@@ -1,0 +1,223 @@
+"""The model registry: one entry per exported model, the single source of truth
+for every model list (the README table, the docs roster, and the programmatic
+``topica.list_models`` discovery helper).
+
+The flat ``from topica import X`` namespace is frozen and stays flat; this module
+is a *presentation and discovery* layer over it, not a second import path. A
+conformance test (``tests/test_registry.py``) asserts the registry and the
+exported model classes stay in one-to-one correspondence, so neither drifts as
+models are added.
+
+Adding a model: export its class from ``__init__`` and add one ``ModelInfo`` here.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class ModelInfo:
+    """One model's place in the taxonomy and its cross-cutting properties.
+
+    Attributes
+    ----------
+    name : the exported class name (``"LDA"`` resolves as ``topica.LDA``).
+    group : the purpose group (one of :data:`GROUPS`).
+    brings : what the user supplies beyond raw text — any of ``"text"``,
+        ``"embeddings"``, ``"metadata"``, ``"seeds"``, ``"labels"``, ``"times"``.
+    inference : the inference engine — ``"gibbs"``, ``"variational"``, ``"vae"``,
+        ``"optimal-transport"``, ``"clustering"`` (more as models are added).
+    determinism : ``"bit-exact"`` (identical regardless of thread count),
+        ``"seed-reproducible"`` (identical from a fixed seed and thread count), or
+        ``"llm-bounded"`` (subject to an external model's nondeterminism).
+    tags : cross-cutting labels for filtered views (e.g. ``"short-text"``,
+        ``"nonparametric"``, ``"temporal"``, ``"hierarchical"``, ``"cross-lingual"``).
+    summary : a one-line description for tables.
+    doc : the docs anchor, relative to the docs root.
+    """
+
+    name: str
+    group: str
+    brings: tuple[str, ...]
+    inference: str
+    determinism: str
+    tags: tuple[str, ...]
+    summary: str
+    doc: str
+
+
+# Purpose groups, in display order. Organized by what the user brings and wants,
+# not by inference family.
+GROUPS: dict[str, str] = {
+    "general-purpose": "General-purpose",
+    "covariates": "Covariates & structure",
+    "guided": "Guided & supervised",
+    "short-text": "Short text",
+    "dynamic-hierarchical": "Dynamic & hierarchical",
+    "embedding": "Embedding-based",
+    "llm": "LLM-based",
+}
+
+
+def _m(*args, **kwargs) -> ModelInfo:
+    return ModelInfo(*args, **kwargs)
+
+
+REGISTRY: dict[str, ModelInfo] = {
+    m.name: m for m in [
+        # ---- General-purpose ------------------------------------------------
+        _m("LDA", "general-purpose", ("text",), "gibbs", "seed-reproducible", (),
+           "Classic latent Dirichlet allocation via a fast SparseLDA collapsed-Gibbs sampler.",
+           "guides/models.md#lda"),
+        _m("CTM", "general-purpose", ("text",), "variational", "bit-exact", (),
+           "Correlated topic model: a logistic-normal prior that lets topics co-occur.",
+           "guides/models.md#ctm"),
+        _m("ProdLDA", "general-purpose", ("text",), "vae", "seed-reproducible", (),
+           "Product-of-experts LDA (AVITM) for sharper, more coherent topics; hand-coded VAE.",
+           "guides/models.md#prodlda"),
+        _m("HDP", "general-purpose", ("text",), "gibbs", "seed-reproducible", ("nonparametric",),
+           "Hierarchical Dirichlet process: infers the number of topics from the data.",
+           "guides/models.md#hdp"),
+        # ---- Covariates & structure ----------------------------------------
+        _m("STM", "covariates", ("text", "metadata"), "variational", "bit-exact", (),
+           "Structural topic model: relate topic prevalence and content to covariates.",
+           "guides/models.md#stm"),
+        _m("STS", "covariates", ("text", "metadata"), "variational", "bit-exact", (),
+           "Structural topic-and-sentiment model over document metadata.",
+           "guides/models.md#sts"),
+        _m("SAGE", "covariates", ("text", "metadata"), "gibbs", "seed-reproducible", (),
+           "Sparse additive generative model: the same topic worded differently across groups.",
+           "guides/models.md#sage"),
+        _m("DMR", "covariates", ("text", "metadata"), "gibbs", "seed-reproducible", (),
+           "Dirichlet-multinomial regression: a document-metadata prior on topic proportions.",
+           "guides/models.md#dmr"),
+        _m("GDMR", "covariates", ("text", "metadata"), "gibbs", "seed-reproducible", (),
+           "Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates.",
+           "guides/models.md#gdmr"),
+        # ---- Guided & supervised -------------------------------------------
+        _m("KeyATM", "guided", ("text", "seeds"), "gibbs", "seed-reproducible", (),
+           "Keyword-assisted topics: anchor named topics with a few seed words each.",
+           "guides/guided.md"),
+        _m("SeededLDA", "guided", ("text", "seeds"), "gibbs", "seed-reproducible", (),
+           "Seeded LDA: steer named topics toward supplied seed words.",
+           "guides/guided.md"),
+        _m("LabeledLDA", "guided", ("text", "labels"), "gibbs", "seed-reproducible", (),
+           "Labeled LDA: each document label is a topic; tokens are restricted to its labels.",
+           "guides/models.md#labeledlda"),
+        _m("SupervisedLDA", "guided", ("text", "labels"), "gibbs", "seed-reproducible", (),
+           "Supervised LDA: topics shaped to predict a per-document real-valued response.",
+           "guides/models.md#supervisedlda"),
+        # ---- Short text -----------------------------------------------------
+        _m("GSDMM", "short-text", ("text",), "gibbs", "seed-reproducible", ("short-text",),
+           "Gibbs-sampling Dirichlet mixture: one topic per short document.",
+           "guides/short-text.md"),
+        _m("PT", "short-text", ("text",), "gibbs", "seed-reproducible", ("short-text",),
+           "Pseudo-document topic model: pool short texts into pseudo-documents.",
+           "guides/short-text.md"),
+        # ---- Dynamic & hierarchical ----------------------------------------
+        _m("DTM", "dynamic-hierarchical", ("text", "times"), "variational", "bit-exact", ("temporal",),
+           "Dynamic topic model: a fixed topic set whose word distributions drift across time slices.",
+           "guides/models.md#dtm"),
+        _m("HLDA", "dynamic-hierarchical", ("text",), "gibbs", "seed-reproducible", ("hierarchical",),
+           "Hierarchical LDA (nested CRP): a learned tree of super- and sub-topics.",
+           "guides/models.md#hierarchy-models"),
+        _m("PA", "dynamic-hierarchical", ("text",), "gibbs", "seed-reproducible", ("hierarchical",),
+           "Pachinko allocation: a DAG of super- and sub-topics.",
+           "guides/models.md#hierarchy-models"),
+        # ---- Embedding-based ------------------------------------------------
+        _m("BERTopic", "embedding", ("text", "embeddings"), "clustering", "seed-reproducible", (),
+           "Cluster document embeddings; label topics by class-based TF-IDF.",
+           "guides/embedding.md"),
+        _m("Top2Vec", "embedding", ("text", "embeddings"), "clustering", "seed-reproducible", (),
+           "Topics as dense regions in a joint document-word embedding space.",
+           "guides/embedding.md"),
+        _m("ETM", "embedding", ("text", "embeddings"), "variational", "bit-exact", (),
+           "Embedded topic model: topic-word distributions factored through word embeddings.",
+           "guides/embedding.md"),
+        _m("FASTopic", "embedding", ("text", "embeddings"), "optimal-transport", "bit-exact", (),
+           "Topics from optimal-transport plans between document, topic, and word embeddings.",
+           "guides/embedding.md"),
+        _m("EmbeddingLDA", "embedding", ("text", "embeddings", "seeds"), "gibbs", "seed-reproducible", (),
+           "Seeded LDA whose seed sets are expanded with nearest neighbors in an embedding space.",
+           "guides/embedding.md"),
+    ]
+}
+
+
+def list_models(
+    *,
+    group: str | None = None,
+    brings: str | None = None,
+    inference: str | None = None,
+    determinism: str | None = None,
+    tag: str | None = None,
+) -> list[ModelInfo]:
+    """Return the registered models matching every supplied filter.
+
+    With no filters, returns all models in registry (insertion) order. Each
+    filter narrows the result:
+
+    - ``group`` — one of :data:`GROUPS` (e.g. ``"short-text"``).
+    - ``brings`` — a single requirement the model accepts (e.g. ``"embeddings"``,
+      ``"metadata"``, ``"seeds"``); matches models whose ``brings`` contains it.
+    - ``inference`` — the engine (e.g. ``"gibbs"``, ``"variational"``, ``"vae"``).
+    - ``determinism`` — ``"bit-exact"``, ``"seed-reproducible"``, ``"llm-bounded"``.
+    - ``tag`` — a cross-cutting tag (e.g. ``"short-text"``, ``"nonparametric"``).
+
+    Examples
+    --------
+    >>> import topica
+    >>> [m.name for m in topica.list_models(brings="embeddings")]
+    ['BERTopic', 'Top2Vec', 'ETM', 'FASTopic', 'EmbeddingLDA']
+    >>> [m.name for m in topica.list_models(group="short-text")]
+    ['GSDMM', 'PT']
+    """
+    if group is not None and group not in GROUPS:
+        raise ValueError(f"unknown group {group!r}; choose from {sorted(GROUPS)}")
+    out = []
+    for m in REGISTRY.values():
+        if group is not None and m.group != group:
+            continue
+        if brings is not None and brings not in m.brings:
+            continue
+        if inference is not None and m.inference != inference:
+            continue
+        if determinism is not None and m.determinism != determinism:
+            continue
+        if tag is not None and tag not in m.tags:
+            continue
+        out.append(m)
+    return out
+
+
+def markdown_table(by_group: bool = True) -> str:
+    """Render the registry as a Markdown table, grouped by purpose by default.
+
+    Used to (re)generate the README model section and the docs roster so the
+    hand-maintained lists cannot drift from the registry.
+    """
+    lines: list[str] = []
+    if by_group:
+        for key, label in GROUPS.items():
+            models = [m for m in REGISTRY.values() if m.group == key]
+            if not models:
+                continue
+            lines.append(f"### {label}\n")
+            lines.append("| Model | Brings | Inference | Reproducibility | Summary |")
+            lines.append("|---|---|---|---|---|")
+            for m in models:
+                brings = ", ".join(m.brings)
+                lines.append(
+                    f"| `{m.name}` | {brings} | {m.inference} | {m.determinism} | {m.summary} |"
+                )
+            lines.append("")
+    else:
+        lines.append("| Model | Group | Brings | Inference | Reproducibility | Summary |")
+        lines.append("|---|---|---|---|---|---|")
+        for m in REGISTRY.values():
+            brings = ", ".join(m.brings)
+            lines.append(
+                f"| `{m.name}` | {GROUPS[m.group]} | {brings} | {m.inference} | "
+                f"{m.determinism} | {m.summary} |"
+            )
+    return "\n".join(lines)

@@ -139,6 +139,8 @@ from .coherence import (  # noqa: E402
     word_intrusion,
     document_intrusion,
 )
+from .registry import list_models, ModelInfo, REGISTRY  # noqa: E402  model taxonomy / discovery
+
 from .validation import (  # noqa: E402  general, model-agnostic post-hoc analyses
     diagnostics,
     perplexity,
@@ -211,6 +213,9 @@ from .frames import from_dataframe, align, prep_documents, plot_removed  # noqa:
 from .formulas import design_matrix  # noqa: E402
 
 __all__ = [
+    "list_models",
+    "ModelInfo",
+    "REGISTRY",
     "LDA",
     "DMR",
     "GDMR",
