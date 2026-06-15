@@ -23,6 +23,72 @@ Every model shares the same shape: construct with hyperparameters and a `seed`,
 | Model short texts (tweets, answers) | [`PT`, `GSDMM`](short-text.md) |
 | Build a topic hierarchy | `PA`, `HLDA` |
 
+## The roster
+
+Every model, grouped by purpose. **Brings** is what you supply beyond raw text;
+**Reproducibility** is `bit-exact` (identical regardless of thread count),
+`seed-reproducible` (identical from a fixed seed and thread count), or
+`llm-bounded`. Filter this roster in code with
+`topica.list_models(group=…, brings=…, inference=…, determinism=…)`. The table is
+generated from `python/topica/registry.py`.
+
+<!-- BEGIN MODEL TABLE (generated from topica.registry; edit registry.py, not this block) -->
+
+### General-purpose
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `LDA` | text | gibbs | seed-reproducible | Classic latent Dirichlet allocation via a fast SparseLDA collapsed-Gibbs sampler. |
+| `CTM` | text | variational | bit-exact | Correlated topic model: a logistic-normal prior that lets topics co-occur. |
+| `ProdLDA` | text | vae | seed-reproducible | Product-of-experts LDA (AVITM) for sharper, more coherent topics; hand-coded VAE. |
+| `HDP` | text | gibbs | seed-reproducible | Hierarchical Dirichlet process: infers the number of topics from the data. |
+
+### Covariates & structure
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `STM` | text, metadata | variational | bit-exact | Structural topic model: relate topic prevalence and content to covariates. |
+| `STS` | text, metadata | variational | bit-exact | Structural topic-and-sentiment model over document metadata. |
+| `SAGE` | text, metadata | gibbs | seed-reproducible | Sparse additive generative model: the same topic worded differently across groups. |
+| `DMR` | text, metadata | gibbs | seed-reproducible | Dirichlet-multinomial regression: a document-metadata prior on topic proportions. |
+| `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
+
+### Guided & supervised
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `KeyATM` | text, seeds | gibbs | seed-reproducible | Keyword-assisted topics: anchor named topics with a few seed words each. |
+| `SeededLDA` | text, seeds | gibbs | seed-reproducible | Seeded LDA: steer named topics toward supplied seed words. |
+| `LabeledLDA` | text, labels | gibbs | seed-reproducible | Labeled LDA: each document label is a topic; tokens are restricted to its labels. |
+| `SupervisedLDA` | text, labels | gibbs | seed-reproducible | Supervised LDA: topics shaped to predict a per-document real-valued response. |
+
+### Short text
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `GSDMM` | text | gibbs | seed-reproducible | Gibbs-sampling Dirichlet mixture: one topic per short document. |
+| `PT` | text | gibbs | seed-reproducible | Pseudo-document topic model: pool short texts into pseudo-documents. |
+
+### Dynamic & hierarchical
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `DTM` | text, times | variational | bit-exact | Dynamic topic model: a fixed topic set whose word distributions drift across time slices. |
+| `HLDA` | text | gibbs | seed-reproducible | Hierarchical LDA (nested CRP): a learned tree of super- and sub-topics. |
+| `PA` | text | gibbs | seed-reproducible | Pachinko allocation: a DAG of super- and sub-topics. |
+
+### Embedding-based
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `BERTopic` | text, embeddings | clustering | seed-reproducible | Cluster document embeddings; label topics by class-based TF-IDF. |
+| `Top2Vec` | text, embeddings | clustering | seed-reproducible | Topics as dense regions in a joint document-word embedding space. |
+| `ETM` | text, embeddings | variational | bit-exact | Embedded topic model: topic-word distributions factored through word embeddings. |
+| `FASTopic` | text, embeddings | optimal-transport | bit-exact | Topics from optimal-transport plans between document, topic, and word embeddings. |
+| `EmbeddingLDA` | text, embeddings, seeds | gibbs | seed-reproducible | Seeded LDA whose seed sets are expanded with nearest neighbors in an embedding space. |
+
+<!-- END MODEL TABLE -->
+
 ## LDA
 
 Classic Latent Dirichlet Allocation via MALLET's fast SparseLDA collapsed-Gibbs

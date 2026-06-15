@@ -30,36 +30,71 @@ See the [getting-started guide](https://nealcaren.github.io/topica/getting-start
 
 ## Models
 
-**Count-based models** learn topics from word counts (collapsed Gibbs, variational EM, or an amortized VAE):
+Models are organized by **what you bring and what you want**, not by inference
+family. The `from topica import X` namespace is flat; `topica.list_models(group=…,
+brings=…, inference=…, determinism=…)` filters this roster in code. **Brings** is
+what you supply beyond raw text; **Reproducibility** is `bit-exact` (identical
+regardless of thread count), `seed-reproducible` (identical from a fixed seed and
+thread count), or `llm-bounded`.
 
-| Model | What it's for |
-|-------|---------------|
-| **`LDA`** | Classic topics via fast collapsed-Gibbs (SparseLDA); optional multi-threaded and LightLDA alias samplers |
-| **`STM`** | The Structural Topic Model: correlated topics with prevalence **and** content covariates |
-| **`STS`** | Structural Topic **and Sentiment-Discourse**: covariate-driven topic sentiment/tone on top of STM |
-| **`CTM`** | Correlated topics (logistic-normal) |
-| **`DMR`** | Topics conditioned on document metadata (Dirichlet-multinomial regression) |
-| **`GDMR`** | Generalized DMR over continuous metadata via a Legendre basis, with topic distribution functions across the metadata range |
-| **`DTM`** | Dynamic topics that evolve across time slices |
-| **`HDP`** | Nonparametric LDA that learns the number of topics from the data; by default fits with fixed concentrations (topic count steered by `gamma`), with optional concentration resampling |
-| **`keyATM` / `seededlda`** | Guided topics steered by seed words |
-| **`ProdLDA`** | Sharper, more coherent topics via a product-of-experts word model, fit as an amortized VAE (no PyTorch) |
-| **`PT` / `GSDMM`** | Short-text models for tweets, survey answers, headlines |
-| **`SupervisedLDA`** | Topics shaped to predict a per-document response |
-| **`LabeledLDA`** | Supervised topics tied to document labels |
-| **`SAGE`** | Content-covariate topics: the same topic worded differently across groups |
-| **`PA` / `HLDA`** | Topic hierarchies (Pachinko, nested-CRP) |
+<!-- BEGIN MODEL TABLE (generated from topica.registry; edit registry.py, not this block) -->
 
-**Embedding-based models** start from document embeddings you supply (no PyTorch, no UMAP/numba in the wheel):
+### General-purpose
 
-| Model | What it's for |
-|-------|---------------|
-| **`BERTopic`** | Cluster document embeddings, label topics by class-TF-IDF; topic reduction and a soft per-document distribution |
-| **`Top2Vec`** | Topics as points in the embedding space; topic words are the nearest word vectors |
-| **`ETM`** | Embedded Topic Model: a logistic-normal topic model with the topic-word distribution factored through embeddings (`β = softmax(ρ·α)`); per-document EM or an amortized VAE (`inference="vae"`) |
-| **`FASTopic`** | Topics read off two optimal-transport plans between document, topic, and word embeddings |
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `LDA` | text | gibbs | seed-reproducible | Classic latent Dirichlet allocation via a fast SparseLDA collapsed-Gibbs sampler. |
+| `CTM` | text | variational | bit-exact | Correlated topic model: a logistic-normal prior that lets topics co-occur. |
+| `ProdLDA` | text | vae | seed-reproducible | Product-of-experts LDA (AVITM) for sharper, more coherent topics; hand-coded VAE. |
+| `HDP` | text | gibbs | seed-reproducible | Hierarchical Dirichlet process: infers the number of topics from the data. |
 
-Every model exposes the same shape: `fit(docs, …)`, then `topic_word` (φ), `doc_topic` (θ), `top_words(n)`, and `save`/`load`. The count-based variational models (`CTM`/`STM`/`STS`/`SupervisedLDA`/`DTM`) parallelize across cores while staying bit-for-bit deterministic. The embedding models split into two kinds: `BERTopic` and `Top2Vec` run the `reduce → cluster → represent` pipeline, while `ETM` and `FASTopic` are generative and mixed-membership; all of them take vectors from any embedder (sentence-transformers, an API, a local model such as ollama). Full guides: [the models](https://nealcaren.github.io/topica/guides/models/) and [embedding topics](https://nealcaren.github.io/topica/guides/embedding/).
+### Covariates & structure
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `STM` | text, metadata | variational | bit-exact | Structural topic model: relate topic prevalence and content to covariates. |
+| `STS` | text, metadata | variational | bit-exact | Structural topic-and-sentiment model over document metadata. |
+| `SAGE` | text, metadata | gibbs | seed-reproducible | Sparse additive generative model: the same topic worded differently across groups. |
+| `DMR` | text, metadata | gibbs | seed-reproducible | Dirichlet-multinomial regression: a document-metadata prior on topic proportions. |
+| `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
+
+### Guided & supervised
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `KeyATM` | text, seeds | gibbs | seed-reproducible | Keyword-assisted topics: anchor named topics with a few seed words each. |
+| `SeededLDA` | text, seeds | gibbs | seed-reproducible | Seeded LDA: steer named topics toward supplied seed words. |
+| `LabeledLDA` | text, labels | gibbs | seed-reproducible | Labeled LDA: each document label is a topic; tokens are restricted to its labels. |
+| `SupervisedLDA` | text, labels | gibbs | seed-reproducible | Supervised LDA: topics shaped to predict a per-document real-valued response. |
+
+### Short text
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `GSDMM` | text | gibbs | seed-reproducible | Gibbs-sampling Dirichlet mixture: one topic per short document. |
+| `PT` | text | gibbs | seed-reproducible | Pseudo-document topic model: pool short texts into pseudo-documents. |
+
+### Dynamic & hierarchical
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `DTM` | text, times | variational | bit-exact | Dynamic topic model: a fixed topic set whose word distributions drift across time slices. |
+| `HLDA` | text | gibbs | seed-reproducible | Hierarchical LDA (nested CRP): a learned tree of super- and sub-topics. |
+| `PA` | text | gibbs | seed-reproducible | Pachinko allocation: a DAG of super- and sub-topics. |
+
+### Embedding-based
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `BERTopic` | text, embeddings | clustering | seed-reproducible | Cluster document embeddings; label topics by class-based TF-IDF. |
+| `Top2Vec` | text, embeddings | clustering | seed-reproducible | Topics as dense regions in a joint document-word embedding space. |
+| `ETM` | text, embeddings | variational | bit-exact | Embedded topic model: topic-word distributions factored through word embeddings. |
+| `FASTopic` | text, embeddings | optimal-transport | bit-exact | Topics from optimal-transport plans between document, topic, and word embeddings. |
+| `EmbeddingLDA` | text, embeddings, seeds | gibbs | seed-reproducible | Seeded LDA whose seed sets are expanded with nearest neighbors in an embedding space. |
+
+<!-- END MODEL TABLE -->
+
+Every model exposes the same shape: `fit(docs, …)`, then `topic_word` (φ), `doc_topic` (θ), `top_words(n)`, and `save`/`load`, so one diagnostic, labeling, and effect-estimation stack applies to all of them and a new model inherits it for free. The embedding-based models take document vectors from any embedder (sentence-transformers, an API, or a local model such as ollama; no PyTorch or UMAP/numba in the wheel). Full guides: [the models](https://nealcaren.github.io/topica/guides/models/) and [embedding topics](https://nealcaren.github.io/topica/guides/embedding/).
 
 ## Diagnostics & analysis
 
