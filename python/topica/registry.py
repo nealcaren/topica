@@ -78,7 +78,7 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("HDP", "general-purpose", ("text",), "gibbs", "seed-reproducible", ("nonparametric",),
            "Hierarchical Dirichlet process: infers the number of topics from the data.",
            "guides/models.md#hdp"),
-        _m("NMF", "general-purpose", ("text",), "matrix-factorization", "seed-reproducible", (),
+        _m("NMF", "general-purpose", ("text",), "matrix-factorization", "bit-exact", (),
            "Non-negative matrix factorization of the document-term matrix via multiplicative updates.",
            "guides/models.md#nmf"),
         # ---- Covariates & structure ----------------------------------------

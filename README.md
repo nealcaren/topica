@@ -47,7 +47,7 @@ thread count), or `llm-bounded`.
 | `CTM` | text | variational | bit-exact | Correlated topic model: a logistic-normal prior that lets topics co-occur. |
 | `ProdLDA` | text | vae | seed-reproducible | Product-of-experts LDA (AVITM) for sharper, more coherent topics; hand-coded VAE. |
 | `HDP` | text | gibbs | seed-reproducible | Hierarchical Dirichlet process: infers the number of topics from the data. |
-| `NMF` | text | matrix-factorization | seed-reproducible | Non-negative matrix factorization of the document-term matrix via multiplicative updates. |
+| `NMF` | text | matrix-factorization | bit-exact | Non-negative matrix factorization of the document-term matrix via multiplicative updates. |
 
 ### Covariates & structure
 
