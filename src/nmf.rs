@@ -89,6 +89,12 @@ impl Mat {
 // reduction whose combination order depends on thread completion).
 
 /// `A . B` for row-major `A (m x k)` and `B (k x n)`.
+///
+/// ikj loop order: for each output row `i` (parallel), accumulate `B[k,:]` scaled
+/// by `A[i,k]` over `k`. The inner `j`-loop is contiguous over both `orow` and
+/// `brow`, which LLVM auto-vectorizes (FMA). Each `orow[j]` still accumulates over
+/// `k` in increasing order, so the per-cell summation order is identical to a
+/// naive ijk kernel and the result is bit-identical and thread-count-independent.
 fn matmul(a: &Mat, b: &Mat) -> Mat {
     debug_assert_eq!(a.cols, b.rows);
     let (m, k, n) = (a.rows, a.cols, b.cols);
@@ -104,6 +110,7 @@ fn matmul(a: &Mat, b: &Mat) -> Mat {
                     continue;
                 }
                 let brow = &b.data[p * n..(p + 1) * n];
+                // Contiguous, dependence-free over j; LLVM vectorizes this FMA.
                 for j in 0..n {
                     orow[j] += aip * brow[j];
                 }
@@ -113,7 +120,14 @@ fn matmul(a: &Mat, b: &Mat) -> Mat {
 }
 
 /// `A^T . B` for row-major `A (m x k)` and `B (m x n)`, giving `(k x n)`. Output
-/// row `p` is `sum_i A[i,p] * B[i,:]`, accumulated over `i` in fixed order.
+/// row `p` is `sum_i A[i,p] * B[i,:]`, accumulated over `i` in fixed (increasing)
+/// order.
+///
+/// ikj order with the output row fixed to a column of A: for each output row `p`
+/// (= A-column `p`, parallel), accumulate `B[i,:]` scaled by `A[i,p]` over `i`.
+/// `A[i,p]` is a strided scalar load (broadcast), but the inner `j`-loop stays
+/// contiguous over `orow` and `brow` so it auto-vectorizes. `i`-order preserved,
+/// so the result is bit-identical and thread-count-independent.
 fn matmul_at(a: &Mat, b: &Mat) -> Mat {
     debug_assert_eq!(a.rows, b.rows);
     let (m, k, n) = (a.rows, a.cols, b.cols);
@@ -137,6 +151,10 @@ fn matmul_at(a: &Mat, b: &Mat) -> Mat {
 }
 
 /// `A . B^T` for row-major `A (m x k)` and `B (n x k)`, giving `(m x n)`.
+///
+/// Each cell `(i,j)` is a dot product over contiguous rows `A[i,:]` and `B[j,:]`,
+/// summed in increasing `k` into a local accumulator `s`, which lets LLVM emit
+/// FMA / vectorize. `k`-order preserved (bit-identical, thread-count-independent).
 fn matmul_bt(a: &Mat, b: &Mat) -> Mat {
     debug_assert_eq!(a.cols, b.cols);
     let (m, k, n) = (a.rows, a.cols, b.rows);
