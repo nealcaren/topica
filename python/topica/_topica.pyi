@@ -2529,6 +2529,77 @@ class ProdLDA:
     def __repr__(self) -> str: ...
 
 
+class NMF:
+    """NMF, non-negative matrix factorization for topic modeling (Lee & Seung
+    2001; Boutsidis & Gallopoulos 2008). We factor the non-negative document-term
+    matrix X (D x V) as X ~ W H with W, H >= 0 by multiplicative updates. Two
+    divergences are available through beta_loss: the squared Frobenius loss
+    (default) and the generalized Kullback-Leibler divergence. The reference is
+    scikit-learn's sklearn.decomposition.NMF (BSD-3-Clause). The topic-word matrix
+    is each row of H normalized to sum 1; the document-topic matrix is each row of
+    W normalized to sum 1."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        beta_loss: str = "frobenius",
+        init: str = "nndsvd",
+        weighting: str = "count",
+        convergence_tol: float = 1e-4,
+        seed: int = 42,
+    ) -> None:
+        """beta_loss is 'frobenius' or 'kullback-leibler' (alias 'kl'); init is
+        'nndsvd' or 'random'; weighting is 'count' or 'tfidf'. seed affects only
+        init='random'."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        *,
+        iters: int | None = None,
+        convergence_tol: Optional[float] = None,
+    ) -> None:
+        """Fit on a Corpus or a list of token lists. `iters` is the maximum number
+        of multiplicative-update iterations (default 200). convergence_tol
+        overrides the constructor value for this fit call only."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def reconstruction_error(self) -> float: ...
+    @property
+    def error_history(self) -> list[float]: ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """Per-iteration reconstruction-error trace: list of (iter, error) pairs."""
+        ...
+    @property
+    def iters_run(self) -> int: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> NMF: ...
+    def __repr__(self) -> str: ...
+
+
 class FASTopic:
     """FASTopic (Wu et al. 2024): a topic model with no encoder or neural network.
     The topic proportions theta and topic-word matrix beta are read off two
