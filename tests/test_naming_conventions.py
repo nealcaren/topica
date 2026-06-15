@@ -68,6 +68,7 @@ CTOR_FIRST_EXCEPT = {
     "BERTopic": "K discovered from clustering",
     "HDP": "K discovered (nonparametric)",
     "Top2Vec": "K discovered from clustering",
+    "TopicGPT": "K discovered by the LLM; keyword-only constructor (backend/model)",
     "LabeledLDA": "topics are the label set, not a K argument",
     "KeyATM": "keyword dict is the leading required input",
     "SeededLDA": "seed-word dict is the leading required input",

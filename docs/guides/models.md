@@ -92,6 +92,12 @@ generated from `python/topica/registry.py`.
 | `CombinedTM` | text, embeddings | vae | bit-exact | Contextualized ProdLDA: encoder reads the bag of words plus a document embedding. |
 | `ZeroShotTM` | text, embeddings | vae | bit-exact | Contextualized ProdLDA: encoder reads the document embedding alone, enabling cross-lingual transfer. |
 
+### LLM-based
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `TopicGPT` | text, llm | prompting | llm-bounded | LLM-driven topic discovery: prompt a model to propose, refine, and assign a topic taxonomy with descriptions. |
+
 <!-- END MODEL TABLE -->
 
 ## LDA

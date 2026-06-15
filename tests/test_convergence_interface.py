@@ -32,9 +32,15 @@ _CLUSTER_MODELS = {"BERTopic", "Top2Vec"}
 # convergence state (converged is None). It takes no `iters` argument.
 _DIRECT_SOLVE_MODELS = {"LSA"}
 
+# LLM-prompting models: TopicGPT runs a fixed generate/refine/assign flow, not an
+# iterative sampler, so (like the cluster models) it has no per-iteration trace
+# (fit_history == []) and no convergence state (converged is None). Its
+# human-readable per-stage log lives in the separate `stage_log` attribute.
+_LLM_MODELS = {"TopicGPT"}
+
 # Models whose fitted state has no iterative objective trace and no early-stop
-# convergence flag: the cluster models plus the direct SVD solve.
-_NO_TRACE_MODELS = _CLUSTER_MODELS | _DIRECT_SOLVE_MODELS
+# convergence flag: the cluster models, the direct SVD solve, and the LLM model.
+_NO_TRACE_MODELS = _CLUSTER_MODELS | _DIRECT_SOLVE_MODELS | _LLM_MODELS
 
 # Models that intentionally never early-stop, so converged is always False.
 # HDP and GSDMM discover their topic/cluster counts, so a log-likelihood plateau
@@ -139,6 +145,14 @@ def _fit_model(name: str, factory):
 
     # LSA: a direct SVD solve; fit() takes no iters argument.
     if name in _DIRECT_SOLVE_MODELS:
+        model.fit(_TOY)
+        return model
+
+    # TopicGPT: an LLM-prompting pipeline; needs a backend and takes no iters.
+    # A trivial fake backend keeps this offline; the convergence interface only
+    # checks that fit_history == [] and converged is None for it.
+    if name in _LLM_MODELS:
+        model._backend_arg = lambda prompt: "{}"
         model.fit(_TOY)
         return model
 

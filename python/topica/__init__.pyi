@@ -50,6 +50,7 @@ from .embedding import (
     save_embeddings as save_embeddings,
     load_embeddings as load_embeddings,
 )
+from .topicgpt import TopicGPT as TopicGPT
 
 __citation__: str
 ENGLISH_STOPWORDS: frozenset[str]
@@ -434,6 +435,7 @@ __all__ = [
     "llm_topic_labels",
     "llm_backend",
     "topic_label_prompts",
+    "TopicGPT",
     "align_corpus",
     "spline",
     "interaction",

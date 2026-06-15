@@ -156,6 +156,10 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("ZeroShotTM", "embedding", ("text", "embeddings"), "vae", "bit-exact", ("cross-lingual",),
            "Contextualized ProdLDA: encoder reads the document embedding alone, enabling cross-lingual transfer.",
            "guides/embedding.md#zeroshottm"),
+        # ---- LLM-based ------------------------------------------------------
+        _m("TopicGPT", "llm", ("text", "llm"), "prompting", "llm-bounded", ("hierarchical",),
+           "LLM-driven topic discovery: prompt a model to propose, refine, and assign a topic taxonomy with descriptions.",
+           "guides/llm.md#topicgpt"),
     ]
 }
 
