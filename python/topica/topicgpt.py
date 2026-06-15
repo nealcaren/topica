@@ -73,7 +73,7 @@ import numpy as np
 # quotes), which is what makes "this implements TopicGPT" a defensible claim.
 #
 # Three documented deviations from the reference: (1) the few-shot examples are
-# generalized to neutral cross-domain ones (astronomy/cuisine) instead of the
+# generalized to neutral cross-domain ones (astronomy/cuisine/music) instead of the
 # reference's congressional-bills examples. The reference prompts are tuned to the
 # paper's policy corpus (and ship a domain seed); used verbatim on an arbitrary
 # corpus they bias the model to reject off-domain documents as "None". The format
@@ -101,6 +101,12 @@ Document:
 A food writer profiled three neighborhood bakeries reviving nineteenth-century sourdough techniques.
 Your response:
 [1] Cuisine: Mentions cooking, food preparation, and culinary culture.
+
+Example 3: The document is about a different theme, so add "[1] Music"
+Document:
+The quartet premiered a new string composition at the concert hall, blending baroque counterpoint with electronic textures.
+Your response:
+[1] Music: Mentions musical works, performance, and composition.
 
 [Instructions]
 Step 1: Determine the topics mentioned in the document.
