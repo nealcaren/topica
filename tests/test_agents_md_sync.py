@@ -19,14 +19,14 @@ def _load_gen():
 
 def test_agents_md_matches_skill():
     gen = _load_gen()
-    assert (ROOT / "AGENTS.md").read_text() == gen.rendered(), (
+    assert (ROOT / "AGENTS.md").read_text(encoding="utf-8") == gen.rendered(), (
         "AGENTS.md is stale; run scripts/gen_agents_md.py")
 
 
 @pytest.mark.parametrize("skill", ["topica-analysis", "add-topic-model"])
 def test_skill_has_valid_frontmatter(skill):
     path = ROOT / ".claude" / "skills" / skill / "SKILL.md"
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert text.startswith("---\n"), f"{skill}: missing YAML frontmatter"
     end = text.find("\n---", 3)
     assert end != -1, f"{skill}: unterminated frontmatter"

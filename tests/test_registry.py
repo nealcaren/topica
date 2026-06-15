@@ -81,7 +81,7 @@ def test_readme_and_docs_roster_in_sync_with_registry():
     expected = f"{BEGIN}\n\n{markdown_table(by_group=True)}\n{END}"
     root = pathlib.Path(__file__).resolve().parent.parent
     for rel in ("README.md", "docs/guides/models.md"):
-        text = (root / rel).read_text()
+        text = (root / rel).read_text(encoding="utf-8")
         i, j = text.find(BEGIN), text.find(END)
         assert i != -1 and j != -1, f"{rel}: marker comments missing"
         assert text[i:j + len(END)] == expected, (

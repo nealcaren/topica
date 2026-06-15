@@ -31,7 +31,7 @@ BANNER = (
 
 def _skill_body() -> str:
     """The SKILL.md text with its YAML frontmatter stripped."""
-    text = SKILL.read_text()
+    text = SKILL.read_text(encoding="utf-8")
     if text.startswith("---"):
         # drop the frontmatter block (between the first two '---' lines)
         end = text.find("\n---", 3)
@@ -46,13 +46,13 @@ def rendered() -> str:
 def main() -> None:
     check = "--check" in sys.argv
     want = rendered()
-    have = AGENTS.read_text() if AGENTS.exists() else ""
+    have = AGENTS.read_text(encoding="utf-8") if AGENTS.exists() else ""
     if check:
         if have != want:
             raise SystemExit("AGENTS.md is stale; run scripts/gen_agents_md.py")
         print("AGENTS.md up to date")
     else:
-        AGENTS.write_text(want)
+        AGENTS.write_text(want, encoding="utf-8")
         print(f"wrote {AGENTS.name} ({len(want.splitlines())} lines)")
 
 

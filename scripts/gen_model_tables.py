@@ -40,12 +40,12 @@ def main() -> None:
     check = "--check" in sys.argv
     stale = []
     for path in TARGETS:
-        old = path.read_text()
+        old = path.read_text(encoding="utf-8")
         new = inject(old)
         if old != new:
             stale.append(path.name)
             if not check:
-                path.write_text(new)
+                path.write_text(new, encoding="utf-8")
     if check and stale:
         print(f"stale (run scripts/gen_model_tables.py): {stale}")
         raise SystemExit(1)
