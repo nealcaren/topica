@@ -2529,6 +2529,173 @@ class ProdLDA:
     def __repr__(self) -> str: ...
 
 
+class CombinedTM:
+    """CombinedTM (Bianchi, Terragni & Hovy 2021), a contextualized topic model.
+    ProdLDA whose encoder reads the normalized bag of words concatenated with a
+    caller-supplied document embedding; the product-of-experts decoder still
+    reconstructs the bag of words. Bring the embeddings at fit() as a
+    (num_docs, E) array, aligned to the documents. Reference implementation:
+    contextualized-topic-models (Bianchi et al., MIT)."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha: float = 1.0,
+        hidden_size: int = 100,
+        dropout: float = 0.2,
+        batch_size: int = 200,
+        lr: float = 0.002,
+        convergence_tol: float = 0.0,
+        seed: int = 42,
+    ) -> None: ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+        *,
+        iters: int | None = None,
+        convergence_tol: Optional[float] = None,
+    ) -> None:
+        """Fit on token documents plus per-document embeddings (num_docs x E,
+        in corpus order). `iters` sets the number of training epochs.
+
+        convergence_tol overrides the constructor's convergence_tol for this fit
+        call only (None = use constructor value)."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def bound(self) -> float: ...
+    @property
+    def bound_history(self) -> list[float]: ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def epochs_run(self) -> int: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def transform(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+    ) -> numpy.typing.NDArray[numpy.float64]: ...
+    def fit_transform(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+        *,
+        iters: int | None = None,
+    ) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> CombinedTM: ...
+    def __repr__(self) -> str: ...
+
+
+class ZeroShotTM:
+    """ZeroShotTM (Bianchi, Nozza & Hovy 2021), a contextualized topic model.
+    ProdLDA whose encoder reads only a caller-supplied document embedding (no bag
+    of words); the product-of-experts decoder still reconstructs the bag of words.
+    Because topics are inferred from the embedding alone, a document embedded with
+    a multilingual encoder maps to the trained topics without any bag of words,
+    enabling cross-lingual transfer: fit on one language, transform documents in
+    another. Bring the embeddings at fit() as a (num_docs, E) array, aligned to the
+    documents. Reference implementation: contextualized-topic-models (Bianchi et
+    al., MIT)."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha: float = 1.0,
+        hidden_size: int = 100,
+        dropout: float = 0.2,
+        batch_size: int = 200,
+        lr: float = 0.002,
+        convergence_tol: float = 0.0,
+        seed: int = 42,
+    ) -> None: ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+        *,
+        iters: int | None = None,
+        convergence_tol: Optional[float] = None,
+    ) -> None:
+        """Fit on token documents plus per-document embeddings (num_docs x E,
+        in corpus order). The encoder uses the embeddings alone. `iters` sets the
+        number of training epochs.
+
+        convergence_tol overrides the constructor's convergence_tol for this fit
+        call only (None = use constructor value)."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def bound(self) -> float: ...
+    @property
+    def bound_history(self) -> list[float]: ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def epochs_run(self) -> int: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def transform(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Held-out topic proportions. For cross-lingual transfer, embed the new
+        documents with the same multilingual encoder used at fit()."""
+        ...
+    def fit_transform(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+        *,
+        iters: int | None = None,
+    ) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> ZeroShotTM: ...
+    def __repr__(self) -> str: ...
+
+
 class NMF:
     """NMF, non-negative matrix factorization for topic modeling (Lee & Seung
     2001; Boutsidis & Gallopoulos 2008). We factor the non-negative document-term

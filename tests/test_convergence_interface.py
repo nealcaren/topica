@@ -109,6 +109,14 @@ def _fit_model(name: str, factory):
         model.fit(_TOY, iters=5)
         return model
 
+    # Contextualized ProdLDA (CombinedTM, ZeroShotTM): require doc_embeddings
+    # as a (num_docs, E) array alongside the tokens.
+    if name in ("CombinedTM", "ZeroShotTM"):
+        rng = np.random.default_rng(42)
+        doc_emb = rng.standard_normal((len(_TOY), 8))
+        model.fit(_TOY, doc_emb, iters=10)
+        return model
+
     # Embedding models (FASTopic, BERTopic, Top2Vec): require doc_embeddings
     if name in ("FASTopic", "BERTopic", "Top2Vec"):
         rng = np.random.default_rng(42)

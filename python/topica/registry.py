@@ -146,6 +146,12 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("EmbeddingLDA", "embedding", ("text", "embeddings", "seeds"), "gibbs", "seed-reproducible", (),
            "Seeded LDA whose seed sets are expanded with nearest neighbors in an embedding space.",
            "guides/embedding.md"),
+        _m("CombinedTM", "embedding", ("text", "embeddings"), "vae", "bit-exact", (),
+           "Contextualized ProdLDA: encoder reads the bag of words plus a document embedding.",
+           "guides/embedding.md#combinedtm"),
+        _m("ZeroShotTM", "embedding", ("text", "embeddings"), "vae", "bit-exact", ("cross-lingual",),
+           "Contextualized ProdLDA: encoder reads the document embedding alone, enabling cross-lingual transfer.",
+           "guides/embedding.md#zeroshottm"),
     ]
 }
 

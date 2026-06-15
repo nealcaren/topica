@@ -213,6 +213,83 @@ Sinkhorn (every gradient checked against finite differences) and steps with Adam
 `dt_alpha`/`tw_alpha` are the inverse entropic regularizations for the two
 transport problems (reference defaults 3.0 and 2.0); larger is sharper.
 
+## CombinedTM
+
+CombinedTM (Bianchi, Terragni & Hovy 2021) is [`ProdLDA`](models.md#prodlda) with
+a richer encoder input. ProdLDA's encoder reads a document's bag of words;
+CombinedTM concatenates that bag of words with a contextual document embedding (a
+sentence-transformer vector, an API embedding, an ollama vector) and feeds the
+pair to the same encoder. The product-of-experts decoder still reconstructs the
+bag of words, and the prior, KL, reparameterization, batchnorm, and Adam are all
+unchanged from ProdLDA. Mixing the contextual signal into the encoder yields more
+coherent topics than the bag of words alone. You bring the per-document
+embeddings at `fit`, one row per document, in corpus order.
+
+```python
+import topica
+
+doc_emb = embed(docs)                    # (num_docs, E), your encoder of choice
+
+model = topica.CombinedTM(num_topics=20, seed=1)
+model.fit(docs, doc_emb, iters=150)
+
+model.topic_word                         # (num_topics, vocab) softmax(beta_k)
+model.doc_topic                          # (num_docs, num_topics) theta
+model.top_words(8, topic=0)
+model.bound, model.converged             # the ELBO at the final epoch
+```
+
+`transform` maps new documents the same way, so it needs both the tokens and
+their embeddings:
+
+```python
+theta_new = model.transform(new_docs, embed(new_docs))   # (n, num_topics)
+```
+
+The reference fits the encoder with PyTorch autograd. We hand-code the encoder's
+forward and backward, including the dense embedding block of the first layer
+(every gradient checked against finite differences), and step with Adam, so this
+is the same model with no PyTorch. Because the encoder is deterministic given a
+seed, fits are bit-identical across reruns. The reference implementation is
+[contextualized-topic-models](https://github.com/MilaNLProc/contextualized-topic-models)
+(Bianchi et al., MIT).
+
+## ZeroShotTM
+
+ZeroShotTM (Bianchi, Nozza & Hovy 2021) takes the same idea one step further: the
+encoder reads *only* the contextual document embedding, with no bag of words at
+all. The decoder still reconstructs the bag of words, so topics remain proper
+word distributions, but topic proportions are inferred from the embedding alone.
+The constructor and surface match CombinedTM.
+
+```python
+import topica
+
+model = topica.ZeroShotTM(num_topics=20, seed=1)
+model.fit(docs, embed(docs), iters=150)
+model.topic_word
+model.doc_topic
+```
+
+Dropping the bag of words from the encoder is what enables **cross-lingual
+transfer**. If you embed documents with a multilingual encoder, you can fit the
+model on one language and `transform` documents in another: the held-out
+documents map to the trained topics through their embeddings, and no shared
+vocabulary is needed.
+
+```python
+# Fit on English, then map French documents to the same topics.
+model.fit(english_docs, multilingual_embed(english_docs), iters=150)
+theta_fr = model.transform(french_docs, multilingual_embed(french_docs))
+```
+
+As with CombinedTM, we hand-code the encoder's forward and backward over the
+embedding-only first layer (finite-difference checked) and fit with Adam, so the
+path has no PyTorch and is bit-identical across reruns. The reference
+implementation is
+[contextualized-topic-models](https://github.com/MilaNLProc/contextualized-topic-models)
+(Bianchi et al., MIT).
+
 ## Avoiding the `-1` noise bucket
 
 HDBSCAN (the default) discovers the topic count but leaves sparse documents
