@@ -95,6 +95,15 @@ def _fit_model(name: str, factory):
         model.fit(_TOY, word_emb, vocab, iters=5)
         return model
 
+    # DETM: requires word_embeddings, vocabulary, and per-document times
+    if name == "DETM":
+        vocab = list({w for doc in _TOY for w in doc})
+        rng = np.random.default_rng(42)
+        word_emb = rng.standard_normal((len(vocab), 8))
+        times = [0] * (len(_TOY) // 2) + [1] * (len(_TOY) - len(_TOY) // 2)
+        model.fit(_TOY, word_emb, vocab, times=times, iters=5)
+        return model
+
     # HLDA does not take num_topics at construct time; fits with default iters
     if name == "HLDA":
         model.fit(_TOY, iters=5)

@@ -137,6 +137,7 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
     // Neural / embedding / nonparametric — no theta posterior.
     RegistryEntry { name: "ProdLDA", family: ModelFamily::None_, exempt: &[] },
     RegistryEntry { name: "ETM", family: ModelFamily::None_, exempt: &[] },
+    RegistryEntry { name: "DETM", family: ModelFamily::None_, exempt: &[] },
     RegistryEntry { name: "FASTopic", family: ModelFamily::None_, exempt: &[] },
     RegistryEntry { name: "GSDMM", family: ModelFamily::None_, exempt: &[] },
     RegistryEntry { name: "BERTopic", family: ModelFamily::None_, exempt: &[] },
@@ -163,7 +164,7 @@ mod registry_tests {
                 assert!(METHODS.contains(&req), "{}: unknown exempt method {req:?}", e.name);
             }
         }
-        // Mirror of the Python REGISTRY size (21 user-facing models).
-        assert_eq!(RUST_ESTIMATORS.len(), 21, "registry size drifted from the Python REGISTRY");
+        // Mirror of the Python REGISTRY size (22 user-facing models).
+        assert_eq!(RUST_ESTIMATORS.len(), 22, "registry size drifted from the Python REGISTRY");
     }
 }
