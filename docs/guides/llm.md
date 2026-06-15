@@ -65,17 +65,30 @@ assignment call each); use `sample=` to bound the generation stage.
 
 ### Editable prompts
 
-The generation, refinement, and assignment prompts are the method, so they are
-exposed as editable assets in `topica.topicgpt.PROMPTS` and can be overridden
-per-instance:
+The generation, refinement, and assignment prompts *are* the method, so they are
+exposed as editable assets in `topica.topicgpt.PROMPTS`. The defaults are adapted
+from the published TopicGPT reference prompts
+([chtmp223/topicGPT](https://github.com/chtmp223/topicGPT), MIT-licensed; Pham,
+Hoyle, Sun & Iyyer 2024): the bracketed `[level] Label: Description` output
+format, the few-shot demonstrations, and the rules (generalizable single topics;
+never invent a topic or a quote). The two documented deviations are that
+refinement asks for the full refined topic list rather than only the incremental
+merge edits, and the assignment prompt carries topica's hard/soft `{n_label}`
+phrasing.
+
+Override one stage and keep the rest — a partial dict merges over the defaults:
 
 ```python
-from topica.topicgpt import PROMPTS
+# Adapt just the generation stage to your domain (keep {taxonomy} and {document}):
+model = topica.TopicGPT(backend=my_callable,
+                        prompts={"generation": my_generation_template})
 
-custom = dict(PROMPTS)
-custom["assignment"] = my_assignment_template   # must keep the {taxonomy}, {document}, {n_label} fields
-model = topica.TopicGPT(backend=my_callable, prompts=custom)
+# Or, equivalently, the convenience method (chainable, before fit):
+model = topica.TopicGPT(backend=my_callable).with_prompt("generation", my_generation_template)
 ```
 
-Auditing and adapting the prompts is part of using the method responsibly: the
-researcher owns the theory the prompts encode.
+A custom `generation`/`assignment` template must keep the `{taxonomy}` and
+`{document}` placeholders (assignment also `{n_label}`); `refinement` keeps
+`{taxonomy}`. Unknown keys and missing placeholders raise immediately rather than
+failing later at format time. Auditing and adapting the prompts is part of using
+the method responsibly: the researcher owns the theory the prompts encode.

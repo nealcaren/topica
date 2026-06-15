@@ -1,13 +1,12 @@
 """TopicGPT orchestration, exercised with a deterministic fake backend.
 
-No network or API: a fake callable returns canned JSON for the generation,
+No network or API: a fake callable returns canned replies in the published
+TopicGPT bracketed-line format (``[1] Label: text``) for the generation,
 refinement, and assignment prompts, so the whole generate/refine/assign pipeline
 is testable end to end. The fake routes by which template the prompt came from.
 """
 
 from __future__ import annotations
-
-import json
 
 import numpy as np
 import pytest
@@ -27,7 +26,8 @@ HELD_OUT = ["the coach praised the goalkeeper after the cup final match"]
 
 
 class FakeBackend:
-    """A deterministic backend that answers each prompt stage with canned JSON.
+    """A deterministic backend that answers each prompt stage in the published
+    TopicGPT bracketed-line format (``[1] Label: text``).
 
     It also records every prompt it sees so tests can assert on call counts and
     on caching (a cached prompt never reaches the backend twice).
@@ -44,30 +44,29 @@ class FakeBackend:
 
     def __call__(self, prompt: str) -> str:
         self.calls.append(prompt)
+        # Assignment shares the "You will receive a document and a..." opening with
+        # generation, so test it first by its distinctive [:40] head.
+        if prompt.startswith(PROMPTS["assignment"][:40]):
+            if "senate" in prompt or "president" in prompt:
+                return '[1] Politics: Mentions legislation ("the senate passed a budget bill")'
+            if "championship" in prompt or "goalkeeper" in prompt or "cup final" in prompt:
+                return '[1] Sports: Mentions a match ("won the championship game")'
+            if "phone" in prompt or "chip" in prompt:
+                return '[1] Technology: Mentions hardware ("ships with a faster chip")'
+            return "[1] Politics: No clear quote ()"
         if prompt.startswith(PROMPTS["generation"][:40]):
             for key, (name, desc) in self.gen.items():
                 if key in prompt:
-                    return json.dumps({"topic": name, "description": desc, "new": True})
-            return json.dumps({"topic": "Other", "description": "Misc.", "new": True})
+                    return f"[1] {name}: {desc}"
+            return "[1] Other: Miscellaneous."
         if prompt.startswith(PROMPTS["refinement"][:40]):
-            # Idempotent refinement: keep the three topics distinct.
-            return json.dumps({"topics": [
-                {"topic": "Politics", "description": "Government and legislation.",
-                 "merged_from": ["Politics"]},
-                {"topic": "Sports", "description": "Games and athletes.",
-                 "merged_from": ["Sports"]},
-                {"topic": "Technology", "description": "Consumer electronics.",
-                 "merged_from": ["Technology"]},
-            ]})
-        if prompt.startswith(PROMPTS["assignment"][:40]):
-            if "senate" in prompt or "president" in prompt:
-                return json.dumps({"assignments": [{"topic": "Politics", "quote": "the senate passed a budget bill"}]})
-            if "championship" in prompt or "goalkeeper" in prompt or "cup final" in prompt:
-                return json.dumps({"assignments": [{"topic": "Sports", "quote": "won the championship game"}]})
-            if "phone" in prompt or "chip" in prompt:
-                return json.dumps({"assignments": [{"topic": "Technology", "quote": "ships with a faster chip"}]})
-            return json.dumps({"assignments": [{"topic": "Politics", "quote": ""}]})
-        return "{}"
+            # Idempotent refinement: return the three topics unchanged.
+            return (
+                "[1] Politics: Government and legislation.\n"
+                "[1] Sports: Games and athletes.\n"
+                "[1] Technology: Consumer electronics."
+            )
+        return "None"
 
 
 def _fit(**kw) -> tuple[TopicGPT, FakeBackend]:
@@ -173,10 +172,10 @@ def test_soft_assignment_normalizes():
 
     def multi(prompt: str) -> str:
         if prompt.startswith(PROMPTS["assignment"][:40]) and "senate" in prompt:
-            return json.dumps({"assignments": [
-                {"topic": "Politics", "quote": "senate"},
-                {"topic": "Technology", "quote": "law"},
-            ]})
+            return (
+                '[1] Politics: Mentions the senate ("senate")\n'
+                '[1] Technology: Mentions a law ("law")'
+            )
         return be(prompt)
 
     model = TopicGPT(backend=multi, assignment="soft")
@@ -319,3 +318,51 @@ def test_fit_history_is_empty_no_trace():
     model, _ = _fit()
     assert model.fit_history == []
     assert model.converged is None
+
+
+# ---------------------------------------------------------------------------
+# Custom prompts
+# ---------------------------------------------------------------------------
+
+def test_partial_prompt_override_merges_over_defaults():
+    # Overriding one stage keeps the published defaults for the others.
+    custom_gen = "MY GENERATION {taxonomy} {document}\n[1] Foo: bar"
+    be = FakeBackend()
+    model = TopicGPT(backend=be, prompts={"generation": custom_gen})
+    assert model.prompts["generation"] == custom_gen
+    assert model.prompts["refinement"] == PROMPTS["refinement"]
+    assert model.prompts["assignment"] == PROMPTS["assignment"]
+
+
+def test_unknown_prompt_key_raises():
+    with pytest.raises(ValueError, match="unknown prompt key"):
+        TopicGPT(backend=lambda p: "", prompts={"generaton": "typo {taxonomy} {document}"})
+
+
+def test_custom_prompt_missing_field_raises():
+    # A generation template without {document} would silently drop the document.
+    with pytest.raises(ValueError, match="missing required field"):
+        TopicGPT(backend=lambda p: "", prompts={"generation": "no fields here {taxonomy}"})
+
+
+def test_with_prompt_overrides_one_stage_and_drives_fit():
+    # A custom generation prompt actually steers the fit: the backend keys off the
+    # custom head and returns a single topic.
+    custom_gen = "CUSTOM-GEN {taxonomy} :: {document}"
+
+    def be(prompt: str) -> str:
+        if prompt.startswith("CUSTOM-GEN"):
+            return "[1] OnlyTopic: the only topic"
+        if prompt.startswith(PROMPTS["refinement"][:40]):
+            return "None"
+        return '[1] OnlyTopic: matched ("quote")'
+
+    model = TopicGPT(backend=be).with_prompt("generation", custom_gen)
+    model.fit(DOCS)
+    assert model.topic_names == ["OnlyTopic"]
+
+
+def test_with_prompt_after_fit_raises():
+    model, _ = _fit()
+    with pytest.raises(RuntimeError, match="before fit"):
+        model.with_prompt("generation", "x {taxonomy} {document}")

@@ -16,6 +16,13 @@ the core takes no API dependency. The prompt templates live in :data:`PROMPTS`
 and are overridable, because the prompts are part of the method and a researcher
 must be able to audit and adapt them.
 
+The default templates are adapted from the published TopicGPT reference prompts
+(github.com/chtmp223/topicGPT, MIT-licensed; Pham, Hoyle, Sun & Iyyer 2024): the
+bracketed ``[level] Label: Description`` output format, the few-shot
+demonstrations, and the method's rules (generalizable single topics; never invent
+a topic or a quote). Override one or more stages via ``prompts=`` (a partial dict
+merges over the defaults) or :meth:`TopicGPT.with_prompt`.
+
 Where TopicGPT sits in the taxonomy
 -----------------------------------
 TopicGPT is a *cluster-style* model: the LLM does the clustering and labeling that
@@ -57,51 +64,103 @@ import numpy as np
 # and adapt them. They live here as a module-level, overridable dict rather than
 # inlined in the orchestration, so a fit can be reproduced and audited from the
 # template text alone. Override per-instance via TopicGPT(..., prompts=...).
+#
+# These templates are adapted from the published TopicGPT reference prompts
+# (github.com/chtmp223/topicGPT, MIT-licensed; Pham, Hoyle, Sun & Iyyer 2024):
+# `generation_1.txt`, `refinement.txt`, and `assignment.txt`. We keep TopicGPT's
+# bracketed `[level] Label: Description` output format, its few-shot demonstration
+# structure, and its rules (generalizable single topics; never invent topics or
+# quotes), which is what makes "this implements TopicGPT" a defensible claim.
+#
+# Three documented deviations from the reference: (1) the few-shot examples are
+# generalized to neutral cross-domain ones (astronomy/cuisine) instead of the
+# reference's congressional-bills examples. The reference prompts are tuned to the
+# paper's policy corpus (and ship a domain seed); used verbatim on an arbitrary
+# corpus they bias the model to reject off-domain documents as "None". The format
+# and rules are the paper's; only the demonstration domain is neutralized, and the
+# whole template is overridable via `prompts=` for a domain-specific run.
+# (2) Refinement asks for the full refined topic list rather than only the
+# incremental merge edits, so the orchestration can replace the topic set directly
+# (see `_refine`). (3) The assignment prompt carries topica's hard/soft `{n_label}`
+# phrasing, which the single-assignment reference prompt does not have.
 
-GENERATION_PROMPT = """You are building a topic taxonomy for a document collection.
+GENERATION_PROMPT = """You will receive a document and a set of top-level topics from a topic hierarchy. Your task is to identify generalizable topics within the document that can act as top-level topics in the hierarchy. If any relevant topics are missing from the provided set, add them. Otherwise, output the existing top-level topics identified in the document.
 
-Below is the taxonomy discovered so far (it may be empty), followed by a new
-document. Decide whether the document fits an existing topic or introduces a new
-one. If it introduces a new topic, name it concisely and write a one-sentence
-description. Do not duplicate an existing topic.
-
-Existing topics:
+[Top-level topics]
 {taxonomy}
 
+[Examples]
+Example 1: The relevant topic is missing, so add "[1] Astronomy"
 Document:
+Astronomers using a space telescope detected water vapor in the atmosphere of a distant exoplanet orbiting a faint red dwarf star.
+Your response:
+[1] Astronomy: Mentions the study of celestial objects and the physical universe.
+
+Example 2: A relevant topic ("[1] Cuisine") already exists, so return it unchanged
+Document:
+A food writer profiled three neighborhood bakeries reviving nineteenth-century sourdough techniques.
+Your response:
+[1] Cuisine: Mentions cooking, food preparation, and culinary culture.
+
+[Instructions]
+Step 1: Determine the topics mentioned in the document.
+- The topic labels must be as GENERALIZABLE as possible; they must not be document-specific.
+- The topics must each reflect a SINGLE topic instead of a combination of topics.
+- Each new topic must have a level number, a short general label, and a one-sentence description.
+- The topics must be broad enough to accommodate future subtopics.
+Step 2: Perform ONE of the following operations:
+1. If a relevant or duplicate topic already exists in the hierarchy, output that topic and stop.
+2. If the document contains no topic, return "None".
+3. Otherwise, add your topic as a top-level topic and output it. Do not add any lower levels.
+
+[Document]
 {document}
 
-Respond with a single JSON object and nothing else:
-{{"topic": "<short topic name>", "description": "<one sentence>", "new": <true|false>}}
+Please ONLY return the relevant or modified top-level topics, one per line, in the format:
+[1] Topic Label: Topic Description
+
+Your response:
 """
 
-REFINEMENT_PROMPT = """You are refining a topic taxonomy by merging near-duplicates.
+REFINEMENT_PROMPT = """You will receive a list of topics that belong to the same level of a topic hierarchy. Your task is to merge topics that are paraphrases or near-duplicates of one another. Keep genuinely distinct topics separate. Return "None" if no modification is needed.
 
-Here is a list of candidate topics, each a name and a description:
+[Topic list]
 {taxonomy}
 
-Group topics that describe the same theme. Keep distinct themes separate. Prefer
-the clearest name for each group and write one merged description per group.
+[Rules]
+- Each line is a topic, with a level indicator, a label, and a description.
+- Merge near-duplicate topics into a single topic, choosing the clearest label and writing one merged description.
+- Do nothing and return "None" if no modification is needed.
 
-Respond with a single JSON object and nothing else:
-{{"topics": [{{"topic": "<name>", "description": "<one sentence>",
-              "merged_from": ["<original name>", ...]}}, ...]}}
+Output the complete refined list of top-level topics (both the merged topics and any left unchanged), one per line, in the format:
+[1] Topic Label: Topic Description
+
+[Your response]
 """
 
-ASSIGNMENT_PROMPT = """You are assigning a document to topics from a fixed taxonomy.
+ASSIGNMENT_PROMPT = """You will receive a document and a topic hierarchy. Assign the document to {n_label} from the hierarchy. Then output the topic label(s), your assignment reasoning, and a supporting quote taken verbatim from the document. DO NOT make up new topics or quotes.
 
-Taxonomy:
+[Topic hierarchy]
 {taxonomy}
 
+[Example]
 Document:
+Astronomers using a space telescope detected water vapor in the atmosphere of a distant exoplanet.
+Assignment:
+[1] Astronomy: Reports the detection of an exoplanet's atmosphere ("...detected water vapor in the atmosphere of a distant exoplanet.")
+
+[Instructions]
+1. Topic labels must be present in the provided hierarchy. You MUST NOT invent new topics.
+2. Each quote must be taken from the document. You MUST NOT invent quotes.
+
+[Document]
 {document}
 
-Assign the document to {n_label} of the topics above. For each assigned topic,
-include a short verbatim quote from the document that supports the assignment.
+Double-check that every assignment exists in the hierarchy.
+Your response should have one assignment per line, in the format:
+[Topic Level] Topic Label: Assignment reasoning (Supporting quote)
 
-Respond with a single JSON object and nothing else:
-{{"assignments": [{{"topic": "<exact topic name from the taxonomy>",
-                    "quote": "<verbatim supporting quote>"}}, ...]}}
+Your response:
 """
 
 PROMPTS: dict[str, str] = {
@@ -109,6 +168,43 @@ PROMPTS: dict[str, str] = {
     "refinement": REFINEMENT_PROMPT,
     "assignment": ASSIGNMENT_PROMPT,
 }
+
+#: Fields each stage template must contain after a user override, so a custom
+#: prompt still receives the data the orchestration substitutes in.
+PROMPT_FIELDS: dict[str, tuple[str, ...]] = {
+    "generation": ("taxonomy", "document"),
+    "refinement": ("taxonomy",),
+    "assignment": ("taxonomy", "document", "n_label"),
+}
+
+
+def _merge_prompts(overrides: Optional[dict]) -> dict[str, str]:
+    """Merge user prompt overrides over the published defaults.
+
+    A partial dict overrides only the named stage(s); the rest fall back to
+    :data:`PROMPTS`. Unknown keys raise (a typo should not be silently ignored),
+    and each overridden template must keep the ``{field}`` placeholders the
+    orchestration fills (see :data:`PROMPT_FIELDS`).
+    """
+    merged = dict(PROMPTS)
+    if not overrides:
+        return merged
+    unknown = set(overrides) - set(PROMPTS)
+    if unknown:
+        raise ValueError(
+            f"unknown prompt key(s) {sorted(unknown)}; valid keys are {sorted(PROMPTS)}"
+        )
+    for stage, template in overrides.items():
+        template = str(template)
+        missing = [f for f in PROMPT_FIELDS[stage] if "{" + f + "}" not in template]
+        if missing:
+            raise ValueError(
+                f"custom {stage!r} prompt is missing required field(s) "
+                f"{missing} (expected placeholders: "
+                f"{['{' + f + '}' for f in PROMPT_FIELDS[stage]]})"
+            )
+        merged[stage] = template
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +257,12 @@ def _as_text_docs(data) -> list[str]:
 
 def _extract_json(text: str):
     """Parse the first JSON object out of a model reply, tolerating prose around
-    it and Markdown code fences. Returns the parsed object or ``None``."""
+    it and Markdown code fences. Returns the parsed object or ``None``.
+
+    Kept as a tolerant fallback: the published TopicGPT prompts emit a bracketed
+    line format (parsed by :func:`_parse_topic_lines` / :func:`_parse_assignment_lines`),
+    but a backend that ignores the format and returns JSON still degrades cleanly.
+    """
     if text is None:
         return None
     s = str(text).strip()
@@ -189,6 +290,71 @@ def _extract_json(text: str):
                 except Exception:
                     return None
     return None
+
+
+# The published TopicGPT output format: one topic per line, ``[level] Label: text``.
+# The label character class follows the reference parser
+# (github.com/chtmp223/topicGPT, generation_1.py: ``r"^\[(\d+)\] ([\w\s\+_#-]+):(.+)"``)
+# but is widened to ``[^:]`` so arbitrary labels survive; the leading ``[level]`` and
+# the first colon are what anchor a topic line.
+_TOPIC_LINE = re.compile(r"^\s*\[(\d+)\]\s*([^:\]]+?)\s*:\s*(.*)$")
+# A supporting quote is the trailing parenthesized span of an assignment line,
+# e.g. ``[1] Trade: reasoning ("...the quote...")``.
+_QUOTE_SPAN = re.compile(r"\(\s*[\"“‘]?(.*?)[\"”’]?\s*\)\s*$", re.DOTALL)
+
+
+def _parse_topic_lines(text: str) -> list[tuple[int, str, str]]:
+    """Parse the reference ``[level] Label: Description`` format into
+    ``(level, name, description)`` triples. A bare ``None`` reply (the reference's
+    "no change / no topic" signal) yields an empty list. Falls back to a tolerant
+    JSON parse if no bracketed line is present (a backend that ignored the format).
+    """
+    out: list[tuple[int, str, str]] = []
+    for line in str(text or "").splitlines():
+        m = _TOPIC_LINE.match(line)
+        if not m:
+            continue
+        name = m.group(2).strip()
+        if not name:
+            continue
+        out.append((int(m.group(1)), name, m.group(3).strip()))
+    if out:
+        return out
+    # Tolerant fallback: {"topics": [{topic, description}, ...]} or {topic, description}.
+    obj = _extract_json(text)
+    if isinstance(obj, dict) and isinstance(obj.get("topics"), list):
+        for m in obj["topics"]:
+            if isinstance(m, dict) and str(m.get("topic", "")).strip():
+                out.append((1, str(m["topic"]).strip(), str(m.get("description", "")).strip()))
+    elif isinstance(obj, dict) and str(obj.get("topic", "")).strip():
+        out.append((1, str(obj["topic"]).strip(), str(obj.get("description", "")).strip()))
+    return out
+
+
+def _parse_assignment_lines(text: str) -> list[tuple[str, str]]:
+    """Parse the reference assignment format
+    ``[level] Label: reasoning (Supporting quote)`` into ``(name, quote)`` pairs.
+    Falls back to a tolerant JSON parse (``{"assignments": [{topic, quote}]}``).
+    """
+    out: list[tuple[str, str]] = []
+    for line in str(text or "").splitlines():
+        m = _TOPIC_LINE.match(line)
+        if not m:
+            continue
+        name = m.group(2).strip()
+        if not name:
+            continue
+        rest = m.group(3)
+        q = _QUOTE_SPAN.search(rest)
+        out.append((name, q.group(1).strip() if q else ""))
+    if out:
+        return out
+    obj = _extract_json(text)
+    if isinstance(obj, dict) and isinstance(obj.get("assignments"), list):
+        for it in obj["assignments"]:
+            if isinstance(it, dict) and str(it.get("topic", "")).strip():
+                out.append((str(it["topic"]).strip(), str(it.get("quote", "")).strip()))
+    return out
 
 
 def _norm(name: str) -> str:
@@ -251,8 +417,14 @@ class TopicGPT:
         Forwarded to the backend where supported; records intent, not a guarantee
         (the determinism is ``llm-bounded``).
     prompts : dict, optional
-        Override the editable prompt templates (keys ``"generation"``,
-        ``"refinement"``, ``"assignment"``). Defaults to :data:`PROMPTS`.
+        Override the editable prompt templates. Keys are ``"generation"``,
+        ``"refinement"``, and ``"assignment"``; any subset is accepted and is
+        merged over the published defaults (:data:`PROMPTS`), so you can swap a
+        single stage and keep the rest. A custom ``"generation"`` /
+        ``"assignment"`` template must keep the ``{taxonomy}`` and ``{document}``
+        fields (assignment also ``{n_label}``); ``"refinement"`` keeps
+        ``{taxonomy}``. Unknown keys raise. See :meth:`with_prompt` for a
+        convenience that overrides one stage.
     """
 
     # Class-level sentinels so the conformance check (which inspects the class,
@@ -291,7 +463,10 @@ class TopicGPT:
         self.max_topics = max_topics
         self.temperature = float(temperature)
         self.seed = int(seed)
-        self.prompts = dict(prompts) if prompts is not None else dict(PROMPTS)
+        # Merge any overrides over the published defaults so a partial dict (one
+        # stage) works; reject unknown keys so a typo surfaces instead of being
+        # silently ignored at format time.
+        self.prompts = _merge_prompts(prompts)
 
         # Fitted state (set by fit()).
         self._fitted = False
@@ -307,6 +482,28 @@ class TopicGPT:
         self.hierarchy: Optional[dict] = None
         self._cache: dict[str, str] = {}
         self._call_count: int = 0
+
+    # -- custom prompts ----------------------------------------------------
+
+    def with_prompt(self, stage: str, template: str) -> "TopicGPT":
+        """Override one stage's prompt template in place and return ``self``.
+
+        A convenience over ``TopicGPT(prompts={stage: template})`` for swapping a
+        single stage, e.g. to adapt the few-shot examples to your domain::
+
+            model = TopicGPT(model="gpt-4o-mini").with_prompt(
+                "generation", my_generation_template)
+
+        ``stage`` is one of ``"generation"``, ``"refinement"``, ``"assignment"``;
+        the template must keep that stage's ``{field}`` placeholders (see
+        :data:`PROMPT_FIELDS`). Raises if called on a fitted model (the prompts
+        drove the existing fit and must stay auditable alongside it)."""
+        if self._fitted:
+            raise RuntimeError("set custom prompts before fit(); the fitted prompts are frozen")
+        if stage not in PROMPTS:
+            raise ValueError(f"unknown stage {stage!r}; valid stages are {sorted(PROMPTS)}")
+        self.prompts = _merge_prompts({**{k: self.prompts[k] for k in PROMPTS}, stage: template})
+        return self
 
     # -- backend plumbing --------------------------------------------------
 
@@ -386,15 +583,16 @@ class TopicGPT:
             prompt = self.prompts["generation"].format(
                 taxonomy=taxonomy, document=text_docs[i][:2000]
             )
-            obj = _extract_json(self._ask(backend, prompt)) or {}
-            name = str(obj.get("topic", "")).strip()
-            if not name:
-                continue
-            key = _norm(name)
-            if key in seen:
-                continue
-            seen[key] = len(topics)
-            topics.append(Topic(name=name, description=str(obj.get("description", "")).strip()))
+            # The reference generation prompt may return several top-level topics
+            # (newly added and/or existing duplicates); add each unseen one.
+            for lvl, name, desc in _parse_topic_lines(self._ask(backend, prompt)):
+                if lvl != 1:  # generation_1 induces top-level topics only
+                    continue
+                key = _norm(name)
+                if key in seen:
+                    continue
+                seen[key] = len(topics)
+                topics.append(Topic(name=name, description=desc))
         self.stage_log.append(("generation", len(topics)))
 
         # Stage 2: refinement -------------------------------------------------
@@ -418,8 +616,7 @@ class TopicGPT:
             prompt = self.prompts["assignment"].format(
                 taxonomy=taxonomy, document=text_docs[i][:2000], n_label=n_label
             )
-            obj = _extract_json(self._ask(backend, prompt)) or {}
-            chosen = self._parse_assignments(obj, name_to_id)
+            chosen = self._parse_assignments(self._ask(backend, prompt), name_to_id)
             if not chosen:
                 chosen = [(0, "")]  # fall back to topic 0 with no quote
             if self.assignment == "hard":
@@ -447,65 +644,54 @@ class TopicGPT:
     # -- stage helpers -----------------------------------------------------
 
     def _render_taxonomy(self, topics: list[Topic]) -> str:
-        return "\n".join(f"- {t.name}: {t.description}" for t in topics)
+        # Emit the reference's bracketed format so the taxonomy the model reads in a
+        # prompt matches the format it is asked to produce.
+        return "\n".join(f"[1] {t.name}: {t.description}" for t in topics)
 
     def _refine(self, backend, topics: list[Topic]) -> list[Topic]:
         """Merge near-duplicate topics. Asks the backend once; falls back to the
-        input taxonomy if the reply is unusable."""
+        input taxonomy if the reply is "None" or unusable. The reference returns
+        only the incremental merge edits; topica's refinement prompt instead asks
+        for the complete refined list, which we adopt as the new topic set."""
         if len(topics) < 2:
             return topics
         prompt = self.prompts["refinement"].format(taxonomy=self._render_taxonomy(topics))
-        obj = _extract_json(self._ask(backend, prompt)) or {}
-        merged = obj.get("topics")
-        if not isinstance(merged, list) or not merged:
+        reply = self._ask(backend, prompt)
+        if str(reply).strip().lower().startswith("none"):
             return topics
         out: list[Topic] = []
         seen: set[str] = set()
-        for m in merged:
-            if not isinstance(m, dict):
-                continue
-            name = str(m.get("topic", "")).strip()
-            if not name:
-                continue
+        for lvl, name, desc in _parse_topic_lines(reply):
             key = _norm(name)
             if key in seen:
                 continue
             seen.add(key)
-            out.append(Topic(name=name, description=str(m.get("description", "")).strip()))
+            out.append(Topic(name=name, description=desc))
         return out or topics
 
-    def _parse_assignments(self, obj: dict, name_to_id: dict) -> list[tuple[int, str]]:
-        items = obj.get("assignments")
-        if not isinstance(items, list):
-            return []
+    def _parse_assignments(self, reply: str, name_to_id: dict) -> list[tuple[int, str]]:
         out: list[tuple[int, str]] = []
-        for it in items:
-            if not isinstance(it, dict):
-                continue
-            tid = name_to_id.get(_norm(it.get("topic", "")))
+        for name, quote in _parse_assignment_lines(reply):
+            tid = name_to_id.get(_norm(name))
             if tid is None:
                 continue
-            out.append((tid, str(it.get("quote", "")).strip()))
+            out.append((tid, quote))
         return out
 
     def _induce_hierarchy(self, backend, topics: list[Topic]) -> dict:
         """A two-level grouping of the discovered topics, reusing the refinement
-        prompt to cluster leaf topics into supertopics."""
+        prompt to cluster leaf topics into supertopics. A topica convenience, not
+        the reference's `generation_2` subtopic induction; each parsed group line
+        becomes a supertopic, and a leaf topic whose name matches a group name is
+        attached as a child."""
         prompt = self.prompts["refinement"].format(taxonomy=self._render_taxonomy(topics))
-        obj = _extract_json(self._ask(backend, prompt)) or {}
-        groups = obj.get("topics")
+        reply = self._ask(backend, prompt)
         name_to_id = {_norm(t.name): j for j, t in enumerate(topics)}
         supers = []
-        if isinstance(groups, list):
-            for g in groups:
-                if not isinstance(g, dict):
-                    continue
-                children = [
-                    name_to_id[_norm(c)]
-                    for c in (g.get("merged_from") or [])
-                    if _norm(c) in name_to_id
-                ]
-                supers.append({"name": str(g.get("topic", "")).strip(), "children": children})
+        for lvl, name, desc in _parse_topic_lines(reply):
+            nkey = _norm(name)
+            children = [name_to_id[nkey]] if nkey in name_to_id else []
+            supers.append({"name": name, "description": desc, "children": children})
         return {"supertopics": supers}
 
     def _class_tfidf(self, doc_topic: np.ndarray) -> tuple[list[str], np.ndarray]:
@@ -646,8 +832,7 @@ class TopicGPT:
             prompt = self.prompts["assignment"].format(
                 taxonomy=taxonomy, document=text[:2000], n_label=n_label
             )
-            obj = _extract_json(self._ask(backend, prompt)) or {}
-            chosen = self._parse_assignments(obj, name_to_id) or [(0, "")]
+            chosen = self._parse_assignments(self._ask(backend, prompt), name_to_id) or [(0, "")]
             if self.assignment == "hard":
                 chosen = chosen[:1]
             for tid, _q in chosen:
