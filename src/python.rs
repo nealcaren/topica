@@ -27,6 +27,7 @@ use crate::hdp;
 use crate::keyatm;
 use crate::seeded;
 use crate::hlda;
+use crate::lsa;
 use crate::nmf;
 use crate::pa;
 use crate::prodlda;
@@ -251,6 +252,7 @@ const MODEL_TAG_KEYATM:    u8 = 19;
 const MODEL_TAG_PA:        u8 = 20;
 const MODEL_TAG_HLDA:      u8 = 21;
 const MODEL_TAG_NMF:       u8 = 22;
+const MODEL_TAG_LSA:       u8 = 23;
 
 fn model_tag_name(tag: u8) -> &'static str {
     match tag {
@@ -276,6 +278,7 @@ fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_PA       => "PA",
         MODEL_TAG_HLDA     => "HLDA",
         MODEL_TAG_NMF      => "NMF",
+        MODEL_TAG_LSA      => "LSA",
         _                  => "unknown",
     }
 }
@@ -12204,6 +12207,274 @@ impl NMF {
     }
 }
 
+/// LSA / LSI, latent semantic analysis (Deerwester et al. 1990; the randomized
+/// truncated SVD follows Halko et al. 2011). We take a truncated SVD of the
+/// weighted document-term matrix ``X (D x V) ~ U_k Sigma_k V_k^T``. The reference
+/// implementation we validate against is ``sklearn.decomposition.TruncatedSVD``
+/// (BSD-3-Clause).
+///
+/// Unlike topica's probabilistic models, LSA outputs are SIGNED latent
+/// coordinates, not probabilities. ``topic_word (K x V)`` is the right singular
+/// vectors ``V_k`` (signed term loadings; ``top_words`` ranks by absolute value).
+/// ``doc_topic (D x K)`` is ``U_k Sigma_k`` (signed document coordinates; rows do
+/// not sum to 1). ``singular_values (K)`` is ``Sigma_k``. A deterministic
+/// ``svd_flip`` sign convention (largest-magnitude entry of each right singular
+/// vector made positive) matches scikit-learn's output.
+#[pyclass(module = "topica")]
+pub struct LSA {
+    num_topics: usize,
+    weighting_tfidf: bool,
+    seed: u64,
+    fitted: bool,
+    topic_names: Vec<String>,
+    model: Option<lsa::LsaModel>,
+    corpus: Option<corpus::Corpus>,
+}
+
+/// Serializable snapshot of a fitted LSA.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LsaState {
+    num_topics: usize,
+    weighting_tfidf: bool,
+    seed: u64,
+    fitted: bool,
+    topic_names: Vec<String>,
+    corpus: Option<corpus::Corpus>,
+    num_types: Option<usize>,
+    topic_word: Option<Vec<Vec<f64>>>,
+    doc_topic: Option<Vec<Vec<f64>>>,
+    singular_values: Option<Vec<f64>>,
+}
+
+impl LSA {
+    fn fitted_model(&self) -> PyResult<&lsa::LsaModel> {
+        self.model
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+    }
+}
+
+#[pymethods]
+impl LSA {
+    /// Create an unfitted model. `num_topics` is K (2 <= K <= min(num_docs,
+    /// vocabulary size)). `weighting` is `"tfidf"` (default, classic LSI) or
+    /// `"count"` (raw term counts). `seed` seeds the randomized-SVD sketch.
+    #[new]
+    #[pyo3(signature = (num_topics, *, weighting="tfidf", seed=42))]
+    fn new(
+        #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
+        weighting: &str,
+        seed: u64,
+    ) -> PyResult<Self> {
+        if num_topics < 2 {
+            return Err(PyValueError::new_err("need at least 2 topics"));
+        }
+        Ok(LSA {
+            num_topics,
+            weighting_tfidf: parse_weighting(weighting)?,
+            seed,
+            fitted: false,
+            topic_names: Vec::new(),
+            model: None,
+            corpus: None,
+        })
+    }
+
+    /// Fit on `data` (a Corpus or list of token lists). The SVD is a direct solve,
+    /// so there is no `iters` argument.
+    fn fit(&mut self, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<()> {
+        let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
+            c.inner
+        } else {
+            let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
+                PyValueError::new_err("fit() expects a Corpus or a list of token lists")
+            })?;
+            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+        };
+        if corpus.num_docs() == 0 {
+            return Err(PyValueError::new_err("corpus contains no documents"));
+        }
+        let num_types = corpus.num_types();
+        // K must not exceed min(num_docs, vocabulary size): the truncated SVD has
+        // at most min(D, V) nonzero singular triplets.
+        let max_k = corpus.num_docs().min(num_types);
+        if self.num_topics > max_k {
+            return Err(PyValueError::new_err(format!(
+                "num_topics ({}) must be <= min(num_docs, vocab) = {}",
+                self.num_topics, max_k
+            )));
+        }
+        let (k, tfidf, seed) = (self.num_topics, self.weighting_tfidf, self.seed);
+        let (model, corpus) = py.allow_threads(move || {
+            let m = lsa::fit_lsa(&corpus.docs, k, num_types, tfidf, seed);
+            (m, corpus)
+        });
+        self.model = Some(model);
+        self.corpus = Some(corpus);
+        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
+        self.fitted = true;
+        Ok(())
+    }
+
+    #[getter]
+    fn num_topics(&self) -> usize {
+        self.num_topics
+    }
+    /// Topic-word matrix (num_topics, vocab): the signed right singular vectors
+    /// ``V_k``. These are term loadings, NOT probabilities (rows are not a
+    /// simplex).
+    #[getter]
+    fn topic_word<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        Ok(vecs_to_arr2(&self.fitted_model()?.topic_word()).to_pyarray_bound(py))
+    }
+    /// Document-topic matrix (num_docs, num_topics): the signed document
+    /// coordinates ``U_k Sigma_k``. Rows do NOT sum to 1 (LSA is not
+    /// mixed-membership).
+    #[getter]
+    fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        Ok(vecs_to_arr2(&self.fitted_model()?.doc_topic).to_pyarray_bound(py))
+    }
+    /// The truncated singular values ``Sigma_k`` (length num_topics), the energy
+    /// of each component (non-increasing, non-negative).
+    #[getter]
+    fn singular_values<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        Ok(Array1::from(self.fitted_model()?.singular_values.clone()).to_pyarray_bound(py))
+    }
+    /// No iterative trace: the SVD is a direct solve. Returns an empty list to
+    /// keep the uniform fitted surface.
+    #[getter]
+    fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
+        self.fitted_model()?;
+        Ok(Vec::new())
+    }
+    /// `None`: "converged" is not meaningful for a one-shot SVD.
+    #[getter]
+    fn converged(&self) -> PyResult<Option<bool>> {
+        self.fitted_model()?;
+        Ok(None)
+    }
+    #[getter]
+    fn topic_names(&self) -> PyResult<Vec<String>> {
+        self.fitted_model()?;
+        Ok(self.topic_names.clone())
+    }
+    #[setter]
+    fn set_topic_names(&mut self, names: Vec<String>) -> PyResult<()> {
+        if names.len() != self.num_topics {
+            return Err(PyValueError::new_err(format!(
+                "topic_names must have length {} (got {})",
+                self.num_topics,
+                names.len()
+            )));
+        }
+        self.topic_names = names;
+        Ok(())
+    }
+    #[getter]
+    fn vocabulary(&self) -> PyResult<Vec<String>> {
+        self.fitted_model()?;
+        Ok(self.corpus.as_ref().unwrap().id_to_word.clone())
+    }
+    #[getter]
+    fn doc_names(&self) -> PyResult<Vec<String>> {
+        self.fitted_model()?;
+        Ok(self.corpus.as_ref().unwrap().doc_names.clone())
+    }
+    /// Top-`n` words per topic, ranked by ABSOLUTE loading (a large negative
+    /// loading is as defining of a component as a large positive one). Each entry
+    /// is `(word, signed_loading)`.
+    #[pyo3(signature = (n=10, *, topic=None))]
+    fn top_words<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        topic: Option<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let m = self.fitted_model()?;
+        let phi = vecs_to_arr2(&m.topic_word());
+        // Rank by |loading| via an abs-valued matrix, but report the SIGNED value.
+        let absphi = phi.mapv(f64::abs);
+        let tops = top_word_ids_phi(&absphi, self.num_topics, n);
+        let vocab = &self.corpus.as_ref().unwrap().id_to_word;
+        let one = |t: usize| -> PyResult<Bound<'py, PyList>> {
+            if t >= self.num_topics {
+                return Err(PyValueError::new_err("topic out of range"));
+            }
+            let items: Vec<Bound<'py, PyTuple>> = tops[t]
+                .iter()
+                .map(|&w| {
+                    PyTuple::new_bound(py, &[vocab[w].clone().into_py(py), phi[[t, w]].into_py(py)])
+                })
+                .collect();
+            Ok(PyList::new_bound(py, items))
+        };
+        match topic {
+            Some(t) => Ok(one(t)?.into_any()),
+            None => {
+                let all: Vec<Bound<'py, PyList>> =
+                    (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
+                Ok(PyList::new_bound(py, all).into_any())
+            }
+        }
+    }
+    /// Topic coherence (UMass) computed on the ABSOLUTE top-loading words per
+    /// component. Read with the caveat that LSA loadings are signed, not P(w|t).
+    #[pyo3(signature = (n=10))]
+    fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
+        let absphi = phi.mapv(f64::abs);
+        let tops = top_word_ids_phi(&absphi, self.num_topics, n);
+        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+    }
+
+    /// Save the fitted model to `path` (topica's binary format).
+    fn save(&self, path: &str) -> PyResult<()> {
+        let m = self.fitted_model()?;
+        write_state(path, MODEL_TAG_LSA, &LsaState {
+            num_topics: self.num_topics,
+            weighting_tfidf: self.weighting_tfidf,
+            seed: self.seed,
+            fitted: self.fitted,
+            topic_names: self.topic_names.clone(),
+            corpus: self.corpus.clone(),
+            num_types: Some(m.num_types),
+            topic_word: Some(m.topic_word.clone()),
+            doc_topic: Some(m.doc_topic.clone()),
+            singular_values: Some(m.singular_values.clone()),
+        })
+    }
+
+    /// Load a model previously written by :meth:`save`.
+    #[staticmethod]
+    fn load(path: &str) -> PyResult<Self> {
+        let s: LsaState = read_state(path, MODEL_TAG_LSA)?;
+        let model = if s.fitted && s.topic_word.is_some() {
+            Some(lsa::LsaModel {
+                num_topics: s.num_topics,
+                num_types: s.num_types.unwrap_or(0),
+                topic_word: s.topic_word.unwrap_or_default(),
+                doc_topic: s.doc_topic.unwrap_or_default(),
+                singular_values: s.singular_values.unwrap_or_default(),
+            })
+        } else {
+            None
+        };
+        Ok(LSA {
+            num_topics: s.num_topics,
+            weighting_tfidf: s.weighting_tfidf,
+            seed: s.seed,
+            fitted: s.fitted,
+            topic_names: s.topic_names,
+            model,
+            corpus: s.corpus,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("LSA(num_topics={}, fitted={})", self.num_topics, self.fitted)
+    }
+}
+
 /// FASTopic (Wu et al. 2024): a topic model with no encoder and no neural
 /// network. The topic proportions ``theta`` and the topic-word matrix ``beta`` are
 /// read off two entropic optimal-transport plans between embedding sets. You bring
@@ -13921,6 +14192,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PA>()?;
     m.add_class::<HLDA>()?;
     m.add_class::<NMF>()?;
+    m.add_class::<LSA>()?;
     m.add_class::<Corpus>()?;
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(window_cooccurrence, m)?)?;

@@ -16,6 +16,7 @@ pub mod keyatm;
 pub mod labeled;
 pub mod cvb0;
 pub mod lightlda;
+pub mod lsa;
 pub mod mh;
 pub mod linalg;
 pub mod model;
