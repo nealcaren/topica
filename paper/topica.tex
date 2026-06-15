@@ -619,25 +619,25 @@ design; \pkg{topica} parallelizes the variational E-step.}
 \cmidrule(lr){1-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
 docs & vocab & $K$ & \pkg{topica} & \proglang{R} \pkg{stm} & \pkg{topica} & speedup \\
 \midrule
-1{,}000 & 500   & 10 & 0.50s & 3.03s & 0.14s & 22.5$\times$ \\
-2{,}000 & 2{,}000 & 10 & 1.44s & 6.51s & 0.49s & 13.5$\times$ \\
-5{,}000 & 5{,}000 & 20 & 8.97s & 26.3s & 2.75s & 9.8$\times$ \\
+1{,}000 & 500   & 10 & 0.30s & 3.13s & 0.10s & 32.2$\times$ \\
+2{,}000 & 2{,}000 & 10 & 1.16s & 6.60s & 0.47s & 14.4$\times$ \\
+5{,}000 & 5{,}000 & 20 & 6.95s & 27.5s & 2.35s & 11.3$\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 The structural topic model is the comparison that matters most for social
 scientists, since \proglang{R} \pkg{stm} is the field standard and its fits can
-take minutes. Table~\ref{tab:stm} shows \pkg{topica} fitting the same model three
-to six times faster on a single core and ten to twenty-two times faster across
+take minutes. Table~\ref{tab:stm} shows \pkg{topica} fitting the same model four
+to ten times faster on a single core and eleven to thirty-two times faster across
 cores. It also fits in under a third of \proglang{R} \pkg{stm}'s memory
 (about 480MB against 1.5GB at 5{,}000 documents and $K=20$), since it holds the
 corpus and the variational state in compact native arrays rather than
 \proglang{R} objects.
 The keyword-assisted model matches \proglang{R} \pkg{keyATM}'s
-\proglang{C++} sampler single-threaded (22.8s versus 23.5s on a
+\proglang{C++} sampler single-threaded (23.3s versus 25.4s on a
 2{,}000-document, 10-topic fit of 1{,}000 sweeps) and runs about 1.7 times as fast
-on four cores (13.7s), through a document-partitioned parallel sweep that the
+on four cores (13.5s), through a document-partitioned parallel sweep that the
 \proglang{R} package has no equivalent of.
 
 Those figures are at $K=20$. The Laplace E-step stores a $(K-1)\times(K-1)$

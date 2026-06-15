@@ -92,11 +92,11 @@ on the poliblog corpus, peak resident memory:
 
 | docs | topica STM | R `stm` |
 |-----:|-----------:|--------:|
-| 2,000 | 287 MB | 1,463 MB |
-| 3,500 | 375 MB | 1,504 MB |
-| 5,000 | 463 MB | 1,737 MB |
+| 2,000 | 297 MB | 1,399 MB |
+| 3,500 | 392 MB | 1,388 MB |
+| 5,000 | 484 MB | 1,506 MB |
 
-About a quarter of R `stm`'s footprint, and the gap widens with corpus size.
+Roughly a quarter to a third of R `stm`'s footprint.
 
 ## keyATM vs R `keyATM`
 
@@ -158,7 +158,7 @@ regime least favorable to topica's sparse samplers.
 
 | model | topica | tomotopy | ratio |
 |-------|-------:|---------:|------:|
-| CTM | 39.4s | 118.2s | **3.00×** |
+| CTM | 33.1s | 116.9s | **3.5×** |
 | DMR | 20.2s | 15.8s | 0.78× |
 | LDA | 19.7s | 12.6s | 0.64× |
 | LabeledLDA | 5.5s | 3.4s | 0.62× |
