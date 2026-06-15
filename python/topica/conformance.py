@@ -82,6 +82,8 @@ REGISTRY: list[tuple[str, object, str]] = [
     # embedding-cluster — no generative word distribution
     ("BERTopic",     lambda: _topica.BERTopic(min_cluster_size=5),               "none"),
     ("Top2Vec",      lambda: _topica.Top2Vec(),                                  "none"),
+    # llm-based — pure-Python prompting pipeline, no generative word distribution
+    ("TopicGPT",     lambda: _topica.TopicGPT(backend=lambda p: ""),             "none"),
     # EmbeddingLDA is EXCLUDED: it is a Python wrapper around SeededLDA (see
     # module-level note in python/topica/embedding.py). It delegates every
     # fitted-model getter to self._model via __getattr__, has no class-level
@@ -168,6 +170,16 @@ EXEMPT: dict[tuple[str, str], str] = {
     # not apply.
     ("BERTopic", "iters"): "BERTopic is not an iterative sampler (UMAP + HDBSCAN); no iteration count applies",
     ("Top2Vec",  "iters"): "Top2Vec is not an iterative sampler (UMAP + HDBSCAN); no iteration count applies",
+
+    # --- TopicGPT: LLM prompting pipeline, no generative word distribution ---
+    # iters: TopicGPT runs a fixed three-stage prompt flow (generate / refine /
+    # assign), not an iterative sampler, so no iteration count applies.
+    ("TopicGPT", "iters"): "TopicGPT is a prompting pipeline (generate/refine/assign), not an iterative sampler; no iteration count applies",
+    # doc_names: TopicGPT exposes a positional doc_names index (str ids), so this
+    # is NOT exempted; topic_word/doc_topic/coherence are synthesized descriptors
+    # (class-based TF-IDF), present and valid, so none of those are exempted.
+    # Tier 2: family is 'none'; no Tier 2 applies. transform IS present (Tier 1
+    # only required for family != 'none', which TopicGPT is not).
     # transform: both DO expose transform; NOT exempted.
     # Tier 2: family is 'none'; no Tier 2 applies.
     # coherence: a count-based UMass/NPMI is computable from any top-word list,

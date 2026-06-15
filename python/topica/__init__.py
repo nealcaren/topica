@@ -204,6 +204,7 @@ from .labeling import (  # noqa: E402  LLM topic labeling as plumbing
     llm_backend,
     topic_label_prompts,
 )
+from .topicgpt import TopicGPT  # noqa: E402  (LLM-driven topic discovery)
 from .embedding import (  # noqa: E402
     EmbeddingLDA,
     embedding_seeds,
@@ -298,6 +299,7 @@ __all__ = [
     "llm_topic_labels",
     "llm_backend",
     "topic_label_prompts",
+    "TopicGPT",
     "estimate_effect",
     "by_strata",
     "prevalence_ci",

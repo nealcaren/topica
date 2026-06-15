@@ -94,6 +94,7 @@ nav:
       - Guided topics (seed words): guides/guided.md
       - Short text: guides/short-text.md
       - Embedding topics: guides/embedding.md
+      - LLM-based topics: guides/llm.md
       - Held-out inference: guides/transform.md
   - Benchmarks: benchmarks.md
   - Best-practice workflow:
