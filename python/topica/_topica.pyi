@@ -1055,6 +1055,7 @@ class DETM:
         batch_size: int = 1000,
         lr: float = 0.005,
         wdecay: float = 1.2e-6,
+        grad_clip: float | None = None,
         convergence_tol: float = 0.0,
         seed: int = 42,
     ) -> None:
@@ -1063,7 +1064,12 @@ class DETM:
         hidden_size is the document encoder width; eta_hidden_size/eta_nlayers size the
         LSTM that amortizes the per-time topic prior q(eta) (reference defaults 200/3);
         batch_size/lr/wdecay drive Adam; convergence_tol stops on the relative change
-        in the epoch ELBO (0 disables)."""
+        in the epoch ELBO (0 disables). grad_clip is an optional global gradient-norm
+        clip (the reference's --clip), off by default (None); set a positive float to
+        rescale each minibatch's gradients to that global L2 norm before the Adam step,
+        which stabilizes training on large vocabularies at higher learning rates. The
+        variational log-variances are additionally clamped before every exp for
+        numerical stability (internal; never reached on a well-behaved fit)."""
         ...
 
     def fit(

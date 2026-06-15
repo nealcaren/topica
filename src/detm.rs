@@ -51,6 +51,34 @@
 
 use rand::Rng;
 
+/// Numerical-stability clamp on the variational log-variances. Every `exp` in the
+/// model that consumes a *variational* log-variance (the q(alpha), q(eta) and
+/// q(theta) heads, in both the reparameterization std `exp(0.5 logvar)` and the KL
+/// `exp(logvar)`) first passes the log-variance through [`clamp_logvar`], which
+/// confines it to `[-LOGVAR_CLAMP, LOGVAR_CLAMP]`. On large vocabularies a head's
+/// log-variance can drift far enough that `exp` overflows to `+inf` and the fit
+/// cascades to NaN; the clamp bounds the std to roughly `[e^-5, e^5]` and keeps the
+/// fit finite. The stable training path never reaches the clamp, so default fits are
+/// unchanged; only a diverging trajectory is held in range. The backward passes zero
+/// the gradient with respect to the raw head output wherever the clamp is active
+/// (the derivative of a saturated clamp is zero), keeping forward and backward
+/// consistent (the finite-difference gate `eta_lstm_bptt_matches_finite_difference`
+/// would otherwise fail).
+const LOGVAR_CLAMP: f64 = 10.0;
+
+/// Confine a variational log-variance to `[-LOGVAR_CLAMP, LOGVAR_CLAMP]`.
+#[inline]
+fn clamp_logvar(x: f64) -> f64 {
+    x.clamp(-LOGVAR_CLAMP, LOGVAR_CLAMP)
+}
+
+/// Whether a clamped log-variance is saturated (so the clamp's local derivative is
+/// zero and the gradient onto the raw head output must be dropped).
+#[inline]
+fn logvar_clamped(x: f64) -> bool {
+    x <= -LOGVAR_CLAMP || x >= LOGVAR_CLAMP
+}
+
 /// Kaiming-uniform initialization matching PyTorch's `nn.Linear` default:
 /// entries uniform on `[-1/sqrt(fan_in), 1/sqrt(fan_in)]`.
 fn kaiming<R: Rng>(len: usize, fan_in: usize, rng: &mut R) -> Vec<f64> {
@@ -183,7 +211,9 @@ impl ThetaEncoder {
                 sl += self.w_ls[row + i] * h2[i];
             }
             mu[c] = sm;
-            ls[c] = sl;
+            // Clamp the variational log-variance before any downstream `exp` (the
+            // reparameterization std and the theta-KL); see [`clamp_logvar`].
+            ls[c] = clamp_logvar(sl);
         }
         ThetaCache { pre1, h1, pre2, h2, mu, ls }
     }
@@ -421,9 +451,12 @@ impl EtaNet {
                     slg += self.ls_w[row + i] * head_inp[tt][i];
                 }
                 mu[tt][c] = sm;
-                ls[tt][c] = slg;
+                // Clamp the variational log-variance before the reparameterization
+                // std and the eta random-walk KL; see [`clamp_logvar`].
+                let slg_c = clamp_logvar(slg);
+                ls[tt][c] = slg_c;
                 etas[tt][c] = if sample {
-                    sm + (0.5 * slg).exp() * eps[tt][c]
+                    sm + (0.5 * slg_c).exp() * eps[tt][c]
                 } else {
                     sm
                 };
@@ -533,6 +566,11 @@ impl EtaNet {
                 if sample {
                     let std = (0.5 * fwd.ls[tt][c]).exp();
                     d_ls[c] += d_eta[tt][c] * eps[tt][c] * 0.5 * std;
+                }
+                // `fwd.ls` holds the clamped log-variance; where the clamp saturated,
+                // the raw head output has zero influence, so drop its gradient.
+                if logvar_clamped(fwd.ls[tt][c]) {
+                    d_ls[c] = 0.0;
                 }
             }
             // Heads: mu_t = mu_w · head_inp + mu_b ; same for ls. Accumulate weight
@@ -790,6 +828,13 @@ fn beta_row(rho: &[Vec<f64>], alpha_k: &[f64]) -> Vec<f64> {
 /// - `hidden` is the theta encoder width; `eta_hidden`/`eta_nlayers` size the LSTM
 ///   that amortizes q(eta); `epochs`/`batch_size`/`lr`/`wdecay` drive Adam; `em_tol`
 ///   stops on the relative change in the epoch ELBO.
+/// - `grad_clip` is an optional global gradient-norm clip (the reference's `--clip`),
+///   off by default (`None`); when set, the per-batch gradients are rescaled so their
+///   global L2 norm does not exceed it before the Adam step.
+///
+/// The variational log-variances are clamped to `[-LOGVAR_CLAMP, LOGVAR_CLAMP]`
+/// before every `exp` for numerical stability (see [`clamp_logvar`]); on the stable
+/// training path the clamp is never reached, so default fits are unchanged.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_detm<R: Rng>(
     tokens: &[Vec<u32>],
@@ -808,6 +853,7 @@ pub fn fit_detm<R: Rng>(
     lr: f64,
     wdecay: f64,
     em_tol: f64,
+    grad_clip: Option<f64>,
     rng: &mut R,
 ) -> DetmModel {
     let (k, v, t, l) = (
@@ -920,14 +966,21 @@ pub fn fit_detm<R: Rng>(
 
             // --- Sample alpha (T x K x L) along the random walk, retaining the eps
             // used so the backward pass through the reparameterization is exact. ---
+            // `lsc_alpha` is the clamped q(alpha) log-variance used in every `exp`
+            // (reparameterization std and random-walk KL); see [`clamp_logvar`]. The
+            // gradient onto the raw `ls_alpha` is dropped for saturated entries before
+            // the Adam step, so forward and backward stay consistent.
             let mut eps_alpha = vec![vec![vec![0.0f64; l]; k]; t];
             let mut alpha = vec![vec![vec![0.0f64; l]; k]; t];
+            let mut lsc_alpha = vec![vec![vec![0.0f64; l]; k]; t];
             for tt in 0..t {
                 for kk in 0..k {
                     for ll in 0..l {
                         let e = randn(rng);
                         eps_alpha[tt][kk][ll] = e;
-                        let std = (0.5 * ls_alpha[tt][kk][ll]).exp();
+                        let lsc = clamp_logvar(ls_alpha[tt][kk][ll]);
+                        lsc_alpha[tt][kk][ll] = lsc;
+                        let std = (0.5 * lsc).exp();
                         alpha[tt][kk][ll] = mu_alpha[tt][kk][ll] + std * e;
                     }
                 }
@@ -1026,6 +1079,11 @@ pub fn fit_detm<R: Rng>(
                     // d KL / d eta_td = -coeff * inv_pv * (mu - eta); eta_td is the
                     // sampled eta at slice td, so route it into d_eta.
                     d_eta[td][c] += -coeff * inv_pv * dm;
+                    // `cache.ls` is the clamped log-variance; where saturated, the raw
+                    // head output has zero influence, so drop its gradient.
+                    if logvar_clamped(cache.ls[c]) {
+                        dls[c] = 0.0;
+                    }
                 }
 
                 // --- Backprop dmu/dls through the encoder heads + MLP. ---
@@ -1097,7 +1155,7 @@ pub fn fit_detm<R: Rng>(
                         }
                     }
                     for ll in 0..l {
-                        let std = (0.5 * ls_alpha[tt][kk][ll]).exp();
+                        let std = (0.5 * lsc_alpha[tt][kk][ll]).exp();
                         g_mu_alpha[tt][kk][ll] += dalpha[ll];
                         g_ls_alpha[tt][kk][ll] += dalpha[ll] * eps_alpha[tt][kk][ll] * 0.5 * std;
                     }
@@ -1107,28 +1165,30 @@ pub fn fit_detm<R: Rng>(
             // --- KL_alpha (global, random walk over time). ---
             // t = 0: prior N(0, I). t >= 1: prior N(alpha_{t-1}, delta I) with the
             // prior *mean* being the sampled alpha_{t-1} (reference uses the sample).
+            // The clamped log-variance `lsc_alpha` feeds the KL `exp`; saturated
+            // entries have their `g_ls_alpha` zeroed before the Adam step.
             for kk in 0..k {
                 let pm = vec![0.0f64; l];
                 let plv = vec![0.0f64; l];
-                batch_loss += kl_gauss(&mu_alpha[0][kk], &ls_alpha[0][kk], &pm, &plv);
+                batch_loss += kl_gauss(&mu_alpha[0][kk], &lsc_alpha[0][kk], &pm, &plv);
                 for ll in 0..l {
                     let dm = mu_alpha[0][kk][ll];
                     g_mu_alpha[0][kk][ll] += dm / (1.0 + 1e-6);
-                    g_ls_alpha[0][kk][ll] += 0.5 * (ls_alpha[0][kk][ll].exp() / (1.0 + 1e-6) - 1.0);
+                    g_ls_alpha[0][kk][ll] += 0.5 * (lsc_alpha[0][kk][ll].exp() / (1.0 + 1e-6) - 1.0);
                 }
                 for tt in 1..t {
                     let prior_mean = alpha[tt - 1][kk].clone(); // sampled alpha_{t-1}
                     let plv: Vec<f64> = vec![log_delta; l];
-                    batch_loss += kl_gauss(&mu_alpha[tt][kk], &ls_alpha[tt][kk], &prior_mean, &plv);
+                    batch_loss += kl_gauss(&mu_alpha[tt][kk], &lsc_alpha[tt][kk], &prior_mean, &plv);
                     let inv_pv = 1.0 / (delta + 1e-6);
                     for ll in 0..l {
                         let dm = mu_alpha[tt][kk][ll] - prior_mean[ll];
                         g_mu_alpha[tt][kk][ll] += inv_pv * dm;
-                        g_ls_alpha[tt][kk][ll] += 0.5 * (ls_alpha[tt][kk][ll].exp() * inv_pv - 1.0);
+                        g_ls_alpha[tt][kk][ll] += 0.5 * (lsc_alpha[tt][kk][ll].exp() * inv_pv - 1.0);
                         // The prior mean is the sample alpha_{t-1}, so KL pushes a
                         // gradient back onto alpha_{t-1} (its mu/ls via the eps).
                         let dprior = -inv_pv * dm;
-                        let std = (0.5 * ls_alpha[tt - 1][kk][ll]).exp();
+                        let std = (0.5 * lsc_alpha[tt - 1][kk][ll]).exp();
                         g_mu_alpha[tt - 1][kk][ll] += dprior;
                         g_ls_alpha[tt - 1][kk][ll] += dprior * eps_alpha[tt - 1][kk][ll] * 0.5 * std;
                     }
@@ -1164,9 +1224,65 @@ pub fn fit_detm<R: Rng>(
             }
 
             // --- q(eta) backprop-through-time, once for the whole sequence. ---
-            let g_eta = eta_net.backward(
+            let mut g_eta = eta_net.backward(
                 &eta_fwd, &d_eta, &d_mu_eta, &d_ls_eta, &eps_eta, true, &rnn_input,
             );
+
+            // The loss reads the clamped q(alpha) log-variance everywhere, so the raw
+            // `ls_alpha` has zero gradient wherever the clamp saturated; drop it.
+            for tt in 0..t {
+                for kk in 0..k {
+                    for ll in 0..l {
+                        if logvar_clamped(ls_alpha[tt][kk][ll]) {
+                            g_ls_alpha[tt][kk][ll] = 0.0;
+                        }
+                    }
+                }
+            }
+
+            // --- Optional global gradient-norm clip (reference `--clip`), OFF by
+            // default. When `grad_clip` is set, scale every gradient block by
+            // `grad_clip / norm` if the global L2 norm exceeds it (à la
+            // `torch.nn.utils.clip_grad_norm_`), before the Adam step. ---
+            if let Some(max_norm) = grad_clip {
+                if max_norm > 0.0 {
+                    let mut sumsq = 0.0f64;
+                    for a in &g_mu_alpha { for b in a { for &x in b { sumsq += x * x; } } }
+                    for a in &g_ls_alpha { for b in a { for &x in b { sumsq += x * x; } } }
+                    let eta_blocks: [&[f64]; 4] =
+                        [&g_eta.map_w, &g_eta.map_b, &g_eta.mu_w, &g_eta.mu_b];
+                    for blk in eta_blocks { for &x in blk { sumsq += x * x; } }
+                    for &x in &g_eta.ls_w { sumsq += x * x; }
+                    for &x in &g_eta.ls_b { sumsq += x * x; }
+                    for layer in [&g_eta.w_ih, &g_eta.w_hh, &g_eta.b_ih, &g_eta.b_hh] {
+                        for a in layer { for &x in a { sumsq += x * x; } }
+                    }
+                    for blk in [&g_enc.w1, &g_enc.b1, &g_enc.w2, &g_enc.b2,
+                                &g_enc.w_mu, &g_enc.b_mu, &g_enc.w_ls, &g_enc.b_ls] {
+                        for &x in blk { sumsq += x * x; }
+                    }
+                    let norm = sumsq.sqrt();
+                    if norm > max_norm {
+                        let s = max_norm / norm;
+                        for a in g_mu_alpha.iter_mut() { for b in a { for x in b { *x *= s; } } }
+                        for a in g_ls_alpha.iter_mut() { for b in a { for x in b { *x *= s; } } }
+                        for blk in [&mut g_eta.map_w, &mut g_eta.map_b,
+                                    &mut g_eta.mu_w, &mut g_eta.mu_b,
+                                    &mut g_eta.ls_w, &mut g_eta.ls_b] {
+                            for x in blk { *x *= s; }
+                        }
+                        for layer in [&mut g_eta.w_ih, &mut g_eta.w_hh,
+                                      &mut g_eta.b_ih, &mut g_eta.b_hh] {
+                            for a in layer { for x in a { *x *= s; } }
+                        }
+                        for blk in [&mut g_enc.w1, &mut g_enc.b1, &mut g_enc.w2, &mut g_enc.b2,
+                                    &mut g_enc.w_mu, &mut g_enc.b_mu,
+                                    &mut g_enc.w_ls, &mut g_enc.b_ls] {
+                            for x in blk { *x *= s; }
+                        }
+                    }
+                }
+            }
 
             // --- Adam updates. ---
             step3d(&mut a_mu_alpha, &mut mu_alpha, &g_mu_alpha, t, k, l);
@@ -1403,7 +1519,7 @@ mod tests {
         let (k, block, t, d_per_t) = (3usize, 6usize, 4usize, 20usize);
         let (tokens, counts, times, rho, v) = planted_corpus(&mut rng, k, block, t, d_per_t);
         let m = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 32, 16, 2, 30, 64, 0.02, 1.2e-6, 0.0, &mut rng,
+            &tokens, &counts, &times, k, v, t, &rho, 0.005, 32, 16, 2, 30, 64, 0.02, 1.2e-6, 0.0, None, &mut rng,
         );
         assert_eq!(m.num_topics, k);
         assert_eq!(m.num_times, t);
@@ -1437,11 +1553,11 @@ mod tests {
 
         let mut rng_a = ChaCha8Rng::seed_from_u64(123);
         let a = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 20, 64, 0.02, 1.2e-6, 0.0, &mut rng_a,
+            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 20, 64, 0.02, 1.2e-6, 0.0, None, &mut rng_a,
         );
         let mut rng_b = ChaCha8Rng::seed_from_u64(123);
         let b = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 20, 64, 0.02, 1.2e-6, 0.0, &mut rng_b,
+            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 20, 64, 0.02, 1.2e-6, 0.0, None, &mut rng_b,
         );
         for tt in 0..t {
             for kk in 0..k {
@@ -1459,7 +1575,7 @@ mod tests {
         let (tokens, counts, times, rho, v) = planted_corpus(&mut rng, k, block, t, d_per_t);
         let m = fit_detm(
             &tokens, &counts, &times, k, v, t, &rho, 0.005, 32, 32, 2, 300, 1000, 0.02, 1.2e-6, 0.0,
-            &mut rng,
+            None, &mut rng,
         );
         // The time-varying topic prior eta (the latent the random walk regularizes)
         // should move across the slices for at least one topic, recovering the
@@ -1595,7 +1711,7 @@ mod tests {
         let (k, block, t, d_per_t) = (3usize, 6usize, 4usize, 20usize);
         let (tokens, counts, times, rho, v) = planted_corpus(&mut rng, k, block, t, d_per_t);
         let m = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 25, 64, 0.02, 1.2e-6, 0.0, &mut rng,
+            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 25, 64, 0.02, 1.2e-6, 0.0, None, &mut rng,
         );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);

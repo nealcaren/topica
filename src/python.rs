@@ -11537,6 +11537,7 @@ pub struct DETM {
     batch_size: usize,
     lr: f64,
     wdecay: f64,
+    grad_clip: Option<f64>,
     convergence_tol: f64,
     seed: u64,
     fitted: bool,
@@ -11558,6 +11559,8 @@ struct DetmState {
     batch_size: usize,
     lr: f64,
     wdecay: f64,
+    #[serde(default)]
+    grad_clip: Option<f64>,
     convergence_tol: f64,
     seed: u64,
     fitted: bool,
@@ -11590,12 +11593,18 @@ impl DETM {
     /// width. ``eta_hidden_size``/``eta_nlayers`` size the LSTM that amortizes the
     /// per-time topic prior q(eta) (reference defaults 200 / 3).
     /// ``batch_size``/``lr``/``wdecay`` drive Adam; ``convergence_tol`` stops on the
-    /// relative change in the epoch ELBO (0 disables early stop). Pass ``iters`` to
+    /// relative change in the epoch ELBO (0 disables early stop). ``grad_clip`` is an
+    /// optional global gradient-norm clip (the reference's ``--clip``), off by default
+    /// (``None``); set it to a positive float to rescale each minibatch's gradients so
+    /// their global L2 norm does not exceed it before the Adam step, which stabilizes
+    /// training on large vocabularies at higher learning rates. (The variational
+    /// log-variances are additionally clamped before every ``exp`` for stability; that
+    /// clamp is internal and never reached on a well-behaved fit.) Pass ``iters`` to
     /// :meth:`fit` for the epoch count.
     #[new]
     #[pyo3(signature = (num_topics, *, delta=0.005, hidden_size=800,
                         eta_hidden_size=200, eta_nlayers=3, batch_size=1000,
-                        lr=0.005, wdecay=1.2e-6, convergence_tol=0.0, seed=42))]
+                        lr=0.005, wdecay=1.2e-6, grad_clip=None, convergence_tol=0.0, seed=42))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
@@ -11606,6 +11615,7 @@ impl DETM {
         batch_size: usize,
         lr: f64,
         wdecay: f64,
+        grad_clip: Option<f64>,
         convergence_tol: f64,
         seed: u64,
     ) -> PyResult<Self> {
@@ -11621,6 +11631,11 @@ impl DETM {
         if eta_hidden_size < 1 {
             return Err(PyValueError::new_err("eta_hidden_size must be >= 1"));
         }
+        if let Some(c) = grad_clip {
+            if !(c > 0.0) || !c.is_finite() {
+                return Err(PyValueError::new_err("grad_clip must be a positive finite float or None"));
+            }
+        }
         Ok(DETM {
             num_topics,
             delta,
@@ -11630,6 +11645,7 @@ impl DETM {
             batch_size,
             lr,
             wdecay,
+            grad_clip,
             convergence_tol,
             seed,
             fitted: false,
@@ -11749,14 +11765,14 @@ impl DETM {
         self.id_to_word = vocabulary.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
 
-        let (k, delta, h, eh, enl, bs, lr, wd) = (
+        let (k, delta, h, eh, enl, bs, lr, wd, gc) = (
             self.num_topics, self.delta, self.hidden_size, self.eta_hidden_size,
-            self.eta_nlayers, self.batch_size, self.lr, self.wdecay,
+            self.eta_nlayers, self.batch_size, self.lr, self.wdecay, self.grad_clip,
         );
         let model = py.allow_threads(move || {
             detm::fit_detm(
                 &tokens, &counts, &times_u, k, num_types, num_times, &rho, delta, h, eh, enl,
-                iters, bs, lr, wd, tol, &mut rng,
+                iters, bs, lr, wd, tol, gc, &mut rng,
             )
         });
 
@@ -11982,6 +11998,7 @@ impl DETM {
             batch_size: self.batch_size,
             lr: self.lr,
             wdecay: self.wdecay,
+            grad_clip: self.grad_clip,
             convergence_tol: self.convergence_tol,
             seed: self.seed,
             fitted: self.fitted,
@@ -12025,6 +12042,7 @@ impl DETM {
             batch_size: s.batch_size,
             lr: s.lr,
             wdecay: s.wdecay,
+            grad_clip: s.grad_clip,
             convergence_tol: s.convergence_tol,
             seed: s.seed,
             fitted: s.fitted,
