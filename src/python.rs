@@ -11519,10 +11519,10 @@ impl ETM {
 /// embeddings, the per-time prior, and an amortized encoder for the document-topic
 /// proportions by minibatch Adam on the ELBO (hand-coded gradients, no PyTorch).
 ///
-/// Inference deviation from the reference: the reference amortizes the variational
-/// posterior over ``eta`` with an LSTM over the per-time bag of words; topica uses
-/// a direct structured Gaussian variational treatment of the eta random walk
-/// instead (same generative model and same random-walk KL, no amortization). See
+/// The variational posterior over ``eta`` follows the reference: a multi-layer LSTM
+/// (sized by ``eta_hidden_size`` / ``eta_nlayers``) over the per-time bag of words
+/// amortizes the per-slice mean and log-variance, with the same random-walk KL. The
+/// LSTM forward and its backprop-through-time are hand-coded (no PyTorch). See
 /// ``src/detm.rs`` for the full account.
 ///
 /// No embedder of your own? ``topica.llm_embed(vocabulary, model=...)`` builds the
@@ -11532,6 +11532,8 @@ pub struct DETM {
     num_topics: usize,
     delta: f64,
     hidden_size: usize,
+    eta_hidden_size: usize,
+    eta_nlayers: usize,
     batch_size: usize,
     lr: f64,
     wdecay: f64,
@@ -11551,6 +11553,8 @@ struct DetmState {
     num_topics: usize,
     delta: f64,
     hidden_size: usize,
+    eta_hidden_size: usize,
+    eta_nlayers: usize,
     batch_size: usize,
     lr: f64,
     wdecay: f64,
@@ -11583,17 +11587,22 @@ impl DETM {
     /// Create an unfitted model. ``delta`` is the random-walk standard-deviation
     /// knob on the topic-embedding and topic-prior trajectories (smaller = smoother
     /// drift; reference default 0.005). ``hidden_size`` is the document encoder
-    /// width; ``batch_size``/``lr``/``wdecay`` drive Adam; ``convergence_tol`` stops
-    /// on the relative change in the epoch ELBO (0 disables early stop). Pass
-    /// ``iters`` to :meth:`fit` for the epoch count.
+    /// width. ``eta_hidden_size``/``eta_nlayers`` size the LSTM that amortizes the
+    /// per-time topic prior q(eta) (reference defaults 200 / 3).
+    /// ``batch_size``/``lr``/``wdecay`` drive Adam; ``convergence_tol`` stops on the
+    /// relative change in the epoch ELBO (0 disables early stop). Pass ``iters`` to
+    /// :meth:`fit` for the epoch count.
     #[new]
-    #[pyo3(signature = (num_topics, *, delta=0.005, hidden_size=800, batch_size=1000,
+    #[pyo3(signature = (num_topics, *, delta=0.005, hidden_size=800,
+                        eta_hidden_size=200, eta_nlayers=3, batch_size=1000,
                         lr=0.005, wdecay=1.2e-6, convergence_tol=0.0, seed=42))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         delta: f64,
         hidden_size: usize,
+        eta_hidden_size: usize,
+        eta_nlayers: usize,
         batch_size: usize,
         lr: f64,
         wdecay: f64,
@@ -11606,10 +11615,18 @@ impl DETM {
         if !finite_pos(delta) {
             return Err(PyValueError::new_err("delta must be > 0"));
         }
+        if eta_nlayers < 1 {
+            return Err(PyValueError::new_err("eta_nlayers must be >= 1"));
+        }
+        if eta_hidden_size < 1 {
+            return Err(PyValueError::new_err("eta_hidden_size must be >= 1"));
+        }
         Ok(DETM {
             num_topics,
             delta,
             hidden_size,
+            eta_hidden_size,
+            eta_nlayers,
             batch_size,
             lr,
             wdecay,
@@ -11732,13 +11749,14 @@ impl DETM {
         self.id_to_word = vocabulary.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
 
-        let (k, delta, h, bs, lr, wd) = (
-            self.num_topics, self.delta, self.hidden_size, self.batch_size, self.lr, self.wdecay,
+        let (k, delta, h, eh, enl, bs, lr, wd) = (
+            self.num_topics, self.delta, self.hidden_size, self.eta_hidden_size,
+            self.eta_nlayers, self.batch_size, self.lr, self.wdecay,
         );
         let model = py.allow_threads(move || {
             detm::fit_detm(
-                &tokens, &counts, &times_u, k, num_types, num_times, &rho, delta, h, iters, bs, lr,
-                wd, tol, &mut rng,
+                &tokens, &counts, &times_u, k, num_types, num_times, &rho, delta, h, eh, enl,
+                iters, bs, lr, wd, tol, &mut rng,
             )
         });
 
@@ -11959,6 +11977,8 @@ impl DETM {
             num_topics: self.num_topics,
             delta: self.delta,
             hidden_size: self.hidden_size,
+            eta_hidden_size: self.eta_hidden_size,
+            eta_nlayers: self.eta_nlayers,
             batch_size: self.batch_size,
             lr: self.lr,
             wdecay: self.wdecay,
@@ -12000,6 +12020,8 @@ impl DETM {
             num_topics: s.num_topics,
             delta: s.delta,
             hidden_size: s.hidden_size,
+            eta_hidden_size: s.eta_hidden_size,
+            eta_nlayers: s.eta_nlayers,
             batch_size: s.batch_size,
             lr: s.lr,
             wdecay: s.wdecay,

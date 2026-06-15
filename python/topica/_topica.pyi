@@ -1038,11 +1038,11 @@ class DETM:
     time-stamped corpora. The topic embeddings (alpha) and the per-time topic prior
     (eta) each follow a Gaussian random walk, so a topic's words drift smoothly
     across time slices. Fit by minibatch Adam on the ELBO with hand-coded gradients
-    (structured amortized variational inference; q(eta) uses a direct structured
-    Gaussian treatment rather than the reference's LSTM). You supply the word
-    embeddings rho like ETM. The headline output is the time-varying topic-word
-    tensor beta_over_time (num_times, num_topics, vocab); topic_word is its mean
-    over time."""
+    (structured amortized variational inference; q(eta) is the reference's multi-layer
+    LSTM over the per-time bag of words, with hand-coded backprop-through-time). You
+    supply the word embeddings rho like ETM. The headline output is the time-varying
+    topic-word tensor beta_over_time (num_times, num_topics, vocab); topic_word is its
+    mean over time."""
 
     def __init__(
         self,
@@ -1050,6 +1050,8 @@ class DETM:
         *,
         delta: float = 0.005,
         hidden_size: int = 800,
+        eta_hidden_size: int = 200,
+        eta_nlayers: int = 3,
         batch_size: int = 1000,
         lr: float = 0.005,
         wdecay: float = 1.2e-6,
@@ -1058,8 +1060,10 @@ class DETM:
     ) -> None:
         """num_topics >= 2. delta is the random-walk standard-deviation knob on the
         topic-embedding and topic-prior trajectories (smaller = smoother drift).
-        hidden_size is the document encoder width; batch_size/lr/wdecay drive Adam;
-        convergence_tol stops on the relative change in the epoch ELBO (0 disables)."""
+        hidden_size is the document encoder width; eta_hidden_size/eta_nlayers size the
+        LSTM that amortizes the per-time topic prior q(eta) (reference defaults 200/3);
+        batch_size/lr/wdecay drive Adam; convergence_tol stops on the relative change
+        in the epoch ELBO (0 disables)."""
         ...
 
     def fit(
