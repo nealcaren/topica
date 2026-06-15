@@ -2512,9 +2512,17 @@ class ETM:
         lr: float = 0.005,
         wdecay: float = 1.2e-6,
         seed: int = 42,
+        prior: str = "laplace",
+        contrastive: bool = False,
+        contrastive_weight: float = 0.5,
+        contrastive_temp: float = 0.5,
         em_tol: Optional[float] = None,
     ) -> None:
-        """em_tol is a deprecated alias for convergence_tol."""
+        """em_tol is a deprecated alias for convergence_tol. On the VAE path,
+        ``prior`` selects ``"laplace"`` (default) or ``"dirichlet"`` (Weibull
+        reparameterization), and ``contrastive`` adds an InfoNCE term on the topic
+        vectors scaled by ``contrastive_weight`` at temperature ``contrastive_temp``.
+        Both are ignored on the EM path."""
         ...
     def fit(
         self,
@@ -2606,10 +2614,21 @@ class ProdLDA:
         lr: float = 0.002,
         convergence_tol: float = 0.0,
         seed: int = 42,
+        prior: str = "laplace",
+        contrastive: bool = False,
+        contrastive_weight: float = 0.5,
+        contrastive_temp: float = 0.5,
         em_tol: Optional[float] = None,
     ) -> None:
-        """em_tol is a deprecated alias for convergence_tol."""
+        """em_tol is a deprecated alias for convergence_tol. ``prior`` selects
+        ``"laplace"`` (default) or ``"dirichlet"`` (Weibull reparameterization);
+        ``contrastive`` adds an InfoNCE term on the topic vectors scaled by
+        ``contrastive_weight`` at temperature ``contrastive_temp``."""
         ...
+    @property
+    def prior(self) -> str: ...
+    @property
+    def contrastive(self) -> bool: ...
     def fit(
         self,
         data: Corpus | Sequence[Sequence[str]],
@@ -2661,6 +2680,338 @@ class ProdLDA:
     def save(self, path: str) -> None: ...
     @staticmethod
     def load(path: str) -> ProdLDA: ...
+    def __repr__(self) -> str: ...
+
+
+class CombinedTM:
+    """CombinedTM (Bianchi, Terragni & Hovy 2021), a contextualized topic model.
+    ProdLDA whose encoder reads the normalized bag of words concatenated with a
+    caller-supplied document embedding; the product-of-experts decoder still
+    reconstructs the bag of words. Bring the embeddings at fit() as a
+    (num_docs, E) array, aligned to the documents. Reference implementation:
+    contextualized-topic-models (Bianchi et al., MIT)."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha: float = 1.0,
+        hidden_size: int = 100,
+        dropout: float = 0.2,
+        batch_size: int = 200,
+        lr: float = 0.002,
+        convergence_tol: float = 0.0,
+        seed: int = 42,
+        prior: str = "laplace",
+        contrastive: bool = False,
+        contrastive_weight: float = 0.5,
+        contrastive_temp: float = 0.5,
+    ) -> None:
+        """``prior`` selects ``"laplace"`` (default) or ``"dirichlet"`` (Weibull
+        reparameterization); ``contrastive`` adds an InfoNCE term on the topic vectors
+        scaled by ``contrastive_weight`` at temperature ``contrastive_temp``."""
+        ...
+    @property
+    def prior(self) -> str: ...
+    @property
+    def contrastive(self) -> bool: ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+        *,
+        iters: int | None = None,
+        convergence_tol: Optional[float] = None,
+    ) -> None:
+        """Fit on token documents plus per-document embeddings (num_docs x E,
+        in corpus order). `iters` sets the number of training epochs.
+
+        convergence_tol overrides the constructor's convergence_tol for this fit
+        call only (None = use constructor value)."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def bound(self) -> float: ...
+    @property
+    def bound_history(self) -> list[float]: ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def epochs_run(self) -> int: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def transform(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+    ) -> numpy.typing.NDArray[numpy.float64]: ...
+    def fit_transform(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+        *,
+        iters: int | None = None,
+    ) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> CombinedTM: ...
+    def __repr__(self) -> str: ...
+
+
+class ZeroShotTM:
+    """ZeroShotTM (Bianchi, Nozza & Hovy 2021), a contextualized topic model.
+    ProdLDA whose encoder reads only a caller-supplied document embedding (no bag
+    of words); the product-of-experts decoder still reconstructs the bag of words.
+    Because topics are inferred from the embedding alone, a document embedded with
+    a multilingual encoder maps to the trained topics without any bag of words,
+    enabling cross-lingual transfer: fit on one language, transform documents in
+    another. Bring the embeddings at fit() as a (num_docs, E) array, aligned to the
+    documents. Reference implementation: contextualized-topic-models (Bianchi et
+    al., MIT)."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha: float = 1.0,
+        hidden_size: int = 100,
+        dropout: float = 0.2,
+        batch_size: int = 200,
+        lr: float = 0.002,
+        convergence_tol: float = 0.0,
+        seed: int = 42,
+        prior: str = "laplace",
+        contrastive: bool = False,
+        contrastive_weight: float = 0.5,
+        contrastive_temp: float = 0.5,
+    ) -> None:
+        """``prior`` selects ``"laplace"`` (default) or ``"dirichlet"`` (Weibull
+        reparameterization); ``contrastive`` adds an InfoNCE term on the topic vectors
+        scaled by ``contrastive_weight`` at temperature ``contrastive_temp``."""
+        ...
+    @property
+    def prior(self) -> str: ...
+    @property
+    def contrastive(self) -> bool: ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+        *,
+        iters: int | None = None,
+        convergence_tol: Optional[float] = None,
+    ) -> None:
+        """Fit on token documents plus per-document embeddings (num_docs x E,
+        in corpus order). The encoder uses the embeddings alone. `iters` sets the
+        number of training epochs.
+
+        convergence_tol overrides the constructor's convergence_tol for this fit
+        call only (None = use constructor value)."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def bound(self) -> float: ...
+    @property
+    def bound_history(self) -> list[float]: ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def epochs_run(self) -> int: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def transform(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Held-out topic proportions. For cross-lingual transfer, embed the new
+        documents with the same multilingual encoder used at fit()."""
+        ...
+    def fit_transform(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+        *,
+        iters: int | None = None,
+    ) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> ZeroShotTM: ...
+    def __repr__(self) -> str: ...
+
+
+class NMF:
+    """NMF, non-negative matrix factorization for topic modeling (Lee & Seung
+    2001; Boutsidis & Gallopoulos 2008). We factor the non-negative document-term
+    matrix X (D x V) as X ~ W H with W, H >= 0 by multiplicative updates. Two
+    divergences are available through beta_loss: the squared Frobenius loss
+    (default) and the generalized Kullback-Leibler divergence. The reference is
+    scikit-learn's sklearn.decomposition.NMF (BSD-3-Clause). The topic-word matrix
+    is each row of H normalized to sum 1; the document-topic matrix is each row of
+    W normalized to sum 1."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        beta_loss: str = "frobenius",
+        init: str = "nndsvd",
+        weighting: str = "count",
+        convergence_tol: float = 1e-4,
+        seed: int = 42,
+    ) -> None:
+        """beta_loss is 'frobenius' or 'kullback-leibler' (alias 'kl'); init is
+        'nndsvd' or 'random'; weighting is 'count' or 'tfidf'. seed affects only
+        init='random'."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        *,
+        iters: int | None = None,
+        convergence_tol: Optional[float] = None,
+    ) -> None:
+        """Fit on a Corpus or a list of token lists. `iters` is the maximum number
+        of multiplicative-update iterations (default 200). convergence_tol
+        overrides the constructor value for this fit call only."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def reconstruction_error(self) -> float: ...
+    @property
+    def error_history(self) -> list[float]: ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """Per-iteration reconstruction-error trace: list of (iter, error) pairs."""
+        ...
+    @property
+    def iters_run(self) -> int: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> NMF: ...
+    def __repr__(self) -> str: ...
+
+class LSA:
+    """LSA / LSI, latent semantic analysis (Deerwester et al. 1990; randomized
+    truncated SVD per Halko et al. 2011). A truncated SVD of the weighted
+    document-term matrix X (D x V) ~ U_k Sigma_k V_k^T. The reference is
+    scikit-learn's sklearn.decomposition.TruncatedSVD (BSD-3-Clause).
+
+    Outputs are SIGNED latent coordinates, not probabilities. topic_word (K x V)
+    is the right singular vectors V_k (signed term loadings; top_words ranks by
+    absolute value). doc_topic (D x K) is U_k Sigma_k (signed document
+    coordinates; rows do not sum to 1). singular_values (K) is Sigma_k. A
+    deterministic svd_flip sign convention matches scikit-learn's output."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        weighting: str = "tfidf",
+        seed: int = 42,
+    ) -> None:
+        """weighting is 'tfidf' (default, classic LSI) or 'count'. seed seeds the
+        randomized-SVD sketch."""
+        ...
+    def fit(self, data: Corpus | Sequence[Sequence[str]]) -> None:
+        """Fit on a Corpus or a list of token lists. The SVD is a direct solve, so
+        there is no iters argument."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_topics, vocab) signed right singular vectors V_k. Term loadings,
+        not probabilities."""
+        ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_docs, num_topics) signed document coordinates U_k Sigma_k. Rows do
+        not sum to 1."""
+        ...
+    @property
+    def singular_values(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_topics,) truncated singular values Sigma_k."""
+        ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """Empty: the SVD is a direct solve with no iterative trace."""
+        ...
+    @property
+    def converged(self) -> bool | None:
+        """None: convergence is not meaningful for a one-shot SVD."""
+        ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]:
+        """Top-n words per component, ranked by absolute loading; each entry is
+        (word, signed_loading)."""
+        ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> LSA: ...
     def __repr__(self) -> str: ...
 
 

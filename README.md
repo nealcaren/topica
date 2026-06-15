@@ -30,36 +30,76 @@ See the [getting-started guide](https://nealcaren.github.io/topica/getting-start
 
 ## Models
 
-**Count-based models** learn topics from word counts (collapsed Gibbs, variational EM, or an amortized VAE):
+Models are organized by **what you bring and what you want**, not by inference
+family. The `from topica import X` namespace is flat; `topica.list_models(group=…,
+brings=…, inference=…, determinism=…)` filters this roster in code. **Brings** is
+what you supply beyond raw text; **Reproducibility** is `bit-exact` (identical
+regardless of thread count), `seed-reproducible` (identical from a fixed seed and
+thread count), or `llm-bounded`.
 
-| Model | What it's for |
-|-------|---------------|
-| **`LDA`** | Classic topics via fast collapsed-Gibbs (SparseLDA); optional multi-threaded and LightLDA alias samplers |
-| **`STM`** | The Structural Topic Model: correlated topics with prevalence **and** content covariates |
-| **`STS`** | Structural Topic **and Sentiment-Discourse**: covariate-driven topic sentiment/tone on top of STM |
-| **`CTM`** | Correlated topics (logistic-normal) |
-| **`DMR`** | Topics conditioned on document metadata (Dirichlet-multinomial regression) |
-| **`GDMR`** | Generalized DMR over continuous metadata via a Legendre basis, with topic distribution functions across the metadata range |
-| **`DTM`** | Dynamic topics that evolve across time slices |
-| **`HDP`** | Nonparametric LDA that learns the number of topics from the data; by default fits with fixed concentrations (topic count steered by `gamma`), with optional concentration resampling |
-| **`keyATM` / `seededlda`** | Guided topics steered by seed words |
-| **`ProdLDA`** | Sharper, more coherent topics via a product-of-experts word model, fit as an amortized VAE (no PyTorch) |
-| **`PT` / `GSDMM`** | Short-text models for tweets, survey answers, headlines |
-| **`SupervisedLDA`** | Topics shaped to predict a per-document response |
-| **`LabeledLDA`** | Supervised topics tied to document labels |
-| **`SAGE`** | Content-covariate topics: the same topic worded differently across groups |
-| **`PA` / `HLDA`** | Topic hierarchies (Pachinko, nested-CRP) |
+<!-- BEGIN MODEL TABLE (generated from topica.registry; edit registry.py, not this block) -->
 
-**Embedding-based models** start from document embeddings you supply (no PyTorch, no UMAP/numba in the wheel):
+### General-purpose
 
-| Model | What it's for |
-|-------|---------------|
-| **`BERTopic`** | Cluster document embeddings, label topics by class-TF-IDF; topic reduction and a soft per-document distribution |
-| **`Top2Vec`** | Topics as points in the embedding space; topic words are the nearest word vectors |
-| **`ETM`** | Embedded Topic Model: a logistic-normal topic model with the topic-word distribution factored through embeddings (`β = softmax(ρ·α)`); per-document EM or an amortized VAE (`inference="vae"`) |
-| **`FASTopic`** | Topics read off two optimal-transport plans between document, topic, and word embeddings |
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `LDA` | text | gibbs | seed-reproducible | Classic latent Dirichlet allocation via a fast SparseLDA collapsed-Gibbs sampler. |
+| `CTM` | text | variational | bit-exact | Correlated topic model: a logistic-normal prior that lets topics co-occur. |
+| `ProdLDA` | text | vae | seed-reproducible | Product-of-experts LDA (AVITM) for sharper, more coherent topics; hand-coded VAE. |
+| `HDP` | text | gibbs | seed-reproducible | Hierarchical Dirichlet process: infers the number of topics from the data. |
+| `NMF` | text | matrix-factorization | bit-exact | Non-negative matrix factorization of the document-term matrix via multiplicative updates. |
+| `LSA` | text | svd | bit-exact | Latent semantic analysis: a truncated SVD of the weighted document-term matrix. |
 
-Every model exposes the same shape: `fit(docs, …)`, then `topic_word` (φ), `doc_topic` (θ), `top_words(n)`, and `save`/`load`. The count-based variational models (`CTM`/`STM`/`STS`/`SupervisedLDA`/`DTM`) parallelize across cores while staying bit-for-bit deterministic. The embedding models split into two kinds: `BERTopic` and `Top2Vec` run the `reduce → cluster → represent` pipeline, while `ETM` and `FASTopic` are generative and mixed-membership; all of them take vectors from any embedder (sentence-transformers, an API, a local model such as ollama). Full guides: [the models](https://nealcaren.github.io/topica/guides/models/) and [embedding topics](https://nealcaren.github.io/topica/guides/embedding/).
+### Covariates & structure
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `STM` | text, metadata | variational | bit-exact | Structural topic model: relate topic prevalence and content to covariates. |
+| `STS` | text, metadata | variational | bit-exact | Structural topic-and-sentiment model over document metadata. |
+| `SAGE` | text, metadata | gibbs | seed-reproducible | Sparse additive generative model: the same topic worded differently across groups. |
+| `DMR` | text, metadata | gibbs | seed-reproducible | Dirichlet-multinomial regression: a document-metadata prior on topic proportions. |
+| `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
+
+### Guided & supervised
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `KeyATM` | text, seeds | gibbs | seed-reproducible | Keyword-assisted topics: anchor named topics with a few seed words each. |
+| `SeededLDA` | text, seeds | gibbs | seed-reproducible | Seeded LDA: steer named topics toward supplied seed words. |
+| `LabeledLDA` | text, labels | gibbs | seed-reproducible | Labeled LDA: each document label is a topic; tokens are restricted to its labels. |
+| `SupervisedLDA` | text, labels | gibbs | seed-reproducible | Supervised LDA: topics shaped to predict a per-document real-valued response. |
+
+### Short text
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `GSDMM` | text | gibbs | seed-reproducible | Gibbs-sampling Dirichlet mixture: one topic per short document. |
+| `PT` | text | gibbs | seed-reproducible | Pseudo-document topic model: pool short texts into pseudo-documents. |
+
+### Dynamic & hierarchical
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `DTM` | text, times | variational | bit-exact | Dynamic topic model: a fixed topic set whose word distributions drift across time slices. |
+| `DETM` | text, embeddings, times | vae | seed-reproducible | Dynamic embedded topic model: embedding-factored topics that drift across time slices, fit as an amortized VAE. |
+| `HLDA` | text | gibbs | seed-reproducible | Hierarchical LDA (nested CRP): a learned tree of super- and sub-topics. |
+| `PA` | text | gibbs | seed-reproducible | Pachinko allocation: a DAG of super- and sub-topics. |
+
+### Embedding-based
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `BERTopic` | text, embeddings | clustering | seed-reproducible | Cluster document embeddings; label topics by class-based TF-IDF. |
+| `Top2Vec` | text, embeddings | clustering | seed-reproducible | Topics as dense regions in a joint document-word embedding space. |
+| `ETM` | text, embeddings | variational | bit-exact | Embedded topic model: topic-word distributions factored through word embeddings. |
+| `FASTopic` | text, embeddings | optimal-transport | bit-exact | Topics from optimal-transport plans between document, topic, and word embeddings. |
+| `EmbeddingLDA` | text, embeddings, seeds | gibbs | seed-reproducible | Seeded LDA whose seed sets are expanded with nearest neighbors in an embedding space. |
+| `CombinedTM` | text, embeddings | vae | bit-exact | Contextualized ProdLDA: encoder reads the bag of words plus a document embedding. |
+| `ZeroShotTM` | text, embeddings | vae | bit-exact | Contextualized ProdLDA: encoder reads the document embedding alone, enabling cross-lingual transfer. |
+
+<!-- END MODEL TABLE -->
+
+Every model exposes the same shape: `fit(docs, …)`, then `topic_word` (φ), `doc_topic` (θ), `top_words(n)`, and `save`/`load`, so one diagnostic, labeling, and effect-estimation stack applies to all of them and a new model inherits it for free. The embedding-based models take document vectors from any embedder (sentence-transformers, an API, or a local model such as ollama; no PyTorch or UMAP/numba in the wheel). Full guides: [the models](https://nealcaren.github.io/topica/guides/models/) and [embedding topics](https://nealcaren.github.io/topica/guides/embedding/).
 
 ## Diagnostics & analysis
 
@@ -110,6 +150,7 @@ Topica stands on a generation of open topic-modeling research and code. Each ent
 - [**lda-c / ctm-c / dtm**](https://github.com/blei-lab) and [**hdp**](https://github.com/blei-lab/hdp) (Blei lab, 2006–2007) — `CTM`, `DTM`, `HDP`: the CTM, Dynamic Topic Model, and HDP samplers
 - [**gensim**](https://github.com/piskvorky/gensim) (Řehůřek & Sojka, 2010) — `DTM`, `ensemble`: the coherence-pipeline conventions (the `coherence_type=` API and default sliding windows; the measures themselves are Röder et al. 2015 and Mimno et al. 2011), the `LdaSeqModel` DTM reference, and the `EnsembleLda` (CBDBSCAN stable-topic) method ported for `ensemble(method="stable")`
 - [**tomotopy**](https://github.com/bab2min/tomotopy) (bab2min, 2020) — API conventions (`summary`, the short-text models), and `GDMR` (generalized DMR; Lee & Song, 2020), validated against its `GDMRModel`
+- [**scikit-learn**](https://github.com/scikit-learn/scikit-learn) (Pedregosa et al., 2011) — `NMF`: the multiplicative-update solver (Lee & Seung, 2001) and the NNDSVD initialization (Boutsidis & Gallopoulos, 2008), validated against `sklearn.decomposition.NMF` (BSD-3-Clause); and `LSA`: latent semantic analysis / indexing (Deerwester et al., 1990), validated against `sklearn.decomposition.TruncatedSVD` (BSD-3-Clause) including its `svd_flip` sign convention. The numerics are reimplemented in Rust; the randomized truncated SVD shared by both (it seeds NMF's NNDSVD and is the LSA factorization itself) follows Halko et al. (2011).
 - [**keyATM**](https://github.com/keyATM/keyATM) (Eshima, Imai & Sasaki, 2024) — `KeyATM`: the base, covariate, and dynamic models, the information-theory token weighting, and the Chib (1998) change-point HMM, validated against the package
 - [**seededlda**](https://github.com/koheiw/seededlda) (Watanabe, 2023) — `SeededLDA`: the seeded-prior scheme
 - [**LightLDA**](https://github.com/microsoft/LightLDA) (Yuan et al., 2015) — `LDA`: the alias-table Metropolis-Hastings sampler
@@ -118,6 +159,9 @@ Topica stands on a generation of open topic-modeling research and code. Each ent
 - [**BERTopic**](https://github.com/MaartenGr/BERTopic) (Grootendorst, 2022) and [**Top2Vec**](https://github.com/ddangelov/Top2Vec) (Angelov, 2020) — `BERTopic`, `Top2Vec`: the embedding-clustering pipeline, class-based TF-IDF, and the `reduce → cluster → represent` design
 - [**ETM**](https://github.com/adjidieng/ETM) (Dieng, Ruiz & Blei, 2020) — `ETM`: the Embedded Topic Model (per-document variational EM and an amortized VAE)
 - [**FASTopic**](https://github.com/BobXWu/FASTopic) (Wu et al., 2024) — `FASTopic`: the optimal-transport topic model
+- [**contextualized-topic-models**](https://github.com/MilaNLProc/contextualized-topic-models) (Bianchi et al., MIT) — `CombinedTM` (Bianchi, Terragni & Hovy, 2021) and `ZeroShotTM` (Bianchi, Nozza & Hovy, 2021): ProdLDA encoders that read a contextual document embedding, alongside or in place of the bag of words
+- [**CLNTM**](https://arxiv.org/abs/2110.12764) (Nguyen & Luu, 2021) — the InfoNCE contrastive regularization on topic vectors offered by the `contrastive=` flag on the VAE models
+- [**WHAI / Weibull-Dirichlet VAE**](https://arxiv.org/abs/1803.01328) (Zhang et al., 2018; Burkhardt & Kramer, 2019) — the Weibull-reparameterized Dirichlet prior offered by `prior="dirichlet"` on the VAE models
 
 The embedding-native models build on two pure-Rust crates: [**petal-clustering**](https://github.com/petabi/petal-clustering) for HDBSCAN and [**umap-rs**](https://github.com/wilsonzlin/umap-rs) for the optional UMAP reducer, both BLAS-free.
 

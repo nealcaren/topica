@@ -23,6 +23,77 @@ Every model shares the same shape: construct with hyperparameters and a `seed`,
 | Model short texts (tweets, answers) | [`PT`, `GSDMM`](short-text.md) |
 | Build a topic hierarchy | `PA`, `HLDA` |
 
+## The roster
+
+Every model, grouped by purpose. **Brings** is what you supply beyond raw text;
+**Reproducibility** is `bit-exact` (identical regardless of thread count),
+`seed-reproducible` (identical from a fixed seed and thread count), or
+`llm-bounded`. Filter this roster in code with
+`topica.list_models(group=…, brings=…, inference=…, determinism=…)`. The table is
+generated from `python/topica/registry.py`.
+
+<!-- BEGIN MODEL TABLE (generated from topica.registry; edit registry.py, not this block) -->
+
+### General-purpose
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `LDA` | text | gibbs | seed-reproducible | Classic latent Dirichlet allocation via a fast SparseLDA collapsed-Gibbs sampler. |
+| `CTM` | text | variational | bit-exact | Correlated topic model: a logistic-normal prior that lets topics co-occur. |
+| `ProdLDA` | text | vae | seed-reproducible | Product-of-experts LDA (AVITM) for sharper, more coherent topics; hand-coded VAE. |
+| `HDP` | text | gibbs | seed-reproducible | Hierarchical Dirichlet process: infers the number of topics from the data. |
+| `NMF` | text | matrix-factorization | bit-exact | Non-negative matrix factorization of the document-term matrix via multiplicative updates. |
+| `LSA` | text | svd | bit-exact | Latent semantic analysis: a truncated SVD of the weighted document-term matrix. |
+
+### Covariates & structure
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `STM` | text, metadata | variational | bit-exact | Structural topic model: relate topic prevalence and content to covariates. |
+| `STS` | text, metadata | variational | bit-exact | Structural topic-and-sentiment model over document metadata. |
+| `SAGE` | text, metadata | gibbs | seed-reproducible | Sparse additive generative model: the same topic worded differently across groups. |
+| `DMR` | text, metadata | gibbs | seed-reproducible | Dirichlet-multinomial regression: a document-metadata prior on topic proportions. |
+| `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
+
+### Guided & supervised
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `KeyATM` | text, seeds | gibbs | seed-reproducible | Keyword-assisted topics: anchor named topics with a few seed words each. |
+| `SeededLDA` | text, seeds | gibbs | seed-reproducible | Seeded LDA: steer named topics toward supplied seed words. |
+| `LabeledLDA` | text, labels | gibbs | seed-reproducible | Labeled LDA: each document label is a topic; tokens are restricted to its labels. |
+| `SupervisedLDA` | text, labels | gibbs | seed-reproducible | Supervised LDA: topics shaped to predict a per-document real-valued response. |
+
+### Short text
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `GSDMM` | text | gibbs | seed-reproducible | Gibbs-sampling Dirichlet mixture: one topic per short document. |
+| `PT` | text | gibbs | seed-reproducible | Pseudo-document topic model: pool short texts into pseudo-documents. |
+
+### Dynamic & hierarchical
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `DTM` | text, times | variational | bit-exact | Dynamic topic model: a fixed topic set whose word distributions drift across time slices. |
+| `DETM` | text, embeddings, times | vae | seed-reproducible | Dynamic embedded topic model: embedding-factored topics that drift across time slices, fit as an amortized VAE. |
+| `HLDA` | text | gibbs | seed-reproducible | Hierarchical LDA (nested CRP): a learned tree of super- and sub-topics. |
+| `PA` | text | gibbs | seed-reproducible | Pachinko allocation: a DAG of super- and sub-topics. |
+
+### Embedding-based
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `BERTopic` | text, embeddings | clustering | seed-reproducible | Cluster document embeddings; label topics by class-based TF-IDF. |
+| `Top2Vec` | text, embeddings | clustering | seed-reproducible | Topics as dense regions in a joint document-word embedding space. |
+| `ETM` | text, embeddings | variational | bit-exact | Embedded topic model: topic-word distributions factored through word embeddings. |
+| `FASTopic` | text, embeddings | optimal-transport | bit-exact | Topics from optimal-transport plans between document, topic, and word embeddings. |
+| `EmbeddingLDA` | text, embeddings, seeds | gibbs | seed-reproducible | Seeded LDA whose seed sets are expanded with nearest neighbors in an embedding space. |
+| `CombinedTM` | text, embeddings | vae | bit-exact | Contextualized ProdLDA: encoder reads the bag of words plus a document embedding. |
+| `ZeroShotTM` | text, embeddings | vae | bit-exact | Contextualized ProdLDA: encoder reads the document embedding alone, enabling cross-lingual transfer. |
+
+<!-- END MODEL TABLE -->
+
 ## LDA
 
 Classic Latent Dirichlet Allocation via MALLET's fast SparseLDA collapsed-Gibbs
@@ -262,6 +333,72 @@ heads and decoder, and high-momentum Adam (`β₁ = 0.99`). Because inference is
 amortized, `transform` maps new documents with a single forward pass rather than
 re-running an optimizer. ProdLDA is bag-of-words (no embeddings); for the
 embedding-factored generative model see [`ETM`](embedding.md).
+
+### Objective and prior options
+
+`ProdLDA`, `CombinedTM`, `ZeroShotTM`, and `ETM(inference="vae")` share the same
+amortized-VAE core, so two optional flags apply across all four. Both default off,
+and the defaults reproduce the standard model exactly.
+
+- `prior=` chooses the document-topic prior. `"laplace"` (the default) is the
+  logistic-normal Laplace approximation to a Dirichlet from the AVITM paper.
+  `"dirichlet"` puts a true Dirichlet prior on `θ` through the Weibull
+  reparameterization (Zhang et al. 2018; Burkhardt & Kramer 2019): the encoder
+  parameterizes a Weibull variational posterior on each unnormalized topic weight,
+  a Weibull draw is normalized onto the simplex, and the analytic Weibull-to-Gamma
+  KL replaces the logistic-normal KL. We reuse the same reparameterization noise the
+  laplace path draws, so turning the flag off is bit-for-bit the original model.
+
+- `contrastive=True` adds a CLNTM-style (Nguyen & Luu 2021) InfoNCE term on the
+  topic vectors. For each document the *anchor* is its sampled topic vector and the
+  *positive view* is the deterministic no-noise topic vector (`softmax(μ)` on the
+  laplace path, the median Weibull on the dirichlet path); the other documents in
+  the minibatch are negatives, with cosine similarity at temperature
+  `contrastive_temp`. The term is scaled by `contrastive_weight` and added to the
+  per-batch loss. We document the positive-view choice because it is what makes the
+  term deterministic and finite-difference checkable; the TF-IDF salient-word
+  positive construction from CLNTM is a future refinement.
+
+```python
+m = topica.ProdLDA(num_topics=20, prior="dirichlet",
+                   contrastive=True, contrastive_weight=0.5, contrastive_temp=0.5)
+m.fit(docs)
+```
+
+The two flags are orthogonal and compose: the contrastive term operates on `θ`
+however `θ` was produced. Every new gradient path is hand-coded and checked against
+finite differences in the Rust unit tests.
+
+## NMF
+
+Non-negative matrix factorization ([Lee & Seung 2001](https://papers.nips.cc/paper/1861-algorithms-for-non-negative-matrix-factorization)) factors the document-term matrix `X` (D x V, non-negative) as `X ≈ W H` with both factors non-negative, then reads each row of `H` as a topic's word distribution and each row of `W` as a document's topic mixture (both normalized to sum to 1). It is the fast, deterministic baseline familiar from scikit-learn: no sampling and no priors, just multiplicative updates that descend a reconstruction loss.
+
+```python
+m = topica.NMF(num_topics=20, seed=1)
+theta = m.fit_transform(docs)
+m.top_words(10)
+```
+
+`beta_loss` selects the divergence: `"frobenius"` (default, the squared error `½‖X − WH‖²`) or `"kullback-leibler"` (the generalized-KL loss, equivalent to pLSA on counts). `init` selects the start: `"nndsvd"` (default, a deterministic NNDSVDa initialization seeded by a from-scratch randomized truncated SVD) or `"random"` (seeded). `weighting` builds `X` from raw counts (default) or topica's own TF-IDF. The Rust core is BLAS-free: the dense products are rayon-parallel and the document-term products exploit `X`'s sparsity, so fits are bit-identical regardless of thread count.
+
+Validated against `sklearn.decomposition.NMF` in `parity/nmf_vs_sklearn.py`. On a planted-block corpus topica matches sklearn to aligned topic-word cosine 1.000 for both divergences. On the political-blog corpus (poliblog5k, 5,000 documents) topica reproduces sklearn's topics at K=10 (aligned cosine 0.999, both divergences); at larger K, where the NMF objective is multimodal, topica reaches an equal-quality alternate optimum (reconstruction loss within about 0.1% of sklearn, sometimes lower) rather than sklearn's exact factorization, as expected for a non-convex problem whose solutions are not unique. On speed, the KL path runs several times faster than sklearn at scale, and the Frobenius path is competitive on the sparse document-term matrices typical of text, with the gap to BLAS-backed sklearn appearing only on near-dense inputs.
+
+## LSA
+
+Latent semantic analysis ([Deerwester et al. 1990](https://onlinelibrary.wiley.com/doi/10.1002/(SICI)1097-4571(199009)41:6%3C391::AID-ASI1%3E3.0.CO;2-9)), also called latent semantic indexing, takes a truncated SVD of the weighted document-term matrix `X` (D x V): `X ≈ U_k Σ_k V_kᵀ`. It is the original distributional-semantics method and the classic baseline behind scikit-learn's `TruncatedSVD`. There is no sampling and no prior, just a direct linear-algebra solve.
+
+```python
+m = topica.LSA(num_topics=20, weighting="tfidf", seed=1)
+m.fit(docs)
+m.singular_values        # the energy of each component
+m.top_words(10)          # ranked by absolute loading
+```
+
+LSA is not a probabilistic topic model, and its outputs reflect that. `topic_word` (K x V) is the signed right singular vectors `V_k`: term *loadings*, not a word distribution, so the rows are not a simplex and a large negative loading is as defining of a component as a large positive one (`top_words` ranks by absolute value). `doc_topic` (D x K) is `U_k Σ_k`, the documents' coordinates in the reduced space; these are signed and the rows do not sum to 1, because LSA is not mixed-membership. `singular_values` (length K) gives each component's energy. Coherence and any diagnostic that assumes a non-negative φ operate on the absolute loadings and should be read with that caveat.
+
+The SVD is unique only up to a per-component sign, so we fix the sign with the `svd_flip` convention scikit-learn uses: for each component we flip the `(u, v)` pair together so the largest-magnitude entry of the right singular vector is positive. That makes the fit deterministic and directly comparable to the reference. `weighting` builds `X` from topica's own TF-IDF (default, classic LSI) or from raw counts. The Rust core reuses NMF's BLAS-free randomized truncated SVD (rayon-parallel dense products, sparse document-term products), so fits are bit-identical regardless of thread count. The SVD is a direct solve, so there is no `iters` argument, `fit_history` is empty, and `converged` is `None`.
+
+We validate against `sklearn.decomposition.TruncatedSVD` (`algorithm='randomized'`) in `parity/lsa_vs_sklearn.py`. On the same document-term matrix, after applying `svd_flip` on both sides, topica reproduces sklearn's solution exactly: per-component right-singular-vector cosine 1.000000, singular values agreeing to a maximum relative error of 1.5e-9, and document-coordinate correlation 1.000000. Because the truncated SVD is well-posed (a unique solution up to sign when the singular values are distinct), this is a match-the-solution result, not agreement within a noise band.
 
 ## Short-text models
 

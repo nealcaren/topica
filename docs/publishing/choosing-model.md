@@ -5,6 +5,20 @@ you think generates the text and what you want to learn, and reviewers will ask
 you to justify it. Pick the simplest model that matches your question and your
 data structure.
 
+The decision tree below is keyed on your *question*. Two practical axes narrow it
+further, both filterable with `topica.list_models(...)` (see the
+[roster](../guides/models.md#the-roster)):
+
+- **What you bring.** Beyond raw text, do you have document **metadata**
+  (covariates), a few **seed** words per topic, document **labels**, document
+  **embeddings**, or **time** stamps? Each points to a group:
+  `list_models(brings="metadata")`, `brings="embeddings"`, and so on.
+- **Reproducibility.** The variational models are `bit-exact` (identical
+  regardless of thread count); the samplers are `seed-reproducible` (fix the seed
+  *and* the thread count); an LLM-backed model is `llm-bounded`. If exact
+  replication is a requirement, prefer a `bit-exact` model:
+  `topica.list_models(determinism="bit-exact")`.
+
 ## First: is a topic model even the right tool?
 
 !!! note "Good fit"

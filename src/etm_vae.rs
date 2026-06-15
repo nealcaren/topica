@@ -26,7 +26,15 @@
 //! inference the sample is dropped (`z = mu`), so `theta = softmax(mu)`.
 
 use crate::etm::softmax_beta;
+use crate::prodlda::{
+    info_nce_backward, info_nce_loss, normal_cdf, weibull_gamma_kl, weibull_gamma_kl_grad,
+    weibull_weight, AvitmOptions, Prior, WEIBULL_FLOOR, WEIBULL_SHAPE_FLOOR,
+};
 use rand::Rng;
+
+/// The implicit symmetric Dirichlet concentration for the ETM Weibull prior. ETM
+/// exposes no `alpha`, so we use 1.0 (a uniform Dirichlet) on the dirichlet path.
+const ETM_DIR_ALPHA: f64 = 1.0;
 
 /// Kaiming-uniform initialization matching PyTorch's `nn.Linear` default:
 /// entries are uniform on `[-1/sqrt(fan_in), 1/sqrt(fan_in)]`.
@@ -167,10 +175,83 @@ fn softmax(v: &[f64]) -> Vec<f64> {
     exps.iter().map(|e| e / z).collect()
 }
 
+/// Logistic sigmoid, the derivative of softplus (used on the Weibull-Dirichlet path
+/// where the Weibull shape/scale are `softplus` of the encoder heads).
+fn sigmoid(x: f64) -> f64 {
+    if x >= 0.0 {
+        1.0 / (1.0 + (-x).exp())
+    } else {
+        let e = x.exp();
+        e / (1.0 + e)
+    }
+}
+
+/// Per-document reparameterization, depending on the prior. For [`Prior::Laplace`]
+/// (ETM's standard `theta = softmax(mu + s eps)`, KL to `N(0, I)`) the Weibull
+/// fields are unused. For [`Prior::Dirichlet`] the topic vector is the normalized
+/// Weibull `theta = g / S`, with the analytic Weibull-to-Gamma KL.
+struct Reparam {
+    theta: Vec<f64>,
+    // Weibull scratch (dirichlet path only).
+    kw: Vec<f64>,
+    lam: Vec<f64>,
+    ln_l: Vec<f64>,
+    g: Vec<f64>,
+    s: f64,
+}
+
+/// Compute `theta` for one document under the chosen prior, given the encoder cache
+/// and the per-topic reparameterization noise `eps`. On the dirichlet path the noise
+/// is turned into uniforms by `Phi(eps)`; passing `noise_free = true` builds the
+/// no-noise positive view (laplace: `softmax(mu)`; dirichlet: median `u = 0.5`).
+fn reparam_theta(cache: &Cache, eps: &[f64], prior: Prior, noise_free: bool) -> Reparam {
+    let k = cache.mu.len();
+    match prior {
+        Prior::Laplace => {
+            let theta = if noise_free {
+                softmax(&cache.mu)
+            } else {
+                let mut z = vec![0.0; k];
+                for t in 0..k {
+                    z[t] = cache.mu[t] + (0.5 * cache.logvar[t]).exp() * eps[t];
+                }
+                softmax(&z)
+            };
+            Reparam { theta, kw: vec![], lam: vec![], ln_l: vec![], g: vec![], s: 0.0 }
+        }
+        Prior::Dirichlet => {
+            let mut kw = vec![0.0; k];
+            let mut lam = vec![0.0; k];
+            let mut ln_l = vec![0.0; k];
+            let mut g = vec![0.0; k];
+            let mut s = 0.0;
+            for t in 0..k {
+                let l = if noise_free {
+                    (-(0.5f64).ln()).ln() // u = 0.5
+                } else {
+                    let u = normal_cdf(eps[t]).clamp(1e-6, 1.0 - 1e-6);
+                    (-(1.0 - u).ln()).ln()
+                };
+                let (kwt, lamt, gt) = weibull_weight(cache.mu[t], cache.logvar[t], l);
+                kw[t] = kwt;
+                lam[t] = lamt;
+                ln_l[t] = l;
+                g[t] = gt;
+                s += gt;
+            }
+            let theta: Vec<f64> = (0..k).map(|t| g[t] / s).collect();
+            Reparam { theta, kw, lam, ln_l, g, s }
+        }
+    }
+}
+
 /// Backprop one document through the decoder and encoder, accumulating into the
 /// encoder gradient, the beta gradient (`g_beta`, K×V), and returning the document's
-/// `(recon, kl)`. `eps` is the fixed reparameterization noise (per topic). `beta`
-/// and `theta` are precomputed for this document.
+/// `(recon, kl)`. `eps` is the fixed reparameterization noise (per topic). `rep`
+/// holds the precomputed `theta` (and Weibull scratch) for this document under the
+/// active prior. `dtheta_extra` is an optional additive gradient on `theta` (the
+/// contrastive anchor term), and `dtheta_pos` is an optional gradient routed through
+/// the no-noise positive view (the contrastive positive term). `beta` is precomputed.
 #[allow(clippy::too_many_arguments)]
 fn backward_doc(
     enc: &Encoder,
@@ -178,12 +259,16 @@ fn backward_doc(
     bow: &[(usize, f64)],
     cache: &Cache,
     eps: &[f64],
-    theta: &[f64],
+    rep: &Reparam,
+    prior: Prior,
+    dtheta_extra: Option<&[f64]>,
+    dtheta_pos: Option<&[f64]>,
     beta: &[Vec<f64>],
     g: &mut EncoderGrad,
     g_beta: &mut [Vec<f64>],
 ) -> (f64, f64) {
     let (h, k, v) = (enc.hidden, enc.k, enc.v);
+    let theta = &rep.theta;
 
     // Reconstruction over the document's words: m_v = sum_k theta_k beta_kv.
     let mut recon = 0.0f64;
@@ -201,24 +286,71 @@ fn backward_doc(
             g_beta[t][w] += g_m * theta[t];
         }
     }
+    // Contrastive anchor gradient acts on theta directly.
+    if let Some(dx) = dtheta_extra {
+        for t in 0..k {
+            g_theta[t] += dx[t];
+        }
+    }
 
-    // theta = softmax(z): g_z = theta .* (g_theta - <g_theta, theta>).
-    let dot: f64 = g_theta.iter().zip(theta).map(|(&g, &t)| g * t).sum();
-    let g_z: Vec<f64> = (0..k).map(|t| theta[t] * (g_theta[t] - dot)).collect();
-
-    // z = mu + s*eps, s = exp(logvar/2). Plus the KL gradients.
-    let mut kl = 0.0f64;
     let mut g_mu = vec![0.0f64; k];
     let mut g_logvar = vec![0.0f64; k];
-    for t in 0..k {
-        let s = (0.5 * cache.logvar[t]).exp();
-        // recon path
-        g_mu[t] += g_z[t];
-        g_logvar[t] += g_z[t] * eps[t] * 0.5 * s;
-        // KL = -0.5 (1 + logvar - mu^2 - exp logvar)
-        kl += -0.5 * (1.0 + cache.logvar[t] - cache.mu[t] * cache.mu[t] - cache.logvar[t].exp());
-        g_mu[t] += cache.mu[t];
-        g_logvar[t] += 0.5 * (cache.logvar[t].exp() - 1.0);
+    let mut kl = 0.0f64;
+
+    match prior {
+        Prior::Laplace => {
+            // theta = softmax(z): g_z = theta .* (g_theta - <g_theta, theta>).
+            let dot: f64 = g_theta.iter().zip(theta).map(|(&g, &t)| g * t).sum();
+            let g_z: Vec<f64> = (0..k).map(|t| theta[t] * (g_theta[t] - dot)).collect();
+            // z = mu + s*eps, s = exp(logvar/2). Plus the KL gradients.
+            for t in 0..k {
+                let s = (0.5 * cache.logvar[t]).exp();
+                g_mu[t] += g_z[t];
+                g_logvar[t] += g_z[t] * eps[t] * 0.5 * s;
+                // KL = -0.5 (1 + logvar - mu^2 - exp logvar)
+                kl += -0.5 * (1.0 + cache.logvar[t] - cache.mu[t] * cache.mu[t] - cache.logvar[t].exp());
+                g_mu[t] += cache.mu[t];
+                g_logvar[t] += 0.5 * (cache.logvar[t].exp() - 1.0);
+            }
+            // Contrastive positive view = softmax(mu): grad into mu only.
+            if let Some(dzp) = dtheta_pos {
+                let tp = softmax(&cache.mu);
+                let dot: f64 = (0..k).map(|t| dzp[t] * tp[t]).sum();
+                for t in 0..k {
+                    g_mu[t] += tp[t] * (dzp[t] - dot);
+                }
+            }
+        }
+        Prior::Dirichlet => {
+            // theta = g / S. dg_m = (g_theta_m - sum_t g_theta_t theta_t) / S.
+            let dot: f64 = (0..k).map(|t| g_theta[t] * theta[t]).sum();
+            for m in 0..k {
+                let dg = (g_theta[m] - dot) / rep.s;
+                let dg_dlam = if rep.lam[m] != 0.0 { rep.g[m] / rep.lam[m] } else { 0.0 };
+                let dg_dkw = rep.g[m] * (-rep.ln_l[m] / (rep.kw[m] * rep.kw[m]));
+                g_mu[m] += dg * dg_dkw * sigmoid(cache.mu[m]);
+                g_logvar[m] += dg * dg_dlam * sigmoid(cache.logvar[m]);
+            }
+            // KL( Weibull(kw, lam) || Gamma(alpha, 1) ).
+            for t in 0..k {
+                kl += weibull_gamma_kl(rep.kw[t], rep.lam[t], ETM_DIR_ALPHA);
+                let (dkw, dlam) = weibull_gamma_kl_grad(rep.kw[t], rep.lam[t], ETM_DIR_ALPHA);
+                g_mu[t] += dkw * sigmoid(cache.mu[t]);
+                g_logvar[t] += dlam * sigmoid(cache.logvar[t]);
+            }
+            // Contrastive positive view = normalized Weibull at u = 0.5.
+            if let Some(dzp) = dtheta_pos {
+                let pos = reparam_theta(cache, eps, Prior::Dirichlet, true);
+                let dot: f64 = (0..k).map(|t| dzp[t] * pos.theta[t]).sum();
+                for m in 0..k {
+                    let dg = (dzp[m] - dot) / pos.s;
+                    let dg_dlam = if pos.lam[m] != 0.0 { pos.g[m] / pos.lam[m] } else { 0.0 };
+                    let dg_dkw = pos.g[m] * (-pos.ln_l[m] / (pos.kw[m] * pos.kw[m]));
+                    g_mu[m] += dg * dg_dkw * sigmoid(cache.mu[m]);
+                    g_logvar[m] += dg * dg_dlam * sigmoid(cache.logvar[m]);
+                }
+            }
+        }
     }
 
     // Heads: mu = W_mu h2 + b_mu, logvar = W_ls h2 + b_ls.
@@ -272,13 +404,29 @@ pub struct EtmVaeModel {
     pub converged: bool,
     pub epochs_run: usize,
     pub encoder: Encoder,
+    /// The document-topic prior the model was fit under, so inference matches the
+    /// training reparameterization. `Laplace` (default) keeps `theta = softmax(mu)`.
+    pub prior: Prior,
 }
 
 impl EtmVaeModel {
     /// Topic proportions for new documents: one encoder forward pass per document,
-    /// `theta = softmax(mu)` (no sampling).
+    /// no sampling. Laplace uses `theta = softmax(mu)`; the Weibull-Dirichlet path
+    /// uses the normalized Weibull at the posterior median (`u = 0.5`), the
+    /// deterministic counterpart of its training reparameterization.
     pub fn transform(&self, docs: &[Vec<u32>]) -> Vec<Vec<f64>> {
-        docs.iter().map(|d| self.encoder.encode_mean(&normalized_bow(d))).collect()
+        docs.iter().map(|d| self.infer_theta(&normalized_bow(d))).collect()
+    }
+
+    fn infer_theta(&self, xn: &[(usize, f64)]) -> Vec<f64> {
+        match self.prior {
+            Prior::Laplace => self.encoder.encode_mean(xn),
+            Prior::Dirichlet => {
+                let cache = self.encoder.forward(xn);
+                let zeros = vec![0.0; self.num_topics];
+                reparam_theta(&cache, &zeros, Prior::Dirichlet, true).theta
+            }
+        }
     }
 }
 
@@ -370,6 +518,7 @@ pub fn fit_etm_vae<R: Rng>(
     lr: f64,
     wdecay: f64,
     em_tol: f64,
+    opts: AvitmOptions,
     rng: &mut R,
 ) -> EtmVaeModel {
     let k = num_topics;
@@ -413,16 +562,55 @@ pub fn fit_etm_vae<R: Rng>(
             let mut g_beta = vec![vec![0.0f64; v]; k];
             let mut batch_loss = 0.0f64;
 
+            // Forward every document first: caches, noise, theta (anchor) and the
+            // no-noise positive-view theta. The contrastive InfoNCE term couples the
+            // batch, so its gradient must be computed before the per-document backward.
+            let bsz = chunk.len();
+            let mut caches = Vec::with_capacity(bsz);
+            let mut epss = Vec::with_capacity(bsz);
+            let mut reps = Vec::with_capacity(bsz);
+            let mut thetas = Vec::with_capacity(bsz);
+            let mut thetas_pos = Vec::with_capacity(bsz);
             for &di in chunk {
                 let cache = enc.forward(&xn[di]);
                 let eps: Vec<f64> = (0..k).map(|_| randn(rng)).collect();
-                let mut z = vec![0.0f64; k];
-                for t in 0..k {
-                    z[t] = cache.mu[t] + (0.5 * cache.logvar[t]).exp() * eps[t];
+                let rep = reparam_theta(&cache, &eps, opts.prior, false);
+                thetas.push(rep.theta.clone());
+                if opts.contrastive {
+                    thetas_pos.push(reparam_theta(&cache, &eps, opts.prior, true).theta);
                 }
-                let theta = softmax(&z);
+                reps.push(rep);
+                caches.push(cache);
+                epss.push(eps);
+            }
+
+            // Contrastive InfoNCE gradients (anchor and positive views), scaled by
+            // the contrastive weight. Empty when the flag is off or the batch is < 2.
+            let (dz_c, dz_pos) = if opts.contrastive && bsz >= 2 {
+                let (mut dz, dzp) =
+                    info_nce_backward(&thetas, &thetas_pos, opts.contrastive_temp);
+                for row in &mut dz {
+                    for x in row.iter_mut() {
+                        *x *= opts.contrastive_weight;
+                    }
+                }
+                let dzp: Vec<Vec<f64>> = dzp
+                    .into_iter()
+                    .map(|row| row.into_iter().map(|x| x * opts.contrastive_weight).collect())
+                    .collect();
+                batch_loss +=
+                    opts.contrastive_weight * info_nce_loss(&thetas, &thetas_pos, opts.contrastive_temp);
+                (Some(dz), Some(dzp))
+            } else {
+                (None, None)
+            };
+
+            for (bi, &di) in chunk.iter().enumerate() {
+                let dx = dz_c.as_ref().map(|d| d[bi].as_slice());
+                let dxp = dz_pos.as_ref().map(|d| d[bi].as_slice());
                 let (recon, kl) = backward_doc(
-                    &enc, &xn[di], &bows[di], &cache, &eps, &theta, &beta, &mut g, &mut g_beta,
+                    &enc, &xn[di], &bows[di], &caches[bi], &epss[bi], &reps[bi], opts.prior,
+                    dx, dxp, &beta, &mut g, &mut g_beta,
                 );
                 batch_loss += recon + kl;
             }
@@ -464,20 +652,21 @@ pub fn fit_etm_vae<R: Rng>(
     }
 
     let beta = softmax_beta(rho, &alpha);
-    let doc_topic: Vec<Vec<f64>> = xn.iter().map(|x| enc.encode_mean(x)).collect();
-
-    EtmVaeModel {
+    let model_stub = EtmVaeModel {
         num_topics: k,
         num_types: v,
         beta,
         alpha,
-        doc_topic,
+        doc_topic: Vec::new(),
         bound: bound_history.last().copied().unwrap_or(f64::NAN),
         bound_history,
         converged,
         epochs_run,
         encoder: enc,
-    }
+        prior: opts.prior,
+    };
+    let doc_topic: Vec<Vec<f64>> = xn.iter().map(|x| model_stub.infer_theta(x)).collect();
+    EtmVaeModel { doc_topic, ..model_stub }
 }
 
 fn scaled(v: &[f64], s: f64) -> Vec<f64> {
@@ -522,10 +711,20 @@ mod tests {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
-    // The full per-document loss (recon + kl) at a FIXED eps, as a function of every
-    // trainable parameter, checked against central finite differences.
-    #[test]
-    fn vae_gradients_match_fd() {
+    fn clone_encoder(e: &Encoder) -> Encoder {
+        Encoder {
+            v: e.v, hidden: e.hidden, k: e.k,
+            w1: e.w1.clone(), b1: e.b1.clone(),
+            w2: e.w2.clone(), b2: e.b2.clone(),
+            w_mu: e.w_mu.clone(), b_mu: e.b_mu.clone(),
+            w_ls: e.w_ls.clone(), b_ls: e.b_ls.clone(),
+        }
+    }
+
+    // Batch FD harness over a small multi-document batch (so the contrastive term is
+    // active), parameterized by `AvitmOptions`. Returns the max relative error over
+    // all encoder/alpha parameters; asserts each is within the 1e-4 absolute band.
+    fn etm_fd_check(opts: AvitmOptions) -> f64 {
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         let (v, hidden, k, e) = (6usize, 4usize, 3usize, 2usize);
         let enc0 = Encoder::new(v, hidden, k, &mut rng);
@@ -533,82 +732,109 @@ mod tests {
             (0..v).map(|_| (0..e).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect()).collect();
         let alpha0: Vec<Vec<f64>> =
             (0..k).map(|_| (0..e).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect()).collect();
-        let doc: Vec<u32> = vec![0, 0, 2, 3, 3, 5];
-        let xn = normalized_bow(&doc);
-        let bow = raw_bow(&doc);
-        let eps = [0.3f64, -0.7, 0.5];
+        let docs: Vec<Vec<u32>> = vec![vec![0, 0, 2, 3, 3, 5], vec![1, 4, 4, 5], vec![2, 2, 3, 0]];
+        let xns: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| normalized_bow(d)).collect();
+        let bows: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| raw_bow(d)).collect();
+        let n = docs.len();
+        let epss: Vec<Vec<f64>> = (0..n)
+            .map(|i| (0..k).map(|t| 0.2 * (i as f64 + 1.0) - 0.13 * t as f64).collect())
+            .collect();
 
-        // Closed-form loss + gradients.
-        let loss_grad = |enc: &Encoder, alpha: &[Vec<f64>]| {
-            let cache = enc.forward(&xn);
-            let mut z = vec![0.0f64; k];
-            for t in 0..k {
-                z[t] = cache.mu[t] + (0.5 * cache.logvar[t]).exp() * eps[t];
-            }
-            let theta = softmax(&z);
+        // Whole-batch loss as a function of the encoder and alpha.
+        let loss_only = |enc: &Encoder, alpha: &[Vec<f64>]| -> f64 {
             let beta = softmax_beta(&rho, alpha);
-            let mut g = EncoderGrad::zeros(enc);
-            let mut g_beta = vec![vec![0.0f64; v]; k];
-            let (recon, kl) =
-                backward_doc(enc, &xn, &bow, &cache, &eps, &theta, &beta, &mut g, &mut g_beta);
-            let g_alpha = alpha_grad(&g_beta, &beta, &rho, e);
-            (recon + kl, g, g_alpha)
+            let mut thetas = Vec::with_capacity(n);
+            let mut thetas_pos = Vec::with_capacity(n);
+            let mut total = 0.0;
+            for i in 0..n {
+                let cache = enc.forward(&xns[i]);
+                let rep = reparam_theta(&cache, &epss[i], opts.prior, false);
+                // recon
+                for &(w, c) in &bows[i] {
+                    let m: f64 = (0..k).map(|t| rep.theta[t] * beta[t][w]).sum::<f64>() + 1e-6;
+                    total -= c * m.ln();
+                }
+                // kl
+                match opts.prior {
+                    Prior::Laplace => {
+                        for t in 0..k {
+                            total += -0.5
+                                * (1.0 + cache.logvar[t] - cache.mu[t].powi(2) - cache.logvar[t].exp());
+                        }
+                    }
+                    Prior::Dirichlet => {
+                        for t in 0..k {
+                            total += weibull_gamma_kl(rep.kw[t], rep.lam[t], ETM_DIR_ALPHA);
+                        }
+                    }
+                }
+                if opts.contrastive {
+                    thetas_pos.push(reparam_theta(&cache, &epss[i], opts.prior, true).theta);
+                }
+                thetas.push(rep.theta);
+            }
+            if opts.contrastive && n >= 2 {
+                total += opts.contrastive_weight
+                    * info_nce_loss(&thetas, &thetas_pos, opts.contrastive_temp);
+            }
+            total
         };
 
-        // Loss only (for finite differences).
-        let loss_only = |enc: &Encoder, alpha: &[Vec<f64>]| {
-            let cache = enc.forward(&xn);
-            let mut z = vec![0.0f64; k];
-            for t in 0..k {
-                z[t] = cache.mu[t] + (0.5 * cache.logvar[t]).exp() * eps[t];
+        // Analytic gradients: forward the batch, contrastive backward, per-doc backward.
+        let mut g = EncoderGrad::zeros(&enc0);
+        let mut g_beta = vec![vec![0.0f64; v]; k];
+        let beta = softmax_beta(&rho, &alpha0);
+        let mut caches = Vec::new();
+        let mut reps = Vec::new();
+        let mut thetas = Vec::new();
+        let mut thetas_pos = Vec::new();
+        for i in 0..n {
+            let cache = enc0.forward(&xns[i]);
+            let rep = reparam_theta(&cache, &epss[i], opts.prior, false);
+            thetas.push(rep.theta.clone());
+            if opts.contrastive {
+                thetas_pos.push(reparam_theta(&cache, &epss[i], opts.prior, true).theta);
             }
-            let theta = softmax(&z);
-            let beta = softmax_beta(&rho, alpha);
-            let mut recon = 0.0;
-            for &(w, c) in &bow {
-                let m: f64 = (0..k).map(|t| theta[t] * beta[t][w]).sum::<f64>() + 1e-6;
-                recon -= c * m.ln();
-            }
-            let kl: f64 = (0..k)
-                .map(|t| -0.5 * (1.0 + cache.logvar[t] - cache.mu[t].powi(2) - cache.logvar[t].exp()))
-                .sum();
-            recon + kl
-        };
+            reps.push(rep);
+            caches.push(cache);
+        }
+        let (dz_c, dz_pos) = if opts.contrastive && n >= 2 {
+            let (mut dz, dzp) = info_nce_backward(&thetas, &thetas_pos, opts.contrastive_temp);
+            for row in &mut dz { for x in row.iter_mut() { *x *= opts.contrastive_weight; } }
+            let dzp: Vec<Vec<f64>> = dzp.into_iter()
+                .map(|r| r.into_iter().map(|x| x * opts.contrastive_weight).collect()).collect();
+            (Some(dz), Some(dzp))
+        } else { (None, None) };
+        for i in 0..n {
+            let dx = dz_c.as_ref().map(|d| d[i].as_slice());
+            let dxp = dz_pos.as_ref().map(|d| d[i].as_slice());
+            backward_doc(&enc0, &xns[i], &bows[i], &caches[i], &epss[i], &reps[i], opts.prior,
+                dx, dxp, &beta, &mut g, &mut g_beta);
+        }
+        let g_alpha = alpha_grad(&g_beta, &beta, &rho, e);
 
-        let (_, g, g_alpha) = loss_grad(&enc0, &alpha0);
         let eps_fd = 1e-6;
-
-        // Check each encoder block and alpha by perturbing one coordinate.
+        let mut max_rel = 0.0f64;
+        let mut chk = |analytic: f64, num: f64| {
+            let abs = (analytic - num).abs();
+            let denom = analytic.abs().max(num.abs());
+            if denom > 1e-3 { max_rel = max_rel.max(abs / denom); }
+            assert!(abs < 1e-4, "analytic {analytic} vs numeric {num}");
+        };
         macro_rules! check_block {
-            ($field:ident, $label:expr) => {
+            ($field:ident) => {
                 for idx in 0..enc0.$field.len() {
-                    let mut ep = Encoder {
-                        v, hidden, k,
-                        w1: enc0.w1.clone(), b1: enc0.b1.clone(),
-                        w2: enc0.w2.clone(), b2: enc0.b2.clone(),
-                        w_mu: enc0.w_mu.clone(), b_mu: enc0.b_mu.clone(),
-                        w_ls: enc0.w_ls.clone(), b_ls: enc0.b_ls.clone(),
-                    };
+                    let mut ep = clone_encoder(&enc0);
                     ep.$field[idx] += eps_fd;
                     let lp = loss_only(&ep, &alpha0);
                     ep.$field[idx] -= 2.0 * eps_fd;
                     let lm = loss_only(&ep, &alpha0);
-                    let num = (lp - lm) / (2.0 * eps_fd);
-                    assert!(
-                        (g.$field[idx] - num).abs() < 1e-4,
-                        "{} [{}]: {} vs {}", $label, idx, g.$field[idx], num
-                    );
+                    chk(g.$field[idx], (lp - lm) / (2.0 * eps_fd));
                 }
             };
         }
-        check_block!(w1, "w1");
-        check_block!(b1, "b1");
-        check_block!(w2, "w2");
-        check_block!(b2, "b2");
-        check_block!(w_mu, "w_mu");
-        check_block!(b_mu, "b_mu");
-        check_block!(w_ls, "w_ls");
-        check_block!(b_ls, "b_ls");
+        check_block!(w1); check_block!(b1); check_block!(w2); check_block!(b2);
+        check_block!(w_mu); check_block!(b_mu); check_block!(w_ls); check_block!(b_ls);
         for t in 0..k {
             for d in 0..e {
                 let mut ap = alpha0.clone();
@@ -616,10 +842,43 @@ mod tests {
                 let lp = loss_only(&enc0, &ap);
                 ap[t][d] -= 2.0 * eps_fd;
                 let lm = loss_only(&enc0, &ap);
-                let num = (lp - lm) / (2.0 * eps_fd);
-                assert!((g_alpha[t][d] - num).abs() < 1e-4, "alpha[{t}][{d}]: {} vs {}", g_alpha[t][d], num);
+                chk(g_alpha[t][d], (lp - lm) / (2.0 * eps_fd));
             }
         }
+        max_rel
+    }
+
+    #[test]
+    fn vae_gradients_match_fd() {
+        // Default options reproduce the original Gaussian-softmax / N(0,I) path.
+        etm_fd_check(AvitmOptions::default());
+    }
+
+    #[test]
+    fn etm_contrastive_gradients_match_fd() {
+        let opts = AvitmOptions {
+            contrastive: true, contrastive_weight: 0.7, contrastive_temp: 0.4,
+            ..AvitmOptions::default()
+        };
+        let max_rel = etm_fd_check(opts);
+        assert!(max_rel < 1e-4, "etm contrastive max relative error {max_rel}");
+    }
+
+    #[test]
+    fn etm_dirichlet_gradients_match_fd() {
+        let opts = AvitmOptions { prior: Prior::Dirichlet, ..AvitmOptions::default() };
+        let max_rel = etm_fd_check(opts);
+        assert!(max_rel < 1e-4, "etm dirichlet max relative error {max_rel}");
+    }
+
+    #[test]
+    fn etm_contrastive_and_dirichlet_compose_fd() {
+        let opts = AvitmOptions {
+            prior: Prior::Dirichlet, contrastive: true,
+            contrastive_weight: 0.6, contrastive_temp: 0.5,
+        };
+        let max_rel = etm_fd_check(opts);
+        assert!(max_rel < 1e-4, "etm contrastive+dirichlet max relative error {max_rel}");
     }
 
     // Planted blocks: K word-blocks, each document drawn from one block. The VAE
@@ -642,7 +901,7 @@ mod tests {
             })
             .collect();
 
-        let m = fit_etm_vae(&docs, k, v, &rho, 32, 200, 64, 0.01, 0.0, 0.0, &mut rng);
+        let m = fit_etm_vae(&docs, k, v, &rho, 32, 200, 64, 0.01, 0.0, 0.0, AvitmOptions::default(), &mut rng);
         assert_eq!(m.beta.len(), k);
         for row in &m.doc_topic {
             assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
@@ -675,8 +934,9 @@ mod tests {
                 (0..12).map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32).collect()
             })
             .collect();
-        let m = fit_etm_vae(&docs, k, v, &rho, 32, 200, 64, 0.01, 0.0, 0.0, &mut rng);
+        let m = fit_etm_vae(&docs, k, v, &rho, 32, 200, 64, 0.01, 0.0, 0.0, AvitmOptions::default(), &mut rng);
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }
 }
+
