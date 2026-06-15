@@ -140,6 +140,7 @@ from . import phrases  # noqa: E402
 from .coherence import (  # noqa: E402
     coherence,
     topic_diversity,
+    topic_semantic_diversity,
     exclusivity,
     word_intrusion,
     document_intrusion,
@@ -260,6 +261,7 @@ __all__ = [
     "phrases",
     "coherence",
     "topic_diversity",
+    "topic_semantic_diversity",
     "exclusivity",
     "word_intrusion",
     "document_intrusion",

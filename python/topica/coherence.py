@@ -25,7 +25,8 @@ These are pure-Python/numpy and work with any model here: pass a fitted model
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
+from itertools import combinations
 
 import numpy as np
 
@@ -371,6 +372,40 @@ def topic_diversity(topics, topn=25):
             seen.add(w)
             total += 1
     return len(seen) / total if total else float("nan")
+
+
+def topic_semantic_diversity(topics, topn=25):
+    """Fraction of unique top-word *pairs* across all topics (Wu, Nguyen & Luu
+    2024, "A Survey on Neural Topic Models", Eq. 18). Where `topic_diversity`
+    counts unique single words, this counts unique *pairs* drawn from each
+    topic's top-`topn` words: a pair occurrence is "unique" when that unordered
+    pair appears in exactly one topic's top words. 1.0 means every top-word pair
+    is unique to its topic; higher = more diverse. A pair disambiguates word
+    sense, so this is "semantic-aware" — no embeddings are needed.
+
+    `topics` is a fitted model or a list of word lists. `topn` must be an
+    integer >= 2 (pairs require at least two words).
+    """
+    if not isinstance(topn, (int, np.integer)) or topn < 2:
+        raise ValueError(f"topn must be an integer >= 2, got {topn!r}")
+    tops = _extract_topics(topics, topn)
+    # Per-topic unordered pairs (top words within a topic are distinct).
+    topic_pairs = [
+        {frozenset(p) for p in combinations(t[:topn], 2)} for t in tops
+    ]
+    # How many topics contain each unordered pair.
+    global_count = Counter()
+    for pairs in topic_pairs:
+        for p in pairs:
+            global_count[p] += 1
+    total = 0
+    unique = 0
+    for pairs in topic_pairs:
+        for p in pairs:
+            total += 1
+            if global_count[p] == 1:
+                unique += 1
+    return unique / total if total else float("nan")
 
 
 # ---------------------------------------------------------------------------

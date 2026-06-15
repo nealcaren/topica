@@ -105,6 +105,54 @@ class TestDiversity:
         assert 0.0 < d <= 1.0
 
 
+class TestSemanticDiversity:
+    """topic_semantic_diversity (Wu, Nguyen & Luu 2024, Eq. 18): fraction of
+    top-word *pairs* that are unique to a single topic."""
+
+    def test_disjoint_is_one(self):
+        # No shared words → no shared pairs → every pair unique.
+        tsd = topica.topic_semantic_diversity(
+            [["a", "b", "c"], ["d", "e", "f"]], topn=3
+        )
+        assert tsd == 1.0
+
+    def test_identical_is_zero(self):
+        # Two identical topics: every pair appears in BOTH topics, so no pair
+        # occurrence has global count 1 → 0.0. (Note: unlike topic_diversity,
+        # which counts unique *words* and gives 0.5 here.)
+        tsd = topica.topic_semantic_diversity(
+            [["a", "b", "c"], ["a", "b", "c"]], topn=3
+        )
+        assert tsd == 0.0
+
+    def test_partial_overlap_exact(self):
+        # A = {a,b,c,d}, B = {a,b,e,f}, topn=4 → 6 pairs each, 12 total.
+        # The only shared pair is {a,b} (count 2); it occurs once in A and once
+        # in B → 2 non-unique occurrences. Unique = 10 → TSD = 10/12.
+        tsd = topica.topic_semantic_diversity(
+            [["a", "b", "c", "d"], ["a", "b", "e", "f"]], topn=4
+        )
+        assert tsd == 10 / 12
+
+    def test_topn_two_edge(self):
+        # topn=2 → exactly one pair per topic; disjoint pairs → 1.0.
+        tsd = topica.topic_semantic_diversity(
+            [["a", "b"], ["c", "d"]], topn=2
+        )
+        assert tsd == 1.0
+
+    def test_accepts_model(self):
+        docs = [["cat", "dog", "pet"]] * 20 + [["star", "moon", "sky"]] * 20
+        m = LDA(num_topics=2, seed=1)
+        m.fit(docs, iters=300)
+        tsd = topica.topic_semantic_diversity(m, topn=3)
+        assert 0.0 <= tsd <= 1.0
+
+    def test_topn_below_two_raises(self):
+        with pytest.raises(ValueError):
+            topica.topic_semantic_diversity([["a", "b", "c"]], topn=1)
+
+
 class TestAnalysisContract:
     """Any object exposing the analysis contract -- ``topic_word`` /
     ``doc_topic`` / ``vocabulary`` -- works with the model-agnostic diagnostics,

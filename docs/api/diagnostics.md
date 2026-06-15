@@ -17,6 +17,8 @@ and in the `topica.validation` module.
 
 ::: topica.topic_diversity
 
+::: topica.topic_semantic_diversity
+
 ::: topica.exclusivity
 
 ::: topica.quality_frontier
