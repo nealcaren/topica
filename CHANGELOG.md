@@ -6,6 +6,37 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-06-15
+
+### Added
+
+- Five new models, each validated against its reference implementation:
+  - **`NMF`** — non-negative matrix factorization (multiplicative updates,
+    Frobenius or generalized-KL), validated against `sklearn.decomposition.NMF`.
+  - **`LSA`** — latent semantic analysis (truncated SVD), identical to
+    `sklearn.decomposition.TruncatedSVD` (cosine 1.000000).
+  - **`CombinedTM`** / **`ZeroShotTM`** — contextualized neural topic models
+    (Bianchi et al. 2021); ZeroShotTM is topica's first cross-lingual model.
+  - **`DETM`** — Dynamic Embedded Topic Model (Dieng, Ruiz & Blei 2019):
+    embedding-factored topics that drift across time slices, fit by structured
+    amortized variational inference (hand-coded LSTM), validated on the paper's
+    UN and ACL corpora at the reference's own seed-to-seed noise floor.
+- **Model registry + purpose taxonomy** — `topica.list_models(group=, brings=,
+  inference=, determinism=, tag=)` over a seven-group registry that is the single
+  source of truth for the README and docs roster.
+- **Opt-in VAE options** on the amortized-VAE models (ProdLDA, ETM-vae,
+  CombinedTM, ZeroShotTM), off by default: `contrastive=` (CLNTM-style InfoNCE
+  regularization) and `prior="dirichlet"` (a true Dirichlet prior via the Weibull
+  reparameterization).
+- **Two bundled skills** (shipped under `.claude/skills/`): `add-topic-model`
+  (the developer workflow for porting a model) and `topica-analysis` (the user
+  analysis guide, the canonical source for the generated `AGENTS.md`).
+
+### Fixed
+
+- Windows CI: repo text files (README, docs, generated tables) are now read and
+  written as UTF-8, fixing a `UnicodeDecodeError` under the Windows cp1252 default.
+
 ## [0.19.0] - 2026-06-15
 
 ### Changed
