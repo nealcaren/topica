@@ -1,6 +1,7 @@
-<!-- Generated from .claude/skills/topica-analysis/SKILL.md by `python scripts/gen_agents_md.py`.
-     This is the cross-tool (agents.md standard) ambient copy of the topica-analysis skill.
-     Edit the skill, not this file. -->
+---
+name: topica-analysis
+description: Working guide for an LLM agent helping a social scientist run a topic-modeling analysis with the topica Python library — building a defensible corpus, choosing and justifying K, fitting a model, validating it, estimating covariate effects with honest uncertainty, and reporting results. Use when the user wants to USE topica to analyze a text corpus (not extend the library). The companion developer skill for adding a model is add-topic-model.
+---
 
 # Using topica well
 

@@ -6,6 +6,14 @@ step by step, including by an LLM coding agent. For general setup and PR
 mechanics and build commands see [`CONTRIBUTING.md`](CONTRIBUTING.md). Read it
 first; this file assumes it.
 
+> **Adding a whole new model with an LLM agent?** The `add-topic-model` skill
+> (`.claude/skills/add-topic-model/`) orchestrates the end-to-end workflow —
+> grounding in the literature, building a gold standard from the reference
+> implementation, validating with an independent benchmark agent and an
+> author-emulation review agent, and opening the PR. It treats *this* file as the
+> mechanical reference for the Rust/PyO3 work. Use the skill for the process; use
+> this playbook for the how-to it points into.
+
 ## Architecture in sixty seconds
 
 topica is a Rust core exposed to Python through PyO3 (0.22, maturin, abi3-py39),

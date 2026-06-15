@@ -16,6 +16,10 @@ is the whole point of a port.
 
 ## Orient first (read these once)
 
+- `CONTRIBUTING-MODELS.md` — the deep implementer's playbook for the Rust/PyO3
+  mechanics (the `Estimator` trait, the binding, the conformance checks, the
+  add-a-model checklist). This skill orchestrates the *process*; that file is the
+  *how-to* for Phase 3. Read it before implementing.
 - `CLAUDE.md` — build/test commands, layout, conventions, branching. Authoritative.
 - `docs/contributing/conventions.md` and `tests/test_naming_conventions.py` — the
   enforced cross-model naming/API contract. New models must pass that test.
