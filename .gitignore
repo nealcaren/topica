@@ -45,8 +45,10 @@ env/
 .DS_Store
 parity/*.class
 
-# Claude Code local dir (agent worktrees, etc.)
-.claude/
+# Claude Code local dir (agent worktrees, settings, etc.) — but DO track the
+# committed skills so contributors get them on clone.
+.claude/*
+!.claude/skills/
 
 # Internal development notes (kept local, not part of the public package)
 /notes/
