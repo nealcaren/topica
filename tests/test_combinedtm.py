@@ -175,3 +175,59 @@ def test_recovers_planted_blocks():
         # Each topic concentrates on few blocks; together they touch all blocks.
         all_blocks = {term.split("w")[0] for words in m.top_words(4) for term, _ in words}
         assert len(all_blocks) == 3, f"{cls.__name__}: blocks covered {all_blocks}"
+
+
+# --- VAE objective/prior flags (#174 contrastive, #176 prior) ----------------
+
+@pytest.mark.parametrize("cls", MODELS, ids=MODEL_IDS)
+def test_flags_accepted_and_exposed(cls):
+    m = cls(num_topics=3, prior="dirichlet", contrastive=True,
+            contrastive_weight=0.3, contrastive_temp=0.2)
+    assert m.prior == "dirichlet"
+    assert m.contrastive is True
+
+
+@pytest.mark.parametrize("cls", MODELS, ids=MODEL_IDS)
+def test_flag_validation(cls):
+    with pytest.raises(ValueError):
+        cls(num_topics=3, prior="nope")
+    with pytest.raises(ValueError):
+        cls(num_topics=3, contrastive=True, contrastive_weight=-0.1)
+    with pytest.raises(ValueError):
+        cls(num_topics=3, contrastive=True, contrastive_temp=-1.0)
+
+
+@pytest.mark.parametrize("cls", MODELS, ids=MODEL_IDS)
+def test_flags_change_results(cls):
+    docs, embs, _ = _planted(n=120)
+    base = _model(cls, seed=1); base.fit(docs, embs, iters=60)
+    dir_m = _model(cls, seed=1, prior="dirichlet"); dir_m.fit(docs, embs, iters=60)
+    con_m = _model(cls, seed=1, contrastive=True); con_m.fit(docs, embs, iters=60)
+    assert not np.allclose(base.topic_word, dir_m.topic_word)
+    assert not np.allclose(base.topic_word, con_m.topic_word)
+    for m in (dir_m, con_m):
+        assert np.allclose(m.topic_word.sum(axis=1), 1.0)
+        assert np.allclose(m.doc_topic.sum(axis=1), 1.0)
+
+
+@pytest.mark.parametrize("cls", MODELS, ids=MODEL_IDS)
+def test_flags_deterministic(cls):
+    docs, embs, _ = _planted(n=120)
+    a = _model(cls, seed=4, prior="dirichlet", contrastive=True); a.fit(docs, embs, iters=60)
+    b = _model(cls, seed=4, prior="dirichlet", contrastive=True); b.fit(docs, embs, iters=60)
+    assert np.array_equal(a.topic_word, b.topic_word)
+    assert np.array_equal(a.doc_topic, b.doc_topic)
+
+
+@pytest.mark.parametrize("cls", MODELS, ids=MODEL_IDS)
+def test_flags_save_load_roundtrip(cls, tmp_path):
+    docs, embs, _ = _planted(n=120)
+    m = _model(cls, seed=2, prior="dirichlet", contrastive=True, contrastive_weight=0.4)
+    m.fit(docs, embs, iters=60)
+    path = str(tmp_path / "ctm_flags.bin")
+    m.save(path)
+    loaded = cls.load(path)
+    assert loaded.prior == "dirichlet"
+    assert loaded.contrastive is True
+    assert np.array_equal(loaded.topic_word, m.topic_word)
+    assert np.array_equal(loaded.doc_topic, m.doc_topic)

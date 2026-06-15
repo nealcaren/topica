@@ -173,6 +173,11 @@ the same surface (`topic_word`, `doc_topic`, `topic_embeddings`); `bound` is the
 variational bound for EM and the ELBO for VAE. The trade is the usual one: EM is
 more accurate per document, the VAE scales.
 
+The VAE path also accepts the shared `prior=` and `contrastive=` flags described
+under [ProdLDA](models.md#objective-and-prior-options): a Weibull-reparameterized
+Dirichlet prior and a CLNTM-style InfoNCE term on the topic vectors. They are
+ignored on the EM path and default off.
+
 ## FASTopic
 
 FASTopic also drops the encoder, but it is not a clustering pipeline and not a
@@ -250,7 +255,9 @@ The reference fits the encoder with PyTorch autograd. We hand-code the encoder's
 forward and backward, including the dense embedding block of the first layer
 (every gradient checked against finite differences), and step with Adam, so this
 is the same model with no PyTorch. Because the encoder is deterministic given a
-seed, fits are bit-identical across reruns. The reference implementation is
+seed, fits are bit-identical across reruns. CombinedTM also accepts the shared
+`prior=` and `contrastive=` flags described under
+[ProdLDA](models.md#objective-and-prior-options). The reference implementation is
 [contextualized-topic-models](https://github.com/MilaNLProc/contextualized-topic-models)
 (Bianchi et al., MIT).
 
@@ -285,8 +292,9 @@ theta_fr = model.transform(french_docs, multilingual_embed(french_docs))
 
 As with CombinedTM, we hand-code the encoder's forward and backward over the
 embedding-only first layer (finite-difference checked) and fit with Adam, so the
-path has no PyTorch and is bit-identical across reruns. The reference
-implementation is
+path has no PyTorch and is bit-identical across reruns. ZeroShotTM accepts the same
+shared `prior=` and `contrastive=` flags described under
+[ProdLDA](models.md#objective-and-prior-options). The reference implementation is
 [contextualized-topic-models](https://github.com/MilaNLProc/contextualized-topic-models)
 (Bianchi et al., MIT).
 
