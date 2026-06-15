@@ -1033,6 +1033,141 @@ class DTM:
     def __repr__(self) -> str: ...
 
 
+class DETM:
+    """Dynamic Embedded Topic Model (Dieng, Ruiz & Blei 2019): ETM extended to
+    time-stamped corpora. The topic embeddings (alpha) and the per-time topic prior
+    (eta) each follow a Gaussian random walk, so a topic's words drift smoothly
+    across time slices. Fit by minibatch Adam on the ELBO with hand-coded gradients
+    (structured amortized variational inference; q(eta) is the reference's multi-layer
+    LSTM over the per-time bag of words, with hand-coded backprop-through-time). You
+    supply the word embeddings rho like ETM. The headline output is the time-varying
+    topic-word tensor beta_over_time (num_times, num_topics, vocab); topic_word is its
+    mean over time."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        delta: float = 0.005,
+        hidden_size: int = 800,
+        eta_hidden_size: int = 200,
+        eta_nlayers: int = 3,
+        batch_size: int = 1000,
+        lr: float = 0.005,
+        wdecay: float = 1.2e-6,
+        grad_clip: float | None = None,
+        convergence_tol: float = 0.0,
+        seed: int = 42,
+    ) -> None:
+        """num_topics >= 2. delta is the random-walk standard-deviation knob on the
+        topic-embedding and topic-prior trajectories (smaller = smoother drift).
+        hidden_size is the document encoder width; eta_hidden_size/eta_nlayers size the
+        LSTM that amortizes the per-time topic prior q(eta) (reference defaults 200/3);
+        batch_size/lr/wdecay drive Adam; convergence_tol stops on the relative change
+        in the epoch ELBO (0 disables). grad_clip is an optional global gradient-norm
+        clip (the reference's --clip), off by default (None); set a positive float to
+        rescale each minibatch's gradients to that global L2 norm before the Adam step,
+        which stabilizes training on large vocabularies at higher learning rates. The
+        variational log-variances are additionally clamped before every exp for
+        numerical stability (internal; never reached on a well-behaved fit)."""
+        ...
+
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        word_embeddings: numpy.typing.ArrayLike,
+        vocabulary: Sequence[str],
+        *,
+        times: Sequence[int] | None = None,
+        timestamps: Sequence[int] | None = None,
+        iters: int = 100,
+        convergence_tol: float | None = None,
+    ) -> None:
+        """Fit on `data` with `word_embeddings` (len(vocabulary), L) aligned to
+        `vocabulary`. `times` is each document's integer time-slice index (0-based,
+        contiguous; `timestamps` is the accepted alias). `iters` is the epoch count."""
+        ...
+
+    def topic_word_at(self, t: int) -> numpy.typing.NDArray[numpy.float64]:
+        """Topic-word matrix at a single time slice, shape (num_topics, vocab)."""
+        ...
+
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[list[tuple[str, float]]] | list[tuple[str, float]]:
+        """Top n words per topic from the time-collapsed topic_word."""
+        ...
+
+    def top_words_at(
+        self, t: int, n: int = 10, *, topic: int | None = None
+    ) -> list[list[tuple[str, float]]] | list[tuple[str, float]]:
+        """Top n words for the topics at a single time slice t."""
+        ...
+
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]:
+        """UMass coherence for each topic's top-n words (time-collapsed)."""
+        ...
+
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def num_times(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Time-collapsed topic-word matrix (num_topics, vocab): mean of beta over
+        time. Rows sum to 1."""
+        ...
+    @property
+    def beta_over_time(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Time-varying topic-word tensor (num_times, num_topics, vocab)."""
+        ...
+    @property
+    def topic_word_over_time(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Alias of beta_over_time (num_times, num_topics, vocab)."""
+        ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Document-topic proportions theta (num_docs, num_topics)."""
+        ...
+    @property
+    def alpha(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Topic-embedding trajectories (num_times, num_topics, L)."""
+        ...
+    @property
+    def eta(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Time-varying topic prevalence prior (num_times, num_topics)."""
+        ...
+    @property
+    def bound(self) -> float:
+        """The final ELBO reached during fitting."""
+        ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """Per-epoch trace: list of (epoch, ELBO) pairs."""
+        ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+
+    def save(self, path: str) -> None:
+        """Persist the fitted model to path. Reload with DETM.load."""
+        ...
+
+    @staticmethod
+    def load(path: str) -> "DETM":
+        """Load a model previously written by save."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+
 class SupervisedLDA:
     """Supervised LDA (Blei & McAuliffe 2007): LDA where each document has a
     real-valued response y_d ~ N(eta^T zbar_d, sigma^2) regressed on its topic

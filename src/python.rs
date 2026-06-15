@@ -20,6 +20,7 @@ use pyo3::types::{PyDict, PyList, PyTuple};
 use numpy::ndarray::{Array1, Array2, Array3};
 use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArray2, ToPyArray};
 
+use crate::detm;
 use crate::dmr;
 use crate::dtm;
 use crate::gsdmm;
@@ -255,6 +256,7 @@ const MODEL_TAG_NMF:       u8 = 22;
 const MODEL_TAG_LSA:       u8 = 23;
 const MODEL_TAG_COMBINEDTM: u8 = 24;
 const MODEL_TAG_ZEROSHOTTM: u8 = 25;
+const MODEL_TAG_DETM:      u8 = 26;
 
 fn model_tag_name(tag: u8) -> &'static str {
     match tag {
@@ -283,6 +285,7 @@ fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_LSA      => "LSA",
         MODEL_TAG_COMBINEDTM => "CombinedTM",
         MODEL_TAG_ZEROSHOTTM => "ZeroShotTM",
+        MODEL_TAG_DETM     => "DETM",
         _                  => "unknown",
     }
 }
@@ -11555,6 +11558,565 @@ impl ETM {
     }
 }
 
+/// DETM: the Dynamic Embedded Topic Model (Dieng, Ruiz & Blei 2019,
+/// arXiv:1907.05545). DETM extends ``ETM`` to time-stamped corpora: the topic
+/// embeddings ``alpha`` and the per-time topic prior ``eta`` each follow a Gaussian
+/// random walk, so a topic's words drift smoothly across time slices. The headline
+/// output is the time-varying topic-word tensor ``beta`` (``num_times`` x
+/// ``num_topics`` x ``vocab``); ``topic_word`` is its mean over time, and
+/// :meth:`topic_word_at` / :meth:`top_words_at` read a single slice.
+///
+/// You bring the word embeddings ``rho`` like ``ETM``; topica fits the topic
+/// embeddings, the per-time prior, and an amortized encoder for the document-topic
+/// proportions by minibatch Adam on the ELBO (hand-coded gradients, no PyTorch).
+///
+/// The variational posterior over ``eta`` follows the reference: a multi-layer LSTM
+/// (sized by ``eta_hidden_size`` / ``eta_nlayers``) over the per-time bag of words
+/// amortizes the per-slice mean and log-variance, with the same random-walk KL. The
+/// LSTM forward and its backprop-through-time are hand-coded (no PyTorch). See
+/// ``src/detm.rs`` for the full account.
+///
+/// No embedder of your own? ``topica.llm_embed(vocabulary, model=...)`` builds the
+/// word embeddings ``rho`` (OpenAI, or offline ``sentence-transformers``).
+#[pyclass(module = "topica")]
+pub struct DETM {
+    num_topics: usize,
+    delta: f64,
+    hidden_size: usize,
+    eta_hidden_size: usize,
+    eta_nlayers: usize,
+    batch_size: usize,
+    lr: f64,
+    wdecay: f64,
+    grad_clip: Option<f64>,
+    convergence_tol: f64,
+    seed: u64,
+    fitted: bool,
+    topic_names: Vec<String>,
+    num_times: usize,
+    model: Option<detm::DetmModel>,
+    id_to_word: Vec<String>,
+    corpus: Option<corpus::Corpus>,
+}
+
+/// Serializable snapshot of a fitted DETM.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DetmState {
+    num_topics: usize,
+    delta: f64,
+    hidden_size: usize,
+    eta_hidden_size: usize,
+    eta_nlayers: usize,
+    batch_size: usize,
+    lr: f64,
+    wdecay: f64,
+    #[serde(default)]
+    grad_clip: Option<f64>,
+    convergence_tol: f64,
+    seed: u64,
+    fitted: bool,
+    topic_names: Vec<String>,
+    num_times: usize,
+    num_types: usize,
+    id_to_word: Vec<String>,
+    corpus: Option<corpus::Corpus>,
+    beta_over_time: Vec<Vec<Vec<f64>>>,
+    doc_topic: Vec<Vec<f64>>,
+    alpha: Vec<Vec<Vec<f64>>>,
+    eta: Vec<Vec<f64>>,
+    bound: f64,
+    converged: bool,
+}
+
+impl DETM {
+    fn fitted_model(&self) -> PyResult<&detm::DetmModel> {
+        self.model
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+    }
+}
+
+#[pymethods]
+impl DETM {
+    /// Create an unfitted model. ``delta`` is the random-walk standard-deviation
+    /// knob on the topic-embedding and topic-prior trajectories (smaller = smoother
+    /// drift; reference default 0.005). ``hidden_size`` is the document encoder
+    /// width. ``eta_hidden_size``/``eta_nlayers`` size the LSTM that amortizes the
+    /// per-time topic prior q(eta) (reference defaults 200 / 3).
+    /// ``batch_size``/``lr``/``wdecay`` drive Adam; ``convergence_tol`` stops on the
+    /// relative change in the epoch ELBO (0 disables early stop). ``grad_clip`` is an
+    /// optional global gradient-norm clip (the reference's ``--clip``), off by default
+    /// (``None``); set it to a positive float to rescale each minibatch's gradients so
+    /// their global L2 norm does not exceed it before the Adam step, which stabilizes
+    /// training on large vocabularies at higher learning rates. (The variational
+    /// log-variances are additionally clamped before every ``exp`` for stability; that
+    /// clamp is internal and never reached on a well-behaved fit.) Pass ``iters`` to
+    /// :meth:`fit` for the epoch count.
+    #[new]
+    #[pyo3(signature = (num_topics, *, delta=0.005, hidden_size=800,
+                        eta_hidden_size=200, eta_nlayers=3, batch_size=1000,
+                        lr=0.005, wdecay=1.2e-6, grad_clip=None, convergence_tol=0.0, seed=42))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
+        delta: f64,
+        hidden_size: usize,
+        eta_hidden_size: usize,
+        eta_nlayers: usize,
+        batch_size: usize,
+        lr: f64,
+        wdecay: f64,
+        grad_clip: Option<f64>,
+        convergence_tol: f64,
+        seed: u64,
+    ) -> PyResult<Self> {
+        if num_topics < 2 {
+            return Err(PyValueError::new_err("need at least 2 topics"));
+        }
+        if !finite_pos(delta) {
+            return Err(PyValueError::new_err("delta must be > 0"));
+        }
+        if eta_nlayers < 1 {
+            return Err(PyValueError::new_err("eta_nlayers must be >= 1"));
+        }
+        if eta_hidden_size < 1 {
+            return Err(PyValueError::new_err("eta_hidden_size must be >= 1"));
+        }
+        if let Some(c) = grad_clip {
+            if !(c > 0.0) || !c.is_finite() {
+                return Err(PyValueError::new_err("grad_clip must be a positive finite float or None"));
+            }
+        }
+        Ok(DETM {
+            num_topics,
+            delta,
+            hidden_size,
+            eta_hidden_size,
+            eta_nlayers,
+            batch_size,
+            lr,
+            wdecay,
+            grad_clip,
+            convergence_tol,
+            seed,
+            fitted: false,
+            topic_names: Vec::new(),
+            num_times: 0,
+            model: None,
+            id_to_word: Vec::new(),
+            corpus: None,
+        })
+    }
+
+    /// Fit on `data` (a Corpus or list of token lists) with `word_embeddings`
+    /// (`(len(vocabulary), L)`) and the aligned `vocabulary`. `times` is each
+    /// document's integer time-slice index (0-based, contiguous; alias
+    /// `timestamps`). `iters` sets the number of training epochs.
+    #[pyo3(signature = (data, word_embeddings, vocabulary, *, times=None, timestamps=None,
+                        iters=100, convergence_tol=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn fit(
+        &mut self,
+        py: Python<'_>,
+        data: &Bound<'_, PyAny>,
+        word_embeddings: &Bound<'_, PyAny>,
+        vocabulary: Vec<String>,
+        times: Option<Vec<i64>>,
+        timestamps: Option<Vec<i64>>,
+        iters: usize,
+        convergence_tol: Option<f64>,
+    ) -> PyResult<()> {
+        // times is canonical; timestamps is the accepted alias.
+        let times = match (times, timestamps) {
+            (Some(t), None) => t,
+            (None, Some(t)) => t,
+            (Some(_), Some(_)) => {
+                return Err(PyValueError::new_err(
+                    "pass either times= or timestamps=, not both",
+                ))
+            }
+            (None, None) => {
+                return Err(PyValueError::new_err(
+                    "fit() requires times= (the per-document time-slice index)",
+                ))
+            }
+        };
+        let tol = convergence_tol.unwrap_or(self.convergence_tol);
+
+        let (docs_str, corpus_opt): (Vec<Vec<String>>, Option<corpus::Corpus>) =
+            if let Ok(c) = data.extract::<Corpus>() {
+                let strings = c.inner.docs.iter()
+                    .map(|d| d.iter().map(|&w| c.inner.id_to_word[w as usize].clone()).collect())
+                    .collect();
+                (strings, Some(c.inner.clone()))
+            } else {
+                let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
+                    PyValueError::new_err("fit() expects a Corpus or a list of token lists")
+                })?;
+                (docs, None)
+            };
+        if docs_str.is_empty() {
+            return Err(PyValueError::new_err("corpus contains no documents"));
+        }
+        if times.len() != docs_str.len() {
+            return Err(PyValueError::new_err(format!(
+                "times has length {} but there are {} documents",
+                times.len(),
+                docs_str.len()
+            )));
+        }
+        if times.iter().any(|&t| t < 0) {
+            return Err(PyValueError::new_err("time-slice indices must be >= 0"));
+        }
+        let times_u: Vec<usize> = times.iter().map(|&t| t as usize).collect();
+        let num_times = times_u.iter().copied().max().unwrap() + 1;
+        let mut seen = vec![false; num_times];
+        for &t in &times_u {
+            seen[t] = true;
+        }
+        if seen.iter().any(|&s| !s) {
+            return Err(PyValueError::new_err(
+                "time slices must be contiguous 0..max; some slice has no documents",
+            ));
+        }
+
+        let rho = parse_features(word_embeddings)?;
+        if rho.len() != vocabulary.len() {
+            return Err(PyValueError::new_err(format!(
+                "word_embeddings has {} rows but vocabulary has {} words",
+                rho.len(),
+                vocabulary.len()
+            )));
+        }
+        check_all_finite_2d("word_embeddings", &rho)?;
+        if vocabulary.len() < self.num_topics {
+            return Err(PyValueError::new_err("vocabulary must have at least num_topics words"));
+        }
+
+        let map: std::collections::HashMap<&str, u32> =
+            vocabulary.iter().enumerate().map(|(i, w)| (w.as_str(), i as u32)).collect();
+        // Per-document sparse (tokens, counts) over the vocabulary ids.
+        let mut tokens: Vec<Vec<u32>> = Vec::with_capacity(docs_str.len());
+        let mut counts: Vec<Vec<u32>> = Vec::with_capacity(docs_str.len());
+        for doc in &docs_str {
+            let mut m: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
+            for w in doc {
+                if let Some(&id) = map.get(w.as_str()) {
+                    *m.entry(id).or_insert(0) += 1;
+                }
+            }
+            tokens.push(m.keys().copied().collect());
+            counts.push(m.values().copied().collect());
+        }
+        if tokens.iter().all(|d| d.is_empty()) {
+            return Err(PyValueError::new_err("no in-vocabulary tokens in the documents"));
+        }
+
+        let num_types = vocabulary.len();
+        self.id_to_word = vocabulary.clone();
+        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+
+        let (k, delta, h, eh, enl, bs, lr, wd, gc) = (
+            self.num_topics, self.delta, self.hidden_size, self.eta_hidden_size,
+            self.eta_nlayers, self.batch_size, self.lr, self.wdecay, self.grad_clip,
+        );
+        let model = py.allow_threads(move || {
+            detm::fit_detm(
+                &tokens, &counts, &times_u, k, num_types, num_times, &rho, delta, h, eh, enl,
+                iters, bs, lr, wd, tol, gc, &mut rng,
+            )
+        });
+
+        self.num_times = num_times;
+        self.model = Some(model);
+        // Retain a corpus for coherence/doc_names; build a minimal one if raw docs were given.
+        self.corpus = Some(corpus_opt.unwrap_or_else(|| {
+            let n = docs_str.len();
+            let v = num_types;
+            let mut df = vec![0u32; v];
+            let mut tf = vec![0u32; v];
+            let mut id_docs: Vec<Vec<u32>> = Vec::with_capacity(n);
+            for doc in &docs_str {
+                let ids: Vec<u32> =
+                    doc.iter().filter_map(|w| map.get(w.as_str()).copied()).collect();
+                let mut s = std::collections::HashSet::new();
+                for &id in &ids {
+                    tf[id as usize] += 1;
+                    s.insert(id as usize);
+                }
+                for id in s {
+                    df[id] += 1;
+                }
+                id_docs.push(ids);
+            }
+            corpus::Corpus {
+                id_to_word: vocabulary.clone(),
+                docs: id_docs,
+                doc_names: (0..n).map(|i| format!("doc_{i}")).collect(),
+                doc_labels: vec![String::new(); n],
+                doc_freqs: df,
+                total_freqs: tf,
+            }
+        }));
+        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
+        self.fitted = true;
+        Ok(())
+    }
+
+    #[getter]
+    fn num_topics(&self) -> usize {
+        self.num_topics
+    }
+
+    /// The number of time slices (available after fit).
+    #[getter]
+    fn num_times(&self) -> PyResult<usize> {
+        self.fitted_model()?;
+        Ok(self.num_times)
+    }
+
+    /// Time-collapsed topic-word matrix beta (num_topics, vocab): the mean of the
+    /// per-time beta over the slices. Each row is a distribution.
+    #[getter]
+    fn topic_word<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        Ok(vecs_to_arr2(&self.fitted_model()?.topic_word_mean()).to_pyarray_bound(py))
+    }
+
+    /// Time-varying topic-word tensor beta (num_times, num_topics, vocab); every
+    /// ``beta[t, k]`` is a distribution over the vocabulary. This is DETM's headline
+    /// output.
+    #[getter]
+    fn beta_over_time<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<f64>>> {
+        let m = self.fitted_model()?;
+        let (t, k, v) = (m.num_times, m.num_topics, m.num_types);
+        let mut arr = Array3::<f64>::zeros((t, k, v));
+        for tt in 0..t {
+            for kk in 0..k {
+                for vv in 0..v {
+                    arr[[tt, kk, vv]] = m.beta_over_time[tt][kk][vv];
+                }
+            }
+        }
+        Ok(arr.to_pyarray_bound(py))
+    }
+
+    /// Alias of :attr:`beta_over_time`: the per-time topic-word tensor
+    /// (num_times, num_topics, vocab).
+    #[getter]
+    fn topic_word_over_time<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<f64>>> {
+        self.beta_over_time(py)
+    }
+
+    /// Topic-word matrix at a single time slice ``t``, shape (num_topics, vocab);
+    /// each row a distribution.
+    fn topic_word_at<'py>(&self, py: Python<'py>, t: usize) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let m = self.fitted_model()?;
+        if t >= m.num_times {
+            return Err(PyValueError::new_err("time out of range"));
+        }
+        Ok(vecs_to_arr2(&m.beta_over_time[t]).to_pyarray_bound(py))
+    }
+
+    /// Document-topic proportions theta (num_docs, num_topics).
+    #[getter]
+    fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        Ok(vecs_to_arr2(&self.fitted_model()?.doc_topic).to_pyarray_bound(py))
+    }
+
+    /// Topic-embedding trajectories alpha (num_times, num_topics, L), the smooth
+    /// latent the random walk regularizes (variational means).
+    #[getter]
+    fn alpha<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<f64>>> {
+        let m = self.fitted_model()?;
+        let (t, k, l) = (m.num_times, m.num_topics, if m.num_topics > 0 { m.alpha[0][0].len() } else { 0 });
+        let mut arr = Array3::<f64>::zeros((t, k, l));
+        for tt in 0..t {
+            for kk in 0..k {
+                for ll in 0..l {
+                    arr[[tt, kk, ll]] = m.alpha[tt][kk][ll];
+                }
+            }
+        }
+        Ok(arr.to_pyarray_bound(py))
+    }
+
+    /// The time-varying topic prevalence prior eta (num_times, num_topics).
+    #[getter]
+    fn eta<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        Ok(vecs_to_arr2(&self.fitted_model()?.eta).to_pyarray_bound(py))
+    }
+
+    /// The final ELBO reached during fitting.
+    #[getter]
+    fn bound(&self) -> PyResult<f64> {
+        Ok(self.fitted_model()?.bound)
+    }
+
+    #[getter]
+    fn converged(&self) -> PyResult<bool> {
+        Ok(self.fitted_model()?.converged)
+    }
+
+    /// Uniform convergence trace: ``(epoch, ELBO)`` pairs, one per training epoch.
+    #[getter]
+    fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
+        let m = self.fitted_model()?;
+        Ok(m.bound_history.iter().enumerate().map(|(i, &b)| (i + 1, b)).collect())
+    }
+
+    #[getter]
+    fn vocabulary(&self) -> PyResult<Vec<String>> {
+        self.fitted_model()?;
+        Ok(self.id_to_word.clone())
+    }
+
+    /// Document names from the training corpus, in corpus order.
+    #[getter]
+    fn doc_names(&self) -> PyResult<Vec<String>> {
+        self.fitted_model()?;
+        Ok(self.corpus.as_ref().unwrap().doc_names.clone())
+    }
+
+    #[getter]
+    fn topic_names(&self) -> PyResult<Vec<String>> {
+        self.fitted_model()?;
+        Ok(self.topic_names.clone())
+    }
+
+    #[setter]
+    fn set_topic_names(&mut self, names: Vec<String>) -> PyResult<()> {
+        if names.len() != self.num_topics {
+            return Err(PyValueError::new_err(format!(
+                "topic_names must have length {} (got {})",
+                self.num_topics,
+                names.len()
+            )));
+        }
+        self.topic_names = names;
+        Ok(())
+    }
+
+    /// Top `n` words per topic from the time-collapsed ``topic_word``. Pass
+    /// ``topic=`` for a single topic. Use :meth:`top_words_at` for a single slice.
+    #[pyo3(signature = (n=10, *, topic=None))]
+    fn top_words<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        topic: Option<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let phi = vecs_to_arr2(&self.fitted_model()?.topic_word_mean());
+        topic_words_helper(py, &phi, &self.id_to_word, self.num_topics, n, topic)
+    }
+
+    /// Top `n` words for the topics at a single time slice ``t``. Pass ``topic=``
+    /// for one topic. This is the per-slice diagnostic: watch how a topic's words
+    /// change from one slice to the next.
+    #[pyo3(signature = (t, n=10, *, topic=None))]
+    fn top_words_at<'py>(
+        &self,
+        py: Python<'py>,
+        t: usize,
+        n: usize,
+        topic: Option<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let m = self.fitted_model()?;
+        if t >= m.num_times {
+            return Err(PyValueError::new_err("time out of range"));
+        }
+        let phi = vecs_to_arr2(&m.beta_over_time[t]);
+        topic_words_helper(py, &phi, &self.id_to_word, self.num_topics, n, topic)
+    }
+
+    /// UMass coherence for each topic's top-`n` words (time-collapsed topic_word),
+    /// over the training corpus.
+    #[pyo3(signature = (n=10))]
+    fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let phi = vecs_to_arr2(&self.fitted_model()?.topic_word_mean());
+        let tops = top_word_ids_phi(&phi, self.num_topics, n);
+        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+    }
+
+    /// Save the fitted model to `path`. Reload with `DETM.load`.
+    fn save(&self, path: &str) -> PyResult<()> {
+        let m = self.fitted_model()?;
+        write_state(path, MODEL_TAG_DETM, &DetmState {
+            num_topics: self.num_topics,
+            delta: self.delta,
+            hidden_size: self.hidden_size,
+            eta_hidden_size: self.eta_hidden_size,
+            eta_nlayers: self.eta_nlayers,
+            batch_size: self.batch_size,
+            lr: self.lr,
+            wdecay: self.wdecay,
+            grad_clip: self.grad_clip,
+            convergence_tol: self.convergence_tol,
+            seed: self.seed,
+            fitted: self.fitted,
+            topic_names: self.topic_names.clone(),
+            num_times: self.num_times,
+            num_types: m.num_types,
+            id_to_word: self.id_to_word.clone(),
+            corpus: self.corpus.clone(),
+            beta_over_time: m.beta_over_time.clone(),
+            doc_topic: m.doc_topic.clone(),
+            alpha: m.alpha.clone(),
+            eta: m.eta.clone(),
+            bound: m.bound,
+            converged: m.converged,
+        })
+    }
+
+    /// Load a model previously written by :meth:`save`.
+    #[staticmethod]
+    fn load(path: &str) -> PyResult<Self> {
+        let s: DetmState = read_state(path, MODEL_TAG_DETM)?;
+        let model = detm::DetmModel {
+            num_topics: s.num_topics,
+            num_times: s.num_times,
+            num_types: s.num_types,
+            beta_over_time: s.beta_over_time,
+            doc_topic: s.doc_topic,
+            alpha: s.alpha,
+            eta: s.eta,
+            bound: s.bound,
+            bound_history: Vec::new(),
+            converged: s.converged,
+            epochs_run: 0,
+        };
+        Ok(DETM {
+            num_topics: s.num_topics,
+            delta: s.delta,
+            hidden_size: s.hidden_size,
+            eta_hidden_size: s.eta_hidden_size,
+            eta_nlayers: s.eta_nlayers,
+            batch_size: s.batch_size,
+            lr: s.lr,
+            wdecay: s.wdecay,
+            grad_clip: s.grad_clip,
+            convergence_tol: s.convergence_tol,
+            seed: s.seed,
+            fitted: s.fitted,
+            topic_names: s.topic_names,
+            num_times: s.num_times,
+            model: Some(model),
+            id_to_word: s.id_to_word,
+            corpus: s.corpus,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        if self.fitted {
+            format!(
+                "DETM(num_topics={}, num_times={}, fitted=true)",
+                self.num_topics, self.num_times
+            )
+        } else {
+            format!("DETM(num_topics={}, fitted=false)", self.num_topics)
+        }
+    }
+}
+
 /// ProdLDA (Srivastava & Sutton 2017), the AVITM autoencoding-variational topic
 /// model. ProdLDA is LDA with the word-level mixture replaced by a *product of
 /// experts*: each topic is an unnormalized expert and the word distribution is
@@ -14873,6 +15435,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LSA>()?;
     m.add_class::<CombinedTM>()?;
     m.add_class::<ZeroShotTM>()?;
+    m.add_class::<DETM>()?;
     m.add_class::<Corpus>()?;
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(window_cooccurrence, m)?)?;

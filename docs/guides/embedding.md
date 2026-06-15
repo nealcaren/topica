@@ -298,6 +298,41 @@ shared `prior=` and `contrastive=` flags described under
 [contextualized-topic-models](https://github.com/MilaNLProc/contextualized-topic-models)
 (Bianchi et al., MIT).
 
+## DETM
+
+DETM (the Dynamic Embedded Topic Model) is ETM for time-stamped corpora: the
+topic embeddings drift across ordered time slices, so a topic's *words* evolve
+while its identity persists. You supply word embeddings and a per-document time
+index; the topic-word distribution at each slice is `softmax(alpha_k^(t) . rho)`,
+with `alpha` following a Gaussian random walk over time.
+
+```python
+model = topica.DETM(num_topics=20, seed=1)
+model.fit(docs, word_embeddings, vocabulary, times=year_index, iters=120)
+
+model.topic_word                 # (K, V): time-averaged topics
+model.beta_over_time             # (T, K, V): per-slice topic-word distributions
+model.top_words_at(t=0, n=10)    # the top words of each topic in slice t
+model.eta                        # (T, K): the time-varying topic prevalence prior
+```
+
+Inference is structured amortized variational inference (an LSTM over the per-time
+word frequencies for the prevalence prior, an encoder for the document
+proportions), hand-coded in the Rust core with finite-difference-checked
+gradients; no PyTorch. Fits are deterministic from a fixed seed. On large
+vocabularies the variational log-variances are clamped for numerical stability,
+and an optional `grad_clip=` mirrors the reference's gradient clipping; neither
+changes the default result on well-behaved corpora.
+
+DETM is [validated against the reference](https://github.com/adjidieng/DETM)
+(Dieng, Ruiz & Blei 2019, MIT) on the paper's UN-debates and ACL corpora: it
+recovers topics at the reference's own seed-to-seed agreement (aligned cosine
+0.74 / 0.59 against a 0.74 / 0.58 reference-vs-reference floor). One honest
+caveat: the per-time *prevalence* trajectory (`eta`) is weakly identified in DETM
+— the reference implementation cannot reproduce its own `eta` across random seeds
+either — so read the topic-word evolution (`beta_over_time`), which is stable, and
+do not over-interpret a single `eta` trajectory.
+
 ## Avoiding the `-1` noise bucket
 
 HDBSCAN (the default) discovers the topic count but leaves sparse documents

@@ -142,6 +142,7 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
     // the SVD is a direct solve, so there is no fit_history trajectory.
     RegistryEntry { name: "LSA", family: ModelFamily::None_, exempt: &["fit_history"] },
     RegistryEntry { name: "ETM", family: ModelFamily::None_, exempt: &[] },
+    RegistryEntry { name: "DETM", family: ModelFamily::None_, exempt: &[] },
     RegistryEntry { name: "FASTopic", family: ModelFamily::None_, exempt: &[] },
     RegistryEntry { name: "GSDMM", family: ModelFamily::None_, exempt: &[] },
     RegistryEntry { name: "BERTopic", family: ModelFamily::None_, exempt: &[] },
@@ -170,6 +171,6 @@ mod registry_tests {
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
         // Estimator-backed Rust struct).
-        assert_eq!(RUST_ESTIMATORS.len(), 23, "registry size drifted from the Python REGISTRY");
+        assert_eq!(RUST_ESTIMATORS.len(), 24, "registry size drifted from the Python REGISTRY");
     }
 }

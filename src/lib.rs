@@ -6,6 +6,7 @@ pub mod ctm;
 pub mod dmr;
 pub mod sts;
 pub mod estimator;
+pub mod detm;
 pub mod etm;
 pub mod etm_vae;
 pub mod dtm;
