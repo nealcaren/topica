@@ -31,6 +31,7 @@
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
+use rayon::prelude::*;
 
 /// Small additive constant guarding the multiplicative-update denominators.
 const EPS: f64 = 1e-10;
@@ -80,46 +81,58 @@ impl Mat {
     }
 }
 
+// The three matmuls are rayon-parallelized over INDEPENDENT output rows: each
+// output row is computed entirely by one task, into its own disjoint output
+// slice, and each output cell keeps a FIXED inner-product summation order (the
+// `p` loop accumulates left-to-right regardless of how rows are scheduled).
+// Therefore results are bit-identical for any thread count (no parallel
+// reduction whose combination order depends on thread completion).
+
 /// `A . B` for row-major `A (m x k)` and `B (k x n)`.
 fn matmul(a: &Mat, b: &Mat) -> Mat {
     debug_assert_eq!(a.cols, b.rows);
     let (m, k, n) = (a.rows, a.cols, b.cols);
     let mut out = Mat::zeros(m, n);
-    for i in 0..m {
-        for p in 0..k {
-            let aip = a.at(i, p);
-            if aip == 0.0 {
-                continue;
+    out.data
+        .par_chunks_mut(n)
+        .enumerate()
+        .for_each(|(i, orow)| {
+            let arow = &a.data[i * k..(i + 1) * k];
+            for p in 0..k {
+                let aip = arow[p];
+                if aip == 0.0 {
+                    continue;
+                }
+                let brow = &b.data[p * n..(p + 1) * n];
+                for j in 0..n {
+                    orow[j] += aip * brow[j];
+                }
             }
-            let brow = &b.data[p * n..(p + 1) * n];
-            let orow = &mut out.data[i * n..(i + 1) * n];
-            for j in 0..n {
-                orow[j] += aip * brow[j];
-            }
-        }
-    }
+        });
     out
 }
 
-/// `A^T . B` for row-major `A (m x k)` and `B (m x n)`, giving `(k x n)`.
+/// `A^T . B` for row-major `A (m x k)` and `B (m x n)`, giving `(k x n)`. Output
+/// row `p` is `sum_i A[i,p] * B[i,:]`, accumulated over `i` in fixed order.
 fn matmul_at(a: &Mat, b: &Mat) -> Mat {
     debug_assert_eq!(a.rows, b.rows);
     let (m, k, n) = (a.rows, a.cols, b.cols);
     let mut out = Mat::zeros(k, n);
-    for i in 0..m {
-        let arow = &a.data[i * k..(i + 1) * k];
-        let brow = &b.data[i * n..(i + 1) * n];
-        for p in 0..k {
-            let aip = arow[p];
-            if aip == 0.0 {
-                continue;
+    out.data
+        .par_chunks_mut(n)
+        .enumerate()
+        .for_each(|(p, orow)| {
+            for i in 0..m {
+                let aip = a.data[i * k + p];
+                if aip == 0.0 {
+                    continue;
+                }
+                let brow = &b.data[i * n..(i + 1) * n];
+                for j in 0..n {
+                    orow[j] += aip * brow[j];
+                }
             }
-            let orow = &mut out.data[p * n..(p + 1) * n];
-            for j in 0..n {
-                orow[j] += aip * brow[j];
-            }
-        }
-    }
+        });
     out
 }
 
@@ -128,15 +141,141 @@ fn matmul_bt(a: &Mat, b: &Mat) -> Mat {
     debug_assert_eq!(a.cols, b.cols);
     let (m, k, n) = (a.rows, a.cols, b.rows);
     let mut out = Mat::zeros(m, n);
-    for i in 0..m {
-        let arow = &a.data[i * k..(i + 1) * k];
-        for j in 0..n {
+    out.data
+        .par_chunks_mut(n)
+        .enumerate()
+        .for_each(|(i, orow)| {
+            let arow = &a.data[i * k..(i + 1) * k];
+            for j in 0..n {
+                let brow = &b.data[j * k..(j + 1) * k];
+                let mut s = 0.0;
+                for p in 0..k {
+                    s += arow[p] * brow[p];
+                }
+                orow[j] = s;
+            }
+        });
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Sparse X (CSR). X is the document-term matrix, which is very sparse, so every
+// product against X iterates only its nonzeros. Per-row (col, val) lists in CSR
+// layout; nonzeros within a row stay in ascending-column order so each output
+// cell's summation order is fixed and thread-count-independent.
+// ---------------------------------------------------------------------------
+
+/// Compressed sparse row matrix `(rows x cols)`.
+struct SpMat {
+    rows: usize,
+    cols: usize,
+    /// Row `r`'s nonzeros are `cols[indptr[r]..indptr[r+1]]` / `vals[...]`.
+    indptr: Vec<usize>,
+    col_idx: Vec<usize>,
+    vals: Vec<f64>,
+}
+
+impl SpMat {
+    #[inline]
+    fn row(&self, r: usize) -> (&[usize], &[f64]) {
+        let s = self.indptr[r];
+        let e = self.indptr[r + 1];
+        (&self.col_idx[s..e], &self.vals[s..e])
+    }
+    /// `sum_{i,j} X_ij^2`.
+    fn frob_sq(&self) -> f64 {
+        self.vals.iter().map(|&v| v * v).sum()
+    }
+    /// `sum_{i,j} X_ij`.
+    fn total(&self) -> f64 {
+        self.vals.iter().sum()
+    }
+}
+
+/// `X^T . B` for sparse `X (m x cols)` and dense `B (m x n)`, giving `(cols x n)`.
+/// Output row `p` = `sum over rows i with X[i,p]!=0 of X[i,p] * B[i,:]`. We invert
+/// the loop: scatter each nonzero into the corresponding output row. To keep
+/// output rows independent (and the per-cell sum order fixed) we accumulate into
+/// a per-output-row layout sequentially over rows `i` ascending.
+fn sp_xt_b(x: &SpMat, b: &Mat) -> Mat {
+    debug_assert_eq!(x.rows, b.rows);
+    let n = b.cols;
+    let mut out = Mat::zeros(x.cols, n);
+    // Sequential over i ascending: each (i) contributes X[i,p]*B[i,:] to out row
+    // p; summation order over i is fixed, so the result is deterministic.
+    for i in 0..x.rows {
+        let (cols, vals) = x.row(i);
+        let brow = &b.data[i * n..(i + 1) * n];
+        for (&p, &xv) in cols.iter().zip(vals.iter()) {
+            let orow = &mut out.data[p * n..(p + 1) * n];
+            for j in 0..n {
+                orow[j] += xv * brow[j];
+            }
+        }
+    }
+    out
+}
+
+/// `X . B^T` for sparse `X (m x cols)` and dense `B (n x cols)`, giving `(m x n)`.
+/// Parallel over independent output rows `i`; each cell `(i,j)` sums over the
+/// nonzeros of `X` row `i` in ascending-column order (fixed).
+fn sp_x_bt(x: &SpMat, b: &Mat) -> Mat {
+    debug_assert_eq!(x.cols, b.cols);
+    let n = b.rows;
+    let k = b.cols;
+    let mut out = Mat::zeros(x.rows, n);
+    out.data.par_chunks_mut(n).enumerate().for_each(|(i, orow)| {
+        let (cols, vals) = x.row(i);
+        for (j, ocell) in orow.iter_mut().enumerate() {
             let brow = &b.data[j * k..(j + 1) * k];
             let mut s = 0.0;
-            for p in 0..k {
-                s += arow[p] * brow[p];
+            for (&c, &xv) in cols.iter().zip(vals.iter()) {
+                s += xv * brow[c];
             }
-            out.set(i, j, s);
+            *ocell = s;
+        }
+    });
+    out
+}
+
+/// `X . B` for sparse `X (m x cols)` and dense `B (cols x n)`, giving `(m x n)`.
+/// Parallel over independent output rows `i`; cell `(i,j)` sums over the nonzeros
+/// of `X` row `i` in ascending-column order (fixed).
+fn sp_x_b(x: &SpMat, b: &Mat) -> Mat {
+    debug_assert_eq!(x.cols, b.rows);
+    let n = b.cols;
+    let mut out = Mat::zeros(x.rows, n);
+    out.data.par_chunks_mut(n).enumerate().for_each(|(i, orow)| {
+        let (cols, vals) = x.row(i);
+        for (&c, &xv) in cols.iter().zip(vals.iter()) {
+            let brow = &b.data[c * n..(c + 1) * n];
+            for j in 0..n {
+                orow[j] += xv * brow[j];
+            }
+        }
+    });
+    out
+}
+
+/// `A^T . X` for dense `A (m x r)` and sparse `X (m x cols)`, giving `(r x cols)`.
+/// Sequential over rows `i` ascending so each output cell's sum order is fixed.
+fn sp_at_x(a: &Mat, x: &SpMat) -> Mat {
+    debug_assert_eq!(a.rows, x.rows);
+    let r = a.cols;
+    let mut out = Mat::zeros(r, x.cols);
+    let cols = x.cols;
+    for i in 0..x.rows {
+        let arow = &a.data[i * r..(i + 1) * r];
+        let (xcols, xvals) = x.row(i);
+        for p in 0..r {
+            let aip = arow[p];
+            if aip == 0.0 {
+                continue;
+            }
+            let orow = &mut out.data[p * cols..(p + 1) * cols];
+            for (&c, &xv) in xcols.iter().zip(xvals.iter()) {
+                orow[c] += aip * xv;
+            }
         }
     }
     out
@@ -264,7 +403,12 @@ fn jacobi_eigen(a_in: &Mat) -> (Vec<f64>, Mat) {
 
 /// Top-`k` truncated SVD of `X (d x v)` by randomized range finding. Returns
 /// `(U (d x k), S (k), Vt (k x v))`. Deterministic (fixed internal seed).
-fn randomized_svd(x: &Mat, k: usize) -> (Mat, Vec<f64>, Mat) {
+///
+/// NOTE: this builds `B B^T` and takes `sqrt(eig(B B^T))`, which SQUARES the
+/// conditioning of the singular spectrum (small singular values lose precision).
+/// That is acceptable here only because the SVD is scoped to seeding the NNDSVD
+/// initialization, not to any reported factorization output.
+fn randomized_svd(x: &SpMat, k: usize) -> (Mat, Vec<f64>, Mat) {
     let (d, v) = (x.rows, x.cols);
     let p = 10usize.min(v.saturating_sub(k));
     let r = (k + p).min(v).min(d);
@@ -279,16 +423,16 @@ fn randomized_svd(x: &Mat, k: usize) -> (Mat, Vec<f64>, Mat) {
     }
 
     // Y = X Omega, with power iterations Y <- X (X^T Y), re-orthonormalizing.
-    let mut y = matmul(x, &omega); // d x r
+    let mut y = sp_x_b(x, &omega); // d x r
     let mut q = mgs_q(&y);
     for _ in 0..4 {
-        let xtq = matmul_at(x, &q); // v x r
-        y = matmul(x, &xtq); // d x r
+        let xtq = sp_xt_b(x, &q); // v x r
+        y = sp_x_b(x, &xtq); // d x r
         q = mgs_q(&y);
     }
 
     // B = Q^T X  (r x v).
-    let b = matmul_at(&q, x);
+    let b = sp_at_x(&q, x);
     // Small SVD of B via the eigendecomposition of B B^T (r x r).
     let bbt = matmul_bt(&b, &b); // r x r
     let (eigvals, ub) = jacobi_eigen(&bbt); // ub columns are left singular vecs of B
@@ -329,7 +473,7 @@ fn randomized_svd(x: &Mat, k: usize) -> (Mat, Vec<f64>, Mat) {
 /// NNDSVD initialization with the "a" zero-fill (Boutsidis & Gallopoulos). Builds
 /// `W (d x k)` and `H (k x v)` from the signed singular vectors, then fills exact
 /// zeros with `mean(X)`.
-fn nndsvd_init(x: &Mat, k: usize) -> (Mat, Mat) {
+fn nndsvd_init(x: &SpMat, k: usize) -> (Mat, Mat) {
     let (d, v) = (x.rows, x.cols);
     let (u, s, vt) = randomized_svd(x, k);
 
@@ -348,6 +492,13 @@ fn nndsvd_init(x: &Mat, k: usize) -> (Mat, Mat) {
 
     // Remaining components: split each singular vector into its positive and
     // negative parts and keep whichever pairing carries more energy.
+    //
+    // LOAD-BEARING sign coupling: `u` (cols of U) and `vt` (rows of Vt) are both
+    // derived from the SAME left singular vectors of B (`ub`), so a global sign
+    // flip of a singular triplet flips U[:,c] and Vt[c,:] TOGETHER. NNDSVD's
+    // positive/negative split therefore picks a consistent (W,H) pairing
+    // regardless of the arbitrary SVD sign. Do not derive U and Vt from
+    // independent eigenproblems, or the signs would decouple and break this.
     for c in 1..k {
         let mut up = vec![0.0; d];
         let mut un = vec![0.0; d];
@@ -392,7 +543,7 @@ fn nndsvd_init(x: &Mat, k: usize) -> (Mat, Mat) {
     }
 
     // "a" variant: fill exact zeros with mean(X).
-    let mean = x.data.iter().sum::<f64>() / (d * v).max(1) as f64;
+    let mean = x.total() / (d * v).max(1) as f64;
     for x in w.data.iter_mut() {
         if *x == 0.0 {
             *x = mean;
@@ -410,19 +561,26 @@ fn norm(v: &[f64]) -> f64 {
     v.iter().map(|&x| x * x).sum::<f64>().sqrt()
 }
 
-/// Random nonnegative initialization, scaled so `W H ~ X` in magnitude: entries
-/// uniform on `[0, 1)` times `sqrt(mean(X)/K)`, seeded by the user `seed`.
-fn random_init<R: Rng>(x: &Mat, k: usize, rng: &mut R) -> (Mat, Mat) {
+/// Random nonnegative initialization matching sklearn's `init="random"`
+/// heuristic. Each factor entry is a half-normal draw `|randn| * sqrt(mean(X)/K)`,
+/// seeded by the user `seed` via the caller's ChaCha8 RNG.
+///
+/// Magnitude target: with `E[|randn|] = sqrt(2/pi)` and `E[randn^2] = 1`, each
+/// W,H entry has mean `sqrt(2/pi) * sqrt(mean/K)` and second moment `mean/K`, so
+/// `E[(WH)_ij] = sum_k E[W_ik] E[H_kj] = K * (2/pi) * (mean/K) = (2/pi)*mean`.
+/// That is the same `O(mean)` scaling sklearn uses (it does not aim for exactly
+/// `mean`; the multiplicative updates rescale within the first few iterations).
+fn random_init<R: Rng>(x: &SpMat, k: usize, rng: &mut R) -> (Mat, Mat) {
     let (d, v) = (x.rows, x.cols);
-    let mean = x.data.iter().sum::<f64>() / (d * v).max(1) as f64;
+    let mean = x.total() / (d * v).max(1) as f64;
     let scale = (mean / k as f64).max(EPS).sqrt();
     let mut w = Mat::zeros(d, k);
     let mut h = Mat::zeros(k, v);
     for x in w.data.iter_mut() {
-        *x = rng.gen::<f64>() * scale;
+        *x = randn(rng).abs() * scale;
     }
     for x in h.data.iter_mut() {
-        *x = rng.gen::<f64>() * scale;
+        *x = randn(rng).abs() * scale;
     }
     (w, h)
 }
@@ -431,46 +589,110 @@ fn random_init<R: Rng>(x: &Mat, k: usize, rng: &mut R) -> (Mat, Mat) {
 // Reconstruction error
 // ---------------------------------------------------------------------------
 
-fn frobenius_error(x: &Mat, w: &Mat, h: &Mat) -> f64 {
-    let wh = matmul(w, h);
+/// `(W H)_ij = sum_k W[i,k] H[k,j]` for column `j` only (k-length inner product),
+/// summed in fixed `k` order. `h` is `K x V` row-major, so `H[k,j]` strides by V.
+#[inline]
+fn wh_cell(wrow: &[f64], h: &Mat, j: usize, k: usize) -> f64 {
     let mut s = 0.0;
-    for i in 0..x.data.len() {
-        let d = x.data[i] - wh.data[i];
-        s += d * d;
-    }
-    0.5 * s
-}
-
-fn kl_error(x: &Mat, w: &Mat, h: &Mat) -> f64 {
-    let wh = matmul(w, h);
-    let mut s = 0.0;
-    for i in 0..x.data.len() {
-        let xi = x.data[i];
-        let whi = wh.data[i].max(EPS);
-        if xi > 0.0 {
-            s += xi * (xi / whi).ln() - xi + whi;
-        } else {
-            s += whi;
-        }
+    for p in 0..k {
+        s += wrow[p] * h.data[p * h.cols + j];
     }
     s
+}
+
+/// Frobenius reconstruction error `0.5 ||X - WH||_F^2` WITHOUT forming dense WH:
+/// `0.5(||X||_F^2 - 2 <X,WH>_nnz + tr((W^T W)(H H^T)))`. The cross term touches
+/// only nnz(X); the `tr` term is `O(d k + k^2 + k v)` via the small Gram matrices.
+fn frobenius_error(x: &SpMat, w: &Mat, h: &Mat) -> f64 {
+    let k = w.cols;
+    let v = h.cols;
+    // Cross term <X, WH> over nonzeros, parallel over independent rows i. We
+    // collect per-row partials into an indexed Vec and sum sequentially, so the
+    // total is independent of thread completion order (deterministic).
+    let mut partials = vec![0.0; x.rows];
+    partials
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(i, slot)| {
+            let wrow = &w.data[i * k..(i + 1) * k];
+            let (cols, vals) = x.row(i);
+            let mut s = 0.0;
+            for (&j, &xv) in cols.iter().zip(vals.iter()) {
+                s += xv * wh_cell(wrow, h, j, k);
+            }
+            *slot = s;
+        });
+    let cross: f64 = partials.iter().sum();
+    // tr((W^T W)(H H^T)) = sum_{a,b} (W^T W)_ab (H H^T)_ab.
+    let wtw = matmul_at(w, w); // k x k
+    let hht = matmul_bt(h, h); // k x k
+    let mut tr = 0.0;
+    for a in 0..k {
+        for b in 0..k {
+            tr += wtw.data[a * k + b] * hht.data[a * k + b];
+        }
+    }
+    let _ = v;
+    0.5 * (x.frob_sq() - 2.0 * cross + tr)
+}
+
+/// Generalized KL `sum_ij [X ln(X/WH) - X + WH]` WITHOUT forming dense WH. The
+/// `X ln(X/WH)` term is nonzero only at nnz(X) (compute WH there); `sum WH =
+/// sum_k (sum_i W_ik)(sum_j H_kj)`; `-sum X` is a scalar.
+fn kl_error(x: &SpMat, w: &Mat, h: &Mat) -> f64 {
+    let k = w.cols;
+    // sum over nnz of X ln(X/WH), parallel over independent rows. Per-row
+    // partials are summed sequentially so the total is thread-count-independent.
+    let mut partials = vec![0.0; x.rows];
+    partials
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(i, slot)| {
+            let wrow = &w.data[i * k..(i + 1) * k];
+            let (cols, vals) = x.row(i);
+            let mut s = 0.0;
+            for (&j, &xv) in cols.iter().zip(vals.iter()) {
+                if xv > 0.0 {
+                    let whij = wh_cell(wrow, h, j, k).max(EPS);
+                    s += xv * (xv / whij).ln();
+                }
+            }
+            *slot = s;
+        });
+    let nnz_term: f64 = partials.iter().sum();
+    // sum WH = sum_k (sum_i W_ik) (sum_j H_kj).
+    let mut sum_wh = 0.0;
+    for c in 0..k {
+        let mut wsum = 0.0;
+        for i in 0..w.rows {
+            wsum += w.data[i * k + c];
+        }
+        let mut hsum = 0.0;
+        for j in 0..h.cols {
+            hsum += h.data[c * h.cols + j];
+        }
+        sum_wh += wsum * hsum;
+    }
+    nnz_term - x.total() + sum_wh
 }
 
 // ---------------------------------------------------------------------------
 // Multiplicative updates
 // ---------------------------------------------------------------------------
 
-/// One Frobenius multiplicative update of `H` then `W`.
-fn mu_frobenius(x: &Mat, w: &mut Mat, h: &mut Mat) {
+/// One Frobenius multiplicative update of `H` then `W`. X is sparse: `W^T X` and
+/// `X H^T` iterate only nonzeros; the small `k`-dim Grams and their dense
+/// products stay dense (and parallelized).
+fn mu_frobenius(x: &SpMat, w: &mut Mat, h: &mut Mat) {
     // H *= (W^T X) / (W^T W H + eps).
-    let wtx = matmul_at(w, x); // k x v
+    let wtx = sp_at_x(w, x); // k x v   (sparse-X product)
     let wtw = matmul_at(w, w); // k x k
     let wtwh = matmul(&wtw, h); // k x v
     for i in 0..h.data.len() {
         h.data[i] *= wtx.data[i] / (wtwh.data[i] + EPS);
     }
     // W *= (X H^T) / (W H H^T + eps).
-    let xht = matmul_bt(x, h); // d x k
+    let xht = sp_x_bt(x, h); // d x k   (sparse-X product)
     let hht = matmul_bt(h, h); // k x k
     let whht = matmul(w, &hht); // d x k
     for i in 0..w.data.len() {
@@ -478,16 +700,52 @@ fn mu_frobenius(x: &Mat, w: &mut Mat, h: &mut Mat) {
     }
 }
 
-/// One KL multiplicative update of `H` then `W`.
-fn mu_kl(x: &Mat, w: &mut Mat, h: &mut Mat) {
+/// Sparse ratio `R = X (./) WH` with the SAME sparsity as `X`: `R_ij = X_ij /
+/// ((WH)_ij + eps)` only at nnz(X) (zero elsewhere, since `X_ij = 0` there).
+/// Returns a CSR matrix sharing X's structure. Parallel over independent rows;
+/// each `(WH)_ij` keeps a fixed inner-product order over `k`.
+fn sparse_ratio(x: &SpMat, w: &Mat, h: &Mat) -> SpMat {
+    let k = w.cols;
+    // Parallel over independent rows: each row owns a disjoint slice of `vals`.
+    let mut out_vals = vec![0.0; x.vals.len()];
+    let chunks: Vec<&mut [f64]> = {
+        // Build per-row mutable slices following X's indptr layout.
+        let mut rest = out_vals.as_mut_slice();
+        let mut v = Vec::with_capacity(x.rows);
+        for i in 0..x.rows {
+            let len = x.indptr[i + 1] - x.indptr[i];
+            let (head, tail) = rest.split_at_mut(len);
+            v.push(head);
+            rest = tail;
+        }
+        v
+    };
+    chunks.into_par_iter().enumerate().for_each(|(i, slot)| {
+        let wrow = &w.data[i * k..(i + 1) * k];
+        let (cols, vals) = x.row(i);
+        for (out, (&j, &xv)) in slot.iter_mut().zip(cols.iter().zip(vals.iter())) {
+            let whij = wh_cell(wrow, h, j, k) + EPS;
+            *out = xv / whij;
+        }
+    });
+    SpMat {
+        rows: x.rows,
+        cols: x.cols,
+        indptr: x.indptr.clone(),
+        col_idx: x.col_idx.clone(),
+        vals: out_vals,
+    }
+}
+
+/// One KL multiplicative update of `H` then `W`. The ratio `X (./) WH` is zero
+/// wherever `X` is zero, so it is formed sparsely (WH evaluated only at nnz(X));
+/// numerators are sparse-X products, denominators are column-sums of W / row-sums
+/// of H (`O(dk)` / `O(kv)`).
+fn mu_kl(x: &SpMat, w: &mut Mat, h: &mut Mat) {
     let (d, v, k) = (x.rows, x.cols, w.cols);
     // H_kj *= [sum_i W_ik (X_ij / (WH)_ij)] / [sum_i W_ik].
-    let wh = matmul(w, h); // d x v
-    let mut ratio = Mat::zeros(d, v);
-    for i in 0..d * v {
-        ratio.data[i] = x.data[i] / (wh.data[i] + EPS);
-    }
-    let numer = matmul_at(w, &ratio); // k x v
+    let ratio = sparse_ratio(x, w, h);
+    let numer = sp_at_x(w, &ratio); // k x v
     let mut wsum = vec![0.0; k]; // sum_i W_ik
     for i in 0..d {
         for c in 0..k {
@@ -502,12 +760,8 @@ fn mu_kl(x: &Mat, w: &mut Mat, h: &mut Mat) {
         }
     }
     // W_ik *= [sum_j H_kj (X_ij / (WH)_ij)] / [sum_j H_kj].
-    let wh = matmul(w, h);
-    let mut ratio = Mat::zeros(d, v);
-    for i in 0..d * v {
-        ratio.data[i] = x.data[i] / (wh.data[i] + EPS);
-    }
-    let numer = matmul_bt(&ratio, h); // d x k
+    let ratio = sparse_ratio(x, w, h);
+    let numer = sp_x_bt(&ratio, h); // d x k
     let mut hsum = vec![0.0; k]; // sum_j H_kj
     for c in 0..k {
         let mut s = 0.0;
@@ -566,51 +820,69 @@ fn normalize_rows(m: &Mat) -> Vec<Vec<f64>> {
         .collect()
 }
 
-/// Build the document-term count matrix `X (D x V)` from token-id documents.
-fn count_matrix(docs: &[Vec<u32>], num_types: usize) -> Mat {
+/// Build the sparse document-term count matrix `X (D x V)` (CSR) from token-id
+/// documents. Each row's nonzeros are stored in ascending-column order.
+fn count_matrix(docs: &[Vec<u32>], num_types: usize) -> SpMat {
     let d = docs.len();
-    let mut x = Mat::zeros(d, num_types);
-    for (i, doc) in docs.iter().enumerate() {
+    let mut indptr = Vec::with_capacity(d + 1);
+    let mut col_idx = Vec::new();
+    let mut vals = Vec::new();
+    indptr.push(0);
+    // Per-row dense accumulator (reused), scanned in ascending column order so
+    // CSR nonzeros come out sorted.
+    let mut counts = vec![0.0f64; num_types];
+    let mut touched: Vec<usize> = Vec::new();
+    for doc in docs {
         for &w in doc {
             let w = w as usize;
             if w < num_types {
-                x.data[i * num_types + w] += 1.0;
+                if counts[w] == 0.0 {
+                    touched.push(w);
+                }
+                counts[w] += 1.0;
             }
         }
+        touched.sort_unstable();
+        for &c in &touched {
+            col_idx.push(c);
+            vals.push(counts[c]);
+            counts[c] = 0.0;
+        }
+        touched.clear();
+        indptr.push(col_idx.len());
     }
-    x
+    SpMat { rows: d, cols: num_types, indptr, col_idx, vals }
 }
 
-/// Build the TF-IDF document-term matrix: `tf * (ln((1+D)/(1+df)) + 1)`, then L2
-/// normalize each document row. topica's own formula; no dependence on any
-/// external transformer.
-fn tfidf_matrix(docs: &[Vec<u32>], num_types: usize) -> Mat {
+/// Build the sparse TF-IDF document-term matrix (CSR): `tf * (ln((1+D)/(1+df))
+/// + 1)`, then L2 normalize each document row. topica's own formula; no
+/// dependence on any external transformer. The IDF reweighting and L2 norm only
+/// rescale existing nonzeros, so the sparsity pattern is unchanged.
+fn tfidf_matrix(docs: &[Vec<u32>], num_types: usize) -> SpMat {
     let d = docs.len();
     let mut x = count_matrix(docs, num_types);
-    // Document frequency per term.
+    // Document frequency per term (count of rows with a nonzero in that column).
     let mut df = vec![0usize; num_types];
-    for r in 0..d {
-        for c in 0..num_types {
-            if x.at(r, c) > 0.0 {
-                df[c] += 1;
-            }
-        }
+    for &c in &x.col_idx {
+        df[c] += 1;
     }
     let idf: Vec<f64> = (0..num_types)
         .map(|c| ((1.0 + d as f64) / (1.0 + df[c] as f64)).ln() + 1.0)
         .collect();
     for r in 0..d {
-        for c in 0..num_types {
-            let v = x.at(r, c) * idf[c];
-            x.set(r, c, v);
+        let s = x.indptr[r];
+        let e = x.indptr[r + 1];
+        // Apply IDF, then L2-normalize the row over its nonzeros.
+        let mut sumsq = 0.0;
+        for nz in s..e {
+            let v = x.vals[nz] * idf[x.col_idx[nz]];
+            x.vals[nz] = v;
+            sumsq += v * v;
         }
-        // L2 normalize the row.
-        let row = x.row(r);
-        let n = norm(row);
+        let n = sumsq.sqrt();
         if n > 0.0 {
-            for c in 0..num_types {
-                let v = x.at(r, c) / n;
-                x.set(r, c, v);
+            for nz in s..e {
+                x.vals[nz] /= n;
             }
         }
     }
@@ -621,6 +893,12 @@ fn tfidf_matrix(docs: &[Vec<u32>], num_types: usize) -> Mat {
 /// `beta_loss` selects the divergence; `init` selects the factor initialization;
 /// `iters` is the maximum iteration count; `convergence_tol` stops early on the
 /// relative reconstruction-error decrease; `seed` seeds `init = Random` only.
+///
+/// NOTE on `convergence_tol`: this is a PER-ITERATION relative-decrease test
+/// (`|prev - err| / |prev| < tol` stops). sklearn instead checks the CUMULATIVE
+/// relative improvement since iteration 0, evaluated only every 10 iterations.
+/// The two stopping rules differ, so `converged` and `iters_run` here are NOT
+/// directly comparable to sklearn's `n_iter_`.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_nmf(
     docs: &[Vec<u32>],
@@ -801,17 +1079,51 @@ mod tests {
         let v = 5usize;
         let a = [3.0, 1.0, 2.0, 0.5, 1.5, 2.5];
         let b = [2.0, 1.0, 0.5, 1.5, 1.0];
-        let mut x = Mat::zeros(d, v);
+        let mut indptr = vec![0usize];
+        let mut col_idx = Vec::new();
+        let mut vals = Vec::new();
         for i in 0..d {
             for j in 0..v {
-                x.set(i, j, a[i] * b[j]);
+                col_idx.push(j);
+                vals.push(a[i] * b[j]);
             }
+            indptr.push(col_idx.len());
         }
+        let x = SpMat { rows: d, cols: v, indptr, col_idx, vals };
         let (_, s, _) = randomized_svd(&x, 2);
         let want = norm(&a) * norm(&b);
         assert!((s[0] - want).abs() / want < 1e-6, "sigma0 {} vs {}", s[0], want);
         // The second singular value of a rank-1 matrix is ~0.
         assert!(s[1] < 1e-6, "sigma1 {} should be near zero", s[1]);
+    }
+
+    #[test]
+    fn thread_count_independent() {
+        // Same seed at 1 thread vs many threads must give bit-identical factors,
+        // proving the parallel matmuls do not depend on thread completion order.
+        let (k, block) = (4usize, 7usize);
+        let (docs, v) = planted(k, block, 200, 18, 11);
+        let fit = |loss, init| {
+            fit_nmf(&docs, k, v, loss, init, false, 120, 0.0, 77)
+        };
+        for &loss in &[BetaLoss::Frobenius, BetaLoss::KullbackLeibler] {
+            for &init in &[Init::Nndsvd, Init::Random] {
+                let one = rayon::ThreadPoolBuilder::new()
+                    .num_threads(1)
+                    .build()
+                    .unwrap()
+                    .install(|| fit(loss, init));
+                let many = rayon::ThreadPoolBuilder::new()
+                    .num_threads(8)
+                    .build()
+                    .unwrap()
+                    .install(|| fit(loss, init));
+                assert_eq!(one.topic_word, many.topic_word,
+                    "topic_word differs by thread count (loss={loss:?}, init={init:?})");
+                assert_eq!(one.doc_topic, many.doc_topic,
+                    "doc_topic differs by thread count (loss={loss:?}, init={init:?})");
+            }
+        }
     }
 
     #[test]
