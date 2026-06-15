@@ -19,6 +19,7 @@ pub mod lightlda;
 pub mod mh;
 pub mod linalg;
 pub mod model;
+pub mod nmf;
 pub mod optimize;
 pub mod output;
 pub mod pa;

@@ -73,6 +73,8 @@ REGISTRY: list[tuple[str, object, str]] = [
     ("ETM",          lambda: _topica.ETM(2),                                     "none"),
     ("ProdLDA",      lambda: _topica.ProdLDA(2),                                 "none"),
     ("FASTopic",     lambda: _topica.FASTopic(2),                                "none"),
+    # matrix-factorization — no theta posterior
+    ("NMF",          lambda: _topica.NMF(2),                                     "none"),
     # embedding-cluster — no generative word distribution
     ("BERTopic",     lambda: _topica.BERTopic(min_cluster_size=5),               "none"),
     ("Top2Vec",      lambda: _topica.Top2Vec(),                                  "none"),
