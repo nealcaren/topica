@@ -167,14 +167,39 @@ impl BatchNorm {
     }
 }
 
-/// The trainable parameters: encoder (`V -> hidden -> hidden -> (mu, logvar)`) and
-/// the unnormalized decoder `beta` (K x V, row-major).
+/// Which inputs feed the encoder's first layer. The decoder, prior, KL,
+/// reparameterization, batchnorm, and BoW reconstruction loss are identical in
+/// every mode; only layer 1's input changes.
+///
+/// - [`InputMode::BowOnly`] is plain ProdLDA: input is the normalized bag of
+///   words (sparse, length `V`); `w1` is `hidden x V` and `e == 0`.
+/// - [`InputMode::BowEmb`] is CombinedTM: the normalized bag of words is
+///   concatenated with the caller's dense document embedding (length `E`); `w1`
+///   is `hidden x (V + E)`, with the BoW columns sparse and the embedding columns
+///   dense.
+/// - [`InputMode::EmbOnly`] is ZeroShotTM: input is the document embedding alone;
+///   `w1` is `hidden x E` (its `V`-column block is unused at the encoder, though
+///   `beta` still reconstructs the `V`-word BoW).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InputMode {
+    BowOnly,
+    BowEmb,
+    EmbOnly,
+}
+
+/// The trainable parameters: encoder (`input -> hidden -> hidden -> (mu, logvar)`)
+/// and the unnormalized decoder `beta` (K x V, row-major). The encoder's first
+/// weight matrix `w1` is `hidden x (V + E)`: the first `V` columns multiply the
+/// sparse normalized bag of words, the next `E` columns the dense document
+/// embedding. With `e == 0` this is exactly the bag-of-words ProdLDA encoder.
 #[derive(Clone)]
 pub struct Weights {
     pub v: usize,
+    pub e: usize,
     pub hidden: usize,
     pub k: usize,
-    pub w1: Vec<f64>, // hidden x V
+    pub mode: InputMode,
+    pub w1: Vec<f64>, // hidden x (V + E)
     pub b1: Vec<f64>, // hidden
     pub w2: Vec<f64>, // hidden x hidden
     pub b2: Vec<f64>, // hidden
@@ -186,12 +211,31 @@ pub struct Weights {
 }
 
 impl Weights {
-    fn new<R: Rng>(v: usize, hidden: usize, k: usize, rng: &mut R) -> Self {
+    /// Build encoder/decoder weights for the given input mode. `fan_in` for `w1`
+    /// is the encoder's input width: `V` (bow-only), `V + E` (bow+emb), or `E`
+    /// (emb-only), matching the reference's `Linear(input_size, hidden)`. The RNG
+    /// draw order is identical to the bow-only path when `e == 0`.
+    fn new<R: Rng>(
+        v: usize,
+        e: usize,
+        hidden: usize,
+        k: usize,
+        mode: InputMode,
+        rng: &mut R,
+    ) -> Self {
+        let cols = v + e; // w1 stores both blocks; the emb-only path leaves the BoW block unused.
+        let fan_in = match mode {
+            InputMode::BowOnly => v,
+            InputMode::BowEmb => v + e,
+            InputMode::EmbOnly => e,
+        };
         Weights {
             v,
+            e,
             hidden,
             k,
-            w1: kaiming(hidden * v, v, rng),
+            mode,
+            w1: kaiming(hidden * cols, fan_in, rng),
             b1: vec![0.0; hidden],
             w2: kaiming(hidden * hidden, hidden, rng),
             b2: vec![0.0; hidden],
@@ -204,16 +248,28 @@ impl Weights {
     }
 
     /// Encoder forward for one document up to the pre-batchnorm head outputs,
-    /// retaining the activations needed for the backward pass.
-    fn encode_raw(&self, xn: &[(usize, f64)], mask2: &[f64]) -> DocCache {
+    /// retaining the activations needed for the backward pass. `xn` is the sparse
+    /// normalized bag of words; `emb` is the dense document embedding (length `E`,
+    /// empty for bow-only). Layer 1's input depends on the mode: bow-only uses the
+    /// BoW columns of `w1`, emb-only the embedding columns, bow+emb both.
+    fn encode_raw(&self, xn: &[(usize, f64)], emb: &[f64], mask2: &[f64]) -> DocCache {
         let (h, k) = (self.hidden, self.k);
-        // Layer 1 is sparse in the vocabulary: only the document's words contribute.
+        let cols = self.v + self.e;
+        // Layer 1: the BoW part is sparse in the vocabulary, the embedding part dense.
         let mut pre1 = self.b1.clone();
         for i in 0..h {
-            let row = i * self.v;
+            let row = i * cols;
             let mut s = pre1[i];
-            for &(w, val) in xn {
-                s += self.w1[row + w] * val;
+            if self.mode != InputMode::EmbOnly {
+                for &(w, val) in xn {
+                    s += self.w1[row + w] * val;
+                }
+            }
+            if self.mode != InputMode::BowOnly {
+                let base = row + self.v;
+                for (j, &ev) in emb.iter().enumerate() {
+                    s += self.w1[base + j] * ev;
+                }
             }
             pre1[i] = s;
         }
@@ -313,6 +369,7 @@ fn laplace_prior(alpha: &[f64]) -> (Vec<f64>, Vec<f64>) {
 /// finite-difference loss can be recomputed identically.
 struct Batch<'a> {
     xns: Vec<&'a [(usize, f64)]>,
+    embs: Vec<&'a [f64]>,
     counts: Vec<&'a [(usize, f64)]>,
     totals: Vec<f64>,
     eps: &'a [Vec<f64>],
@@ -351,7 +408,7 @@ fn batch_forward(
 
     // Encoder up to the pre-BN heads.
     let doc: Vec<DocCache> =
-        (0..n).map(|i| w.encode_raw(batch.xns[i], &batch.masks2[i])).collect();
+        (0..n).map(|i| w.encode_raw(batch.xns[i], batch.embs[i], &batch.masks2[i])).collect();
     let mu_raw: Vec<Vec<f64>> = doc.iter().map(|d| d.mu_raw.clone()).collect();
     let lv_raw: Vec<Vec<f64>> = doc.iter().map(|d| d.lv_raw.clone()).collect();
 
@@ -522,12 +579,23 @@ fn batch_backward(w: &Weights, prior_mu: &[f64], prior_var: &[f64], batch: &Batc
         for j in 0..h {
             dpre1[j] = dh1[j] * sigmoid(dc.pre1[j]);
         }
-        // Layer 1 (sparse in the vocabulary): pre1 = W1 xn + b1.
+        // Layer 1: pre1 = W1 [xn ; emb] + b1. The BoW columns are sparse in the
+        // vocabulary; the embedding columns (offset by V) are dense. The mode
+        // selects which blocks contribute, mirroring `encode_raw`.
+        let cols = v + w.e;
         for a in 0..h {
             g.b1[a] += dpre1[a];
-            let row = a * v;
-            for &(word, val) in batch.xns[i] {
-                g.w1[row + word] += dpre1[a] * val;
+            let row = a * cols;
+            if w.mode != InputMode::EmbOnly {
+                for &(word, val) in batch.xns[i] {
+                    g.w1[row + word] += dpre1[a] * val;
+                }
+            }
+            if w.mode != InputMode::BowOnly {
+                let base = row + v;
+                for (j, &ev) in batch.embs[i].iter().enumerate() {
+                    g.w1[base + j] += dpre1[a] * ev;
+                }
             }
         }
     }
@@ -631,12 +699,22 @@ impl ProdldaModel {
 
     /// Topic proportions for new documents: one encoder forward pass each,
     /// `theta = softmax(BN_eval(mu))` (no sampling, running batchnorm statistics).
+    /// For bow-only ProdLDA the embedding argument is unused; pass an empty slice.
     pub fn transform(&self, docs: &[Vec<u32>]) -> Vec<Vec<f64>> {
+        let empty: Vec<Vec<f64>> = vec![Vec::new(); docs.len()];
+        self.transform_with_emb(docs, &empty)
+    }
+
+    /// Topic proportions for new documents using both the bag of words and the
+    /// caller's per-document embeddings. `docs[i]` and `embs[i]` describe the same
+    /// document; the mode stored in the encoder selects which inputs are read.
+    pub fn transform_with_emb(&self, docs: &[Vec<u32>], embs: &[Vec<f64>]) -> Vec<Vec<f64>> {
         docs.iter()
-            .map(|d| {
+            .zip(embs.iter())
+            .map(|(d, emb)| {
                 let xn = normalized_bow(d);
                 let no_drop = vec![1.0; self.weights.hidden];
-                let dc = self.weights.encode_raw(&xn, &no_drop);
+                let dc = self.weights.encode_raw(&xn, emb, &no_drop);
                 let mu = self.bn_mu.forward_eval_row(&dc.mu_raw);
                 softmax(&mu)
             })
@@ -668,11 +746,46 @@ fn raw_bow(doc: &[u32]) -> Vec<(usize, f64)> {
 /// concentration (reference 1.0); `dropout` is the dropout *rate* on `h2` and
 /// `theta`; `epochs`/`batch_size`/`lr` drive Adam (reference 200/200/0.002, with
 /// `beta1 = 0.99`); `em_tol` stops on the relative change in the epoch ELBO.
+///
+/// This is the bag-of-words encoder; [`fit_avitm`] is the generalization that adds
+/// a dense per-document embedding block (CombinedTM / ZeroShotTM). The two share
+/// the entire forward/backward core, and this path is byte-identical to the
+/// pre-embedding implementation.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_prodlda<R: Rng>(
     docs: &[Vec<u32>],
     num_topics: usize,
     num_types: usize,
+    hidden: usize,
+    alpha: f64,
+    dropout: f64,
+    epochs: usize,
+    batch_size: usize,
+    lr: f64,
+    em_tol: f64,
+    rng: &mut R,
+) -> ProdldaModel {
+    let empty: Vec<Vec<f64>> = vec![Vec::new(); docs.len()];
+    fit_avitm(
+        docs, &empty, InputMode::BowOnly, num_topics, num_types, 0, hidden, alpha,
+        dropout, epochs, batch_size, lr, em_tol, rng,
+    )
+}
+
+/// Fit the AVITM autoencoding-variational topic model with a chosen encoder input
+/// (see [`InputMode`]). `embs[i]` is the dense embedding for document `i` (length
+/// `emb_dim`; pass empty rows and `emb_dim == 0` for the bow-only path). The
+/// decoder, prior, KL, reparameterization, batchnorm, Adam, and BoW reconstruction
+/// loss are identical across modes; only the layer-1 input differs. CombinedTM is
+/// [`InputMode::BowEmb`], ZeroShotTM is [`InputMode::EmbOnly`].
+#[allow(clippy::too_many_arguments)]
+pub fn fit_avitm<R: Rng>(
+    docs: &[Vec<u32>],
+    embs: &[Vec<f64>],
+    mode: InputMode,
+    num_topics: usize,
+    num_types: usize,
+    emb_dim: usize,
     hidden: usize,
     alpha: f64,
     dropout: f64,
@@ -691,7 +804,7 @@ pub fn fit_prodlda<R: Rng>(
     let (prior_mu, prior_var) = laplace_prior(&vec![alpha; k]);
     let keep = (1.0 - dropout).max(1e-6);
 
-    let mut w = Weights::new(v, hidden, k, rng);
+    let mut w = Weights::new(v, emb_dim, hidden, k, mode, rng);
     let mut bn_mu = BatchNorm::new(k);
     let mut bn_lv = BatchNorm::new(k);
     let mut bn_dec = BatchNorm::new(v);
@@ -734,6 +847,7 @@ pub fn fit_prodlda<R: Rng>(
                 .collect();
             let batch = Batch {
                 xns: chunk.iter().map(|&di| xn[di].as_slice()).collect(),
+                embs: chunk.iter().map(|&di| embs[di].as_slice()).collect(),
                 counts: chunk.iter().map(|&di| bows[di].as_slice()).collect(),
                 totals: chunk.iter().map(|&di| totals[di]).collect(),
                 eps: &eps,
@@ -779,7 +893,7 @@ pub fn fit_prodlda<R: Rng>(
         weights: w,
         bn_mu,
     };
-    let doc_topic = model.transform(docs);
+    let doc_topic = model.transform_with_emb(docs, embs);
     ProdldaModel { doc_topic, ..model }
 }
 
@@ -836,11 +950,14 @@ mod tests {
         batch_forward(w, &bn_mu, &bn_lv, &bn_dec, prior_mu, prior_var, batch).0
     }
 
-    #[test]
-    fn batch_gradients_match_fd() {
+    // FD gradient check for a given encoder input mode. Every weight block is
+    // perturbed by central differences against the analytic batch gradient,
+    // including the new dense-embedding columns of `w1`. The maximum relative
+    // error across all parameters is returned for reporting.
+    fn fd_check_mode(mode: InputMode, emb_dim: usize) -> f64 {
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         let (v, hidden, k) = (7usize, 5usize, 4usize);
-        let w0 = Weights::new(v, hidden, k, &mut rng);
+        let w0 = Weights::new(v, emb_dim, hidden, k, mode, &mut rng);
         let (prior_mu, prior_var) = laplace_prior(&vec![1.0; k]);
 
         // A small batch (>=2 docs so batchnorm statistics are well-defined).
@@ -850,12 +967,17 @@ mod tests {
         let bows: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| raw_bow(d)).collect();
         let totals: Vec<f64> = bows.iter().map(|b| b.iter().map(|&(_, c)| c).sum()).collect();
         let n = docs.len();
+        // Distinct, nonzero embeddings so the embedding columns get a real signal.
+        let embs: Vec<Vec<f64>> = (0..n)
+            .map(|i| (0..emb_dim).map(|j| 0.3 * (i as f64 + 1.0) - 0.17 * j as f64 + 0.05).collect())
+            .collect();
         let eps: Vec<Vec<f64>> =
             (0..n).map(|i| (0..k).map(|t| 0.1 * (i as f64 + 1.0) - 0.05 * t as f64).collect()).collect();
         let masks2 = vec![vec![1.0; hidden]; n]; // dropout disabled for the check
         let masks_t = vec![vec![1.0; k]; n];
         let batch = Batch {
             xns: xns.iter().map(|x| x.as_slice()).collect(),
+            embs: embs.iter().map(|x| x.as_slice()).collect(),
             counts: bows.iter().map(|b| b.as_slice()).collect(),
             totals: totals.clone(),
             eps: &eps,
@@ -873,6 +995,7 @@ mod tests {
         batch_backward(&w0, &prior_mu, &prior_var, &batch, &cache, &mut g);
 
         let fd = 1e-6;
+        let mut max_rel = 0.0f64;
         macro_rules! check_block {
             ($field:ident, $label:expr) => {
                 for idx in 0..w0.$field.len() {
@@ -882,10 +1005,23 @@ mod tests {
                     wp.$field[idx] -= 2.0 * fd;
                     let lm = batch_loss(&wp, &prior_mu, &prior_var, &batch);
                     let num = (lp - lm) / (2.0 * fd);
+                    let analytic = g.$field[idx];
+                    let abs_err = (analytic - num).abs();
+                    // Relative error is only meaningful where the gradient has
+                    // appreciable magnitude; near zero, central-difference noise
+                    // (O(fd^2) plus float cancellation) dominates the ratio, so we
+                    // fall back to the absolute tolerance there.
+                    let denom = analytic.abs().max(num.abs());
+                    if denom > 1e-3 {
+                        let rel = abs_err / denom;
+                        if rel > max_rel {
+                            max_rel = rel;
+                        }
+                    }
                     assert!(
-                        (g.$field[idx] - num).abs() < 1e-4,
-                        "{} [{}]: analytic {} vs numeric {}",
-                        $label, idx, g.$field[idx], num
+                        abs_err < 1e-4,
+                        "{:?} {} [{}]: analytic {} vs numeric {}",
+                        mode, $label, idx, analytic, num
                     );
                 }
             };
@@ -899,6 +1035,27 @@ mod tests {
         check_block!(w_ls, "w_ls");
         check_block!(b_ls, "b_ls");
         check_block!(beta, "beta");
+        max_rel
+    }
+
+    #[test]
+    fn batch_gradients_match_fd() {
+        // Bow-only path (plain ProdLDA).
+        fd_check_mode(InputMode::BowOnly, 0);
+    }
+
+    #[test]
+    fn batch_gradients_match_fd_bow_emb() {
+        // CombinedTM: BoW concatenated with a dense embedding block.
+        let max_rel = fd_check_mode(InputMode::BowEmb, 6);
+        assert!(max_rel < 1e-4, "bow+emb max relative error {max_rel}");
+    }
+
+    #[test]
+    fn batch_gradients_match_fd_emb_only() {
+        // ZeroShotTM: dense embedding block only, no BoW in the encoder.
+        let max_rel = fd_check_mode(InputMode::EmbOnly, 6);
+        assert!(max_rel < 1e-4, "emb-only max relative error {max_rel}");
     }
 
     #[test]
@@ -964,5 +1121,95 @@ mod tests {
         let m = fit_prodlda(&docs, k, v, 32, 1.0, 0.0, 250, 60, 0.01, 0.0, &mut rng);
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
+    }
+
+    // A synthetic corpus where the document embedding encodes the planted topic
+    // structure: K blocks of words, each document drawn from one block, and the
+    // document's E-vector one-hot along its block's axis (plus noise). Returns
+    // (docs, embeddings, k, block, v).
+    fn planted_emb_corpus(
+        n_docs: usize,
+        seed: u64,
+    ) -> (Vec<Vec<u32>>, Vec<Vec<f64>>, usize, usize, usize) {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let (k, block) = (3usize, 8usize);
+        let v = k * block;
+        let mut docs = Vec::with_capacity(n_docs);
+        let mut embs = Vec::with_capacity(n_docs);
+        for d in 0..n_docs {
+            let b = d % k;
+            let doc: Vec<u32> = (0..15)
+                .map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                .collect();
+            // Embedding: 3.0 along the block axis, small noise elsewhere.
+            let emb: Vec<f64> = (0..k)
+                .map(|j| if j == b { 3.0 } else { 0.0 } + (rng.gen::<f64>() - 0.5) * 0.2)
+                .collect();
+            docs.push(doc);
+            embs.push(emb);
+        }
+        (docs, embs, k, block, v)
+    }
+
+    fn top_blocks(tw: &[Vec<f64>], k: usize, v: usize, block: usize) -> usize {
+        let mut covered = std::collections::HashSet::new();
+        for row in tw.iter().take(k) {
+            let mut ord: Vec<usize> = (0..v).collect();
+            ord.sort_by(|&a, &b| row[b].total_cmp(&row[a]));
+            let blocks: std::collections::HashSet<usize> =
+                ord[..4].iter().map(|&w| w / block).collect();
+            assert_eq!(blocks.len(), 1, "topic top words mix blocks");
+            covered.insert(*blocks.iter().next().unwrap());
+        }
+        covered.len()
+    }
+
+    #[test]
+    fn combinedtm_recovers_planted_blocks() {
+        let (docs, embs, k, block, v) = planted_emb_corpus(180, 1);
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let m = fit_avitm(
+            &docs, &embs, InputMode::BowEmb, k, v, k, 32, 1.0, 0.0, 250, 60, 0.01, 0.0, &mut rng,
+        );
+        let tw = m.topic_word();
+        for row in &tw {
+            assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        }
+        for row in &m.doc_topic {
+            assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        }
+        assert_eq!(top_blocks(&tw, k, v, block), k, "topics did not cover all blocks");
+        let base = crate::conformance::check_conformance(&m);
+        assert!(base.is_empty(), "check_conformance: {:?}", base);
+    }
+
+    #[test]
+    fn zeroshottm_recovers_planted_blocks() {
+        let (docs, embs, k, block, v) = planted_emb_corpus(180, 1);
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let m = fit_avitm(
+            &docs, &embs, InputMode::EmbOnly, k, v, k, 32, 1.0, 0.0, 250, 60, 0.01, 0.0, &mut rng,
+        );
+        let tw = m.topic_word();
+        for row in &tw {
+            assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        }
+        // The encoder never saw the BoW; topics are recovered from embeddings alone.
+        assert_eq!(top_blocks(&tw, k, v, block), k, "topics did not cover all blocks");
+        let base = crate::conformance::check_conformance(&m);
+        assert!(base.is_empty(), "check_conformance: {:?}", base);
+    }
+
+    #[test]
+    fn embedding_modes_are_deterministic() {
+        let (docs, embs, k, _block, v) = planted_emb_corpus(60, 2);
+        for mode in [InputMode::BowEmb, InputMode::EmbOnly] {
+            let mut r1 = ChaCha8Rng::seed_from_u64(11);
+            let mut r2 = ChaCha8Rng::seed_from_u64(11);
+            let a = fit_avitm(&docs, &embs, mode, k, v, k, 16, 1.0, 0.0, 30, 30, 0.01, 0.0, &mut r1);
+            let b = fit_avitm(&docs, &embs, mode, k, v, k, 16, 1.0, 0.0, 30, 30, 0.01, 0.0, &mut r2);
+            assert_eq!(a.topic_word(), b.topic_word(), "{mode:?} topic_word not bit-identical");
+            assert_eq!(a.doc_topic, b.doc_topic, "{mode:?} doc_topic not bit-identical");
+        }
     }
 }

@@ -253,6 +253,8 @@ const MODEL_TAG_PA:        u8 = 20;
 const MODEL_TAG_HLDA:      u8 = 21;
 const MODEL_TAG_NMF:       u8 = 22;
 const MODEL_TAG_LSA:       u8 = 23;
+const MODEL_TAG_COMBINEDTM: u8 = 24;
+const MODEL_TAG_ZEROSHOTTM: u8 = 25;
 
 fn model_tag_name(tag: u8) -> &'static str {
     match tag {
@@ -279,6 +281,8 @@ fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_HLDA     => "HLDA",
         MODEL_TAG_NMF      => "NMF",
         MODEL_TAG_LSA      => "LSA",
+        MODEL_TAG_COMBINEDTM => "CombinedTM",
+        MODEL_TAG_ZEROSHOTTM => "ZeroShotTM",
         _                  => "unknown",
     }
 }
@@ -11848,7 +11852,7 @@ impl ProdLDA {
                 converged: s.converged.unwrap_or(false),
                 epochs_run: s.epochs_run.unwrap_or(0),
                 weights: prodlda::Weights {
-                    v, hidden, k,
+                    v, e: 0, hidden, k, mode: prodlda::InputMode::BowOnly,
                     w1: s.w_w1.unwrap_or_default(),
                     b1: s.w_b1.unwrap_or_default(),
                     w2: s.w_w2.unwrap_or_default(),
@@ -11886,6 +11890,496 @@ impl ProdLDA {
         format!("ProdLDA(num_topics={}, fitted={})", self.num_topics, self.fitted)
     }
 }
+
+// --- CombinedTM / ZeroShotTM (Bianchi et al. 2021) ---------------------------
+//
+// Both models are ProdLDA with a different encoder *input*: CombinedTM
+// concatenates the normalized bag of words with a caller-supplied document
+// embedding (`InputMode::BowEmb`), and ZeroShotTM uses the embedding alone
+// (`InputMode::EmbOnly`). The decoder, prior, KL, reparameterization, batchnorm,
+// Adam, and BoW reconstruction loss are identical to ProdLDA; see
+// `crate::prodlda::fit_avitm`. The two pyclasses share their whole surface, so we
+// generate them with one macro and only vary the input mode, the model tag, and
+// the class name. Embeddings are caller-supplied (sentence-transformers / API /
+// ollama), matching ETM's caller-supplied-vectors pattern; ZeroShotTM's
+// embedding-only encoder is what enables cross-lingual transfer at `transform`.
+
+/// Serializable snapshot of a fitted CombinedTM / ZeroShotTM. The encoder `w1` is
+/// `hidden x (V + E)`; `emb_dim` records `E` and `mode` the encoder input.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CtmEmbState {
+    num_topics: usize,
+    hidden_size: usize,
+    alpha: f64,
+    dropout: f64,
+    batch_size: usize,
+    lr: f64,
+    convergence_tol: f64,
+    seed: u64,
+    fitted: bool,
+    topic_names: Vec<String>,
+    corpus: Option<corpus::Corpus>,
+    emb_dim: usize,
+    mode: u8, // 1 = BowEmb (CombinedTM), 2 = EmbOnly (ZeroShotTM)
+    doc_topic: Option<Vec<Vec<f64>>>,
+    bound: Option<f64>,
+    bound_history: Option<Vec<f64>>,
+    converged: Option<bool>,
+    epochs_run: Option<usize>,
+    w_v: Option<usize>,
+    w_e: Option<usize>,
+    w_hidden: Option<usize>,
+    w_k: Option<usize>,
+    w_w1: Option<Vec<f64>>,
+    w_b1: Option<Vec<f64>>,
+    w_w2: Option<Vec<f64>>,
+    w_b2: Option<Vec<f64>>,
+    w_w_mu: Option<Vec<f64>>,
+    w_b_mu: Option<Vec<f64>>,
+    w_w_ls: Option<Vec<f64>>,
+    w_b_ls: Option<Vec<f64>>,
+    w_beta: Option<Vec<f64>>,
+    bn_running_mean: Option<Vec<f64>>,
+    bn_running_var: Option<Vec<f64>>,
+}
+
+fn mode_to_u8(m: prodlda::InputMode) -> u8 {
+    match m {
+        prodlda::InputMode::BowOnly => 0,
+        prodlda::InputMode::BowEmb => 1,
+        prodlda::InputMode::EmbOnly => 2,
+    }
+}
+
+fn u8_to_mode(m: u8) -> prodlda::InputMode {
+    match m {
+        2 => prodlda::InputMode::EmbOnly,
+        _ => prodlda::InputMode::BowEmb,
+    }
+}
+
+/// Parse `doc_embeddings` into dense rows and check the row count matches the
+/// document count.
+fn parse_doc_embeddings(
+    data: &Bound<'_, PyAny>,
+    num_docs: usize,
+) -> PyResult<Vec<Vec<f64>>> {
+    let embs = parse_features(data)?;
+    if embs.len() != num_docs {
+        return Err(PyValueError::new_err(format!(
+            "doc_embeddings has {} rows but corpus has {} documents",
+            embs.len(),
+            num_docs
+        )));
+    }
+    check_all_finite_2d("doc_embeddings", &embs)?;
+    Ok(embs)
+}
+
+macro_rules! ctm_embedding_model {
+    ($name:ident, $tag:expr, $mode:expr, $repr:expr, $doc:expr) => {
+        #[doc = $doc]
+        #[pyclass(module = "topica")]
+        pub struct $name {
+            num_topics: usize,
+            hidden_size: usize,
+            alpha: f64,
+            dropout: f64,
+            batch_size: usize,
+            lr: f64,
+            convergence_tol: f64,
+            seed: u64,
+            fitted: bool,
+            topic_names: Vec<String>,
+            model: Option<prodlda::ProdldaModel>,
+            corpus: Option<corpus::Corpus>,
+            emb_dim: usize,
+        }
+
+        impl $name {
+            fn fitted_model(&self) -> PyResult<&prodlda::ProdldaModel> {
+                self.model.as_ref().ok_or_else(|| {
+                    PyRuntimeError::new_err("model is not fitted yet; call fit() first")
+                })
+            }
+        }
+
+        #[pymethods]
+        impl $name {
+            /// Create an unfitted model. `alpha` is the symmetric Dirichlet prior
+            /// concentration (reference 1.0); `hidden_size` is the encoder width
+            /// (reference 100); `dropout` is the dropout rate on the hidden layer
+            /// and on `theta`; `batch_size`/`lr` drive Adam (reference 200/0.002,
+            /// with `beta1 = 0.99`); `convergence_tol > 0` stops early on the
+            /// relative change in the epoch ELBO (0 runs all epochs). Pass `iters`
+            /// to :meth:`fit` to set the number of epochs.
+            #[new]
+            #[pyo3(signature = (num_topics, *, alpha=1.0, hidden_size=100, dropout=0.2,
+                                batch_size=200, lr=0.002, convergence_tol=0.0, seed=42))]
+            #[allow(clippy::too_many_arguments)]
+            fn new(
+                #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
+                alpha: f64,
+                hidden_size: usize,
+                dropout: f64,
+                batch_size: usize,
+                lr: f64,
+                convergence_tol: f64,
+                seed: u64,
+            ) -> PyResult<Self> {
+                if num_topics < 2 {
+                    return Err(PyValueError::new_err("need at least 2 topics"));
+                }
+                if !finite_pos(alpha) {
+                    return Err(PyValueError::new_err("alpha must be > 0"));
+                }
+                if !(0.0..1.0).contains(&dropout) {
+                    return Err(PyValueError::new_err("dropout must be in [0, 1)"));
+                }
+                Ok($name {
+                    num_topics,
+                    hidden_size,
+                    alpha,
+                    dropout,
+                    batch_size,
+                    lr,
+                    convergence_tol,
+                    seed,
+                    fitted: false,
+                    topic_names: Vec::new(),
+                    model: None,
+                    corpus: None,
+                    emb_dim: 0,
+                })
+            }
+
+            /// Fit on `data` (a Corpus or list of token lists) with
+            /// `doc_embeddings`, a `(num_docs, E)` dense array (one row per
+            /// document, in corpus order). The decoder reconstructs the bag of
+            /// words; the encoder reads the embedding (and, for CombinedTM, the
+            /// bag of words too). `iters` sets the number of training epochs
+            /// (default 200). `convergence_tol` overrides the constructor value
+            /// for this run (when given).
+            #[pyo3(signature = (data, doc_embeddings, *, iters=None, convergence_tol=None))]
+            fn fit(
+                &mut self,
+                py: Python<'_>,
+                data: &Bound<'_, PyAny>,
+                doc_embeddings: &Bound<'_, PyAny>,
+                iters: Option<usize>,
+                convergence_tol: Option<f64>,
+            ) -> PyResult<()> {
+                let tol = convergence_tol.unwrap_or(self.convergence_tol);
+                let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
+                    c.inner
+                } else {
+                    let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
+                        PyValueError::new_err("fit() expects a Corpus or a list of token lists")
+                    })?;
+                    build_corpus_from_docs(
+                        docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0,
+                    )?
+                    .0
+                };
+                if corpus.num_docs() == 0 {
+                    return Err(PyValueError::new_err("corpus contains no documents"));
+                }
+                let num_types = corpus.num_types();
+                if num_types < self.num_topics {
+                    return Err(PyValueError::new_err(
+                        "vocabulary must have at least num_topics words",
+                    ));
+                }
+                let embs = parse_doc_embeddings(doc_embeddings, corpus.num_docs())?;
+                let emb_dim = embs.first().map(|r| r.len()).unwrap_or(0);
+                if emb_dim == 0 {
+                    return Err(PyValueError::new_err("doc_embeddings must have at least one column"));
+                }
+                self.emb_dim = emb_dim;
+                let ep = iters.unwrap_or(200);
+                let (k, h, a, dp, bs, lr) = (
+                    self.num_topics, self.hidden_size, self.alpha, self.dropout,
+                    self.batch_size, self.lr,
+                );
+                let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+                let (model, corpus) = py.allow_threads(move || {
+                    let m = prodlda::fit_avitm(
+                        &corpus.docs, &embs, $mode, k, num_types, emb_dim, h, a, dp, ep, bs,
+                        lr, tol, &mut rng,
+                    );
+                    (m, corpus)
+                });
+                self.model = Some(model);
+                self.corpus = Some(corpus);
+                self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
+                self.fitted = true;
+                Ok(())
+            }
+
+            #[getter]
+            fn num_topics(&self) -> usize {
+                self.num_topics
+            }
+            /// Topic-word matrix (num_topics, vocab); each row is ``softmax(beta_k)``.
+            #[getter]
+            fn topic_word<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+                Ok(vecs_to_arr2(&self.fitted_model()?.topic_word()).to_pyarray_bound(py))
+            }
+            /// Document-topic proportions theta (num_docs, num_topics); rows sum to 1.
+            #[getter]
+            fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+                Ok(vecs_to_arr2(&self.fitted_model()?.doc_topic).to_pyarray_bound(py))
+            }
+            /// The ELBO (negative training loss) at the final epoch.
+            #[getter]
+            fn bound(&self) -> PyResult<f64> {
+                Ok(self.fitted_model()?.bound)
+            }
+            /// Per-epoch ELBO trajectory.
+            #[getter]
+            fn bound_history(&self) -> PyResult<Vec<f64>> {
+                Ok(self.fitted_model()?.bound_history.clone())
+            }
+            #[getter]
+            fn converged(&self) -> PyResult<bool> {
+                Ok(self.fitted_model()?.converged)
+            }
+            /// Uniform convergence trace: ``(epoch, elbo)`` pairs, one per epoch.
+            #[getter]
+            fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
+                Ok(self
+                    .fitted_model()?
+                    .bound_history
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &b)| (i + 1, b))
+                    .collect())
+            }
+            #[getter]
+            fn epochs_run(&self) -> PyResult<usize> {
+                Ok(self.fitted_model()?.epochs_run)
+            }
+            #[getter]
+            fn topic_names(&self) -> PyResult<Vec<String>> {
+                self.fitted_model()?;
+                Ok(self.topic_names.clone())
+            }
+            #[setter]
+            fn set_topic_names(&mut self, names: Vec<String>) -> PyResult<()> {
+                if names.len() != self.num_topics {
+                    return Err(PyValueError::new_err(format!(
+                        "topic_names must have length {} (got {})",
+                        self.num_topics,
+                        names.len()
+                    )));
+                }
+                self.topic_names = names;
+                Ok(())
+            }
+            #[getter]
+            fn vocabulary(&self) -> PyResult<Vec<String>> {
+                self.fitted_model()?;
+                Ok(self.corpus.as_ref().unwrap().id_to_word.clone())
+            }
+            #[getter]
+            fn doc_names(&self) -> PyResult<Vec<String>> {
+                self.fitted_model()?;
+                Ok(self.corpus.as_ref().unwrap().doc_names.clone())
+            }
+            #[pyo3(signature = (n=10, *, topic=None))]
+            fn top_words<'py>(
+                &self,
+                py: Python<'py>,
+                n: usize,
+                topic: Option<usize>,
+            ) -> PyResult<Bound<'py, PyAny>> {
+                let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
+                topic_words_helper(
+                    py,
+                    &phi,
+                    &self.corpus.as_ref().unwrap().id_to_word,
+                    self.num_topics,
+                    n,
+                    topic,
+                )
+            }
+            #[pyo3(signature = (n=10))]
+            fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+                let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
+                let tops = top_word_ids_phi(&phi, self.num_topics, n);
+                Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                    .to_pyarray_bound(py))
+            }
+
+            /// Held-out topic proportions for new documents: one encoder forward
+            /// pass each (no sampling, running batchnorm statistics). Pass the same
+            /// `data`/`doc_embeddings` shape as :meth:`fit`. For ZeroShotTM the
+            /// encoder reads the embeddings alone, so a multilingual encoder maps
+            /// documents in a new language to the trained topics; for CombinedTM
+            /// the bag of words is read as well. Tokens outside the vocabulary are
+            /// dropped. Returns `(num_docs, num_topics)`.
+            #[pyo3(signature = (data, doc_embeddings))]
+            fn transform<'py>(
+                &self,
+                py: Python<'py>,
+                data: &Bound<'py, PyAny>,
+                doc_embeddings: &Bound<'py, PyAny>,
+            ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+                let m = self.fitted_model()?;
+                let docs = docs_to_ids(data, &self.corpus.as_ref().unwrap().id_to_word)?;
+                let embs = parse_doc_embeddings(doc_embeddings, docs.len())?;
+                Ok(vecs_to_arr2(&m.transform_with_emb(&docs, &embs)).to_pyarray_bound(py))
+            }
+
+            /// Fit, then return the document-topic proportions (`fit_transform`).
+            #[pyo3(signature = (data, doc_embeddings, *, iters=None))]
+            fn fit_transform<'py>(
+                &mut self,
+                py: Python<'py>,
+                data: &Bound<'py, PyAny>,
+                doc_embeddings: &Bound<'py, PyAny>,
+                iters: Option<usize>,
+            ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+                self.fit(py, data, doc_embeddings, iters, None)?;
+                Ok(vecs_to_arr2(&self.fitted_model()?.doc_topic).to_pyarray_bound(py))
+            }
+
+            /// Save the fitted model to `path` (topica's binary format).
+            fn save(&self, path: &str) -> PyResult<()> {
+                let m = self.fitted_model()?;
+                write_state(path, $tag, &CtmEmbState {
+                    num_topics: self.num_topics,
+                    hidden_size: self.hidden_size,
+                    alpha: self.alpha,
+                    dropout: self.dropout,
+                    batch_size: self.batch_size,
+                    lr: self.lr,
+                    convergence_tol: self.convergence_tol,
+                    seed: self.seed,
+                    fitted: self.fitted,
+                    topic_names: self.topic_names.clone(),
+                    corpus: self.corpus.clone(),
+                    emb_dim: self.emb_dim,
+                    mode: mode_to_u8($mode),
+                    doc_topic: Some(m.doc_topic.clone()),
+                    bound: Some(m.bound),
+                    bound_history: Some(m.bound_history.clone()),
+                    converged: Some(m.converged),
+                    epochs_run: Some(m.epochs_run),
+                    w_v: Some(m.weights.v),
+                    w_e: Some(m.weights.e),
+                    w_hidden: Some(m.weights.hidden),
+                    w_k: Some(m.weights.k),
+                    w_w1: Some(m.weights.w1.clone()),
+                    w_b1: Some(m.weights.b1.clone()),
+                    w_w2: Some(m.weights.w2.clone()),
+                    w_b2: Some(m.weights.b2.clone()),
+                    w_w_mu: Some(m.weights.w_mu.clone()),
+                    w_b_mu: Some(m.weights.b_mu.clone()),
+                    w_w_ls: Some(m.weights.w_ls.clone()),
+                    w_b_ls: Some(m.weights.b_ls.clone()),
+                    w_beta: Some(m.weights.beta.clone()),
+                    bn_running_mean: Some(m.bn_mu.running_mean.clone()),
+                    bn_running_var: Some(m.bn_mu.running_var.clone()),
+                })
+            }
+
+            /// Load a model previously written by :meth:`save`.
+            #[staticmethod]
+            fn load(path: &str) -> PyResult<Self> {
+                let s: CtmEmbState = read_state(path, $tag)?;
+                let model = if s.fitted && s.w_v.is_some() {
+                    let v = s.w_v.unwrap();
+                    let e = s.w_e.unwrap_or(0);
+                    let hidden = s.w_hidden.unwrap();
+                    let k = s.w_k.unwrap();
+                    Some(prodlda::ProdldaModel {
+                        num_topics: s.num_topics,
+                        num_types: v,
+                        doc_topic: s.doc_topic.unwrap_or_default(),
+                        bound: s.bound.unwrap_or(f64::NAN),
+                        bound_history: s.bound_history.unwrap_or_default(),
+                        converged: s.converged.unwrap_or(false),
+                        epochs_run: s.epochs_run.unwrap_or(0),
+                        weights: prodlda::Weights {
+                            v,
+                            e,
+                            hidden,
+                            k,
+                            mode: u8_to_mode(s.mode),
+                            w1: s.w_w1.unwrap_or_default(),
+                            b1: s.w_b1.unwrap_or_default(),
+                            w2: s.w_w2.unwrap_or_default(),
+                            b2: s.w_b2.unwrap_or_default(),
+                            w_mu: s.w_w_mu.unwrap_or_default(),
+                            b_mu: s.w_b_mu.unwrap_or_default(),
+                            w_ls: s.w_w_ls.unwrap_or_default(),
+                            b_ls: s.w_b_ls.unwrap_or_default(),
+                            beta: s.w_beta.unwrap_or_default(),
+                        },
+                        bn_mu: prodlda::BatchNorm {
+                            running_mean: s.bn_running_mean.unwrap_or_else(|| vec![0.0; k]),
+                            running_var: s.bn_running_var.unwrap_or_else(|| vec![1.0; k]),
+                            momentum: 0.1,
+                        },
+                    })
+                } else {
+                    None
+                };
+                Ok($name {
+                    num_topics: s.num_topics,
+                    hidden_size: s.hidden_size,
+                    alpha: s.alpha,
+                    dropout: s.dropout,
+                    batch_size: s.batch_size,
+                    lr: s.lr,
+                    convergence_tol: s.convergence_tol,
+                    seed: s.seed,
+                    fitted: s.fitted,
+                    topic_names: s.topic_names,
+                    model,
+                    corpus: s.corpus,
+                    emb_dim: s.emb_dim,
+                })
+            }
+
+            fn __repr__(&self) -> String {
+                format!(concat!($repr, "(num_topics={}, fitted={})"), self.num_topics, self.fitted)
+            }
+        }
+    };
+}
+
+ctm_embedding_model!(
+    CombinedTM,
+    MODEL_TAG_COMBINEDTM,
+    prodlda::InputMode::BowEmb,
+    "CombinedTM",
+    "CombinedTM (Bianchi, Terragni & Hovy 2021), a contextualized topic model. \
+CombinedTM is ProdLDA whose encoder reads the normalized bag of words \
+*concatenated with* a caller-supplied document embedding (e.g. from a \
+sentence-transformer); the product-of-experts decoder still reconstructs the bag \
+of words. Mixing contextual embeddings into the encoder yields more coherent \
+topics than bag-of-words ProdLDA. Bring the embeddings at :meth:`fit` as a \
+`(num_docs, E)` array, aligned to the documents. The reference implementation is \
+`contextualized-topic-models` (Bianchi et al., MIT)."
+);
+
+ctm_embedding_model!(
+    ZeroShotTM,
+    MODEL_TAG_ZEROSHOTTM,
+    prodlda::InputMode::EmbOnly,
+    "ZeroShotTM",
+    "ZeroShotTM (Bianchi, Nozza & Hovy 2021), a contextualized topic model. \
+ZeroShotTM is ProdLDA whose encoder reads *only* a caller-supplied document \
+embedding (no bag of words); the product-of-experts decoder still reconstructs \
+the bag of words. Because topics are inferred from the embedding alone, a \
+document embedded with a multilingual encoder maps to the trained topics without \
+any bag of words at all, which enables cross-lingual transfer: fit on one \
+language, :meth:`transform` documents in another. Bring the embeddings at \
+:meth:`fit` as a `(num_docs, E)` array, aligned to the documents. The reference \
+implementation is `contextualized-topic-models` (Bianchi et al., MIT)."
+);
 
 /// NMF, non-negative matrix factorization for topic modeling (Lee & Seung 2001;
 /// Boutsidis & Gallopoulos 2008). We factor the non-negative document-term matrix
@@ -14193,6 +14687,8 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<HLDA>()?;
     m.add_class::<NMF>()?;
     m.add_class::<LSA>()?;
+    m.add_class::<CombinedTM>()?;
+    m.add_class::<ZeroShotTM>()?;
     m.add_class::<Corpus>()?;
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(window_cooccurrence, m)?)?;

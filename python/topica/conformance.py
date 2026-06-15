@@ -72,6 +72,8 @@ REGISTRY: list[tuple[str, object, str]] = [
     # neural / embedding-based — no theta posterior
     ("ETM",          lambda: _topica.ETM(2),                                     "none"),
     ("ProdLDA",      lambda: _topica.ProdLDA(2),                                 "none"),
+    ("CombinedTM",   lambda: _topica.CombinedTM(2),                              "none"),
+    ("ZeroShotTM",   lambda: _topica.ZeroShotTM(2),                              "none"),
     ("FASTopic",     lambda: _topica.FASTopic(2),                                "none"),
     # matrix-factorization — no theta posterior
     ("NMF",          lambda: _topica.NMF(2),                                     "none"),
