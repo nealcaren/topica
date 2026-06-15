@@ -136,6 +136,11 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
     RegistryEntry { name: "SupervisedLDA", family: ModelFamily::Dirichlet, exempt: &[] },
     // Neural / embedding / nonparametric — no theta posterior.
     RegistryEntry { name: "ProdLDA", family: ModelFamily::None_, exempt: &[] },
+    // Matrix factorization — signed latent coordinates, no theta posterior.
+    RegistryEntry { name: "NMF", family: ModelFamily::None_, exempt: &[] },
+    // LSA/LSI: doc_topic is signed coordinates (U Sigma), not a (D,K) simplex;
+    // the SVD is a direct solve, so there is no fit_history trajectory.
+    RegistryEntry { name: "LSA", family: ModelFamily::None_, exempt: &["fit_history"] },
     RegistryEntry { name: "ETM", family: ModelFamily::None_, exempt: &[] },
     RegistryEntry { name: "FASTopic", family: ModelFamily::None_, exempt: &[] },
     RegistryEntry { name: "GSDMM", family: ModelFamily::None_, exempt: &[] },
@@ -163,7 +168,8 @@ mod registry_tests {
                 assert!(METHODS.contains(&req), "{}: unknown exempt method {req:?}", e.name);
             }
         }
-        // Mirror of the Python REGISTRY size (21 user-facing models).
-        assert_eq!(RUST_ESTIMATORS.len(), 21, "registry size drifted from the Python REGISTRY");
+        // Mirror of the Python REGISTRY size (user-facing models with an
+        // Estimator-backed Rust struct).
+        assert_eq!(RUST_ESTIMATORS.len(), 23, "registry size drifted from the Python REGISTRY");
     }
 }

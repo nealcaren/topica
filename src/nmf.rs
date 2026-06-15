@@ -56,27 +56,31 @@ pub enum Init {
 // ---------------------------------------------------------------------------
 
 /// A dense row-major matrix.
+///
+/// `pub(crate)` so `src/lsa.rs` (LSA/LSI) can reuse the truncated-SVD output
+/// without duplicating the linear-algebra primitives. The fields and methods are
+/// crate-internal; the public Python surface never exposes `Mat` directly.
 #[derive(Clone)]
-struct Mat {
-    rows: usize,
-    cols: usize,
-    data: Vec<f64>,
+pub(crate) struct Mat {
+    pub(crate) rows: usize,
+    pub(crate) cols: usize,
+    pub(crate) data: Vec<f64>,
 }
 
 impl Mat {
-    fn zeros(rows: usize, cols: usize) -> Self {
+    pub(crate) fn zeros(rows: usize, cols: usize) -> Self {
         Mat { rows, cols, data: vec![0.0; rows * cols] }
     }
     #[inline]
-    fn at(&self, r: usize, c: usize) -> f64 {
+    pub(crate) fn at(&self, r: usize, c: usize) -> f64 {
         self.data[r * self.cols + c]
     }
     #[inline]
-    fn set(&mut self, r: usize, c: usize, v: f64) {
+    pub(crate) fn set(&mut self, r: usize, c: usize, v: f64) {
         self.data[r * self.cols + c] = v;
     }
     #[inline]
-    fn row(&self, r: usize) -> &[f64] {
+    pub(crate) fn row(&self, r: usize) -> &[f64] {
         &self.data[r * self.cols..(r + 1) * self.cols]
     }
 }
@@ -184,18 +188,22 @@ fn matmul_bt(a: &Mat, b: &Mat) -> Mat {
 // ---------------------------------------------------------------------------
 
 /// Compressed sparse row matrix `(rows x cols)`.
-struct SpMat {
-    rows: usize,
-    cols: usize,
+///
+/// `pub(crate)` so `src/lsa.rs` can build the weighted document-term matrix
+/// through the shared `count_matrix`/`tfidf_matrix` builders and feed it to the
+/// shared `randomized_svd`. Crate-internal only.
+pub(crate) struct SpMat {
+    pub(crate) rows: usize,
+    pub(crate) cols: usize,
     /// Row `r`'s nonzeros are `cols[indptr[r]..indptr[r+1]]` / `vals[...]`.
-    indptr: Vec<usize>,
-    col_idx: Vec<usize>,
-    vals: Vec<f64>,
+    pub(crate) indptr: Vec<usize>,
+    pub(crate) col_idx: Vec<usize>,
+    pub(crate) vals: Vec<f64>,
 }
 
 impl SpMat {
     #[inline]
-    fn row(&self, r: usize) -> (&[usize], &[f64]) {
+    pub(crate) fn row(&self, r: usize) -> (&[usize], &[f64]) {
         let s = self.indptr[r];
         let e = self.indptr[r + 1];
         (&self.col_idx[s..e], &self.vals[s..e])
@@ -317,7 +325,7 @@ fn randn<R: Rng>(rng: &mut R) -> f64 {
 
 /// Modified Gram-Schmidt QR; returns the orthonormal `Q (m x n)` (the `R` factor
 /// is not needed). Columns that collapse to near-zero are replaced by zeros.
-fn mgs_q(a: &Mat) -> Mat {
+pub(crate) fn mgs_q(a: &Mat) -> Mat {
     let (m, n) = (a.rows, a.cols);
     // Work column-wise: columns[j] is column j of the running matrix.
     let mut cols: Vec<Vec<f64>> = (0..n)
@@ -354,7 +362,7 @@ fn mgs_q(a: &Mat) -> Mat {
 /// Symmetric eigendecomposition of a small dense `(n x n)` matrix by the cyclic
 /// Jacobi method. Returns `(eigenvalues, eigenvectors)` with eigenvectors as
 /// columns of the returned matrix, sorted by descending eigenvalue.
-fn jacobi_eigen(a_in: &Mat) -> (Vec<f64>, Mat) {
+pub(crate) fn jacobi_eigen(a_in: &Mat) -> (Vec<f64>, Mat) {
     let n = a_in.rows;
     let mut a = a_in.clone();
     let mut v = Mat::zeros(n, n);
@@ -427,10 +435,19 @@ fn jacobi_eigen(a_in: &Mat) -> (Vec<f64>, Mat) {
 /// That is acceptable here only because the SVD is scoped to seeding the NNDSVD
 /// initialization, not to any reported factorization output.
 fn randomized_svd(x: &SpMat, k: usize) -> (Mat, Vec<f64>, Mat) {
+    randomized_svd_seeded(x, k, SVD_SEED)
+}
+
+/// Top-`k` truncated SVD of `X (d x v)` by randomized range finding, with the
+/// sketch RNG seeded by `seed`. Same algorithm as [`randomized_svd`] (which fixes
+/// the seed to `SVD_SEED` for NMF's NNDSVD init); LSA/LSI calls this with the
+/// user seed so its truncated SVD is reproducible per seed. Returns
+/// `(U (d x k), S (k), Vt (k x v))`.
+pub(crate) fn randomized_svd_seeded(x: &SpMat, k: usize, seed: u64) -> (Mat, Vec<f64>, Mat) {
     let (d, v) = (x.rows, x.cols);
     let p = 10usize.min(v.saturating_sub(k));
     let r = (k + p).min(v).min(d);
-    let mut rng = ChaCha8Rng::seed_from_u64(SVD_SEED);
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
     // Omega (v x r) Gaussian test matrix.
     let mut omega = Mat::zeros(v, r);
@@ -840,7 +857,7 @@ fn normalize_rows(m: &Mat) -> Vec<Vec<f64>> {
 
 /// Build the sparse document-term count matrix `X (D x V)` (CSR) from token-id
 /// documents. Each row's nonzeros are stored in ascending-column order.
-fn count_matrix(docs: &[Vec<u32>], num_types: usize) -> SpMat {
+pub(crate) fn count_matrix(docs: &[Vec<u32>], num_types: usize) -> SpMat {
     let d = docs.len();
     let mut indptr = Vec::with_capacity(d + 1);
     let mut col_idx = Vec::new();
@@ -876,7 +893,7 @@ fn count_matrix(docs: &[Vec<u32>], num_types: usize) -> SpMat {
 /// + 1)`, then L2 normalize each document row. topica's own formula; no
 /// dependence on any external transformer. The IDF reweighting and L2 norm only
 /// rescale existing nonzeros, so the sparsity pattern is unchanged.
-fn tfidf_matrix(docs: &[Vec<u32>], num_types: usize) -> SpMat {
+pub(crate) fn tfidf_matrix(docs: &[Vec<u32>], num_types: usize) -> SpMat {
     let d = docs.len();
     let mut x = count_matrix(docs, num_types);
     // Document frequency per term (count of rows with a nonzero in that column).

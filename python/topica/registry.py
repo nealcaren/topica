@@ -81,6 +81,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("NMF", "general-purpose", ("text",), "matrix-factorization", "bit-exact", (),
            "Non-negative matrix factorization of the document-term matrix via multiplicative updates.",
            "guides/models.md#nmf"),
+        _m("LSA", "general-purpose", ("text",), "svd", "bit-exact", (),
+           "Latent semantic analysis: a truncated SVD of the weighted document-term matrix.",
+           "guides/models.md#lsa"),
         # ---- Covariates & structure ----------------------------------------
         _m("STM", "covariates", ("text", "metadata"), "variational", "bit-exact", (),
            "Structural topic model: relate topic prevalence and content to covariates.",

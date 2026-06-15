@@ -2599,6 +2599,76 @@ class NMF:
     def load(path: str) -> NMF: ...
     def __repr__(self) -> str: ...
 
+class LSA:
+    """LSA / LSI, latent semantic analysis (Deerwester et al. 1990; randomized
+    truncated SVD per Halko et al. 2011). A truncated SVD of the weighted
+    document-term matrix X (D x V) ~ U_k Sigma_k V_k^T. The reference is
+    scikit-learn's sklearn.decomposition.TruncatedSVD (BSD-3-Clause).
+
+    Outputs are SIGNED latent coordinates, not probabilities. topic_word (K x V)
+    is the right singular vectors V_k (signed term loadings; top_words ranks by
+    absolute value). doc_topic (D x K) is U_k Sigma_k (signed document
+    coordinates; rows do not sum to 1). singular_values (K) is Sigma_k. A
+    deterministic svd_flip sign convention matches scikit-learn's output."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        weighting: str = "tfidf",
+        seed: int = 42,
+    ) -> None:
+        """weighting is 'tfidf' (default, classic LSI) or 'count'. seed seeds the
+        randomized-SVD sketch."""
+        ...
+    def fit(self, data: Corpus | Sequence[Sequence[str]]) -> None:
+        """Fit on a Corpus or a list of token lists. The SVD is a direct solve, so
+        there is no iters argument."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_topics, vocab) signed right singular vectors V_k. Term loadings,
+        not probabilities."""
+        ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_docs, num_topics) signed document coordinates U_k Sigma_k. Rows do
+        not sum to 1."""
+        ...
+    @property
+    def singular_values(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_topics,) truncated singular values Sigma_k."""
+        ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """Empty: the SVD is a direct solve with no iterative trace."""
+        ...
+    @property
+    def converged(self) -> bool | None:
+        """None: convergence is not meaningful for a one-shot SVD."""
+        ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]:
+        """Top-n words per component, ranked by absolute loading; each entry is
+        (word, signed_loading)."""
+        ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> LSA: ...
+    def __repr__(self) -> str: ...
+
 
 class FASTopic:
     """FASTopic (Wu et al. 2024): a topic model with no encoder or neural network.

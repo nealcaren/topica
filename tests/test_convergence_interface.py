@@ -27,6 +27,15 @@ _TOY    = [list(_ANIMAL) for _ in range(15)] + [list(_SPACE) for _ in range(15)]
 # Cluster models: fit_history == [] and converged is None by design (not a gap).
 _CLUSTER_MODELS = {"BERTopic", "Top2Vec"}
 
+# Direct (non-iterative) solves: LSA is a one-shot truncated SVD, so like the
+# cluster models it has no per-iteration trace (fit_history == []) and no
+# convergence state (converged is None). It takes no `iters` argument.
+_DIRECT_SOLVE_MODELS = {"LSA"}
+
+# Models whose fitted state has no iterative objective trace and no early-stop
+# convergence flag: the cluster models plus the direct SVD solve.
+_NO_TRACE_MODELS = _CLUSTER_MODELS | _DIRECT_SOLVE_MODELS
+
 # Models that intentionally never early-stop, so converged is always False.
 # HDP and GSDMM discover their topic/cluster counts, so a log-likelihood plateau
 # is not a convergence signal; DTM and HLDA expose no flat per-iteration objective.
@@ -111,6 +120,11 @@ def _fit_model(name: str, factory):
             model.fit(_TOY, doc_emb)
         return model
 
+    # LSA: a direct SVD solve; fit() takes no iters argument.
+    if name in _DIRECT_SOLVE_MODELS:
+        model.fit(_TOY)
+        return model
+
     # All others: plain fit
     model.fit(_TOY, iters=10)
     return model
@@ -192,8 +206,8 @@ def test_fit_history_non_empty(name, factory, family):
     Part B models (parametric-Gibbs without a trace) are xfail.
     Cluster models (BERTopic, Top2Vec) and DTM are skipped (no trace by design).
     """
-    # Cluster models: [] by design, not a gap
-    if name in _CLUSTER_MODELS:
+    # Cluster models and direct SVD solves: [] by design, not a gap
+    if name in _NO_TRACE_MODELS:
         pytest.skip(f"{name}: no iterative objective; fit_history == [] by design")
 
     # DTM: no static per-iteration trace (time-sliced)
@@ -220,7 +234,7 @@ def test_converged_type(name, factory, family):
     """converged must return bool for iterative models or None for cluster models."""
     model = _fit_model(name, factory)
     c = model.converged
-    if name in _CLUSTER_MODELS:
+    if name in _NO_TRACE_MODELS:
         assert c is None, f"{name}.converged should be None, got {c!r}"
     else:
         assert isinstance(c, bool), (
@@ -238,8 +252,8 @@ def test_converged_false_by_default(name, factory, family):
 
     Cluster models are skipped (converged is None by design).
     """
-    if name in _CLUSTER_MODELS:
-        pytest.skip(f"{name}: cluster model, converged is None")
+    if name in _NO_TRACE_MODELS:
+        pytest.skip(f"{name}: non-iterative model, converged is None")
 
     model = _fit_model(name, factory)
     c = model.converged

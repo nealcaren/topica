@@ -75,6 +75,7 @@ REGISTRY: list[tuple[str, object, str]] = [
     ("FASTopic",     lambda: _topica.FASTopic(2),                                "none"),
     # matrix-factorization — no theta posterior
     ("NMF",          lambda: _topica.NMF(2),                                     "none"),
+    ("LSA",          lambda: _topica.LSA(2),                                     "none"),
     # embedding-cluster — no generative word distribution
     ("BERTopic",     lambda: _topica.BERTopic(min_cluster_size=5),               "none"),
     ("Top2Vec",      lambda: _topica.Top2Vec(),                                  "none"),
@@ -172,6 +173,17 @@ EXEMPT: dict[tuple[str, str], str] = {
     #
     # fit_history/converged: BERTopic and Top2Vec DO expose these (returning []
     # and None respectively), so they are NOT exempted here.
+
+    # --- LSA/LSI: matrix factorization, signed latent coordinates ---
+    # doc_topic: LSA's doc_topic is U Sigma, the document coordinates in the
+    # reduced SVD space. These are SIGNED and rows do NOT sum to 1, so the (D, K)
+    # array is not a topic simplex. The attribute is present and shaped (D, K);
+    # this exemption documents that its simplex semantics intentionally do not
+    # hold, mirroring the HLDA/DTM doc_topic entries.
+    ("LSA", "doc_topic"): "LSA yields signed latent coordinates, not a (D,K) topic simplex",
+    # iters: the truncated SVD is a direct (non-iterative) solve, so there is no
+    # iteration count to expose. fit() takes no iters kwarg by design.
+    ("LSA", "iters"): "LSA is a direct SVD solve, not an iterative sampler; no iteration count applies",
 }
 
 # ---------------------------------------------------------------------------
