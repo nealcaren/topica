@@ -81,7 +81,7 @@ topica runs on a parallel Rust core. It is several times faster than R `stm` —
 
 | Model | Reference | topica speedup |
 |-------|-----------|----------------|
-| STM | R `stm` | **3–6× single-threaded, ~10–22× multithreaded** |
+| STM | R `stm` | **4–10× single-threaded, ~11–32× multithreaded** |
 | LDA | Java MALLET | parity single-threaded; multithread speedup **grows with corpus size** |
 | keyATM | R `keyATM` | parity single-threaded, **~2×** multithreaded |
 

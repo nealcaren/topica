@@ -18,19 +18,19 @@ per-iteration cost, not time to convergence.
 
 | docs | vocab | K | topica | R `stm` | speedup |
 |-----:|------:|---:|-------:|--------:|--------:|
-| 1,000 | 500 | 10 | 0.14s | 3.16s | **22.5×** |
-| 2,000 | 2,000 | 10 | 0.49s | 6.60s | **13.5×** |
-| 5,000 | 5,000 | 20 | 2.75s | 26.9s | **9.8×** |
+| 1,000 | 500 | 10 | 0.10s | 3.21s | **32.2×** |
+| 2,000 | 2,000 | 10 | 0.47s | 6.78s | **14.4×** |
+| 5,000 | 5,000 | 20 | 2.35s | 26.6s | **11.3×** |
 
 **Single core** (apples-to-apples, `RAYON_NUM_THREADS=1`):
 
 | docs | vocab | K | topica | R `stm` | speedup |
 |-----:|------:|---:|-------:|--------:|--------:|
-| 1,000 | 500 | 10 | 0.50s | 3.03s | **6.0×** |
-| 2,000 | 2,000 | 10 | 1.44s | 6.51s | **4.5×** |
-| 5,000 | 5,000 | 20 | 8.97s | 26.3s | **2.9×** |
+| 1,000 | 500 | 10 | 0.30s | 3.13s | **10.4×** |
+| 2,000 | 2,000 | 10 | 1.16s | 6.60s | **5.7×** |
+| 5,000 | 5,000 | 20 | 6.95s | 27.5s | **3.9×** |
 
-So topica is roughly **3 to 6 times faster single-threaded and 10 to 23 times on
+So topica is roughly **4 to 10 times faster single-threaded and 11 to 32 times on
 all cores**, and it produces the same fit (the content and prevalence models are
 [validated against R `stm`](publishing/validation.md)). Reproduce:
 
@@ -109,10 +109,10 @@ same number of Gibbs sweeps, α learned each sweep on both sides; fit time only.
 
 | docs | vocab | K | sweeps | topica (1 core) | topica (4 cores) | R `keyATM` |
 |-----:|------:|---:|-------:|----------------:|-----------------:|-----------:|
-| 2,000 | 2,632 | 10 | 1,000 | 25.9s | **12.1s** | 24.5s |
+| 2,000 | 2,632 | 10 | 1,000 | 23.3s | **13.5s** | 25.4s |
 
-So topica is at parity with R single-threaded and about **2× faster on four
-cores**. If you do not need the R-matching asymmetric prior, `estimate_alpha=False`
+So topica is at parity with R single-threaded — a touch faster here — and about
+**1.9× faster on four cores**. If you do not need the R-matching asymmetric prior, `estimate_alpha=False`
 fixes a symmetric α and skips the per-sweep slice sampler for a further 15 to 20%
 (more at larger K). This row, with the STM and LDA comparisons above, is
 reproducible in one command:
