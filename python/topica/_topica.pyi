@@ -2377,9 +2377,17 @@ class ETM:
         lr: float = 0.005,
         wdecay: float = 1.2e-6,
         seed: int = 42,
+        prior: str = "laplace",
+        contrastive: bool = False,
+        contrastive_weight: float = 0.5,
+        contrastive_temp: float = 0.5,
         em_tol: Optional[float] = None,
     ) -> None:
-        """em_tol is a deprecated alias for convergence_tol."""
+        """em_tol is a deprecated alias for convergence_tol. On the VAE path,
+        ``prior`` selects ``"laplace"`` (default) or ``"dirichlet"`` (Weibull
+        reparameterization), and ``contrastive`` adds an InfoNCE term on the topic
+        vectors scaled by ``contrastive_weight`` at temperature ``contrastive_temp``.
+        Both are ignored on the EM path."""
         ...
     def fit(
         self,
@@ -2471,10 +2479,21 @@ class ProdLDA:
         lr: float = 0.002,
         convergence_tol: float = 0.0,
         seed: int = 42,
+        prior: str = "laplace",
+        contrastive: bool = False,
+        contrastive_weight: float = 0.5,
+        contrastive_temp: float = 0.5,
         em_tol: Optional[float] = None,
     ) -> None:
-        """em_tol is a deprecated alias for convergence_tol."""
+        """em_tol is a deprecated alias for convergence_tol. ``prior`` selects
+        ``"laplace"`` (default) or ``"dirichlet"`` (Weibull reparameterization);
+        ``contrastive`` adds an InfoNCE term on the topic vectors scaled by
+        ``contrastive_weight`` at temperature ``contrastive_temp``."""
         ...
+    @property
+    def prior(self) -> str: ...
+    @property
+    def contrastive(self) -> bool: ...
     def fit(
         self,
         data: Corpus | Sequence[Sequence[str]],
@@ -2548,7 +2567,19 @@ class CombinedTM:
         lr: float = 0.002,
         convergence_tol: float = 0.0,
         seed: int = 42,
-    ) -> None: ...
+        prior: str = "laplace",
+        contrastive: bool = False,
+        contrastive_weight: float = 0.5,
+        contrastive_temp: float = 0.5,
+    ) -> None:
+        """``prior`` selects ``"laplace"`` (default) or ``"dirichlet"`` (Weibull
+        reparameterization); ``contrastive`` adds an InfoNCE term on the topic vectors
+        scaled by ``contrastive_weight`` at temperature ``contrastive_temp``."""
+        ...
+    @property
+    def prior(self) -> str: ...
+    @property
+    def contrastive(self) -> bool: ...
     def fit(
         self,
         data: Corpus | Sequence[Sequence[str]],
@@ -2631,7 +2662,19 @@ class ZeroShotTM:
         lr: float = 0.002,
         convergence_tol: float = 0.0,
         seed: int = 42,
-    ) -> None: ...
+        prior: str = "laplace",
+        contrastive: bool = False,
+        contrastive_weight: float = 0.5,
+        contrastive_temp: float = 0.5,
+    ) -> None:
+        """``prior`` selects ``"laplace"`` (default) or ``"dirichlet"`` (Weibull
+        reparameterization); ``contrastive`` adds an InfoNCE term on the topic vectors
+        scaled by ``contrastive_weight`` at temperature ``contrastive_temp``."""
+        ...
+    @property
+    def prior(self) -> str: ...
+    @property
+    def contrastive(self) -> bool: ...
     def fit(
         self,
         data: Corpus | Sequence[Sequence[str]],

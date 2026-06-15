@@ -333,6 +333,41 @@ amortized, `transform` maps new documents with a single forward pass rather than
 re-running an optimizer. ProdLDA is bag-of-words (no embeddings); for the
 embedding-factored generative model see [`ETM`](embedding.md).
 
+### Objective and prior options
+
+`ProdLDA`, `CombinedTM`, `ZeroShotTM`, and `ETM(inference="vae")` share the same
+amortized-VAE core, so two optional flags apply across all four. Both default off,
+and the defaults reproduce the standard model exactly.
+
+- `prior=` chooses the document-topic prior. `"laplace"` (the default) is the
+  logistic-normal Laplace approximation to a Dirichlet from the AVITM paper.
+  `"dirichlet"` puts a true Dirichlet prior on `θ` through the Weibull
+  reparameterization (Zhang et al. 2018; Burkhardt & Kramer 2019): the encoder
+  parameterizes a Weibull variational posterior on each unnormalized topic weight,
+  a Weibull draw is normalized onto the simplex, and the analytic Weibull-to-Gamma
+  KL replaces the logistic-normal KL. We reuse the same reparameterization noise the
+  laplace path draws, so turning the flag off is bit-for-bit the original model.
+
+- `contrastive=True` adds a CLNTM-style (Nguyen & Luu 2021) InfoNCE term on the
+  topic vectors. For each document the *anchor* is its sampled topic vector and the
+  *positive view* is the deterministic no-noise topic vector (`softmax(μ)` on the
+  laplace path, the median Weibull on the dirichlet path); the other documents in
+  the minibatch are negatives, with cosine similarity at temperature
+  `contrastive_temp`. The term is scaled by `contrastive_weight` and added to the
+  per-batch loss. We document the positive-view choice because it is what makes the
+  term deterministic and finite-difference checkable; the TF-IDF salient-word
+  positive construction from CLNTM is a future refinement.
+
+```python
+m = topica.ProdLDA(num_topics=20, prior="dirichlet",
+                   contrastive=True, contrastive_weight=0.5, contrastive_temp=0.5)
+m.fit(docs)
+```
+
+The two flags are orthogonal and compose: the contrastive term operates on `θ`
+however `θ` was produced. Every new gradient path is hand-coded and checked against
+finite differences in the Rust unit tests.
+
 ## NMF
 
 Non-negative matrix factorization ([Lee & Seung 2001](https://papers.nips.cc/paper/1861-algorithms-for-non-negative-matrix-factorization)) factors the document-term matrix `X` (D x V, non-negative) as `X ≈ W H` with both factors non-negative, then reads each row of `H` as a topic's word distribution and each row of `W` as a document's topic mixture (both normalized to sum to 1). It is the fast, deterministic baseline familiar from scikit-learn: no sampling and no priors, just multiplicative updates that descend a reconstruction loss.

@@ -116,3 +116,51 @@ def test_etm_vae_determinism():
     b.fit(docs, word_emb, vocab, iters=200)
     assert np.allclose(a.topic_word, b.topic_word)
     assert np.allclose(a.doc_topic, b.doc_topic)
+
+
+# --- VAE objective/prior flags (#174 contrastive, #176 prior) ----------------
+
+def test_etm_vae_flags_accepted():
+    m = topica.ETM(num_topics=3, inference="vae", prior="dirichlet",
+                   contrastive=True, contrastive_weight=0.3, contrastive_temp=0.2)
+    assert m.inference == "vae"
+
+
+def test_etm_flag_validation():
+    with pytest.raises(ValueError):
+        topica.ETM(num_topics=3, inference="vae", prior="gaussian")
+    with pytest.raises(ValueError):
+        topica.ETM(num_topics=3, inference="vae", contrastive=True, contrastive_weight=-1.0)
+    with pytest.raises(ValueError):
+        topica.ETM(num_topics=3, inference="vae", contrastive=True, contrastive_temp=0.0)
+
+
+def test_etm_vae_flags_change_results():
+    docs, vocab, word_emb, _ = _planted()
+    base = _vae(seed=1); base.fit(docs, word_emb, vocab, iters=80)
+    dir_m = _vae(seed=1, prior="dirichlet"); dir_m.fit(docs, word_emb, vocab, iters=80)
+    con_m = _vae(seed=1, contrastive=True); con_m.fit(docs, word_emb, vocab, iters=80)
+    assert not np.allclose(base.topic_word, dir_m.topic_word)
+    assert not np.allclose(base.topic_word, con_m.topic_word)
+    for m in (dir_m, con_m):
+        assert np.allclose(m.topic_word.sum(axis=1), 1.0)
+        assert np.allclose(m.doc_topic.sum(axis=1), 1.0)
+
+
+def test_etm_vae_flags_deterministic():
+    docs, vocab, word_emb, _ = _planted()
+    a = _vae(seed=3, prior="dirichlet", contrastive=True); a.fit(docs, word_emb, vocab, iters=80)
+    b = _vae(seed=3, prior="dirichlet", contrastive=True); b.fit(docs, word_emb, vocab, iters=80)
+    assert np.array_equal(a.topic_word, b.topic_word)
+    assert np.array_equal(a.doc_topic, b.doc_topic)
+
+
+def test_etm_vae_flags_save_load_roundtrip(tmp_path):
+    docs, vocab, word_emb, _ = _planted()
+    m = _vae(seed=2, prior="dirichlet", contrastive=True)
+    m.fit(docs, word_emb, vocab, iters=80)
+    path = str(tmp_path / "etm_vae_flags.bin")
+    m.save(path)
+    loaded = topica.ETM.load(path)
+    assert np.array_equal(loaded.topic_word, m.topic_word)
+    assert np.array_equal(loaded.doc_topic, m.doc_topic)

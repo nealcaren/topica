@@ -98,3 +98,63 @@ def test_prodlda_validation():
         topica.ProdLDA(num_topics=3, dropout=1.0)  # dropout in [0, 1)
     with pytest.raises(RuntimeError):
         topica.ProdLDA(num_topics=3).topic_word  # not fitted
+
+
+# --- VAE objective/prior flags (#174 contrastive, #176 prior) ----------------
+
+def test_prodlda_flags_accepted_and_exposed():
+    m = topica.ProdLDA(
+        num_topics=3, prior="dirichlet", contrastive=True,
+        contrastive_weight=0.3, contrastive_temp=0.2,
+    )
+    assert m.prior == "dirichlet"
+    assert m.contrastive is True
+    # Laplace, no contrastive is the default.
+    d = topica.ProdLDA(num_topics=3)
+    assert d.prior == "laplace" and d.contrastive is False
+
+
+def test_prodlda_flag_validation():
+    with pytest.raises(ValueError):
+        topica.ProdLDA(num_topics=3, prior="gaussian")  # unknown prior
+    with pytest.raises(ValueError):
+        topica.ProdLDA(num_topics=3, contrastive=True, contrastive_weight=-1.0)
+    with pytest.raises(ValueError):
+        topica.ProdLDA(num_topics=3, contrastive=True, contrastive_temp=0.0)
+
+
+def test_prodlda_flags_change_results_but_stay_valid():
+    docs, vocab, _ = _planted(n=120)
+    base = _model(seed=1); base.fit(docs, iters=60)
+    dir_m = _model(seed=1, prior="dirichlet"); dir_m.fit(docs, iters=60)
+    con_m = _model(seed=1, contrastive=True); con_m.fit(docs, iters=60)
+    # Each flag changes the fitted topics.
+    assert not np.allclose(base.topic_word, dir_m.topic_word)
+    assert not np.allclose(base.topic_word, con_m.topic_word)
+    # Outputs remain valid distributions.
+    for m in (dir_m, con_m):
+        assert np.allclose(m.topic_word.sum(axis=1), 1.0)
+        assert np.allclose(m.doc_topic.sum(axis=1), 1.0)
+
+
+def test_prodlda_flags_deterministic():
+    docs, _, _ = _planted(n=120)
+    for kw in ({"prior": "dirichlet"}, {"contrastive": True},
+               {"prior": "dirichlet", "contrastive": True}):
+        a = _model(seed=5, **kw); a.fit(docs, iters=60)
+        b = _model(seed=5, **kw); b.fit(docs, iters=60)
+        assert np.array_equal(a.topic_word, b.topic_word)
+        assert np.array_equal(a.doc_topic, b.doc_topic)
+
+
+def test_prodlda_flags_save_load_roundtrip(tmp_path):
+    docs, _, _ = _planted(n=120)
+    m = _model(seed=2, prior="dirichlet", contrastive=True, contrastive_weight=0.4)
+    m.fit(docs, iters=60)
+    path = str(tmp_path / "prodlda_flags.bin")
+    m.save(path)
+    loaded = topica.ProdLDA.load(path)
+    assert loaded.prior == "dirichlet"
+    assert loaded.contrastive is True
+    assert np.array_equal(loaded.topic_word, m.topic_word)
+    assert np.array_equal(loaded.doc_topic, m.doc_topic)

@@ -10956,6 +10956,11 @@ pub struct ETM {
     lr: f64,
     wdecay: f64,
     seed: u64,
+    // VAE-path flags (#174, #176); ignored on the EM path.
+    prior: String,
+    contrastive: bool,
+    contrastive_weight: f64,
+    contrastive_temp: f64,
     fitted: bool,
     topic_names: Vec<String>,
     model: Option<etm::EtmModel>,
@@ -10978,6 +10983,14 @@ struct EtmState {
     lr: f64,
     wdecay: f64,
     seed: u64,
+    #[serde(default = "default_prior")]
+    prior: String,
+    #[serde(default)]
+    contrastive: bool,
+    #[serde(default = "default_contrastive_weight")]
+    contrastive_weight: f64,
+    #[serde(default = "default_contrastive_temp")]
+    contrastive_temp: f64,
     fitted: bool,
     topic_names: Vec<String>,
     id_to_word: Vec<String>,
@@ -11095,7 +11108,9 @@ impl ETM {
     #[pyo3(signature = (num_topics, *, inference="em", convergence_tol=1e-4,
                         sigma_shrink=0.0, prior_variance=1e6, max_inner=25,
                         hidden_size=800, batch_size=1000, lr=0.005,
-                        wdecay=1.2e-6, seed=42, em_tol=None))]
+                        wdecay=1.2e-6, seed=42, prior="laplace".to_string(),
+                        contrastive=false, contrastive_weight=0.5, contrastive_temp=0.5,
+                        em_tol=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
@@ -11110,6 +11125,10 @@ impl ETM {
         lr: f64,
         wdecay: f64,
         seed: u64,
+        prior: String,
+        contrastive: bool,
+        contrastive_weight: f64,
+        contrastive_temp: f64,
         em_tol: Option<f64>,
     ) -> PyResult<Self> {
         let convergence_tol = if let Some(old_val) = em_tol {
@@ -11132,6 +11151,8 @@ impl ETM {
         if inference != "em" && inference != "vae" {
             return Err(PyValueError::new_err("inference must be \"em\" or \"vae\""));
         }
+        // Validate the VAE flags eagerly (they only take effect on the vae path).
+        build_avitm_options(&prior, contrastive, contrastive_weight, contrastive_temp)?;
         Ok(ETM {
             num_topics,
             inference: inference.to_string(),
@@ -11144,6 +11165,10 @@ impl ETM {
             lr,
             wdecay,
             seed,
+            prior,
+            contrastive,
+            contrastive_weight,
+            contrastive_temp,
             fitted: false,
             topic_names: Vec::new(),
             model: None,
@@ -11209,12 +11234,15 @@ impl ETM {
 
         if self.inference == "vae" {
             let ep = iters.unwrap_or(150);
+            let opts = build_avitm_options(
+                &self.prior, self.contrastive, self.contrastive_weight, self.contrastive_temp,
+            )?;
             let (k, h, bs, lr, wd, et) = (
                 self.num_topics, self.hidden_size, self.batch_size,
                 self.lr, self.wdecay, tol,
             );
             let m = py.allow_threads(move || {
-                etm_vae::fit_etm_vae(&docs_ids, k, num_types, &rho, h, ep, bs, lr, wd, et, &mut rng)
+                etm_vae::fit_etm_vae(&docs_ids, k, num_types, &rho, h, ep, bs, lr, wd, et, opts, &mut rng)
             });
             self.vae = Some(m);
             self.model = None;
@@ -11391,6 +11419,10 @@ impl ETM {
             lr: self.lr,
             wdecay: self.wdecay,
             seed: self.seed,
+            prior: self.prior.clone(),
+            contrastive: self.contrastive,
+            contrastive_weight: self.contrastive_weight,
+            contrastive_temp: self.contrastive_temp,
             fitted: self.fitted,
             topic_names: self.topic_names.clone(),
             id_to_word: self.id_to_word.clone(),
@@ -11445,6 +11477,11 @@ impl ETM {
                     w_ls: s.enc_w_ls.unwrap_or_default(),
                     b_ls: s.enc_b_ls.unwrap_or_default(),
                 },
+                prior: if s.prior == "dirichlet" {
+                    prodlda::Prior::Dirichlet
+                } else {
+                    prodlda::Prior::Laplace
+                },
             })
         } else { None };
         Ok(ETM {
@@ -11459,6 +11496,10 @@ impl ETM {
             lr: s.lr,
             wdecay: s.wdecay,
             seed: s.seed,
+            prior: s.prior,
+            contrastive: s.contrastive,
+            contrastive_weight: s.contrastive_weight,
+            contrastive_temp: s.contrastive_temp,
             fitted: s.fitted,
             topic_names: s.topic_names,
             id_to_word: s.id_to_word,
@@ -11534,6 +11575,12 @@ pub struct ProdLDA {
     lr: f64,
     em_tol: f64,
     seed: u64,
+    // #176 prior: "laplace" (default) or "dirichlet" (Weibull-reparameterized).
+    prior: String,
+    // #174 contrastive (InfoNCE) regularization on the topic vectors.
+    contrastive: bool,
+    contrastive_weight: f64,
+    contrastive_temp: f64,
     fitted: bool,
     topic_names: Vec<String>,
     model: Option<prodlda::ProdldaModel>,
@@ -11541,6 +11588,17 @@ pub struct ProdLDA {
 }
 
 /// Serializable snapshot of a fitted ProdLDA.
+// Serde defaults for the VAE flags so pre-change saved models load unchanged.
+fn default_prior() -> String {
+    "laplace".to_string()
+}
+fn default_contrastive_weight() -> f64 {
+    0.5
+}
+fn default_contrastive_temp() -> f64 {
+    0.5
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ProdldaState {
     num_topics: usize,
@@ -11551,6 +11609,16 @@ struct ProdldaState {
     lr: f64,
     em_tol: f64,
     seed: u64,
+    // VAE objective/prior flags (#174, #176). `#[serde(default)]` so models saved
+    // before these fields existed still load with the pre-change behavior.
+    #[serde(default = "default_prior")]
+    prior: String,
+    #[serde(default)]
+    contrastive: bool,
+    #[serde(default = "default_contrastive_weight")]
+    contrastive_weight: f64,
+    #[serde(default = "default_contrastive_temp")]
+    contrastive_temp: f64,
     fitted: bool,
     topic_names: Vec<String>,
     corpus: Option<corpus::Corpus>,
@@ -11578,6 +11646,40 @@ struct ProdldaState {
     bn_running_var: Option<Vec<f64>>,
 }
 
+/// Validate the VAE-model flags (#174, #176) and build the [`prodlda::AvitmOptions`]
+/// passed into `fit_avitm`. With `prior == "laplace"` and `contrastive == false`
+/// (the defaults) this yields `AvitmOptions::default()`, the pre-flag code path.
+fn build_avitm_options(
+    prior: &str,
+    contrastive: bool,
+    contrastive_weight: f64,
+    contrastive_temp: f64,
+) -> PyResult<prodlda::AvitmOptions> {
+    let prior_enum = match prior {
+        "laplace" => prodlda::Prior::Laplace,
+        "dirichlet" => prodlda::Prior::Dirichlet,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "prior must be \"laplace\" or \"dirichlet\", got {other:?}"
+            )))
+        }
+    };
+    if contrastive {
+        if !(contrastive_weight >= 0.0 && contrastive_weight.is_finite()) {
+            return Err(PyValueError::new_err("contrastive_weight must be >= 0 and finite"));
+        }
+        if !(contrastive_temp > 0.0 && contrastive_temp.is_finite()) {
+            return Err(PyValueError::new_err("contrastive_temp must be > 0 and finite"));
+        }
+    }
+    Ok(prodlda::AvitmOptions {
+        prior: prior_enum,
+        contrastive,
+        contrastive_weight,
+        contrastive_temp,
+    })
+}
+
 impl ProdLDA {
     fn fitted_model(&self) -> PyResult<&prodlda::ProdldaModel> {
         self.model
@@ -11596,7 +11698,9 @@ impl ProdLDA {
     /// all epochs). Pass `iters` to :meth:`fit` to set the number of epochs.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=1.0, hidden_size=100, dropout=0.2,
-                        batch_size=200, lr=0.002, convergence_tol=0.0, seed=42, em_tol=None))]
+                        batch_size=200, lr=0.002, convergence_tol=0.0, seed=42,
+                        prior="laplace".to_string(), contrastive=false,
+                        contrastive_weight=0.5, contrastive_temp=0.5, em_tol=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
@@ -11608,6 +11712,10 @@ impl ProdLDA {
         lr: f64,
         convergence_tol: f64,
         seed: u64,
+        prior: String,
+        contrastive: bool,
+        contrastive_weight: f64,
+        contrastive_temp: f64,
         em_tol: Option<f64>,
     ) -> PyResult<Self> {
         let convergence_tol = if let Some(old_val) = em_tol {
@@ -11631,6 +11739,8 @@ impl ProdLDA {
         if !(0.0..1.0).contains(&dropout) {
             return Err(PyValueError::new_err("dropout must be in [0, 1)"));
         }
+        // Validate the flags eagerly so a bad prior/weight fails at construction.
+        build_avitm_options(&prior, contrastive, contrastive_weight, contrastive_temp)?;
         Ok(ProdLDA {
             num_topics,
             hidden_size,
@@ -11640,6 +11750,10 @@ impl ProdLDA {
             lr,
             em_tol: convergence_tol,
             seed,
+            prior,
+            contrastive,
+            contrastive_weight,
+            contrastive_temp,
             fitted: false,
             topic_names: Vec::new(),
             model: None,
@@ -11669,14 +11783,19 @@ impl ProdLDA {
             return Err(PyValueError::new_err("vocabulary must have at least num_topics words"));
         }
         let ep = iters.unwrap_or(200);
+        let opts = build_avitm_options(
+            &self.prior, self.contrastive, self.contrastive_weight, self.contrastive_temp,
+        )?;
         let (k, h, a, dp, bs, lr, et) = (
             self.num_topics, self.hidden_size, self.alpha, self.dropout,
             self.batch_size, self.lr, tol,
         );
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        let empty: Vec<Vec<f64>> = vec![Vec::new(); corpus.docs.len()];
         let (model, corpus) = py.allow_threads(move || {
-            let m = prodlda::fit_prodlda(
-                &corpus.docs, k, num_types, h, a, dp, ep, bs, lr, et, &mut rng,
+            let m = prodlda::fit_avitm(
+                &corpus.docs, &empty, prodlda::InputMode::BowOnly, k, num_types, 0, h, a, dp,
+                ep, bs, lr, et, opts, &mut rng,
             );
             (m, corpus)
         });
@@ -11810,6 +11929,10 @@ impl ProdLDA {
             lr: self.lr,
             em_tol: self.em_tol,
             seed: self.seed,
+            prior: self.prior.clone(),
+            contrastive: self.contrastive,
+            contrastive_weight: self.contrastive_weight,
+            contrastive_temp: self.contrastive_temp,
             fitted: self.fitted,
             topic_names: self.topic_names.clone(),
             corpus: self.corpus.clone(),
@@ -11879,11 +12002,26 @@ impl ProdLDA {
             lr: s.lr,
             em_tol: s.em_tol,
             seed: s.seed,
+            prior: s.prior,
+            contrastive: s.contrastive,
+            contrastive_weight: s.contrastive_weight,
+            contrastive_temp: s.contrastive_temp,
             fitted: s.fitted,
             topic_names: s.topic_names,
             model,
             corpus: s.corpus,
         })
+    }
+
+    /// The document-topic prior: ``"laplace"`` (default) or ``"dirichlet"``.
+    #[getter]
+    fn prior(&self) -> String {
+        self.prior.clone()
+    }
+    /// Whether contrastive (InfoNCE) regularization is enabled.
+    #[getter]
+    fn contrastive(&self) -> bool {
+        self.contrastive
     }
 
     fn __repr__(&self) -> String {
@@ -11916,6 +12054,14 @@ struct CtmEmbState {
     lr: f64,
     convergence_tol: f64,
     seed: u64,
+    #[serde(default = "default_prior")]
+    prior: String,
+    #[serde(default)]
+    contrastive: bool,
+    #[serde(default = "default_contrastive_weight")]
+    contrastive_weight: f64,
+    #[serde(default = "default_contrastive_temp")]
+    contrastive_temp: f64,
     fitted: bool,
     topic_names: Vec<String>,
     corpus: Option<corpus::Corpus>,
@@ -11989,6 +12135,10 @@ macro_rules! ctm_embedding_model {
             lr: f64,
             convergence_tol: f64,
             seed: u64,
+            prior: String,
+            contrastive: bool,
+            contrastive_weight: f64,
+            contrastive_temp: f64,
             fitted: bool,
             topic_names: Vec<String>,
             model: Option<prodlda::ProdldaModel>,
@@ -12015,7 +12165,9 @@ macro_rules! ctm_embedding_model {
             /// to :meth:`fit` to set the number of epochs.
             #[new]
             #[pyo3(signature = (num_topics, *, alpha=1.0, hidden_size=100, dropout=0.2,
-                                batch_size=200, lr=0.002, convergence_tol=0.0, seed=42))]
+                                batch_size=200, lr=0.002, convergence_tol=0.0, seed=42,
+                                prior="laplace".to_string(), contrastive=false,
+                                contrastive_weight=0.5, contrastive_temp=0.5))]
             #[allow(clippy::too_many_arguments)]
             fn new(
                 #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
@@ -12026,6 +12178,10 @@ macro_rules! ctm_embedding_model {
                 lr: f64,
                 convergence_tol: f64,
                 seed: u64,
+                prior: String,
+                contrastive: bool,
+                contrastive_weight: f64,
+                contrastive_temp: f64,
             ) -> PyResult<Self> {
                 if num_topics < 2 {
                     return Err(PyValueError::new_err("need at least 2 topics"));
@@ -12036,6 +12192,7 @@ macro_rules! ctm_embedding_model {
                 if !(0.0..1.0).contains(&dropout) {
                     return Err(PyValueError::new_err("dropout must be in [0, 1)"));
                 }
+                build_avitm_options(&prior, contrastive, contrastive_weight, contrastive_temp)?;
                 Ok($name {
                     num_topics,
                     hidden_size,
@@ -12045,6 +12202,10 @@ macro_rules! ctm_embedding_model {
                     lr,
                     convergence_tol,
                     seed,
+                    prior,
+                    contrastive,
+                    contrastive_weight,
+                    contrastive_temp,
                     fitted: false,
                     topic_names: Vec::new(),
                     model: None,
@@ -12097,6 +12258,10 @@ macro_rules! ctm_embedding_model {
                 }
                 self.emb_dim = emb_dim;
                 let ep = iters.unwrap_or(200);
+                let opts = build_avitm_options(
+                    &self.prior, self.contrastive, self.contrastive_weight,
+                    self.contrastive_temp,
+                )?;
                 let (k, h, a, dp, bs, lr) = (
                     self.num_topics, self.hidden_size, self.alpha, self.dropout,
                     self.batch_size, self.lr,
@@ -12105,7 +12270,7 @@ macro_rules! ctm_embedding_model {
                 let (model, corpus) = py.allow_threads(move || {
                     let m = prodlda::fit_avitm(
                         &corpus.docs, &embs, $mode, k, num_types, emb_dim, h, a, dp, ep, bs,
-                        lr, tol, &mut rng,
+                        lr, tol, opts, &mut rng,
                     );
                     (m, corpus)
                 });
@@ -12256,6 +12421,10 @@ macro_rules! ctm_embedding_model {
                     lr: self.lr,
                     convergence_tol: self.convergence_tol,
                     seed: self.seed,
+                    prior: self.prior.clone(),
+                    contrastive: self.contrastive,
+                    contrastive_weight: self.contrastive_weight,
+                    contrastive_temp: self.contrastive_temp,
                     fitted: self.fitted,
                     topic_names: self.topic_names.clone(),
                     corpus: self.corpus.clone(),
@@ -12335,12 +12504,27 @@ macro_rules! ctm_embedding_model {
                     lr: s.lr,
                     convergence_tol: s.convergence_tol,
                     seed: s.seed,
+                    prior: s.prior,
+                    contrastive: s.contrastive,
+                    contrastive_weight: s.contrastive_weight,
+                    contrastive_temp: s.contrastive_temp,
                     fitted: s.fitted,
                     topic_names: s.topic_names,
                     model,
                     corpus: s.corpus,
                     emb_dim: s.emb_dim,
                 })
+            }
+
+            /// The document-topic prior: ``"laplace"`` (default) or ``"dirichlet"``.
+            #[getter]
+            fn prior(&self) -> String {
+                self.prior.clone()
+            }
+            /// Whether contrastive (InfoNCE) regularization is enabled.
+            #[getter]
+            fn contrastive(&self) -> bool {
+                self.contrastive
             }
 
             fn __repr__(&self) -> String {
