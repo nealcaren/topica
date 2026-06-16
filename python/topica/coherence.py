@@ -632,19 +632,19 @@ LLM_EVAL_PROMPTS: dict[str, str] = {
 }
 
 
-def _resolve_llm_call(call):
-    """Turn `call` into a callable ``str -> str``. Accepts a callable (used as-is)
+def _resolve_llm_call(backend):
+    """Turn `backend` into a callable ``str -> str``. Accepts a callable (used as-is)
     or a model-name string (routed through :func:`topica.llm_backend`)."""
-    if callable(call):
-        return call
-    if isinstance(call, str):
+    if callable(backend):
+        return backend
+    if isinstance(backend, str):
         from .labeling import llm_backend
 
-        return llm_backend(call)
+        return llm_backend(backend)
     raise TypeError(
-        "call must be a callable (str -> str) or a model-name string; pass e.g. "
-        'call=topica.llm.backend("openrouter/meta-llama/llama-3.3-70b-instruct") '
-        'or call="<your model>".'
+        "backend must be a callable (str -> str) or a model-name string; pass e.g. "
+        'backend=topica.llm.backend("openrouter/meta-llama/llama-3.3-70b-instruct") '
+        'or backend="<your model>".'
     )
 
 
@@ -682,7 +682,7 @@ def _match_intruder(reply, words):
     return None
 
 
-def llm_coherence(model, *, call, n_words=10, scale=(1, 3), dataset_description=None,
+def llm_coherence(model, *, backend, n_words=10, scale=(1, 3), dataset_description=None,
                   seed=0, n_samples=1, shuffle=True, prompts=None):
     """LLM-rated topic coherence (Stammbach et al. 2023): the headline LLM metric.
 
@@ -697,8 +697,8 @@ def llm_coherence(model, *, call, n_words=10, scale=(1, 3), dataset_description=
     ----------
     model : fitted model or list of word lists
         Anything :func:`_extract_topics` accepts.
-    call : callable ``str -> str`` or model-name str
-        The LLM. Pass ``topica.llm_backend(name, temperature=0)`` or a model name.
+    backend : callable ``str -> str`` or model-name str
+        The LLM. Pass ``topica.llm.backend(name, temperature=0)`` or a model name.
     n_words, scale : the number of top words shown and the rating range.
     dataset_description : optional str
         A one-line corpus description added to the prompt (small reported gains).
@@ -711,7 +711,7 @@ def llm_coherence(model, *, call, n_words=10, scale=(1, 3), dataset_description=
         Override the editable templates (key ``"rating"``); defaults to
         :data:`LLM_EVAL_PROMPTS`.
     """
-    backend = _resolve_llm_call(call)
+    backend = _resolve_llm_call(backend)
     tmpl = (prompts or LLM_EVAL_PROMPTS)["rating"]
     lo, hi = int(scale[0]), int(scale[1])
     ds = _dataset_clause(dataset_description)
@@ -731,7 +731,7 @@ def llm_coherence(model, *, call, n_words=10, scale=(1, 3), dataset_description=
     return np.array(out, dtype=float)
 
 
-def llm_intrusion(model, vocabulary=None, *, call, n_words=5, dataset_description=None,
+def llm_intrusion(model, vocabulary=None, *, backend, n_words=5, dataset_description=None,
                   seed=0, n_samples=1, prompts=None):
     """LLM word-intrusion accuracy (Stammbach et al. 2023).
 
@@ -743,9 +743,9 @@ def llm_intrusion(model, vocabulary=None, *, call, n_words=5, dataset_descriptio
     The paper finds an LLM matches human accuracy on this *task* (~72%), but rating
     (:func:`llm_coherence`) tracks human topic *rankings* better -- lead with
     ``llm_coherence`` and report this alongside. ``llm-bounded``; see
-    :func:`llm_coherence` for the shared ``call`` / ``n_samples`` semantics.
+    :func:`llm_coherence` for the shared ``backend`` / ``n_samples`` semantics.
     """
-    backend = _resolve_llm_call(call)
+    backend = _resolve_llm_call(backend)
     tmpl = (prompts or LLM_EVAL_PROMPTS)["intrusion"]
     ds = _dataset_clause(dataset_description)
     items = word_intrusion(model, vocabulary, n_words=n_words, seed=seed)
@@ -785,7 +785,7 @@ def _doc_texts(docs):
     return [d if isinstance(d, str) else " ".join(str(t) for t in d) for d in docs]
 
 
-def llm_select_k(models, docs, *, call, n_docs=10, granularity="broad",
+def llm_select_k(models, docs, *, backend, n_docs=10, granularity="broad",
                  example_labels=None, research_question=None, criterion="knee",
                  tol=0.03, seed=0, n_samples=1, max_chars=1500, prompts=None):
     """Choose the number of topics by LLM document-label purity (Stammbach et al.
@@ -814,7 +814,7 @@ def llm_select_k(models, docs, *, call, n_docs=10, granularity="broad",
         Candidates, typically the same corpus fit at different ``num_topics``.
     docs : Corpus | list of str | list of token lists
         The documents, in the order the models were fit on (their ``doc_topic`` rows).
-    call : callable ``str -> str`` or model-name str
+    backend : callable ``str -> str`` or model-name str
         The LLM (see :func:`llm_coherence`).
     n_docs : int
         Top documents per topic to label.
@@ -840,7 +840,7 @@ def llm_select_k(models, docs, *, call, n_docs=10, granularity="broad",
     dict with ``best`` (the chosen model's ``num_topics``), ``best_index``, and
     ``scores`` (a list of ``{"num_topics", "purity", "per_topic_purity"}`` per model).
     """
-    backend = _resolve_llm_call(call)
+    backend = _resolve_llm_call(backend)
     tmpl = (prompts or LLM_EVAL_PROMPTS)["label"]
     texts = _doc_texts(docs)
     gran = "broad" if granularity not in ("broad", "narrow") else granularity

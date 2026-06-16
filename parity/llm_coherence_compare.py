@@ -70,7 +70,7 @@ def run(verbose: bool = True) -> dict:
     data = _load()
     if data is None:
         raise RuntimeError("could not fetch the Hoyle human data")
-    call = topica.llm.backend(MODEL, temperature=0)
+    backend = topica.llm.backend(MODEL, temperature=0)
 
     llm_all, human_all, npmi_all = [], [], []
     rows = []
@@ -83,7 +83,7 @@ def run(verbose: bool = True) -> dict:
             if PER_COMBO:
                 topics, human, npmi = topics[:PER_COMBO], human[:PER_COMBO], npmi[:PER_COMBO]
             word_lists = [t[:N_WORDS] for t in topics]
-            llm = topica.llm.coherence(word_lists, call=call, n_words=N_WORDS)
+            llm = topica.llm.coherence(word_lists, backend=backend, n_words=N_WORDS)
             ok = ~np.isnan(llm)
             llm, human, npmi = llm[ok], np.array(human)[ok], np.array(npmi)[ok]
             rows.append((f"{dataset}/{model_name}", _spearman(llm, human), _spearman(npmi, human), len(llm)))

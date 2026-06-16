@@ -88,11 +88,11 @@ provider-agnostic `topica[llm]` backend.
 
 ```python
 # A capable open-source model, via OpenRouter or a local endpoint:
-call = topica.llm.backend("openrouter/meta-llama/llama-3.3-70b-instruct", temperature=0)
+backend = topica.llm.backend("openrouter/meta-llama/llama-3.3-70b-instruct", temperature=0)
 
-topica.llm.coherence(model, call=call, n_words=10)        # per-topic 1-3 rating (the headline)
-topica.llm.intrusion(model, call=call, n_words=5)         # LLM picks the intruder -> accuracy
-topica.llm.select_k(models, docs, call=call, n_docs=10)   # number-of-topics by doc-label purity
+topica.llm.coherence(model, backend=backend, n_words=10)        # per-topic 1-3 rating (the headline)
+topica.llm.intrusion(model, backend=backend, n_words=5)         # LLM picks the intruder -> accuracy
+topica.llm.select_k(models, docs, backend=backend, n_docs=10)   # number-of-topics by doc-label purity
 ```
 
 `llm.coherence` is the one to lead with: in the paper it beats NPMI/c_v at tracking
