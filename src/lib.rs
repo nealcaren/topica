@@ -13,6 +13,7 @@ pub mod dtm;
 pub mod gsdmm;
 pub mod hdp;
 pub mod hlda;
+pub mod infoctm;
 pub mod keyatm;
 pub mod labeled;
 pub mod cvb0;
