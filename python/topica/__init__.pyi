@@ -115,6 +115,10 @@ def topic_diversity(topics: Any, topn: int = 25) -> float:
     """Fraction of unique words across all topics' top-`topn` words."""
     ...
 
+def topic_semantic_diversity(topics: Any, topn: int = 25) -> float:
+    """Fraction of unique top-word *pairs* across all topics (Wu, Nguyen & Luu 2024)."""
+    ...
+
 
 def exclusivity(model_or_phi: Any, *, n: int = 10) -> numpy.typing.NDArray[numpy.float64]:
     """Per-topic exclusivity of the top-n words, shape (num_topics,). Pair with
@@ -411,6 +415,7 @@ __all__ = [
     "stm",
     "coherence",
     "topic_diversity",
+    "topic_semantic_diversity",
     "exclusivity",
     "word_intrusion",
     "document_intrusion",

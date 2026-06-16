@@ -15,10 +15,17 @@ model.coherence(10)                                   # per-topic UMass (built i
 topica.coherence(model, texts, coherence_type="c_v")      # windowed, human-aligned
 topica.exclusivity(model, n=10)                           # per topic
 topica.topic_diversity(model, topn=25)                    # fraction of unique top words
+topica.topic_semantic_diversity(model, topn=25)           # fraction of unique top-word *pairs*
 
 qf = topica.quality_frontier(model, n=10)                 # coherence, exclusivity, prevalence
 # qf["coherence"], qf["exclusivity"] -> the canonical STM quality scatter
 ```
+
+`topic_diversity` counts unique single words; `topic_semantic_diversity` counts
+unique word *pairs* (Wu, Nguyen & Luu 2024). We reach for the pair version when
+single-word overlap understates redundancy: two topics can share few exact words
+yet co-locate the same word pairs, and a pair pins down word sense without any
+embeddings. Both range over `[0, 1]`, and higher means more diverse.
 
 !!! tip "Coherence is fast, even at large K"
     `topica.coherence` runs its co-occurrence counting in the Rust core, scoring only
