@@ -82,6 +82,51 @@ def content_trajectory(model, topic: int, word, contrast=None):
     return out
 
 
+def _effective_counts(model, topic, group, period, groups, periods, doc_lengths):
+    """Effective number of topic-`topic` tokens in the (group, period) cell:
+    sum over the cell's documents of theta_{d,topic} * document length."""
+    theta = np.asarray(model.doc_topic)[:, topic]
+    dl = np.asarray(doc_lengths, dtype=float)
+    glab, plab = str(group), _period_label(period)
+    mask = np.array([str(g) == glab for g in groups]) & \
+           np.array([_period_label(p) == plab for p in periods])
+    return float((theta[mask] * dl[mask]).sum())
+
+
+def content_contrast_se(model, topic, group_a, group_b, period, groups, periods, doc_lengths, n=10):
+    """Analytic standard errors for the per-word content contrast between two
+    groups in one period.
+
+    Each cell's topic-word estimate is treated as a proportion measured from its
+    effective token count ``N`` (derived from the document-topic weights, theta *
+    document length), giving the multinomial sampling variance
+    ``beta_v (1 - beta_v) / N`` per word; the contrast SE is the root of the sum
+    across the two independent cells. This is the standard word-level delta-method
+    SE (as in weighted log-odds / fightin'-words) and is **instant**.
+
+    It is deliberately conservative: it uses only within-cell sampling variance and
+    **ignores the random-walk pooling across periods and the prior shrinkage**,
+    both of which narrow the true posterior. Read it as an upper bound on a single
+    cell's uncertainty; :func:`content_trajectory_ci` gives the pooled bootstrap
+    band that reflects the model's actual partial pooling. Returns a list of
+    ``(word, contrast, se)`` for the ``n`` words with the largest ``|contrast|``.
+    """
+    # Resolve the period to its label once (int in range = index, else a value),
+    # so content_word_dist and the effective-count match use the same key.
+    plab = (model.periods[period] if isinstance(period, int) and 0 <= period < model.num_periods
+            else _period_label(period))
+    ba = np.asarray(model.content_word_dist(group_a, plab))[topic]
+    bb = np.asarray(model.content_word_dist(group_b, plab))[topic]
+    na = _effective_counts(model, topic, group_a, plab, groups, periods, doc_lengths)
+    nb = _effective_counts(model, topic, group_b, plab, groups, periods, doc_lengths)
+    contrast = ba - bb
+    var = ba * (1 - ba) / max(na, 1e-9) + bb * (1 - bb) / max(nb, 1e-9)
+    se = np.sqrt(var)
+    vocab = model.vocabulary
+    order = np.argsort(np.abs(contrast))[::-1][:n]
+    return [(vocab[i], float(contrast[i]), float(se[i])) for i in order]
+
+
 def content_trajectory_ci(refit, docs, groups, periods, *, anchor_words, word, contrast,
                           clusters=None, n_boot=40, ci=0.95, seed=0):
     """Cluster-bootstrap confidence band for a content trajectory.

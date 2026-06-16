@@ -146,6 +146,23 @@ def test_prevalence_helpers():
     assert len(pc) == m.num_periods and [p for p, _ in pc] == m.periods
 
 
+def test_content_contrast_se():
+    from topica.ectm import content_contrast_se
+    docs, groups, times = _corpus(drift=True)
+    m = topica.ECTM(num_topics=2, seed=1)
+    m.fit(docs, times=times, content=groups, iters=40)
+    dl = [len(d) for d in docs]
+    k = max(range(2), key=lambda k: m.content_word_dist("B", 2)[k, m.vocabulary.index("x")])
+    res = content_contrast_se(m, k, "B", "A", 2, groups, times, dl, n=4)  # period index 2
+    assert len(res) == 4
+    for w, c, se in res:
+        assert isinstance(w, str) and se >= 0
+    full = dict((w, (c, se)) for w, c, se in
+                content_contrast_se(m, k, "B", "A", 2, groups, times, dl, n=len(m.vocabulary)))
+    # the drifting word leans toward B with a finite SE in the last period
+    assert full["x"][0] > 0 and full["x"][1] > 0
+
+
 def test_content_trajectory_ci():
     from topica.ectm import content_trajectory_ci
     docs, groups, times = _corpus(drift=True)

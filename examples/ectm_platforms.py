@@ -140,6 +140,16 @@ def main():
         print("  (trend agrees; ECTM adds period pooling on sparse cells, topic separation, "
               "and the\n   uncertainty band -- it is the regularized, inferential version of the cross-tab.)")
 
+        # Per-word content contrast with analytic standard errors (last election).
+        from topica.ectm import content_contrast_se
+        dl = [len(d) for d in docs]
+        print(f"\nContent contrast with analytic SEs, {P[-1]} (word: D-R x1000 +/- SE, z):")
+        for w, c, se in content_contrast_se(model, env, "D", "R", P[-1], party, year, dl, n=5):
+            z = c / se if se > 0 else 0.0
+            print(f"  {w:12} {1000 * c:+7.1f} +/- {1000 * se:4.1f}  z={z:+.1f}")
+        print("  (instant, conservative -- ignores period pooling; for the pooled band use "
+              "content_trajectory_ci)")
+
         # --- The other half: how OFTEN each party discusses the topic ---
         print(f"\n=== Environment topic #{env}: ATTENTION (prevalence), the other half ===")
         att = prevalence_by_group(model, party, year, topic=env) * 100  # (num_groups, num_periods) %

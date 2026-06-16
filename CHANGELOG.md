@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **ECTM content standard errors** — `topica.ectm.content_contrast_se` gives
+  instant analytic per-word SEs for a group contrast (multinomial sampling
+  variance from each cell's effective token count; conservative, ignores period
+  pooling), and `content_trajectory_ci` gives a cluster-bootstrap confidence band
+  (resample by source document/platform, not paragraph). On the platforms,
+  `climate` is a z=5.7 Democratic word in 2016 and absent in 1964.
 - **ECTM prevalence helpers** — `topica.ectm.prevalence_by_group` /
   `prevalence_contrast` give the descriptive "how often each group discusses a
   topic" view (mean `doc_topic` by group x period). The partisan examples now also

@@ -224,7 +224,11 @@ The `topica.ectm` helpers read the content result on the word-probability scale:
 `content_contrast(m, topic, a, b, period)` (words distinguishing two groups),
 `content_trajectory(m, topic, word, contrast=(a, b))` (a word's contrast across
 periods), and `content_divergence(m, topic, a, b)` (total-variation distance
-between the groups each period).
+between the groups each period). For uncertainty, `content_contrast_se` gives
+instant analytic per-word standard errors (multinomial sampling variance from
+each cell's effective counts; conservative, ignores the period pooling) and
+`content_trajectory_ci` gives a cluster-bootstrap band (resample by source
+document, so the band reflects independent units, not paragraphs).
 
 Four worked examples ship with topica. The two partisan showcases model how
 **Democrats and Republicans** word the same topics and how that gap evolves:
