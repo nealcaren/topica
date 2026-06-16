@@ -199,7 +199,20 @@ random-walk precision over periods (larger pools adjacent periods more);
 `interaction_shrink` pulls the group-by-time term toward zero unless the data earn
 it. A prevalence design (`prevalence=`) is optional and behaves as in STM.
 
-The `topica.ectm` helpers read the result on the word-probability scale:
+ECTM answers two complementary questions, and exposes both. The **content** half
+(which words a group uses, and how that drifts) is the topic-word model above; the
+**prevalence** half (how *often* each group discusses a topic) is the standard
+logistic-normal regression on a `prevalence=` design. Because ECTM is
+logistic-normal, the prevalence side comes with method-of-composition standard
+errors: pass `prevalence=party*spline(year)` and use
+`topica.stm.predicted_prevalence` / `topica.estimate_effect` for attention
+trajectories with confidence bands, exactly as for STM. `prevalence_by_group(m,
+groups, periods)` gives the quick descriptive version. The two halves can tell
+different stories -- on the platforms the parties devote *similar attention* to
+the environment while their *language* diverges sharply, a contrast a
+prevalence-only model would miss.
+
+The `topica.ectm` helpers read the content result on the word-probability scale:
 `content_words(m, topic, group, period)` (top words for a cell),
 `content_contrast(m, topic, a, b, period)` (words distinguishing two groups),
 `content_trajectory(m, topic, word, contrast=(a, b))` (a word's contrast across

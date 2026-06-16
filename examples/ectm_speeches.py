@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 import topica
-from topica.ectm import content_contrast, content_divergence
+from topica.ectm import content_contrast, content_divergence, prevalence_by_group
 
 DATA = os.path.join(os.path.dirname(__file__), "speech_data", "speeches.parquet")
 
@@ -59,9 +59,17 @@ def main():
     print(f"{len(docs)} speeches | parties D/R | {len(set(period))} periods "
           f"{min(period)}-{max(period)} | vocab {vocab}")
 
+    # Prevalence design (party * smooth time) so attention can vary by party and
+    # period -- the "how often" half, with SEs available via predicted_prevalence.
+    party_col, pn = topica.one_hot(party)
+    t_basis, sn = topica.spline(np.asarray(period, float), df=4)
+    inter, _ = topica.interaction(party_col, t_basis, name="party_time")
+    X = np.column_stack([party_col, t_basis, inter])
+    names = list(pn) + list(sn) + [f"party_time_{i}" for i in range(inter.shape[1])]
+
     model = topica.ECTM(num_topics=16, seed=1)
-    model.fit(docs, times=period, content=party, iters=120,
-              period_smooth=6.0, interaction_shrink=1.3)
+    model.fit(docs, times=period, content=party, prevalence=X, prevalence_names=names,
+              iters=120, period_smooth=6.0, interaction_shrink=1.3)
     print(f"fitted: {model} | converged={model.converged}\n")
 
     P = model.periods
@@ -82,6 +90,17 @@ def main():
             c = content_contrast(model, k, "D", "R", yr, n=5)
             print(f"   {yr}  D: {', '.join(w for w, _ in c['toward_D'])}"
                   f"   R: {', '.join(w for w, _ in c['toward_R'])}")
+
+    # The other half: how often each party discusses the most divergent topic.
+    top = max(range(model.num_topics), key=avg_div)
+    att = prevalence_by_group(model, party, period, topic=top) * 100
+    gi = {g: i for i, g in enumerate(model.groups)}
+    print(f"\n=== Attention (prevalence) for topic #{top}, by party (%), every 4th period ===")
+    print("        " + " ".join(f"{c:>6}" for c in P[::4]))
+    for g in model.groups:
+        print(f"  {g}:   " + " ".join(f"{v:6.1f}" for v in att[gi[g]][::4]))
+    print("(for attention gaps with standard errors, pass this prevalence design to "
+          "topica.stm.predicted_prevalence / estimate_effect)")
 
 
 if __name__ == "__main__":

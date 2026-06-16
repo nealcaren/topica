@@ -82,6 +82,59 @@ def content_trajectory(model, topic: int, word, contrast=None):
     return out
 
 
+def _period_label(v):
+    """Format a raw period value the way the fit did (numeric -> int label)."""
+    try:
+        f = float(v)
+        return str(int(f)) if f == int(f) else str(f)
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def prevalence_by_group(model, groups, periods, topic=None):
+    """Descriptive mean topic *prevalence* (share of ``doc_topic``) by
+    (group, period) -- the "how often does each group discuss a topic" half of
+    the ECTM picture, complementing the content helpers' "how worded".
+
+    ``groups`` and ``periods`` are the per-document arrays passed to
+    :meth:`ECTM.fit`, aligned to ``model.doc_topic`` rows. Returns an array of
+    mean prevalence indexed in ``model.groups`` x ``model.periods`` order:
+    shape ``(num_groups, num_periods, num_topics)``, or ``(num_groups,
+    num_periods)`` when ``topic`` is given. Cells with no documents are ``nan``.
+
+    This is the quick descriptive view; for prevalence with standard errors and
+    smooth trajectories, fit with a ``prevalence=`` design and use
+    :func:`topica.stm.predicted_prevalence` / :func:`topica.estimate_effect`,
+    which work on ECTM through its logistic-normal posterior.
+    """
+    theta = np.asarray(model.doc_topic)
+    gi = {g: i for i, g in enumerate(model.groups)}
+    pi = {p: i for i, p in enumerate(model.periods)}
+    g_idx = np.array([gi.get(str(g), -1) for g in groups])
+    p_idx = np.array([pi.get(_period_label(p), -1) for p in periods])
+    G, P, K = model.num_groups, model.num_periods, model.num_topics
+    out = np.full((G, P, K), np.nan)
+    for a in range(G):
+        for b in range(P):
+            mask = (g_idx == a) & (p_idx == b)
+            if mask.any():
+                out[a, b] = theta[mask].mean(axis=0)
+    return out if topic is None else out[:, :, topic]
+
+
+def prevalence_contrast(model, topic: int, group_a, group_b, groups, periods):
+    """Descriptive prevalence gap ``group_a - group_b`` for ``topic`` in each
+    period -- how much more (or less) often one group discusses the topic, traced
+    over time. Returns a list of ``(period_label, gap)`` in period order.
+    (Sign uses mean ``doc_topic`` shares; for an inferential gap with a CI use
+    :func:`topica.stm.predicted_prevalence` with ``contrast=``.)
+    """
+    pv = prevalence_by_group(model, groups, periods, topic=topic)
+    ia = model.groups.index(str(group_a))
+    ib = model.groups.index(str(group_b))
+    return [(p, float(pv[ia, t] - pv[ib, t])) for t, p in enumerate(model.periods)]
+
+
 def content_divergence(model, topic: int, group_a, group_b):
     """Total-variation distance between ``group_a`` and ``group_b``'s word
     distributions for ``topic`` in each period — a single-number summary of how

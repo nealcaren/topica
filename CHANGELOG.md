@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **ECTM prevalence helpers** — `topica.ectm.prevalence_by_group` /
+  `prevalence_contrast` give the descriptive "how often each group discusses a
+  topic" view (mean `doc_topic` by group x period). The partisan examples now also
+  fit a `prevalence=party*spline(year)` design and report the attention gap with
+  method-of-composition standard errors via `topica.stm.predicted_prevalence`,
+  alongside the content trajectories — both halves of the ECTM picture.
 - **ECTM partisan examples** — `examples/ectm_platforms.py` (U.S. party platforms
   1948-2024, Dem vs Rep across 20 elections; corpus ships in-repo, rebuilt by
   `prep_platforms.py`) and `examples/ectm_speeches.py` (congressional speeches

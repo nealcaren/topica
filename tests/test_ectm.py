@@ -130,6 +130,22 @@ def test_content_helpers_surface():
     assert len(div) == m.num_periods and all(0.0 <= d <= 1.0 for _, d in div)
 
 
+def test_prevalence_helpers():
+    docs, groups, times = _corpus(drift=True)
+    m = topica.ECTM(num_topics=2, seed=1)
+    m.fit(docs, times=times, content=groups, iters=40)
+    from topica.ectm import prevalence_by_group, prevalence_contrast
+    pv = prevalence_by_group(m, groups, times)
+    assert pv.shape == (m.num_groups, m.num_periods, m.num_topics)
+    # populated cells are topic distributions (sum to 1 over topics)
+    finite = pv[~np.isnan(pv).any(axis=2)]
+    np.testing.assert_allclose(finite.sum(axis=1), 1.0, atol=1e-6)
+    one = prevalence_by_group(m, groups, times, topic=0)
+    assert one.shape == (m.num_groups, m.num_periods)
+    pc = prevalence_contrast(m, 0, "A", "B", groups, times)
+    assert len(pc) == m.num_periods and [p for p, _ in pc] == m.periods
+
+
 def test_analysis_surface():
     m = _fit()
     assert topica.summary(m) is not None

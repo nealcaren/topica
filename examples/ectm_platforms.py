@@ -27,7 +27,8 @@ from collections import Counter
 import numpy as np
 
 import topica
-from topica.ectm import content_contrast, content_divergence, content_trajectory
+from topica.ectm import (content_contrast, content_divergence, content_trajectory,
+                         prevalence_by_group)
 
 DATA = os.path.join(os.path.dirname(__file__), "platforms_data", "platforms.json.gz")
 
@@ -69,9 +70,19 @@ def main():
     print(f"{len(docs)} platform paragraphs | parties D/R | {len(set(year))} elections "
           f"{min(year)}-{max(year)} | vocab {vocab}")
 
+    # Prevalence design: party, a smooth year trend, and their interaction. Passing
+    # it as prevalence= lets each topic's *attention* depend on party and time
+    # (the "how often" half), and using the same design in predicted_prevalence
+    # below gives method-of-composition standard errors.
+    party_col, pn = topica.one_hot(party)                 # indicator(Republican)
+    yr_basis, sn = topica.spline(np.asarray(year, float), df=4)
+    inter, _ = topica.interaction(party_col, yr_basis, name="party_year")
+    X = np.column_stack([party_col, yr_basis, inter])
+    names = list(pn) + list(sn) + [f"party_year_{i}" for i in range(inter.shape[1])]
+
     model = topica.ECTM(num_topics=18, seed=1)
-    model.fit(docs, times=year, content=party, iters=150,
-              period_smooth=6.0, interaction_shrink=1.2)
+    model.fit(docs, times=year, content=party, prevalence=X, prevalence_names=names,
+              iters=150, period_smooth=6.0, interaction_shrink=1.2)
     print(f"fitted: {model} | converged={model.converged}\n")
 
     P = model.periods
@@ -107,6 +118,32 @@ def main():
             for pt in ("D", "R"):
                 traj = [1000 * model.content_word_dist(pt, t)[env, vi[w]] for t in range(len(P))][::4]
                 print(f"  {w + ' (' + pt + ')':<11}" + " ".join(f"{v:5.1f}" for v in traj))
+
+        # --- The other half: how OFTEN each party discusses the topic ---
+        print(f"\n=== Environment topic #{env}: ATTENTION (prevalence), the other half ===")
+        att = prevalence_by_group(model, party, year, topic=env) * 100  # (num_groups, num_periods) %
+        gi = {g: i for i, g in enumerate(model.groups)}
+        print("Share of platform devoted to the topic (%), every 4th election:")
+        print("        " + " ".join(f"{c:>6}" for c in P[::4]))
+        for g in model.groups:
+            print(f"  {g}:   " + " ".join(f"{v:6.1f}" for v in att[gi[g]][::4]))
+        try:
+            import pandas as pd
+            from topica.stm import predicted_prevalence
+            data = pd.DataFrame({"party": party, "year": year})
+            res = predicted_prevalence(model, formula="~ C(party) * spline(year, df=4)",
+                                       data=data, contrast={"party": ["D", "R"]},
+                                       topics=[env], nsims=25, n_sim=2000, seed=0)
+            e = res[0]
+            gap, lo, hi = (100 * float(np.ravel(x)[0]) for x in (e.estimate, e.ci_low, e.ci_high))
+            print(f"\nD-R attention gap (predicted, method-of-composition 95% CI): "
+                  f"{gap:+.2f} points  [{lo:+.2f}, {hi:+.2f}]")
+            print(f"Takeaway: the ATTENTION gap is about a percentage point ({abs(gap):.1f}), while the")
+            print("WORDING gap (climate, above) swings ~20-30 per-mille and grows -- an order of")
+            print("magnitude larger. The partisan divergence on the environment is overwhelmingly in")
+            print("HOW it is discussed, not HOW MUCH -- which a prevalence-only model cannot see.")
+        except ImportError:
+            print("\n(install topica[formula] to get the attention gap with standard errors)")
 
 
 if __name__ == "__main__":
