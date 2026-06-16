@@ -12,6 +12,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Once;
 
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -258,6 +260,7 @@ const MODEL_TAG_LSA:       u8 = 23;
 const MODEL_TAG_COMBINEDTM: u8 = 24;
 const MODEL_TAG_ZEROSHOTTM: u8 = 25;
 const MODEL_TAG_DETM:      u8 = 26;
+const MODEL_TAG_ECTM:      u8 = 27;
 
 fn model_tag_name(tag: u8) -> &'static str {
     match tag {
@@ -287,6 +290,7 @@ fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_COMBINEDTM => "CombinedTM",
         MODEL_TAG_ZEROSHOTTM => "ZeroShotTM",
         MODEL_TAG_DETM     => "DETM",
+        MODEL_TAG_ECTM     => "ECTM",
         _                  => "unknown",
     }
 }
@@ -387,6 +391,23 @@ struct StmState {
     feature_names: Vec<String>, content_beta: Option<Vec<Vec<Vec<f64>>>>,
     #[serde(default)] mu: Vec<f64>, #[serde(default)] sigma: Vec<f64>,
     group_names: Vec<String>, corpus: Option<corpus::Corpus>,
+    #[serde(default = "nan")] bound: f64,
+    #[serde(default)] bound_history: Vec<f64>,
+    #[serde(default)] converged: bool,
+    #[serde(default)] topic_names: Vec<String>,
+    #[serde(default = "default_variational")] variational: String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+struct EctmState {
+    num_topics: usize, sigma_shrink: f64, seed: u64, fitted: bool,
+    beta: Option<Arr2>, theta: Option<Arr2>,
+    eta_mean: Option<Arr2>, eta_cov: Option<Arr3>, gamma: Option<Arr2>,
+    feature_names: Vec<String>,
+    content_beta: Vec<Vec<Vec<f64>>>,
+    num_groups: usize, num_periods: usize,
+    group_names: Vec<String>, period_names: Vec<String>,
+    #[serde(default)] mu: Vec<f64>, #[serde(default)] sigma: Vec<f64>,
+    corpus: Option<corpus::Corpus>,
     #[serde(default = "nan")] bound: f64,
     #[serde(default)] bound_history: Vec<f64>,
     #[serde(default)] converged: bool,
@@ -6813,6 +6834,639 @@ impl STM {
 
     fn __repr__(&self) -> String {
         format!("STM(num_topics={}, variational={:?}, fitted={})", self.num_topics, self.variational, self.fitted)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ECTM: Evolving Content Topic Model (STM core + dynamic content covariates)
+// ---------------------------------------------------------------------------
+
+/// Evolving Content Topic Model. An STM whose **content** (topic-word) model
+/// carries a group-by-time interaction: the same stable topic is worded
+/// differently across a document **group** covariate, and that difference
+/// **evolves** across discrete time **periods**. Where :class:`STM`'s content
+/// model gives one word distribution per group, ECTM gives one per
+/// (group, period) cell, tied across adjacent periods by a random-walk prior so
+/// sparse cells borrow strength from their temporal neighbours.
+///
+/// After fitting, :meth:`content_word_dist` returns the topic-word matrix for
+/// any (group, period) cell; the helpers in :mod:`topica.ectm`
+/// (``content_words`` / ``content_contrast`` / ``content_trajectory``) read
+/// those to report how a group's vocabulary on a topic shifts over time.
+///
+/// The prevalence side is the standard STM regression ``μ_d = X_d γ`` and is
+/// optional; ``content`` (a per-document group label) and ``times`` (a
+/// per-document period label) are required.
+#[pyclass(module = "topica")]
+pub struct ECTM {
+    num_topics: usize,
+    sigma_shrink: f64,
+    seed: u64,
+    variational: String,
+
+    fitted: bool,
+    topic_names: Vec<String>,
+    beta: Option<Array2<f64>>,        // K×V, cell-averaged topic-word
+    theta: Option<Array2<f64>>,       // D×K
+    content_beta: Vec<Vec<Vec<f64>>>, // [cell][k][v], cell = g*num_periods + t
+    num_groups: usize,
+    num_periods: usize,
+    group_names: Vec<String>,
+    period_names: Vec<String>,
+    eta_mean: Option<Array2<f64>>,
+    eta_cov: Option<Array3<f32>>,
+    gamma: Option<Array2<f64>>, // (num_features, K-1); None if no prevalence
+    feature_names: Vec<String>,
+    mu: Vec<f64>,
+    sigma: Vec<f64>,
+    corpus: Option<corpus::Corpus>,
+    bound: f64,
+    bound_history: Vec<f64>,
+    converged: bool,
+}
+
+impl ECTM {
+    fn require_fitted(&self) -> PyResult<()> {
+        if self.fitted {
+            Ok(())
+        } else {
+            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+        }
+    }
+
+    fn resolve_group(&self, obj: &Bound<'_, PyAny>) -> PyResult<usize> {
+        if let Ok(i) = obj.extract::<usize>() {
+            if i < self.group_names.len() {
+                return Ok(i);
+            }
+            return Err(PyValueError::new_err("group index out of range"));
+        }
+        if let Ok(s) = obj.extract::<String>() {
+            return self
+                .group_names
+                .iter()
+                .position(|g| g == &s)
+                .ok_or_else(|| PyValueError::new_err(format!("unknown group {:?}", s)));
+        }
+        Err(PyValueError::new_err("group must be a name (str) or index (int)"))
+    }
+
+    fn resolve_period(&self, obj: &Bound<'_, PyAny>) -> PyResult<usize> {
+        if let Ok(i) = obj.extract::<usize>() {
+            if i < self.period_names.len() {
+                return Ok(i);
+            }
+            return Err(PyValueError::new_err("period index out of range"));
+        }
+        if let Ok(s) = obj.extract::<String>() {
+            return self
+                .period_names
+                .iter()
+                .position(|p| p == &s)
+                .ok_or_else(|| PyValueError::new_err(format!("unknown period {:?}", s)));
+        }
+        Err(PyValueError::new_err("period must be a label (str) or index (int)"))
+    }
+}
+
+#[pymethods]
+impl ECTM {
+    /// Create an unfitted model. `sigma_shrink` ∈ [0,1] shrinks Σ toward its
+    /// diagonal each M-step. `variational` selects the per-document
+    /// variational-covariance mode: ``"laplace"`` (default, full ν = H⁻¹) or
+    /// ``"diagonal"`` (mean-field). ECTM always uses a seeded random init for the
+    /// content model, so `seed` matters for reproducibility.
+    #[new]
+    #[pyo3(signature = (num_topics, *, sigma_shrink=0.0, seed=42, variational="laplace"))]
+    fn new(
+        #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
+        sigma_shrink: f64,
+        seed: u64,
+        variational: &str,
+    ) -> PyResult<Self> {
+        require_experimental("ECTM")?;
+        if num_topics < 2 {
+            return Err(PyValueError::new_err("num_topics must be >= 2"));
+        }
+        if !(0.0..=1.0).contains(&sigma_shrink) {
+            return Err(PyValueError::new_err("sigma_shrink must be in [0, 1]"));
+        }
+        if variational != "laplace" && variational != "diagonal" {
+            return Err(PyValueError::new_err("variational must be 'laplace' or 'diagonal'"));
+        }
+        Ok(ECTM {
+            num_topics,
+            sigma_shrink,
+            seed,
+            variational: variational.to_string(),
+            fitted: false,
+            topic_names: Vec::new(),
+            beta: None,
+            theta: None,
+            content_beta: Vec::new(),
+            num_groups: 0,
+            num_periods: 0,
+            group_names: Vec::new(),
+            period_names: Vec::new(),
+            eta_mean: None,
+            eta_cov: None,
+            gamma: None,
+            feature_names: Vec::new(),
+            mu: Vec::new(),
+            sigma: Vec::new(),
+            corpus: None,
+            bound: f64::NAN,
+            bound_history: Vec::new(),
+            converged: false,
+        })
+    }
+
+    /// Fit. `data` is a :class:`Corpus` or `list[list[str]]`. `times` is one
+    /// period label per document (numbers or strings; the distinct values, sorted,
+    /// define the period order). `content` is one group label per document. Both
+    /// are required — together they form the (group, period) content cells.
+    /// `prevalence` (optional, `(num_docs, F)`) adds the STM prevalence regression
+    /// `μ_d = X_d γ` (an intercept is prepended).
+    ///
+    /// The content κ are regularized by: an L2 prior with variance
+    /// `content_prior_var`; a first-order random-walk across periods with
+    /// precision `period_smooth` (larger ⇒ smoother, more pooling across adjacent
+    /// periods); and an extra L2 factor `interaction_shrink` on the group×time
+    /// term (larger ⇒ the changing contrast is pulled harder toward zero unless
+    /// the data demand it). EM runs until the relative change in the variational
+    /// bound drops below `convergence_tol` or `iters` iterations are reached.
+    #[pyo3(signature = (data, times, content, *, prevalence=None, prevalence_names=None,
+                        content_names=None, period_names=None, iters=500, convergence_tol=1e-5,
+                        content_prior_var=1.0, period_smooth=5.0, interaction_shrink=2.0,
+                        keep_eta_cov=true, num_threads=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn fit(
+        &mut self,
+        py: Python<'_>,
+        data: &Bound<'_, PyAny>,
+        times: &Bound<'_, PyAny>,
+        content: &Bound<'_, PyAny>,
+        prevalence: Option<&Bound<'_, PyAny>>,
+        prevalence_names: Option<Vec<String>>,
+        content_names: Option<Vec<String>>,
+        period_names: Option<Vec<String>>,
+        iters: usize,
+        convergence_tol: f64,
+        content_prior_var: f64,
+        period_smooth: f64,
+        interaction_shrink: f64,
+        keep_eta_cov: bool,
+        num_threads: Option<usize>,
+    ) -> PyResult<()> {
+        if content_prior_var <= 0.0 {
+            return Err(PyValueError::new_err("content_prior_var must be > 0"));
+        }
+        if period_smooth < 0.0 {
+            return Err(PyValueError::new_err("period_smooth must be >= 0"));
+        }
+        if interaction_shrink <= 0.0 {
+            return Err(PyValueError::new_err("interaction_shrink must be > 0"));
+        }
+
+        let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
+            c.inner
+        } else {
+            let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
+                PyValueError::new_err("fit() expects a Corpus or a list of token lists")
+            })?;
+            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+        };
+        let num_docs = corpus.num_docs();
+        if num_docs == 0 {
+            return Err(PyValueError::new_err("corpus contains no documents"));
+        }
+
+        // --- Period index from times ---
+        let (period_idx, mut period_vocab) = build_time_index(times, num_docs)?;
+        if let Some(names) = period_names {
+            if names.len() != period_vocab.len() {
+                return Err(PyValueError::new_err(format!(
+                    "period_names has {} entries but the data has {} distinct periods",
+                    names.len(),
+                    period_vocab.len()
+                )));
+            }
+            period_vocab = names;
+        }
+        let num_periods = period_vocab.len();
+
+        // --- Group index from content ---
+        let groups_str = parse_groups(content)?;
+        if groups_str.len() != num_docs {
+            return Err(PyValueError::new_err(format!(
+                "content has {} entries but corpus has {} documents",
+                groups_str.len(),
+                num_docs
+            )));
+        }
+        let group_vocab = match content_names {
+            Some(n) => n,
+            None => {
+                let mut set: HashSet<String> = groups_str.iter().cloned().collect();
+                let mut v: Vec<String> = set.drain().collect();
+                v.sort();
+                v
+            }
+        };
+        let gindex: HashMap<&str, usize> =
+            group_vocab.iter().enumerate().map(|(i, g)| (g.as_str(), i)).collect();
+        let group_idx: Vec<usize> = groups_str
+            .iter()
+            .map(|g| {
+                gindex.get(g.as_str()).copied().ok_or_else(|| {
+                    PyValueError::new_err(format!("content group {:?} not in content_names", g))
+                })
+            })
+            .collect::<PyResult<_>>()?;
+        let num_groups = group_vocab.len();
+
+        // --- Prevalence design (optional) ---
+        let mut prevalence_x: Option<Vec<Vec<f64>>> = None;
+        let mut feat_names: Vec<String> = Vec::new();
+        if let Some(prev) = prevalence {
+            let raw = parse_features(prev)?;
+            if raw.len() != num_docs {
+                return Err(PyValueError::new_err(format!(
+                    "prevalence has {} rows but corpus has {} documents",
+                    raw.len(),
+                    num_docs
+                )));
+            }
+            check_all_finite_2d("prevalence", &raw)?;
+            let f_in = raw.first().map(|r| r.len()).unwrap_or(0);
+            if raw.iter().any(|r| r.len() != f_in) {
+                return Err(PyValueError::new_err("all prevalence rows must have the same length"));
+            }
+            if let Some(names) = &prevalence_names {
+                if names.len() != f_in {
+                    return Err(PyValueError::new_err(
+                        "prevalence_names length must match the number of covariate columns",
+                    ));
+                }
+            }
+            let nf = f_in + 1;
+            prevalence_x = Some(
+                raw.iter()
+                    .map(|r| {
+                        let mut v = Vec::with_capacity(nf);
+                        v.push(1.0);
+                        v.extend_from_slice(r);
+                        v
+                    })
+                    .collect(),
+            );
+            feat_names.push("intercept".to_string());
+            feat_names.extend(
+                prevalence_names.unwrap_or_else(|| (0..f_in).map(|i| format!("feature_{}", i)).collect()),
+            );
+        }
+
+        let k = self.num_topics;
+        let num_types = corpus.num_types();
+        let shrink = self.sigma_shrink;
+        let diagonal = self.variational == "diagonal";
+        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+
+        let (model, corpus) = py.allow_threads(move || {
+            let prev_ref = prevalence_x.as_deref();
+            let m = run_with_threads(num_threads, || {
+                crate::ectm::fit_ectm(
+                    &corpus.docs, k, num_types, &group_idx, num_groups, &period_idx, num_periods,
+                    iters, convergence_tol, shrink, prev_ref, content_prior_var, period_smooth,
+                    period_smooth, interaction_shrink, keep_eta_cov, diagonal, &mut rng,
+                )
+            });
+            (m, corpus)
+        });
+
+        let mut beta = Array2::<f64>::zeros((k, num_types));
+        for t in 0..k {
+            for v in 0..num_types {
+                beta[[t, v]] = model.beta[t][v];
+            }
+        }
+        let theta_v = model.doc_topics();
+        let mut theta = Array2::<f64>::zeros((theta_v.len(), k));
+        for (di, row) in theta_v.iter().enumerate() {
+            for (t, &val) in row.iter().enumerate() {
+                theta[[di, t]] = val;
+            }
+        }
+        self.gamma = model.gamma.as_ref().map(|g| {
+            let nf = g.len();
+            let mut arr = Array2::<f64>::zeros((nf, k - 1));
+            for ff in 0..nf {
+                for t in 0..(k - 1) {
+                    arr[[ff, t]] = g[ff][t];
+                }
+            }
+            arr
+        });
+
+        let dim = k - 1;
+        let d_docs = model.lambda.len();
+        let mut eta_mean_arr = Array2::<f64>::zeros((d_docs, dim));
+        for di in 0..d_docs {
+            for i in 0..dim {
+                eta_mean_arr[[di, i]] = model.lambda[di][i];
+            }
+        }
+        let stored_eta_cov: Option<Array3<f32>> = if keep_eta_cov && !model.nu.is_empty() {
+            let mut cov = Array3::<f32>::zeros((d_docs, dim, dim));
+            for di in 0..d_docs {
+                for i in 0..dim {
+                    for j in 0..dim {
+                        cov[[di, i, j]] = model.nu[di][i * dim + j] as f32;
+                    }
+                }
+            }
+            Some(cov)
+        } else {
+            None
+        };
+
+        self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        self.beta = Some(beta);
+        self.theta = Some(theta);
+        self.content_beta = model.content_beta;
+        self.num_groups = num_groups;
+        self.num_periods = num_periods;
+        self.group_names = group_vocab;
+        self.period_names = period_vocab;
+        self.eta_mean = Some(eta_mean_arr);
+        self.eta_cov = stored_eta_cov;
+        self.feature_names = feat_names;
+        self.mu = model.mu.clone();
+        self.sigma = model.sigma.clone();
+        self.corpus = Some(corpus);
+        self.bound = model.bound;
+        self.bound_history = model.bound_history.clone();
+        self.converged = model.converged;
+        self.fitted = true;
+        Ok(())
+    }
+
+    /// Topic-word matrix β, shape ``(num_topics, num_words)`` — averaged over all
+    /// (group, period) cells. Use :meth:`content_word_dist` for a specific cell.
+    #[getter]
+    fn topic_word<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        Ok(self.beta.as_ref().unwrap().to_pyarray_bound(py))
+    }
+
+    /// Document-topic matrix θ, shape ``(num_docs, num_topics)``; rows sum to 1.
+    #[getter]
+    fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        Ok(self.theta.as_ref().unwrap().to_pyarray_bound(py))
+    }
+
+    #[getter]
+    fn num_topics(&self) -> usize {
+        self.num_topics
+    }
+
+    /// The content groups, in index order (the column order of cells).
+    #[getter]
+    fn groups(&self) -> PyResult<Vec<String>> {
+        self.require_fitted()?;
+        Ok(self.group_names.clone())
+    }
+
+    /// The time periods, sorted into the order used for the random-walk prior.
+    #[getter]
+    fn periods(&self) -> PyResult<Vec<String>> {
+        self.require_fitted()?;
+        Ok(self.period_names.clone())
+    }
+
+    #[getter]
+    fn num_groups(&self) -> usize {
+        self.num_groups
+    }
+
+    #[getter]
+    fn num_periods(&self) -> usize {
+        self.num_periods
+    }
+
+    /// Topic-word matrix β for one (group, period) cell, shape
+    /// ``(num_topics, num_words)``. `group` and `period` accept either a label
+    /// (str) or an index (int). This is the content surface that the
+    /// :mod:`topica.ectm` helpers read.
+    fn content_word_dist<'py>(
+        &self,
+        py: Python<'py>,
+        group: &Bound<'py, PyAny>,
+        period: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        let g = self.resolve_group(group)?;
+        let t = self.resolve_period(period)?;
+        let c = g * self.num_periods + t;
+        let v = self.content_beta[c][0].len();
+        let mut arr = Array2::<f64>::zeros((self.num_topics, v));
+        for k in 0..self.num_topics {
+            for w in 0..v {
+                arr[[k, w]] = self.content_beta[c][k][w];
+            }
+        }
+        Ok(arr.to_pyarray_bound(py))
+    }
+
+    /// Vocabulary, the column order of :attr:`topic_word`.
+    #[getter]
+    fn vocabulary(&self) -> PyResult<Vec<String>> {
+        self.require_fitted()?;
+        Ok(self.corpus.as_ref().unwrap().id_to_word.clone())
+    }
+
+    /// Prevalence coefficients γ, shape ``(num_features, num_topics-1)``; raises
+    /// if the model was fit without a prevalence design.
+    #[getter]
+    fn prevalence_effects<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        self.gamma
+            .as_ref()
+            .map(|g| g.to_pyarray_bound(py))
+            .ok_or_else(|| PyRuntimeError::new_err("model was fit without prevalence covariates"))
+    }
+
+    /// Prevalence feature names (``["intercept", ...]``), aligned with
+    /// :attr:`prevalence_effects` rows. Empty if no prevalence design.
+    #[getter]
+    fn feature_names(&self) -> PyResult<Vec<String>> {
+        self.require_fitted()?;
+        Ok(self.feature_names.clone())
+    }
+
+    /// Per-document variational posterior means λ of η, shape
+    /// ``(num_docs, num_topics-1)``.
+    #[getter]
+    fn eta_mean<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        Ok(self.eta_mean.as_ref().unwrap().to_pyarray_bound(py))
+    }
+
+    /// Per-document variational posterior covariances ν of η, shape
+    /// ``(num_docs, num_topics-1, num_topics-1)`` as float32. Raises if fit with
+    /// ``keep_eta_cov=False``.
+    #[getter]
+    fn eta_cov<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<f32>>> {
+        self.require_fitted()?;
+        self.eta_cov.as_ref().map(|c| c.to_pyarray_bound(py)).ok_or_else(|| {
+            PyRuntimeError::new_err("model was fit with keep_eta_cov=False; refit with keep_eta_cov=True")
+        })
+    }
+
+    /// Final variational bound (approximate ELBO) at convergence.
+    #[getter]
+    fn bound(&self) -> PyResult<f64> {
+        self.require_fitted()?;
+        Ok(self.bound)
+    }
+
+    /// The variational bound after each EM iteration.
+    #[getter]
+    fn bound_history(&self) -> PyResult<Vec<f64>> {
+        self.require_fitted()?;
+        Ok(self.bound_history.clone())
+    }
+
+    /// ``True`` if EM stopped on the `convergence_tol` criterion; ``False`` if it
+    /// hit the `iters` cap first.
+    #[getter]
+    fn converged(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
+
+    /// Uniform convergence trace: ``(iteration, bound)`` pairs.
+    #[getter]
+    fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
+        self.require_fitted()?;
+        Ok(self.bound_history.iter().enumerate().map(|(i, &b)| (i + 1, b)).collect())
+    }
+
+    /// Variational-covariance mode (``"laplace"`` or ``"diagonal"``).
+    #[getter]
+    fn variational(&self) -> String {
+        self.variational.clone()
+    }
+
+    /// Top `n` words per topic (or one topic) as ``(word, probability)`` pairs,
+    /// from the cell-averaged β.
+    #[pyo3(signature = (n=10, *, topic=None))]
+    fn top_words<'py>(&self, py: Python<'py>, n: usize, topic: Option<usize>) -> PyResult<Bound<'py, PyAny>> {
+        self.require_fitted()?;
+        let beta = self.beta.as_ref().unwrap();
+        let vocab = &self.corpus.as_ref().unwrap().id_to_word;
+        let tops = top_word_ids_phi(beta, self.num_topics, n);
+        let one = |t: usize| -> PyResult<Bound<'py, PyList>> {
+            if t >= self.num_topics {
+                return Err(PyValueError::new_err("topic out of range"));
+            }
+            let items: Vec<Bound<'py, PyTuple>> = tops[t]
+                .iter()
+                .map(|&w| PyTuple::new_bound(py, &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)]))
+                .collect();
+            Ok(PyList::new_bound(py, items))
+        };
+        match topic {
+            Some(t) => Ok(one(t)?.into_any()),
+            None => {
+                let all: Vec<Bound<'py, PyList>> = (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
+                Ok(PyList::new_bound(py, all).into_any())
+            }
+        }
+    }
+
+    /// UMass topic coherence per topic, shape ``(num_topics,)``.
+    #[pyo3(signature = (n=10))]
+    fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        self.require_fitted()?;
+        let tops = top_word_ids_phi(self.beta.as_ref().unwrap(), self.num_topics, n);
+        let scores = umass_coherence(self.corpus.as_ref().unwrap(), &tops);
+        Ok(Array1::from(scores).to_pyarray_bound(py))
+    }
+
+    /// One label per topic, in topic order.
+    #[getter]
+    fn topic_names(&self) -> PyResult<Vec<String>> {
+        self.require_fitted()?;
+        Ok(self.topic_names.clone())
+    }
+
+    #[setter]
+    fn set_topic_names(&mut self, names: Vec<String>) -> PyResult<()> {
+        if names.len() != self.num_topics {
+            return Err(PyValueError::new_err(format!(
+                "topic_names must have length {} (got {})",
+                self.num_topics,
+                names.len()
+            )));
+        }
+        self.topic_names = names;
+        Ok(())
+    }
+
+    /// Save the fitted model to `path`. Reload with `ECTM.load`.
+    fn save(&self, path: &str) -> PyResult<()> {
+        self.require_fitted()?;
+        let eta_cov_f64 = self.eta_cov.as_ref().map(|c| c.mapv(|x| x as f64));
+        write_state(path, MODEL_TAG_ECTM, &EctmState {
+            num_topics: self.num_topics, sigma_shrink: self.sigma_shrink, seed: self.seed,
+            fitted: self.fitted,
+            beta: arr2_opt(&self.beta), theta: arr2_opt(&self.theta),
+            eta_mean: arr2_opt(&self.eta_mean), eta_cov: arr3_opt(&eta_cov_f64),
+            gamma: arr2_opt(&self.gamma), feature_names: self.feature_names.clone(),
+            content_beta: self.content_beta.clone(),
+            num_groups: self.num_groups, num_periods: self.num_periods,
+            group_names: self.group_names.clone(), period_names: self.period_names.clone(),
+            mu: self.mu.clone(), sigma: self.sigma.clone(),
+            corpus: self.corpus.clone(),
+            bound: self.bound, bound_history: self.bound_history.clone(),
+            converged: self.converged,
+            topic_names: self.topic_names.clone(),
+            variational: self.variational.clone(),
+        })
+    }
+
+    /// Load a model previously written by :meth:`save`.
+    #[staticmethod]
+    fn load(path: &str) -> PyResult<Self> {
+        require_experimental("ECTM")?;
+        let s: EctmState = read_state(path, MODEL_TAG_ECTM)?;
+        let topic_names = if s.topic_names.is_empty() {
+            (0..s.num_topics).map(|i| format!("topic_{i}")).collect()
+        } else {
+            s.topic_names
+        };
+        let eta_cov = arr3_back(s.eta_cov).map(|c| c.mapv(|x| x as f32));
+        Ok(ECTM {
+            num_topics: s.num_topics, sigma_shrink: s.sigma_shrink, seed: s.seed,
+            variational: s.variational, fitted: s.fitted, topic_names,
+            beta: arr2_back(s.beta), theta: arr2_back(s.theta),
+            content_beta: s.content_beta,
+            num_groups: s.num_groups, num_periods: s.num_periods,
+            group_names: s.group_names, period_names: s.period_names,
+            eta_mean: arr2_back(s.eta_mean), eta_cov,
+            gamma: arr2_back(s.gamma), feature_names: s.feature_names,
+            mu: s.mu, sigma: s.sigma, corpus: s.corpus,
+            bound: s.bound, bound_history: s.bound_history, converged: s.converged,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ECTM(num_topics={}, num_groups={}, num_periods={}, fitted={})",
+            self.num_topics, self.num_groups, self.num_periods, self.fitted
+        )
     }
 }
 
@@ -15694,6 +16348,67 @@ impl HLDA {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Experimental-model gate
+//
+// Some models ship before they have a published paper and a reference-parity
+// check (topica's bar for a "validated" model). They are compiled into the wheel
+// like any other, but refuse to construct or load until the user opts in --
+// `topica.enable_experimental()` from Python, or the `TOPICA_EXPERIMENTAL`
+// environment variable. This keeps an in-development model usable without
+// silently diluting the validated roster.
+// ---------------------------------------------------------------------------
+
+static EXPERIMENTAL_ENABLED: AtomicBool = AtomicBool::new(false);
+static EXPERIMENTAL_INIT: Once = Once::new();
+
+fn experimental_env_truthy() -> bool {
+    match std::env::var("TOPICA_EXPERIMENTAL") {
+        Ok(v) => matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Err(_) => false,
+    }
+}
+
+fn experimental_enabled() -> bool {
+    // Seed the flag from the environment exactly once. An explicit
+    // `set_experimental` consumes the Once first, so a Python call always wins
+    // over a later environment read.
+    EXPERIMENTAL_INIT.call_once(|| {
+        if experimental_env_truthy() {
+            EXPERIMENTAL_ENABLED.store(true, Ordering::Relaxed);
+        }
+    });
+    EXPERIMENTAL_ENABLED.load(Ordering::Relaxed)
+}
+
+fn require_experimental(name: &str) -> PyResult<()> {
+    if experimental_enabled() {
+        Ok(())
+    } else {
+        Err(PyRuntimeError::new_err(format!(
+            "{name} is experimental and unvalidated: it has no published paper or \
+             reference-implementation parity yet, topica's bar for a validated model. \
+             Enable experimental models with `topica.enable_experimental()` or set the \
+             environment variable TOPICA_EXPERIMENTAL=1. Experimental models may change \
+             or be removed without a deprecation cycle."
+        )))
+    }
+}
+
+/// Toggle the experimental-model gate (backs `topica.enable_experimental`).
+#[pyfunction]
+fn set_experimental(enabled: bool) {
+    // Consume the env-seeding Once so the explicit choice is authoritative.
+    EXPERIMENTAL_INIT.call_once(|| {});
+    EXPERIMENTAL_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// Whether experimental models are currently enabled.
+#[pyfunction]
+fn experimental_is_enabled() -> bool {
+    experimental_enabled()
+}
+
 #[pymodule]
 fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LDA>()?;
@@ -15702,6 +16417,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SAGE>()?;
     m.add_class::<CTM>()?;
     m.add_class::<STM>()?;
+    m.add_class::<ECTM>()?;
     m.add_class::<STS>()?;
     m.add_class::<HDP>()?;
     m.add_class::<DTM>()?;
@@ -15727,6 +16443,8 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(window_cooccurrence, m)?)?;
     m.add_function(wrap_pyfunction!(project, m)?)?;
+    m.add_function(wrap_pyfunction!(set_experimental, m)?)?;
+    m.add_function(wrap_pyfunction!(experimental_is_enabled, m)?)?;
     m.add("DEFAULT_TOKEN_REGEX", corpus::DEFAULT_TOKEN_REGEX)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())

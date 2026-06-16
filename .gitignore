@@ -1,6 +1,10 @@
 # Rust build artifacts
 /target/
 
+# Example data built locally from external archives (see examples/prep_*.py / prep_congress.R)
+examples/congress_data/
+examples/speech_data/
+
 # Java reference source (not part of the Rust project)
 Mallet/
 

@@ -6,6 +6,47 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **ECTM content standard errors** — `topica.ectm.content_contrast_se` gives
+  instant analytic per-word SEs for a group contrast (multinomial sampling
+  variance from each cell's effective token count; conservative, ignores period
+  pooling), and `content_trajectory_ci` gives a cluster-bootstrap confidence band
+  (resample by source document/platform, not paragraph). On the platforms,
+  `climate` is a z=5.7 Democratic word in 2016 and absent in 1964.
+- **ECTM prevalence helpers** — `topica.ectm.prevalence_by_group` /
+  `prevalence_contrast` give the descriptive "how often each group discusses a
+  topic" view (mean `doc_topic` by group x period). The partisan examples now also
+  fit a `prevalence=party*spline(year)` design and report the attention gap with
+  method-of-composition standard errors via `topica.stm.predicted_prevalence`,
+  alongside the content trajectories — both halves of the ECTM picture.
+- **ECTM partisan examples** — `examples/ectm_platforms.py` (U.S. party platforms
+  1948-2024, Dem vs Rep across 20 elections; corpus ships in-repo, rebuilt by
+  `prep_platforms.py`) and `examples/ectm_speeches.py` (congressional speeches
+  with Voteview party, 1948-2008; built by `prep_speeches.py`). The platforms demo
+  shows `climate` entering the Democratic environment vocabulary while Republicans
+  never adopt it; the speeches demo recovers the mid-1990s rise in the partisanship
+  of congressional language.
+- **`ECTM`** — the Evolving Content Topic Model: an STM whose content (topic-word)
+  model carries a group-by-time interaction. The same stable topic is worded
+  differently across a document group, and that difference drifts across discrete
+  time periods, with a first-order random-walk prior tying adjacent periods so
+  sparse cells borrow strength from their temporal neighbours. Reuses STM's
+  logistic-normal variational E-step; the content M-step generalizes the SAGE
+  content κ-regression to (group × period) cells with random-walk and shrinkage
+  penalties (`η_kgtv = m_v + κT_k + κKP_kt + κKG_kg + κKGP_kgt`). Standard fitted
+  surface plus `content_word_dist(group, period)`, the per-document logistic-normal
+  posterior (`eta_mean`/`eta_cov`), and the `topica.ectm` interpretation helpers
+  (`content_words`, `content_contrast`, `content_trajectory`, `content_divergence`).
+  See `examples/ectm_poliblog.py`. **Experimental:** ECTM ships before a published
+  paper and a reference-parity check, so it is gated — call
+  `topica.enable_experimental()` (or set `TOPICA_EXPERIMENTAL=1`) before use, and
+  expect it may change without a deprecation cycle.
+- **`topica.enable_experimental()`** — opt into experimental, unvalidated models
+  (currently `ECTM`). Such models are kept out of the validated roster and refuse
+  to construct or load until enabled (also via the `TOPICA_EXPERIMENTAL`
+  environment variable). `topica.experimental_enabled()` reports the current state.
+
 ## [0.21.0] - 2026-06-16
 
 ### Added

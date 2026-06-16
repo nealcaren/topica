@@ -99,6 +99,14 @@ generated from `python/topica/registry.py`.
 |---|---|---|---|---|
 | `TopicGPT` | text, llm | prompting | llm-bounded | LLM-driven topic discovery: prompt a model to propose, refine, and assign a topic taxonomy with descriptions. |
 
+### Experimental
+
+Shipped before a published paper and reference-implementation parity (topica's bar for a validated model). Gated: call `topica.enable_experimental()` (or set `TOPICA_EXPERIMENTAL=1`) before use. These may change or be removed without a deprecation cycle.
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `ECTM` | text, metadata, times | variational | seed-reproducible | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
+
 <!-- END MODEL TABLE -->
 
 ## LDA
@@ -171,6 +179,89 @@ Like CTM, STM takes `variational="diagonal"` to use the mean-field E-step in
 place of the default Laplace one (`variational="laplace"`): faster at high K, but
 it drops the off-diagonal posterior covariance, so the precision of
 topic-correlation and method-of-composition standard errors is lower.
+
+## ECTM
+
+!!! warning "Experimental — unvalidated"
+    ECTM ships before a published paper and a reference-implementation parity
+    check, topica's bar for a validated model. It is **gated**: call
+    `topica.enable_experimental()` (or set the `TOPICA_EXPERIMENTAL=1` environment
+    variable) before constructing or loading it, or construction raises. Treat its
+    results as provisional, and expect that it may change or be removed without a
+    deprecation cycle.
+
+The Evolving Content Topic Model extends STM's content covariate with **time**.
+STM's content model lets a topic be worded differently across a group (the SAGE
+content covariate); ECTM lets that group difference **drift across discrete time
+periods**, so you can ask not only "how do these groups word this topic
+differently" but "how has that difference *changed*".
+
+Where [`DTM`](#dtm) and [`DETM`](embedding.md) already let a topic's *single*
+vocabulary drift over time, ECTM's novelty is the **group-by-time interaction**:
+it models how the *difference between groups* in a topic's wording evolves, in the
+logistic-normal/variational frame that also carries STM's prevalence covariates.
+So the contrast with keyATM below is specifically about keyATM's *dynamic* model,
+which holds each topic's word distribution fixed and drifts only prevalence. It fits one topic-word
+distribution per (group, period) cell, with a first-order random-walk prior tying
+adjacent periods so sparse cells borrow strength from their temporal neighbours
+rather than fragmenting the topic.
+
+```python
+topica.enable_experimental()              # ECTM is experimental and gated
+m = topica.ECTM(num_topics=10, seed=42)
+m.fit(docs, times=year, content=party,   # times → periods, content → groups
+      period_smooth=5.0, interaction_shrink=2.0)
+
+m.content_word_dist("Republican", 2016)  # topic-word β for one (group, period)
+```
+
+The content model is `η_kgtv = m_v + κT_k + κKP_kt + κKG_kg + κKGP_kgt`: a topic
+baseline, a shared temporal trajectory, an average group deviation, and the
+group-by-time deviation — the changing lexical contrast. `period_smooth` is the
+random-walk precision over periods (larger pools adjacent periods more);
+`interaction_shrink` pulls the group-by-time term toward zero unless the data earn
+it. A prevalence design (`prevalence=`) is optional and behaves as in STM.
+
+ECTM answers two complementary questions, and exposes both. The **content** half
+(which words a group uses, and how that drifts) is the topic-word model above; the
+**prevalence** half (how *often* each group discusses a topic) is the standard
+logistic-normal regression on a `prevalence=` design. Because ECTM is
+logistic-normal, the prevalence side comes with method-of-composition standard
+errors: pass `prevalence=party*spline(year)` and use
+`topica.stm.predicted_prevalence` / `topica.estimate_effect` for attention
+trajectories with confidence bands, exactly as for STM. `prevalence_by_group(m,
+groups, periods)` gives the quick descriptive version. The two halves can tell
+different stories -- on the platforms the parties devote *similar attention* to
+the environment while their *language* diverges sharply, a contrast a
+prevalence-only model would miss.
+
+The `topica.ectm` helpers read the content result on the word-probability scale:
+`content_words(m, topic, group, period)` (top words for a cell),
+`content_contrast(m, topic, a, b, period)` (words distinguishing two groups),
+`content_trajectory(m, topic, word, contrast=(a, b))` (a word's contrast across
+periods), and `content_divergence(m, topic, a, b)` (total-variation distance
+between the groups each period). For uncertainty, `content_contrast_se` gives
+instant analytic per-word standard errors (multinomial sampling variance from
+each cell's effective counts; conservative, ignores the period pooling) and
+`content_trajectory_ci` gives a cluster-bootstrap band (resample by source
+document, so the band reflects independent units, not paragraphs).
+
+Four worked examples ship with topica. The two partisan showcases model how
+**Democrats and Republicans** word the same topics and how that gap evolves:
+`examples/ectm_platforms.py` (national party platforms, 1948-2024, 20 elections)
+finds that inside a stable "environment" topic the word `climate` enters the
+Democratic vocabulary after 2000 while Republicans never adopt it, `conservation`
+fades, and the partisan gap widens — evolution a fixed-vocabulary dynamic model
+cannot represent. `examples/ectm_speeches.py` (congressional speeches with
+Voteview party, 1948-2008) recovers the documented rise of partisan language: the
+mean Democrat-Republican vocabulary distance is flat through the 1950s-80s and
+rises in the mid-1990s. The platforms corpus ships in-repo; the speeches corpus is
+built by `python examples/prep_speeches.py`.
+
+Two smaller examples round out the set: `examples/ectm_poliblog.py` (Conservative
+vs Liberal blogs across the 2008 campaign — a single year, so a stable gap) and
+`examples/ectm_congress.py` (the keyATM Congressional-bills corpus, House vs
+Senate across 14 Congresses; run `Rscript examples/prep_congress.R` first).
 
 ## STS
 

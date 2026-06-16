@@ -123,6 +123,7 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
     RegistryEntry { name: "STM", family: ModelFamily::LogisticNormal, exempt: &[] },
     RegistryEntry { name: "CTM", family: ModelFamily::LogisticNormal, exempt: &[] },
     RegistryEntry { name: "STS", family: ModelFamily::LogisticNormal, exempt: &[] },
+    RegistryEntry { name: "ECTM", family: ModelFamily::LogisticNormal, exempt: &[] },
     // Collapsed-Gibbs / Dirichlet doc-topic posterior.
     RegistryEntry { name: "LDA", family: ModelFamily::Dirichlet, exempt: &[] },
     RegistryEntry { name: "DMR", family: ModelFamily::Dirichlet, exempt: &[] },
@@ -171,6 +172,6 @@ mod registry_tests {
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
         // Estimator-backed Rust struct).
-        assert_eq!(RUST_ESTIMATORS.len(), 24, "registry size drifted from the Python REGISTRY");
+        assert_eq!(RUST_ESTIMATORS.len(), 25, "registry size drifted from the Python REGISTRY");
     }
 }

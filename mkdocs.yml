@@ -109,6 +109,7 @@ nav:
       - Du Bois in The Crisis: examples/dubois.md
       - Gadarian (STM vignette): examples/gadarian.md
       - Political blogs: examples/poliblog.md
+      - Party platforms (ECTM): examples/ectm.md
       - LLM embeddings & labels: examples/llm-topics.md
   - Replications:
       - Overview: replications/index.md
