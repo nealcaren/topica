@@ -27,8 +27,8 @@
 
 use crate::etm::softmax_beta;
 use crate::prodlda::{
-    info_nce_backward, info_nce_loss, normal_cdf, weibull_gamma_kl, weibull_gamma_kl_grad,
-    weibull_weight, AvitmOptions, Prior, WEIBULL_FLOOR, WEIBULL_SHAPE_FLOOR,
+    info_nce_backward, info_nce_loss, normal_cdf, stick_break, stick_break_dz, weibull_gamma_kl,
+    weibull_gamma_kl_grad, weibull_weight, AvitmOptions, Prior,
 };
 use rand::Rng;
 
@@ -198,6 +198,8 @@ struct Reparam {
     ln_l: Vec<f64>,
     g: Vec<f64>,
     s: f64,
+    // Stick-breaking scratch (the eta = sigmoid(z) breaks), empty off that path.
+    eta: Vec<f64>,
 }
 
 /// Compute `theta` for one document under the chosen prior, given the encoder cache
@@ -217,7 +219,17 @@ fn reparam_theta(cache: &Cache, eps: &[f64], prior: Prior, noise_free: bool) -> 
                 }
                 softmax(&z)
             };
-            Reparam { theta, kw: vec![], lam: vec![], ln_l: vec![], g: vec![], s: 0.0 }
+            Reparam { theta, kw: vec![], lam: vec![], ln_l: vec![], g: vec![], s: 0.0, eta: vec![] }
+        }
+        Prior::StickBreaking => {
+            // Gaussian latent (same as laplace), simplex via stick-breaking.
+            let z = if noise_free {
+                cache.mu.clone()
+            } else {
+                (0..k).map(|t| cache.mu[t] + (0.5 * cache.logvar[t]).exp() * eps[t]).collect()
+            };
+            let (eta, theta) = stick_break(&z);
+            Reparam { theta, kw: vec![], lam: vec![], ln_l: vec![], g: vec![], s: 0.0, eta }
         }
         Prior::Dirichlet => {
             let mut kw = vec![0.0; k];
@@ -240,7 +252,7 @@ fn reparam_theta(cache: &Cache, eps: &[f64], prior: Prior, noise_free: bool) -> 
                 s += gt;
             }
             let theta: Vec<f64> = (0..k).map(|t| g[t] / s).collect();
-            Reparam { theta, kw, lam, ln_l, g, s }
+            Reparam { theta, kw, lam, ln_l, g, s, eta: vec![] }
         }
     }
 }
@@ -318,6 +330,27 @@ fn backward_doc(
                 let dot: f64 = (0..k).map(|t| dzp[t] * tp[t]).sum();
                 for t in 0..k {
                     g_mu[t] += tp[t] * (dzp[t] - dot);
+                }
+            }
+        }
+        Prior::StickBreaking => {
+            // Gaussian latent (same reparam + N(0, I) KL as laplace); the simplex
+            // map is stick-breaking, so g_z routes through its Jacobian.
+            let g_z = stick_break_dz(&g_theta, &rep.eta, theta);
+            for t in 0..k {
+                let s = (0.5 * cache.logvar[t]).exp();
+                g_mu[t] += g_z[t];
+                g_logvar[t] += g_z[t] * eps[t] * 0.5 * s;
+                kl += -0.5 * (1.0 + cache.logvar[t] - cache.mu[t] * cache.mu[t] - cache.logvar[t].exp());
+                g_mu[t] += cache.mu[t];
+                g_logvar[t] += 0.5 * (cache.logvar[t].exp() - 1.0);
+            }
+            // Contrastive positive view = stick-breaking on mu: grad into mu only.
+            if let Some(dzp) = dtheta_pos {
+                let (eta_pos, theta_pos) = stick_break(&cache.mu);
+                let dz_pos = stick_break_dz(dzp, &eta_pos, &theta_pos);
+                for t in 0..k {
+                    g_mu[t] += dz_pos[t];
                 }
             }
         }
@@ -425,6 +458,12 @@ impl EtmVaeModel {
                 let cache = self.encoder.forward(xn);
                 let zeros = vec![0.0; self.num_topics];
                 reparam_theta(&cache, &zeros, Prior::Dirichlet, true).theta
+            }
+            Prior::StickBreaking => {
+                // Noise-free stick-breaking on the encoder mean, matching training.
+                let cache = self.encoder.forward(xn);
+                let zeros = vec![0.0; self.num_topics];
+                reparam_theta(&cache, &zeros, Prior::StickBreaking, true).theta
             }
         }
     }
@@ -756,7 +795,8 @@ mod tests {
                 }
                 // kl
                 match opts.prior {
-                    Prior::Laplace => {
+                    Prior::Laplace | Prior::StickBreaking => {
+                        // Both keep the Gaussian latent, so the KL is N(q || N(0, I)).
                         for t in 0..k {
                             total += -0.5
                                 * (1.0 + cache.logvar[t] - cache.mu[t].powi(2) - cache.logvar[t].exp());
@@ -879,6 +919,23 @@ mod tests {
         };
         let max_rel = etm_fd_check(opts);
         assert!(max_rel < 1e-4, "etm contrastive+dirichlet max relative error {max_rel}");
+    }
+
+    #[test]
+    fn etm_stick_breaking_gradients_match_fd() {
+        let opts = AvitmOptions { prior: Prior::StickBreaking, ..AvitmOptions::default() };
+        let max_rel = etm_fd_check(opts);
+        assert!(max_rel < 1e-4, "etm stick-breaking max relative error {max_rel}");
+    }
+
+    #[test]
+    fn etm_contrastive_and_stick_breaking_compose_fd() {
+        let opts = AvitmOptions {
+            prior: Prior::StickBreaking, contrastive: true,
+            contrastive_weight: 0.6, contrastive_temp: 0.5,
+        };
+        let max_rel = etm_fd_check(opts);
+        assert!(max_rel < 1e-4, "etm contrastive+stick-breaking max relative error {max_rel}");
     }
 
     // Planted blocks: K word-blocks, each document drawn from one block. The VAE

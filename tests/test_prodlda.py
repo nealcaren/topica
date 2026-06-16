@@ -158,3 +158,56 @@ def test_prodlda_flags_save_load_roundtrip(tmp_path):
     assert loaded.contrastive is True
     assert np.array_equal(loaded.topic_word, m.topic_word)
     assert np.array_equal(loaded.doc_topic, m.doc_topic)
+
+
+# --- stick-breaking prior (#176) ---------------------------------------------
+
+def test_prodlda_stick_breaking_exposed_and_valid():
+    docs, _, _ = _planted(n=120)
+    base = _model(seed=1); base.fit(docs, iters=60)
+    sb = _model(seed=1, prior="stick_breaking"); sb.fit(docs, iters=60)
+    assert sb.prior == "stick_breaking"
+    # The prior changes the fitted topics but the outputs stay on the simplex.
+    assert not np.allclose(base.topic_word, sb.topic_word)
+    assert np.allclose(sb.topic_word.sum(axis=1), 1.0)
+    assert np.allclose(sb.doc_topic.sum(axis=1), 1.0)
+    assert (sb.doc_topic >= 0).all()
+
+
+def test_prodlda_stick_breaking_deterministic():
+    docs, _, _ = _planted(n=120)
+    for kw in ({"prior": "stick_breaking"},
+               {"prior": "stick_breaking", "contrastive": True}):
+        a = _model(seed=5, **kw); a.fit(docs, iters=60)
+        b = _model(seed=5, **kw); b.fit(docs, iters=60)
+        assert np.array_equal(a.topic_word, b.topic_word)
+        assert np.array_equal(a.doc_topic, b.doc_topic)
+
+
+def test_prodlda_stick_breaking_recovers_planted():
+    docs, vocab, truth = _planted(n=240)
+    m = _model(seed=0, prior="stick_breaking"); m.fit(docs, iters=200)
+    # Each planted block should dominate some topic's top words (majority of top-3).
+    tw = m.topic_word
+    blocks = {w: int(w[1]) for w in vocab}  # "b{block}w{i}"
+    covered = set()
+    voc = m.vocabulary
+    for t in range(m.num_topics):
+        top = np.argsort(tw[t])[::-1][:3]
+        b = [blocks[voc[j]] for j in top]
+        covered.add(max(set(b), key=b.count))
+    assert len(covered) == 3
+
+
+def test_prodlda_stick_breaking_save_load_roundtrip(tmp_path):
+    docs, _, _ = _planted(n=120)
+    m = _model(seed=2, prior="stick_breaking"); m.fit(docs, iters=60)
+    path = str(tmp_path / "prodlda_sb.bin")
+    m.save(path)
+    loaded = topica.ProdLDA.load(path)
+    assert loaded.prior == "stick_breaking"
+    assert np.array_equal(loaded.topic_word, m.topic_word)
+    assert np.array_equal(loaded.doc_topic, m.doc_topic)
+    # transform after load uses the stick-breaking map (matches the fitted doc_topic).
+    dt = loaded.transform(docs[:5])
+    assert np.allclose(dt.sum(axis=1), 1.0)

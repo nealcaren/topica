@@ -231,3 +231,23 @@ def test_flags_save_load_roundtrip(cls, tmp_path):
     assert loaded.contrastive is True
     assert np.array_equal(loaded.topic_word, m.topic_word)
     assert np.array_equal(loaded.doc_topic, m.doc_topic)
+
+
+@pytest.mark.parametrize("cls", MODELS, ids=MODEL_IDS)
+def test_stick_breaking_valid_deterministic_roundtrip(cls, tmp_path):
+    docs, embs, _ = _planted(n=120)
+    base = _model(cls, seed=1); base.fit(docs, embs, iters=60)
+    sb = _model(cls, seed=1, prior="stick_breaking"); sb.fit(docs, embs, iters=60)
+    assert sb.prior == "stick_breaking"
+    assert not np.allclose(base.topic_word, sb.topic_word)
+    assert np.allclose(sb.topic_word.sum(axis=1), 1.0)
+    assert np.allclose(sb.doc_topic.sum(axis=1), 1.0)
+    # deterministic
+    sb2 = _model(cls, seed=1, prior="stick_breaking"); sb2.fit(docs, embs, iters=60)
+    assert np.array_equal(sb.topic_word, sb2.topic_word)
+    # save/load
+    path = str(tmp_path / "ctm_sb.bin")
+    sb.save(path)
+    loaded = cls.load(path)
+    assert loaded.prior == "stick_breaking"
+    assert np.array_equal(loaded.doc_topic, sb.doc_topic)
