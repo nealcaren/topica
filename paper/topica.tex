@@ -291,28 +291,40 @@ varies is the seed.
 
 \subsection{A lean core with optional extras}
 
-The core depends only on \pkg{NumPy}. Features that pull heavier dependencies are
-optional extras, so the base install stays small and \pkg{PyTorch} is never
-required, even for the embedding-based models, which take vectors the user
-supplies from any embedder, and even for the neural \code{ProdLDA}, whose
-amortized variational autoencoder is hand-coded against \pkg{NumPy} alone. The \code{viz} extra adds the plotting stack, the
-\code{formula} extra adds \proglang{R}-style model formulas, and the \code{llm}
-extra adds optional large-language-model labeling and embedding through an API or
-a local model. The embedding models build on two pure-\proglang{Rust},
-BLAS-free crates for HDBSCAN \citep{campello2013hdbscan} and the optional UMAP
-reducer \citep{mcinnes2018umap}.
+The core depends only on \pkg{NumPy} and \pkg{pandas}: the DataFrame is the
+default on-ramp (Section~\ref{sec:workflow}), and a handful of example corpora
+ship with the package so the documented workflows run out of the box. Features
+that pull heavier dependencies are optional extras, so the base install stays
+small and \pkg{PyTorch} is never required, even for the embedding-based models,
+which take vectors the user supplies from any embedder, and even for the neural
+models such as \code{ProdLDA}, whose amortized variational autoencoders are
+hand-coded against \pkg{NumPy} alone. The \code{viz} extra adds the plotting
+stack, the \code{formula} extra adds \proglang{R}-style model formulas, and the
+\code{llm} extra adds optional large-language-model labeling, embedding, and
+evaluation through an API or a local model. The embedding models build on two
+pure-\proglang{Rust}, BLAS-free crates for HDBSCAN \citep{campello2013hdbscan}
+and the optional UMAP reducer \citep{mcinnes2018umap}.
+
+Models that ship before a published reference and a parity check are marked
+\emph{experimental} and gated behind an explicit opt-in. They are kept out of the
+validated family of Table~\ref{tab:models} and documented as provisional, so the
+default surface is only models checked against a reference implementation.
 
 %% ===========================================================================
 \section{The model family}\label{sec:models}
 %% ===========================================================================
 
-\pkg{topica} groups its models into two kinds by how they treat words.
-\emph{Count-based} models learn topics from word counts, by collapsed-Gibbs
-sampling, variational EM, or an amortized variational autoencoder, and present
-topic-word weights on the probability simplex. \emph{Embedding-based} models
-start from document vectors the user supplies. Table~\ref{tab:models} lists the family and the question each model
+\pkg{topica} groups its models by how they treat words. \emph{Count-based}
+models learn topics from word counts, by collapsed-Gibbs sampling, variational
+EM, or an amortized variational autoencoder, and present topic-word weights on
+the probability simplex. \emph{Matrix-factorization} models decompose the
+document-term matrix directly. \emph{Embedding-based} models start from document
+vectors the user supplies, and include contextualized and cross-lingual variants.
+A final \emph{LLM-based} model drives discovery by prompting a large language
+model. Table~\ref{tab:models} lists the family and the question each model
 answers. The breadth is the point: a single import covers the span from the LDA
-baseline to the structural topic model to neural clustering.
+baseline to the structural topic model, neural clustering, cross-lingual
+alignment, and LLM-driven discovery.
 
 \begin{table}[t!]
 \centering
@@ -343,11 +355,23 @@ Model & What it is for & Reference \\
 \code{SeededLDA}, \code{KeyATM} & Guided topics from seed words            & \citet{jagarlamudi2012seeded, eshima2024keyatm} \\
 \code{PA}, \code{HLDA} & Topic hierarchies                                 & \citet{li2006pa, griffiths2004hlda} \\
 \midrule
+\multicolumn{3}{l}{\emph{Matrix factorization}}\\
+\code{NMF}          & Non-negative factorization of the document-term matrix & \citet{lee2001nmf} \\
+\code{LSA}          & Latent semantic analysis (truncated {SVD})           & \citet{deerwester1990lsa} \\
+\midrule
 \multicolumn{3}{l}{\emph{Embedding-based}}\\
 \code{BERTopic}     & Cluster embeddings, label by class-TF-IDF            & \citet{grootendorst2022bertopic} \\
 \code{Top2Vec}      & Topics as points in the embedding space              & \citet{angelov2020top2vec} \\
 \code{ETM}          & Logistic-normal topic model factored through embeddings & \citet{dieng2020etm} \\
 \code{FASTopic}     & Topics from optimal-transport plans                  & \citet{wu2024fastopic} \\
+\code{DETM}         & Embedded topics that drift across time slices        & \citet{dieng2019detm} \\
+\code{EmbeddingLDA} & Seeded {LDA} with embedding-expanded seed sets       & \citet{jagarlamudi2012seeded} \\
+\code{CombinedTM}   & Contextualized {ProdLDA} (bag-of-words plus embedding) & \citet{bianchi2021combined} \\
+\code{ZeroShotTM}   & Contextual topics, cross-lingual zero-shot transfer  & \citet{bianchi2021zeroshot} \\
+\code{InfoCTM}      & Cross-lingual topics aligned by a bilingual dictionary & \citet{wu2023infoctm} \\
+\midrule
+\multicolumn{3}{l}{\emph{LLM-based}}\\
+\code{TopicGPT}     & {LLM}-driven discovery: propose, refine, assign a taxonomy & \citet{pham2024topicgpt} \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -367,6 +391,16 @@ information-theoretic token weighting, and the change-point hidden Markov model
 \citep{chib1998changepoint} of the dynamic specification, whose smoothed time
 trend is reported with per-period credible bands drawn from the retained
 posterior rather than as a bare point estimate.
+
+The neural models share one implementation as well. The amortized-VAE family
+(\code{ProdLDA}, \code{CombinedTM}, \code{ZeroShotTM}, and the VAE path of
+\code{ETM}) is hand-coded against \pkg{NumPy} with a swappable latent prior, so a
+single encoder serves logistic-normal, Dirichlet, and stick-breaking choices
+rather than a separate model for each. Two models also bring cross-lingual
+analysis into the same library: \code{ZeroShotTM} transfers a contextual model
+across languages through a multilingual sentence embedding, and \code{InfoCTM}
+aligns two monolingual models through a bilingual dictionary, so a comparative
+study of text in two languages stays in one workflow.
 
 %% ===========================================================================
 \section{A principled analysis workflow}\label{sec:workflow}
@@ -428,7 +462,14 @@ Validation is not optional.
 \code{topica.topic\_diversity} measure distinctness, \code{bootstrap\_stability}
 checks that topics persist across seeds, and \code{word\_intrusion} and
 \code{document\_intrusion} build the human-validation tasks of
-\citet{chang2009reading}.
+\citet{chang2009reading}. For teams without annotators, the \code{topica.llm}
+namespace offers automated stand-ins for those judgments \citep{stammbach2023llmeval}:
+a large language model rates a topic's word set for coherence
+(\code{topica.llm.coherence}) or names the intruder in a word-intrusion item
+(\code{topica.llm.intrusion}), and \code{topica.llm.select\_k} extends the same
+idea to choosing $K$. These run against any backend, a hosted API or a local open
+model, and \pkg{topica} treats their output as \emph{llm-bounded}: a cheaper proxy
+for the human task, not a deterministic metric.
 
 \subsection{Combine runs into a reliable consensus}\label{sec:ensemble}
 
@@ -983,9 +1024,10 @@ will question, with the diagnostics to defend each one. As large-language-model
 agents increasingly drive analysis pipelines, this division of labor matters more,
 not less, and the package ships a companion guide that encodes it for agent use.
 
-Future work includes amortized variational inference for the embedded topic model
-to scale it past per-document EM, additional models, and a wider set of links and
-estimands for the effect-estimation tools.
+Future work includes scaling the amortized-VAE and embedding-based models to
+larger corpora, a wider set of links and estimands for the effect-estimation
+tools, and moving the experimental models, such as the evolving content topic
+model, into the validated family as reference results are published.
 
 %% ===========================================================================
 \section{Availability}\label{sec:availability}
@@ -993,8 +1035,8 @@ estimands for the effect-estimation tools.
 
 \pkg{topica} is released under the Apache-2.0 license and installs from the
 Python Package Index with \code{pip install topica}; the core requires only
-\pkg{NumPy}. The results reported in this article were produced with
-\pkg{topica} 0.16.1. Source code, documentation, and worked examples are available at
+\pkg{NumPy} and \pkg{pandas}. This article documents \pkg{topica} 0.22.0; the
+benchmarks and validation reported here were produced with version 0.16.1. Source code, documentation, and worked examples are available at
 \url{https://github.com/nealcaren/topica} and
 \url{https://nealcaren.github.io/topica/}. One script, \code{paper/replication.py},
 regenerates the worked-example figures and table (Section~\ref{sec:example}) and
