@@ -25,6 +25,7 @@ use crate::dmr;
 use crate::dtm;
 use crate::gsdmm;
 use crate::hdp;
+use crate::infoctm;
 use crate::keyatm;
 use crate::seeded;
 use crate::hlda;
@@ -12113,6 +12114,277 @@ impl DETM {
     }
 }
 
+/// InfoCTM (Wu et al. 2023), a cross-lingual neural topic model. Two ProdLDA/AVITM
+/// models -- one per language, over independent vocabularies, sharing the topic
+/// index -- are fit jointly and aligned by a Topic-Alignment Mutual-Information
+/// term: a masked cross-lingual InfoNCE over the topic-word columns, with positive
+/// word pairs taken from a bilingual ``dictionary`` (optionally densified by
+/// per-language word ``embeddings``). After fitting, topic ``k`` denotes the same
+/// theme in both languages, so ``topic_word(lang=...)`` and ``top_words(lang=...)``
+/// return aligned topics for comparative cross-lingual analysis. This is the
+/// dictionary-grounded alternative to the embedding-based ``ZeroShotTM`` path.
+#[pyclass(module = "topica")]
+pub struct InfoCTM {
+    num_topics: usize,
+    mi_weight: f64,
+    mi_temperature: f64,
+    pos_threshold: f64,
+    hidden_size: usize,
+    dropout: f64,
+    lr: f64,
+    em_tol: f64,
+    seed: u64,
+    languages: (String, String),
+    model: Option<infoctm::InfoctmModel>,
+    corpus_a: Option<corpus::Corpus>,
+    corpus_b: Option<corpus::Corpus>,
+    fitted: bool,
+}
+
+impl InfoCTM {
+    fn lang_index(&self, lang: &str) -> PyResult<usize> {
+        if lang == self.languages.0 || lang == "a" || lang == "0" {
+            Ok(0)
+        } else if lang == self.languages.1 || lang == "b" || lang == "1" {
+            Ok(1)
+        } else {
+            Err(PyValueError::new_err(format!(
+                "lang must be one of {:?}, {:?}, \"a\", or \"b\"; got {lang:?}",
+                self.languages.0, self.languages.1
+            )))
+        }
+    }
+    fn model_for(&self, lang: &str) -> PyResult<&prodlda::ProdldaModel> {
+        let m = self
+            .model
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))?;
+        Ok(if self.lang_index(lang)? == 0 { &m.model_a } else { &m.model_b })
+    }
+    fn corpus_for(&self, lang: &str) -> PyResult<&corpus::Corpus> {
+        let c = if self.lang_index(lang)? == 0 { &self.corpus_a } else { &self.corpus_b };
+        c.as_ref().ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+    }
+}
+
+#[pymethods]
+impl InfoCTM {
+    /// Create an unfitted model. `mi_weight` scales the alignment term (reference
+    /// 30-50); `mi_temperature` is the InfoNCE temperature (0.2); `pos_threshold`
+    /// is the cosine cutoff for the embedding-densified positive mask (0.4, used
+    /// only when embeddings are given). `languages` names the two corpora for the
+    /// `lang=` selector (default `("a", "b")`). Pass `iters`/`batch_size` to `fit`.
+    #[new]
+    #[pyo3(signature = (num_topics, *, mi_weight=30.0, mi_temperature=0.2,
+                        pos_threshold=0.4, hidden_size=100, dropout=0.0, lr=0.002,
+                        convergence_tol=0.0, seed=42, languages=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
+        mi_weight: f64,
+        mi_temperature: f64,
+        pos_threshold: f64,
+        hidden_size: usize,
+        dropout: f64,
+        lr: f64,
+        convergence_tol: f64,
+        seed: u64,
+        languages: Option<(String, String)>,
+    ) -> PyResult<Self> {
+        if num_topics < 2 {
+            return Err(PyValueError::new_err("need at least 2 topics"));
+        }
+        if !(0.0..1.0).contains(&dropout) {
+            return Err(PyValueError::new_err("dropout must be in [0, 1)"));
+        }
+        if !(mi_temperature > 0.0 && mi_temperature.is_finite()) {
+            return Err(PyValueError::new_err("mi_temperature must be > 0"));
+        }
+        Ok(InfoCTM {
+            num_topics,
+            mi_weight,
+            mi_temperature,
+            pos_threshold,
+            hidden_size,
+            dropout,
+            lr,
+            em_tol: convergence_tol,
+            seed,
+            languages: languages.unwrap_or_else(|| ("a".to_string(), "b".to_string())),
+            model: None,
+            corpus_a: None,
+            corpus_b: None,
+            fitted: false,
+        })
+    }
+
+    /// Fit both languages jointly. `data_a`/`data_b` are Corpora or lists of token
+    /// lists (independent vocabularies). `dictionary` is an iterable of
+    /// `(word_a, word_b)` pairs (a bilingual lexicon). `embeddings_a`/`embeddings_b`
+    /// are optional `{word: vector}` maps that densify the alignment mask; absent,
+    /// the positives are the direct dictionary pairs. `iters` is the number of
+    /// epochs (reference 500).
+    #[pyo3(signature = (data_a, data_b, *, dictionary, embeddings_a=None,
+                        embeddings_b=None, iters=None, batch_size=128))]
+    #[allow(clippy::too_many_arguments)]
+    fn fit(
+        &mut self,
+        py: Python<'_>,
+        data_a: &Bound<'_, PyAny>,
+        data_b: &Bound<'_, PyAny>,
+        dictionary: Vec<(String, String)>,
+        embeddings_a: Option<std::collections::HashMap<String, Vec<f64>>>,
+        embeddings_b: Option<std::collections::HashMap<String, Vec<f64>>>,
+        iters: Option<usize>,
+        batch_size: usize,
+    ) -> PyResult<()> {
+        let to_corpus = |data: &Bound<'_, PyAny>| -> PyResult<corpus::Corpus> {
+            if let Ok(c) = data.extract::<Corpus>() {
+                Ok(c.inner)
+            } else {
+                let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
+                    PyValueError::new_err("fit() expects a Corpus or a list of token lists")
+                })?;
+                Ok(build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0)
+            }
+        };
+        let corpus_a = to_corpus(data_a)?;
+        let corpus_b = to_corpus(data_b)?;
+        let (va, vb) = (corpus_a.num_types(), corpus_b.num_types());
+        if corpus_a.num_docs() == 0 || corpus_b.num_docs() == 0 {
+            return Err(PyValueError::new_err("both corpora must contain documents"));
+        }
+        if va < self.num_topics || vb < self.num_topics {
+            return Err(PyValueError::new_err("each vocabulary must have at least num_topics words"));
+        }
+
+        // word -> id maps for each language.
+        let wid = |c: &corpus::Corpus| -> std::collections::HashMap<String, usize> {
+            c.id_to_word.iter().enumerate().map(|(i, w)| (w.clone(), i)).collect()
+        };
+        let wa = wid(&corpus_a);
+        let wb = wid(&corpus_b);
+
+        // Bilingual dictionary matrix trans_ab (Va x Vb).
+        let mut trans_ab = vec![vec![0.0f64; vb]; va];
+        for (word_a, word_b) in &dictionary {
+            if let (Some(&ia), Some(&ib)) = (wa.get(word_a), wb.get(word_b)) {
+                trans_ab[ia][ib] = 1.0;
+            }
+        }
+
+        // Optional embedding matrices aligned to each vocabulary (rows of 0 for
+        // out-of-embedding words; those simply do not densify).
+        let emb_matrix = |emb: Option<std::collections::HashMap<String, Vec<f64>>>,
+                          c: &corpus::Corpus|
+         -> Option<Vec<Vec<f64>>> {
+            emb.map(|map| {
+                let dim = map.values().next().map(|v| v.len()).unwrap_or(0);
+                c.id_to_word
+                    .iter()
+                    .map(|w| map.get(w).cloned().unwrap_or_else(|| vec![0.0; dim]))
+                    .collect()
+            })
+        };
+        let emb_a = emb_matrix(embeddings_a, &corpus_a);
+        let emb_b = emb_matrix(embeddings_b, &corpus_b);
+
+        let ep = iters.unwrap_or(500);
+        let (k, h, dp, lr, et) =
+            (self.num_topics, self.hidden_size, self.dropout, self.lr, self.em_tol);
+        let (mw, mt, pt) = (self.mi_weight, self.mi_temperature, self.pos_threshold);
+        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+
+        let docs_a = corpus_a.docs.clone();
+        let docs_b = corpus_b.docs.clone();
+        let model = py.allow_threads(move || {
+            infoctm::fit_infoctm(
+                &docs_a, &docs_b, va, vb, &trans_ab, emb_a.as_deref(), emb_b.as_deref(),
+                k, h, dp, ep, batch_size, lr, mw, mt, pt, et, &mut rng,
+            )
+        });
+        self.model = Some(model);
+        self.corpus_a = Some(corpus_a);
+        self.corpus_b = Some(corpus_b);
+        self.fitted = true;
+        Ok(())
+    }
+
+    #[getter]
+    fn num_topics(&self) -> usize {
+        self.num_topics
+    }
+
+    /// Topic-word matrix for one language (num_topics, vocab); each row is
+    /// ``softmax(beta_k)``. `lang` selects the language (its name or "a"/"b").
+    #[pyo3(signature = (lang="a"))]
+    fn topic_word<'py>(&self, py: Python<'py>, lang: &str) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        Ok(vecs_to_arr2(&self.model_for(lang)?.topic_word()).to_pyarray_bound(py))
+    }
+
+    /// Document-topic proportions for one language (num_docs, num_topics).
+    #[pyo3(signature = (lang="a"))]
+    fn doc_topic<'py>(&self, py: Python<'py>, lang: &str) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        Ok(vecs_to_arr2(&self.model_for(lang)?.doc_topic).to_pyarray_bound(py))
+    }
+
+    /// Vocabulary for one language, in id order.
+    #[pyo3(signature = (lang="a"))]
+    fn vocabulary(&self, lang: &str) -> PyResult<Vec<String>> {
+        Ok(self.corpus_for(lang)?.id_to_word.clone())
+    }
+
+    /// Top-`n` words per topic for one language as `(word, weight)` pairs.
+    #[pyo3(signature = (n=10, *, lang="a"))]
+    fn top_words(&self, n: usize, lang: &str) -> PyResult<Vec<Vec<(String, f64)>>> {
+        let model = self.model_for(lang)?;
+        let vocab = &self.corpus_for(lang)?.id_to_word;
+        let tw = model.topic_word();
+        Ok(tw
+            .iter()
+            .map(|row| {
+                let mut idx: Vec<usize> = (0..row.len()).collect();
+                idx.sort_by(|&a, &b| row[b].total_cmp(&row[a]));
+                idx.into_iter().take(n).map(|j| (vocab[j].clone(), row[j])).collect()
+            })
+            .collect())
+    }
+
+    /// Assign held-out documents of one language to the discovered topics
+    /// (num_docs, num_topics) via a single encoder pass. Words outside that
+    /// language's vocabulary are dropped.
+    #[pyo3(signature = (data, *, lang="a"))]
+    fn transform<'py>(
+        &self,
+        py: Python<'py>,
+        data: &Bound<'_, PyAny>,
+        lang: &str,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let model = self.model_for(lang)?;
+        let docs = docs_to_ids(data, &self.corpus_for(lang)?.id_to_word)?;
+        Ok(vecs_to_arr2(&model.transform(&docs)).to_pyarray_bound(py))
+    }
+
+    /// The per-epoch training ELBO (negative joint loss) trace.
+    #[getter]
+    fn fit_history(&self) -> Vec<f64> {
+        self.model.as_ref().map(|m| m.bound_history.clone()).unwrap_or_default()
+    }
+
+    #[getter]
+    fn converged(&self) -> Option<bool> {
+        self.model.as_ref().map(|m| m.converged)
+    }
+
+    fn __repr__(&self) -> String {
+        if self.fitted {
+            format!("InfoCTM(num_topics={}, fitted)", self.num_topics)
+        } else {
+            format!("InfoCTM(num_topics={}, unfitted)", self.num_topics)
+        }
+    }
+}
+
 /// ProdLDA (Srivastava & Sutton 2017), the AVITM autoencoding-variational topic
 /// model. ProdLDA is LDA with the word-level mixture replaced by a *product of
 /// experts*: each topic is an unnormalized expert and the word distribution is
@@ -15438,6 +15710,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BERTopic>()?;
     m.add_class::<ETM>()?;
     m.add_class::<ProdLDA>()?;
+    m.add_class::<InfoCTM>()?;
     m.add_class::<FASTopic>()?;
     m.add_class::<PA>()?;
     m.add_class::<HLDA>()?;
