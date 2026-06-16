@@ -2595,6 +2595,68 @@ class ETM:
     def __repr__(self) -> str: ...
 
 
+class InfoCTM:
+    """InfoCTM (Wu et al. 2023), a cross-lingual neural topic model. Two ProdLDA
+    models -- one per language over independent vocabularies, sharing the topic
+    index -- are fit jointly and aligned by a Topic-Alignment Mutual-Information
+    term (a masked cross-lingual InfoNCE over topic-word columns) seeded by a
+    bilingual ``dictionary`` (optionally densified by per-language ``embeddings``).
+    After fitting, topic ``k`` denotes the same theme in both languages."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        mi_weight: float = 30.0,
+        mi_temperature: float = 0.2,
+        pos_threshold: float = 0.4,
+        hidden_size: int = 100,
+        dropout: float = 0.0,
+        lr: float = 0.002,
+        convergence_tol: float = 0.0,
+        seed: int = 42,
+        languages: tuple[str, str] | None = None,
+    ) -> None:
+        """``mi_weight`` scales the alignment term (reference 30-50);
+        ``mi_temperature`` is the InfoNCE temperature; ``pos_threshold`` is the
+        cosine cutoff for the embedding-densified positive mask (used only with
+        embeddings). ``languages`` names the two corpora for the ``lang=`` selector
+        (default ``("a", "b")``)."""
+        ...
+    def fit(
+        self,
+        data_a: Corpus | Sequence[Sequence[str]],
+        data_b: Corpus | Sequence[Sequence[str]],
+        *,
+        dictionary: Sequence[tuple[str, str]],
+        embeddings_a: dict[str, Sequence[float]] | None = None,
+        embeddings_b: dict[str, Sequence[float]] | None = None,
+        iters: int | None = None,
+        batch_size: int = 128,
+    ) -> None:
+        """Fit both languages jointly. ``dictionary`` is an iterable of
+        ``(word_a, word_b)`` pairs; ``embeddings_*`` are optional ``{word: vector}``
+        maps that densify the alignment mask. ``iters`` is the epoch count (500)."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    def topic_word(self, lang: str = "a") -> numpy.typing.NDArray[numpy.float64]:
+        """Topic-word matrix (num_topics, vocab) for ``lang``; rows are softmax(beta_k)."""
+        ...
+    def doc_topic(self, lang: str = "a") -> numpy.typing.NDArray[numpy.float64]:
+        """Document-topic proportions (num_docs, num_topics) for ``lang``."""
+        ...
+    def vocabulary(self, lang: str = "a") -> list[str]: ...
+    def top_words(self, n: int = 10, *, lang: str = "a") -> list[list[tuple[str, float]]]: ...
+    def transform(
+        self, data: Corpus | Sequence[Sequence[str]], *, lang: str = "a"
+    ) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def fit_history(self) -> list[float]: ...
+    @property
+    def converged(self) -> bool | None: ...
+
+
 class ProdLDA:
     """ProdLDA (Srivastava & Sutton 2017), the AVITM autoencoding-variational topic
     model. LDA with the word-level mixture replaced by a product of experts:
