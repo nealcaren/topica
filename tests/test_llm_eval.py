@@ -208,26 +208,40 @@ def _fake_labeler(prompt: str) -> str:
     return body.split()[0] if body else "?"
 
 
+def _model_with_top_docs(D, per_topic_docs):
+    """A fake model whose topic t ranks exactly `per_topic_docs[t]` at the top, in
+    that order, with DISTINCT descending theta (so argsort is platform-independent
+    and there are no cross-label ties)."""
+    K = len(per_topic_docs)
+    dt = np.full((D, K), 1e-3)
+    for t, ds in enumerate(per_topic_docs):
+        for rank, d in enumerate(ds):
+            dt[d, t] = 1.0 - 1e-3 * rank
+    return _FakeModel(dt)
+
+
 def test_select_k_prefers_pure_partition():
     docs, truth = _labeled_docs(n_per=8)        # 24 docs, 3 true classes
     D = len(docs)
-    # Good model (K=3): topic t one-hot on class-t docs -> each topic pure.
-    good = np.zeros((D, 3))
-    for d, c in enumerate(truth):
-        good[d, c] = 1.0
-    # Bad model (K=2): topic 0 = classes 0+1, topic 1 = classes 1+2 -> mixed.
-    bad = np.zeros((D, 2))
-    for d, c in enumerate(truth):
-        bad[d, 0] = 1.0 if c in (0, 1) else 0.1
-        bad[d, 1] = 1.0 if c in (1, 2) else 0.1
-    res = llm_select_k([_FakeModel(bad), _FakeModel(good)], docs,
-                       call=_fake_labeler, n_docs=6)
-    assert res["best"] == 3                       # the K=3 model wins
+    by_class = [[d for d, c in enumerate(truth) if c == k] for k in range(3)]
+
+    def interleave(a, b):
+        out = []
+        for x, y in zip(a, b):
+            out += [x, y]
+        return out
+
+    # Good (K=3): each topic's top docs are one whole class -> pure.
+    good = _model_with_top_docs(D, by_class)
+    # Bad (K=2): each topic's top docs interleave two classes -> ~50/50, impure.
+    bad = _model_with_top_docs(D, [interleave(by_class[0], by_class[1]),
+                                   interleave(by_class[1], by_class[2])])
+    res = llm_select_k([bad, good], docs, call=_fake_labeler, n_docs=6)
+    assert res["best"] == 3                       # the pure K=3 model wins
     assert res["best_index"] == 1
-    # the pure model scores higher purity than the mixed one
     pur = {s["num_topics"]: s["purity"] for s in res["scores"]}
-    assert pur[3] > pur[2]
     assert pur[3] == 1.0
+    assert pur[2] < pur[3] - 0.03                  # mixed model clearly below the knee tol
 
 
 def test_select_k_per_topic_purity_shape():
