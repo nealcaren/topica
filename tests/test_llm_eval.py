@@ -176,3 +176,117 @@ def test_accepts_fitted_model_surface():
     m.fit(docs, iters=200)
     out = llm_coherence(m, call=lambda p: "2", n_words=5)
     assert out.shape == (2,) and np.allclose(out, 2.0)
+
+
+# ---------------------------------------------------------------------------
+# llm_select_k (document-label purity)
+# ---------------------------------------------------------------------------
+
+from topica import llm_select_k
+
+
+class _FakeModel:
+    """Minimal fitted-model stand-in exposing a doc_topic matrix."""
+
+    def __init__(self, doc_topic):
+        self.doc_topic = np.asarray(doc_topic, dtype=float)
+
+
+def _labeled_docs(n_per=8, classes=("alpha", "beta", "gamma")):
+    # Each document's first word is its true class label; the fake labeler returns it.
+    docs, truth = [], []
+    for ci, c in enumerate(classes):
+        for j in range(n_per):
+            docs.append(f"{c} document number {j} about the {c} theme")
+            truth.append(ci)
+    return docs, np.array(truth)
+
+
+def _fake_labeler(prompt: str) -> str:
+    # Pull the document's leading class word out of the prompt.
+    body = prompt.split("Document:\n", 1)[-1].strip()
+    return body.split()[0] if body else "?"
+
+
+def test_select_k_prefers_pure_partition():
+    docs, truth = _labeled_docs(n_per=8)        # 24 docs, 3 true classes
+    D = len(docs)
+    # Good model (K=3): topic t one-hot on class-t docs -> each topic pure.
+    good = np.zeros((D, 3))
+    for d, c in enumerate(truth):
+        good[d, c] = 1.0
+    # Bad model (K=2): topic 0 = classes 0+1, topic 1 = classes 1+2 -> mixed.
+    bad = np.zeros((D, 2))
+    for d, c in enumerate(truth):
+        bad[d, 0] = 1.0 if c in (0, 1) else 0.1
+        bad[d, 1] = 1.0 if c in (1, 2) else 0.1
+    res = llm_select_k([_FakeModel(bad), _FakeModel(good)], docs,
+                       call=_fake_labeler, n_docs=6)
+    assert res["best"] == 3                       # the K=3 model wins
+    assert res["best_index"] == 1
+    # the pure model scores higher purity than the mixed one
+    pur = {s["num_topics"]: s["purity"] for s in res["scores"]}
+    assert pur[3] > pur[2]
+    assert pur[3] == 1.0
+
+
+def test_select_k_per_topic_purity_shape():
+    docs, truth = _labeled_docs(n_per=6)
+    D = len(docs)
+    dt = np.zeros((D, 3))
+    for d, c in enumerate(truth):
+        dt[d, c] = 1.0
+    res = llm_select_k([_FakeModel(dt)], docs, call=_fake_labeler, n_docs=5)
+    s = res["scores"][0]
+    assert len(s["per_topic_purity"]) == 3
+    assert all(0.0 <= p <= 1.0 for p in s["per_topic_purity"])
+
+
+def test_select_k_prompt_carries_options():
+    docs, truth = _labeled_docs(n_per=4)
+    dt = np.zeros((len(docs), 3))
+    for d, c in enumerate(truth):
+        dt[d, c] = 1.0
+    seen = {}
+    def be(p):
+        seen["p"] = p
+        return _fake_labeler(p)
+    llm_select_k([_FakeModel(dt)], docs, call=be, n_docs=2, granularity="narrow",
+                 example_labels=["sports", "politics"], research_question="Label by news topic.")
+    assert "narrow" in seen["p"]
+    assert "sports" in seen["p"] and "Label by news topic." in seen["p"]
+
+
+def test_select_k_knee_prefers_smaller_on_plateau():
+    # Two models: K=3 (pure, true) and K=6 (over-split, marginally purer). The knee
+    # criterion prefers the smaller K on the plateau; "max" takes the over-split one.
+    docs, truth = _labeled_docs(n_per=8)
+    D = len(docs)
+    good = np.zeros((D, 3))
+    for d, c in enumerate(truth):
+        good[d, c] = 1.0
+    # K=6: split each class into two topics (still same label -> still pure).
+    split = np.zeros((D, 6))
+    for d, c in enumerate(truth):
+        split[d, c * 2 + (d % 2)] = 1.0
+    models = [_FakeModel(good), _FakeModel(split)]
+    knee = llm_select_k(models, docs, call=_fake_labeler, n_docs=4)          # default knee
+    mx = llm_select_k(models, docs, call=_fake_labeler, n_docs=4, criterion="max")
+    # both purities are ~1.0 here, so the knee takes the smaller K=3
+    assert knee["best"] == 3
+    # "max" returns whichever is highest (>= the smaller); never the smaller-but-worse
+    assert mx["best"] in (3, 6)
+
+
+def test_select_k_majority_vote_over_samples():
+    docs, truth = _labeled_docs(n_per=4)
+    dt = np.zeros((len(docs), 3))
+    for d, c in enumerate(truth):
+        dt[d, c] = 1.0
+    # Labeler returns the true class 2/3 of the time, noise otherwise; majority recovers it.
+    state = {"i": 0}
+    def noisy(p):
+        state["i"] += 1
+        return _fake_labeler(p) if state["i"] % 3 != 0 else "noise"
+    res = llm_select_k([_FakeModel(dt)], docs, call=noisy, n_docs=3, n_samples=3)
+    assert res["scores"][0]["purity"] == 1.0

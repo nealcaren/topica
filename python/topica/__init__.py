@@ -147,6 +147,7 @@ from .coherence import (  # noqa: E402
     document_intrusion,
     llm_coherence,
     llm_intrusion,
+    llm_select_k,
     LLM_EVAL_PROMPTS,
 )
 from .registry import list_models, ModelInfo, REGISTRY  # noqa: E402  model taxonomy / discovery
@@ -272,6 +273,7 @@ __all__ = [
     "document_intrusion",
     "llm_coherence",
     "llm_intrusion",
+    "llm_select_k",
     "LLM_EVAL_PROMPTS",
     "frex",
     "label_topics",

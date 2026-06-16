@@ -85,16 +85,30 @@ received, tracks human ratings more closely — especially the rating task. topi
 exposes two such diagnostics; both reuse the provider-agnostic `topica[llm]` backend.
 
 ```python
-call = topica.llm_backend("gpt-4o-mini", temperature=0)    # or any provider / openrouter / ollama
+# An open-source model, via OpenRouter or a fully local ollama endpoint:
+call = topica.llm_backend("openrouter/meta-llama/llama-3.1-8b-instruct", temperature=0)
+# call = topica.llm_backend("ollama/llama3.1")                # fully local, no API key
 
 topica.llm_coherence(model, call=call, n_words=10)         # per-topic 1-3 rating (the headline)
 topica.llm_intrusion(model, call=call, n_words=5)          # LLM picks the intruder -> accuracy
+topica.llm_select_k(models, docs, call=call, n_docs=10)    # number-of-topics by doc-label purity
 ```
 
 `llm_coherence` is the one to lead with: in the paper it beats NPMI/c_v at tracking
 human topic *rankings* (and on the Hoyle 2021 gold, `parity/llm_coherence_compare.py`
 reproduces that here). `llm_intrusion` matches human accuracy on the *task* but is a
 weaker ranking signal, so report it alongside, not instead.
+
+`llm_select_k` chooses the number of topics: for each candidate model it labels each
+topic's top documents with the LLM and scores by **label purity** (the fraction of a
+topic's documents sharing the majority label), returning the model with the highest
+mean purity. This is the paper's *working* number-of-topics signal — doc-label purity
+tracks ground-truth cluster quality, where rating the top *words* across `k` does not
+— and complements `search_k`'s coherence/exclusivity/perplexity criteria.
+
+Small **open** LLMs (Llama-3.1-8B, Mistral-7B, Qwen2.5-14B) are good enough for these
+(Tan & D'Souza 2025); a cheap or local open model keeps the whole evaluation
+reproducible and key-free.
 
 !!! warning "These are `llm-bounded`, not bit-exact"
     Unlike the rest of topica's diagnostics, these call an external model and are

@@ -57,6 +57,8 @@ and in the `topica.validation` module.
 
 ::: topica.llm_intrusion
 
+::: topica.llm_select_k
+
 ::: topica.bootstrap_stability
 
 ::: topica.search_k
