@@ -119,6 +119,7 @@ from .gdmr import GDMR  # noqa: E402  (pure-Python Legendre-basis DMR wrapper)
 from . import stm  # noqa: E402  (stm imports names defined above)
 from .stm import align_corpus, spline, interaction  # noqa: E402  (general covariate-design helpers)
 from . import keyatm  # noqa: E402  (keyATM-specific workflow helpers)
+from . import ectm  # noqa: E402  (ECTM content-trajectory interpretation helpers)
 from . import effects  # noqa: E402  (model-neutral prevalence analysis)
 from . import validation  # noqa: E402  (post-hoc topic diagnostics surface)
 from . import conformance  # noqa: E402  (estimator contract and registry)
@@ -262,6 +263,7 @@ __all__ = [
     "project",
     "one_hot",
     "stm",
+    "ectm",
     "keyatm",
     "spline",
     "interaction",
