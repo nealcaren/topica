@@ -6,8 +6,25 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-06-16
+
 ### Added
 
+- **`topica.datasets`** — bundled example datasets for quickstarts and worked
+  examples: `load_gadarian` (vendored in the wheel, loads offline), `load_poliblog`
+  and `load_dubois` (downloaded once from a pinned commit, SHA-256 verified, cached
+  under `~/.cache/topica` or `TOPICA_DATA_HOME`). Each returns a pandas DataFrame
+  ready for `from_dataframe`, or the cached CSV path with `return_path=True`. (#204)
+- **InfoCTM** — topica's first cross-lingual topic model (Wu et al. 2023): two
+  ProdLDA models aligned by a bilingual dictionary through a topic-alignment
+  mutual-information term, so topics correspond across two languages. Brings
+  `text, dictionary`; validated against the reference. (#200)
+- **LLM-based topic evaluation** under the `topica.llm` namespace —
+  `topica.llm.coherence` and `topica.llm.intrusion` (Stammbach et al. 2023: have an
+  LLM rate a topic's word set or spot the intruder), `topica.llm.select_k` for
+  LLM-guided K selection, the Tan & D'Souza metric suite, and a pluggable
+  `topica.llm.backend` (OpenAI or local via ollama; the docs default to and
+  showcase open models). (#201, #202)
 - **ECTM content standard errors** — `topica.ectm.content_contrast_se` gives
   instant analytic per-word SEs for a group contrast (multinomial sampling
   variance from each cell's effective token count; conservative, ignores period
@@ -46,6 +63,25 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   (currently `ECTM`). Such models are kept out of the validated roster and refuse
   to construct or load until enabled (also via the `TOPICA_EXPERIMENTAL`
   environment variable). `topica.experimental_enabled()` reports the current state.
+
+### Changed
+
+- **Repo root slimmed** — `CONTRIBUTING.md` and `CONTRIBUTING-MODELS.md` moved
+  under `.github/` (GitHub still surfaces the contributing guide from there).
+  Dataset CSVs are marked `binary` in a new `.gitattributes` so their bytes (and
+  the dataset checksums) are identical across platforms. (#209)
+
+### Documentation
+
+- **CSV-first onboarding** — the README leads with a runnable `from_dataframe`
+  example on a bundled dataset and collapses the model roster behind a "start
+  here" teaser; the quickstart leads with the CSV path, the minimal `fit(corpus)`
+  call, and a choosing-K section. New `topica.datasets` API page. (#205, #207)
+- **STM prevalence parity corrected** — `docs/replications/stm.md` now leads with
+  the Poliblog results (aligned topic-word cosine 0.97 at 2k/K=20, 0.84 at
+  5k/K=15; prevalence effects track R at Pearson 0.84) instead of the mislabeled
+  Gadarian K=3 stress case (0.51). No code change; the parity was always there.
+  Adds the `parity/stm_poliblog5k_compare.py` harness. (#206)
 
 ## [0.21.0] - 2026-06-16
 
