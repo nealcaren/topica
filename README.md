@@ -5,30 +5,56 @@
 [![Docs](https://img.shields.io/badge/docs-mkdocs--material-blue.svg)](https://nealcaren.github.io/topica/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-`topica` is a fast topic-modeling library for Python with more than a dozen models, built for social scientists who want to move from text data to publishable results in a single workflow. It brings together models and tools usually split across JVM software like MALLET and R packages like `stm`, and runs them on a parallel Rust core competitive with the standard implementations, with reproducible fits: the variational models are identical to the bit, and the samplers reproduce from a fixed seed and thread count. Each model comes with the validation, covariate-effect, and reporting tools to meet the standards reviewers expect.
+`topica` is a fast, all-purpose topic-modeling library for Python, built for computational social scientists who want to go from a column of text to publishable results in one workflow. It brings together models usually split across JVM tools like MALLET and R packages like `stm`, more than two dozen in all (LDA, STM, CTM, plus neural, dynamic, and embedding-based models), each paired with the validation, covariate-effect, and reporting tools reviewers expect. It installs as a single wheel that needs only NumPy: no JVM, no PyTorch.
 
 ```bash
 pip install topica
 ```
 
-The core needs only NumPy. Optional extras add features without weighing the core
-down: `topica[viz]` (matplotlib plots), `topica[formula]` (R-style formulas),
-`topica[polars]` (Polars frames), and `topica[llm]` (LLM labels and embeddings,
-OpenAI or local via ollama). PyTorch is never required.
+## Quick start
+
+Point topica at a DataFrame and read the topics. This runs exactly as written, on a bundled example dataset, right after install:
 
 ```python
-from topica import LDA
+import topica
 
-model = LDA(num_topics=2, seed=42)
-model.fit([["cat", "dog", "fish"]] * 15 + [["planet", "star", "moon"]] * 15, iters=1000)
+df = topica.datasets.load_gadarian()          # bundled; loads offline
+corpus = topica.from_dataframe(
+    df, text_col="open.ended.response", stopwords=topica.ENGLISH_STOPWORDS
+)
 
-for i, words in enumerate(model.top_words(3)):
-    print(f"Topic {i}:", " ".join(w for w, _ in words))
+model = topica.LDA(num_topics=5, seed=42)
+model.fit(corpus)                             # sensible defaults; no tuning required
+print(topica.summary(model))                  # top words per topic
 ```
 
-See the [getting-started guide](https://nealcaren.github.io/topica/getting-started/quickstart/) and the [worked examples](https://nealcaren.github.io/topica/examples/dubois/) for end-to-end analyses.
+`from_dataframe` keeps your metadata aligned to the documents that survive pruning, so the same corpus feeds a structural topic model that relates topic prevalence to a covariate, with an honest hypothesis test:
+
+```python
+prevalence = corpus.metadata[["treatment"]].to_numpy(float)
+
+stm = topica.STM(num_topics=5, seed=42)
+stm.fit(corpus, prevalence, prevalence_names=["treatment"])
+
+draws  = topica.posterior_theta_samples(stm, nsims=30, seed=0)
+effect = topica.estimate_effect(draws, prevalence, feature_names=["treatment"])
+```
+
+Your own data is one line away: pass `pandas.read_csv("yours.csv")` to `from_dataframe`. See the [getting-started guide](https://nealcaren.github.io/topica/getting-started/quickstart/) and the [worked examples](https://nealcaren.github.io/topica/examples/dubois/) for analyses end to end.
+
+Fits are reproducible and validated: the variational models are identical to the bit, the samplers reproduce from a fixed seed and thread count, and every model is checked against its reference implementation (R `stm`, MALLET, keyATM, and more).
+
+The core needs only NumPy. Optional extras add features without weighing it down: `topica[viz]` (matplotlib plots), `topica[formula]` (R-style formulas), `topica[polars]` (Polars frames), and `topica[llm]` (LLM labels and embeddings, OpenAI or local via ollama).
 
 ## Models
+
+Starting out? **`LDA`** for general topics, **`STM`** to relate topics to
+covariates, **`HDP`** to let the data choose the number of topics, and
+**`BERTopic`** or **`CombinedTM`** for embedding-based topics. The full roster
+follows.
+
+<details>
+<summary><b>All models</b> (more than two dozen, grouped by what you bring and what you want; click to expand)</summary>
 
 Models are organized by **what you bring and what you want**, not by inference
 family. The `from topica import X` namespace is flat; `topica.list_models(group=…,
@@ -113,6 +139,8 @@ Shipped before a published paper and reference-implementation parity (topica's b
 | `ECTM` | text, metadata, times | variational | seed-reproducible | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
 
 <!-- END MODEL TABLE -->
+
+</details>
 
 Every model exposes the same shape: `fit(docs, …)`, then `topic_word` (φ), `doc_topic` (θ), `top_words(n)`, and `save`/`load`, so one diagnostic, labeling, and effect-estimation stack applies to all of them and a new model inherits it for free. The embedding-based models take document vectors from any embedder (sentence-transformers, an API, or a local model such as ollama; no PyTorch or UMAP/numba in the wheel). Full guides: [the models](https://nealcaren.github.io/topica/guides/models/) and [embedding topics](https://nealcaren.github.io/topica/guides/embedding/).
 
