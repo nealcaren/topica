@@ -85,9 +85,8 @@ received, tracks human ratings more closely — especially the rating task. topi
 exposes two such diagnostics; both reuse the provider-agnostic `topica[llm]` backend.
 
 ```python
-# An open-source model, via OpenRouter or a fully local ollama endpoint:
-call = topica.llm_backend("openrouter/meta-llama/llama-3.1-8b-instruct", temperature=0)
-# call = topica.llm_backend("ollama/llama3.1")                # fully local, no API key
+# A capable open-source model, via OpenRouter or a local endpoint:
+call = topica.llm_backend("openrouter/meta-llama/llama-3.3-70b-instruct", temperature=0)
 
 topica.llm_coherence(model, call=call, n_words=10)         # per-topic 1-3 rating (the headline)
 topica.llm_intrusion(model, call=call, n_words=5)          # LLM picks the intruder -> accuracy
@@ -106,9 +105,15 @@ mean purity. This is the paper's *working* number-of-topics signal — doc-label
 tracks ground-truth cluster quality, where rating the top *words* across `k` does not
 — and complements `search_k`'s coherence/exclusivity/perplexity criteria.
 
-Small **open** LLMs (Llama-3.1-8B, Mistral-7B, Qwen2.5-14B) are good enough for these
-(Tan & D'Souza 2025); a cheap or local open model keeps the whole evaluation
-reproducible and key-free.
+!!! note "Model capability matters — don't use a tiny model"
+    These tasks need a **capable** model, and open weights are enough: in our checks a
+    70B-class open model (Llama-3.3-70B) handles all three, and `llm_coherence`
+    reproduces the paper's human correlation with Qwen3-235B. The tasks differ in
+    difficulty — *rating* (`llm_coherence`) is forgiving and an 8B model ranks topics
+    sensibly, but *intrusion* (`llm_intrusion`) and *labeling* (`llm_select_k`) are
+    harder: an 8B model failed to spot obvious word intruders in our tests. Prefer a
+    ~70B+ open model (or a strong hosted one); treat small-model results, especially
+    on intrusion/labeling, with suspicion.
 
 !!! warning "These are `llm-bounded`, not bit-exact"
     Unlike the rest of topica's diagnostics, these call an external model and are

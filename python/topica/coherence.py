@@ -643,8 +643,8 @@ def _resolve_llm_call(call):
         return llm_backend(call)
     raise TypeError(
         "call must be a callable (str -> str) or a model-name string; pass e.g. "
-        'call=topica.llm_backend("openrouter/meta-llama/llama-3.1-8b-instruct") '
-        'or call="ollama/llama3.1".'
+        'call=topica.llm_backend("openrouter/meta-llama/llama-3.3-70b-instruct") '
+        'or call="<your model>".'
     )
 
 
