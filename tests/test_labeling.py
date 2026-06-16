@@ -50,7 +50,7 @@ def test_byo_callable_labels_each_topic(model_and_texts):
         line = next(ln for ln in prompt.splitlines() if ln.startswith("Top words:"))
         return line.split(":", 1)[1].split(",")[0].strip()
 
-    labels = topica.llm_topic_labels(m, texts, call=fake, n_words=4)
+    labels = topica.llm_topic_labels(m, texts, backend=fake, n_words=4)
     assert len(labels) == 2 == len(calls)
     assert all(isinstance(x, str) and x for x in labels)
 
@@ -58,7 +58,7 @@ def test_byo_callable_labels_each_topic(model_and_texts):
 def test_set_labels_flows_into_topic_info(model_and_texts):
     m, texts = model_and_texts
     labels = topica.llm_topic_labels(
-        m, texts, call=lambda p: "THEME", set_labels=True
+        m, texts, backend=lambda p: "THEME", set_labels=True
     )
     assert labels == ["THEME", "THEME"]
     info = topica.topic_info(m)

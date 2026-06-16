@@ -46,7 +46,7 @@ def main():
     # up, in which case the report keeps topica's default top-word labels.
     try:
         backend = topica.llm_backend(LABEL_MODEL, temperature=0)
-        labels = topica.llm_topic_labels(model, texts, call=backend, set_labels=True)
+        labels = topica.llm_topic_labels(model, texts, backend=backend, set_labels=True)
         for t, label in enumerate(labels):
             print(f"{t:2d}  {label}")
     except Exception as e:

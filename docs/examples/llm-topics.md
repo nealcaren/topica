@@ -79,7 +79,7 @@ report.
 
 ```python
 backend = topica.llm_backend("gpt-4o-mini", temperature=0)
-labels = topica.llm_topic_labels(model, texts, call=backend, set_labels=True)
+labels = topica.llm_topic_labels(model, texts, backend=backend, set_labels=True)
 
 for t, label in enumerate(labels):
     print(t, label)
