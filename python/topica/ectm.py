@@ -104,11 +104,13 @@ def content_contrast_se(model, topic, group_a, group_b, period, groups, periods,
     across the two independent cells. This is the standard word-level delta-method
     SE (as in weighted log-odds / fightin'-words) and is **instant**.
 
-    It is deliberately conservative: it uses only within-cell sampling variance and
-    **ignores the random-walk pooling across periods and the prior shrinkage**,
-    both of which narrow the true posterior. Read it as an upper bound on a single
-    cell's uncertainty; :func:`content_trajectory_ci` gives the pooled bootstrap
-    band that reflects the model's actual partial pooling. Returns a list of
+    Two caveats, pulling opposite ways. It **treats each token as independent**, so
+    when documents cluster (e.g. paragraphs of one platform, where the real number
+    of independent units is the platform count, not the token count) it can badly
+    *overstate* precision -- there :func:`content_trajectory_ci` with ``clusters=``
+    is the honest measure. It also **ignores the random-walk pooling and prior
+    shrinkage**, which pull the other way. Use it as a fast within-cell screen for
+    which words separate the groups, not as a final p-value. Returns a list of
     ``(word, contrast, se)`` for the ``n`` words with the largest ``|contrast|``.
     """
     # Resolve the period to its label once (int in range = index, else a value),

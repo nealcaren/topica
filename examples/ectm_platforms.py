@@ -147,8 +147,9 @@ def main():
         for w, c, se in content_contrast_se(model, env, "D", "R", P[-1], party, year, dl, n=5):
             z = c / se if se > 0 else 0.0
             print(f"  {w:12} {1000 * c:+7.1f} +/- {1000 * se:4.1f}  z={z:+.1f}")
-        print("  (instant, conservative -- ignores period pooling; for the pooled band use "
-              "content_trajectory_ci)")
+        print("  (instant within-cell screen; assumes token independence, so it OVERSTATES")
+        print("   precision when paragraphs cluster by platform -- use content_trajectory_ci")
+        print("   with clusters=zip(party,year) for honest, platform-level confidence bands.)")
 
         # --- The other half: how OFTEN each party discusses the topic ---
         print(f"\n=== Environment topic #{env}: ATTENTION (prevalence), the other half ===")
