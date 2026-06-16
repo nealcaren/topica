@@ -435,10 +435,72 @@ fn lgamma(x: f64) -> f64 {
 ///   logistic-normal KL. The Gaussian reparameterization is replaced too; we reuse
 ///   the same Gaussian noise turned into uniforms by `Phi(eps)` so the laplace path
 ///   is unaffected.
+/// - [`Prior::StickBreaking`] is the Gaussian stick-breaking construction (Miao,
+///   Grefenstette & Blunsom 2017, "GSB"; the reparameterizable simplex map of
+///   Nalisnick & Smyth 2017). It keeps the *same* Gaussian latent and Gaussian KL
+///   as `Prior::Laplace` — only the map onto the simplex changes: instead of
+///   `softmax(z)`, the `K-1` breaks `eta_t = sigmoid(z_t)` are turned into topic
+///   proportions by stick-breaking (`theta_t = eta_t * prod_{j<t}(1 - eta_j)`, with
+///   the last stick the remainder). The construction is nonparametric-flavored: the
+///   ordered sticks let early topics claim most mass and later ones decay, softening
+///   the fixed-`K` assumption. Because the latent and KL are unchanged, the laplace
+///   path stays byte-identical.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Prior {
     Laplace,
     Dirichlet,
+    StickBreaking,
+}
+
+/// Gaussian stick-breaking map: turn a latent vector `z` (length `K`) into topic
+/// proportions on the simplex. The first `K-1` entries are breaks
+/// `eta_t = sigmoid(z_t)`; `theta_t = eta_t * prod_{j<t}(1 - eta_j)` and the last
+/// topic takes the remaining stick. Returns `(eta, theta)`; `eta[K-1]` is unused
+/// (left 0) and `theta` sums to 1 by construction. Shared by `prodlda` and `etm_vae`.
+pub(crate) fn stick_break(z: &[f64]) -> (Vec<f64>, Vec<f64>) {
+    let k = z.len();
+    let mut eta = vec![0.0; k];
+    let mut theta = vec![0.0; k];
+    if k == 0 {
+        return (eta, theta);
+    }
+    let mut r = 1.0; // remaining stick R_t = prod_{j<t}(1 - eta_j)
+    for t in 0..k - 1 {
+        let e = sigmoid(z[t]);
+        eta[t] = e;
+        theta[t] = e * r;
+        r *= 1.0 - e;
+    }
+    theta[k - 1] = r;
+    (eta, theta)
+}
+
+/// Backward of [`stick_break`]: map `dtheta` (grad w.r.t. the proportions) to `dz`
+/// (grad w.r.t. the latent), folding in the `sigmoid` derivative. `eta` and `theta`
+/// are the forward values. With `R_j = prod_{i<j}(1 - eta_i)` and the suffix sum
+/// `S_j = sum_{t>j} dtheta_t * theta_t`, the break gradient is
+/// `deta_j = dtheta_j R_j - S_j / (1 - eta_j)`; multiplying by the sigmoid Jacobian
+/// `eta_j (1 - eta_j)` cancels the division, giving
+/// `dz_j = eta_j (1 - eta_j) dtheta_j R_j - eta_j S_j`. `dz[K-1] = 0` (unused break).
+pub(crate) fn stick_break_dz(dtheta: &[f64], eta: &[f64], theta: &[f64]) -> Vec<f64> {
+    let k = dtheta.len();
+    let mut dz = vec![0.0; k];
+    if k < 2 {
+        return dz;
+    }
+    // suffix[j] = sum_{t>=j} dtheta_t * theta_t, so S_j = suffix[j+1].
+    let mut suffix = vec![0.0; k + 1];
+    for t in (0..k).rev() {
+        suffix[t] = suffix[t + 1] + dtheta[t] * theta[t];
+    }
+    let mut r = 1.0;
+    for j in 0..k - 1 {
+        let e = eta[j];
+        let s_j = suffix[j + 1];
+        dz[j] = e * (1.0 - e) * dtheta[j] * r - e * s_j;
+        r *= 1.0 - e;
+    }
+    dz
 }
 
 /// The two orthogonal `fit_avitm` options (#174, #176). Both default to the
@@ -495,10 +557,19 @@ struct BatchCache {
     // For each (doc, topic): Weibull shape `kw`, scale `lam`, the constant
     // `L = -ln(1-u)` from the noise, and the unnormalized weight `g = lam * L^(1/kw)`.
     dir: Option<DirCache>,
+    // Stick-breaking scratch (the `eta = sigmoid(z)` breaks), empty off that path.
+    // Needed by the backward to recompute the stick-breaking Jacobian.
+    sb: Option<SbCache>,
     // Contrastive positive-view topic vectors (the no-noise / posterior-mean theta),
     // and the per-doc softmax used to build them, retained so the backward can push
     // the InfoNCE gradient through both views. Empty when `contrastive == false`.
     contrast: Option<ContrastCache>,
+}
+
+/// Per-(doc, topic) stick-breaking quantities: the `eta = sigmoid(z)` breaks for the
+/// Gaussian stick-breaking prior. `theta` lives in `BatchCache.theta`.
+struct SbCache {
+    eta: Vec<Vec<f64>>, // N x K (entry K-1 unused)
 }
 
 /// Per-(doc, topic) Weibull reparameterization quantities for the Dirichlet prior.
@@ -727,6 +798,7 @@ fn batch_forward(
     let (lv, c_lv, mean_lv, var_lv) = bn_lv.forward_train(&lv_raw);
 
     let dirichlet = opts.prior == Prior::Dirichlet;
+    let stick = opts.prior == Prior::StickBreaking;
     let contrastive = opts.contrastive;
 
     // Reparameterize and decode.
@@ -739,6 +811,8 @@ fn batch_forward(
     let mut d_ln_l = vec![vec![0.0; k]; n];
     let mut d_g = vec![vec![0.0; k]; n];
     let mut d_s = vec![0.0; n];
+    // Stick-breaking scratch (eta breaks).
+    let mut sb_eta = vec![vec![0.0; k]; n];
     // Contrastive positive-view scratch.
     let mut theta_pos = vec![vec![0.0; k]; n];
     let mut g_pos = vec![vec![0.0; k]; n];
@@ -761,11 +835,18 @@ fn batch_forward(
             d_s[i] = s;
             (0..k).map(|t| d_g[i][t] / s).collect()
         } else {
+            // Gaussian latent (shared by laplace and stick-breaking).
             let mut z = vec![0.0; k];
             for t in 0..k {
                 z[t] = mu[i][t] + (0.5 * lv[i][t]).exp() * batch.eps[i][t];
             }
-            softmax(&z)
+            if stick {
+                let (eta, th) = stick_break(&z);
+                sb_eta[i] = eta;
+                th
+            } else {
+                softmax(&z)
+            }
         };
         for t in 0..k {
             theta_do[i][t] = th[t] * batch.masks_t[i][t];
@@ -788,6 +869,10 @@ fn batch_forward(
                 for t in 0..k {
                     theta_pos[i][t] = g_pos[i][t] / s;
                 }
+            } else if stick {
+                // No-noise stick-breaking on z = mu.
+                let (_eta_pos, th_pos) = stick_break(&mu[i]);
+                theta_pos[i] = th_pos;
             } else {
                 theta_pos[i] = softmax(&mu[i]);
             }
@@ -856,6 +941,7 @@ fn batch_forward(
         } else {
             None
         },
+        sb: if stick { Some(SbCache { eta: sb_eta }) } else { None },
         contrast: if contrastive {
             Some(ContrastCache { theta_pos, g_pos, s_pos })
         } else {
@@ -913,6 +999,7 @@ fn batch_backward(
     let (h, k, v) = (w.hidden, w.k, w.v);
     let n = batch.xns.len();
     let dirichlet = opts.prior == Prior::Dirichlet;
+    let stick = opts.prior == Prior::StickBreaking;
 
     // --- Decoder: loss -> logit -> BN -> logit_raw -> (theta_do, beta). ---
     // d loss / d logit_iv = total_i * recon_iv - count_iv.
@@ -990,9 +1077,16 @@ fn batch_backward(
                 dlv[i][t] += dlam * sigmoid(c.lv[i][t]);
             }
         } else {
-            // theta = softmax(z): softmax backward.
-            let dot: f64 = (0..k).map(|t| dtheta[t] * c.theta[i][t]).sum();
-            let dz: Vec<f64> = (0..k).map(|t| c.theta[i][t] * (dtheta[t] - dot)).collect();
+            // Gaussian latent z = mu + exp(lv/2) * eps. The simplex map differs:
+            // laplace -> softmax(z); stick-breaking -> sigmoid + stick-breaking. Both
+            // share the same Gaussian reparameterization and Gaussian KL below.
+            let dz: Vec<f64> = if stick {
+                let sb = c.sb.as_ref().unwrap();
+                stick_break_dz(&dtheta, &sb.eta[i], &c.theta[i])
+            } else {
+                let dot: f64 = (0..k).map(|t| dtheta[t] * c.theta[i][t]).sum();
+                (0..k).map(|t| c.theta[i][t] * (dtheta[t] - dot)).collect()
+            };
             // z = mu + exp(lv/2) * eps.
             for t in 0..k {
                 let s = (0.5 * c.lv[i][t]).exp();
@@ -1017,6 +1111,13 @@ fn batch_backward(
                     &dzp[i], &cc.g_pos[i], cc.s_pos[i], &kw_pos, &lam_pos, &ln_l_pos,
                     &c.mu[i], &c.lv[i], &mut dmu[i], &mut dlv[i],
                 );
+            } else if stick {
+                // theta_pos via no-noise stick-breaking on z = mu; grad into mu only.
+                let (eta_pos, _) = stick_break(&c.mu[i]);
+                let dz_pos = stick_break_dz(&dzp[i], &eta_pos, &cc.theta_pos[i]);
+                for t in 0..k {
+                    dmu[i][t] += dz_pos[t];
+                }
             } else {
                 // theta_pos = softmax(mu): softmax backward into mu only.
                 let tp = &cc.theta_pos[i];
@@ -1179,6 +1280,10 @@ pub struct ProdldaModel {
     pub epochs_run: usize,
     pub weights: Weights,
     pub bn_mu: BatchNorm,
+    /// The prior the model was fit under, so `transform` applies the matching
+    /// noise-free simplex map (softmax for laplace/dirichlet, stick-breaking for
+    /// `Prior::StickBreaking`).
+    pub prior: Prior,
 }
 
 impl ProdldaModel {
@@ -1209,7 +1314,15 @@ impl ProdldaModel {
                 let no_drop = vec![1.0; self.weights.hidden];
                 let dc = self.weights.encode_raw(&xn, emb, &no_drop);
                 let mu = self.bn_mu.forward_eval_row(&dc.mu_raw);
-                softmax(&mu)
+                // Noise-free point estimate under the model's prior. Laplace and
+                // Dirichlet both use softmax(mu) as the cheap point estimate (the
+                // shipped behavior); stick-breaking uses its own simplex map so the
+                // proportions stay consistent with the decoder it was trained on.
+                if self.prior == Prior::StickBreaking {
+                    stick_break(&mu).1
+                } else {
+                    softmax(&mu)
+                }
             })
             .collect()
     }
@@ -1388,6 +1501,7 @@ pub fn fit_avitm<R: Rng>(
         epochs_run,
         weights: w,
         bn_mu,
+        prior: opts.prior,
     };
     let doc_topic = model.transform_with_emb(docs, embs);
     ProdldaModel { doc_topic, ..model }
@@ -1597,6 +1711,20 @@ mod tests {
         assert!(max_rel < 1e-4, "dirichlet emb-only max relative error {max_rel}");
     }
 
+    #[test]
+    fn stick_breaking_gradients_match_fd_bow_only() {
+        let opts = AvitmOptions { prior: Prior::StickBreaking, ..AvitmOptions::default() };
+        let max_rel = fd_check_mode_opts(InputMode::BowOnly, 0, opts);
+        assert!(max_rel < 1e-4, "stick-breaking bow-only max relative error {max_rel}");
+    }
+
+    #[test]
+    fn stick_breaking_gradients_match_fd_emb_only() {
+        let opts = AvitmOptions { prior: Prior::StickBreaking, ..AvitmOptions::default() };
+        let max_rel = fd_check_mode_opts(InputMode::EmbOnly, 6, opts);
+        assert!(max_rel < 1e-4, "stick-breaking emb-only max relative error {max_rel}");
+    }
+
     // --- composition: both flags on at once must still FD-check ------------------
     #[test]
     fn contrastive_and_dirichlet_compose_fd() {
@@ -1608,6 +1736,18 @@ mod tests {
         };
         let max_rel = fd_check_mode_opts(InputMode::BowEmb, 6, opts);
         assert!(max_rel < 1e-4, "contrastive+dirichlet max relative error {max_rel}");
+    }
+
+    #[test]
+    fn contrastive_and_stick_breaking_compose_fd() {
+        let opts = AvitmOptions {
+            prior: Prior::StickBreaking,
+            contrastive: true,
+            contrastive_weight: 0.6,
+            contrastive_temp: 0.5,
+        };
+        let max_rel = fd_check_mode_opts(InputMode::BowEmb, 6, opts);
+        assert!(max_rel < 1e-4, "contrastive+stick-breaking max relative error {max_rel}");
     }
 
     // The Weibull-to-Gamma KL gradient checked directly against finite differences.
@@ -1841,6 +1981,48 @@ mod tests {
             covered.insert(dom);
         }
         assert_eq!(covered.len(), k, "dirichlet: topics did not cover all blocks");
+    }
+
+    #[test]
+    fn fit_recovers_planted_blocks_stick_breaking() {
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let (k, block) = (3usize, 8usize);
+        let v = k * block;
+        let docs: Vec<Vec<u32>> = (0..180)
+            .map(|d| {
+                let b = d % k;
+                (0..15).map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32).collect()
+            })
+            .collect();
+        let opts = AvitmOptions { prior: Prior::StickBreaking, ..AvitmOptions::default() };
+        let m = fit_avitm(
+            &docs, &vec![Vec::new(); docs.len()], InputMode::BowOnly, k, v, 0, 32, 0.5, 0.0,
+            400, 60, 0.005, 0.0, opts, &mut rng,
+        );
+        let tw = m.topic_word();
+        for row in &tw {
+            assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        }
+        // Stick-breaking proportions live on the simplex by construction.
+        for row in &m.doc_topic {
+            assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+            assert!(row.iter().all(|&x| x >= 0.0));
+        }
+        // Each topic dominated by a single planted block; every block covered. The
+        // ordered sticks mix a little more, so use the same majority criterion.
+        let mut covered = std::collections::HashSet::new();
+        for row in tw.iter().take(k) {
+            let mut ord: Vec<usize> = (0..v).collect();
+            ord.sort_by(|&a, &b| row[b].total_cmp(&row[a]));
+            let mut counts = vec![0usize; k];
+            for &w in &ord[..3] {
+                counts[w / block] += 1;
+            }
+            let (dom, &cnt) = counts.iter().enumerate().max_by_key(|(_, &c)| c).unwrap();
+            assert!(cnt >= 2, "stick-breaking topic top words do not concentrate in a block");
+            covered.insert(dom);
+        }
+        assert_eq!(covered.len(), k, "stick-breaking: topics did not cover all blocks");
     }
 }
 

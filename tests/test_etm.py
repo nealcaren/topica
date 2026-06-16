@@ -164,3 +164,28 @@ def test_etm_vae_flags_save_load_roundtrip(tmp_path):
     loaded = topica.ETM.load(path)
     assert np.array_equal(loaded.topic_word, m.topic_word)
     assert np.array_equal(loaded.doc_topic, m.doc_topic)
+
+
+def test_etm_stick_breaking_valid_and_deterministic():
+    docs, vocab, word_emb, _ = _planted()
+    base = _vae(seed=1); base.fit(docs, word_emb, vocab, iters=80)
+    sb = _vae(seed=1, prior="stick_breaking"); sb.fit(docs, word_emb, vocab, iters=80)
+    # The prior changes the fit but the outputs stay on the simplex.
+    assert not np.allclose(base.topic_word, sb.topic_word)
+    assert np.allclose(sb.topic_word.sum(axis=1), 1.0)
+    assert np.allclose(sb.doc_topic.sum(axis=1), 1.0)
+    # determinism
+    sb2 = _vae(seed=1, prior="stick_breaking"); sb2.fit(docs, word_emb, vocab, iters=80)
+    assert np.array_equal(sb.topic_word, sb2.topic_word)
+    assert np.array_equal(sb.doc_topic, sb2.doc_topic)
+
+
+def test_etm_stick_breaking_save_load_roundtrip(tmp_path):
+    docs, vocab, word_emb, _ = _planted()
+    m = _vae(seed=2, prior="stick_breaking"); m.fit(docs, word_emb, vocab, iters=80)
+    path = str(tmp_path / "etm_sb.bin")
+    m.save(path)
+    loaded = topica.ETM.load(path)
+    # The stick-breaking map survives the round-trip (doc_topic matches exactly).
+    assert np.array_equal(loaded.topic_word, m.topic_word)
+    assert np.array_equal(loaded.doc_topic, m.doc_topic)

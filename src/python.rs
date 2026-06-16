@@ -11480,11 +11480,7 @@ impl ETM {
                     w_ls: s.enc_w_ls.unwrap_or_default(),
                     b_ls: s.enc_b_ls.unwrap_or_default(),
                 },
-                prior: if s.prior == "dirichlet" {
-                    prodlda::Prior::Dirichlet
-                } else {
-                    prodlda::Prior::Laplace
-                },
+                prior: prior_from_str(&s.prior),
             })
         } else { None };
         Ok(ETM {
@@ -12211,6 +12207,17 @@ struct ProdldaState {
 /// Validate the VAE-model flags (#174, #176) and build the [`prodlda::AvitmOptions`]
 /// passed into `fit_avitm`. With `prior == "laplace"` and `contrastive == false`
 /// (the defaults) this yields `AvitmOptions::default()`, the pre-flag code path.
+/// Map a stored/validated prior string to the enum. Lenient (unknown -> laplace);
+/// used on the `load` path where the string was already validated at construction.
+/// Construction itself validates strictly via [`build_avitm_options`].
+fn prior_from_str(prior: &str) -> prodlda::Prior {
+    match prior {
+        "dirichlet" => prodlda::Prior::Dirichlet,
+        "stick_breaking" => prodlda::Prior::StickBreaking,
+        _ => prodlda::Prior::Laplace,
+    }
+}
+
 fn build_avitm_options(
     prior: &str,
     contrastive: bool,
@@ -12220,9 +12227,10 @@ fn build_avitm_options(
     let prior_enum = match prior {
         "laplace" => prodlda::Prior::Laplace,
         "dirichlet" => prodlda::Prior::Dirichlet,
+        "stick_breaking" => prodlda::Prior::StickBreaking,
         other => {
             return Err(PyValueError::new_err(format!(
-                "prior must be \"laplace\" or \"dirichlet\", got {other:?}"
+                "prior must be \"laplace\", \"dirichlet\", or \"stick_breaking\", got {other:?}"
             )))
         }
     };
@@ -12553,6 +12561,7 @@ impl ProdLDA {
                     running_var: s.bn_running_var.unwrap_or_else(|| vec![1.0; k]),
                     momentum: 0.1,
                 },
+                prior: prior_from_str(&s.prior),
             })
         } else { None };
         Ok(ProdLDA {
@@ -13053,6 +13062,7 @@ macro_rules! ctm_embedding_model {
                             running_var: s.bn_running_var.unwrap_or_else(|| vec![1.0; k]),
                             momentum: 0.1,
                         },
+                        prior: prior_from_str(&s.prior),
                     })
                 } else {
                     None

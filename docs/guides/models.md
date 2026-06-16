@@ -354,11 +354,20 @@ and the defaults reproduce the standard model exactly.
   a Weibull draw is normalized onto the simplex, and the analytic Weibull-to-Gamma
   KL replaces the logistic-normal KL. We reuse the same reparameterization noise the
   laplace path draws, so turning the flag off is bit-for-bit the original model.
+  `"stick_breaking"` is the Gaussian stick-breaking construction (Miao,
+  Grefenstette & Blunsom 2017; reparameterizable simplex map of Nalisnick & Smyth
+  2017): it keeps the same Gaussian latent and Gaussian KL as `"laplace"`, but maps
+  it onto the simplex by stick-breaking — `K-1` breaks `ηₜ = sigmoid(zₜ)` give
+  `θₜ = ηₜ ∏_{j<t}(1 - η_j)` with the last topic the remainder. The ordered sticks
+  let early topics claim most mass and later ones decay, a nonparametric-flavored
+  prior that softens the fixed-`K` assumption. Because only the simplex map changes,
+  the laplace default stays bit-identical.
 
 - `contrastive=True` adds a CLNTM-style (Nguyen & Luu 2021) InfoNCE term on the
   topic vectors. For each document the *anchor* is its sampled topic vector and the
   *positive view* is the deterministic no-noise topic vector (`softmax(μ)` on the
-  laplace path, the median Weibull on the dirichlet path); the other documents in
+  laplace path, the median Weibull on the dirichlet path, the no-noise stick-breaking
+  of `μ` on the stick-breaking path); the other documents in
   the minibatch are negatives, with cosine similarity at temperature
   `contrastive_temp`. The term is scaled by `contrastive_weight` and added to the
   per-batch loss. We document the positive-view choice because it is what makes the

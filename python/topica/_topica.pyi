@@ -2519,8 +2519,9 @@ class ETM:
         em_tol: Optional[float] = None,
     ) -> None:
         """em_tol is a deprecated alias for convergence_tol. On the VAE path,
-        ``prior`` selects ``"laplace"`` (default) or ``"dirichlet"`` (Weibull
-        reparameterization), and ``contrastive`` adds an InfoNCE term on the topic
+        ``prior`` selects ``"laplace"`` (default), ``"dirichlet"`` (Weibull
+        reparameterization), or ``"stick_breaking"`` (Gaussian stick-breaking,
+        Miao et al. 2017), and ``contrastive`` adds an InfoNCE term on the topic
         vectors scaled by ``contrastive_weight`` at temperature ``contrastive_temp``.
         Both are ignored on the EM path."""
         ...
@@ -2621,7 +2622,8 @@ class ProdLDA:
         em_tol: Optional[float] = None,
     ) -> None:
         """em_tol is a deprecated alias for convergence_tol. ``prior`` selects
-        ``"laplace"`` (default) or ``"dirichlet"`` (Weibull reparameterization);
+        ``"laplace"`` (default), ``"dirichlet"`` (Weibull reparameterization), or
+        ``"stick_breaking"`` (Gaussian stick-breaking, Miao et al. 2017);
         ``contrastive`` adds an InfoNCE term on the topic vectors scaled by
         ``contrastive_weight`` at temperature ``contrastive_temp``."""
         ...
@@ -2707,8 +2709,9 @@ class CombinedTM:
         contrastive_weight: float = 0.5,
         contrastive_temp: float = 0.5,
     ) -> None:
-        """``prior`` selects ``"laplace"`` (default) or ``"dirichlet"`` (Weibull
-        reparameterization); ``contrastive`` adds an InfoNCE term on the topic vectors
+        """``prior`` selects ``"laplace"`` (default), ``"dirichlet"`` (Weibull
+        reparameterization), or ``"stick_breaking"`` (Gaussian stick-breaking, Miao
+        et al. 2017); ``contrastive`` adds an InfoNCE term on the topic vectors
         scaled by ``contrastive_weight`` at temperature ``contrastive_temp``."""
         ...
     @property
@@ -2802,8 +2805,9 @@ class ZeroShotTM:
         contrastive_weight: float = 0.5,
         contrastive_temp: float = 0.5,
     ) -> None:
-        """``prior`` selects ``"laplace"`` (default) or ``"dirichlet"`` (Weibull
-        reparameterization); ``contrastive`` adds an InfoNCE term on the topic vectors
+        """``prior`` selects ``"laplace"`` (default), ``"dirichlet"`` (Weibull
+        reparameterization), or ``"stick_breaking"`` (Gaussian stick-breaking, Miao
+        et al. 2017); ``contrastive`` adds an InfoNCE term on the topic vectors
         scaled by ``contrastive_weight`` at temperature ``contrastive_temp``."""
         ...
     @property
