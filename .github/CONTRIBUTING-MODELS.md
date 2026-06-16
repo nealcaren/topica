@@ -62,7 +62,7 @@ checks run; the binding is plumbing.
 7. **Names follow the shared vocabulary.** The iteration count is `iters`, the
    seed is `seed=42`, counts are `num_*`, a covariate design is reachable as
    `covariates=`, and so on. See
-   [`docs/contributing/conventions.md`](docs/contributing/conventions.md); the
+   [`docs/contributing/conventions.md`](../docs/contributing/conventions.md); the
    contract is enforced by `tests/test_naming_conventions.py`, which fails when a
    new model breaks a rule.
 
@@ -297,7 +297,7 @@ Register the module in `src/lib.rs` (`pub mod <model>;`, matching the others).
 
 **Implement the `Estimator` trait on your fitted struct.** The core trait
 hierarchy lives in `src/estimator.rs` (and `src/variational/mod.rs`); it is the
-Rust mirror of the [estimator contract](docs/contributing/estimator-contract.md)
+Rust mirror of the [estimator contract](../docs/contributing/estimator-contract.md)
 and the binding point for the R frontend. On your `*Model` struct, add:
 
 ```rust

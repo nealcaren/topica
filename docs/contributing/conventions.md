@@ -13,7 +13,7 @@ being `GDMR`) matches by construction rather than by memory.
     the *explanation*; the test is the *contract*. When the two disagree, the
     test wins and this page is wrong. It pairs with the structural
     [estimator contract](estimator-contract.md) (which methods/attributes a model
-    must expose) and the [implementer's playbook](https://github.com/nealcaren/topica/blob/main/CONTRIBUTING-MODELS.md).
+    must expose) and the [implementer's playbook](https://github.com/nealcaren/topica/blob/main/.github/CONTRIBUTING-MODELS.md).
 
 ## Naming rules
 
