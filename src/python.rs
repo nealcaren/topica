@@ -12123,6 +12123,10 @@ impl DETM {
 /// theme in both languages, so ``topic_word(lang=...)`` and ``top_words(lang=...)``
 /// return aligned topics for comparative cross-lingual analysis. This is the
 /// dictionary-grounded alternative to the embedding-based ``ZeroShotTM`` path.
+///
+/// Training follows the InfoCTM reference (Adam ``beta1=0.9``) at a constant learning
+/// rate; the reference's ``StepLR`` schedule is not applied, so an exact numerical
+/// match to a reference run is not expected (the model and objective are unchanged).
 #[pyclass(module = "topica")]
 pub struct InfoCTM {
     num_topics: usize,

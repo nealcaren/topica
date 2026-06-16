@@ -409,6 +409,13 @@ Each language keeps the full fitted surface (`topic_word`, `doc_topic`, `top_wor
 whose gradient is hand-coded and finite-difference checked. Determinism is
 `seed-reproducible`.
 
+Two training-recipe deviations from the reference, documented for anyone
+reproducing the paper: the optimizer follows the InfoCTM reference (Adam,
+`beta1=0.9`), not topica's ProdLDA `beta1=0.99`; and topica trains at a **constant**
+learning rate, where the reference halves it every 125 epochs (a `StepLR` schedule).
+Both leave the model and objective unchanged but can shift the final fit, so an exact
+numerical match to a reference run is not expected.
+
 ## NMF
 
 Non-negative matrix factorization ([Lee & Seung 2001](https://papers.nips.cc/paper/1861-algorithms-for-non-negative-matrix-factorization)) factors the document-term matrix `X` (D x V, non-negative) as `X ≈ W H` with both factors non-negative, then reads each row of `H` as a topic's word distribution and each row of `W` as a document's topic mixture (both normalized to sum to 1). It is the fast, deterministic baseline familiar from scikit-learn: no sampling and no priors, just multiplicative updates that descend a reconstruction loss.

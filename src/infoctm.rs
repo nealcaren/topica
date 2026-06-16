@@ -276,7 +276,10 @@ impl LangState {
         let bows: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| raw_bow(d)).collect();
         let totals: Vec<f64> = bows.iter().map(|b| b.iter().map(|&(_, c)| c).sum()).collect();
         let w = Weights::new(v, 0, hidden, k, InputMode::BowOnly, rng);
-        let opt = Optim::new(&w, lr, 0.99, 0.0);
+        // Adam beta1 = 0.9 to match the InfoCTM reference's optimizer (default
+        // torch Adam betas), NOT ProdLDA's high-momentum 0.99 anti-collapse value:
+        // this is an InfoCTM port, so it follows InfoCTM's training recipe.
+        let opt = Optim::new(&w, lr, 0.9, 0.0);
         LangState {
             w,
             bn_mu: BatchNorm::new(k),
