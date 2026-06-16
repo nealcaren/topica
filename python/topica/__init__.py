@@ -249,6 +249,7 @@ from .stopwords import ENGLISH_STOPWORDS  # noqa: E402
 from .phrases import learn_phrases, apply_phrases, add_ngrams, Phrases  # noqa: E402
 from .frames import from_dataframe, align, prep_documents, plot_removed  # noqa: E402
 from .formulas import design_matrix  # noqa: E402
+from . import datasets  # noqa: E402  (bundled + fetch-on-demand example datasets)
 
 __all__ = [
     "list_models",
@@ -381,6 +382,7 @@ __all__ = [
     "add_ngrams",
     "Phrases",
     "align_corpus",
+    "datasets",
     "DEFAULT_TOKEN_REGEX",
     "__version__",
     "__citation__",
