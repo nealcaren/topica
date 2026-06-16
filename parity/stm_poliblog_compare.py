@@ -190,7 +190,7 @@ def run(verbose: bool = True) -> dict:
         r_rand2 = _read_r_beta(os.path.join(d, "r_rand2.csv"), r_vocab)
 
         model = STM(num_topics=K, init="spectral")
-        model.fit(docs, X, prevalence_names=feat_names, iters=EM_ITERS, em_tol=1e-5)
+        model.fit(docs, X, prevalence_names=feat_names, iters=EM_ITERS, convergence_tol=1e-5)
         tt_converged = bool(model.converged)
         tt_em_iters = len(model.bound_history)
         tt_vocab = list(model.vocabulary)
