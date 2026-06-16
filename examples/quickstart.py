@@ -37,29 +37,36 @@ print()
 # 2. Fit the LDA model
 # ---------------------------------------------------------------------------
 
-# Progress callback: called every `progress_interval` iterations.
-def on_progress(iteration: int, ll_per_token: float) -> None:
-    print(f"  iter {iteration:4d}  LL/token = {ll_per_token:.4f}")
-
-model = LDA(
-    num_topics=2,
-    alpha_sum=2.0,   # prior concentration; defaults to num_topics (1.0/topic)
-    beta=0.01,       # per-word smoothing for topic-word prior
-    optimize_interval=50,  # optimize α/β every 50 iters after burn-in
-    burn_in=200,     # iterations before hyper-optimization begins
-    seed=42,         # deterministic: same seed → identical results
-)
-
-print("Training (500 iterations, progress every 100) …")
-model.fit(
-    documents,
-    iters=500,
-    num_samples=5,          # average this many snapshots for final φ/θ
-    sample_interval=25,     # Gibbs sweeps between snapshots
-    progress=on_progress,
-    progress_interval=100,
-)
+# The simple way: sensible defaults, no tuning required.
+print("Training …")
+model = LDA(num_topics=2, seed=42)   # seed -> deterministic, reproducible fit
+model.fit(documents)
 print()
+
+# --- Advanced: the same fit with the tuning knobs spelled out --------------
+# You need none of these for good topics; they are here so you know what exists.
+# Uncomment to try.
+#
+# def on_progress(iteration: int, ll_per_token: float) -> None:
+#     # called every `progress_interval` iterations
+#     print(f"  iter {iteration:4d}  LL/token = {ll_per_token:.4f}")
+#
+# model = LDA(
+#     num_topics=2,
+#     seed=42,
+#     alpha_sum=2.0,         # document-topic prior concentration (default: num_topics)
+#     beta=0.01,             # topic-word smoothing
+#     optimize_interval=50,  # re-optimize alpha/beta every 50 iters after burn-in
+#     burn_in=200,           # iters before hyperparameter optimization begins
+# )
+# model.fit(
+#     documents,
+#     iters=500,             # total Gibbs sweeps
+#     num_samples=5,         # average this many snapshots for the final phi/theta
+#     sample_interval=25,    # sweeps between snapshots
+#     progress=on_progress,
+#     progress_interval=100,
+# )
 
 # ---------------------------------------------------------------------------
 # 3. Inspect result shapes

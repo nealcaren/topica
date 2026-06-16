@@ -116,6 +116,7 @@ nav:
       - STM (the stm vignette): replications/stm.md
       - Dynamic keyATM (Supreme Court): replications/keyatm-dynamic.md
   - API reference:
+      - Datasets: api/datasets.md
       - Models: api/models.md
       - Embedding models: api/embedding.md
       - Diagnostics: api/diagnostics.md
