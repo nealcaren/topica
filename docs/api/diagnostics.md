@@ -53,6 +53,10 @@ and in the `topica.validation` module.
 
 ::: topica.document_intrusion
 
+::: topica.llm_coherence
+
+::: topica.llm_intrusion
+
 ::: topica.bootstrap_stability
 
 ::: topica.search_k

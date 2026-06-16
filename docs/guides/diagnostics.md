@@ -77,6 +77,33 @@ topica.word_intrusion(model, n_words=5, seed=0)           # top words + an intru
 topica.document_intrusion(model, texts=texts, n_docs=3)   # top docs + an intruder
 ```
 
+## LLM-based evaluation
+
+Automated coherence (NPMI, c_v) correlates only weakly with human judgment. Stammbach
+et al. (2023) show that an LLM, prompted with the *same* instructions the crowd-workers
+received, tracks human ratings more closely — especially the rating task. topica
+exposes two such diagnostics; both reuse the provider-agnostic `topica[llm]` backend.
+
+```python
+call = topica.llm_backend("gpt-4o-mini", temperature=0)    # or any provider / openrouter / ollama
+
+topica.llm_coherence(model, call=call, n_words=10)         # per-topic 1-3 rating (the headline)
+topica.llm_intrusion(model, call=call, n_words=5)          # LLM picks the intruder -> accuracy
+```
+
+`llm_coherence` is the one to lead with: in the paper it beats NPMI/c_v at tracking
+human topic *rankings* (and on the Hoyle 2021 gold, `parity/llm_coherence_compare.py`
+reproduces that here). `llm_intrusion` matches human accuracy on the *task* but is a
+weaker ranking signal, so report it alongside, not instead.
+
+!!! warning "These are `llm-bounded`, not bit-exact"
+    Unlike the rest of topica's diagnostics, these call an external model and are
+    **not** reproducible bit-for-bit. Use `temperature=0` (or `n_samples>1`, which
+    calls the model repeatedly and aggregates by mean/majority-vote) for stability,
+    and read the result as a measurement with model-dependent noise. The paper's
+    prompts are kept verbatim in the overridable `topica.LLM_EVAL_PROMPTS` dict. Cost
+    is O(K) LLM calls; pass a cheap model.
+
 ## Stability and model selection
 
 ```python
