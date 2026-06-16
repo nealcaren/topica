@@ -1,0 +1,6 @@
+# Dataset CSVs are data, not source text. Keep their bytes identical across
+# platforms: on Windows, git's autocrlf would rewrite LF to CRLF on checkout,
+# changing the file's SHA-256 and breaking the dataset checksums (the vendored
+# file is verified directly; the fetched files are pinned by hash).
+python/topica/datasets/_data/*.csv binary
+examples/*.csv binary
