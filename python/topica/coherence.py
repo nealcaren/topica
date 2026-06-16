@@ -627,8 +627,51 @@ LABEL_PROMPT = (
     "naming its single main theme.{examples} Reply with only the label, a single "
     "word or short phrase.\n\nDocument:\n{document}"
 )
+# Tan & D'Souza (2025, IRCDL; arXiv:2502.07352; repo MIT) extend the suite beyond
+# coherence rating: unsupervised outlier detection, repetitiveness, cross-topic
+# diversity, topic-document alignment, and gold-free adversarial self-checks.
+OUTLIER_PROMPT = (
+    "You are a helpful assistant evaluating the top words of a topic model output for "
+    "a given topic. {dataset}Identify the words that do not semantically belong to the "
+    "same conceptual theme as the others. Reply with a comma-separated list of only "
+    'those words, or "none".\n\n{words}'
+)
+REPETITIVE_RATE_PROMPT = (
+    "You are a helpful assistant evaluating the top words of a topic model output for "
+    "a given topic. {dataset}Evaluate whether there are semantically equivalent "
+    "(redundant) words. Rate the repetitiveness from 1 to 3, where 1 = highly "
+    "repetitive with significant semantic overlap and 3 = minimal repetition with "
+    "diverse, distinctive words. Reply with a single number.\n\n{words}"
+)
+DUPLICATE_PROMPT = (
+    "You are a helpful assistant evaluating the top words of a topic model output for "
+    "a given topic. {dataset}Identify pairs of words that refer to the exact same "
+    "concept or idea (not merely related or similar). Reply with a comma-separated "
+    'list of pairs like (word1, word2), or "none".\n\n{words}'
+)
+DIVERSITY_PROMPT = (
+    "You are a helpful assistant comparing two topics from a topic model. {dataset}"
+    "Rate the thematic distinctiveness between the two groups of words from 1 to 3, "
+    "where 1 = partially overlapping themes and 3 = highly distinctive themes. Reply "
+    "with a single number.\n\nGroup 1: {words_a}\nGroup 2: {words_b}"
+)
+ALIGN_IRRELEVANT_PROMPT = (
+    "You are a helpful assistant evaluating how well a topic's words describe a "
+    "document. {dataset}Identify which of the topic words are NOT relevant to the "
+    'document. Reply with a comma-separated list of the irrelevant words, or "none".'
+    "\n\nDocument:\n{document}\n\nTopic words: {words}"
+)
+ALIGN_MISSING_PROMPT = (
+    "You are a helpful assistant evaluating how well a topic's words cover a "
+    "document's themes. {dataset}Identify significant themes present in the document "
+    "that are NOT captured by the topic words. Reply with a comma-separated list of "
+    'the missing themes, or "none".\n\nDocument:\n{document}\n\nTopic words: {words}'
+)
 LLM_EVAL_PROMPTS: dict[str, str] = {
     "rating": RATING_PROMPT, "intrusion": INTRUSION_PROMPT, "label": LABEL_PROMPT,
+    "outlier": OUTLIER_PROMPT, "repetitive_rate": REPETITIVE_RATE_PROMPT,
+    "duplicate": DUPLICATE_PROMPT, "diversity": DIVERSITY_PROMPT,
+    "align_irrelevant": ALIGN_IRRELEVANT_PROMPT, "align_missing": ALIGN_MISSING_PROMPT,
 }
 
 
@@ -898,3 +941,197 @@ def llm_select_k(models, docs, *, backend, n_docs=10, granularity="broad",
         "best_index": best_index,
         "scores": scores,
     }
+
+
+# ---------------------------------------------------------------------------
+# Tan & D'Souza (2025) metrics: outlier, repetitiveness, diversity, alignment,
+# and gold-free adversarial self-checks. All llm-bounded; exposed under topica.llm.
+# ---------------------------------------------------------------------------
+
+def _parse_word_list(reply, allowed=None):
+    """Parse a comma-separated word list from an LLM reply, dropping ``none``/empty
+    and bracket noise. If `allowed` (a set of lowercased words) is given, keep only
+    those. Returns a list of lowercased words."""
+    s = str(reply).strip().strip("[](){}").strip()
+    if not s or s.lower() in ("none", "[]", "n/a", "no outliers", "none."):
+        return []
+    parts = re.split(r"[,\n;]+", s)
+    out = []
+    for p in parts:
+        w = re.sub(r"[^a-z0-9'\- ]+", "", p.strip().lower()).strip()
+        if not w or w == "none":
+            continue
+        if allowed is None or w in allowed:
+            out.append(w)
+        elif allowed is not None:
+            # a multi-word reply phrase: keep any allowed token it contains
+            for tok in w.split():
+                if tok in allowed:
+                    out.append(tok)
+    return out
+
+
+def _parse_pairs(reply):
+    """Parse ``(a, b)`` style pairs from an LLM reply. Returns a list of
+    lowercased ``(a, b)`` tuples (order-normalized)."""
+    out = []
+    for a, b in re.findall(r"\(\s*([\w'\-]+)\s*,\s*([\w'\-]+)\s*\)", str(reply).lower()):
+        pair = tuple(sorted((a.strip(), b.strip())))
+        if pair[0] and pair[1] and pair[0] != pair[1]:
+            out.append(pair)
+    return out
+
+
+def llm_outlier(model, *, backend, n_words=10, n_samples=5, threshold=3,
+                dataset_description=None, seed=0, prompts=None):
+    """Unsupervised semantic-outlier detection (Tan & D'Souza 2025, ``C_outlier``).
+
+    For each topic, asks the LLM to list the words that do not fit the topic, over
+    ``n_samples`` runs, and keeps a word flagged in at least ``threshold`` runs (the
+    paper's 3-of-5 vote). Returns a per-topic list of dicts with ``topic``,
+    ``outliers`` (the flagged words), and ``count``. Unlike :func:`llm_intrusion`
+    there is no planted answer — this surfaces *which* words make a topic incoherent.
+    ``llm-bounded``; see :func:`llm_coherence` for ``backend``/``n_samples`` semantics.
+    """
+    backend = _resolve_llm_call(backend)
+    tmpl = (prompts or LLM_EVAL_PROMPTS)["outlier"]
+    ds = _dataset_clause(dataset_description)
+    out = []
+    for t, words in enumerate(_extract_topics(model, n_words)):
+        allowed = {w.lower() for w in words}
+        votes = Counter()
+        for _ in range(max(1, n_samples)):
+            flagged = _parse_word_list(backend(tmpl.format(dataset=ds, words=", ".join(words))), allowed)
+            votes.update(set(flagged))
+        outliers = [w for w, c in votes.items() if c >= threshold]
+        out.append({"topic": t, "outliers": outliers, "count": len(outliers)})
+    return out
+
+
+def llm_repetitiveness(model, *, backend, n_words=10, n_samples=1,
+                       dataset_description=None, seed=0, prompts=None):
+    """LLM repetitiveness (Tan & D'Souza 2025): is apparent coherence just redundancy?
+
+    Returns a per-topic list of dicts with ``rate`` (``R_rate``: 1 = highly
+    repetitive, 3 = diverse/distinctive; averaged over ``n_samples``),
+    ``duplicate_pairs`` (``R_duplicate``: word pairs the LLM judges the *same*
+    concept), and ``duplicate_count``. A robust coherent topic has a *high* rate and
+    a *low* duplicate count. Complements :func:`topic_semantic_diversity` on the LLM
+    side. ``llm-bounded``.
+    """
+    backend = _resolve_llm_call(backend)
+    P = prompts or LLM_EVAL_PROMPTS
+    ds = _dataset_clause(dataset_description)
+    out = []
+    for t, words in enumerate(_extract_topics(model, n_words)):
+        ws = ", ".join(words)
+        rates = []
+        for _ in range(max(1, n_samples)):
+            v = _parse_rating(backend(P["repetitive_rate"].format(dataset=ds, words=ws)), 1, 3)
+            if v is not None:
+                rates.append(v)
+        allowed = {w.lower() for w in words}
+        pair_votes = Counter()
+        for _ in range(max(1, n_samples)):
+            for pr in _parse_pairs(backend(P["duplicate"].format(dataset=ds, words=ws))):
+                if pr[0] in allowed and pr[1] in allowed:
+                    pair_votes[pr] += 1
+        pairs = [p for p, c in pair_votes.items() if c >= (max(1, n_samples) + 1) // 2]
+        out.append({"topic": t, "rate": float(np.mean(rates)) if rates else float("nan"),
+                    "duplicate_pairs": pairs, "duplicate_count": len(pairs)})
+    return out
+
+
+def llm_diversity(model, *, backend, n_words=10, n_samples=1, max_pairs=None,
+                  dataset_description=None, seed=0, prompts=None):
+    """Cross-topic LLM diversity (Tan & D'Souza 2025, ``D_rate``).
+
+    Rates the thematic distinctiveness of every pair of topics 1-3 (1 = overlapping,
+    3 = distinctive) and averages. Returns ``{"mean": float, "pairwise": [...]}`` with
+    one ``{"topics": (i, j), "rate": r}`` per scored pair. O(K²) calls; pass
+    ``max_pairs`` to score a deterministic random subset. The LLM analog of
+    :func:`topic_diversity` / :func:`topic_semantic_diversity`. ``llm-bounded``.
+    """
+    backend = _resolve_llm_call(backend)
+    tmpl = (prompts or LLM_EVAL_PROMPTS)["diversity"]
+    ds = _dataset_clause(dataset_description)
+    topics = _extract_topics(model, n_words)
+    pairs = list(combinations(range(len(topics)), 2))
+    if max_pairs is not None and len(pairs) > max_pairs:
+        rng = np.random.RandomState(seed)
+        pairs = [pairs[i] for i in sorted(rng.choice(len(pairs), max_pairs, replace=False))]
+    rows = []
+    for i, j in pairs:
+        scores = []
+        for _ in range(max(1, n_samples)):
+            v = _parse_rating(backend(tmpl.format(
+                dataset=ds, words_a=", ".join(topics[i]), words_b=", ".join(topics[j]))), 1, 3)
+            if v is not None:
+                scores.append(v)
+        if scores:
+            rows.append({"topics": (i, j), "rate": float(np.mean(scores))})
+    mean = float(np.mean([r["rate"] for r in rows])) if rows else float("nan")
+    return {"mean": mean, "pairwise": rows}
+
+
+def llm_adversarial(model, *, backend, intruder="shakespeare", n_words=10,
+                    n_samples=5, threshold=3, dataset_description=None, seed=0, prompts=None):
+    """Gold-free adversarial self-check (Tan & D'Souza 2025, ``AdvT_outlier``).
+
+    Plants a known-unrelated word (default ``"shakespeare"``) into each topic's top
+    words and measures how often the LLM's :func:`llm_outlier` detection flags it.
+    This validates the metric *and* the model's capability **without human-gold data**,
+    on any corpus — a low detection rate means the model is too weak for these tasks.
+    Returns ``{"detection_rate": float, "intruder": str, "per_topic": [...]}``.
+    """
+    backend = _resolve_llm_call(backend)
+    tmpl = (prompts or LLM_EVAL_PROMPTS)["outlier"]
+    ds = _dataset_clause(dataset_description)
+    intr = intruder.lower()
+    per_topic, hits = [], []
+    for t, words in enumerate(_extract_topics(model, n_words)):
+        rng = np.random.RandomState(seed + t)
+        planted = list(words) + [intruder]
+        rng.shuffle(planted)
+        allowed = {w.lower() for w in planted}
+        votes = Counter()
+        for _ in range(max(1, n_samples)):
+            votes.update(set(_parse_word_list(backend(tmpl.format(dataset=ds, words=", ".join(planted))), allowed)))
+        caught = votes[intr] >= threshold
+        per_topic.append({"topic": t, "caught": bool(caught), "flagged": votes[intr]})
+        hits.append(caught)
+    return {"detection_rate": float(np.mean(hits)) if hits else float("nan"),
+            "intruder": intruder, "per_topic": per_topic}
+
+
+def llm_alignment(model, docs, *, backend, n_words=10, n_docs=5,
+                  dataset_description=None, seed=0, prompts=None, max_chars=1500):
+    """Topic-document alignment (Tan & D'Souza 2025, ``A_ir-topic`` / ``A_missing-theme``).
+
+    For each topic, takes its top ``n_docs`` documents and asks the LLM, per document,
+    (1) how many topic words are *irrelevant* to it (overrepresentation) and (2) how
+    many document themes are *missing* from the topic words (underrepresentation),
+    averaging over the documents. Returns a per-topic list of dicts with ``topic``,
+    ``irrelevant`` (mean count) and ``missing`` (mean count); lower is better on both.
+    Needs the documents and O(K·n_docs) calls. ``llm-bounded``.
+    """
+    backend = _resolve_llm_call(backend)
+    P = prompts or LLM_EVAL_PROMPTS
+    ds = _dataset_clause(dataset_description)
+    texts = _doc_texts(docs)
+    theta = np.asarray(model.doc_topic)
+    topics = _extract_topics(model, n_words)
+    out = []
+    for t, words in enumerate(topics):
+        ws = ", ".join(words)
+        allowed = {w.lower() for w in words}
+        top = np.argsort(theta[:, t])[::-1][:n_docs]
+        irr, mis = [], []
+        for d in top:
+            doc = str(texts[d])[:max_chars]
+            irr.append(len(_parse_word_list(backend(P["align_irrelevant"].format(dataset=ds, document=doc, words=ws)), allowed)))
+            mis.append(len(_parse_word_list(backend(P["align_missing"].format(dataset=ds, document=doc, words=ws)))))
+        out.append({"topic": t,
+                    "irrelevant": float(np.mean(irr)) if irr else float("nan"),
+                    "missing": float(np.mean(mis)) if mis else float("nan")})
+    return out

@@ -57,11 +57,11 @@ local models via plugins.
 
 ```python
 # Bring your own callable (no extra dependency):
-labels = topica.llm_topic_labels(model, texts, call=my_model_fn, set_labels=True)
+labels = topica.llm_topic_labels(model, texts, backend=my_model_fn, set_labels=True)
 
 # Or name a model via the `llm` adapter (pip install "topica[llm]"):
 backend = topica.llm_backend("gpt-4o-mini", temperature=0)   # pin for stability
-labels = topica.llm_topic_labels(model, texts, call=backend, set_labels=True)
+labels = topica.llm_topic_labels(model, texts, backend=backend, set_labels=True)
 
 topica.topic_label_prompts(model, texts)[0]   # inspect exactly what the model sees
 ```
@@ -106,6 +106,39 @@ topic's documents sharing the majority label), returning the model with the high
 mean purity. This is the paper's *working* number-of-topics signal — doc-label purity
 tracks ground-truth cluster quality, where rating the top *words* across `k` does not
 — and complements `search_k`'s coherence/exclusivity/perplexity criteria.
+
+### A multi-dimensional suite (Tan & D'Souza 2025)
+
+Coherence rating answers one question — *are these words related?* — but a topic can
+be coherent and still be redundant, indistinct from its neighbours, or a poor fit for
+the documents it claims. Tan & D'Souza (2025) widen the lens to four dimensions, all
+exposed under the same namespace and `backend=`:
+
+```python
+topica.llm.outlier(model, backend=backend, n_samples=5, threshold=3)  # which words break a topic (unsupervised vote)
+topica.llm.repetitiveness(model, backend=backend)                     # is coherence just redundancy? rate + duplicate pairs
+topica.llm.diversity(model, backend=backend)                          # pairwise cross-topic distinctiveness (1-3)
+topica.llm.alignment(model, docs, backend=backend)                    # per topic: irrelevant words / missing themes vs its top docs
+topica.llm.adversarial(model, backend=backend)                        # gold-free capability self-check
+```
+
+`llm.outlier` is the unsupervised sibling of `llm.intrusion`: no planted answer, just a
+5-runs vote on *which* top words don't belong (kept when flagged in `threshold` of
+`n_samples` runs), so it surfaces the specific words making a topic incoherent.
+`llm.repetitiveness` checks the failure coherence rating misses — a topic of near-synonyms
+scores high on relatedness but is uninformative; it returns a 1-3 rate (3 = distinctive)
+plus the duplicate word pairs. `llm.diversity` rates every topic *pair* for thematic
+overlap, the LLM analog of `topic_diversity`. `llm.alignment` is the only one that reads
+the corpus: per topic it asks, over the topic's top documents, how many topic words are
+irrelevant (overrepresentation) and how many document themes are missing
+(underrepresentation).
+
+`llm.adversarial` is the one to run first. It plants a known-unrelated word
+(`"shakespeare"`) into each topic and measures how often `llm.outlier` catches it — a
+**gold-free** check that validates both the metric and your model's capability on *your*
+corpus, no human labels required. A detection rate near 1.0 means the model is strong
+enough for the rest of the suite; a low rate is the signal to size up before trusting any
+of these numbers.
 
 !!! note "Model capability matters — don't use a tiny model"
     These tasks need a **capable** model, and open weights are enough: in our checks a

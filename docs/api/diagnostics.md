@@ -61,6 +61,16 @@ and in the `topica.validation` module.
 
 ::: topica.llm.select_k
 
+::: topica.llm.outlier
+
+::: topica.llm.repetitiveness
+
+::: topica.llm.diversity
+
+::: topica.llm.alignment
+
+::: topica.llm.adversarial
+
 ::: topica.bootstrap_stability
 
 ::: topica.search_k

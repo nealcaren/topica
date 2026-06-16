@@ -318,3 +318,87 @@ def test_select_k_majority_vote_over_samples():
         return _fake_labeler(p) if state["i"] % 3 != 0 else "noise"
     res = llm_select_k([_FakeModel(dt)], docs, backend=noisy, n_docs=3, n_samples=3)
     assert res["scores"][0]["purity"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Tan & D'Souza (2025) metrics: outlier / repetitiveness / diversity /
+# adversarial / alignment
+# ---------------------------------------------------------------------------
+
+def test_tan_metrics_in_namespace():
+    for name in ("outlier", "repetitiveness", "diversity", "adversarial", "alignment"):
+        assert callable(getattr(topica.llm, name))
+
+
+def test_outlier_threshold_voting():
+    topics = [["river", "lake", "ocean", "wave", "shakespeare"]]
+    # flags "shakespeare" on 3 of 5 runs, "river" once -> only shakespeare survives >=3.
+    seq = iter(["shakespeare", "shakespeare", "river", "shakespeare", "none"])
+    res = topica.llm.outlier(topics, backend=lambda p: next(seq), n_words=5,
+                             n_samples=5, threshold=3)
+    assert res[0]["outliers"] == ["shakespeare"]
+    assert res[0]["count"] == 1
+
+
+def test_outlier_filters_to_topic_words():
+    topics = [["river", "lake", "ocean"]]
+    # a hallucinated word not in the topic is dropped.
+    res = topica.llm.outlier(topics, backend=lambda p: "banana, river", n_words=3,
+                             n_samples=1, threshold=1)
+    assert res[0]["outliers"] == ["river"]
+
+
+def test_repetitiveness_rate_and_duplicates():
+    topics = [["car", "automobile", "road", "drive"]]
+    def be(prompt):
+        if "repetitive" in prompt.lower() and "Rate" in prompt:
+            return "1"   # highly repetitive
+        return "(car, automobile)"   # duplicate pair
+    res = topica.llm.repetitiveness(topics, backend=be, n_words=4)
+    assert res[0]["rate"] == 1.0
+    assert res[0]["duplicate_count"] == 1
+    assert ("automobile", "car") in res[0]["duplicate_pairs"]
+
+
+def test_diversity_pairwise_mean():
+    topics = [["a", "b"], ["c", "d"], ["e", "f"]]   # 3 topics -> 3 pairs
+    res = topica.llm.diversity(topics, backend=lambda p: "3", n_words=2)
+    assert len(res["pairwise"]) == 3
+    assert res["mean"] == 3.0
+
+
+def test_diversity_max_pairs_subsets():
+    topics = [["a"], ["b"], ["c"], ["d"]]   # 6 pairs
+    res = topica.llm.diversity(topics, backend=lambda p: "2", n_words=1, max_pairs=2, seed=0)
+    assert len(res["pairwise"]) == 2
+
+
+def test_adversarial_detects_planted_outlier():
+    topics = [["river", "lake", "ocean", "wave"], ["senate", "vote", "law", "court"]]
+    # An oracle that flags the planted intruder.
+    good = topica.llm.adversarial(topics, backend=lambda p: "shakespeare", n_words=4,
+                                  n_samples=1, threshold=1)
+    assert good["detection_rate"] == 1.0
+    assert good["intruder"] == "shakespeare"
+    # A weak model that never flags it -> 0 detection (the capability signal).
+    weak = topica.llm.adversarial(topics, backend=lambda p: "none", n_words=4,
+                                  n_samples=1, threshold=1)
+    assert weak["detection_rate"] == 0.0
+
+
+def test_alignment_counts_irrelevant_and_missing():
+    docs = ["the river flooded the lake and the wave hit the shore"] * 6
+    phi = np.zeros((1, 6)); phi[0, :4] = 1.0; phi = phi / phi.sum(1, keepdims=True)
+    vocab = ["river", "lake", "wave", "shore", "senate", "tax"]
+    # one-topic model exposing doc_topic + the analysis surface
+
+    class M:
+        doc_topic = np.ones((6, 1))
+        def top_words(self, n):
+            return [[(w, 1.0) for w in vocab[:n]]]
+    def be(prompt):
+        if "not relevant" in prompt.lower() or "irrelevant" in prompt.lower():
+            return "tax"          # 1 irrelevant topic word
+        return "flooding, shore"  # 2 missing themes
+    res = topica.llm.alignment(M(), docs, backend=be, n_words=4, n_docs=3)
+    assert res[0]["irrelevant"] >= 0.0 and res[0]["missing"] >= 0.0
