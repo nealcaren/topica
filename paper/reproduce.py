@@ -45,20 +45,24 @@ ROOT = Path(__file__).resolve().parent.parent
 GEN = ROOT / "paper" / "generated"
 LOGS = GEN / "logs"
 
-# (key, section, argv, timeout_seconds). Timeouts are generous; benchmarks at
-# 5k docs against R/MALLET are minutes each.
+# (key, section, argv, timeout_seconds, extra_env). Timeouts are generous;
+# benchmarks at 5k docs against R/MALLET are minutes each. extra_env lets a step
+# pin thread count (the §6 STM table reports both single- and multi-thread topica,
+# so bench_stm runs twice).
 STEPS = [
-    ("worked_example", 7, ["paper/replication.py", "--quick"], 1200),
-    ("stm_prevalence", 5, ["parity/stm_poliblog_compare.py"], 1800),
-    ("stm_content", 5, ["parity/stm_content_r_compare.py"], 900),
-    ("keyatm", 5, ["parity/keyatm_r_compare.py"], 1800),
-    ("sts", 5, ["parity/sts_r_compare.py"], 1800),
-    ("mallet_lda", 5, ["parity/mallet_parity.py"], 1800),
-    ("bench", 6, ["benchmarks/bench.py"], 3600),  # fig_thread_scaling, fig_memory
-    ("speed_vs_r", 6, ["benchmarks/speed_vs_r.py"], 3600),
-    ("speed_vs_size", 6, ["benchmarks/speed_vs_size.py"], 3600),
-    ("bench_scaling", 6, ["benchmarks/bench_scaling.py"], 3600),
-    ("k_crossover", 6, ["benchmarks/k_crossover.py"], 3600),
+    ("worked_example", 7, ["paper/replication.py", "--quick"], 1200, None),
+    ("stm_prevalence", 5, ["parity/stm_poliblog_compare.py"], 1800, None),
+    ("stm_content", 5, ["parity/stm_content_r_compare.py"], 900, None),
+    ("keyatm", 5, ["parity/keyatm_r_compare.py"], 1800, None),
+    ("sts", 5, ["parity/sts_r_compare.py"], 1800, None),
+    ("mallet_lda", 5, ["parity/mallet_parity.py"], 1800, None),
+    ("bench", 6, ["benchmarks/bench.py"], 3600, None),  # fig_thread_scaling, fig_memory
+    ("bench_stm_st", 6, ["benchmarks/bench_stm.py"], 1800, {"RAYON_NUM_THREADS": "1"}),  # STM table, single-thread column
+    ("bench_stm_mt", 6, ["benchmarks/bench_stm.py"], 1800, None),  # STM table, all-cores column
+    ("speed_vs_r", 6, ["benchmarks/speed_vs_r.py"], 3600, None),
+    ("speed_vs_size", 6, ["benchmarks/speed_vs_size.py"], 3600, None),
+    ("bench_scaling", 6, ["benchmarks/bench_scaling.py"], 3600, None),  # fig_scaling
+    ("k_crossover", 6, ["benchmarks/k_crossover.py"], 3600, None),
 ]
 
 # Benchmark JSONs the Section-6 scripts emit, surfaced verbatim in the report.
@@ -110,10 +114,12 @@ def toolchains() -> dict:
     }
 
 
-def run_step(key, argv, timeout):
+def run_step(key, argv, timeout, extra_env=None):
     log = LOGS / f"{key}.log"
     env = dict(os.environ, PYTHONUNBUFFERED="1")
     env.setdefault("VIRTUAL_ENV", str(ROOT / ".venv-dev"))
+    if extra_env:
+        env.update(extra_env)
     t0 = time.time()
     try:
         with open(log, "w", encoding="utf-8") as fh:
@@ -169,9 +175,9 @@ def main():
     print(f"running {len(steps)} step(s)\n")
 
     results = []
-    for key, section, argv, timeout in steps:
+    for key, section, argv, timeout, extra_env in steps:
         print(f"[§{section}] {key} ... ", end="", flush=True)
-        status, dt, text = run_step(key, argv, timeout)
+        status, dt, text = run_step(key, argv, timeout, extra_env)
         print(f"{status} ({dt:.0f}s)")
         results.append((key, section, status, dt, text))
 

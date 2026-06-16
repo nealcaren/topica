@@ -116,7 +116,7 @@ def bench_stm(docs, rating, day):
     r = _r_time(out)
     t0 = time.perf_counter()
     STM(num_topics=STM_K, init="spectral").fit(
-        docs, X, prevalence_names=feat, iters=STM_EM_ITERS, em_tol=0.0
+        docs, X, prevalence_names=feat, iters=STM_EM_ITERS, convergence_tol=0.0
     )
     return {"r": r, "tt1": time.perf_counter() - t0}
 
