@@ -6,6 +6,31 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-06-16
+
+### Added
+
+- **`TopicGPT`** — LLM-driven topic discovery (Pham, Hoyle, Sun & Iyyer 2024): a
+  generate / refine / assign prompt pipeline that reads documents, induces a topic
+  taxonomy with natural-language descriptions, and assigns each document with a
+  supporting quote. Cluster-style (`llm-bounded`), with the standard fitted surface
+  (`doc_topic`, a class-TF-IDF `topic_word` descriptor, `top_words`, `coherence`,
+  `transform`, `save`/`load`) plus `topic_descriptions`. Bring your own backend
+  callable or a model name via `topica.llm_backend`. The prompts are adapted from
+  the published TopicGPT reference (chtmp223/topicGPT, MIT) — the bracketed
+  `[level] Label: Description` format, few-shot structure, and rules — and are
+  fully overridable (`prompts=` accepts a partial dict; `with_prompt(stage, …)`).
+- **`topic_semantic_diversity`** (TSD; Wu, Nguyen & Luu 2024, Eq. 18) — a
+  model-agnostic diagnostic counting unique top-word *pairs* across topics (a
+  stricter, sense-aware companion to `topic_diversity`); no embeddings.
+- **`prior="stick_breaking"`** on the amortized-VAE models (ProdLDA, CombinedTM,
+  ZeroShotTM, `ETM(inference="vae")`) — the Gaussian stick-breaking construction
+  (Miao, Grefenstette & Blunsom 2017; Nalisnick & Smyth 2017). Keeps the laplace
+  Gaussian latent and KL, mapping onto the simplex by stick-breaking; a
+  nonparametric-flavored prior that softens the fixed-`K` assumption. Completes the
+  alternative-prior VAE family (`laplace` / `dirichlet` / `stick_breaking`). The
+  laplace default stays bit-identical.
+
 ## [0.20.0] - 2026-06-15
 
 ### Added
