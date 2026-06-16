@@ -57,7 +57,6 @@ thread count), or `llm-bounded`.
 | `STM` | text, metadata | variational | bit-exact | Structural topic model: relate topic prevalence and content to covariates. |
 | `STS` | text, metadata | variational | bit-exact | Structural topic-and-sentiment model over document metadata. |
 | `SAGE` | text, metadata | gibbs | seed-reproducible | Sparse additive generative model: the same topic worded differently across groups. |
-| `ECTM` | text, metadata, times | variational | seed-reproducible | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
 | `DMR` | text, metadata | gibbs | seed-reproducible | Dirichlet-multinomial regression: a document-metadata prior on topic proportions. |
 | `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
 
@@ -104,6 +103,14 @@ thread count), or `llm-bounded`.
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
 | `TopicGPT` | text, llm | prompting | llm-bounded | LLM-driven topic discovery: prompt a model to propose, refine, and assign a topic taxonomy with descriptions. |
+
+### Experimental
+
+Shipped before a published paper and reference-implementation parity (topica's bar for a validated model). Gated: call `topica.enable_experimental()` (or set `TOPICA_EXPERIMENTAL=1`) before use. These may change or be removed without a deprecation cycle.
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `ECTM` | text, metadata, times | variational | seed-reproducible | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
 
 <!-- END MODEL TABLE -->
 

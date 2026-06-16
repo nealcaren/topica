@@ -8,6 +8,12 @@ to 2024. We treat the party as the content **group** and the election year as th
 **period**, then read how each party's vocabulary on a shared topic evolves across
 twenty elections.
 
+!!! warning "ECTM is experimental"
+    ECTM has no published paper or reference-parity check yet, so it is gated.
+    Call `topica.enable_experimental()` (or set `TOPICA_EXPERIMENTAL=1`) once
+    before constructing it, as the fit cell below does. Read the results as
+    provisional.
+
 !!! info "Focus of this example"
     Content covariates that drift over time · the content vs prevalence split ·
     analytic and bootstrap uncertainty · why clustered resampling matters. For
@@ -59,6 +65,7 @@ yr_basis,  sn = topica.spline(np.asarray(year, float), df=4)
 inter,     _  = topica.interaction(party_col, yr_basis, name="party_year")
 X = np.column_stack([party_col, yr_basis, inter])
 
+topica.enable_experimental()   # ECTM is experimental and gated; opt in first
 model = topica.ECTM(num_topics=18, seed=1)
 model.fit(docs, times=year, content=party,
           prevalence=X, prevalence_names=list(pn) + list(sn) + ["party_year"],

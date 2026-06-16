@@ -37,9 +37,33 @@ from ._topica import (
     Corpus,
     tokenize,
     project,
+    set_experimental as _set_experimental,
+    experimental_is_enabled as _experimental_is_enabled,
     DEFAULT_TOKEN_REGEX,
     __version__,
 )
+
+
+def enable_experimental(enabled: bool = True) -> None:
+    """Opt into experimental, unvalidated models for this process.
+
+    Some models ship before they have a published paper and a
+    reference-implementation parity check (topica's bar for a *validated*
+    model). They are flagged **experimental**: kept out of the validated roster
+    and the README model table, documented separately, and refused at
+    construction or load until you opt in here. Call this once, early, before
+    constructing such a model (currently :class:`ECTM`); pass ``False`` to turn
+    the gate back on. Equivalent to setting the ``TOPICA_EXPERIMENTAL=1``
+    environment variable. Experimental models may change or be removed without a
+    deprecation cycle.
+    """
+    _set_experimental(bool(enabled))
+
+
+def experimental_enabled() -> bool:
+    """Whether experimental models are currently enabled (see
+    :func:`enable_experimental`)."""
+    return bool(_experimental_is_enabled())
 
 __citation__ = (
     "Caren, N. (2026). topica: fast, all-purpose topic modeling for Python. "
@@ -237,6 +261,8 @@ __all__ = [
     "CTM",
     "STM",
     "ECTM",
+    "enable_experimental",
+    "experimental_enabled",
     "STS",
     "HDP",
     "DTM",

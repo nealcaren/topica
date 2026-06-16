@@ -12,6 +12,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Once;
 
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -6942,6 +6944,7 @@ impl ECTM {
         seed: u64,
         variational: &str,
     ) -> PyResult<Self> {
+        require_experimental("ECTM")?;
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
@@ -7437,6 +7440,7 @@ impl ECTM {
     /// Load a model previously written by :meth:`save`.
     #[staticmethod]
     fn load(path: &str) -> PyResult<Self> {
+        require_experimental("ECTM")?;
         let s: EctmState = read_state(path, MODEL_TAG_ECTM)?;
         let topic_names = if s.topic_names.is_empty() {
             (0..s.num_topics).map(|i| format!("topic_{i}")).collect()
@@ -16344,6 +16348,67 @@ impl HLDA {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Experimental-model gate
+//
+// Some models ship before they have a published paper and a reference-parity
+// check (topica's bar for a "validated" model). They are compiled into the wheel
+// like any other, but refuse to construct or load until the user opts in --
+// `topica.enable_experimental()` from Python, or the `TOPICA_EXPERIMENTAL`
+// environment variable. This keeps an in-development model usable without
+// silently diluting the validated roster.
+// ---------------------------------------------------------------------------
+
+static EXPERIMENTAL_ENABLED: AtomicBool = AtomicBool::new(false);
+static EXPERIMENTAL_INIT: Once = Once::new();
+
+fn experimental_env_truthy() -> bool {
+    match std::env::var("TOPICA_EXPERIMENTAL") {
+        Ok(v) => matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Err(_) => false,
+    }
+}
+
+fn experimental_enabled() -> bool {
+    // Seed the flag from the environment exactly once. An explicit
+    // `set_experimental` consumes the Once first, so a Python call always wins
+    // over a later environment read.
+    EXPERIMENTAL_INIT.call_once(|| {
+        if experimental_env_truthy() {
+            EXPERIMENTAL_ENABLED.store(true, Ordering::Relaxed);
+        }
+    });
+    EXPERIMENTAL_ENABLED.load(Ordering::Relaxed)
+}
+
+fn require_experimental(name: &str) -> PyResult<()> {
+    if experimental_enabled() {
+        Ok(())
+    } else {
+        Err(PyRuntimeError::new_err(format!(
+            "{name} is experimental and unvalidated: it has no published paper or \
+             reference-implementation parity yet, topica's bar for a validated model. \
+             Enable experimental models with `topica.enable_experimental()` or set the \
+             environment variable TOPICA_EXPERIMENTAL=1. Experimental models may change \
+             or be removed without a deprecation cycle."
+        )))
+    }
+}
+
+/// Toggle the experimental-model gate (backs `topica.enable_experimental`).
+#[pyfunction]
+fn set_experimental(enabled: bool) {
+    // Consume the env-seeding Once so the explicit choice is authoritative.
+    EXPERIMENTAL_INIT.call_once(|| {});
+    EXPERIMENTAL_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// Whether experimental models are currently enabled.
+#[pyfunction]
+fn experimental_is_enabled() -> bool {
+    experimental_enabled()
+}
+
 #[pymodule]
 fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LDA>()?;
@@ -16378,6 +16443,8 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(window_cooccurrence, m)?)?;
     m.add_function(wrap_pyfunction!(project, m)?)?;
+    m.add_function(wrap_pyfunction!(set_experimental, m)?)?;
+    m.add_function(wrap_pyfunction!(experimental_is_enabled, m)?)?;
     m.add("DEFAULT_TOKEN_REGEX", corpus::DEFAULT_TOKEN_REGEX)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())

@@ -30,6 +30,8 @@ import topica
 from topica.ectm import (content_contrast, content_divergence, content_trajectory,
                          prevalence_by_group)
 
+topica.enable_experimental()  # ECTM is experimental and gated; opt in to use it
+
 DATA = os.path.join(os.path.dirname(__file__), "platforms_data", "platforms.json.gz")
 
 STOP = set((

@@ -34,6 +34,11 @@ class ModelInfo:
         ``"nonparametric"``, ``"temporal"``, ``"hierarchical"``, ``"cross-lingual"``).
     summary : a one-line description for tables.
     doc : the docs anchor, relative to the docs root.
+    experimental : ``True`` for a model that ships before it has a published
+        paper and a reference-implementation parity check (topica's bar for a
+        *validated* model). Experimental models are gated at construction (see
+        :func:`topica.enable_experimental`) and listed apart from the validated
+        roster; they may change or be removed without a deprecation cycle.
     """
 
     name: str
@@ -44,6 +49,7 @@ class ModelInfo:
     tags: tuple[str, ...]
     summary: str
     doc: str
+    experimental: bool = False
 
 
 # Purpose groups, in display order. Organized by what the user brings and wants,
@@ -97,7 +103,7 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("ECTM", "covariates", ("text", "metadata", "times"), "variational", "seed-reproducible",
            ("temporal",),
            "Evolving content topic model: STM content covariates that vary by group and drift across time periods.",
-           "guides/models.md#ectm"),
+           "guides/models.md#ectm", experimental=True),
         _m("DMR", "covariates", ("text", "metadata"), "gibbs", "seed-reproducible", (),
            "Dirichlet-multinomial regression: a document-metadata prior on topic proportions.",
            "guides/models.md#dmr"),
@@ -178,6 +184,7 @@ def list_models(
     inference: str | None = None,
     determinism: str | None = None,
     tag: str | None = None,
+    experimental: bool | None = None,
 ) -> list[ModelInfo]:
     """Return the registered models matching every supplied filter.
 
@@ -190,6 +197,8 @@ def list_models(
     - ``inference`` — the engine (e.g. ``"gibbs"``, ``"variational"``, ``"vae"``).
     - ``determinism`` — ``"bit-exact"``, ``"seed-reproducible"``, ``"llm-bounded"``.
     - ``tag`` — a cross-cutting tag (e.g. ``"short-text"``, ``"nonparametric"``).
+    - ``experimental`` — ``True`` for only the experimental (unvalidated) models,
+      ``False`` for only the validated roster; the default ``None`` returns both.
 
     Examples
     --------
@@ -213,6 +222,8 @@ def list_models(
             continue
         if tag is not None and tag not in m.tags:
             continue
+        if experimental is not None and m.experimental != experimental:
+            continue
         out.append(m)
     return out
 
@@ -223,20 +234,38 @@ def markdown_table(by_group: bool = True) -> str:
     Used to (re)generate the README model section and the docs roster so the
     hand-maintained lists cannot drift from the registry.
     """
+    def _rows(models: list[ModelInfo]) -> list[str]:
+        rows = ["| Model | Brings | Inference | Reproducibility | Summary |",
+                "|---|---|---|---|---|"]
+        for m in models:
+            brings = ", ".join(m.brings)
+            rows.append(
+                f"| `{m.name}` | {brings} | {m.inference} | {m.determinism} | {m.summary} |"
+            )
+        return rows
+
     lines: list[str] = []
     if by_group:
+        # Validated models, grouped by purpose. Experimental models are held out
+        # and listed in their own section below so the roster above is exactly
+        # the paper-backed, parity-checked set.
         for key, label in GROUPS.items():
-            models = [m for m in REGISTRY.values() if m.group == key]
+            models = [m for m in REGISTRY.values() if m.group == key and not m.experimental]
             if not models:
                 continue
             lines.append(f"### {label}\n")
-            lines.append("| Model | Brings | Inference | Reproducibility | Summary |")
-            lines.append("|---|---|---|---|---|")
-            for m in models:
-                brings = ", ".join(m.brings)
-                lines.append(
-                    f"| `{m.name}` | {brings} | {m.inference} | {m.determinism} | {m.summary} |"
-                )
+            lines += _rows(models)
+            lines.append("")
+        experimental = [m for m in REGISTRY.values() if m.experimental]
+        if experimental:
+            lines.append("### Experimental\n")
+            lines.append(
+                "Shipped before a published paper and reference-implementation parity "
+                "(topica's bar for a validated model). Gated: call "
+                "`topica.enable_experimental()` (or set `TOPICA_EXPERIMENTAL=1`) before "
+                "use. These may change or be removed without a deprecation cycle.\n"
+            )
+            lines += _rows(experimental)
             lines.append("")
     else:
         lines.append("| Model | Group | Brings | Inference | Reproducibility | Summary |")

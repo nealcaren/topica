@@ -6,6 +6,28 @@ import topica
 from topica.ectm import content_contrast, content_divergence, content_trajectory, content_words
 
 
+@pytest.fixture(autouse=True)
+def _enable_experimental():
+    """ECTM is experimental and gated; opt in for these tests and restore after."""
+    was = topica.experimental_enabled()
+    topica.enable_experimental(True)
+    yield
+    topica.enable_experimental(was)
+
+
+def test_ectm_is_gated_without_optin():
+    """Without opt-in, construction and load raise a clear, actionable error."""
+    topica.enable_experimental(False)
+    try:
+        with pytest.raises(RuntimeError, match="experimental"):
+            topica.ECTM(num_topics=3)
+        with pytest.raises(RuntimeError, match="experimental"):
+            topica.ECTM.load("does-not-exist.topica")
+    finally:
+        topica.enable_experimental(True)
+    topica.ECTM(num_topics=3)  # opted back in: constructs fine
+
+
 def _corpus(reps=60, drift=True):
     """Two groups over three periods, vocab {a,b,x,y}. Group A always uses {a,b}.
     Group B starts on {a,b} and (if drift) moves onto {x,y} by the last period —

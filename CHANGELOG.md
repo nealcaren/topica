@@ -38,7 +38,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   surface plus `content_word_dist(group, period)`, the per-document logistic-normal
   posterior (`eta_mean`/`eta_cov`), and the `topica.ectm` interpretation helpers
   (`content_words`, `content_contrast`, `content_trajectory`, `content_divergence`).
-  See `examples/ectm_poliblog.py`.
+  See `examples/ectm_poliblog.py`. **Experimental:** ECTM ships before a published
+  paper and a reference-parity check, so it is gated — call
+  `topica.enable_experimental()` (or set `TOPICA_EXPERIMENTAL=1`) before use, and
+  expect it may change without a deprecation cycle.
+- **`topica.enable_experimental()`** — opt into experimental, unvalidated models
+  (currently `ECTM`). Such models are kept out of the validated roster and refuse
+  to construct or load until enabled (also via the `TOPICA_EXPERIMENTAL`
+  environment variable). `topica.experimental_enabled()` reports the current state.
 
 ## [0.21.0] - 2026-06-16
 

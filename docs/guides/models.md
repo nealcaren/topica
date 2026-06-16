@@ -52,7 +52,6 @@ generated from `python/topica/registry.py`.
 | `STM` | text, metadata | variational | bit-exact | Structural topic model: relate topic prevalence and content to covariates. |
 | `STS` | text, metadata | variational | bit-exact | Structural topic-and-sentiment model over document metadata. |
 | `SAGE` | text, metadata | gibbs | seed-reproducible | Sparse additive generative model: the same topic worded differently across groups. |
-| `ECTM` | text, metadata, times | variational | seed-reproducible | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
 | `DMR` | text, metadata | gibbs | seed-reproducible | Dirichlet-multinomial regression: a document-metadata prior on topic proportions. |
 | `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
 
@@ -99,6 +98,14 @@ generated from `python/topica/registry.py`.
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
 | `TopicGPT` | text, llm | prompting | llm-bounded | LLM-driven topic discovery: prompt a model to propose, refine, and assign a topic taxonomy with descriptions. |
+
+### Experimental
+
+Shipped before a published paper and reference-implementation parity (topica's bar for a validated model). Gated: call `topica.enable_experimental()` (or set `TOPICA_EXPERIMENTAL=1`) before use. These may change or be removed without a deprecation cycle.
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `ECTM` | text, metadata, times | variational | seed-reproducible | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
 
 <!-- END MODEL TABLE -->
 
@@ -175,6 +182,14 @@ topic-correlation and method-of-composition standard errors is lower.
 
 ## ECTM
 
+!!! warning "Experimental — unvalidated"
+    ECTM ships before a published paper and a reference-implementation parity
+    check, topica's bar for a validated model. It is **gated**: call
+    `topica.enable_experimental()` (or set the `TOPICA_EXPERIMENTAL=1` environment
+    variable) before constructing or loading it, or construction raises. Treat its
+    results as provisional, and expect that it may change or be removed without a
+    deprecation cycle.
+
 The Evolving Content Topic Model extends STM's content covariate with **time**.
 STM's content model lets a topic be worded differently across a group (the SAGE
 content covariate); ECTM lets that group difference **drift across discrete time
@@ -192,6 +207,7 @@ adjacent periods so sparse cells borrow strength from their temporal neighbours
 rather than fragmenting the topic.
 
 ```python
+topica.enable_experimental()              # ECTM is experimental and gated
 m = topica.ECTM(num_topics=10, seed=42)
 m.fit(docs, times=year, content=party,   # times → periods, content → groups
       period_smooth=5.0, interaction_shrink=2.0)

@@ -17,6 +17,8 @@ import numpy as np
 import topica
 from topica.ectm import content_contrast, content_divergence, content_trajectory
 
+topica.enable_experimental()  # ECTM is experimental and gated; opt in to use it
+
 
 def load():
     path = os.path.join(os.path.dirname(__file__), "poliblog.csv")

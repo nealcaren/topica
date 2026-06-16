@@ -22,6 +22,8 @@ from scipy.io import mmread
 import topica
 from topica.ectm import content_contrast, content_divergence
 
+topica.enable_experimental()  # ECTM is experimental and gated; opt in to use it
+
 DATA = os.path.join(os.path.dirname(__file__), "congress_data")
 TOKENS_PER_BILL = 250  # subsample: bills average ~5,500 tokens; 250 keeps the fit quick
 

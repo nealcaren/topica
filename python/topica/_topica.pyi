@@ -8,6 +8,10 @@ DEFAULT_TOKEN_REGEX: str
 __version__: str
 
 
+def set_experimental(enabled: bool) -> None: ...
+def experimental_is_enabled() -> bool: ...
+
+
 def tokenize(
     text: str,
     *,
