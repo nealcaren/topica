@@ -40,7 +40,7 @@ fn kaiming<R: Rng>(len: usize, fan_in: usize, rng: &mut R) -> Vec<f64> {
 }
 
 /// A standard-normal sample via Box-Muller.
-fn randn<R: Rng>(rng: &mut R) -> f64 {
+pub(crate) fn randn<R: Rng>(rng: &mut R) -> f64 {
     let u1: f64 = rng.gen::<f64>().max(1e-12);
     let u2: f64 = rng.gen::<f64>();
     (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
@@ -86,7 +86,7 @@ struct BnCache {
 }
 
 impl BatchNorm {
-    fn new(f: usize) -> Self {
+    pub(crate) fn new(f: usize) -> Self {
         BatchNorm { running_mean: vec![0.0; f], running_var: vec![1.0; f], momentum: 0.1 }
     }
 
@@ -129,7 +129,7 @@ impl BatchNorm {
     }
 
     /// Fold a batch's statistics into the running estimates.
-    fn update_running(&mut self, mean: &[f64], var: &[f64]) {
+    pub(crate) fn update_running(&mut self, mean: &[f64], var: &[f64]) {
         let m = self.momentum;
         for j in 0..self.running_mean.len() {
             self.running_mean[j] = (1.0 - m) * self.running_mean[j] + m * mean[j];
@@ -215,7 +215,7 @@ impl Weights {
     /// is the encoder's input width: `V` (bow-only), `V + E` (bow+emb), or `E`
     /// (emb-only), matching the reference's `Linear(input_size, hidden)`. The RNG
     /// draw order is identical to the bow-only path when `e == 0`.
-    fn new<R: Rng>(
+    pub(crate) fn new<R: Rng>(
         v: usize,
         e: usize,
         hidden: usize,
@@ -314,7 +314,7 @@ struct DocCache {
 }
 
 /// Gradient accumulators mirroring [`Weights`].
-struct Grad {
+pub(crate) struct Grad {
     w1: Vec<f64>,
     b1: Vec<f64>,
     w2: Vec<f64>,
@@ -323,11 +323,13 @@ struct Grad {
     b_mu: Vec<f64>,
     w_ls: Vec<f64>,
     b_ls: Vec<f64>,
-    beta: Vec<f64>,
+    /// Topic-word (decoder) gradient, K x V. Exposed so a coupled model
+    /// (`infoctm`) can add a cross-lingual alignment gradient before the Adam step.
+    pub(crate) beta: Vec<f64>,
 }
 
 impl Grad {
-    fn zeros(w: &Weights) -> Self {
+    pub(crate) fn zeros(w: &Weights) -> Self {
         Grad {
             w1: vec![0.0; w.w1.len()],
             b1: vec![0.0; w.b1.len()],
@@ -340,7 +342,7 @@ impl Grad {
             beta: vec![0.0; w.beta.len()],
         }
     }
-    fn scale(&mut self, s: f64) {
+    pub(crate) fn scale(&mut self, s: f64) {
         for blk in [
             &mut self.w1, &mut self.b1, &mut self.w2, &mut self.b2, &mut self.w_mu,
             &mut self.b_mu, &mut self.w_ls, &mut self.b_ls, &mut self.beta,
@@ -354,7 +356,7 @@ impl Grad {
 
 /// The Laplace approximation to a Dirichlet(`alpha`) prior in the softmax basis
 /// (eq. 6): a diagonal logistic-normal with mean `mu_1` and variance `Sigma_1`.
-fn laplace_prior(alpha: &[f64]) -> (Vec<f64>, Vec<f64>) {
+pub(crate) fn laplace_prior(alpha: &[f64]) -> (Vec<f64>, Vec<f64>) {
     let k = alpha.len();
     let kf = k as f64;
     let mean_log: f64 = alpha.iter().map(|&a| a.ln()).sum::<f64>() / kf;
@@ -532,18 +534,18 @@ impl Default for AvitmOptions {
 
 /// Inputs and noise for one batch, gathered so the forward and the
 /// finite-difference loss can be recomputed identically.
-struct Batch<'a> {
-    xns: Vec<&'a [(usize, f64)]>,
-    embs: Vec<&'a [f64]>,
-    counts: Vec<&'a [(usize, f64)]>,
-    totals: Vec<f64>,
-    eps: &'a [Vec<f64>],
-    masks2: &'a [Vec<f64>],
-    masks_t: &'a [Vec<f64>],
+pub(crate) struct Batch<'a> {
+    pub(crate) xns: Vec<&'a [(usize, f64)]>,
+    pub(crate) embs: Vec<&'a [f64]>,
+    pub(crate) counts: Vec<&'a [(usize, f64)]>,
+    pub(crate) totals: Vec<f64>,
+    pub(crate) eps: &'a [Vec<f64>],
+    pub(crate) masks2: &'a [Vec<f64>],
+    pub(crate) masks_t: &'a [Vec<f64>],
 }
 
 /// Caches retained from the batch forward for the backward pass.
-struct BatchCache {
+pub(crate) struct BatchCache {
     doc: Vec<DocCache>,
     bn_mu: BnCache,
     bn_lv: BnCache,
@@ -773,7 +775,7 @@ pub(crate) fn info_nce_backward(z: &[Vec<f64>], z_pos: &[Vec<f64>], temp: f64) -
 }
 
 #[allow(clippy::type_complexity)]
-fn batch_forward(
+pub(crate) fn batch_forward(
     w: &Weights,
     bn_mu: &BatchNorm,
     bn_lv: &BatchNorm,
@@ -986,7 +988,7 @@ fn weibull_reparam_backward(
 
 /// Backward pass over the batch, accumulating into `g`. Returns gradients for the
 /// summed loss (the caller scales by 1/N).
-fn batch_backward(
+pub(crate) fn batch_backward(
     w: &Weights,
     prior_mu: &[f64],
     prior_var: &[f64],
@@ -1228,7 +1230,7 @@ impl Adam {
 }
 
 /// A bundle of Adam states, one per parameter block.
-struct Optim {
+pub(crate) struct Optim {
     w1: Adam,
     b1: Adam,
     w2: Adam,
@@ -1241,7 +1243,7 @@ struct Optim {
 }
 
 impl Optim {
-    fn new(w: &Weights, lr: f64, beta1: f64, wd: f64) -> Self {
+    pub(crate) fn new(w: &Weights, lr: f64, beta1: f64, wd: f64) -> Self {
         Optim {
             w1: Adam::new(w.w1.len(), lr, beta1, wd),
             b1: Adam::new(w.b1.len(), lr, beta1, wd),
@@ -1254,7 +1256,7 @@ impl Optim {
             beta: Adam::new(w.beta.len(), lr, beta1, wd),
         }
     }
-    fn step(&mut self, w: &mut Weights, g: &Grad) {
+    pub(crate) fn step(&mut self, w: &mut Weights, g: &Grad) {
         self.w1.step(&mut w.w1, &g.w1);
         self.b1.step(&mut w.b1, &g.b1);
         self.w2.step(&mut w.w2, &g.w2);
@@ -1329,7 +1331,7 @@ impl ProdldaModel {
 }
 
 /// Sparse normalized bag of words `(word_id, count / length)`.
-fn normalized_bow(doc: &[u32]) -> Vec<(usize, f64)> {
+pub(crate) fn normalized_bow(doc: &[u32]) -> Vec<(usize, f64)> {
     let mut counts: std::collections::BTreeMap<usize, f64> = std::collections::BTreeMap::new();
     for &w in doc {
         *counts.entry(w as usize).or_insert(0.0) += 1.0;
@@ -1339,7 +1341,7 @@ fn normalized_bow(doc: &[u32]) -> Vec<(usize, f64)> {
 }
 
 /// Sparse raw bag of words `(word_id, count)`.
-fn raw_bow(doc: &[u32]) -> Vec<(usize, f64)> {
+pub(crate) fn raw_bow(doc: &[u32]) -> Vec<(usize, f64)> {
     let mut counts: std::collections::BTreeMap<usize, f64> = std::collections::BTreeMap::new();
     for &w in doc {
         *counts.entry(w as usize).or_insert(0.0) += 1.0;

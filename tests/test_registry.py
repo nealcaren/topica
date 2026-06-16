@@ -10,7 +10,7 @@ from topica.registry import GROUPS, REGISTRY, ModelInfo, list_models, markdown_t
 # Exported classes that are NOT topic models (so not in the registry).
 _NON_MODEL_CLASSES = {"Heldout", "HeldoutResult", "Corpus", "ModelInfo"}
 
-_BRINGS = {"text", "embeddings", "metadata", "seeds", "labels", "times", "llm"}
+_BRINGS = {"text", "embeddings", "metadata", "seeds", "labels", "times", "llm", "dictionary"}
 _INFERENCE = {"gibbs", "variational", "vae", "optimal-transport", "clustering",
               "matrix-factorization", "svd", "prompting"}
 _DETERMINISM = {"bit-exact", "seed-reproducible", "llm-bounded"}

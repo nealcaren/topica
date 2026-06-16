@@ -91,6 +91,7 @@ generated from `python/topica/registry.py`.
 | `EmbeddingLDA` | text, embeddings, seeds | gibbs | seed-reproducible | Seeded LDA whose seed sets are expanded with nearest neighbors in an embedding space. |
 | `CombinedTM` | text, embeddings | vae | bit-exact | Contextualized ProdLDA: encoder reads the bag of words plus a document embedding. |
 | `ZeroShotTM` | text, embeddings | vae | bit-exact | Contextualized ProdLDA: encoder reads the document embedding alone, enabling cross-lingual transfer. |
+| `InfoCTM` | text, dictionary | vae | seed-reproducible | Cross-lingual: two ProdLDA models aligned by a bilingual dictionary through a mutual-information term. |
 
 ### LLM-based
 
@@ -383,6 +384,37 @@ m.fit(docs)
 The two flags are orthogonal and compose: the contrastive term operates on `θ`
 however `θ` was produced. Every new gradient path is hand-coded and checked against
 finite differences in the Rust unit tests.
+
+## InfoCTM
+
+`InfoCTM` (Wu et al. 2023) is a **cross-lingual** topic model: it fits two languages
+into a shared `K`-topic space so topic `k` denotes the same theme in both. It is two
+`ProdLDA` models — one per language, over independent vocabularies — fit jointly and
+aligned by a **Topic-Alignment Mutual-Information (TAMI)** term: a masked
+cross-lingual InfoNCE over the topic-word columns whose positive pairs come from a
+bilingual `dictionary` (optionally densified by per-language word `embeddings`). This
+is the dictionary-grounded alternative to the embedding-based `ZeroShotTM` path: it
+needs a bilingual lexicon rather than a multilingual embedder.
+
+```python
+m = topica.InfoCTM(num_topics=20, mi_weight=30.0, languages=("en", "zh"))
+m.fit(corpus_en, corpus_zh, dictionary=en_zh_pairs)   # (word_en, word_zh) pairs
+#       optionally: embeddings_en={word: vec}, embeddings_zh={word: vec}
+m.topic_word(lang="en"); m.top_words(10, lang="zh")   # aligned across languages
+```
+
+Each language keeps the full fitted surface (`topic_word`, `doc_topic`, `top_words`,
+`vocabulary`, `transform`) selected by `lang=`. The per-language model is exactly
+`ProdLDA`, so its ELBO is the validated AVITM objective; the only added term is TAMI,
+whose gradient is hand-coded and finite-difference checked. Determinism is
+`seed-reproducible`.
+
+Two training-recipe deviations from the reference, documented for anyone
+reproducing the paper: the optimizer follows the InfoCTM reference (Adam,
+`beta1=0.9`), not topica's ProdLDA `beta1=0.99`; and topica trains at a **constant**
+learning rate, where the reference halves it every 125 epochs (a `StepLR` schedule).
+Both leave the model and objective unchanged but can shift the final fit, so an exact
+numerical match to a reference run is not expected.
 
 ## NMF
 
