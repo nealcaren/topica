@@ -53,11 +53,13 @@ and in the `topica.validation` module.
 
 ::: topica.document_intrusion
 
-::: topica.llm_coherence
+### LLM-based evaluation (`topica.llm`)
 
-::: topica.llm_intrusion
+::: topica.llm.coherence
 
-::: topica.llm_select_k
+::: topica.llm.intrusion
+
+::: topica.llm.select_k
 
 ::: topica.bootstrap_stability
 

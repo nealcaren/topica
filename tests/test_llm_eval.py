@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 import topica
-from topica import llm_coherence, llm_intrusion, LLM_EVAL_PROMPTS
+from topica.llm import coherence as llm_coherence, intrusion as llm_intrusion, PROMPTS as LLM_EVAL_PROMPTS
 
 # Three topics with a clear theme each; the third is deliberately incoherent.
 TOPICS = [
@@ -17,6 +17,20 @@ TOPICS = [
     ["senate", "election", "vote", "policy", "law", "congress", "budget", "party"],
     ["banana", "telescope", "guitar", "asphalt", "penguin", "invoice", "comet", "yoga"],
 ]
+
+
+def test_namespace_surface():
+    # The LLM-eval suite lives under topica.llm.* (an llm-bounded family), and the
+    # flat llm_* metric names are intentionally not exposed at the top level.
+    assert callable(topica.llm.coherence)
+    assert callable(topica.llm.intrusion)
+    assert callable(topica.llm.select_k)
+    assert callable(topica.llm.backend)
+    assert isinstance(topica.llm.PROMPTS, dict)
+    for gone in ("llm_coherence", "llm_intrusion", "llm_select_k", "LLM_EVAL_PROMPTS"):
+        assert not hasattr(topica, gone), f"{gone} should be namespaced under topica.llm"
+    # backend is also reachable flat (a shared, released constructor).
+    assert topica.llm.backend is topica.llm_backend
 
 
 class Rater:
@@ -182,7 +196,7 @@ def test_accepts_fitted_model_surface():
 # llm_select_k (document-label purity)
 # ---------------------------------------------------------------------------
 
-from topica import llm_select_k
+from topica.llm import select_k as llm_select_k
 
 
 class _FakeModel:

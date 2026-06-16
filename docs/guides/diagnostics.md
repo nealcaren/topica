@@ -82,23 +82,25 @@ topica.document_intrusion(model, texts=texts, n_docs=3)   # top docs + an intrud
 Automated coherence (NPMI, c_v) correlates only weakly with human judgment. Stammbach
 et al. (2023) show that an LLM, prompted with the *same* instructions the crowd-workers
 received, tracks human ratings more closely — especially the rating task. topica
-exposes two such diagnostics; both reuse the provider-agnostic `topica[llm]` backend.
+exposes these diagnostics under the **`topica.llm`** namespace — an `llm-bounded`
+family kept distinct from the bit-exact diagnostics above. All reuse the
+provider-agnostic `topica[llm]` backend.
 
 ```python
 # A capable open-source model, via OpenRouter or a local endpoint:
-call = topica.llm_backend("openrouter/meta-llama/llama-3.3-70b-instruct", temperature=0)
+call = topica.llm.backend("openrouter/meta-llama/llama-3.3-70b-instruct", temperature=0)
 
-topica.llm_coherence(model, call=call, n_words=10)         # per-topic 1-3 rating (the headline)
-topica.llm_intrusion(model, call=call, n_words=5)          # LLM picks the intruder -> accuracy
-topica.llm_select_k(models, docs, call=call, n_docs=10)    # number-of-topics by doc-label purity
+topica.llm.coherence(model, call=call, n_words=10)        # per-topic 1-3 rating (the headline)
+topica.llm.intrusion(model, call=call, n_words=5)         # LLM picks the intruder -> accuracy
+topica.llm.select_k(models, docs, call=call, n_docs=10)   # number-of-topics by doc-label purity
 ```
 
-`llm_coherence` is the one to lead with: in the paper it beats NPMI/c_v at tracking
+`llm.coherence` is the one to lead with: in the paper it beats NPMI/c_v at tracking
 human topic *rankings* (and on the Hoyle 2021 gold, `parity/llm_coherence_compare.py`
-reproduces that here). `llm_intrusion` matches human accuracy on the *task* but is a
+reproduces that here). `llm.intrusion` matches human accuracy on the *task* but is a
 weaker ranking signal, so report it alongside, not instead.
 
-`llm_select_k` chooses the number of topics: for each candidate model it labels each
+`llm.select_k` chooses the number of topics: for each candidate model it labels each
 topic's top documents with the LLM and scores by **label purity** (the fraction of a
 topic's documents sharing the majority label), returning the model with the highest
 mean purity. This is the paper's *working* number-of-topics signal — doc-label purity
@@ -107,10 +109,10 @@ tracks ground-truth cluster quality, where rating the top *words* across `k` doe
 
 !!! note "Model capability matters — don't use a tiny model"
     These tasks need a **capable** model, and open weights are enough: in our checks a
-    70B-class open model (Llama-3.3-70B) handles all three, and `llm_coherence`
+    70B-class open model (Llama-3.3-70B) handles all three, and `llm.coherence`
     reproduces the paper's human correlation with Qwen3-235B. The tasks differ in
-    difficulty — *rating* (`llm_coherence`) is forgiving and an 8B model ranks topics
-    sensibly, but *intrusion* (`llm_intrusion`) and *labeling* (`llm_select_k`) are
+    difficulty — *rating* (`llm.coherence`) is forgiving and an 8B model ranks topics
+    sensibly, but *intrusion* (`llm.intrusion`) and *labeling* (`llm.select_k`) are
     harder: an 8B model failed to spot obvious word intruders in our tests. Prefer a
     ~70B+ open model (or a strong hosted one); treat small-model results, especially
     on intrusion/labeling, with suspicion.
@@ -120,7 +122,7 @@ tracks ground-truth cluster quality, where rating the top *words* across `k` doe
     **not** reproducible bit-for-bit. Use `temperature=0` (or `n_samples>1`, which
     calls the model repeatedly and aggregates by mean/majority-vote) for stability,
     and read the result as a measurement with model-dependent noise. The paper's
-    prompts are kept verbatim in the overridable `topica.LLM_EVAL_PROMPTS` dict. Cost
+    prompts are kept verbatim in the overridable `topica.llm.PROMPTS` dict. Cost
     is O(K) LLM calls; pass a cheap model.
 
 ## Stability and model selection
