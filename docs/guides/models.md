@@ -179,7 +179,14 @@ The Evolving Content Topic Model extends STM's content covariate with **time**.
 STM's content model lets a topic be worded differently across a group (the SAGE
 content covariate); ECTM lets that group difference **drift across discrete time
 periods**, so you can ask not only "how do these groups word this topic
-differently" but "how has that difference *changed*". It fits one topic-word
+differently" but "how has that difference *changed*".
+
+Where [`DTM`](#dtm) and [`DETM`](embedding.md) already let a topic's *single*
+vocabulary drift over time, ECTM's novelty is the **group-by-time interaction**:
+it models how the *difference between groups* in a topic's wording evolves, in the
+logistic-normal/variational frame that also carries STM's prevalence covariates.
+So the contrast with keyATM below is specifically about keyATM's *dynamic* model,
+which holds each topic's word distribution fixed and drifts only prevalence. It fits one topic-word
 distribution per (group, period) cell, with a first-order random-walk prior tying
 adjacent periods so sparse cells borrow strength from their temporal neighbours
 rather than fragmenting the topic.

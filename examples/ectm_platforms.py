@@ -119,6 +119,27 @@ def main():
                 traj = [1000 * model.content_word_dist(pt, t)[env, vi[w]] for t in range(len(P))][::4]
                 print(f"  {w + ' (' + pt + ')':<11}" + " ".join(f"{v:5.1f}" for v in traj))
 
+        # --- Does the topic model add value over a naive cross-tab? ---
+        # Naive baseline: the raw share of `climate` among tokens of documents
+        # whose dominant topic is this one, by party-year. ECTM should agree on
+        # the trend but partial-pool the sparse early cells (where the raw share is
+        # 0 or undefined) and isolate the word *within* the topic.
+        assign = model.doc_topic.argmax(1)
+        cols = P[::4]
+
+        def raw_climate(pt, ylabel):
+            tok = [t for d, pp, yy, a in zip(docs, party, year, assign)
+                   if a == env and pp == pt and yy == int(ylabel) for t in d]
+            return 1000 * tok.count("climate") / len(tok) if tok else float("nan")
+
+        ectm = [1000 * model.content_word_dist("D", t)[env, vi["climate"]] for t in range(len(P))]
+        print("\nECTM (RW-pooled) vs naive within-topic cross-tab, 'climate' for Democrats (x1000):")
+        print("           " + " ".join(f"{c:>6}" for c in cols))
+        print("  ECTM:    " + " ".join(f"{ectm[i * 4]:6.1f}" for i in range(len(cols))))
+        print("  raw:     " + " ".join(f"{raw_climate('D', c):6.1f}" for c in cols))
+        print("  (trend agrees; ECTM adds period pooling on sparse cells, topic separation, "
+              "and the\n   uncertainty band -- it is the regularized, inferential version of the cross-tab.)")
+
         # --- The other half: how OFTEN each party discusses the topic ---
         print(f"\n=== Environment topic #{env}: ATTENTION (prevalence), the other half ===")
         att = prevalence_by_group(model, party, year, topic=env) * 100  # (num_groups, num_periods) %

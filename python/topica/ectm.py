@@ -82,6 +82,66 @@ def content_trajectory(model, topic: int, word, contrast=None):
     return out
 
 
+def content_trajectory_ci(refit, docs, groups, periods, *, anchor_words, word, contrast,
+                          clusters=None, n_boot=40, ci=0.95, seed=0):
+    """Cluster-bootstrap confidence band for a content trajectory.
+
+    The content-side estimates are MAP point values; this resamples the data and
+    refits to put uncertainty on them. ``refit(docs, groups, periods)`` must return
+    a freshly fitted :class:`ECTM` with your settings (a closure capturing
+    ``num_topics``, ``iters``, the priors, etc.).
+
+    ``clusters`` is a per-document id (e.g. the source document a paragraph came
+    from, or a ``(party, year)`` platform key) that is resampled *with
+    replacement*; pass it whenever documents within a cluster are not independent,
+    so the band reflects the number of independent units rather than the number of
+    paragraphs. ``None`` resamples documents individually.
+
+    Topics are not aligned across refits, so each bootstrap's topic is matched to
+    the reference by top-word overlap with ``anchor_words`` (e.g.
+    ``[w for w, _ in model.top_words(20, topic=k)]``). Returns a list of
+    ``(period_label, mean, ci_low, ci_high)`` for the ``contrast`` trajectory of
+    ``word`` (same ``contrast`` semantics as :func:`content_trajectory`).
+    """
+    rng = np.random.default_rng(seed)
+    docs = list(docs)
+    groups = list(groups)
+    periods = list(periods)
+    n = len(docs)
+    clusters = list(range(n)) if clusters is None else list(clusters)
+    uniq = list(dict.fromkeys(clusters))
+    by_cluster = {}
+    for i, c in enumerate(clusters):
+        by_cluster.setdefault(c, []).append(i)
+    anchor = set(anchor_words)
+    lo_q, hi_q = (1 - ci) / 2 * 100, (1 + ci) / 2 * 100
+    acc = {}  # period_label -> [values]
+    for _ in range(n_boot):
+        pick = rng.integers(0, len(uniq), len(uniq))
+        idx = [i for j in pick for i in by_cluster[uniq[j]]]
+        m = refit([docs[i] for i in idx], [groups[i] for i in idx], [periods[i] for i in idx])
+        # match the topic by top-word overlap with the anchor signature
+        best, best_ov = 0, -1
+        for k in range(m.num_topics):
+            ov = len(anchor & {w for w, _ in m.top_words(len(anchor), topic=k)})
+            if ov > best_ov:
+                best, best_ov = k, ov
+        for p, v in content_trajectory(m, best, word, contrast=contrast):
+            acc.setdefault(p, []).append(v)
+    out = []
+    for p in sorted(acc, key=lambda s: _period_sort_key(s)):
+        a = np.array(acc[p])
+        out.append((p, float(a.mean()), float(np.percentile(a, lo_q)), float(np.percentile(a, hi_q))))
+    return out
+
+
+def _period_sort_key(label):
+    try:
+        return (0, float(label))
+    except (TypeError, ValueError):
+        return (1, label)
+
+
 def _period_label(v):
     """Format a raw period value the way the fit did (numeric -> int label)."""
     try:

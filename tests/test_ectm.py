@@ -146,6 +146,27 @@ def test_prevalence_helpers():
     assert len(pc) == m.num_periods and [p for p, _ in pc] == m.periods
 
 
+def test_content_trajectory_ci():
+    from topica.ectm import content_trajectory_ci
+    docs, groups, times = _corpus(drift=True)
+
+    def refit(d, g, p):
+        m = topica.ECTM(num_topics=2, seed=5)
+        m.fit(d, times=p, content=g, iters=30)
+        return m
+
+    m0 = refit(docs, groups, times)
+    k = max(range(2), key=lambda k: m0.content_word_dist("B", 2)[k, m0.vocabulary.index("x")])
+    anchor = [w for w, _ in m0.top_words(4, topic=k)]
+    band = content_trajectory_ci(refit, docs, groups, times, anchor_words=anchor,
+                                 word="x", contrast=("B", "A"),
+                                 clusters=list(zip(groups, times)), n_boot=4, seed=0)
+    assert len(band) == m0.num_periods
+    assert [p for p, *_ in band] == m0.periods  # sorted in period order
+    for _, mean, lo, hi in band:
+        assert lo <= mean <= hi
+
+
 def test_analysis_surface():
     m = _fit()
     assert topica.summary(m) is not None
