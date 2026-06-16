@@ -52,6 +52,7 @@ generated from `python/topica/registry.py`.
 | `STM` | text, metadata | variational | bit-exact | Structural topic model: relate topic prevalence and content to covariates. |
 | `STS` | text, metadata | variational | bit-exact | Structural topic-and-sentiment model over document metadata. |
 | `SAGE` | text, metadata | gibbs | seed-reproducible | Sparse additive generative model: the same topic worded differently across groups. |
+| `ECTM` | text, metadata, times | variational | seed-reproducible | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
 | `DMR` | text, metadata | gibbs | seed-reproducible | Dirichlet-multinomial regression: a document-metadata prior on topic proportions. |
 | `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
 

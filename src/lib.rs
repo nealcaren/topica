@@ -4,6 +4,7 @@ pub mod conformance;
 pub mod corpus;
 pub mod ctm;
 pub mod dmr;
+pub mod ectm;
 pub mod sts;
 pub mod estimator;
 pub mod detm;
