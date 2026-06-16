@@ -5,7 +5,7 @@
 [![Docs](https://img.shields.io/badge/docs-mkdocs--material-blue.svg)](https://nealcaren.github.io/topica/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-`topica` is a fast, all-purpose topic-modeling library for Python, built for computational social scientists who want to go from a column of text to publishable results in one workflow. It brings together models usually split across JVM tools like MALLET and R packages like `stm`, more than two dozen in all (LDA, STM, CTM, plus neural, dynamic, and embedding-based models), each paired with the validation, covariate-effect, and reporting tools reviewers expect. It installs as a single wheel that needs only NumPy: no JVM, no PyTorch.
+`topica` is a fast, all-purpose topic-modeling library for Python, built for computational social scientists who want to go from a column of text to publishable results in one workflow. It brings together models usually split across JVM tools like MALLET and R packages like `stm`, more than two dozen in all (LDA, STM, CTM, plus neural, dynamic, and embedding-based models), each paired with the validation, covariate-effect, and reporting tools reviewers expect. Where general toolkits like Gensim or BERTopic give you topics, topica is built around the question social scientists ask of them next: how topic prevalence and content relate to covariates, with reference-validated models and reproducible fits. It installs as a single wheel that needs only NumPy and pandas: no JVM, no PyTorch.
 
 ```bash
 pip install topica
@@ -44,7 +44,7 @@ Your own data is one line away: pass `pandas.read_csv("yours.csv")` to `from_dat
 
 Fits are reproducible and validated: the variational models are identical to the bit, the samplers reproduce from a fixed seed and thread count, and every model is checked against its reference implementation (R `stm`, MALLET, keyATM, and more).
 
-The core needs only NumPy. Optional extras add features without weighing it down: `topica[viz]` (matplotlib plots), `topica[formula]` (R-style formulas), `topica[polars]` (Polars frames), and `topica[llm]` (LLM labels and embeddings, OpenAI or local via ollama).
+The core needs only NumPy and pandas. Optional extras add features without weighing it down: `topica[viz]` (matplotlib plots), `topica[formula]` (R-style formulas), `topica[polars]` (Polars frames), and `topica[llm]` (LLM labels and embeddings, OpenAI or local via ollama).
 
 ## Models
 

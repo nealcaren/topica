@@ -1,6 +1,6 @@
 # Topica
 
-`topica` is a fast topic-modeling library for Python with more than a dozen
+`topica` is a fast topic-modeling library for Python with more than two dozen
 models, built for social scientists who want to move from text data to
 publishable results in a single workflow. It brings together models and tools
 usually split across JVM software like MALLET and R packages like `stm`, and
@@ -66,7 +66,7 @@ for i, words in enumerate(model.top_words(5)):
 
 ## Worked examples
 
-Three end-to-end analyses on real, redistributable corpora:
+End-to-end analyses on real, redistributable corpora:
 
 - [**W.E.B. Du Bois in *The Crisis***](examples/dubois.md): 704 articles,
   1910–1934, the full workflow from preprocessing to dynamic topics.
@@ -74,6 +74,10 @@ Three end-to-end analyses on real, redistributable corpora:
   vignette, reproduced.
 - [**Political blogs**](examples/poliblog.md): STM with ideology and time
   covariates.
+- [**Party platforms**](examples/ectm.md): how Democrats and Republicans word the
+  same topics, and how that contrast has shifted across 20 elections (ECTM).
+- [**LLM embeddings and labels**](examples/llm-topics.md): embedding-based topics
+  with contextual document vectors and LLM-generated topic labels.
 
 ---
 
