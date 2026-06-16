@@ -25,6 +25,7 @@ These are pure-Python/numpy and work with any model here: pass a fitted model
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter, defaultdict
 from itertools import combinations
 
@@ -590,3 +591,170 @@ def document_intrusion(model_or_theta, texts=None, *, n_docs=3, seed=0):
             entry["texts"] = [str(texts[i])[:120] for i in shuffled]
         out.append(entry)
     return out
+
+
+# ---------------------------------------------------------------------------
+# LLM-based topic evaluation (Stammbach, Zouhar, Hoyle, Sachan & Ash 2023,
+# "Revisiting Automated Topic Model Evaluation with Large Language Models",
+# EMNLP; arXiv:2305.12152). An LLM, prompted with the same instructions the
+# crowd-workers received, correlates with human judgment better than NPMI / c_v
+# -- especially the *rating* task (`llm_coherence`). These are `llm-bounded`: they
+# call an external model, so they are NOT bit-deterministic like the rest of the
+# coherence suite. Use `temperature=0` (or `n_samples>1` and aggregate) for
+# stability, and read the result as a measurement with model-dependent noise.
+# ---------------------------------------------------------------------------
+
+# The prompts ARE the method: kept verbatim from the paper for comparability, as a
+# module-level overridable dict (pass `prompts=` to override). `{dataset}` is an
+# optional dataset-description clause (small reported gains); `{words}` is the
+# comma-separated, shuffled word list.
+RATING_PROMPT = (
+    "You are a helpful assistant evaluating the top words of a topic model output "
+    "for a given topic. {dataset}Please rate how related the following words are to "
+    'each other on a scale from 1 to 3 ("1" = not very related, "2" = moderately '
+    'related, "3" = very related). Reply with a single number, indicating the '
+    "overall appropriateness of the topic.\n\n{words}"
+)
+INTRUSION_PROMPT = (
+    "You are a helpful assistant evaluating the top words of a topic model output "
+    "for a given topic. {dataset}Select which word is the least related to all other "
+    "words. If multiple words do not fit, choose the word that is most out of place. "
+    "Reply with a single word.\n\n{words}"
+)
+LLM_EVAL_PROMPTS: dict[str, str] = {"rating": RATING_PROMPT, "intrusion": INTRUSION_PROMPT}
+
+
+def _resolve_llm_call(call):
+    """Turn `call` into a callable ``str -> str``. Accepts a callable (used as-is)
+    or a model-name string (routed through :func:`topica.llm_backend`)."""
+    if callable(call):
+        return call
+    if isinstance(call, str):
+        from .labeling import llm_backend
+
+        return llm_backend(call)
+    raise TypeError(
+        "call must be a callable (str -> str) or a model-name string; pass e.g. "
+        'call=topica.llm_backend("gpt-4o-mini", temperature=0) or call="gpt-4o-mini".'
+    )
+
+
+def _dataset_clause(dataset_description):
+    if not dataset_description:
+        return ""
+    return f"The topics are from the following corpus: {dataset_description.strip()} "
+
+
+def _parse_rating(reply, lo, hi):
+    """The first integer in `reply` within ``[lo, hi]``, else None."""
+    for tok in re.findall(r"-?\d+", str(reply)):
+        v = int(tok)
+        if lo <= v <= hi:
+            return v
+    return None
+
+
+def _match_intruder(reply, words):
+    """Match the model's reply to one of `words` (case-insensitive, whole-word
+    first, then substring). Returns the matched word or None."""
+    r = str(reply).strip().lower()
+    lowered = {w.lower(): w for w in words}
+    if r in lowered:
+        return lowered[r]
+    # whole-word hit anywhere in the reply
+    toks = set(re.findall(r"[a-z0-9']+", r))
+    for w in words:
+        if w.lower() in toks:
+            return w
+    # last resort: substring
+    for w in words:
+        if w.lower() in r:
+            return w
+    return None
+
+
+def llm_coherence(model, *, call, n_words=10, scale=(1, 3), dataset_description=None,
+                  seed=0, n_samples=1, shuffle=True, prompts=None):
+    """LLM-rated topic coherence (Stammbach et al. 2023): the headline LLM metric.
+
+    For each topic, the top ``n_words`` words are shuffled and an LLM rates how
+    related they are on a ``scale`` (default 1-3). Returns a per-topic numpy array
+    of mean ratings (higher = more coherent). This is the metric that **beats
+    NPMI / c_v at tracking human judgment** in the paper; it sits beside
+    :func:`coherence`, :func:`topic_diversity`, and :func:`topic_semantic_diversity`,
+    but is ``llm-bounded`` -- it calls an external model and is not bit-deterministic.
+
+    Parameters
+    ----------
+    model : fitted model or list of word lists
+        Anything :func:`_extract_topics` accepts.
+    call : callable ``str -> str`` or model-name str
+        The LLM. Pass ``topica.llm_backend(name, temperature=0)`` or a model name.
+    n_words, scale : the number of top words shown and the rating range.
+    dataset_description : optional str
+        A one-line corpus description added to the prompt (small reported gains).
+    seed : int
+        Seeds the per-topic word shuffles (reproducible task; the *LLM* is not).
+    n_samples : int
+        Calls the LLM this many times per topic and averages (tames non-determinism;
+        the paper uses temperature=1 to mimic annotator variation).
+    prompts : optional dict
+        Override the editable templates (key ``"rating"``); defaults to
+        :data:`LLM_EVAL_PROMPTS`.
+    """
+    backend = _resolve_llm_call(call)
+    tmpl = (prompts or LLM_EVAL_PROMPTS)["rating"]
+    lo, hi = int(scale[0]), int(scale[1])
+    ds = _dataset_clause(dataset_description)
+    topics = _extract_topics(model, n_words)
+    out = []
+    for t, words in enumerate(topics):
+        scores = []
+        for s in range(max(1, n_samples)):
+            w = list(words)
+            if shuffle:
+                np.random.RandomState(seed + t * 1000 + s).shuffle(w)
+            prompt = tmpl.format(dataset=ds, words=", ".join(w))
+            val = _parse_rating(backend(prompt), lo, hi)
+            if val is not None:
+                scores.append(val)
+        out.append(float(np.mean(scores)) if scores else float("nan"))
+    return np.array(out, dtype=float)
+
+
+def llm_intrusion(model, vocabulary=None, *, call, n_words=5, dataset_description=None,
+                  seed=0, n_samples=1, prompts=None):
+    """LLM word-intrusion accuracy (Stammbach et al. 2023).
+
+    Builds the intrusion task with :func:`word_intrusion` (top ``n_words`` words plus
+    one intruder, shuffled), asks the LLM to pick the intruder, and scores it against
+    the answer key. Returns ``{"accuracy": float, "per_topic": [...]}`` where each
+    per-topic dict has ``topic``, ``intruder``, ``picked``, and ``correct``.
+
+    The paper finds an LLM matches human accuracy on this *task* (~72%), but rating
+    (:func:`llm_coherence`) tracks human topic *rankings* better -- lead with
+    ``llm_coherence`` and report this alongside. ``llm-bounded``; see
+    :func:`llm_coherence` for the shared ``call`` / ``n_samples`` semantics.
+    """
+    backend = _resolve_llm_call(call)
+    tmpl = (prompts or LLM_EVAL_PROMPTS)["intrusion"]
+    ds = _dataset_clause(dataset_description)
+    items = word_intrusion(model, vocabulary, n_words=n_words, seed=seed)
+    per_topic, correct = [], []
+    for item in items:
+        votes = []
+        for _ in range(max(1, n_samples)):
+            prompt = tmpl.format(dataset=ds, words=", ".join(item["words"]))
+            picked = _match_intruder(backend(prompt), item["words"])
+            if picked is not None:
+                votes.append(picked)
+        chosen = Counter(votes).most_common(1)
+        picked = chosen[0][0] if chosen else None
+        hit = picked == item["intruder"]
+        per_topic.append({
+            "topic": item["topic"], "intruder": item["intruder"],
+            "picked": picked, "correct": bool(hit),
+        })
+        correct.append(hit)
+    return {"accuracy": float(np.mean(correct)) if correct else float("nan"),
+            "per_topic": per_topic}
