@@ -145,6 +145,9 @@ from .coherence import (  # noqa: E402
     exclusivity,
     word_intrusion,
     document_intrusion,
+    llm_coherence,
+    llm_intrusion,
+    LLM_EVAL_PROMPTS,
 )
 from .registry import list_models, ModelInfo, REGISTRY  # noqa: E402  model taxonomy / discovery
 
@@ -267,6 +270,9 @@ __all__ = [
     "exclusivity",
     "word_intrusion",
     "document_intrusion",
+    "llm_coherence",
+    "llm_intrusion",
+    "LLM_EVAL_PROMPTS",
     "frex",
     "label_topics",
     "topic_table",
