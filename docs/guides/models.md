@@ -204,11 +204,17 @@ The `topica.ectm` helpers read the result on the word-probability scale:
 `content_contrast(m, topic, a, b, period)` (words distinguishing two groups),
 `content_trajectory(m, topic, word, contrast=(a, b))` (a word's contrast across
 periods), and `content_divergence(m, topic, a, b)` (total-variation distance
-between the groups each period). See `examples/ectm_poliblog.py` for a worked
-analysis of Conservative vs Liberal blog vocabulary across the 2008 campaign.
+between the groups each period).
 
-A single year shows a fairly stable group gap; ECTM's evolution story is clearest
-on a multi-period corpus (e.g. party language across decades).
+Two worked examples ship with topica. `examples/ectm_poliblog.py` contrasts
+Conservative and Liberal blog vocabulary across the 2008 campaign (a single year,
+so the group gap is fairly stable). `examples/ectm_congress.py` is the
+multi-period showcase: on the keyATM Congressional-bills corpus (Eshima, Imai &
+Sasaki 2024) it models House vs Senate wording across 14 Congresses (1989-2017)
+and recovers a chamber vocabulary gap that *widens* over the period — the kind of
+evolving content contrast ECTM exists to surface. Run `Rscript
+examples/prep_congress.R` once to build the corpus from the Harvard Dataverse
+archive, then run the example.
 
 ## STS
 
