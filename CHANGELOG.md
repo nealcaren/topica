@@ -66,6 +66,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Changed
 
+- **pandas is now a core dependency** (alongside NumPy). The DataFrame-first
+  workflow (`from_dataframe`, `topica.datasets`, `topic_table`) is the default
+  on-ramp, so `pip install topica` now ships pandas and the quickstart runs with
+  no extras. Still no JVM and no PyTorch.
 - **Repo root slimmed** — `CONTRIBUTING.md` and `CONTRIBUTING-MODELS.md` moved
   under `.github/` (GitHub still surfaces the contributing guide from there).
   Dataset CSVs are marked `binary` in a new `.gitattributes` so their bytes (and

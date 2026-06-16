@@ -12,8 +12,9 @@ or, with [uv](https://github.com/astral-sh/uv):
 uv pip install topica
 ```
 
-The only runtime dependency is **NumPy**. Everything else is an optional extra,
-so the core stays light. Install the ones you need:
+The runtime dependencies are **NumPy** and **pandas** (the DataFrame workflow,
+`from_dataframe`, and the bundled datasets all build on pandas). Everything else
+is an optional extra, so the core stays light. Install the ones you need:
 
 | Install | Enables |
 |---------|---------|

@@ -1,13 +1,13 @@
 cff-version: 1.2.0
 message: "If you use topica in published work, please cite it as below."
 title: "topica: fast, all-purpose topic modeling for Python"
-version: 0.16.2
-date-released: 2026-06-13
+version: 0.22.0
+date-released: 2026-06-16
 abstract: >-
   A fast, all-purpose topic-modeling library for Python: a Rust core with a
-  numpy-native API, built for computational social scientists. More than a dozen
-  models (LDA, DMR, CTM, STM, SAGE, HDP, DTM, keyATM, SeededLDA, BERTopic,
-  Top2Vec, ETM, FASTopic, and more), each validated against its reference
+  numpy-native API, built for computational social scientists. More than two
+  dozen models (LDA, DMR, CTM, STM, SAGE, HDP, DTM, keyATM, SeededLDA, BERTopic,
+  Top2Vec, ETM, FASTopic, InfoCTM, and more), each validated against its reference
   implementation.
 type: software
 authors:
