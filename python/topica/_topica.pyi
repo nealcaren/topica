@@ -659,6 +659,139 @@ class STM:
     def __repr__(self) -> str: ...
 
 
+class ECTM:
+    """Evolving Content Topic Model: an STM whose content (topic-word) model
+    carries a group-by-time interaction. The same stable topic is worded
+    differently across a document group, and that difference drifts across
+    discrete time periods, with a first-order random-walk prior tying adjacent
+    periods. content_word_dist(group, period) returns the topic-word matrix for a
+    cell; the topica.ectm helpers read those to report changing group contrasts."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        sigma_shrink: float = 0.0,
+        seed: int = 42,
+        variational: str = "laplace",
+    ) -> None:
+        """sigma_shrink in [0,1] shrinks Sigma toward its diagonal each M-step.
+        variational is "laplace" (default; full nu = H^-1) or "diagonal"
+        (mean-field). ECTM uses a seeded random content init, so seed matters."""
+        ...
+
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        times: Sequence[float] | Sequence[str],
+        content: Sequence[str] | Sequence[int],
+        *,
+        prevalence: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]] | None = None,
+        prevalence_names: list[str] | None = None,
+        content_names: list[str] | None = None,
+        period_names: list[str] | None = None,
+        iters: int = 500,
+        convergence_tol: float = 1e-5,
+        content_prior_var: float = 1.0,
+        period_smooth: float = 5.0,
+        interaction_shrink: float = 2.0,
+        keep_eta_cov: bool = True,
+        num_threads: Optional[int] = None,
+    ) -> None:
+        """Fit. times is one period label per document (numbers or strings; the
+        distinct values, sorted, define the period order). content is one group
+        label per document. Both are required and form the (group, period) content
+        cells. prevalence (optional, (num_docs, F)) adds the STM prevalence
+        regression mu_d = X_d gamma (intercept prepended).
+
+        The content deviations are regularized by an L2 prior (variance
+        content_prior_var); a first-order random walk across periods with precision
+        period_smooth (larger = smoother / more pooling across adjacent periods);
+        and an extra L2 factor interaction_shrink on the group-by-time term."""
+        ...
+
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Cell-averaged topic-word matrix (K, V). Use content_word_dist for a
+        specific (group, period) cell."""
+        ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def num_groups(self) -> int: ...
+    @property
+    def num_periods(self) -> int: ...
+    @property
+    def groups(self) -> list[str]:
+        """Content group labels, in index/column order."""
+        ...
+    @property
+    def periods(self) -> list[str]:
+        """Time period labels, sorted into the random-walk prior order."""
+        ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def prevalence_effects(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Prevalence coefficients gamma (num_features, K-1). Raises if fit
+        without a prevalence design."""
+        ...
+    @property
+    def feature_names(self) -> list[str]: ...
+    @property
+    def eta_mean(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def eta_cov(self) -> numpy.typing.NDArray[numpy.float32]:
+        """Per-document variational posterior covariances nu (num_docs, K-1, K-1)
+        as float32. Raises if fit with keep_eta_cov=False."""
+        ...
+    @property
+    def bound(self) -> float: ...
+    @property
+    def bound_history(self) -> list[float]: ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def variational(self) -> str: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, names: list[str]) -> None: ...
+
+    def content_word_dist(
+        self, group: str | int, period: str | int
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Topic-word matrix (K, V) for one (group, period) cell. group and period
+        accept a label (str) or an index (int)."""
+        ...
+
+    def top_words(
+        self, n: int = 10, *, topic: Optional[int] = None
+    ) -> list[list[tuple[str, float]]] | list[tuple[str, float]]:
+        """Top n (word, probability) pairs per topic (or one topic) from the
+        cell-averaged beta."""
+        ...
+
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]:
+        """UMass topic coherence per topic, shape (num_topics,)."""
+        ...
+
+    def save(self, path: str) -> None:
+        """Save the fitted model to path. Reload with ECTM.load."""
+        ...
+
+    @staticmethod
+    def load(path: str) -> "ECTM":
+        """Load a model previously written by save."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+
 class STS:
     """Structural Topic and Sentiment-Discourse model (Chen & Mankad 2024): STM
     plus a per-document, per-topic continuous sentiment-discourse latent that

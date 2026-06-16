@@ -173,6 +173,43 @@ place of the default Laplace one (`variational="laplace"`): faster at high K, bu
 it drops the off-diagonal posterior covariance, so the precision of
 topic-correlation and method-of-composition standard errors is lower.
 
+## ECTM
+
+The Evolving Content Topic Model extends STM's content covariate with **time**.
+STM's content model lets a topic be worded differently across a group (the SAGE
+content covariate); ECTM lets that group difference **drift across discrete time
+periods**, so you can ask not only "how do these groups word this topic
+differently" but "how has that difference *changed*". It fits one topic-word
+distribution per (group, period) cell, with a first-order random-walk prior tying
+adjacent periods so sparse cells borrow strength from their temporal neighbours
+rather than fragmenting the topic.
+
+```python
+m = topica.ECTM(num_topics=10, seed=42)
+m.fit(docs, times=year, content=party,   # times → periods, content → groups
+      period_smooth=5.0, interaction_shrink=2.0)
+
+m.content_word_dist("Republican", 2016)  # topic-word β for one (group, period)
+```
+
+The content model is `η_kgtv = m_v + κT_k + κKP_kt + κKG_kg + κKGP_kgt`: a topic
+baseline, a shared temporal trajectory, an average group deviation, and the
+group-by-time deviation — the changing lexical contrast. `period_smooth` is the
+random-walk precision over periods (larger pools adjacent periods more);
+`interaction_shrink` pulls the group-by-time term toward zero unless the data earn
+it. A prevalence design (`prevalence=`) is optional and behaves as in STM.
+
+The `topica.ectm` helpers read the result on the word-probability scale:
+`content_words(m, topic, group, period)` (top words for a cell),
+`content_contrast(m, topic, a, b, period)` (words distinguishing two groups),
+`content_trajectory(m, topic, word, contrast=(a, b))` (a word's contrast across
+periods), and `content_divergence(m, topic, a, b)` (total-variation distance
+between the groups each period). See `examples/ectm_poliblog.py` for a worked
+analysis of Conservative vs Liberal blog vocabulary across the 2008 campaign.
+
+A single year shows a fairly stable group gap; ECTM's evolution story is clearest
+on a multi-period corpus (e.g. party language across decades).
+
 ## STS
 
 The Structural Topic and Sentiment-Discourse model (Chen & Mankad 2024) extends

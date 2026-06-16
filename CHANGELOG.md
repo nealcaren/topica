@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **`ECTM`** — the Evolving Content Topic Model: an STM whose content (topic-word)
+  model carries a group-by-time interaction. The same stable topic is worded
+  differently across a document group, and that difference drifts across discrete
+  time periods, with a first-order random-walk prior tying adjacent periods so
+  sparse cells borrow strength from their temporal neighbours. Reuses STM's
+  logistic-normal variational E-step; the content M-step generalizes the SAGE
+  content κ-regression to (group × period) cells with random-walk and shrinkage
+  penalties (`η_kgtv = m_v + κT_k + κKP_kt + κKG_kg + κKGP_kgt`). Standard fitted
+  surface plus `content_word_dist(group, period)`, the per-document logistic-normal
+  posterior (`eta_mean`/`eta_cov`), and the `topica.ectm` interpretation helpers
+  (`content_words`, `content_contrast`, `content_trajectory`, `content_divergence`).
+  See `examples/ectm_poliblog.py`.
+
 ## [0.21.0] - 2026-06-16
 
 ### Added
