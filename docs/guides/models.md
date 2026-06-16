@@ -206,15 +206,22 @@ The `topica.ectm` helpers read the result on the word-probability scale:
 periods), and `content_divergence(m, topic, a, b)` (total-variation distance
 between the groups each period).
 
-Two worked examples ship with topica. `examples/ectm_poliblog.py` contrasts
-Conservative and Liberal blog vocabulary across the 2008 campaign (a single year,
-so the group gap is fairly stable). `examples/ectm_congress.py` is the
-multi-period showcase: on the keyATM Congressional-bills corpus (Eshima, Imai &
-Sasaki 2024) it models House vs Senate wording across 14 Congresses (1989-2017)
-and recovers a chamber vocabulary gap that *widens* over the period — the kind of
-evolving content contrast ECTM exists to surface. Run `Rscript
-examples/prep_congress.R` once to build the corpus from the Harvard Dataverse
-archive, then run the example.
+Four worked examples ship with topica. The two partisan showcases model how
+**Democrats and Republicans** word the same topics and how that gap evolves:
+`examples/ectm_platforms.py` (national party platforms, 1948-2024, 20 elections)
+finds that inside a stable "environment" topic the word `climate` enters the
+Democratic vocabulary after 2000 while Republicans never adopt it, `conservation`
+fades, and the partisan gap widens — evolution a fixed-vocabulary dynamic model
+cannot represent. `examples/ectm_speeches.py` (congressional speeches with
+Voteview party, 1948-2008) recovers the documented rise of partisan language: the
+mean Democrat-Republican vocabulary distance is flat through the 1950s-80s and
+rises in the mid-1990s. The platforms corpus ships in-repo; the speeches corpus is
+built by `python examples/prep_speeches.py`.
+
+Two smaller examples round out the set: `examples/ectm_poliblog.py` (Conservative
+vs Liberal blogs across the 2008 campaign — a single year, so a stable gap) and
+`examples/ectm_congress.py` (the keyATM Congressional-bills corpus, House vs
+Senate across 14 Congresses; run `Rscript examples/prep_congress.R` first).
 
 ## STS
 

@@ -8,6 +8,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **ECTM partisan examples** — `examples/ectm_platforms.py` (U.S. party platforms
+  1948-2024, Dem vs Rep across 20 elections; corpus ships in-repo, rebuilt by
+  `prep_platforms.py`) and `examples/ectm_speeches.py` (congressional speeches
+  with Voteview party, 1948-2008; built by `prep_speeches.py`). The platforms demo
+  shows `climate` entering the Democratic environment vocabulary while Republicans
+  never adopt it; the speeches demo recovers the mid-1990s rise in the partisanship
+  of congressional language.
 - **`ECTM`** — the Evolving Content Topic Model: an STM whose content (topic-word)
   model carries a group-by-time interaction. The same stable topic is worded
   differently across a document group, and that difference drifts across discrete
