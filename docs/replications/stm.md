@@ -21,9 +21,14 @@ topica should land in the same neighborhood of solutions that R lands in, and it
 agreement with R should sit inside the spread of R's agreement with itself.
 
 We feed identical integer-coded documents to both engines and align topics
-one-to-one before comparing. The harness lives in
-[`parity/stm_r_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/stm_r_compare.py)
-and [`parity/stm_content_r_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/stm_content_r_compare.py).
+one-to-one before comparing. The harnesses live in `parity/`:
+[`stm_poliblog_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/stm_poliblog_compare.py)
+and [`stm_poliblog5k_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/stm_poliblog5k_compare.py)
+for the prevalence model on Poliblog,
+[`stm_content_r_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/stm_content_r_compare.py)
+for the content model, and
+[`stm_r_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/stm_r_compare.py)
+for the small Gadarian stress case.
 
 ## Content model: exact agreement
 
@@ -42,28 +47,40 @@ collapsing them (topic-separation near 0 in each):
 This is the path where a symmetric-initialization bug once collapsed all topics
 to the background; the exact match against R is how we know it is fixed.
 
-## Prevalence model: same neighborhood as R
+## Prevalence model: same neighborhood as R, and the same conclusions
 
 For the prevalence model we compare topica's spectral fit to R's spectral fit on
-a 339-document, 303-word corpus, against the floor of R's agreement with itself:
+the `stm` Poliblog vignette, against the floor of R's agreement with itself. On
+the 2,000-document corpus at K = 20 the two engines' topic-word matrices align to
+a cosine of 0.97; on the full 5,000-document corpus at K = 15 it is 0.84. Both
+sit well above how closely R reproduces *itself* across initializations:
 
-| Comparison | aligned cosine |
+| Comparison (Poliblog 5k, K = 15) | aligned cosine |
 |---|---:|
 | R Spectral vs R Random (R's own basin spread) | 0.62 |
-| R Random vs R Random (R's self-consistency) | 0.81 |
-| **R Spectral vs topica Spectral** | **0.51** |
+| R Random vs R Random (R's self-consistency) | 0.68 |
+| **R Spectral vs topica Spectral** | **0.84** |
 
-topica's agreement with R (0.51) sits within the spread of R's own
-Spectral-versus-Random runs (gap 0.11). The two engines find the same family of
-solutions and differ by the local optimum the optimizer settled in, exactly as
-two R runs do. This is the expected behavior for a non-convex model, not a
-discrepancy: there is no single STM fit to reproduce.
+topica reproduces R's spectral solution more closely than R reproduces itself
+from a different seed. Where the per-topic cosine dips (the 5k median is 0.98,
+but a few topics fall lower) it is always a handful of genuinely bistable topics
+that the two optimizers split differently, never a systematic offset — the
+expected behavior of a non-convex model, where there is no single STM fit to
+reproduce.
 
-What does replicate stably across optima is the substantive conclusion. The
-[Poliblog](../examples/poliblog.md) and [Gadarian](../examples/gadarian.md)
-worked examples refit the canonical `stm` vignettes end to end and recover the
-same prevalence effects the package documents, with honest standard errors from
-the method of composition.
+What replicates stably across optima is the substantive conclusion. Regressing
+topic prevalence on ideology, topica recovers R's effect coefficients with a
+Pearson correlation of 0.84, and the same sign and significance on 13 of 15
+topics. The [Poliblog](../examples/poliblog.md) and
+[Gadarian](../examples/gadarian.md) worked examples refit the canonical `stm`
+vignettes end to end and recover the prevalence effects the package documents,
+with honest standard errors from the method of composition.
+
+The smaller Gadarian survey corpus (339 documents, K = 3) is a deliberately
+harder, more multimodal case: with so few short open-ended responses, R itself
+self-agrees only to a cosine of 0.81, and topica lands at 0.51 — still inside the
+spread of R's own Spectral-versus-Random runs (0.62). It is the stress test, not
+the headline; see [`stm_r_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/stm_r_compare.py).
 
 ## Speed
 
