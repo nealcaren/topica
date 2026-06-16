@@ -57,11 +57,11 @@ local models via plugins.
 
 ```python
 # Bring your own callable (no extra dependency):
-labels = topica.llm_topic_labels(model, texts, call=my_model_fn, set_labels=True)
+labels = topica.llm_topic_labels(model, texts, backend=my_model_fn, set_labels=True)
 
 # Or name a model via the `llm` adapter (pip install "topica[llm]"):
 backend = topica.llm_backend("gpt-4o-mini", temperature=0)   # pin for stability
-labels = topica.llm_topic_labels(model, texts, call=backend, set_labels=True)
+labels = topica.llm_topic_labels(model, texts, backend=backend, set_labels=True)
 
 topica.topic_label_prompts(model, texts)[0]   # inspect exactly what the model sees
 ```
@@ -82,26 +82,80 @@ topica.document_intrusion(model, texts=texts, n_docs=3)   # top docs + an intrud
 Automated coherence (NPMI, c_v) correlates only weakly with human judgment. Stammbach
 et al. (2023) show that an LLM, prompted with the *same* instructions the crowd-workers
 received, tracks human ratings more closely — especially the rating task. topica
-exposes two such diagnostics; both reuse the provider-agnostic `topica[llm]` backend.
+exposes these diagnostics under the **`topica.llm`** namespace — an `llm-bounded`
+family kept distinct from the bit-exact diagnostics above. All reuse the
+provider-agnostic `topica[llm]` backend.
 
 ```python
-call = topica.llm_backend("gpt-4o-mini", temperature=0)    # or any provider / openrouter / ollama
+# A capable open-source model, via OpenRouter or a local endpoint:
+backend = topica.llm.backend("openrouter/meta-llama/llama-3.3-70b-instruct", temperature=0)
 
-topica.llm_coherence(model, call=call, n_words=10)         # per-topic 1-3 rating (the headline)
-topica.llm_intrusion(model, call=call, n_words=5)          # LLM picks the intruder -> accuracy
+topica.llm.coherence(model, backend=backend, n_words=10)        # per-topic 1-3 rating (the headline)
+topica.llm.intrusion(model, backend=backend, n_words=5)         # LLM picks the intruder -> accuracy
+topica.llm.select_k(models, docs, backend=backend, n_docs=10)   # number-of-topics by doc-label purity
 ```
 
-`llm_coherence` is the one to lead with: in the paper it beats NPMI/c_v at tracking
+`llm.coherence` is the one to lead with: in the paper it beats NPMI/c_v at tracking
 human topic *rankings* (and on the Hoyle 2021 gold, `parity/llm_coherence_compare.py`
-reproduces that here). `llm_intrusion` matches human accuracy on the *task* but is a
+reproduces that here). `llm.intrusion` matches human accuracy on the *task* but is a
 weaker ranking signal, so report it alongside, not instead.
+
+`llm.select_k` chooses the number of topics: for each candidate model it labels each
+topic's top documents with the LLM and scores by **label purity** (the fraction of a
+topic's documents sharing the majority label), returning the model with the highest
+mean purity. This is the paper's *working* number-of-topics signal — doc-label purity
+tracks ground-truth cluster quality, where rating the top *words* across `k` does not
+— and complements `search_k`'s coherence/exclusivity/perplexity criteria.
+
+### A multi-dimensional suite (Tan & D'Souza 2025)
+
+Coherence rating answers one question — *are these words related?* — but a topic can
+be coherent and still be redundant, indistinct from its neighbours, or a poor fit for
+the documents it claims. Tan & D'Souza (2025) widen the lens to four dimensions, all
+exposed under the same namespace and `backend=`:
+
+```python
+topica.llm.outlier(model, backend=backend, n_samples=5, threshold=3)  # which words break a topic (unsupervised vote)
+topica.llm.repetitiveness(model, backend=backend)                     # is coherence just redundancy? rate + duplicate pairs
+topica.llm.diversity(model, backend=backend)                          # pairwise cross-topic distinctiveness (1-3)
+topica.llm.alignment(model, docs, backend=backend)                    # per topic: irrelevant words / missing themes vs its top docs
+topica.llm.adversarial(model, backend=backend)                        # gold-free capability self-check
+```
+
+`llm.outlier` is the unsupervised sibling of `llm.intrusion`: no planted answer, just a
+5-runs vote on *which* top words don't belong (kept when flagged in `threshold` of
+`n_samples` runs), so it surfaces the specific words making a topic incoherent.
+`llm.repetitiveness` checks the failure coherence rating misses — a topic of near-synonyms
+scores high on relatedness but is uninformative; it returns a 1-3 rate (3 = distinctive)
+plus the duplicate word pairs. `llm.diversity` rates every topic *pair* for thematic
+overlap, the LLM analog of `topic_diversity`. `llm.alignment` is the only one that reads
+the corpus: per topic it asks, over the topic's top documents, how many topic words are
+irrelevant (overrepresentation) and how many document themes are missing
+(underrepresentation).
+
+`llm.adversarial` is the one to run first. It plants a known-unrelated word
+(`"shakespeare"`) into each topic and measures how often `llm.outlier` catches it — a
+**gold-free** check that validates both the metric and your model's capability on *your*
+corpus, no human labels required. A detection rate near 1.0 means the model is strong
+enough for the rest of the suite; a low rate is the signal to size up before trusting any
+of these numbers.
+
+!!! note "Model capability matters — don't use a tiny model"
+    These tasks need a **capable** model, and open weights are enough: in our checks a
+    70B-class open model (Llama-3.3-70B) handles all three, and `llm.coherence`
+    reproduces the paper's human correlation with Qwen3-235B. The tasks differ in
+    difficulty — *rating* (`llm.coherence`) is forgiving and an 8B model ranks topics
+    sensibly, but *intrusion* (`llm.intrusion`) and *labeling* (`llm.select_k`) are
+    harder: an 8B model failed to spot obvious word intruders in our tests. Prefer a
+    ~70B+ open model (or a strong hosted one); treat small-model results, especially
+    on intrusion/labeling, with suspicion.
 
 !!! warning "These are `llm-bounded`, not bit-exact"
     Unlike the rest of topica's diagnostics, these call an external model and are
     **not** reproducible bit-for-bit. Use `temperature=0` (or `n_samples>1`, which
     calls the model repeatedly and aggregates by mean/majority-vote) for stability,
     and read the result as a measurement with model-dependent noise. The paper's
-    prompts are kept verbatim in the overridable `topica.LLM_EVAL_PROMPTS` dict. Cost
+    prompts are kept verbatim in the overridable `topica.llm.PROMPTS` dict. Cost
     is O(K) LLM calls; pass a cheap model.
 
 ## Stability and model selection

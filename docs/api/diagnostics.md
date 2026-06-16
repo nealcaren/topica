@@ -53,9 +53,23 @@ and in the `topica.validation` module.
 
 ::: topica.document_intrusion
 
-::: topica.llm_coherence
+### LLM-based evaluation (`topica.llm`)
 
-::: topica.llm_intrusion
+::: topica.llm.coherence
+
+::: topica.llm.intrusion
+
+::: topica.llm.select_k
+
+::: topica.llm.outlier
+
+::: topica.llm.repetitiveness
+
+::: topica.llm.diversity
+
+::: topica.llm.alignment
+
+::: topica.llm.adversarial
 
 ::: topica.bootstrap_stability
 

@@ -145,10 +145,11 @@ from .coherence import (  # noqa: E402
     exclusivity,
     word_intrusion,
     document_intrusion,
-    llm_coherence,
-    llm_intrusion,
-    LLM_EVAL_PROMPTS,
 )
+# LLM-based evaluation is exposed as a namespace, topica.llm.* (coherence,
+# intrusion, select_k, backend, PROMPTS) -- it is an llm-bounded family, kept
+# distinct from the bit-exact diagnostics above. See topica/llm.py.
+from . import llm  # noqa: E402
 from .registry import list_models, ModelInfo, REGISTRY  # noqa: E402  model taxonomy / discovery
 
 from .validation import (  # noqa: E402  general, model-agnostic post-hoc analyses
@@ -270,9 +271,7 @@ __all__ = [
     "exclusivity",
     "word_intrusion",
     "document_intrusion",
-    "llm_coherence",
-    "llm_intrusion",
-    "LLM_EVAL_PROMPTS",
+    "llm",
     "frex",
     "label_topics",
     "topic_table",

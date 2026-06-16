@@ -621,21 +621,73 @@ INTRUSION_PROMPT = (
     "words. If multiple words do not fit, choose the word that is most out of place. "
     "Reply with a single word.\n\n{words}"
 )
-LLM_EVAL_PROMPTS: dict[str, str] = {"rating": RATING_PROMPT, "intrusion": INTRUSION_PROMPT}
+LABEL_PROMPT = (
+    "You are a helpful assistant labeling documents by their main theme. {dataset}"
+    "{research}Read the document below and annotate it with a {granularity} label "
+    "naming its single main theme.{examples} Reply with only the label, a single "
+    "word or short phrase.\n\nDocument:\n{document}"
+)
+# Tan & D'Souza (2025, IRCDL; arXiv:2502.07352; repo MIT) extend the suite beyond
+# coherence rating: unsupervised outlier detection, repetitiveness, cross-topic
+# diversity, topic-document alignment, and gold-free adversarial self-checks.
+OUTLIER_PROMPT = (
+    "You are a helpful assistant evaluating the top words of a topic model output for "
+    "a given topic. {dataset}Identify the words that do not semantically belong to the "
+    "same conceptual theme as the others. Reply with a comma-separated list of only "
+    'those words, or "none".\n\n{words}'
+)
+REPETITIVE_RATE_PROMPT = (
+    "You are a helpful assistant evaluating the top words of a topic model output for "
+    "a given topic. {dataset}Evaluate whether there are semantically equivalent "
+    "(redundant) words. Rate the repetitiveness from 1 to 3, where 1 = highly "
+    "repetitive with significant semantic overlap and 3 = minimal repetition with "
+    "diverse, distinctive words. Reply with a single number.\n\n{words}"
+)
+DUPLICATE_PROMPT = (
+    "You are a helpful assistant evaluating the top words of a topic model output for "
+    "a given topic. {dataset}Identify pairs of words that refer to the exact same "
+    "concept or idea (not merely related or similar). Reply with a comma-separated "
+    'list of pairs like (word1, word2), or "none".\n\n{words}'
+)
+DIVERSITY_PROMPT = (
+    "You are a helpful assistant comparing two topics from a topic model. {dataset}"
+    "Rate the thematic distinctiveness between the two groups of words from 1 to 3, "
+    "where 1 = partially overlapping themes and 3 = highly distinctive themes. Reply "
+    "with a single number.\n\nGroup 1: {words_a}\nGroup 2: {words_b}"
+)
+ALIGN_IRRELEVANT_PROMPT = (
+    "You are a helpful assistant evaluating how well a topic's words describe a "
+    "document. {dataset}Identify which of the topic words are NOT relevant to the "
+    'document. Reply with a comma-separated list of the irrelevant words, or "none".'
+    "\n\nDocument:\n{document}\n\nTopic words: {words}"
+)
+ALIGN_MISSING_PROMPT = (
+    "You are a helpful assistant evaluating how well a topic's words cover a "
+    "document's themes. {dataset}Identify significant themes present in the document "
+    "that are NOT captured by the topic words. Reply with a comma-separated list of "
+    'the missing themes, or "none".\n\nDocument:\n{document}\n\nTopic words: {words}'
+)
+LLM_EVAL_PROMPTS: dict[str, str] = {
+    "rating": RATING_PROMPT, "intrusion": INTRUSION_PROMPT, "label": LABEL_PROMPT,
+    "outlier": OUTLIER_PROMPT, "repetitive_rate": REPETITIVE_RATE_PROMPT,
+    "duplicate": DUPLICATE_PROMPT, "diversity": DIVERSITY_PROMPT,
+    "align_irrelevant": ALIGN_IRRELEVANT_PROMPT, "align_missing": ALIGN_MISSING_PROMPT,
+}
 
 
-def _resolve_llm_call(call):
-    """Turn `call` into a callable ``str -> str``. Accepts a callable (used as-is)
+def _resolve_llm_call(backend):
+    """Turn `backend` into a callable ``str -> str``. Accepts a callable (used as-is)
     or a model-name string (routed through :func:`topica.llm_backend`)."""
-    if callable(call):
-        return call
-    if isinstance(call, str):
+    if callable(backend):
+        return backend
+    if isinstance(backend, str):
         from .labeling import llm_backend
 
-        return llm_backend(call)
+        return llm_backend(backend)
     raise TypeError(
-        "call must be a callable (str -> str) or a model-name string; pass e.g. "
-        'call=topica.llm_backend("gpt-4o-mini", temperature=0) or call="gpt-4o-mini".'
+        "backend must be a callable (str -> str) or a model-name string; pass e.g. "
+        'backend=topica.llm.backend("openrouter/meta-llama/llama-3.3-70b-instruct") '
+        'or backend="<your model>".'
     )
 
 
@@ -673,7 +725,7 @@ def _match_intruder(reply, words):
     return None
 
 
-def llm_coherence(model, *, call, n_words=10, scale=(1, 3), dataset_description=None,
+def llm_coherence(model, *, backend, n_words=10, scale=(1, 3), dataset_description=None,
                   seed=0, n_samples=1, shuffle=True, prompts=None):
     """LLM-rated topic coherence (Stammbach et al. 2023): the headline LLM metric.
 
@@ -688,8 +740,8 @@ def llm_coherence(model, *, call, n_words=10, scale=(1, 3), dataset_description=
     ----------
     model : fitted model or list of word lists
         Anything :func:`_extract_topics` accepts.
-    call : callable ``str -> str`` or model-name str
-        The LLM. Pass ``topica.llm_backend(name, temperature=0)`` or a model name.
+    backend : callable ``str -> str`` or model-name str
+        The LLM. Pass ``topica.llm.backend(name, temperature=0)`` or a model name.
     n_words, scale : the number of top words shown and the rating range.
     dataset_description : optional str
         A one-line corpus description added to the prompt (small reported gains).
@@ -702,7 +754,7 @@ def llm_coherence(model, *, call, n_words=10, scale=(1, 3), dataset_description=
         Override the editable templates (key ``"rating"``); defaults to
         :data:`LLM_EVAL_PROMPTS`.
     """
-    backend = _resolve_llm_call(call)
+    backend = _resolve_llm_call(backend)
     tmpl = (prompts or LLM_EVAL_PROMPTS)["rating"]
     lo, hi = int(scale[0]), int(scale[1])
     ds = _dataset_clause(dataset_description)
@@ -722,7 +774,7 @@ def llm_coherence(model, *, call, n_words=10, scale=(1, 3), dataset_description=
     return np.array(out, dtype=float)
 
 
-def llm_intrusion(model, vocabulary=None, *, call, n_words=5, dataset_description=None,
+def llm_intrusion(model, vocabulary=None, *, backend, n_words=5, dataset_description=None,
                   seed=0, n_samples=1, prompts=None):
     """LLM word-intrusion accuracy (Stammbach et al. 2023).
 
@@ -734,9 +786,9 @@ def llm_intrusion(model, vocabulary=None, *, call, n_words=5, dataset_descriptio
     The paper finds an LLM matches human accuracy on this *task* (~72%), but rating
     (:func:`llm_coherence`) tracks human topic *rankings* better -- lead with
     ``llm_coherence`` and report this alongside. ``llm-bounded``; see
-    :func:`llm_coherence` for the shared ``call`` / ``n_samples`` semantics.
+    :func:`llm_coherence` for the shared ``backend`` / ``n_samples`` semantics.
     """
-    backend = _resolve_llm_call(call)
+    backend = _resolve_llm_call(backend)
     tmpl = (prompts or LLM_EVAL_PROMPTS)["intrusion"]
     ds = _dataset_clause(dataset_description)
     items = word_intrusion(model, vocabulary, n_words=n_words, seed=seed)
@@ -758,3 +810,328 @@ def llm_intrusion(model, vocabulary=None, *, call, n_words=5, dataset_descriptio
         correct.append(hit)
     return {"accuracy": float(np.mean(correct)) if correct else float("nan"),
             "per_topic": per_topic}
+
+
+def _normalize_label(text):
+    """Collapse an LLM label reply to a comparison key (lowercase, trimmed, no
+    surrounding quotes/punctuation)."""
+    s = str(text).strip().strip("\"'.").lower()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def _doc_texts(docs):
+    """Normalize `docs` to a list of display strings (Corpus, raw strings, or token
+    lists), matching the doc order the model was fit on."""
+    if hasattr(docs, "documents"):
+        return [" ".join(d) for d in docs.documents()]
+    return [d if isinstance(d, str) else " ".join(str(t) for t in d) for d in docs]
+
+
+def llm_select_k(models, docs, *, backend, n_docs=10, granularity="broad",
+                 example_labels=None, research_question=None, criterion="knee",
+                 tol=0.03, seed=0, n_samples=1, max_chars=1500, prompts=None):
+    """Choose the number of topics by LLM document-label purity (Stammbach et al.
+    2023). For each candidate fitted `model`, take each topic's top ``n_docs``
+    documents, have an LLM assign each a theme label, and score the topic by **label
+    purity** — the fraction of its documents sharing the majority label. The model's
+    score is the mean per-topic purity.
+
+    This is the paper's *working* number-of-topics signal: doc-label purity tracks
+    ground-truth cluster quality (ARI), whereas rating the top *words* across K does
+    not (their negative result). Complements :func:`search_k` (coherence /
+    exclusivity / perplexity) with a human-aligned, ``llm-bounded`` criterion.
+
+    .. note::
+       Purity **rises then plateaus** as ``K`` grows — over-splitting one theme into
+       two topics yields two same-labelled, still-pure topics — so the raw maximum
+       tends to over-split (the mirror of coherence's bias toward small ``K``; cf.
+       :func:`search_k`'s frontier). The default ``criterion="knee"`` therefore
+       returns the **smallest** ``K`` whose purity is within ``tol`` of the best
+       (the plateau onset), not the bare ``argmax``. Always read the full ``scores``
+       curve; ``criterion="max"`` restores the literal highest-purity pick.
+
+    Parameters
+    ----------
+    models : sequence of fitted models
+        Candidates, typically the same corpus fit at different ``num_topics``.
+    docs : Corpus | list of str | list of token lists
+        The documents, in the order the models were fit on (their ``doc_topic`` rows).
+    backend : callable ``str -> str`` or model-name str
+        The LLM (see :func:`llm_coherence`).
+    n_docs : int
+        Top documents per topic to label.
+    granularity : {"broad", "narrow"}
+        Whether to ask for a broad or a narrow theme label.
+    example_labels : optional sequence of str
+        Example label vocabulary shown to the model (steers granularity/format).
+    research_question : optional str
+        A one-line framing ("label by the policy area discussed", ...).
+    criterion : {"knee", "max"}
+        How ``best`` is chosen from the purity curve. ``"knee"`` (default) returns
+        the smallest ``K`` within ``tol`` of the best purity (the plateau onset);
+        ``"max"`` returns the highest-purity model (which tends to over-split).
+    tol : float
+        Purity tolerance for the knee (default 0.03).
+    n_samples : int
+        Majority-vote the label over this many calls per document.
+    max_chars : int
+        Truncate each document to this many characters in the prompt.
+
+    Returns
+    -------
+    dict with ``best`` (the chosen model's ``num_topics``), ``best_index``, and
+    ``scores`` (a list of ``{"num_topics", "purity", "per_topic_purity"}`` per model).
+    """
+    backend = _resolve_llm_call(backend)
+    tmpl = (prompts or LLM_EVAL_PROMPTS)["label"]
+    texts = _doc_texts(docs)
+    gran = "broad" if granularity not in ("broad", "narrow") else granularity
+    ex = ""
+    if example_labels:
+        ex = " Example labels: " + ", ".join(str(x) for x in example_labels) + "."
+    rq = f"{research_question.strip()} " if research_question else ""
+
+    def label_doc(text, salt):
+        votes = []
+        for s in range(max(1, n_samples)):
+            prompt = tmpl.format(dataset="", research=rq, granularity=gran,
+                                 examples=ex, document=str(text)[:max_chars])
+            reply = _normalize_label(backend(prompt))
+            if reply:
+                votes.append(reply)
+        c = Counter(votes).most_common(1)
+        return c[0][0] if c else None
+
+    scores = []
+    for mi, model in enumerate(models):
+        theta = np.asarray(model.doc_topic)  # (D, K)
+        K = theta.shape[1]
+        per_topic = []
+        salt = 0
+        for t in range(K):
+            top = np.argsort(theta[:, t])[::-1][:n_docs]
+            labels = [label_doc(texts[d], salt + i) for i, d in enumerate(top)]
+            labels = [x for x in labels if x is not None]
+            salt += len(top)
+            if not labels:
+                per_topic.append(float("nan"))
+                continue
+            majority = Counter(labels).most_common(1)[0][1]
+            per_topic.append(majority / len(labels))
+        finite = [p for p in per_topic if not math.isnan(p)]
+        purity = float(np.mean(finite)) if finite else float("nan")
+        scores.append({
+            "num_topics": int(K), "purity": purity, "per_topic_purity": per_topic,
+        })
+
+    valid = [(i, s["purity"]) for i, s in enumerate(scores) if not math.isnan(s["purity"])]
+    if not valid:
+        best_index = None
+    elif criterion == "max":
+        best_index = max(valid, key=lambda x: x[1])[0]
+    else:
+        # Knee: the smallest-K model within `tol` of the best purity (the plateau
+        # onset), preferring parsimony over the over-splitting raw maximum.
+        best_purity = max(p for _, p in valid)
+        within = [i for i, p in valid if p >= best_purity - tol]
+        best_index = min(within, key=lambda i: scores[i]["num_topics"])
+    return {
+        "best": scores[best_index]["num_topics"] if best_index is not None else None,
+        "best_index": best_index,
+        "scores": scores,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tan & D'Souza (2025) metrics: outlier, repetitiveness, diversity, alignment,
+# and gold-free adversarial self-checks. All llm-bounded; exposed under topica.llm.
+# ---------------------------------------------------------------------------
+
+def _parse_word_list(reply, allowed=None):
+    """Parse a comma-separated word list from an LLM reply, dropping ``none``/empty
+    and bracket noise. If `allowed` (a set of lowercased words) is given, keep only
+    those. Returns a list of lowercased words."""
+    s = str(reply).strip().strip("[](){}").strip()
+    if not s or s.lower() in ("none", "[]", "n/a", "no outliers", "none."):
+        return []
+    parts = re.split(r"[,\n;]+", s)
+    out = []
+    for p in parts:
+        w = re.sub(r"[^a-z0-9'\- ]+", "", p.strip().lower()).strip()
+        if not w or w == "none":
+            continue
+        if allowed is None or w in allowed:
+            out.append(w)
+        elif allowed is not None:
+            # a multi-word reply phrase: keep any allowed token it contains
+            for tok in w.split():
+                if tok in allowed:
+                    out.append(tok)
+    return out
+
+
+def _parse_pairs(reply):
+    """Parse ``(a, b)`` style pairs from an LLM reply. Returns a list of
+    lowercased ``(a, b)`` tuples (order-normalized)."""
+    out = []
+    for a, b in re.findall(r"\(\s*([\w'\-]+)\s*,\s*([\w'\-]+)\s*\)", str(reply).lower()):
+        pair = tuple(sorted((a.strip(), b.strip())))
+        if pair[0] and pair[1] and pair[0] != pair[1]:
+            out.append(pair)
+    return out
+
+
+def llm_outlier(model, *, backend, n_words=10, n_samples=5, threshold=3,
+                dataset_description=None, seed=0, prompts=None):
+    """Unsupervised semantic-outlier detection (Tan & D'Souza 2025, ``C_outlier``).
+
+    For each topic, asks the LLM to list the words that do not fit the topic, over
+    ``n_samples`` runs, and keeps a word flagged in at least ``threshold`` runs (the
+    paper's 3-of-5 vote). Returns a per-topic list of dicts with ``topic``,
+    ``outliers`` (the flagged words), and ``count``. Unlike :func:`llm_intrusion`
+    there is no planted answer — this surfaces *which* words make a topic incoherent.
+    ``llm-bounded``; see :func:`llm_coherence` for ``backend``/``n_samples`` semantics.
+    """
+    backend = _resolve_llm_call(backend)
+    tmpl = (prompts or LLM_EVAL_PROMPTS)["outlier"]
+    ds = _dataset_clause(dataset_description)
+    out = []
+    for t, words in enumerate(_extract_topics(model, n_words)):
+        allowed = {w.lower() for w in words}
+        votes = Counter()
+        for _ in range(max(1, n_samples)):
+            flagged = _parse_word_list(backend(tmpl.format(dataset=ds, words=", ".join(words))), allowed)
+            votes.update(set(flagged))
+        outliers = [w for w, c in votes.items() if c >= threshold]
+        out.append({"topic": t, "outliers": outliers, "count": len(outliers)})
+    return out
+
+
+def llm_repetitiveness(model, *, backend, n_words=10, n_samples=1,
+                       dataset_description=None, seed=0, prompts=None):
+    """LLM repetitiveness (Tan & D'Souza 2025): is apparent coherence just redundancy?
+
+    Returns a per-topic list of dicts with ``rate`` (``R_rate``: 1 = highly
+    repetitive, 3 = diverse/distinctive; averaged over ``n_samples``),
+    ``duplicate_pairs`` (``R_duplicate``: word pairs the LLM judges the *same*
+    concept), and ``duplicate_count``. A robust coherent topic has a *high* rate and
+    a *low* duplicate count. Complements :func:`topic_semantic_diversity` on the LLM
+    side. ``llm-bounded``.
+    """
+    backend = _resolve_llm_call(backend)
+    P = prompts or LLM_EVAL_PROMPTS
+    ds = _dataset_clause(dataset_description)
+    out = []
+    for t, words in enumerate(_extract_topics(model, n_words)):
+        ws = ", ".join(words)
+        rates = []
+        for _ in range(max(1, n_samples)):
+            v = _parse_rating(backend(P["repetitive_rate"].format(dataset=ds, words=ws)), 1, 3)
+            if v is not None:
+                rates.append(v)
+        allowed = {w.lower() for w in words}
+        pair_votes = Counter()
+        for _ in range(max(1, n_samples)):
+            for pr in _parse_pairs(backend(P["duplicate"].format(dataset=ds, words=ws))):
+                if pr[0] in allowed and pr[1] in allowed:
+                    pair_votes[pr] += 1
+        pairs = [p for p, c in pair_votes.items() if c >= (max(1, n_samples) + 1) // 2]
+        out.append({"topic": t, "rate": float(np.mean(rates)) if rates else float("nan"),
+                    "duplicate_pairs": pairs, "duplicate_count": len(pairs)})
+    return out
+
+
+def llm_diversity(model, *, backend, n_words=10, n_samples=1, max_pairs=None,
+                  dataset_description=None, seed=0, prompts=None):
+    """Cross-topic LLM diversity (Tan & D'Souza 2025, ``D_rate``).
+
+    Rates the thematic distinctiveness of every pair of topics 1-3 (1 = overlapping,
+    3 = distinctive) and averages. Returns ``{"mean": float, "pairwise": [...]}`` with
+    one ``{"topics": (i, j), "rate": r}`` per scored pair. O(K²) calls; pass
+    ``max_pairs`` to score a deterministic random subset. The LLM analog of
+    :func:`topic_diversity` / :func:`topic_semantic_diversity`. ``llm-bounded``.
+    """
+    backend = _resolve_llm_call(backend)
+    tmpl = (prompts or LLM_EVAL_PROMPTS)["diversity"]
+    ds = _dataset_clause(dataset_description)
+    topics = _extract_topics(model, n_words)
+    pairs = list(combinations(range(len(topics)), 2))
+    if max_pairs is not None and len(pairs) > max_pairs:
+        rng = np.random.RandomState(seed)
+        pairs = [pairs[i] for i in sorted(rng.choice(len(pairs), max_pairs, replace=False))]
+    rows = []
+    for i, j in pairs:
+        scores = []
+        for _ in range(max(1, n_samples)):
+            v = _parse_rating(backend(tmpl.format(
+                dataset=ds, words_a=", ".join(topics[i]), words_b=", ".join(topics[j]))), 1, 3)
+            if v is not None:
+                scores.append(v)
+        if scores:
+            rows.append({"topics": (i, j), "rate": float(np.mean(scores))})
+    mean = float(np.mean([r["rate"] for r in rows])) if rows else float("nan")
+    return {"mean": mean, "pairwise": rows}
+
+
+def llm_adversarial(model, *, backend, intruder="shakespeare", n_words=10,
+                    n_samples=5, threshold=3, dataset_description=None, seed=0, prompts=None):
+    """Gold-free adversarial self-check (Tan & D'Souza 2025, ``AdvT_outlier``).
+
+    Plants a known-unrelated word (default ``"shakespeare"``) into each topic's top
+    words and measures how often the LLM's :func:`llm_outlier` detection flags it.
+    This validates the metric *and* the model's capability **without human-gold data**,
+    on any corpus — a low detection rate means the model is too weak for these tasks.
+    Returns ``{"detection_rate": float, "intruder": str, "per_topic": [...]}``.
+    """
+    backend = _resolve_llm_call(backend)
+    tmpl = (prompts or LLM_EVAL_PROMPTS)["outlier"]
+    ds = _dataset_clause(dataset_description)
+    intr = intruder.lower()
+    per_topic, hits = [], []
+    for t, words in enumerate(_extract_topics(model, n_words)):
+        rng = np.random.RandomState(seed + t)
+        planted = list(words) + [intruder]
+        rng.shuffle(planted)
+        allowed = {w.lower() for w in planted}
+        votes = Counter()
+        for _ in range(max(1, n_samples)):
+            votes.update(set(_parse_word_list(backend(tmpl.format(dataset=ds, words=", ".join(planted))), allowed)))
+        caught = votes[intr] >= threshold
+        per_topic.append({"topic": t, "caught": bool(caught), "flagged": votes[intr]})
+        hits.append(caught)
+    return {"detection_rate": float(np.mean(hits)) if hits else float("nan"),
+            "intruder": intruder, "per_topic": per_topic}
+
+
+def llm_alignment(model, docs, *, backend, n_words=10, n_docs=5,
+                  dataset_description=None, seed=0, prompts=None, max_chars=1500):
+    """Topic-document alignment (Tan & D'Souza 2025, ``A_ir-topic`` / ``A_missing-theme``).
+
+    For each topic, takes its top ``n_docs`` documents and asks the LLM, per document,
+    (1) how many topic words are *irrelevant* to it (overrepresentation) and (2) how
+    many document themes are *missing* from the topic words (underrepresentation),
+    averaging over the documents. Returns a per-topic list of dicts with ``topic``,
+    ``irrelevant`` (mean count) and ``missing`` (mean count); lower is better on both.
+    Needs the documents and O(K·n_docs) calls. ``llm-bounded``.
+    """
+    backend = _resolve_llm_call(backend)
+    P = prompts or LLM_EVAL_PROMPTS
+    ds = _dataset_clause(dataset_description)
+    texts = _doc_texts(docs)
+    theta = np.asarray(model.doc_topic)
+    topics = _extract_topics(model, n_words)
+    out = []
+    for t, words in enumerate(topics):
+        ws = ", ".join(words)
+        allowed = {w.lower() for w in words}
+        top = np.argsort(theta[:, t])[::-1][:n_docs]
+        irr, mis = [], []
+        for d in top:
+            doc = str(texts[d])[:max_chars]
+            irr.append(len(_parse_word_list(backend(P["align_irrelevant"].format(dataset=ds, document=doc, words=ws)), allowed)))
+            mis.append(len(_parse_word_list(backend(P["align_missing"].format(dataset=ds, document=doc, words=ws)))))
+        out.append({"topic": t,
+                    "irrelevant": float(np.mean(irr)) if irr else float("nan"),
+                    "missing": float(np.mean(mis)) if mis else float("nan")})
+    return out

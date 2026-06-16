@@ -125,6 +125,18 @@ names.
 These were the candidate inconsistencies (#155). Each is now decided, so the
 `KNOWN_DRIFT` list in `tests/test_naming_conventions.py` is empty.
 
+- **LLM-based evaluation is a namespace, `topica.llm.*`, not flat `llm_*`.** The
+  diagnostics that call an external model (`topica.llm.coherence`,
+  `topica.llm.intrusion`, `topica.llm.select_k`, and the future
+  `outlier`/`repetitiveness`/`diversity`/`alignment`) are grouped under
+  `topica.llm` rather than spread as top-level `llm_*` functions. This is a
+  deliberate carve-out from the flat-function rule: the suite is a coherent,
+  growing family that shares one property the rest of the library does not —
+  `llm-bounded` non-determinism — and the namespace signals that at the call site.
+  `topica.llm.backend` is the same constructor as the top-level `topica.llm_backend`
+  (kept flat because it is also the bring-your-own-model adapter for `TopicGPT` and
+  `label_topics`, not only an eval metric).
+
 - **Temporal index — `times`.** Canonical across models (DTM's positional arg).
   KeyATM now accepts `times=` and keeps `timestamps=` as an alias. A
   `test_temporal_models_accept_times` check enforces `times` on every temporal

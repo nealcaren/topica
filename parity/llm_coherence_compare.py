@@ -5,7 +5,7 @@ Stammbach et al. show an LLM prompted with the crowd-worker instructions correla
 with human topic *ratings* better than NPMI / c_v. This script reproduces that on the
 public Hoyle 2021 data (300 topics: wikitext + nytimes, each fit by mallet / dvae /
 etm, 50 topics each, with mean human ratings and c_npmi already computed). For each
-topic it runs `topica.llm_coherence` and reports the Spearman correlation of the LLM
+topic it runs `topica.llm.coherence` and reports the Spearman correlation of the LLM
 ratings vs the mean human ratings, against the NPMI baseline.
 
 Skips cleanly when the data cannot be fetched or no LLM backend is configured. The
@@ -70,7 +70,7 @@ def run(verbose: bool = True) -> dict:
     data = _load()
     if data is None:
         raise RuntimeError("could not fetch the Hoyle human data")
-    call = topica.llm_backend(MODEL, temperature=0)
+    backend = topica.llm.backend(MODEL, temperature=0)
 
     llm_all, human_all, npmi_all = [], [], []
     rows = []
@@ -83,7 +83,7 @@ def run(verbose: bool = True) -> dict:
             if PER_COMBO:
                 topics, human, npmi = topics[:PER_COMBO], human[:PER_COMBO], npmi[:PER_COMBO]
             word_lists = [t[:N_WORDS] for t in topics]
-            llm = topica.llm_coherence(word_lists, call=call, n_words=N_WORDS)
+            llm = topica.llm.coherence(word_lists, backend=backend, n_words=N_WORDS)
             ok = ~np.isnan(llm)
             llm, human, npmi = llm[ok], np.array(human)[ok], np.array(npmi)[ok]
             rows.append((f"{dataset}/{model_name}", _spearman(llm, human), _spearman(npmi, human), len(llm)))
