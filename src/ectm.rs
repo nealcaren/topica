@@ -330,6 +330,7 @@ pub fn fit_ectm<R: Rng>(
     shrink_kgp: f64,
     keep_nu: bool,
     diagonal: bool,
+    init_spectral: bool,
     rng: &mut R,
 ) -> EctmModel {
     let k = num_topics;
@@ -341,8 +342,12 @@ pub fn fit_ectm<R: Rng>(
 
     let sparse: Vec<(Vec<usize>, Vec<f64>)> = docs.iter().map(|doc| doc_sparse(doc)).collect();
 
-    // Random (seeded) per-topic β to break across-topic symmetry of κT.
-    let mut beta = {
+    // Base per-topic β to break across-topic symmetry of κT. With `init_spectral`
+    // (the default) we use the same deterministic anchor-word spectral init as
+    // STM/CTM/STS (issue #216/#220): a random base β leaves the content model
+    // multimodal, and most seeds collapse to flat/no-group content. Falls back to
+    // a seeded random β if the spectral solve is unavailable (e.g. K > vocab).
+    let random_beta = |rng: &mut R| {
         let mut b = vec![vec![0.0f64; num_types]; k];
         for row in b.iter_mut() {
             let mut s = 0.0;
@@ -355,6 +360,11 @@ pub fn fit_ectm<R: Rng>(
             }
         }
         b
+    };
+    let mut beta = if init_spectral {
+        crate::spectral::spectral_init(docs, k, num_types).unwrap_or_else(|| random_beta(rng))
+    } else {
+        random_beta(rng)
     };
 
     // Background m_v = corpus log word-frequency (+1 smoothing).
@@ -648,13 +658,18 @@ mod tests {
         (docs, groups, periods)
     }
 
-    fn fit_small(seed: u64) -> EctmModel {
+    fn fit_small_init(seed: u64, init_spectral: bool) -> EctmModel {
         let (docs, groups, periods) = growing_contrast_corpus();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         fit_ectm(
             &docs, 2, 4, &groups, 2, &periods, 3, 60, 0.0, 0.0, None, 1.0, 5.0, 5.0, 2.0, true, false,
-            &mut rng,
+            init_spectral, &mut rng,
         )
+    }
+
+    // Default path is spectral init.
+    fn fit_small(seed: u64) -> EctmModel {
+        fit_small_init(seed, true)
     }
 
     #[test]
@@ -691,26 +706,39 @@ mod tests {
     }
 
     #[test]
-    fn deterministic() {
-        let a = fit_small(7);
-        let b = fit_small(7);
+    fn spectral_init_is_seed_independent() {
+        // The spectral base (issue #220) is deterministic, so the whole fit is
+        // bit-exact: different seeds give identical content β (no random-base
+        // multimodal collapse). This is the ECTM half of #216.
+        let a = fit_small_init(7, true);
+        let b = fit_small_init(8, true);
+        for c in 0..a.content_beta.len() {
+            for k in 0..a.num_topics {
+                assert_eq!(
+                    a.content_beta[c][k], b.content_beta[c][k],
+                    "spectral init must be seed-independent (cell {c}, topic {k})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn random_init_is_seeded_not_fixed() {
+        // With init_spectral=false the base β is seeded random: same seed
+        // reproduces, different seeds differ (the pre-#220 behavior, still
+        // available via init="random").
+        let a = fit_small_init(7, false);
+        let b = fit_small_init(7, false);
         for c in 0..a.content_beta.len() {
             for k in 0..a.num_topics {
                 assert_eq!(a.content_beta[c][k], b.content_beta[c][k]);
             }
         }
-        // A different seed should not give identical content β.
-        let cc = fit_small(8);
-        let mut any_diff = false;
-        'outer: for c in 0..a.content_beta.len() {
-            for k in 0..a.num_topics {
-                if a.content_beta[c][k] != cc.content_beta[c][k] {
-                    any_diff = true;
-                    break 'outer;
-                }
-            }
-        }
-        assert!(any_diff, "different seeds should differ");
+        let cc = fit_small_init(8, false);
+        let any_diff = (0..a.content_beta.len()).any(|c| {
+            (0..a.num_topics).any(|k| a.content_beta[c][k] != cc.content_beta[c][k])
+        });
+        assert!(any_diff, "different seeds should differ under random init");
     }
 
     #[test]

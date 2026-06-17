@@ -100,7 +100,7 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("SAGE", "covariates", ("text", "metadata"), "gibbs", "seed-reproducible", (),
            "Sparse additive generative model: the same topic worded differently across groups.",
            "guides/models.md#sage"),
-        _m("ECTM", "covariates", ("text", "metadata", "times"), "variational", "seed-reproducible",
+        _m("ECTM", "covariates", ("text", "metadata", "times"), "variational", "bit-exact",
            ("temporal",),
            "Evolving content topic model: STM content covariates that vary by group and drift across time periods.",
            "guides/models.md#ectm", experimental=True),

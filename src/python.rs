@@ -370,6 +370,12 @@ fn nan() -> f64 {
 fn default_variational() -> String {
     "laplace".to_string()
 }
+/// serde default for `init_spectral` on models saved before the field existed.
+/// Those predate the spectral base (issue #220), so they were fit with a random
+/// base β; default to `false` to describe how they were actually fit.
+fn default_false() -> bool {
+    false
+}
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CtmState {
     num_topics: usize, sigma_shrink: f64, seed: u64, init_spectral: bool, fitted: bool,
@@ -413,6 +419,7 @@ struct EctmState {
     #[serde(default)] converged: bool,
     #[serde(default)] topic_names: Vec<String>,
     #[serde(default = "default_variational")] variational: String,
+    #[serde(default = "default_false")] init_spectral: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StsState {
@@ -6863,6 +6870,7 @@ pub struct ECTM {
     sigma_shrink: f64,
     seed: u64,
     variational: String,
+    init_spectral: bool,
 
     fitted: bool,
     topic_names: Vec<String>,
@@ -6934,15 +6942,19 @@ impl ECTM {
     /// Create an unfitted model. `sigma_shrink` ∈ [0,1] shrinks Σ toward its
     /// diagonal each M-step. `variational` selects the per-document
     /// variational-covariance mode: ``"laplace"`` (default, full ν = H⁻¹) or
-    /// ``"diagonal"`` (mean-field). ECTM always uses a seeded random init for the
-    /// content model, so `seed` matters for reproducibility.
+    /// ``"diagonal"`` (mean-field). `init` is ``"spectral"`` (default;
+    /// deterministic anchor-word base init matching STM/CTM/STS, with the
+    /// group×period content deviations starting at zero as R `stm` does for κ) or
+    /// ``"random"`` (seeded). The spectral base removes the multimodal collapse of
+    /// a random base β (issue #220); with ``init="random"`` `seed` matters.
     #[new]
-    #[pyo3(signature = (num_topics, *, sigma_shrink=0.0, seed=42, variational="laplace"))]
+    #[pyo3(signature = (num_topics, *, sigma_shrink=0.0, seed=42, variational="laplace", init="spectral"))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         sigma_shrink: f64,
         seed: u64,
         variational: &str,
+        init: &str,
     ) -> PyResult<Self> {
         require_experimental("ECTM")?;
         if num_topics < 2 {
@@ -6954,11 +6966,17 @@ impl ECTM {
         if variational != "laplace" && variational != "diagonal" {
             return Err(PyValueError::new_err("variational must be 'laplace' or 'diagonal'"));
         }
+        let init_spectral = match init {
+            "spectral" => true,
+            "random" => false,
+            _ => return Err(PyValueError::new_err("init must be 'spectral' or 'random'")),
+        };
         Ok(ECTM {
             num_topics,
             sigma_shrink,
             seed,
             variational: variational.to_string(),
+            init_spectral,
             fitted: false,
             topic_names: Vec::new(),
             beta: None,
@@ -7130,6 +7148,7 @@ impl ECTM {
         let num_types = corpus.num_types();
         let shrink = self.sigma_shrink;
         let diagonal = self.variational == "diagonal";
+        let init_spectral = self.init_spectral;
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
 
         let (model, corpus) = py.allow_threads(move || {
@@ -7138,7 +7157,7 @@ impl ECTM {
                 crate::ectm::fit_ectm(
                     &corpus.docs, k, num_types, &group_idx, num_groups, &period_idx, num_periods,
                     iters, convergence_tol, shrink, prev_ref, content_prior_var, period_smooth,
-                    period_smooth, interaction_shrink, keep_eta_cov, diagonal, &mut rng,
+                    period_smooth, interaction_shrink, keep_eta_cov, diagonal, init_spectral, &mut rng,
                 )
             });
             (m, corpus)
@@ -7434,6 +7453,7 @@ impl ECTM {
             converged: self.converged,
             topic_names: self.topic_names.clone(),
             variational: self.variational.clone(),
+            init_spectral: self.init_spectral,
         })
     }
 
@@ -7450,7 +7470,7 @@ impl ECTM {
         let eta_cov = arr3_back(s.eta_cov).map(|c| c.mapv(|x| x as f32));
         Ok(ECTM {
             num_topics: s.num_topics, sigma_shrink: s.sigma_shrink, seed: s.seed,
-            variational: s.variational, fitted: s.fitted, topic_names,
+            variational: s.variational, init_spectral: s.init_spectral, fitted: s.fitted, topic_names,
             beta: arr2_back(s.beta), theta: arr2_back(s.theta),
             content_beta: s.content_beta,
             num_groups: s.num_groups, num_periods: s.num_periods,

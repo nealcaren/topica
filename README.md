@@ -136,7 +136,7 @@ Shipped before a published paper and reference-implementation parity (topica's b
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
-| `ECTM` | text, metadata, times | variational | seed-reproducible | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
+| `ECTM` | text, metadata, times | variational | bit-exact | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
 
 <!-- END MODEL TABLE -->
 

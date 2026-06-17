@@ -678,10 +678,16 @@ class ECTM:
         sigma_shrink: float = 0.0,
         seed: int = 42,
         variational: str = "laplace",
+        init: str = "spectral",
     ) -> None:
         """sigma_shrink in [0,1] shrinks Sigma toward its diagonal each M-step.
         variational is "laplace" (default; full nu = H^-1) or "diagonal"
-        (mean-field). ECTM uses a seeded random content init, so seed matters."""
+        (mean-field). init is "spectral" (default; deterministic anchor-word base
+        init matching STM/CTM/STS, with the group-by-period content deviations
+        starting at zero as R stm does for kappa) or "random" (seeded). The
+        spectral base removes the multimodal collapse a random base beta caused
+        (issue #220), so the default fit is bit-exact; with init="random" seed
+        matters."""
         ...
 
     def fit(
