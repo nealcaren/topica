@@ -44,7 +44,9 @@ models it runs about ten times faster than \proglang{R} \pkg{stm} on a single
 core and up to thirty-two times faster multithreaded, and it is at parity with
 the compiled \pkg{MALLET} and \pkg{keyATM} samplers, while reproducing the
 variational models to the bit and the samplers from a fixed seed.
-Each model is validated against its reference implementation. We describe the design, the
+Each model on the default surface is validated against its reference
+implementation where one exists, or by recovery and invariance checks where the
+model is novel. We describe the design, the
 model family, and a principled analysis workflow.
 }
 
@@ -242,6 +244,17 @@ know or care which model produced the matrices they are given. This is what make
 cross-model comparison free: an LDA fit and a clustering of embeddings present
 the same surface, so the analyst can score both with the same coherence measure
 and align their topics with the same tools.
+
+The contract is one of shared attribute \emph{names and shapes}, not always of an
+identical statistical object. For the count-based models \code{doc\_topic} is a
+proper distribution whose rows lie on the probability simplex; for the
+matrix-factorization models (\code{NMF}, \code{LSA}) the same attribute holds
+signed latent coordinates that do not sum to one, and the embedding-cluster
+models expose a hard or soft assignment rather than a generative posterior. The
+diagnostics that assume a simplex (for example held-out perplexity) are therefore
+defined only for the generative models and refuse, rather than silently
+mis-compute, for the others; the conformance suite records exactly which surface
+each model supports.
 
 \subsection{Extensibility falls out of the contract}
 
@@ -1038,7 +1051,9 @@ model, into the validated family as reference results are published.
 \pkg{topica} is released under the Apache-2.0 license and installs from the
 Python Package Index with \code{pip install topica}; the core requires only
 \pkg{NumPy} and \pkg{pandas}. The benchmarks and validation reported here were
-produced with \pkg{topica} 0.22.0 by \code{paper/reproduce.py}. Source code, documentation, and worked examples are available at
+produced with \pkg{topica} 0.23.1 by \code{paper/reproduce.py}; the exact
+hardware, operating system, and reference-toolchain versions are recorded in the
+generated replication report. Source code, documentation, and worked examples are available at
 \url{https://github.com/nealcaren/topica} and
 \url{https://nealcaren.github.io/topica/}. One script, \code{paper/reproduce.py},
 regenerates every empirical number in the paper end to end: the worked-example
