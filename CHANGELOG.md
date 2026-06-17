@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-06-17
+
+### Added
+
+- **Bundled multilingual stopwords** — `topica.stopwords(lang)` returns a
+  `frozenset` for any of **58 languages** (the [stopwords-iso](https://github.com/stopwords-iso/stopwords-iso)
+  lists, MIT licensed, bundled in the wheel), accepting an ISO 639-1 code
+  (`"fr"`) or an English name (`"french"`, case-insensitive) and raising with the
+  available codes on an unknown language; `topica.stopword_languages()` lists
+  them. This gives the cross-lingual models (`InfoCTM`, `ZeroShotTM`) and any
+  non-English corpus a ready stoplist. `ENGLISH_STOPWORDS` is unchanged (the
+  short, stable default); `stopwords("en")` is the larger stopwords-iso English
+  list. (#225)
+
 ## [0.23.0] - 2026-06-17
 
 ### Added
