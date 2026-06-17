@@ -933,6 +933,9 @@ def select_model(
     runs=20,
     model="lda",
     prevalence=None,
+    word_embeddings=None,
+    vocabulary=None,
+    doc_embeddings=None,
     iters=500,
     num_samples=3,
     sample_interval=10,
@@ -947,16 +950,33 @@ def select_model(
     ``fraction`` set, the procedure uses two stages: a short burn-in
     (``burn_in_iters``, defaulting to 20% of ``iters``) followed by
     full training of the top ``ceil(fraction * runs)`` models by their
-    objective (ELBO for STM/CTM, log-likelihood for LDA). This mirrors
-    stm's "run briefly, keep the best ~20%" heuristic.
+    objective (ELBO where the model has one, else log-likelihood, else
+    mean coherence). This mirrors stm's "run briefly, keep the best ~20%"
+    heuristic.
+
+    This is for models whose fit depends on the random seed — the ones that
+    scatter across local optima. ``ETM``, ``ProdLDA``, ``FASTopic``,
+    ``CombinedTM``, and ``ZeroShotTM`` all benefit. ``STM``/``CTM`` use a
+    deterministic spectral init, so every run is identical and multi-start buys
+    nothing — pick one of the stochastic models instead. (``DTM`` is not selected
+    here: its topics are time-varying, so coherence/exclusivity are not a single
+    number; use ``DTM(init="spectral")`` for a deterministic fit.)
 
     Parameters
     ----------
     docs : training documents (``list[list[str]]`` or a ``Corpus``).
     K : number of topics for every run.
     runs : number of random initializations.
-    model : ``"lda"`` (default) or ``"stm"``.
+    model : which model to fit. One of ``"lda"`` (default), ``"stm"``,
+        ``"prodlda"``, ``"etm"``, ``"fastopic"``, ``"combinedtm"``,
+        ``"zeroshottm"``.
     prevalence : covariate design matrix; required when ``model="stm"``.
+    word_embeddings : ``(vocab, dim)`` word-embedding matrix; required when
+        ``model="etm"`` (paired with ``vocabulary``).
+    vocabulary : the word list aligning ``word_embeddings`` rows; required when
+        ``model="etm"``.
+    doc_embeddings : ``(num_docs, dim)`` document-embedding matrix; required when
+        ``model`` is ``"fastopic"``, ``"combinedtm"``, or ``"zeroshottm"``.
     iters : full-training iterations per run (or per survivor when
         ``fraction`` is used).
     num_samples : Gibbs samples per run (LDA only).
@@ -976,34 +996,64 @@ def select_model(
     ``exclusivity``, and ``run_seeds`` arrays of length equal to the
     number of survivors (all ``runs`` when ``fraction`` is ``None``).
     """
-    from . import LDA, STM  # local import to avoid a cycle
+    from . import (  # local import to avoid a cycle
+        LDA, STM, CombinedTM, ETM, FASTopic, ProdLDA, ZeroShotTM,
+    )
 
-    if model not in ("lda", "stm"):
-        raise ValueError("model must be 'lda' or 'stm'")
+    valid = ("lda", "stm", "prodlda", "etm", "fastopic", "combinedtm",
+             "zeroshottm")
+    if model not in valid:
+        raise ValueError(f"model must be one of {valid}, got {model!r}")
     if not isinstance(runs, int) or runs < 1:
         raise ValueError(f"runs must be a positive integer, got {runs!r}")
     if fraction is not None and not (0.0 < fraction <= 1.0):
         raise ValueError(f"fraction must be in (0, 1], got {fraction!r}")
+    # Per-model required data.
+    if model == "stm" and prevalence is None:
+        raise ValueError("model='stm' requires prevalence=")
+    if model == "etm" and (word_embeddings is None or vocabulary is None):
+        raise ValueError("model='etm' requires word_embeddings= and vocabulary=")
+    if model in ("fastopic", "combinedtm", "zeroshottm") and doc_embeddings is None:
+        raise ValueError(f"model={model!r} requires doc_embeddings=")
 
     def _make(s):
         if model == "stm":
             return STM(num_topics=K, seed=s)
+        if model == "prodlda":
+            return ProdLDA(num_topics=K, seed=s)
+        if model == "etm":
+            return ETM(num_topics=K, seed=s)
+        if model == "fastopic":
+            return FASTopic(num_topics=K, seed=s)
+        if model == "combinedtm":
+            return CombinedTM(num_topics=K, seed=s)
+        if model == "zeroshottm":
+            return ZeroShotTM(num_topics=K, seed=s)
         return LDA(num_topics=K, seed=s)
 
     def _fit(m, n_iters):
         if model == "stm":
             m.fit(docs, prevalence, iters=n_iters)
-        else:
+        elif model == "etm":
+            m.fit(docs, word_embeddings, vocabulary, iters=n_iters)
+        elif model in ("fastopic", "combinedtm", "zeroshottm"):
+            m.fit(docs, doc_embeddings, iters=n_iters)
+        elif model == "lda":
             m.fit(docs, iters=n_iters, num_samples=num_samples,
                   sample_interval=sample_interval)
+        else:  # prodlda
+            m.fit(docs, iters=n_iters)
 
     def _objective(m):
-        """Scalar objective for early discard: higher is better."""
+        """Scalar objective for early discard: higher is better. Falls back to
+        mean coherence for models with no scalar bound (e.g. FASTopic)."""
         if hasattr(m, "bound"):
-            return float(m.bound)
+            b = float(m.bound)
+            if not np.isnan(b):
+                return b
         if hasattr(m, "log_likelihood") and callable(m.log_likelihood):
             return float(m.log_likelihood())
-        return float("nan")
+        return float(np.mean(m.coherence(coherence_n)))
 
     run_seeds = [seed + r for r in range(runs)]
 
