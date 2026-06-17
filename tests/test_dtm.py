@@ -128,6 +128,32 @@ class TestApi:
         for t in range(a.num_times):
             assert np.array_equal(a.topic_word(t), b.topic_word(t))
 
+    def test_spectral_init_is_seed_independent(self):
+        # init="spectral" uses the deterministic anchor-word seed, so the fit is
+        # reproducible across seeds (no random static-LDA scatter).
+        docs, times, _ = _drift_corpus()
+        a = DTM(num_topics=2, chain_variance=0.5, seed=2, init="spectral")
+        a.fit(docs, times, iters=12)
+        b = DTM(num_topics=2, chain_variance=0.5, seed=7, init="spectral")
+        b.fit(docs, times, iters=12)
+        for t in range(a.num_times):
+            assert np.array_equal(a.topic_word(t), b.topic_word(t))
+
+    def test_random_init_default_is_seeded_not_fixed(self):
+        # The default (random, gensim-style) seed reproduces for a fixed seed and
+        # differs across seeds.
+        docs, times, _ = _drift_corpus()
+        a = DTM(num_topics=2, chain_variance=0.5, seed=2)
+        a.fit(docs, times, iters=12)
+        b = DTM(num_topics=2, chain_variance=0.5, seed=2)
+        b.fit(docs, times, iters=12)
+        c = DTM(num_topics=2, chain_variance=0.5, seed=7)
+        c.fit(docs, times, iters=12)
+        assert np.array_equal(a.topic_word(0), b.topic_word(0))
+        assert not all(
+            np.array_equal(a.topic_word(t), c.topic_word(t)) for t in range(a.num_times)
+        )
+
     def test_accepts_corpus_object(self):
         docs, times, _ = _drift_corpus()
         c = Corpus.from_documents(docs)

@@ -546,14 +546,37 @@ pub fn fit_dtm<R: Rng>(
     chain_variance: f64,
     obs_variance: f64,
     em_iters: usize,
+    init_spectral: bool,
     rng: &mut R,
 ) -> DtmModel {
     let k = num_topics;
     let v = num_types;
     let t = num_times;
 
-    // Static-LDA seed, then initialize each topic chain.
-    let seed = init_suffstats(docs, v, k, 50, rng);
+    // Seed each topic chain with a static topic-word distribution. With
+    // `init_spectral` (the default) we use the deterministic anchor-word spectral
+    // init shared with STM/CTM/STS/ECTM: a random static-LDA seed leaves the DTM
+    // bound multimodal (issue #216 family), so different seeds land in different
+    // basins. `counts_init` normalizes the seed, so passing the spectral β
+    // distributions directly is sufficient. Falls back to the random static-LDA
+    // seed when the spectral solve is unavailable (e.g. K > vocab) or when the
+    // caller asks for it (init="random", which matches gensim's LdaModel seed).
+    let seed: Vec<Vec<f64>> = match init_spectral
+        .then(|| crate::spectral::spectral_init(docs, k, v))
+        .flatten()
+    {
+        Some(beta) => {
+            // spectral_init returns [k][v] distributions; init_suffstats is [v][k].
+            let mut s = vec![vec![0.0f64; k]; v];
+            for (kk, brow) in beta.iter().enumerate() {
+                for (w, &bw) in brow.iter().enumerate() {
+                    s[w][kk] = bw;
+                }
+            }
+            s
+        }
+        None => init_suffstats(docs, v, k, 50, rng),
+    };
     let mut chains: Vec<Sslm> = (0..k)
         .map(|kk| {
             let mut chain = Sslm::new(v, t, chain_variance, obs_variance);
@@ -683,7 +706,7 @@ mod tests {
 
         // Looser chain variance: the planted drift is abrupt (disjoint vocab per
         // slice), so the random walk needs room to move between slices.
-        let model = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.5, 0.5, 20, &mut rng);
+        let model = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.5, 0.5, 20, false, &mut rng);
 
         // Identify the drifting topic as the one whose top word changes across
         // slices; the other should be the stable {10,11,12} topic.
@@ -731,7 +754,24 @@ mod tests {
     }
 
     #[test]
-    fn deterministic_for_fixed_seed() {
+    fn spectral_init_is_seed_independent() {
+        // The spectral seed is deterministic, so DTM is bit-exact: different
+        // seeds give identical chains (no random static-LDA basin scatter).
+        let v = 12;
+        let docs: Vec<Vec<u32>> = (0..30)
+            .map(|d| (0..6).map(|i| ((i + d) % v) as u32).collect())
+            .collect();
+        let times: Vec<usize> = (0..30).map(|d| d % 3).collect();
+        let mut r1 = ChaCha8Rng::seed_from_u64(5);
+        let mut r2 = ChaCha8Rng::seed_from_u64(99);
+        let m1 = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, true, &mut r1);
+        let m2 = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, true, &mut r2);
+        assert_eq!(m1.topic_word(0, 0), m2.topic_word(0, 0));
+        assert_eq!(m1.topic_word(1, 2), m2.topic_word(1, 2));
+    }
+
+    #[test]
+    fn random_init_reproducible_for_fixed_seed() {
         let v = 12;
         let docs: Vec<Vec<u32>> = (0..30)
             .map(|d| (0..6).map(|i| ((i + d) % v) as u32).collect())
@@ -739,8 +779,8 @@ mod tests {
         let times: Vec<usize> = (0..30).map(|d| d % 3).collect();
         let mut r1 = ChaCha8Rng::seed_from_u64(5);
         let mut r2 = ChaCha8Rng::seed_from_u64(5);
-        let m1 = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, &mut r1);
-        let m2 = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, &mut r2);
+        let m1 = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, false, &mut r1);
+        let m2 = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, false, &mut r2);
         assert_eq!(m1.topic_word(0, 0), m2.topic_word(0, 0));
         assert_eq!(m1.topic_word(1, 2), m2.topic_word(1, 2));
     }
@@ -753,7 +793,7 @@ mod tests {
             .collect();
         let times: Vec<usize> = (0..30).map(|d| d % 3).collect();
         let mut rng = ChaCha8Rng::seed_from_u64(5);
-        let m = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, &mut rng);
+        let m = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, true, &mut rng);
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }

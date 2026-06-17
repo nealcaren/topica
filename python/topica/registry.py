@@ -100,7 +100,7 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("SAGE", "covariates", ("text", "metadata"), "gibbs", "seed-reproducible", (),
            "Sparse additive generative model: the same topic worded differently across groups.",
            "guides/models.md#sage"),
-        _m("ECTM", "covariates", ("text", "metadata", "times"), "variational", "seed-reproducible",
+        _m("ECTM", "covariates", ("text", "metadata", "times"), "variational", "bit-exact",
            ("temporal",),
            "Evolving content topic model: STM content covariates that vary by group and drift across time periods.",
            "guides/models.md#ectm", experimental=True),
@@ -131,7 +131,7 @@ REGISTRY: dict[str, ModelInfo] = {
            "Pseudo-document topic model: pool short texts into pseudo-documents.",
            "guides/short-text.md"),
         # ---- Dynamic & hierarchical ----------------------------------------
-        _m("DTM", "dynamic-hierarchical", ("text", "times"), "variational", "seed-reproducible", ("temporal",),
+        _m("DTM", "dynamic-hierarchical", ("text", "times"), "variational", "seed-reproducible", ("temporal",),  # random seed default (gensim-style); init="spectral" is deterministic
            "Dynamic topic model: a fixed topic set whose word distributions drift across time slices.",
            "guides/models.md#dtm"),
         _m("DETM", "dynamic-hierarchical", ("text", "embeddings", "times"), "vae", "seed-reproducible",

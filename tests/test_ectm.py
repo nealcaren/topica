@@ -45,9 +45,9 @@ def _corpus(reps=60, drift=True):
     return docs, groups, times
 
 
-def _fit(seed=1, drift=True, **kw):
+def _fit(seed=1, drift=True, init="spectral", **kw):
     docs, groups, times = _corpus(drift=drift)
-    m = topica.ECTM(num_topics=2, seed=seed)
+    m = topica.ECTM(num_topics=2, seed=seed, init=init)
     m.fit(docs, times=times, content=groups, iters=60,
           period_smooth=5.0, interaction_shrink=2.0, **kw)
     return m
@@ -72,11 +72,20 @@ def test_shapes_and_normalization():
             np.testing.assert_allclose(cw.sum(axis=1), 1.0, atol=1e-9)
 
 
-def test_determinism():
-    a, b = _fit(seed=3), _fit(seed=3)
+def test_spectral_init_is_seed_independent():
+    # The default spectral base (#220) is deterministic, so the fit is bit-exact:
+    # different seeds give identical topics and content. No random-base collapse.
+    a, b = _fit(seed=3), _fit(seed=4)
     assert np.array_equal(a.topic_word, b.topic_word)
     assert np.array_equal(a.content_word_dist(1, 2), b.content_word_dist(1, 2))
-    c = _fit(seed=4)
+
+
+def test_random_init_is_seeded_not_fixed():
+    # init="random" keeps the pre-#220 behavior: same seed reproduces, different
+    # seeds differ.
+    a, b = _fit(seed=3, init="random"), _fit(seed=3, init="random")
+    assert np.array_equal(a.content_word_dist(1, 2), b.content_word_dist(1, 2))
+    c = _fit(seed=4, init="random")
     assert not np.array_equal(a.content_word_dist(1, 2), c.content_word_dist(1, 2))
 
 

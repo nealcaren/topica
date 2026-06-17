@@ -678,10 +678,16 @@ class ECTM:
         sigma_shrink: float = 0.0,
         seed: int = 42,
         variational: str = "laplace",
+        init: str = "spectral",
     ) -> None:
         """sigma_shrink in [0,1] shrinks Sigma toward its diagonal each M-step.
         variational is "laplace" (default; full nu = H^-1) or "diagonal"
-        (mean-field). ECTM uses a seeded random content init, so seed matters."""
+        (mean-field). init is "spectral" (default; deterministic anchor-word base
+        init matching STM/CTM/STS, with the group-by-period content deviations
+        starting at zero as R stm does for kappa) or "random" (seeded). The
+        spectral base removes the multimodal collapse a random base beta caused
+        (issue #220), so the default fit is bit-exact; with init="random" seed
+        matters."""
         ...
 
     def fit(
@@ -1096,10 +1102,14 @@ class DTM:
         chain_variance: float = 0.005,
         obs_variance: float = 0.5,
         seed: int = 42,
+        init: str = "random",
     ) -> None:
         """num_topics >= 2. chain_variance controls how much a topic may drift
         between adjacent slices (larger = freer). alpha, chain_variance,
-        obs_variance must be > 0."""
+        obs_variance must be > 0. init is "random" (default; a seeded static-LDA
+        seed, matching gensim's LdaSeqModel) or "spectral" (the deterministic
+        anchor-word seed shared with STM/CTM/STS/ECTM, reproducible across seeds;
+        choose it when you want a single deterministic fit)."""
         ...
 
     def fit(
