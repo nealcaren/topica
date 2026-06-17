@@ -916,7 +916,12 @@ pub fn fit_ctm<R: Rng>(
         }
         b
     };
-    let mut beta = if init_spectral && content.is_none() {
+    // Spectral applies with or without a content covariate: R `stm` initializes
+    // the base topics spectrally even in the content (SAGE) model and starts the
+    // content deviations κ at zero. Gating spectral off for content models left
+    // the base β random, which is strongly multimodal — most seeds collapse to a
+    // flat, no-group-content optimum (issue #216).
+    let mut beta = if init_spectral {
         crate::spectral::spectral_init(docs, k, num_types).unwrap_or_else(|| random_beta(rng))
     } else {
         random_beta(rng)
@@ -940,8 +945,8 @@ pub fn fit_ctm<R: Rng>(
         for v in 0..num_types {
             m_bg[v] = (freq[v] / total).ln();
         }
-        // Seed the topic deviations κ_t from the per-topic random β so topics
-        // start differentiated. With κ all zero, build_content_beta makes every
+        // Seed the topic deviations κ_t from the base β (spectral when requested,
+        // else random) so topics start differentiated. With κ all zero, build_content_beta makes every
         // topic identical to the background m — a symmetric fixed point the
         // E-step cannot escape (θ stays uniform, so the soft counts never give
         // κ_t any across-topic signal). Setting κ_t[k] = ln β_k − m makes the
