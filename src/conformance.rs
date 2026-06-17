@@ -13,7 +13,7 @@ use crate::variational::LogisticNormalModel;
 /// `LogisticNormalModel` trait by the typed helper [`check_logistic_normal`],
 /// since `&dyn Estimator` cannot be downcast to it; a registered logistic-normal
 /// model is wired through that helper in the conformance test.
-#[allow(dead_code)]
+#[cfg_attr(not(test), allow(dead_code))]  // test-only contract checker; live under `cargo test`
 pub fn check_conformance(m: &dyn Estimator) -> Vec<String> {
     let mut v = Vec::new();
     let k = m.num_topics();
@@ -36,7 +36,7 @@ pub fn check_conformance(m: &dyn Estimator) -> Vec<String> {
 
 /// Tier-2 shape check for Dirichlet (collapsed-Gibbs) models: alpha length,
 /// doc_lengths length, and theta_draws nesting.
-#[allow(dead_code)]
+#[cfg_attr(not(test), allow(dead_code))]  // test-only contract checker; live under `cargo test`
 pub fn check_dirichlet(m: &dyn DirichletModel) -> Vec<String> {
     let mut v = Vec::new();
     let k = m.num_topics();
@@ -67,7 +67,7 @@ pub fn check_dirichlet(m: &dyn DirichletModel) -> Vec<String> {
 
 /// Tier-2 shape check for logistic-normal models: eta_mean is (D, eta_dim) and
 /// eta_cov is (D, eta_dim²) with a consistent eta_dim.
-#[allow(dead_code)]
+#[cfg_attr(not(test), allow(dead_code))]  // test-only contract checker; live under `cargo test`
 pub fn check_logistic_normal(m: &dyn LogisticNormalModel) -> Vec<String> {
     let mut v = Vec::new();
     let dim = m.eta_dim();
@@ -95,7 +95,7 @@ pub fn check_logistic_normal(m: &dyn LogisticNormalModel) -> Vec<String> {
 /// its fitted struct reports from `Estimator::model_family`, and any Tier-0
 /// Estimator method it structurally cannot provide — returned empty by design,
 /// the Rust analog of `conformance.py`'s `EXEMPT`.
-#[allow(dead_code)]
+#[cfg_attr(not(test), allow(dead_code))]  // test-only contract checker; live under `cargo test`
 pub struct RegistryEntry {
     pub name: &'static str,
     pub family: ModelFamily,
@@ -117,7 +117,7 @@ pub struct RegistryEntry {
 /// match the Python registry. The embedding-cluster models (`BERTopic`,
 /// `Top2Vec`) carry a `topic_word`/`doc_topic` from their Rust struct and so
 /// participate here.
-#[allow(dead_code)]
+#[cfg_attr(not(test), allow(dead_code))]  // test-only contract checker; live under `cargo test`
 pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
     // Logistic-normal variational (eta posterior).
     RegistryEntry { name: "STM", family: ModelFamily::LogisticNormal, exempt: &[] },
