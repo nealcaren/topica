@@ -11,7 +11,11 @@ Each step runs as an isolated subprocess with its own timeout and unbuffered
 output, so one stalled reference toolchain cannot hang the whole run silently
 (it is marked TIMEOUT and the rest proceeds). Steps whose toolchain is absent
 (Rscript+stm/keyATM, the mallet CLI) skip themselves cleanly and are reported as
-SKIP rather than failure.
+SKIP rather than failure -- so a contributor without those tools still gets a
+useful run. For the archival run that backs the paper's numbers, pass --strict:
+then SKIP and TIMEOUT also count as failures (every toolchain must be present
+and every step must actually reproduce), so a green --strict run is the evidence
+the manuscript's Sections 5-6 cite.
 
 Usage (from the repo root):
 
@@ -19,6 +23,7 @@ Usage (from the repo root):
     ... --no-benchmarks    # Sections 5 + 7 only (deterministic, machine-independent)
     ... --only 6           # one section
     ... --stamp "2026-06-16"   # provenance date written into the report
+    ... --strict           # SKIP/TIMEOUT are failures (archival provenance run)
 
 Performance numbers (Section 6) are hardware-dependent. The report records the
 machine so the absolute timings are interpretable; relative speedups are the
@@ -158,6 +163,12 @@ def main():
     ap.add_argument("--no-benchmarks", action="store_true", help="skip Section 6")
     ap.add_argument("--only", type=int, choices=[5, 6, 7], help="run one section")
     ap.add_argument("--stamp", default="", help="provenance date for the report")
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="treat SKIP and TIMEOUT as failures too (for an archival "
+             "full-provenance run where every toolchain must be present)",
+    )
     args = ap.parse_args()
 
     GEN.mkdir(parents=True, exist_ok=True)
@@ -225,9 +236,24 @@ def main():
     report.write_text("\n".join(lines), encoding="utf-8")
     print(f"\nReport: {report.relative_to(ROOT)}")
 
-    # nonzero exit if anything hard-failed (SKIP/TIMEOUT are not failures)
-    hard = [r for r in results if r[2].startswith("FAIL")]
-    sys.exit(1 if hard else 0)
+    # Default: nonzero exit only on hard FAIL (SKIP/TIMEOUT are tolerated, since
+    # a contributor may not have R/MALLET installed). With --strict, a SKIP or
+    # TIMEOUT is also a failure — use it for the archival run that backs the
+    # paper's numbers, where every toolchain must be present and every step must
+    # actually reproduce.
+    def _bad(status):
+        if status.startswith("FAIL"):
+            return True
+        if args.strict and status in ("SKIP", "TIMEOUT"):
+            return True
+        return False
+
+    bad = [r for r in results if _bad(r[2])]
+    if bad:
+        kinds = ", ".join(sorted({r[2].split("(")[0] for r in bad}))
+        print(f"\n{len(bad)} step(s) not reproduced ({kinds})"
+              + (" — strict mode" if args.strict else ""))
+    sys.exit(1 if bad else 0)
 
 
 if __name__ == "__main__":

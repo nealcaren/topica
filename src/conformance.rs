@@ -127,6 +127,9 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
     // Collapsed-Gibbs / Dirichlet doc-topic posterior.
     RegistryEntry { name: "LDA", family: ModelFamily::Dirichlet, exempt: &[] },
     RegistryEntry { name: "DMR", family: ModelFamily::Dirichlet, exempt: &[] },
+    // GDMR shares the `TopicModel` struct with LDA/DMR, so it is covered by the
+    // same `topicmodel_conforms` test; listed here under its user-facing name.
+    RegistryEntry { name: "GDMR", family: ModelFamily::Dirichlet, exempt: &[] },
     RegistryEntry { name: "LabeledLDA", family: ModelFamily::Dirichlet, exempt: &[] },
     RegistryEntry { name: "SeededLDA", family: ModelFamily::Dirichlet, exempt: &[] },
     RegistryEntry { name: "KeyATM", family: ModelFamily::Dirichlet, exempt: &[] },
@@ -172,6 +175,6 @@ mod registry_tests {
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
         // Estimator-backed Rust struct).
-        assert_eq!(RUST_ESTIMATORS.len(), 25, "registry size drifted from the Python REGISTRY");
+        assert_eq!(RUST_ESTIMATORS.len(), 26, "registry size drifted from the Python REGISTRY");
     }
 }
