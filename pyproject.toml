@@ -59,6 +59,11 @@ python-source = "python"
 module-name = "topica._topica"
 features = ["python"]
 # Ship the small vendored example dataset (topica.datasets.load_gadarian); larger
-# datasets are fetched on demand, not bundled.
-include = ["python/topica/datasets/_data/*.csv"]
+# datasets are fetched on demand, not bundled. Also ship the bundled multilingual
+# stopword lists (topica.stopwords; stopwords-iso, MIT) and their license.
+include = [
+    "python/topica/datasets/_data/*.csv",
+    "python/topica/_data/stopwords_iso.json",
+    "python/topica/_data/STOPWORDS_ISO_LICENSE.txt",
+]
 # Build a single abi3 wheel per platform (works on CPython >=3.9).
