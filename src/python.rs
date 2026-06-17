@@ -448,6 +448,7 @@ struct DtmState {
     fitted: bool, num_times: usize, bound: f64,
     topic_words: Option<Vec<Vec<Vec<f64>>>>, corpus: Option<corpus::Corpus>,
     #[serde(default)] topic_names: Vec<String>,
+    #[serde(default = "default_false")] init_spectral: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SldaState {
@@ -8809,6 +8810,7 @@ pub struct DTM {
     chain_variance: f64,
     obs_variance: f64,
     seed: u64,
+    init_spectral: bool,
 
     fitted: bool,
     topic_names: Vec<String>,
@@ -8834,15 +8836,22 @@ impl DTM {
     /// Create an unfitted model. `chain_variance` controls how much a topic may
     /// drift between adjacent slices (larger = freer to change; gensim's default
     /// is 0.005). `obs_variance` is the observation noise; `alpha` the Dirichlet
-    /// concentration on document-topic proportions.
+    /// concentration on document-topic proportions. `init` is ``"random"``
+    /// (default; a seeded static-LDA seed, matching gensim's `LdaSeqModel`, which
+    /// seeds from a random `LdaModel`) or ``"spectral"`` (the deterministic
+    /// anchor-word seed shared with STM/CTM/STS/ECTM, which makes the fit
+    /// reproducible across seeds and avoids the multimodal scatter a random seed
+    /// can fall into). The default tracks DTM's reference implementation; choose
+    /// ``"spectral"`` when you want a single deterministic fit.
     #[new]
-    #[pyo3(signature = (num_topics, *, alpha=0.01, chain_variance=0.005, obs_variance=0.5, seed=42))]
+    #[pyo3(signature = (num_topics, *, alpha=0.01, chain_variance=0.005, obs_variance=0.5, seed=42, init="random"))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         alpha: f64,
         chain_variance: f64,
         obs_variance: f64,
         seed: u64,
+        init: &str,
     ) -> PyResult<Self> {
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
@@ -8852,12 +8861,18 @@ impl DTM {
                 "alpha, chain_variance, obs_variance must be > 0",
             ));
         }
+        let init_spectral = match init {
+            "spectral" => true,
+            "random" => false,
+            _ => return Err(PyValueError::new_err("init must be 'spectral' or 'random'")),
+        };
         Ok(DTM {
             num_topics,
             alpha,
             chain_variance,
             obs_variance,
             seed,
+            init_spectral,
             fitted: false,
             topic_names: Vec::new(),
             num_times: 0,
@@ -8915,11 +8930,13 @@ impl DTM {
         let num_types = corpus.num_types();
         let k = self.num_topics;
         let (alpha, cv, ov) = (self.alpha, self.chain_variance, self.obs_variance);
+        let init_spectral = self.init_spectral;
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
 
         let (model, corpus) = py.allow_threads(move || {
             let m = dtm::fit_dtm(
-                &corpus.docs, &times_u, num_types, k, num_times, alpha, cv, ov, iters, &mut rng,
+                &corpus.docs, &times_u, num_types, k, num_times, alpha, cv, ov, iters,
+                init_spectral, &mut rng,
             );
             (m, corpus)
         });
@@ -9122,6 +9139,7 @@ impl DTM {
             num_times: self.num_times, bound: self.bound,
             topic_words: self.topic_words.clone(), corpus: self.corpus.clone(),
             topic_names: self.topic_names.clone(),
+            init_spectral: self.init_spectral,
         })
     }
 
@@ -9136,8 +9154,8 @@ impl DTM {
         };
         Ok(DTM {
             num_topics: s.num_topics, alpha: s.alpha, chain_variance: s.chain_variance,
-            obs_variance: s.obs_variance, seed: s.seed, fitted: s.fitted,
-            topic_names,
+            obs_variance: s.obs_variance, seed: s.seed, init_spectral: s.init_spectral,
+            fitted: s.fitted, topic_names,
             num_times: s.num_times, bound: s.bound, topic_words: s.topic_words, corpus: s.corpus,
         })
     }
