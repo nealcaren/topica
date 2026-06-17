@@ -142,6 +142,47 @@ def test_invalid_fraction_raises():
 
 
 # ---------------------------------------------------------------------------
+# Stochastic models: the ones multi-start actually helps (ETM/ProdLDA/etc.)
+# ---------------------------------------------------------------------------
+
+_RNG = np.random.default_rng(0)
+_VOCAB = sorted({w for d in DOCS for w in d})
+_WORD_EMB = _RNG.standard_normal((len(_VOCAB), 8))
+_DOC_EMB = _RNG.standard_normal((len(DOCS), 8))
+
+
+class TestSelectModelStochastic:
+    @pytest.mark.parametrize("model", ["prodlda", "etm", "fastopic", "combinedtm", "zeroshottm"])
+    def test_runs_and_shapes(self, model):
+        kw = dict(runs=2, iters=20, seed=0)
+        if model == "etm":
+            kw.update(word_embeddings=_WORD_EMB, vocabulary=_VOCAB)
+        elif model in ("fastopic", "combinedtm", "zeroshottm"):
+            kw.update(doc_embeddings=_DOC_EMB)
+        result = topica.select_model(DOCS, K=2, model=model, **kw)
+        assert isinstance(result, SelectModelResult)
+        assert len(result.models) == 2
+        assert len(result.coherence) == 2
+
+    def test_etm_requires_embeddings(self):
+        with pytest.raises(ValueError, match="word_embeddings"):
+            topica.select_model(DOCS, K=2, runs=2, model="etm")
+
+    def test_fastopic_requires_doc_embeddings(self):
+        with pytest.raises(ValueError, match="doc_embeddings"):
+            topica.select_model(DOCS, K=2, runs=2, model="fastopic")
+
+    def test_fastopic_fraction_uses_coherence_objective(self):
+        # FASTopic has no scalar bound; the burn-in selector must fall back to
+        # coherence rather than crashing on NaN.
+        result = topica.select_model(
+            DOCS, K=2, runs=4, model="fastopic", doc_embeddings=_DOC_EMB,
+            iters=20, seed=0, fraction=0.5,
+        )
+        assert 1 <= len(result.models) <= 4
+
+
+# ---------------------------------------------------------------------------
 # plot_models
 # ---------------------------------------------------------------------------
 
