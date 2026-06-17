@@ -82,6 +82,13 @@ def _fit_model(name: str, factory):
         model.fit(_TOY, features, iters=20, check_every=10)
         return model
 
+    # GDMR: like DMR but a smooth (Legendre) prior over a continuous covariate;
+    # the factory uses degrees=[2], i.e. one continuous covariate column.
+    if name == "GDMR":
+        features = np.linspace(0.0, 1.0, len(_TOY)).reshape(-1, 1)
+        model.fit(_TOY, features, iters=20, check_every=10)
+        return model
+
     # SAGE: positional `groups` is a per-document group label
     if name == "SAGE":
         groups = ["animal"] * 15 + ["space"] * 15
