@@ -5,7 +5,7 @@ in each (R-process startup, library load, and preprocessing are excluded), and
 prints a speedup table. Both engines are pinned to the same number of
 iterations so the comparison is per-unit-work, not convergence-dependent:
 
-  - STM:    fixed EM iterations (R `max.em.its` + `emtol=0`; topica `em_tol=0`).
+  - STM:    fixed EM iterations (R `max.em.its` + `emtol=0`; topica `convergence_tol=0`).
   - keyATM: fixed Gibbs sweeps (the natural iteration unit for both).
 
 topica STM is single-threaded (variational EM); keyATM is timed single-threaded
@@ -99,10 +99,10 @@ def bench_stm() -> dict:
         out = _rscript(f'dir <- "{d}"\nKVAL <- {STM_K}\nNITERS <- {STM_EM_ITERS}\n' + _R_STM)
     r_time = float([ln for ln in out.splitlines() if ln.startswith("R_TIME")][0].split()[1])
 
-    # topica: same fixed EM iterations (em_tol=0 disables early stop).
+    # topica: same fixed EM iterations (convergence_tol=0 disables early stop).
     t0 = time.perf_counter()
     TopicaSTM(num_topics=STM_K, init="spectral").fit(
-        docs, X, prevalence_names=feat, iters=STM_EM_ITERS, em_tol=0.0
+        docs, X, prevalence_names=feat, iters=STM_EM_ITERS, convergence_tol=0.0
     )
     tt_time = time.perf_counter() - t0
     return {
