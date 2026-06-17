@@ -316,7 +316,7 @@ def _bench_stm(
             f"t0 = time.perf_counter()\n"
             f"topica.STM(num_topics={STM_K}, init='spectral').fit("
             f"    docs, X, prevalence_names=feat,"
-            f"    iters={STM_EM_ITERS}, em_tol=0.0)\n"
+            f"    iters={STM_EM_ITERS}, convergence_tol=0.0)\n"
             "print('FIT_TIME', time.perf_counter()-t0)\n"
         )
         stdout, tt_rss = peak_rss_mb([PYTHON, "-c", py_script])
@@ -1008,7 +1008,7 @@ def bench_tomotopy_matrix(
                 f"data = json.load(open({docs_pkl!r}))\n"
                 "docs = data['docs']\n"
                 f"t0 = time.perf_counter()\n"
-                f"topica.CTM(num_topics={K}).fit(docs, iters={ITERS}, em_tol=0.0)\n"
+                f"topica.CTM(num_topics={K}).fit(docs, iters={ITERS}, convergence_tol=0.0)\n"
                 "print('FIT_TIME', time.perf_counter() - t0)\n"
             )
             py_tomo = (

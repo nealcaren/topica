@@ -1,28 +1,36 @@
-"""Cross-implementation check for topica's ProdLDA against a faithful PyTorch
-reference of AVITM (Srivastava & Sutton 2017).
+"""Cross-implementation check for topica's ZeroShotTM against a faithful PyTorch
+reference of the contextualized topic model (Bianchi, Nozza & Hovy 2021).
 
-Both are the same model: an autoencoding-variational LDA whose word-level mixture
-is a product of experts, ``softmax(beta . theta)`` with unnormalized beta. The
-reference here is a compact PyTorch implementation built to the paper's recipe and
-matching topica's exact formulation -- softplus encoder, affine-free batch
-normalization on the mean/logvar heads and the decoder, the Laplace approximation
-to the Dirichlet prior (eq. 6), and high-momentum Adam (beta1 = 0.99). topica's
-network is hand-coded in Rust with no autograd; PyTorch differentiates the same
-graph. Initialization, RNG, and the autograd vs hand-coded backward differ, so
-exact agreement is impossible -- we hold them to a statistical-equivalence bar on
-a shared task: the SAME tokenized corpus, the same vocabulary, the same topic
-count and optimizer schedule.
+ZeroShotTM is ProdLDA (AVITM; Srivastava & Sutton 2017) with one change: the
+encoder reads *only* a caller-supplied document embedding -- no bag of words at
+all. The decoder is unchanged -- a product-of-experts ``softmax(beta . theta)``
+reconstructing the bag of words over the V-vocabulary. Because topics are inferred
+from the embedding alone, a document embedded with a multilingual encoder maps to
+the trained topics without any bag of words; the embedding is only an encoder
+input and is never reconstructed.
+
+The reference here reuses the shared AVITM backbone in ``refs.avitm`` (softplus
+encoder built ``fc1, fc2, mu, lv`` with affine-free batchnorm heads, the Laplace
+approximation to the Dirichlet prior, the reparameterization trick, and the
+Dirichlet-Laplace KL) and the same ProdLDA decoder + training loop as
+``prodlda_compare.py``. The only difference from ProdLDA is that the encoder is
+built at ``build_encoder(v_in = E, ...)`` and fed the document embedding alone --
+no normalized bag of words enters the encoder. topica's network is hand-coded in
+Rust with no autograd; PyTorch differentiates the same graph. Initialization,
+RNG, and autograd-vs-hand-coded backward differ, so exact agreement is
+impossible -- we hold them to a statistical-equivalence bar on a shared task: the
+SAME planted token corpus, the SAME per-document embeddings, the same topic count
+and optimizer schedule.
 
 Metrics, computed identically for both with topica's own coherence:
   - topic coherence (c_v, c_npmi) over the shared token corpus
   - topic diversity (TU): fraction of distinct words across the top lists
-  - doc-topic agreement: NMI of the argmax topic vs the true newsgroup label, and
+  - doc-topic agreement: NMI of the argmax topic vs the true planted block, and
     cross-NMI between the two implementations
 
-Skips cleanly when torch / sklearn are unavailable or the corpus cannot be
-fetched. Run directly:
+Skips cleanly when torch is unavailable. Run directly:
 
-    python parity/prodlda_compare.py
+    python parity/zeroshot_compare.py
 """
 
 from __future__ import annotations
@@ -41,24 +49,31 @@ from refs.avitm import (  # noqa: E402
     reparameterize,
 )
 
-GROUPS = [
-    "rec.sport.baseball",
-    "sci.space",
-    "talk.politics.guns",
-    "comp.graphics",
-    "sci.med",
-]
-NUM_TOPICS = 10
+# --- Shared task and optimizer schedule --------------------------------------
+#
+# Planted-block synthetic corpus (mirrors tests/test_combinedtm.py): K word
+# blocks; each document draws its tokens from one block and carries an embedding
+# that one-hot-encodes its block (plus small noise). The embedding is the only
+# encoder signal ZeroShotTM gets, so it must carry the block structure cleanly
+# for either implementation to recover the planted topics.
+
+NUM_BLOCKS = 5
+BLOCK = 10           # words per block -> vocab = NUM_BLOCKS * BLOCK
+NUM_DOCS = 600
+DOC_LEN = 25
+EMB_DIM = NUM_BLOCKS  # one-hot over blocks (+ noise)
+NUM_TOPICS = NUM_BLOCKS
 TOP_N = 10
-SEED = 0
 
 # Shared optimizer schedule (kept modest so the parity run finishes in minutes).
 ALPHA = 1.0
 HIDDEN = 100
 DROPOUT = 0.2
-EPOCHS = 120
+EPOCHS = 150
 BATCH = 200
 LR = 0.002
+
+SEEDS = (0, 1, 2)
 
 
 def available() -> bool:
@@ -70,79 +85,80 @@ def available() -> bool:
     return True
 
 
-def load():
-    from sklearn.datasets import fetch_20newsgroups
-    from sklearn.feature_extraction.text import CountVectorizer
-
-    data = fetch_20newsgroups(
-        subset="train", categories=GROUPS, remove=("headers", "footers", "quotes"),
-        random_state=SEED,
+def load(seed: int = 0):
+    """Build a planted-block token corpus and per-document embeddings. The
+    embedding one-hot-encodes the document's dominant block (plus small Gaussian
+    noise); it is the only signal the encoder sees. Returns
+    ``(token_docs, embeddings, labels, vocab)``; data is fixed across fit seeds so
+    topica and the reference see exactly the same task each run."""
+    rng = np.random.default_rng(seed)
+    vocab = [f"b{b}w{i}" for b in range(NUM_BLOCKS) for i in range(BLOCK)]
+    token_docs, embs, labels = [], [], []
+    for d in range(NUM_DOCS):
+        b = d % NUM_BLOCKS
+        token_docs.append(
+            [f"b{b}w{int(rng.integers(BLOCK))}" for _ in range(DOC_LEN)]
+        )
+        e = np.zeros(EMB_DIM)
+        e[b] = 3.0
+        e = e + rng.normal(0.0, 0.1, EMB_DIM)
+        embs.append(e)
+        labels.append(b)
+    return (
+        token_docs,
+        np.asarray(embs, dtype=np.float64),
+        np.asarray(labels),
+        vocab,
     )
-    raw = [d.strip() for d in data.data]
-    labels = np.array(data.target)
-    keep = [i for i, d in enumerate(raw) if len(d.split()) >= 20]
-    raw, labels = [raw[i] for i in keep], labels[keep]
-    cv = CountVectorizer(
-        min_df=10, max_df=0.4, stop_words="english", token_pattern=r"(?u)\b[a-z]{3,}\b"
-    )
-    cv.fit([d.lower() for d in raw])
-    vset = set(cv.get_feature_names_out())
-    analyzer = cv.build_analyzer()
-    token_docs, mask = [], []
-    for d in raw:
-        toks = [t for t in analyzer(d.lower()) if t in vset]
-        ok = len(toks) >= 5
-        mask.append(ok)
-        if ok:
-            token_docs.append(toks)
-    return token_docs, labels[np.array(mask)], sorted(vset)
 
 
-# --- PyTorch reference: AVITM / ProdLDA --------------------------------------
+# --- PyTorch reference: ZeroShotTM --------------------------------------------
 #
-# The encoder backbone (fc1, fc2, mu, lv + affine-free batchnorm heads), the
-# Laplace-Dirichlet prior, the reparameterization trick, and the KL are shared
-# with the InfoCTM parity reference via ``refs.avitm``. The decoder and training
-# loop below are ProdLDA-specific. The encoder submodule is constructed before
-# ``beta``, so the RNG draw order (fc1, fc2, mu, lv, beta) is unchanged.
+# Identical to the ProdLDA reference (prodlda_compare.py) except the encoder is
+# built at ``v_in = E`` and fed the document embedding alone -- no bag of words
+# enters the encoder. The decoder still reconstructs the V-vocabulary. The
+# Laplace-Dirichlet prior, reparameterization, KL, and batchnorm are unchanged
+# and come from ``refs.avitm``; nothing is re-implemented here.
 
 
-def _build_reference(v: int, k: int):
+def _build_reference(v: int, e: int, k: int):
     import torch
     import torch.nn as nn
 
-    class ProdLDARef(nn.Module):
+    class ZeroShotTMRef(nn.Module):
         def __init__(self):
             super().__init__()
-            self.enc = build_encoder(v, k, HIDDEN, dropout=DROPOUT)
+            # ZeroShotTM: encoder input is the document embedding alone (E).
+            self.enc = build_encoder(e, k, HIDDEN, dropout=DROPOUT)
             self.drop = nn.Dropout(DROPOUT)
-            self.beta = nn.Linear(k, v, bias=False)  # weight is V x K; logits = theta @ W^T
+            self.beta = nn.Linear(k, v, bias=False)  # weight V x K; logits = theta @ W^T
             self.bn_dec = nn.BatchNorm1d(v, affine=False, eps=1e-5, momentum=0.1)
 
-        def encode(self, xn):
-            return self.enc.encode(xn)
+        def encode(self, emb):
+            return self.enc.encode(emb)
 
-        def forward(self, xn):
-            mu, lv = self.encode(xn)
+        def forward(self, emb):
+            mu, lv = self.encode(emb)
             z = reparameterize(mu, lv)
             theta = self.drop(torch.softmax(z, dim=1))
             logits = self.bn_dec(self.beta(theta))
             return torch.log_softmax(logits, dim=1), mu, lv
 
-    return ProdLDARef()
+    return ZeroShotTMRef()
 
 
-def _train_reference(counts: np.ndarray, k: int, seed: int):
+def _train_reference(counts: np.ndarray, emb: np.ndarray, k: int, seed: int):
     import torch
 
     torch.manual_seed(seed)
     np.random.seed(seed)
     v = counts.shape[1]
-    model = _build_reference(v, k)
+    e = emb.shape[1]
+    model = _build_reference(v, e, k)
     prior_mu, prior_var = laplace_prior(k, ALPHA)
 
     cnt = torch.tensor(counts, dtype=torch.float32)
-    norm = cnt / cnt.sum(1, keepdim=True).clamp_min(1.0)
+    em = torch.tensor(emb, dtype=torch.float32)
     n = cnt.shape[0]
     opt = torch.optim.Adam(model.parameters(), lr=LR, betas=(0.99, 0.999))
 
@@ -154,7 +170,8 @@ def _train_reference(counts: np.ndarray, k: int, seed: int):
             if len(idx) < 2:
                 continue
             opt.zero_grad()
-            recon, mu, lv = model(norm[idx])
+            # Encoder sees only the embedding; the decoder still reconstructs BoW.
+            recon, mu, lv = model(em[idx])
             rl = -(cnt[idx] * recon).sum(1)
             kl = dirichlet_laplace_kl(mu, lv, prior_mu, prior_var, k)
             (rl + kl).mean().backward()
@@ -164,7 +181,7 @@ def _train_reference(counts: np.ndarray, k: int, seed: int):
     with torch.no_grad():
         beta = model.beta.weight.detach().t()  # K x V
         topic_word = torch.softmax(beta, dim=1).numpy()
-        mu, _ = model.encode(norm)
+        mu, _ = model.encode(em)
         assign = torch.softmax(mu, dim=1).argmax(1).numpy()
     return topic_word, assign
 
@@ -175,7 +192,9 @@ def _train_reference(counts: np.ndarray, k: int, seed: int):
 def _coherence(topics, token_docs, measure):
     import topica
 
-    return float(np.mean(topica.coherence(topics, token_docs, coherence_type=measure, topn=TOP_N)))
+    return float(
+        np.mean(topica.coherence(topics, token_docs, coherence_type=measure, topn=TOP_N))
+    )
 
 
 def _diversity(topics):
@@ -194,24 +213,21 @@ def _counts_matrix(token_docs, vocab):
     return m
 
 
-SEEDS = (0, 1, 2)
-
-
-def _topica_fit(token_docs, seed):
+def _topica_fit(token_docs, embs, seed):
     import topica
 
-    tm = topica.ProdLDA(
+    tm = topica.ZeroShotTM(
         num_topics=NUM_TOPICS, alpha=ALPHA, hidden_size=HIDDEN, dropout=DROPOUT,
         batch_size=BATCH, lr=LR, seed=seed,
     )
-    tm.fit(token_docs, iters=EPOCHS)
-    theta = np.asarray(tm.transform(token_docs))
+    tm.fit(token_docs, embs, iters=EPOCHS)
+    theta = np.asarray(tm.transform(token_docs, embs))
     topics = [[w for w, _ in tm.top_words(TOP_N, topic=t)] for t in range(tm.num_topics)]
     return topics, theta.argmax(1)
 
 
-def _ref_fit(counts, vocab, seed):
-    tw, assign = _train_reference(counts, NUM_TOPICS, seed)
+def _ref_fit(counts, embs, vocab, seed):
+    tw, assign = _train_reference(counts, embs, NUM_TOPICS, seed)
     topics = [[vocab[j] for j in row.argsort()[::-1][:TOP_N]] for row in tw]
     return topics, assign
 
@@ -219,7 +235,7 @@ def _ref_fit(counts, vocab, seed):
 def run(verbose: bool = True) -> dict:
     from sklearn.metrics import normalized_mutual_info_score
 
-    token_docs, labels, vocab = load()
+    token_docs, embs, labels, vocab = load()
     counts = _counts_matrix(token_docs, vocab)
 
     # Bit-exact agreement is impossible across frameworks; a single seed is also
@@ -228,8 +244,8 @@ def run(verbose: bool = True) -> dict:
     rows = {k: [] for k in ("t_cv", "r_cv", "t_npmi", "r_npmi", "t_div", "r_div",
                             "t_nmi", "r_nmi", "cross_nmi")}
     for seed in SEEDS:
-        t_topics, t_assign = _topica_fit(token_docs, seed)
-        r_topics, r_assign = _ref_fit(counts, vocab, seed)
+        t_topics, t_assign = _topica_fit(token_docs, embs, seed)
+        r_topics, r_assign = _ref_fit(counts, embs, vocab, seed)
         rows["t_cv"].append(_coherence(t_topics, token_docs, "c_v"))
         rows["r_cv"].append(_coherence(r_topics, token_docs, "c_v"))
         rows["t_npmi"].append(_coherence(t_topics, token_docs, "c_npmi"))
@@ -247,6 +263,7 @@ def run(verbose: bool = True) -> dict:
     metrics = {
         "num_docs": len(token_docs),
         "vocab": len(vocab),
+        "emb_dim": EMB_DIM,
         "seeds": list(SEEDS),
         "topica_c_v": ms("t_cv"),
         "reference_c_v": ms("r_cv"),
@@ -259,6 +276,8 @@ def run(verbose: bool = True) -> dict:
         "cross_nmi": ms("cross_nmi"),
     }
     if verbose:
+        print(f"  ZeroShotTM parity: {metrics['num_docs']} docs, "
+              f"V={metrics['vocab']}, E={metrics['emb_dim']}, K={NUM_TOPICS}")
         print(f"  {'metric':22s} {'topica (mean±sd)':>22s} {'reference (mean±sd)':>22s}")
         for label, tk, rk in [
             ("c_v coherence", "topica_c_v", "reference_c_v"),
@@ -270,7 +289,7 @@ def run(verbose: bool = True) -> dict:
             rm_, rs = metrics[rk]
             print(f"  {label:22s} {tm_:>13.3f} ±{ts:.3f} {rm_:>13.3f} ±{rs:.3f}")
         cm, cs = metrics["cross_nmi"]
-        print(f"  {'cross-NMI (topica↔ref)':22s} {cm:>13.3f} ±{cs:.3f}")
+        print(f"  {'cross-NMI (topica<->ref)':22s} {cm:>13.3f} ±{cs:.3f}")
         gap = metrics["topica_c_npmi"][0] - metrics["reference_c_npmi"][0]
         print(
             f"\n  c_npmi gap {gap:+.4f} vs reference seed-to-seed sd "
@@ -282,6 +301,6 @@ def run(verbose: bool = True) -> dict:
 
 if __name__ == "__main__":
     if not available():
-        print("torch / sklearn not installed; skipping.")
+        print("SKIP: torch / sklearn not installed.")
     else:
         run(verbose=True)
