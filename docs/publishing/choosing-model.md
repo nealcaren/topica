@@ -13,11 +13,14 @@ further, both filterable with `topica.list_models(...)` (see the
   (covariates), a few **seed** words per topic, document **labels**, document
   **embeddings**, or **time** stamps? Each points to a group:
   `list_models(brings="metadata")`, `brings="embeddings"`, and so on.
-- **Reproducibility.** The variational models are `bit-exact` (identical
-  regardless of thread count); the samplers are `seed-reproducible` (fix the seed
-  *and* the thread count); an LLM-backed model is `llm-bounded`. If exact
-  replication is a requirement, prefer a `bit-exact` model:
-  `topica.list_models(determinism="bit-exact")`.
+- **Reproducibility.** Models with a deterministic fit (CTM, STM, STS — spectral
+  anchor-word init — and NMF, whose multiplicative updates converge away from the
+  init) are `bit-exact` (identical regardless of seed or thread count); models
+  that draw a seeded random state — the samplers, the randomized-SVD LSA, and the
+  embedding/VAE/optimal-transport models — are `seed-reproducible` (identical
+  once you fix the seed *and* the thread count); an LLM-backed model is
+  `llm-bounded`. If seed-free replication is a requirement, prefer a `bit-exact`
+  model: `topica.list_models(determinism="bit-exact")`.
 
 ## First: is a topic model even the right tool?
 
