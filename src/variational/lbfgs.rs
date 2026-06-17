@@ -65,7 +65,10 @@ where
         // Backtracking Armijo line search.
         let mut step = 1.0;
         let mut x_new = x.clone();
-        let (mut fx_new, mut g_new) = (fx, g.clone());
+        // Assigned on every loop iteration before they are read; the line search
+        // always runs the body at least once, so no initial value is needed.
+        let mut fx_new: f64;
+        let mut g_new: Vec<f64>;
         loop {
             for j in 0..n {
                 x_new[j] = x[j] + step * d[j];

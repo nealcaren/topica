@@ -536,22 +536,6 @@ mod tests {
         (docs, v)
     }
 
-    /// Return the block (0-indexed) that contributes most mass to `phi`.
-    fn dominant_block(phi: &[f64], block_size: usize) -> usize {
-        let num_blocks = phi.len() / block_size;
-        (0..num_blocks)
-            .max_by(|&a, &b| {
-                let sa: f64 = phi[a * block_size..(a + 1) * block_size]
-                    .iter()
-                    .sum();
-                let sb: f64 = phi[b * block_size..(b + 1) * block_size]
-                    .iter()
-                    .sum();
-                sa.partial_cmp(&sb).unwrap()
-            })
-            .unwrap()
-    }
-
     /// Seeds steer topics toward the planted vocabulary blocks.
     ///
     /// K=3 topics; topic 0 seeded with words from block A, topic 1 seeded with

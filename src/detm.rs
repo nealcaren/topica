@@ -464,16 +464,15 @@ impl EtaNet {
         }
 
         EtaForward {
-            map_out, layer_inputs,
+            layer_inputs,
             gates_i, gates_f, gates_g, gates_o, cell, tanh_c, hidden,
-            output, head_inp, mu, ls, etas,
+            head_inp, mu, ls, etas,
         }
     }
 }
 
 /// Cached q(eta) forward activations retained for BPTT.
 struct EtaForward {
-    map_out: Vec<Vec<f64>>,                 // T x eh
     layer_inputs: Vec<Vec<Vec<f64>>>,       // nlayers x T x eh (input seen by each layer)
     gates_i: Vec<Vec<Vec<f64>>>,            // nlayers x T x eh
     gates_f: Vec<Vec<Vec<f64>>>,
@@ -482,7 +481,6 @@ struct EtaForward {
     cell: Vec<Vec<Vec<f64>>>,
     tanh_c: Vec<Vec<Vec<f64>>>,
     hidden: Vec<Vec<Vec<f64>>>,             // nlayers x T x eh
-    output: Vec<Vec<f64>>,                  // T x eh (top-layer hidden)
     head_inp: Vec<Vec<f64>>,                // T x (eh + K)
     mu: Vec<Vec<f64>>,                      // T x K
     ls: Vec<Vec<f64>>,                      // T x K
@@ -1378,24 +1376,6 @@ fn step3d(opt: &mut Adam, p: &mut [Vec<Vec<f64>>], g: &[Vec<Vec<f64>>], t: usize
                 p[tt][kk][ll] = flat_p[idx];
                 idx += 1;
             }
-        }
-    }
-}
-
-/// Adam step over a flattened (T x K) parameter block.
-fn step2d(opt: &mut Adam, p: &mut [Vec<f64>], g: &[Vec<f64>], t: usize, k: usize) {
-    let mut flat_p = Vec::with_capacity(t * k);
-    let mut flat_g = Vec::with_capacity(t * k);
-    for tt in 0..t {
-        flat_p.extend_from_slice(&p[tt]);
-        flat_g.extend_from_slice(&g[tt]);
-    }
-    opt.step(&mut flat_p, &flat_g);
-    let mut idx = 0;
-    for tt in 0..t {
-        for kk in 0..k {
-            p[tt][kk] = flat_p[idx];
-            idx += 1;
         }
     }
 }
