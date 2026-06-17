@@ -64,8 +64,9 @@ examples = topica.find_thoughts(model, topic=0, n=3)
     topica's `tokenize` lowercases and splits but does **not** stem, so your own
     text keeps its surface forms. Some bundled corpora (such as `load_poliblog`)
     ship already stemmed, which is why their top words read like `militari`,
-    `economi`. That is the data, not topica. Stem your own corpus only if you
-    want that behavior.
+    `economi`. That is the data, not topica. To merge inflections and still get
+    readable labels, [lemmatize instead of stemming](../guides/preprocessing.md#readable-topic-words-lemmatize-dont-stem)
+    — pass a lemmatizing `tokenizer` to `from_dataframe`.
 
 ## Starting from raw text instead
 

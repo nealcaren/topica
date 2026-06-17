@@ -17,6 +17,31 @@ tokens = tokenize(text, stopwords=stop, min_length=3)
 **not** stem (stemming hurts interpretability); lemmatize in your own pipeline if
 you need it.
 
+### Readable topic words: lemmatize, don't stem
+
+Stemming truncates words to a root (`military` → `militari`, `economy` →
+`economi`), so top-word tables read as broken. If your text is not already
+stemmed, topica keeps the surface forms as-is. To merge inflections *and* keep
+readable words, lemmatize — and because `from_dataframe` (and `tokenize`) take a
+`tokenizer` callable, you can drop a lemmatizer straight in:
+
+```python
+import topica
+from nltk.stem import WordNetLemmatizer   # pip install nltk; nltk.download("wordnet")
+
+_lemm = WordNetLemmatizer()
+def lemmatize(text):
+    return [_lemm.lemmatize(w)
+            for w in topica.tokenize(text, stopwords=topica.ENGLISH_STOPWORDS, min_length=3)]
+
+corpus = topica.from_dataframe(df, text_col="text", tokenizer=lemmatize)
+# top words now read "military", "economy" — not "militari", "economi"
+```
+
+If your corpus arrives already stemmed (some bundled datasets and `stm`'s
+`poliblog` do), there is no way to recover the original words — that is the data,
+not topica. Re-process from the raw text if you want readable labels.
+
 ## Build a Corpus and prune the vocabulary
 
 ```python

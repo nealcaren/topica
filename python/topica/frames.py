@@ -60,7 +60,12 @@ def from_dataframe(
         ``text_col``.
     tokenizer : callable, optional
         ``str -> list[str]``. Defaults to :func:`topica.tokenize` with the
-        ``stopwords`` and ``min_length`` arguments below.
+        ``stopwords`` and ``min_length`` arguments below. This is also where you
+        plug in lemmatization: the default tokenizer does **not** stem (stemming
+        truncates words to roots like ``militari``/``economi``, which read as
+        broken in a topic table), so pass a lemmatizing tokenizer here if you want
+        to merge inflections while keeping readable surface forms. See the
+        preprocessing guide ("Readable topic words: lemmatize, don't stem").
     """
     texts = list(df[text_col])  # pandas Series and Polars Series both iterate to values
     if tokenizer is None:
