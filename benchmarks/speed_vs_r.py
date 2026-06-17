@@ -89,7 +89,7 @@ def bench_stm() -> dict:
     feat = ["ratingLiberal"] + [f"day_s{j}" for j in range(spline_basis.shape[1])]
     design = np.column_stack([np.ones(len(docs)), X])
 
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as d:
+    with tempfile.TemporaryDirectory() as d:
         with open(os.path.join(d, "vdocs.txt"), "w") as f:
             f.write("\n".join(" ".join(doc) for doc in docs) + "\n")
         with open(os.path.join(d, "design.csv"), "w", newline="") as f:
@@ -135,7 +135,7 @@ def bench_keyatm() -> dict:
 
     num_kw = len(keywords)
     nreg = KEYATM_K - num_kw
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as d:
+    with tempfile.TemporaryDirectory() as d:
         with open(os.path.join(d, "vdocs.txt"), "w") as f:
             f.write("\n".join(" ".join(doc) for doc in docs) + "\n")
         json.dump(keywords, open(os.path.join(d, "keywords.json"), "w"))
@@ -172,7 +172,7 @@ def bench_lda() -> dict:
     from topica import LDA
 
     mallet = shutil.which("mallet")
-    d = tempfile.mkdtemp(dir="/private/tmp")
+    d = tempfile.mkdtemp()
     try:
         txt = os.path.join(d, "tok.txt")
         with open(txt, "w") as f:
