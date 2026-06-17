@@ -75,5 +75,9 @@ API_FROZEN.md
 docs/stratm-design.md
 uv.lock
 
-# Paper reproduction outputs (regenerable by paper/reproduce.py)
-paper/generated/
+# Paper reproduction outputs (regenerable by paper/reproduce.py). Ignore the
+# directory CONTENTS (not the dir itself) so the consolidated provenance report
+# can be re-included -- JSS wants it versioned, so every printed number in
+# Sections 5-7 has a traceable, dated, machine-stamped run.
+paper/generated/*
+!paper/generated/replication_report.md
