@@ -54,6 +54,7 @@ REGISTRY: list[tuple[str, object, str]] = [
     # collapsed-Gibbs / Dirichlet doc-topic posterior
     ("LDA",          lambda: _topica.LDA(2),                                     "dirichlet"),
     ("DMR",          lambda: _topica.DMR(2),                                     "dirichlet"),
+    ("GDMR",         lambda: _topica.GDMR(2, degrees=[2]),                        "dirichlet"),
     ("SAGE",         lambda: _topica.SAGE(2),                                    "dirichlet"),
     ("PA",           lambda: _topica.PA(num_super=2, num_sub=4),                 "dirichlet"),
     ("PT",           lambda: _topica.PT(num_topics=2, num_pseudo=10),            "dirichlet"),
@@ -84,6 +85,15 @@ REGISTRY: list[tuple[str, object, str]] = [
     ("Top2Vec",      lambda: _topica.Top2Vec(),                                  "none"),
     # llm-based — pure-Python prompting pipeline, no generative word distribution
     ("TopicGPT",     lambda: _topica.TopicGPT(backend=lambda p: ""),             "none"),
+    # InfoCTM is EXCLUDED: it is a cross-lingual model that fits TWO aligned
+    # ProdLDA sub-models (fit(data_a, data_b, dictionary=...)) and exposes a
+    # topic-word distribution PER LANGUAGE, not a single flat (K, V) surface. It
+    # therefore has no generic (D, K) doc_topic / single topic_word to check
+    # against the flat contract here; its per-language outputs are validated in
+    # parity/infoctm_compare.py, and the underlying ProdLDA (in this registry)
+    # covers the single-language contract. Treat InfoCTM like DTM/HLDA: a
+    # structurally different model outside the flat-K conformance surface.
+    #
     # EmbeddingLDA is EXCLUDED: it is a Python wrapper around SeededLDA (see
     # module-level note in python/topica/embedding.py). It delegates every
     # fitted-model getter to self._model via __getattr__, has no class-level
