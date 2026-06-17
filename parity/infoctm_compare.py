@@ -22,7 +22,19 @@ Skips cleanly when torch is unavailable.
 
 from __future__ import annotations
 
+import os
+import sys
+
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from refs.avitm import (  # noqa: E402
+    build_encoder,
+    dirichlet_laplace_kl,
+    laplace_prior,
+    reparameterize,
+)
 
 K = 5
 PER = 6                 # words per block per language
@@ -78,12 +90,12 @@ def _counts(docs, vocab):
 # ---------------------------------------------------------------------------
 # Paper-derived PyTorch reference
 # ---------------------------------------------------------------------------
-
-def _laplace_prior(k, a=1.0):
-    a = a * np.ones((1, k), dtype=np.float32)
-    mu = (np.log(a).T - np.mean(np.log(a), 1)).T
-    var = (((1.0 / a) * (1 - 2.0 / k)).T + (1.0 / (k * k)) * np.sum(1.0 / a, 1)).T
-    return mu.astype(np.float32), var.astype(np.float32)
+#
+# The two per-language encoder backbones (fc1, fc2, mu, lv + affine-free
+# batchnorm heads), the Laplace-Dirichlet prior, the reparameterization trick,
+# and the KL are shared with the ProdLDA parity reference via ``refs.avitm``.
+# The decoder (a ``phi`` matmul + decoder batchnorm + softmax recon, x2) and the
+# TAMI cross-lingual alignment term below are InfoCTM-specific.
 
 
 def _train_reference(counts_a, counts_b, trans_ab, seed):
@@ -92,8 +104,7 @@ def _train_reference(counts_a, counts_b, trans_ab, seed):
 
     torch.manual_seed(seed)
     va, vb = counts_a.shape[1], counts_b.shape[1]
-    mu2, var2 = _laplace_prior(K)
-    mu2 = torch.tensor(mu2); var2 = torch.tensor(var2)
+    mu2, var2 = laplace_prior(K, 1.0)
     trans = torch.tensor(trans_ab)              # Va x Vb (identity mono-mask -> dict pairs)
     trans_t = trans.T
     neg_ab = (trans <= 0).float()
@@ -101,24 +112,14 @@ def _train_reference(counts_a, counts_b, trans_ab, seed):
     pos_sum = trans.sum() + trans_t.sum()
     temp, weight = 0.2, 30.0
 
-    def encoder(v):
-        return torch.nn.Sequential(
-            torch.nn.Linear(v, HIDDEN), torch.nn.Softplus(),
-            torch.nn.Linear(HIDDEN, HIDDEN), torch.nn.Softplus(),
-        )
-
-    enc_a, enc_b = encoder(va), encoder(vb)
-    head_mu_a, head_lv_a = torch.nn.Linear(HIDDEN, K), torch.nn.Linear(HIDDEN, K)
-    head_mu_b, head_lv_b = torch.nn.Linear(HIDDEN, K), torch.nn.Linear(HIDDEN, K)
-    bn_mu_a, bn_lv_a = torch.nn.BatchNorm1d(K, affine=False), torch.nn.BatchNorm1d(K, affine=False)
-    bn_mu_b, bn_lv_b = torch.nn.BatchNorm1d(K, affine=False), torch.nn.BatchNorm1d(K, affine=False)
+    enc_a = build_encoder(va, K, HIDDEN)
+    enc_b = build_encoder(vb, K, HIDDEN)
     dec_bn_a = torch.nn.BatchNorm1d(va, affine=False)
     dec_bn_b = torch.nn.BatchNorm1d(vb, affine=False)
     phi_a = torch.nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(K, va)))
     phi_b = torch.nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(K, vb)))
 
-    mods = [enc_a, enc_b, head_mu_a, head_lv_a, head_mu_b, head_lv_b,
-            bn_mu_a, bn_lv_a, bn_mu_b, bn_lv_b, dec_bn_a, dec_bn_b]
+    mods = [enc_a, enc_b, dec_bn_a, dec_bn_b]
     params = [phi_a, phi_b]
     for m in mods:
         params += list(m.parameters())
@@ -126,15 +127,13 @@ def _train_reference(counts_a, counts_b, trans_ab, seed):
 
     xa = torch.tensor(counts_a); xb = torch.tensor(counts_b)
 
-    def elbo(x, enc, hmu, hlv, bmu, blv, dbn, phi):
-        h = enc(x)
-        mu = bmu(hmu(h)); lv = blv(hlv(h))
-        z = mu + torch.randn_like(lv) * (0.5 * lv).exp()
+    def elbo(x, enc, dbn, phi):
+        mu, lv = enc.encode(x)
+        z = reparameterize(mu, lv)
         theta = F.softmax(z, dim=1)
         recon = F.softmax(dbn(theta @ phi), dim=1)
         rec = -(x * (recon + 1e-10).log()).sum(1)
-        var = lv.exp()
-        kld = 0.5 * ((var / var2 + (mu - mu2) ** 2 / var2 + var2.log() - lv).sum(1) - K)
+        kld = dirichlet_laplace_kl(mu, lv, mu2, var2, K)
         return (rec + kld).mean()
 
     def mutual_info(fa, fb, pos, neg):
@@ -148,8 +147,8 @@ def _train_reference(counts_a, counts_b, trans_ab, seed):
 
     for _ in range(ITERS):
         opt.zero_grad()
-        la = elbo(xa, enc_a, head_mu_a, head_lv_a, bn_mu_a, bn_lv_a, dec_bn_a, phi_a)
-        lb = elbo(xb, enc_b, head_mu_b, head_lv_b, bn_mu_b, bn_lv_b, dec_bn_b, phi_b)
+        la = elbo(xa, enc_a, dec_bn_a, phi_a)
+        lb = elbo(xb, enc_b, dec_bn_b, phi_b)
         tami = mutual_info(phi_a.T, phi_b.T, trans, neg_ab)
         tami = tami + mutual_info(phi_b.T, phi_a.T, trans_t, neg_ba)
         loss = la + lb + weight * tami / pos_sum

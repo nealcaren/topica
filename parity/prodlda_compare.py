@@ -27,7 +27,19 @@ fetched. Run directly:
 
 from __future__ import annotations
 
+import os
+import sys
+
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from refs.avitm import (  # noqa: E402
+    build_encoder,
+    dirichlet_laplace_kl,
+    laplace_prior,
+    reparameterize,
+)
 
 GROUPS = [
     "rec.sport.baseball",
@@ -87,17 +99,12 @@ def load():
 
 
 # --- PyTorch reference: AVITM / ProdLDA --------------------------------------
-
-
-def _laplace_prior(k: int, alpha: float):
-    """Diagonal logistic-normal Laplace approximation to a symmetric Dirichlet
-    prior in the softmax basis (eq. 6)."""
-    import torch
-
-    a = np.full(k, alpha)
-    mu1 = np.log(a) - np.mean(np.log(a))
-    var1 = (1.0 / a) * (1.0 - 2.0 / k) + (1.0 / (k * k)) * np.sum(1.0 / a)
-    return torch.tensor(mu1, dtype=torch.float32), torch.tensor(var1, dtype=torch.float32)
+#
+# The encoder backbone (fc1, fc2, mu, lv + affine-free batchnorm heads), the
+# Laplace-Dirichlet prior, the reparameterization trick, and the KL are shared
+# with the InfoCTM parity reference via ``refs.avitm``. The decoder and training
+# loop below are ProdLDA-specific. The encoder submodule is constructed before
+# ``beta``, so the RNG draw order (fc1, fc2, mu, lv, beta) is unchanged.
 
 
 def _build_reference(v: int, k: int):
@@ -107,26 +114,17 @@ def _build_reference(v: int, k: int):
     class ProdLDARef(nn.Module):
         def __init__(self):
             super().__init__()
-            self.fc1 = nn.Linear(v, HIDDEN)
-            self.fc2 = nn.Linear(HIDDEN, HIDDEN)
+            self.enc = build_encoder(v, k, HIDDEN, dropout=DROPOUT)
             self.drop = nn.Dropout(DROPOUT)
-            self.mu = nn.Linear(HIDDEN, k)
-            self.lv = nn.Linear(HIDDEN, k)
-            # affine-free batchnorm, eps/momentum matching the Rust core
-            self.bn_mu = nn.BatchNorm1d(k, affine=False, eps=1e-5, momentum=0.1)
-            self.bn_lv = nn.BatchNorm1d(k, affine=False, eps=1e-5, momentum=0.1)
             self.beta = nn.Linear(k, v, bias=False)  # weight is V x K; logits = theta @ W^T
             self.bn_dec = nn.BatchNorm1d(v, affine=False, eps=1e-5, momentum=0.1)
 
         def encode(self, xn):
-            h = torch.nn.functional.softplus(self.fc1(xn))
-            h = torch.nn.functional.softplus(self.fc2(h))
-            h = self.drop(h)
-            return self.bn_mu(self.mu(h)), self.bn_lv(self.lv(h))
+            return self.enc.encode(xn)
 
         def forward(self, xn):
             mu, lv = self.encode(xn)
-            z = mu + torch.exp(0.5 * lv) * torch.randn_like(mu)
+            z = reparameterize(mu, lv)
             theta = self.drop(torch.softmax(z, dim=1))
             logits = self.bn_dec(self.beta(theta))
             return torch.log_softmax(logits, dim=1), mu, lv
@@ -141,7 +139,7 @@ def _train_reference(counts: np.ndarray, k: int, seed: int):
     np.random.seed(seed)
     v = counts.shape[1]
     model = _build_reference(v, k)
-    prior_mu, prior_var = _laplace_prior(k, ALPHA)
+    prior_mu, prior_var = laplace_prior(k, ALPHA)
 
     cnt = torch.tensor(counts, dtype=torch.float32)
     norm = cnt / cnt.sum(1, keepdim=True).clamp_min(1.0)
@@ -158,14 +156,7 @@ def _train_reference(counts: np.ndarray, k: int, seed: int):
             opt.zero_grad()
             recon, mu, lv = model(norm[idx])
             rl = -(cnt[idx] * recon).sum(1)
-            var0 = lv.exp()
-            kl = 0.5 * (
-                (var0 / prior_var).sum(1)
-                + ((prior_mu - mu) ** 2 / prior_var).sum(1)
-                - k
-                + prior_var.log().sum()
-                - lv.sum(1)
-            )
+            kl = dirichlet_laplace_kl(mu, lv, prior_mu, prior_var, k)
             (rl + kl).mean().backward()
             opt.step()
 
@@ -211,9 +202,10 @@ def _topica_fit(token_docs, seed):
 
     tm = topica.ProdLDA(
         num_topics=NUM_TOPICS, alpha=ALPHA, hidden_size=HIDDEN, dropout=DROPOUT,
-        epochs=EPOCHS, batch_size=BATCH, lr=LR, seed=seed,
+        batch_size=BATCH, lr=LR, seed=seed,
     )
-    theta = np.asarray(tm.fit_transform(token_docs))
+    tm.fit(token_docs, iters=EPOCHS)
+    theta = np.asarray(tm.transform(token_docs))
     topics = [[w for w, _ in tm.top_words(TOP_N, topic=t)] for t in range(tm.num_topics)]
     return topics, theta.argmax(1)
 
