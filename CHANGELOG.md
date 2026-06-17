@@ -6,6 +6,58 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-06-17
+
+### Added
+
+- **Deterministic spectral init for ECTM** — ECTM's content model now starts
+  from the same anchor-word spectral base as STM/CTM/STS (`init="spectral"`, the
+  default), with the group×period content deviations starting at zero (as R `stm`
+  does for κ). A random base β left the model multimodal — on the German
+  Manifesto corpus (K=25) 4 of 10 seeds collapsed ~320,000 nats below the
+  structured basin. The spectral base removes that scatter: the fit is now
+  seed- and thread-independent (ECTM is `bit-exact`). `init="random"` keeps the
+  old seeded behavior for multi-start. (#220)
+- **`DTM(init="spectral")`** — an optional deterministic anchor-word seed for the
+  dynamic topic model, for a single reproducible fit in the good basin. The
+  default stays `init="random"` (a seeded static-LDA seed, matching gensim's
+  `LdaSeqModel`); the rule across models is that the default init tracks each
+  model's reference implementation. (#221)
+- **`select_model` for the stochastic models** — `stm`'s `selectModel` (fit N
+  seeds at fixed K, return the coherence/exclusivity frontier) now drives
+  `model="prodlda" | "etm" | "fastopic" | "combinedtm" | "zeroshottm"` in
+  addition to `"lda"`/`"stm"`, each with its required data argument
+  (`word_embeddings`+`vocabulary` for ETM; `doc_embeddings` for the
+  embedding/VAE models). The burn-in selector falls back to mean coherence for
+  models with no scalar bound (FASTopic). These are the models whose fit depends
+  on the seed; STM/CTM are deterministic, so multi-start there buys nothing. (#222)
+
+### Fixed
+
+- **STM content covariate used a random base β under `init="spectral"`** — the
+  init guard `init_spectral && content.is_none()` routed content models to a
+  random basis, so the SAGE content model started from a random basis and most
+  seeds collapsed to flat/no-group content. STM content now uses the
+  deterministic spectral base (verified against R `stm`'s `kappa.init`/`stm.init`:
+  R zeros all content κ and uses the full deterministic Gram). (#216, #217)
+
+### Changed
+
+- **Determinism tags corrected for six models** — `DTM`, `ETM`, `FASTopic`,
+  `CombinedTM`, `ZeroShotTM`, and `LSA` were tagged `bit-exact` but reach the RNG
+  at initialization (random init, or randomized SVD for LSA), so their output
+  depends on the seed. Re-tagged to `seed-reproducible`, which also matches their
+  reference implementations (all random-init/stochastic). A registry-driven test
+  now enforces every determinism tag so the claim and the behavior can't drift
+  apart. (#219)
+- **Paper roster + reproduction** — `paper/topica.tex` updated to the current
+  model roster and 0.22.0 numbers, with a one-command reproduction harness
+  (`paper/reproduce.py`). (#213, #215)
+- **Parity scaffolding** — the ProdLDA-family AVITM torch reference is
+  consolidated into `parity/refs/avitm.py`, with new CombinedTM/ZeroShotTM parity
+  harnesses. (#218)
+- **CI** — JavaScript actions bumped to Node 24 majors. (#214)
+
 ## [0.22.0] - 2026-06-16
 
 ### Added
