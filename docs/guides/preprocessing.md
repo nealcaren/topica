@@ -17,6 +17,27 @@ tokens = tokenize(text, stopwords=stop, min_length=3)
 **not** stem (stemming hurts interpretability); lemmatize in your own pipeline if
 you need it.
 
+### Stopword lists (58 languages)
+
+`topica.ENGLISH_STOPWORDS` is a short, stable English default. For other
+languages — or a fuller English list — `topica.stopwords(lang)` serves the
+[stopwords-iso](https://github.com/stopwords-iso/stopwords-iso) lists (58
+languages, MIT licensed, bundled in the wheel). Accepts an ISO 639-1 code or an
+English name:
+
+```python
+import topica
+
+fr = topica.stopwords("fr")            # or "french"; case-insensitive
+corpus = topica.from_dataframe(df, text_col="texte", stopwords=fr)
+
+topica.stopword_languages()            # ['af', 'ar', 'bg', ..., 'zh']
+```
+
+Unknown languages raise with the list of available codes. For the cross-lingual
+models ([`InfoCTM`](models.md#infoctm), [`ZeroShotTM`](embedding.md#zeroshottm)),
+pass the matching list per language. Anything not covered: supply your own list.
+
 ### Readable topic words: lemmatize, don't stem
 
 Stemming truncates words to a root (`military` → `militari`, `economy` →
