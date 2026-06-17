@@ -55,6 +55,17 @@ Rscript -e '
   for (p in pkgs) cat(p, as.character(packageVersion(p)), "\n")
 '
 
-# 6. Smoke-test (catches build/import/data issues before any batch job).
+# 6. MALLET (Java) for the LDA-vs-MALLET §6 leg. The v202108 binary release
+#    ships bin/mallet + dist/ jars + class/, so it serves both §6 (CLI on PATH)
+#    and §5 parity (classpath). Java comes from a module at runtime (see bench.sl).
+if [ ! -x "$WORK/mallet/bin/mallet" ]; then
+  curl -fsSL https://github.com/mimno/Mallet/releases/download/v202108/Mallet-202108-bin.tar.gz \
+    -o "$WORK/mallet.tgz"
+  tar xzf "$WORK/mallet.tgz" -C "$WORK" && rm -f "$WORK/mallet.tgz"
+  mv "$WORK"/Mallet-202108 "$WORK/mallet"
+fi
+echo "mallet: $WORK/mallet/bin/mallet"
+
+# 7. Smoke-test (catches build/import/data issues before any batch job).
 python -c "import topica,numpy,pandas,sklearn,gensim,tomotopy,matplotlib; print('topica', topica.__version__, '- env OK')"
 echo "Setup done. Activate: conda activate $ENV_PREFIX ; then: sbatch longleaf/bench.sl"

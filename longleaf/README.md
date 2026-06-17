@@ -19,8 +19,10 @@ fix; `v0.23.1` predates it). Pass a ref to override: `bash longleaf/setup_env.sh
 ## What `setup_env.sh` installs
 A fresh, dedicated `topica-bench` conda env (Python 3.11) with: rustup + `maturin`
 build of topica from source; `numpy pandas scipy scikit-learn gensim tomotopy
-matplotlib`; and R `stm` + `keyATM` (+`quanteda`) in a personal library. It never
-touches a shared env.
+matplotlib`; R `stm` + `keyATM` (+`quanteda`) in a personal library; and **MALLET**
+(v202108, under `$WORK/mallet`) for the LDA-vs-MALLET comparison. It never touches
+a shared env. (Java for MALLET is loaded as a module at runtime by `bench.sl`,
+not installed into the env.)
 
 ## Hardware-setup lessons baked into these scripts
 Running this cross-platform shook out several issues; the scripts now encode the fixes:
@@ -34,7 +36,13 @@ Running this cross-platform shook out several issues; the scripts now encode the
 - **R has no writable default library** → create `R_LIBS_USER` before
   `install.packages`, else it fails with "unable to install packages".
 - **§6 needs R `stm` AND `keyATM`** (the `bench` and `speed_vs_size` steps include a
-  keyATM-vs-R leg) plus **matplotlib** (figure steps). All installed by setup.
+  keyATM-vs-R leg) plus **matplotlib** (figure steps) and **MALLET** (the
+  LDA-vs-MALLET leg; without it that column is null but the step still runs). All
+  installed/wired by setup + `bench.sl`.
+- **Pick a sane node.** The `general` pool is heterogeneous; an unlucky draw can be
+  a slow 4-socket Xeon E7 (NUMA, unrepresentative thread-scaling). Check the
+  provenance header's CPU/socket line in the `.out`; if it's a 4-socket box,
+  cancel and resubmit to re-roll for a 1–2-socket node.
 - **Benchmarks honor `$TMPDIR`** (the old hardcoded `/private/tmp` crashed on Linux;
   fixed in the benchmark scripts). `bench.sl` sets `$TMPDIR` to `$WORK/tmp`.
 

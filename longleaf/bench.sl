@@ -25,10 +25,13 @@ REPO=$WORK/topica
 module purge
 module load anaconda/2024.02
 module load r/4.5.0
+module load java/17.0.2                        # for MALLET (LDA-vs-MALLET §6 leg)
 eval "$(conda shell.bash hook)"
 conda activate $WORK/envs/topica-bench
 export PYTHONNOUSERSITE=1
 export TMPDIR=$WORK/tmp; mkdir -p "$TMPDIR"   # benchmarks honor $TMPDIR (no hardcoded path)
+export MALLET_HOME=$WORK/mallet                 # installed by setup_env.sh
+export PATH=$MALLET_HOME/bin:$PATH              # benchmarks find MALLET via `which mallet`
 
 cd "$REPO"
 echo "=== provenance ==="
@@ -39,6 +42,7 @@ python -c "import numpy,sys; print('py', sys.version.split()[0]); numpy.show_con
   | grep -iE "openblas|mkl|blas|lapack" | head
 Rscript -e 'cat(R.version.string, "| stm", as.character(packageVersion("stm")),
   "| keyATM", as.character(packageVersion("keyATM")), "\n")' 2>/dev/null || true
+echo "MALLET: $(command -v mallet || echo none) ($MALLET_HOME)"
 echo "=================="
 
 STAMP="$(date +%F) longleaf $(hostname) topica-$(python -c 'import topica;print(topica.__version__)')"
