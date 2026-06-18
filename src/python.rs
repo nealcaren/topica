@@ -3231,6 +3231,37 @@ fn parse_features(data: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<f64>>> {
     })
 }
 
+/// Parse the optional caller-supplied base topic-word init (K×V) for the warm-start
+/// hook (issue #234): lets an STM-compatible front end inject an externally
+/// computed β (e.g. R `stm`'s exact spectral β) and reproduce that fit. Validates
+/// the shape and rejects it on the SVI path (batch only).
+fn parse_init_beta(
+    beta_init: Option<&Bound<'_, PyAny>>,
+    k: usize,
+    num_types: usize,
+    svi: bool,
+) -> PyResult<Option<Vec<Vec<f64>>>> {
+    match beta_init {
+        None => Ok(None),
+        Some(b) => {
+            if svi {
+                return Err(PyValueError::new_err(
+                    "beta_init is not supported with inference=\"svi\" (batch only)",
+                ));
+            }
+            let m = parse_features(b)?;
+            if m.len() != k || m.iter().any(|r| r.len() != num_types) {
+                return Err(PyValueError::new_err(format!(
+                    "beta_init must have shape (num_topics={k}, num_words={num_types}); got {}x{}",
+                    m.len(),
+                    m.first().map(|r| r.len()).unwrap_or(0)
+                )));
+            }
+            Ok(Some(m))
+        }
+    }
+}
+
 /// Map a per-document timestamp sequence to contiguous 0-based time-segment
 /// indices plus the sorted, distinct labels. Accepts numbers or strings; the
 /// distinct values are sorted to define the time order. Returns
@@ -5492,8 +5523,8 @@ impl CTM {
     /// sharply at large K; `posterior_theta_samples` / `estimate_effect` with
     /// draws transparently recompute it on demand when needed.
     #[pyo3(signature = (data, *, iters=500, convergence_tol=1e-5, inference="batch",
-                        batch_size=256, tau=64.0, kappa=0.7, em_tol=None, keep_eta_cov=true,
-                        num_threads=None))]
+                        batch_size=256, tau=64.0, kappa=0.7, beta_init=None, em_tol=None,
+                        keep_eta_cov=true, num_threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         &mut self,
@@ -5505,6 +5536,7 @@ impl CTM {
         batch_size: usize,
         tau: f64,
         kappa: f64,
+        beta_init: Option<&Bound<'_, PyAny>>,
         em_tol: Option<f64>,
         keep_eta_cov: bool,
         num_threads: Option<usize>,
@@ -5549,6 +5581,8 @@ impl CTM {
         let diagonal = self.variational == "diagonal";
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
 
+        let init_beta = parse_init_beta(beta_init, k, num_types, svi)?;
+
         let (model, corpus) = py.allow_threads(move || {
             let m = run_with_threads(num_threads, || {
                 if svi {
@@ -5559,7 +5593,8 @@ impl CTM {
                 } else {
                     ctm::fit_ctm(
                         &corpus.docs, k, num_types, iters, convergence_tol, shrink, None, None,
-                        spectral, ctm::GammaPrior::Pooled, keep_eta_cov, diagonal, &mut rng,
+                        spectral, init_beta.as_deref(), ctm::GammaPrior::Pooled, keep_eta_cov,
+                        diagonal, &mut rng,
                     )
                 }
             });
@@ -6136,8 +6171,8 @@ impl STM {
     /// lower-precision mean-field covariance).
     #[pyo3(signature = (data, prevalence=None, *, prevalence_names=None,
                         content=None, content_names=None, iters=500, convergence_tol=1e-5,
-                        gamma_prior="pooled", gamma_enet=1.0, em_tol=None, covariates=None,
-                        keep_eta_cov=true, num_threads=None))]
+                        gamma_prior="pooled", gamma_enet=1.0, beta_init=None, em_tol=None,
+                        covariates=None, keep_eta_cov=true, num_threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         &mut self,
@@ -6151,6 +6186,7 @@ impl STM {
         convergence_tol: f64,
         gamma_prior: &str,
         gamma_enet: f64,
+        beta_init: Option<&Bound<'_, PyAny>>,
         em_tol: Option<f64>,
         covariates: Option<&Bound<'_, PyAny>>,
         keep_eta_cov: bool,
@@ -6295,13 +6331,15 @@ impl STM {
         let diagonal = self.variational == "diagonal";
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
 
+        let init_beta = parse_init_beta(beta_init, k, num_types, false)?;
+
         let (model, corpus) = py.allow_threads(move || {
             let prev_ref = prevalence_x.as_deref();
             let cont_ref = content_groups.as_ref().map(|(g, n)| (g.as_slice(), *n));
             let m = run_with_threads(num_threads, || {
                 ctm::fit_ctm(
                     &corpus.docs, k, num_types, iters, convergence_tol, shrink, prev_ref, cont_ref,
-                    spectral, gprior, keep_eta_cov, diagonal, &mut rng,
+                    spectral, init_beta.as_deref(), gprior, keep_eta_cov, diagonal, &mut rng,
                 )
             });
             (m, corpus)

@@ -366,6 +366,7 @@ class CTM:
         batch_size: int = 256,
         tau: float = 64.0,
         kappa: float = 0.7,
+        beta_init: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]] | None = None,
         em_tol: Optional[float] = None,
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
@@ -382,6 +383,11 @@ class CTM:
         Monro step rho_t = (tau + t)^(-kappa). tau (>= 0) and kappa in (0.5, 1] set
         the learning-rate schedule; convergence_tol is ignored. SVI does not retain a
         per-iteration bound trace.
+
+        beta_init (K x num_words) overrides the spectral/random topic-word
+        initialization with a caller-supplied base beta -- the warm-start hook for
+        reproducing an external fit (e.g. R stm's exact spectral beta). Batch only
+        (not supported with inference="svi").
 
         keep_eta_cov=False skips storing the per-document variational covariance (nu),
         saving O(N*K^2) memory. The fit is bit-identical. Use _recompute_eta_cov() or
@@ -512,6 +518,7 @@ class STM:
         convergence_tol: float = 1e-5,
         gamma_prior: str = "pooled",
         gamma_enet: float = 1.0,
+        beta_init: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]] | None = None,
         em_tol: Optional[float] = None,
         covariates: Optional[numpy.typing.NDArray[numpy.float64]] = None,
         keep_eta_cov: bool = True,
@@ -533,6 +540,10 @@ class STM:
         with AIC-selected penalty, recommended for high-dimensional prevalence
         designs. gamma_enet is the elastic-net mix (1.0 = pure lasso, values in
         (0,1) add ridge; R stm's gamma.enet). Ignored when gamma_prior="pooled".
+
+        beta_init (K x num_words) overrides the spectral/random topic-word
+        initialization with a caller-supplied base beta -- the warm-start hook for
+        reproducing an external fit (e.g. R stm's exact spectral beta).
 
         keep_eta_cov=False skips storing the per-document variational covariance (nu),
         saving O(N*K^2) memory. The fit is bit-identical. Use _recompute_eta_cov() or
