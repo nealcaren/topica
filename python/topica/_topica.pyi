@@ -709,6 +709,7 @@ class ECTM:
         batch_size: int = 256,
         tau: float = 64.0,
         kappa: float = 0.7,
+        content_every: int = 0,
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
     ) -> None:
@@ -729,7 +730,10 @@ class ECTM:
         and the globals move with a Robbins-Monro rate (tau + step)^(-kappa). SVI
         is seed-reproducible (it samples minibatches from the model seed), not
         bit-exact like the default spectral batch fit; convergence_tol is unused in
-        SVI mode."""
+        SVI mode. content_every sets how often (in minibatches) the expensive
+        content-κ M-step is re-solved; the cheap μ/Σ/γ updates run every minibatch.
+        content_every=0 (default) re-solves κ once per epoch; a small positive value
+        re-solves more often (better per-epoch progress, more cost per epoch)."""
         ...
 
     @property

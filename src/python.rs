@@ -7018,7 +7018,7 @@ impl ECTM {
                         content_names=None, period_names=None, iters=500, convergence_tol=1e-5,
                         content_prior_var=1.0, period_smooth=5.0, interaction_shrink=2.0,
                         inference="batch", batch_size=256, tau=64.0, kappa=0.7,
-                        keep_eta_cov=true, num_threads=None))]
+                        content_every=0, keep_eta_cov=true, num_threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         &mut self,
@@ -7039,6 +7039,7 @@ impl ECTM {
         batch_size: usize,
         tau: f64,
         kappa: f64,
+        content_every: usize,
         keep_eta_cov: bool,
         num_threads: Option<usize>,
     ) -> PyResult<()> {
@@ -7172,9 +7173,9 @@ impl ECTM {
                 if svi {
                     crate::ectm::fit_ectm_svi(
                         &corpus.docs, k, num_types, &group_idx, num_groups, &period_idx, num_periods,
-                        iters, batch_size, tau, kappa, shrink, prev_ref, content_prior_var,
-                        period_smooth, period_smooth, interaction_shrink, keep_eta_cov, diagonal,
-                        init_spectral, &mut rng,
+                        iters, batch_size, tau, kappa, content_every, shrink, prev_ref,
+                        content_prior_var, period_smooth, period_smooth, interaction_shrink,
+                        keep_eta_cov, diagonal, init_spectral, &mut rng,
                     )
                 } else {
                     crate::ectm::fit_ectm(

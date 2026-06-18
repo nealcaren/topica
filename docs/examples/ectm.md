@@ -256,6 +256,13 @@ global parameter toward the minibatch estimate with a decaying step size
 fast the step size decays. Larger `batch_size` gives steadier steps at higher
 per-step cost.
 
+ECTM's content (topic-word) M-step is far more expensive than the cheap
+mean/covariance/prevalence updates, so it is re-solved only every `content_every`
+minibatches (default `0` = once per epoch) while the cheap globals update every
+step. Once per epoch keeps an SVI epoch about as cheap as a batch iteration;
+lowering `content_every` re-solves the content model more often for better
+per-epoch fidelity at more cost.
+
 Two things to know. First, the SVI fit is **seed-reproducible but not bit-exact**:
 it draws its minibatches from the model seed, so a fixed seed reproduces a run
 exactly, but a different seed gives a different (statistically equivalent) fit,

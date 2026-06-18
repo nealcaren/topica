@@ -144,6 +144,49 @@ fn blend_kappa(cur: &mut [Vec<f64>], old: &[Vec<f64>], rho: f64) {
     }
 }
 
+/// One SVI content-κ update: scale the window's accumulated soft counts to corpus
+/// magnitude (`D / window docs`), re-solve κ warm-started from the current global
+/// (a few inner iterations is enough — the move is rho-damped), and blend the
+/// candidate toward the previous κ. Snapshots κ before the solve so the blend uses
+/// the pre-solve global.
+#[allow(clippy::too_many_arguments)]
+fn solve_and_blend_content(
+    m: &[f64],
+    kt: &mut [Vec<f64>],
+    kkp: &mut [Vec<f64>],
+    kkg: &mut [Vec<f64>],
+    kkgp: &mut [Vec<f64>],
+    content_ss: &[Vec<f64>],
+    win_docs: f64,
+    d: usize,
+    k: usize,
+    g: usize,
+    p: usize,
+    v: usize,
+    sigma2: f64,
+    rw_kp: f64,
+    rw_kgp: f64,
+    shrink_kgp: f64,
+    rho: f64,
+) {
+    let scale = d as f64 / win_docs.max(1.0);
+    let counts: Vec<Vec<f64>> = content_ss
+        .iter()
+        .map(|r| r.iter().map(|&c| c * scale + 1e-8).collect())
+        .collect();
+    let kt_old = kt.to_vec();
+    let kkp_old = kkp.to_vec();
+    let kkg_old = kkg.to_vec();
+    let kkgp_old = kkgp.to_vec();
+    optimize_content(
+        m, kt, kkp, kkg, kkgp, &counts, k, g, p, v, sigma2, rw_kp, rw_kgp, shrink_kgp, 5,
+    );
+    blend_kappa(kt, &kt_old, rho);
+    blend_kappa(kkp, &kkp_old, rho);
+    blend_kappa(kkg, &kkg_old, rho);
+    blend_kappa(kkgp, &kkgp_old, rho);
+}
+
 /// MAP-update the content deviations κ from the variational expected
 /// (topic×group×period×word) counts, then rebuild per-cell β.
 ///
@@ -609,6 +652,7 @@ pub fn fit_ectm_svi<R: Rng>(
     batch_size: usize,
     tau: f64,
     kappa: f64,
+    content_every: usize,
     sigma_shrink: f64,
     prevalence: Option<&[Vec<f64>]>,
     sigma2: f64,
@@ -704,6 +748,19 @@ pub fn fit_ectm_svi<R: Rng>(
     let mut s_xl = nf.map(|f| vec![0.0f64; f * km1]);
 
     let batch = batch_size.clamp(1, d.max(1));
+    // The content κ-solve (optimize_content over all K·G·P·V cells) costs the same
+    // regardless of minibatch size, so re-solving it every minibatch dominates the
+    // ECTM SVI cost. Instead accumulate the content sufficient statistics across
+    // `content_every` minibatches and re-solve κ once per window, while μ/Σ/γ (cheap,
+    // closed-form) still update every minibatch. `content_every == 0` means "once per
+    // epoch". The κ counts persist across the window and are scaled by D/(window docs)
+    // at solve time.
+    let mb_per_epoch = d.div_ceil(batch).max(1);
+    let solve_every = if content_every == 0 { mb_per_epoch } else { content_every };
+    let mut content_ss = vec![vec![0.0f64; num_types]; k * num_cells];
+    let mut win_docs = 0.0f64;
+    let mut steps_since_solve = 0usize;
+    let mut last_rho = svi::rho(tau, kappa, 1);
     let mut t_step: usize = 0;
 
     for _epoch in 0..epochs {
@@ -711,6 +768,7 @@ pub fn fit_ectm_svi<R: Rng>(
         for chunk in order.chunks(batch) {
             t_step += 1;
             let rho = svi::rho(tau, kappa, t_step);
+            last_rho = rho;
 
             let siginv = spd_inverse(&sigma, km1).unwrap_or_else(|| {
                 let mut s = sigma.clone();
@@ -722,8 +780,8 @@ pub fn fit_ectm_svi<R: Rng>(
                 None => 0.0,
             };
 
-            // E-step over the minibatch (warm-started from the stored λ).
-            let mut content_ss = vec![vec![1e-8f64; num_types]; k * num_cells];
+            // E-step over the minibatch (warm-started from the stored λ). Content
+            // sufficient statistics accumulate into the persistent window buffer.
             let mut sigma_ss = vec![0.0f64; km1 * km1];
             let mut lambda_sum = vec![0.0f64; km1];
             let mut etas: Vec<Vec<f64>> = Vec::with_capacity(chunk.len());
@@ -760,6 +818,8 @@ pub fn fit_ectm_svi<R: Rng>(
             }
             let bsz = chunk.len() as f64;
             let scale = d as f64 / bsz;
+            win_docs += bsz;
+            steps_since_solve += 1;
 
             // Prevalence γ (blend ridge sufficient stats) or shared mean μ.
             if let (Some(x), Some(f)) = (prevalence, nf) {
@@ -797,31 +857,34 @@ pub fn fit_ectm_svi<R: Rng>(
                 }
             }
 
-            // Content κ: re-solve on the scaled minibatch counts (warm-started from
-            // the current global), then blend the candidate toward the old global.
-            let kt_old = kt.clone();
-            let kkp_old = kkp.clone();
-            let kkg_old = kkg.clone();
-            let kkgp_old = kkgp.clone();
-            for row in content_ss.iter_mut() {
-                for c in row.iter_mut() {
-                    *c *= scale;
+            // Content κ: once per `solve_every` minibatches, re-solve on the
+            // window's accumulated counts (scaled to corpus magnitude, warm-started
+            // from the current global), then blend the candidate toward the old
+            // global and reset the window.
+            if steps_since_solve >= solve_every {
+                solve_and_blend_content(
+                    &m_bg, &mut kt, &mut kkp, &mut kkg, &mut kkgp, &content_ss, win_docs, d,
+                    k, g, p, num_types, sigma2, rw_kp, rw_kgp, shrink_kgp, rho,
+                );
+                content_beta = build_content_beta(&m_bg, &kt, &kkp, &kkg, &kkgp, k, g, p, num_types);
+                for row in content_ss.iter_mut() {
+                    for c in row.iter_mut() {
+                        *c = 0.0;
+                    }
                 }
+                win_docs = 0.0;
+                steps_since_solve = 0;
             }
-            // A few warm-started inner iterations is enough: the per-step global
-            // move is small and rho-damped, so the kappa candidate need not be
-            // fully converged each minibatch (re-solving it to convergence every
-            // step is the dominant SVI cost for ECTM and is wasted work).
-            optimize_content(
-                &m_bg, &mut kt, &mut kkp, &mut kkg, &mut kkgp, &content_ss, k, g, p, num_types,
-                sigma2, rw_kp, rw_kgp, shrink_kgp, 5,
-            );
-            blend_kappa(&mut kt, &kt_old, rho);
-            blend_kappa(&mut kkp, &kkp_old, rho);
-            blend_kappa(&mut kkg, &kkg_old, rho);
-            blend_kappa(&mut kkgp, &kkgp_old, rho);
-            content_beta = build_content_beta(&m_bg, &kt, &kkp, &kkg, &kkgp, k, g, p, num_types);
         }
+    }
+
+    // Flush any partial window so the last minibatches inform the content model.
+    if steps_since_solve > 0 {
+        solve_and_blend_content(
+            &m_bg, &mut kt, &mut kkp, &mut kkg, &mut kkgp, &content_ss, win_docs, d, k, g, p,
+            num_types, sigma2, rw_kp, rw_kgp, shrink_kgp, last_rho,
+        );
+        content_beta = build_content_beta(&m_bg, &kt, &kkp, &kkg, &kkgp, k, g, p, num_types);
     }
 
     // Final full E-step with the converged globals: populate every doc's λ/ν and

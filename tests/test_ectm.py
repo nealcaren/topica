@@ -218,13 +218,14 @@ def test_content_trajectory_ci():
 # --- Minibatch / stochastic VI (issue #231) --------------------------------
 
 def _fit_svi(seed=1, drift=True, **kw):
-    # This synthetic corpus is tiny (vocab 4, 360 docs), so SVI needs many epochs
-    # and a gentle schedule to converge to the batch fit; on real corpora the
-    # defaults recover at ~30 epochs (see the paper's batch-vs-SVI check).
+    # This synthetic corpus is tiny (vocab 4, 360 docs), so SVI needs many epochs,
+    # a gentle schedule, and frequent content updates (content_every=1) to converge
+    # to the batch fit; on real corpora the defaults (content_every=0, once per
+    # epoch) recover at ~30 epochs (see the paper's batch-vs-SVI check).
     docs, groups, times = _corpus(drift=drift)
     m = topica.ECTM(num_topics=2, seed=seed)
     m.fit(docs, times=times, content=groups, iters=150, inference="svi",
-          batch_size=48, tau=4.0, kappa=0.6,
+          batch_size=48, tau=4.0, kappa=0.6, content_every=1,
           period_smooth=5.0, interaction_shrink=2.0, **kw)
     return m
 
