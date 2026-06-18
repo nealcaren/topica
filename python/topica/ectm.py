@@ -12,6 +12,8 @@ the sorted period order (``model.periods``).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 
@@ -258,3 +260,267 @@ def content_divergence(model, topic: int, group_a, group_b):
         b = _cell(model, topic, group_b, t)
         out.append((periods[t], float(0.5 * np.abs(a - b).sum())))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Content-divergence placebo (issue #230)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ContentPlaceboResult:
+    """Result of :func:`content_placebo`: the content-divergence permutation
+    placebo for every topic of one fitted ECTM.
+
+    The headline ECTM quantity is the between-group **content** divergence (the
+    total-variation distance between two groups' word distributions for a topic,
+    via :func:`content_divergence`), averaged over periods. Because each
+    (group, period) cell carries its own parameters, the estimated divergence has
+    a finite-sample floor above zero even when the two groups are identical. This
+    object holds the observed divergence against the permutation null that floor
+    is read from.
+
+    Attributes
+    ----------
+    topics : list[int]
+        Reference topic indices, aligned to ``model``.
+    topic_names : list[str]
+        Topic labels (or ``"topic_t"`` when none are set).
+    observed : numpy.ndarray, shape (K,)
+        Per-topic observed mean divergence (mean over periods of the reference
+        fit's TV distance between ``group_a`` and ``group_b``).
+    null : numpy.ndarray, shape (n_perm, K)
+        Per-permutation mean divergence. Entries for a topic that a refit could
+        not be matched to are ``nan``.
+    floor : numpy.ndarray, shape (K,)
+        The finite-sample floor: the mean of the (non-``nan``) null for each
+        topic.
+    pval : numpy.ndarray, shape (K,)
+        One-sided p-value per topic (proportion of the null at or above the
+        observed divergence), using the ``(1 + count) / (1 + n)`` convention so
+        it is never exactly zero.
+    group_a, group_b : str
+        The two content groups the divergence is measured between.
+    """
+
+    topics: list
+    topic_names: list
+    observed: np.ndarray
+    null: np.ndarray
+    floor: np.ndarray
+    pval: np.ndarray
+    group_a: str
+    group_b: str
+
+    def as_dict(self) -> list:
+        """One plain-dict row per topic (omits the full null array), ready to
+        hand to ``pandas.DataFrame``."""
+        rows = []
+        for i, t in enumerate(self.topics):
+            col = self.null[:, i]
+            valid = col[~np.isnan(col)]
+            rows.append({
+                "topic": int(t),
+                "topic_name": self.topic_names[i],
+                "observed": float(self.observed[i]),
+                "floor": float(self.floor[i]),
+                "pvalue": float(self.pval[i]),
+                "null_std": float(valid.std(ddof=1)) if valid.size > 1 else float("nan"),
+            })
+        return rows
+
+
+def _mean_divergence(model, topic, group_a, group_b):
+    """Mean over periods of the per-topic TV divergence between two groups."""
+    vals = [d for _, d in content_divergence(model, topic, group_a, group_b)]
+    return float(np.mean(vals)) if vals else float("nan")
+
+
+def content_placebo(
+    model,
+    corpus,
+    groups,
+    periods,
+    *,
+    group_a=None,
+    group_b=None,
+    n_perm=100,
+    within_period=True,
+    seed=0,
+    iters=None,
+    topn=10,
+    model_factory=None,
+):
+    """Permutation placebo for ECTM's between-group content divergence.
+
+    The complement of :func:`topica.permutation_test`. ``permutation_test``
+    shuffles a covariate to test topic *prevalence* (does a group talk about a
+    topic more); this shuffles the **content** group labels to test topic
+    *wording* (do two groups word a topic differently), the quantity ECTM is
+    built to estimate. Each (group, period) cell gets its own parameters, so the
+    estimated divergence sits above zero even for identical groups; this test
+    measures that finite-sample floor and how far the observed divergence clears
+    it.
+
+    Each permutation reassigns the group labels (by default within each period,
+    so every period keeps its group composition), refits the model from a fresh
+    start on the same documents with the shuffled labels, aligns the refit's
+    topics to the reference with the Hungarian top-word matcher
+    (:func:`~topica.validation._hungarian`), and recomputes each topic's mean
+    :func:`content_divergence`. The observed divergence is then compared to that
+    null.
+
+    Parameters
+    ----------
+    model : a fitted :class:`~topica.ECTM`.
+        The reference fit. Its type rebuilds each refit
+        (``type(model)(num_topics=K, seed=s)``) unless ``model_factory`` is given.
+    corpus : list of token lists or a ``Corpus``.
+        The documents ``model`` was fit on. Each permutation refits on these same
+        documents with shuffled group labels.
+    groups : array-like (num_docs,).
+        Per-document content (group) labels, the ``content=`` argument passed to
+        :meth:`ECTM.fit`. These are what get shuffled.
+    periods : array-like (num_docs,).
+        Per-document period labels, the ``times=`` argument passed to
+        :meth:`ECTM.fit`. Held fixed; with ``within_period=True`` the shuffle
+        stays inside each period.
+    group_a, group_b : str or int, optional
+        The two groups the divergence is measured between. Default to the model's
+        two groups; required when the model has more than two.
+    n_perm : int
+        Number of permutation refits. 100 screens, 500 for publication.
+    within_period : bool
+        Shuffle labels within each period (default), preserving every period's
+        group composition. ``False`` shuffles globally.
+    seed : int
+        Master RNG seed; permutation seeds derive as ``seed + perm_index + 1``.
+    iters : int, optional
+        Iterations for each refit. ``None`` uses the model's fit default; pass a
+        smaller value to speed up screening.
+    topn : int
+        Top-word count used to align refit topics to the reference.
+    model_factory : callable(seed) -> unfitted model, optional
+        Override the default ``type(model)(num_topics=K, seed=s)`` builder. Use it
+        to preserve non-default constructor settings (``variational=``,
+        ``sigma_shrink=``, ``init=``). With the default ``init="spectral"`` the
+        fit is deterministic, so the null's spread comes from the shuffles, not
+        the seed.
+
+    Returns
+    -------
+    :class:`ContentPlaceboResult`
+        ``observed`` (K,), ``null`` (n_perm, K), ``floor`` (K,), ``pval`` (K,).
+
+    Notes
+    -----
+    The p-value is one-sided (the alternative is "more divergent than chance")
+    and uses the ``(1 + count) / (1 + n)`` convention, so it is never exactly
+    zero. A topic that a refit cannot be matched to contributes ``nan`` to that
+    row of the null and is dropped before the floor and p-value are computed.
+    """
+    # --- resolve corpus to token lists ----------------------------------------
+    if hasattr(corpus, "documents"):
+        docs = corpus.documents()
+    else:
+        docs = [list(d) for d in corpus]
+    n_docs = len(docs)
+
+    theta_ref = np.asarray(model.doc_topic, dtype=np.float64)
+    if theta_ref.shape[0] != n_docs:
+        raise ValueError(
+            f"corpus has {n_docs} documents but model.doc_topic has "
+            f"{theta_ref.shape[0]} rows; pass the same documents the model "
+            "was fit on"
+        )
+    groups = list(groups)
+    periods = list(periods)
+    if len(groups) != n_docs or len(periods) != n_docs:
+        raise ValueError(
+            f"groups and periods must each have length {n_docs} (one per "
+            f"document); got {len(groups)} and {len(periods)}"
+        )
+
+    # --- resolve the two groups to contrast -----------------------------------
+    if group_a is None or group_b is None:
+        if model.num_groups != 2:
+            raise ValueError(
+                f"model has {model.num_groups} groups; pass group_a= and group_b= "
+                "to choose the two to contrast"
+            )
+        group_a, group_b = model.groups[0], model.groups[1]
+
+    k = int(model.num_topics)
+    from .effects import _match_to_reference, _top_word_strings, _topic_names
+
+    names = _topic_names(model, k)
+    _, ref_sets = _top_word_strings(model, topn)
+
+    # --- observed mean divergence per topic -----------------------------------
+    observed = np.array(
+        [_mean_divergence(model, t, group_a, group_b) for t in range(k)],
+        dtype=np.float64,
+    )
+
+    # --- default refit factory -------------------------------------------------
+    if model_factory is None:
+        cls = type(model)
+
+        def model_factory(s, _cls=cls, _k=k):
+            try:
+                return _cls(num_topics=_k, seed=s)
+            except TypeError as exc:
+                raise TypeError(
+                    f"could not rebuild {_cls.__name__} for the content placebo; "
+                    "pass model_factory=callable(seed)->unfitted model"
+                ) from exc
+
+    fit_kwargs = {}
+    if iters is not None:
+        fit_kwargs["iters"] = iters
+
+    # --- period blocks for the within-period shuffle --------------------------
+    plabels = np.array([_period_label(p) for p in periods])
+    if within_period:
+        blocks = [np.where(plabels == pl)[0] for pl in dict.fromkeys(plabels)]
+    else:
+        blocks = [np.arange(n_docs)]
+    groups_arr = np.array([str(g) for g in groups], dtype=object)
+
+    # --- permutation loop ------------------------------------------------------
+    null = np.full((n_perm, k), np.nan)
+    for perm in range(n_perm):
+        rng = np.random.default_rng(seed + perm + 1)
+        g_perm = groups_arr.copy()
+        for idx in blocks:
+            g_perm[idx] = groups_arr[rng.permutation(idx)]
+
+        m_perm = model_factory(seed + perm + 1)
+        m_perm.fit(docs, list(plabels), list(g_perm), **fit_kwargs)
+
+        _, perm_sets = _top_word_strings(m_perm, topn)
+        match, _, _ = _match_to_reference(ref_sets, perm_sets)
+        for ref_t in range(k):
+            perm_t = match.get(ref_t)
+            if perm_t is not None and perm_t < m_perm.num_topics:
+                null[perm, ref_t] = _mean_divergence(m_perm, perm_t, group_a, group_b)
+
+    # --- floor + one-sided p-value --------------------------------------------
+    floor = np.full(k, np.nan)
+    pval = np.full(k, np.nan)
+    for t in range(k):
+        col = null[:, t]
+        valid = col[~np.isnan(col)]
+        if valid.size:
+            floor[t] = float(valid.mean())
+            pval[t] = float((1 + np.sum(valid >= observed[t])) / (1 + valid.size))
+
+    return ContentPlaceboResult(
+        topics=list(range(k)),
+        topic_names=[names[t] if t < len(names) else f"topic_{t}" for t in range(k)],
+        observed=observed,
+        null=null,
+        floor=floor,
+        pval=pval,
+        group_a=str(group_a),
+        group_b=str(group_b),
+    )
