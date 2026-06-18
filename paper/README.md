@@ -17,6 +17,40 @@ make one later, is the same source with the `nojss` option removed.
 - `make_arxiv.sh` — assembles the self-contained arXiv tarball.
 - `ARXIV.md` — submission metadata (categories, license, abstract).
 
+## Reproducing the paper
+
+One command drives everything: `paper/reproduce.py` runs each numbered claim as an
+isolated, timed subprocess and writes `paper/generated/replication_report.md` (a
+dated, machine-stamped report with one row per step). Each step **skips cleanly
+and says so** when its toolchain is absent, so a partial run is useful; pass
+`--strict` to make SKIP/TIMEOUT count as failures (the archival run that backs
+the printed numbers).
+
+```bash
+python paper/reproduce.py                 # everything available on this machine
+python paper/reproduce.py --no-benchmarks # §5 parity + §7 only (machine-independent)
+python paper/reproduce.py --only 6        # just the benchmarks (§6)
+python paper/reproduce.py --strict --stamp 2026-06-17   # archival: every step must pass
+```
+
+### What you need beyond Python
+
+The Python core is `pip install topica` (NumPy + pandas). Reproduction adds:
+
+| Need | For | Without it |
+|---|---|---|
+| `pip install topica[viz] scikit-learn gensim tomotopy` | figures, the spanning table, the LDA-vs-tomotopy crossover (§6) | those steps error/skip |
+| **R** (`Rscript`) + packages **`stm`, `keyATM`, `quanteda`, `jsonlite`** | the STM / keyATM parity (§5) and the topica-vs-R speed tables (§6) | the R legs SKIP (report says so) |
+| **Java (JDK: `java` + `javac`)** + the **`mallet` CLI** on `PATH` | LDA-vs-MALLET parity (§5) and speed (§6) | the MALLET legs SKIP / null column |
+| `STS_REPL_DIR` → the authors' (non-redistributable) STS replication package | the STS validation (§5) | the STS step SKIPs |
+
+Install hints: R packages via `install.packages(c("stm","keyATM","quanteda","jsonlite"))`;
+MALLET from <https://github.com/mimno/Mallet/releases> (set `MALLET_HOME` to the
+unpacked dir and add `$MALLET_HOME/bin` to `PATH`). §5 parity and §7 are
+machine-independent; **§6 timings are hardware-dependent** — for a documented,
+repeatable §6 on UNC's Longleaf HPC (with a turnkey env-setup + SLURM script and
+the gotchas we hit), see [`longleaf/README.md`](../longleaf/README.md).
+
 ## Building
 
 Needs `jss.cls` and `jss.bst` (no `jsslogo.jpg`, since `nojss` drops the logo).
@@ -50,20 +84,19 @@ VIRTUAL_ENV="$PWD/.venv-dev" .venv-dev/bin/python paper/replication.py          
 VIRTUAL_ENV="$PWD/.venv-dev" .venv-dev/bin/python paper/replication.py --quick  # figure+table only
 ```
 
-The figure is gitignored (regenerable); the script is tracked. Full toolchain for
-a complete run: `pip install "topica[viz]" scikit-learn` (the effect figure needs
-matplotlib + pandas, the spanning-table embedding row needs scikit-learn for LSA
-vectors); for the cross-implementation checks, the `mallet` CLI with a JDK
-(`java` + `javac`, for the LabeledLDA/DMR legs) and `Rscript` with `stm`, `keyATM`,
-`quanteda`, and `jsonlite`. The STS check additionally reads the authors'
-(non-redistributable) replication package via `STS_REPL_DIR`. Each leg skips
-cleanly, and reports doing so, when its toolchain is absent.
+The figure is gitignored (regenerable); the script is tracked. The non-Python
+toolchains a complete run needs (R + `stm`/`keyATM`/`quanteda`/`jsonlite`, a JDK +
+the `mallet` CLI, and `STS_REPL_DIR` for STS) are listed in the "Reproducing the
+paper" requirements table above; each leg skips cleanly, and reports doing so,
+when its toolchain is absent.
 
 Open TODOs before submission:
 
-1. **Comparison-table audit (Table 1).** The feature matrix is drawn from current
-   knowledge of each tool; re-verify each cell against the tools' current releases
-   before submission, especially the "partial" marks.
+1. **Comparison-table audit (Table 1).** DONE (June 2026): re-verified every cell
+   against current releases (MALLET 2.0.8, gensim 4.4.0, tomotopy 0.13.0,
+   stm 1.3.8, keyATM 0.5.5, BERTopic 0.17.3). No cell changed — the "partial"
+   marks (MALLET/tomotopy/keyATM = prevalence-only DMR; BERTopic determinism =
+   UMAP) all hold. The caption now pins the checked versions.
 2. **Polish pass** with the writing-editor levels (sentence/word) once the section
    order is final.
 

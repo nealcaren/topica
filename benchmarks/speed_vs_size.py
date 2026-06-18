@@ -105,7 +105,7 @@ def bench_stm(docs, rating, day):
     X = np.column_stack([rating, sb])
     feat = ["ratingLiberal"] + [f"day_s{j}" for j in range(sb.shape[1])]
     design = np.column_stack([np.ones(len(docs)), X])
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as d:
+    with tempfile.TemporaryDirectory() as d:
         with open(os.path.join(d, "vdocs.txt"), "w") as f:
             f.write("\n".join(" ".join(x) for x in docs) + "\n")
         with open(os.path.join(d, "design.csv"), "w", newline="") as f:
@@ -127,7 +127,7 @@ def bench_keyatm(docs, vocab):
     kws = {n: [w for w in ws if w in vocab] for n, ws in KA.KEYWORD_SETS.items()}
     kws = {n: ws for n, ws in kws.items() if ws}
     nreg = KEYATM_K - len(kws)
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as d:
+    with tempfile.TemporaryDirectory() as d:
         with open(os.path.join(d, "vdocs.txt"), "w") as f:
             f.write("\n".join(" ".join(x) for x in docs) + "\n")
         json.dump(kws, open(os.path.join(d, "keywords.json"), "w"))
@@ -148,7 +148,7 @@ def bench_lda(docs):
     mallet = shutil.which("mallet")
     r = None
     if mallet:
-        d = tempfile.mkdtemp(dir="/private/tmp")
+        d = tempfile.mkdtemp()
         try:
             txt = os.path.join(d, "tok.txt")
             with open(txt, "w") as f:
