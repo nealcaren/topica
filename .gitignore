@@ -82,3 +82,4 @@ uv.lock
 paper/generated/*
 !paper/generated/replication_report.md
 !paper/generated/replication_report_longleaf.md
+!paper/generated/validation_appendix.tex

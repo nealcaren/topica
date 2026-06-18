@@ -37,11 +37,16 @@ for fig in fig_poliblog_effect.pdf fig_poliblog_report.pdf fig_thread_scaling.pd
   [ -f "$HERE/$fig" ] || {
     echo "ERROR: $fig missing. Generate it (replication.py --quick / benchmarks/bench.py)"; exit 1; }
 done
+# Appendix A is \input-ed from generated/validation_appendix.tex (committed).
+APP="$HERE/generated/validation_appendix.tex"
+[ -f "$APP" ] || {
+  echo "ERROR: $APP missing. Generate it (python paper/gen_validation_appendix.py)"; exit 1; }
 
 # --- build the .bbl ---------------------------------------------------------
-BUILD="$STAGE/build"; mkdir -p "$BUILD"
+BUILD="$STAGE/build"; mkdir -p "$BUILD/generated"
 cp "$HERE/topica.tex" "$HERE/topica.bib" "$JSS_CLS" "$JSS_BST" \
    "$HERE/fig_poliblog_effect.pdf" "$HERE/fig_poliblog_report.pdf" "$HERE/fig_thread_scaling.pdf" "$BUILD/"
+cp "$APP" "$BUILD/generated/"
 ( cd "$BUILD"
   export TEXINPUTS=".:" BSTINPUTS=".:" BIBINPUTS=".:"
   pdflatex -interaction=nonstopmode topica.tex >build.log 2>&1
@@ -51,10 +56,11 @@ cp "$HERE/topica.tex" "$HERE/topica.bib" "$JSS_CLS" "$JSS_BST" \
     echo "ERROR: .bbl build failed; tail of $BUILD/build.log:"; tail -30 "$BUILD/build.log"; exit 1; }
 
 # --- assemble the submission (tex + bbl + class/style + figure) -------------
-SUB="$STAGE/submission"; mkdir -p "$SUB"
+SUB="$STAGE/submission"; mkdir -p "$SUB/generated"
 cp "$BUILD/topica.tex" "$BUILD/topica.bbl" "$JSS_CLS" "$JSS_BST" \
    "$HERE/fig_poliblog_effect.pdf" "$HERE/fig_poliblog_report.pdf" \
    "$HERE/fig_thread_scaling.pdf" "$SUB/"
+cp "$APP" "$SUB/generated/"
 
 # --- prove it compiles in isolation (no .bib, bibtex not run) ---------------
 ( cd "$SUB"
@@ -66,7 +72,8 @@ if grep -qiE "Citation .* undefined|LaTeX Error|Undefined control" /tmp/arxiv_co
 fi
 
 tar czf "$OUT" -C "$SUB" topica.tex topica.bbl jss.cls jss.bst \
-  fig_poliblog_effect.pdf fig_poliblog_report.pdf fig_thread_scaling.pdf
+  fig_poliblog_effect.pdf fig_poliblog_report.pdf fig_thread_scaling.pdf \
+  generated/validation_appendix.tex
 echo "wrote $OUT"
 echo "contents:"; tar tzf "$OUT" | sed 's/^/  /'
 echo "pages: $(pdfinfo "$SUB/topica.pdf" 2>/dev/null | awk '/Pages/{print $2}')"

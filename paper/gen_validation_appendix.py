@@ -1,0 +1,581 @@
+"""Generate the paper's side-by-side validation appendix.
+
+For each reference package topica validates against, this runs BOTH the original
+package and topica on the **poliblog** corpus and writes a LaTeX subsection showing
+the two engines' topics side by side (topic-aligned top words), plus each model's
+distinctive feature (covariate effects, keywords, correlations, sentiment) and the
+alignment cosine. The output is one self-contained file,
+``paper/generated/validation_appendix.tex``, ``\\input``-ed by ``paper/topica.tex``.
+
+It reuses the poliblog loader and the cross-implementation drivers in ``parity/``;
+top words are read off the topic-word matrices both engines export. Every leg
+**skips cleanly** — emitting a "skipped" note into the tex — when its toolchain is
+absent (``Rscript``+``stm``/``keyATM``, the ``mallet`` CLI, ``tomotopy``, or
+``STS_REPL_DIR``), so the generator always writes a complete file.
+
+    python paper/gen_validation_appendix.py            # all legs
+    python paper/gen_validation_appendix.py --only stm --k 8
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import traceback
+
+import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+PARITY = os.path.join(ROOT, "parity")
+OUT = os.path.join(HERE, "generated", "validation_appendix.tex")
+sys.path.insert(0, PARITY)
+
+DEFAULT_K = 10  # coarse enough that the random-init Gibbs legs (LDA, DMR) align
+                # cleanly; the spectral legs (STM/CTM/content) stay tight at any K
+TOP_N = 8  # words shown per topic in the side-by-side tables
+
+
+# --------------------------------------------------------------------------- #
+# Shared data + small numeric helpers
+# --------------------------------------------------------------------------- #
+def poliblog():
+    """(docs, rating_lib, day, vocab) — reuses the parity loader."""
+    import stm_poliblog_compare as stmp
+    return stmp.load_and_prep()
+
+
+def realign_to(vocab_to, vocab_from, mat):
+    """Reindex a K x |vocab_from| matrix onto vocab_to (zeros for missing)."""
+    idx = {w: i for i, w in enumerate(vocab_from)}
+    out = np.zeros((mat.shape[0], len(vocab_to)))
+    for j, w in enumerate(vocab_to):
+        if w in idx:
+            out[:, j] = mat[:, idx[w]]
+    return out
+
+
+def align_pairs(ref_tw, top_tw):
+    """Greedy 1-1 alignment ref->topica by topic-word cosine (parity helper)."""
+    import stm_poliblog_compare as stmp
+    mean_cos, pairs = stmp._best_alignment_cosine(ref_tw, top_tw, return_pairs=True)
+    return pairs, mean_cos
+
+
+def topw(row, vocab, n=TOP_N):
+    return [vocab[i] for i in np.argsort(row)[::-1][:n]]
+
+
+# --------------------------------------------------------------------------- #
+# LaTeX helpers
+# --------------------------------------------------------------------------- #
+def tex_escape(s: str) -> str:
+    for a, b in [("\\", r"\textbackslash{}"), ("&", r"\&"), ("%", r"\%"),
+                 ("$", r"\$"), ("#", r"\#"), ("_", r"\_"), ("{", r"\{"),
+                 ("}", r"\}"), ("~", r"\textasciitilde{}"), ("^", r"\textasciicircum{}")]:
+        s = s.replace(a, b)
+    return s
+
+
+def cell(words) -> str:
+    return ", ".join(tex_escape(w) for w in words)
+
+
+def sidebyside(ref_name, ref_tw, top_tw, vocab, *, caption, label, n=TOP_N):
+    """Topic-aligned side-by-side top-words table (one row per aligned topic)."""
+    pairs, mean_cos = align_pairs(ref_tw, top_tw)
+    pairs = sorted(pairs, key=lambda p: -p[2])
+    lines = [
+        r"\begin{table}[ht]\centering\footnotesize",
+        rf"\caption{{{caption}}}",
+        rf"\label{{{label}}}",
+        r"\begin{tabular}{@{}r >{\raggedright\arraybackslash}p{0.40\textwidth} "
+        r">{\raggedright\arraybackslash}p{0.40\textwidth}@{}}",
+        r"\toprule",
+        rf" & {ref_name} & \pkg{{topica}} \\",  # ref_name is LaTeX we control
+        r"\midrule",
+    ]
+    for rank, (ri, tj, _c) in enumerate(pairs, 1):
+        lines.append(rf"{rank} & {cell(topw(ref_tw[ri], vocab, n))} & "
+                     rf"{cell(topw(top_tw[tj], vocab, n))} \\")
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
+    return "\n".join(lines), mean_cos, pairs
+
+
+def _plain(title):
+    """Strip LaTeX markup from a heading for the PDF bookmark / ToC (hyperref
+    cannot sanitize \\pkg/\\proglang inside a bookmark)."""
+    import re
+    t = re.sub(r"\\(?:pkg|proglang|code|emph|textbf)\{([^}]*)\}", r"\1", title)
+    return t.replace("~", " ").replace("\\", "")
+
+
+def subsection(title, body):
+    # \subsection[bookmark-safe plain text]{rich title}
+    return f"\\subsection[{_plain(title)}]{{{title}}}\n\n{body}\n"
+
+
+def skip(title, reason):
+    return subsection(title, rf"\emph{{Skipped at build time: {tex_escape(reason)}.}} "
+                      r"This leg regenerates where the toolchain is available.")
+
+
+# --------------------------------------------------------------------------- #
+# Generic R stm runner (powers the STM / CTM / content legs)
+# --------------------------------------------------------------------------- #
+def r_stm_available():
+    import stm_poliblog_compare as stmp
+    return stmp.r_stm_available()
+
+
+_R_STM = r"""
+suppressMessages(library(stm))
+lines <- readLines(file.path(dir, "docs.txt")); toks <- strsplit(lines, " ")
+vocab <- sort(unique(unlist(toks))); vmap <- setNames(seq_along(vocab), vocab)
+documents <- lapply(toks, function(d){ tb <- table(d); idx <- as.integer(vmap[names(tb)])
+  o <- order(idx); matrix(as.integer(rbind(idx[o], as.integer(tb)[o])), nrow=2) })
+prev <- NULL; cont <- NULL
+if (file.exists(file.path(dir,"design.csv"))) prev <- as.matrix(read.csv(file.path(dir,"design.csv")))
+meta <- read.csv(file.path(dir,"meta.csv"))
+set.seed(1)
+args <- list(documents=documents, vocab=vocab, K=KVAL, init.type="Spectral", verbose=FALSE)
+if (!is.null(prev)) args$prevalence <- prev
+if (HASCONTENT) { args$content <- ~rating; args$data <- meta }
+f <- do.call(stm, args)
+# Marginal topic-word (averaged over content levels when content is present).
+if (is.null(f$beta$logbeta) || length(f$beta$logbeta) == 1) {
+  b <- exp(f$beta$logbeta[[1]])
+} else {
+  acc <- exp(f$beta$logbeta[[1]]); for (i in 2:length(f$beta$logbeta)) acc <- acc + exp(f$beta$logbeta[[i]])
+  b <- acc / length(f$beta$logbeta)
+}
+colnames(b) <- vocab
+write.csv(b, file.path(dir,"beta.csv"), row.names=FALSE)
+write.csv(f$theta, file.path(dir,"theta.csv"), row.names=FALSE)
+write(vocab, file.path(dir,"vocab.txt"))
+# Per-content-level betas for the SAGE leg (one CSV per level).
+if (HASCONTENT) {
+  for (i in seq_along(f$beta$logbeta)) {
+    bi <- exp(f$beta$logbeta[[i]]); colnames(bi) <- vocab
+    write.csv(bi, file.path(dir, sprintf("beta_lvl%d.csv", i)), row.names=FALSE)
+  }
+  write(levels(as.factor(meta$rating)), file.path(dir,"levels.txt"))
+}
+cat("ok\n")
+"""
+
+
+def run_r_stm(docs, k, *, design=None, feat_names=None, meta_rating=None, content=False,
+              workdir=None):
+    """Fit R stm and return (vocab, beta KxV, theta DxK, extra dict)."""
+    import stm_poliblog_compare as stmp
+    d = workdir
+    with open(os.path.join(d, "docs.txt"), "w") as f:
+        f.write("\n".join(" ".join(doc) for doc in docs) + "\n")
+    if design is not None:
+        with open(os.path.join(d, "design.csv"), "w", newline="") as f:
+            w = csv.writer(f); w.writerow(["intercept"] + feat_names)
+            for row in design:
+                w.writerow(list(row))
+    with open(os.path.join(d, "meta.csv"), "w", newline="") as f:
+        w = csv.writer(f); w.writerow(["rating"])
+        for r in (meta_rating if meta_rating is not None else ["NA"] * len(docs)):
+            w.writerow([r])
+    script = (f'dir <- "{d}"\nKVAL <- {k}\nHASCONTENT <- {"TRUE" if content else "FALSE"}\n'
+              + _R_STM)
+    proc = subprocess.run(["Rscript", "-e", script], capture_output=True, text=True, timeout=2400)
+    if "ok" not in proc.stdout:
+        raise RuntimeError(f"R stm driver failed:\n{proc.stdout}\n{proc.stderr}")
+    vocab = open(os.path.join(d, "vocab.txt")).read().split()
+    beta = stmp._read_r_beta(os.path.join(d, "beta.csv"), vocab)
+    theta = np.loadtxt(os.path.join(d, "theta.csv"), delimiter=",", skiprows=1)
+    extra = {}
+    if content:
+        levels = open(os.path.join(d, "levels.txt")).read().split()
+        extra["levels"] = levels
+        extra["level_beta"] = [stmp._read_r_beta(os.path.join(d, f"beta_lvl{i+1}.csv"), vocab)
+                               for i in range(len(levels))]
+    return vocab, beta, theta, extra
+
+
+# --------------------------------------------------------------------------- #
+# Legs
+# --------------------------------------------------------------------------- #
+def leg_stm(k):
+    title = r"Structural topic model (vs \proglang{R}~\pkg{stm})"
+    if not r_stm_available():
+        return skip(title, "Rscript with the stm package not available")
+    from topica import STM
+    from topica.stm import spline
+    docs, rating_lib, day, _ = poliblog()
+    rating = ["Liberal" if r else "Conservative" for r in rating_lib]
+    spl, _ = spline(day, df=10)
+    X = np.column_stack([rating_lib, spl])
+    feat = ["ratingLiberal"] + [f"day_s{j}" for j in range(spl.shape[1])]
+    with tempfile.TemporaryDirectory() as d:
+        rvocab, rbeta, rtheta, _ = run_r_stm(
+            docs, k, design=np.column_stack([np.ones(len(docs)), X]),
+            feat_names=feat, meta_rating=rating, workdir=d)
+    m = STM(num_topics=k, init="spectral")
+    m.fit(docs, X, prevalence_names=feat, iters=200, convergence_tol=1e-5)
+    tbeta = realign_to(rvocab, list(m.vocabulary), np.asarray(m.topic_word))
+    ttheta = np.asarray(m.doc_topic)
+    table, cos, pairs = sidebyside(r"\proglang{R}~\pkg{stm}", rbeta, tbeta, rvocab,
+                                   caption=f"STM topics on poliblog (K={k}), "
+                                   r"\proglang{R}~\pkg{stm} vs \pkg{topica}, "
+                                   "aligned by topic-word cosine.",
+                                   label="tab:app:stm")
+    # Unique feature: prevalence by ideology — mean topic share, Conservative vs
+    # Liberal, from each engine's theta; show the most ideologically split topics.
+    lib = np.array([r == "Liberal" for r in rating])
+    feat_block = _prevalence_block(rbeta, tbeta, rtheta, ttheta, rvocab, lib, pairs,
+                                   "Conservative", "Liberal", ref_label=r"\pkg{stm}")
+    intro = (rf"Both engines fit \code{{prevalence = \textasciitilde{{}} rating + s(day)}} "
+             rf"on the same {len(docs)} posts and {len(rvocab)} word types. "
+             rf"Aligned topic-word cosine \textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table, feat_block]))
+
+
+def _prevalence_block(rbeta, tbeta, rtheta, ttheta, vocab, lib_mask, pairs, lo, hi,
+                      ref_label=r"\pkg{stm}"):
+    """Side-by-side: the 3 topics with the largest Liberal-minus-Conservative mean
+    topic share, with each engine's effect and a top-words label."""
+    rmap = {ri: tj for ri, tj, _ in pairs}
+    r_eff = rtheta[lib_mask].mean(0) - rtheta[~lib_mask].mean(0)
+    t_eff = ttheta[lib_mask].mean(0) - ttheta[~lib_mask].mean(0)
+    order = np.argsort(-np.abs(r_eff))[:3]
+    lines = [r"\noindent\emph{Prevalence by ideology.} Mean topic share, "
+             rf"{hi} minus {lo} posts (positive = more {hi}):",
+             r"\begin{center}\footnotesize\begin{tabular}{@{}p{0.5\textwidth} r r@{}}",
+             r"\toprule",
+             rf"topic (\pkg{{topica}} top words) & {ref_label} & \pkg{{topica}} \\",
+             r"\midrule"]
+    for ri in order:
+        tj = rmap.get(int(ri), int(ri))
+        lab = cell(topw(tbeta[tj], vocab, 4))
+        lines.append(rf"{lab} & {r_eff[ri]:+.3f} & {t_eff[tj]:+.3f} \\")
+    lines += [r"\bottomrule", r"\end{tabular}\end{center}"]
+    return "\n".join(lines)
+
+
+def leg_ctm(k):
+    title = r"Correlated topic model (vs \proglang{R}~\pkg{stm}, no covariates)"
+    if not r_stm_available():
+        return skip(title, "Rscript with the stm package not available")
+    from topica import CTM
+    docs, _, _, _ = poliblog()
+    with tempfile.TemporaryDirectory() as d:
+        rvocab, rbeta, _rtheta, _ = run_r_stm(docs, k, workdir=d)
+    m = CTM(num_topics=k, init="spectral")
+    m.fit(docs, iters=200, convergence_tol=1e-5)
+    tbeta = realign_to(rvocab, list(m.vocabulary), np.asarray(m.topic_word))
+    table, cos, _ = sidebyside(r"\proglang{R}~\pkg{stm}", rbeta, tbeta, rvocab,
+                               caption=f"CTM topics on poliblog (K={k}).",
+                               label="tab:app:ctm")
+    # Unique feature: topic correlation (what CTM adds over LDA).
+    tw = np.asarray(m.topic_word); tvocab = list(m.vocabulary)
+    corr = np.asarray(m.topic_correlation)
+    iu = np.triu_indices(k, 1)
+    strongest = sorted(zip(corr[iu], iu[0], iu[1]), key=lambda t: -abs(t[0]))[:3]
+    rows = "\n".join(
+        rf"{cell(topw(tw[a], tvocab, 3))} / {cell(topw(tw[b], tvocab, 3))} & {c:+.2f} \\"
+        for c, a, b in strongest)
+    feat = "\n".join([
+        r"\noindent\emph{Topic correlations} (the structure CTM adds over LDA), "
+        r"strongest pairs in \pkg{topica}:",
+        r"\begin{center}\footnotesize\begin{tabular}{@{}>{\raggedright\arraybackslash}"
+        r"p{0.7\textwidth} r@{}}",
+        r"\toprule topic pair & corr \\ \midrule",
+        rows,
+        r"\bottomrule\end{tabular}\end{center}",
+    ])
+    intro = (r"No covariates, so this is the logistic-normal (correlated) topic model. "
+             rf"Aligned cosine \textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table, feat]))
+
+
+def leg_content(k):
+    title = r"Content covariate / SAGE (vs \proglang{R}~\pkg{stm})"
+    if not r_stm_available():
+        return skip(title, "Rscript with the stm package not available")
+    from topica import STM
+    docs, rating_lib, _, _ = poliblog()
+    rating = ["Liberal" if r else "Conservative" for r in rating_lib]
+    with tempfile.TemporaryDirectory() as d:
+        rvocab, rbeta, _t, extra = run_r_stm(docs, k, meta_rating=rating, content=True, workdir=d)
+    m = STM(num_topics=k, init="spectral")
+    m.fit(docs, content=rating, iters=150, convergence_tol=1e-5)
+    tbeta = realign_to(rvocab, list(m.vocabulary), np.asarray(m.topic_word))
+    table, cos, pairs = sidebyside(r"\proglang{R}~\pkg{stm}", rbeta, tbeta, rvocab,
+                                   caption=f"Content-model (SAGE) topics on poliblog (K={k}); "
+                                   "marginal topic-word averaged over rating levels.",
+                                   label="tab:app:content")
+    # Unique feature: per-group wording of one topic (Conservative vs Liberal).
+    feat = _content_block(m, rvocab=rvocab, pairs=pairs)
+    intro = (rf"\code{{content = \textasciitilde{{}} rating}}: each topic's words shift by "
+             rf"ideology. Marginal aligned cosine \textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table, feat]))
+
+
+def _content_block(m, rvocab, pairs):
+    import numpy as np
+    tw = np.asarray(m.topic_word); tvocab = list(m.vocabulary)
+    groups = list(m.groups)
+    # pick the topic whose two groups' wording differs most (TV distance).
+    best_t, best_d = 0, -1.0
+    g0 = np.asarray(m.topic_word_by_group)  # (K, G, V)
+    for t in range(tw.shape[0]):
+        d = 0.5 * np.abs(g0[t, 0] - g0[t, 1]).sum()
+        if d > best_d:
+            best_t, best_d = t, d
+    lines = [rf"\noindent\emph{{Per-group wording}} of one topic in \pkg{{topica}} "
+             rf"(the SAGE deviation, TV distance {best_d:.2f}):",
+             r"\begin{center}\footnotesize\begin{tabular}{@{}l p{0.7\textwidth}@{}}\toprule"]
+    for gi, g in enumerate(groups):
+        lines.append(rf"{tex_escape(g)} & {cell(topw(g0[best_t, gi], tvocab, 8))} \\")
+    lines += [r"\bottomrule\end{tabular}\end{center}"]
+    return "\n".join(lines)
+
+
+def leg_lda(k):
+    title = r"Latent Dirichlet allocation (vs Java \pkg{MALLET})"
+    import mallet_parity as mp
+    if not mp.mallet_available():
+        return skip(title, "the MALLET CLI not available")
+    from topica import LDA
+    docs, _, _, _ = poliblog()
+    mphi, mvocab = mp._mallet_phi(docs, k, iters=1000, seed=1)
+    m = LDA(num_topics=k, seed=1, optimize_interval=0)
+    m.fit(docs, iters=1000, num_samples=5, sample_interval=25)
+    tbeta = realign_to(mvocab, list(m.vocabulary), np.asarray(m.topic_word))
+    table, cos, _ = sidebyside(r"Java \pkg{MALLET}", mphi, tbeta, mvocab,
+                               caption=f"LDA topics on poliblog (K={k}), "
+                               r"Java \pkg{MALLET} vs \pkg{topica} (both collapsed Gibbs).",
+                               label="tab:app:lda")
+    intro = (rf"The baseline: plain LDA on the same {len(docs)} posts, collapsed Gibbs "
+             rf"in both engines. Aligned topic-word cosine \textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table]))
+
+
+def _diag_cosine(A, B):
+    """Mean per-row (un-permuted) cosine — for index-aligned topics."""
+    An = A / (np.linalg.norm(A, axis=1, keepdims=True) + 1e-12)
+    Bn = B / (np.linalg.norm(B, axis=1, keepdims=True) + 1e-12)
+    return float(np.mean(np.sum(An * Bn, axis=1)))
+
+
+def leg_keyatm(k):
+    title = r"Keyword-assisted topic model (vs \proglang{R}~\pkg{keyATM})"
+    import keyatm_r_compare as ka
+    if not ka.r_keyatm_available():
+        return skip(title, "Rscript with the keyATM package not available")
+    from topica import KeyATM
+    docs, keywords = ka.load_and_prep()
+    names = list(keywords.keys())
+    num_keyword = len(keywords)
+    num_topics = num_keyword + ka.NUM_REGULAR  # keyATM's K is set by the keyword sets
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "vdocs.txt"), "w") as f:
+            f.write("\n".join(" ".join(doc) for doc in docs) + "\n")
+        with open(os.path.join(d, "keywords.json"), "w") as f:
+            json.dump(keywords, f)
+        script = (f'dir <- "{d}"\nNREG <- {ka.NUM_REGULAR}\nITERS <- {ka.ITERS}\n'
+                  'if (!requireNamespace("jsonlite", quietly=TRUE)) stop("need jsonlite")\n'
+                  + ka._R_DRIVER)
+        proc = subprocess.run(["Rscript", "-e", script], capture_output=True, text=True,
+                              timeout=3600)
+        if "ok" not in proc.stdout:
+            raise RuntimeError(f"R keyATM driver failed:\n{proc.stdout}\n{proc.stderr}")
+        with open(os.path.join(d, "r_phi1.csv"), newline="") as f:
+            header = next(csv.reader(f))
+        rvocab = [h.strip('"') for h in header[1:]]
+        rphi = ka._read_r_phi(os.path.join(d, "r_phi1.csv"), rvocab)
+    model = KeyATM(keywords, num_topics=num_topics, seed=1)
+    model.fit(docs, iters=ka.ITERS)
+    tphi = realign_to(rvocab, list(model.vocabulary), np.asarray(model.topic_word))
+    # keyATM orders the keyword topics first, in keyword-list order, in BOTH engines
+    # — so the keyword topics are index-aligned (no cosine alignment needed). Show
+    # them with their seed words; that is keyATM's signature.
+    kw_cos = _diag_cosine(rphi[:num_keyword], tphi[:num_keyword])
+    _, overall_cos = align_pairs(rphi, tphi)
+    table = _keyword_table(names, keywords, rphi, tphi, rvocab, num_keyword,
+                           caption="keyATM keyword topics on poliblog, "
+                           r"\proglang{R}~\pkg{keyATM} vs \pkg{topica}; each topic "
+                           "anchored to its seed words (index-aligned).",
+                           label="tab:app:keyatm")
+    intro = (rf"{num_keyword} seeded keyword topics plus {ka.NUM_REGULAR} free topics on "
+             rf"{len(docs)} posts. The anchored topics line up by construction; their "
+             rf"recovered words agree at per-topic cosine \textbf{{{kw_cos:.3f}}} "
+             rf"(all {num_topics} topics, best-aligned: {overall_cos:.3f}).")
+    return subsection(title, "\n\n".join([intro, table]))
+
+
+def _keyword_table(names, keywords, rphi, tphi, rvocab, num_keyword, *, caption, label):
+    lines = [
+        r"\begin{table}[ht]\centering\footnotesize",
+        rf"\caption{{{caption}}}",
+        rf"\label{{{label}}}",
+        r"\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.18\textwidth} "
+        r">{\raggedright\arraybackslash}p{0.36\textwidth} "
+        r">{\raggedright\arraybackslash}p{0.36\textwidth}@{}}",
+        r"\toprule",
+        r"seed keywords & \proglang{R}~\pkg{keyATM} & \pkg{topica} \\",
+        r"\midrule",
+    ]
+    for i in range(num_keyword):
+        lines.append(rf"{cell(keywords[names[i]])} & {cell(topw(rphi[i], rvocab))} & "
+                     rf"{cell(topw(tphi[i], rvocab))} \\")
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
+    return "\n".join(lines)
+
+
+def leg_dmr(k):
+    title = r"Dirichlet-multinomial regression (vs \pkg{tomotopy})"
+    try:
+        import tomotopy as tp
+    except ImportError:
+        return skip(title, "tomotopy not installed")
+    from topica import DMR
+    docs, rating_lib, _, _ = poliblog()
+    rating = ["Liberal" if r else "Conservative" for r in rating_lib]
+    # tomotopy DMR: categorical rating metadata.
+    mdl = tp.DMRModel(tw=tp.TermWeight.ONE, k=k, seed=1)
+    for doc, r in zip(docs, rating):
+        mdl.add_doc(doc, metadata=r)
+    mdl.burn_in = 200
+    mdl.train(1000, show_progress=False)
+    mvocab = list(mdl.used_vocabs)
+    mphi = np.array([mdl.get_topic_word_dist(t) for t in range(k)])
+    mtheta = np.array([d.get_topic_dist() for d in mdl.docs])
+    # topica DMR: the rating as a 0/1 covariate (an intercept is prepended).
+    X = np.array(rating_lib, dtype=float).reshape(-1, 1)
+    m = DMR(num_topics=k, seed=1)
+    m.fit(docs, X, feature_names=["ratingLiberal"], iters=1000)
+    tbeta = realign_to(mvocab, list(m.vocabulary), np.asarray(m.topic_word))
+    ttheta = np.asarray(m.doc_topic)
+    table, cos, pairs = sidebyside(r"\pkg{tomotopy}", mphi, tbeta, mvocab,
+                                   caption=f"DMR topics on poliblog (K={k}), "
+                                   r"\pkg{tomotopy} vs \pkg{topica} (both Gibbs with a "
+                                   "metadata-driven document prior).",
+                                   label="tab:app:dmr")
+    lib = np.array([r == "Liberal" for r in rating])
+    feat = _prevalence_block(mphi, tbeta, mtheta, ttheta, mvocab, lib, pairs,
+                             "Conservative", "Liberal", ref_label=r"\pkg{tomotopy}")
+    intro = (r"The metadata covariate is the post's ideology (\code{rating}); DMR makes "
+             rf"each document's topic prior log-linear in it. Aligned cosine "
+             rf"\textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table, feat]))
+
+
+def leg_sts(k):
+    title = (r"Structural topic and sentiment-discourse (vs the authors' "
+             r"\proglang{R} reference)")
+    import sts_r_compare as stsm
+    ok, why = stsm.available()
+    if not ok:
+        return skip(title, why)
+    from topica import STS
+    from stm_r_compare import _read_r_beta
+    with tempfile.TemporaryDirectory() as d:
+        env = {**os.environ, "STS_REPL_DIR": stsm.REPL_DIR}
+        driver = stsm._R_DRIVER.replace("__MIN_OVERLAP__", repr(stsm.MIN_VOCAB_OVERLAP))
+        proc = subprocess.run(["Rscript", "-e", f'dir <- "{d}"\n' + driver],
+                              capture_output=True, text=True, timeout=1200, env=env)
+        if "vocab-mismatch" in proc.stdout:
+            return skip(title, "regenerated poliblog vocabulary differs from the fitted RDS")
+        if "ok" not in proc.stdout:
+            raise RuntimeError(f"R STS driver failed:\n{proc.stdout}\n{proc.stderr}")
+        docs = [ln.split() for ln in open(os.path.join(d, "docs.txt")) if ln.strip()]
+        with open(os.path.join(d, "meta.csv"), newline="") as f:
+            rating = np.array([float(r["rating"]) for r in csv.DictReader(f)])
+        rvocab = open(os.path.join(d, "r_vocab.txt")).read().split()
+        r_sts = _read_r_beta(os.path.join(d, "r_sts_beta.csv"), rvocab)
+    K = r_sts.shape[0]
+    sts = STS(num_topics=K, init="spectral")
+    sts.fit(docs, sentiment_seed=rating.tolist(), prevalence=rating.reshape(-1, 1),
+            prevalence_names=["rating"], iters=50, kappa_estimation="lasso")
+    beta_mean, _ = stsm._beta_at_mean_sentiment(sts)
+    t_sts = stsm._to_r_vocab(beta_mean, list(sts.vocabulary), rvocab)
+    table, cos, _ = sidebyside(r"\proglang{R} reference", r_sts, t_sts, rvocab,
+                               caption=f"STS topics on the published poliblog fit (K={K}), "
+                               "read at each topic's mean sentiment-discourse.",
+                               label="tab:app:sts")
+    feat = _sts_block(sts)
+    intro = (r"The authors' published poliblog\,2008 fit vs \pkg{topica}, both read at the "
+             r"mean sentiment (the reference's \code{print.topWords} view). Aligned cosine "
+             rf"\textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table, feat]))
+
+
+def _sts_block(sts):
+    """STS's signature: the rating covariate drives a per-topic sentiment-discourse
+    latent (not just prevalence). Show the topics whose sentiment leans most by
+    ideology — the readable view of what STS adds over STM."""
+    vocab = list(sts.vocabulary)
+    beta = np.asarray(sts.topic_word)  # neutral baseline, for topic labels
+    seff = np.asarray(sts.sentiment_effects)  # (num_features, K); 0=intercept, 1=rating
+    rating_eff = seff[1] if seff.shape[0] > 1 else seff[0]
+    order = np.argsort(-np.abs(rating_eff))[:3]
+    lines = [r"\noindent\emph{Sentiment by ideology.} Effect of \code{rating} (Liberal) "
+             r"on each topic's sentiment-discourse latent in \pkg{topica} "
+             r"(positive = more positive among Liberal posts) — the dimension STS adds "
+             r"over STM:",
+             r"\begin{center}\footnotesize\begin{tabular}{@{}p{0.6\textwidth} r@{}}\toprule",
+             r"topic (top words) & sentiment effect \\ \midrule"]
+    for t in order:
+        lines.append(rf"{cell(topw(beta[t], vocab, 5))} & {rating_eff[t]:+.3f} \\")
+    lines += [r"\bottomrule\end{tabular}\end{center}"]
+    return "\n".join(lines)
+
+
+LEGS = {
+    "lda": leg_lda,
+    "stm": leg_stm,
+    "ctm": leg_ctm,
+    "content": leg_content,
+    "keyatm": leg_keyatm,
+    "dmr": leg_dmr,
+    "sts": leg_sts,
+}
+ORDER = ["lda", "stm", "ctm", "content", "keyatm", "dmr", "sts"]
+
+
+def build(only=None, k_override=None):
+    k = k_override or DEFAULT_K
+    names = [only] if only else ORDER
+    parts = []
+    for name in names:
+        fn = LEGS.get(name)
+        if fn is None:
+            print(f"  {name}: not yet implemented, skipping")
+            continue
+        try:
+            tex = fn(k)
+            print(f"  {name}: ok")
+        except Exception as e:  # any toolchain/runtime failure -> skip note
+            print(f"  {name}: ERROR -> skip note ({e})")
+            traceback.print_exc()
+            tex = skip(name.upper(), f"generation failed: {e}")
+        parts.append(tex)
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    if only:
+        # single-leg run: print, don't clobber the full file
+        print("\n".join(parts))
+        return
+    with open(OUT, "w") as f:
+        f.write("% Generated by paper/gen_validation_appendix.py — do not edit by hand.\n\n")
+        f.write("\n\n".join(parts) + "\n")
+    print(f"wrote {OUT}")
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--only", help="run a single leg (lda, stm, ctm, content, keyatm, dmr, sts)")
+    ap.add_argument("--k", type=int, help="override the topic count")
+    args = ap.parse_args()
+    build(only=args.only, k_override=args.k)
