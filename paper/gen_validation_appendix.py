@@ -13,9 +13,10 @@ top words are read off the topic-word matrices both engines export. Every leg
 absent (``Rscript``+``stm``/``keyATM``, the ``mallet`` CLI, ``tomotopy``, or
 ``STS_REPL_DIR``), so the generator always writes a complete file.
 
-Legs (``--only``): ``lda`` (Java MALLET + tomotopy), ``stm``/``ctm``/``content``
-(R stm), ``keyatm`` (R keyATM), ``dmr``/``hdp``/``pa`` (tomotopy), ``sts``
-(the authors' R reference).
+Legs (``--only``): ``lda`` (Java MALLET + tomotopy), ``nmf``/``lsa``
+(scikit-learn), ``stm``/``ctm``/``content`` (R stm), ``keyatm`` (R keyATM),
+``dmr``/``gdmr``/``slda``/``labeledlda``/``hdp``/``pa``/``dtm``
+(tomotopy), ``sts`` (the authors' R reference).
 
     python paper/gen_validation_appendix.py            # all legs
     python paper/gen_validation_appendix.py --only stm --k 8
@@ -62,6 +63,18 @@ def realign_to(vocab_to, vocab_from, mat):
         if w in idx:
             out[:, j] = mat[:, idx[w]]
     return out
+
+
+def doc_term(docs, vocab):
+    """Dense document-term count matrix (D x |vocab|) for the sklearn legs."""
+    idx = {w: i for i, w in enumerate(vocab)}
+    X = np.zeros((len(docs), len(vocab)))
+    for r, doc in enumerate(docs):
+        for w in doc:
+            j = idx.get(w)
+            if j is not None:
+                X[r, j] += 1.0
+    return X
 
 
 def align_pairs(ref_tw, top_tw):
@@ -714,18 +727,290 @@ def _pa_block(p):
     return "\n".join(lines)
 
 
+def leg_nmf(k):
+    title = r"Non-negative matrix factorization (vs \pkg{scikit-learn})"
+    try:
+        from sklearn.decomposition import NMF as SkNMF
+    except ImportError:
+        return skip(title, "scikit-learn not installed")
+    from topica import NMF
+    docs, _, _, _ = poliblog()
+    m = NMF(num_topics=k, beta_loss="frobenius", init="nndsvd", seed=1)
+    m.fit(docs, iters=400)
+    tv = list(m.vocabulary)
+    ttw = np.asarray(m.topic_word)
+    X = doc_term(docs, tv)
+    sk = SkNMF(n_components=k, init="nndsvd", beta_loss="frobenius", max_iter=400, random_state=1)
+    sk.fit(X)
+    H = sk.components_
+    ref = H / (H.sum(1, keepdims=True) + 1e-12)
+    table, cos, _ = sidebyside(r"\pkg{scikit-learn}", ref, ttw, tv,
+                               caption=f"NMF topics on poliblog (K={k}); Frobenius loss, "
+                               "NNDSVD init.", label="tab:app:nmf")
+    intro = (r"Non-negative factorization of the document-term matrix; \pkg{topica} reimplements "
+             r"\pkg{scikit-learn}'s multiplicative updates with the same NNDSVD start. "
+             rf"Aligned topic-word cosine \textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table]))
+
+
+def leg_lsa(k):
+    title = r"Latent semantic analysis (vs \pkg{scikit-learn})"
+    try:
+        from sklearn.decomposition import TruncatedSVD
+        from sklearn.feature_extraction.text import TfidfTransformer
+    except ImportError:
+        return skip(title, "scikit-learn not installed")
+    from topica import LSA
+    docs, _, _, _ = poliblog()
+    m = LSA(num_topics=k, weighting="tfidf", seed=1)
+    m.fit(docs)
+    tv = list(m.vocabulary)
+    ttw = np.abs(np.asarray(m.topic_word))  # signed loadings -> rank by absolute value
+    X = doc_term(docs, tv)
+    Xt = TfidfTransformer().fit_transform(X)
+    svd = TruncatedSVD(n_components=k, random_state=1)
+    svd.fit(Xt)
+    ref = np.abs(svd.components_)
+    table, cos, _ = sidebyside(r"\pkg{scikit-learn}", ref, ttw, tv,
+                               caption=f"LSA components on poliblog (K={k}); top terms by "
+                               "absolute loading.", label="tab:app:lsa")
+    sv_t = np.asarray(m.singular_values)
+    sv_s = np.asarray(svd.singular_values_)
+    nshow = min(5, len(sv_t), len(sv_s))
+    feat = "\n".join([
+        r"\noindent\emph{Singular values} (the variance each component captures), "
+        rf"first {nshow}:",
+        rf"\begin{{center}}\footnotesize\begin{{tabular}}{{@{{}}l {'r ' * nshow}@{{}}}}\toprule",
+        r" & " + " & ".join(str(i + 1) for i in range(nshow)) + r" \\ \midrule",
+        r"\pkg{scikit-learn} & " + " & ".join(f"{v:.1f}" for v in sv_s[:nshow]) + r" \\",
+        r"\pkg{topica} & " + " & ".join(f"{v:.1f}" for v in sv_t[:nshow]) + r" \\",
+        r"\bottomrule\end{tabular}\end{center}",
+    ])
+    intro = (r"Truncated SVD of the tf-idf matrix; \pkg{topica} matches \pkg{scikit-learn}'s "
+             r"\code{TruncatedSVD} (signed loadings, top terms by absolute value). "
+             rf"Aligned cosine \textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table, feat]))
+
+
+def leg_gdmr(k):
+    title = r"Generalized DMR / continuous metadata (vs \pkg{tomotopy})"
+    try:
+        import tomotopy as tp
+    except ImportError:
+        return skip(title, "tomotopy not installed")
+    from topica import GDMR
+    docs, _, day, _ = poliblog()
+    day = np.asarray(day, dtype=float)
+    x = (day - day.min()) / (day.max() - day.min() + 1e-12)
+    deg = [3]
+    mdl = tp.GDMRModel(tw=tp.TermWeight.ONE, k=k, degrees=deg, seed=1)
+    for d, xx in zip(docs, x):
+        mdl.add_doc(d, numeric_metadata=[float(xx)])
+    mdl.burn_in = 200
+    mdl.train(800, show_progress=False)
+    mvocab = list(mdl.used_vocabs)
+    mphi = np.array([mdl.get_topic_word_dist(t) for t in range(k)])
+    g = GDMR(num_topics=k, degrees=deg, seed=1)
+    g.fit(docs, x.reshape(-1, 1), iters=1000)
+    tv = list(g.vocabulary)
+    ttw = np.asarray(g.topic_word)
+    ref = realign_to(tv, mvocab, mphi)
+    table, cos, pairs = sidebyside(r"\pkg{tomotopy}", ref, ttw, tv,
+                                   caption=f"g-DMR topics on poliblog (K={k}); continuous-time "
+                                   "(post day) metadata via a Legendre basis.",
+                                   label="tab:app:gdmr")
+    feat = _gdmr_block(g, mdl, ttw, tv, pairs)
+    intro = (rf"DMR generalized to \emph{{continuous}} metadata (post day, degree-{deg[0]} "
+             rf"Legendre basis). Topic-word aligned: cosine \textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table, feat]))
+
+
+def _gdmr_block(g, mdl, ttw, vocab, pairs):
+    lo, hi = 0.1, 0.9
+    t_lo = np.asarray(g.tdf(np.array([[lo]]), normalize=True))[0]
+    t_hi = np.asarray(g.tdf(np.array([[hi]]), normalize=True))[0]
+    m_lo = np.array(mdl.tdf([lo], normalize=True))
+    m_hi = np.array(mdl.tdf([hi], normalize=True))
+    inv = {tj: ri for ri, tj, _ in pairs}  # topica topic -> tomotopy topic
+    t_delta = t_hi - t_lo
+    order = np.argsort(-np.abs(t_delta))[:3]
+    lines = [r"\noindent\emph{Prevalence over time.} Topic share at late minus early 2008 "
+             r"(positive = rising through the year):",
+             r"\begin{center}\footnotesize\begin{tabular}{@{}p{0.5\textwidth} r r@{}}\toprule",
+             r"topic (\pkg{topica} top words) & \pkg{tomotopy} & \pkg{topica} \\ \midrule"]
+    for tj in order:
+        ri = inv.get(int(tj))
+        md = (m_hi[ri] - m_lo[ri]) if ri is not None else float("nan")
+        lines.append(rf"{cell(topw(ttw[tj], vocab, 4))} & {md:+.3f} & {t_delta[tj]:+.3f} \\")
+    lines += [r"\bottomrule\end{tabular}\end{center}"]
+    return "\n".join(lines)
+
+
+def leg_slda(k):
+    title = r"Supervised LDA (vs \pkg{tomotopy})"
+    try:
+        import tomotopy as tp
+    except ImportError:
+        return skip(title, "tomotopy not installed")
+    from topica import SupervisedLDA
+    docs, rating_lib, _, _ = poliblog()
+    y = np.asarray(rating_lib, dtype=float)  # 1 = Liberal
+    mdl = tp.SLDAModel(tw=tp.TermWeight.ONE, k=k, vars=["l"], seed=1)
+    for d, r in zip(docs, y):
+        mdl.add_doc(d, y=[float(r)])
+    mdl.burn_in = 200
+    mdl.train(1000, show_progress=False)
+    mvocab = list(mdl.used_vocabs)
+    mphi = np.array([mdl.get_topic_word_dist(t) for t in range(k)])
+    mcoef = np.asarray(mdl.get_regression_coef(0))
+    m = SupervisedLDA(num_topics=k, seed=1)
+    m.fit(docs, y.tolist(), iters=40)
+    tv = list(m.vocabulary)
+    ttw = np.asarray(m.topic_word)
+    tcoef = np.asarray(m.coefficients)
+    ref = realign_to(tv, mvocab, mphi)
+    table, cos, pairs = sidebyside(r"\pkg{tomotopy}", ref, ttw, tv,
+                                   caption=f"sLDA topics on poliblog (K={k}); "
+                                   "response = ideology (Liberal\\,=\\,1).",
+                                   label="tab:app:slda")
+    feat = _coef_block(mcoef, tcoef, ttw, tv, pairs)
+    intro = (r"LDA with a response regression: topics are shaped to predict ideology. "
+             rf"Topic-word aligned: cosine \textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table, feat]))
+
+
+def _coef_block(mcoef, tcoef, ttw, vocab, pairs):
+    inv = {tj: ri for ri, tj, _ in pairs}
+    order = np.argsort(-np.abs(tcoef))[:3]
+    lines = [r"\noindent\emph{Response coefficients.} How each topic moves the ideology "
+             r"response (sign = direction; the two engines scale the latent differently, "
+             r"so compare sign and ranking):",
+             r"\begin{center}\footnotesize\begin{tabular}{@{}p{0.5\textwidth} r r@{}}\toprule",
+             r"topic (\pkg{topica} top words) & \pkg{tomotopy} & \pkg{topica} \\ \midrule"]
+    for tj in order:
+        ri = inv.get(int(tj))
+        mc = mcoef[ri] if ri is not None else float("nan")
+        lines.append(rf"{cell(topw(ttw[tj], vocab, 4))} & {mc:+.2f} & {tcoef[tj]:+.2f} \\")
+    lines += [r"\bottomrule\end{tabular}\end{center}"]
+    return "\n".join(lines)
+
+
+def leg_labeledlda(k):
+    title = r"Labeled LDA (vs \pkg{tomotopy})"
+    try:
+        import tomotopy as tp
+    except ImportError:
+        return skip(title, "tomotopy not installed")
+    from topica import LabeledLDA
+    docs, rating_lib, _, _ = poliblog()
+    rating = ["Liberal" if r else "Conservative" for r in rating_lib]
+    names = ["Conservative", "Liberal"]
+    mdl = tp.LLDAModel(tw=tp.TermWeight.ONE, seed=1)
+    for d, r in zip(docs, rating):
+        mdl.add_doc(d, labels=[r])
+    mdl.burn_in = 200
+    mdl.train(1000, show_progress=False)
+    mvocab = list(mdl.used_vocabs)
+    ldict = list(mdl.topic_label_dict)
+    mphi_by = {ldict[t]: np.array(mdl.get_topic_word_dist(t)) for t in range(len(ldict))}
+    m = LabeledLDA(seed=1)
+    m.fit(docs, [[r] for r in rating], label_names=names, iters=1000)
+    tv = list(m.vocabulary)
+    ttw = np.asarray(m.topic_word)
+    rows, coss = [], []
+    for i, name in enumerate(names):
+        if name in mphi_by:
+            ref = realign_to(tv, mvocab, mphi_by[name][None, :])[0]
+            coss.append(_diag_cosine(ref[None, :], ttw[i][None, :]))
+            rows.append(rf"{tex_escape(name)} & {cell(topw(ref, tv))} & "
+                        rf"{cell(topw(ttw[i], tv))} \\")
+    cos = float(np.mean(coss)) if coss else 0.0
+    table = "\n".join([
+        r"\begin{table}[ht]\centering\footnotesize",
+        r"\caption{Labeled-LDA topics on poliblog: one topic per ideology label, "
+        r"\pkg{tomotopy} vs \pkg{topica} (index-aligned by label).}",
+        r"\label{tab:app:labeledlda}",
+        r"\begin{tabular}{@{}l >{\raggedright\arraybackslash}p{0.36\textwidth} "
+        r">{\raggedright\arraybackslash}p{0.36\textwidth}@{}}",
+        r"\toprule", r"label & \pkg{tomotopy} & \pkg{topica} \\", r"\midrule",
+        *rows, r"\bottomrule", r"\end{tabular}", r"\end{table}"])
+    intro = (r"Supervised topics pinned to document labels: the topic set \emph{is} the label "
+             r"set (here ideology), so the topics are index-aligned by construction. "
+             rf"Per-label cosine \textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table]))
+
+
+def leg_dtm(k):
+    title = r"Dynamic topic model (vs \pkg{tomotopy})"
+    try:
+        import tomotopy as tp
+    except ImportError:
+        return skip(title, "tomotopy not installed")
+    from topica import DTM
+    docs, _, day, _ = poliblog()
+    day = np.asarray(day, dtype=float)
+    T = 4
+    edges = np.quantile(day, np.linspace(0, 1, T + 1))[1:-1]
+    slc = np.searchsorted(edges, day)  # 0..T-1 contiguous slices
+    mdl = tp.DTModel(tw=tp.TermWeight.ONE, k=k, t=T, seed=1)
+    for d, s in zip(docs, slc):
+        mdl.add_doc(d, timepoint=int(s))
+    mdl.train(20, show_progress=False)
+    mvocab = list(mdl.used_vocabs)
+    last = T - 1
+    mphi = np.array([mdl.get_topic_word_dist(t, last) for t in range(k)])
+    m = DTM(num_topics=k, seed=1)
+    m.fit(docs, slc.tolist(), iters=20)
+    tv = list(m.vocabulary)
+    ttw = np.asarray(m.topic_word(last))
+    ref = realign_to(tv, mvocab, mphi)
+    table, cos, _ = sidebyside(r"\pkg{tomotopy}", ref, ttw, tv,
+                               caption=f"DTM topics at the final slice on poliblog "
+                               f"(K={k}, {T} time slices of 2008).", label="tab:app:dtm")
+    feat = _dtm_block(m, k, T)
+    intro = (rf"Topics whose word distributions drift across {T} time slices of 2008. At the "
+             rf"final slice, topic-word aligned: cosine \textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table, feat]))
+
+
+def _dtm_block(m, k, T):
+    best = None
+    for t in range(k):
+        dr = m.word_drift(t, n=6, from_time=0, to_time=T - 1)
+        score = sum(abs(d) for _, d in dr.get("rising", []))
+        if best is None or score > best[0]:
+            best = (score, dr)
+    dr = best[1]
+    rise = ", ".join(tex_escape(w) for w, _ in dr.get("rising", [])[:6])
+    fall = ", ".join(tex_escape(w) for w, _ in dr.get("falling", [])[:6])
+    lines = [r"\noindent\emph{Word drift} within one \pkg{topica} topic across 2008 "
+             r"(first to last slice):",
+             r"\begin{center}\footnotesize\begin{tabular}{@{}l p{0.72\textwidth}@{}}\toprule",
+             rf"rising & {rise} \\",
+             rf"falling & {fall} \\",
+             r"\bottomrule\end{tabular}\end{center}"]
+    return "\n".join(lines)
+
+
 LEGS = {
     "lda": leg_lda,
+    "nmf": leg_nmf,
+    "lsa": leg_lsa,
     "stm": leg_stm,
     "ctm": leg_ctm,
     "content": leg_content,
-    "keyatm": leg_keyatm,
     "dmr": leg_dmr,
+    "gdmr": leg_gdmr,
+    "keyatm": leg_keyatm,
+    "slda": leg_slda,
+    "labeledlda": leg_labeledlda,
     "hdp": leg_hdp,
     "pa": leg_pa,
+    "dtm": leg_dtm,
     "sts": leg_sts,
 }
-ORDER = ["lda", "stm", "ctm", "content", "keyatm", "dmr", "hdp", "pa", "sts"]
+ORDER = ["lda", "nmf", "lsa", "stm", "ctm", "content", "dmr", "gdmr", "keyatm",
+         "slda", "labeledlda", "hdp", "pa", "dtm", "sts"]
 
 
 def build(only=None, k_override=None):
@@ -758,8 +1043,8 @@ def build(only=None, k_override=None):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", help="run a single leg (lda, stm, ctm, content, keyatm, "
-                    "dmr, hdp, pa, sts)")
+    ap.add_argument("--only", help="run a single leg (lda, nmf, lsa, stm, ctm, content, "
+                    "dmr, gdmr, keyatm, slda, labeledlda, hdp, pa, dtm, sts)")
     ap.add_argument("--k", type=int, help="override the topic count")
     args = ap.parse_args()
     build(only=args.only, k_override=args.k)
