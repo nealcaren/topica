@@ -1279,15 +1279,11 @@ pub fn fit_ctm_svi<R: Rng>(
 
     for _epoch in 0..epochs {
         // Deterministic shuffle (Fisher-Yates with the supplied rng).
-        let mut order: Vec<usize> = (0..d).collect();
-        for i in (1..d).rev() {
-            let j = ((rng.gen::<f64>() * (i as f64 + 1.0)) as usize).min(i);
-            order.swap(i, j);
-        }
+        let order = crate::variational::svi::shuffled_order(d, rng);
 
         for chunk in order.chunks(batch) {
             t_step += 1;
-            let rho = (tau + t_step as f64).powf(-kappa);
+            let rho = crate::variational::svi::rho(tau, kappa, t_step);
 
             let siginv = spd_inverse(&sigma, km1).unwrap_or_else(|| {
                 let mut s = sigma.clone();

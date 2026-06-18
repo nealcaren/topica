@@ -215,6 +215,112 @@ def test_content_trajectory_ci():
         assert lo <= mean <= hi
 
 
+# --- Minibatch / stochastic VI (issue #231) --------------------------------
+
+def _fit_svi(seed=1, drift=True, **kw):
+    # This synthetic corpus is tiny (vocab 4, 360 docs), so SVI needs many epochs,
+    # a gentle schedule, and frequent content updates (content_every=1) to converge
+    # to the batch fit; on real corpora the defaults (content_every=0, once per
+    # epoch) recover at ~30 epochs (see the paper's batch-vs-SVI check).
+    docs, groups, times = _corpus(drift=drift)
+    m = topica.ECTM(num_topics=2, seed=seed)
+    m.fit(docs, times=times, content=groups, iters=150, inference="svi",
+          batch_size=48, tau=4.0, kappa=0.6, content_every=1,
+          period_smooth=5.0, interaction_shrink=2.0, **kw)
+    return m
+
+
+def test_svi_shapes_and_normalization():
+    m = _fit_svi()
+    assert m.topic_word.shape == (2, len(m.vocabulary))
+    assert m.doc_topic.shape == (360, 2)
+    np.testing.assert_allclose(m.topic_word.sum(axis=1), 1.0, atol=1e-9)
+    np.testing.assert_allclose(m.doc_topic.sum(axis=1), 1.0, atol=1e-9)
+    for g in range(2):
+        for t in range(3):
+            np.testing.assert_allclose(m.content_word_dist(g, t).sum(axis=1), 1.0, atol=1e-9)
+
+
+def test_svi_recovers_growing_contrast():
+    """SVI recovers the same qualitative structure as the batch fit: the drift
+    topic carries a large A-vs-B content gap that grows across periods."""
+    m = _fit_svi(drift=True)
+    vocab = m.vocabulary
+    xi, yi = vocab.index("x"), vocab.index("y")
+    k = max(range(2), key=lambda k: m.content_word_dist("B", 2)[k, xi] + m.content_word_dist("B", 2)[k, yi])
+
+    def gap(per):
+        b = m.content_word_dist("B", per)[k, xi] + m.content_word_dist("B", per)[k, yi]
+        a = m.content_word_dist("A", per)[k, xi] + m.content_word_dist("A", per)[k, yi]
+        return b - a
+
+    assert gap(2) > gap(0) + 0.2, "B-vs-A contrast should grow across periods"
+    assert gap(2) > 0.3
+    # the drift topic clears a clear divergence, batch-style
+    div = max(np.mean([d for _, d in content_divergence(m, t, "A", "B")]) for t in range(2))
+    assert div > 0.3
+
+
+def test_svi_no_contrast_when_groups_identical():
+    m = _fit_svi(drift=False)
+    for k in range(2):
+        for _, dist in content_divergence(m, k, "A", "B"):
+            assert dist < 0.2, "identical groups should have near-zero divergence under SVI"
+
+
+def test_svi_is_seed_reproducible_not_bit_exact():
+    """SVI samples minibatches from the model seed: same seed reproduces exactly,
+    a different seed differs (unlike the deterministic spectral batch fit)."""
+    a, b = _fit_svi(seed=1), _fit_svi(seed=1)
+    assert np.array_equal(a.content_word_dist(1, 2), b.content_word_dist(1, 2))
+    c = _fit_svi(seed=2)
+    assert not np.array_equal(a.content_word_dist(1, 2), c.content_word_dist(1, 2))
+
+
+def test_svi_with_prevalence():
+    """SVI threads a prevalence design through the blended ridge gamma."""
+    docs, groups, times = _corpus(drift=True)
+    party, _ = topica.one_hot(groups)
+    m = topica.ECTM(num_topics=2, seed=1)
+    m.fit(docs, times=times, content=groups, prevalence=party,
+          iters=30, inference="svi", batch_size=48, tau=16.0, kappa=0.7)
+    assert m.prevalence_effects.shape[1] == 1  # K-1
+    assert m.doc_topic.shape == (360, 2)
+
+
+def test_svi_content_convergence_diagnostic():
+    """SVI exposes a content-convergence diagnostic; batch leaves it empty."""
+    m = _fit_svi(drift=True)
+    assert len(m.content_shift_history) >= 1
+    assert m.content_converged  # the gentle toy schedule settles
+    b = _fit(drift=True)
+    assert b.content_shift_history == [] and b.content_converged
+
+
+def test_svi_under_convergence_warns():
+    """A starved content schedule (one solve from zero) is flagged loudly, not
+    silently returned as a collapsed content model."""
+    import warnings
+    docs, groups, times = _corpus(drift=True)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        m = topica.ECTM(num_topics=2, seed=1)
+        # content_every huge => only the end-of-fit flush solves kappa once
+        m.fit(docs, times=times, content=groups, iters=1, inference="svi",
+              batch_size=48, content_every=10**6)
+    assert not m.content_converged
+    assert any("may not have converged" in str(x.message) for x in w)
+
+
+def test_svi_save_load_roundtrip(tmp_path):
+    m = _fit_svi()
+    p = str(tmp_path / "svi.tt")
+    m.save(p)
+    loaded = topica.ECTM.load(p)
+    assert np.array_equal(m.topic_word, loaded.topic_word)
+    assert np.array_equal(m.content_word_dist("B", 2), loaded.content_word_dist("B", 2))
+
+
 def test_analysis_surface():
     m = _fit()
     assert topica.summary(m) is not None

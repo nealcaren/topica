@@ -231,7 +231,60 @@ there are only about twenty platforms per party behind seventy-six years.
     documents nest. The number of independent units here is the number of
     platforms, and the bands reflect it.
 
-## 7. What to claim, and what not to
+## 7. Scaling to large corpora
+
+The fit above is full-batch variational EM: every iteration touches every
+document. That is fine for eleven thousand paragraphs, but it does not scale to
+the hundreds of thousands or millions of documents in a congressional or
+social-media corpus, where one batch iteration is already expensive and dozens are
+needed. For those, pass `inference="svi"` to switch to minibatch stochastic
+variational inference:
+
+```python
+model = topica.ECTM(num_topics=18, seed=1)
+model.fit(docs, times=year, content=party, prevalence=X,
+          iters=8,                 # epochs (passes over the corpus), not batch EM steps
+          inference="svi", batch_size=2048, tau=64.0, kappa=0.7,
+          period_smooth=6.0, interaction_shrink=1.2)
+```
+
+Each step samples `batch_size` documents, runs the same Laplace E-step on just
+those, scales their sufficient statistics up to the full corpus, and nudges every
+global parameter toward the minibatch estimate with a decaying step size
+`(tau + step)^(-kappa)`. `iters` now counts **epochs** (passes over the corpus);
+`tau` down-weights the noisy early minibatches and `kappa` in `(0.5, 1]` sets how
+fast the step size decays. Larger `batch_size` gives steadier steps at higher
+per-step cost.
+
+ECTM's content (topic-word) M-step is far more expensive than the cheap
+mean/covariance/prevalence updates, so it is re-solved only every `content_every`
+minibatches (default `0` = once per epoch) while the cheap globals update every
+step. Once per epoch keeps an SVI epoch about as cheap as a batch iteration;
+lowering `content_every` re-solves the content model more often for better
+per-epoch fidelity at more cost. On a 96,000-speech congressional corpus (party ×
+congress, K=30, vocabulary 25,000) eight SVI epochs recover a full batch fit's
+topics and between-party content divergences to about 0.97 (matched cosine and
+divergence-spectrum correlation) in a few minutes, well under the batch fit's
+runtime.
+
+Two things to know. First, the SVI fit is **seed-reproducible but not bit-exact**:
+it draws its minibatches from the model seed, so a fixed seed reproduces a run
+exactly, but a different seed gives a different (statistically equivalent) fit,
+unlike the deterministic spectral batch fit. Second, SVI removes the need to
+subsample, which matters for inference: a smaller corpus has smaller (group,
+period) cells, and smaller cells raise the finite-sample floor of the estimated
+content divergence, so fitting the full data keeps that floor as low as the data
+allow. Use the batch fit for small corpora where it is affordable (it is
+deterministic and needs no step-size tuning) and SVI when the corpus is too large
+to fit in one piece.
+
+Because too few content solves can leave the between-group divergences understated,
+an SVI fit reports whether its content model settled. Check `model.content_converged`
+(and the per-solve trace `model.content_shift_history`); a fit that has not
+converged also emits a warning at fit time. If it reports `False`, raise `iters`
+(epochs) or lower `content_every` and refit.
+
+## 8. What to claim, and what not to
 
 The defensible findings are the **shapes**. The environment is a cleavage that
 opened inside the vocabulary: shared `conservation` language in 1948 giving way to

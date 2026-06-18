@@ -420,6 +420,7 @@ struct EctmState {
     #[serde(default)] topic_names: Vec<String>,
     #[serde(default = "default_variational")] variational: String,
     #[serde(default = "default_false")] init_spectral: bool,
+    #[serde(default)] content_shift_history: Vec<f64>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StsState {
@@ -6865,6 +6866,9 @@ impl STM {
 /// The prevalence side is the standard STM regression ``μ_d = X_d γ`` and is
 /// optional; ``content`` (a per-document group label) and ``times`` (a
 /// per-document period label) are required.
+/// Relative κ-shift below which an SVI content model is treated as converged.
+const CONTENT_CONVERGED_TOL: f64 = 0.10;
+
 #[pyclass(module = "topica")]
 pub struct ECTM {
     num_topics: usize,
@@ -6892,6 +6896,7 @@ pub struct ECTM {
     bound: f64,
     bound_history: Vec<f64>,
     converged: bool,
+    content_shift_history: Vec<f64>,
 }
 
 impl ECTM {
@@ -6997,6 +7002,7 @@ impl ECTM {
             bound: f64::NAN,
             bound_history: Vec::new(),
             converged: false,
+            content_shift_history: Vec::new(),
         })
     }
 
@@ -7017,7 +7023,8 @@ impl ECTM {
     #[pyo3(signature = (data, times, content, *, prevalence=None, prevalence_names=None,
                         content_names=None, period_names=None, iters=500, convergence_tol=1e-5,
                         content_prior_var=1.0, period_smooth=5.0, interaction_shrink=2.0,
-                        keep_eta_cov=true, num_threads=None))]
+                        inference="batch", batch_size=256, tau=64.0, kappa=0.7,
+                        content_every=0, keep_eta_cov=true, num_threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         &mut self,
@@ -7034,9 +7041,23 @@ impl ECTM {
         content_prior_var: f64,
         period_smooth: f64,
         interaction_shrink: f64,
+        inference: &str,
+        batch_size: usize,
+        tau: f64,
+        kappa: f64,
+        content_every: usize,
         keep_eta_cov: bool,
         num_threads: Option<usize>,
     ) -> PyResult<()> {
+        let svi = match inference {
+            "batch" => false,
+            "svi" => true,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown inference {other:?}; expected \"batch\" or \"svi\""
+                )))
+            }
+        };
         if content_prior_var <= 0.0 {
             return Err(PyValueError::new_err("content_prior_var must be > 0"));
         }
@@ -7155,11 +7176,21 @@ impl ECTM {
         let (model, corpus) = py.allow_threads(move || {
             let prev_ref = prevalence_x.as_deref();
             let m = run_with_threads(num_threads, || {
-                crate::ectm::fit_ectm(
-                    &corpus.docs, k, num_types, &group_idx, num_groups, &period_idx, num_periods,
-                    iters, convergence_tol, shrink, prev_ref, content_prior_var, period_smooth,
-                    period_smooth, interaction_shrink, keep_eta_cov, diagonal, init_spectral, &mut rng,
-                )
+                if svi {
+                    crate::ectm::fit_ectm_svi(
+                        &corpus.docs, k, num_types, &group_idx, num_groups, &period_idx, num_periods,
+                        iters, batch_size, tau, kappa, content_every, shrink, prev_ref,
+                        content_prior_var, period_smooth, period_smooth, interaction_shrink,
+                        keep_eta_cov, diagonal, init_spectral, &mut rng,
+                    )
+                } else {
+                    crate::ectm::fit_ectm(
+                        &corpus.docs, k, num_types, &group_idx, num_groups, &period_idx, num_periods,
+                        iters, convergence_tol, shrink, prev_ref, content_prior_var, period_smooth,
+                        period_smooth, interaction_shrink, keep_eta_cov, diagonal, init_spectral,
+                        &mut rng,
+                    )
+                }
             });
             (m, corpus)
         });
@@ -7227,7 +7258,26 @@ impl ECTM {
         self.bound = model.bound;
         self.bound_history = model.bound_history.clone();
         self.converged = model.converged;
+        self.content_shift_history = model.content_shift_history.clone();
         self.fitted = true;
+        // Loud guard: an SVI fit whose content model is still moving at the end has
+        // under-developed κ, so the headline between-group divergences may be
+        // understated. Warn rather than fail silently (see content_converged).
+        if let Some(&last) = self.content_shift_history.last() {
+            if last > CONTENT_CONVERGED_TOL {
+                let _ = py.import_bound("warnings").and_then(|w| {
+                    w.call_method1(
+                        "warn",
+                        (format!(
+                            "ECTM SVI content model may not have converged (last content shift \
+                             {last:.3} > {CONTENT_CONVERGED_TOL}); the between-group content \
+                             divergences may be understated. Increase iters (epochs), lower \
+                             content_every, or use inference=\"batch\"."
+                        ),),
+                    )
+                });
+            }
+        }
         Ok(())
     }
 
@@ -7366,6 +7416,29 @@ impl ECTM {
         Ok(self.converged)
     }
 
+    /// SVI only: the relative L2 change of the content deviations κ at each content
+    /// M-step solve. Empty for a batch fit. A trailing value still large means the
+    /// content model has not settled (the between-group divergences may be
+    /// understated). See :attr:`content_converged`.
+    #[getter]
+    fn content_shift_history(&self) -> PyResult<Vec<f64>> {
+        self.require_fitted()?;
+        Ok(self.content_shift_history.clone())
+    }
+
+    /// Whether the content (topic-word) model settled. Always ``True`` for a batch
+    /// fit; for SVI it is ``True`` when the last content shift is below the
+    /// tolerance. ``False`` means the headline between-group divergences may be
+    /// understated — increase ``iters`` (epochs) or lower ``content_every``.
+    #[getter]
+    fn content_converged(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(match self.content_shift_history.last() {
+            Some(&last) => last <= CONTENT_CONVERGED_TOL,
+            None => true,
+        })
+    }
+
     /// Uniform convergence trace: ``(iteration, bound)`` pairs.
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
@@ -7455,6 +7528,7 @@ impl ECTM {
             topic_names: self.topic_names.clone(),
             variational: self.variational.clone(),
             init_spectral: self.init_spectral,
+            content_shift_history: self.content_shift_history.clone(),
         })
     }
 
@@ -7480,6 +7554,7 @@ impl ECTM {
             gamma: arr2_back(s.gamma), feature_names: s.feature_names,
             mu: s.mu, sigma: s.sigma, corpus: s.corpus,
             bound: s.bound, bound_history: s.bound_history, converged: s.converged,
+            content_shift_history: s.content_shift_history,
         })
     }
 
