@@ -1,13 +1,21 @@
-"""Parity: topica's spectral-init recovery vs R stm's recoverL2 (issue #234).
+"""Parity: topica's spectral init vs R stm's spectral start (issues #234, #240).
 
-topica's `recover()` (src/spectral.rs) is the Arora anchor-word recovery step. This
-checks it reproduces R `stm`'s reference recovery on an identical corpus: it drives
-R to tokenize gadarian, compute its spectral topic-word matrix via the QP reference
-path (`recoverEG=FALSE` — the converged optimum, not stm's non-converging default
-exponentiated-gradient), and emit the prepped documents; then it fits topica's
-spectral init (CTM, iters=0) on those same documents and reports the Hungarian-
-matched topic-word cosine. Pre-#234 this was ~0.37 (topica's EG diverged at the
-fixed eta=50); the fix targets ~1.0.
+This is an END-TO-END check of topica's whole spectral pipeline — its own
+`cooccurrence()` + `fast_anchor_words()` + `recover()` (src/spectral.rs) — against
+R `stm`'s, NOT just the `recover()` step. It drives R to tokenize gadarian via
+`textProcessor`/`prepDocuments`, compute the spectral topic-word matrix through the
+QP reference path (`recoverEG=FALSE` — the converged optimum, not stm's
+non-converging default exponentiated-gradient), and emit those exact prepped
+documents; then it fits topica's spectral init (`CTM(init="spectral").fit(iters=0)`,
+which returns the raw spectral β unchanged) on the SAME documents. Because no stm
+intermediates are substituted, agreement here means topica's cooccurrence, anchors,
+and recovery all reproduce stm's given identical input.
+
+On gadarian K=5 the per-topic (same-order) cosine is ~1.0: topica's default
+spectral start equals stm's. (Pre-#234 the recover() step alone was ~0.37 because
+its exponentiated gradient diverged at a fixed eta=50.) #240 note: an end-to-end
+gap observed downstream comes from feeding a *differently prepared* corpus, not
+from the spectral algorithm — given identical prepped input, topica matches stm.
 
 Skips cleanly if Rscript or the stm/Matrix packages are unavailable.
 """
@@ -76,8 +84,13 @@ def main():
         stm_vocab = [w.strip() for w in open(os.path.join(d, "vocab.txt"))]
         stm_beta = np.loadtxt(os.path.join(d, "beta.csv"), delimiter=",")  # (K, V_stm)
 
+    # CTM(init="spectral").fit(iters=0) returns the pure spectral-init topic-word
+    # *from topica's own full pipeline* (its cooccurrence() + fast_anchor_words() +
+    # recover()), with no EM and no stm intermediates substituted. So this is an
+    # end-to-end check, not just a recover() check — given the SAME stm-prepped
+    # documents, topica's whole spectral start should equal stm's.
     m = topica.CTM(num_topics=K, seed=1, init="spectral")
-    m.fit(docs, iters=0)  # iters=0 returns the pure spectral-init topic-word
+    m.fit(docs, iters=0)
     tb = np.asarray(m.topic_word)
     tvocab = list(m.vocabulary)
 
@@ -88,10 +101,18 @@ def main():
     scols = [stm_idx[w] for w in shared]
     A = tb[:, tcols]
     B = stm_beta[:, scols]
-    cos = _hungarian_cosine(B, A)
+    # Per-topic (diagonal, un-permuted) cosine: tests that topica reproduces stm's
+    # spectral topics in the SAME order, not merely the same set. Hungarian is the
+    # weaker fallback in case a future change permutes topic order.
+    An = A / (np.linalg.norm(A, axis=1, keepdims=True) + 1e-12)
+    Bn = B / (np.linalg.norm(B, axis=1, keepdims=True) + 1e-12)
+    diag_cos = float(np.mean(np.sum(An * Bn, axis=1)))
+    matched_cos = _hungarian_cosine(B, A)
     print(f"shared vocab: {len(shared)} words | topica V={len(tvocab)} stm V={len(stm_vocab)}")
-    print(f"spectral recover() vs R stm recoverL2 (QP path): matched cosine = {cos:.4f}")
-    ok = cos >= 0.95
+    print(f"full spectral_init vs R stm spectral start (cooccurrence+anchor+recover):")
+    print(f"  per-topic (same-order) cosine = {diag_cos:.4f}")
+    print(f"  matched (Hungarian)    cosine = {matched_cos:.4f}")
+    ok = diag_cos >= 0.95 and matched_cos >= 0.95
     print("PASS" if ok else "FAIL (expected >= 0.95)")
     return 0 if ok else 1
 
