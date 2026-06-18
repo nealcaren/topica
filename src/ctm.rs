@@ -347,6 +347,25 @@ pub fn ctm_hpb(
     HpbResult { nu, phi: eb, bound }
 }
 
+/// The SAGE content-model κ decomposition (the additive parts of the per-group
+/// topic-word model): `log β_{k,a,v} = m_v + κ_topic_{k,v} + κ_cov_{a,v} +
+/// κ_interaction_{k,a,v}`, softmax-normalized over `v`. `content_beta` is derived
+/// from these; the κ pieces are the identifying information R `stm`'s
+/// `sageLabels()` / `labelTopics()` rank words by (and cannot be recovered from
+/// the per-group β alone).
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct ContentKappa {
+    /// Background log word-frequency `m`, length V.
+    pub m: Vec<f64>,
+    /// Topic deviations κ_topic, K × V.
+    pub kappa_topic: Vec<Vec<f64>>,
+    /// Covariate (group) deviations κ_cov, num_groups × V.
+    pub kappa_cov: Vec<Vec<f64>>,
+    /// Topic×group interaction deviations κ_interaction, (K·num_groups) × V,
+    /// indexed `topic * num_groups + group` (the layout `build_content_beta` uses).
+    pub kappa_interaction: Vec<Vec<f64>>,
+}
+
 /// A fitted CTM/STM model.
 pub struct CtmModel {
     pub num_topics: usize,
@@ -378,6 +397,9 @@ pub struct CtmModel {
     /// covariates were supplied (the SAGE content model inside STM). `beta` is
     /// then the group-averaged topic-word.
     pub content_beta: Option<Vec<Vec<Vec<f64>>>>,
+    /// SAGE κ decomposition behind `content_beta`, `Some` when content covariates
+    /// were supplied. See [`ContentKappa`].
+    pub content_kappa: Option<ContentKappa>,
     pub num_groups: usize,
     /// Corpus approximate evidence bound (ELBO) at the final E-step — the same
     /// quantity R `stm` reports as its convergence bound.
@@ -1195,6 +1217,16 @@ pub fn fit_ctm<R: Rng>(
     } else {
         None
     };
+    let content_kappa_out = if content.is_some() {
+        Some(ContentKappa {
+            m: m_bg.clone(),
+            kappa_topic: kappa_t.clone(),
+            kappa_cov: kappa_c.clone(),
+            kappa_interaction: kappa_i.clone(),
+        })
+    } else {
+        None
+    };
 
     CtmModel {
         num_topics: k,
@@ -1208,6 +1240,7 @@ pub fn fit_ctm<R: Rng>(
         nu: nu_store,
         gamma,
         content_beta: content_out,
+        content_kappa: content_kappa_out,
         num_groups,
         bound: bound_history.last().copied().unwrap_or(f64::NAN),
         bound_history,
@@ -1415,6 +1448,7 @@ pub fn fit_ctm_svi<R: Rng>(
         nu: nu_store,
         gamma: None,
         content_beta: None,
+        content_kappa: None,
         num_groups: 1,
         bound: total_bound,
         bound_history: vec![total_bound],

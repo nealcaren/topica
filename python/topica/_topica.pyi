@@ -615,6 +615,16 @@ class STM:
         RuntimeError if fit without content covariates."""
         ...
     @property
+    def content_kappa(self) -> dict[str, numpy.typing.NDArray[numpy.float64]]:
+        """The SAGE content-model kappa decomposition as a dict: 'm' (num_words,),
+        'kappa_topic' (num_topics, num_words), 'kappa_cov' (num_groups, num_words),
+        'kappa_interaction' (num_topics, num_groups, num_words). Per-group
+        log-probabilities are m + kappa_topic + kappa_cov + kappa_interaction
+        (softmax over words). These are the additive parts R stm's sageLabels()
+        ranks words by; the per-group beta alone does not identify them.
+        RuntimeError if fit without content covariates."""
+        ...
+    @property
     def groups(self) -> list[str]:
         """Content group names (axis-1 of topic_word_by_group). RuntimeError if
         fit without content covariates."""
