@@ -168,6 +168,7 @@ fn solve_and_blend_content(
     rw_kgp: f64,
     shrink_kgp: f64,
     rho: f64,
+    inner_iters: usize,
 ) {
     let scale = d as f64 / win_docs.max(1.0);
     let counts: Vec<Vec<f64>> = content_ss
@@ -179,7 +180,7 @@ fn solve_and_blend_content(
     let kkg_old = kkg.to_vec();
     let kkgp_old = kkgp.to_vec();
     optimize_content(
-        m, kt, kkp, kkg, kkgp, &counts, k, g, p, v, sigma2, rw_kp, rw_kgp, shrink_kgp, 5,
+        m, kt, kkp, kkg, kkgp, &counts, k, g, p, v, sigma2, rw_kp, rw_kgp, shrink_kgp, inner_iters,
     );
     blend_kappa(kt, &kt_old, rho);
     blend_kappa(kkp, &kkp_old, rho);
@@ -757,10 +758,16 @@ pub fn fit_ectm_svi<R: Rng>(
     // at solve time.
     let mb_per_epoch = d.div_ceil(batch).max(1);
     let solve_every = if content_every == 0 { mb_per_epoch } else { content_every };
+    // The κ schedule is indexed by the number of κ-solves, not minibatches: κ
+    // updates rarely (once per window), each on a near-full-corpus estimate, so it
+    // takes a strong early step (rho_k from a small tau) and does a fuller inner
+    // solve when it solves rarely. Indexing on t_step (as the cheap globals do)
+    // would creep at rho ~ 0.04 and never develop the content deviations.
+    let kiters = if solve_every >= 8 { 20 } else { 6 };
     let mut content_ss = vec![vec![0.0f64; num_types]; k * num_cells];
     let mut win_docs = 0.0f64;
     let mut steps_since_solve = 0usize;
-    let mut last_rho = svi::rho(tau, kappa, 1);
+    let mut n_ksolve = 0usize;
     let mut t_step: usize = 0;
 
     for _epoch in 0..epochs {
@@ -768,7 +775,6 @@ pub fn fit_ectm_svi<R: Rng>(
         for chunk in order.chunks(batch) {
             t_step += 1;
             let rho = svi::rho(tau, kappa, t_step);
-            last_rho = rho;
 
             let siginv = spd_inverse(&sigma, km1).unwrap_or_else(|| {
                 let mut s = sigma.clone();
@@ -862,9 +868,11 @@ pub fn fit_ectm_svi<R: Rng>(
             // from the current global), then blend the candidate toward the old
             // global and reset the window.
             if steps_since_solve >= solve_every {
+                n_ksolve += 1;
+                let rho_k = svi::rho(1.0, kappa, n_ksolve);
                 solve_and_blend_content(
                     &m_bg, &mut kt, &mut kkp, &mut kkg, &mut kkgp, &content_ss, win_docs, d,
-                    k, g, p, num_types, sigma2, rw_kp, rw_kgp, shrink_kgp, rho,
+                    k, g, p, num_types, sigma2, rw_kp, rw_kgp, shrink_kgp, rho_k, kiters,
                 );
                 content_beta = build_content_beta(&m_bg, &kt, &kkp, &kkg, &kkgp, k, g, p, num_types);
                 for row in content_ss.iter_mut() {
@@ -880,9 +888,11 @@ pub fn fit_ectm_svi<R: Rng>(
 
     // Flush any partial window so the last minibatches inform the content model.
     if steps_since_solve > 0 {
+        n_ksolve += 1;
+        let rho_k = svi::rho(1.0, kappa, n_ksolve);
         solve_and_blend_content(
             &m_bg, &mut kt, &mut kkp, &mut kkg, &mut kkgp, &content_ss, win_docs, d, k, g, p,
-            num_types, sigma2, rw_kp, rw_kgp, shrink_kgp, last_rho,
+            num_types, sigma2, rw_kp, rw_kgp, shrink_kgp, rho_k, kiters,
         );
         content_beta = build_content_beta(&m_bg, &kt, &kkp, &kkg, &kkgp, k, g, p, num_types);
     }
