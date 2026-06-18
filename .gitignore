@@ -81,3 +81,4 @@ uv.lock
 # Sections 5-7 has a traceable, dated, machine-stamped run.
 paper/generated/*
 !paper/generated/replication_report.md
+!paper/generated/replication_report_longleaf.md
