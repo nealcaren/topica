@@ -885,6 +885,7 @@ pub fn fit_ctm<R: Rng>(
     prevalence: Option<&[Vec<f64>]>,
     content: Option<(&[usize], usize)>,
     init_spectral: bool,
+    init_beta: Option<&[Vec<f64>]>,
     gamma_prior: GammaPrior,
     keep_nu: bool,
     diagonal: bool,
@@ -921,10 +922,15 @@ pub fn fit_ctm<R: Rng>(
     // content deviations κ at zero. Gating spectral off for content models left
     // the base β random, which is strongly multimodal — most seeds collapse to a
     // flat, no-group-content optimum (issue #216).
-    let mut beta = if init_spectral {
-        crate::spectral::spectral_init(docs, k, num_types).unwrap_or_else(|| random_beta(rng))
-    } else {
-        random_beta(rng)
+    // A caller-supplied `init_beta` (K×V) overrides spectral/random init — the
+    // warm-start hook that lets an STM-compatible front end inject an externally
+    // computed base β (e.g. R `stm`'s exact spectral β) and reproduce that fit.
+    let mut beta = match init_beta {
+        Some(b) => b.iter().map(|row| row.to_vec()).collect(),
+        None if init_spectral => {
+            crate::spectral::spectral_init(docs, k, num_types).unwrap_or_else(|| random_beta(rng))
+        }
+        None => random_beta(rng),
     };
 
     // Content covariate state: background m_v and SAGE deviations κ; per-group β.

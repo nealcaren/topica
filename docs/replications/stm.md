@@ -68,6 +68,20 @@ that the two optimizers split differently, never a systematic offset — the
 expected behavior of a non-convex model, where there is no single STM fit to
 reproduce.
 
+### Spectral initialization reproduces R's recovery exactly
+
+The cosines above are EM optima of a non-convex objective, so they differ across
+optimizers. The *initialization* underneath them is the deterministic Arora
+anchor-word recovery, and topica reproduces R `stm`'s `recoverL2()` step exactly:
+on identical documents the spectral topic-word matrix matches R's reference
+recovery at a cosine of **1.0** (`parity/spectral_recover_stm.py`). (Earlier
+topica's recovery used a fixed, too-large exponentiated-gradient step that diverged
+to vertices rather than the constrained optimum; the step is now scale-adaptive and
+runs to convergence — issue #234.) For a guaranteed "replicate the original" mode,
+`STM.fit(..., beta_init=)` / `CTM.fit(..., beta_init=)` inject an externally
+computed base β (for example R `stm`'s exact spectral β), so a fit can start from
+R's initialization and reproduce that run.
+
 What replicates stably across optima is the substantive conclusion. Regressing
 topic prevalence on ideology, topica recovers R's effect coefficients with a
 Pearson correlation of 0.84, and the same sign and significance on 13 of 15

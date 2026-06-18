@@ -152,30 +152,64 @@ fn recover(qbar: &[Vec<f64>], p: &[f64], anchors: &[usize], k: usize, v: usize) 
         }
     }
 
+    // Map each anchor word to its topic index, so anchor words get exact unit
+    // vectors (matching stm's recoverL2, which sets condprob[anchor] = e_topic).
+    let mut anchor_topic = vec![usize::MAX; v];
+    for (t, &a) in anchors.iter().enumerate() {
+        anchor_topic[a] = t;
+    }
+
     // A[word][topic] = C[word][topic] * p[word]; later normalized per topic.
+    // Per word, recover the simplex weights C by exponentiated gradient on the
+    // residual `b − G c`, with a max-subtracted multiplicative update
+    // `c ∝ c · exp(2η(b − Gc) − max)` run to `‖residual‖` convergence.
+    //
+    // The step `η` is adaptive: `1/(2L)` with `L` a Gershgorin bound on the largest
+    // eigenvalue of `G` (the gradient's Lipschitz constant). This is the mirror-
+    // descent stable step, so the iterate converges to the constrained optimum
+    // (Arora's recoverL2, == R stm's `recoverEG=FALSE` reference path) rather than
+    // overshooting to a vertex. The classic fixed `η=50` is far too large here —
+    // the gradients scale as ~1/V — so it diverged to (arbitrary, float-order-
+    // dependent) vertices and never converged (issue #234); the adaptive step
+    // reaches the optimum in ~70 iterations on gadarian.
+    let l: f64 = (0..k)
+        .map(|i| (0..k).map(|j| g[i][j].abs()).sum::<f64>())
+        .fold(0.0, f64::max);
+    let eta = 1.0 / (2.0 * l.max(1e-12));
+    const TOL: f64 = 1e-8;
+    const MAX_ITS: usize = 500;
     let mut a_mat = vec![vec![0.0f64; k]; v];
     for w in 0..v {
-        let bvec: Vec<f64> = (0..k).map(|t| dot(anchor_rows[t], &qbar[w])).collect();
-        // Exponentiated gradient on the simplex: min Cᵀ G C − 2 Cᵀ b.
         let mut c = vec![1.0 / k as f64; k];
-        let eta = 50.0;
-        for _ in 0..120 {
-            let gc: Vec<f64> = (0..k).map(|i| (0..k).map(|j| g[i][j] * c[j]).sum()).collect();
-            // grad_i = 2(gc_i − b_i)
-            let mut total = 0.0;
-            for i in 0..k {
-                c[i] *= (-eta * 2.0 * (gc[i] - bvec[i])).exp();
-                if !c[i].is_finite() {
-                    c[i] = 0.0;
+        if anchor_topic[w] != usize::MAX {
+            // Anchor word: exact unit vector, no solve.
+            c = vec![0.0f64; k];
+            c[anchor_topic[w]] = 1.0;
+        } else {
+            let bvec: Vec<f64> = (0..k).map(|t| dot(anchor_rows[t], &qbar[w])).collect();
+            let mut sse_old = f64::INFINITY;
+            for _ in 0..MAX_ITS {
+                let gc: Vec<f64> = (0..k).map(|i| (0..k).map(|j| g[i][j] * c[j]).sum()).collect();
+                // residual b − Gc and its squared norm (the convergence metric).
+                let resid: Vec<f64> = (0..k).map(|i| bvec[i] - gc[i]).collect();
+                let sse: f64 = resid.iter().map(|r| r * r).sum();
+                // Multiplicative exp-gradient step, max-subtracted for stability.
+                let grad: Vec<f64> = resid.iter().map(|r| 2.0 * eta * r).collect();
+                let maxd = grad.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                let mut total = 0.0;
+                for i in 0..k {
+                    c[i] *= (grad[i] - maxd).exp();
+                    total += c[i];
                 }
-                total += c[i];
-            }
-            if total > 0.0 {
-                for ci in c.iter_mut() {
-                    *ci /= total;
+                if total > 0.0 {
+                    for ci in c.iter_mut() {
+                        *ci /= total;
+                    }
                 }
-            } else {
-                c = vec![1.0 / k as f64; k];
+                if (sse_old.sqrt() - sse.sqrt()).abs() < TOL {
+                    break;
+                }
+                sse_old = sse;
             }
         }
         for t in 0..k {

@@ -548,3 +548,19 @@ class TestSearchK:
         for row in search_k_results:
             assert isinstance(row["coherence"], float)
             assert isinstance(row["exclusivity"], float)
+
+
+def test_stm_beta_init_warm_start():
+    """STM accepts a caller-supplied base beta (the warm-start hook, issue #234B):
+    injecting the spectral init reproduces the default spectral fit."""
+    import topica
+    rng = np.random.default_rng(0)
+    docs, x = _make_synthetic_corpus(rng, n_per_class=60)
+    X = x.reshape(-1, 1)
+    spec = topica.STM(num_topics=2, seed=1)
+    spec.fit(docs, prevalence=X, iters=0)  # pure spectral-init topic-word
+    warm = topica.STM(num_topics=2, seed=1)
+    warm.fit(docs, prevalence=X, iters=10, beta_init=spec.topic_word)
+    default = topica.STM(num_topics=2, seed=1)
+    default.fit(docs, prevalence=X, iters=10)
+    np.testing.assert_allclose(warm.topic_word, default.topic_word, atol=1e-9)
