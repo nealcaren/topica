@@ -92,9 +92,11 @@ when its toolchain is absent.
 
 Open TODOs before submission:
 
-1. **Comparison-table audit (Table 1).** The feature matrix is drawn from current
-   knowledge of each tool; re-verify each cell against the tools' current releases
-   before submission, especially the "partial" marks.
+1. **Comparison-table audit (Table 1).** DONE (June 2026): re-verified every cell
+   against current releases (MALLET 2.0.8, gensim 4.4.0, tomotopy 0.13.0,
+   stm 1.3.8, keyATM 0.5.5, BERTopic 0.17.3). No cell changed — the "partial"
+   marks (MALLET/tomotopy/keyATM = prevalence-only DMR; BERTopic determinism =
+   UMAP) all hold. The caption now pins the checked versions.
 2. **Polish pass** with the writing-editor levels (sentence/word) once the section
    order is final.
 
