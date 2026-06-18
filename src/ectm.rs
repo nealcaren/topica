@@ -45,7 +45,10 @@ use rand::Rng;
 use crate::ctm::{ctm_hpb, ctm_lhood_grad, HpbResult};
 use crate::estimator::{Estimator, ModelFamily};
 use crate::linalg::{cholesky, half_logdet, make_diagonally_dominant, spd_inverse};
-use crate::variational::{doc_sparse, fit_gamma_ridge, laplace_estep, lbfgs_minimize, LogisticNormalModel};
+use crate::variational::{
+    doc_sparse, fit_gamma_ridge, fit_gamma_ridge_from_ss, gamma_ss, laplace_estep, lbfgs_minimize,
+    svi, LogisticNormalModel,
+};
 
 /// A fitted ECTM model.
 pub struct EctmModel {
@@ -128,6 +131,17 @@ fn build_content_beta(
         }
     }
     out
+}
+
+/// Convex blend of a content-deviation block toward its previous value:
+/// `cur ← (1-rho)·old + rho·cur`. Used by the SVI path to damp the per-minibatch
+/// κ solve toward the running global (the natural-parameter SVI average).
+fn blend_kappa(cur: &mut [Vec<f64>], old: &[Vec<f64>], rho: f64) {
+    for (c_row, o_row) in cur.iter_mut().zip(old) {
+        for (c, &o) in c_row.iter_mut().zip(o_row) {
+            *c = (1.0 - rho) * o + rho * *c;
+        }
+    }
 }
 
 /// MAP-update the content deviations κ from the variational expected
@@ -564,6 +578,318 @@ pub fn fit_ectm<R: Rng>(
         bound_history,
         converged,
         em_iters_run,
+        diagonal,
+    }
+}
+
+/// Fit ECTM by **stochastic** variational EM (minibatch SVI) for corpora too
+/// large for the full-batch `fit_ectm`. Each step subsamples `batch_size`
+/// documents, runs the warm-started Laplace E-step on them, scales the minibatch
+/// sufficient statistics to corpus magnitude (`D/|B|`), and moves every global
+/// toward the minibatch estimate with the Robbins-Monro rate
+/// `rho_t = (tau + t)^(-kappa)`. The closed-form globals (μ/Σ, and γ via blended
+/// ridge sufficient statistics) blend directly; the non-conjugate content κ is
+/// re-solved by `optimize_content` on the scaled minibatch counts (warm-started
+/// from the current global) and the result blended toward the previous κ. A final
+/// full E-step gives every document its λ/ν posterior and the corpus bound.
+///
+/// `epochs` is the number of passes over the corpus; the remaining arguments
+/// match `fit_ectm`. The minibatch order is drawn from `rng`, so the fit is
+/// seed-reproducible (not bit-exact across seeds, unlike the spectral batch fit).
+#[allow(clippy::too_many_arguments)]
+pub fn fit_ectm_svi<R: Rng>(
+    docs: &[Vec<u32>],
+    num_topics: usize,
+    num_types: usize,
+    groups: &[usize],
+    num_groups: usize,
+    periods: &[usize],
+    num_periods: usize,
+    epochs: usize,
+    batch_size: usize,
+    tau: f64,
+    kappa: f64,
+    sigma_shrink: f64,
+    prevalence: Option<&[Vec<f64>]>,
+    sigma2: f64,
+    rw_kp: f64,
+    rw_kgp: f64,
+    shrink_kgp: f64,
+    keep_nu: bool,
+    diagonal: bool,
+    init_spectral: bool,
+    rng: &mut R,
+) -> EctmModel {
+    let k = num_topics;
+    let km1 = k - 1;
+    let d = docs.len();
+    let g = num_groups;
+    let p = num_periods;
+    let num_cells = g * p;
+    let nf = prevalence.map(|x| x[0].len());
+
+    let sparse: Vec<(Vec<usize>, Vec<f64>)> = docs.iter().map(|doc| doc_sparse(doc)).collect();
+
+    // --- initialization: identical to fit_ectm (spectral base, m_v, κ seed) ---
+    let random_beta = |rng: &mut R| {
+        let mut b = vec![vec![0.0f64; num_types]; k];
+        for row in b.iter_mut() {
+            let mut s = 0.0;
+            for x in row.iter_mut() {
+                *x = 1.0 + rng.gen::<f64>();
+                s += *x;
+            }
+            for x in row.iter_mut() {
+                *x /= s;
+            }
+        }
+        b
+    };
+    let mut beta = if init_spectral {
+        crate::spectral::spectral_init(docs, k, num_types).unwrap_or_else(|| random_beta(rng))
+    } else {
+        random_beta(rng)
+    };
+
+    let mut m_bg = vec![0.0f64; num_types];
+    {
+        let mut freq = vec![1.0f64; num_types];
+        let mut total = num_types as f64;
+        for doc in docs {
+            for &w in doc {
+                freq[w as usize] += 1.0;
+                total += 1.0;
+            }
+        }
+        for v in 0..num_types {
+            m_bg[v] = (freq[v] / total).ln();
+        }
+    }
+
+    let mut kt = vec![vec![0.0f64; num_types]; k];
+    let mut kkp = vec![vec![0.0f64; num_types]; k * p];
+    let mut kkg = vec![vec![0.0f64; num_types]; k * g];
+    let mut kkgp = vec![vec![0.0f64; num_types]; k * g * p];
+    for t in 0..k {
+        for v in 0..num_types {
+            kt[t][v] = beta[t][v].max(1e-12).ln() - m_bg[v];
+        }
+    }
+    let mut content_beta = build_content_beta(&m_bg, &kt, &kkp, &kkg, &kkgp, k, g, p, num_types);
+
+    let mut mu_shared = vec![0.0f64; km1];
+    let mut gamma: Option<Vec<Vec<f64>>> = nf.map(|f| vec![vec![0.0f64; km1]; f]);
+    let mut sigma = vec![0.0f64; km1 * km1];
+    for i in 0..km1 {
+        sigma[i * km1 + i] = 1.0;
+    }
+    let mut lambda = vec![vec![0.0f64; km1]; d];
+    let mut nu_store: Vec<Vec<f64>> = if keep_nu {
+        vec![vec![0.0f64; km1 * km1]; d]
+    } else {
+        Vec::new()
+    };
+
+    let doc_mu = |di: usize, gamma: &Option<Vec<Vec<f64>>>, mu_shared: &[f64]| -> Vec<f64> {
+        match (prevalence, gamma) {
+            (Some(x), Some(gm)) => (0..km1)
+                .map(|t| x[di].iter().zip(gm).map(|(xi, gr)| xi * gr[t]).sum())
+                .collect(),
+            _ => mu_shared.to_vec(),
+        }
+    };
+
+    // Running ridge sufficient statistics for γ, blended across minibatches.
+    let mut s_xx = nf.map(|f| vec![0.0f64; f * f]);
+    let mut s_xl = nf.map(|f| vec![0.0f64; f * km1]);
+
+    let batch = batch_size.clamp(1, d.max(1));
+    let mut t_step: usize = 0;
+
+    for _epoch in 0..epochs {
+        let order = svi::shuffled_order(d, rng);
+        for chunk in order.chunks(batch) {
+            t_step += 1;
+            let rho = svi::rho(tau, kappa, t_step);
+
+            let siginv = spd_inverse(&sigma, km1).unwrap_or_else(|| {
+                let mut s = sigma.clone();
+                make_diagonally_dominant(&mut s, km1);
+                spd_inverse(&s, km1).unwrap()
+            });
+            let entropy = match cholesky(&sigma, km1) {
+                Some(l) => half_logdet(&l, km1),
+                None => 0.0,
+            };
+
+            // E-step over the minibatch (warm-started from the stored λ).
+            let mut content_ss = vec![vec![1e-8f64; num_types]; k * num_cells];
+            let mut sigma_ss = vec![0.0f64; km1 * km1];
+            let mut lambda_sum = vec![0.0f64; km1];
+            let mut etas: Vec<Vec<f64>> = Vec::with_capacity(chunk.len());
+            for &di in chunk {
+                let mu_d = doc_mu(di, &gamma, &mu_shared);
+                let c = cell(groups[di], periods[di], p);
+                let beta_doc: &[Vec<f64>] = &content_beta[c];
+                let words = &sparse[di].0;
+                let counts = &sparse[di].1;
+                let opt = lbfgs_minimize(
+                    lambda[di].clone(),
+                    |eta| ctm_lhood_grad(eta, beta_doc, words, counts, &mu_d, &siginv),
+                    40,
+                    7,
+                    1e-5,
+                );
+                let res = ctm_hpb(&opt, beta_doc, words, counts, &mu_d, &siginv, entropy, diagonal);
+                for (wi, &w) in words.iter().enumerate() {
+                    for t in 0..k {
+                        content_ss[t * num_cells + c][w] += res.phi[t][wi];
+                    }
+                }
+                for i in 0..km1 {
+                    lambda_sum[i] += opt[i];
+                    for j in 0..km1 {
+                        sigma_ss[i * km1 + j] += res.nu[i * km1 + j];
+                    }
+                }
+                lambda[di] = opt.clone();
+                if keep_nu {
+                    nu_store[di] = res.nu.clone();
+                }
+                etas.push(opt);
+            }
+            let bsz = chunk.len() as f64;
+            let scale = d as f64 / bsz;
+
+            // Prevalence γ (blend ridge sufficient stats) or shared mean μ.
+            if let (Some(x), Some(f)) = (prevalence, nf) {
+                let xmb: Vec<Vec<f64>> = chunk.iter().map(|&di| x[di].clone()).collect();
+                let (xx_b, xl_b) = gamma_ss(&xmb, &etas, f, km1);
+                let sxx = s_xx.as_mut().unwrap();
+                let sxl = s_xl.as_mut().unwrap();
+                for (s, &b) in sxx.iter_mut().zip(&xx_b) {
+                    *s = (1.0 - rho) * *s + rho * scale * b;
+                }
+                for (s, &b) in sxl.iter_mut().zip(&xl_b) {
+                    *s = (1.0 - rho) * *s + rho * scale * b;
+                }
+                gamma = Some(fit_gamma_ridge_from_ss(sxx, sxl, f, km1, 1e-6));
+            } else {
+                for i in 0..km1 {
+                    mu_shared[i] = (1.0 - rho) * mu_shared[i] + rho * (lambda_sum[i] / bsz);
+                }
+            }
+
+            // Σ: blend toward the minibatch covariance estimate.
+            let mus: Vec<Vec<f64>> = chunk.iter().map(|&di| doc_mu(di, &gamma, &mu_shared)).collect();
+            for i in 0..km1 {
+                for j in 0..km1 {
+                    let mut cross = 0.0;
+                    for (eta, mu) in etas.iter().zip(&mus) {
+                        cross += (eta[i] - mu[i]) * (eta[j] - mu[j]);
+                    }
+                    let shat = (sigma_ss[i * km1 + j] + cross) / bsz;
+                    let mut newv = (1.0 - rho) * sigma[i * km1 + j] + rho * shat;
+                    if sigma_shrink > 0.0 && i != j {
+                        newv *= 1.0 - sigma_shrink;
+                    }
+                    sigma[i * km1 + j] = newv;
+                }
+            }
+
+            // Content κ: re-solve on the scaled minibatch counts (warm-started from
+            // the current global), then blend the candidate toward the old global.
+            let kt_old = kt.clone();
+            let kkp_old = kkp.clone();
+            let kkg_old = kkg.clone();
+            let kkgp_old = kkgp.clone();
+            for row in content_ss.iter_mut() {
+                for c in row.iter_mut() {
+                    *c *= scale;
+                }
+            }
+            optimize_content(
+                &m_bg, &mut kt, &mut kkp, &mut kkg, &mut kkgp, &content_ss, k, g, p, num_types,
+                sigma2, rw_kp, rw_kgp, shrink_kgp, 20,
+            );
+            blend_kappa(&mut kt, &kt_old, rho);
+            blend_kappa(&mut kkp, &kkp_old, rho);
+            blend_kappa(&mut kkg, &kkg_old, rho);
+            blend_kappa(&mut kkgp, &kkgp_old, rho);
+            content_beta = build_content_beta(&m_bg, &kt, &kkp, &kkg, &kkgp, k, g, p, num_types);
+        }
+    }
+
+    // Final full E-step with the converged globals: populate every doc's λ/ν and
+    // the corpus bound. Chunked + parallel like fit_ectm, summed in document order.
+    let siginv = spd_inverse(&sigma, km1).unwrap_or_else(|| {
+        let mut s = sigma.clone();
+        make_diagonally_dominant(&mut s, km1);
+        spd_inverse(&s, km1).unwrap()
+    });
+    let entropy = match cholesky(&sigma, km1) {
+        Some(l) => half_logdet(&l, km1),
+        None => 0.0,
+    };
+    let chunk = (128 * 1024 * 1024 / (km1 * km1 * 8).max(1)).max(256).min(d.max(1));
+    let mut total_bound = 0.0f64;
+    let mut base = 0usize;
+    while base < d {
+        let end = (base + chunk).min(d);
+        let chunk_results: Vec<(usize, (Vec<f64>, HpbResult))> =
+            laplace_estep(&sparse[base..end], |local_di, words, counts| {
+                let di = base + local_di;
+                let mu_d = doc_mu(di, &gamma, &mu_shared);
+                let c = cell(groups[di], periods[di], p);
+                let beta_doc: &[Vec<f64>] = &content_beta[c];
+                let opt = lbfgs_minimize(
+                    lambda[di].clone(),
+                    |eta| ctm_lhood_grad(eta, beta_doc, words, counts, &mu_d, &siginv),
+                    40,
+                    7,
+                    1e-5,
+                );
+                let res = ctm_hpb(&opt, beta_doc, words, counts, &mu_d, &siginv, entropy, diagonal);
+                (opt, res)
+            });
+        for (local_di, (opt, res)) in &chunk_results {
+            let di = base + *local_di;
+            total_bound += res.bound;
+            lambda[di] = opt.clone();
+            if keep_nu {
+                nu_store[di] = res.nu.clone();
+            }
+        }
+        base = end;
+    }
+
+    // Reported β is the cell-averaged topic-word.
+    for t in 0..k {
+        for v in 0..num_types {
+            let mut s = 0.0;
+            for c in 0..num_cells {
+                s += content_beta[c][t][v];
+            }
+            beta[t][v] = s / num_cells as f64;
+        }
+    }
+
+    EctmModel {
+        num_topics: k,
+        num_types,
+        num_groups: g,
+        num_periods: p,
+        beta,
+        content_beta,
+        mu: mu_shared,
+        sigma,
+        lambda,
+        nu: nu_store,
+        gamma,
+        bound: total_bound,
+        bound_history: vec![total_bound],
+        converged: true,
+        em_iters_run: epochs,
         diagonal,
     }
 }

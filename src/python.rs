@@ -7017,6 +7017,7 @@ impl ECTM {
     #[pyo3(signature = (data, times, content, *, prevalence=None, prevalence_names=None,
                         content_names=None, period_names=None, iters=500, convergence_tol=1e-5,
                         content_prior_var=1.0, period_smooth=5.0, interaction_shrink=2.0,
+                        inference="batch", batch_size=256, tau=64.0, kappa=0.7,
                         keep_eta_cov=true, num_threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
@@ -7034,9 +7035,22 @@ impl ECTM {
         content_prior_var: f64,
         period_smooth: f64,
         interaction_shrink: f64,
+        inference: &str,
+        batch_size: usize,
+        tau: f64,
+        kappa: f64,
         keep_eta_cov: bool,
         num_threads: Option<usize>,
     ) -> PyResult<()> {
+        let svi = match inference {
+            "batch" => false,
+            "svi" => true,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown inference {other:?}; expected \"batch\" or \"svi\""
+                )))
+            }
+        };
         if content_prior_var <= 0.0 {
             return Err(PyValueError::new_err("content_prior_var must be > 0"));
         }
@@ -7155,11 +7169,21 @@ impl ECTM {
         let (model, corpus) = py.allow_threads(move || {
             let prev_ref = prevalence_x.as_deref();
             let m = run_with_threads(num_threads, || {
-                crate::ectm::fit_ectm(
-                    &corpus.docs, k, num_types, &group_idx, num_groups, &period_idx, num_periods,
-                    iters, convergence_tol, shrink, prev_ref, content_prior_var, period_smooth,
-                    period_smooth, interaction_shrink, keep_eta_cov, diagonal, init_spectral, &mut rng,
-                )
+                if svi {
+                    crate::ectm::fit_ectm_svi(
+                        &corpus.docs, k, num_types, &group_idx, num_groups, &period_idx, num_periods,
+                        iters, batch_size, tau, kappa, shrink, prev_ref, content_prior_var,
+                        period_smooth, period_smooth, interaction_shrink, keep_eta_cov, diagonal,
+                        init_spectral, &mut rng,
+                    )
+                } else {
+                    crate::ectm::fit_ectm(
+                        &corpus.docs, k, num_types, &group_idx, num_groups, &period_idx, num_periods,
+                        iters, convergence_tol, shrink, prev_ref, content_prior_var, period_smooth,
+                        period_smooth, interaction_shrink, keep_eta_cov, diagonal, init_spectral,
+                        &mut rng,
+                    )
+                }
             });
             (m, corpus)
         });

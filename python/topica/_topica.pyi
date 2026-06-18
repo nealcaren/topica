@@ -705,6 +705,10 @@ class ECTM:
         content_prior_var: float = 1.0,
         period_smooth: float = 5.0,
         interaction_shrink: float = 2.0,
+        inference: str = "batch",
+        batch_size: int = 256,
+        tau: float = 64.0,
+        kappa: float = 0.7,
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
     ) -> None:
@@ -717,7 +721,15 @@ class ECTM:
         The content deviations are regularized by an L2 prior (variance
         content_prior_var); a first-order random walk across periods with precision
         period_smooth (larger = smoother / more pooling across adjacent periods);
-        and an extra L2 factor interaction_shrink on the group-by-time term."""
+        and an extra L2 factor interaction_shrink on the group-by-time term.
+
+        inference="batch" (default) is full-batch variational EM. inference="svi"
+        is minibatch stochastic VI for corpora too large to fit in batch: iters
+        becomes the number of epochs, batch_size documents are sampled per step,
+        and the globals move with a Robbins-Monro rate (tau + step)^(-kappa). SVI
+        is seed-reproducible (it samples minibatches from the model seed), not
+        bit-exact like the default spectral batch fit; convergence_tol is unused in
+        SVI mode."""
         ...
 
     @property
