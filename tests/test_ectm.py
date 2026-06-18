@@ -53,6 +53,12 @@ def _fit(seed=1, drift=True, init="spectral", **kw):
     return m
 
 
+def _placebo_model(docs, groups, times):
+    m = topica.ECTM(num_topics=2, seed=1)
+    m.fit(docs, times=times, content=groups, iters=60)
+    return m
+
+
 # --- The four idioms -------------------------------------------------------
 
 def test_shapes_and_normalization():
@@ -213,6 +219,39 @@ def test_content_trajectory_ci():
     assert [p for p, *_ in band] == m0.periods  # sorted in period order
     for _, mean, lo, hi in band:
         assert lo <= mean <= hi
+
+
+def test_content_placebo_separates_drift_from_floor():
+    """The placebo (issue #230): a real group-by-time contrast clears the
+    finite-sample floor (small p), identical groups do not (large p)."""
+    from topica.ectm import content_placebo
+
+    # drift: B moves onto {x,y}; the contrast is real -> observed >> floor.
+    docs, groups, times = _corpus(drift=True)
+    m = _placebo_model(docs, groups, times)
+    res = content_placebo(m, docs, groups, times, n_perm=20, iters=40, seed=0)
+    assert res.observed.shape == (2,)
+    assert res.null.shape == (20, 2)
+    assert res.floor.shape == (2,) and res.pval.shape == (2,)
+    assert res.group_a == "A" and res.group_b == "B"
+    # the topic carrying the drift should sit clearly above its floor and be sig.
+    k = int(np.argmax(res.observed))
+    assert res.observed[k] > res.floor[k]
+    assert res.pval[k] <= 0.1
+    rows = res.as_dict()
+    assert len(rows) == 2 and {"topic", "observed", "floor", "pvalue"} <= set(rows[0])
+
+
+def test_content_placebo_null_when_groups_identical():
+    """No real contrast -> observed near the floor, p-value not significant."""
+    from topica.ectm import content_placebo
+
+    docs, groups, times = _corpus(drift=False)
+    m = _placebo_model(docs, groups, times)
+    res = content_placebo(m, docs, groups, times, n_perm=20, iters=40, seed=0)
+    # observed should be in the bulk of the null, not its tail
+    for t in range(2):
+        assert res.pval[t] > 0.1
 
 
 # --- Minibatch / stochastic VI (issue #231) --------------------------------

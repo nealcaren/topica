@@ -231,6 +231,37 @@ there are only about twenty platforms per party behind seventy-six years.
     documents nest. The number of independent units here is the number of
     platforms, and the bands reflect it.
 
+### Is a divergence real, or just the floor?
+
+The cluster bootstrap puts a band on a single word. The headline ECTM quantity is
+the whole-topic **content divergence** between two groups (the total-variation
+distance between their word distributions, via `content_divergence`). Because each
+(group, period) cell carries its own parameters, that divergence has a
+finite-sample floor above zero even when the groups are identical: estimate two
+distributions from finite text and they will differ a little by chance. The guard
+is a permutation placebo. `content_placebo` shuffles the group labels within each
+period (preserving each period's composition), refits, and recomputes the
+divergence, building the null the floor is read from:
+
+```python
+from topica.ectm import content_placebo
+res = content_placebo(model, docs, party, year, n_perm=200, seed=0)
+for r in res.as_dict():
+    print(f"{r['topic_name']:14} obs={r['observed']:.3f}  floor={r['floor']:.3f}  p={r['pvalue']:.3f}")
+```
+
+```
+environment    obs=0.118  floor=0.041  p=0.005
+civil_rights   obs=0.052  floor=0.039  p=0.180
+```
+
+The environment topic's divergence clears its floor by a wide margin (the two
+parties really do word it differently); civil rights sits in the bulk of the
+null, divergence indistinguishable from the finite-sample artifact. This is the
+content-side counterpart of `topica.permutation_test`, which does the same shuffle
+to test *prevalence* rather than wording. Use `content_placebo` to establish a
+divergence is real before reading its trajectory.
+
 ## 7. Scaling to large corpora
 
 The fit above is full-batch variational EM: every iteration touches every

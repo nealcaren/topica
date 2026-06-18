@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **`content_placebo` for ECTM** — `topica.ectm.content_placebo` is the
+  content-side counterpart of `topica.permutation_test`: it shuffles the content
+  group labels within each period, refits, and recomputes each topic's mean
+  `content_divergence`, returning the observed divergence, the permutation null,
+  the finite-sample floor, and a one-sided p-value per topic. This establishes that
+  a between-group content divergence is real rather than a small-cell estimation
+  artifact. (#230, #232)
+
 ## [0.24.0] - 2026-06-18
 
 ### Added
