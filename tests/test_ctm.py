@@ -513,3 +513,35 @@ def test_bad_inference_rejected():
     docs, nb, _ = _block_corpus(n=60)
     with pytest.raises(ValueError):
         CTM(num_topics=nb, seed=1).fit(docs, iters=5, inference="banana")
+
+
+# beta_init warm-start hook (issue #234) -----------------------------------
+
+def test_beta_init_overrides_initialization():
+    """iters=0 returns exactly the injected base beta (the warm-start hook)."""
+    docs, nb, _ = _block_corpus(n=200)
+    V = len({w for d in docs for w in d})
+    rng = np.random.default_rng(0)
+    custom = rng.random((nb, V)); custom /= custom.sum(1, keepdims=True)
+    m = CTM(num_topics=nb, seed=1); m.fit(docs, iters=0, beta_init=custom)
+    # vocab order is stable for iters=0; rows match up to the model's vocab order
+    _npt.assert_allclose(np.sort(m.topic_word, axis=1), np.sort(custom, axis=1), atol=1e-9)
+
+
+def test_beta_init_warm_start_reproduces_spectral_fit():
+    """Injecting the spectral-init beta reproduces the default spectral fit."""
+    docs, nb, _ = _block_corpus(n=300)
+    default = CTM(num_topics=nb, seed=1); default.fit(docs, iters=20)
+    spec = CTM(num_topics=nb, seed=1); spec.fit(docs, iters=0)  # the spectral init beta
+    warm = CTM(num_topics=nb, seed=1); warm.fit(docs, iters=20, beta_init=spec.topic_word)
+    _npt.assert_allclose(warm.topic_word, default.topic_word, atol=1e-9)
+
+
+def test_beta_init_validation():
+    docs, nb, _ = _block_corpus(n=60)
+    V = len({w for d in docs for w in d})
+    with pytest.raises(ValueError, match="beta_init must have shape"):
+        CTM(num_topics=nb, seed=1).fit(docs, iters=5, beta_init=np.ones((nb + 1, V)))
+    with pytest.raises(ValueError, match="not supported with inference"):
+        CTM(num_topics=nb, seed=1).fit(docs, iters=2, inference="svi",
+                                       beta_init=np.ones((nb, V)) / V)

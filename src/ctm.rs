@@ -885,6 +885,7 @@ pub fn fit_ctm<R: Rng>(
     prevalence: Option<&[Vec<f64>]>,
     content: Option<(&[usize], usize)>,
     init_spectral: bool,
+    init_beta: Option<&[Vec<f64>]>,
     gamma_prior: GammaPrior,
     keep_nu: bool,
     diagonal: bool,
@@ -921,10 +922,15 @@ pub fn fit_ctm<R: Rng>(
     // content deviations κ at zero. Gating spectral off for content models left
     // the base β random, which is strongly multimodal — most seeds collapse to a
     // flat, no-group-content optimum (issue #216).
-    let mut beta = if init_spectral {
-        crate::spectral::spectral_init(docs, k, num_types).unwrap_or_else(|| random_beta(rng))
-    } else {
-        random_beta(rng)
+    // A caller-supplied `init_beta` (K×V) overrides spectral/random init — the
+    // warm-start hook that lets an STM-compatible front end inject an externally
+    // computed base β (e.g. R `stm`'s exact spectral β) and reproduce that fit.
+    let mut beta = match init_beta {
+        Some(b) => b.iter().map(|row| row.to_vec()).collect(),
+        None if init_spectral => {
+            crate::spectral::spectral_init(docs, k, num_types).unwrap_or_else(|| random_beta(rng))
+        }
+        None => random_beta(rng),
     };
 
     // Content covariate state: background m_v and SAGE deviations κ; per-group β.
@@ -1279,15 +1285,11 @@ pub fn fit_ctm_svi<R: Rng>(
 
     for _epoch in 0..epochs {
         // Deterministic shuffle (Fisher-Yates with the supplied rng).
-        let mut order: Vec<usize> = (0..d).collect();
-        for i in (1..d).rev() {
-            let j = ((rng.gen::<f64>() * (i as f64 + 1.0)) as usize).min(i);
-            order.swap(i, j);
-        }
+        let order = crate::variational::svi::shuffled_order(d, rng);
 
         for chunk in order.chunks(batch) {
             t_step += 1;
-            let rho = (tau + t_step as f64).powf(-kappa);
+            let rho = crate::variational::svi::rho(tau, kappa, t_step);
 
             let siginv = spd_inverse(&sigma, km1).unwrap_or_else(|| {
                 let mut s = sigma.clone();
@@ -1577,7 +1579,7 @@ mod tests {
                 docs.push(vec![6, 7, 8, 6, 7, 8, 6, 7, 8, 6]);
             }
         }
-        let model = fit_ctm(&docs, 3, 9, 25, 0.0, 0.0, None, None, true, GammaPrior::Pooled, true, false, &mut rng);
+        let model = fit_ctm(&docs, 3, 9, 25, 0.0, 0.0, None, None, true, None, GammaPrior::Pooled, true, false, &mut rng);
         let theta = model.doc_topics();
         // Sanity: θ rows sum to 1 and are valid.
         for row in &theta {
@@ -1608,7 +1610,7 @@ mod tests {
             }
         }
         // K=2 (CTM needs >=2 topics); content groups = 2.
-        let model = fit_ctm(&docs, 2, 4, 30, 0.0, 0.0, None, Some((&groups, 2)), false, GammaPrior::Pooled, true, false, &mut rng);
+        let model = fit_ctm(&docs, 2, 4, 30, 0.0, 0.0, None, Some((&groups, 2)), false, None, GammaPrior::Pooled, true, false, &mut rng);
         let cb = model.content_beta.expect("content_beta present");
         // cb[group][topic][word]. The dominant topic for group 0 should favour
         // {0,1}; for group 1 {2,3}. Check that for each group some topic does.
@@ -1636,7 +1638,7 @@ mod tests {
             }
         }
 
-        let converged = fit_ctm(&docs, 2, 6, 100, 1e-5, 0.0, None, None, true, GammaPrior::Pooled, true, false, &mut rng);
+        let converged = fit_ctm(&docs, 2, 6, 100, 1e-5, 0.0, None, None, true, None, GammaPrior::Pooled, true, false, &mut rng);
         // The bound trajectory is (weakly) monotone increasing.
         let h = &converged.bound_history;
         assert!(h.len() >= 2);
@@ -1649,7 +1651,7 @@ mod tests {
 
         // em_tol = 0 disables early stopping: run the full cap.
         let mut rng2 = ChaCha8Rng::seed_from_u64(7);
-        let capped = fit_ctm(&docs, 2, 6, 8, 0.0, 0.0, None, None, true, GammaPrior::Pooled, true, false, &mut rng2);
+        let capped = fit_ctm(&docs, 2, 6, 8, 0.0, 0.0, None, None, true, None, GammaPrior::Pooled, true, false, &mut rng2);
         assert!(!capped.converged);
         assert_eq!(capped.em_iters_run, 8);
         assert_eq!(capped.bound_history.len(), 8);
@@ -1673,7 +1675,7 @@ mod tests {
             })
             .collect();
         let model = fit_ctm(
-            &docs, nb, v, 30, 0.0, 0.0, None, None, true, GammaPrior::Pooled, true, true, &mut rng,
+            &docs, nb, v, 30, 0.0, 0.0, None, None, true, None, GammaPrior::Pooled, true, true, &mut rng,
         );
         assert!(model.diagonal, "model should record diagonal mode");
 
@@ -1799,7 +1801,7 @@ mod tests {
             vec![1, 1, 2, 0, 1],
             vec![2, 2, 0, 1, 2],
         ];
-        let model = fit_ctm(&docs, 3, 3, 5, 0.0, 0.0, None, None, false, GammaPrior::Pooled, true, false, &mut rng);
+        let model = fit_ctm(&docs, 3, 3, 5, 0.0, 0.0, None, None, false, None, GammaPrior::Pooled, true, false, &mut rng);
 
         let base_violations = check_conformance(&model);
         assert!(

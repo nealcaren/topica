@@ -366,6 +366,7 @@ class CTM:
         batch_size: int = 256,
         tau: float = 64.0,
         kappa: float = 0.7,
+        beta_init: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]] | None = None,
         em_tol: Optional[float] = None,
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
@@ -382,6 +383,11 @@ class CTM:
         Monro step rho_t = (tau + t)^(-kappa). tau (>= 0) and kappa in (0.5, 1] set
         the learning-rate schedule; convergence_tol is ignored. SVI does not retain a
         per-iteration bound trace.
+
+        beta_init (K x num_words) overrides the spectral/random topic-word
+        initialization with a caller-supplied base beta -- the warm-start hook for
+        reproducing an external fit (e.g. R stm's exact spectral beta). Batch only
+        (not supported with inference="svi").
 
         keep_eta_cov=False skips storing the per-document variational covariance (nu),
         saving O(N*K^2) memory. The fit is bit-identical. Use _recompute_eta_cov() or
@@ -512,6 +518,7 @@ class STM:
         convergence_tol: float = 1e-5,
         gamma_prior: str = "pooled",
         gamma_enet: float = 1.0,
+        beta_init: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]] | None = None,
         em_tol: Optional[float] = None,
         covariates: Optional[numpy.typing.NDArray[numpy.float64]] = None,
         keep_eta_cov: bool = True,
@@ -533,6 +540,10 @@ class STM:
         with AIC-selected penalty, recommended for high-dimensional prevalence
         designs. gamma_enet is the elastic-net mix (1.0 = pure lasso, values in
         (0,1) add ridge; R stm's gamma.enet). Ignored when gamma_prior="pooled".
+
+        beta_init (K x num_words) overrides the spectral/random topic-word
+        initialization with a caller-supplied base beta -- the warm-start hook for
+        reproducing an external fit (e.g. R stm's exact spectral beta).
 
         keep_eta_cov=False skips storing the per-document variational covariance (nu),
         saving O(N*K^2) memory. The fit is bit-identical. Use _recompute_eta_cov() or
@@ -705,6 +716,11 @@ class ECTM:
         content_prior_var: float = 1.0,
         period_smooth: float = 5.0,
         interaction_shrink: float = 2.0,
+        inference: str = "batch",
+        batch_size: int = 256,
+        tau: float = 64.0,
+        kappa: float = 0.7,
+        content_every: int = 0,
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
     ) -> None:
@@ -717,7 +733,18 @@ class ECTM:
         The content deviations are regularized by an L2 prior (variance
         content_prior_var); a first-order random walk across periods with precision
         period_smooth (larger = smoother / more pooling across adjacent periods);
-        and an extra L2 factor interaction_shrink on the group-by-time term."""
+        and an extra L2 factor interaction_shrink on the group-by-time term.
+
+        inference="batch" (default) is full-batch variational EM. inference="svi"
+        is minibatch stochastic VI for corpora too large to fit in batch: iters
+        becomes the number of epochs, batch_size documents are sampled per step,
+        and the globals move with a Robbins-Monro rate (tau + step)^(-kappa). SVI
+        is seed-reproducible (it samples minibatches from the model seed), not
+        bit-exact like the default spectral batch fit; convergence_tol is unused in
+        SVI mode. content_every sets how often (in minibatches) the expensive
+        content-κ M-step is re-solved; the cheap μ/Σ/γ updates run every minibatch.
+        content_every=0 (default) re-solves κ once per epoch; a small positive value
+        re-solves more often (better per-epoch progress, more cost per epoch)."""
         ...
 
     @property
@@ -763,6 +790,19 @@ class ECTM:
     def bound_history(self) -> list[float]: ...
     @property
     def converged(self) -> bool: ...
+    @property
+    def content_shift_history(self) -> list[float]:
+        """SVI only: relative L2 change of the content deviations kappa at each
+        content M-step solve (empty for a batch fit). A trailing value still large
+        means the content model has not settled."""
+        ...
+    @property
+    def content_converged(self) -> bool:
+        """Whether the content model settled: always True for a batch fit; for SVI,
+        True when the last content shift is below tolerance. False means the
+        between-group divergences may be understated (raise iters / lower
+        content_every)."""
+        ...
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
     @property
