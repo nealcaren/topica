@@ -402,6 +402,7 @@ struct StmState {
     #[serde(default)] converged: bool,
     #[serde(default)] topic_names: Vec<String>,
     #[serde(default = "default_variational")] variational: String,
+    #[serde(default)] content_kappa: Option<ctm::ContentKappa>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct EctmState {
@@ -5820,6 +5821,7 @@ impl CTM {
             nu: Vec::new(),
             gamma: None,
             content_beta: None,
+            content_kappa: None,
             num_groups: 1,
             bound: f64::NAN,
             bound_history: Vec::new(),
@@ -6041,6 +6043,7 @@ pub struct STM {
     gamma: Option<Array2<f64>>, // (num_features, num_topics-1); None if no prevalence
     feature_names: Vec<String>,
     content_beta: Option<Vec<Vec<Vec<f64>>>>, // G×K×V; None if no content
+    content_kappa: Option<ctm::ContentKappa>, // SAGE κ decomposition; None if no content
     group_names: Vec<String>,
     mu: Vec<f64>,    // K-1 logistic-normal prior mean (covariate-free baseline)
     sigma: Vec<f64>, // (K-1)² logistic-normal prior covariance
@@ -6128,6 +6131,7 @@ impl STM {
             gamma: None,
             feature_names: Vec::new(),
             content_beta: None,
+            content_kappa: None,
             group_names: Vec::new(),
             mu: Vec::new(),
             sigma: Vec::new(),
@@ -6427,6 +6431,7 @@ impl STM {
         }
         self.feature_names = feat_names;
         self.content_beta = model.content_beta;
+        self.content_kappa = model.content_kappa;
         self.group_names = group_vocab;
         self.mu = model.mu.clone();
         self.sigma = model.sigma.clone();
@@ -6575,6 +6580,7 @@ impl STM {
             nu: Vec::new(),
             gamma: None,
             content_beta: None,
+            content_kappa: None,
             num_groups: 1,
             bound: f64::NAN,
             bound_history: Vec::new(),
@@ -6648,6 +6654,53 @@ impl STM {
             }
         }
         Ok(arr.to_pyarray_bound(py))
+    }
+
+    /// The SAGE content-model κ decomposition behind the per-group topic-word
+    /// model, as a dict: ``m`` (num_words,), ``kappa_topic`` (num_topics,
+    /// num_words), ``kappa_cov`` (num_groups, num_words), and ``kappa_interaction``
+    /// (num_topics, num_groups, num_words). The per-group log-probabilities are
+    /// ``m + kappa_topic + kappa_cov + kappa_interaction`` (softmax over words).
+    /// Requires content covariates. These additive parts are what R ``stm``'s
+    /// ``sageLabels()`` / ``labelTopics()`` rank words by; the per-group β alone
+    /// does not identify them.
+    #[getter]
+    fn content_kappa<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        self.require_fitted()?;
+        let ck = self.content_kappa.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err("model was fit without content covariates")
+        })?;
+        let k = self.num_topics;
+        let g = self.group_names.len();
+        let v = ck.m.len();
+        let mut kt = Array2::<f64>::zeros((k, v));
+        for t in 0..k {
+            for w in 0..v {
+                kt[[t, w]] = ck.kappa_topic[t][w];
+            }
+        }
+        let mut kc = Array2::<f64>::zeros((g, v));
+        for gg in 0..g {
+            for w in 0..v {
+                kc[[gg, w]] = ck.kappa_cov[gg][w];
+            }
+        }
+        // kappa_interaction is stored flat as (K*G, V) indexed topic*G + group;
+        // reshape to (K, G, V) for the Python view.
+        let mut ki = Array3::<f64>::zeros((k, g, v));
+        for t in 0..k {
+            for gg in 0..g {
+                for w in 0..v {
+                    ki[[t, gg, w]] = ck.kappa_interaction[t * g + gg][w];
+                }
+            }
+        }
+        let d = PyDict::new_bound(py);
+        d.set_item("m", PyArray1::from_vec_bound(py, ck.m.clone()))?;
+        d.set_item("kappa_topic", kt.to_pyarray_bound(py))?;
+        d.set_item("kappa_cov", kc.to_pyarray_bound(py))?;
+        d.set_item("kappa_interaction", ki.to_pyarray_bound(py))?;
+        Ok(d)
     }
 
     /// Content-covariate group names (axis-1 order of :attr:`topic_word_by_group`).
@@ -6849,6 +6902,7 @@ impl STM {
             converged: self.converged,
             topic_names: self.topic_names.clone(),
             variational: self.variational.clone(),
+            content_kappa: self.content_kappa.clone(),
         })
     }
 
@@ -6871,6 +6925,7 @@ impl STM {
             eta_mean: arr2_back(s.eta_mean), eta_cov,
             gamma: arr2_back(s.gamma), feature_names: s.feature_names,
             content_beta: s.content_beta,
+            content_kappa: s.content_kappa,
             mu: s.mu, sigma: s.sigma,
             sigma_estep: Vec::new(),  // not persisted; falls back to sigma in _recompute_eta_cov
             beta_estep: None,         // not persisted; falls back to self.beta

@@ -16,6 +16,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   a between-group content divergence is real rather than a small-cell estimation
   artifact. (#230, #232)
 
+- **SAGE content-model κ coefficients on `STM`** — `STM.content_kappa` returns the
+  additive decomposition behind the per-group topic-word model as a dict: `m`
+  (num_words), `kappa_topic` (num_topics × num_words), `kappa_cov` (num_groups ×
+  num_words), and `kappa_interaction` (num_topics × num_groups × num_words), where
+  the per-group log-probabilities are `m + kappa_topic + kappa_cov +
+  kappa_interaction` (softmax over words). These were computed internally but
+  previously discarded; they are the identifying parts R `stm`'s `sageLabels()` /
+  `labelTopics()` rank words by (and cannot be recovered from the per-group β
+  alone). Persisted across save/load. (#237)
+
 ## [0.24.0] - 2026-06-18
 
 ### Added
