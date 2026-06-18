@@ -808,9 +808,13 @@ pub fn fit_ectm_svi<R: Rng>(
                     *c *= scale;
                 }
             }
+            // A few warm-started inner iterations is enough: the per-step global
+            // move is small and rho-damped, so the kappa candidate need not be
+            // fully converged each minibatch (re-solving it to convergence every
+            // step is the dominant SVI cost for ECTM and is wasted work).
             optimize_content(
                 &m_bg, &mut kt, &mut kkp, &mut kkg, &mut kkgp, &content_ss, k, g, p, num_types,
-                sigma2, rw_kp, rw_kgp, shrink_kgp, 20,
+                sigma2, rw_kp, rw_kgp, shrink_kgp, 5,
             );
             blend_kappa(&mut kt, &kt_old, rho);
             blend_kappa(&mut kkp, &kkp_old, rho);
