@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-06-18
+
 ### Added
 
 - **`content_placebo` for ECTM** — `topica.ectm.content_placebo` is the
