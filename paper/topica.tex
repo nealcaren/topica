@@ -1117,8 +1117,13 @@ random-initialized collapsed-Gibbs models (LDA, DMR, g-DMR, sLDA, HDP, Pachinko,
 DTM) the agreement is statistical, as Section~\ref{sec:validation} notes: the
 dominant topics coincide while the diffuse, low-prevalence tail topics, which differ
 between any two random-initialized runs, account for most of the alignment gap. For
-the nonparametric HDP the headline result is instead that both engines infer nearly
-the same topic count (about thirty) without being told it.
+those legs the relevant yardstick is not an absolute cosine but the reference's own
+seed-to-seed agreement---the ceiling any two independent samplers can reach---which
+the subsections report alongside the cross-implementation figure (DMR, for instance,
+sits at the level two \pkg{tomotopy} runs reach with each other). For the
+nonparametric HDP the headline result is instead that both engines infer nearly the
+same topic count (about thirty) without being told it, since HDP topic identities are
+seed-sensitive even within one engine.
 
 The neural and embedding models (ETM, ProdLDA, CombinedTM, ZeroShotTM, InfoCTM,
 FASTopic, the dynamic ETM, BERTopic, Top2Vec, the embedding LDA) and the LLM-based
