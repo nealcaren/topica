@@ -74,6 +74,11 @@ pub struct EctmModel {
     pub converged: bool,
     pub em_iters_run: usize,
     pub diagonal: bool,
+    /// SVI only: the relative L2 change of the content deviations κ at each
+    /// content M-step solve. A run whose last entries are still large has not
+    /// converged its content model (the headline divergences may be understated);
+    /// empty for the batch fit. See `content_converged`.
+    pub content_shift_history: Vec<f64>,
 }
 
 /// `cell = g * P + t`.
@@ -169,7 +174,7 @@ fn solve_and_blend_content(
     shrink_kgp: f64,
     rho: f64,
     inner_iters: usize,
-) {
+) -> f64 {
     let scale = d as f64 / win_docs.max(1.0);
     let counts: Vec<Vec<f64>> = content_ss
         .iter()
@@ -186,6 +191,19 @@ fn solve_and_blend_content(
     blend_kappa(kkp, &kkp_old, rho);
     blend_kappa(kkg, &kkg_old, rho);
     blend_kappa(kkgp, &kkgp_old, rho);
+    // Relative L2 change of the full κ vector (new vs pre-solve), the
+    // content-model convergence signal: still-large at the end => not converged.
+    let mut num = 0.0f64;
+    let mut den = 0.0f64;
+    for (cur, old) in [(&*kt, &kt_old), (&*kkp, &kkp_old), (&*kkg, &kkg_old), (&*kkgp, &kkgp_old)] {
+        for (cr, orow) in cur.iter().zip(old) {
+            for (&c, &o) in cr.iter().zip(orow) {
+                num += (c - o) * (c - o);
+                den += o * o;
+            }
+        }
+    }
+    (num.sqrt()) / (den.sqrt() + 1e-12)
 }
 
 /// MAP-update the content deviations κ from the variational expected
@@ -623,6 +641,7 @@ pub fn fit_ectm<R: Rng>(
         converged,
         em_iters_run,
         diagonal,
+        content_shift_history: Vec::new(),
     }
 }
 
@@ -757,7 +776,17 @@ pub fn fit_ectm_svi<R: Rng>(
     // epoch". The κ counts persist across the window and are scaled by D/(window docs)
     // at solve time.
     let mb_per_epoch = d.div_ceil(batch).max(1);
-    let solve_every = if content_every == 0 { mb_per_epoch } else { content_every };
+    // Safer default (content_every == 0): target a floor of ~TARGET_KSOLVES content
+    // M-step solves so the content model develops even at a low epoch count, while
+    // never solving less often than once per epoch. A naive low-epoch call would
+    // otherwise under-develop κ and silently understate the divergences.
+    const TARGET_KSOLVES: usize = 10;
+    let solve_every = if content_every == 0 {
+        let total_mb = mb_per_epoch.saturating_mul(epochs).max(1);
+        (total_mb / TARGET_KSOLVES).clamp(1, mb_per_epoch)
+    } else {
+        content_every
+    };
     // The κ schedule is indexed by the number of κ-solves, not minibatches: κ
     // updates rarely (once per window), each on a near-full-corpus estimate, so it
     // takes a strong early step (rho_k from a small tau) and does a fuller inner
@@ -765,6 +794,7 @@ pub fn fit_ectm_svi<R: Rng>(
     // would creep at rho ~ 0.04 and never develop the content deviations.
     let kiters = if solve_every >= 8 { 20 } else { 6 };
     let mut content_ss = vec![vec![0.0f64; num_types]; k * num_cells];
+    let mut content_shift_history: Vec<f64> = Vec::new();
     let mut win_docs = 0.0f64;
     let mut steps_since_solve = 0usize;
     let mut n_ksolve = 0usize;
@@ -870,10 +900,11 @@ pub fn fit_ectm_svi<R: Rng>(
             if steps_since_solve >= solve_every {
                 n_ksolve += 1;
                 let rho_k = svi::rho(1.0, kappa, n_ksolve);
-                solve_and_blend_content(
+                let shift = solve_and_blend_content(
                     &m_bg, &mut kt, &mut kkp, &mut kkg, &mut kkgp, &content_ss, win_docs, d,
                     k, g, p, num_types, sigma2, rw_kp, rw_kgp, shrink_kgp, rho_k, kiters,
                 );
+                content_shift_history.push(shift);
                 content_beta = build_content_beta(&m_bg, &kt, &kkp, &kkg, &kkgp, k, g, p, num_types);
                 for row in content_ss.iter_mut() {
                     for c in row.iter_mut() {
@@ -890,10 +921,11 @@ pub fn fit_ectm_svi<R: Rng>(
     if steps_since_solve > 0 {
         n_ksolve += 1;
         let rho_k = svi::rho(1.0, kappa, n_ksolve);
-        solve_and_blend_content(
+        let shift = solve_and_blend_content(
             &m_bg, &mut kt, &mut kkp, &mut kkg, &mut kkgp, &content_ss, win_docs, d, k, g, p,
             num_types, sigma2, rw_kp, rw_kgp, shrink_kgp, rho_k, kiters,
         );
+        content_shift_history.push(shift);
         content_beta = build_content_beta(&m_bg, &kt, &kkp, &kkg, &kkgp, k, g, p, num_types);
     }
 
@@ -968,6 +1000,7 @@ pub fn fit_ectm_svi<R: Rng>(
         converged: true,
         em_iters_run: epochs,
         diagonal,
+        content_shift_history,
     }
 }
 

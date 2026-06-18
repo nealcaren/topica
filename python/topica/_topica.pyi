@@ -780,6 +780,19 @@ class ECTM:
     @property
     def converged(self) -> bool: ...
     @property
+    def content_shift_history(self) -> list[float]:
+        """SVI only: relative L2 change of the content deviations kappa at each
+        content M-step solve (empty for a batch fit). A trailing value still large
+        means the content model has not settled."""
+        ...
+    @property
+    def content_converged(self) -> bool:
+        """Whether the content model settled: always True for a batch fit; for SVI,
+        True when the last content shift is below tolerance. False means the
+        between-group divergences may be understated (raise iters / lower
+        content_every)."""
+        ...
+    @property
     def fit_history(self) -> list[tuple[int, float]]: ...
     @property
     def variational(self) -> str: ...

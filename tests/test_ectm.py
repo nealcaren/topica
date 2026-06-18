@@ -288,6 +288,30 @@ def test_svi_with_prevalence():
     assert m.doc_topic.shape == (360, 2)
 
 
+def test_svi_content_convergence_diagnostic():
+    """SVI exposes a content-convergence diagnostic; batch leaves it empty."""
+    m = _fit_svi(drift=True)
+    assert len(m.content_shift_history) >= 1
+    assert m.content_converged  # the gentle toy schedule settles
+    b = _fit(drift=True)
+    assert b.content_shift_history == [] and b.content_converged
+
+
+def test_svi_under_convergence_warns():
+    """A starved content schedule (one solve from zero) is flagged loudly, not
+    silently returned as a collapsed content model."""
+    import warnings
+    docs, groups, times = _corpus(drift=True)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        m = topica.ECTM(num_topics=2, seed=1)
+        # content_every huge => only the end-of-fit flush solves kappa once
+        m.fit(docs, times=times, content=groups, iters=1, inference="svi",
+              batch_size=48, content_every=10**6)
+    assert not m.content_converged
+    assert any("may not have converged" in str(x.message) for x in w)
+
+
 def test_svi_save_load_roundtrip(tmp_path):
     m = _fit_svi()
     p = str(tmp_path / "svi.tt")

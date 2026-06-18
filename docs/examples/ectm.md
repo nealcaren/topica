@@ -278,6 +278,12 @@ allow. Use the batch fit for small corpora where it is affordable (it is
 deterministic and needs no step-size tuning) and SVI when the corpus is too large
 to fit in one piece.
 
+Because too few content solves can leave the between-group divergences understated,
+an SVI fit reports whether its content model settled. Check `model.content_converged`
+(and the per-solve trace `model.content_shift_history`); a fit that has not
+converged also emits a warning at fit time. If it reports `False`, raise `iters`
+(epochs) or lower `content_every` and refit.
+
 ## 8. What to claim, and what not to
 
 The defensible findings are the **shapes**. The environment is a cleavage that
