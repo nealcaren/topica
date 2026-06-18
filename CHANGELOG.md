@@ -6,6 +6,44 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-06-18
+
+### Added
+
+- **Minibatch / stochastic VI for ECTM** — `ECTM.fit(inference="svi",
+  batch_size=, tau=, kappa=, content_every=)` fits the 10^5–10^6-document corpora
+  ECTM is built for without subsampling. Each step samples `batch_size` documents,
+  runs the warm-started Laplace E-step, scales the minibatch sufficient statistics
+  to corpus size, and moves the globals with a Robbins-Monro rate
+  `(tau + step)^(-kappa)`; the expensive content-κ M-step is amortized across
+  `content_every` minibatches (default once per epoch). Validated against the batch
+  fit on a 96k-speech congressional corpus (matched topic-word cosine 0.97,
+  between-group divergence-spectrum correlation 0.97, in a few minutes vs ~22 for
+  batch). SVI is **seed-reproducible** (not bit-exact); batch stays the default.
+  A content-convergence guard (`content_converged`, `content_shift_history`) warns
+  when a fit's content model has not settled, so an understated headline cannot
+  pass silently. SVI is ECTM-only: a size-ladder benchmark showed plain STM/CTM
+  batch EM converges in ~15–25 cheap iterations at every scale, so SVI offers no
+  benefit there. (#231, #233)
+
+- **`beta_init` warm-start hook** — `STM.fit(..., beta_init=)` and
+  `CTM.fit(..., beta_init=)` accept a caller-supplied `(num_topics, num_words)`
+  base topic-word matrix, overriding the spectral/random init. This lets an
+  external front end (e.g. an R `stm`-compatible wrapper) inject a precomputed β
+  and reproduce that fit deterministically. Batch only. (#234)
+
+### Fixed
+
+- **Spectral initialization now reproduces R `stm`'s `recoverL2`** — the
+  anchor-word recovery (`recover()`) solved the per-word simplex problem with a
+  fixed, too-large exponentiated-gradient step that diverged to arbitrary vertices
+  instead of the constrained optimum (matching R `stm` at only ~0.37 cosine even
+  on identical inputs). The step is now scale-adaptive (`1/(2L)`, L a Gershgorin
+  bound on λmax) and runs to convergence, with anchor words set to exact unit
+  vectors; it reaches R `stm`'s reference recovery at cosine **1.0** on gadarian
+  (`parity/spectral_recover_stm.py`) in ~70 iterations. This corrects the spectral
+  init under the whole logistic-normal family (CTM/STM/STS/ECTM/DTM). (#234)
+
 ## [0.23.1] - 2026-06-17
 
 ### Added
