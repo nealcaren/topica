@@ -1579,7 +1579,7 @@ mod tests {
                 docs.push(vec![6, 7, 8, 6, 7, 8, 6, 7, 8, 6]);
             }
         }
-        let model = fit_ctm(&docs, 3, 9, 25, 0.0, 0.0, None, None, true, GammaPrior::Pooled, true, false, &mut rng);
+        let model = fit_ctm(&docs, 3, 9, 25, 0.0, 0.0, None, None, true, None, GammaPrior::Pooled, true, false, &mut rng);
         let theta = model.doc_topics();
         // Sanity: θ rows sum to 1 and are valid.
         for row in &theta {
@@ -1610,7 +1610,7 @@ mod tests {
             }
         }
         // K=2 (CTM needs >=2 topics); content groups = 2.
-        let model = fit_ctm(&docs, 2, 4, 30, 0.0, 0.0, None, Some((&groups, 2)), false, GammaPrior::Pooled, true, false, &mut rng);
+        let model = fit_ctm(&docs, 2, 4, 30, 0.0, 0.0, None, Some((&groups, 2)), false, None, GammaPrior::Pooled, true, false, &mut rng);
         let cb = model.content_beta.expect("content_beta present");
         // cb[group][topic][word]. The dominant topic for group 0 should favour
         // {0,1}; for group 1 {2,3}. Check that for each group some topic does.
@@ -1638,7 +1638,7 @@ mod tests {
             }
         }
 
-        let converged = fit_ctm(&docs, 2, 6, 100, 1e-5, 0.0, None, None, true, GammaPrior::Pooled, true, false, &mut rng);
+        let converged = fit_ctm(&docs, 2, 6, 100, 1e-5, 0.0, None, None, true, None, GammaPrior::Pooled, true, false, &mut rng);
         // The bound trajectory is (weakly) monotone increasing.
         let h = &converged.bound_history;
         assert!(h.len() >= 2);
@@ -1651,7 +1651,7 @@ mod tests {
 
         // em_tol = 0 disables early stopping: run the full cap.
         let mut rng2 = ChaCha8Rng::seed_from_u64(7);
-        let capped = fit_ctm(&docs, 2, 6, 8, 0.0, 0.0, None, None, true, GammaPrior::Pooled, true, false, &mut rng2);
+        let capped = fit_ctm(&docs, 2, 6, 8, 0.0, 0.0, None, None, true, None, GammaPrior::Pooled, true, false, &mut rng2);
         assert!(!capped.converged);
         assert_eq!(capped.em_iters_run, 8);
         assert_eq!(capped.bound_history.len(), 8);
@@ -1675,7 +1675,7 @@ mod tests {
             })
             .collect();
         let model = fit_ctm(
-            &docs, nb, v, 30, 0.0, 0.0, None, None, true, GammaPrior::Pooled, true, true, &mut rng,
+            &docs, nb, v, 30, 0.0, 0.0, None, None, true, None, GammaPrior::Pooled, true, true, &mut rng,
         );
         assert!(model.diagonal, "model should record diagonal mode");
 
@@ -1801,7 +1801,7 @@ mod tests {
             vec![1, 1, 2, 0, 1],
             vec![2, 2, 0, 1, 2],
         ];
-        let model = fit_ctm(&docs, 3, 3, 5, 0.0, 0.0, None, None, false, GammaPrior::Pooled, true, false, &mut rng);
+        let model = fit_ctm(&docs, 3, 3, 5, 0.0, 0.0, None, None, false, None, GammaPrior::Pooled, true, false, &mut rng);
 
         let base_violations = check_conformance(&model);
         assert!(
