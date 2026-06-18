@@ -13,6 +13,10 @@ top words are read off the topic-word matrices both engines export. Every leg
 absent (``Rscript``+``stm``/``keyATM``, the ``mallet`` CLI, ``tomotopy``, or
 ``STS_REPL_DIR``), so the generator always writes a complete file.
 
+Legs (``--only``): ``lda`` (Java MALLET + tomotopy), ``stm``/``ctm``/``content``
+(R stm), ``keyatm`` (R keyATM), ``dmr``/``hdp``/``pa`` (tomotopy), ``sts``
+(the authors' R reference).
+
     python paper/gen_validation_appendix.py            # all legs
     python paper/gen_validation_appendix.py --only stm --k 8
 """
@@ -113,6 +117,39 @@ def _plain(title):
     import re
     t = re.sub(r"\\(?:pkg|proglang|code|emph|textbf)\{([^}]*)\}", r"\1", title)
     return t.replace("~", " ").replace("\\", "")
+
+
+def sidebyside_multi(refs, top_tw, vocab, *, caption, label, n=TOP_N):
+    """N-engine side-by-side: refs is a list of (display_name, ref_tw), each
+    matrix already on `vocab`; every reference is aligned to topica and gets its
+    own column. Returns (table_str, [mean_cos per ref]). topica topics are ordered
+    by the first reference's alignment cosine."""
+    K = top_tw.shape[0]
+    cols = []  # (name, ref_tw, {topica_topic: ref_topic}, mean_cos, {topica_topic: cos})
+    for name, tw in refs:
+        pairs, mc = align_pairs(tw, top_tw)
+        cols.append((name, tw, {tj: ri for ri, tj, _ in pairs}, mc,
+                     {tj: c for _, tj, c in pairs}))
+    order = sorted(range(K), key=lambda tj: -cols[0][4].get(tj, 0.0)) if cols else list(range(K))
+    width = 0.88 / (len(refs) + 1)
+    colspec = " ".join([r">{\raggedright\arraybackslash}p{%.2f\textwidth}" % width] * (len(refs) + 1))
+    header = " & ".join([name for name, *_ in cols] + [r"\pkg{topica}"])
+    lines = [
+        r"\begin{table}[ht]\centering\footnotesize",
+        rf"\caption{{{caption}}}",
+        rf"\label{{{label}}}",
+        rf"\begin{{tabular}}{{@{{}}r {colspec}@{{}}}}",
+        r"\toprule",
+        rf" & {header} \\",
+        r"\midrule",
+    ]
+    for rank, tj in enumerate(order, 1):
+        cells = [cell(topw(tw[amap[tj]], vocab, n)) if tj in amap else ""
+                 for _name, tw, amap, _mc, _cm in cols]
+        cells.append(cell(topw(top_tw[tj], vocab, n)))
+        lines.append(rf"{rank} & " + " & ".join(cells) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
+    return "\n".join(lines), [mc for _n, _t, _a, mc, _c in cols]
 
 
 def subsection(title, body):
@@ -264,21 +301,30 @@ def _prevalence_block(rbeta, tbeta, rtheta, ttheta, vocab, lib_mask, pairs, lo, 
 
 
 def leg_ctm(k):
+    # tomotopy also implements a CTModel, but it is random-initialized on the
+    # highly multimodal logistic-normal objective and lands in a different basin
+    # than topica's spectral-initialized fit (matched cosine ~0.4, vs 0.99 against
+    # R stm, which is likewise spectral-initialized) -- so the meaningful reference
+    # here is R stm. tomotopy serves as the second reference on the LDA leg, where
+    # both engines are collapsed Gibbs and agree.
     title = r"Correlated topic model (vs \proglang{R}~\pkg{stm}, no covariates)"
     if not r_stm_available():
         return skip(title, "Rscript with the stm package not available")
     from topica import CTM
     docs, _, _, _ = poliblog()
-    with tempfile.TemporaryDirectory() as d:
-        rvocab, rbeta, _rtheta, _ = run_r_stm(docs, k, workdir=d)
     m = CTM(num_topics=k, init="spectral")
     m.fit(docs, iters=200, convergence_tol=1e-5)
-    tbeta = realign_to(rvocab, list(m.vocabulary), np.asarray(m.topic_word))
-    table, cos, _ = sidebyside(r"\proglang{R}~\pkg{stm}", rbeta, tbeta, rvocab,
-                               caption=f"CTM topics on poliblog (K={k}).",
-                               label="tab:app:ctm")
+    tvocab = list(m.vocabulary)
+    ttw = np.asarray(m.topic_word)
+    with tempfile.TemporaryDirectory() as d:
+        rvocab, rbeta, _rtheta, _ = run_r_stm(docs, k, workdir=d)
+    refs = [(r"\proglang{R}~\pkg{stm}", realign_to(tvocab, rvocab, rbeta))]
+    table, coses = sidebyside_multi(refs, ttw, tvocab, n=TOP_N,
+                                    caption=f"CTM topics on poliblog (K={k}); "
+                                    "the logistic-normal (correlated) topic model.",
+                                    label="tab:app:ctm")
     # Unique feature: topic correlation (what CTM adds over LDA).
-    tw = np.asarray(m.topic_word); tvocab = list(m.vocabulary)
+    tw = ttw
     corr = np.asarray(m.topic_correlation)
     iu = np.triu_indices(k, 1)
     strongest = sorted(zip(corr[iu], iu[0], iu[1]), key=lambda t: -abs(t[0]))[:3]
@@ -294,8 +340,9 @@ def leg_ctm(k):
         rows,
         r"\bottomrule\end{tabular}\end{center}",
     ])
+    costxt = ", ".join(f"{_plain(name)} {c:.3f}" for (name, _), c in zip(refs, coses))
     intro = (r"No covariates, so this is the logistic-normal (correlated) topic model. "
-             rf"Aligned cosine \textbf{{{cos:.3f}}}.")
+             rf"Aligned cosine vs \pkg{{topica}} --- {costxt}.")
     return subsection(title, "\n\n".join([intro, table, feat]))
 
 
@@ -343,22 +390,45 @@ def _content_block(m, rvocab, pairs):
 
 
 def leg_lda(k):
-    title = r"Latent Dirichlet allocation (vs Java \pkg{MALLET})"
+    title = r"Latent Dirichlet allocation (vs Java \pkg{MALLET} and \pkg{tomotopy})"
     import mallet_parity as mp
-    if not mp.mallet_available():
-        return skip(title, "the MALLET CLI not available")
+    have_mallet = mp.mallet_available()
+    try:
+        import tomotopy as tp
+        have_tomo = True
+    except ImportError:
+        have_tomo = False
+    if not (have_mallet or have_tomo):
+        return skip(title, "neither the MALLET CLI nor tomotopy available")
     from topica import LDA
     docs, _, _, _ = poliblog()
-    mphi, mvocab = mp._mallet_phi(docs, k, iters=1000, seed=1)
     m = LDA(num_topics=k, seed=1, optimize_interval=0)
     m.fit(docs, iters=1000, num_samples=5, sample_interval=25)
-    tbeta = realign_to(mvocab, list(m.vocabulary), np.asarray(m.topic_word))
-    table, cos, _ = sidebyside(r"Java \pkg{MALLET}", mphi, tbeta, mvocab,
-                               caption=f"LDA topics on poliblog (K={k}), "
-                               r"Java \pkg{MALLET} vs \pkg{topica} (both collapsed Gibbs).",
-                               label="tab:app:lda")
-    intro = (rf"The baseline: plain LDA on the same {len(docs)} posts, collapsed Gibbs "
-             rf"in both engines. Aligned topic-word cosine \textbf{{{cos:.3f}}}.")
+    tvocab = list(m.vocabulary)
+    ttw = np.asarray(m.topic_word)
+    refs = []
+    if have_mallet:
+        mphi, mvocab = mp._mallet_phi(docs, k, iters=1000, seed=1)
+        refs.append((r"Java \pkg{MALLET}", realign_to(tvocab, mvocab, mphi)))
+    if have_tomo:
+        mdl = tp.LDAModel(tw=tp.TermWeight.ONE, k=k, seed=1)
+        for d in docs:
+            mdl.add_doc(d)
+        mdl.burn_in = 200
+        mdl.train(1000, show_progress=False)
+        phi = np.array([mdl.get_topic_word_dist(t) for t in range(k)])
+        refs.append((r"\pkg{tomotopy}", realign_to(tvocab, list(mdl.used_vocabs), phi)))
+    n = TOP_N if len(refs) == 1 else 6
+    names = [name for name, _ in refs] + [r"\pkg{topica}"]
+    engines = (", ".join(names[:-1]) + ", and " + names[-1]) if len(names) > 2 else " and ".join(names)
+    table, coses = sidebyside_multi(refs, ttw, tvocab, n=n,
+                                    caption=f"LDA topics on poliblog (K={k}); "
+                                    "all collapsed Gibbs samplers.",
+                                    label="tab:app:lda")
+    costxt = ", ".join(f"{_plain(name)} {c:.3f}" for (name, _), c in zip(refs, coses))
+    intro = (rf"The baseline: plain LDA on the same {len(docs)} posts, independent "
+             rf"collapsed-Gibbs samplers ({engines}). Aligned topic-word "
+             rf"cosine vs \pkg{{topica}} --- {costxt}.")
     return subsection(title, "\n\n".join([intro, table]))
 
 
@@ -533,6 +603,117 @@ def _sts_block(sts):
     return "\n".join(lines)
 
 
+def leg_hdp(k):
+    title = r"Hierarchical Dirichlet process (vs \pkg{tomotopy})"
+    try:
+        import tomotopy as tp
+    except ImportError:
+        return skip(title, "tomotopy not installed")
+    from topica import HDP
+    docs, _, _, _ = poliblog()
+    # tomotopy HDP infers its own topic count; keep the live topics, by prevalence.
+    # alpha=gamma=1.0 lets both engines discover a comparable count (~30) on poliblog
+    # rather than collapsing to a handful at the conservative defaults.
+    mdl = tp.HDPModel(tw=tp.TermWeight.ONE, initial_k=10, alpha=1.0, gamma=1.0, seed=1)
+    for doc in docs:
+        mdl.add_doc(doc)
+    mdl.burn_in = 200
+    mdl.train(800, show_progress=False)
+    counts = np.array(mdl.get_count_by_topics(), dtype=float)
+    live = sorted((t for t in range(mdl.k) if mdl.is_live_topic(t)), key=lambda t: -counts[t])
+    mvocab = list(mdl.used_vocabs)
+    # topica HDP also infers its count.
+    h = HDP(alpha=1.0, gamma=1.0, seed=1)
+    h.fit(docs, iters=400)
+    hvocab = list(h.vocabulary)
+    htw = np.asarray(h.topic_word)
+    hprev = np.asarray(h.doc_topic).sum(0)
+    htop = list(np.argsort(-hprev))
+    n_show = min(k, len(live), htw.shape[0])
+    # Align ALL discovered topics (the counts differ), then show topica's most
+    # prevalent ones beside their best-matched tomotopy topic.
+    ref_full = realign_to(hvocab, mvocab,
+                          np.array([mdl.get_topic_word_dist(t) for t in live]))
+    pairs, _ = align_pairs(ref_full, htw)  # (tomotopy_i, topica_j, cos)
+    ref_for = {tj: (ri, c) for ri, tj, c in pairs}
+    shown = htop[:n_show]
+    rows, coss = [], []
+    for rank, tj in enumerate(shown, 1):
+        if tj in ref_for:
+            ri, c = ref_for[tj]
+            coss.append(c)
+            aw = cell(topw(ref_full[ri], hvocab))
+        else:
+            aw = ""
+        rows.append(rf"{rank} & {aw} & {cell(topw(htw[tj], hvocab))} \\")
+    cos = float(np.mean(coss)) if coss else 0.0
+    table = "\n".join([
+        r"\begin{table}[ht]\centering\footnotesize",
+        rf"\caption{{HDP topics on poliblog: \pkg{{topica}}'s {n_show} most prevalent topics "
+        r"beside their best-matched \pkg{tomotopy} topic.}",
+        r"\label{tab:app:hdp}",
+        r"\begin{tabular}{@{}r >{\raggedright\arraybackslash}p{0.40\textwidth} "
+        r">{\raggedright\arraybackslash}p{0.40\textwidth}@{}}",
+        r"\toprule",
+        r" & \pkg{tomotopy} & \pkg{topica} \\",
+        r"\midrule", *rows, r"\bottomrule", r"\end{tabular}", r"\end{table}"])
+    intro = (r"The nonparametric model: both engines \emph{infer} the topic count rather "
+             rf"than fixing it. \pkg{{tomotopy}} discovered {mdl.live_k} live topics, "
+             rf"\pkg{{topica}} {h.num_topics} --- close agreement on a quantity neither was "
+             rf"told. \pkg{{topica}}'s {n_show} most prevalent topics, matched to "
+             rf"\pkg{{tomotopy}}: mean cosine \textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table]))
+
+
+def leg_pa(k):
+    title = r"Pachinko allocation (vs \pkg{tomotopy})"
+    try:
+        import tomotopy as tp
+    except ImportError:
+        return skip(title, "tomotopy not installed")
+    from topica import PA
+    docs, _, _, _ = poliblog()
+    num_super, num_sub = 3, k
+    mdl = tp.PAModel(tw=tp.TermWeight.ONE, k1=num_super, k2=num_sub, seed=1)
+    for doc in docs:
+        mdl.add_doc(doc)
+    mdl.burn_in = 200
+    mdl.train(1000, show_progress=False)
+    mvocab = list(mdl.used_vocabs)
+    msub = np.array([mdl.get_topic_word_dist(s) for s in range(num_sub)])
+    p = PA(num_super, num_sub, seed=1)
+    p.fit(docs, iters=1000)
+    pvocab = list(p.vocabulary)
+    psub = np.asarray(p.topic_word)
+    ref_sub = realign_to(pvocab, mvocab, msub)
+    table, cos, _ = sidebyside(r"\pkg{tomotopy}", ref_sub, psub, pvocab,
+                               caption=f"Pachinko sub-topics on poliblog "
+                               f"({num_super} super-topics over {num_sub} sub-topics), "
+                               r"\pkg{tomotopy} vs \pkg{topica}.",
+                               label="tab:app:pa")
+    feat = _pa_block(p)
+    intro = (rf"A DAG of {num_super} super-topics over {num_sub} shared sub-topics, capturing "
+             rf"topic correlation through the hierarchy. Sub-topics aligned: cosine "
+             rf"\textbf{{{cos:.3f}}}.")
+    return subsection(title, "\n\n".join([intro, table, feat]))
+
+
+def _pa_block(p):
+    ss = np.asarray(p.super_sub)  # (num_super, num_sub)
+    tw = np.asarray(p.topic_word)
+    vocab = list(p.vocabulary)
+    lines = [r"\noindent\emph{Super-topic structure} in \pkg{topica}: each super-topic's "
+             r"two strongest sub-topics (the Pachinko DAG that plain LDA lacks):",
+             r"\begin{center}\footnotesize\begin{tabular}{@{}l p{0.72\textwidth}@{}}\toprule",
+             r"super-topic & top sub-topics (by association) \\ \midrule"]
+    for s in range(ss.shape[0]):
+        subs = np.argsort(-ss[s])[:2]
+        label = "; ".join(cell(topw(tw[si], vocab, 3)) for si in subs)
+        lines.append(rf"{s + 1} & {label} \\")
+    lines += [r"\bottomrule\end{tabular}\end{center}"]
+    return "\n".join(lines)
+
+
 LEGS = {
     "lda": leg_lda,
     "stm": leg_stm,
@@ -540,9 +721,11 @@ LEGS = {
     "content": leg_content,
     "keyatm": leg_keyatm,
     "dmr": leg_dmr,
+    "hdp": leg_hdp,
+    "pa": leg_pa,
     "sts": leg_sts,
 }
-ORDER = ["lda", "stm", "ctm", "content", "keyatm", "dmr", "sts"]
+ORDER = ["lda", "stm", "ctm", "content", "keyatm", "dmr", "hdp", "pa", "sts"]
 
 
 def build(only=None, k_override=None):
@@ -575,7 +758,8 @@ def build(only=None, k_override=None):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", help="run a single leg (lda, stm, ctm, content, keyatm, dmr, sts)")
+    ap.add_argument("--only", help="run a single leg (lda, stm, ctm, content, keyatm, "
+                    "dmr, hdp, pa, sts)")
     ap.add_argument("--k", type=int, help="override the topic count")
     args = ap.parse_args()
     build(only=args.only, k_override=args.k)
