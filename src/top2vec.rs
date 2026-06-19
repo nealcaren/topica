@@ -332,12 +332,7 @@ mod tests {
         let mut doc_emb = Vec::new();
         for d in 0..40 {
             if d % 2 == 0 {
-                docs.push(
-                    vec![0u32, 1, 2, 3, 4]
-                        .into_iter()
-                        .map(|w| w as u32)
-                        .collect::<Vec<_>>(),
-                );
+                docs.push(vec![0u32, 1, 2, 3, 4].into_iter().collect::<Vec<_>>());
                 doc_emb.push(jitter(&mut rng, &center_a));
             } else {
                 docs.push((5u32..10).collect::<Vec<_>>());

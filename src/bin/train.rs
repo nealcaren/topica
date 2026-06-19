@@ -1,3 +1,9 @@
+#![allow(
+    clippy::needless_range_loop,
+    clippy::too_many_arguments,
+    clippy::ptr_arg
+)]
+
 use std::path::Path;
 use std::time::Instant;
 use topica::cli::{next_val, parse_val};

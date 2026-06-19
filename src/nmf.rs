@@ -324,6 +324,8 @@ fn sp_at_x(a: &Mat, x: &SpMat) -> Mat {
 
 /// Seed for the randomized-SVD test matrix. Kept distinct from any user seed so
 /// the NNDSVD initialization is identical on every run.
+// The trailing `64` is the hex byte for 'd' in "nmf_svd", not a type suffix.
+#[allow(clippy::mistyped_literal_suffixes)]
 const SVD_SEED: u64 = 0x6e6d_665f_7376_64; // "nmf_svd"
 
 /// A standard-normal draw via Box-Muller.

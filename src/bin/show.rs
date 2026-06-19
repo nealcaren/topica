@@ -1,3 +1,9 @@
+#![allow(
+    clippy::needless_range_loop,
+    clippy::too_many_arguments,
+    clippy::ptr_arg
+)]
+
 /// Display trained topic model results in human-readable form.
 /// Reads the TSV files written by `train` and prints formatted output.
 use std::collections::BTreeMap;

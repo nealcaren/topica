@@ -1,3 +1,9 @@
+#![allow(
+    clippy::needless_range_loop,
+    clippy::too_many_arguments,
+    clippy::ptr_arg
+)]
+
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufWriter, Write};

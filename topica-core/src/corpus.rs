@@ -266,11 +266,7 @@ pub fn load_text_file(path: &Path, opts: &LoadOptions) -> io::Result<Corpus> {
     let mut final_names: Vec<String> = Vec::new();
     let mut final_labels: Vec<String> = Vec::new();
 
-    for ((doc, name), label) in new_docs
-        .into_iter()
-        .zip(doc_names.into_iter())
-        .zip(doc_labels.into_iter())
-    {
+    for ((doc, name), label) in new_docs.into_iter().zip(doc_names).zip(doc_labels) {
         if !doc.is_empty() {
             final_docs.push(doc);
             final_names.push(name);

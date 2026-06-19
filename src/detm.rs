@@ -709,9 +709,7 @@ impl EtaNet {
                     d_c_next[j] = d_c[j] * ft[j];
                 }
                 // Save the input gradient for the layer below (or q_eta_map).
-                for i in 0..eh {
-                    d_layer_in[tt][i] = d_x[i];
-                }
+                d_layer_in[tt][..eh].copy_from_slice(&d_x[..eh]);
             }
             if layer == 0 {
                 // d_layer_in is d loss / d map_out; backprop through q_eta_map.

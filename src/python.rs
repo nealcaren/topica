@@ -943,8 +943,8 @@ fn build_corpus_from_docs(
     let mut kept_indices: Vec<usize> = Vec::new();
     for (orig_idx, ((doc, name), label)) in new_docs
         .into_iter()
-        .zip(doc_names.into_iter())
-        .zip(doc_labels.into_iter())
+        .zip(doc_names)
+        .zip(doc_labels)
         .enumerate()
     {
         if !doc.is_empty() {
@@ -1758,7 +1758,7 @@ impl LDA {
                     do_sweep(&mut model, &mut rng, batch);
                     iter += batch;
 
-                    if draw_thin > 0 && iter % draw_thin == 0 {
+                    if draw_thin > 0 && iter.is_multiple_of(draw_thin) {
                         push_capped(
                             &mut theta_draw_buf,
                             theta_snapshot_f32(&model, &corpus),
@@ -1766,7 +1766,10 @@ impl LDA {
                         );
                     }
 
-                    if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
+                    if optimize_interval > 0
+                        && iter > burn_in
+                        && iter.is_multiple_of(optimize_interval)
+                    {
                         if use_symmetric_alpha {
                             optimize::optimize_alpha_symmetric(&mut model, &corpus);
                         } else {
@@ -1776,7 +1779,8 @@ impl LDA {
                     }
 
                     // Trace recording and optional convergence check (never alters RNG).
-                    if convergence_tol > 0.0 && check_every > 0 && iter % check_every == 0 {
+                    if convergence_tol > 0.0 && check_every > 0 && iter.is_multiple_of(check_every)
+                    {
                         let ll = output::model_log_likelihood(&model, &corpus);
                         ll_history.push((iter, ll));
                         // Relative change criterion: compare the current ll to the
@@ -1789,7 +1793,10 @@ impl LDA {
                                 break;
                             }
                         }
-                    } else if convergence_tol == 0.0 && check_every > 0 && iter % check_every == 0 {
+                    } else if convergence_tol == 0.0
+                        && check_every > 0
+                        && iter.is_multiple_of(check_every)
+                    {
                         // When tol is disabled, still record the trace so fit_history
                         // is non-empty, but never break early.
                         let ll = output::model_log_likelihood(&model, &corpus);
@@ -1797,7 +1804,7 @@ impl LDA {
                     }
 
                     if let Some(cb) = &progress {
-                        if progress_interval > 0 && iter % progress_interval == 0 {
+                        if progress_interval > 0 && iter.is_multiple_of(progress_interval) {
                             let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
                             Python::with_gil(|py| {
                                 let _ = cb.call1(py, (iter, ll));
@@ -3343,7 +3350,7 @@ fn infer_doc<R: Rng>(
         }
         if iter > burn_in
             && samples_taken < num_samples
-            && (iter - burn_in) % sample_interval.max(1) == 0
+            && (iter - burn_in).is_multiple_of(sample_interval.max(1))
         {
             let denom = n as f64 + alpha_sum;
             for t in 0..k {
@@ -3424,7 +3431,7 @@ fn infer_theta_gibbs<R: Rng>(
         }
         if iter > burn_in
             && samples_taken < num_samples
-            && (iter - burn_in) % sample_interval.max(1) == 0
+            && (iter - burn_in).is_multiple_of(sample_interval.max(1))
         {
             let denom = n as f64 + alpha_sum;
             for t in 0..k {
@@ -9921,12 +9928,16 @@ impl HDP {
     }
 
     /// The fitted document-level concentration α0 (resampled if enabled).
+    // `learned_alpha`/`learned_gamma` are the fitted values these getters expose;
+    // clippy's misnamed_getters heuristic matches on the `learned_` prefix.
+    #[allow(clippy::misnamed_getters)]
     #[getter]
     fn alpha(&self) -> f64 {
         self.learned_alpha
     }
 
     /// The fitted corpus-level concentration γ (resampled if enabled).
+    #[allow(clippy::misnamed_getters)]
     #[getter]
     fn gamma(&self) -> f64 {
         self.learned_gamma
@@ -14371,7 +14382,7 @@ impl DETM {
             return Err(PyValueError::new_err("eta_hidden_size must be >= 1"));
         }
         if let Some(c) = grad_clip {
-            if !(c > 0.0) || !c.is_finite() {
+            if c <= 0.0 || !c.is_finite() {
                 return Err(PyValueError::new_err(
                     "grad_clip must be a positive finite float or None",
                 ));
@@ -15660,8 +15671,7 @@ impl ProdLDA {
     #[staticmethod]
     fn load(path: &str) -> PyResult<Self> {
         let s: ProdldaState = read_state(path, MODEL_TAG_PRODLDA)?;
-        let model = if s.fitted && s.w_v.is_some() {
-            let v = s.w_v.unwrap();
+        let model = if let (true, Some(v)) = (s.fitted, s.w_v) {
             let hidden = s.w_hidden.unwrap();
             let k = s.w_k.unwrap();
             Some(prodlda::ProdldaModel {
@@ -19248,7 +19258,7 @@ mod tests {
     #[test]
     fn total_cmp_sort_with_nan_does_not_panic() {
         // A NaN in a float slice should sort without panicking when using total_cmp.
-        let data = vec![3.0f64, f64::NAN, 1.0, 2.0];
+        let data = [3.0f64, f64::NAN, 1.0, 2.0];
         let mut idx: Vec<usize> = (0..data.len()).collect();
         // Descending sort: using total_cmp equivalent pattern.
         idx.sort_by(|&a, &b| f64::total_cmp(&data[b], &data[a]));
