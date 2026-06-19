@@ -93,7 +93,7 @@ mod tests {
     fn foo_state_round_trip() {
         let orig = FooState {
             x: 42,
-            y: 3.14,
+            y: 1.25,
             flags: true,
             draws: Some(vec![0.1, 0.2, 0.3]),
         };

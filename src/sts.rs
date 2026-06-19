@@ -207,9 +207,7 @@ pub fn sts_grad(
 
     // grad f = [g1[0..K-1], g2] − Σ⁻¹(α−μ).
     let mut g = vec![0.0f64; n];
-    for i in 0..(k - 1) {
-        g[i] = g1[i];
-    }
+    g[..(k - 1)].copy_from_slice(&g1[..(k - 1)]);
     for t in 0..k {
         g[k - 1 + t] = g2[t];
     }

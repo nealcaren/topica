@@ -30,6 +30,25 @@ permissions:
 # because the wheel is abi3 (CPython >=3.9 compatible).
 # ---------------------------------------------------------------------------
 jobs:
+  # Rust hygiene gate, run once (OS-independent): the whole workspace must be
+  # rustfmt-clean and clippy-clean (-D warnings, all features so python.rs is
+  # linted too). Catches drift without relying on reviewer discipline.
+  lint:
+    name: lint (fmt + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+      - name: cargo clippy -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
   test:
     name: test / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -65,11 +84,6 @@ jobs:
       # build, and the suite is dominated by model fits, so an optimized build
       # turns a ~20-minute debug run into a few minutes. The extra compile time is
       # repaid many times over (and cached by rust-cache above).
-      # Formatting gate: the whole workspace must be rustfmt-clean. Mechanical,
-      # so it catches drift without depending on reviewer discipline.
-      - name: cargo fmt --check
-        run: cargo fmt --all --check
-
       # Rust unit tests. Run without the `python` feature: pyo3's
       # extension-module mode does not link libpython into a standalone test
       # binary, so the bindings crate cannot be unit-tested that way. `--workspace`

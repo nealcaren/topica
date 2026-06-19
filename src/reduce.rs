@@ -229,7 +229,7 @@ pub fn project(
         "umap" => {
             #[cfg(feature = "umap")]
             {
-                return umap(data, n_components, n_neighbors, seed);
+                umap(data, n_components, n_neighbors, seed)
             }
             #[cfg(not(feature = "umap"))]
             {
@@ -240,7 +240,7 @@ pub fn project(
         "tsne" => {
             #[cfg(feature = "tsne")]
             {
-                return tsne(data, n_components, perplexity, theta, epochs, seed);
+                tsne(data, n_components, perplexity, theta, epochs, seed)
             }
             #[cfg(not(feature = "tsne"))]
             {
@@ -822,8 +822,8 @@ mod tsne_tests {
             "embedding has NaN"
         );
         // Per-blob 2-D centroids, then check each point is nearest its own.
-        let mut cents = vec![[0.0f64; 2]; 3];
-        let mut counts = vec![0.0f64; 3];
+        let mut cents = [[0.0f64; 2]; 3];
+        let mut counts = [0.0f64; 3];
         for (i, &c) in truth.iter().enumerate() {
             cents[c][0] += emb[i][0];
             cents[c][1] += emb[i][1];

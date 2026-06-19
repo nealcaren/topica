@@ -152,7 +152,7 @@ impl GsdmmModel {
                             continue;
                         }
                         let base = self.nw[kk][w] as f64 + self.beta;
-                        for j in 0..cw as u32 {
+                        for j in 0..cw {
                             lp += (base + j as f64).ln();
                         }
                     }
@@ -234,7 +234,7 @@ fn resample_doc<R: Rng>(model: &mut GsdmmModel, d: usize, doc: &[u32], rng: &mut
                 continue;
             }
             let base = model.nw[kk][w] as f64 + model.beta;
-            for j in 0..cw as u32 {
+            for j in 0..cw {
                 lp += (base + j as f64).ln();
             }
         }

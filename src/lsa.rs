@@ -304,7 +304,7 @@ mod tests {
         let b = [2u32, 1, 3, 1, 2];
         let nd = 9usize;
         let doc: Vec<u32> = (0..v)
-            .flat_map(|j| std::iter::repeat(j as u32).take(b[j] as usize))
+            .flat_map(|j| std::iter::repeat_n(j as u32, b[j] as usize))
             .collect();
         let docs: Vec<Vec<u32>> = (0..nd).map(|_| doc.clone()).collect();
         let m = fit_lsa(&docs, 2, v, false, 42);

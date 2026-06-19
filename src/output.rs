@@ -89,7 +89,7 @@ pub fn display_top_words(model: &TopicModel, corpus: &Corpus, n: usize) -> Strin
                 }
             })
             .collect();
-        word_scores.sort_by(|a, b| b.0.cmp(&a.0));
+        word_scores.sort_by_key(|w| std::cmp::Reverse(w.0));
 
         out.push_str(&format!("{}\t{:.5}\t", topic, model.alpha[topic]));
         for (i, (_, id)) in word_scores.iter().take(n).enumerate() {

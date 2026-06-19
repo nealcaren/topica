@@ -380,8 +380,6 @@ impl HdpModel {
 /// mixes far better than random seeding. `resample_conc` toggles resampling of
 /// the concentrations α0, γ (recommended — fixed concentrations make K very
 /// sensitive to their values).
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub fn fit_hdp<R: Rng>(
     docs: &[Vec<u32>],
     num_types: usize,

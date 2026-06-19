@@ -1244,7 +1244,7 @@ fn init_state<R: Rng>(
     let mut word_keyword_topics: Vec<Vec<usize>> = vec![Vec::new(); v];
     for (kk, kws) in keywords.iter().enumerate() {
         for &w in kws {
-            word_keyword_topics[w as usize].push(kk);
+            word_keyword_topics[w].push(kk);
         }
     }
 
@@ -1504,7 +1504,7 @@ pub fn fit_keyatm_cvb0<R: Rng>(
 /// ends at the model's returned state; `interval == 0` disables tracing.
 #[inline]
 fn record_ll(iter: usize, interval: usize, iters: usize) -> bool {
-    interval > 0 && (iter % interval == 0 || iter == iters)
+    interval > 0 && (iter.is_multiple_of(interval) || iter == iters)
 }
 
 /// Opt-in early-stop test on keyATM's recorded `model_fit` trace: `true` once the
@@ -1554,7 +1554,7 @@ impl ThetaDrawOpts {
         ndk: &[Vec<f64>],
         doc_alpha: &[Vec<f64>],
     ) {
-        if self.thin == 0 || iter % self.thin != 0 {
+        if self.thin == 0 || !iter.is_multiple_of(self.thin) {
             return;
         }
         let snap: Vec<Vec<f32>> = ndk
@@ -1655,7 +1655,7 @@ pub fn fit_keyatm_cov<R: Rng>(
             num_threads,
             rng,
         );
-        if opt_interval > 0 && it + 1 > burn_in && (it + 1 - burn_in) % opt_interval == 0 {
+        if opt_interval > 0 && it + 1 > burn_in && (it + 1 - burn_in).is_multiple_of(opt_interval) {
             crate::dmr::optimize_lambda(
                 &mut lambda,
                 features,

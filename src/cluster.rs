@@ -18,6 +18,7 @@ use rand_chacha::ChaCha8Rng;
 /// HDBSCAN / BERTopic outlier convention. `min_cluster_size` is the smallest
 /// group that counts as a topic; `min_samples` controls how conservative the
 /// density estimate is (larger = more points called noise).
+#[allow(clippy::field_reassign_with_default)] // HDbscan (external) has private fields
 pub fn hdbscan_labels(
     points: &[Vec<f64>],
     min_cluster_size: usize,
@@ -47,6 +48,8 @@ pub fn hdbscan_labels(
     let flat: Vec<f64> = points.iter().flat_map(|r| r.iter().copied()).collect();
     let array = Array2::from_shape_vec((n, dim), flat).expect("point matrix shape");
 
+    // HDbscan is an external struct; struct-update syntax can't reach its private
+    // fields, so post-construction assignment is the only option here.
     let mut model: HDbscan<f64, _> = HDbscan::default();
     model.min_cluster_size = mcs;
     model.min_samples = ms;
@@ -286,10 +289,7 @@ mod tests {
                     *counts.entry(l).or_insert(0) += 1;
                 }
             }
-            counts
-                .into_iter()
-                .max_by_key(|&(_, c)| c)
-                .map(|(l, c)| (l, c))
+            counts.into_iter().max_by_key(|&(_, c)| c)
         };
         let (a, na) = majority(&labels[..30]).expect("blob 1 has a cluster");
         let (b, nb) = majority(&labels[30..]).expect("blob 2 has a cluster");

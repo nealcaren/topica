@@ -49,7 +49,7 @@ impl Alias {
         let mut alias = vec![0u32; n];
 
         let sum: f64 = weights.iter().sum();
-        if !(sum > 0.0) {
+        if sum <= 0.0 || sum.is_nan() {
             for i in 0..n {
                 prob[i] = 1.0;
                 alias[i] = i as u32;

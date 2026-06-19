@@ -1,3 +1,22 @@
+// Clippy allow-list (deliberate, for a numerical + pyo3 crate):
+// - needless_range_loop: index loops are the clearer idiom for the matrix math here.
+// - too_many_arguments / type_complexity: the model fit/binding entry points are
+//   inherently many-parameter; the option-struct refactor is tracked separately.
+// - upper_case_acronyms: the public model types (`LDA`, `STM`, `DMR`, …) are named
+//   after the methods; renaming them would break the public API.
+// - useless_conversion: emitted inside pyo3 0.22's `#[pymethods]`/`#[pyfunction]`
+//   error-conversion codegen, not our code — noise we can't fix at the source.
+// doc_* lints are rustdoc-rendering cosmetics; the user-facing docs are mkdocs.
+#![allow(
+    clippy::needless_range_loop,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::upper_case_acronyms,
+    clippy::useless_conversion,
+    clippy::doc_lazy_continuation,
+    clippy::doc_overindented_list_items
+)]
+
 // The STM/CTM/SAGE + CVB0 core lives in the `topica-core` workspace member. Re-export
 // every module here so `topica::ctm::*`, `topica::corpus::*`, etc. resolve exactly as
 // before — the extraction is a no-op for everything downstream of `topica`.
