@@ -344,6 +344,18 @@ answers. The breadth is the point: a single import covers the span from the LDA
 baseline to the structural topic model, neural clustering, cross-lingual
 alignment, and LLM-driven discovery.
 
+In every case \pkg{topica} \emph{implements} a method introduced elsewhere; the
+statistical contribution belongs to the cited authors, and \pkg{topica} is an
+implementation and workflow integration, not a reimagining of the underlying
+models. The Reference column of Table~\ref{tab:models} gives the originating
+paper for each model, and a user who fits one should cite that paper alongside
+\pkg{topica} \citep{caren2026topica}. This is most consequential for the methods
+whose own software social scientists already rely on---the structural topic model
+\citep{roberts2016model} and keyword-assisted topic modeling
+\citep{eshima2024keyatm}---where \pkg{topica} reimplements the published model
+family and validates against the authors' package (Section~\ref{sec:validation})
+rather than supplanting it.
+
 \begin{table}[t!]
 \centering
 \caption{The \pkg{topica} model family. Nearly all present the \code{fit}\,$\rightarrow$\,
@@ -587,7 +599,31 @@ as \pkg{topica}, align the fitted topics, and report the overlap;
 toolchain is absent. Because the engines share no code and no random number
 generator, ``agreement'' means \emph{statistical} agreement on the fitted topics,
 benchmarked against each reference's own run-to-run reproducibility, arguably the
-fairest yardstick for stochastic inference. We report it without inflating it.
+fairest yardstick for stochastic inference. We report it without inflating it. The
+supplementary material shows the underlying picture in full: for fifteen models it
+fits both the reference package and \pkg{topica} on the same poliblog corpus and
+displays the recovered topics twice, side by side, word for word rather than as a
+single summary statistic.
+
+``Validated'' means different things for different models, and we are explicit
+about which applies. We distinguish four kinds of evidence. \emph{Reference
+parity} compares \pkg{topica} to an established implementation on shared inputs
+(LDA against \pkg{MALLET}; STM, CTM, and content against \proglang{R}~\pkg{stm};
+\code{KeyATM} against \proglang{R}~\pkg{keyATM}; NMF and LSA against
+\pkg{scikit-learn}; and the side-by-side legs of the supplement). \emph{Planted
+recovery} checks that a model recovers known structure on a synthetic corpus with
+a fixed, separable answer---the right test where two stochastic engines need not
+produce identical matrices, and the only one for a model with no single canonical
+reference. \emph{Structural and invariance checks} verify properties the method
+must have regardless of data: bit-for-bit determinism under a fixed seed, a
+monotone variational bound, and conformance to the shared interface contract. The
+neural and embedding models are validated against their own reference
+implementations on the corpora those references use. Each of these applies to a
+model on the \emph{default surface}; a fourth category, \emph{experimental} models
+behind an explicit opt-in gate (Section~\ref{sec:extending}), is deliberately
+excluded from the default surface precisely because it has not yet cleared a
+reference-parity or recovery bar, and we make no validation claim for it. When we
+say every model is validated, we mean every model a user gets by default.
 
 \paragraph{Collapsed-Gibbs LDA.} \pkg{topica}'s LDA began as a port of
 \pkg{RustMallet}, David Mimno's \proglang{Rust} port of \pkg{MALLET}'s SparseLDA
@@ -1063,9 +1099,10 @@ model, into the validated family as reference results are published.
 \section{Availability}\label{sec:availability}
 %% ===========================================================================
 
-\pkg{topica} is released under the Apache-2.0 license and installs from the
-Python Package Index with \code{pip install topica}; the core requires only
-\pkg{NumPy} and \pkg{pandas}. The benchmarks and validation reported here were
+\pkg{topica} is released under the Apache-2.0 license, which is compatible with
+the GPL-3 terms \proglang{R} and several reference packages carry, and installs
+from the Python Package Index with \code{pip install topica}; the core requires
+only \pkg{NumPy} and \pkg{pandas}. The benchmarks and validation reported here were
 produced with \pkg{topica} 0.24.0 by \code{paper/reproduce.py}; the exact
 hardware, operating system, and reference-toolchain versions are recorded in the
 generated replication report. Source code, documentation, and worked examples are available at
@@ -1081,61 +1118,6 @@ each reported value to the run that produced it. \pkg{topica} reimplements publi
 methods and is validated against their reference implementations; it does not
 replace the original work, and users should cite both \pkg{topica}
 \citep{caren2026topica} and the model they use.
-
-%% ===========================================================================
-\appendix
-\section{Side by side with the reference implementations}\label{app:sidebyside}
-%% ===========================================================================
-
-Section~\ref{sec:validation} summarizes the cross-implementation agreement as a
-single alignment cosine per model. This appendix shows the underlying picture: for
-each reference package \pkg{topica} validates against, both the original package
-and \pkg{topica} are fit on the \emph{same} poliblog corpus with the same
-settings, and their output is displayed twice, side by side. The fifteen legs span
-the classical roster---LDA, NMF, LSA, STM, CTM, content/SAGE, DMR, g-DMR, keyATM,
-supervised LDA, labeled LDA, HDP, Pachinko allocation, the dynamic topic model, and
-the structural topic-and-sentiment model---each against an established
-implementation: Java \pkg{MALLET} and \pkg{tomotopy} (LDA), \pkg{scikit-learn} (NMF,
-LSA), \proglang{R}~\pkg{stm} (STM, CTM, content), \proglang{R}~\pkg{keyATM},
-\pkg{tomotopy} (DMR, g-DMR, sLDA, labeled LDA, HDP, Pachinko, DTM), and the authors'
-\proglang{R} reference (STS). Each subsection aligns the two engines' topics (by
-topic-word cosine, except keyATM keyword topics and labeled-LDA label topics, which
-are index-aligned by construction) and reports the top words from each, plus the
-feature that distinguishes that model: covariate prevalence effects (STM, DMR),
-continuous-time prevalence (g-DMR), topic correlations (CTM), per-group wording
-(content/SAGE), seeded keywords (keyATM), a response regression (sLDA), label-topic
-correspondence (labeled LDA), the inferred topic count (HDP), the super/sub-topic
-hierarchy (Pachinko), word drift over time (DTM), and covariate-driven sentiment
-(STS). LDA is shown against two independent references at once (Java \pkg{MALLET}
-and \pkg{tomotopy}).
-
-Agreement falls into three regimes. The spectral-initialized structural models (STM,
-CTM, content) and the deterministic factorizations (NMF, LSA) start from the same
-solution as their reference and coincide almost exactly (cosine $\geq 0.95$); the
-supervised models constrained by labels likewise match near-exactly. For the
-random-initialized collapsed-Gibbs models (LDA, DMR, g-DMR, sLDA, HDP, Pachinko,
-DTM) the agreement is statistical, as Section~\ref{sec:validation} notes: the
-dominant topics coincide while the diffuse, low-prevalence tail topics, which differ
-between any two random-initialized runs, account for most of the alignment gap. For
-those legs the relevant yardstick is not an absolute cosine but the reference's own
-seed-to-seed agreement---the ceiling any two independent samplers can reach---which
-the subsections report alongside the cross-implementation figure (DMR, for instance,
-sits at the level two \pkg{tomotopy} runs reach with each other). For the
-nonparametric HDP the headline result is instead that both engines infer nearly the
-same topic count (about thirty) without being told it, since HDP topic identities are
-seed-sensitive even within one engine.
-
-The neural and embedding models (ETM, ProdLDA, CombinedTM, ZeroShotTM, InfoCTM,
-FASTopic, the dynamic ETM, BERTopic, Top2Vec, the embedding LDA) and the LLM-based
-TopicGPT are validated in Section~\ref{sec:validation} and \code{parity/} against
-their own reference implementations on the corpora those references use, and so are
-not part of this poliblog side-by-side. The tables here are generated by
-\code{paper/gen\_validation\_appendix.py} as part of \code{reproduce.py}; legs whose
-reference toolchain (\proglang{R} with \pkg{stm}/\pkg{keyATM}, the \pkg{MALLET}
-CLI, \pkg{scikit-learn}, \pkg{tomotopy}, or the \pkg{STS} replication package) was
-absent at build time are marked skipped.
-
-\input{generated/validation_appendix}
 
 \bibliography{topica}
 
