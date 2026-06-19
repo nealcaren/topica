@@ -78,11 +78,20 @@ def synthetic_corpus(v, d, k_true, seed=0, length=TOKENS_PER_DOC):
     return docs, x, names
 
 
+# Representative core cap for the multi-core column: an explicit thread count so
+# the number reflects a normal machine, not every core of a big HPC node. Honors
+# RAYON_NUM_THREADS when set (so the single-core step's =1 still means 1);
+# otherwise caps at 16.
+_RNT = os.environ.get("RAYON_NUM_THREADS")
+NUM_THREADS = int(_RNT) if _RNT else min(16, os.cpu_count() or 16)
+
+
 def time_topica(docs, x, names, k, iters):
     t0 = time.perf_counter()
     m = STM(num_topics=k, init="spectral", seed=1)
     # convergence_tol=0 disables early stop, so the full iters budget runs.
-    m.fit(docs, x, prevalence_names=names, iters=iters, convergence_tol=0.0)
+    m.fit(docs, x, prevalence_names=names, iters=iters, convergence_tol=0.0,
+          num_threads=NUM_THREADS)
     return time.perf_counter() - t0
 
 
@@ -136,9 +145,8 @@ def time_r_stm(docs, x, names, k, iters):
 
 
 def main():
-    threads = os.environ.get("RAYON_NUM_THREADS", f"all ({os.cpu_count()} cores)")
     have_r = r_stm_available()
-    print(f"topica threads: {threads};  design: ~rating + s(day, df={SPLINE_DF});  "
+    print(f"topica threads: {NUM_THREADS};  design: ~rating + s(day, df={SPLINE_DF});  "
           f"fixed {EM_ITERS} EM iterations (per-iteration cost);  "
           f"R stm: {'available' if have_r else 'not found (topica only)'}\n")
     header = f"{'docs':>6} {'vocab':>6} {'K':>3} | {'topica':>10} {'ms/it':>6}"

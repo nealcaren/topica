@@ -18,8 +18,9 @@ Corpora (set ``CORPUS``):
     corpus; see that script) -> ``benchmarks/congress_prepped.csv``.
 
 topica is timed single-core (``num_threads=1``, the apples-to-apples comparison to
-single-threaded R ``stm``) and all-cores (topica's parallel variational E-step,
-which R has no equivalent of).
+single-threaded R ``stm``) and at a representative consumer core cap (``THREADS``,
+default 16 — not every core of a big HPC node, which would report a speedup nobody
+on a normal machine sees).
 
 Run::
 
@@ -55,6 +56,10 @@ CORPUS = os.environ.get("CORPUS", "poliblog5k")
 K = int(os.environ.get("STM_K", "20"))
 EM_TOL = float(os.environ.get("STM_EM_TOL", "1e-5"))
 MAX_EM_ITERS = int(os.environ.get("STM_MAX_EM_ITERS", "500"))
+# The "all-cores" run is capped at a representative consumer core count rather
+# than every core of a big HPC node (a 44-core node flatters topica with speedups
+# nobody on a normal machine sees). Default 16; override with THREADS.
+THREADS = int(os.environ.get("THREADS", str(min(16, os.cpu_count() or 16))))
 
 
 def corpus_path(cfg):
@@ -151,19 +156,20 @@ def main():
           f"to convergence (emtol={EM_TOL})\n")
 
     ts, its, cs = time_topica(docs, x, names, 1)
-    tm, itm, cm = time_topica(docs, x, names, None)
+    tm, itm, cm = time_topica(docs, x, names, THREADS)
     res = {"corpus": CORPUS, "n_docs": len(docs), "K": K, "em_tol": EM_TOL,
+           "threads": THREADS,
            "topica_single_s": ts, "topica_single_iters": its,
            "topica_multi_s": tm, "topica_multi_iters": itm,
            "topica_converged": cs and cm}
-    print(f"topica single-core : {ts:8.2f}s  ({its} iters)")
-    print(f"topica all-cores   : {tm:8.2f}s  ({itm} iters)")
+    print(f"topica single-core   : {ts:8.2f}s  ({its} iters)")
+    print(f"topica {THREADS}-core{'':<{max(0,6-len(str(THREADS)))}}: {tm:8.2f}s  ({itm} iters)")
     if have_r:
         rt, ri = time_r_stm(docs, x, names)
         res.update({"r_s": rt, "r_iters": ri,
                     "speedup_single": rt / ts, "speedup_multi": rt / tm})
-        print(f"R stm (1 thread)   : {rt:8.2f}s  ({ri} iters)")
-        print(f"\nto-convergence speedup:  single {rt / ts:.1f}x   all-cores {rt / tm:.1f}x")
+        print(f"R stm (1 thread)     : {rt:8.2f}s  ({ri} iters)")
+        print(f"\nto-convergence speedup:  single {rt / ts:.1f}x   {THREADS}-core {rt / tm:.1f}x")
     else:
         print("\nR stm not available — topica numbers only")
     out = os.path.join(HERE, "stm_convergence_results.json")
