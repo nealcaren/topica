@@ -62,6 +62,7 @@ benchmarks/poliblog5k_prepped.csv
 benchmarks/congress_prepped.csv
 benchmarks/bench_results.json
 benchmarks/speed_vs_size.json
+benchmarks/stm_convergence_results.json
 benchmarks/website_table.md
 benchmarks/matrix_results.json
 benchmarks/model_matrix.md
