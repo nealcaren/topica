@@ -1,4 +1,5 @@
 use std::path::Path;
+use topica::cli::{next_val, parse_val};
 use topica::corpus::{self, InputFormat, LoadOptions, DEFAULT_TOKEN_REGEX};
 
 fn print_usage() {
@@ -72,59 +73,29 @@ fn parse_args() -> Option<Args> {
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
-            "--input" => {
-                i += 1;
-                args.input = Some(raw[i].clone());
-            }
-            "--output" => {
-                i += 1;
-                args.output = Some(raw[i].clone());
-            }
-            "--stoplist" => {
-                i += 1;
-                args.stoplist = Some(raw[i].clone());
-            }
-            "--format" => {
-                i += 1;
-                match raw[i].as_str() {
-                    "tsv" => args.tsv_mode = true,
-                    "plain" => args.tsv_mode = false,
-                    other => {
-                        eprintln!("Unknown format: {} (use 'plain' or 'tsv')", other);
-                        return None;
-                    }
+            "--input" => args.input = Some(next_val(&raw, &mut i)?),
+            "--output" => args.output = Some(next_val(&raw, &mut i)?),
+            "--stoplist" => args.stoplist = Some(next_val(&raw, &mut i)?),
+            "--format" => match next_val(&raw, &mut i)?.as_str() {
+                "tsv" => args.tsv_mode = true,
+                "plain" => args.tsv_mode = false,
+                other => {
+                    eprintln!("Unknown format: {} (use 'plain' or 'tsv')", other);
+                    return None;
                 }
-            }
+            },
             "--id-field" => {
                 args.id_field = true;
             }
-            "--id-column" => {
-                i += 1;
-                args.id_column = raw[i].parse().ok()?;
-            }
-            "--label-column" => {
-                i += 1;
-                args.label_column = Some(raw[i].parse().ok()?);
-            }
+            "--id-column" => args.id_column = parse_val(&raw, &mut i)?,
+            "--label-column" => args.label_column = Some(parse_val(&raw, &mut i)?),
             "--no-label" => {
                 args.label_column = None;
             }
-            "--text-column" => {
-                i += 1;
-                args.text_column = raw[i].parse().ok()?;
-            }
-            "--token-regex" => {
-                i += 1;
-                args.token_regex = raw[i].clone();
-            }
-            "--min-doc-freq" => {
-                i += 1;
-                args.min_doc_freq = raw[i].parse().ok()?;
-            }
-            "--max-doc-fraction" => {
-                i += 1;
-                args.max_doc_fraction = raw[i].parse().ok()?;
-            }
+            "--text-column" => args.text_column = parse_val(&raw, &mut i)?,
+            "--token-regex" => args.token_regex = next_val(&raw, &mut i)?,
+            "--min-doc-freq" => args.min_doc_freq = parse_val(&raw, &mut i)?,
+            "--max-doc-fraction" => args.max_doc_fraction = parse_val(&raw, &mut i)?,
             "--help" | "-h" => return None,
             other => {
                 eprintln!("Unknown argument: {}", other);

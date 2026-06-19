@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
+use topica::cli::{next_val, parse_val};
 use topica::corpus;
 
 fn print_usage() {
@@ -55,30 +56,12 @@ fn parse_args() -> Option<Args> {
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
-            "--corpus" => {
-                i += 1;
-                args.corpus = Some(raw[i].clone());
-            }
-            "--max-doc-fraction" => {
-                i += 1;
-                args.max_doc_fraction = raw[i].parse().ok()?;
-            }
-            "--max-word-length" => {
-                i += 1;
-                args.max_word_length = raw[i].parse().ok()?;
-            }
-            "--min-doc-freq" => {
-                i += 1;
-                args.min_doc_freq = raw[i].parse().ok()?;
-            }
-            "--num-candidates" => {
-                i += 1;
-                args.num_candidates = raw[i].parse().ok()?;
-            }
-            "--output-stoplist" => {
-                i += 1;
-                args.output_stoplist = Some(raw[i].clone());
-            }
+            "--corpus" => args.corpus = Some(next_val(&raw, &mut i)?),
+            "--max-doc-fraction" => args.max_doc_fraction = parse_val(&raw, &mut i)?,
+            "--max-word-length" => args.max_word_length = parse_val(&raw, &mut i)?,
+            "--min-doc-freq" => args.min_doc_freq = parse_val(&raw, &mut i)?,
+            "--num-candidates" => args.num_candidates = parse_val(&raw, &mut i)?,
+            "--output-stoplist" => args.output_stoplist = Some(next_val(&raw, &mut i)?),
             "--help" | "-h" => return None,
             other => {
                 eprintln!("Unknown argument: {}", other);

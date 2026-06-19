@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::time::Instant;
+use topica::cli::{next_val, parse_val};
 use topica::{corpus, model, optimize, output, sampler};
 
 use rand::SeedableRng;
@@ -84,62 +85,20 @@ fn parse_args() -> Option<Args> {
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
-            "--corpus" => {
-                i += 1;
-                args.corpus = Some(raw[i].clone());
-            }
-            "--num-topics" => {
-                i += 1;
-                args.num_topics = raw[i].parse().ok()?;
-            }
-            "--iterations" => {
-                i += 1;
-                args.iterations = raw[i].parse().ok()?;
-            }
-            "--burn-in" => {
-                i += 1;
-                args.burn_in = raw[i].parse().ok()?;
-            }
-            "--optimize-interval" => {
-                i += 1;
-                args.optimize_interval = raw[i].parse().ok()?;
-            }
-            "--num-samples" => {
-                i += 1;
-                args.num_samples = raw[i].parse().ok()?;
-            }
-            "--sample-interval" => {
-                i += 1;
-                args.sample_interval = raw[i].parse().ok()?;
-            }
-            "--topic-word" => {
-                i += 1;
-                args.topic_word_output = raw[i].clone();
-            }
-            "--doc-topic" => {
-                i += 1;
-                args.doc_topic_output = raw[i].clone();
-            }
-            "--alpha-sum" => {
-                i += 1;
-                args.alpha_sum = Some(raw[i].parse().ok()?);
-            }
-            "--beta" => {
-                i += 1;
-                args.beta = raw[i].parse().ok()?;
-            }
-            "--seed" => {
-                i += 1;
-                args.seed = raw[i].parse().ok()?;
-            }
-            "--show-topics-interval" => {
-                i += 1;
-                args.show_topics_interval = raw[i].parse().ok()?;
-            }
-            "--words-per-topic" => {
-                i += 1;
-                args.words_per_topic = raw[i].parse().ok()?;
-            }
+            "--corpus" => args.corpus = Some(next_val(&raw, &mut i)?),
+            "--num-topics" => args.num_topics = parse_val(&raw, &mut i)?,
+            "--iterations" => args.iterations = parse_val(&raw, &mut i)?,
+            "--burn-in" => args.burn_in = parse_val(&raw, &mut i)?,
+            "--optimize-interval" => args.optimize_interval = parse_val(&raw, &mut i)?,
+            "--num-samples" => args.num_samples = parse_val(&raw, &mut i)?,
+            "--sample-interval" => args.sample_interval = parse_val(&raw, &mut i)?,
+            "--topic-word" => args.topic_word_output = next_val(&raw, &mut i)?,
+            "--doc-topic" => args.doc_topic_output = next_val(&raw, &mut i)?,
+            "--alpha-sum" => args.alpha_sum = Some(parse_val(&raw, &mut i)?),
+            "--beta" => args.beta = parse_val(&raw, &mut i)?,
+            "--seed" => args.seed = parse_val(&raw, &mut i)?,
+            "--show-topics-interval" => args.show_topics_interval = parse_val(&raw, &mut i)?,
+            "--words-per-topic" => args.words_per_topic = parse_val(&raw, &mut i)?,
             "--help" | "-h" => return None,
             other => {
                 eprintln!("Unknown argument: {}", other);

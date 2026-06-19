@@ -77,6 +77,42 @@ pub fn spd_inverse(a: &[f64], n: usize) -> Option<Vec<f64>> {
     cholesky(a, n).map(|l| spd_inverse_from_chol(&l, n))
 }
 
+/// Cholesky that never fails. If `a` is not positive-definite even after the
+/// caller's diagonal-dominance repair, escalate a ridge on the diagonal until it
+/// factors (a degraded but finite fallback for the "should be impossible" path,
+/// instead of panicking). In the happy path (already PD) the result is identical
+/// to [`cholesky`]; only a genuinely non-PD input is perturbed.
+pub fn cholesky_jitter(a: &[f64], n: usize) -> Vec<f64> {
+    if let Some(l) = cholesky(a, n) {
+        return l;
+    }
+    let mut m = a.to_vec();
+    let scale = (0..n).map(|i| a[i * n + i].abs()).sum::<f64>() / (n.max(1) as f64);
+    let mut jit = 1e-10 * (1.0 + scale);
+    for _ in 0..16 {
+        for i in 0..n {
+            m[i * n + i] += jit;
+        }
+        if let Some(l) = cholesky(&m, n) {
+            return l;
+        }
+        jit *= 10.0;
+    }
+    // Last resort: a diagonal (always-PD) surrogate from the clamped diagonal.
+    let mut d = vec![0.0f64; n * n];
+    for i in 0..n {
+        d[i * n + i] = a[i * n + i].abs().max(1e-8).sqrt();
+    }
+    d
+}
+
+/// SPD inverse that never fails (see [`cholesky_jitter`]). Identical to
+/// [`spd_inverse`] when `a` is positive-definite; otherwise ridge-jittered rather
+/// than `None`/panic.
+pub fn spd_inverse_jitter(a: &[f64], n: usize) -> Vec<f64> {
+    spd_inverse_from_chol(&cholesky_jitter(a, n), n)
+}
+
 /// Force a symmetric matrix to be positive definite by diagonal dominance
 /// (STM's fallback when the Hessian is indefinite): if a diagonal entry is
 /// smaller than the sum of the magnitudes of its off-diagonal entries, raise it.
