@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::Path;
+use topica::cli::{next_val, parse_val};
 
 fn print_usage() {
     eprintln!(
@@ -45,26 +46,11 @@ fn parse_args() -> Option<Args> {
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
-            "--topic-word" => {
-                i += 1;
-                args.topic_word = raw[i].clone();
-            }
-            "--doc-topic" => {
-                i += 1;
-                args.doc_topic = raw[i].clone();
-            }
-            "--words" => {
-                i += 1;
-                args.words = raw[i].parse().ok()?;
-            }
-            "--doc-topics" => {
-                i += 1;
-                args.doc_topics = raw[i].parse().ok()?;
-            }
-            "--threshold" => {
-                i += 1;
-                args.threshold = raw[i].parse().ok()?;
-            }
+            "--topic-word" => args.topic_word = next_val(&raw, &mut i)?,
+            "--doc-topic" => args.doc_topic = next_val(&raw, &mut i)?,
+            "--words" => args.words = parse_val(&raw, &mut i)?,
+            "--doc-topics" => args.doc_topics = parse_val(&raw, &mut i)?,
+            "--threshold" => args.threshold = parse_val(&raw, &mut i)?,
             "--help" | "-h" => return None,
             other => {
                 eprintln!("Unknown argument: {}", other);

@@ -183,8 +183,12 @@ fn arr2_opt(a: &Option<Array2<f64>>) -> Option<Arr2> {
         data: m.iter().copied().collect(),
     })
 }
-fn arr2_back(s: Option<Arr2>) -> Option<Array2<f64>> {
-    s.map(|a| Array2::from_shape_vec((a.rows, a.cols), a.data).unwrap())
+fn arr2_back(s: Option<Arr2>) -> PyResult<Option<Array2<f64>>> {
+    s.map(|a| {
+        Array2::from_shape_vec((a.rows, a.cols), a.data)
+            .map_err(|e| PyValueError::new_err(format!("corrupt saved 2-D array: {e}")))
+    })
+    .transpose()
 }
 fn arr3_opt(a: &Option<Array3<f64>>) -> Option<Arr3> {
     a.as_ref().map(|m| {
@@ -197,8 +201,12 @@ fn arr3_opt(a: &Option<Array3<f64>>) -> Option<Arr3> {
         }
     })
 }
-fn arr3_back(s: Option<Arr3>) -> Option<Array3<f64>> {
-    s.map(|a| Array3::from_shape_vec((a.d0, a.d1, a.d2), a.data).unwrap())
+fn arr3_back(s: Option<Arr3>) -> PyResult<Option<Array3<f64>>> {
+    s.map(|a| {
+        Array3::from_shape_vec((a.d0, a.d1, a.d2), a.data)
+            .map_err(|e| PyValueError::new_err(format!("corrupt saved 3-D array: {e}")))
+    })
+    .transpose()
 }
 
 /// Run `f` on a rayon pool of `num_threads` workers, or on the global pool (all
@@ -225,8 +233,12 @@ fn arr3f32_opt(a: &Option<Array3<f32>>) -> Option<Arr3f32> {
         }
     })
 }
-fn arr3f32_back(s: Option<Arr3f32>) -> Option<Array3<f32>> {
-    s.map(|a| Array3::from_shape_vec((a.d0, a.d1, a.d2), a.data).unwrap())
+fn arr3f32_back(s: Option<Arr3f32>) -> PyResult<Option<Array3<f32>>> {
+    s.map(|a| {
+        Array3::from_shape_vec((a.d0, a.d1, a.d2), a.data)
+            .map_err(|e| PyValueError::new_err(format!("corrupt saved 3-D array: {e}")))
+    })
+    .transpose()
 }
 fn arr1_opt(a: &Option<Array1<f64>>) -> Option<Vec<f64>> {
     a.as_ref().map(|m| m.to_vec())
@@ -2699,9 +2711,9 @@ impl LDA {
             use_symmetric_alpha: s.use_symmetric_alpha,
             init_spectral: s.init_spectral,
             topic_names,
-            phi: arr2_back(s.phi),
-            theta: arr2_back(s.theta),
-            theta_draws: arr3f32_back(s.theta_draws),
+            phi: arr2_back(s.phi)?,
+            theta: arr2_back(s.theta)?,
+            theta_draws: arr3f32_back(s.theta_draws)?,
             model: s.model,
             corpus: s.corpus,
             log_likelihood_history: s.log_likelihood_history,
@@ -4621,12 +4633,12 @@ impl DMR {
             cvb0: false,
             fitted: s.fitted,
             topic_names,
-            phi: arr2_back(s.phi),
-            theta: arr2_back(s.theta),
-            feature_effects: arr2_back(s.feature_effects),
+            phi: arr2_back(s.phi)?,
+            theta: arr2_back(s.theta)?,
+            feature_effects: arr2_back(s.feature_effects)?,
             feature_names: s.feature_names,
             corpus: s.corpus,
-            theta_draws: arr3f32_back(s.theta_draws),
+            theta_draws: arr3f32_back(s.theta_draws)?,
             log_likelihood_history: s.log_likelihood_history,
             converged: s.converged,
         })
@@ -5232,11 +5244,11 @@ impl LabeledLDA {
             fitted: s.fitted,
             num_topics: s.num_topics,
             topic_names,
-            phi: arr2_back(s.phi),
-            theta: arr2_back(s.theta),
+            phi: arr2_back(s.phi)?,
+            theta: arr2_back(s.theta)?,
             label_vocab: s.label_vocab,
             corpus: s.corpus,
-            theta_draws: arr3f32_back(s.theta_draws),
+            theta_draws: arr3f32_back(s.theta_draws)?,
             log_likelihood_history: s.log_likelihood_history,
             converged: s.converged,
         })
@@ -5854,10 +5866,10 @@ impl SAGE {
             num_groups: s.num_groups,
             topic_names,
             beta: s.beta,
-            theta: arr2_back(s.theta),
+            theta: arr2_back(s.theta)?,
             group_names: s.group_names,
             corpus: s.corpus,
-            theta_draws: arr3f32_back(s.theta_draws),
+            theta_draws: arr3f32_back(s.theta_draws)?,
             log_likelihood_history: s.log_likelihood_history,
             converged: s.converged,
         })
@@ -6721,7 +6733,7 @@ impl CTM {
             s.topic_names
         };
         // eta_cov is saved as f64 for format compatibility; downcast to f32 in memory.
-        let eta_cov = arr3_back(s.eta_cov).map(|c| c.mapv(|x| x as f32));
+        let eta_cov = arr3_back(s.eta_cov)?.map(|c| c.mapv(|x| x as f32));
         Ok(CTM {
             num_topics: s.num_topics,
             sigma_shrink: s.sigma_shrink,
@@ -6730,10 +6742,10 @@ impl CTM {
             variational: s.variational,
             fitted: s.fitted,
             topic_names,
-            beta: arr2_back(s.beta),
-            theta: arr2_back(s.theta),
-            corr: arr2_back(s.corr),
-            eta_mean: arr2_back(s.eta_mean),
+            beta: arr2_back(s.beta)?,
+            theta: arr2_back(s.theta)?,
+            corr: arr2_back(s.corr)?,
+            eta_mean: arr2_back(s.eta_mean)?,
             eta_cov,
             mu: s.mu,
             sigma: s.sigma,
@@ -7741,7 +7753,7 @@ impl STM {
             s.topic_names
         };
         // eta_cov is saved as f64 for format compatibility; downcast to f32 in memory.
-        let eta_cov = arr3_back(s.eta_cov).map(|c| c.mapv(|x| x as f32));
+        let eta_cov = arr3_back(s.eta_cov)?.map(|c| c.mapv(|x| x as f32));
         Ok(STM {
             num_topics: s.num_topics,
             sigma_shrink: s.sigma_shrink,
@@ -7750,12 +7762,12 @@ impl STM {
             variational: s.variational,
             fitted: s.fitted,
             topic_names,
-            beta: arr2_back(s.beta),
-            theta: arr2_back(s.theta),
-            corr: arr2_back(s.corr),
-            eta_mean: arr2_back(s.eta_mean),
+            beta: arr2_back(s.beta)?,
+            theta: arr2_back(s.theta)?,
+            corr: arr2_back(s.corr)?,
+            eta_mean: arr2_back(s.eta_mean)?,
             eta_cov,
-            gamma: arr2_back(s.gamma),
+            gamma: arr2_back(s.gamma)?,
             feature_names: s.feature_names,
             content_beta: s.content_beta,
             content_kappa: s.content_kappa,
@@ -8566,7 +8578,7 @@ impl ECTM {
         } else {
             s.topic_names
         };
-        let eta_cov = arr3_back(s.eta_cov).map(|c| c.mapv(|x| x as f32));
+        let eta_cov = arr3_back(s.eta_cov)?.map(|c| c.mapv(|x| x as f32));
         Ok(ECTM {
             num_topics: s.num_topics,
             sigma_shrink: s.sigma_shrink,
@@ -8575,16 +8587,16 @@ impl ECTM {
             init_spectral: s.init_spectral,
             fitted: s.fitted,
             topic_names,
-            beta: arr2_back(s.beta),
-            theta: arr2_back(s.theta),
+            beta: arr2_back(s.beta)?,
+            theta: arr2_back(s.theta)?,
             content_beta: s.content_beta,
             num_groups: s.num_groups,
             num_periods: s.num_periods,
             group_names: s.group_names,
             period_names: s.period_names,
-            eta_mean: arr2_back(s.eta_mean),
+            eta_mean: arr2_back(s.eta_mean)?,
             eta_cov,
-            gamma: arr2_back(s.gamma),
+            gamma: arr2_back(s.gamma)?,
             feature_names: s.feature_names,
             mu: s.mu,
             sigma: s.sigma,
@@ -9471,18 +9483,18 @@ impl STS {
             s.topic_names
         };
         // eta_cov is saved as f64 for format compatibility; downcast to f32 in memory.
-        let eta_cov = arr3_back(s.eta_cov).map(|c| c.mapv(|x| x as f32));
+        let eta_cov = arr3_back(s.eta_cov)?.map(|c| c.mapv(|x| x as f32));
         Ok(STS {
             num_topics: s.num_topics,
             seed: s.seed,
             init_spectral: s.init_spectral,
             fitted: s.fitted,
             topic_names,
-            beta: arr2_back(s.beta),
-            theta: arr2_back(s.theta),
-            sentiment: arr2_back(s.sentiment),
-            gamma: arr2_back(s.gamma),
-            eta_mean: arr2_back(s.eta_mean),
+            beta: arr2_back(s.beta)?,
+            theta: arr2_back(s.theta)?,
+            sentiment: arr2_back(s.sentiment)?,
+            gamma: arr2_back(s.gamma)?,
+            eta_mean: arr2_back(s.eta_mean)?,
             eta_cov,
             feature_names: s.feature_names,
             kappa_t: s.kappa_t,
@@ -10100,8 +10112,8 @@ impl HDP {
             topic_names,
             learned_alpha: s.learned_alpha,
             learned_gamma: s.learned_gamma,
-            beta: arr2_back(s.beta),
-            theta: arr2_back(s.theta),
+            beta: arr2_back(s.beta)?,
+            theta: arr2_back(s.theta)?,
             corpus: s.corpus,
             trace: s.trace,
             theta_draws: None,
@@ -11048,8 +11060,8 @@ impl SupervisedLDA {
             topic_names,
             sigma2: s.sigma2,
             eta: arr1_back(s.eta),
-            beta: arr2_back(s.beta),
-            theta: arr2_back(s.theta),
+            beta: arr2_back(s.beta)?,
+            theta: arr2_back(s.theta)?,
             log_beta: s.log_beta,
             corpus: s.corpus,
             theta_draws: None,
@@ -11361,8 +11373,8 @@ impl PT {
             seed: s.seed,
             fitted: s.fitted,
             topic_names,
-            phi: arr2_back(s.phi),
-            theta: arr2_back(s.theta),
+            phi: arr2_back(s.phi)?,
+            theta: arr2_back(s.theta)?,
             corpus: s.corpus,
             theta_draws: None,
             log_likelihood_history: s.log_likelihood_history,
@@ -11757,8 +11769,8 @@ impl GSDMM {
             fitted: s.fitted,
             num_used: s.num_used,
             topic_names,
-            phi: arr2_back(s.phi),
-            theta: arr2_back(s.theta),
+            phi: arr2_back(s.phi)?,
+            theta: arr2_back(s.theta)?,
             doc_cluster: s.doc_cluster,
             corpus: s.corpus,
             trace: s.trace,
@@ -12290,9 +12302,9 @@ impl SeededLDA {
             cvb0: s.cvb0,
             fitted: s.fitted,
             topic_names: s.topic_names,
-            phi: arr2_back(s.phi),
-            theta: arr2_back(s.theta),
-            theta_draws: arr3f32_back(s.theta_draws),
+            phi: arr2_back(s.phi)?,
+            theta: arr2_back(s.theta)?,
+            theta_draws: arr3f32_back(s.theta_draws)?,
             corpus: s.corpus,
             log_likelihood_history: s.log_likelihood_history,
             converged: s.converged,
@@ -18306,8 +18318,8 @@ impl KeyATM {
             topic_names: s.topic_names,
             num_threads: s.num_threads,
             keyword_rate: s.keyword_rate,
-            phi: arr2_back(s.phi),
-            theta: arr2_back(s.theta),
+            phi: arr2_back(s.phi)?,
+            theta: arr2_back(s.theta)?,
             corpus: s.corpus,
             feature_effects: None,
             feature_names: Vec::new(),
@@ -18320,7 +18332,7 @@ impl KeyATM {
             alpha_history: s.alpha_history,
             pi_history: s.pi_history,
             alpha_vec: s.alpha_vec,
-            theta_draws: arr3f32_back(s.theta_draws),
+            theta_draws: arr3f32_back(s.theta_draws)?,
         })
     }
 
@@ -18694,9 +18706,9 @@ impl PA {
             seed: s.seed,
             fitted: s.fitted,
             topic_names,
-            phi: arr2_back(s.phi),
-            theta: arr2_back(s.theta),
-            super_sub: arr2_back(s.super_sub),
+            phi: arr2_back(s.phi)?,
+            theta: arr2_back(s.theta)?,
+            super_sub: arr2_back(s.super_sub)?,
             corpus: s.corpus,
             theta_draws: None,
             log_likelihood_history: s.log_likelihood_history,
@@ -19046,7 +19058,7 @@ impl HLDA {
             fitted: s.fitted,
             num_nodes: s.num_nodes,
             topic_names,
-            node_topic_word: arr2_back(s.node_topic_word),
+            node_topic_word: arr2_back(s.node_topic_word)?,
             node_levels: s.node_levels,
             node_parents: s.node_parents,
             doc_paths: s.doc_paths,

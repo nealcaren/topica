@@ -17,7 +17,8 @@ use rand::Rng;
 
 use crate::estimator::{Estimator, ModelFamily};
 use crate::linalg::{
-    cholesky, half_logdet, make_diagonally_dominant, spd_inverse, spd_inverse_from_chol,
+    cholesky, cholesky_jitter, half_logdet, make_diagonally_dominant, spd_inverse,
+    spd_inverse_from_chol, spd_inverse_jitter,
 };
 use crate::variational::LogisticNormalModel;
 use crate::variational::{doc_sparse, fit_gamma_ridge, lbfgs_minimize};
@@ -321,7 +322,7 @@ pub fn ctm_hpb(
             Some(l) => (spd_inverse_from_chol(&l, km1), half_logdet(&l, km1)),
             None => {
                 make_diagonally_dominant(&mut h, km1);
-                let l = cholesky(&h, km1).expect("PD after diagonal dominance");
+                let l = cholesky_jitter(&h, km1);
                 (spd_inverse_from_chol(&l, km1), half_logdet(&l, km1))
             }
         };
@@ -1056,7 +1057,7 @@ pub fn fit_ctm<R: Rng>(
         let siginv = spd_inverse(&sigma, km1).unwrap_or_else(|| {
             let mut s = sigma.clone();
             make_diagonally_dominant(&mut s, km1);
-            spd_inverse(&s, km1).unwrap()
+            spd_inverse_jitter(&s, km1)
         });
         let entropy = match cholesky(&sigma, km1) {
             Some(l) => half_logdet(&l, km1),
@@ -1352,7 +1353,7 @@ pub fn fit_ctm_svi<R: Rng>(
             let siginv = spd_inverse(&sigma, km1).unwrap_or_else(|| {
                 let mut s = sigma.clone();
                 make_diagonally_dominant(&mut s, km1);
-                spd_inverse(&s, km1).unwrap()
+                spd_inverse_jitter(&s, km1)
             });
             let entropy = match cholesky(&sigma, km1) {
                 Some(l) => half_logdet(&l, km1),
@@ -1433,7 +1434,7 @@ pub fn fit_ctm_svi<R: Rng>(
     let siginv = spd_inverse(&sigma, km1).unwrap_or_else(|| {
         let mut s = sigma.clone();
         make_diagonally_dominant(&mut s, km1);
-        spd_inverse(&s, km1).unwrap()
+        spd_inverse_jitter(&s, km1)
     });
     let entropy = match cholesky(&sigma, km1) {
         Some(l) => half_logdet(&l, km1),
@@ -1506,7 +1507,7 @@ pub fn recompute_nu(model: &CtmModel, sparse: &[(Vec<usize>, Vec<f64>)]) -> Vec<
     let siginv = crate::linalg::spd_inverse(sig, km1).unwrap_or_else(|| {
         let mut s = sig.clone();
         crate::linalg::make_diagonally_dominant(&mut s, km1);
-        crate::linalg::spd_inverse(&s, km1).unwrap()
+        crate::linalg::spd_inverse_jitter(&s, km1)
     });
     let entropy = match crate::linalg::cholesky(sig, km1) {
         Some(l) => crate::linalg::half_logdet(&l, km1),

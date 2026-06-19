@@ -329,7 +329,8 @@ pub fn sts_precision(
 
 use crate::estimator::{Estimator, ModelFamily};
 use crate::linalg::{
-    cholesky, half_logdet, make_diagonally_dominant, spd_inverse, spd_inverse_from_chol,
+    cholesky, cholesky_jitter, half_logdet, make_diagonally_dominant, spd_inverse,
+    spd_inverse_from_chol, spd_inverse_jitter,
 };
 use crate::variational::LogisticNormalModel;
 use crate::variational::{doc_sparse, fit_gamma_ridge, lbfgs_minimize};
@@ -449,7 +450,7 @@ pub fn sts_infer(
     let siginv = spd_inverse(sigma, n).unwrap_or_else(|| {
         let mut s = sigma.to_vec();
         make_diagonally_dominant(&mut s, n);
-        spd_inverse(&s, n).unwrap()
+        spd_inverse_jitter(&s, n)
     });
     let mu = vec![0.0f64; n];
     let sparse: Vec<(Vec<usize>, Vec<f64>)> = docs.iter().map(|d| doc_sparse(d)).collect();
@@ -956,7 +957,7 @@ pub fn fit_sts<R: Rng>(
         let siginv = spd_inverse(&sigma, n).unwrap_or_else(|| {
             let mut s = sigma.clone();
             make_diagonally_dominant(&mut s, n);
-            spd_inverse(&s, n).unwrap()
+            spd_inverse_jitter(&s, n)
         });
         let entropy = match cholesky(&sigma, n) {
             Some(l) => half_logdet(&l, n),
@@ -992,7 +993,7 @@ pub fn fit_sts<R: Rng>(
                     Some(l) => (spd_inverse_from_chol(&l, n), half_logdet(&l, n)),
                     None => {
                         make_diagonally_dominant(&mut prec, n);
-                        let l = cholesky(&prec, n).expect("PD after diagonal dominance");
+                        let l = cholesky_jitter(&prec, n);
                         (spd_inverse_from_chol(&l, n), half_logdet(&l, n))
                     }
                 };
@@ -1139,7 +1140,7 @@ pub fn recompute_nu_sts(model: &StsModel, sparse: &[(Vec<usize>, Vec<f64>)]) -> 
     let siginv = spd_inverse(sig, n).unwrap_or_else(|| {
         let mut s = sig.clone();
         make_diagonally_dominant(&mut s, n);
-        spd_inverse(&s, n).unwrap()
+        spd_inverse_jitter(&s, n)
     });
     // Use kappa from the last E-step (before the final κ M-step updated kappa_t/kappa_s).
     let kappa = Kappa {
@@ -1163,7 +1164,7 @@ pub fn recompute_nu_sts(model: &StsModel, sparse: &[(Vec<usize>, Vec<f64>)]) -> 
                 Some(l) => spd_inverse_from_chol(&l, n),
                 None => {
                     make_diagonally_dominant(&mut prec, n);
-                    let l = cholesky(&prec, n).expect("PD after diagonal dominance");
+                    let l = cholesky_jitter(&prec, n);
                     spd_inverse_from_chol(&l, n)
                 }
             }

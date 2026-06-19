@@ -94,11 +94,7 @@ fn fast_anchor_words(qbar: &[Vec<f64>], p: &[f64], k: usize, min_p: f64) -> Opti
     let mut anchors = Vec::with_capacity(k);
     let first = *candidates
         .iter()
-        .max_by(|&&a, &&b| {
-            dot(&qbar[a], &qbar[a])
-                .partial_cmp(&dot(&qbar[b], &qbar[b]))
-                .unwrap()
-        })
+        .max_by(|&&a, &&b| dot(&qbar[a], &qbar[a]).total_cmp(&dot(&qbar[b], &qbar[b])))
         .unwrap();
     anchors.push(first);
 
@@ -133,7 +129,7 @@ fn fast_anchor_words(qbar: &[Vec<f64>], p: &[f64], k: usize, min_p: f64) -> Opti
             .enumerate()
             .filter(|(pos, _)| !anchors.contains(&candidates[*pos]))
             .map(|(pos, r)| (pos, dot(r, r)))
-            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())?;
+            .max_by(|a, b| a.1.total_cmp(&b.1))?;
         if dot(&residual[best_pos], &residual[best_pos]) < 1e-12 {
             return None; // can't find K independent anchors
         }
@@ -375,7 +371,7 @@ mod tests {
         let mut covered = std::collections::HashSet::new();
         for t in 0..nb {
             let mut idx: Vec<usize> = (0..v).collect();
-            idx.sort_by(|&a, &b| beta[t][b].partial_cmp(&beta[t][a]).unwrap());
+            idx.sort_by(|&a, &b| beta[t][b].total_cmp(&beta[t][a]));
             let block_of = |w: usize| w / bs;
             let top_block = block_of(idx[0]);
             let same = idx[..10]
@@ -416,7 +412,7 @@ mod tests {
         // Each topic concentrates on one block (its top-3 words are one block).
         for t in 0..3 {
             let mut idx: Vec<usize> = (0..9).collect();
-            idx.sort_by(|&a, &b| beta[t][b].partial_cmp(&beta[t][a]).unwrap());
+            idx.sort_by(|&a, &b| beta[t][b].total_cmp(&beta[t][a]));
             let top: std::collections::HashSet<usize> = idx[..3].iter().copied().collect();
             let is_block = blocks
                 .iter()
