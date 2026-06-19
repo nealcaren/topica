@@ -61,6 +61,7 @@ STEPS = [
     ("keyatm", 5, ["parity/keyatm_r_compare.py"], 1800, None),
     ("sts", 5, ["parity/sts_r_compare.py"], 1800, None),
     ("mallet_lda", 5, ["parity/mallet_parity.py"], 1800, None),
+    ("validation_appendix", 5, ["paper/gen_validation_appendix.py"], 5400, None),  # Appendix A side-by-side tables
     ("bench", 6, ["benchmarks/bench.py"], 3600, None),  # fig_thread_scaling, fig_memory
     ("bench_stm_st", 6, ["benchmarks/bench_stm.py"], 1800, {"RAYON_NUM_THREADS": "1"}),  # STM table, single-thread column
     ("bench_stm_mt", 6, ["benchmarks/bench_stm.py"], 1800, None),  # STM table, all-cores column
@@ -88,6 +89,7 @@ CLAIMS = [
     ("5", "keyATM agreement with R keyATM", "log: keyatm"),
     ("5", "STS benchmarks vs the sts package", "log: sts"),
     ("5", "LDA vs Java MALLET (cosine / Jaccard)", "log: mallet_lda"),
+    ("A", "Side-by-side reference tables (Appendix A)", "tex: generated/validation_appendix.tex + log: validation_appendix"),
     ("6", "STM 3-22x faster than R stm (single / multi-thread)", "json: bench_results.json + speed_vs_r"),
     ("6", "LDA at parity with MALLET; multithread speedup grows with size", "json: bench_results.json, speed_vs_size.json"),
     ("6", "keyATM ~2x multithreaded vs R keyATM", "json: bench_results.json"),
