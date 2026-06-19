@@ -45,6 +45,10 @@ DEFAULT_K = 10  # coarse enough that the random-init Gibbs legs (LDA, DMR) align
                 # cleanly; the spectral legs (STM/CTM/content) stay tight at any K
 TOP_N = 8  # words shown per topic in the side-by-side tables
 
+# Filled live by each poliblog leg (keyed by leg name) so the master validation
+# table (Table A1) reports the same figures the legs below derive.
+RESULTS = {}
+
 
 # --------------------------------------------------------------------------- #
 # Shared data + small numeric helpers
@@ -285,6 +289,7 @@ def leg_stm(k):
     lib = np.array([r == "Liberal" for r in rating])
     feat_block = _prevalence_block(rbeta, tbeta, rtheta, ttheta, rvocab, lib, pairs,
                                    "Conservative", "Liberal", ref_label=r"\pkg{stm}")
+    RESULTS["stm"] = f"{cos:.2f}"
     intro = (rf"Both engines fit \code{{prevalence = \textasciitilde{{}} rating + s(day)}} "
              rf"on the same {len(docs)} posts and {len(rvocab)} word types. "
              rf"Aligned topic-word cosine \textbf{{{cos:.3f}}}.")
@@ -354,6 +359,7 @@ def leg_ctm(k):
         r"\bottomrule\end{tabular}\end{center}",
     ])
     costxt = ", ".join(f"{_plain(name)} {c:.3f}" for (name, _), c in zip(refs, coses))
+    RESULTS["ctm"] = f"{coses[0]:.2f}"
     intro = (r"No covariates, so this is the logistic-normal (correlated) topic model. "
              rf"Aligned cosine vs \pkg{{topica}} --- {costxt}.")
     return subsection(title, "\n\n".join([intro, table, feat]))
@@ -377,6 +383,7 @@ def leg_content(k):
                                    label="tab:app:content")
     # Unique feature: per-group wording of one topic (Conservative vs Liberal).
     feat = _content_block(m, rvocab=rvocab, pairs=pairs)
+    RESULTS["content"] = f"{cos:.2f}"
     intro = (rf"\code{{content = \textasciitilde{{}} rating}}: each topic's words shift by "
              rf"ideology. Marginal aligned cosine \textbf{{{cos:.3f}}}.")
     return subsection(title, "\n\n".join([intro, table, feat]))
@@ -439,6 +446,7 @@ def leg_lda(k):
                                     "all collapsed Gibbs samplers.",
                                     label="tab:app:lda")
     costxt = ", ".join(f"{_plain(name)} {c:.3f}" for (name, _), c in zip(refs, coses))
+    RESULTS["lda"] = " / ".join(f"{c:.2f}" for c in coses)
     intro = (rf"The baseline: plain LDA on the same {len(docs)} posts, independent "
              rf"collapsed-Gibbs samplers ({engines}). Aligned topic-word "
              rf"cosine vs \pkg{{topica}} --- {costxt}.")
@@ -491,6 +499,7 @@ def leg_keyatm(k):
                            r"\proglang{R}~\pkg{keyATM} vs \pkg{topica}; each topic "
                            "anchored to its seed words (index-aligned).",
                            label="tab:app:keyatm")
+    RESULTS["keyatm"] = f"{kw_cos:.2f}"
     intro = (rf"{num_keyword} seeded keyword topics plus {ka.NUM_REGULAR} free topics on "
              rf"{len(docs)} posts. The anchored topics line up by construction; their "
              rf"recovered words agree at per-topic cosine \textbf{{{kw_cos:.3f}}} "
@@ -558,6 +567,7 @@ def leg_dmr(k):
     lib = np.array([r == "Liberal" for r in rating])
     feat = _prevalence_block(mphi, tbeta, mtheta, ttheta, mvocab, lib, pairs,
                              "Conservative", "Liberal", ref_label=r"\pkg{tomotopy}")
+    RESULTS["dmr"] = f"{cos:.2f} (ceil.\\ {ceiling:.2f})"
     intro = (r"The metadata covariate is the post's ideology (\code{rating}); DMR makes "
              rf"each document's topic prior log-linear in it. Aligned cosine "
              rf"\textbf{{{cos:.3f}}} --- at the ceiling for independent DMR samplers: two "
@@ -601,6 +611,7 @@ def leg_sts(k):
                                "read at each topic's mean sentiment-discourse.",
                                label="tab:app:sts")
     feat = _sts_block(sts)
+    RESULTS["sts"] = f"{cos:.2f}"
     intro = (r"The authors' published poliblog\,2008 fit vs \pkg{topica}, both read at the "
              r"mean sentiment (the reference's \code{print.topWords} view). Aligned cosine "
              rf"\textbf{{{cos:.3f}}}.")
@@ -688,6 +699,7 @@ def leg_hdp(k):
         r"\toprule",
         r" & \pkg{tomotopy} & \pkg{topica} \\",
         r"\midrule", *rows, r"\bottomrule", r"\end{tabular}", r"\end{table}"])
+    RESULTS["hdp"] = f"count {mdl.live_k}$\\approx${h.num_topics}"
     intro = (r"The nonparametric model: both engines \emph{infer} the topic count rather "
              rf"than fixing it, and they land in nearly the same place --- \pkg{{tomotopy}} "
              rf"discovered \textbf{{{mdl.live_k}}} live topics, \pkg{{topica}} "
@@ -727,6 +739,7 @@ def leg_pa(k):
                                r"\pkg{tomotopy} vs \pkg{topica}.",
                                label="tab:app:pa")
     feat = _pa_block(p)
+    RESULTS["pa"] = f"{cos:.2f}"
     intro = (rf"A DAG of {num_super} super-topics over {num_sub} shared sub-topics, capturing "
              rf"topic correlation through the hierarchy. Sub-topics aligned: cosine "
              rf"\textbf{{{cos:.3f}}}.")
@@ -769,6 +782,7 @@ def leg_nmf(k):
     table, cos, _ = sidebyside(r"\pkg{scikit-learn}", ref, ttw, tv,
                                caption=f"NMF topics on poliblog (K={k}); Frobenius loss, "
                                "NNDSVD init.", label="tab:app:nmf")
+    RESULTS["nmf"] = f"{cos:.2f}"
     intro = (r"Non-negative factorization of the document-term matrix; \pkg{topica} reimplements "
              r"\pkg{scikit-learn}'s multiplicative updates with the same NNDSVD start. "
              rf"Aligned topic-word cosine \textbf{{{cos:.3f}}}.")
@@ -808,6 +822,7 @@ def leg_lsa(k):
         r"\pkg{topica} & " + " & ".join(f"{v:.1f}" for v in sv_t[:nshow]) + r" \\",
         r"\bottomrule\end{tabular}\end{center}",
     ])
+    RESULTS["lsa"] = f"{cos:.2f}"
     intro = (r"Truncated SVD of the tf-idf matrix; \pkg{topica} matches \pkg{scikit-learn}'s "
              r"\code{TruncatedSVD} (signed loadings, top terms by absolute value). "
              rf"Aligned cosine \textbf{{{cos:.3f}}}.")
@@ -842,6 +857,7 @@ def leg_gdmr(k):
                                    "(post day) metadata via a Legendre basis.",
                                    label="tab:app:gdmr")
     feat = _gdmr_block(g, mdl, ttw, tv, pairs)
+    RESULTS["gdmr"] = f"{cos:.2f}"
     intro = (rf"DMR generalized to \emph{{continuous}} metadata (post day, degree-{deg[0]} "
              rf"Legendre basis). Topic-word aligned: cosine \textbf{{{cos:.3f}}}.")
     return subsection(title, "\n\n".join([intro, table, feat]))
@@ -896,6 +912,7 @@ def leg_slda(k):
                                    "response = ideology (Liberal\\,=\\,1).",
                                    label="tab:app:slda")
     feat = _coef_block(mcoef, tcoef, ttw, tv, pairs)
+    RESULTS["slda"] = f"{cos:.2f}"
     intro = (r"LDA with a response regression: topics are shaped to predict ideology. "
              rf"Topic-word aligned: cosine \textbf{{{cos:.3f}}}.")
     return subsection(title, "\n\n".join([intro, table, feat]))
@@ -956,6 +973,7 @@ def leg_labeledlda(k):
         r">{\raggedright\arraybackslash}p{0.36\textwidth}@{}}",
         r"\toprule", r"label & \pkg{tomotopy} & \pkg{topica} \\", r"\midrule",
         *rows, r"\bottomrule", r"\end{tabular}", r"\end{table}"])
+    RESULTS["labeledlda"] = f"{cos:.2f}"
     intro = (r"Supervised topics pinned to document labels: the topic set \emph{is} the label "
              r"set (here ideology), so the topics are index-aligned by construction. "
              rf"Per-label cosine \textbf{{{cos:.3f}}}.")
@@ -990,6 +1008,7 @@ def leg_dtm(k):
                                caption=f"DTM topics at the final slice on poliblog "
                                f"(K={k}, {T} time slices of 2008).", label="tab:app:dtm")
     feat = _dtm_block(m, k, T)
+    RESULTS["dtm"] = f"{cos:.2f}"
     intro = (rf"Topics whose word distributions drift across {T} time slices of 2008. At the "
              rf"final slice the aligned topic-word cosine is \textbf{{{cos:.3f}}}: with a "
              r"converged reference the dominant themes line up, though \pkg{tomotopy}'s "
@@ -1015,6 +1034,97 @@ def _dtm_block(m, k, T):
              rf"rising & {rise} \\",
              rf"falling & {fall} \\",
              r"\bottomrule\end{tabular}\end{center}"]
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# Master validation map (Table A1): every model in one place
+# --------------------------------------------------------------------------- #
+# Poliblog legs: (leg key, display, reference, corpus, table label). The agreement
+# cell is filled live from RESULTS so it matches the leg below.
+POLIBLOG_ROWS = [
+    ("lda", "LDA", r"\pkg{MALLET}, \pkg{tomotopy}", "poliblog", "tab:app:lda"),
+    ("nmf", "NMF", r"\pkg{scikit-learn}", "poliblog", "tab:app:nmf"),
+    ("lsa", "LSA", r"\pkg{scikit-learn}", "poliblog", "tab:app:lsa"),
+    ("stm", "STM", r"\proglang{R}~\pkg{stm}", "poliblog", "tab:app:stm"),
+    ("ctm", "CTM", r"\proglang{R}~\pkg{stm}", "poliblog", "tab:app:ctm"),
+    ("content", "SAGE/content", r"\proglang{R}~\pkg{stm}", "poliblog", "tab:app:content"),
+    ("dmr", "DMR", r"\pkg{tomotopy}", "poliblog", "tab:app:dmr"),
+    ("gdmr", "g-DMR", r"\pkg{tomotopy}", "poliblog", "tab:app:gdmr"),
+    ("keyatm", "KeyATM", r"\proglang{R}~\pkg{keyATM}", "poliblog", "tab:app:keyatm"),
+    ("slda", "sLDA", r"\pkg{tomotopy}", "poliblog", "tab:app:slda"),
+    ("labeledlda", "LabeledLDA", r"\pkg{tomotopy}", "poliblog", "tab:app:labeledlda"),
+    ("hdp", "HDP", r"\pkg{tomotopy}", "poliblog", "tab:app:hdp"),
+    ("pa", "PA", r"\pkg{tomotopy}", "poliblog", "tab:app:pa"),
+    ("dtm", "DTM", r"\pkg{tomotopy}", "poliblog", "tab:app:dtm"),
+    ("sts", "STS", r"\proglang{R} (authors)", "poliblog", "tab:app:sts"),
+]
+
+# Non-poliblog models: validated on their reference's native corpus in parity/ or
+# tests/. (display, reference, corpus, agreement, source). Numbers are computed at
+# runtime by the cited scripts; here we record the reference, corpus, and check.
+OTHER_GROUPS = [
+    ("Neural (autoencoding / optimal-transport)", [
+        ("ProdLDA", r"PyTorch AVITM", r"20\,Newsgroups", r"$c_v$, $c_{\text{npmi}}$, cross-NMI within reference seed noise", r"\code{parity/prodlda\_compare.py}"),
+        ("CombinedTM", r"PyTorch CTM", "synthetic", r"$c_v$, $c_{\text{npmi}}$, cross-NMI", r"\code{parity/combinedtm\_compare.py}"),
+        ("ZeroShotTM", r"PyTorch CTM", "synthetic + emb.", r"$c_v$, $c_{\text{npmi}}$, cross-NMI", r"\code{parity/zeroshot\_compare.py}"),
+        ("InfoCTM", r"PyTorch InfoCTM", "bilingual synth.", r"cross-lingual alignment $\geq 0.8$", r"\code{parity/infoctm\_compare.py}"),
+        ("FASTopic", r"\pkg{fastopic}", r"20\,Newsgroups", r"$c_v$, $c_{\text{npmi}}$, diversity", r"\code{parity/fastopic\_compare.py}"),
+        ("ETM", r"PyTorch ETM", "synthetic", r"finite-diff.\ gradient; coherence", r"\code{tests/test\_etm.py}"),
+        ("DETM", r"reference fit", "synthetic time series", r"Hungarian topic cosine $\geq 0.7$", r"\code{tests/test\_detm.py}"),
+    ]),
+    ("Embedding-based", [
+        ("BERTopic", r"\pkg{BERTopic}", "planted clusters", r"adj.\ Rand index, purity", r"\code{parity/top2vec\_compare.py}"),
+        ("Top2Vec", r"\pkg{BERTopic}", "planted clusters", r"adj.\ Rand index, purity", r"\code{parity/top2vec\_compare.py}"),
+        ("EmbeddingLDA", "structural", r"planted emb.\ blocks", "block recovery", r"\code{tests/test\_embedding\_lda.py}"),
+    ]),
+    ("LLM-based", [
+        ("TopicGPT", "deterministic backend", "synthetic", "taxonomy + assignment", r"\code{tests/test\_topicgpt.py}"),
+    ]),
+    ("Short-text / seeded", [
+        ("GSDMM", r"MGP (Yin \& Wang)", "planted short texts", r"cluster recovery, inferred $K$", r"\code{tests/test\_gsdmm.py}"),
+        ("PT", "structural", "synthetic", "shape / contract", r"\code{tests/test\_extra\_models.py}"),
+        ("SeededLDA", r"\pkg{seededlda}", "planted seeds", "seed-word placement", r"\code{tests/test\_seeded\_warp.py}"),
+    ]),
+    ("Hierarchical / experimental", [
+        ("HLDA", "nested CRP (no poliblog ref.)", "synthetic", "structural (tree, paths)", r"\code{tests/}"),
+        ("ECTM", "experimental tier; own paper", r"planted group$\times$time", "content drift + placebo", r"\code{tests/test\_ectm.py}"),
+    ]),
+]
+
+
+def master_table():
+    """Table A1: one row per model, the comprehensive validation map."""
+    def row(model, ref, corpus, agree, src):
+        return rf"{model} & {ref} & {corpus} & {agree} & {src} \\"
+    def grp(t):
+        return rf"\addlinespace \multicolumn{{5}}{{@{{}}l}}{{\textit{{{t}}}}} \\[1pt]"
+    lines = [
+        r"\begin{table}[p]\centering\footnotesize",
+        r"\caption{Validation map: every \pkg{topica} model, its reference implementation, "
+        r"the corpus on which agreement is measured, the check applied, and where the detailed "
+        r"comparison lives. The classical models are the side-by-side legs of this appendix; the "
+        r"rest are validated on their reference's native corpus in \code{parity/} or \code{tests/} "
+        r"(those scripts compute the figures at run time). Random-initialized samplers are read "
+        r"against the reference's own seed-to-seed agreement, not an absolute threshold.}",
+        r"\label{tab:app:map}",
+        r"\begin{tabular}{@{}l >{\raggedright\arraybackslash}p{0.16\textwidth} "
+        r">{\raggedright\arraybackslash}p{0.12\textwidth} "
+        r">{\raggedright\arraybackslash}p{0.24\textwidth} "
+        r">{\raggedright\arraybackslash}p{0.20\textwidth}@{}}",
+        r"\toprule",
+        r"model & reference & corpus & agreement & detail \\",
+        r"\midrule",
+        grp(r"Classical (poliblog side-by-side, this appendix)"),
+    ]
+    for key, disp, ref, corpus, label in POLIBLOG_ROWS:
+        lines.append(row(disp, ref, corpus, RESULTS.get(key, "see leg"),
+                         rf"Tab.~\ref{{{label}}}"))
+    for header, rows in OTHER_GROUPS:
+        lines.append(grp(header))
+        for r in rows:
+            lines.append(row(*r))
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
     return "\n".join(lines)
 
 
@@ -1061,6 +1171,11 @@ def build(only=None, k_override=None):
         # single-leg run: print, don't clobber the full file
         print("\n".join(parts))
         return
+    # Master validation map first (poliblog rows now carry live RESULTS).
+    intro = (r"\noindent Table~\ref{tab:app:map} maps every \pkg{topica} model to its "
+             r"reference, corpus, and validation check. The classical models follow as "
+             r"side-by-side legs; the rest are validated on their reference's native corpus.")
+    parts = [intro, master_table()] + parts
     with open(OUT, "w") as f:
         f.write("% Generated by paper/gen_validation_appendix.py — do not edit by hand.\n\n")
         f.write("\n\n".join(parts) + "\n")
