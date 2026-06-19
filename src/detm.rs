@@ -83,7 +83,9 @@ fn logvar_clamped(x: f64) -> bool {
 /// entries uniform on `[-1/sqrt(fan_in), 1/sqrt(fan_in)]`.
 fn kaiming<R: Rng>(len: usize, fan_in: usize, rng: &mut R) -> Vec<f64> {
     let bound = 1.0 / (fan_in.max(1) as f64).sqrt();
-    (0..len).map(|_| (rng.gen::<f64>() * 2.0 - 1.0) * bound).collect()
+    (0..len)
+        .map(|_| (rng.gen::<f64>() * 2.0 - 1.0) * bound)
+        .collect()
 }
 
 /// A standard-normal sample via Box-Muller.
@@ -94,7 +96,11 @@ fn randn<R: Rng>(rng: &mut R) -> f64 {
 }
 
 fn relu(x: f64) -> f64 {
-    if x > 0.0 { x } else { 0.0 }
+    if x > 0.0 {
+        x
+    } else {
+        0.0
+    }
 }
 
 fn sigmoid(x: f64) -> f64 {
@@ -106,7 +112,9 @@ fn sigmoid(x: f64) -> f64 {
 /// regardless of the per-tensor fan-in. This helper draws that block.
 fn lstm_init<R: Rng>(len: usize, hidden: usize, rng: &mut R) -> Vec<f64> {
     let bound = 1.0 / (hidden.max(1) as f64).sqrt();
-    (0..len).map(|_| (rng.gen::<f64>() * 2.0 - 1.0) * bound).collect()
+    (0..len)
+        .map(|_| (rng.gen::<f64>() * 2.0 - 1.0) * bound)
+        .collect()
 }
 
 fn softmax(v: &[f64]) -> Vec<f64> {
@@ -141,10 +149,10 @@ pub struct ThetaEncoder {
     pub v: usize,
     pub k: usize,
     pub hidden: usize,
-    pub w1: Vec<f64>, // hidden x (V + K)
-    pub b1: Vec<f64>, // hidden
-    pub w2: Vec<f64>, // hidden x hidden
-    pub b2: Vec<f64>, // hidden
+    pub w1: Vec<f64>,   // hidden x (V + K)
+    pub b1: Vec<f64>,   // hidden
+    pub w2: Vec<f64>,   // hidden x hidden
+    pub b2: Vec<f64>,   // hidden
     pub w_mu: Vec<f64>, // K x hidden
     pub b_mu: Vec<f64>, // K
     pub w_ls: Vec<f64>, // K x hidden
@@ -215,7 +223,14 @@ impl ThetaEncoder {
             // reparameterization std and the theta-KL); see [`clamp_logvar`].
             ls[c] = clamp_logvar(sl);
         }
-        ThetaCache { pre1, h1, pre2, h2, mu, ls }
+        ThetaCache {
+            pre1,
+            h1,
+            pre2,
+            h2,
+            mu,
+            ls,
+        }
     }
 }
 
@@ -276,8 +291,8 @@ impl EncGrad {
 pub struct EtaNet {
     pub v: usize,
     pub k: usize,
-    pub eh: usize,       // eta_hidden_size
-    pub nlayers: usize,  // eta_nlayers
+    pub eh: usize,      // eta_hidden_size
+    pub nlayers: usize, // eta_nlayers
     // q_eta_map: Linear(V -> eh).
     pub map_w: Vec<f64>, // eh x V
     pub map_b: Vec<f64>, // eh
@@ -313,9 +328,16 @@ impl EtaNet {
         // Heads: nn.Linear(eh + K -> K), fan_in = eh + K.
         let inp = eh + k;
         EtaNet {
-            v, k, eh, nlayers,
-            map_w, map_b,
-            w_ih, w_hh, b_ih, b_hh,
+            v,
+            k,
+            eh,
+            nlayers,
+            map_w,
+            map_b,
+            w_ih,
+            w_hh,
+            b_ih,
+            b_hh,
             mu_w: kaiming(k * inp, inp, rng),
             mu_b: kaiming(k, inp, rng),
             ls_w: kaiming(k * inp, inp, rng),
@@ -329,12 +351,7 @@ impl EtaNet {
     /// `mu` directly (reference `reparameterize` in eval mode). Returns the sampled
     /// (or mean) `eta` (T x K), the per-slice head `mu`/`logsigma` (for the KL), and
     /// a cache holding every activation BPTT needs.
-    fn forward(
-        &self,
-        rnn_input: &[Vec<f64>],
-        eps: &[Vec<f64>],
-        sample: bool,
-    ) -> EtaForward {
+    fn forward(&self, rnn_input: &[Vec<f64>], eps: &[Vec<f64>], sample: bool) -> EtaForward {
         let (k, eh, nl) = (self.k, self.eh, self.nlayers);
         let t = rnn_input.len();
 
@@ -361,10 +378,10 @@ impl EtaNet {
         let mut gates_f = vec![vec![vec![0.0f64; eh]; t]; nl];
         let mut gates_g = vec![vec![vec![0.0f64; eh]; t]; nl];
         let mut gates_o = vec![vec![vec![0.0f64; eh]; t]; nl];
-        let mut cell = vec![vec![vec![0.0f64; eh]; t]; nl];     // c_t per layer/step
-        let mut tanh_c = vec![vec![vec![0.0f64; eh]; t]; nl];   // tanh(c_t)
-        let mut hidden = vec![vec![vec![0.0f64; eh]; t]; nl];   // h_t per layer/step
-        // Inputs each layer saw (needed for the input-weight gradient).
+        let mut cell = vec![vec![vec![0.0f64; eh]; t]; nl]; // c_t per layer/step
+        let mut tanh_c = vec![vec![vec![0.0f64; eh]; t]; nl]; // tanh(c_t)
+        let mut hidden = vec![vec![vec![0.0f64; eh]; t]; nl]; // h_t per layer/step
+                                                              // Inputs each layer saw (needed for the input-weight gradient).
         let mut layer_inputs: Vec<Vec<Vec<f64>>> = Vec::with_capacity(nl);
 
         for layer in 0..nl {
@@ -465,26 +482,35 @@ impl EtaNet {
 
         EtaForward {
             layer_inputs,
-            gates_i, gates_f, gates_g, gates_o, cell, tanh_c, hidden,
-            head_inp, mu, ls, etas,
+            gates_i,
+            gates_f,
+            gates_g,
+            gates_o,
+            cell,
+            tanh_c,
+            hidden,
+            head_inp,
+            mu,
+            ls,
+            etas,
         }
     }
 }
 
 /// Cached q(eta) forward activations retained for BPTT.
 struct EtaForward {
-    layer_inputs: Vec<Vec<Vec<f64>>>,       // nlayers x T x eh (input seen by each layer)
-    gates_i: Vec<Vec<Vec<f64>>>,            // nlayers x T x eh
+    layer_inputs: Vec<Vec<Vec<f64>>>, // nlayers x T x eh (input seen by each layer)
+    gates_i: Vec<Vec<Vec<f64>>>,      // nlayers x T x eh
     gates_f: Vec<Vec<Vec<f64>>>,
     gates_g: Vec<Vec<Vec<f64>>>,
     gates_o: Vec<Vec<Vec<f64>>>,
     cell: Vec<Vec<Vec<f64>>>,
     tanh_c: Vec<Vec<Vec<f64>>>,
-    hidden: Vec<Vec<Vec<f64>>>,             // nlayers x T x eh
-    head_inp: Vec<Vec<f64>>,                // T x (eh + K)
-    mu: Vec<Vec<f64>>,                      // T x K
-    ls: Vec<Vec<f64>>,                      // T x K
-    etas: Vec<Vec<f64>>,                    // T x K
+    hidden: Vec<Vec<Vec<f64>>>, // nlayers x T x eh
+    head_inp: Vec<Vec<f64>>,    // T x (eh + K)
+    mu: Vec<Vec<f64>>,          // T x K
+    ls: Vec<Vec<f64>>,          // T x K
+    etas: Vec<Vec<f64>>,        // T x K
 }
 
 /// Gradient accumulators mirroring [`EtaNet`].
@@ -632,15 +658,19 @@ impl EtaNet {
                     let d_tc = d_h[j] * o[j];
                     let d_ct = d_tc * (1.0 - tc[j] * tc[j]) + d_c_next[j];
                     d_c[j] = d_ct;
-                    let cprev = if tt > 0 { fwd.cell[layer][tt - 1][j] } else { 0.0 };
+                    let cprev = if tt > 0 {
+                        fwd.cell[layer][tt - 1][j]
+                    } else {
+                        0.0
+                    };
                     let d_f = d_ct * cprev;
                     let d_i = d_ct * gt[j];
                     let d_g = d_ct * it[j];
                     // Gate pre-activation gradients (sigmoid' = s(1-s); tanh' = 1-g^2).
-                    d_pre[0][j] = d_i * it[j] * (1.0 - it[j]);  // input gate
-                    d_pre[1][j] = d_f * ft[j] * (1.0 - ft[j]);  // forget gate
-                    d_pre[2][j] = d_g * (1.0 - gt[j] * gt[j]);  // cell gate (tanh)
-                    d_pre[3][j] = d_o * o[j] * (1.0 - o[j]);     // output gate
+                    d_pre[0][j] = d_i * it[j] * (1.0 - it[j]); // input gate
+                    d_pre[1][j] = d_f * ft[j] * (1.0 - ft[j]); // forget gate
+                    d_pre[2][j] = d_g * (1.0 - gt[j] * gt[j]); // cell gate (tanh)
+                    d_pre[3][j] = d_o * o[j] * (1.0 - o[j]); // output gate
                 }
                 // Accumulate weight/bias grads and propagate to x_t and h_{t-1}.
                 let x = &inp_seq[tt];
@@ -720,7 +750,13 @@ struct Adam {
 
 impl Adam {
     fn new(len: usize, lr: f64, wd: f64) -> Self {
-        Adam { m: vec![0.0; len], v: vec![0.0; len], t: 0, lr, wd }
+        Adam {
+            m: vec![0.0; len],
+            v: vec![0.0; len],
+            t: 0,
+            lr,
+            wd,
+        }
     }
     fn step(&mut self, p: &mut [f64], grad: &[f64]) {
         const B1: f64 = 0.9;
@@ -729,8 +765,9 @@ impl Adam {
         self.t += 1;
         let bc1 = 1.0 - B1.powi(self.t as i32);
         let bc2 = 1.0 - B2.powi(self.t as i32);
-        for (pi, (&g0, (mi, vi))) in
-            p.iter_mut().zip(grad.iter().zip(self.m.iter_mut().zip(self.v.iter_mut())))
+        for (pi, (&g0, (mi, vi))) in p
+            .iter_mut()
+            .zip(grad.iter().zip(self.m.iter_mut().zip(self.v.iter_mut())))
         {
             let g = g0 + self.wd * *pi;
             *mi = B1 * *mi + (1.0 - B1) * g;
@@ -864,9 +901,11 @@ pub fn fit_detm<R: Rng>(
     let log_delta = delta.max(1e-12).ln();
 
     // Precompute the per-document sparse raw and normalized bags of words.
-    let bows: Vec<Vec<(usize, f64)>> =
-        (0..d).map(|i| raw_bow(&tokens[i], &counts[i])).collect();
-    let totals: Vec<f64> = bows.iter().map(|b| b.iter().map(|&(_, c)| c).sum::<f64>()).collect();
+    let bows: Vec<Vec<(usize, f64)>> = (0..d).map(|i| raw_bow(&tokens[i], &counts[i])).collect();
+    let totals: Vec<f64> = bows
+        .iter()
+        .map(|b| b.iter().map(|&(_, c)| c).sum::<f64>())
+        .collect();
     let nbows: Vec<Vec<(usize, f64)>> = bows
         .iter()
         .zip(&totals)
@@ -920,10 +959,26 @@ pub fn fit_detm<R: Rng>(
     // q(eta) LSTM-network optimizers (one Adam per parameter block).
     let mut a_eta_map_w = Adam::new(eta_net.map_w.len(), lr, wdecay);
     let mut a_eta_map_b = Adam::new(eta_net.map_b.len(), lr, wdecay);
-    let mut a_eta_w_ih: Vec<Adam> = eta_net.w_ih.iter().map(|w| Adam::new(w.len(), lr, wdecay)).collect();
-    let mut a_eta_w_hh: Vec<Adam> = eta_net.w_hh.iter().map(|w| Adam::new(w.len(), lr, wdecay)).collect();
-    let mut a_eta_b_ih: Vec<Adam> = eta_net.b_ih.iter().map(|b| Adam::new(b.len(), lr, wdecay)).collect();
-    let mut a_eta_b_hh: Vec<Adam> = eta_net.b_hh.iter().map(|b| Adam::new(b.len(), lr, wdecay)).collect();
+    let mut a_eta_w_ih: Vec<Adam> = eta_net
+        .w_ih
+        .iter()
+        .map(|w| Adam::new(w.len(), lr, wdecay))
+        .collect();
+    let mut a_eta_w_hh: Vec<Adam> = eta_net
+        .w_hh
+        .iter()
+        .map(|w| Adam::new(w.len(), lr, wdecay))
+        .collect();
+    let mut a_eta_b_ih: Vec<Adam> = eta_net
+        .b_ih
+        .iter()
+        .map(|b| Adam::new(b.len(), lr, wdecay))
+        .collect();
+    let mut a_eta_b_hh: Vec<Adam> = eta_net
+        .b_hh
+        .iter()
+        .map(|b| Adam::new(b.len(), lr, wdecay))
+        .collect();
     let mut a_eta_mu_w = Adam::new(eta_net.mu_w.len(), lr, wdecay);
     let mut a_eta_mu_b = Adam::new(eta_net.mu_b.len(), lr, wdecay);
     let mut a_eta_ls_w = Adam::new(eta_net.ls_w.len(), lr, wdecay);
@@ -1172,23 +1227,27 @@ pub fn fit_detm<R: Rng>(
                 for ll in 0..l {
                     let dm = mu_alpha[0][kk][ll];
                     g_mu_alpha[0][kk][ll] += dm / (1.0 + 1e-6);
-                    g_ls_alpha[0][kk][ll] += 0.5 * (lsc_alpha[0][kk][ll].exp() / (1.0 + 1e-6) - 1.0);
+                    g_ls_alpha[0][kk][ll] +=
+                        0.5 * (lsc_alpha[0][kk][ll].exp() / (1.0 + 1e-6) - 1.0);
                 }
                 for tt in 1..t {
                     let prior_mean = alpha[tt - 1][kk].clone(); // sampled alpha_{t-1}
                     let plv: Vec<f64> = vec![log_delta; l];
-                    batch_loss += kl_gauss(&mu_alpha[tt][kk], &lsc_alpha[tt][kk], &prior_mean, &plv);
+                    batch_loss +=
+                        kl_gauss(&mu_alpha[tt][kk], &lsc_alpha[tt][kk], &prior_mean, &plv);
                     let inv_pv = 1.0 / (delta + 1e-6);
                     for ll in 0..l {
                         let dm = mu_alpha[tt][kk][ll] - prior_mean[ll];
                         g_mu_alpha[tt][kk][ll] += inv_pv * dm;
-                        g_ls_alpha[tt][kk][ll] += 0.5 * (lsc_alpha[tt][kk][ll].exp() * inv_pv - 1.0);
+                        g_ls_alpha[tt][kk][ll] +=
+                            0.5 * (lsc_alpha[tt][kk][ll].exp() * inv_pv - 1.0);
                         // The prior mean is the sample alpha_{t-1}, so KL pushes a
                         // gradient back onto alpha_{t-1} (its mu/ls via the eps).
                         let dprior = -inv_pv * dm;
                         let std = (0.5 * lsc_alpha[tt - 1][kk][ll]).exp();
                         g_mu_alpha[tt - 1][kk][ll] += dprior;
-                        g_ls_alpha[tt - 1][kk][ll] += dprior * eps_alpha[tt - 1][kk][ll] * 0.5 * std;
+                        g_ls_alpha[tt - 1][kk][ll] +=
+                            dprior * eps_alpha[tt - 1][kk][ll] * 0.5 * std;
                     }
                 }
             }
@@ -1245,38 +1304,108 @@ pub fn fit_detm<R: Rng>(
             if let Some(max_norm) = grad_clip {
                 if max_norm > 0.0 {
                     let mut sumsq = 0.0f64;
-                    for a in &g_mu_alpha { for b in a { for &x in b { sumsq += x * x; } } }
-                    for a in &g_ls_alpha { for b in a { for &x in b { sumsq += x * x; } } }
+                    for a in &g_mu_alpha {
+                        for b in a {
+                            for &x in b {
+                                sumsq += x * x;
+                            }
+                        }
+                    }
+                    for a in &g_ls_alpha {
+                        for b in a {
+                            for &x in b {
+                                sumsq += x * x;
+                            }
+                        }
+                    }
                     let eta_blocks: [&[f64]; 4] =
                         [&g_eta.map_w, &g_eta.map_b, &g_eta.mu_w, &g_eta.mu_b];
-                    for blk in eta_blocks { for &x in blk { sumsq += x * x; } }
-                    for &x in &g_eta.ls_w { sumsq += x * x; }
-                    for &x in &g_eta.ls_b { sumsq += x * x; }
-                    for layer in [&g_eta.w_ih, &g_eta.w_hh, &g_eta.b_ih, &g_eta.b_hh] {
-                        for a in layer { for &x in a { sumsq += x * x; } }
+                    for blk in eta_blocks {
+                        for &x in blk {
+                            sumsq += x * x;
+                        }
                     }
-                    for blk in [&g_enc.w1, &g_enc.b1, &g_enc.w2, &g_enc.b2,
-                                &g_enc.w_mu, &g_enc.b_mu, &g_enc.w_ls, &g_enc.b_ls] {
-                        for &x in blk { sumsq += x * x; }
+                    for &x in &g_eta.ls_w {
+                        sumsq += x * x;
+                    }
+                    for &x in &g_eta.ls_b {
+                        sumsq += x * x;
+                    }
+                    for layer in [&g_eta.w_ih, &g_eta.w_hh, &g_eta.b_ih, &g_eta.b_hh] {
+                        for a in layer {
+                            for &x in a {
+                                sumsq += x * x;
+                            }
+                        }
+                    }
+                    for blk in [
+                        &g_enc.w1,
+                        &g_enc.b1,
+                        &g_enc.w2,
+                        &g_enc.b2,
+                        &g_enc.w_mu,
+                        &g_enc.b_mu,
+                        &g_enc.w_ls,
+                        &g_enc.b_ls,
+                    ] {
+                        for &x in blk {
+                            sumsq += x * x;
+                        }
                     }
                     let norm = sumsq.sqrt();
                     if norm > max_norm {
                         let s = max_norm / norm;
-                        for a in g_mu_alpha.iter_mut() { for b in a { for x in b { *x *= s; } } }
-                        for a in g_ls_alpha.iter_mut() { for b in a { for x in b { *x *= s; } } }
-                        for blk in [&mut g_eta.map_w, &mut g_eta.map_b,
-                                    &mut g_eta.mu_w, &mut g_eta.mu_b,
-                                    &mut g_eta.ls_w, &mut g_eta.ls_b] {
-                            for x in blk { *x *= s; }
+                        for a in g_mu_alpha.iter_mut() {
+                            for b in a {
+                                for x in b {
+                                    *x *= s;
+                                }
+                            }
                         }
-                        for layer in [&mut g_eta.w_ih, &mut g_eta.w_hh,
-                                      &mut g_eta.b_ih, &mut g_eta.b_hh] {
-                            for a in layer { for x in a { *x *= s; } }
+                        for a in g_ls_alpha.iter_mut() {
+                            for b in a {
+                                for x in b {
+                                    *x *= s;
+                                }
+                            }
                         }
-                        for blk in [&mut g_enc.w1, &mut g_enc.b1, &mut g_enc.w2, &mut g_enc.b2,
-                                    &mut g_enc.w_mu, &mut g_enc.b_mu,
-                                    &mut g_enc.w_ls, &mut g_enc.b_ls] {
-                            for x in blk { *x *= s; }
+                        for blk in [
+                            &mut g_eta.map_w,
+                            &mut g_eta.map_b,
+                            &mut g_eta.mu_w,
+                            &mut g_eta.mu_b,
+                            &mut g_eta.ls_w,
+                            &mut g_eta.ls_b,
+                        ] {
+                            for x in blk {
+                                *x *= s;
+                            }
+                        }
+                        for layer in [
+                            &mut g_eta.w_ih,
+                            &mut g_eta.w_hh,
+                            &mut g_eta.b_ih,
+                            &mut g_eta.b_hh,
+                        ] {
+                            for a in layer {
+                                for x in a {
+                                    *x *= s;
+                                }
+                            }
+                        }
+                        for blk in [
+                            &mut g_enc.w1,
+                            &mut g_enc.b1,
+                            &mut g_enc.w2,
+                            &mut g_enc.b2,
+                            &mut g_enc.w_mu,
+                            &mut g_enc.b_mu,
+                            &mut g_enc.w_ls,
+                            &mut g_enc.b_ls,
+                        ] {
+                            for x in blk {
+                                *x *= s;
+                            }
                         }
                     }
                 }
@@ -1311,7 +1440,11 @@ pub fn fit_detm<R: Rng>(
             batches += 1;
         }
 
-        let avg = if batches > 0 { epoch_loss / batches as f64 } else { f64::NAN };
+        let avg = if batches > 0 {
+            epoch_loss / batches as f64
+        } else {
+            f64::NAN
+        };
         bound_history.push(-avg); // ELBO == negative loss
         if em_tol > 0.0 && bound_history.len() >= 2 {
             let prev = bound_history[bound_history.len() - 2];
@@ -1331,7 +1464,11 @@ pub fn fit_detm<R: Rng>(
     let zero_eps = vec![vec![0.0f64; k]; t];
     let eta_mean = eta_net.forward(&rnn_input, &zero_eps, false).etas;
     let beta_over_time: Vec<Vec<Vec<f64>>> = (0..t)
-        .map(|tt| (0..k).map(|kk| beta_row(rho, &alpha_mean[tt][kk])).collect())
+        .map(|tt| {
+            (0..k)
+                .map(|kk| beta_row(rho, &alpha_mean[tt][kk]))
+                .collect()
+        })
         .collect();
 
     // doc_topic from the encoder mean (theta = softmax(mu)), as in main.py's get_theta.
@@ -1359,7 +1496,14 @@ pub fn fit_detm<R: Rng>(
 }
 
 /// Adam step over a flattened (T x K x L) parameter block.
-fn step3d(opt: &mut Adam, p: &mut [Vec<Vec<f64>>], g: &[Vec<Vec<f64>>], t: usize, k: usize, l: usize) {
+fn step3d(
+    opt: &mut Adam,
+    p: &mut [Vec<Vec<f64>>],
+    g: &[Vec<Vec<f64>>],
+    t: usize,
+    k: usize,
+    l: usize,
+) {
     let mut flat_p = Vec::with_capacity(t * k * l);
     let mut flat_g = Vec::with_capacity(t * k * l);
     for tt in 0..t {
@@ -1396,7 +1540,11 @@ impl Estimator for DetmModel {
     }
 
     fn fit_history(&self) -> Vec<(usize, f64)> {
-        self.bound_history.iter().enumerate().map(|(i, &b)| (i + 1, b)).collect()
+        self.bound_history
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| (i + 1, b))
+            .collect()
     }
 
     fn converged(&self) -> Option<bool> {
@@ -1423,7 +1571,13 @@ mod tests {
         block: usize,
         t: usize,
         d_per_t: usize,
-    ) -> (Vec<Vec<u32>>, Vec<Vec<u32>>, Vec<usize>, Vec<Vec<f64>>, usize) {
+    ) -> (
+        Vec<Vec<u32>>,
+        Vec<Vec<u32>>,
+        Vec<usize>,
+        Vec<Vec<f64>>,
+        usize,
+    ) {
         let v = k * block;
         let l = k + 2;
         let rho: Vec<Vec<f64>> = (0..v)
@@ -1490,7 +1644,10 @@ mod tests {
         // Not exactly zero: the reference's get_kl adds 1e-6 to the prior variance
         // for numerical safety, so KL(q || q) is a tiny negative number. We match
         // that form, so we only require it is close to zero.
-        assert!(kl.abs() < 1e-4, "KL of a distribution with itself should be ~0, got {kl}");
+        assert!(
+            kl.abs() < 1e-4,
+            "KL of a distribution with itself should be ~0, got {kl}"
+        );
     }
 
     #[test]
@@ -1499,7 +1656,8 @@ mod tests {
         let (k, block, t, d_per_t) = (3usize, 6usize, 4usize, 20usize);
         let (tokens, counts, times, rho, v) = planted_corpus(&mut rng, k, block, t, d_per_t);
         let m = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 32, 16, 2, 30, 64, 0.02, 1.2e-6, 0.0, None, &mut rng,
+            &tokens, &counts, &times, k, v, t, &rho, 0.005, 32, 16, 2, 30, 64, 0.02, 1.2e-6, 0.0,
+            None, &mut rng,
         );
         assert_eq!(m.num_topics, k);
         assert_eq!(m.num_times, t);
@@ -1533,11 +1691,13 @@ mod tests {
 
         let mut rng_a = ChaCha8Rng::seed_from_u64(123);
         let a = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 20, 64, 0.02, 1.2e-6, 0.0, None, &mut rng_a,
+            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 20, 64, 0.02, 1.2e-6, 0.0,
+            None, &mut rng_a,
         );
         let mut rng_b = ChaCha8Rng::seed_from_u64(123);
         let b = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 20, 64, 0.02, 1.2e-6, 0.0, None, &mut rng_b,
+            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 20, 64, 0.02, 1.2e-6, 0.0,
+            None, &mut rng_b,
         );
         for tt in 0..t {
             for kk in 0..k {
@@ -1554,8 +1714,8 @@ mod tests {
         let (k, block, t, d_per_t) = (3usize, 8usize, 5usize, 40usize);
         let (tokens, counts, times, rho, v) = planted_corpus(&mut rng, k, block, t, d_per_t);
         let m = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 32, 32, 2, 300, 1000, 0.02, 1.2e-6, 0.0,
-            None, &mut rng,
+            &tokens, &counts, &times, k, v, t, &rho, 0.005, 32, 32, 2, 300, 1000, 0.02, 1.2e-6,
+            0.0, None, &mut rng,
         );
         // The time-varying topic prior eta (the latent the random walk regularizes)
         // should move across the slices for at least one topic, recovering the
@@ -1567,8 +1727,13 @@ mod tests {
         let prior_at = |tt: usize| softmax(&m.eta[tt]);
         let p0 = prior_at(0);
         let plast = prior_at(t - 1);
-        let max_drift = (0..k).map(|kk| (plast[kk] - p0[kk]).abs()).fold(0.0f64, f64::max);
-        assert!(max_drift > 0.01, "eta prior did not drift across time (max {max_drift})");
+        let max_drift = (0..k)
+            .map(|kk| (plast[kk] - p0[kk]).abs())
+            .fold(0.0f64, f64::max);
+        assert!(
+            max_drift > 0.01,
+            "eta prior did not drift across time (max {max_drift})"
+        );
     }
 
     // ---- Finite-difference check on the LSTM q(eta) path --------------------
@@ -1612,7 +1777,8 @@ mod tests {
                 let dmm = fwd.mu[tt][c] - prior;
                 let inv_pv = 1.0 / (delta + 1e-6);
                 loss += 0.5
-                    * ((fwd.ls[tt][c].exp() + dmm * dmm) * inv_pv - 1.0 + log_delta - fwd.ls[tt][c]);
+                    * ((fwd.ls[tt][c].exp() + dmm * dmm) * inv_pv - 1.0 + log_delta
+                        - fwd.ls[tt][c]);
                 d_mu[tt][c] += inv_pv * dmm;
                 d_ls[tt][c] += 0.5 * (fwd.ls[tt][c].exp() * inv_pv - 1.0);
                 d_eta[tt - 1][c] += -inv_pv * dmm;
@@ -1628,16 +1794,27 @@ mod tests {
         let delta = 0.005;
         let net = EtaNet::new(v, k, eh, nl, &mut rng);
         // Fixed inputs / noise / downstream weights.
-        let rnn_input: Vec<Vec<f64>> =
-            (0..t).map(|_| (0..v).map(|_| rng.gen::<f64>()).collect()).collect();
-        let eps: Vec<Vec<f64>> =
-            (0..t).map(|_| (0..k).map(|_| randn(&mut rng)).collect()).collect();
-        let w: Vec<Vec<f64>> =
-            (0..t).map(|_| (0..k).map(|_| randn(&mut rng) * 0.3).collect()).collect();
+        let rnn_input: Vec<Vec<f64>> = (0..t)
+            .map(|_| (0..v).map(|_| rng.gen::<f64>()).collect())
+            .collect();
+        let eps: Vec<Vec<f64>> = (0..t)
+            .map(|_| (0..k).map(|_| randn(&mut rng)).collect())
+            .collect();
+        let w: Vec<Vec<f64>> = (0..t)
+            .map(|_| (0..k).map(|_| randn(&mut rng) * 0.3).collect())
+            .collect();
 
         // Analytic gradient via BPTT.
         let (_, d_eta, d_mu, d_ls) = eta_fd_loss(&net, &rnn_input, &eps, &w, delta);
-        let g = net.backward(&net.forward(&rnn_input, &eps, true), &d_eta, &d_mu, &d_ls, &eps, true, &rnn_input);
+        let g = net.backward(
+            &net.forward(&rnn_input, &eps, true),
+            &d_eta,
+            &d_mu,
+            &d_ls,
+            &eps,
+            true,
+            &rnn_input,
+        );
 
         let h = 1e-5;
         // Closure: perturb element `idx` of a chosen parameter block and recompute loss.
@@ -1691,7 +1868,8 @@ mod tests {
         let (k, block, t, d_per_t) = (3usize, 6usize, 4usize, 20usize);
         let (tokens, counts, times, rho, v) = planted_corpus(&mut rng, k, block, t, d_per_t);
         let m = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 25, 64, 0.02, 1.2e-6, 0.0, None, &mut rng,
+            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 25, 64, 0.02, 1.2e-6, 0.0,
+            None, &mut rng,
         );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);

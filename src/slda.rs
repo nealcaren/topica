@@ -35,7 +35,10 @@ pub struct SldaModel {
 impl SldaModel {
     /// Topic-word distributions β = exp(log_beta), shape K×V.
     pub fn topic_word(&self) -> Vec<Vec<f64>> {
-        self.log_beta.iter().map(|row| row.iter().map(|&l| l.exp()).collect()).collect()
+        self.log_beta
+            .iter()
+            .map(|row| row.iter().map(|&l| l.exp()).collect())
+            .collect()
     }
 
     /// Document-topic mixtures θ_d = γ_d / Σγ_d, shape D×K.
@@ -151,10 +154,19 @@ pub fn predict_one(model: &SldaModel, doc: &[u32], var_iters: usize) -> f64 {
     if bag.is_empty() {
         return 0.0;
     }
-    let (_, _, sum_phi) =
-        infer_doc(&bag, &model.log_beta, &model.eta, model.sigma2, model.alpha, None, var_iters);
+    let (_, _, sum_phi) = infer_doc(
+        &bag,
+        &model.log_beta,
+        &model.eta,
+        model.sigma2,
+        model.alpha,
+        None,
+        var_iters,
+    );
     let n: f64 = bag.iter().map(|&(_, c)| c).sum();
-    (0..model.num_topics).map(|k| model.eta[k] * sum_phi[k] / n).sum()
+    (0..model.num_topics)
+        .map(|k| model.eta[k] * sum_phi[k] / n)
+        .sum()
 }
 
 /// Per-EM-iteration objective: the Gaussian log-likelihood of the response
@@ -304,9 +316,7 @@ pub fn fit_slda<R: Rng>(
 
         // Bound trace and optional convergence check (uses current η/σ²/log_beta).
         if check_every > 0 && em_iter % check_every == 0 {
-            let bnd = response_log_likelihood(
-                &bags, y, &log_beta, &eta, sigma2, alpha, var_iters,
-            );
+            let bnd = response_log_likelihood(&bags, y, &log_beta, &eta, sigma2, alpha, var_iters);
             bound_history.push((em_iter, bnd));
             if convergence_tol > 0.0 && bound_history.len() >= 2 {
                 let prev = bound_history[bound_history.len() - 2].1;
@@ -319,11 +329,22 @@ pub fn fit_slda<R: Rng>(
         }
     }
 
-    (SldaModel { num_topics: k, num_types: v, alpha, log_beta, eta, sigma2, gamma },
-     bound_history, converged)
+    (
+        SldaModel {
+            num_topics: k,
+            num_types: v,
+            alpha,
+            log_beta,
+            eta,
+            sigma2,
+            gamma,
+        },
+        bound_history,
+        converged,
+    )
 }
 
-use crate::estimator::{Estimator, ModelFamily, DirichletModel};
+use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 
 impl Estimator for SldaModel {
     fn num_topics(&self) -> usize {
@@ -364,10 +385,13 @@ impl DirichletModel for SldaModel {
     fn doc_lengths(&self) -> Vec<usize> {
         // doc_lengths reconstructed from γ (sLDA stores no raw token counts):
         // γ[d] = α + token-topic counts, so N_d ≈ Σγ[d] − α·K.
-        self.gamma.iter().map(|g| {
-            let s: f64 = g.iter().sum();
-            (s - self.alpha * self.num_topics as f64).round().max(0.0) as usize
-        }).collect()
+        self.gamma
+            .iter()
+            .map(|g| {
+                let s: f64 = g.iter().sum();
+                (s - self.alpha * self.num_topics as f64).round().max(0.0) as usize
+            })
+            .collect()
     }
 }
 
@@ -416,7 +440,11 @@ mod tests {
             // Which topic puts more mass on this vocabulary block.
             let m0: f64 = block.iter().map(|&w| tw[0][w]).sum();
             let m1: f64 = block.iter().map(|&w| tw[1][w]).sum();
-            if m0 > m1 { 0 } else { 1 }
+            if m0 > m1 {
+                0
+            } else {
+                1
+            }
         };
         let k0 = topic_of_block(&[0, 1, 2, 3, 4, 5]);
         let k1 = topic_of_block(&[6, 7, 8, 9, 10, 11]);

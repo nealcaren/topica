@@ -15,10 +15,12 @@
 
 use rand::Rng;
 
-use crate::variational::{lbfgs_minimize, doc_sparse, fit_gamma_ridge};
-use crate::linalg::{cholesky, half_logdet, make_diagonally_dominant, spd_inverse, spd_inverse_from_chol};
 use crate::estimator::{Estimator, ModelFamily};
+use crate::linalg::{
+    cholesky, half_logdet, make_diagonally_dominant, spd_inverse, spd_inverse_from_chol,
+};
 use crate::variational::LogisticNormalModel;
+use crate::variational::{doc_sparse, fit_gamma_ridge, lbfgs_minimize};
 
 /// Prior on the prevalence coefficients γ in the STM M-step.
 ///
@@ -195,8 +197,8 @@ pub fn ctm_grad(
 /// Result of STM `hpbcpp`: the Laplace covariance, expected token-topic counts,
 /// and the per-document evidence bound.
 pub struct HpbResult {
-    pub nu: Vec<f64>,        // (K-1)×(K-1) variational covariance H⁻¹
-    pub phi: Vec<Vec<f64>>,  // K×W expected token-topic counts for the doc's words
+    pub nu: Vec<f64>,       // (K-1)×(K-1) variational covariance H⁻¹
+    pub phi: Vec<Vec<f64>>, // K×W expected token-topic counts for the doc's words
     pub bound: f64,
 }
 
@@ -371,9 +373,9 @@ pub struct ContentKappa {
 pub struct CtmModel {
     pub num_topics: usize,
     pub num_types: usize,
-    pub beta: Vec<Vec<f64>>, // K×V topic-word
-    pub mu: Vec<f64>,        // K-1 prior mean (no-covariate case)
-    pub sigma: Vec<f64>,     // (K-1)² prior covariance
+    pub beta: Vec<Vec<f64>>,   // K×V topic-word
+    pub mu: Vec<f64>,          // K-1 prior mean (no-covariate case)
+    pub sigma: Vec<f64>,       // (K-1)² prior covariance
     pub lambda: Vec<Vec<f64>>, // per-doc variational means η (K-1)
     /// Per-document variational covariance ν = H⁻¹ ((K-1)² flattened, row-major),
     /// from the final E-step — the Laplace posterior of η used for
@@ -719,23 +721,34 @@ fn fit_gamma_enet(
         col_mean[j] = s / n_f64;
     }
     for j in 0..p {
-        let var: f64 = x.iter().map(|row| {
-            let d = row[j + 1] - col_mean[j];
-            d * d
-        }).sum::<f64>() / n_f64;
+        let var: f64 = x
+            .iter()
+            .map(|row| {
+                let d = row[j + 1] - col_mean[j];
+                d * d
+            })
+            .sum::<f64>()
+            / n_f64;
         col_std[j] = if var > 1e-12 { var.sqrt() } else { 1.0 };
     }
 
     // Build standardised design matrix (n × p), excluding the intercept column.
-    let xs: Vec<Vec<f64>> = x.iter().map(|row| {
-        (0..p).map(|j| (row[j + 1] - col_mean[j]) / col_std[j]).collect()
-    }).collect();
+    let xs: Vec<Vec<f64>> = x
+        .iter()
+        .map(|row| {
+            (0..p)
+                .map(|j| (row[j + 1] - col_mean[j]) / col_std[j])
+                .collect()
+        })
+        .collect();
 
     // Pre-compute column norms² of the standardised design (all = n for unit-variance).
     let mut xj_norm2 = vec![0.0f64; p];
     for j in 0..p {
         xj_norm2[j] = xs.iter().map(|row| row[j] * row[j]).sum();
-        if xj_norm2[j] < 1e-12 { xj_norm2[j] = 1.0; } // constant column guard
+        if xj_norm2[j] < 1e-12 {
+            xj_norm2[j] = 1.0;
+        } // constant column guard
     }
 
     // Coordinate-descent loop for one response column y (length n).
@@ -797,7 +810,9 @@ fn fit_gamma_enet(
                 let delta_int = r_mean;
                 if delta_int.abs() > 1e-14 {
                     coef[0] += delta_int;
-                    for ri in r.iter_mut() { *ri -= delta_int; }
+                    for ri in r.iter_mut() {
+                        *ri -= delta_int;
+                    }
                     max_change = max_change.max(delta_int.abs());
                 }
 
@@ -805,7 +820,11 @@ fn fit_gamma_enet(
                 for j in 0..p {
                     let old = coef[j + 1];
                     // Partial residual: add back contribution of current coef.
-                    let rj_dot: f64 = xs.iter().zip(r.iter()).map(|(row, &ri)| row[j] * (ri + old * row[j])).sum();
+                    let rj_dot: f64 = xs
+                        .iter()
+                        .zip(r.iter())
+                        .map(|(row, &ri)| row[j] * (ri + old * row[j]))
+                        .sum();
                     // Soft-threshold update.
                     let z = rj_dot / xj_norm2[j];
                     let thresh = lam * alpha_safe;
@@ -827,7 +846,9 @@ fn fit_gamma_enet(
                     }
                 }
 
-                if max_change < 1e-7 { break; }
+                if max_change < 1e-7 {
+                    break;
+                }
             }
 
             // AIC = n * ln(RSS/n) + 2 * df
@@ -864,7 +885,6 @@ fn fit_gamma_enet(
     }
     g
 }
-
 
 /// `μ_d = X_d γ` (length K-1).
 fn mu_from(x_d: &[f64], gamma: &[Vec<f64>], km1: usize) -> Vec<f64> {
@@ -987,7 +1007,9 @@ pub fn fit_ctm<R: Rng>(
                 kappa_t[t][v] = beta[t][v].max(1e-12).ln() - m_bg[v];
             }
         }
-        content_beta = build_content_beta(&m_bg, &kappa_t, &kappa_c, &kappa_i, k, num_groups, num_types);
+        content_beta = build_content_beta(
+            &m_bg, &kappa_t, &kappa_c, &kappa_i, k, num_groups, num_types,
+        );
     }
 
     let mut mu_shared = vec![0.0f64; km1];
@@ -1029,8 +1051,8 @@ pub fn fit_ctm<R: Rng>(
 
     for em in 0..em_iters {
         em_iters_run = em + 1;
-        sigma_estep = sigma.clone();  // capture sigma before E-step
-        beta_estep = beta.clone();    // capture beta before E-step
+        sigma_estep = sigma.clone(); // capture sigma before E-step
+        beta_estep = beta.clone(); // capture beta before E-step
         let siginv = spd_inverse(&sigma, km1).unwrap_or_else(|| {
             let mut s = sigma.clone();
             make_diagonally_dominant(&mut s, km1);
@@ -1082,7 +1104,9 @@ pub fn fit_ctm<R: Rng>(
                         7,
                         1e-5,
                     );
-                    let res = ctm_hpb(&opt, beta_doc, words, counts, &mu_d, &siginv, entropy, diagonal);
+                    let res = ctm_hpb(
+                        &opt, beta_doc, words, counts, &mu_d, &siginv, entropy, diagonal,
+                    );
                     (opt, res)
                 });
 
@@ -1350,7 +1374,9 @@ pub fn fit_ctm_svi<R: Rng>(
                     7,
                     1e-5,
                 );
-                let res = ctm_hpb(&opt, &beta, words, counts, &mu_shared, &siginv, entropy, diagonal);
+                let res = ctm_hpb(
+                    &opt, &beta, words, counts, &mu_shared, &siginv, entropy, diagonal,
+                );
                 for (wi, &w) in words.iter().enumerate() {
                     for tt in 0..k {
                         beta_ss[tt][w] += res.phi[tt][wi];
@@ -1424,7 +1450,9 @@ pub fn fit_ctm_svi<R: Rng>(
             7,
             1e-5,
         );
-        let res = ctm_hpb(&opt, &beta, words, counts, &mu_shared, &siginv, entropy, diagonal);
+        let res = ctm_hpb(
+            &opt, &beta, words, counts, &mu_shared, &siginv, entropy, diagonal,
+        );
         lambda[di] = opt;
         if keep_nu {
             nu_store[di] = res.nu;
@@ -1468,10 +1496,7 @@ pub fn fit_ctm_svi<R: Rng>(
 /// μ cancels out of the Hessian — so we evaluate at the shared `model.mu` and the
 /// E-step β/Σ (`beta_estep`/`sigma_estep`) to reproduce the stored ν exactly.
 /// `sparse` is the same `(words, counts)` representation built from the raw docs.
-pub fn recompute_nu(
-    model: &CtmModel,
-    sparse: &[(Vec<usize>, Vec<f64>)],
-) -> Vec<Vec<f64>> {
+pub fn recompute_nu(model: &CtmModel, sparse: &[(Vec<usize>, Vec<f64>)]) -> Vec<Vec<f64>> {
     use rayon::prelude::*;
     let d = sparse.len();
     let km1 = model.num_topics - 1;
@@ -1524,13 +1549,31 @@ mod tests {
         use rand::SeedableRng;
         use rand_chacha::ChaCha8Rng;
         let docs: Vec<Vec<u32>> = vec![
-            vec![0, 1, 0, 1, 2, 2], vec![1, 2, 1, 2, 0, 0], vec![2, 0, 2, 0, 1, 1],
-            vec![3, 4, 3, 4, 5, 5], vec![4, 5, 4, 5, 3, 3], vec![5, 3, 5, 3, 4, 4],
+            vec![0, 1, 0, 1, 2, 2],
+            vec![1, 2, 1, 2, 0, 0],
+            vec![2, 0, 2, 0, 1, 1],
+            vec![3, 4, 3, 4, 5, 5],
+            vec![4, 5, 4, 5, 3, 3],
+            vec![5, 3, 5, 3, 4, 4],
         ];
         let fit = || {
             let mut rng = ChaCha8Rng::seed_from_u64(123);
-            fit_ctm(&docs, 2, 6, 30, 0.0, 0.0, None, None, false, None,
-                    GammaPrior::Pooled, true, false, &mut rng)
+            fit_ctm(
+                &docs,
+                2,
+                6,
+                30,
+                0.0,
+                0.0,
+                None,
+                None,
+                false,
+                None,
+                GammaPrior::Pooled,
+                true,
+                false,
+                &mut rng,
+            )
         };
         let a = fit();
         let b = fit();
@@ -1539,16 +1582,14 @@ mod tests {
         // Frozen reference: each topic concentrates on one disjoint 3-word block.
         let on = 0.333_333_332_8_f64;
         let off = 0.000_000_000_6_f64;
-        let expected = [
-            [off, off, off, on, on, on],
-            [on, on, on, off, off, off],
-        ];
+        let expected = [[off, off, off, on, on, on], [on, on, on, off, off, off]];
         for k in 0..2 {
             for v in 0..6 {
                 assert!(
                     (a.beta[k][v] - expected[k][v]).abs() < 1e-9,
                     "beta[{k}][{v}] = {} drifted from frozen {}",
-                    a.beta[k][v], expected[k][v]
+                    a.beta[k][v],
+                    expected[k][v]
                 );
             }
         }
@@ -1585,7 +1626,13 @@ mod tests {
             let num = (ctm_lhood(&ep, &beta, &words, &counts, &mu, &siginv)
                 - ctm_lhood(&em, &beta, &words, &counts, &mu, &siginv))
                 / (2.0 * eps);
-            assert!((num - g[i]).abs() < 1e-4, "grad[{}]: {} vs {}", i, g[i], num);
+            assert!(
+                (num - g[i]).abs() < 1e-4,
+                "grad[{}]: {} vs {}",
+                i,
+                g[i],
+                num
+            );
         }
     }
 
@@ -1606,7 +1653,9 @@ mod tests {
                 doc
             })
             .collect();
-        let m = fit_ctm_svi(&docs, nb, v, 20, 32, 16.0, 0.7, 0.0, false, true, false, &mut rng);
+        let m = fit_ctm_svi(
+            &docs, nb, v, 20, 32, 16.0, 0.7, 0.0, false, true, false, &mut rng,
+        );
         // Each planted block is the top of some topic.
         let mut covered = std::collections::HashSet::new();
         for t in 0..nb {
@@ -1630,7 +1679,10 @@ mod tests {
             .collect();
         let run = || {
             let mut rng = ChaCha8Rng::seed_from_u64(7);
-            fit_ctm_svi(&docs, 3, 9, 10, 16, 16.0, 0.7, 0.0, false, true, false, &mut rng).beta
+            fit_ctm_svi(
+                &docs, 3, 9, 10, 16, 16.0, 0.7, 0.0, false, true, false, &mut rng,
+            )
+            .beta
         };
         let (a, b) = (run(), run());
         for (ra, rb) in a.iter().zip(b.iter()) {
@@ -1655,7 +1707,22 @@ mod tests {
                 docs.push(vec![6, 7, 8, 6, 7, 8, 6, 7, 8, 6]);
             }
         }
-        let model = fit_ctm(&docs, 3, 9, 25, 0.0, 0.0, None, None, true, None, GammaPrior::Pooled, true, false, &mut rng);
+        let model = fit_ctm(
+            &docs,
+            3,
+            9,
+            25,
+            0.0,
+            0.0,
+            None,
+            None,
+            true,
+            None,
+            GammaPrior::Pooled,
+            true,
+            false,
+            &mut rng,
+        );
         let theta = model.doc_topics();
         // Sanity: θ rows sum to 1 and are valid.
         for row in &theta {
@@ -1686,7 +1753,22 @@ mod tests {
             }
         }
         // K=2 (CTM needs >=2 topics); content groups = 2.
-        let model = fit_ctm(&docs, 2, 4, 30, 0.0, 0.0, None, Some((&groups, 2)), false, None, GammaPrior::Pooled, true, false, &mut rng);
+        let model = fit_ctm(
+            &docs,
+            2,
+            4,
+            30,
+            0.0,
+            0.0,
+            None,
+            Some((&groups, 2)),
+            false,
+            None,
+            GammaPrior::Pooled,
+            true,
+            false,
+            &mut rng,
+        );
         let cb = model.content_beta.expect("content_beta present");
         // cb[group][topic][word]. The dominant topic for group 0 should favour
         // {0,1}; for group 1 {2,3}. Check that for each group some topic does.
@@ -1696,8 +1778,16 @@ mod tests {
         let g1_best = (0..2)
             .map(|t| cb[1][t][2] + cb[1][t][3])
             .fold(0.0f64, f64::max);
-        assert!(g0_best > 0.8, "group 0 top topic mass on its words = {}", g0_best);
-        assert!(g1_best > 0.8, "group 1 top topic mass on its words = {}", g1_best);
+        assert!(
+            g0_best > 0.8,
+            "group 0 top topic mass on its words = {}",
+            g0_best
+        );
+        assert!(
+            g1_best > 0.8,
+            "group 1 top topic mass on its words = {}",
+            g1_best
+        );
     }
 
     #[test]
@@ -1714,20 +1804,53 @@ mod tests {
             }
         }
 
-        let converged = fit_ctm(&docs, 2, 6, 100, 1e-5, 0.0, None, None, true, None, GammaPrior::Pooled, true, false, &mut rng);
+        let converged = fit_ctm(
+            &docs,
+            2,
+            6,
+            100,
+            1e-5,
+            0.0,
+            None,
+            None,
+            true,
+            None,
+            GammaPrior::Pooled,
+            true,
+            false,
+            &mut rng,
+        );
         // The bound trajectory is (weakly) monotone increasing.
         let h = &converged.bound_history;
         assert!(h.len() >= 2);
         for w in h.windows(2) {
             assert!(w[1] >= w[0] - 1e-6, "bound decreased: {} -> {}", w[0], w[1]);
         }
-        assert!(converged.converged, "should meet em_tol before the 100-iter cap");
+        assert!(
+            converged.converged,
+            "should meet em_tol before the 100-iter cap"
+        );
         assert_eq!(converged.em_iters_run, h.len());
         assert!(converged.bound.is_finite());
 
         // em_tol = 0 disables early stopping: run the full cap.
         let mut rng2 = ChaCha8Rng::seed_from_u64(7);
-        let capped = fit_ctm(&docs, 2, 6, 8, 0.0, 0.0, None, None, true, None, GammaPrior::Pooled, true, false, &mut rng2);
+        let capped = fit_ctm(
+            &docs,
+            2,
+            6,
+            8,
+            0.0,
+            0.0,
+            None,
+            None,
+            true,
+            None,
+            GammaPrior::Pooled,
+            true,
+            false,
+            &mut rng2,
+        );
         assert!(!capped.converged);
         assert_eq!(capped.em_iters_run, 8);
         assert_eq!(capped.bound_history.len(), 8);
@@ -1751,7 +1874,20 @@ mod tests {
             })
             .collect();
         let model = fit_ctm(
-            &docs, nb, v, 30, 0.0, 0.0, None, None, true, None, GammaPrior::Pooled, true, true, &mut rng,
+            &docs,
+            nb,
+            v,
+            30,
+            0.0,
+            0.0,
+            None,
+            None,
+            true,
+            None,
+            GammaPrior::Pooled,
+            true,
+            true,
+            &mut rng,
         );
         assert!(model.diagonal, "model should record diagonal mode");
 
@@ -1765,7 +1901,10 @@ mod tests {
         let h_max = h.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let total_range = h_max - h[0];
         assert!(total_range > 0.0, "diagonal bound did not improve overall");
-        assert!(h[h.len() - 1] > h[0], "diagonal bound did not improve overall");
+        assert!(
+            h[h.len() - 1] > h[0],
+            "diagonal bound did not improve overall"
+        );
         let mut max_decrease = 0.0f64;
         for w in h.windows(2) {
             let dec = w[0] - w[1];
@@ -1776,7 +1915,8 @@ mod tests {
         assert!(
             max_decrease < 0.01 * total_range,
             "max per-step decrease {} too large vs total improvement {}",
-            max_decrease, total_range
+            max_decrease,
+            total_range
         );
 
         // ν is purely diagonal (off-diagonals exactly zero, diagonals positive).
@@ -1806,7 +1946,11 @@ mod tests {
                 }
             }
         }
-        assert_eq!(covered.len(), nb, "diagonal mode only recovered {covered:?}");
+        assert_eq!(
+            covered.len(),
+            nb,
+            "diagonal mode only recovered {covered:?}"
+        );
     }
 
     // Build a synthetic regression problem with n observations, p predictors
@@ -1822,7 +1966,9 @@ mod tests {
         // at test time.  Generates uniform [0,1) floats.
         let mut state = seed ^ 0xdeadbeef_cafef00d;
         let mut rand_f64 = move || -> f64 {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (state >> 33) as f64 / (u32::MAX as f64)
         };
 

@@ -40,7 +40,9 @@ const ETM_DIR_ALPHA: f64 = 1.0;
 /// entries are uniform on `[-1/sqrt(fan_in), 1/sqrt(fan_in)]`.
 fn kaiming<R: Rng>(len: usize, fan_in: usize, rng: &mut R) -> Vec<f64> {
     let bound = 1.0 / (fan_in as f64).sqrt();
-    (0..len).map(|_| (rng.gen::<f64>() * 2.0 - 1.0) * bound).collect()
+    (0..len)
+        .map(|_| (rng.gen::<f64>() * 2.0 - 1.0) * bound)
+        .collect()
 }
 
 /// A standard-normal sample via Box-Muller.
@@ -132,7 +134,14 @@ impl Encoder {
             mu[c] = sm;
             logvar[c] = sl;
         }
-        Cache { pre1, h1, pre2, h2, mu, logvar }
+        Cache {
+            pre1,
+            h1,
+            pre2,
+            h2,
+            mu,
+            logvar,
+        }
     }
 
     /// Inference mean only: `theta = softmax(mu)` with no sampling.
@@ -219,17 +228,35 @@ fn reparam_theta(cache: &Cache, eps: &[f64], prior: Prior, noise_free: bool) -> 
                 }
                 softmax(&z)
             };
-            Reparam { theta, kw: vec![], lam: vec![], ln_l: vec![], g: vec![], s: 0.0, eta: vec![] }
+            Reparam {
+                theta,
+                kw: vec![],
+                lam: vec![],
+                ln_l: vec![],
+                g: vec![],
+                s: 0.0,
+                eta: vec![],
+            }
         }
         Prior::StickBreaking => {
             // Gaussian latent (same as laplace), simplex via stick-breaking.
             let z = if noise_free {
                 cache.mu.clone()
             } else {
-                (0..k).map(|t| cache.mu[t] + (0.5 * cache.logvar[t]).exp() * eps[t]).collect()
+                (0..k)
+                    .map(|t| cache.mu[t] + (0.5 * cache.logvar[t]).exp() * eps[t])
+                    .collect()
             };
             let (eta, theta) = stick_break(&z);
-            Reparam { theta, kw: vec![], lam: vec![], ln_l: vec![], g: vec![], s: 0.0, eta }
+            Reparam {
+                theta,
+                kw: vec![],
+                lam: vec![],
+                ln_l: vec![],
+                g: vec![],
+                s: 0.0,
+                eta,
+            }
         }
         Prior::Dirichlet => {
             let mut kw = vec![0.0; k];
@@ -252,7 +279,15 @@ fn reparam_theta(cache: &Cache, eps: &[f64], prior: Prior, noise_free: bool) -> 
                 s += gt;
             }
             let theta: Vec<f64> = (0..k).map(|t| g[t] / s).collect();
-            Reparam { theta, kw, lam, ln_l, g, s, eta: vec![] }
+            Reparam {
+                theta,
+                kw,
+                lam,
+                ln_l,
+                g,
+                s,
+                eta: vec![],
+            }
         }
     }
 }
@@ -320,7 +355,8 @@ fn backward_doc(
                 g_mu[t] += g_z[t];
                 g_logvar[t] += g_z[t] * eps[t] * 0.5 * s;
                 // KL = -0.5 (1 + logvar - mu^2 - exp logvar)
-                kl += -0.5 * (1.0 + cache.logvar[t] - cache.mu[t] * cache.mu[t] - cache.logvar[t].exp());
+                kl += -0.5
+                    * (1.0 + cache.logvar[t] - cache.mu[t] * cache.mu[t] - cache.logvar[t].exp());
                 g_mu[t] += cache.mu[t];
                 g_logvar[t] += 0.5 * (cache.logvar[t].exp() - 1.0);
             }
@@ -341,7 +377,8 @@ fn backward_doc(
                 let s = (0.5 * cache.logvar[t]).exp();
                 g_mu[t] += g_z[t];
                 g_logvar[t] += g_z[t] * eps[t] * 0.5 * s;
-                kl += -0.5 * (1.0 + cache.logvar[t] - cache.mu[t] * cache.mu[t] - cache.logvar[t].exp());
+                kl += -0.5
+                    * (1.0 + cache.logvar[t] - cache.mu[t] * cache.mu[t] - cache.logvar[t].exp());
                 g_mu[t] += cache.mu[t];
                 g_logvar[t] += 0.5 * (cache.logvar[t].exp() - 1.0);
             }
@@ -359,7 +396,11 @@ fn backward_doc(
             let dot: f64 = (0..k).map(|t| g_theta[t] * theta[t]).sum();
             for m in 0..k {
                 let dg = (g_theta[m] - dot) / rep.s;
-                let dg_dlam = if rep.lam[m] != 0.0 { rep.g[m] / rep.lam[m] } else { 0.0 };
+                let dg_dlam = if rep.lam[m] != 0.0 {
+                    rep.g[m] / rep.lam[m]
+                } else {
+                    0.0
+                };
                 let dg_dkw = rep.g[m] * (-rep.ln_l[m] / (rep.kw[m] * rep.kw[m]));
                 g_mu[m] += dg * dg_dkw * sigmoid(cache.mu[m]);
                 g_logvar[m] += dg * dg_dlam * sigmoid(cache.logvar[m]);
@@ -377,7 +418,11 @@ fn backward_doc(
                 let dot: f64 = (0..k).map(|t| dzp[t] * pos.theta[t]).sum();
                 for m in 0..k {
                     let dg = (dzp[m] - dot) / pos.s;
-                    let dg_dlam = if pos.lam[m] != 0.0 { pos.g[m] / pos.lam[m] } else { 0.0 };
+                    let dg_dlam = if pos.lam[m] != 0.0 {
+                        pos.g[m] / pos.lam[m]
+                    } else {
+                        0.0
+                    };
                     let dg_dkw = pos.g[m] * (-pos.ln_l[m] / (pos.kw[m] * pos.kw[m]));
                     g_mu[m] += dg * dg_dkw * sigmoid(cache.mu[m]);
                     g_logvar[m] += dg * dg_dlam * sigmoid(cache.logvar[m]);
@@ -448,7 +493,9 @@ impl EtmVaeModel {
     /// uses the normalized Weibull at the posterior median (`u = 0.5`), the
     /// deterministic counterpart of its training reparameterization.
     pub fn transform(&self, docs: &[Vec<u32>]) -> Vec<Vec<f64>> {
-        docs.iter().map(|d| self.infer_theta(&normalized_bow(d))).collect()
+        docs.iter()
+            .map(|d| self.infer_theta(&normalized_bow(d)))
+            .collect()
     }
 
     fn infer_theta(&self, xn: &[(usize, f64)]) -> Vec<f64> {
@@ -521,7 +568,13 @@ struct Adam {
 
 impl Adam {
     fn new(len: usize, lr: f64, wd: f64) -> Self {
-        Adam { m: vec![0.0; len], v: vec![0.0; len], t: 0, lr, wd }
+        Adam {
+            m: vec![0.0; len],
+            v: vec![0.0; len],
+            t: 0,
+            lr,
+            wd,
+        }
     }
     fn step(&mut self, p: &mut [f64], grad: &[f64]) {
         const B1: f64 = 0.9;
@@ -530,8 +583,9 @@ impl Adam {
         self.t += 1;
         let bc1 = 1.0 - B1.powi(self.t as i32);
         let bc2 = 1.0 - B2.powi(self.t as i32);
-        for (pi, (&g0, (mi, vi))) in
-            p.iter_mut().zip(grad.iter().zip(self.m.iter_mut().zip(self.v.iter_mut())))
+        for (pi, (&g0, (mi, vi))) in p
+            .iter_mut()
+            .zip(grad.iter().zip(self.m.iter_mut().zip(self.v.iter_mut())))
         {
             let g = g0 + self.wd * *pi;
             *mi = B1 * *mi + (1.0 - B1) * g;
@@ -626,8 +680,7 @@ pub fn fit_etm_vae<R: Rng>(
             // Contrastive InfoNCE gradients (anchor and positive views), scaled by
             // the contrastive weight. Empty when the flag is off or the batch is < 2.
             let (dz_c, dz_pos) = if opts.contrastive && bsz >= 2 {
-                let (mut dz, dzp) =
-                    info_nce_backward(&thetas, &thetas_pos, opts.contrastive_temp);
+                let (mut dz, dzp) = info_nce_backward(&thetas, &thetas_pos, opts.contrastive_temp);
                 for row in &mut dz {
                     for x in row.iter_mut() {
                         *x *= opts.contrastive_weight;
@@ -635,10 +688,14 @@ pub fn fit_etm_vae<R: Rng>(
                 }
                 let dzp: Vec<Vec<f64>> = dzp
                     .into_iter()
-                    .map(|row| row.into_iter().map(|x| x * opts.contrastive_weight).collect())
+                    .map(|row| {
+                        row.into_iter()
+                            .map(|x| x * opts.contrastive_weight)
+                            .collect()
+                    })
                     .collect();
-                batch_loss +=
-                    opts.contrastive_weight * info_nce_loss(&thetas, &thetas_pos, opts.contrastive_temp);
+                batch_loss += opts.contrastive_weight
+                    * info_nce_loss(&thetas, &thetas_pos, opts.contrastive_temp);
                 (Some(dz), Some(dzp))
             } else {
                 (None, None)
@@ -648,8 +705,18 @@ pub fn fit_etm_vae<R: Rng>(
                 let dx = dz_c.as_ref().map(|d| d[bi].as_slice());
                 let dxp = dz_pos.as_ref().map(|d| d[bi].as_slice());
                 let (recon, kl) = backward_doc(
-                    &enc, &xn[di], &bows[di], &caches[bi], &epss[bi], &reps[bi], opts.prior,
-                    dx, dxp, &beta, &mut g, &mut g_beta,
+                    &enc,
+                    &xn[di],
+                    &bows[di],
+                    &caches[bi],
+                    &epss[bi],
+                    &reps[bi],
+                    opts.prior,
+                    dx,
+                    dxp,
+                    &beta,
+                    &mut g,
+                    &mut g_beta,
                 );
                 batch_loss += recon + kl;
             }
@@ -705,7 +772,10 @@ pub fn fit_etm_vae<R: Rng>(
         prior: opts.prior,
     };
     let doc_topic: Vec<Vec<f64>> = xn.iter().map(|x| model_stub.infer_theta(x)).collect();
-    EtmVaeModel { doc_topic, ..model_stub }
+    EtmVaeModel {
+        doc_topic,
+        ..model_stub
+    }
 }
 
 fn scaled(v: &[f64], s: f64) -> Vec<f64> {
@@ -752,11 +822,17 @@ mod tests {
 
     fn clone_encoder(e: &Encoder) -> Encoder {
         Encoder {
-            v: e.v, hidden: e.hidden, k: e.k,
-            w1: e.w1.clone(), b1: e.b1.clone(),
-            w2: e.w2.clone(), b2: e.b2.clone(),
-            w_mu: e.w_mu.clone(), b_mu: e.b_mu.clone(),
-            w_ls: e.w_ls.clone(), b_ls: e.b_ls.clone(),
+            v: e.v,
+            hidden: e.hidden,
+            k: e.k,
+            w1: e.w1.clone(),
+            b1: e.b1.clone(),
+            w2: e.w2.clone(),
+            b2: e.b2.clone(),
+            w_mu: e.w_mu.clone(),
+            b_mu: e.b_mu.clone(),
+            w_ls: e.w_ls.clone(),
+            b_ls: e.b_ls.clone(),
         }
     }
 
@@ -767,16 +843,22 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         let (v, hidden, k, e) = (6usize, 4usize, 3usize, 2usize);
         let enc0 = Encoder::new(v, hidden, k, &mut rng);
-        let rho: Vec<Vec<f64>> =
-            (0..v).map(|_| (0..e).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect()).collect();
-        let alpha0: Vec<Vec<f64>> =
-            (0..k).map(|_| (0..e).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect()).collect();
+        let rho: Vec<Vec<f64>> = (0..v)
+            .map(|_| (0..e).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect())
+            .collect();
+        let alpha0: Vec<Vec<f64>> = (0..k)
+            .map(|_| (0..e).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect())
+            .collect();
         let docs: Vec<Vec<u32>> = vec![vec![0, 0, 2, 3, 3, 5], vec![1, 4, 4, 5], vec![2, 2, 3, 0]];
         let xns: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| normalized_bow(d)).collect();
         let bows: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| raw_bow(d)).collect();
         let n = docs.len();
         let epss: Vec<Vec<f64>> = (0..n)
-            .map(|i| (0..k).map(|t| 0.2 * (i as f64 + 1.0) - 0.13 * t as f64).collect())
+            .map(|i| {
+                (0..k)
+                    .map(|t| 0.2 * (i as f64 + 1.0) - 0.13 * t as f64)
+                    .collect()
+            })
             .collect();
 
         // Whole-batch loss as a function of the encoder and alpha.
@@ -799,7 +881,9 @@ mod tests {
                         // Both keep the Gaussian latent, so the KL is N(q || N(0, I)).
                         for t in 0..k {
                             total += -0.5
-                                * (1.0 + cache.logvar[t] - cache.mu[t].powi(2) - cache.logvar[t].exp());
+                                * (1.0 + cache.logvar[t]
+                                    - cache.mu[t].powi(2)
+                                    - cache.logvar[t].exp());
                         }
                     }
                     Prior::Dirichlet => {
@@ -840,16 +924,36 @@ mod tests {
         }
         let (dz_c, dz_pos) = if opts.contrastive && n >= 2 {
             let (mut dz, dzp) = info_nce_backward(&thetas, &thetas_pos, opts.contrastive_temp);
-            for row in &mut dz { for x in row.iter_mut() { *x *= opts.contrastive_weight; } }
-            let dzp: Vec<Vec<f64>> = dzp.into_iter()
-                .map(|r| r.into_iter().map(|x| x * opts.contrastive_weight).collect()).collect();
+            for row in &mut dz {
+                for x in row.iter_mut() {
+                    *x *= opts.contrastive_weight;
+                }
+            }
+            let dzp: Vec<Vec<f64>> = dzp
+                .into_iter()
+                .map(|r| r.into_iter().map(|x| x * opts.contrastive_weight).collect())
+                .collect();
             (Some(dz), Some(dzp))
-        } else { (None, None) };
+        } else {
+            (None, None)
+        };
         for i in 0..n {
             let dx = dz_c.as_ref().map(|d| d[i].as_slice());
             let dxp = dz_pos.as_ref().map(|d| d[i].as_slice());
-            backward_doc(&enc0, &xns[i], &bows[i], &caches[i], &epss[i], &reps[i], opts.prior,
-                dx, dxp, &beta, &mut g, &mut g_beta);
+            backward_doc(
+                &enc0,
+                &xns[i],
+                &bows[i],
+                &caches[i],
+                &epss[i],
+                &reps[i],
+                opts.prior,
+                dx,
+                dxp,
+                &beta,
+                &mut g,
+                &mut g_beta,
+            );
         }
         let g_alpha = alpha_grad(&g_beta, &beta, &rho, e);
 
@@ -858,7 +962,9 @@ mod tests {
         let mut chk = |analytic: f64, num: f64| {
             let abs = (analytic - num).abs();
             let denom = analytic.abs().max(num.abs());
-            if denom > 1e-3 { max_rel = max_rel.max(abs / denom); }
+            if denom > 1e-3 {
+                max_rel = max_rel.max(abs / denom);
+            }
             assert!(abs < 1e-4, "analytic {analytic} vs numeric {num}");
         };
         macro_rules! check_block {
@@ -873,8 +979,14 @@ mod tests {
                 }
             };
         }
-        check_block!(w1); check_block!(b1); check_block!(w2); check_block!(b2);
-        check_block!(w_mu); check_block!(b_mu); check_block!(w_ls); check_block!(b_ls);
+        check_block!(w1);
+        check_block!(b1);
+        check_block!(w2);
+        check_block!(b2);
+        check_block!(w_mu);
+        check_block!(b_mu);
+        check_block!(w_ls);
+        check_block!(b_ls);
         for t in 0..k {
             for d in 0..e {
                 let mut ap = alpha0.clone();
@@ -897,16 +1009,24 @@ mod tests {
     #[test]
     fn etm_contrastive_gradients_match_fd() {
         let opts = AvitmOptions {
-            contrastive: true, contrastive_weight: 0.7, contrastive_temp: 0.4,
+            contrastive: true,
+            contrastive_weight: 0.7,
+            contrastive_temp: 0.4,
             ..AvitmOptions::default()
         };
         let max_rel = etm_fd_check(opts);
-        assert!(max_rel < 1e-4, "etm contrastive max relative error {max_rel}");
+        assert!(
+            max_rel < 1e-4,
+            "etm contrastive max relative error {max_rel}"
+        );
     }
 
     #[test]
     fn etm_dirichlet_gradients_match_fd() {
-        let opts = AvitmOptions { prior: Prior::Dirichlet, ..AvitmOptions::default() };
+        let opts = AvitmOptions {
+            prior: Prior::Dirichlet,
+            ..AvitmOptions::default()
+        };
         let max_rel = etm_fd_check(opts);
         assert!(max_rel < 1e-4, "etm dirichlet max relative error {max_rel}");
     }
@@ -914,28 +1034,44 @@ mod tests {
     #[test]
     fn etm_contrastive_and_dirichlet_compose_fd() {
         let opts = AvitmOptions {
-            prior: Prior::Dirichlet, contrastive: true,
-            contrastive_weight: 0.6, contrastive_temp: 0.5,
+            prior: Prior::Dirichlet,
+            contrastive: true,
+            contrastive_weight: 0.6,
+            contrastive_temp: 0.5,
         };
         let max_rel = etm_fd_check(opts);
-        assert!(max_rel < 1e-4, "etm contrastive+dirichlet max relative error {max_rel}");
+        assert!(
+            max_rel < 1e-4,
+            "etm contrastive+dirichlet max relative error {max_rel}"
+        );
     }
 
     #[test]
     fn etm_stick_breaking_gradients_match_fd() {
-        let opts = AvitmOptions { prior: Prior::StickBreaking, ..AvitmOptions::default() };
+        let opts = AvitmOptions {
+            prior: Prior::StickBreaking,
+            ..AvitmOptions::default()
+        };
         let max_rel = etm_fd_check(opts);
-        assert!(max_rel < 1e-4, "etm stick-breaking max relative error {max_rel}");
+        assert!(
+            max_rel < 1e-4,
+            "etm stick-breaking max relative error {max_rel}"
+        );
     }
 
     #[test]
     fn etm_contrastive_and_stick_breaking_compose_fd() {
         let opts = AvitmOptions {
-            prior: Prior::StickBreaking, contrastive: true,
-            contrastive_weight: 0.6, contrastive_temp: 0.5,
+            prior: Prior::StickBreaking,
+            contrastive: true,
+            contrastive_weight: 0.6,
+            contrastive_temp: 0.5,
         };
         let max_rel = etm_fd_check(opts);
-        assert!(max_rel < 1e-4, "etm contrastive+stick-breaking max relative error {max_rel}");
+        assert!(
+            max_rel < 1e-4,
+            "etm contrastive+stick-breaking max relative error {max_rel}"
+        );
     }
 
     // Planted blocks: K word-blocks, each document drawn from one block. The VAE
@@ -948,17 +1084,34 @@ mod tests {
         let rho: Vec<Vec<f64>> = (0..v)
             .map(|w| {
                 let b = w / block;
-                (0..e).map(|dim| if dim == b { 3.0 } else { 0.0 } + (rng.gen::<f64>() - 0.5) * 0.2).collect()
+                (0..e)
+                    .map(|dim| if dim == b { 3.0 } else { 0.0 } + (rng.gen::<f64>() - 0.5) * 0.2)
+                    .collect()
             })
             .collect();
         let docs: Vec<Vec<u32>> = (0..150)
             .map(|d| {
                 let b = d % k;
-                (0..12).map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32).collect()
+                (0..12)
+                    .map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                    .collect()
             })
             .collect();
 
-        let m = fit_etm_vae(&docs, k, v, &rho, 32, 200, 64, 0.01, 0.0, 0.0, AvitmOptions::default(), &mut rng);
+        let m = fit_etm_vae(
+            &docs,
+            k,
+            v,
+            &rho,
+            32,
+            200,
+            64,
+            0.01,
+            0.0,
+            0.0,
+            AvitmOptions::default(),
+            &mut rng,
+        );
         assert_eq!(m.beta.len(), k);
         for row in &m.doc_topic {
             assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
@@ -967,7 +1120,8 @@ mod tests {
         for t in 0..k {
             let mut ord: Vec<usize> = (0..v).collect();
             ord.sort_by(|&a, &b| m.beta[t][b].total_cmp(&m.beta[t][a]));
-            let blocks: std::collections::HashSet<usize> = ord[..4].iter().map(|&w| w / block).collect();
+            let blocks: std::collections::HashSet<usize> =
+                ord[..4].iter().map(|&w| w / block).collect();
             assert_eq!(blocks.len(), 1, "topic {t} top words mix blocks");
             covered.insert(*blocks.iter().next().unwrap());
         }
@@ -982,18 +1136,34 @@ mod tests {
         let rho: Vec<Vec<f64>> = (0..v)
             .map(|w| {
                 let b = w / block;
-                (0..e).map(|dim| if dim == b { 3.0 } else { 0.0 } + (rng.gen::<f64>() - 0.5) * 0.2).collect()
+                (0..e)
+                    .map(|dim| if dim == b { 3.0 } else { 0.0 } + (rng.gen::<f64>() - 0.5) * 0.2)
+                    .collect()
             })
             .collect();
         let docs: Vec<Vec<u32>> = (0..150)
             .map(|d| {
                 let b = d % k;
-                (0..12).map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32).collect()
+                (0..12)
+                    .map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                    .collect()
             })
             .collect();
-        let m = fit_etm_vae(&docs, k, v, &rho, 32, 200, 64, 0.01, 0.0, 0.0, AvitmOptions::default(), &mut rng);
+        let m = fit_etm_vae(
+            &docs,
+            k,
+            v,
+            &rho,
+            32,
+            200,
+            64,
+            0.01,
+            0.0,
+            0.0,
+            AvitmOptions::default(),
+            &mut rng,
+        );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }
 }
-

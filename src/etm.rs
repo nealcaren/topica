@@ -29,8 +29,8 @@
 //! reference's scaling at some cost in per-document posterior accuracy.
 
 use crate::ctm::{ctm_grad, ctm_hpb, ctm_lhood, HpbResult};
-use crate::variational::{lbfgs_minimize, doc_sparse};
 use crate::linalg::{cholesky, half_logdet, make_diagonally_dominant, spd_inverse};
+use crate::variational::{doc_sparse, lbfgs_minimize};
 use rand::Rng;
 use rayon::prelude::*;
 
@@ -211,7 +211,11 @@ pub fn fit_etm<R: Rng>(
     }
     let mut alpha = vec![vec![0.0f64; e]; k];
     for (t, ak) in alpha.iter_mut().enumerate() {
-        let src = if num_types > 0 { &rho[idx[t % num_types]] } else { &vec![0.0; e] };
+        let src = if num_types > 0 {
+            &rho[idx[t % num_types]]
+        } else {
+            &vec![0.0; e]
+        };
         for (ae, &r) in ak.iter_mut().zip(src) {
             *ae = r + (rng.gen::<f64>() - 0.5) * 0.01;
         }
@@ -265,7 +269,9 @@ pub fn fit_etm<R: Rng>(
                     1e-5,
                 );
                 // ETM uses the full Laplace covariance (diagonal=false).
-                let res = ctm_hpb(&opt, &beta, words, counts, &mu_shared, &siginv, entropy, false);
+                let res = ctm_hpb(
+                    &opt, &beta, words, counts, &mu_shared, &siginv, entropy, false,
+                );
                 (di, opt, res)
             })
             .collect();
@@ -384,7 +390,13 @@ mod tests {
     fn kl(p: &[f64], q: &[f64]) -> f64 {
         p.iter()
             .zip(q)
-            .map(|(&pi, &qi)| if pi > 0.0 { pi * (pi / qi.max(1e-12)).ln() } else { 0.0 })
+            .map(|(&pi, &qi)| {
+                if pi > 0.0 {
+                    pi * (pi / qi.max(1e-12)).ln()
+                } else {
+                    0.0
+                }
+            })
             .sum()
     }
 
@@ -408,21 +420,28 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         let (k, v, e) = (3, 30, 8);
         // Random word embeddings (fixed) and planted topic embeddings.
-        let rho: Vec<Vec<f64>> =
-            (0..v).map(|_| (0..e).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect()).collect();
-        let alpha_true: Vec<Vec<f64>> =
-            (0..k).map(|_| (0..e).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect()).collect();
+        let rho: Vec<Vec<f64>> = (0..v)
+            .map(|_| (0..e).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect())
+            .collect();
+        let alpha_true: Vec<Vec<f64>> = (0..k)
+            .map(|_| (0..e).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect())
+            .collect();
         let beta_true = softmax_beta(&rho, &alpha_true);
         // Expected counts: a large multiple of the planted beta, so the M-step
         // target is essentially beta_true.
-        let counts: Vec<Vec<f64>> =
-            beta_true.iter().map(|row| row.iter().map(|&p| p * 5000.0).collect()).collect();
+        let counts: Vec<Vec<f64>> = beta_true
+            .iter()
+            .map(|row| row.iter().map(|&p| p * 5000.0).collect())
+            .collect();
 
         let mut alpha = vec![vec![0.0f64; e]; k]; // start from zero
         let beta_hat = optimize_topic_embeddings(&rho, &mut alpha, &counts, 100.0, 200);
 
         for t in 0..k {
-            assert!(kl(&beta_true[t], &beta_hat[t]) < 1e-3, "topic {t} KL too large");
+            assert!(
+                kl(&beta_true[t], &beta_hat[t]) < 1e-3,
+                "topic {t} KL too large"
+            );
         }
     }
 
@@ -438,14 +457,18 @@ mod tests {
         let rho: Vec<Vec<f64>> = (0..v)
             .map(|w| {
                 let b = w / block;
-                (0..e).map(|dim| if dim == b { 3.0 } else { 0.0 } + (rng.gen::<f64>() - 0.5) * 0.2).collect()
+                (0..e)
+                    .map(|dim| if dim == b { 3.0 } else { 0.0 } + (rng.gen::<f64>() - 0.5) * 0.2)
+                    .collect()
             })
             .collect();
         // Documents: doc d draws 10 words from block d % k.
         let docs: Vec<Vec<u32>> = (0..90)
             .map(|d| {
                 let b = d % k;
-                (0..10).map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32).collect()
+                (0..10)
+                    .map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                    .collect()
             })
             .collect();
 
@@ -476,13 +499,17 @@ mod tests {
         let rho: Vec<Vec<f64>> = (0..v)
             .map(|w| {
                 let b = w / block;
-                (0..e).map(|dim| if dim == b { 3.0 } else { 0.0 } + (rng.gen::<f64>() - 0.5) * 0.2).collect()
+                (0..e)
+                    .map(|dim| if dim == b { 3.0 } else { 0.0 } + (rng.gen::<f64>() - 0.5) * 0.2)
+                    .collect()
             })
             .collect();
         let docs: Vec<Vec<u32>> = (0..90)
             .map(|d| {
                 let b = d % k;
-                (0..10).map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32).collect()
+                (0..10)
+                    .map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                    .collect()
             })
             .collect();
         let m = fit_etm(&docs, k, v, &rho, 50, 1e-5, 0.0, 1e6, 25, &mut rng);

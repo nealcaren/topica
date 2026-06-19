@@ -94,7 +94,11 @@ fn fast_anchor_words(qbar: &[Vec<f64>], p: &[f64], k: usize, min_p: f64) -> Opti
     let mut anchors = Vec::with_capacity(k);
     let first = *candidates
         .iter()
-        .max_by(|&&a, &&b| dot(&qbar[a], &qbar[a]).partial_cmp(&dot(&qbar[b], &qbar[b])).unwrap())
+        .max_by(|&&a, &&b| {
+            dot(&qbar[a], &qbar[a])
+                .partial_cmp(&dot(&qbar[b], &qbar[b]))
+                .unwrap()
+        })
         .unwrap();
     anchors.push(first);
 
@@ -189,7 +193,9 @@ fn recover(qbar: &[Vec<f64>], p: &[f64], anchors: &[usize], k: usize, v: usize) 
             let bvec: Vec<f64> = (0..k).map(|t| dot(anchor_rows[t], &qbar[w])).collect();
             let mut sse_old = f64::INFINITY;
             for _ in 0..MAX_ITS {
-                let gc: Vec<f64> = (0..k).map(|i| (0..k).map(|j| g[i][j] * c[j]).sum()).collect();
+                let gc: Vec<f64> = (0..k)
+                    .map(|i| (0..k).map(|j| g[i][j] * c[j]).sum())
+                    .collect();
                 // residual b − Gc and its squared norm (the convergence metric).
                 let resid: Vec<f64> = (0..k).map(|i| bvec[i] - gc[i]).collect();
                 let sse: f64 = resid.iter().map(|r| r * r).sum();
@@ -256,7 +262,11 @@ fn cooccurrence_projected(
     let mut rng = ChaCha8Rng::seed_from_u64(PROJ_SEED);
     let scale = 1.0 / (m as f64).sqrt();
     let r: Vec<Vec<f64>> = (0..v)
-        .map(|_| (0..m).map(|_| if rng.gen::<bool>() { scale } else { -scale }).collect())
+        .map(|_| {
+            (0..m)
+                .map(|_| if rng.gen::<bool>() { scale } else { -scale })
+                .collect()
+        })
         .collect();
 
     let mut qp = vec![vec![0.0f64; m]; v];
@@ -350,7 +360,9 @@ mod tests {
         let nb = 10usize;
         let bs = 400usize;
         let v = nb * bs; // 4000
-        let blocks: Vec<Vec<u32>> = (0..nb).map(|b| (b * bs..b * bs + bs).map(|w| w as u32).collect()).collect();
+        let blocks: Vec<Vec<u32>> = (0..nb)
+            .map(|b| (b * bs..b * bs + bs).map(|w| w as u32).collect())
+            .collect();
         let mut docs = Vec::new();
         for i in 0..(nb * 200) {
             let blk = &blocks[i % nb];
@@ -366,8 +378,16 @@ mod tests {
             idx.sort_by(|&a, &b| beta[t][b].partial_cmp(&beta[t][a]).unwrap());
             let block_of = |w: usize| w / bs;
             let top_block = block_of(idx[0]);
-            let same = idx[..10].iter().filter(|&&w| block_of(w) == top_block).count();
-            assert!(same >= 8, "topic {} top words not concentrated in one block ({}/10)", t, same);
+            let same = idx[..10]
+                .iter()
+                .filter(|&&w| block_of(w) == top_block)
+                .count();
+            assert!(
+                same >= 8,
+                "topic {} top words not concentrated in one block ({}/10)",
+                t,
+                same
+            );
             covered.insert(top_block);
         }
         // Every topic is cleanly block-localized (asserted above); a strong
@@ -375,7 +395,11 @@ mod tests {
         // block separation isn't guaranteed at K=10 — greedy anchor selection can
         // pick two anchors from one block — and that's true of the exact path too,
         // so we don't demand it of the approximate projected path.)
-        assert!(covered.len() >= 7, "too few blocks separated: {:?}", covered);
+        assert!(
+            covered.len() >= 7,
+            "too few blocks separated: {:?}",
+            covered
+        );
     }
 
     #[test]
@@ -397,7 +421,12 @@ mod tests {
             let is_block = blocks
                 .iter()
                 .any(|blk| blk.iter().all(|&w| top.contains(&(w as usize))));
-            assert!(is_block, "topic {} top words not a single block: {:?}", t, &idx[..3]);
+            assert!(
+                is_block,
+                "topic {} top words not a single block: {:?}",
+                t,
+                &idx[..3]
+            );
         }
     }
 }

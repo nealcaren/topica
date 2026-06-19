@@ -22,29 +22,29 @@ use pyo3::types::{PyDict, PyList, PyTuple};
 use numpy::ndarray::{Array1, Array2, Array3};
 use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArray2, ToPyArray};
 
-use crate::cvb0_ext::Cvb0ToModel;  // re-adds Cvb0::to_topic_model (TopicModel lives in topica)
+use crate::bertopic;
+use crate::cvb0_ext::Cvb0ToModel; // re-adds Cvb0::to_topic_model (TopicModel lives in topica)
 use crate::detm;
 use crate::dmr;
 use crate::dtm;
+use crate::etm;
+use crate::etm_vae;
+use crate::fastopic;
 use crate::gsdmm;
 use crate::hdp;
+use crate::hlda;
 use crate::infoctm;
 use crate::keyatm;
-use crate::seeded;
-use crate::hlda;
+use crate::labeled;
 use crate::lsa;
 use crate::nmf;
 use crate::pa;
 use crate::prodlda;
 use crate::pt;
+use crate::sage;
+use crate::seeded;
 use crate::slda;
 use crate::top2vec;
-use crate::bertopic;
-use crate::etm;
-use crate::etm_vae;
-use crate::fastopic;
-use crate::labeled;
-use crate::sage;
 use crate::variational::LogisticNormalModel;
 
 use rand::{Rng, SeedableRng};
@@ -55,7 +55,9 @@ use regex::Regex;
 
 use crate::corpus::{self, InputFormat, LoadOptions};
 use crate::model::TopicModel;
-use crate::{coherence as coh, ctm, cvb0, lightlda, optimize, output, sampler, spectral, sts, warplda};
+use crate::{
+    coherence as coh, ctm, cvb0, lightlda, optimize, output, sampler, spectral, sts, warplda,
+};
 
 // ---------------------------------------------------------------------------
 // Error helpers
@@ -175,7 +177,11 @@ struct Arr3f32 {
 }
 
 fn arr2_opt(a: &Option<Array2<f64>>) -> Option<Arr2> {
-    a.as_ref().map(|m| Arr2 { rows: m.nrows(), cols: m.ncols(), data: m.iter().copied().collect() })
+    a.as_ref().map(|m| Arr2 {
+        rows: m.nrows(),
+        cols: m.ncols(),
+        data: m.iter().copied().collect(),
+    })
 }
 fn arr2_back(s: Option<Arr2>) -> Option<Array2<f64>> {
     s.map(|a| Array2::from_shape_vec((a.rows, a.cols), a.data).unwrap())
@@ -183,7 +189,12 @@ fn arr2_back(s: Option<Arr2>) -> Option<Array2<f64>> {
 fn arr3_opt(a: &Option<Array3<f64>>) -> Option<Arr3> {
     a.as_ref().map(|m| {
         let d = m.dim();
-        Arr3 { d0: d.0, d1: d.1, d2: d.2, data: m.iter().copied().collect() }
+        Arr3 {
+            d0: d.0,
+            d1: d.1,
+            d2: d.2,
+            data: m.iter().copied().collect(),
+        }
     })
 }
 fn arr3_back(s: Option<Arr3>) -> Option<Array3<f64>> {
@@ -206,7 +217,12 @@ fn run_with_threads<T: Send, F: FnOnce() -> T + Send>(num_threads: Option<usize>
 fn arr3f32_opt(a: &Option<Array3<f32>>) -> Option<Arr3f32> {
     a.as_ref().map(|m| {
         let d = m.dim();
-        Arr3f32 { d0: d.0, d1: d.1, d2: d.2, data: m.iter().copied().collect() }
+        Arr3f32 {
+            d0: d.0,
+            d1: d.1,
+            d2: d.2,
+            data: m.iter().copied().collect(),
+        }
     })
 }
 fn arr3f32_back(s: Option<Arr3f32>) -> Option<Array3<f32>> {
@@ -235,70 +251,69 @@ fn arr1_back(s: Option<Vec<f64>>) -> Option<Array1<f64>> {
 // ---------------------------------------------------------------------------
 
 // One tag per concrete model type that calls write_state / read_state.
-const MODEL_TAG_LDA:       u8 = 1;
-const MODEL_TAG_DMR:       u8 = 2;
-const MODEL_TAG_LABELED:   u8 = 3;
-const MODEL_TAG_SAGE:      u8 = 4;
-const MODEL_TAG_CTM:       u8 = 5;
-const MODEL_TAG_STM:       u8 = 6;
-const MODEL_TAG_STS:       u8 = 7;
-const MODEL_TAG_HDP:       u8 = 8;
-const MODEL_TAG_DTM:       u8 = 9;
-const MODEL_TAG_SLDA:      u8 = 10;
-const MODEL_TAG_PT:        u8 = 11;
-const MODEL_TAG_GSDMM:     u8 = 12;
-const MODEL_TAG_SEEDED:    u8 = 13;
-const MODEL_TAG_TOP2VEC:   u8 = 14;
-const MODEL_TAG_BERTOPIC:  u8 = 15;
-const MODEL_TAG_ETM:       u8 = 16;
-const MODEL_TAG_PRODLDA:   u8 = 17;
-const MODEL_TAG_FASTOPIC:  u8 = 18;
-const MODEL_TAG_KEYATM:    u8 = 19;
-const MODEL_TAG_PA:        u8 = 20;
-const MODEL_TAG_HLDA:      u8 = 21;
-const MODEL_TAG_NMF:       u8 = 22;
-const MODEL_TAG_LSA:       u8 = 23;
+const MODEL_TAG_LDA: u8 = 1;
+const MODEL_TAG_DMR: u8 = 2;
+const MODEL_TAG_LABELED: u8 = 3;
+const MODEL_TAG_SAGE: u8 = 4;
+const MODEL_TAG_CTM: u8 = 5;
+const MODEL_TAG_STM: u8 = 6;
+const MODEL_TAG_STS: u8 = 7;
+const MODEL_TAG_HDP: u8 = 8;
+const MODEL_TAG_DTM: u8 = 9;
+const MODEL_TAG_SLDA: u8 = 10;
+const MODEL_TAG_PT: u8 = 11;
+const MODEL_TAG_GSDMM: u8 = 12;
+const MODEL_TAG_SEEDED: u8 = 13;
+const MODEL_TAG_TOP2VEC: u8 = 14;
+const MODEL_TAG_BERTOPIC: u8 = 15;
+const MODEL_TAG_ETM: u8 = 16;
+const MODEL_TAG_PRODLDA: u8 = 17;
+const MODEL_TAG_FASTOPIC: u8 = 18;
+const MODEL_TAG_KEYATM: u8 = 19;
+const MODEL_TAG_PA: u8 = 20;
+const MODEL_TAG_HLDA: u8 = 21;
+const MODEL_TAG_NMF: u8 = 22;
+const MODEL_TAG_LSA: u8 = 23;
 const MODEL_TAG_COMBINEDTM: u8 = 24;
 const MODEL_TAG_ZEROSHOTTM: u8 = 25;
-const MODEL_TAG_DETM:      u8 = 26;
-const MODEL_TAG_ECTM:      u8 = 27;
+const MODEL_TAG_DETM: u8 = 26;
+const MODEL_TAG_ECTM: u8 = 27;
 
 fn model_tag_name(tag: u8) -> &'static str {
     match tag {
-        MODEL_TAG_LDA      => "LDA",
-        MODEL_TAG_DMR      => "DMR",
-        MODEL_TAG_LABELED  => "LabeledLDA",
-        MODEL_TAG_SAGE     => "SAGE",
-        MODEL_TAG_CTM      => "CTM",
-        MODEL_TAG_STM      => "STM",
-        MODEL_TAG_STS      => "STS",
-        MODEL_TAG_HDP      => "HDP",
-        MODEL_TAG_DTM      => "DTM",
-        MODEL_TAG_SLDA     => "SupervisedLDA",
-        MODEL_TAG_PT       => "PT",
-        MODEL_TAG_GSDMM    => "GSDMM",
-        MODEL_TAG_SEEDED   => "SeededLDA",
-        MODEL_TAG_TOP2VEC  => "Top2Vec",
+        MODEL_TAG_LDA => "LDA",
+        MODEL_TAG_DMR => "DMR",
+        MODEL_TAG_LABELED => "LabeledLDA",
+        MODEL_TAG_SAGE => "SAGE",
+        MODEL_TAG_CTM => "CTM",
+        MODEL_TAG_STM => "STM",
+        MODEL_TAG_STS => "STS",
+        MODEL_TAG_HDP => "HDP",
+        MODEL_TAG_DTM => "DTM",
+        MODEL_TAG_SLDA => "SupervisedLDA",
+        MODEL_TAG_PT => "PT",
+        MODEL_TAG_GSDMM => "GSDMM",
+        MODEL_TAG_SEEDED => "SeededLDA",
+        MODEL_TAG_TOP2VEC => "Top2Vec",
         MODEL_TAG_BERTOPIC => "BERTopic",
-        MODEL_TAG_ETM      => "ETM",
-        MODEL_TAG_PRODLDA  => "ProdLDA",
+        MODEL_TAG_ETM => "ETM",
+        MODEL_TAG_PRODLDA => "ProdLDA",
         MODEL_TAG_FASTOPIC => "FASTopic",
-        MODEL_TAG_KEYATM   => "KeyATM",
-        MODEL_TAG_PA       => "PA",
-        MODEL_TAG_HLDA     => "HLDA",
-        MODEL_TAG_NMF      => "NMF",
-        MODEL_TAG_LSA      => "LSA",
+        MODEL_TAG_KEYATM => "KeyATM",
+        MODEL_TAG_PA => "PA",
+        MODEL_TAG_HLDA => "HLDA",
+        MODEL_TAG_NMF => "NMF",
+        MODEL_TAG_LSA => "LSA",
         MODEL_TAG_COMBINEDTM => "CombinedTM",
         MODEL_TAG_ZEROSHOTTM => "ZeroShotTM",
-        MODEL_TAG_DETM     => "DETM",
-        MODEL_TAG_ECTM     => "ECTM",
-        _                  => "unknown",
+        MODEL_TAG_DETM => "DETM",
+        MODEL_TAG_ECTM => "ECTM",
+        _ => "unknown",
     }
 }
 
 fn write_state<S: serde::Serialize>(path: &str, model_tag: u8, state: &S) -> PyResult<()> {
-    let buf = crate::saveformat::encode_state(model_tag, state)
-        .map_err(PyValueError::new_err)?;
+    let buf = crate::saveformat::encode_state(model_tag, state).map_err(PyValueError::new_err)?;
     std::fs::write(path, buf).map_err(io_err)
 }
 fn read_state<S: serde::de::DeserializeOwned>(path: &str, expected_tag: u8) -> PyResult<S> {
@@ -310,56 +325,109 @@ fn read_state<S: serde::de::DeserializeOwned>(path: &str, expected_tag: u8) -> P
 // Per-model serializable snapshots (ndarray fields stored as Arr2/Arr3/Vec).
 #[derive(serde::Serialize, serde::Deserialize)]
 struct LdaState {
-    num_topics: usize, alpha_sum: Option<f64>, beta: f64, optimize_interval: usize,
-    burn_in: usize, seed: u64, num_threads: usize, fitted: bool,
-    phi: Option<Arr2>, theta: Option<Arr2>, model: Option<TopicModel>,
+    num_topics: usize,
+    alpha_sum: Option<f64>,
+    beta: f64,
+    optimize_interval: usize,
+    burn_in: usize,
+    seed: u64,
+    num_threads: usize,
+    fitted: bool,
+    phi: Option<Arr2>,
+    theta: Option<Arr2>,
+    model: Option<TopicModel>,
     corpus: Option<corpus::Corpus>,
-    #[serde(default)] use_symmetric_alpha: bool,
-    #[serde(default)] topic_names: Vec<String>,
-    #[serde(default)] log_likelihood_history: Vec<(usize, f64)>,
-    #[serde(default)] converged: bool,
-    #[serde(default)] init_spectral: bool,
+    #[serde(default)]
+    use_symmetric_alpha: bool,
+    #[serde(default)]
+    topic_names: Vec<String>,
+    #[serde(default)]
+    log_likelihood_history: Vec<(usize, f64)>,
+    #[serde(default)]
+    converged: bool,
+    #[serde(default)]
+    init_spectral: bool,
     // Sampler backend flags (persisted so a reloaded model is behaviorally identical).
-    #[serde(default)] light: bool,
-    #[serde(default)] warp: bool,
-    #[serde(default)] cvb0: bool,
+    #[serde(default)]
+    light: bool,
+    #[serde(default)]
+    warp: bool,
+    #[serde(default)]
+    cvb0: bool,
     // Thinned MCMC theta draws (num_draws, num_docs, num_topics), f32.
-    #[serde(default)] theta_draws: Option<Arr3f32>,
+    #[serde(default)]
+    theta_draws: Option<Arr3f32>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct DmrState {
-    num_topics: usize, beta: f64, optimize_interval: usize, burn_in: usize, seed: u64,
-    prior_variance: f64, lbfgs_iters: usize, fitted: bool,
-    phi: Option<Arr2>, theta: Option<Arr2>, feature_effects: Option<Arr2>,
-    feature_names: Vec<String>, corpus: Option<corpus::Corpus>,
-    #[serde(default)] topic_names: Vec<String>,
-    #[serde(default)] log_likelihood_history: Vec<(usize, f64)>,
-    #[serde(default)] converged: bool,
+    num_topics: usize,
+    beta: f64,
+    optimize_interval: usize,
+    burn_in: usize,
+    seed: u64,
+    prior_variance: f64,
+    lbfgs_iters: usize,
+    fitted: bool,
+    phi: Option<Arr2>,
+    theta: Option<Arr2>,
+    feature_effects: Option<Arr2>,
+    feature_names: Vec<String>,
+    corpus: Option<corpus::Corpus>,
+    #[serde(default)]
+    topic_names: Vec<String>,
+    #[serde(default)]
+    log_likelihood_history: Vec<(usize, f64)>,
+    #[serde(default)]
+    converged: bool,
     // Thinned MCMC theta draws (num_draws, num_docs, num_topics), f32.
-    #[serde(default)] theta_draws: Option<Arr3f32>,
+    #[serde(default)]
+    theta_draws: Option<Arr3f32>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct LabeledState {
-    alpha: f64, beta: f64, seed: u64, fitted: bool, num_topics: usize,
-    phi: Option<Arr2>, theta: Option<Arr2>, label_vocab: Vec<String>,
+    alpha: f64,
+    beta: f64,
+    seed: u64,
+    fitted: bool,
+    num_topics: usize,
+    phi: Option<Arr2>,
+    theta: Option<Arr2>,
+    label_vocab: Vec<String>,
     corpus: Option<corpus::Corpus>,
-    #[serde(default)] topic_names: Vec<String>,
-    #[serde(default)] log_likelihood_history: Vec<(usize, f64)>,
-    #[serde(default)] converged: bool,
+    #[serde(default)]
+    topic_names: Vec<String>,
+    #[serde(default)]
+    log_likelihood_history: Vec<(usize, f64)>,
+    #[serde(default)]
+    converged: bool,
     // Thinned MCMC theta draws (num_draws, num_docs, num_topics), f32.
-    #[serde(default)] theta_draws: Option<Arr3f32>,
+    #[serde(default)]
+    theta_draws: Option<Arr3f32>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SageState {
-    num_topics: usize, alpha: f64, prior_variance: f64, optimize_interval: usize,
-    burn_in: usize, seed: u64, lbfgs_iters: usize, fitted: bool, num_groups: usize,
-    beta: Vec<Vec<f64>>, theta: Option<Arr2>, group_names: Vec<String>,
+    num_topics: usize,
+    alpha: f64,
+    prior_variance: f64,
+    optimize_interval: usize,
+    burn_in: usize,
+    seed: u64,
+    lbfgs_iters: usize,
+    fitted: bool,
+    num_groups: usize,
+    beta: Vec<Vec<f64>>,
+    theta: Option<Arr2>,
+    group_names: Vec<String>,
     corpus: Option<corpus::Corpus>,
-    #[serde(default)] topic_names: Vec<String>,
-    #[serde(default)] log_likelihood_history: Vec<(usize, f64)>,
-    #[serde(default)] converged: bool,
+    #[serde(default)]
+    topic_names: Vec<String>,
+    #[serde(default)]
+    log_likelihood_history: Vec<(usize, f64)>,
+    #[serde(default)]
+    converged: bool,
     // Thinned MCMC theta draws (num_draws, num_docs, num_topics), f32.
-    #[serde(default)] theta_draws: Option<Arr3f32>,
+    #[serde(default)]
+    theta_draws: Option<Arr3f32>,
 }
 /// serde default for the bound of a model saved before convergence tracking
 /// existed: NaN signals "unknown", distinct from a real bound of 0.
@@ -379,154 +447,323 @@ fn default_false() -> bool {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CtmState {
-    num_topics: usize, sigma_shrink: f64, seed: u64, init_spectral: bool, fitted: bool,
-    beta: Option<Arr2>, theta: Option<Arr2>, corr: Option<Arr2>,
-    eta_mean: Option<Arr2>, eta_cov: Option<Arr3>,
-    #[serde(default)] mu: Vec<f64>, #[serde(default)] sigma: Vec<f64>,
+    num_topics: usize,
+    sigma_shrink: f64,
+    seed: u64,
+    init_spectral: bool,
+    fitted: bool,
+    beta: Option<Arr2>,
+    theta: Option<Arr2>,
+    corr: Option<Arr2>,
+    eta_mean: Option<Arr2>,
+    eta_cov: Option<Arr3>,
+    #[serde(default)]
+    mu: Vec<f64>,
+    #[serde(default)]
+    sigma: Vec<f64>,
     corpus: Option<corpus::Corpus>,
-    #[serde(default = "nan")] bound: f64,
-    #[serde(default)] bound_history: Vec<f64>,
-    #[serde(default)] converged: bool,
-    #[serde(default)] topic_names: Vec<String>,
-    #[serde(default = "default_variational")] variational: String,
+    #[serde(default = "nan")]
+    bound: f64,
+    #[serde(default)]
+    bound_history: Vec<f64>,
+    #[serde(default)]
+    converged: bool,
+    #[serde(default)]
+    topic_names: Vec<String>,
+    #[serde(default = "default_variational")]
+    variational: String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StmState {
-    num_topics: usize, sigma_shrink: f64, seed: u64, init_spectral: bool, fitted: bool,
-    beta: Option<Arr2>, theta: Option<Arr2>, corr: Option<Arr2>,
-    eta_mean: Option<Arr2>, eta_cov: Option<Arr3>, gamma: Option<Arr2>,
-    feature_names: Vec<String>, content_beta: Option<Vec<Vec<Vec<f64>>>>,
-    #[serde(default)] mu: Vec<f64>, #[serde(default)] sigma: Vec<f64>,
-    group_names: Vec<String>, corpus: Option<corpus::Corpus>,
-    #[serde(default = "nan")] bound: f64,
-    #[serde(default)] bound_history: Vec<f64>,
-    #[serde(default)] converged: bool,
-    #[serde(default)] topic_names: Vec<String>,
-    #[serde(default = "default_variational")] variational: String,
-    #[serde(default)] content_kappa: Option<ctm::ContentKappa>,
+    num_topics: usize,
+    sigma_shrink: f64,
+    seed: u64,
+    init_spectral: bool,
+    fitted: bool,
+    beta: Option<Arr2>,
+    theta: Option<Arr2>,
+    corr: Option<Arr2>,
+    eta_mean: Option<Arr2>,
+    eta_cov: Option<Arr3>,
+    gamma: Option<Arr2>,
+    feature_names: Vec<String>,
+    content_beta: Option<Vec<Vec<Vec<f64>>>>,
+    #[serde(default)]
+    mu: Vec<f64>,
+    #[serde(default)]
+    sigma: Vec<f64>,
+    group_names: Vec<String>,
+    corpus: Option<corpus::Corpus>,
+    #[serde(default = "nan")]
+    bound: f64,
+    #[serde(default)]
+    bound_history: Vec<f64>,
+    #[serde(default)]
+    converged: bool,
+    #[serde(default)]
+    topic_names: Vec<String>,
+    #[serde(default = "default_variational")]
+    variational: String,
+    #[serde(default)]
+    content_kappa: Option<ctm::ContentKappa>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct EctmState {
-    num_topics: usize, sigma_shrink: f64, seed: u64, fitted: bool,
-    beta: Option<Arr2>, theta: Option<Arr2>,
-    eta_mean: Option<Arr2>, eta_cov: Option<Arr3>, gamma: Option<Arr2>,
+    num_topics: usize,
+    sigma_shrink: f64,
+    seed: u64,
+    fitted: bool,
+    beta: Option<Arr2>,
+    theta: Option<Arr2>,
+    eta_mean: Option<Arr2>,
+    eta_cov: Option<Arr3>,
+    gamma: Option<Arr2>,
     feature_names: Vec<String>,
     content_beta: Vec<Vec<Vec<f64>>>,
-    num_groups: usize, num_periods: usize,
-    group_names: Vec<String>, period_names: Vec<String>,
-    #[serde(default)] mu: Vec<f64>, #[serde(default)] sigma: Vec<f64>,
+    num_groups: usize,
+    num_periods: usize,
+    group_names: Vec<String>,
+    period_names: Vec<String>,
+    #[serde(default)]
+    mu: Vec<f64>,
+    #[serde(default)]
+    sigma: Vec<f64>,
     corpus: Option<corpus::Corpus>,
-    #[serde(default = "nan")] bound: f64,
-    #[serde(default)] bound_history: Vec<f64>,
-    #[serde(default)] converged: bool,
-    #[serde(default)] topic_names: Vec<String>,
-    #[serde(default = "default_variational")] variational: String,
-    #[serde(default = "default_false")] init_spectral: bool,
-    #[serde(default)] content_shift_history: Vec<f64>,
+    #[serde(default = "nan")]
+    bound: f64,
+    #[serde(default)]
+    bound_history: Vec<f64>,
+    #[serde(default)]
+    converged: bool,
+    #[serde(default)]
+    topic_names: Vec<String>,
+    #[serde(default = "default_variational")]
+    variational: String,
+    #[serde(default = "default_false")]
+    init_spectral: bool,
+    #[serde(default)]
+    content_shift_history: Vec<f64>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StsState {
-    num_topics: usize, seed: u64, init_spectral: bool, fitted: bool,
-    beta: Option<Arr2>, theta: Option<Arr2>, sentiment: Option<Arr2>,
-    gamma: Option<Arr2>, eta_mean: Option<Arr2>, eta_cov: Option<Arr3>,
+    num_topics: usize,
+    seed: u64,
+    init_spectral: bool,
+    fitted: bool,
+    beta: Option<Arr2>,
+    theta: Option<Arr2>,
+    sentiment: Option<Arr2>,
+    gamma: Option<Arr2>,
+    eta_mean: Option<Arr2>,
+    eta_cov: Option<Arr3>,
     feature_names: Vec<String>,
-    kappa_t: Vec<Vec<f64>>, kappa_s: Vec<Vec<f64>>, mv: Vec<f64>, sigma: Vec<f64>,
+    kappa_t: Vec<Vec<f64>>,
+    kappa_s: Vec<Vec<f64>>,
+    mv: Vec<f64>,
+    sigma: Vec<f64>,
     corpus: Option<corpus::Corpus>,
-    #[serde(default = "nan")] bound: f64,
-    #[serde(default)] bound_history: Vec<f64>,
-    #[serde(default)] converged: bool,
-    #[serde(default)] topic_names: Vec<String>,
+    #[serde(default = "nan")]
+    bound: f64,
+    #[serde(default)]
+    bound_history: Vec<f64>,
+    #[serde(default)]
+    converged: bool,
+    #[serde(default)]
+    topic_names: Vec<String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct HdpState {
-    alpha: f64, gamma: f64, eta: f64, seed: u64, resample_conc: bool, fitted: bool,
-    num_topics: usize, learned_alpha: f64, learned_gamma: f64,
-    beta: Option<Arr2>, theta: Option<Arr2>, corpus: Option<corpus::Corpus>,
-    #[serde(default)] trace: Vec<(usize, usize, f64, f64, f64)>,
-    #[serde(default)] topic_names: Vec<String>,
+    alpha: f64,
+    gamma: f64,
+    eta: f64,
+    seed: u64,
+    resample_conc: bool,
+    fitted: bool,
+    num_topics: usize,
+    learned_alpha: f64,
+    learned_gamma: f64,
+    beta: Option<Arr2>,
+    theta: Option<Arr2>,
+    corpus: Option<corpus::Corpus>,
+    #[serde(default)]
+    trace: Vec<(usize, usize, f64, f64, f64)>,
+    #[serde(default)]
+    topic_names: Vec<String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct DtmState {
-    num_topics: usize, alpha: f64, chain_variance: f64, obs_variance: f64, seed: u64,
-    fitted: bool, num_times: usize, bound: f64,
-    topic_words: Option<Vec<Vec<Vec<f64>>>>, corpus: Option<corpus::Corpus>,
-    #[serde(default)] topic_names: Vec<String>,
-    #[serde(default = "default_false")] init_spectral: bool,
+    num_topics: usize,
+    alpha: f64,
+    chain_variance: f64,
+    obs_variance: f64,
+    seed: u64,
+    fitted: bool,
+    num_times: usize,
+    bound: f64,
+    topic_words: Option<Vec<Vec<Vec<f64>>>>,
+    corpus: Option<corpus::Corpus>,
+    #[serde(default)]
+    topic_names: Vec<String>,
+    #[serde(default = "default_false")]
+    init_spectral: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SldaState {
-    num_topics: usize, alpha: f64, seed: u64, fitted: bool, sigma2: f64,
-    eta: Option<Vec<f64>>, beta: Option<Arr2>, theta: Option<Arr2>,
-    log_beta: Option<Vec<Vec<f64>>>, corpus: Option<corpus::Corpus>,
-    #[serde(default)] topic_names: Vec<String>,
-    #[serde(default)] log_likelihood_history: Vec<(usize, f64)>,
-    #[serde(default)] converged: bool,
+    num_topics: usize,
+    alpha: f64,
+    seed: u64,
+    fitted: bool,
+    sigma2: f64,
+    eta: Option<Vec<f64>>,
+    beta: Option<Arr2>,
+    theta: Option<Arr2>,
+    log_beta: Option<Vec<Vec<f64>>>,
+    corpus: Option<corpus::Corpus>,
+    #[serde(default)]
+    topic_names: Vec<String>,
+    #[serde(default)]
+    log_likelihood_history: Vec<(usize, f64)>,
+    #[serde(default)]
+    converged: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PtState {
-    num_topics: usize, num_pseudo: usize, alpha: f64, beta: f64, seed: u64, fitted: bool,
-    phi: Option<Arr2>, theta: Option<Arr2>, corpus: Option<corpus::Corpus>,
-    #[serde(default)] topic_names: Vec<String>,
-    #[serde(default)] log_likelihood_history: Vec<(usize, f64)>,
-    #[serde(default)] converged: bool,
+    num_topics: usize,
+    num_pseudo: usize,
+    alpha: f64,
+    beta: f64,
+    seed: u64,
+    fitted: bool,
+    phi: Option<Arr2>,
+    theta: Option<Arr2>,
+    corpus: Option<corpus::Corpus>,
+    #[serde(default)]
+    topic_names: Vec<String>,
+    #[serde(default)]
+    log_likelihood_history: Vec<(usize, f64)>,
+    #[serde(default)]
+    converged: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct GsdmmState {
-    k_max: usize, alpha: f64, beta: f64, seed: u64, fitted: bool, num_used: usize,
-    phi: Option<Arr2>, theta: Option<Arr2>, doc_cluster: Vec<usize>,
+    k_max: usize,
+    alpha: f64,
+    beta: f64,
+    seed: u64,
+    fitted: bool,
+    num_used: usize,
+    phi: Option<Arr2>,
+    theta: Option<Arr2>,
+    doc_cluster: Vec<usize>,
     corpus: Option<corpus::Corpus>,
-    #[serde(default)] trace: Vec<(usize, usize, f64)>,
-    #[serde(default)] topic_names: Vec<String>,
+    #[serde(default)]
+    trace: Vec<(usize, usize, f64)>,
+    #[serde(default)]
+    topic_names: Vec<String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SeededState {
-    num_topics: usize, alpha: f64, beta: f64, weight: f64, seed: u64, fitted: bool,
-    topic_names: Vec<String>, phi: Option<Arr2>, theta: Option<Arr2>,
+    num_topics: usize,
+    alpha: f64,
+    beta: f64,
+    weight: f64,
+    seed: u64,
+    fitted: bool,
+    topic_names: Vec<String>,
+    phi: Option<Arr2>,
+    theta: Option<Arr2>,
     corpus: Option<corpus::Corpus>,
-    #[serde(default)] log_likelihood_history: Vec<(usize, f64)>,
-    #[serde(default)] converged: bool,
+    #[serde(default)]
+    log_likelihood_history: Vec<(usize, f64)>,
+    #[serde(default)]
+    converged: bool,
     // Seed metadata: persisted so load() restores the model faithfully.
     // seed_names / seed_words allow re-fit without re-supplying the keyword dict;
     // residual is the count of unseeded fallback topics.
-    #[serde(default)] seed_names: Vec<String>,
-    #[serde(default)] seed_words: Vec<Vec<String>>,
-    #[serde(default)] residual: usize,
+    #[serde(default)]
+    seed_names: Vec<String>,
+    #[serde(default)]
+    seed_words: Vec<Vec<String>>,
+    #[serde(default)]
+    residual: usize,
     // Sampler backend flags.
-    #[serde(default)] warp: bool,
-    #[serde(default)] cvb0: bool,
+    #[serde(default)]
+    warp: bool,
+    #[serde(default)]
+    cvb0: bool,
     // Thinned MCMC theta draws (num_draws, num_docs, num_topics), f32.
-    #[serde(default)] theta_draws: Option<Arr3f32>,
+    #[serde(default)]
+    theta_draws: Option<Arr3f32>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct KeyAtmState {
-    num_topics: usize, alpha: f64, beta: f64, beta_keyword: f64, gamma1: f64, gamma2: f64,
-    seed: u64, fitted: bool, topic_names: Vec<String>, keyword_rate: Vec<f64>,
-    phi: Option<Arr2>, theta: Option<Arr2>, corpus: Option<corpus::Corpus>,
-    #[serde(default)] log_likelihood_history: Vec<(usize, f64, f64)>,
-    #[serde(default)] converged: bool,
-    #[serde(default)] alpha_history: Vec<(usize, Vec<f64>)>,
-    #[serde(default)] pi_history: Vec<(usize, Vec<f64>)>,
-    #[serde(default)] alpha_vec: Option<Vec<f64>>,
-    #[serde(default = "default_num_threads")] num_threads: usize,
+    num_topics: usize,
+    alpha: f64,
+    beta: f64,
+    beta_keyword: f64,
+    gamma1: f64,
+    gamma2: f64,
+    seed: u64,
+    fitted: bool,
+    topic_names: Vec<String>,
+    keyword_rate: Vec<f64>,
+    phi: Option<Arr2>,
+    theta: Option<Arr2>,
+    corpus: Option<corpus::Corpus>,
+    #[serde(default)]
+    log_likelihood_history: Vec<(usize, f64, f64)>,
+    #[serde(default)]
+    converged: bool,
+    #[serde(default)]
+    alpha_history: Vec<(usize, Vec<f64>)>,
+    #[serde(default)]
+    pi_history: Vec<(usize, Vec<f64>)>,
+    #[serde(default)]
+    alpha_vec: Option<Vec<f64>>,
+    #[serde(default = "default_num_threads")]
+    num_threads: usize,
     // Thinned MCMC theta draws (num_draws, num_docs, num_topics), f32.
-    #[serde(default)] theta_draws: Option<Arr3f32>,
+    #[serde(default)]
+    theta_draws: Option<Arr3f32>,
 }
-fn default_num_threads() -> usize { 1 }
+fn default_num_threads() -> usize {
+    1
+}
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PaState {
-    num_super: usize, num_sub: usize, alpha: f64, beta: f64, seed: u64, fitted: bool,
-    phi: Option<Arr2>, theta: Option<Arr2>, super_sub: Option<Arr2>,
+    num_super: usize,
+    num_sub: usize,
+    alpha: f64,
+    beta: f64,
+    seed: u64,
+    fitted: bool,
+    phi: Option<Arr2>,
+    theta: Option<Arr2>,
+    super_sub: Option<Arr2>,
     corpus: Option<corpus::Corpus>,
-    #[serde(default)] topic_names: Vec<String>,
-    #[serde(default)] log_likelihood_history: Vec<(usize, f64)>,
-    #[serde(default)] converged: bool,
+    #[serde(default)]
+    topic_names: Vec<String>,
+    #[serde(default)]
+    log_likelihood_history: Vec<(usize, f64)>,
+    #[serde(default)]
+    converged: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct HldaState {
-    depth: usize, gamma: f64, eta: f64, alpha: f64, seed: u64, fitted: bool,
-    num_nodes: usize, node_topic_word: Option<Arr2>, node_levels: Vec<usize>,
-    node_parents: Vec<i64>, doc_paths: Vec<Vec<usize>>, corpus: Option<corpus::Corpus>,
-    #[serde(default)] topic_names: Vec<String>,
+    depth: usize,
+    gamma: f64,
+    eta: f64,
+    alpha: f64,
+    seed: u64,
+    fitted: bool,
+    num_nodes: usize,
+    node_topic_word: Option<Arr2>,
+    node_levels: Vec<usize>,
+    node_parents: Vec<i64>,
+    doc_paths: Vec<Vec<usize>>,
+    corpus: Option<corpus::Corpus>,
+    #[serde(default)]
+    topic_names: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -607,8 +844,8 @@ fn build_corpus_from_docs(
         per_doc_type_sets.push(seen);
     }
 
-    let doc_names: Vec<String> = doc_names_in
-        .unwrap_or_else(|| (0..n).map(|i| format!("doc_{}", i)).collect());
+    let doc_names: Vec<String> =
+        doc_names_in.unwrap_or_else(|| (0..n).map(|i| format!("doc_{}", i)).collect());
     let doc_labels: Vec<String> = doc_labels_in.unwrap_or_else(|| vec![String::new(); n]);
 
     let num_types = id_to_word.len();
@@ -797,7 +1034,11 @@ impl Corpus {
             min_cf,
             rm_top,
         )?;
-        Ok(Corpus { inner, kept_indices, metadata: None })
+        Ok(Corpus {
+            inner,
+            kept_indices,
+            metadata: None,
+        })
     }
 
     /// Load and tokenise a raw text file (MALLET-style), matching the
@@ -849,7 +1090,11 @@ impl Corpus {
         };
         let inner = corpus::load_text_file(Path::new(path), &opts).map_err(io_err)?;
         let kept_indices = (0..inner.num_docs()).collect();
-        Ok(Corpus { inner, kept_indices, metadata: None })
+        Ok(Corpus {
+            inner,
+            kept_indices,
+            metadata: None,
+        })
     }
 
     /// Load a binary corpus file written by the ``preprocess`` CLI or
@@ -858,7 +1103,11 @@ impl Corpus {
     fn load(path: &str) -> PyResult<Self> {
         let inner = corpus::load_corpus(Path::new(path)).map_err(io_err)?;
         let kept_indices = (0..inner.num_docs()).collect();
-        Ok(Corpus { inner, kept_indices, metadata: None })
+        Ok(Corpus {
+            inner,
+            kept_indices,
+            metadata: None,
+        })
     }
 
     /// Write this corpus to a binary file (the ``preprocess`` format), so it
@@ -906,7 +1155,11 @@ impl Corpus {
         self.inner
             .docs
             .iter()
-            .map(|d| d.iter().map(|&w| self.inner.id_to_word[w as usize].clone()).collect())
+            .map(|d| {
+                d.iter()
+                    .map(|&w| self.inner.id_to_word[w as usize].clone())
+                    .collect()
+            })
             .collect()
     }
 
@@ -998,7 +1251,7 @@ pub struct LDA {
     corpus: Option<corpus::Corpus>,
     // Convergence tracking (issue #46 uniform interface).
     log_likelihood_history: Vec<(usize, f64)>, // (iteration, log_likelihood)
-    converged: bool,   // true only when convergence_tol criterion was met
+    converged: bool,                           // true only when convergence_tol criterion was met
 }
 
 impl LDA {
@@ -1044,7 +1297,9 @@ impl LDA {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 
@@ -1065,10 +1320,7 @@ impl LDA {
     /// Map held-out documents (a `Corpus` or `list[list[str]]`) to trained
     /// vocabulary ids, dropping out-of-vocabulary tokens. Returns
     /// `(docs_as_ids, num_tokens_scored, num_oov_dropped)`.
-    fn map_heldout(
-        &self,
-        data: &Bound<'_, PyAny>,
-    ) -> PyResult<(Vec<Vec<usize>>, usize, usize)> {
+    fn map_heldout(&self, data: &Bound<'_, PyAny>) -> PyResult<(Vec<Vec<usize>>, usize, usize)> {
         let trained = self.corpus.as_ref().unwrap();
         let index: HashMap<&str, usize> = trained
             .id_to_word
@@ -1089,7 +1341,9 @@ impl LDA {
                 .collect()
         } else {
             data.extract::<Vec<Vec<String>>>().map_err(|_| {
-                PyValueError::new_err("expected a Corpus or a list of token lists (list[list[str]])")
+                PyValueError::new_err(
+                    "expected a Corpus or a list of token lists (list[list[str]])",
+                )
             })?
         };
 
@@ -1165,7 +1419,9 @@ impl LDA {
             }
         };
         if light && mh_steps == 0 {
-            return Err(PyValueError::new_err("mh_steps must be >= 1 for the lightlda sampler"));
+            return Err(PyValueError::new_err(
+                "mh_steps must be >= 1 for the lightlda sampler",
+            ));
         }
         let init_spectral = match init {
             "spectral" => true,
@@ -1365,8 +1621,10 @@ impl LDA {
                     (acc_phi, acc_theta, ll_history, converged, model, corpus)
                 });
             self.theta_draws = None;
-            self.finalize_fit(num_topics, num_types, num_docs, acc_phi, acc_theta, model, corpus,
-                ll_history, converged);
+            self.finalize_fit(
+                num_topics, num_types, num_docs, acc_phi, acc_theta, model, corpus, ll_history,
+                converged,
+            );
             return Ok(());
         }
 
@@ -1378,30 +1636,66 @@ impl LDA {
         // trace, converged=false). The SparseLDA path stays separate to keep its
         // convergence trace, parallel sweep, and CLI byte-parity untouched.
         if warp || light {
-            let (acc_phi, acc_theta, theta_draw_buf, model, corpus) =
-                py.allow_threads(move || {
-                    let alpha0 = vec![alpha_sum / num_topics as f64; num_topics];
-                    if warp {
-                        let ws = warplda::WarpLda::new(&corpus, num_topics, &alpha0, beta, &mut rng);
-                        run_mh_training(
-                            ws, corpus, num_topics, num_types, num_docs, iters, num_samples,
-                            sample_interval, burn_in, optimize_interval, use_symmetric_alpha,
-                            draw_thin, draw_cap, total_tokens, &mut rng, &progress, progress_interval,
-                        )
-                    } else {
-                        let mut ls =
-                            lightlda::LightLda::new(&corpus, num_topics, &alpha0, beta, &mut rng);
-                        ls.mh_steps = mh_steps;
-                        run_mh_training(
-                            ls, corpus, num_topics, num_types, num_docs, iters, num_samples,
-                            sample_interval, burn_in, optimize_interval, use_symmetric_alpha,
-                            draw_thin, draw_cap, total_tokens, &mut rng, &progress, progress_interval,
-                        )
-                    }
-                });
+            let (acc_phi, acc_theta, theta_draw_buf, model, corpus) = py.allow_threads(move || {
+                let alpha0 = vec![alpha_sum / num_topics as f64; num_topics];
+                if warp {
+                    let ws = warplda::WarpLda::new(&corpus, num_topics, &alpha0, beta, &mut rng);
+                    run_mh_training(
+                        ws,
+                        corpus,
+                        num_topics,
+                        num_types,
+                        num_docs,
+                        iters,
+                        num_samples,
+                        sample_interval,
+                        burn_in,
+                        optimize_interval,
+                        use_symmetric_alpha,
+                        draw_thin,
+                        draw_cap,
+                        total_tokens,
+                        &mut rng,
+                        &progress,
+                        progress_interval,
+                    )
+                } else {
+                    let mut ls =
+                        lightlda::LightLda::new(&corpus, num_topics, &alpha0, beta, &mut rng);
+                    ls.mh_steps = mh_steps;
+                    run_mh_training(
+                        ls,
+                        corpus,
+                        num_topics,
+                        num_types,
+                        num_docs,
+                        iters,
+                        num_samples,
+                        sample_interval,
+                        burn_in,
+                        optimize_interval,
+                        use_symmetric_alpha,
+                        draw_thin,
+                        draw_cap,
+                        total_tokens,
+                        &mut rng,
+                        &progress,
+                        progress_interval,
+                    )
+                }
+            });
             self.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, num_topics, None);
-            self.finalize_fit(num_topics, num_types, num_docs, acc_phi, acc_theta, model, corpus,
-                Vec::new(), false);
+            self.finalize_fit(
+                num_topics,
+                num_types,
+                num_docs,
+                acc_phi,
+                acc_theta,
+                model,
+                corpus,
+                Vec::new(),
+                false,
+            );
             return Ok(());
         }
 
@@ -1409,139 +1703,146 @@ impl LDA {
         // re-acquires it. allow_threads returns the owned model + accumulators.
         let (acc_phi, acc_theta, theta_draw_buf, ll_history, converged, model) =
             py.allow_threads(move || {
-            // One logical Gibbs sweep: exact sequential path when
-            // single-threaded, approximate parallel sampling otherwise. `sweep`
-            // seeds the per-worker RNGs so parallel runs are deterministic.
-            //
-            // In turbo mode (merge_every > 1, parallel only) sampling proceeds in
-            // batches: each `do_sweep` call runs `merge_every` worker sweeps and
-            // reconciles once, returning a globally consistent model. The caller
-            // therefore steps the iteration counter by `merge_every` per call and
-            // runs the per-iteration bookkeeping (θ-draws, α/β optimization,
-            // convergence checks) at those batch boundaries, where the model is
-            // consistent. With merge_every == 1 this is the exact per-sweep path.
-            let mut sweep: u64 = 0;
-            // logical iterations advanced by one do_sweep call.
-            let step = if num_threads <= 1 { 1 } else { merge_every };
-            // `batch` is the number of worker sweeps to run before reconciling;
-            // it is `step` for full windows and the remainder for a short tail
-            // window so the run never samples more than `iters` total sweeps.
-            let mut do_sweep =
-                |model: &mut TopicModel, rng: &mut Pcg64Mcg, batch: usize| {
+                // One logical Gibbs sweep: exact sequential path when
+                // single-threaded, approximate parallel sampling otherwise. `sweep`
+                // seeds the per-worker RNGs so parallel runs are deterministic.
+                //
+                // In turbo mode (merge_every > 1, parallel only) sampling proceeds in
+                // batches: each `do_sweep` call runs `merge_every` worker sweeps and
+                // reconciles once, returning a globally consistent model. The caller
+                // therefore steps the iteration counter by `merge_every` per call and
+                // runs the per-iteration bookkeeping (θ-draws, α/β optimization,
+                // convergence checks) at those batch boundaries, where the model is
+                // consistent. With merge_every == 1 this is the exact per-sweep path.
+                let mut sweep: u64 = 0;
+                // logical iterations advanced by one do_sweep call.
+                let step = if num_threads <= 1 { 1 } else { merge_every };
+                // `batch` is the number of worker sweeps to run before reconciling;
+                // it is `step` for full windows and the remainder for a short tail
+                // window so the run never samples more than `iters` total sweeps.
+                let mut do_sweep = |model: &mut TopicModel, rng: &mut Pcg64Mcg, batch: usize| {
                     if num_threads <= 1 {
                         sweep += 1;
                         sampler::run_iteration(model, &corpus, rng);
                     } else {
                         sweep += 1;
-                        let s = seed_base
-                            .wrapping_add(sweep.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+                        let s = seed_base.wrapping_add(sweep.wrapping_mul(0x9E37_79B9_7F4A_7C15));
                         parallel_sweep_batched(model, &corpus.docs, num_threads, s, batch.max(1));
                     }
                 };
-            let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
-            let mut ll_history: Vec<(usize, f64)> = Vec::new();
-            let mut converged = false;
+                let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
+                let mut ll_history: Vec<(usize, f64)> = Vec::new();
+                let mut converged = false;
 
-            // ---- main training loop (ports src/bin/train.rs) ----
-            // `step` is 1 except in turbo mode, where each do_sweep advances
-            // `step` logical iterations. We sample at the start of each window
-            // and run the per-iteration bookkeeping at its end (where the model
-            // is freshly reconciled), so θ-draws/optimization/convergence always
-            // observe a consistent global state.
-            let mut iter = 0usize;
-            while iter < iters {
-                let batch = (iters - iter).min(step);
-                do_sweep(&mut model, &mut rng, batch);
-                iter += batch;
+                // ---- main training loop (ports src/bin/train.rs) ----
+                // `step` is 1 except in turbo mode, where each do_sweep advances
+                // `step` logical iterations. We sample at the start of each window
+                // and run the per-iteration bookkeeping at its end (where the model
+                // is freshly reconciled), so θ-draws/optimization/convergence always
+                // observe a consistent global state.
+                let mut iter = 0usize;
+                while iter < iters {
+                    let batch = (iters - iter).min(step);
+                    do_sweep(&mut model, &mut rng, batch);
+                    iter += batch;
 
-                if draw_thin > 0 && iter % draw_thin == 0 {
-                    push_capped(
-                        &mut theta_draw_buf,
-                        theta_snapshot_f32(&model, &corpus),
-                        draw_cap,
-                    );
-                }
-
-                if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
-                    if use_symmetric_alpha {
-                        optimize::optimize_alpha_symmetric(&mut model, &corpus);
-                    } else {
-                        optimize::optimize_alpha(&mut model, &corpus);
+                    if draw_thin > 0 && iter % draw_thin == 0 {
+                        push_capped(
+                            &mut theta_draw_buf,
+                            theta_snapshot_f32(&model, &corpus),
+                            draw_cap,
+                        );
                     }
-                    optimize::optimize_beta(&mut model);
-                }
 
-                // Trace recording and optional convergence check (never alters RNG).
-                if convergence_tol > 0.0 && check_every > 0 && iter % check_every == 0 {
-                    let ll = output::model_log_likelihood(&model, &corpus);
-                    ll_history.push((iter, ll));
-                    // Relative change criterion: compare the current ll to the
-                    // one recorded one window back (window = check_every sweeps).
-                    if ll_history.len() >= 2 {
-                        let prev = ll_history[ll_history.len() - 2].1;
-                        let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
-                        if rel < convergence_tol {
-                            converged = true;
-                            break;
+                    if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
+                        if use_symmetric_alpha {
+                            optimize::optimize_alpha_symmetric(&mut model, &corpus);
+                        } else {
+                            optimize::optimize_alpha(&mut model, &corpus);
+                        }
+                        optimize::optimize_beta(&mut model);
+                    }
+
+                    // Trace recording and optional convergence check (never alters RNG).
+                    if convergence_tol > 0.0 && check_every > 0 && iter % check_every == 0 {
+                        let ll = output::model_log_likelihood(&model, &corpus);
+                        ll_history.push((iter, ll));
+                        // Relative change criterion: compare the current ll to the
+                        // one recorded one window back (window = check_every sweeps).
+                        if ll_history.len() >= 2 {
+                            let prev = ll_history[ll_history.len() - 2].1;
+                            let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
+                            if rel < convergence_tol {
+                                converged = true;
+                                break;
+                            }
+                        }
+                    } else if convergence_tol == 0.0 && check_every > 0 && iter % check_every == 0 {
+                        // When tol is disabled, still record the trace so fit_history
+                        // is non-empty, but never break early.
+                        let ll = output::model_log_likelihood(&model, &corpus);
+                        ll_history.push((iter, ll));
+                    }
+
+                    if let Some(cb) = &progress {
+                        if progress_interval > 0 && iter % progress_interval == 0 {
+                            let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
+                            Python::with_gil(|py| {
+                                let _ = cb.call1(py, (iter, ll));
+                            });
                         }
                     }
-                } else if convergence_tol == 0.0 && check_every > 0 && iter % check_every == 0 {
-                    // When tol is disabled, still record the trace so fit_history
-                    // is non-empty, but never break early.
-                    let ll = output::model_log_likelihood(&model, &corpus);
-                    ll_history.push((iter, ll));
                 }
 
-                if let Some(cb) = &progress {
-                    if progress_interval > 0 && iter % progress_interval == 0 {
-                        let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
-                        Python::with_gil(|py| {
-                            let _ = cb.call1(py, (iter, ll));
-                        });
+                // Under early stop, draw_thin was computed against the nominal `iters`
+                // but the loop ended at `actual_iters` sweeps; remaining draws are
+                // whatever was already collected (ring-buffered), which is correct.
+
+                // ---- sampling phase: average num_samples smoothed snapshots ----
+                let mut acc_phi = vec![vec![0.0f64; num_topics]; num_types];
+                let mut acc_theta = vec![vec![0.0f64; num_topics]; num_docs];
+
+                for _ in 0..num_samples {
+                    // Step through `sample_interval` sweeps; in turbo mode each
+                    // do_sweep covers a batch of `step`, reconciling once per batch.
+                    let mut done = 0usize;
+                    while done < sample_interval {
+                        let batch = (sample_interval - done).min(step);
+                        do_sweep(&mut model, &mut rng, batch);
+                        done += batch;
+                    }
+                    accumulate_phi(&model, &mut acc_phi);
+                    accumulate_theta(&model, &corpus, &mut acc_theta);
+                }
+
+                let n = (num_samples.max(1)) as f64;
+                for row in acc_phi.iter_mut() {
+                    for v in row.iter_mut() {
+                        *v /= n;
                     }
                 }
-            }
-
-            // Under early stop, draw_thin was computed against the nominal `iters`
-            // but the loop ended at `actual_iters` sweeps; remaining draws are
-            // whatever was already collected (ring-buffered), which is correct.
-
-            // ---- sampling phase: average num_samples smoothed snapshots ----
-            let mut acc_phi = vec![vec![0.0f64; num_topics]; num_types];
-            let mut acc_theta = vec![vec![0.0f64; num_topics]; num_docs];
-
-            for _ in 0..num_samples {
-                // Step through `sample_interval` sweeps; in turbo mode each
-                // do_sweep covers a batch of `step`, reconciling once per batch.
-                let mut done = 0usize;
-                while done < sample_interval {
-                    let batch = (sample_interval - done).min(step);
-                    do_sweep(&mut model, &mut rng, batch);
-                    done += batch;
+                for row in acc_theta.iter_mut() {
+                    for v in row.iter_mut() {
+                        *v /= n;
+                    }
                 }
-                accumulate_phi(&model, &mut acc_phi);
-                accumulate_theta(&model, &corpus, &mut acc_theta);
-            }
 
-            let n = (num_samples.max(1)) as f64;
-            for row in acc_phi.iter_mut() {
-                for v in row.iter_mut() {
-                    *v /= n;
-                }
-            }
-            for row in acc_theta.iter_mut() {
-                for v in row.iter_mut() {
-                    *v /= n;
-                }
-            }
-
-            // Return the corpus too (move it back out for storage).
-            (acc_phi, acc_theta, theta_draw_buf, ll_history, converged, (model, corpus))
-        });
+                // Return the corpus too (move it back out for storage).
+                (
+                    acc_phi,
+                    acc_theta,
+                    theta_draw_buf,
+                    ll_history,
+                    converged,
+                    (model, corpus),
+                )
+            });
         let (model, corpus) = model;
         self.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, num_topics, None);
-        self.finalize_fit(num_topics, num_types, num_docs, acc_phi, acc_theta, model, corpus,
-            ll_history, converged);
+        self.finalize_fit(
+            num_topics, num_types, num_docs, acc_phi, acc_theta, model, corpus, ll_history,
+            converged,
+        );
         Ok(())
     }
 
@@ -1664,7 +1965,9 @@ impl LDA {
             let items: Vec<Bound<'py, PyTuple>> = idx
                 .iter()
                 .take(n)
-                .map(|&w| PyTuple::new_bound(py, &[vocab[w].clone().into_py(py), phi[[t, w]].into_py(py)]))
+                .map(|&w| {
+                    PyTuple::new_bound(py, &[vocab[w].clone().into_py(py), phi[[t, w]].into_py(py)])
+                })
                 .collect();
             Ok(PyList::new_bound(py, items))
         };
@@ -1672,8 +1975,9 @@ impl LDA {
         match topic {
             Some(t) => Ok(one_topic(t)?.into_any()),
             None => {
-                let all: Vec<Bound<'py, PyList>> =
-                    (0..self.num_topics).map(one_topic).collect::<PyResult<_>>()?;
+                let all: Vec<Bound<'py, PyList>> = (0..self.num_topics)
+                    .map(one_topic)
+                    .collect::<PyResult<_>>()?;
                 Ok(PyList::new_bound(py, all).into_any())
             }
         }
@@ -1758,7 +2062,12 @@ impl LDA {
         buf.push_str("#doc source pos typeindex type topic\n");
         buf.push_str("#alpha : ");
         buf.push_str(
-            &model.alpha.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(" "),
+            &model
+                .alpha
+                .iter()
+                .map(|a| a.to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
         );
         buf.push('\n');
         buf.push_str(&format!("#beta : {}\n", model.beta));
@@ -1771,7 +2080,10 @@ impl LDA {
             let z = &model.doc_topics[d];
             for (pos, &w) in doc.iter().enumerate() {
                 let word = &corpus.id_to_word[w as usize];
-                buf.push_str(&format!("{} {} {} {} {} {}\n", d, source, pos, w, word, z[pos]));
+                buf.push_str(&format!(
+                    "{} {} {} {} {} {}\n",
+                    d, source, pos, w, word, z[pos]
+                ));
             }
         }
 
@@ -1798,7 +2110,9 @@ impl LDA {
         // Detect gzip by magic bytes; fall back to plain text otherwise.
         let text = if raw.starts_with(&[0x1f, 0x8b]) {
             let mut s = String::new();
-            GzDecoder::new(&raw[..]).read_to_string(&mut s).map_err(io_err)?;
+            GzDecoder::new(&raw[..])
+                .read_to_string(&mut s)
+                .map_err(io_err)?;
             s
         } else {
             String::from_utf8(raw).map_err(|e| PyValueError::new_err(e.to_string()))?
@@ -1816,7 +2130,10 @@ impl LDA {
 
         for line in text.lines() {
             if let Some(rest) = line.strip_prefix("#alpha") {
-                alpha = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+                alpha = rest
+                    .split_whitespace()
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
                 continue;
             }
             if let Some(rest) = line.strip_prefix("#beta") {
@@ -1831,7 +2148,9 @@ impl LDA {
             // doc source pos typeindex type topic
             let p: Vec<&str> = line.split_whitespace().collect();
             if p.len() < 6 {
-                return Err(PyValueError::new_err(format!("malformed state row: {line:?}")));
+                return Err(PyValueError::new_err(format!(
+                    "malformed state row: {line:?}"
+                )));
             }
             let parse_err = || PyValueError::new_err(format!("malformed state row: {line:?}"));
             let doc: usize = p[0].parse().map_err(|_| parse_err())?;
@@ -1843,14 +2162,21 @@ impl LDA {
             }
             id_to_word[typeindex] = p[4].to_string();
             max_topic = max_topic.max(topic);
-            docs_tokens.entry(doc).or_default().push((pos, typeindex as u32, topic));
+            docs_tokens
+                .entry(doc)
+                .or_default()
+                .push((pos, typeindex as u32, topic));
             doc_source.entry(doc).or_insert_with(|| p[1].to_string());
         }
 
         if docs_tokens.is_empty() {
             return Err(PyValueError::new_err("state file contains no token rows"));
         }
-        let num_topics = if alpha.is_empty() { max_topic as usize + 1 } else { alpha.len() };
+        let num_topics = if alpha.is_empty() {
+            max_topic as usize + 1
+        } else {
+            alpha.len()
+        };
         let num_types = id_to_word.len();
 
         let mut docs_v: Vec<Vec<u32>> = Vec::new();
@@ -1861,7 +2187,11 @@ impl LDA {
             docs_v.push(toks.iter().map(|&(_, w, _)| w).collect());
             doc_topics.push(toks.iter().map(|&(_, _, t)| t).collect());
             let src = doc_source.remove(&doc_id).unwrap_or_default();
-            doc_names.push(if src.is_empty() || src == "NA" { format!("doc_{doc_id}") } else { src });
+            doc_names.push(if src.is_empty() || src == "NA" {
+                format!("doc_{doc_id}")
+            } else {
+                src
+            });
         }
         let num_docs = docs_v.len();
 
@@ -2087,7 +2417,12 @@ impl LDA {
         }
 
         // Corpus word distribution (for the corpus-distance diagnostic).
-        let total_tokens: f64 = corpus.total_freqs.iter().map(|&c| c as f64).sum::<f64>().max(1.0);
+        let total_tokens: f64 = corpus
+            .total_freqs
+            .iter()
+            .map(|&c| c as f64)
+            .sum::<f64>()
+            .max(1.0);
 
         let list = PyList::empty_bound(py);
         for t in 0..self.num_topics {
@@ -2125,7 +2460,11 @@ impl LDA {
             let effective_words = h.exp();
 
             let tt = model.tokens_per_topic[t] as f64;
-            let document_entropy = if tt > 0.0 { tt.ln() - doc_ent_s[t] / tt } else { 0.0 };
+            let document_entropy = if tt > 0.0 {
+                tt.ln() - doc_ent_s[t] / tt
+            } else {
+                0.0
+            };
 
             let words: Vec<String> = topn.iter().map(|&w| vocab[w].clone()).collect();
 
@@ -2175,7 +2514,15 @@ impl LDA {
         let thetas: Vec<Vec<f64>> = py.allow_threads(move || {
             docs.iter()
                 .map(|d| {
-                    infer_doc(model, d, iterations, burn_in, num_samples, sample_interval, &mut rng)
+                    infer_doc(
+                        model,
+                        d,
+                        iterations,
+                        burn_in,
+                        num_samples,
+                        sample_interval,
+                        &mut rng,
+                    )
                 })
                 .collect()
         });
@@ -2298,20 +2645,33 @@ impl LDA {
     /// Save the fitted model to `path` (compact binary). Reload with `LDA.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
-        write_state(path, MODEL_TAG_LDA, &LdaState {
-            num_topics: self.num_topics, alpha_sum: self.alpha_sum, beta: self.beta,
-            optimize_interval: self.optimize_interval, burn_in: self.burn_in, seed: self.seed,
-            num_threads: self.num_threads, fitted: self.fitted,
-            phi: arr2_opt(&self.phi), theta: arr2_opt(&self.theta),
-            model: self.model.clone(), corpus: self.corpus.clone(),
-            use_symmetric_alpha: self.use_symmetric_alpha,
-            topic_names: self.topic_names.clone(),
-            log_likelihood_history: self.log_likelihood_history.clone(),
-            converged: self.converged,
-            init_spectral: self.init_spectral,
-            light: self.light, warp: self.warp, cvb0: self.cvb0,
-            theta_draws: arr3f32_opt(&self.theta_draws),
-        })
+        write_state(
+            path,
+            MODEL_TAG_LDA,
+            &LdaState {
+                num_topics: self.num_topics,
+                alpha_sum: self.alpha_sum,
+                beta: self.beta,
+                optimize_interval: self.optimize_interval,
+                burn_in: self.burn_in,
+                seed: self.seed,
+                num_threads: self.num_threads,
+                fitted: self.fitted,
+                phi: arr2_opt(&self.phi),
+                theta: arr2_opt(&self.theta),
+                model: self.model.clone(),
+                corpus: self.corpus.clone(),
+                use_symmetric_alpha: self.use_symmetric_alpha,
+                topic_names: self.topic_names.clone(),
+                log_likelihood_history: self.log_likelihood_history.clone(),
+                converged: self.converged,
+                init_spectral: self.init_spectral,
+                light: self.light,
+                warp: self.warp,
+                cvb0: self.cvb0,
+                theta_draws: arr3f32_opt(&self.theta_draws),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -2324,16 +2684,26 @@ impl LDA {
             s.topic_names
         };
         Ok(LDA {
-            num_topics: s.num_topics, alpha_sum: s.alpha_sum, beta: s.beta,
-            optimize_interval: s.optimize_interval, burn_in: s.burn_in, seed: s.seed,
-            num_threads: s.num_threads, light: s.light, warp: s.warp, cvb0: s.cvb0,
-            mh_steps: 2, fitted: s.fitted,
+            num_topics: s.num_topics,
+            alpha_sum: s.alpha_sum,
+            beta: s.beta,
+            optimize_interval: s.optimize_interval,
+            burn_in: s.burn_in,
+            seed: s.seed,
+            num_threads: s.num_threads,
+            light: s.light,
+            warp: s.warp,
+            cvb0: s.cvb0,
+            mh_steps: 2,
+            fitted: s.fitted,
             use_symmetric_alpha: s.use_symmetric_alpha,
             init_spectral: s.init_spectral,
             topic_names,
-            phi: arr2_back(s.phi), theta: arr2_back(s.theta),
+            phi: arr2_back(s.phi),
+            theta: arr2_back(s.theta),
             theta_draws: arr3f32_back(s.theta_draws),
-            model: s.model, corpus: s.corpus,
+            model: s.model,
+            corpus: s.corpus,
             log_likelihood_history: s.log_likelihood_history,
             converged: s.converged,
         })
@@ -2512,10 +2882,14 @@ fn run_mh_training<S: crate::mh::MhSampler>(
     }
     let n = (num_samples.max(1)) as f64;
     for row in acc_phi.iter_mut() {
-        for v in row.iter_mut() { *v /= n; }
+        for v in row.iter_mut() {
+            *v /= n;
+        }
     }
     for row in acc_theta.iter_mut() {
-        for v in row.iter_mut() { *v /= n; }
+        for v in row.iter_mut() {
+            *v /= n;
+        }
     }
     let model = sampler.to_topic_model();
     (acc_phi, acc_theta, theta_draw_buf, model, corpus)
@@ -2675,7 +3049,12 @@ fn parallel_sweep_batched(
                     &mut rng,
                 );
             }
-            WorkerOut { ttc, tpt, start, dt }
+            WorkerOut {
+                ttc,
+                tpt,
+                start,
+                dt,
+            }
         })
         .collect();
 
@@ -3002,7 +3381,10 @@ fn infer_theta_gibbs<R: Rng>(
     }
 
     // Per-token phi column (probability of this word under each topic).
-    let cols: Vec<Vec<f64>> = doc.iter().map(|&w| (0..k).map(|t| phi[t][w]).collect()).collect();
+    let cols: Vec<Vec<f64>> = doc
+        .iter()
+        .map(|&w| (0..k).map(|t| phi[t][w]).collect())
+        .collect();
 
     let mut local = vec![0u32; k];
     let mut z = vec![0usize; n];
@@ -3100,8 +3482,10 @@ fn transform_gibbs<'py>(
     base_seed: u64,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let docs = docs_to_ids(data, id_to_word)?;
-    let docs_usize: Vec<Vec<usize>> =
-        docs.iter().map(|d| d.iter().map(|&w| w as usize).collect()).collect();
+    let docs_usize: Vec<Vec<usize>> = docs
+        .iter()
+        .map(|d| d.iter().map(|&w| w as usize).collect())
+        .collect();
     let phi_rows: Vec<Vec<f64>> = phi.outer_iter().map(|r| r.to_vec()).collect();
     let alpha_v = alpha.to_vec();
     let k = phi_rows.len();
@@ -3113,7 +3497,13 @@ fn transform_gibbs<'py>(
             .map(|(i, d)| {
                 let mut rng = ChaCha8Rng::seed_from_u64(base_seed.wrapping_add(i as u64));
                 infer_theta_gibbs(
-                    &phi_rows, &alpha_v, d, iterations, burn_in, num_samples, sample_interval,
+                    &phi_rows,
+                    &alpha_v,
+                    d,
+                    iterations,
+                    burn_in,
+                    num_samples,
+                    sample_interval,
                     &mut rng,
                 )
             })
@@ -3192,7 +3582,12 @@ fn topic_words_helper<'py>(
         }
         let items: Vec<Bound<'py, PyTuple>> = tops[t]
             .iter()
-            .map(|&w| PyTuple::new_bound(py, &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)]))
+            .map(|&w| {
+                PyTuple::new_bound(
+                    py,
+                    &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)],
+                )
+            })
             .collect();
         Ok(PyList::new_bound(py, items))
     };
@@ -3347,8 +3742,8 @@ pub struct DMR {
 
     fitted: bool,
     topic_names: Vec<String>,
-    phi: Option<Array2<f64>>,            // (num_topics, num_words)
-    theta: Option<Array2<f64>>,          // (num_docs, num_topics)
+    phi: Option<Array2<f64>>,   // (num_topics, num_words)
+    theta: Option<Array2<f64>>, // (num_docs, num_topics)
     // Thinned MCMC θ snapshots (num_draws, num_docs, num_topics), f32; None when
     // keep_theta_draws=False. Feeds composition_theta's cross-sweep uncertainty.
     theta_draws: Option<Array3<f32>>,
@@ -3364,7 +3759,9 @@ impl DMR {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 }
@@ -3478,7 +3875,17 @@ impl DMR {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -3495,7 +3902,9 @@ impl DMR {
         check_all_finite_2d("features", &raw)?;
         let f_in = raw.first().map(|r| r.len()).unwrap_or(0);
         if raw.iter().any(|r| r.len() != f_in) {
-            return Err(PyValueError::new_err("all feature rows must have the same length"));
+            return Err(PyValueError::new_err(
+                "all feature rows must have the same length",
+            ));
         }
         if let Some(names) = &feature_names {
             if names.len() != f_in {
@@ -3545,8 +3954,16 @@ impl DMR {
         let beta = self.beta;
         let warp = self.warp;
         let cvb0_flag = self.cvb0;
-        let (acc_phi, acc_theta, theta_draw_buf, feat_eff, ll_history, converged_flag, model, corpus) =
-          if cvb0_flag {
+        let (
+            acc_phi,
+            acc_theta,
+            theta_draw_buf,
+            feat_eff,
+            ll_history,
+            converged_flag,
+            model,
+            corpus,
+        ) = if cvb0_flag {
             // CVB0 DMR: deterministic; per-document α is fed to the CVB0 sweep,
             // and the soft expected counts E[n_dk] feed the λ optimizer directly.
             // No MCMC, so no θ-draws and no convergence trace.
@@ -3559,8 +3976,14 @@ impl DMR {
                     cv.sweep();
                     if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
                         dmr::optimize_lambda(
-                            &mut lambda, &feats, cv.doc_topic_expected(), k, nf,
-                            prior_variance, lbfgs_iters, None,
+                            &mut lambda,
+                            &feats,
+                            cv.doc_topic_expected(),
+                            k,
+                            nf,
+                            prior_variance,
+                            lbfgs_iters,
+                            None,
                         );
                     }
                 }
@@ -3569,9 +3992,18 @@ impl DMR {
                 cv.phi_into(&mut acc_phi);
                 cv.theta_into(&mut acc_theta);
                 let model = cv.to_topic_model(&corpus);
-                (acc_phi, acc_theta, Vec::new(), lambda, Vec::new(), false, model, corpus)
+                (
+                    acc_phi,
+                    acc_theta,
+                    Vec::new(),
+                    lambda,
+                    Vec::new(),
+                    false,
+                    model,
+                    corpus,
+                )
             })
-          } else if warp {
+        } else if warp {
             // WarpLDA DMR path: same λ-optimization loop, but the per-document
             // prior α is fed to the WarpLDA per-doc doc phase each sweep. Like the
             // LDA WarpLDA path it computes no inline log_likelihood, so the
@@ -3588,20 +4020,33 @@ impl DMR {
                     if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
                         let dtc = doc_topic_counts(ws.doc_topics(), k);
                         dmr::optimize_lambda(
-                            &mut lambda, &feats, &dtc, k, nf, prior_variance, lbfgs_iters, None,
+                            &mut lambda,
+                            &feats,
+                            &dtc,
+                            k,
+                            nf,
+                            prior_variance,
+                            lbfgs_iters,
+                            None,
                         );
                     }
 
                     if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
                         let doc_alpha_snap = dmr::compute_doc_alpha(&lambda, &feats, None);
-                        let snap: Vec<Vec<f32>> = ws.doc_topics().iter()
+                        let snap: Vec<Vec<f32>> = ws
+                            .doc_topics()
+                            .iter()
                             .enumerate()
                             .map(|(d, topics)| {
                                 let mut c = vec![0.0f64; k];
-                                for &t in topics { c[t as usize] += 1.0; }
+                                for &t in topics {
+                                    c[t as usize] += 1.0;
+                                }
                                 let asum: f64 = doc_alpha_snap[d].iter().sum();
                                 let denom = c.iter().sum::<f64>() + asum;
-                                (0..k).map(|t| ((c[t] + doc_alpha_snap[d][t]) / denom) as f32).collect()
+                                (0..k)
+                                    .map(|t| ((c[t] + doc_alpha_snap[d][t]) / denom) as f32)
+                                    .collect()
                             })
                             .collect();
                         push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
@@ -3611,7 +4056,13 @@ impl DMR {
                         if progress_interval > 0 && iter % progress_interval == 0 {
                             let dtc = doc_topic_counts(ws.doc_topics(), k);
                             let (ll, _) = dmr::dmr_objective_and_gradient(
-                                &lambda, &feats, &dtc, k, nf, prior_variance, None,
+                                &lambda,
+                                &feats,
+                                &dtc,
+                                k,
+                                nf,
+                                prior_variance,
+                                None,
                             );
                             let llpt = ll / total_tokens;
                             Python::with_gil(|py| {
@@ -3642,95 +4093,36 @@ impl DMR {
                 }
                 let n = num_samples.max(1) as f64;
                 for row in acc_phi.iter_mut() {
-                    for v in row.iter_mut() { *v /= n; }
+                    for v in row.iter_mut() {
+                        *v /= n;
+                    }
                 }
                 for row in acc_theta.iter_mut() {
-                    for v in row.iter_mut() { *v /= n; }
+                    for v in row.iter_mut() {
+                        *v /= n;
+                    }
                 }
                 let model = ws.to_topic_model();
-                (acc_phi, acc_theta, theta_draw_buf, lambda, Vec::new(), false, model, corpus)
+                (
+                    acc_phi,
+                    acc_theta,
+                    theta_draw_buf,
+                    lambda,
+                    Vec::new(),
+                    false,
+                    model,
+                    corpus,
+                )
             })
-          } else {
+        } else {
             model.initialize(&corpus, &mut rng);
             py.allow_threads(move || {
-            let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
-            let mut ll_history: Vec<(usize, f64)> = Vec::new();
-            let mut converged_flag = false;
+                let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
+                let mut ll_history: Vec<(usize, f64)> = Vec::new();
+                let mut converged_flag = false;
 
-            'outer: for iter in 1..=iters {
-                let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, None);
-                dmr::run_sweep_dmr(
-                    &mut model.type_topic_counts,
-                    &mut model.tokens_per_topic,
-                    &mut model.doc_topics,
-                    &corpus.docs,
-                    &doc_alpha,
-                    model.beta,
-                    model.beta_sum,
-                    model.topic_mask,
-                    model.topic_bits,
-                    k,
-                    &mut rng,
-                );
-
-                if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
-                    let dtc = doc_topic_counts(&model.doc_topics, k);
-                    dmr::optimize_lambda(
-                        &mut lambda, &feats, &dtc, k, nf, prior_variance, lbfgs_iters, None,
-                    );
-                }
-
-                // Snapshot θ = (n_dk + α_dk) / (N_d + Σα_d) every thin sweeps.
-                if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
-                    let doc_alpha_snap = dmr::compute_doc_alpha(&lambda, &feats, None);
-                    let snap: Vec<Vec<f32>> = model.doc_topics.iter()
-                        .enumerate()
-                        .map(|(d, topics)| {
-                            let mut c = vec![0.0f64; k];
-                            for &t in topics { c[t as usize] += 1.0; }
-                            let asum: f64 = doc_alpha_snap[d].iter().sum();
-                            let denom = c.iter().sum::<f64>() + asum;
-                            (0..k).map(|t| ((c[t] + doc_alpha_snap[d][t]) / denom) as f32).collect()
-                        })
-                        .collect();
-                    push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
-                }
-
-                if let Some(cb) = &progress {
-                    if progress_interval > 0 && iter % progress_interval == 0 {
-                        let dtc = doc_topic_counts(&model.doc_topics, k);
-                        let (ll, _) = dmr::dmr_objective_and_gradient(
-                            &lambda, &feats, &dtc, k, nf, prior_variance, None,
-                        );
-                        let llpt = ll / total_tokens;
-                        Python::with_gil(|py| {
-                            let _ = cb.call1(py, (iter, llpt));
-                        });
-                    }
-                }
-
-                // Trace recording and optional convergence check (never alters RNG).
-                if check_every > 0 && iter % check_every == 0 {
-                    let ll = output::model_log_likelihood(&model, &corpus);
-                    ll_history.push((iter, ll));
-                    if convergence_tol > 0.0 && ll_history.len() >= 2 {
-                        let prev = ll_history[ll_history.len() - 2].1;
-                        let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
-                        if rel < convergence_tol {
-                            converged_flag = true;
-                            break 'outer;
-                        }
-                    }
-                }
-            }
-
-            // Sampling phase: λ is now fixed, so α per doc is fixed too.
-            let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, None);
-            let mut acc_phi = vec![vec![0.0f64; k]; num_types];
-            let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
-
-            for _ in 0..num_samples {
-                for _ in 0..sample_interval {
+                'outer: for iter in 1..=iters {
+                    let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, None);
                     dmr::run_sweep_dmr(
                         &mut model.type_topic_counts,
                         &mut model.tokens_per_topic,
@@ -3744,34 +4136,134 @@ impl DMR {
                         k,
                         &mut rng,
                     );
-                }
-                accumulate_phi(&model, &mut acc_phi);
-                // DMR θ uses the per-document prior.
-                let counts = doc_topic_counts(&model.doc_topics, k);
-                for d in 0..num_docs {
-                    let asum: f64 = doc_alpha[d].iter().sum();
-                    let denom = corpus.docs[d].len() as f64 + asum;
-                    for t in 0..k {
-                        acc_theta[d][t] += (counts[d][t] as f64 + doc_alpha[d][t]) / denom;
+
+                    if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
+                        let dtc = doc_topic_counts(&model.doc_topics, k);
+                        dmr::optimize_lambda(
+                            &mut lambda,
+                            &feats,
+                            &dtc,
+                            k,
+                            nf,
+                            prior_variance,
+                            lbfgs_iters,
+                            None,
+                        );
+                    }
+
+                    // Snapshot θ = (n_dk + α_dk) / (N_d + Σα_d) every thin sweeps.
+                    if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
+                        let doc_alpha_snap = dmr::compute_doc_alpha(&lambda, &feats, None);
+                        let snap: Vec<Vec<f32>> = model
+                            .doc_topics
+                            .iter()
+                            .enumerate()
+                            .map(|(d, topics)| {
+                                let mut c = vec![0.0f64; k];
+                                for &t in topics {
+                                    c[t as usize] += 1.0;
+                                }
+                                let asum: f64 = doc_alpha_snap[d].iter().sum();
+                                let denom = c.iter().sum::<f64>() + asum;
+                                (0..k)
+                                    .map(|t| ((c[t] + doc_alpha_snap[d][t]) / denom) as f32)
+                                    .collect()
+                            })
+                            .collect();
+                        push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
+                    }
+
+                    if let Some(cb) = &progress {
+                        if progress_interval > 0 && iter % progress_interval == 0 {
+                            let dtc = doc_topic_counts(&model.doc_topics, k);
+                            let (ll, _) = dmr::dmr_objective_and_gradient(
+                                &lambda,
+                                &feats,
+                                &dtc,
+                                k,
+                                nf,
+                                prior_variance,
+                                None,
+                            );
+                            let llpt = ll / total_tokens;
+                            Python::with_gil(|py| {
+                                let _ = cb.call1(py, (iter, llpt));
+                            });
+                        }
+                    }
+
+                    // Trace recording and optional convergence check (never alters RNG).
+                    if check_every > 0 && iter % check_every == 0 {
+                        let ll = output::model_log_likelihood(&model, &corpus);
+                        ll_history.push((iter, ll));
+                        if convergence_tol > 0.0 && ll_history.len() >= 2 {
+                            let prev = ll_history[ll_history.len() - 2].1;
+                            let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
+                            if rel < convergence_tol {
+                                converged_flag = true;
+                                break 'outer;
+                            }
+                        }
                     }
                 }
-            }
 
-            let n = num_samples.max(1) as f64;
-            for row in acc_phi.iter_mut() {
-                for v in row.iter_mut() {
-                    *v /= n;
-                }
-            }
-            for row in acc_theta.iter_mut() {
-                for v in row.iter_mut() {
-                    *v /= n;
-                }
-            }
+                // Sampling phase: λ is now fixed, so α per doc is fixed too.
+                let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, None);
+                let mut acc_phi = vec![vec![0.0f64; k]; num_types];
+                let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
 
-            (acc_phi, acc_theta, theta_draw_buf, lambda, ll_history, converged_flag, model, corpus)
+                for _ in 0..num_samples {
+                    for _ in 0..sample_interval {
+                        dmr::run_sweep_dmr(
+                            &mut model.type_topic_counts,
+                            &mut model.tokens_per_topic,
+                            &mut model.doc_topics,
+                            &corpus.docs,
+                            &doc_alpha,
+                            model.beta,
+                            model.beta_sum,
+                            model.topic_mask,
+                            model.topic_bits,
+                            k,
+                            &mut rng,
+                        );
+                    }
+                    accumulate_phi(&model, &mut acc_phi);
+                    // DMR θ uses the per-document prior.
+                    let counts = doc_topic_counts(&model.doc_topics, k);
+                    for d in 0..num_docs {
+                        let asum: f64 = doc_alpha[d].iter().sum();
+                        let denom = corpus.docs[d].len() as f64 + asum;
+                        for t in 0..k {
+                            acc_theta[d][t] += (counts[d][t] as f64 + doc_alpha[d][t]) / denom;
+                        }
+                    }
+                }
+
+                let n = num_samples.max(1) as f64;
+                for row in acc_phi.iter_mut() {
+                    for v in row.iter_mut() {
+                        *v /= n;
+                    }
+                }
+                for row in acc_theta.iter_mut() {
+                    for v in row.iter_mut() {
+                        *v /= n;
+                    }
+                }
+
+                (
+                    acc_phi,
+                    acc_theta,
+                    theta_draw_buf,
+                    lambda,
+                    ll_history,
+                    converged_flag,
+                    model,
+                    corpus,
+                )
             })
-          };
+        };
         let _ = model;
 
         let mut phi = Array2::<f64>::zeros((k, num_types));
@@ -4001,10 +4493,17 @@ impl DMR {
         let nf = eff.shape()[1];
         let id_to_word = &self.corpus.as_ref().unwrap().id_to_word;
         let docs = docs_to_ids(data, id_to_word)?;
-        let docs_usize: Vec<Vec<usize>> =
-            docs.iter().map(|d| d.iter().map(|&w| w as usize).collect()).collect();
-        let phi_rows: Vec<Vec<f64>> =
-            self.phi.as_ref().unwrap().outer_iter().map(|r| r.to_vec()).collect();
+        let docs_usize: Vec<Vec<usize>> = docs
+            .iter()
+            .map(|d| d.iter().map(|&w| w as usize).collect())
+            .collect();
+        let phi_rows: Vec<Vec<f64>> = self
+            .phi
+            .as_ref()
+            .unwrap()
+            .outer_iter()
+            .map(|r| r.to_vec())
+            .collect();
 
         // Per-document Dirichlet prior α_d = exp(Xγ); intercept is column 0.
         let alphas: Vec<Vec<f64>> = match &features {
@@ -4052,7 +4551,13 @@ impl DMR {
                 .map(|(i, (d, alpha))| {
                     let mut rng = Pcg64Mcg::seed_from_u64(base_seed.wrapping_add(i as u64));
                     infer_theta_gibbs(
-                        &phi_rows, alpha, d, iterations, burn_in, num_samples, sample_interval,
+                        &phi_rows,
+                        alpha,
+                        d,
+                        iterations,
+                        burn_in,
+                        num_samples,
+                        sample_interval,
                         &mut rng,
                     )
                 })
@@ -4070,18 +4575,29 @@ impl DMR {
     /// Save the fitted model to `path` (compact binary). Reload with `DMR.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
-        write_state(path, MODEL_TAG_DMR, &DmrState {
-            num_topics: self.num_topics, beta: self.beta,
-            optimize_interval: self.optimize_interval, burn_in: self.burn_in, seed: self.seed,
-            prior_variance: self.prior_variance, lbfgs_iters: self.lbfgs_iters, fitted: self.fitted,
-            phi: arr2_opt(&self.phi), theta: arr2_opt(&self.theta),
-            feature_effects: arr2_opt(&self.feature_effects),
-            feature_names: self.feature_names.clone(), corpus: self.corpus.clone(),
-            topic_names: self.topic_names.clone(),
-            log_likelihood_history: self.log_likelihood_history.clone(),
-            converged: self.converged,
-            theta_draws: arr3f32_opt(&self.theta_draws),
-        })
+        write_state(
+            path,
+            MODEL_TAG_DMR,
+            &DmrState {
+                num_topics: self.num_topics,
+                beta: self.beta,
+                optimize_interval: self.optimize_interval,
+                burn_in: self.burn_in,
+                seed: self.seed,
+                prior_variance: self.prior_variance,
+                lbfgs_iters: self.lbfgs_iters,
+                fitted: self.fitted,
+                phi: arr2_opt(&self.phi),
+                theta: arr2_opt(&self.theta),
+                feature_effects: arr2_opt(&self.feature_effects),
+                feature_names: self.feature_names.clone(),
+                corpus: self.corpus.clone(),
+                topic_names: self.topic_names.clone(),
+                log_likelihood_history: self.log_likelihood_history.clone(),
+                converged: self.converged,
+                theta_draws: arr3f32_opt(&self.theta_draws),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -4094,13 +4610,22 @@ impl DMR {
             s.topic_names
         };
         Ok(DMR {
-            num_topics: s.num_topics, beta: s.beta, optimize_interval: s.optimize_interval,
-            burn_in: s.burn_in, seed: s.seed, prior_variance: s.prior_variance,
-            lbfgs_iters: s.lbfgs_iters, warp: false, cvb0: false, fitted: s.fitted,
+            num_topics: s.num_topics,
+            beta: s.beta,
+            optimize_interval: s.optimize_interval,
+            burn_in: s.burn_in,
+            seed: s.seed,
+            prior_variance: s.prior_variance,
+            lbfgs_iters: s.lbfgs_iters,
+            warp: false,
+            cvb0: false,
+            fitted: s.fitted,
             topic_names,
-            phi: arr2_back(s.phi), theta: arr2_back(s.theta),
+            phi: arr2_back(s.phi),
+            theta: arr2_back(s.theta),
             feature_effects: arr2_back(s.feature_effects),
-            feature_names: s.feature_names, corpus: s.corpus,
+            feature_names: s.feature_names,
+            corpus: s.corpus,
             theta_draws: arr3f32_back(s.theta_draws),
             log_likelihood_history: s.log_likelihood_history,
             converged: s.converged,
@@ -4108,7 +4633,10 @@ impl DMR {
     }
 
     fn __repr__(&self) -> String {
-        format!("DMR(num_topics={}, fitted={})", self.num_topics, self.fitted)
+        format!(
+            "DMR(num_topics={}, fitted={})",
+            self.num_topics, self.fitted
+        )
     }
 }
 
@@ -4149,7 +4677,9 @@ impl LabeledLDA {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 }
@@ -4228,7 +4758,17 @@ impl LabeledLDA {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         let num_docs = corpus.num_docs();
         if num_docs == 0 {
@@ -4258,7 +4798,9 @@ impl LabeledLDA {
             }
         };
         if label_vocab.is_empty() {
-            return Err(PyValueError::new_err("no labels found; provide labels or label_names"));
+            return Err(PyValueError::new_err(
+                "no labels found; provide labels or label_names",
+            ));
         }
         let k = label_vocab.len();
         let index: HashMap<&str, usize> = label_vocab
@@ -4270,8 +4812,10 @@ impl LabeledLDA {
         let allowed: Vec<Vec<usize>> = labels
             .iter()
             .map(|ls| {
-                let mut v: Vec<usize> =
-                    ls.iter().filter_map(|l| index.get(l.as_str()).copied()).collect();
+                let mut v: Vec<usize> = ls
+                    .iter()
+                    .filter_map(|l| index.get(l.as_str()).copied())
+                    .collect();
                 v.sort_unstable();
                 v.dedup();
                 v
@@ -4285,7 +4829,13 @@ impl LabeledLDA {
         let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
         labeled::initialize_labeled(&mut model, &corpus.docs, &allowed, &mut rng);
 
-        let check_every_labeled = if check_every == 0 { 0 } else if convergence_tol > 0.0 { check_every.max(1) } else { check_every };
+        let check_every_labeled = if check_every == 0 {
+            0
+        } else if convergence_tol > 0.0 {
+            check_every.max(1)
+        } else {
+            check_every
+        };
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
@@ -4330,86 +4880,102 @@ impl LabeledLDA {
             return Ok(());
         }
 
-        let (acc_phi, acc_theta, theta_draw_buf, ll_history, converged, model, corpus) = py.allow_threads(move || {
-            let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
-            let all_topics: Vec<usize> = (0..k).collect();
-            let mut ll_history: Vec<(usize, f64)> = Vec::new();
-            let mut converged = false;
+        let (acc_phi, acc_theta, theta_draw_buf, ll_history, converged, model, corpus) = py
+            .allow_threads(move || {
+                let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
+                let all_topics: Vec<usize> = (0..k).collect();
+                let mut ll_history: Vec<(usize, f64)> = Vec::new();
+                let mut converged = false;
 
-            'outer: for iter in 1..=iters {
-                labeled::run_sweep_labeled(&mut model, &corpus.docs, &allowed, &mut rng);
-                if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
+                'outer: for iter in 1..=iters {
+                    labeled::run_sweep_labeled(&mut model, &corpus.docs, &allowed, &mut rng);
+                    if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
+                        let counts = doc_topic_counts(&model.doc_topics, k);
+                        let snap: Vec<Vec<f32>> = (0..num_docs)
+                            .map(|d| {
+                                let allow: &[usize] = if allowed[d].is_empty() {
+                                    &all_topics
+                                } else {
+                                    &allowed[d]
+                                };
+                                let asum: f64 = allow.iter().map(|&t| model.alpha[t]).sum();
+                                let denom = corpus.docs[d].len() as f64 + asum;
+                                let mut row = vec![0.0f32; k];
+                                for &t in allow {
+                                    row[t] =
+                                        ((counts[d][t] as f64 + model.alpha[t]) / denom) as f32;
+                                }
+                                row
+                            })
+                            .collect();
+                        push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
+                    }
+                    if let Some(cb) = &progress {
+                        if progress_interval > 0 && iter % progress_interval == 0 {
+                            let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
+                            Python::with_gil(|py| {
+                                let _ = cb.call1(py, (iter, ll));
+                            });
+                        }
+                    }
+                    // Trace recording and optional convergence check (never alters RNG).
+                    if check_every_labeled > 0 && iter % check_every_labeled == 0 {
+                        let ll = output::model_log_likelihood(&model, &corpus);
+                        ll_history.push((iter, ll));
+                        if convergence_tol > 0.0 && ll_history.len() >= 2 {
+                            let prev = ll_history[ll_history.len() - 2].1;
+                            let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
+                            if rel < convergence_tol {
+                                converged = true;
+                                break 'outer;
+                            }
+                        }
+                    }
+                }
+
+                let mut acc_phi = vec![vec![0.0f64; k]; num_types];
+                let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
+                for _ in 0..num_samples {
+                    for _ in 0..sample_interval {
+                        labeled::run_sweep_labeled(&mut model, &corpus.docs, &allowed, &mut rng);
+                    }
+                    accumulate_phi(&model, &mut acc_phi);
                     let counts = doc_topic_counts(&model.doc_topics, k);
-                    let snap: Vec<Vec<f32>> = (0..num_docs).map(|d| {
-                        let allow: &[usize] = if allowed[d].is_empty() { &all_topics } else { &allowed[d] };
+                    for d in 0..num_docs {
+                        let allow: &[usize] = if allowed[d].is_empty() {
+                            &all_topics
+                        } else {
+                            &allowed[d]
+                        };
                         let asum: f64 = allow.iter().map(|&t| model.alpha[t]).sum();
                         let denom = corpus.docs[d].len() as f64 + asum;
-                        let mut row = vec![0.0f32; k];
                         for &t in allow {
-                            row[t] = ((counts[d][t] as f64 + model.alpha[t]) / denom) as f32;
-                        }
-                        row
-                    }).collect();
-                    push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
-                }
-                if let Some(cb) = &progress {
-                    if progress_interval > 0 && iter % progress_interval == 0 {
-                        let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
-                        Python::with_gil(|py| {
-                            let _ = cb.call1(py, (iter, ll));
-                        });
-                    }
-                }
-                // Trace recording and optional convergence check (never alters RNG).
-                if check_every_labeled > 0 && iter % check_every_labeled == 0 {
-                    let ll = output::model_log_likelihood(&model, &corpus);
-                    ll_history.push((iter, ll));
-                    if convergence_tol > 0.0 && ll_history.len() >= 2 {
-                        let prev = ll_history[ll_history.len() - 2].1;
-                        let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
-                        if rel < convergence_tol {
-                            converged = true;
-                            break 'outer;
+                            acc_theta[d][t] += (counts[d][t] as f64 + model.alpha[t]) / denom;
                         }
                     }
                 }
-            }
 
-            let mut acc_phi = vec![vec![0.0f64; k]; num_types];
-            let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
-            for _ in 0..num_samples {
-                for _ in 0..sample_interval {
-                    labeled::run_sweep_labeled(&mut model, &corpus.docs, &allowed, &mut rng);
-                }
-                accumulate_phi(&model, &mut acc_phi);
-                let counts = doc_topic_counts(&model.doc_topics, k);
-                for d in 0..num_docs {
-                    let allow: &[usize] = if allowed[d].is_empty() {
-                        &all_topics
-                    } else {
-                        &allowed[d]
-                    };
-                    let asum: f64 = allow.iter().map(|&t| model.alpha[t]).sum();
-                    let denom = corpus.docs[d].len() as f64 + asum;
-                    for &t in allow {
-                        acc_theta[d][t] += (counts[d][t] as f64 + model.alpha[t]) / denom;
+                let n = num_samples.max(1) as f64;
+                for row in acc_phi.iter_mut() {
+                    for v in row.iter_mut() {
+                        *v /= n;
                     }
                 }
-            }
-
-            let n = num_samples.max(1) as f64;
-            for row in acc_phi.iter_mut() {
-                for v in row.iter_mut() {
-                    *v /= n;
+                for row in acc_theta.iter_mut() {
+                    for v in row.iter_mut() {
+                        *v /= n;
+                    }
                 }
-            }
-            for row in acc_theta.iter_mut() {
-                for v in row.iter_mut() {
-                    *v /= n;
-                }
-            }
-            (acc_phi, acc_theta, theta_draw_buf, ll_history, converged, model, corpus)
-        });
+                (
+                    acc_phi,
+                    acc_theta,
+                    theta_draw_buf,
+                    ll_history,
+                    converged,
+                    model,
+                    corpus,
+                )
+            });
         let _ = model;
 
         let mut phi = Array2::<f64>::zeros((k, num_types));
@@ -4475,7 +5041,11 @@ impl LabeledLDA {
     #[getter]
     fn doc_lengths(&self) -> PyResult<Vec<usize>> {
         self.require_fitted()?;
-        Ok(self.corpus.as_ref().map(|c| c.docs.iter().map(|d| d.len()).collect()).unwrap_or_default())
+        Ok(self
+            .corpus
+            .as_ref()
+            .map(|c| c.docs.iter().map(|d| d.len()).collect())
+            .unwrap_or_default())
     }
 
     /// The label name for each topic, in topic (column) order.
@@ -4608,8 +5178,15 @@ impl LabeledLDA {
         self.require_fitted()?;
         let alpha = vec![self.alpha; self.num_topics];
         transform_gibbs(
-            py, data, &self.corpus.as_ref().unwrap().id_to_word, self.phi.as_ref().unwrap(),
-            &alpha, iters, burn_in, num_samples, sample_interval,
+            py,
+            data,
+            &self.corpus.as_ref().unwrap().id_to_word,
+            self.phi.as_ref().unwrap(),
+            &alpha,
+            iters,
+            burn_in,
+            num_samples,
+            sample_interval,
             seed.unwrap_or(self.seed),
         )
     }
@@ -4617,15 +5194,25 @@ impl LabeledLDA {
     /// Save the fitted model to `path`. Reload with `LabeledLDA.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
-        write_state(path, MODEL_TAG_LABELED, &LabeledState {
-            alpha: self.alpha, beta: self.beta, seed: self.seed, fitted: self.fitted,
-            num_topics: self.num_topics, phi: arr2_opt(&self.phi), theta: arr2_opt(&self.theta),
-            label_vocab: self.label_vocab.clone(), corpus: self.corpus.clone(),
-            topic_names: self.topic_names.clone(),
-            log_likelihood_history: self.log_likelihood_history.clone(),
-            converged: self.converged,
-            theta_draws: arr3f32_opt(&self.theta_draws),
-        })
+        write_state(
+            path,
+            MODEL_TAG_LABELED,
+            &LabeledState {
+                alpha: self.alpha,
+                beta: self.beta,
+                seed: self.seed,
+                fitted: self.fitted,
+                num_topics: self.num_topics,
+                phi: arr2_opt(&self.phi),
+                theta: arr2_opt(&self.theta),
+                label_vocab: self.label_vocab.clone(),
+                corpus: self.corpus.clone(),
+                topic_names: self.topic_names.clone(),
+                log_likelihood_history: self.log_likelihood_history.clone(),
+                converged: self.converged,
+                theta_draws: arr3f32_opt(&self.theta_draws),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -4638,10 +5225,17 @@ impl LabeledLDA {
             s.topic_names
         };
         Ok(LabeledLDA {
-            alpha: s.alpha, beta: s.beta, seed: s.seed, cvb0: false, fitted: s.fitted,
-            num_topics: s.num_topics, topic_names,
-            phi: arr2_back(s.phi), theta: arr2_back(s.theta),
-            label_vocab: s.label_vocab, corpus: s.corpus,
+            alpha: s.alpha,
+            beta: s.beta,
+            seed: s.seed,
+            cvb0: false,
+            fitted: s.fitted,
+            num_topics: s.num_topics,
+            topic_names,
+            phi: arr2_back(s.phi),
+            theta: arr2_back(s.theta),
+            label_vocab: s.label_vocab,
+            corpus: s.corpus,
             theta_draws: arr3f32_back(s.theta_draws),
             log_likelihood_history: s.log_likelihood_history,
             converged: s.converged,
@@ -4668,7 +5262,9 @@ fn parse_groups(obj: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
     if let Ok(v) = obj.extract::<Vec<i64>>() {
         return Ok(v.iter().map(|x| x.to_string()).collect());
     }
-    Err(PyValueError::new_err("groups must be a list of strings or ints"))
+    Err(PyValueError::new_err(
+        "groups must be a list of strings or ints",
+    ))
 }
 
 /// Content-covariate topic model (SAGE / the STM content model).
@@ -4706,7 +5302,9 @@ impl SAGE {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 
@@ -4801,7 +5399,17 @@ impl SAGE {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         let num_docs = corpus.num_docs();
         if num_docs == 0 {
@@ -4834,10 +5442,9 @@ impl SAGE {
         let groups_idx: Vec<usize> = groups_str
             .iter()
             .map(|g| {
-                gindex
-                    .get(g.as_str())
-                    .copied()
-                    .ok_or_else(|| PyValueError::new_err(format!("group {:?} not in group_names", g)))
+                gindex.get(g.as_str()).copied().ok_or_else(|| {
+                    PyValueError::new_err(format!("group {:?} not in group_names", g))
+                })
             })
             .collect::<PyResult<_>>()?;
 
@@ -4860,83 +5467,95 @@ impl SAGE {
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
-        let (beta, acc_theta, theta_draw_buf, ll_history, converged_flag, corpus) = py.allow_threads(move || {
-            let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
-            let mut ll_history: Vec<(usize, f64)> = Vec::new();
-            let mut converged_flag = false;
+        let (beta, acc_theta, theta_draw_buf, ll_history, converged_flag, corpus) = py
+            .allow_threads(move || {
+                let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
+                let mut ll_history: Vec<(usize, f64)> = Vec::new();
+                let mut converged_flag = false;
 
-            // Inline LL for SAGE: sum_c sum_v n_cv * ln(beta_cv).
-            let compute_ll = |model: &sage::SageModel| -> f64 {
-                let mut ll = 0.0f64;
-                for c in 0..(k * group_n) {
-                    for v in 0..num_types {
-                        let n = model.counts[c][v] as f64;
-                        if n > 0.0 {
-                            ll += n * model.beta[c][v].max(1e-300).ln();
+                // Inline LL for SAGE: sum_c sum_v n_cv * ln(beta_cv).
+                let compute_ll = |model: &sage::SageModel| -> f64 {
+                    let mut ll = 0.0f64;
+                    for c in 0..(k * group_n) {
+                        for v in 0..num_types {
+                            let n = model.counts[c][v] as f64;
+                            if n > 0.0 {
+                                ll += n * model.beta[c][v].max(1e-300).ln();
+                            }
                         }
                     }
-                }
-                ll
-            };
+                    ll
+                };
 
-            'outer: for iter in 1..=iters {
-                sage::run_sweep_sage(&mut model, &corpus.docs, &groups_idx, &mut rng);
-                if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
-                    sage::optimize_kappa(&mut model, lbfgs_iters);
-                }
-                if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
-                    let counts = doc_topic_counts(&model.doc_topics, k);
-                    let snap: Vec<Vec<f32>> = (0..num_docs).map(|d| {
-                        let denom = corpus.docs[d].len() as f64 + alpha_sum;
-                        (0..k).map(|t| ((counts[d][t] as f64 + alpha) / denom) as f32).collect()
-                    }).collect();
-                    push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
-                }
-                if let Some(cb) = &progress {
-                    if progress_interval > 0 && iter % progress_interval == 0 {
-                        let llpt = compute_ll(&model) / total_tokens;
-                        Python::with_gil(|py| {
-                            let _ = cb.call1(py, (iter, llpt));
-                        });
-                    }
-                }
-                // Trace recording and optional convergence check (never alters RNG).
-                if check_every > 0 && iter % check_every == 0 {
-                    let ll = compute_ll(&model);
-                    ll_history.push((iter, ll));
-                    if convergence_tol > 0.0 && ll_history.len() >= 2 {
-                        let prev = ll_history[ll_history.len() - 2].1;
-                        let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
-                        if rel < convergence_tol {
-                            converged_flag = true;
-                            break 'outer;
-                        }
-                    }
-                }
-            }
-            sage::optimize_kappa(&mut model, lbfgs_iters); // final β refresh
-
-            let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
-            for _ in 0..num_samples {
-                for _ in 0..sample_interval {
+                'outer: for iter in 1..=iters {
                     sage::run_sweep_sage(&mut model, &corpus.docs, &groups_idx, &mut rng);
-                }
-                let counts = doc_topic_counts(&model.doc_topics, k);
-                for d in 0..num_docs {
-                    let denom = corpus.docs[d].len() as f64 + alpha_sum;
-                    for t in 0..k {
-                        acc_theta[d][t] += (counts[d][t] as f64 + alpha) / denom;
+                    if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
+                        sage::optimize_kappa(&mut model, lbfgs_iters);
+                    }
+                    if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
+                        let counts = doc_topic_counts(&model.doc_topics, k);
+                        let snap: Vec<Vec<f32>> = (0..num_docs)
+                            .map(|d| {
+                                let denom = corpus.docs[d].len() as f64 + alpha_sum;
+                                (0..k)
+                                    .map(|t| ((counts[d][t] as f64 + alpha) / denom) as f32)
+                                    .collect()
+                            })
+                            .collect();
+                        push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
+                    }
+                    if let Some(cb) = &progress {
+                        if progress_interval > 0 && iter % progress_interval == 0 {
+                            let llpt = compute_ll(&model) / total_tokens;
+                            Python::with_gil(|py| {
+                                let _ = cb.call1(py, (iter, llpt));
+                            });
+                        }
+                    }
+                    // Trace recording and optional convergence check (never alters RNG).
+                    if check_every > 0 && iter % check_every == 0 {
+                        let ll = compute_ll(&model);
+                        ll_history.push((iter, ll));
+                        if convergence_tol > 0.0 && ll_history.len() >= 2 {
+                            let prev = ll_history[ll_history.len() - 2].1;
+                            let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
+                            if rel < convergence_tol {
+                                converged_flag = true;
+                                break 'outer;
+                            }
+                        }
                     }
                 }
-            }
-            let n = num_samples.max(1) as f64;
-            for row in acc_theta.iter_mut() {
-                for v in row.iter_mut() {
-                    *v /= n;
+                sage::optimize_kappa(&mut model, lbfgs_iters); // final β refresh
+
+                let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
+                for _ in 0..num_samples {
+                    for _ in 0..sample_interval {
+                        sage::run_sweep_sage(&mut model, &corpus.docs, &groups_idx, &mut rng);
+                    }
+                    let counts = doc_topic_counts(&model.doc_topics, k);
+                    for d in 0..num_docs {
+                        let denom = corpus.docs[d].len() as f64 + alpha_sum;
+                        for t in 0..k {
+                            acc_theta[d][t] += (counts[d][t] as f64 + alpha) / denom;
+                        }
+                    }
                 }
-            }
-            (model.beta.clone(), acc_theta, theta_draw_buf, ll_history, converged_flag, corpus)
-        });
+                let n = num_samples.max(1) as f64;
+                for row in acc_theta.iter_mut() {
+                    for v in row.iter_mut() {
+                        *v /= n;
+                    }
+                }
+                (
+                    model.beta.clone(),
+                    acc_theta,
+                    theta_draw_buf,
+                    ll_history,
+                    converged_flag,
+                    corpus,
+                )
+            });
 
         let mut theta = Array2::<f64>::zeros((num_docs, k));
         for (d, row) in acc_theta.iter().enumerate() {
@@ -5014,7 +5633,11 @@ impl SAGE {
     #[getter]
     fn doc_lengths(&self) -> PyResult<Vec<usize>> {
         self.require_fitted()?;
-        Ok(self.corpus.as_ref().map(|c| c.docs.iter().map(|d| d.len()).collect()).unwrap_or_default())
+        Ok(self
+            .corpus
+            .as_ref()
+            .map(|c| c.docs.iter().map(|d| d.len()).collect())
+            .unwrap_or_default())
     }
 
     /// Group names, in the index order used by :attr:`topic_word`'s second axis.
@@ -5185,17 +5808,29 @@ impl SAGE {
     /// Save the fitted model to `path`. Reload with `SAGE.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
-        write_state(path, MODEL_TAG_SAGE, &SageState {
-            num_topics: self.num_topics, alpha: self.alpha, prior_variance: self.prior_variance,
-            optimize_interval: self.optimize_interval, burn_in: self.burn_in, seed: self.seed,
-            lbfgs_iters: self.lbfgs_iters, fitted: self.fitted, num_groups: self.num_groups,
-            beta: self.beta.clone(), theta: arr2_opt(&self.theta),
-            group_names: self.group_names.clone(), corpus: self.corpus.clone(),
-            topic_names: self.topic_names.clone(),
-            log_likelihood_history: self.log_likelihood_history.clone(),
-            converged: self.converged,
-            theta_draws: arr3f32_opt(&self.theta_draws),
-        })
+        write_state(
+            path,
+            MODEL_TAG_SAGE,
+            &SageState {
+                num_topics: self.num_topics,
+                alpha: self.alpha,
+                prior_variance: self.prior_variance,
+                optimize_interval: self.optimize_interval,
+                burn_in: self.burn_in,
+                seed: self.seed,
+                lbfgs_iters: self.lbfgs_iters,
+                fitted: self.fitted,
+                num_groups: self.num_groups,
+                beta: self.beta.clone(),
+                theta: arr2_opt(&self.theta),
+                group_names: self.group_names.clone(),
+                corpus: self.corpus.clone(),
+                topic_names: self.topic_names.clone(),
+                log_likelihood_history: self.log_likelihood_history.clone(),
+                converged: self.converged,
+                theta_draws: arr3f32_opt(&self.theta_draws),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -5208,11 +5843,20 @@ impl SAGE {
             s.topic_names
         };
         Ok(SAGE {
-            num_topics: s.num_topics, alpha: s.alpha, prior_variance: s.prior_variance,
-            optimize_interval: s.optimize_interval, burn_in: s.burn_in, seed: s.seed,
-            lbfgs_iters: s.lbfgs_iters, fitted: s.fitted, num_groups: s.num_groups,
+            num_topics: s.num_topics,
+            alpha: s.alpha,
+            prior_variance: s.prior_variance,
+            optimize_interval: s.optimize_interval,
+            burn_in: s.burn_in,
+            seed: s.seed,
+            lbfgs_iters: s.lbfgs_iters,
+            fitted: s.fitted,
+            num_groups: s.num_groups,
             topic_names,
-            beta: s.beta, theta: arr2_back(s.theta), group_names: s.group_names, corpus: s.corpus,
+            beta: s.beta,
+            theta: arr2_back(s.theta),
+            group_names: s.group_names,
+            corpus: s.corpus,
             theta_draws: arr3f32_back(s.theta_draws),
             log_likelihood_history: s.log_likelihood_history,
             converged: s.converged,
@@ -5248,8 +5892,18 @@ impl SAGE {
         let id_to_word = &self.corpus.as_ref().unwrap().id_to_word;
         let phi = self.topic_marginal();
         let alpha = vec![self.alpha; self.num_topics];
-        transform_gibbs(py, data, id_to_word, &phi, &alpha, iters, burn_in,
-                        num_samples, sample_interval, seed.unwrap_or(self.seed))
+        transform_gibbs(
+            py,
+            data,
+            id_to_word,
+            &phi,
+            &alpha,
+            iters,
+            burn_in,
+            num_samples,
+            sample_interval,
+            seed.unwrap_or(self.seed),
+        )
     }
 
     fn __repr__(&self) -> String {
@@ -5279,7 +5933,9 @@ impl SAGE {
                 .position(|g| g == &s)
                 .ok_or_else(|| PyValueError::new_err(format!("unknown group {:?}", s)));
         }
-        Err(PyValueError::new_err("group must be a name (str) or index (int)"))
+        Err(PyValueError::new_err(
+            "group must be a name (str) or index (int)",
+        ))
     }
 }
 
@@ -5294,10 +5950,7 @@ impl SAGE {
 /// Map new documents (a `Corpus` or `list[list[str]]`) onto the training
 /// vocabulary, dropping out-of-vocabulary tokens. Tokens are lowercased to
 /// match the corpus loader. Returns one `Vec<u32>` of word-ids per document.
-fn docs_to_ids(
-    data: &Bound<'_, PyAny>,
-    id_to_word: &[String],
-) -> PyResult<Vec<Vec<u32>>> {
+fn docs_to_ids(data: &Bound<'_, PyAny>, id_to_word: &[String]) -> PyResult<Vec<Vec<u32>>> {
     let word_to_id: HashMap<&str, u32> = id_to_word
         .iter()
         .enumerate()
@@ -5307,7 +5960,11 @@ fn docs_to_ids(
         c.inner
             .docs
             .iter()
-            .map(|d| d.iter().map(|&w| c.inner.id_to_word[w as usize].clone()).collect())
+            .map(|d| {
+                d.iter()
+                    .map(|&w| c.inner.id_to_word[w as usize].clone())
+                    .collect()
+            })
             .collect()
     } else {
         data.extract().map_err(|_| {
@@ -5401,7 +6058,6 @@ fn infer_theta_batch_per_doc(
     out
 }
 
-
 /// Correlated Topic Model (Blei & Lafferty; the STM core). Topics are drawn
 /// from a logistic-normal prior with a full covariance, so they can correlate —
 /// unlike LDA's Dirichlet. Fit by variational EM (STM's Laplace E-step).
@@ -5425,13 +6081,13 @@ pub struct CTM {
 
     fitted: bool,
     topic_names: Vec<String>,
-    beta: Option<Array2<f64>>,  // (num_topics, num_words)
-    theta: Option<Array2<f64>>, // (num_docs, num_topics)
-    corr: Option<Array2<f64>>,  // (num_topics, num_topics)
+    beta: Option<Array2<f64>>,     // (num_topics, num_words)
+    theta: Option<Array2<f64>>,    // (num_docs, num_topics)
+    corr: Option<Array2<f64>>,     // (num_topics, num_topics)
     eta_mean: Option<Array2<f64>>, // (num_docs, num_topics-1) variational means λ
-    eta_cov: Option<Array3<f32>>,  // (num_docs, K-1, K-1) variational covariances ν — stored as f32 to halve memory
-    mu: Vec<f64>,                  // K-1 logistic-normal prior mean (for inference)
-    sigma: Vec<f64>,               // (K-1)² logistic-normal prior covariance
+    eta_cov: Option<Array3<f32>>, // (num_docs, K-1, K-1) variational covariances ν — stored as f32 to halve memory
+    mu: Vec<f64>,                 // K-1 logistic-normal prior mean (for inference)
+    sigma: Vec<f64>,              // (K-1)² logistic-normal prior covariance
     /// Sigma from the last E-step (may differ from sigma when the final M-step
     /// updated sigma after the last E-step). Used by `_recompute_eta_cov`.
     sigma_estep: Vec<f64>,
@@ -5439,9 +6095,9 @@ pub struct CTM {
     /// M-step updated `beta`). Used by `_recompute_eta_cov` to reproduce ν.
     beta_estep: Option<Array2<f64>>,
     corpus: Option<corpus::Corpus>,
-    bound: f64,                    // final variational bound (ELBO)
-    bound_history: Vec<f64>,       // bound after each EM iteration
-    converged: bool,               // hit em_tol (true) or em_iters cap (false)
+    bound: f64,              // final variational bound (ELBO)
+    bound_history: Vec<f64>, // bound after each EM iteration
+    converged: bool,         // hit em_tol (true) or em_iters cap (false)
 }
 
 impl CTM {
@@ -5449,7 +6105,9 @@ impl CTM {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 }
@@ -5467,7 +6125,13 @@ impl CTM {
     /// off-diagonal posterior covariance — topic-correlation/SE precision is lower).
     #[new]
     #[pyo3(signature = (num_topics, *, sigma_shrink=0.0, seed=42, init="spectral", variational="laplace"))]
-    fn new(#[pyo3(from_py_with = "py_num_topics")] num_topics: usize, sigma_shrink: f64, seed: u64, init: &str, variational: &str) -> PyResult<Self> {
+    fn new(
+        #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
+        sigma_shrink: f64,
+        seed: u64,
+        init: &str,
+        variational: &str,
+    ) -> PyResult<Self> {
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
@@ -5480,7 +6144,9 @@ impl CTM {
             _ => return Err(PyValueError::new_err("init must be 'spectral' or 'random'")),
         };
         if variational != "laplace" && variational != "diagonal" {
-            return Err(PyValueError::new_err("variational must be 'laplace' or 'diagonal'"));
+            return Err(PyValueError::new_err(
+                "variational must be 'laplace' or 'diagonal'",
+            ));
         }
         Ok(CTM {
             num_topics,
@@ -5545,13 +6211,20 @@ impl CTM {
     ) -> PyResult<()> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
-            warnings.call_method1("warn", (
-                "CTM.fit(em_tol=) is deprecated; use convergence_tol= instead",
-                py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
-                2_i32,
-            ))?;
+            warnings.call_method1(
+                "warn",
+                (
+                    "CTM.fit(em_tol=) is deprecated; use convergence_tol= instead",
+                    py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
+                    2_i32,
+                ),
+            )?;
             // convergence_tol wins if explicitly set (not the default 1e-5); else deprecated.
-            if (convergence_tol - 1e-5_f64).abs() > f64::EPSILON { convergence_tol } else { old_val }
+            if (convergence_tol - 1e-5_f64).abs() > f64::EPSILON {
+                convergence_tol
+            } else {
+                old_val
+            }
         } else {
             convergence_tol
         };
@@ -5561,7 +6234,17 @@ impl CTM {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -5589,14 +6272,35 @@ impl CTM {
             let m = run_with_threads(num_threads, || {
                 if svi {
                     ctm::fit_ctm_svi(
-                        &corpus.docs, k, num_types, iters, batch_size, tau, kappa, shrink, spectral,
-                        keep_eta_cov, diagonal, &mut rng,
+                        &corpus.docs,
+                        k,
+                        num_types,
+                        iters,
+                        batch_size,
+                        tau,
+                        kappa,
+                        shrink,
+                        spectral,
+                        keep_eta_cov,
+                        diagonal,
+                        &mut rng,
                     )
                 } else {
                     ctm::fit_ctm(
-                        &corpus.docs, k, num_types, iters, convergence_tol, shrink, None, None,
-                        spectral, init_beta.as_deref(), ctm::GammaPrior::Pooled, keep_eta_cov,
-                        diagonal, &mut rng,
+                        &corpus.docs,
+                        k,
+                        num_types,
+                        iters,
+                        convergence_tol,
+                        shrink,
+                        None,
+                        None,
+                        spectral,
+                        init_beta.as_deref(),
+                        ctm::GammaPrior::Pooled,
+                        keep_eta_cov,
+                        diagonal,
+                        &mut rng,
                     )
                 }
             });
@@ -5730,7 +6434,8 @@ impl CTM {
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
         self.require_fitted()?;
-        Ok(self.bound_history
+        Ok(self
+            .bound_history
             .iter()
             .enumerate()
             .map(|(i, &b)| (i + 1, b))
@@ -5771,12 +6476,15 @@ impl CTM {
     #[getter]
     fn eta_cov<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<f32>>> {
         self.require_fitted()?;
-        self.eta_cov.as_ref()
+        self.eta_cov
+            .as_ref()
             .map(|c| c.to_pyarray_bound(py))
-            .ok_or_else(|| PyRuntimeError::new_err(
-                "model was fit with keep_eta_cov=False; refit with keep_eta_cov=True, \
-                 or use posterior_theta_samples/_recompute_eta_cov which recompute it on demand"
-            ))
+            .ok_or_else(|| {
+                PyRuntimeError::new_err(
+                    "model was fit with keep_eta_cov=False; refit with keep_eta_cov=True, \
+                 or use posterior_theta_samples/_recompute_eta_cov which recompute it on demand",
+                )
+            })
     }
 
     /// Recompute the per-document variational covariance ν on demand.
@@ -5789,18 +6497,27 @@ impl CTM {
         })?;
         let k = self.num_topics;
         let km1 = k - 1;
-        let sparse: Vec<(Vec<usize>, Vec<f64>)> = corpus.docs.iter()
+        let sparse: Vec<(Vec<usize>, Vec<f64>)> = corpus
+            .docs
+            .iter()
             .map(|doc| crate::variational::doc_sparse(doc))
             .collect();
         // Build a minimal CtmModel stub using only the fields recompute_nu needs.
         // Use beta_estep (the topic-word matrix from the last E-step, before the
         // final M-step updated beta) so the Hessian computation is bit-identical
         // to what was used when nu was originally stored.
-        let beta_src = self.beta_estep.as_ref().unwrap_or_else(|| self.beta.as_ref().unwrap());
-        let beta_v: Vec<Vec<f64>> = beta_src
-            .outer_iter().map(|r| r.to_vec()).collect();
-        let lambda_v: Vec<Vec<f64>> = self.eta_mean.as_ref().unwrap()
-            .outer_iter().map(|r| r.to_vec()).collect();
+        let beta_src = self
+            .beta_estep
+            .as_ref()
+            .unwrap_or_else(|| self.beta.as_ref().unwrap());
+        let beta_v: Vec<Vec<f64>> = beta_src.outer_iter().map(|r| r.to_vec()).collect();
+        let lambda_v: Vec<Vec<f64>> = self
+            .eta_mean
+            .as_ref()
+            .unwrap()
+            .outer_iter()
+            .map(|r| r.to_vec())
+            .collect();
         let d = lambda_v.len();
         // ν is independent of the prior mean μ, so recompute_nu uses self.mu for
         // every document. Fall back to self.sigma for loaded models (sigma_estep
@@ -5897,7 +6614,10 @@ impl CTM {
             let items: Vec<Bound<'py, PyTuple>> = tops[t]
                 .iter()
                 .map(|&w| {
-                    PyTuple::new_bound(py, &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)])
+                    PyTuple::new_bound(
+                        py,
+                        &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)],
+                    )
                 })
                 .collect();
             Ok(PyList::new_bound(py, items))
@@ -5965,18 +6685,30 @@ impl CTM {
         // eta_cov is stored as f32 in memory; upcast to f64 for the on-disk format
         // so existing saved models remain compatible.
         let eta_cov_f64 = self.eta_cov.as_ref().map(|c| c.mapv(|x| x as f64));
-        write_state(path, MODEL_TAG_CTM, &CtmState {
-            num_topics: self.num_topics, sigma_shrink: self.sigma_shrink, seed: self.seed,
-            init_spectral: self.init_spectral, fitted: self.fitted,
-            beta: arr2_opt(&self.beta), theta: arr2_opt(&self.theta), corr: arr2_opt(&self.corr),
-            eta_mean: arr2_opt(&self.eta_mean), eta_cov: arr3_opt(&eta_cov_f64),
-            mu: self.mu.clone(), sigma: self.sigma.clone(),
-            corpus: self.corpus.clone(),
-            bound: self.bound, bound_history: self.bound_history.clone(),
-            converged: self.converged,
-            topic_names: self.topic_names.clone(),
-            variational: self.variational.clone(),
-        })
+        write_state(
+            path,
+            MODEL_TAG_CTM,
+            &CtmState {
+                num_topics: self.num_topics,
+                sigma_shrink: self.sigma_shrink,
+                seed: self.seed,
+                init_spectral: self.init_spectral,
+                fitted: self.fitted,
+                beta: arr2_opt(&self.beta),
+                theta: arr2_opt(&self.theta),
+                corr: arr2_opt(&self.corr),
+                eta_mean: arr2_opt(&self.eta_mean),
+                eta_cov: arr3_opt(&eta_cov_f64),
+                mu: self.mu.clone(),
+                sigma: self.sigma.clone(),
+                corpus: self.corpus.clone(),
+                bound: self.bound,
+                bound_history: self.bound_history.clone(),
+                converged: self.converged,
+                topic_names: self.topic_names.clone(),
+                variational: self.variational.clone(),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -5991,21 +6723,34 @@ impl CTM {
         // eta_cov is saved as f64 for format compatibility; downcast to f32 in memory.
         let eta_cov = arr3_back(s.eta_cov).map(|c| c.mapv(|x| x as f32));
         Ok(CTM {
-            num_topics: s.num_topics, sigma_shrink: s.sigma_shrink, seed: s.seed,
-            init_spectral: s.init_spectral, variational: s.variational, fitted: s.fitted,
+            num_topics: s.num_topics,
+            sigma_shrink: s.sigma_shrink,
+            seed: s.seed,
+            init_spectral: s.init_spectral,
+            variational: s.variational,
+            fitted: s.fitted,
             topic_names,
-            beta: arr2_back(s.beta), theta: arr2_back(s.theta), corr: arr2_back(s.corr),
-            eta_mean: arr2_back(s.eta_mean), eta_cov,
-            mu: s.mu, sigma: s.sigma,
-            sigma_estep: Vec::new(),  // not persisted; falls back to sigma in _recompute_eta_cov
-            beta_estep: None,         // not persisted; falls back to self.beta
+            beta: arr2_back(s.beta),
+            theta: arr2_back(s.theta),
+            corr: arr2_back(s.corr),
+            eta_mean: arr2_back(s.eta_mean),
+            eta_cov,
+            mu: s.mu,
+            sigma: s.sigma,
+            sigma_estep: Vec::new(), // not persisted; falls back to sigma in _recompute_eta_cov
+            beta_estep: None,        // not persisted; falls back to self.beta
             corpus: s.corpus,
-            bound: s.bound, bound_history: s.bound_history, converged: s.converged,
+            bound: s.bound,
+            bound_history: s.bound_history,
+            converged: s.converged,
         })
     }
 
     fn __repr__(&self) -> String {
-        format!("CTM(num_topics={}, variational={:?}, fitted={})", self.num_topics, self.variational, self.fitted)
+        format!(
+            "CTM(num_topics={}, variational={:?}, fitted={})",
+            self.num_topics, self.variational, self.fitted
+        )
     }
 }
 
@@ -6040,8 +6785,8 @@ pub struct STM {
     theta: Option<Array2<f64>>,
     corr: Option<Array2<f64>>,
     eta_mean: Option<Array2<f64>>, // (num_docs, num_topics-1) variational means λ
-    eta_cov: Option<Array3<f32>>,  // (num_docs, K-1, K-1) variational covariances ν — stored as f32 to halve memory
-    gamma: Option<Array2<f64>>, // (num_features, num_topics-1); None if no prevalence
+    eta_cov: Option<Array3<f32>>, // (num_docs, K-1, K-1) variational covariances ν — stored as f32 to halve memory
+    gamma: Option<Array2<f64>>,   // (num_features, num_topics-1); None if no prevalence
     feature_names: Vec<String>,
     content_beta: Option<Vec<Vec<Vec<f64>>>>, // G×K×V; None if no content
     content_kappa: Option<ctm::ContentKappa>, // SAGE κ decomposition; None if no content
@@ -6055,9 +6800,9 @@ pub struct STM {
     /// M-step updated `beta`). Used by `_recompute_eta_cov` to reproduce ν.
     beta_estep: Option<Array2<f64>>,
     corpus: Option<corpus::Corpus>,
-    bound: f64,                // final variational bound (ELBO)
-    bound_history: Vec<f64>,   // bound after each EM iteration
-    converged: bool,           // hit em_tol (true) or em_iters cap (false)
+    bound: f64,              // final variational bound (ELBO)
+    bound_history: Vec<f64>, // bound after each EM iteration
+    converged: bool,         // hit em_tol (true) or em_iters cap (false)
 }
 
 impl STM {
@@ -6065,7 +6810,9 @@ impl STM {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 
@@ -6083,7 +6830,9 @@ impl STM {
                 .position(|g| g == &s)
                 .ok_or_else(|| PyValueError::new_err(format!("unknown group {:?}", s)));
         }
-        Err(PyValueError::new_err("group must be a name (str) or index (int)"))
+        Err(PyValueError::new_err(
+            "group must be a name (str) or index (int)",
+        ))
     }
 }
 
@@ -6101,7 +6850,13 @@ impl STM {
     /// off-diagonal posterior covariance — topic-correlation/SE precision is lower).
     #[new]
     #[pyo3(signature = (num_topics, *, sigma_shrink=0.0, seed=42, init="spectral", variational="laplace"))]
-    fn new(#[pyo3(from_py_with = "py_num_topics")] num_topics: usize, sigma_shrink: f64, seed: u64, init: &str, variational: &str) -> PyResult<Self> {
+    fn new(
+        #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
+        sigma_shrink: f64,
+        seed: u64,
+        init: &str,
+        variational: &str,
+    ) -> PyResult<Self> {
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
@@ -6114,7 +6869,9 @@ impl STM {
             _ => return Err(PyValueError::new_err("init must be 'spectral' or 'random'")),
         };
         if variational != "laplace" && variational != "diagonal" {
-            return Err(PyValueError::new_err("variational must be 'laplace' or 'diagonal'"));
+            return Err(PyValueError::new_err(
+                "variational must be 'laplace' or 'diagonal'",
+            ));
         }
         Ok(STM {
             num_topics,
@@ -6199,12 +6956,19 @@ impl STM {
     ) -> PyResult<()> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
-            warnings.call_method1("warn", (
-                "STM.fit(em_tol=) is deprecated; use convergence_tol= instead",
-                py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
-                2_i32,
-            ))?;
-            if (convergence_tol - 1e-5_f64).abs() > f64::EPSILON { convergence_tol } else { old_val }
+            warnings.call_method1(
+                "warn",
+                (
+                    "STM.fit(em_tol=) is deprecated; use convergence_tol= instead",
+                    py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
+                    2_i32,
+                ),
+            )?;
+            if (convergence_tol - 1e-5_f64).abs() > f64::EPSILON {
+                convergence_tol
+            } else {
+                old_val
+            }
         } else {
             convergence_tol
         };
@@ -6225,7 +6989,17 @@ impl STM {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         let num_docs = corpus.num_docs();
         if num_docs == 0 {
@@ -6252,7 +7026,9 @@ impl STM {
             check_all_finite_2d("prevalence", &raw)?;
             let f_in = raw.first().map(|r| r.len()).unwrap_or(0);
             if raw.iter().any(|r| r.len() != f_in) {
-                return Err(PyValueError::new_err("all prevalence rows must have the same length"));
+                return Err(PyValueError::new_err(
+                    "all prevalence rows must have the same length",
+                ));
             }
             if let Some(names) = &prevalence_names {
                 if names.len() != f_in {
@@ -6324,9 +7100,12 @@ impl STM {
                 }
                 ctm::GammaPrior::L1 { alpha: gamma_enet }
             }
-            other => return Err(PyValueError::new_err(format!(
-                "gamma_prior must be \"pooled\" or \"l1\", got {:?}", other
-            ))),
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "gamma_prior must be \"pooled\" or \"l1\", got {:?}",
+                    other
+                )))
+            }
         };
 
         let k = self.num_topics;
@@ -6343,8 +7122,20 @@ impl STM {
             let cont_ref = content_groups.as_ref().map(|(g, n)| (g.as_slice(), *n));
             let m = run_with_threads(num_threads, || {
                 ctm::fit_ctm(
-                    &corpus.docs, k, num_types, iters, convergence_tol, shrink, prev_ref, cont_ref,
-                    spectral, init_beta.as_deref(), gprior, keep_eta_cov, diagonal, &mut rng,
+                    &corpus.docs,
+                    k,
+                    num_types,
+                    iters,
+                    convergence_tol,
+                    shrink,
+                    prev_ref,
+                    cont_ref,
+                    spectral,
+                    init_beta.as_deref(),
+                    gprior,
+                    keep_eta_cov,
+                    diagonal,
+                    &mut rng,
                 )
             });
             (m, corpus)
@@ -6492,7 +7283,8 @@ impl STM {
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
         self.require_fitted()?;
-        Ok(self.bound_history
+        Ok(self
+            .bound_history
             .iter()
             .enumerate()
             .map(|(i, &b)| (i + 1, b))
@@ -6532,12 +7324,15 @@ impl STM {
     #[getter]
     fn eta_cov<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<f32>>> {
         self.require_fitted()?;
-        self.eta_cov.as_ref()
+        self.eta_cov
+            .as_ref()
             .map(|c| c.to_pyarray_bound(py))
-            .ok_or_else(|| PyRuntimeError::new_err(
-                "model was fit with keep_eta_cov=False; refit with keep_eta_cov=True, \
-                 or use posterior_theta_samples/_recompute_eta_cov which recompute it on demand"
-            ))
+            .ok_or_else(|| {
+                PyRuntimeError::new_err(
+                    "model was fit with keep_eta_cov=False; refit with keep_eta_cov=True, \
+                 or use posterior_theta_samples/_recompute_eta_cov which recompute it on demand",
+                )
+            })
     }
 
     /// Recompute the per-document variational covariance ν on demand.
@@ -6550,17 +7345,26 @@ impl STM {
         })?;
         let k = self.num_topics;
         let km1 = k - 1;
-        let sparse: Vec<(Vec<usize>, Vec<f64>)> = corpus.docs.iter()
+        let sparse: Vec<(Vec<usize>, Vec<f64>)> = corpus
+            .docs
+            .iter()
             .map(|doc| crate::variational::doc_sparse(doc))
             .collect();
         // Use beta_estep (the topic-word matrix from the last E-step, before the
         // final M-step updated beta) so the Hessian computation is bit-identical
         // to what was used when nu was originally stored.
-        let beta_src = self.beta_estep.as_ref().unwrap_or_else(|| self.beta.as_ref().unwrap());
-        let beta_v: Vec<Vec<f64>> = beta_src
-            .outer_iter().map(|r| r.to_vec()).collect();
-        let lambda_v: Vec<Vec<f64>> = self.eta_mean.as_ref().unwrap()
-            .outer_iter().map(|r| r.to_vec()).collect();
+        let beta_src = self
+            .beta_estep
+            .as_ref()
+            .unwrap_or_else(|| self.beta.as_ref().unwrap());
+        let beta_v: Vec<Vec<f64>> = beta_src.outer_iter().map(|r| r.to_vec()).collect();
+        let lambda_v: Vec<Vec<f64>> = self
+            .eta_mean
+            .as_ref()
+            .unwrap()
+            .outer_iter()
+            .map(|r| r.to_vec())
+            .collect();
         let d = lambda_v.len();
         // ν is independent of the prior mean μ, so recompute_nu uses self.mu for
         // every document.
@@ -6627,10 +7431,9 @@ impl STM {
     #[getter]
     fn prevalence_effects<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
-        let g = self
-            .gamma
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("model was fit without prevalence covariates"))?;
+        let g = self.gamma.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err("model was fit without prevalence covariates")
+        })?;
         Ok(g.to_pyarray_bound(py))
     }
 
@@ -6639,9 +7442,10 @@ impl STM {
     #[getter]
     fn topic_word_by_group<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<f64>>> {
         self.require_fitted()?;
-        let cb = self.content_beta.as_ref().ok_or_else(|| {
-            PyRuntimeError::new_err("model was fit without content covariates")
-        })?;
+        let cb = self
+            .content_beta
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("model was fit without content covariates"))?;
         let g = cb.len();
         let k = self.num_topics;
         let v = self.corpus.as_ref().unwrap().num_types();
@@ -6668,9 +7472,10 @@ impl STM {
     #[getter]
     fn content_kappa<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         self.require_fitted()?;
-        let ck = self.content_kappa.as_ref().ok_or_else(|| {
-            PyRuntimeError::new_err("model was fit without content covariates")
-        })?;
+        let ck = self
+            .content_kappa
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("model was fit without content covariates"))?;
         let k = self.num_topics;
         let g = self.group_names.len();
         let v = ck.m.len();
@@ -6709,7 +7514,9 @@ impl STM {
     fn groups(&self) -> PyResult<Vec<String>> {
         self.require_fitted()?;
         if self.group_names.is_empty() {
-            return Err(PyRuntimeError::new_err("model was fit without content covariates"));
+            return Err(PyRuntimeError::new_err(
+                "model was fit without content covariates",
+            ));
         }
         Ok(self.group_names.clone())
     }
@@ -6727,9 +7534,10 @@ impl STM {
         n: usize,
     ) -> PyResult<Bound<'py, PyList>> {
         self.require_fitted()?;
-        let cb = self.content_beta.as_ref().ok_or_else(|| {
-            PyRuntimeError::new_err("model was fit without content covariates")
-        })?;
+        let cb = self
+            .content_beta
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("model was fit without content covariates"))?;
         if topic >= self.num_topics {
             return Err(PyValueError::new_err("topic out of range"));
         }
@@ -6795,7 +7603,10 @@ impl STM {
             let items: Vec<Bound<'py, PyTuple>> = tops[t]
                 .iter()
                 .map(|&w| {
-                    PyTuple::new_bound(py, &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)])
+                    PyTuple::new_bound(
+                        py,
+                        &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)],
+                    )
                 })
                 .collect();
             Ok(PyList::new_bound(py, items))
@@ -6889,22 +7700,35 @@ impl STM {
         // eta_cov is stored as f32 in memory; upcast to f64 for the on-disk format
         // so existing saved models remain compatible.
         let eta_cov_f64 = self.eta_cov.as_ref().map(|c| c.mapv(|x| x as f64));
-        write_state(path, MODEL_TAG_STM, &StmState {
-            num_topics: self.num_topics, sigma_shrink: self.sigma_shrink, seed: self.seed,
-            init_spectral: self.init_spectral, fitted: self.fitted,
-            beta: arr2_opt(&self.beta), theta: arr2_opt(&self.theta), corr: arr2_opt(&self.corr),
-            eta_mean: arr2_opt(&self.eta_mean), eta_cov: arr3_opt(&eta_cov_f64),
-            gamma: arr2_opt(&self.gamma), feature_names: self.feature_names.clone(),
-            content_beta: self.content_beta.clone(),
-            mu: self.mu.clone(), sigma: self.sigma.clone(),
-            group_names: self.group_names.clone(),
-            corpus: self.corpus.clone(),
-            bound: self.bound, bound_history: self.bound_history.clone(),
-            converged: self.converged,
-            topic_names: self.topic_names.clone(),
-            variational: self.variational.clone(),
-            content_kappa: self.content_kappa.clone(),
-        })
+        write_state(
+            path,
+            MODEL_TAG_STM,
+            &StmState {
+                num_topics: self.num_topics,
+                sigma_shrink: self.sigma_shrink,
+                seed: self.seed,
+                init_spectral: self.init_spectral,
+                fitted: self.fitted,
+                beta: arr2_opt(&self.beta),
+                theta: arr2_opt(&self.theta),
+                corr: arr2_opt(&self.corr),
+                eta_mean: arr2_opt(&self.eta_mean),
+                eta_cov: arr3_opt(&eta_cov_f64),
+                gamma: arr2_opt(&self.gamma),
+                feature_names: self.feature_names.clone(),
+                content_beta: self.content_beta.clone(),
+                mu: self.mu.clone(),
+                sigma: self.sigma.clone(),
+                group_names: self.group_names.clone(),
+                corpus: self.corpus.clone(),
+                bound: self.bound,
+                bound_history: self.bound_history.clone(),
+                converged: self.converged,
+                topic_names: self.topic_names.clone(),
+                variational: self.variational.clone(),
+                content_kappa: self.content_kappa.clone(),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -6919,24 +7743,39 @@ impl STM {
         // eta_cov is saved as f64 for format compatibility; downcast to f32 in memory.
         let eta_cov = arr3_back(s.eta_cov).map(|c| c.mapv(|x| x as f32));
         Ok(STM {
-            num_topics: s.num_topics, sigma_shrink: s.sigma_shrink, seed: s.seed,
-            init_spectral: s.init_spectral, variational: s.variational, fitted: s.fitted,
+            num_topics: s.num_topics,
+            sigma_shrink: s.sigma_shrink,
+            seed: s.seed,
+            init_spectral: s.init_spectral,
+            variational: s.variational,
+            fitted: s.fitted,
             topic_names,
-            beta: arr2_back(s.beta), theta: arr2_back(s.theta), corr: arr2_back(s.corr),
-            eta_mean: arr2_back(s.eta_mean), eta_cov,
-            gamma: arr2_back(s.gamma), feature_names: s.feature_names,
+            beta: arr2_back(s.beta),
+            theta: arr2_back(s.theta),
+            corr: arr2_back(s.corr),
+            eta_mean: arr2_back(s.eta_mean),
+            eta_cov,
+            gamma: arr2_back(s.gamma),
+            feature_names: s.feature_names,
             content_beta: s.content_beta,
             content_kappa: s.content_kappa,
-            mu: s.mu, sigma: s.sigma,
-            sigma_estep: Vec::new(),  // not persisted; falls back to sigma in _recompute_eta_cov
-            beta_estep: None,         // not persisted; falls back to self.beta
-            group_names: s.group_names, corpus: s.corpus,
-            bound: s.bound, bound_history: s.bound_history, converged: s.converged,
+            mu: s.mu,
+            sigma: s.sigma,
+            sigma_estep: Vec::new(), // not persisted; falls back to sigma in _recompute_eta_cov
+            beta_estep: None,        // not persisted; falls back to self.beta
+            group_names: s.group_names,
+            corpus: s.corpus,
+            bound: s.bound,
+            bound_history: s.bound_history,
+            converged: s.converged,
         })
     }
 
     fn __repr__(&self) -> String {
-        format!("STM(num_topics={}, variational={:?}, fitted={})", self.num_topics, self.variational, self.fitted)
+        format!(
+            "STM(num_topics={}, variational={:?}, fitted={})",
+            self.num_topics, self.variational, self.fitted
+        )
     }
 }
 
@@ -6998,7 +7837,9 @@ impl ECTM {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 
@@ -7016,7 +7857,9 @@ impl ECTM {
                 .position(|g| g == &s)
                 .ok_or_else(|| PyValueError::new_err(format!("unknown group {:?}", s)));
         }
-        Err(PyValueError::new_err("group must be a name (str) or index (int)"))
+        Err(PyValueError::new_err(
+            "group must be a name (str) or index (int)",
+        ))
     }
 
     fn resolve_period(&self, obj: &Bound<'_, PyAny>) -> PyResult<usize> {
@@ -7033,7 +7876,9 @@ impl ECTM {
                 .position(|p| p == &s)
                 .ok_or_else(|| PyValueError::new_err(format!("unknown period {:?}", s)));
         }
-        Err(PyValueError::new_err("period must be a label (str) or index (int)"))
+        Err(PyValueError::new_err(
+            "period must be a label (str) or index (int)",
+        ))
     }
 }
 
@@ -7064,7 +7909,9 @@ impl ECTM {
             return Err(PyValueError::new_err("sigma_shrink must be in [0, 1]"));
         }
         if variational != "laplace" && variational != "diagonal" {
-            return Err(PyValueError::new_err("variational must be 'laplace' or 'diagonal'"));
+            return Err(PyValueError::new_err(
+                "variational must be 'laplace' or 'diagonal'",
+            ));
         }
         let init_spectral = match init {
             "spectral" => true,
@@ -7168,7 +8015,17 @@ impl ECTM {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         let num_docs = corpus.num_docs();
         if num_docs == 0 {
@@ -7207,8 +8064,11 @@ impl ECTM {
                 v
             }
         };
-        let gindex: HashMap<&str, usize> =
-            group_vocab.iter().enumerate().map(|(i, g)| (g.as_str(), i)).collect();
+        let gindex: HashMap<&str, usize> = group_vocab
+            .iter()
+            .enumerate()
+            .map(|(i, g)| (g.as_str(), i))
+            .collect();
         let group_idx: Vec<usize> = groups_str
             .iter()
             .map(|g| {
@@ -7234,7 +8094,9 @@ impl ECTM {
             check_all_finite_2d("prevalence", &raw)?;
             let f_in = raw.first().map(|r| r.len()).unwrap_or(0);
             if raw.iter().any(|r| r.len() != f_in) {
-                return Err(PyValueError::new_err("all prevalence rows must have the same length"));
+                return Err(PyValueError::new_err(
+                    "all prevalence rows must have the same length",
+                ));
             }
             if let Some(names) = &prevalence_names {
                 if names.len() != f_in {
@@ -7256,7 +8118,8 @@ impl ECTM {
             );
             feat_names.push("intercept".to_string());
             feat_names.extend(
-                prevalence_names.unwrap_or_else(|| (0..f_in).map(|i| format!("feature_{}", i)).collect()),
+                prevalence_names
+                    .unwrap_or_else(|| (0..f_in).map(|i| format!("feature_{}", i)).collect()),
             );
         }
 
@@ -7272,16 +8135,49 @@ impl ECTM {
             let m = run_with_threads(num_threads, || {
                 if svi {
                     crate::ectm::fit_ectm_svi(
-                        &corpus.docs, k, num_types, &group_idx, num_groups, &period_idx, num_periods,
-                        iters, batch_size, tau, kappa, content_every, shrink, prev_ref,
-                        content_prior_var, period_smooth, period_smooth, interaction_shrink,
-                        keep_eta_cov, diagonal, init_spectral, &mut rng,
+                        &corpus.docs,
+                        k,
+                        num_types,
+                        &group_idx,
+                        num_groups,
+                        &period_idx,
+                        num_periods,
+                        iters,
+                        batch_size,
+                        tau,
+                        kappa,
+                        content_every,
+                        shrink,
+                        prev_ref,
+                        content_prior_var,
+                        period_smooth,
+                        period_smooth,
+                        interaction_shrink,
+                        keep_eta_cov,
+                        diagonal,
+                        init_spectral,
+                        &mut rng,
                     )
                 } else {
                     crate::ectm::fit_ectm(
-                        &corpus.docs, k, num_types, &group_idx, num_groups, &period_idx, num_periods,
-                        iters, convergence_tol, shrink, prev_ref, content_prior_var, period_smooth,
-                        period_smooth, interaction_shrink, keep_eta_cov, diagonal, init_spectral,
+                        &corpus.docs,
+                        k,
+                        num_types,
+                        &group_idx,
+                        num_groups,
+                        &period_idx,
+                        num_periods,
+                        iters,
+                        convergence_tol,
+                        shrink,
+                        prev_ref,
+                        content_prior_var,
+                        period_smooth,
+                        period_smooth,
+                        interaction_shrink,
+                        keep_eta_cov,
+                        diagonal,
+                        init_spectral,
                         &mut rng,
                     )
                 }
@@ -7483,9 +8379,14 @@ impl ECTM {
     #[getter]
     fn eta_cov<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<f32>>> {
         self.require_fitted()?;
-        self.eta_cov.as_ref().map(|c| c.to_pyarray_bound(py)).ok_or_else(|| {
-            PyRuntimeError::new_err("model was fit with keep_eta_cov=False; refit with keep_eta_cov=True")
-        })
+        self.eta_cov
+            .as_ref()
+            .map(|c| c.to_pyarray_bound(py))
+            .ok_or_else(|| {
+                PyRuntimeError::new_err(
+                    "model was fit with keep_eta_cov=False; refit with keep_eta_cov=True",
+                )
+            })
     }
 
     /// Final variational bound (approximate ELBO) at convergence.
@@ -7537,7 +8438,12 @@ impl ECTM {
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
         self.require_fitted()?;
-        Ok(self.bound_history.iter().enumerate().map(|(i, &b)| (i + 1, b)).collect())
+        Ok(self
+            .bound_history
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| (i + 1, b))
+            .collect())
     }
 
     /// Variational-covariance mode (``"laplace"`` or ``"diagonal"``).
@@ -7549,7 +8455,12 @@ impl ECTM {
     /// Top `n` words per topic (or one topic) as ``(word, probability)`` pairs,
     /// from the cell-averaged β.
     #[pyo3(signature = (n=10, *, topic=None))]
-    fn top_words<'py>(&self, py: Python<'py>, n: usize, topic: Option<usize>) -> PyResult<Bound<'py, PyAny>> {
+    fn top_words<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        topic: Option<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         let beta = self.beta.as_ref().unwrap();
         let vocab = &self.corpus.as_ref().unwrap().id_to_word;
@@ -7560,14 +8471,20 @@ impl ECTM {
             }
             let items: Vec<Bound<'py, PyTuple>> = tops[t]
                 .iter()
-                .map(|&w| PyTuple::new_bound(py, &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)]))
+                .map(|&w| {
+                    PyTuple::new_bound(
+                        py,
+                        &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)],
+                    )
+                })
                 .collect();
             Ok(PyList::new_bound(py, items))
         };
         match topic {
             Some(t) => Ok(one(t)?.into_any()),
             None => {
-                let all: Vec<Bound<'py, PyList>> = (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
+                let all: Vec<Bound<'py, PyList>> =
+                    (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
                 Ok(PyList::new_bound(py, all).into_any())
             }
         }
@@ -7606,24 +8523,37 @@ impl ECTM {
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
         let eta_cov_f64 = self.eta_cov.as_ref().map(|c| c.mapv(|x| x as f64));
-        write_state(path, MODEL_TAG_ECTM, &EctmState {
-            num_topics: self.num_topics, sigma_shrink: self.sigma_shrink, seed: self.seed,
-            fitted: self.fitted,
-            beta: arr2_opt(&self.beta), theta: arr2_opt(&self.theta),
-            eta_mean: arr2_opt(&self.eta_mean), eta_cov: arr3_opt(&eta_cov_f64),
-            gamma: arr2_opt(&self.gamma), feature_names: self.feature_names.clone(),
-            content_beta: self.content_beta.clone(),
-            num_groups: self.num_groups, num_periods: self.num_periods,
-            group_names: self.group_names.clone(), period_names: self.period_names.clone(),
-            mu: self.mu.clone(), sigma: self.sigma.clone(),
-            corpus: self.corpus.clone(),
-            bound: self.bound, bound_history: self.bound_history.clone(),
-            converged: self.converged,
-            topic_names: self.topic_names.clone(),
-            variational: self.variational.clone(),
-            init_spectral: self.init_spectral,
-            content_shift_history: self.content_shift_history.clone(),
-        })
+        write_state(
+            path,
+            MODEL_TAG_ECTM,
+            &EctmState {
+                num_topics: self.num_topics,
+                sigma_shrink: self.sigma_shrink,
+                seed: self.seed,
+                fitted: self.fitted,
+                beta: arr2_opt(&self.beta),
+                theta: arr2_opt(&self.theta),
+                eta_mean: arr2_opt(&self.eta_mean),
+                eta_cov: arr3_opt(&eta_cov_f64),
+                gamma: arr2_opt(&self.gamma),
+                feature_names: self.feature_names.clone(),
+                content_beta: self.content_beta.clone(),
+                num_groups: self.num_groups,
+                num_periods: self.num_periods,
+                group_names: self.group_names.clone(),
+                period_names: self.period_names.clone(),
+                mu: self.mu.clone(),
+                sigma: self.sigma.clone(),
+                corpus: self.corpus.clone(),
+                bound: self.bound,
+                bound_history: self.bound_history.clone(),
+                converged: self.converged,
+                topic_names: self.topic_names.clone(),
+                variational: self.variational.clone(),
+                init_spectral: self.init_spectral,
+                content_shift_history: self.content_shift_history.clone(),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -7638,16 +8568,30 @@ impl ECTM {
         };
         let eta_cov = arr3_back(s.eta_cov).map(|c| c.mapv(|x| x as f32));
         Ok(ECTM {
-            num_topics: s.num_topics, sigma_shrink: s.sigma_shrink, seed: s.seed,
-            variational: s.variational, init_spectral: s.init_spectral, fitted: s.fitted, topic_names,
-            beta: arr2_back(s.beta), theta: arr2_back(s.theta),
+            num_topics: s.num_topics,
+            sigma_shrink: s.sigma_shrink,
+            seed: s.seed,
+            variational: s.variational,
+            init_spectral: s.init_spectral,
+            fitted: s.fitted,
+            topic_names,
+            beta: arr2_back(s.beta),
+            theta: arr2_back(s.theta),
             content_beta: s.content_beta,
-            num_groups: s.num_groups, num_periods: s.num_periods,
-            group_names: s.group_names, period_names: s.period_names,
-            eta_mean: arr2_back(s.eta_mean), eta_cov,
-            gamma: arr2_back(s.gamma), feature_names: s.feature_names,
-            mu: s.mu, sigma: s.sigma, corpus: s.corpus,
-            bound: s.bound, bound_history: s.bound_history, converged: s.converged,
+            num_groups: s.num_groups,
+            num_periods: s.num_periods,
+            group_names: s.group_names,
+            period_names: s.period_names,
+            eta_mean: arr2_back(s.eta_mean),
+            eta_cov,
+            gamma: arr2_back(s.gamma),
+            feature_names: s.feature_names,
+            mu: s.mu,
+            sigma: s.sigma,
+            corpus: s.corpus,
+            bound: s.bound,
+            bound_history: s.bound_history,
+            converged: s.converged,
             content_shift_history: s.content_shift_history,
         })
     }
@@ -7747,7 +8691,16 @@ fn project<'py>(
     let n = rows.len();
     let method = method.to_string(); // own it so the GIL can be released
     let out = py.allow_threads(move || {
-        crate::reduce::project(&rows, n_components, &method, n_neighbors, perplexity, 0.5, 1000, seed)
+        crate::reduce::project(
+            &rows,
+            n_components,
+            &method,
+            n_neighbors,
+            perplexity,
+            0.5,
+            1000,
+            seed,
+        )
     });
     let mut arr = Array2::<f64>::zeros((n, n_components));
     for (i, r) in out.iter().enumerate() {
@@ -7860,12 +8813,12 @@ pub struct STS {
     sentiment: Option<Array2<f64>>, // D×K topic sentiment-discourse α^(s)
     gamma: Option<Array2<f64>>,     // F×(2K-1) prevalence+sentiment regression
     feature_names: Vec<String>,
-    kappa_t: Vec<Vec<f64>>, // K×V (final, after last κ M-step)
-    kappa_s: Vec<Vec<f64>>, // K×V (final, after last κ M-step)
-    mv: Vec<f64>,           // V
-    sigma: Vec<f64>,        // (2K-1)²
-    eta_mean: Option<Array2<f64>>,  // D×(2K-1)
-    eta_cov: Option<Array3<f32>>,   // D×(2K-1)×(2K-1) — stored as f32 to halve memory; None when fit with keep_eta_cov=False
+    kappa_t: Vec<Vec<f64>>,        // K×V (final, after last κ M-step)
+    kappa_s: Vec<Vec<f64>>,        // K×V (final, after last κ M-step)
+    mv: Vec<f64>,                  // V
+    sigma: Vec<f64>,               // (2K-1)²
+    eta_mean: Option<Array2<f64>>, // D×(2K-1)
+    eta_cov: Option<Array3<f32>>, // D×(2K-1)×(2K-1) — stored as f32 to halve memory; None when fit with keep_eta_cov=False
     /// Sigma from the last E-step (before the final Σ M-step). Used by
     /// `_recompute_eta_cov` to reproduce ν exactly. Empty when not needed (loaded
     /// models) — falls back to `sigma` in that case.
@@ -7886,7 +8839,9 @@ impl STS {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 }
@@ -7975,12 +8930,19 @@ impl STS {
     ) -> PyResult<()> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
-            warnings.call_method1("warn", (
-                "STS.fit(em_tol=) is deprecated; use convergence_tol= instead",
-                py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
-                2_i32,
-            ))?;
-            if (convergence_tol - 1e-5_f64).abs() > f64::EPSILON { convergence_tol } else { old_val }
+            warnings.call_method1(
+                "warn",
+                (
+                    "STS.fit(em_tol=) is deprecated; use convergence_tol= instead",
+                    py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
+                    2_i32,
+                ),
+            )?;
+            if (convergence_tol - 1e-5_f64).abs() > f64::EPSILON {
+                convergence_tol
+            } else {
+                old_val
+            }
         } else {
             convergence_tol
         };
@@ -7996,11 +8958,15 @@ impl STS {
             (None, None) => None,
         };
         let kappa_est = match kappa_estimation {
-            "lasso" => sts::KappaEst::Lasso { nlambda: 100, lambda_min_ratio: 0.001 },
+            "lasso" => sts::KappaEst::Lasso {
+                nlambda: 100,
+                lambda_min_ratio: 0.001,
+            },
             "ridge" => sts::KappaEst::Ridge(kappa_ridge),
             other => {
                 return Err(PyValueError::new_err(format!(
-                    "kappa_estimation must be \"lasso\" or \"ridge\", got {:?}", other
+                    "kappa_estimation must be \"lasso\" or \"ridge\", got {:?}",
+                    other
                 )))
             }
         };
@@ -8010,7 +8976,17 @@ impl STS {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         let num_docs = corpus.num_docs();
         if num_docs == 0 {
@@ -8039,7 +9015,9 @@ impl STS {
             check_all_finite_2d("prevalence", &raw)?;
             let f_in = raw.first().map(|r| r.len()).unwrap_or(0);
             if raw.iter().any(|r| r.len() != f_in) {
-                return Err(PyValueError::new_err("all prevalence rows must have the same length"));
+                return Err(PyValueError::new_err(
+                    "all prevalence rows must have the same length",
+                ));
             }
             if let Some(names) = &prevalence_names {
                 if names.len() != f_in {
@@ -8073,8 +9051,17 @@ impl STS {
         let (model, corpus) = py.allow_threads(move || {
             let prev_ref = prevalence_x.as_deref();
             let m = sts::fit_sts(
-                &corpus.docs, k, num_types, iters, convergence_tol, prev_ref, Some(&sentiment_seed),
-                kappa_est, spectral, keep_eta_cov, &mut rng,
+                &corpus.docs,
+                k,
+                num_types,
+                iters,
+                convergence_tol,
+                prev_ref,
+                Some(&sentiment_seed),
+                kappa_est,
+                spectral,
+                keep_eta_cov,
+                &mut rng,
             );
             (m, corpus)
         });
@@ -8170,10 +9157,22 @@ impl STS {
     /// every topic), shape ``(num_topics, num_words)``. Inspect the wording at
     /// positive vs. negative sentiment by passing percentiles of :attr:`sentiment`.
     #[pyo3(signature = (level))]
-    fn topic_word_at<'py>(&self, py: Python<'py>, level: f64) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    fn topic_word_at<'py>(
+        &self,
+        py: Python<'py>,
+        level: f64,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         let v = self.mv.len();
-        Ok(sts_beta_at(&self.kappa_t, &self.kappa_s, &self.mv, self.num_topics, v, level).to_pyarray_bound(py))
+        Ok(sts_beta_at(
+            &self.kappa_t,
+            &self.kappa_s,
+            &self.mv,
+            self.num_topics,
+            v,
+            level,
+        )
+        .to_pyarray_bound(py))
     }
 
     /// Document-topic prevalence matrix θ, shape ``(num_docs, num_topics)``.
@@ -8254,12 +9253,15 @@ impl STS {
     #[getter]
     fn eta_cov<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<f32>>> {
         self.require_fitted()?;
-        self.eta_cov.as_ref()
+        self.eta_cov
+            .as_ref()
             .map(|c| c.to_pyarray_bound(py))
-            .ok_or_else(|| PyRuntimeError::new_err(
-                "model was fit with keep_eta_cov=False; refit with keep_eta_cov=True, \
-                 or use _recompute_eta_cov which recomputes it on demand"
-            ))
+            .ok_or_else(|| {
+                PyRuntimeError::new_err(
+                    "model was fit with keep_eta_cov=False; refit with keep_eta_cov=True, \
+                 or use _recompute_eta_cov which recomputes it on demand",
+                )
+            })
     }
 
     /// Recompute the per-document variational covariance ν on demand.
@@ -8268,14 +9270,22 @@ impl STS {
     /// array as :attr:`eta_cov`.
     fn _recompute_eta_cov<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<f32>>> {
         self.require_fitted()?;
-        let corpus = self.corpus.as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("no corpus retained; cannot recompute eta_cov"))?;
-        let sparse: Vec<(Vec<usize>, Vec<f64>)> =
-            corpus.docs.iter().map(|d| crate::variational::doc_sparse(d)).collect();
+        let corpus = self.corpus.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err("no corpus retained; cannot recompute eta_cov")
+        })?;
+        let sparse: Vec<(Vec<usize>, Vec<f64>)> = corpus
+            .docs
+            .iter()
+            .map(|d| crate::variational::doc_sparse(d))
+            .collect();
 
         // Build a minimal StsModel stub with only the fields recompute_nu_sts needs.
-        let alpha = self.eta_mean.as_ref().unwrap()
-            .rows().into_iter()
+        let alpha = self
+            .eta_mean
+            .as_ref()
+            .unwrap()
+            .rows()
+            .into_iter()
             .map(|r| r.to_vec())
             .collect::<Vec<_>>();
         // ν is independent of the prior mean μ — use sigma_estep (the sigma that was
@@ -8359,7 +9369,12 @@ impl STS {
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
         self.require_fitted()?;
-        Ok(self.bound_history.iter().enumerate().map(|(i, &b)| (i + 1, b)).collect())
+        Ok(self
+            .bound_history
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| (i + 1, b))
+            .collect())
     }
 
     #[getter]
@@ -8400,7 +9415,14 @@ impl STS {
         self.require_fitted()?;
         let docs = docs_to_ids(data, &self.corpus.as_ref().unwrap().id_to_word)?;
         let theta = py.allow_threads(|| {
-            sts::sts_infer(&docs, &self.kappa_t, &self.kappa_s, &self.mv, &self.sigma, self.num_topics)
+            sts::sts_infer(
+                &docs,
+                &self.kappa_t,
+                &self.kappa_s,
+                &self.mv,
+                &self.sigma,
+                self.num_topics,
+            )
         });
         Ok(vecs_to_arr2(&theta).to_pyarray_bound(py))
     }
@@ -8411,19 +9433,32 @@ impl STS {
         // eta_cov is stored as f32 in memory; upcast to f64 for the on-disk format
         // so existing saved models remain compatible.
         let eta_cov_f64 = self.eta_cov.as_ref().map(|c| c.mapv(|x| x as f64));
-        write_state(path, MODEL_TAG_STS, &StsState {
-            num_topics: self.num_topics, seed: self.seed, init_spectral: self.init_spectral,
-            fitted: self.fitted,
-            beta: arr2_opt(&self.beta), theta: arr2_opt(&self.theta),
-            sentiment: arr2_opt(&self.sentiment), gamma: arr2_opt(&self.gamma),
-            eta_mean: arr2_opt(&self.eta_mean), eta_cov: arr3_opt(&eta_cov_f64),
-            feature_names: self.feature_names.clone(),
-            kappa_t: self.kappa_t.clone(), kappa_s: self.kappa_s.clone(),
-            mv: self.mv.clone(), sigma: self.sigma.clone(),
-            corpus: self.corpus.clone(),
-            bound: self.bound, bound_history: self.bound_history.clone(),
-            converged: self.converged, topic_names: self.topic_names.clone(),
-        })
+        write_state(
+            path,
+            MODEL_TAG_STS,
+            &StsState {
+                num_topics: self.num_topics,
+                seed: self.seed,
+                init_spectral: self.init_spectral,
+                fitted: self.fitted,
+                beta: arr2_opt(&self.beta),
+                theta: arr2_opt(&self.theta),
+                sentiment: arr2_opt(&self.sentiment),
+                gamma: arr2_opt(&self.gamma),
+                eta_mean: arr2_opt(&self.eta_mean),
+                eta_cov: arr3_opt(&eta_cov_f64),
+                feature_names: self.feature_names.clone(),
+                kappa_t: self.kappa_t.clone(),
+                kappa_s: self.kappa_s.clone(),
+                mv: self.mv.clone(),
+                sigma: self.sigma.clone(),
+                corpus: self.corpus.clone(),
+                bound: self.bound,
+                bound_history: self.bound_history.clone(),
+                converged: self.converged,
+                topic_names: self.topic_names.clone(),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -8438,17 +9473,28 @@ impl STS {
         // eta_cov is saved as f64 for format compatibility; downcast to f32 in memory.
         let eta_cov = arr3_back(s.eta_cov).map(|c| c.mapv(|x| x as f32));
         Ok(STS {
-            num_topics: s.num_topics, seed: s.seed, init_spectral: s.init_spectral,
-            fitted: s.fitted, topic_names,
-            beta: arr2_back(s.beta), theta: arr2_back(s.theta),
-            sentiment: arr2_back(s.sentiment), gamma: arr2_back(s.gamma),
-            eta_mean: arr2_back(s.eta_mean), eta_cov,
+            num_topics: s.num_topics,
+            seed: s.seed,
+            init_spectral: s.init_spectral,
+            fitted: s.fitted,
+            topic_names,
+            beta: arr2_back(s.beta),
+            theta: arr2_back(s.theta),
+            sentiment: arr2_back(s.sentiment),
+            gamma: arr2_back(s.gamma),
+            eta_mean: arr2_back(s.eta_mean),
+            eta_cov,
             feature_names: s.feature_names,
-            kappa_t: s.kappa_t, kappa_s: s.kappa_s, mv: s.mv, sigma: s.sigma,
-            sigma_estep: Vec::new(),         // not persisted; falls back to sigma in _recompute_eta_cov
-            kappa_t_estep: Vec::new(),       // not persisted; falls back to kappa_t/kappa_s
+            kappa_t: s.kappa_t,
+            kappa_s: s.kappa_s,
+            mv: s.mv,
+            sigma: s.sigma,
+            sigma_estep: Vec::new(), // not persisted; falls back to sigma in _recompute_eta_cov
+            kappa_t_estep: Vec::new(), // not persisted; falls back to kappa_t/kappa_s
             kappa_s_estep: Vec::new(),
-            corpus: s.corpus, bound: s.bound, bound_history: s.bound_history,
+            corpus: s.corpus,
+            bound: s.bound,
+            bound_history: s.bound_history,
             converged: s.converged,
         })
     }
@@ -8456,7 +9502,12 @@ impl STS {
     /// Top `n` words per topic (or one topic) at neutral sentiment, as
     /// ``(word, probability)`` pairs.
     #[pyo3(signature = (n=10, *, topic=None))]
-    fn top_words<'py>(&self, py: Python<'py>, n: usize, topic: Option<usize>) -> PyResult<Bound<'py, PyAny>> {
+    fn top_words<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        topic: Option<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         let beta = self.beta.as_ref().unwrap();
         let vocab = &self.corpus.as_ref().unwrap().id_to_word;
@@ -8467,14 +9518,20 @@ impl STS {
             }
             let items: Vec<Bound<'py, PyTuple>> = tops[t]
                 .iter()
-                .map(|&w| PyTuple::new_bound(py, &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)]))
+                .map(|&w| {
+                    PyTuple::new_bound(
+                        py,
+                        &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)],
+                    )
+                })
                 .collect();
             Ok(PyList::new_bound(py, items))
         };
         match topic {
             Some(t) => Ok(one(t)?.into_any()),
             None => {
-                let all: Vec<Bound<'py, PyList>> = (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
+                let all: Vec<Bound<'py, PyList>> =
+                    (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
                 Ok(PyList::new_bound(py, all).into_any())
             }
         }
@@ -8554,7 +9611,9 @@ impl HDP {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 }
@@ -8578,15 +9637,30 @@ impl HDP {
     /// `gamma` to choose the granularity directly.
     #[new]
     #[pyo3(signature = (*, alpha=0.1, gamma=0.1, beta=0.01, seed=42, resample_conc=false, eta=None))]
-    fn new(py: Python<'_>, alpha: f64, gamma: f64, beta: f64, seed: u64, resample_conc: bool, eta: Option<f64>) -> PyResult<Self> {
+    fn new(
+        py: Python<'_>,
+        alpha: f64,
+        gamma: f64,
+        beta: f64,
+        seed: u64,
+        resample_conc: bool,
+        eta: Option<f64>,
+    ) -> PyResult<Self> {
         let beta = if let Some(old_val) = eta {
             let warnings = py.import_bound("warnings")?;
-            warnings.call_method1("warn", (
-                "HDP(eta=) is deprecated; use beta= instead",
-                py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
-                2_i32,
-            ))?;
-            if (beta - 0.01_f64).abs() > f64::EPSILON { beta } else { old_val }
+            warnings.call_method1(
+                "warn",
+                (
+                    "HDP(eta=) is deprecated; use beta= instead",
+                    py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
+                    2_i32,
+                ),
+            )?;
+            if (beta - 0.01_f64).abs() > f64::EPSILON {
+                beta
+            } else {
+                old_val
+            }
         } else {
             beta
         };
@@ -8631,13 +9705,20 @@ impl HDP {
     ) -> PyResult<()> {
         let progress_interval = if let Some(old_val) = report_interval {
             let warnings = py.import_bound("warnings")?;
-            warnings.call_method1("warn", (
-                "HDP.fit(report_interval=) is deprecated; use progress_interval= instead",
-                py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
-                2_i32,
-            ))?;
+            warnings.call_method1(
+                "warn",
+                (
+                    "HDP.fit(report_interval=) is deprecated; use progress_interval= instead",
+                    py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
+                    2_i32,
+                ),
+            )?;
             // progress_interval wins if explicitly set (non-zero); else deprecated value.
-            if progress_interval != 0 { progress_interval } else { old_val }
+            if progress_interval != 0 {
+                progress_interval
+            } else {
+                old_val
+            }
         } else {
             progress_interval
         };
@@ -8647,7 +9728,17 @@ impl HDP {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -8658,7 +9749,11 @@ impl HDP {
         let (alpha, gamma, eta, conc) = (self.alpha, self.gamma, self.eta, self.resample_conc);
         let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
         // 0 = auto: ~50 evenly spaced trace points across the run.
-        let ll_interval = if progress_interval == 0 { (iters / 50).max(1) } else { progress_interval };
+        let ll_interval = if progress_interval == 0 {
+            (iters / 50).max(1)
+        } else {
+            progress_interval
+        };
 
         // HDP's K varies during training, so theta_draws are sampled from the final
         // Dirichlet posterior Dirichlet(njk[d]+alpha*beta[k]) after the chain ends.
@@ -8666,7 +9761,15 @@ impl HDP {
 
         let (model, corpus) = py.allow_threads(move || {
             let m = hdp::fit_hdp(
-                &corpus.docs, num_types, alpha, gamma, eta, iters, conc, ll_interval, &mut rng,
+                &corpus.docs,
+                num_types,
+                alpha,
+                gamma,
+                eta,
+                iters,
+                conc,
+                ll_interval,
+                &mut rng,
             );
             (m, corpus)
         });
@@ -8694,19 +9797,25 @@ impl HDP {
         if draw_cap > 0 {
             let mut draw_rng = Pcg64Mcg::seed_from_u64(self.seed.wrapping_add(1));
             for _ in 0..draw_cap {
-                let snap: Vec<Vec<f32>> = model.njk.iter().map(|counts| {
-                    let mut gammas: Vec<f64> = (0..k)
-                        .map(|t| {
-                            let shape = counts[t] as f64 + model.alpha * model.beta[t];
-                            hdp::sample_gamma(shape.max(1e-12), &mut draw_rng)
-                        })
-                        .collect();
-                    let s: f64 = gammas.iter().sum();
-                    if s > 0.0 {
-                        for g in gammas.iter_mut() { *g /= s; }
-                    }
-                    gammas.iter().map(|&g| g as f32).collect()
-                }).collect();
+                let snap: Vec<Vec<f32>> = model
+                    .njk
+                    .iter()
+                    .map(|counts| {
+                        let mut gammas: Vec<f64> = (0..k)
+                            .map(|t| {
+                                let shape = counts[t] as f64 + model.alpha * model.beta[t];
+                                hdp::sample_gamma(shape.max(1e-12), &mut draw_rng)
+                            })
+                            .collect();
+                        let s: f64 = gammas.iter().sum();
+                        if s > 0.0 {
+                            for g in gammas.iter_mut() {
+                                *g /= s;
+                            }
+                        }
+                        gammas.iter().map(|&g| g as f32).collect()
+                    })
+                    .collect();
                 theta_draw_buf.push(snap);
             }
         }
@@ -8760,7 +9869,11 @@ impl HDP {
     #[getter]
     fn log_likelihood_history(&self) -> PyResult<Vec<(usize, f64)>> {
         self.require_fitted()?;
-        Ok(self.trace.iter().map(|&(it, _, ll, _, _)| (it, ll)).collect())
+        Ok(self
+            .trace
+            .iter()
+            .map(|&(it, _, ll, _, _)| (it, ll))
+            .collect())
     }
 
     /// Uniform convergence trace: ``(iteration, log_likelihood)`` pairs (same as
@@ -8768,7 +9881,11 @@ impl HDP {
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
         self.require_fitted()?;
-        Ok(self.trace.iter().map(|&(it, _, ll, _, _)| (it, ll)).collect())
+        Ok(self
+            .trace
+            .iter()
+            .map(|&(it, _, ll, _, _)| (it, ll))
+            .collect())
     }
 
     /// HDP does not implement an early-stop criterion; always ``False``.
@@ -8784,7 +9901,11 @@ impl HDP {
     #[getter]
     fn concentration_history(&self) -> PyResult<Vec<(usize, f64, f64)>> {
         self.require_fitted()?;
-        Ok(self.trace.iter().map(|&(it, _, _, a, g)| (it, a, g)).collect())
+        Ok(self
+            .trace
+            .iter()
+            .map(|&(it, _, _, a, g)| (it, a, g))
+            .collect())
     }
 
     /// The fitted document-level concentration α0 (resampled if enabled).
@@ -8812,7 +9933,11 @@ impl HDP {
     #[getter]
     fn doc_lengths(&self) -> PyResult<Vec<usize>> {
         self.require_fitted()?;
-        Ok(self.corpus.as_ref().map(|c| c.docs.iter().map(|d| d.len()).collect()).unwrap_or_default())
+        Ok(self
+            .corpus
+            .as_ref()
+            .map(|c| c.docs.iter().map(|d| d.len()).collect())
+            .unwrap_or_default())
     }
 
     #[getter]
@@ -8846,7 +9971,10 @@ impl HDP {
             let items: Vec<Bound<'py, PyTuple>> = tops[t]
                 .iter()
                 .map(|&w| {
-                    PyTuple::new_bound(py, &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)])
+                    PyTuple::new_bound(
+                        py,
+                        &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)],
+                    )
                 })
                 .collect();
             Ok(PyList::new_bound(py, items))
@@ -8893,8 +10021,15 @@ impl HDP {
         let k = self.num_topics;
         let alpha = vec![self.learned_alpha / k as f64; k];
         transform_gibbs(
-            py, data, &self.corpus.as_ref().unwrap().id_to_word, self.beta.as_ref().unwrap(),
-            &alpha, iters, burn_in, num_samples, sample_interval,
+            py,
+            data,
+            &self.corpus.as_ref().unwrap().id_to_word,
+            self.beta.as_ref().unwrap(),
+            &alpha,
+            iters,
+            burn_in,
+            num_samples,
+            sample_interval,
             seed.unwrap_or(self.seed),
         )
     }
@@ -8923,14 +10058,26 @@ impl HDP {
     /// Save the fitted model to `path`. Reload with `HDP.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
-        write_state(path, MODEL_TAG_HDP, &HdpState {
-            alpha: self.alpha, gamma: self.gamma, eta: self.eta, seed: self.seed,
-            resample_conc: self.resample_conc, fitted: self.fitted, num_topics: self.num_topics,
-            learned_alpha: self.learned_alpha, learned_gamma: self.learned_gamma,
-            beta: arr2_opt(&self.beta), theta: arr2_opt(&self.theta), corpus: self.corpus.clone(),
-            trace: self.trace.clone(),
-            topic_names: self.topic_names.clone(),
-        })
+        write_state(
+            path,
+            MODEL_TAG_HDP,
+            &HdpState {
+                alpha: self.alpha,
+                gamma: self.gamma,
+                eta: self.eta,
+                seed: self.seed,
+                resample_conc: self.resample_conc,
+                fitted: self.fitted,
+                num_topics: self.num_topics,
+                learned_alpha: self.learned_alpha,
+                learned_gamma: self.learned_gamma,
+                beta: arr2_opt(&self.beta),
+                theta: arr2_opt(&self.theta),
+                corpus: self.corpus.clone(),
+                trace: self.trace.clone(),
+                topic_names: self.topic_names.clone(),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -8943,11 +10090,19 @@ impl HDP {
             s.topic_names
         };
         Ok(HDP {
-            alpha: s.alpha, gamma: s.gamma, eta: s.eta, seed: s.seed,
-            resample_conc: s.resample_conc, fitted: s.fitted, num_topics: s.num_topics,
+            alpha: s.alpha,
+            gamma: s.gamma,
+            eta: s.eta,
+            seed: s.seed,
+            resample_conc: s.resample_conc,
+            fitted: s.fitted,
+            num_topics: s.num_topics,
             topic_names,
-            learned_alpha: s.learned_alpha, learned_gamma: s.learned_gamma,
-            beta: arr2_back(s.beta), theta: arr2_back(s.theta), corpus: s.corpus,
+            learned_alpha: s.learned_alpha,
+            learned_gamma: s.learned_gamma,
+            beta: arr2_back(s.beta),
+            theta: arr2_back(s.theta),
+            corpus: s.corpus,
             trace: s.trace,
             theta_draws: None,
         })
@@ -8955,9 +10110,15 @@ impl HDP {
 
     fn __repr__(&self) -> String {
         if self.fitted {
-            format!("HDP(num_topics={} [inferred], fitted=true)", self.num_topics)
+            format!(
+                "HDP(num_topics={} [inferred], fitted=true)",
+                self.num_topics
+            )
         } else {
-            format!("HDP(alpha={}, gamma={}, fitted=false)", self.alpha, self.gamma)
+            format!(
+                "HDP(alpha={}, gamma={}, fitted=false)",
+                self.alpha, self.gamma
+            )
         }
     }
 }
@@ -8995,7 +10156,9 @@ impl DTM {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 }
@@ -9068,7 +10231,17 @@ impl DTM {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -9104,15 +10277,23 @@ impl DTM {
 
         let (model, corpus) = py.allow_threads(move || {
             let m = dtm::fit_dtm(
-                &corpus.docs, &times_u, num_types, k, num_times, alpha, cv, ov, iters,
-                init_spectral, &mut rng,
+                &corpus.docs,
+                &times_u,
+                num_types,
+                k,
+                num_times,
+                alpha,
+                cv,
+                ov,
+                iters,
+                init_spectral,
+                &mut rng,
             );
             (m, corpus)
         });
 
         // Precompute p(word | topic, time) for every slice.
-        let tw: Vec<Vec<Vec<f64>>> =
-            (0..num_times).map(|t| model.topic_word_matrix(t)).collect();
+        let tw: Vec<Vec<Vec<f64>>> = (0..num_times).map(|t| model.topic_word_matrix(t)).collect();
 
         self.num_times = num_times;
         self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
@@ -9157,9 +10338,10 @@ impl DTM {
             i
         } else {
             let s = word.extract::<String>()?;
-            vocab.iter().position(|w| w == &s).ok_or_else(|| {
-                PyValueError::new_err(format!("word {:?} not in vocabulary", s))
-            })?
+            vocab
+                .iter()
+                .position(|w| w == &s)
+                .ok_or_else(|| PyValueError::new_err(format!("word {:?} not in vocabulary", s)))?
         };
         if wid >= vocab.len() {
             return Err(PyValueError::new_err("word id out of range"));
@@ -9171,12 +10353,7 @@ impl DTM {
 
     /// Top `n` words for a topic at one time slice as ``(word, probability)``.
     #[pyo3(signature = (topic, time, n=10))]
-    fn top_words(
-        &self,
-        topic: usize,
-        time: usize,
-        n: usize,
-    ) -> PyResult<Vec<(String, f64)>> {
+    fn top_words(&self, topic: usize, time: usize, n: usize) -> PyResult<Vec<(String, f64)>> {
         self.require_fitted()?;
         if topic >= self.num_topics {
             return Err(PyValueError::new_err("topic out of range"));
@@ -9188,7 +10365,11 @@ impl DTM {
         let row = &self.topic_words.as_ref().unwrap()[time][topic];
         let mut idx: Vec<usize> = (0..row.len()).collect();
         idx.sort_by(|&a, &b| f64::total_cmp(&row[b], &row[a]));
-        Ok(idx.into_iter().take(n).map(|w| (vocab[w].clone(), row[w])).collect())
+        Ok(idx
+            .into_iter()
+            .take(n)
+            .map(|w| (vocab[w].clone(), row[w]))
+            .collect())
     }
 
     /// Which words inside `topic` drift most between two time slices.
@@ -9224,13 +10405,27 @@ impl DTM {
         deltas.sort_by(|x, y| f64::total_cmp(&y.1, &x.1)); // descending by delta
 
         let to_pairs = |items: Vec<(usize, f64)>| -> Vec<(String, f64)> {
-            items.into_iter().map(|(w, d)| (vocab[w].clone(), d)).collect()
+            items
+                .into_iter()
+                .map(|(w, d)| (vocab[w].clone(), d))
+                .collect()
         };
         let rising = to_pairs(
-            deltas.iter().filter(|&&(_, d)| d > 0.0).take(n).copied().collect(),
+            deltas
+                .iter()
+                .filter(|&&(_, d)| d > 0.0)
+                .take(n)
+                .copied()
+                .collect(),
         );
         let falling = to_pairs(
-            deltas.iter().rev().filter(|&&(_, d)| d < 0.0).take(n).copied().collect(),
+            deltas
+                .iter()
+                .rev()
+                .filter(|&&(_, d)| d < 0.0)
+                .take(n)
+                .copied()
+                .collect(),
         );
 
         let out = PyDict::new_bound(py);
@@ -9302,14 +10497,24 @@ impl DTM {
     /// Save the fitted model to `path`. Reload with `DTM.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
-        write_state(path, MODEL_TAG_DTM, &DtmState {
-            num_topics: self.num_topics, alpha: self.alpha, chain_variance: self.chain_variance,
-            obs_variance: self.obs_variance, seed: self.seed, fitted: self.fitted,
-            num_times: self.num_times, bound: self.bound,
-            topic_words: self.topic_words.clone(), corpus: self.corpus.clone(),
-            topic_names: self.topic_names.clone(),
-            init_spectral: self.init_spectral,
-        })
+        write_state(
+            path,
+            MODEL_TAG_DTM,
+            &DtmState {
+                num_topics: self.num_topics,
+                alpha: self.alpha,
+                chain_variance: self.chain_variance,
+                obs_variance: self.obs_variance,
+                seed: self.seed,
+                fitted: self.fitted,
+                num_times: self.num_times,
+                bound: self.bound,
+                topic_words: self.topic_words.clone(),
+                corpus: self.corpus.clone(),
+                topic_names: self.topic_names.clone(),
+                init_spectral: self.init_spectral,
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -9322,10 +10527,18 @@ impl DTM {
             s.topic_names
         };
         Ok(DTM {
-            num_topics: s.num_topics, alpha: s.alpha, chain_variance: s.chain_variance,
-            obs_variance: s.obs_variance, seed: s.seed, init_spectral: s.init_spectral,
-            fitted: s.fitted, topic_names,
-            num_times: s.num_times, bound: s.bound, topic_words: s.topic_words, corpus: s.corpus,
+            num_topics: s.num_topics,
+            alpha: s.alpha,
+            chain_variance: s.chain_variance,
+            obs_variance: s.obs_variance,
+            seed: s.seed,
+            init_spectral: s.init_spectral,
+            fitted: s.fitted,
+            topic_names,
+            num_times: s.num_times,
+            bound: s.bound,
+            topic_words: s.topic_words,
+            corpus: s.corpus,
         })
     }
 
@@ -9376,7 +10589,9 @@ impl SupervisedLDA {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 }
@@ -9387,7 +10602,11 @@ impl SupervisedLDA {
     /// concentration on document-topic proportions.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=0.1, seed=42))]
-    fn new(#[pyo3(from_py_with = "py_num_topics")] num_topics: usize, alpha: f64, seed: u64) -> PyResult<Self> {
+    fn new(
+        #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
+        alpha: f64,
+        seed: u64,
+    ) -> PyResult<Self> {
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
@@ -9435,7 +10654,17 @@ impl SupervisedLDA {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -9459,8 +10688,16 @@ impl SupervisedLDA {
 
         let (model, ll_history, converged_flag, corpus) = py.allow_threads(move || {
             let (m, hist, conv) = slda::fit_slda(
-                &corpus.docs, &y, num_types, k, alpha, iters, var_iters,
-                convergence_tol, check_every, &mut rng,
+                &corpus.docs,
+                &y,
+                num_types,
+                k,
+                alpha,
+                iters,
+                var_iters,
+                convergence_tol,
+                check_every,
+                &mut rng,
             );
             (m, hist, conv, corpus)
         });
@@ -9485,14 +10722,23 @@ impl SupervisedLDA {
         if draw_cap > 0 {
             let mut draw_rng = ChaCha8Rng::seed_from_u64(self.seed.wrapping_add(1));
             for _ in 0..draw_cap {
-                let snap: Vec<Vec<f32>> = model.gamma.iter().map(|gd| {
-                    let mut gammas: Vec<f64> = gd.iter()
-                        .map(|&g| hdp::sample_gamma(g.max(1e-12), &mut draw_rng))
-                        .collect();
-                    let s: f64 = gammas.iter().sum();
-                    if s > 0.0 { for x in gammas.iter_mut() { *x /= s; } }
-                    gammas.iter().map(|&g| g as f32).collect()
-                }).collect();
+                let snap: Vec<Vec<f32>> = model
+                    .gamma
+                    .iter()
+                    .map(|gd| {
+                        let mut gammas: Vec<f64> = gd
+                            .iter()
+                            .map(|&g| hdp::sample_gamma(g.max(1e-12), &mut draw_rng))
+                            .collect();
+                        let s: f64 = gammas.iter().sum();
+                        if s > 0.0 {
+                            for x in gammas.iter_mut() {
+                                *x /= s;
+                            }
+                        }
+                        gammas.iter().map(|&g| g as f32).collect()
+                    })
+                    .collect();
                 theta_draw_buf.push(snap);
             }
         }
@@ -9523,11 +10769,22 @@ impl SupervisedLDA {
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
         let vocab = &self.corpus.as_ref().unwrap().id_to_word;
-        let word_id: std::collections::HashMap<&str, u32> =
-            vocab.iter().enumerate().map(|(i, w)| (w.as_str(), i as u32)).collect();
+        let word_id: std::collections::HashMap<&str, u32> = vocab
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.as_str(), i as u32))
+            .collect();
 
         let docs: Vec<Vec<String>> = if let Ok(c) = data.extract::<Corpus>() {
-            c.inner.docs.iter().map(|d| d.iter().map(|&w| c.inner.id_to_word[w as usize].clone()).collect()).collect()
+            c.inner
+                .docs
+                .iter()
+                .map(|d| {
+                    d.iter()
+                        .map(|&w| c.inner.id_to_word[w as usize].clone())
+                        .collect()
+                })
+                .collect()
         } else {
             data.extract().map_err(|_| {
                 PyValueError::new_err("predict() expects a Corpus or a list of token lists")
@@ -9548,7 +10805,10 @@ impl SupervisedLDA {
         let preds: Vec<f64> = docs
             .iter()
             .map(|doc| {
-                let ids: Vec<u32> = doc.iter().filter_map(|w| word_id.get(w.as_str()).copied()).collect();
+                let ids: Vec<u32> = doc
+                    .iter()
+                    .filter_map(|w| word_id.get(w.as_str()).copied())
+                    .collect();
                 slda::predict_one(&model, &ids, var_iters)
             })
             .collect();
@@ -9590,7 +10850,11 @@ impl SupervisedLDA {
     #[getter]
     fn doc_lengths(&self) -> PyResult<Vec<usize>> {
         self.require_fitted()?;
-        Ok(self.corpus.as_ref().map(|c| c.docs.iter().map(|d| d.len()).collect()).unwrap_or_default())
+        Ok(self
+            .corpus
+            .as_ref()
+            .map(|c| c.docs.iter().map(|d| d.len()).collect())
+            .unwrap_or_default())
     }
 
     /// Regression coefficients η, shape ``(num_topics,)`` — how each topic moves
@@ -9660,7 +10924,10 @@ impl SupervisedLDA {
             let items: Vec<Bound<'py, PyTuple>> = tops[t]
                 .iter()
                 .map(|&w| {
-                    PyTuple::new_bound(py, &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)])
+                    PyTuple::new_bound(
+                        py,
+                        &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)],
+                    )
                 })
                 .collect();
             Ok(PyList::new_bound(py, items))
@@ -9706,8 +10973,15 @@ impl SupervisedLDA {
         self.require_fitted()?;
         let alpha = vec![self.alpha; self.num_topics];
         transform_gibbs(
-            py, data, &self.corpus.as_ref().unwrap().id_to_word, self.beta.as_ref().unwrap(),
-            &alpha, iters, burn_in, num_samples, sample_interval,
+            py,
+            data,
+            &self.corpus.as_ref().unwrap().id_to_word,
+            self.beta.as_ref().unwrap(),
+            &alpha,
+            iters,
+            burn_in,
+            num_samples,
+            sample_interval,
             seed.unwrap_or(self.seed),
         )
     }
@@ -9736,15 +11010,25 @@ impl SupervisedLDA {
     /// Save the fitted model to `path`. Reload with `SupervisedLDA.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
-        write_state(path, MODEL_TAG_SLDA, &SldaState {
-            num_topics: self.num_topics, alpha: self.alpha, seed: self.seed, fitted: self.fitted,
-            sigma2: self.sigma2, eta: arr1_opt(&self.eta), beta: arr2_opt(&self.beta),
-            theta: arr2_opt(&self.theta), log_beta: self.log_beta.clone(),
-            corpus: self.corpus.clone(),
-            topic_names: self.topic_names.clone(),
-            log_likelihood_history: self.log_likelihood_history.clone(),
-            converged: self.converged,
-        })
+        write_state(
+            path,
+            MODEL_TAG_SLDA,
+            &SldaState {
+                num_topics: self.num_topics,
+                alpha: self.alpha,
+                seed: self.seed,
+                fitted: self.fitted,
+                sigma2: self.sigma2,
+                eta: arr1_opt(&self.eta),
+                beta: arr2_opt(&self.beta),
+                theta: arr2_opt(&self.theta),
+                log_beta: self.log_beta.clone(),
+                corpus: self.corpus.clone(),
+                topic_names: self.topic_names.clone(),
+                log_likelihood_history: self.log_likelihood_history.clone(),
+                converged: self.converged,
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -9757,10 +11041,17 @@ impl SupervisedLDA {
             s.topic_names
         };
         Ok(SupervisedLDA {
-            num_topics: s.num_topics, alpha: s.alpha, seed: s.seed, fitted: s.fitted,
+            num_topics: s.num_topics,
+            alpha: s.alpha,
+            seed: s.seed,
+            fitted: s.fitted,
             topic_names,
-            sigma2: s.sigma2, eta: arr1_back(s.eta), beta: arr2_back(s.beta),
-            theta: arr2_back(s.theta), log_beta: s.log_beta, corpus: s.corpus,
+            sigma2: s.sigma2,
+            eta: arr1_back(s.eta),
+            beta: arr2_back(s.beta),
+            theta: arr2_back(s.theta),
+            log_beta: s.log_beta,
+            corpus: s.corpus,
             theta_draws: None,
             log_likelihood_history: s.log_likelihood_history,
             converged: s.converged,
@@ -9768,7 +11059,10 @@ impl SupervisedLDA {
     }
 
     fn __repr__(&self) -> String {
-        format!("SupervisedLDA(num_topics={}, fitted={})", self.num_topics, self.fitted)
+        format!(
+            "SupervisedLDA(num_topics={}, fitted={})",
+            self.num_topics, self.fitted
+        )
     }
 }
 
@@ -9804,7 +11098,9 @@ impl PT {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 }
@@ -9815,7 +11111,13 @@ impl PT {
     /// short texts are aggregated into (more = finer, fewer = more aggregation).
     #[new]
     #[pyo3(signature = (num_topics, *, num_pseudo=100, alpha=0.1, beta=0.01, seed=42))]
-    fn new(#[pyo3(from_py_with = "py_num_topics")] num_topics: usize, #[pyo3(from_py_with = "py_num_pseudo")] num_pseudo: usize, alpha: f64, beta: f64, seed: u64) -> PyResult<Self> {
+    fn new(
+        #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
+        #[pyo3(from_py_with = "py_num_pseudo")] num_pseudo: usize,
+        alpha: f64,
+        beta: f64,
+        seed: u64,
+    ) -> PyResult<Self> {
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
@@ -9826,8 +11128,16 @@ impl PT {
             return Err(PyValueError::new_err("alpha and beta must be > 0"));
         }
         Ok(PT {
-            num_topics, num_pseudo, alpha, beta, seed,
-            fitted: false, topic_names: Vec::new(), phi: None, theta: None, corpus: None,
+            num_topics,
+            num_pseudo,
+            alpha,
+            beta,
+            seed,
+            fitted: false,
+            topic_names: Vec::new(),
+            phi: None,
+            theta: None,
+            corpus: None,
             theta_draws: None,
             log_likelihood_history: Vec::new(),
             converged: false,
@@ -9853,7 +11163,17 @@ impl PT {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -9868,8 +11188,17 @@ impl PT {
         let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
         let (model, ll_history, converged_flag, corpus) = py.allow_threads(move || {
             let (m, hist, conv) = pt::fit_ptm_with_draws(
-                &corpus.docs, num_types, k, p, a, b, iters, draws_opts,
-                convergence_tol, check_every, &mut rng,
+                &corpus.docs,
+                num_types,
+                k,
+                p,
+                a,
+                b,
+                iters,
+                draws_opts,
+                convergence_tol,
+                check_every,
+                &mut rng,
             );
             (m, hist, conv, corpus)
         });
@@ -9912,7 +11241,11 @@ impl PT {
     #[getter]
     fn doc_lengths(&self) -> PyResult<Vec<usize>> {
         self.require_fitted()?;
-        Ok(self.corpus.as_ref().map(|c| c.docs.iter().map(|d| d.len()).collect()).unwrap_or_default())
+        Ok(self
+            .corpus
+            .as_ref()
+            .map(|c| c.docs.iter().map(|d| d.len()).collect())
+            .unwrap_or_default())
     }
     #[getter]
     fn num_topics(&self) -> usize {
@@ -9963,28 +11296,53 @@ impl PT {
     }
 
     #[pyo3(signature = (n=10, *, topic=None))]
-    fn top_words<'py>(&self, py: Python<'py>, n: usize, topic: Option<usize>) -> PyResult<Bound<'py, PyAny>> {
+    fn top_words<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        topic: Option<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
-        topic_words_helper(py, self.phi.as_ref().unwrap(), &self.corpus.as_ref().unwrap().id_to_word, self.num_topics, n, topic)
+        topic_words_helper(
+            py,
+            self.phi.as_ref().unwrap(),
+            &self.corpus.as_ref().unwrap().id_to_word,
+            self.num_topics,
+            n,
+            topic,
+        )
     }
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.phi.as_ref().unwrap(), self.num_topics, n);
-        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+        Ok(
+            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                .to_pyarray_bound(py),
+        )
     }
 
     /// Save the fitted model to `path`. Reload with `PT.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
-        write_state(path, MODEL_TAG_PT, &PtState {
-            num_topics: self.num_topics, num_pseudo: self.num_pseudo, alpha: self.alpha,
-            beta: self.beta, seed: self.seed, fitted: self.fitted,
-            phi: arr2_opt(&self.phi), theta: arr2_opt(&self.theta), corpus: self.corpus.clone(),
-            topic_names: self.topic_names.clone(),
-            log_likelihood_history: self.log_likelihood_history.clone(),
-            converged: self.converged,
-        })
+        write_state(
+            path,
+            MODEL_TAG_PT,
+            &PtState {
+                num_topics: self.num_topics,
+                num_pseudo: self.num_pseudo,
+                alpha: self.alpha,
+                beta: self.beta,
+                seed: self.seed,
+                fitted: self.fitted,
+                phi: arr2_opt(&self.phi),
+                theta: arr2_opt(&self.theta),
+                corpus: self.corpus.clone(),
+                topic_names: self.topic_names.clone(),
+                log_likelihood_history: self.log_likelihood_history.clone(),
+                converged: self.converged,
+            },
+        )
     }
     /// Load a model previously written by :meth:`save`.
     #[staticmethod]
@@ -9996,9 +11354,15 @@ impl PT {
             s.topic_names
         };
         Ok(PT {
-            num_topics: s.num_topics, num_pseudo: s.num_pseudo, alpha: s.alpha, beta: s.beta,
-            seed: s.seed, fitted: s.fitted, topic_names,
-            phi: arr2_back(s.phi), theta: arr2_back(s.theta),
+            num_topics: s.num_topics,
+            num_pseudo: s.num_pseudo,
+            alpha: s.alpha,
+            beta: s.beta,
+            seed: s.seed,
+            fitted: s.fitted,
+            topic_names,
+            phi: arr2_back(s.phi),
+            theta: arr2_back(s.theta),
             corpus: s.corpus,
             theta_draws: None,
             log_likelihood_history: s.log_likelihood_history,
@@ -10034,12 +11398,25 @@ impl PT {
         let id_to_word = &self.corpus.as_ref().unwrap().id_to_word;
         let phi = self.phi.as_ref().unwrap();
         let alpha = vec![self.alpha; self.num_topics];
-        transform_gibbs(py, data, id_to_word, phi, &alpha, iters, burn_in,
-                        num_samples, sample_interval, seed.unwrap_or(self.seed))
+        transform_gibbs(
+            py,
+            data,
+            id_to_word,
+            phi,
+            &alpha,
+            iters,
+            burn_in,
+            num_samples,
+            sample_interval,
+            seed.unwrap_or(self.seed),
+        )
     }
 
     fn __repr__(&self) -> String {
-        format!("PT(num_topics={}, num_pseudo={}, fitted={})", self.num_topics, self.num_pseudo, self.fitted)
+        format!(
+            "PT(num_topics={}, num_pseudo={}, fitted={})",
+            self.num_topics, self.num_pseudo, self.fitted
+        )
     }
 }
 
@@ -10062,9 +11439,9 @@ pub struct GSDMM {
     fitted: bool,
     num_used: usize,
     topic_names: Vec<String>,
-    phi: Option<Array2<f64>>,        // num_used × V (used clusters only)
-    theta: Option<Array2<f64>>,      // num_docs × num_used (soft assignment)
-    doc_cluster: Vec<usize>,         // hard assignment per doc, remapped to 0..num_used
+    phi: Option<Array2<f64>>,   // num_used × V (used clusters only)
+    theta: Option<Array2<f64>>, // num_docs × num_used (soft assignment)
+    doc_cluster: Vec<usize>,    // hard assignment per doc, remapped to 0..num_used
     corpus: Option<corpus::Corpus>,
     // Discovery/convergence trace: (iteration, num_clusters, log-likelihood).
     trace: Vec<(usize, usize, f64)>,
@@ -10075,7 +11452,9 @@ impl GSDMM {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 }
@@ -10088,18 +11467,33 @@ impl GSDMM {
     /// toward populous clusters; `beta` is the word-Dirichlet smoothing.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=0.1, beta=0.1, seed=42))]
-    fn new(#[pyo3(from_py_with = "py_num_topics")] num_topics: usize, alpha: f64, beta: f64, seed: u64) -> PyResult<Self> {
+    fn new(
+        #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
+        alpha: f64,
+        beta: f64,
+        seed: u64,
+    ) -> PyResult<Self> {
         if num_topics < 2 {
-            return Err(PyValueError::new_err("num_topics (max clusters) must be >= 2"));
+            return Err(PyValueError::new_err(
+                "num_topics (max clusters) must be >= 2",
+            ));
         }
         if !finite_pos(alpha) || !finite_pos(beta) {
             return Err(PyValueError::new_err("alpha and beta must be > 0"));
         }
         Ok(GSDMM {
-            k_max: num_topics, alpha, beta, seed,
-            fitted: false, num_used: 0, topic_names: Vec::new(),
-            phi: None, theta: None,
-            doc_cluster: Vec::new(), corpus: None, trace: Vec::new(),
+            k_max: num_topics,
+            alpha,
+            beta,
+            seed,
+            fitted: false,
+            num_used: 0,
+            topic_names: Vec::new(),
+            phi: None,
+            theta: None,
+            doc_cluster: Vec::new(),
+            corpus: None,
+            trace: Vec::new(),
         })
     }
 
@@ -10118,12 +11512,19 @@ impl GSDMM {
     ) -> PyResult<()> {
         let progress_interval = if let Some(old_val) = report_interval {
             let warnings = py.import_bound("warnings")?;
-            warnings.call_method1("warn", (
-                "GSDMM.fit(report_interval=) is deprecated; use progress_interval= instead",
-                py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
-                2_i32,
-            ))?;
-            if progress_interval != 0 { progress_interval } else { old_val }
+            warnings.call_method1(
+                "warn",
+                (
+                    "GSDMM.fit(report_interval=) is deprecated; use progress_interval= instead",
+                    py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
+                    2_i32,
+                ),
+            )?;
+            if progress_interval != 0 {
+                progress_interval
+            } else {
+                old_val
+            }
         } else {
             progress_interval
         };
@@ -10133,7 +11534,17 @@ impl GSDMM {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -10141,9 +11552,22 @@ impl GSDMM {
         let num_types = corpus.num_types();
         let (k, a, b) = (self.k_max, self.alpha, self.beta);
         let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
-        let ll_interval = if progress_interval == 0 { (iters / 50).max(1) } else { progress_interval };
+        let ll_interval = if progress_interval == 0 {
+            (iters / 50).max(1)
+        } else {
+            progress_interval
+        };
         let (model, corpus) = py.allow_threads(move || {
-            let m = gsdmm::fit_gsdmm(&corpus.docs, num_types, k, a, b, iters, ll_interval, &mut rng);
+            let m = gsdmm::fit_gsdmm(
+                &corpus.docs,
+                num_types,
+                k,
+                a,
+                b,
+                iters,
+                ll_interval,
+                &mut rng,
+            );
             (m, corpus)
         });
 
@@ -10268,27 +11692,53 @@ impl GSDMM {
     }
 
     #[pyo3(signature = (n=10, *, topic=None))]
-    fn top_words<'py>(&self, py: Python<'py>, n: usize, topic: Option<usize>) -> PyResult<Bound<'py, PyAny>> {
+    fn top_words<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        topic: Option<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
-        topic_words_helper(py, self.phi.as_ref().unwrap(), &self.corpus.as_ref().unwrap().id_to_word, self.num_used, n, topic)
+        topic_words_helper(
+            py,
+            self.phi.as_ref().unwrap(),
+            &self.corpus.as_ref().unwrap().id_to_word,
+            self.num_used,
+            n,
+            topic,
+        )
     }
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.phi.as_ref().unwrap(), self.num_used, n);
-        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+        Ok(
+            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                .to_pyarray_bound(py),
+        )
     }
 
     /// Save the fitted model to `path`. Reload with `GSDMM.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
-        write_state(path, MODEL_TAG_GSDMM, &GsdmmState {
-            k_max: self.k_max, alpha: self.alpha, beta: self.beta, seed: self.seed,
-            fitted: self.fitted, num_used: self.num_used,
-            phi: arr2_opt(&self.phi), theta: arr2_opt(&self.theta),
-            doc_cluster: self.doc_cluster.clone(), corpus: self.corpus.clone(),
-            trace: self.trace.clone(), topic_names: self.topic_names.clone(),
-        })
+        write_state(
+            path,
+            MODEL_TAG_GSDMM,
+            &GsdmmState {
+                k_max: self.k_max,
+                alpha: self.alpha,
+                beta: self.beta,
+                seed: self.seed,
+                fitted: self.fitted,
+                num_used: self.num_used,
+                phi: arr2_opt(&self.phi),
+                theta: arr2_opt(&self.theta),
+                doc_cluster: self.doc_cluster.clone(),
+                corpus: self.corpus.clone(),
+                trace: self.trace.clone(),
+                topic_names: self.topic_names.clone(),
+            },
+        )
     }
     /// Load a model previously written by :meth:`save`.
     #[staticmethod]
@@ -10300,15 +11750,26 @@ impl GSDMM {
             s.topic_names
         };
         Ok(GSDMM {
-            k_max: s.k_max, alpha: s.alpha, beta: s.beta, seed: s.seed, fitted: s.fitted,
-            num_used: s.num_used, topic_names,
-            phi: arr2_back(s.phi), theta: arr2_back(s.theta),
-            doc_cluster: s.doc_cluster, corpus: s.corpus, trace: s.trace,
+            k_max: s.k_max,
+            alpha: s.alpha,
+            beta: s.beta,
+            seed: s.seed,
+            fitted: s.fitted,
+            num_used: s.num_used,
+            topic_names,
+            phi: arr2_back(s.phi),
+            theta: arr2_back(s.theta),
+            doc_cluster: s.doc_cluster,
+            corpus: s.corpus,
+            trace: s.trace,
         })
     }
 
     fn __repr__(&self) -> String {
-        format!("GSDMM(num_topics={}, k_max={}, fitted={})", self.num_used, self.k_max, self.fitted)
+        format!(
+            "GSDMM(num_topics={}, k_max={}, fitted={})",
+            self.num_used, self.k_max, self.fitted
+        )
     }
 }
 
@@ -10330,7 +11791,9 @@ fn parse_seed_dict(d: &Bound<'_, PyDict>) -> PyResult<(Vec<String>, Vec<Vec<Stri
         })?);
     }
     if names.is_empty() {
-        return Err(PyValueError::new_err("provide at least one seeded/keyword topic"));
+        return Err(PyValueError::new_err(
+            "provide at least one seeded/keyword topic",
+        ));
     }
     Ok((names, words))
 }
@@ -10342,11 +11805,18 @@ fn seed_word_ids(
     id_to_word: &[String],
     num_topics: usize,
 ) -> Vec<Vec<usize>> {
-    let index: HashMap<&str, usize> =
-        id_to_word.iter().enumerate().map(|(i, w)| (w.as_str(), i)).collect();
+    let index: HashMap<&str, usize> = id_to_word
+        .iter()
+        .enumerate()
+        .map(|(i, w)| (w.as_str(), i))
+        .collect();
     let mut out: Vec<Vec<usize>> = word_strings
         .iter()
-        .map(|ws| ws.iter().filter_map(|w| index.get(w.as_str()).copied()).collect())
+        .map(|ws| {
+            ws.iter()
+                .filter_map(|w| index.get(w.as_str()).copied())
+                .collect()
+        })
         .collect();
     out.resize(num_topics, Vec::new());
     out
@@ -10389,7 +11859,9 @@ impl SeededLDA {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
     fn num_topics_val(&self) -> usize {
@@ -10420,7 +11892,9 @@ impl SeededLDA {
             return Err(PyValueError::new_err("alpha and beta must be > 0"));
         }
         if names.len() + residual < 2 {
-            return Err(PyValueError::new_err("need at least 2 topics (seeded + residual)"));
+            return Err(PyValueError::new_err(
+                "need at least 2 topics (seeded + residual)",
+            ));
         }
         let (warp, cvb0) = match sampler {
             "sparse" => (false, false),
@@ -10433,10 +11907,23 @@ impl SeededLDA {
             }
         };
         Ok(SeededLDA {
-            seed_names: names, seed_words: words, residual, alpha, beta, weight, seed, warp, cvb0,
-            fitted: false, topic_names: Vec::new(), phi: None, theta: None,
-            theta_draws: None, corpus: None,
-            log_likelihood_history: Vec::new(), converged: false,
+            seed_names: names,
+            seed_words: words,
+            residual,
+            alpha,
+            beta,
+            weight,
+            seed,
+            warp,
+            cvb0,
+            fitted: false,
+            topic_names: Vec::new(),
+            phi: None,
+            theta: None,
+            theta_draws: None,
+            corpus: None,
+            log_likelihood_history: Vec::new(),
+            converged: false,
         })
     }
 
@@ -10474,7 +11961,17 @@ impl SeededLDA {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -10507,9 +12004,21 @@ impl SeededLDA {
             None => None,
         };
 
-        let check_every = if check_every == 0 { 0 } else if convergence_tol > 0.0 { check_every.max(1) } else { check_every };
+        let check_every = if check_every == 0 {
+            0
+        } else if convergence_tol > 0.0 {
+            check_every.max(1)
+        } else {
+            check_every
+        };
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
-        warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, corpus.num_docs(), num_topics)?;
+        warn_theta_draw_memory(
+            py,
+            keep_theta_draws,
+            num_theta_draws,
+            corpus.num_docs(),
+            num_topics,
+        )?;
         let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
 
         if self.cvb0 {
@@ -10563,7 +12072,8 @@ impl SeededLDA {
                     if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
                         let mut tmp = vec![vec![0.0f64; num_topics]; num_docs];
                         ws.theta_into(&corpus, &mut tmp);
-                        let snap = tmp.iter()
+                        let snap = tmp
+                            .iter()
                             .map(|r| r.iter().map(|&v| v as f32).collect())
                             .collect();
                         push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
@@ -10591,8 +12101,19 @@ impl SeededLDA {
 
         let (model, ll_history, converged, corpus) = py.allow_threads(move || {
             let (m, ll, conv) = seeded::fit_seeded_lda(
-                &corpus.docs, num_types, num_topics, &seeds, alpha, beta, seed_weight, doc_alpha,
-                iters, draws_opts, convergence_tol, check_every, &mut rng,
+                &corpus.docs,
+                num_types,
+                num_topics,
+                &seeds,
+                alpha,
+                beta,
+                seed_weight,
+                doc_alpha,
+                iters,
+                draws_opts,
+                convergence_tol,
+                check_every,
+                &mut rng,
             );
             (m, ll, conv, corpus)
         });
@@ -10698,33 +12219,59 @@ impl SeededLDA {
     }
 
     #[pyo3(signature = (n=10, *, topic=None))]
-    fn top_words<'py>(&self, py: Python<'py>, n: usize, topic: Option<usize>) -> PyResult<Bound<'py, PyAny>> {
+    fn top_words<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        topic: Option<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
-        topic_words_helper(py, self.phi.as_ref().unwrap(), &self.corpus.as_ref().unwrap().id_to_word, self.num_topics_val(), n, topic)
+        topic_words_helper(
+            py,
+            self.phi.as_ref().unwrap(),
+            &self.corpus.as_ref().unwrap().id_to_word,
+            self.num_topics_val(),
+            n,
+            topic,
+        )
     }
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.phi.as_ref().unwrap(), self.num_topics_val(), n);
-        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+        Ok(
+            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                .to_pyarray_bound(py),
+        )
     }
 
     /// Save the fitted model to `path`. Reload with `SeededLDA.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
-        write_state(path, MODEL_TAG_SEEDED, &SeededState {
-            num_topics: self.num_topics_val(), alpha: self.alpha, beta: self.beta,
-            weight: self.weight, seed: self.seed, fitted: self.fitted,
-            topic_names: self.topic_names.clone(), phi: arr2_opt(&self.phi),
-            theta: arr2_opt(&self.theta), corpus: self.corpus.clone(),
-            log_likelihood_history: self.log_likelihood_history.clone(),
-            converged: self.converged,
-            seed_names: self.seed_names.clone(),
-            seed_words: self.seed_words.clone(),
-            residual: self.residual,
-            warp: self.warp, cvb0: self.cvb0,
-            theta_draws: arr3f32_opt(&self.theta_draws),
-        })
+        write_state(
+            path,
+            MODEL_TAG_SEEDED,
+            &SeededState {
+                num_topics: self.num_topics_val(),
+                alpha: self.alpha,
+                beta: self.beta,
+                weight: self.weight,
+                seed: self.seed,
+                fitted: self.fitted,
+                topic_names: self.topic_names.clone(),
+                phi: arr2_opt(&self.phi),
+                theta: arr2_opt(&self.theta),
+                corpus: self.corpus.clone(),
+                log_likelihood_history: self.log_likelihood_history.clone(),
+                converged: self.converged,
+                seed_names: self.seed_names.clone(),
+                seed_words: self.seed_words.clone(),
+                residual: self.residual,
+                warp: self.warp,
+                cvb0: self.cvb0,
+                theta_draws: arr3f32_opt(&self.theta_draws),
+            },
+        )
     }
     /// Load a model previously written by :meth:`save`.
     #[staticmethod]
@@ -10735,9 +12282,16 @@ impl SeededLDA {
             seed_names: s.seed_names,
             seed_words: s.seed_words,
             residual: s.residual,
-            alpha: s.alpha, beta: s.beta, weight: s.weight, seed: s.seed,
-            warp: s.warp, cvb0: s.cvb0, fitted: s.fitted,
-            topic_names: s.topic_names, phi: arr2_back(s.phi), theta: arr2_back(s.theta),
+            alpha: s.alpha,
+            beta: s.beta,
+            weight: s.weight,
+            seed: s.seed,
+            warp: s.warp,
+            cvb0: s.cvb0,
+            fitted: s.fitted,
+            topic_names: s.topic_names,
+            phi: arr2_back(s.phi),
+            theta: arr2_back(s.theta),
             theta_draws: arr3f32_back(s.theta_draws),
             corpus: s.corpus,
             log_likelihood_history: s.log_likelihood_history,
@@ -10773,12 +12327,27 @@ impl SeededLDA {
         let phi = self.phi.as_ref().unwrap();
         let k = self.num_topics_val();
         let alpha = vec![self.alpha; k];
-        transform_gibbs(py, data, id_to_word, phi, &alpha, iters, burn_in,
-                        num_samples, sample_interval, seed.unwrap_or(self.seed))
+        transform_gibbs(
+            py,
+            data,
+            id_to_word,
+            phi,
+            &alpha,
+            iters,
+            burn_in,
+            num_samples,
+            sample_interval,
+            seed.unwrap_or(self.seed),
+        )
     }
 
     fn __repr__(&self) -> String {
-        format!("SeededLDA(seeded={}, residual={}, fitted={})", self.seed_names.len(), self.residual, self.fitted)
+        format!(
+            "SeededLDA(seeded={}, residual={}, fitted={})",
+            self.seed_names.len(),
+            self.residual,
+            self.fitted
+        )
     }
 }
 
@@ -10801,7 +12370,10 @@ fn parse_reducer(reducer: &str) -> PyResult<bool> {
 /// default) discovers the topic count and leaves a `-1` noise bucket; `"kmeans"`
 /// and `"agglomerative"` assign every document to `num_clusters` clusters, so they
 /// require `num_clusters >= 1`.
-fn parse_clusterer(clusterer: &str, num_clusters: Option<i64>) -> PyResult<(String, Option<usize>)> {
+fn parse_clusterer(
+    clusterer: &str,
+    num_clusters: Option<i64>,
+) -> PyResult<(String, Option<usize>)> {
     match clusterer {
         "hdbscan" => Ok(("hdbscan".to_string(), None)),
         "kmeans" | "agglomerative" => {
@@ -10840,10 +12412,12 @@ fn umap_notice(py: Python<'_>, use_umap: bool) -> PyResult<()> {
     let warnings = py.import_bound("warnings")?;
     warnings.call_method1(
         "warn",
-        ("reducer='umap': the UMAP topic-discovery fit is not reproducible across runs \
+        (
+            "reducer='umap': the UMAP topic-discovery fit is not reproducible across runs \
           (the Rust UMAP optimizer's negative sampling is unseeded). The transform / \
           prediction phase is deterministic regardless. Use reducer='pca' (the default) \
-          for a reproducible fit.",),
+          for a reproducible fit.",
+        ),
     )?;
     Ok(())
 }
@@ -10896,7 +12470,8 @@ struct Top2VecState {
     seed: u64,
     fitted: bool,
     has_word_vectors: bool,
-    #[serde(default)] topic_names: Vec<String>,
+    #[serde(default)]
+    topic_names: Vec<String>,
     model: Option<top2vec::Top2VecModel>,
     id_to_word: Vec<String>,
     docs: Vec<Vec<u32>>,
@@ -10974,7 +12549,17 @@ impl Top2Vec {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -11007,8 +12592,11 @@ impl Top2Vec {
                 }
                 check_all_finite_2d("word_embeddings", &rows)?;
                 let e = rows.first().map(|r| r.len()).unwrap_or(0);
-                let map: std::collections::HashMap<&str, usize> =
-                    vocab.iter().enumerate().map(|(i, w)| (w.as_str(), i)).collect();
+                let map: std::collections::HashMap<&str, usize> = vocab
+                    .iter()
+                    .enumerate()
+                    .map(|(i, w)| (w.as_str(), i))
+                    .collect();
                 corpus
                     .id_to_word
                     .iter()
@@ -11026,23 +12614,40 @@ impl Top2Vec {
 
         umap_notice(py, self.use_umap)?;
         let (nc, uu, nn, mcs, ms, seed) = (
-            self.n_components, self.use_umap, self.n_neighbors,
-            self.min_cluster_size, self.min_samples, self.seed,
+            self.n_components,
+            self.use_umap,
+            self.n_neighbors,
+            self.min_cluster_size,
+            self.min_samples,
+            self.seed,
         );
         let clusterer = self.clusterer.clone();
         let num_clusters = self.num_clusters;
         let model = py.allow_threads(move || {
             top2vec::fit_top2vec(
-                &corpus.docs, &doc_emb, &word_vecs, num_types, nc, uu, nn, mcs, ms,
-                &clusterer, num_clusters, seed,
+                &corpus.docs,
+                &doc_emb,
+                &word_vecs,
+                num_types,
+                nc,
+                uu,
+                nn,
+                mcs,
+                ms,
+                &clusterer,
+                num_clusters,
+                seed,
             )
         });
         if model.num_topics == 0 {
             let warnings = py.import_bound("warnings")?;
-            warnings.call_method1("warn", (
-                "Top2Vec: clustering found no clusters (num_topics=0). Lower \
+            warnings.call_method1(
+                "warn",
+                (
+                    "Top2Vec: clustering found no clusters (num_topics=0). Lower \
                  min_cluster_size, add data, or check the scale of your embeddings.",
-            ))?;
+                ),
+            )?;
         }
         let k = model.num_topics;
         self.model = Some(model);
@@ -11211,15 +12816,27 @@ impl Top2Vec {
                 let mut df = vec![0u32; v];
                 for doc in &self.docs {
                     let mut seen = std::collections::HashSet::new();
-                    for &w in doc { seen.insert(w as usize); }
-                    for w in seen { if w < v { df[w] += 1; } }
+                    for &w in doc {
+                        seen.insert(w as usize);
+                    }
+                    for w in seen {
+                        if w < v {
+                            df[w] += 1;
+                        }
+                    }
                 }
                 df
             },
             total_freqs: {
                 let v = self.id_to_word.len();
                 let mut tf = vec![0u32; v];
-                for doc in &self.docs { for &w in doc { if (w as usize) < v { tf[w as usize] += 1; } } }
+                for doc in &self.docs {
+                    for &w in doc {
+                        if (w as usize) < v {
+                            tf[w as usize] += 1;
+                        }
+                    }
+                }
                 tf
             },
         };
@@ -11240,9 +12857,8 @@ impl Top2Vec {
                  min_cluster_size or more data",
             ));
         }
-        let de_obj = doc_embeddings.ok_or_else(|| {
-            PyValueError::new_err("Top2Vec.transform requires doc_embeddings")
-        })?;
+        let de_obj = doc_embeddings
+            .ok_or_else(|| PyValueError::new_err("Top2Vec.transform requires doc_embeddings"))?;
         let _ = data;
         let de = parse_features(de_obj)?;
         Ok(vecs_to_arr2(&m.assign(&de)).to_pyarray_bound(py))
@@ -11267,9 +12883,10 @@ impl Top2Vec {
     /// renumbered to a dense range.
     fn merge_topics(&mut self, groups: Vec<Vec<usize>>) -> PyResult<()> {
         let vocab = self.id_to_word.len();
-        let m = self.model.as_mut().ok_or_else(|| {
-            PyRuntimeError::new_err("model is not fitted yet; call fit() first")
-        })?;
+        let m = self
+            .model
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))?;
         m.merge_topics(&self.docs, &groups, vocab);
         Ok(())
     }
@@ -11278,9 +12895,10 @@ impl Top2Vec {
     /// the topic-word matrix. Returns how many documents were reassigned.
     fn reduce_outliers(&mut self) -> PyResult<usize> {
         let vocab = self.id_to_word.len();
-        let m = self.model.as_mut().ok_or_else(|| {
-            PyRuntimeError::new_err("model is not fitted yet; call fit() first")
-        })?;
+        let m = self
+            .model
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))?;
         let before = m.labels.iter().filter(|&&l| l < 0).count();
         m.reduce_outliers(&self.docs, vocab);
         Ok(before - m.labels.iter().filter(|&&l| l < 0).count())
@@ -11291,22 +12909,26 @@ impl Top2Vec {
     /// `reducer="umap"` discovery).
     fn save(&self, path: &str) -> PyResult<()> {
         self.fitted_model()?;
-        write_state(path, MODEL_TAG_TOP2VEC, &Top2VecState {
-            n_components: self.n_components,
-            use_umap: self.use_umap,
-            n_neighbors: self.n_neighbors,
-            min_cluster_size: self.min_cluster_size,
-            min_samples: self.min_samples,
-            clusterer: self.clusterer.clone(),
-            num_clusters: self.num_clusters,
-            seed: self.seed,
-            fitted: self.fitted,
-            has_word_vectors: self.has_word_vectors,
-            topic_names: self.topic_names.clone(),
-            model: self.model.clone(),
-            id_to_word: self.id_to_word.clone(),
-            docs: self.docs.clone(),
-        })
+        write_state(
+            path,
+            MODEL_TAG_TOP2VEC,
+            &Top2VecState {
+                n_components: self.n_components,
+                use_umap: self.use_umap,
+                n_neighbors: self.n_neighbors,
+                min_cluster_size: self.min_cluster_size,
+                min_samples: self.min_samples,
+                clusterer: self.clusterer.clone(),
+                num_clusters: self.num_clusters,
+                seed: self.seed,
+                fitted: self.fitted,
+                has_word_vectors: self.has_word_vectors,
+                topic_names: self.topic_names.clone(),
+                model: self.model.clone(),
+                id_to_word: self.id_to_word.clone(),
+                docs: self.docs.clone(),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -11405,7 +13027,8 @@ struct BertopicState {
     num_clusters: Option<usize>,
     seed: u64,
     fitted: bool,
-    #[serde(default)] topic_names: Vec<String>,
+    #[serde(default)]
+    topic_names: Vec<String>,
     model: Option<bertopic::BertopicModel>,
     id_to_word: Vec<String>,
     docs: Vec<Vec<u32>>,
@@ -11420,10 +13043,18 @@ impl BERTopic {
     /// Map token-list documents to id documents over the fitted vocabulary,
     /// dropping out-of-vocabulary words (used for `approximate_distribution`).
     fn to_ids(&self, docs: &[Vec<String>]) -> Vec<Vec<u32>> {
-        let map: std::collections::HashMap<&str, u32> =
-            self.id_to_word.iter().enumerate().map(|(i, w)| (w.as_str(), i as u32)).collect();
+        let map: std::collections::HashMap<&str, u32> = self
+            .id_to_word
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.as_str(), i as u32))
+            .collect();
         docs.iter()
-            .map(|d| d.iter().filter_map(|w| map.get(w.as_str()).copied()).collect())
+            .map(|d| {
+                d.iter()
+                    .filter_map(|w| map.get(w.as_str()).copied())
+                    .collect()
+            })
             .collect()
     }
 }
@@ -11496,7 +13127,17 @@ impl BERTopic {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -11515,24 +13156,49 @@ impl BERTopic {
         self.docs = corpus.docs.clone();
         umap_notice(py, self.use_umap)?;
         let (nc, uu, nn, mcs, ms, nr, win, st, b25, rf, seed) = (
-            self.n_components, self.use_umap, self.n_neighbors, self.min_cluster_size,
-            self.min_samples, self.nr_topics, self.window, self.stride,
-            self.bm25, self.reduce_frequent, self.seed,
+            self.n_components,
+            self.use_umap,
+            self.n_neighbors,
+            self.min_cluster_size,
+            self.min_samples,
+            self.nr_topics,
+            self.window,
+            self.stride,
+            self.bm25,
+            self.reduce_frequent,
+            self.seed,
         );
         let clusterer = self.clusterer.clone();
         let num_clusters = self.num_clusters;
         let model = py.allow_threads(move || {
             bertopic::fit_bertopic(
-                &corpus.docs, &doc_emb, num_types, nc, uu, nn, mcs, ms, nr, win, st, b25, rf,
-                &clusterer, num_clusters, seed,
+                &corpus.docs,
+                &doc_emb,
+                num_types,
+                nc,
+                uu,
+                nn,
+                mcs,
+                ms,
+                nr,
+                win,
+                st,
+                b25,
+                rf,
+                &clusterer,
+                num_clusters,
+                seed,
             )
         });
         if model.num_topics == 0 {
             let warnings = py.import_bound("warnings")?;
-            warnings.call_method1("warn", (
-                "BERTopic: clustering found no clusters (num_topics=0). Lower \
+            warnings.call_method1(
+                "warn",
+                (
+                    "BERTopic: clustering found no clusters (num_topics=0). Lower \
                  min_cluster_size, add data, or check the scale of your embeddings.",
-            ))?;
+                ),
+            )?;
         }
         let k = model.num_topics;
         self.model = Some(model);
@@ -11617,15 +13283,27 @@ impl BERTopic {
                 let mut df = vec![0u32; v];
                 for doc in &self.docs {
                     let mut seen = std::collections::HashSet::new();
-                    for &w in doc { seen.insert(w as usize); }
-                    for w in seen { if w < v { df[w] += 1; } }
+                    for &w in doc {
+                        seen.insert(w as usize);
+                    }
+                    for w in seen {
+                        if w < v {
+                            df[w] += 1;
+                        }
+                    }
                 }
                 df
             },
             total_freqs: {
                 let v = self.id_to_word.len();
                 let mut tf = vec![0u32; v];
-                for doc in &self.docs { for &w in doc { if (w as usize) < v { tf[w as usize] += 1; } } }
+                for doc in &self.docs {
+                    for &w in doc {
+                        if (w as usize) < v {
+                            tf[w as usize] += 1;
+                        }
+                    }
+                }
                 tf
             },
         };
@@ -11651,7 +13329,15 @@ impl BERTopic {
             ));
         }
         let docs_str: Vec<Vec<String>> = if let Ok(c) = data.extract::<Corpus>() {
-            c.inner.docs.iter().map(|d| d.iter().map(|&w| c.inner.id_to_word[w as usize].clone()).collect()).collect()
+            c.inner
+                .docs
+                .iter()
+                .map(|d| {
+                    d.iter()
+                        .map(|&w| c.inner.id_to_word[w as usize].clone())
+                        .collect()
+                })
+                .collect()
         } else {
             data.extract().map_err(|_| {
                 PyValueError::new_err("approximate_distribution expects a Corpus or token lists")
@@ -11696,11 +13382,17 @@ impl BERTopic {
     /// Merge groups of topics into single topics, e.g. ``[[3, 7], [1, 2]]``,
     /// rebuilding the c-TF-IDF representation and the document-topic distribution.
     fn merge_topics(&mut self, groups: Vec<Vec<usize>>) -> PyResult<()> {
-        let (vocab, b25, rf, win, st) =
-            (self.id_to_word.len(), self.bm25, self.reduce_frequent, self.window, self.stride);
-        let m = self.model.as_mut().ok_or_else(|| {
-            PyRuntimeError::new_err("model is not fitted yet; call fit() first")
-        })?;
+        let (vocab, b25, rf, win, st) = (
+            self.id_to_word.len(),
+            self.bm25,
+            self.reduce_frequent,
+            self.window,
+            self.stride,
+        );
+        let m = self
+            .model
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))?;
         m.merge_topics(&self.docs, &groups, vocab, b25, rf, win, st);
         Ok(())
     }
@@ -11708,11 +13400,17 @@ impl BERTopic {
     /// Reassign noise documents (label ``-1``) to their nearest topic by c-TF-IDF
     /// fit and rebuild. Returns how many documents were reassigned.
     fn reduce_outliers(&mut self) -> PyResult<usize> {
-        let (vocab, b25, rf, win, st) =
-            (self.id_to_word.len(), self.bm25, self.reduce_frequent, self.window, self.stride);
-        let m = self.model.as_mut().ok_or_else(|| {
-            PyRuntimeError::new_err("model is not fitted yet; call fit() first")
-        })?;
+        let (vocab, b25, rf, win, st) = (
+            self.id_to_word.len(),
+            self.bm25,
+            self.reduce_frequent,
+            self.window,
+            self.stride,
+        );
+        let m = self
+            .model
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))?;
         let before = m.labels.iter().filter(|&&l| l < 0).count();
         m.reduce_outliers(&self.docs, vocab, b25, rf, win, st);
         Ok(before - m.labels.iter().filter(|&&l| l < 0).count())
@@ -11723,26 +13421,30 @@ impl BERTopic {
     /// `reducer="umap"` discovery).
     fn save(&self, path: &str) -> PyResult<()> {
         self.fitted_model()?;
-        write_state(path, MODEL_TAG_BERTOPIC, &BertopicState {
-            n_components: self.n_components,
-            use_umap: self.use_umap,
-            n_neighbors: self.n_neighbors,
-            min_cluster_size: self.min_cluster_size,
-            min_samples: self.min_samples,
-            nr_topics: self.nr_topics,
-            window: self.window,
-            stride: self.stride,
-            bm25: self.bm25,
-            reduce_frequent: self.reduce_frequent,
-            clusterer: self.clusterer.clone(),
-            num_clusters: self.num_clusters,
-            seed: self.seed,
-            fitted: self.fitted,
-            topic_names: self.topic_names.clone(),
-            model: self.model.clone(),
-            id_to_word: self.id_to_word.clone(),
-            docs: self.docs.clone(),
-        })
+        write_state(
+            path,
+            MODEL_TAG_BERTOPIC,
+            &BertopicState {
+                n_components: self.n_components,
+                use_umap: self.use_umap,
+                n_neighbors: self.n_neighbors,
+                min_cluster_size: self.min_cluster_size,
+                min_samples: self.min_samples,
+                nr_topics: self.nr_topics,
+                window: self.window,
+                stride: self.stride,
+                bm25: self.bm25,
+                reduce_frequent: self.reduce_frequent,
+                clusterer: self.clusterer.clone(),
+                num_clusters: self.num_clusters,
+                seed: self.seed,
+                fitted: self.fitted,
+                topic_names: self.topic_names.clone(),
+                model: self.model.clone(),
+                id_to_word: self.id_to_word.clone(),
+                docs: self.docs.clone(),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -11898,7 +13600,9 @@ impl ETM {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 
@@ -11908,7 +13612,9 @@ impl ETM {
         match (&self.model, &self.vae) {
             (Some(m), _) => Ok(&m.beta),
             (_, Some(m)) => Ok(&m.beta),
-            _ => Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first")),
+            _ => Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            )),
         }
     }
 
@@ -11918,7 +13624,9 @@ impl ETM {
         match (&self.model, &self.vae) {
             (Some(m), _) => Ok(&m.alpha),
             (_, Some(m)) => Ok(&m.alpha),
-            _ => Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first")),
+            _ => Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            )),
         }
     }
 
@@ -11928,7 +13636,9 @@ impl ETM {
         match (&self.model, &self.vae) {
             (Some(m), _) => Ok(m.doc_topics()),
             (_, Some(m)) => Ok(m.doc_topic.clone()),
-            _ => Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first")),
+            _ => Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            )),
         }
     }
 
@@ -11937,7 +13647,9 @@ impl ETM {
         match (&self.model, &self.vae) {
             (Some(m), _) => Ok(m.bound),
             (_, Some(m)) => Ok(m.bound),
-            _ => Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first")),
+            _ => Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            )),
         }
     }
 
@@ -11946,7 +13658,9 @@ impl ETM {
         match (&self.model, &self.vae) {
             (Some(m), _) => Ok(m.converged),
             (_, Some(m)) => Ok(m.converged),
-            _ => Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first")),
+            _ => Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            )),
         }
     }
 
@@ -11955,7 +13669,9 @@ impl ETM {
         match (&self.model, &self.vae) {
             (Some(m), _) => Ok(m.bound_history.clone()),
             (_, Some(m)) => Ok(m.bound_history.clone()),
-            _ => Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first")),
+            _ => Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            )),
         }
     }
 }
@@ -11998,12 +13714,19 @@ impl ETM {
     ) -> PyResult<Self> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
-            warnings.call_method1("warn", (
-                "ETM(em_tol=) is deprecated; use convergence_tol= instead",
-                py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
-                2_i32,
-            ))?;
-            if (convergence_tol - 1e-4_f64).abs() > f64::EPSILON { convergence_tol } else { old_val }
+            warnings.call_method1(
+                "warn",
+                (
+                    "ETM(em_tol=) is deprecated; use convergence_tol= instead",
+                    py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
+                    2_i32,
+                ),
+            )?;
+            if (convergence_tol - 1e-4_f64).abs() > f64::EPSILON {
+                convergence_tol
+            } else {
+                old_val
+            }
         } else {
             convergence_tol
         };
@@ -12062,8 +13785,15 @@ impl ETM {
         let tol = convergence_tol.unwrap_or(self.em_tol);
         let (docs_str, corpus_opt): (Vec<Vec<String>>, Option<corpus::Corpus>) =
             if let Ok(c) = data.extract::<Corpus>() {
-                let strings = c.inner.docs.iter()
-                    .map(|d| d.iter().map(|&w| c.inner.id_to_word[w as usize].clone()).collect())
+                let strings = c
+                    .inner
+                    .docs
+                    .iter()
+                    .map(|d| {
+                        d.iter()
+                            .map(|&w| c.inner.id_to_word[w as usize].clone())
+                            .collect()
+                    })
                     .collect();
                 (strings, Some(c.inner.clone()))
             } else {
@@ -12082,16 +13812,27 @@ impl ETM {
         }
         check_all_finite_2d("word_embeddings", &rho)?;
         if vocabulary.len() < self.num_topics {
-            return Err(PyValueError::new_err("vocabulary must have at least num_topics words"));
+            return Err(PyValueError::new_err(
+                "vocabulary must have at least num_topics words",
+            ));
         }
-        let map: std::collections::HashMap<&str, u32> =
-            vocabulary.iter().enumerate().map(|(i, w)| (w.as_str(), i as u32)).collect();
+        let map: std::collections::HashMap<&str, u32> = vocabulary
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.as_str(), i as u32))
+            .collect();
         let docs_ids: Vec<Vec<u32>> = docs_str
             .iter()
-            .map(|d| d.iter().filter_map(|w| map.get(w.as_str()).copied()).collect())
+            .map(|d| {
+                d.iter()
+                    .filter_map(|w| map.get(w.as_str()).copied())
+                    .collect()
+            })
             .collect();
         if docs_ids.iter().all(|d| d.is_empty()) {
-            return Err(PyValueError::new_err("no in-vocabulary tokens in the documents"));
+            return Err(PyValueError::new_err(
+                "no in-vocabulary tokens in the documents",
+            ));
         }
         let num_types = vocabulary.len();
         self.id_to_word = vocabulary.clone();
@@ -12100,22 +13841,34 @@ impl ETM {
         if self.inference == "vae" {
             let ep = iters.unwrap_or(150);
             let opts = build_avitm_options(
-                &self.prior, self.contrastive, self.contrastive_weight, self.contrastive_temp,
+                &self.prior,
+                self.contrastive,
+                self.contrastive_weight,
+                self.contrastive_temp,
             )?;
             let (k, h, bs, lr, wd, et) = (
-                self.num_topics, self.hidden_size, self.batch_size,
-                self.lr, self.wdecay, tol,
+                self.num_topics,
+                self.hidden_size,
+                self.batch_size,
+                self.lr,
+                self.wdecay,
+                tol,
             );
             let m = py.allow_threads(move || {
-                etm_vae::fit_etm_vae(&docs_ids, k, num_types, &rho, h, ep, bs, lr, wd, et, opts, &mut rng)
+                etm_vae::fit_etm_vae(
+                    &docs_ids, k, num_types, &rho, h, ep, bs, lr, wd, et, opts, &mut rng,
+                )
             });
             self.vae = Some(m);
             self.model = None;
         } else {
             let ei = iters.unwrap_or(100);
             let (k, et, ss, pv, mi) = (
-                self.num_topics, tol, self.sigma_shrink,
-                self.prior_variance, self.max_inner,
+                self.num_topics,
+                tol,
+                self.sigma_shrink,
+                self.prior_variance,
+                self.max_inner,
             );
             let model = py.allow_threads(move || {
                 etm::fit_etm(&docs_ids, k, num_types, &rho, ei, et, ss, pv, mi, &mut rng)
@@ -12132,7 +13885,8 @@ impl ETM {
             let mut tf = vec![0u32; v];
             let mut id_docs: Vec<Vec<u32>> = Vec::with_capacity(n);
             for doc in &docs_str {
-                let ids: Vec<u32> = doc.iter()
+                let ids: Vec<u32> = doc
+                    .iter()
                     .filter_map(|w| map.get(w.as_str()).copied())
                     .collect();
                 let mut seen = std::collections::HashSet::new();
@@ -12140,7 +13894,9 @@ impl ETM {
                     tf[id as usize] += 1;
                     seen.insert(id as usize);
                 }
-                for id in seen { df[id] += 1; }
+                for id in seen {
+                    df[id] += 1;
+                }
                 id_docs.push(ids);
             }
             corpus::Corpus {
@@ -12194,7 +13950,8 @@ impl ETM {
     /// :meth:`load` (bound_history is not persisted in the saved state).
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
-        Ok(self.surf_bound_history()?
+        Ok(self
+            .surf_bound_history()?
             .iter()
             .enumerate()
             .map(|(i, &b)| (i + 1, b))
@@ -12243,7 +14000,10 @@ impl ETM {
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let phi = vecs_to_arr2(self.surf_beta()?);
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
-        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+        Ok(
+            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                .to_pyarray_bound(py),
+        )
     }
 
     /// Save the fitted model to `path` (topica's binary format).
@@ -12251,52 +14011,106 @@ impl ETM {
         self.ensure_fitted()?;
         let (beta_em, alpha_em, mu_em, sigma_em, lambda_em, bound_em, converged_em) =
             if let Some(m) = &self.model {
-                (Some(m.beta.clone()), Some(m.alpha.clone()), Some(m.mu.clone()),
-                 Some(m.sigma.clone()), Some(m.lambda.clone()), Some(m.bound), Some(m.converged))
+                (
+                    Some(m.beta.clone()),
+                    Some(m.alpha.clone()),
+                    Some(m.mu.clone()),
+                    Some(m.sigma.clone()),
+                    Some(m.lambda.clone()),
+                    Some(m.bound),
+                    Some(m.converged),
+                )
             } else {
                 (None, None, None, None, None, None, None)
             };
-        let (beta_vae, alpha_vae, doc_topic_vae, bound_vae, converged_vae,
-             enc_v, enc_hidden, enc_w1, enc_b1, enc_w2, enc_b2,
-             enc_w_mu, enc_b_mu, enc_w_ls, enc_b_ls) =
-            if let Some(m) = &self.vae {
-                let enc = &m.encoder;
-                (Some(m.beta.clone()), Some(m.alpha.clone()), Some(m.doc_topic.clone()),
-                 Some(m.bound), Some(m.converged),
-                 Some(enc.v), Some(enc.hidden),
-                 Some(enc.w1.clone()), Some(enc.b1.clone()),
-                 Some(enc.w2.clone()), Some(enc.b2.clone()),
-                 Some(enc.w_mu.clone()), Some(enc.b_mu.clone()),
-                 Some(enc.w_ls.clone()), Some(enc.b_ls.clone()))
-            } else {
-                (None, None, None, None, None, None, None,
-                 None, None, None, None, None, None, None, None)
-            };
-        write_state(path, MODEL_TAG_ETM, &EtmState {
-            num_topics: self.num_topics,
-            inference: self.inference.clone(),
-            em_tol: self.em_tol,
-            sigma_shrink: self.sigma_shrink,
-            prior_variance: self.prior_variance,
-            max_inner: self.max_inner,
-            hidden_size: self.hidden_size,
-            batch_size: self.batch_size,
-            lr: self.lr,
-            wdecay: self.wdecay,
-            seed: self.seed,
-            prior: self.prior.clone(),
-            contrastive: self.contrastive,
-            contrastive_weight: self.contrastive_weight,
-            contrastive_temp: self.contrastive_temp,
-            fitted: self.fitted,
-            topic_names: self.topic_names.clone(),
-            id_to_word: self.id_to_word.clone(),
-            corpus: self.corpus.clone(),
-            beta_em, alpha_em, mu_em, sigma_em, lambda_em, bound_em, converged_em,
-            beta_vae, alpha_vae, doc_topic_vae, bound_vae, converged_vae,
-            enc_v, enc_hidden, enc_w1, enc_b1, enc_w2, enc_b2,
-            enc_w_mu, enc_b_mu, enc_w_ls, enc_b_ls,
-        })
+        let (
+            beta_vae,
+            alpha_vae,
+            doc_topic_vae,
+            bound_vae,
+            converged_vae,
+            enc_v,
+            enc_hidden,
+            enc_w1,
+            enc_b1,
+            enc_w2,
+            enc_b2,
+            enc_w_mu,
+            enc_b_mu,
+            enc_w_ls,
+            enc_b_ls,
+        ) = if let Some(m) = &self.vae {
+            let enc = &m.encoder;
+            (
+                Some(m.beta.clone()),
+                Some(m.alpha.clone()),
+                Some(m.doc_topic.clone()),
+                Some(m.bound),
+                Some(m.converged),
+                Some(enc.v),
+                Some(enc.hidden),
+                Some(enc.w1.clone()),
+                Some(enc.b1.clone()),
+                Some(enc.w2.clone()),
+                Some(enc.b2.clone()),
+                Some(enc.w_mu.clone()),
+                Some(enc.b_mu.clone()),
+                Some(enc.w_ls.clone()),
+                Some(enc.b_ls.clone()),
+            )
+        } else {
+            (
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None,
+            )
+        };
+        write_state(
+            path,
+            MODEL_TAG_ETM,
+            &EtmState {
+                num_topics: self.num_topics,
+                inference: self.inference.clone(),
+                em_tol: self.em_tol,
+                sigma_shrink: self.sigma_shrink,
+                prior_variance: self.prior_variance,
+                max_inner: self.max_inner,
+                hidden_size: self.hidden_size,
+                batch_size: self.batch_size,
+                lr: self.lr,
+                wdecay: self.wdecay,
+                seed: self.seed,
+                prior: self.prior.clone(),
+                contrastive: self.contrastive,
+                contrastive_weight: self.contrastive_weight,
+                contrastive_temp: self.contrastive_temp,
+                fitted: self.fitted,
+                topic_names: self.topic_names.clone(),
+                id_to_word: self.id_to_word.clone(),
+                corpus: self.corpus.clone(),
+                beta_em,
+                alpha_em,
+                mu_em,
+                sigma_em,
+                lambda_em,
+                bound_em,
+                converged_em,
+                beta_vae,
+                alpha_vae,
+                doc_topic_vae,
+                bound_vae,
+                converged_vae,
+                enc_v,
+                enc_hidden,
+                enc_w1,
+                enc_b1,
+                enc_w2,
+                enc_b2,
+                enc_w_mu,
+                enc_b_mu,
+                enc_w_ls,
+                enc_b_ls,
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -12317,7 +14131,9 @@ impl ETM {
                 converged: s.converged_em.unwrap_or(false),
                 em_iters_run: 0,
             })
-        } else { None };
+        } else {
+            None
+        };
         let vae = if s.inference == "vae" {
             s.beta_vae.map(|beta| etm_vae::EtmVaeModel {
                 num_topics: s.num_topics,
@@ -12344,7 +14160,9 @@ impl ETM {
                 },
                 prior: prior_from_str(&s.prior),
             })
-        } else { None };
+        } else {
+            None
+        };
         Ok(ETM {
             num_topics: s.num_topics,
             inference: s.inference,
@@ -12542,7 +14360,9 @@ impl DETM {
         }
         if let Some(c) = grad_clip {
             if !(c > 0.0) || !c.is_finite() {
-                return Err(PyValueError::new_err("grad_clip must be a positive finite float or None"));
+                return Err(PyValueError::new_err(
+                    "grad_clip must be a positive finite float or None",
+                ));
             }
         }
         Ok(DETM {
@@ -12603,8 +14423,15 @@ impl DETM {
 
         let (docs_str, corpus_opt): (Vec<Vec<String>>, Option<corpus::Corpus>) =
             if let Ok(c) = data.extract::<Corpus>() {
-                let strings = c.inner.docs.iter()
-                    .map(|d| d.iter().map(|&w| c.inner.id_to_word[w as usize].clone()).collect())
+                let strings = c
+                    .inner
+                    .docs
+                    .iter()
+                    .map(|d| {
+                        d.iter()
+                            .map(|&w| c.inner.id_to_word[w as usize].clone())
+                            .collect()
+                    })
                     .collect();
                 (strings, Some(c.inner.clone()))
             } else {
@@ -12648,11 +14475,16 @@ impl DETM {
         }
         check_all_finite_2d("word_embeddings", &rho)?;
         if vocabulary.len() < self.num_topics {
-            return Err(PyValueError::new_err("vocabulary must have at least num_topics words"));
+            return Err(PyValueError::new_err(
+                "vocabulary must have at least num_topics words",
+            ));
         }
 
-        let map: std::collections::HashMap<&str, u32> =
-            vocabulary.iter().enumerate().map(|(i, w)| (w.as_str(), i as u32)).collect();
+        let map: std::collections::HashMap<&str, u32> = vocabulary
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.as_str(), i as u32))
+            .collect();
         // Per-document sparse (tokens, counts) over the vocabulary ids.
         let mut tokens: Vec<Vec<u32>> = Vec::with_capacity(docs_str.len());
         let mut counts: Vec<Vec<u32>> = Vec::with_capacity(docs_str.len());
@@ -12667,7 +14499,9 @@ impl DETM {
             counts.push(m.values().copied().collect());
         }
         if tokens.iter().all(|d| d.is_empty()) {
-            return Err(PyValueError::new_err("no in-vocabulary tokens in the documents"));
+            return Err(PyValueError::new_err(
+                "no in-vocabulary tokens in the documents",
+            ));
         }
 
         let num_types = vocabulary.len();
@@ -12675,8 +14509,15 @@ impl DETM {
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
 
         let (k, delta, h, eh, enl, bs, lr, wd, gc) = (
-            self.num_topics, self.delta, self.hidden_size, self.eta_hidden_size,
-            self.eta_nlayers, self.batch_size, self.lr, self.wdecay, self.grad_clip,
+            self.num_topics,
+            self.delta,
+            self.hidden_size,
+            self.eta_hidden_size,
+            self.eta_nlayers,
+            self.batch_size,
+            self.lr,
+            self.wdecay,
+            self.grad_clip,
         );
         let model = py.allow_threads(move || {
             detm::fit_detm(
@@ -12695,8 +14536,10 @@ impl DETM {
             let mut tf = vec![0u32; v];
             let mut id_docs: Vec<Vec<u32>> = Vec::with_capacity(n);
             for doc in &docs_str {
-                let ids: Vec<u32> =
-                    doc.iter().filter_map(|w| map.get(w.as_str()).copied()).collect();
+                let ids: Vec<u32> = doc
+                    .iter()
+                    .filter_map(|w| map.get(w.as_str()).copied())
+                    .collect();
                 let mut s = std::collections::HashSet::new();
                 for &id in &ids {
                     tf[id as usize] += 1;
@@ -12786,7 +14629,15 @@ impl DETM {
     #[getter]
     fn alpha<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<f64>>> {
         let m = self.fitted_model()?;
-        let (t, k, l) = (m.num_times, m.num_topics, if m.num_topics > 0 { m.alpha[0][0].len() } else { 0 });
+        let (t, k, l) = (
+            m.num_times,
+            m.num_topics,
+            if m.num_topics > 0 {
+                m.alpha[0][0].len()
+            } else {
+                0
+            },
+        );
         let mut arr = Array3::<f64>::zeros((t, k, l));
         for tt in 0..t {
             for kk in 0..k {
@@ -12819,7 +14670,11 @@ impl DETM {
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
         let m = self.fitted_model()?;
-        Ok(m.bound_history.iter().enumerate().map(|(i, &b)| (i + 1, b)).collect())
+        Ok(m.bound_history
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| (i + 1, b))
+            .collect())
     }
 
     #[getter]
@@ -12892,37 +14747,44 @@ impl DETM {
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word_mean());
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
-        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+        Ok(
+            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                .to_pyarray_bound(py),
+        )
     }
 
     /// Save the fitted model to `path`. Reload with `DETM.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         let m = self.fitted_model()?;
-        write_state(path, MODEL_TAG_DETM, &DetmState {
-            num_topics: self.num_topics,
-            delta: self.delta,
-            hidden_size: self.hidden_size,
-            eta_hidden_size: self.eta_hidden_size,
-            eta_nlayers: self.eta_nlayers,
-            batch_size: self.batch_size,
-            lr: self.lr,
-            wdecay: self.wdecay,
-            grad_clip: self.grad_clip,
-            convergence_tol: self.convergence_tol,
-            seed: self.seed,
-            fitted: self.fitted,
-            topic_names: self.topic_names.clone(),
-            num_times: self.num_times,
-            num_types: m.num_types,
-            id_to_word: self.id_to_word.clone(),
-            corpus: self.corpus.clone(),
-            beta_over_time: m.beta_over_time.clone(),
-            doc_topic: m.doc_topic.clone(),
-            alpha: m.alpha.clone(),
-            eta: m.eta.clone(),
-            bound: m.bound,
-            converged: m.converged,
-        })
+        write_state(
+            path,
+            MODEL_TAG_DETM,
+            &DetmState {
+                num_topics: self.num_topics,
+                delta: self.delta,
+                hidden_size: self.hidden_size,
+                eta_hidden_size: self.eta_hidden_size,
+                eta_nlayers: self.eta_nlayers,
+                batch_size: self.batch_size,
+                lr: self.lr,
+                wdecay: self.wdecay,
+                grad_clip: self.grad_clip,
+                convergence_tol: self.convergence_tol,
+                seed: self.seed,
+                fitted: self.fitted,
+                topic_names: self.topic_names.clone(),
+                num_times: self.num_times,
+                num_types: m.num_types,
+                id_to_word: self.id_to_word.clone(),
+                corpus: self.corpus.clone(),
+                beta_over_time: m.beta_over_time.clone(),
+                doc_topic: m.doc_topic.clone(),
+                alpha: m.alpha.clone(),
+                eta: m.eta.clone(),
+                bound: m.bound,
+                converged: m.converged,
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -13024,11 +14886,20 @@ impl InfoCTM {
             .model
             .as_ref()
             .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))?;
-        Ok(if self.lang_index(lang)? == 0 { &m.model_a } else { &m.model_b })
+        Ok(if self.lang_index(lang)? == 0 {
+            &m.model_a
+        } else {
+            &m.model_b
+        })
     }
     fn corpus_for(&self, lang: &str) -> PyResult<&corpus::Corpus> {
-        let c = if self.lang_index(lang)? == 0 { &self.corpus_a } else { &self.corpus_b };
-        c.as_ref().ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+        let c = if self.lang_index(lang)? == 0 {
+            &self.corpus_a
+        } else {
+            &self.corpus_b
+        };
+        c.as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
     }
 }
 
@@ -13110,7 +14981,17 @@ impl InfoCTM {
                 let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                     PyValueError::new_err("fit() expects a Corpus or a list of token lists")
                 })?;
-                Ok(build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0)
+                Ok(build_corpus_from_docs(
+                    docs,
+                    None,
+                    None,
+                    std::collections::HashSet::new(),
+                    1,
+                    1.0,
+                    0,
+                    0,
+                )?
+                .0)
             }
         };
         let corpus_a = to_corpus(data_a)?;
@@ -13120,12 +15001,18 @@ impl InfoCTM {
             return Err(PyValueError::new_err("both corpora must contain documents"));
         }
         if va < self.num_topics || vb < self.num_topics {
-            return Err(PyValueError::new_err("each vocabulary must have at least num_topics words"));
+            return Err(PyValueError::new_err(
+                "each vocabulary must have at least num_topics words",
+            ));
         }
 
         // word -> id maps for each language.
         let wid = |c: &corpus::Corpus| -> std::collections::HashMap<String, usize> {
-            c.id_to_word.iter().enumerate().map(|(i, w)| (w.clone(), i)).collect()
+            c.id_to_word
+                .iter()
+                .enumerate()
+                .map(|(i, w)| (w.clone(), i))
+                .collect()
         };
         let wa = wid(&corpus_a);
         let wb = wid(&corpus_b);
@@ -13155,8 +15042,13 @@ impl InfoCTM {
         let emb_b = emb_matrix(embeddings_b, &corpus_b);
 
         let ep = iters.unwrap_or(500);
-        let (k, h, dp, lr, et) =
-            (self.num_topics, self.hidden_size, self.dropout, self.lr, self.em_tol);
+        let (k, h, dp, lr, et) = (
+            self.num_topics,
+            self.hidden_size,
+            self.dropout,
+            self.lr,
+            self.em_tol,
+        );
         let (mw, mt, pt) = (self.mi_weight, self.mi_temperature, self.pos_threshold);
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
 
@@ -13164,8 +15056,24 @@ impl InfoCTM {
         let docs_b = corpus_b.docs.clone();
         let model = py.allow_threads(move || {
             infoctm::fit_infoctm(
-                &docs_a, &docs_b, va, vb, &trans_ab, emb_a.as_deref(), emb_b.as_deref(),
-                k, h, dp, ep, batch_size, lr, mw, mt, pt, et, &mut rng,
+                &docs_a,
+                &docs_b,
+                va,
+                vb,
+                &trans_ab,
+                emb_a.as_deref(),
+                emb_b.as_deref(),
+                k,
+                h,
+                dp,
+                ep,
+                batch_size,
+                lr,
+                mw,
+                mt,
+                pt,
+                et,
+                &mut rng,
             )
         });
         self.model = Some(model);
@@ -13210,7 +15118,10 @@ impl InfoCTM {
             .map(|row| {
                 let mut idx: Vec<usize> = (0..row.len()).collect();
                 idx.sort_by(|&a, &b| row[b].total_cmp(&row[a]));
-                idx.into_iter().take(n).map(|j| (vocab[j].clone(), row[j])).collect()
+                idx.into_iter()
+                    .take(n)
+                    .map(|j| (vocab[j].clone(), row[j]))
+                    .collect()
             })
             .collect())
     }
@@ -13233,7 +15144,10 @@ impl InfoCTM {
     /// The per-epoch training ELBO (negative joint loss) trace.
     #[getter]
     fn fit_history(&self) -> Vec<f64> {
-        self.model.as_ref().map(|m| m.bound_history.clone()).unwrap_or_default()
+        self.model
+            .as_ref()
+            .map(|m| m.bound_history.clone())
+            .unwrap_or_default()
     }
 
     #[getter]
@@ -13373,10 +15287,14 @@ fn build_avitm_options(
     };
     if contrastive {
         if !(contrastive_weight >= 0.0 && contrastive_weight.is_finite()) {
-            return Err(PyValueError::new_err("contrastive_weight must be >= 0 and finite"));
+            return Err(PyValueError::new_err(
+                "contrastive_weight must be >= 0 and finite",
+            ));
         }
         if !(contrastive_temp > 0.0 && contrastive_temp.is_finite()) {
-            return Err(PyValueError::new_err("contrastive_temp must be > 0 and finite"));
+            return Err(PyValueError::new_err(
+                "contrastive_temp must be > 0 and finite",
+            ));
         }
     }
     Ok(prodlda::AvitmOptions {
@@ -13427,13 +15345,20 @@ impl ProdLDA {
     ) -> PyResult<Self> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
-            warnings.call_method1("warn", (
-                "ProdLDA(em_tol=) is deprecated; use convergence_tol= instead",
-                py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
-                2_i32,
-            ))?;
+            warnings.call_method1(
+                "warn",
+                (
+                    "ProdLDA(em_tol=) is deprecated; use convergence_tol= instead",
+                    py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
+                    2_i32,
+                ),
+            )?;
             // ProdLDA default is 0.0; if unchanged, use the deprecated value.
-            if convergence_tol != 0.0 { convergence_tol } else { old_val }
+            if convergence_tol != 0.0 {
+                convergence_tol
+            } else {
+                old_val
+            }
         } else {
             convergence_tol
         };
@@ -13472,7 +15397,13 @@ impl ProdLDA {
     /// `iters` sets the number of training epochs (default 200).
     /// `convergence_tol` overrides the constructor value for this run (when given).
     #[pyo3(signature = (data, *, iters=None, convergence_tol=None))]
-    fn fit(&mut self, py: Python<'_>, data: &Bound<'_, PyAny>, iters: Option<usize>, convergence_tol: Option<f64>) -> PyResult<()> {
+    fn fit(
+        &mut self,
+        py: Python<'_>,
+        data: &Bound<'_, PyAny>,
+        iters: Option<usize>,
+        convergence_tol: Option<f64>,
+    ) -> PyResult<()> {
         let tol = convergence_tol.unwrap_or(self.em_tol);
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -13480,29 +15411,62 @@ impl ProdLDA {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
         let num_types = corpus.num_types();
         if num_types < self.num_topics {
-            return Err(PyValueError::new_err("vocabulary must have at least num_topics words"));
+            return Err(PyValueError::new_err(
+                "vocabulary must have at least num_topics words",
+            ));
         }
         let ep = iters.unwrap_or(200);
         let opts = build_avitm_options(
-            &self.prior, self.contrastive, self.contrastive_weight, self.contrastive_temp,
+            &self.prior,
+            self.contrastive,
+            self.contrastive_weight,
+            self.contrastive_temp,
         )?;
         let (k, h, a, dp, bs, lr, et) = (
-            self.num_topics, self.hidden_size, self.alpha, self.dropout,
-            self.batch_size, self.lr, tol,
+            self.num_topics,
+            self.hidden_size,
+            self.alpha,
+            self.dropout,
+            self.batch_size,
+            self.lr,
+            tol,
         );
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
         let empty: Vec<Vec<f64>> = vec![Vec::new(); corpus.docs.len()];
         let (model, corpus) = py.allow_threads(move || {
             let m = prodlda::fit_avitm(
-                &corpus.docs, &empty, prodlda::InputMode::BowOnly, k, num_types, 0, h, a, dp,
-                ep, bs, lr, et, opts, &mut rng,
+                &corpus.docs,
+                &empty,
+                prodlda::InputMode::BowOnly,
+                k,
+                num_types,
+                0,
+                h,
+                a,
+                dp,
+                ep,
+                bs,
+                lr,
+                et,
+                opts,
+                &mut rng,
             );
             (m, corpus)
         });
@@ -13545,7 +15509,8 @@ impl ProdLDA {
     /// epoch (same as :attr:`bound_history` but indexed).
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
-        Ok(self.fitted_model()?
+        Ok(self
+            .fitted_model()?
             .bound_history
             .iter()
             .enumerate()
@@ -13591,13 +15556,23 @@ impl ProdLDA {
         topic: Option<usize>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
-        topic_words_helper(py, &phi, &self.corpus.as_ref().unwrap().id_to_word, self.num_topics, n, topic)
+        topic_words_helper(
+            py,
+            &phi,
+            &self.corpus.as_ref().unwrap().id_to_word,
+            self.num_topics,
+            n,
+            topic,
+        )
     }
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
-        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+        Ok(
+            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                .to_pyarray_bound(py),
+        )
     }
 
     /// Held-out topic proportions for new documents: one encoder forward pass each
@@ -13627,42 +15602,46 @@ impl ProdLDA {
     /// Save the fitted model to `path` (topica's binary format).
     fn save(&self, path: &str) -> PyResult<()> {
         let m = self.fitted_model()?;
-        write_state(path, MODEL_TAG_PRODLDA, &ProdldaState {
-            num_topics: self.num_topics,
-            hidden_size: self.hidden_size,
-            alpha: self.alpha,
-            dropout: self.dropout,
-            batch_size: self.batch_size,
-            lr: self.lr,
-            em_tol: self.em_tol,
-            seed: self.seed,
-            prior: self.prior.clone(),
-            contrastive: self.contrastive,
-            contrastive_weight: self.contrastive_weight,
-            contrastive_temp: self.contrastive_temp,
-            fitted: self.fitted,
-            topic_names: self.topic_names.clone(),
-            corpus: self.corpus.clone(),
-            doc_topic: Some(m.doc_topic.clone()),
-            bound: Some(m.bound),
-            bound_history: Some(m.bound_history.clone()),
-            converged: Some(m.converged),
-            epochs_run: Some(m.epochs_run),
-            w_v: Some(m.weights.v),
-            w_hidden: Some(m.weights.hidden),
-            w_k: Some(m.weights.k),
-            w_w1: Some(m.weights.w1.clone()),
-            w_b1: Some(m.weights.b1.clone()),
-            w_w2: Some(m.weights.w2.clone()),
-            w_b2: Some(m.weights.b2.clone()),
-            w_w_mu: Some(m.weights.w_mu.clone()),
-            w_b_mu: Some(m.weights.b_mu.clone()),
-            w_w_ls: Some(m.weights.w_ls.clone()),
-            w_b_ls: Some(m.weights.b_ls.clone()),
-            w_beta: Some(m.weights.beta.clone()),
-            bn_running_mean: Some(m.bn_mu.running_mean.clone()),
-            bn_running_var: Some(m.bn_mu.running_var.clone()),
-        })
+        write_state(
+            path,
+            MODEL_TAG_PRODLDA,
+            &ProdldaState {
+                num_topics: self.num_topics,
+                hidden_size: self.hidden_size,
+                alpha: self.alpha,
+                dropout: self.dropout,
+                batch_size: self.batch_size,
+                lr: self.lr,
+                em_tol: self.em_tol,
+                seed: self.seed,
+                prior: self.prior.clone(),
+                contrastive: self.contrastive,
+                contrastive_weight: self.contrastive_weight,
+                contrastive_temp: self.contrastive_temp,
+                fitted: self.fitted,
+                topic_names: self.topic_names.clone(),
+                corpus: self.corpus.clone(),
+                doc_topic: Some(m.doc_topic.clone()),
+                bound: Some(m.bound),
+                bound_history: Some(m.bound_history.clone()),
+                converged: Some(m.converged),
+                epochs_run: Some(m.epochs_run),
+                w_v: Some(m.weights.v),
+                w_hidden: Some(m.weights.hidden),
+                w_k: Some(m.weights.k),
+                w_w1: Some(m.weights.w1.clone()),
+                w_b1: Some(m.weights.b1.clone()),
+                w_w2: Some(m.weights.w2.clone()),
+                w_b2: Some(m.weights.b2.clone()),
+                w_w_mu: Some(m.weights.w_mu.clone()),
+                w_b_mu: Some(m.weights.b_mu.clone()),
+                w_w_ls: Some(m.weights.w_ls.clone()),
+                w_b_ls: Some(m.weights.b_ls.clone()),
+                w_beta: Some(m.weights.beta.clone()),
+                bn_running_mean: Some(m.bn_mu.running_mean.clone()),
+                bn_running_var: Some(m.bn_mu.running_var.clone()),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -13682,7 +15661,11 @@ impl ProdLDA {
                 converged: s.converged.unwrap_or(false),
                 epochs_run: s.epochs_run.unwrap_or(0),
                 weights: prodlda::Weights {
-                    v, e: 0, hidden, k, mode: prodlda::InputMode::BowOnly,
+                    v,
+                    e: 0,
+                    hidden,
+                    k,
+                    mode: prodlda::InputMode::BowOnly,
                     w1: s.w_w1.unwrap_or_default(),
                     b1: s.w_b1.unwrap_or_default(),
                     w2: s.w_w2.unwrap_or_default(),
@@ -13700,7 +15683,9 @@ impl ProdLDA {
                 },
                 prior: prior_from_str(&s.prior),
             })
-        } else { None };
+        } else {
+            None
+        };
         Ok(ProdLDA {
             num_topics: s.num_topics,
             hidden_size: s.hidden_size,
@@ -13733,7 +15718,10 @@ impl ProdLDA {
     }
 
     fn __repr__(&self) -> String {
-        format!("ProdLDA(num_topics={}, fitted={})", self.num_topics, self.fitted)
+        format!(
+            "ProdLDA(num_topics={}, fitted={})",
+            self.num_topics, self.fitted
+        )
     }
 }
 
@@ -13814,10 +15802,7 @@ fn u8_to_mode(m: u8) -> prodlda::InputMode {
 
 /// Parse `doc_embeddings` into dense rows and check the row count matches the
 /// document count.
-fn parse_doc_embeddings(
-    data: &Bound<'_, PyAny>,
-    num_docs: usize,
-) -> PyResult<Vec<Vec<f64>>> {
+fn parse_doc_embeddings(data: &Bound<'_, PyAny>, num_docs: usize) -> PyResult<Vec<Vec<f64>>> {
     let embs = parse_features(data)?;
     if embs.len() != num_docs {
         return Err(PyValueError::new_err(format!(
@@ -13873,9 +15858,9 @@ macro_rules! ctm_embedding_model {
             /// to :meth:`fit` to set the number of epochs.
             #[new]
             #[pyo3(signature = (num_topics, *, alpha=1.0, hidden_size=100, dropout=0.2,
-                                batch_size=200, lr=0.002, convergence_tol=0.0, seed=42,
-                                prior="laplace".to_string(), contrastive=false,
-                                contrastive_weight=0.5, contrastive_temp=0.5))]
+                                        batch_size=200, lr=0.002, convergence_tol=0.0, seed=42,
+                                        prior="laplace".to_string(), contrastive=false,
+                                        contrastive_weight=0.5, contrastive_temp=0.5))]
             #[allow(clippy::too_many_arguments)]
             fn new(
                 #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
@@ -13946,7 +15931,14 @@ macro_rules! ctm_embedding_model {
                         PyValueError::new_err("fit() expects a Corpus or a list of token lists")
                     })?;
                     build_corpus_from_docs(
-                        docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0,
+                        docs,
+                        None,
+                        None,
+                        std::collections::HashSet::new(),
+                        1,
+                        1.0,
+                        0,
+                        0,
                     )?
                     .0
                 };
@@ -13962,23 +15954,44 @@ macro_rules! ctm_embedding_model {
                 let embs = parse_doc_embeddings(doc_embeddings, corpus.num_docs())?;
                 let emb_dim = embs.first().map(|r| r.len()).unwrap_or(0);
                 if emb_dim == 0 {
-                    return Err(PyValueError::new_err("doc_embeddings must have at least one column"));
+                    return Err(PyValueError::new_err(
+                        "doc_embeddings must have at least one column",
+                    ));
                 }
                 self.emb_dim = emb_dim;
                 let ep = iters.unwrap_or(200);
                 let opts = build_avitm_options(
-                    &self.prior, self.contrastive, self.contrastive_weight,
+                    &self.prior,
+                    self.contrastive,
+                    self.contrastive_weight,
                     self.contrastive_temp,
                 )?;
                 let (k, h, a, dp, bs, lr) = (
-                    self.num_topics, self.hidden_size, self.alpha, self.dropout,
-                    self.batch_size, self.lr,
+                    self.num_topics,
+                    self.hidden_size,
+                    self.alpha,
+                    self.dropout,
+                    self.batch_size,
+                    self.lr,
                 );
                 let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
                 let (model, corpus) = py.allow_threads(move || {
                     let m = prodlda::fit_avitm(
-                        &corpus.docs, &embs, $mode, k, num_types, emb_dim, h, a, dp, ep, bs,
-                        lr, tol, opts, &mut rng,
+                        &corpus.docs,
+                        &embs,
+                        $mode,
+                        k,
+                        num_types,
+                        emb_dim,
+                        h,
+                        a,
+                        dp,
+                        ep,
+                        bs,
+                        lr,
+                        tol,
+                        opts,
+                        &mut rng,
                     );
                     (m, corpus)
                 });
@@ -14077,11 +16090,17 @@ macro_rules! ctm_embedding_model {
                 )
             }
             #[pyo3(signature = (n=10))]
-            fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+            fn coherence<'py>(
+                &self,
+                py: Python<'py>,
+                n: usize,
+            ) -> PyResult<Bound<'py, PyArray1<f64>>> {
                 let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
                 let tops = top_word_ids_phi(&phi, self.num_topics, n);
-                Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
-                    .to_pyarray_bound(py))
+                Ok(
+                    Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                        .to_pyarray_bound(py),
+                )
             }
 
             /// Held-out topic proportions for new documents: one encoder forward
@@ -14120,45 +16139,49 @@ macro_rules! ctm_embedding_model {
             /// Save the fitted model to `path` (topica's binary format).
             fn save(&self, path: &str) -> PyResult<()> {
                 let m = self.fitted_model()?;
-                write_state(path, $tag, &CtmEmbState {
-                    num_topics: self.num_topics,
-                    hidden_size: self.hidden_size,
-                    alpha: self.alpha,
-                    dropout: self.dropout,
-                    batch_size: self.batch_size,
-                    lr: self.lr,
-                    convergence_tol: self.convergence_tol,
-                    seed: self.seed,
-                    prior: self.prior.clone(),
-                    contrastive: self.contrastive,
-                    contrastive_weight: self.contrastive_weight,
-                    contrastive_temp: self.contrastive_temp,
-                    fitted: self.fitted,
-                    topic_names: self.topic_names.clone(),
-                    corpus: self.corpus.clone(),
-                    emb_dim: self.emb_dim,
-                    mode: mode_to_u8($mode),
-                    doc_topic: Some(m.doc_topic.clone()),
-                    bound: Some(m.bound),
-                    bound_history: Some(m.bound_history.clone()),
-                    converged: Some(m.converged),
-                    epochs_run: Some(m.epochs_run),
-                    w_v: Some(m.weights.v),
-                    w_e: Some(m.weights.e),
-                    w_hidden: Some(m.weights.hidden),
-                    w_k: Some(m.weights.k),
-                    w_w1: Some(m.weights.w1.clone()),
-                    w_b1: Some(m.weights.b1.clone()),
-                    w_w2: Some(m.weights.w2.clone()),
-                    w_b2: Some(m.weights.b2.clone()),
-                    w_w_mu: Some(m.weights.w_mu.clone()),
-                    w_b_mu: Some(m.weights.b_mu.clone()),
-                    w_w_ls: Some(m.weights.w_ls.clone()),
-                    w_b_ls: Some(m.weights.b_ls.clone()),
-                    w_beta: Some(m.weights.beta.clone()),
-                    bn_running_mean: Some(m.bn_mu.running_mean.clone()),
-                    bn_running_var: Some(m.bn_mu.running_var.clone()),
-                })
+                write_state(
+                    path,
+                    $tag,
+                    &CtmEmbState {
+                        num_topics: self.num_topics,
+                        hidden_size: self.hidden_size,
+                        alpha: self.alpha,
+                        dropout: self.dropout,
+                        batch_size: self.batch_size,
+                        lr: self.lr,
+                        convergence_tol: self.convergence_tol,
+                        seed: self.seed,
+                        prior: self.prior.clone(),
+                        contrastive: self.contrastive,
+                        contrastive_weight: self.contrastive_weight,
+                        contrastive_temp: self.contrastive_temp,
+                        fitted: self.fitted,
+                        topic_names: self.topic_names.clone(),
+                        corpus: self.corpus.clone(),
+                        emb_dim: self.emb_dim,
+                        mode: mode_to_u8($mode),
+                        doc_topic: Some(m.doc_topic.clone()),
+                        bound: Some(m.bound),
+                        bound_history: Some(m.bound_history.clone()),
+                        converged: Some(m.converged),
+                        epochs_run: Some(m.epochs_run),
+                        w_v: Some(m.weights.v),
+                        w_e: Some(m.weights.e),
+                        w_hidden: Some(m.weights.hidden),
+                        w_k: Some(m.weights.k),
+                        w_w1: Some(m.weights.w1.clone()),
+                        w_b1: Some(m.weights.b1.clone()),
+                        w_w2: Some(m.weights.w2.clone()),
+                        w_b2: Some(m.weights.b2.clone()),
+                        w_w_mu: Some(m.weights.w_mu.clone()),
+                        w_b_mu: Some(m.weights.b_mu.clone()),
+                        w_w_ls: Some(m.weights.w_ls.clone()),
+                        w_b_ls: Some(m.weights.b_ls.clone()),
+                        w_beta: Some(m.weights.beta.clone()),
+                        bn_running_mean: Some(m.bn_mu.running_mean.clone()),
+                        bn_running_var: Some(m.bn_mu.running_var.clone()),
+                    },
+                )
             }
 
             /// Load a model previously written by :meth:`save`.
@@ -14237,7 +16260,10 @@ macro_rules! ctm_embedding_model {
             }
 
             fn __repr__(&self) -> String {
-                format!(concat!($repr, "(num_topics={}, fitted={})"), self.num_topics, self.fitted)
+                format!(
+                    concat!($repr, "(num_topics={}, fitted={})"),
+                    self.num_topics, self.fitted
+                )
             }
         }
     };
@@ -14399,7 +16425,13 @@ impl NMF {
     /// number of multiplicative-update iterations (default 200). `convergence_tol`
     /// overrides the constructor value for this run (when given).
     #[pyo3(signature = (data, *, iters=None, convergence_tol=None))]
-    fn fit(&mut self, py: Python<'_>, data: &Bound<'_, PyAny>, iters: Option<usize>, convergence_tol: Option<f64>) -> PyResult<()> {
+    fn fit(
+        &mut self,
+        py: Python<'_>,
+        data: &Bound<'_, PyAny>,
+        iters: Option<usize>,
+        convergence_tol: Option<f64>,
+    ) -> PyResult<()> {
         let tol = convergence_tol.unwrap_or(self.convergence_tol);
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -14407,18 +16439,35 @@ impl NMF {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
         let num_types = corpus.num_types();
         if num_types < self.num_topics {
-            return Err(PyValueError::new_err("vocabulary must have at least num_topics words"));
+            return Err(PyValueError::new_err(
+                "vocabulary must have at least num_topics words",
+            ));
         }
         let it = iters.unwrap_or(200);
-        let (k, bl, ini, tfidf, seed) =
-            (self.num_topics, self.beta_loss, self.init, self.weighting_tfidf, self.seed);
+        let (k, bl, ini, tfidf, seed) = (
+            self.num_topics,
+            self.beta_loss,
+            self.init,
+            self.weighting_tfidf,
+            self.seed,
+        );
         let (model, corpus) = py.allow_threads(move || {
             let m = nmf::fit_nmf(&corpus.docs, k, num_types, bl, ini, tfidf, it, tol, seed);
             (m, corpus)
@@ -14463,7 +16512,8 @@ impl NMF {
     /// entry (`iter = 1`) is the initial error before any update.
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
-        Ok(self.fitted_model()?
+        Ok(self
+            .fitted_model()?
             .error_history
             .iter()
             .enumerate()
@@ -14509,44 +16559,58 @@ impl NMF {
         topic: Option<usize>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
-        topic_words_helper(py, &phi, &self.corpus.as_ref().unwrap().id_to_word, self.num_topics, n, topic)
+        topic_words_helper(
+            py,
+            &phi,
+            &self.corpus.as_ref().unwrap().id_to_word,
+            self.num_topics,
+            n,
+            topic,
+        )
     }
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
-        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+        Ok(
+            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                .to_pyarray_bound(py),
+        )
     }
 
     /// Save the fitted model to `path` (topica's binary format).
     fn save(&self, path: &str) -> PyResult<()> {
         let m = self.fitted_model()?;
-        write_state(path, MODEL_TAG_NMF, &NmfState {
-            num_topics: self.num_topics,
-            beta_loss: match self.beta_loss {
-                nmf::BetaLoss::Frobenius => 0,
-                nmf::BetaLoss::KullbackLeibler => 1,
+        write_state(
+            path,
+            MODEL_TAG_NMF,
+            &NmfState {
+                num_topics: self.num_topics,
+                beta_loss: match self.beta_loss {
+                    nmf::BetaLoss::Frobenius => 0,
+                    nmf::BetaLoss::KullbackLeibler => 1,
+                },
+                init: match self.init {
+                    nmf::Init::Nndsvd => 0,
+                    nmf::Init::Random => 1,
+                },
+                weighting_tfidf: self.weighting_tfidf,
+                convergence_tol: self.convergence_tol,
+                seed: self.seed,
+                fitted: self.fitted,
+                topic_names: self.topic_names.clone(),
+                corpus: self.corpus.clone(),
+                num_types: Some(m.num_types),
+                topic_word: Some(m.topic_word.clone()),
+                doc_topic: Some(m.doc_topic.clone()),
+                h: Some(m.h.clone()),
+                w: Some(m.w.clone()),
+                reconstruction_error: Some(m.reconstruction_error),
+                error_history: Some(m.error_history.clone()),
+                converged: Some(m.converged),
+                iters_run: Some(m.iters_run),
             },
-            init: match self.init {
-                nmf::Init::Nndsvd => 0,
-                nmf::Init::Random => 1,
-            },
-            weighting_tfidf: self.weighting_tfidf,
-            convergence_tol: self.convergence_tol,
-            seed: self.seed,
-            fitted: self.fitted,
-            topic_names: self.topic_names.clone(),
-            corpus: self.corpus.clone(),
-            num_types: Some(m.num_types),
-            topic_word: Some(m.topic_word.clone()),
-            doc_topic: Some(m.doc_topic.clone()),
-            h: Some(m.h.clone()),
-            w: Some(m.w.clone()),
-            reconstruction_error: Some(m.reconstruction_error),
-            error_history: Some(m.error_history.clone()),
-            converged: Some(m.converged),
-            iters_run: Some(m.iters_run),
-        })
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -14574,7 +16638,11 @@ impl NMF {
         } else {
             nmf::BetaLoss::Frobenius
         };
-        let init = if s.init == 1 { nmf::Init::Random } else { nmf::Init::Nndsvd };
+        let init = if s.init == 1 {
+            nmf::Init::Random
+        } else {
+            nmf::Init::Nndsvd
+        };
         Ok(NMF {
             num_topics: s.num_topics,
             beta_loss,
@@ -14590,7 +16658,10 @@ impl NMF {
     }
 
     fn __repr__(&self) -> String {
-        format!("NMF(num_topics={}, fitted={})", self.num_topics, self.fitted)
+        format!(
+            "NMF(num_topics={}, fitted={})",
+            self.num_topics, self.fitted
+        )
     }
 }
 
@@ -14676,7 +16747,17 @@ impl LSA {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -14811,24 +16892,31 @@ impl LSA {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
         let absphi = phi.mapv(f64::abs);
         let tops = top_word_ids_phi(&absphi, self.num_topics, n);
-        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+        Ok(
+            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                .to_pyarray_bound(py),
+        )
     }
 
     /// Save the fitted model to `path` (topica's binary format).
     fn save(&self, path: &str) -> PyResult<()> {
         let m = self.fitted_model()?;
-        write_state(path, MODEL_TAG_LSA, &LsaState {
-            num_topics: self.num_topics,
-            weighting_tfidf: self.weighting_tfidf,
-            seed: self.seed,
-            fitted: self.fitted,
-            topic_names: self.topic_names.clone(),
-            corpus: self.corpus.clone(),
-            num_types: Some(m.num_types),
-            topic_word: Some(m.topic_word.clone()),
-            doc_topic: Some(m.doc_topic.clone()),
-            singular_values: Some(m.singular_values.clone()),
-        })
+        write_state(
+            path,
+            MODEL_TAG_LSA,
+            &LsaState {
+                num_topics: self.num_topics,
+                weighting_tfidf: self.weighting_tfidf,
+                seed: self.seed,
+                fitted: self.fitted,
+                topic_names: self.topic_names.clone(),
+                corpus: self.corpus.clone(),
+                num_types: Some(m.num_types),
+                topic_word: Some(m.topic_word.clone()),
+                doc_topic: Some(m.doc_topic.clone()),
+                singular_values: Some(m.singular_values.clone()),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -14858,7 +16946,10 @@ impl LSA {
     }
 
     fn __repr__(&self) -> String {
-        format!("LSA(num_topics={}, fitted={})", self.num_topics, self.fitted)
+        format!(
+            "LSA(num_topics={}, fitted={})",
+            self.num_topics, self.fitted
+        )
     }
 }
 
@@ -14953,12 +17044,19 @@ impl FASTopic {
     ) -> PyResult<Self> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
-            warnings.call_method1("warn", (
-                "FASTopic(em_tol=) is deprecated; use convergence_tol= instead",
-                py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
-                2_i32,
-            ))?;
-            if (convergence_tol - 1e-6_f64).abs() > f64::EPSILON { convergence_tol } else { old_val }
+            warnings.call_method1(
+                "warn",
+                (
+                    "FASTopic(em_tol=) is deprecated; use convergence_tol= instead",
+                    py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
+                    2_i32,
+                ),
+            )?;
+            if (convergence_tol - 1e-6_f64).abs() > f64::EPSILON {
+                convergence_tol
+            } else {
+                old_val
+            }
         } else {
             convergence_tol
         };
@@ -15007,7 +17105,17 @@ impl FASTopic {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -15023,15 +17131,23 @@ impl FASTopic {
         check_all_finite_2d("doc_embeddings", &doc_emb)?;
         let num_types = corpus.num_types();
         if num_types < self.num_topics {
-            return Err(PyValueError::new_err("vocabulary must have at least num_topics words"));
+            return Err(PyValueError::new_err(
+                "vocabulary must have at least num_topics words",
+            ));
         }
         self.id_to_word = corpus.id_to_word.clone();
         let docs_ids = corpus.docs.clone();
         let ep = iters.unwrap_or(200);
 
         let (k, lr, dta, twa, tt, et, si, st) = (
-            self.num_topics, self.lr, self.dt_alpha, self.tw_alpha,
-            self.theta_temp, tol, self.sinkhorn_iters, self.sinkhorn_tol,
+            self.num_topics,
+            self.lr,
+            self.dt_alpha,
+            self.tw_alpha,
+            self.theta_temp,
+            tol,
+            self.sinkhorn_iters,
+            self.sinkhorn_tol,
         );
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
         let model = py.allow_threads(move || {
@@ -15083,7 +17199,8 @@ impl FASTopic {
     /// objective is the negated OT loss (so higher = better), indexed from 1.
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
-        Ok(self.fitted_model()?
+        Ok(self
+            .fitted_model()?
             .loss_history
             .iter()
             .enumerate()
@@ -15135,7 +17252,10 @@ impl FASTopic {
         let m = self.fitted_model()?;
         let phi = vecs_to_arr2(&m.topic_word);
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
-        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+        Ok(
+            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                .to_pyarray_bound(py),
+        )
     }
 
     /// Held-out topic proportions for new documents from their embeddings
@@ -15151,9 +17271,8 @@ impl FASTopic {
         doc_embeddings: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let _ = data;
-        let de_obj = doc_embeddings.ok_or_else(|| {
-            PyValueError::new_err("FASTopic.transform requires doc_embeddings")
-        })?;
+        let de_obj = doc_embeddings
+            .ok_or_else(|| PyValueError::new_err("FASTopic.transform requires doc_embeddings"))?;
         let m = self.fitted_model()?;
         let doc_emb = parse_features(de_obj)?;
         Ok(vecs_to_arr2(&m.transform(&doc_emb)).to_pyarray_bound(py))
@@ -15174,29 +17293,33 @@ impl FASTopic {
     /// Save the fitted model to `path` (topica's binary format).
     fn save(&self, path: &str) -> PyResult<()> {
         let m = self.fitted_model()?;
-        write_state(path, MODEL_TAG_FASTOPIC, &FastopicState {
-            num_topics: self.num_topics,
-            lr: self.lr,
-            dt_alpha: self.dt_alpha,
-            tw_alpha: self.tw_alpha,
-            theta_temp: self.theta_temp,
-            em_tol: self.em_tol,
-            sinkhorn_iters: self.sinkhorn_iters,
-            sinkhorn_tol: self.sinkhorn_tol,
-            seed: self.seed,
-            fitted: self.fitted,
-            topic_names: self.topic_names.clone(),
-            id_to_word: self.id_to_word.clone(),
-            corpus: self.corpus.clone(),
-            topic_word: Some(m.topic_word.clone()),
-            doc_topic: Some(m.doc_topic.clone()),
-            topic_embeddings: Some(m.topic_embeddings.clone()),
-            word_embeddings: Some(m.word_embeddings.clone()),
-            train_doc_embeddings: Some(m.train_doc_embeddings.clone()),
-            loss_history: Some(m.loss_history.clone()),
-            converged: Some(m.converged),
-            epochs_run: Some(m.epochs_run),
-        })
+        write_state(
+            path,
+            MODEL_TAG_FASTOPIC,
+            &FastopicState {
+                num_topics: self.num_topics,
+                lr: self.lr,
+                dt_alpha: self.dt_alpha,
+                tw_alpha: self.tw_alpha,
+                theta_temp: self.theta_temp,
+                em_tol: self.em_tol,
+                sinkhorn_iters: self.sinkhorn_iters,
+                sinkhorn_tol: self.sinkhorn_tol,
+                seed: self.seed,
+                fitted: self.fitted,
+                topic_names: self.topic_names.clone(),
+                id_to_word: self.id_to_word.clone(),
+                corpus: self.corpus.clone(),
+                topic_word: Some(m.topic_word.clone()),
+                doc_topic: Some(m.doc_topic.clone()),
+                topic_embeddings: Some(m.topic_embeddings.clone()),
+                word_embeddings: Some(m.word_embeddings.clone()),
+                train_doc_embeddings: Some(m.train_doc_embeddings.clone()),
+                loss_history: Some(m.loss_history.clone()),
+                converged: Some(m.converged),
+                epochs_run: Some(m.epochs_run),
+            },
+        )
     }
 
     /// Load a model previously written by :meth:`save`.
@@ -15217,7 +17340,9 @@ impl FASTopic {
                 converged: s.converged.unwrap_or(false),
                 epochs_run: s.epochs_run.unwrap_or(0),
             })
-        } else { None };
+        } else {
+            None
+        };
         Ok(FASTopic {
             num_topics: s.num_topics,
             lr: s.lr,
@@ -15237,7 +17362,10 @@ impl FASTopic {
     }
 
     fn __repr__(&self) -> String {
-        format!("FASTopic(num_topics={}, fitted={})", self.num_topics, self.fitted)
+        format!(
+            "FASTopic(num_topics={}, fitted={})",
+            self.num_topics, self.fitted
+        )
     }
 }
 
@@ -15305,7 +17433,9 @@ impl KeyATM {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 }
@@ -15347,8 +17477,15 @@ impl KeyATM {
         }
         // Default to R keyATM's base prior 1/K.
         let alpha = alpha.unwrap_or(1.0 / k as f64);
-        if !finite_pos(alpha) || !finite_pos(beta) || !finite_pos(beta_keyword) || !finite_pos(gamma1) || !finite_pos(gamma2) {
-            return Err(PyValueError::new_err("alpha, beta, beta_keyword, gamma1, gamma2 must be > 0"));
+        if !finite_pos(alpha)
+            || !finite_pos(beta)
+            || !finite_pos(beta_keyword)
+            || !finite_pos(gamma1)
+            || !finite_pos(gamma2)
+        {
+            return Err(PyValueError::new_err(
+                "alpha, beta, beta_keyword, gamma1, gamma2 must be > 0",
+            ));
         }
         let cvb0 = match sampler {
             "sparse" => false,
@@ -15360,14 +17497,35 @@ impl KeyATM {
             }
         };
         Ok(KeyATM {
-            key_names: names, keywords: words, num_topics: k, alpha, beta, beta_keyword,
-            gamma1, gamma2, seed, estimate_alpha, num_threads: num_threads.max(1),
-            cvb0, fitted: false, topic_names: Vec::new(),
-            keyword_rate: Vec::new(), phi: None, theta: None, corpus: None,
-            feature_effects: None, feature_names: Vec::new(),
-            time_state: Vec::new(), time_prevalence: None, time_labels: Vec::new(),
-            transition_matrix: None, log_likelihood_history: Vec::new(), converged: false,
-            alpha_history: Vec::new(), pi_history: Vec::new(), alpha_vec: None,
+            key_names: names,
+            keywords: words,
+            num_topics: k,
+            alpha,
+            beta,
+            beta_keyword,
+            gamma1,
+            gamma2,
+            seed,
+            estimate_alpha,
+            num_threads: num_threads.max(1),
+            cvb0,
+            fitted: false,
+            topic_names: Vec::new(),
+            keyword_rate: Vec::new(),
+            phi: None,
+            theta: None,
+            corpus: None,
+            feature_effects: None,
+            feature_names: Vec::new(),
+            time_state: Vec::new(),
+            time_prevalence: None,
+            time_labels: Vec::new(),
+            transition_matrix: None,
+            log_likelihood_history: Vec::new(),
+            converged: false,
+            alpha_history: Vec::new(),
+            pi_history: Vec::new(),
+            alpha_vec: None,
             theta_draws: None,
         })
     }
@@ -15380,7 +17538,12 @@ impl KeyATM {
     /// keyword-specific outputs (``keyword_rate``, ``pi_history``) are empty.
     #[staticmethod]
     #[pyo3(signature = (num_topics, *, alpha=0.1, beta=0.01, seed=42))]
-    fn weighted_lda(#[pyo3(from_py_with = "py_num_topics")] num_topics: usize, alpha: f64, beta: f64, seed: u64) -> PyResult<Self> {
+    fn weighted_lda(
+        #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
+        alpha: f64,
+        beta: f64,
+        seed: u64,
+    ) -> PyResult<Self> {
         if num_topics < 2 {
             return Err(PyValueError::new_err("need at least 2 topics"));
         }
@@ -15388,16 +17551,35 @@ impl KeyATM {
             return Err(PyValueError::new_err("alpha and beta must be > 0"));
         }
         Ok(KeyATM {
-            key_names: Vec::new(), keywords: Vec::new(), num_topics, alpha, beta,
-            beta_keyword: 0.1, gamma1: 1.0, gamma2: 1.0, seed, estimate_alpha: true,
+            key_names: Vec::new(),
+            keywords: Vec::new(),
+            num_topics,
+            alpha,
+            beta,
+            beta_keyword: 0.1,
+            gamma1: 1.0,
+            gamma2: 1.0,
+            seed,
+            estimate_alpha: true,
             num_threads: 1,
             cvb0: false,
             fitted: false,
-            topic_names: Vec::new(), keyword_rate: Vec::new(), phi: None, theta: None,
-            corpus: None, feature_effects: None, feature_names: Vec::new(),
-            time_state: Vec::new(), time_prevalence: None, time_labels: Vec::new(),
-            transition_matrix: None, log_likelihood_history: Vec::new(), converged: false,
-            alpha_history: Vec::new(), pi_history: Vec::new(), alpha_vec: None,
+            topic_names: Vec::new(),
+            keyword_rate: Vec::new(),
+            phi: None,
+            theta: None,
+            corpus: None,
+            feature_effects: None,
+            feature_names: Vec::new(),
+            time_state: Vec::new(),
+            time_prevalence: None,
+            time_labels: Vec::new(),
+            transition_matrix: None,
+            log_likelihood_history: Vec::new(),
+            converged: false,
+            alpha_history: Vec::new(),
+            pi_history: Vec::new(),
+            alpha_vec: None,
             theta_draws: None,
         })
     }
@@ -15466,17 +17648,22 @@ impl KeyATM {
             (Some(t), None) | (None, Some(t)) => Some(t),
             (None, None) => None,
         };
-        let progress_interval = if let Some(old_val) = report_interval {
-            let warnings = py.import_bound("warnings")?;
-            warnings.call_method1("warn", (
+        let progress_interval =
+            if let Some(old_val) = report_interval {
+                let warnings = py.import_bound("warnings")?;
+                warnings.call_method1("warn", (
                 "KeyATM.fit(report_interval=) is deprecated; use progress_interval= instead",
                 py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
                 2_i32,
             ))?;
-            if progress_interval != 0 { progress_interval } else { old_val }
-        } else {
-            progress_interval
-        };
+                if progress_interval != 0 {
+                    progress_interval
+                } else {
+                    old_val
+                }
+            } else {
+                progress_interval
+            };
         // num_threads: fit()-level value overrides the constructor default.
         let nthreads_fit = num_threads.unwrap_or(self.num_threads).max(1);
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
@@ -15485,7 +17672,17 @@ impl KeyATM {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -15494,7 +17691,13 @@ impl KeyATM {
         let num_types = corpus.num_types();
         // Thinned θ-draw retention schedule (issue #31), shared by all three fits.
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
-        warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, corpus.num_docs(), num_topics)?;
+        warn_theta_draw_memory(
+            py,
+            keep_theta_draws,
+            num_theta_draws,
+            corpus.num_docs(),
+            num_topics,
+        )?;
         // Warn about keywords absent from the (pruned) vocabulary: a "seeded"
         // topic whose keywords were all dropped was never actually seeded, and
         // pruning (rm_top / min_doc_freq) or a typo/stemming mismatch silently
@@ -15503,12 +17706,18 @@ impl KeyATM {
             let vocab: HashSet<&str> = corpus.id_to_word.iter().map(|s| s.as_str()).collect();
             let mut notes: Vec<String> = Vec::new();
             for (name, words) in self.key_names.iter().zip(self.keywords.iter()) {
-                let oov: Vec<&str> =
-                    words.iter().map(|w| w.as_str()).filter(|w| !vocab.contains(w)).collect();
+                let oov: Vec<&str> = words
+                    .iter()
+                    .map(|w| w.as_str())
+                    .filter(|w| !vocab.contains(w))
+                    .collect();
                 if !oov.is_empty() {
                     notes.push(format!(
                         "'{}' ({} of {} not in vocabulary, ignored: {})",
-                        name, oov.len(), words.len(), oov.join(", ")
+                        name,
+                        oov.len(),
+                        words.len(),
+                        oov.join(", ")
                     ));
                 }
             }
@@ -15516,13 +17725,21 @@ impl KeyATM {
                 let warnings = py.import_bound("warnings")?;
                 warnings.call_method1(
                     "warn",
-                    (format!("KeyATM: some keywords were dropped — {}", notes.join("; ")),),
+                    (format!(
+                        "KeyATM: some keywords were dropped — {}",
+                        notes.join("; ")
+                    ),),
                 )?;
             }
         }
         let keys = seed_word_ids(&self.keywords, &corpus.id_to_word, num_topics);
-        let (alpha, beta, beta_key, g1, g2) =
-            (self.alpha, self.beta, self.beta_keyword, self.gamma1, self.gamma2);
+        let (alpha, beta, beta_key, g1, g2) = (
+            self.alpha,
+            self.beta,
+            self.beta_keyword,
+            self.gamma1,
+            self.gamma2,
+        );
         let estimate_alpha = self.estimate_alpha;
         let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
         let nthreads = nthreads_fit;
@@ -15532,8 +17749,8 @@ impl KeyATM {
             "none" => keyatm::WeightScheme::None,
             other => {
                 return Err(PyValueError::new_err(format!(
-                    "unknown weights={other:?}; expected 'information-theory', 'inv-freq', or 'none'"
-                )))
+                "unknown weights={other:?}; expected 'information-theory', 'inv-freq', or 'none'"
+            )))
             }
         };
         // Convergence trace cadence (keyATM's model_fit). 0 = auto: ~50 evenly
@@ -15585,15 +17802,33 @@ impl KeyATM {
             // keyATM requires documents ordered by time; sort, fit, then unsort θ.
             let mut order: Vec<usize> = (0..corpus.num_docs()).collect();
             order.sort_by_key(|&d| time_raw[d]);
-            let sorted_docs: Vec<Vec<u32>> = order.iter().map(|&d| corpus.docs[d].clone()).collect();
+            let sorted_docs: Vec<Vec<u32>> =
+                order.iter().map(|&d| corpus.docs[d].clone()).collect();
             let sorted_time: Vec<usize> = order.iter().map(|&d| time_raw[d]).collect();
 
             let model = py.allow_threads(move || {
                 keyatm::fit_keyatm_dynamic(
-                    &sorted_docs, num_types, num_topics, &keys, &sorted_time, num_states,
-                    beta, beta_key, g1, g2,
-                    1.0, 1.0, 2.0, 1.0, // keyATM α-prior defaults: eta_1, eta_2, eta_1_reg, eta_2_reg
-                    iters, ll_interval, weight_scheme, nthreads, draws_opts, convergence_tol, &mut rng,
+                    &sorted_docs,
+                    num_types,
+                    num_topics,
+                    &keys,
+                    &sorted_time,
+                    num_states,
+                    beta,
+                    beta_key,
+                    g1,
+                    g2,
+                    1.0,
+                    1.0,
+                    2.0,
+                    1.0, // keyATM α-prior defaults: eta_1, eta_2, eta_1_reg, eta_2_reg
+                    iters,
+                    ll_interval,
+                    weight_scheme,
+                    nthreads,
+                    draws_opts,
+                    convergence_tol,
+                    &mut rng,
                 )
             });
 
@@ -15605,8 +17840,12 @@ impl KeyATM {
             }
             self.theta = Some(vecs_to_arr2(&theta));
             // θ draws are also sorted; unsort their rows via `order` to match θ.
-            self.theta_draws =
-                draws_to_array3(&model.theta_draws, corpus.num_docs(), num_topics, Some(&order));
+            self.theta_draws = draws_to_array3(
+                &model.theta_draws,
+                corpus.num_docs(),
+                num_topics,
+                Some(&order),
+            );
             self.phi = Some(vecs_to_arr2(&model.topic_word_all()));
             self.keyword_rate = model.keyword_rate();
             self.time_prevalence = model.time_prevalence().map(|tp| vecs_to_arr2(&tp));
@@ -15645,13 +17884,16 @@ impl KeyATM {
                 check_all_finite_2d("covariates", &raw)?;
                 let f_in = raw.first().map(|r| r.len()).unwrap_or(0);
                 if raw.iter().any(|r| r.len() != f_in) {
-                    return Err(PyValueError::new_err("all covariate rows must have the same length"));
+                    return Err(PyValueError::new_err(
+                        "all covariate rows must have the same length",
+                    ));
                 }
                 if let Some(n) = &feature_names {
                     if n.len() != f_in {
                         return Err(PyValueError::new_err(format!(
                             "feature_names has {} entries but covariates has {} columns",
-                            n.len(), f_in
+                            n.len(),
+                            f_in
                         )));
                     }
                 }
@@ -15666,7 +17908,8 @@ impl KeyATM {
                     .collect();
                 let mut names = vec!["intercept".to_string()];
                 names.extend(
-                    feature_names.unwrap_or_else(|| (0..f_in).map(|i| format!("feature_{}", i)).collect()),
+                    feature_names
+                        .unwrap_or_else(|| (0..f_in).map(|i| format!("feature_{}", i)).collect()),
                 );
                 (Some(feats), names)
             }
@@ -15708,26 +17951,69 @@ impl KeyATM {
         let (model, corpus) = py.allow_threads(move || {
             let m = match &feats {
                 Some(f) => keyatm::fit_keyatm_cov(
-                    &corpus.docs, num_types, num_topics, &keys, f, f[0].len(),
-                    beta, beta_key, g1, g2, iters, optimize_interval, burn_in,
-                    prior_variance, lbfgs_iters, ll_interval, weight_scheme, nthreads,
-                    offset.as_deref(), draws_opts, convergence_tol, &mut rng,
+                    &corpus.docs,
+                    num_types,
+                    num_topics,
+                    &keys,
+                    f,
+                    f[0].len(),
+                    beta,
+                    beta_key,
+                    g1,
+                    g2,
+                    iters,
+                    optimize_interval,
+                    burn_in,
+                    prior_variance,
+                    lbfgs_iters,
+                    ll_interval,
+                    weight_scheme,
+                    nthreads,
+                    offset.as_deref(),
+                    draws_opts,
+                    convergence_tol,
+                    &mut rng,
                 ),
                 None if cvb0 => keyatm::fit_keyatm_cvb0(
-                    &corpus.docs, num_types, num_topics, &keys, alpha, beta, beta_key, g1, g2,
-                    iters, weight_scheme, &mut rng,
+                    &corpus.docs,
+                    num_types,
+                    num_topics,
+                    &keys,
+                    alpha,
+                    beta,
+                    beta_key,
+                    g1,
+                    g2,
+                    iters,
+                    weight_scheme,
+                    &mut rng,
                 ),
                 None => keyatm::fit_keyatm(
-                    &corpus.docs, num_types, num_topics, &keys, alpha, beta, beta_key, g1, g2,
-                    iters, ll_interval, estimate_alpha, weight_scheme, nthreads, draws_opts, convergence_tol, turbo_alpha_stride, &mut rng,
+                    &corpus.docs,
+                    num_types,
+                    num_topics,
+                    &keys,
+                    alpha,
+                    beta,
+                    beta_key,
+                    g1,
+                    g2,
+                    iters,
+                    ll_interval,
+                    estimate_alpha,
+                    weight_scheme,
+                    nthreads,
+                    draws_opts,
+                    convergence_tol,
+                    turbo_alpha_stride,
+                    &mut rng,
                 ),
             };
             (m, corpus)
         });
         self.phi = Some(vecs_to_arr2(&model.topic_word_all()));
         self.theta = Some(vecs_to_arr2(&model.doc_topic()));
-        self.theta_draws =
-            draws_to_array3(&model.theta_draws, corpus.num_docs(), num_topics, None);
+        self.theta_draws = draws_to_array3(&model.theta_draws, corpus.num_docs(), num_topics, None);
         self.keyword_rate = model.keyword_rate();
         self.log_likelihood_history = model.log_likelihood_history.clone();
         self.converged = model.converged;
@@ -15873,7 +18159,8 @@ impl KeyATM {
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
         self.require_fitted()?;
-        Ok(self.log_likelihood_history
+        Ok(self
+            .log_likelihood_history
             .iter()
             .map(|&(it, ll, _)| (it, ll))
             .collect())
@@ -15943,51 +18230,97 @@ impl KeyATM {
     }
 
     #[pyo3(signature = (n=10, *, topic=None))]
-    fn top_words<'py>(&self, py: Python<'py>, n: usize, topic: Option<usize>) -> PyResult<Bound<'py, PyAny>> {
+    fn top_words<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        topic: Option<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
-        topic_words_helper(py, self.phi.as_ref().unwrap(), &self.corpus.as_ref().unwrap().id_to_word, self.num_topics, n, topic)
+        topic_words_helper(
+            py,
+            self.phi.as_ref().unwrap(),
+            &self.corpus.as_ref().unwrap().id_to_word,
+            self.num_topics,
+            n,
+            topic,
+        )
     }
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.phi.as_ref().unwrap(), self.num_topics, n);
-        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+        Ok(
+            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                .to_pyarray_bound(py),
+        )
     }
 
     /// Save the fitted model to `path`. Reload with `KeyATM.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
-        write_state(path, MODEL_TAG_KEYATM, &KeyAtmState {
-            num_topics: self.num_topics, alpha: self.alpha, beta: self.beta,
-            beta_keyword: self.beta_keyword, gamma1: self.gamma1, gamma2: self.gamma2,
-            seed: self.seed, fitted: self.fitted, topic_names: self.topic_names.clone(),
-            keyword_rate: self.keyword_rate.clone(), phi: arr2_opt(&self.phi),
-            theta: arr2_opt(&self.theta), corpus: self.corpus.clone(),
-            log_likelihood_history: self.log_likelihood_history.clone(),
-            converged: self.converged,
-            alpha_history: self.alpha_history.clone(),
-            pi_history: self.pi_history.clone(),
-            alpha_vec: self.alpha_vec.clone(),
-            num_threads: self.num_threads,
-            theta_draws: arr3f32_opt(&self.theta_draws),
-        })
+        write_state(
+            path,
+            MODEL_TAG_KEYATM,
+            &KeyAtmState {
+                num_topics: self.num_topics,
+                alpha: self.alpha,
+                beta: self.beta,
+                beta_keyword: self.beta_keyword,
+                gamma1: self.gamma1,
+                gamma2: self.gamma2,
+                seed: self.seed,
+                fitted: self.fitted,
+                topic_names: self.topic_names.clone(),
+                keyword_rate: self.keyword_rate.clone(),
+                phi: arr2_opt(&self.phi),
+                theta: arr2_opt(&self.theta),
+                corpus: self.corpus.clone(),
+                log_likelihood_history: self.log_likelihood_history.clone(),
+                converged: self.converged,
+                alpha_history: self.alpha_history.clone(),
+                pi_history: self.pi_history.clone(),
+                alpha_vec: self.alpha_vec.clone(),
+                num_threads: self.num_threads,
+                theta_draws: arr3f32_opt(&self.theta_draws),
+            },
+        )
     }
     /// Load a model previously written by :meth:`save`.
     #[staticmethod]
     fn load(path: &str) -> PyResult<Self> {
         let s: KeyAtmState = read_state(path, MODEL_TAG_KEYATM)?;
         Ok(KeyATM {
-            key_names: Vec::new(), keywords: Vec::new(), num_topics: s.num_topics,
-            alpha: s.alpha, beta: s.beta, beta_keyword: s.beta_keyword, gamma1: s.gamma1,
-            gamma2: s.gamma2, seed: s.seed, estimate_alpha: true, cvb0: false, fitted: s.fitted,
-            topic_names: s.topic_names, num_threads: s.num_threads,
-            keyword_rate: s.keyword_rate, phi: arr2_back(s.phi), theta: arr2_back(s.theta),
-            corpus: s.corpus, feature_effects: None, feature_names: Vec::new(),
-            time_state: Vec::new(), time_prevalence: None, time_labels: Vec::new(),
-            transition_matrix: None, log_likelihood_history: s.log_likelihood_history,
+            key_names: Vec::new(),
+            keywords: Vec::new(),
+            num_topics: s.num_topics,
+            alpha: s.alpha,
+            beta: s.beta,
+            beta_keyword: s.beta_keyword,
+            gamma1: s.gamma1,
+            gamma2: s.gamma2,
+            seed: s.seed,
+            estimate_alpha: true,
+            cvb0: false,
+            fitted: s.fitted,
+            topic_names: s.topic_names,
+            num_threads: s.num_threads,
+            keyword_rate: s.keyword_rate,
+            phi: arr2_back(s.phi),
+            theta: arr2_back(s.theta),
+            corpus: s.corpus,
+            feature_effects: None,
+            feature_names: Vec::new(),
+            time_state: Vec::new(),
+            time_prevalence: None,
+            time_labels: Vec::new(),
+            transition_matrix: None,
+            log_likelihood_history: s.log_likelihood_history,
             converged: s.converged,
-            alpha_history: s.alpha_history, pi_history: s.pi_history,
-            alpha_vec: s.alpha_vec, theta_draws: arr3f32_back(s.theta_draws),
+            alpha_history: s.alpha_history,
+            pi_history: s.pi_history,
+            alpha_vec: s.alpha_vec,
+            theta_draws: arr3f32_back(s.theta_draws),
         })
     }
 
@@ -16023,12 +18356,27 @@ impl KeyATM {
             Some(v) => v.clone(),
             None => vec![self.alpha; self.num_topics],
         };
-        transform_gibbs(py, data, id_to_word, phi, &alpha, iters, burn_in,
-                        num_samples, sample_interval, seed.unwrap_or(self.seed))
+        transform_gibbs(
+            py,
+            data,
+            id_to_word,
+            phi,
+            &alpha,
+            iters,
+            burn_in,
+            num_samples,
+            sample_interval,
+            seed.unwrap_or(self.seed),
+        )
     }
 
     fn __repr__(&self) -> String {
-        format!("KeyATM(keyword_topics={}, num_topics={}, fitted={})", self.key_names.len(), self.num_topics, self.fitted)
+        format!(
+            "KeyATM(keyword_topics={}, num_topics={}, fitted={})",
+            self.key_names.len(),
+            self.num_topics,
+            self.fitted
+        )
     }
 }
 
@@ -16065,7 +18413,9 @@ impl PA {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 }
@@ -16076,17 +18426,33 @@ impl PA {
     /// sub-topics (the sub-topics are the word-level topics).
     #[new]
     #[pyo3(signature = (num_super, num_sub, *, alpha=0.1, beta=0.01, seed=42))]
-    fn new(#[pyo3(from_py_with = "py_num_super")] num_super: usize, #[pyo3(from_py_with = "py_num_sub")] num_sub: usize, alpha: f64, beta: f64, seed: u64) -> PyResult<Self> {
+    fn new(
+        #[pyo3(from_py_with = "py_num_super")] num_super: usize,
+        #[pyo3(from_py_with = "py_num_sub")] num_sub: usize,
+        alpha: f64,
+        beta: f64,
+        seed: u64,
+    ) -> PyResult<Self> {
         if num_super < 1 || num_sub < 2 {
-            return Err(PyValueError::new_err("num_super must be >= 1 and num_sub >= 2"));
+            return Err(PyValueError::new_err(
+                "num_super must be >= 1 and num_sub >= 2",
+            ));
         }
         if !finite_pos(alpha) || !finite_pos(beta) {
             return Err(PyValueError::new_err("alpha and beta must be > 0"));
         }
         Ok(PA {
-            num_super, num_sub, alpha, beta, seed,
-            fitted: false, topic_names: Vec::new(),
-            phi: None, theta: None, super_sub: None, corpus: None,
+            num_super,
+            num_sub,
+            alpha,
+            beta,
+            seed,
+            fitted: false,
+            topic_names: Vec::new(),
+            phi: None,
+            theta: None,
+            super_sub: None,
+            corpus: None,
             theta_draws: None,
             log_likelihood_history: Vec::new(),
             converged: false,
@@ -16112,7 +18478,17 @@ impl PA {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -16127,8 +18503,17 @@ impl PA {
         let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
         let (model, ll_history, converged_flag, corpus) = py.allow_threads(move || {
             let (m, hist, conv) = pa::fit_pam_with_draws(
-                &corpus.docs, num_types, s, k, a, b, iters, draws_opts,
-                convergence_tol, check_every, &mut rng,
+                &corpus.docs,
+                num_types,
+                s,
+                k,
+                a,
+                b,
+                iters,
+                draws_opts,
+                convergence_tol,
+                check_every,
+                &mut rng,
             );
             (m, hist, conv, corpus)
         });
@@ -16174,7 +18559,11 @@ impl PA {
     #[getter]
     fn doc_lengths(&self) -> PyResult<Vec<usize>> {
         self.require_fitted()?;
-        Ok(self.corpus.as_ref().map(|c| c.docs.iter().map(|d| d.len()).collect()).unwrap_or_default())
+        Ok(self
+            .corpus
+            .as_ref()
+            .map(|c| c.docs.iter().map(|d| d.len()).collect())
+            .unwrap_or_default())
     }
     /// Super-topic → sub-topic association, shape ``(num_super, num_sub)``; row s
     /// shows which sub-topics super-topic s groups together (the correlations).
@@ -16239,28 +18628,54 @@ impl PA {
     }
 
     #[pyo3(signature = (n=10, *, topic=None))]
-    fn top_words<'py>(&self, py: Python<'py>, n: usize, topic: Option<usize>) -> PyResult<Bound<'py, PyAny>> {
+    fn top_words<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        topic: Option<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
-        topic_words_helper(py, self.phi.as_ref().unwrap(), &self.corpus.as_ref().unwrap().id_to_word, self.num_sub, n, topic)
+        topic_words_helper(
+            py,
+            self.phi.as_ref().unwrap(),
+            &self.corpus.as_ref().unwrap().id_to_word,
+            self.num_sub,
+            n,
+            topic,
+        )
     }
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.phi.as_ref().unwrap(), self.num_sub, n);
-        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+        Ok(
+            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                .to_pyarray_bound(py),
+        )
     }
 
     /// Save the fitted model to `path`. Reload with `PA.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
-        write_state(path, MODEL_TAG_PA, &PaState {
-            num_super: self.num_super, num_sub: self.num_sub, alpha: self.alpha, beta: self.beta,
-            seed: self.seed, fitted: self.fitted, phi: arr2_opt(&self.phi),
-            theta: arr2_opt(&self.theta), super_sub: arr2_opt(&self.super_sub),
-            corpus: self.corpus.clone(), topic_names: self.topic_names.clone(),
-            log_likelihood_history: self.log_likelihood_history.clone(),
-            converged: self.converged,
-        })
+        write_state(
+            path,
+            MODEL_TAG_PA,
+            &PaState {
+                num_super: self.num_super,
+                num_sub: self.num_sub,
+                alpha: self.alpha,
+                beta: self.beta,
+                seed: self.seed,
+                fitted: self.fitted,
+                phi: arr2_opt(&self.phi),
+                theta: arr2_opt(&self.theta),
+                super_sub: arr2_opt(&self.super_sub),
+                corpus: self.corpus.clone(),
+                topic_names: self.topic_names.clone(),
+                log_likelihood_history: self.log_likelihood_history.clone(),
+                converged: self.converged,
+            },
+        )
     }
     /// Load a model previously written by :meth:`save`.
     #[staticmethod]
@@ -16272,10 +18687,17 @@ impl PA {
             s.topic_names
         };
         Ok(PA {
-            num_super: s.num_super, num_sub: s.num_sub, alpha: s.alpha, beta: s.beta,
-            seed: s.seed, fitted: s.fitted, topic_names,
-            phi: arr2_back(s.phi), theta: arr2_back(s.theta),
-            super_sub: arr2_back(s.super_sub), corpus: s.corpus,
+            num_super: s.num_super,
+            num_sub: s.num_sub,
+            alpha: s.alpha,
+            beta: s.beta,
+            seed: s.seed,
+            fitted: s.fitted,
+            topic_names,
+            phi: arr2_back(s.phi),
+            theta: arr2_back(s.theta),
+            super_sub: arr2_back(s.super_sub),
+            corpus: s.corpus,
             theta_draws: None,
             log_likelihood_history: s.log_likelihood_history,
             converged: s.converged,
@@ -16310,12 +18732,25 @@ impl PA {
         let id_to_word = &self.corpus.as_ref().unwrap().id_to_word;
         let phi = self.phi.as_ref().unwrap();
         let alpha = vec![self.alpha; self.num_sub];
-        transform_gibbs(py, data, id_to_word, phi, &alpha, iters, burn_in,
-                        num_samples, sample_interval, seed.unwrap_or(self.seed))
+        transform_gibbs(
+            py,
+            data,
+            id_to_word,
+            phi,
+            &alpha,
+            iters,
+            burn_in,
+            num_samples,
+            sample_interval,
+            seed.unwrap_or(self.seed),
+        )
     }
 
     fn __repr__(&self) -> String {
-        format!("PA(num_super={}, num_sub={}, fitted={})", self.num_super, self.num_sub, self.fitted)
+        format!(
+            "PA(num_super={}, num_sub={}, fitted={})",
+            self.num_super, self.num_sub, self.fitted
+        )
     }
 }
 
@@ -16350,7 +18785,9 @@ impl HLDA {
         if self.fitted {
             Ok(())
         } else {
-            Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+            Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ))
         }
     }
 }
@@ -16362,15 +18799,30 @@ impl HLDA {
     /// topic-word Dirichlet; `alpha` the per-document level distribution.
     #[new]
     #[pyo3(signature = (*, depth=3, gamma=1.0, beta=0.01, alpha=0.1, seed=42, eta=None))]
-    fn new(py: Python<'_>, #[pyo3(from_py_with = "py_depth")] depth: usize, gamma: f64, beta: f64, alpha: f64, seed: u64, eta: Option<f64>) -> PyResult<Self> {
+    fn new(
+        py: Python<'_>,
+        #[pyo3(from_py_with = "py_depth")] depth: usize,
+        gamma: f64,
+        beta: f64,
+        alpha: f64,
+        seed: u64,
+        eta: Option<f64>,
+    ) -> PyResult<Self> {
         let beta = if let Some(old_val) = eta {
             let warnings = py.import_bound("warnings")?;
-            warnings.call_method1("warn", (
-                "HLDA(eta=) is deprecated; use beta= instead",
-                py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
-                2_i32,
-            ))?;
-            if (beta - 0.01_f64).abs() > f64::EPSILON { beta } else { old_val }
+            warnings.call_method1(
+                "warn",
+                (
+                    "HLDA(eta=) is deprecated; use beta= instead",
+                    py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
+                    2_i32,
+                ),
+            )?;
+            if (beta - 0.01_f64).abs() > f64::EPSILON {
+                beta
+            } else {
+                old_val
+            }
         } else {
             beta
         };
@@ -16381,10 +18833,19 @@ impl HLDA {
             return Err(PyValueError::new_err("gamma, beta, alpha must be > 0"));
         }
         Ok(HLDA {
-            depth, gamma, eta: beta, alpha, seed,
-            fitted: false, num_nodes: 0, topic_names: Vec::new(),
+            depth,
+            gamma,
+            eta: beta,
+            alpha,
+            seed,
+            fitted: false,
+            num_nodes: 0,
+            topic_names: Vec::new(),
             node_topic_word: None,
-            node_levels: Vec::new(), node_parents: Vec::new(), doc_paths: Vec::new(), corpus: None,
+            node_levels: Vec::new(),
+            node_parents: Vec::new(),
+            doc_paths: Vec::new(),
+            corpus: None,
         })
     }
 
@@ -16397,7 +18858,17 @@ impl HLDA {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
                 PyValueError::new_err("fit() expects a Corpus or a list of token lists")
             })?;
-            build_corpus_from_docs(docs, None, None, std::collections::HashSet::new(), 1, 1.0, 0, 0)?.0
+            build_corpus_from_docs(
+                docs,
+                None,
+                None,
+                std::collections::HashSet::new(),
+                1,
+                1.0,
+                0,
+                0,
+            )?
+            .0
         };
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
@@ -16406,7 +18877,16 @@ impl HLDA {
         let (depth, gamma, eta, alpha) = (self.depth, self.gamma, self.eta, self.alpha);
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
         let (model, corpus) = py.allow_threads(move || {
-            let m = hlda::fit_hlda(&corpus.docs, num_types, depth, gamma, eta, alpha, iters, &mut rng);
+            let m = hlda::fit_hlda(
+                &corpus.docs,
+                num_types,
+                depth,
+                gamma,
+                eta,
+                alpha,
+                iters,
+                &mut rng,
+            );
             (m, corpus)
         });
 
@@ -16421,7 +18901,9 @@ impl HLDA {
         self.topic_names = (0..nn).map(|i| format!("topic_{i}")).collect();
         self.node_topic_word = Some(tw);
         self.node_levels = (0..nn).map(|i| model.node_level(i)).collect();
-        self.node_parents = (0..nn).map(|i| model.node_parent(i).map(|p| p as i64).unwrap_or(-1)).collect();
+        self.node_parents = (0..nn)
+            .map(|i| model.node_parent(i).map(|p| p as i64).unwrap_or(-1))
+            .collect();
         self.doc_paths = (0..corpus.num_docs()).map(|d| model.doc_path(d)).collect();
         self.corpus = Some(corpus);
         self.fitted = true;
@@ -16480,7 +18962,9 @@ impl HLDA {
     fn leaves(&self) -> PyResult<Vec<usize>> {
         self.require_fitted()?;
         let parents: HashSet<i64> = self.node_parents.iter().copied().collect();
-        Ok((0..self.num_nodes).filter(|&i| !parents.contains(&(i as i64))).collect())
+        Ok((0..self.num_nodes)
+            .filter(|&i| !parents.contains(&(i as i64)))
+            .collect())
     }
     #[getter]
     fn vocabulary(&self) -> PyResult<Vec<String>> {
@@ -16514,19 +18998,35 @@ impl HLDA {
         let v = tw.shape()[1];
         let mut idx: Vec<usize> = (0..v).collect();
         idx.sort_by(|&a, &b| f64::total_cmp(&tw[[node, b]], &tw[[node, a]]));
-        Ok(idx.into_iter().take(n).map(|w| (vocab[w].clone(), tw[[node, w]])).collect())
+        Ok(idx
+            .into_iter()
+            .take(n)
+            .map(|w| (vocab[w].clone(), tw[[node, w]]))
+            .collect())
     }
 
     /// Save the fitted model to `path`. Reload with `HLDA.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
-        write_state(path, MODEL_TAG_HLDA, &HldaState {
-            depth: self.depth, gamma: self.gamma, eta: self.eta, alpha: self.alpha,
-            seed: self.seed, fitted: self.fitted, num_nodes: self.num_nodes,
-            node_topic_word: arr2_opt(&self.node_topic_word), node_levels: self.node_levels.clone(),
-            node_parents: self.node_parents.clone(), doc_paths: self.doc_paths.clone(),
-            corpus: self.corpus.clone(), topic_names: self.topic_names.clone(),
-        })
+        write_state(
+            path,
+            MODEL_TAG_HLDA,
+            &HldaState {
+                depth: self.depth,
+                gamma: self.gamma,
+                eta: self.eta,
+                alpha: self.alpha,
+                seed: self.seed,
+                fitted: self.fitted,
+                num_nodes: self.num_nodes,
+                node_topic_word: arr2_opt(&self.node_topic_word),
+                node_levels: self.node_levels.clone(),
+                node_parents: self.node_parents.clone(),
+                doc_paths: self.doc_paths.clone(),
+                corpus: self.corpus.clone(),
+                topic_names: self.topic_names.clone(),
+            },
+        )
     }
     /// Load a model previously written by :meth:`save`.
     #[staticmethod]
@@ -16538,17 +19038,28 @@ impl HLDA {
             s.topic_names
         };
         Ok(HLDA {
-            depth: s.depth, gamma: s.gamma, eta: s.eta, alpha: s.alpha, seed: s.seed,
-            fitted: s.fitted, num_nodes: s.num_nodes, topic_names,
+            depth: s.depth,
+            gamma: s.gamma,
+            eta: s.eta,
+            alpha: s.alpha,
+            seed: s.seed,
+            fitted: s.fitted,
+            num_nodes: s.num_nodes,
+            topic_names,
             node_topic_word: arr2_back(s.node_topic_word),
-            node_levels: s.node_levels, node_parents: s.node_parents, doc_paths: s.doc_paths,
+            node_levels: s.node_levels,
+            node_parents: s.node_parents,
+            doc_paths: s.doc_paths,
             corpus: s.corpus,
         })
     }
 
     fn __repr__(&self) -> String {
         if self.fitted {
-            format!("HLDA(depth={}, num_nodes={}, fitted=true)", self.depth, self.num_nodes)
+            format!(
+                "HLDA(depth={}, num_nodes={}, fitted=true)",
+                self.depth, self.num_nodes
+            )
         } else {
             format!("HLDA(depth={}, fitted=false)", self.depth)
         }
@@ -16571,7 +19082,10 @@ static EXPERIMENTAL_INIT: Once = Once::new();
 
 fn experimental_env_truthy() -> bool {
     match std::env::var("TOPICA_EXPERIMENTAL") {
-        Ok(v) => matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Ok(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
         Err(_) => false,
     }
 }
@@ -16677,8 +19191,14 @@ mod tests {
         let rows = vec![vec![1.0, f64::NAN], vec![3.0, 4.0]];
         let err = check_all_finite_2d("prevalence", &rows).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("prevalence"), "message should name the parameter");
-        assert!(msg.contains("non-finite"), "message should mention non-finite");
+        assert!(
+            msg.contains("prevalence"),
+            "message should name the parameter"
+        );
+        assert!(
+            msg.contains("non-finite"),
+            "message should mention non-finite"
+        );
         assert!(msg.contains("row 0"), "message should include row number");
     }
 

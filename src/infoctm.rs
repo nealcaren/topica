@@ -135,7 +135,11 @@ fn mutual_info(
     let k = if va > 0 { fa.fea[0].len() } else { 0 };
     let mut loss = 0.0;
     // ds[i][j] accumulators (only needed for the backward).
-    let mut ds = if grads.is_some() { vec![vec![0.0f64; vb]; va] } else { Vec::new() };
+    let mut ds = if grads.is_some() {
+        vec![vec![0.0f64; vb]; va]
+    } else {
+        Vec::new()
+    };
 
     for i in 0..va {
         // s[i][.] and a per-row max for numerical stability.
@@ -234,10 +238,22 @@ fn tami(
     };
 
     let want = g_beta.is_some();
-    let loss_ab = mutual_info(&fa, &fb, &mab.pos, &mab.neg, temp,
-        if want { Some((&mut da, &mut db)) } else { None });
-    let loss_ba = mutual_info(&fb, &fa, &mba.pos, &mba.neg, temp,
-        if want { Some((&mut db, &mut da)) } else { None });
+    let loss_ab = mutual_info(
+        &fa,
+        &fb,
+        &mab.pos,
+        &mab.neg,
+        temp,
+        if want { Some((&mut da, &mut db)) } else { None },
+    );
+    let loss_ba = mutual_info(
+        &fb,
+        &fa,
+        &mba.pos,
+        &mba.neg,
+        temp,
+        if want { Some((&mut db, &mut da)) } else { None },
+    );
 
     if let Some((ga, gb)) = g_beta.as_mut() {
         for kk in 0..k {
@@ -271,10 +287,20 @@ struct LangState {
 }
 
 impl LangState {
-    fn new<R: Rng>(docs: &[Vec<u32>], v: usize, hidden: usize, k: usize, lr: f64, rng: &mut R) -> Self {
+    fn new<R: Rng>(
+        docs: &[Vec<u32>],
+        v: usize,
+        hidden: usize,
+        k: usize,
+        lr: f64,
+        rng: &mut R,
+    ) -> Self {
         let xn: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| normalized_bow(d)).collect();
         let bows: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| raw_bow(d)).collect();
-        let totals: Vec<f64> = bows.iter().map(|b| b.iter().map(|&(_, c)| c).sum()).collect();
+        let totals: Vec<f64> = bows
+            .iter()
+            .map(|b| b.iter().map(|&(_, c)| c).sum())
+            .collect();
         let w = Weights::new(v, 0, hidden, k, InputMode::BowOnly, rng);
         // Adam beta1 = 0.9 to match the InfoCTM reference's optimizer (default
         // torch Adam betas), NOT ProdLDA's high-momentum 0.99 anti-collapse value:
@@ -371,12 +397,24 @@ pub fn fit_infoctm<R: Rng>(
                 continue;
             }
             // Per-language ELBO forward/backward (reuses the ProdLDA core).
-            let (la, mut ga) = elbo_step(&mut a, ca, k, keep, &prior_mu, &prior_var, &alpha_vec, &opts, rng);
-            let (lb, mut gb) = elbo_step(&mut b, cb, k, keep, &prior_mu, &prior_var, &alpha_vec, &opts, rng);
+            let (la, mut ga) = elbo_step(
+                &mut a, ca, k, keep, &prior_mu, &prior_var, &alpha_vec, &opts, rng,
+            );
+            let (lb, mut gb) = elbo_step(
+                &mut b, cb, k, keep, &prior_mu, &prior_var, &alpha_vec, &opts, rng,
+            );
 
             // TAMI coupling on the two raw topic-word matrices, added to beta grads.
             let l_tami = tami(
-                &a.w.beta, &b.w.beta, k, va, vb, &mab, &mba, temperature, mi_weight,
+                &a.w.beta,
+                &b.w.beta,
+                k,
+                va,
+                vb,
+                &mab,
+                &mba,
+                temperature,
+                mi_weight,
                 Some((&mut ga.beta, &mut gb.beta)),
             );
 
@@ -397,9 +435,32 @@ pub fn fit_infoctm<R: Rng>(
         }
     }
 
-    let model_a = finish(a, k, bound_history.last().copied().unwrap_or(f64::NAN), &bound_history, converged, epochs_run, docs_a);
-    let model_b = finish(b, k, bound_history.last().copied().unwrap_or(f64::NAN), &bound_history, converged, epochs_run, docs_b);
-    InfoctmModel { num_topics: k, model_a, model_b, bound_history, converged, epochs_run }
+    let model_a = finish(
+        a,
+        k,
+        bound_history.last().copied().unwrap_or(f64::NAN),
+        &bound_history,
+        converged,
+        epochs_run,
+        docs_a,
+    );
+    let model_b = finish(
+        b,
+        k,
+        bound_history.last().copied().unwrap_or(f64::NAN),
+        &bound_history,
+        converged,
+        epochs_run,
+        docs_b,
+    );
+    InfoctmModel {
+        num_topics: k,
+        model_a,
+        model_b,
+        bound_history,
+        converged,
+        epochs_run,
+    }
 }
 
 /// One ELBO minibatch step for a language: forward+backward through the ProdLDA
@@ -419,12 +480,34 @@ fn elbo_step<R: Rng>(
 ) -> (f64, Grad) {
     let n = chunk.len();
     let hidden = s.w.hidden;
-    let eps: Vec<Vec<f64>> = (0..n).map(|_| (0..k).map(|_| randn(rng)).collect()).collect();
+    let eps: Vec<Vec<f64>> = (0..n)
+        .map(|_| (0..k).map(|_| randn(rng)).collect())
+        .collect();
     let masks2: Vec<Vec<f64>> = (0..n)
-        .map(|_| (0..hidden).map(|_| if rng.gen::<f64>() < keep { 1.0 / keep } else { 0.0 }).collect())
+        .map(|_| {
+            (0..hidden)
+                .map(|_| {
+                    if rng.gen::<f64>() < keep {
+                        1.0 / keep
+                    } else {
+                        0.0
+                    }
+                })
+                .collect()
+        })
         .collect();
     let masks_t: Vec<Vec<f64>> = (0..n)
-        .map(|_| (0..k).map(|_| if rng.gen::<f64>() < keep { 1.0 / keep } else { 0.0 }).collect())
+        .map(|_| {
+            (0..k)
+                .map(|_| {
+                    if rng.gen::<f64>() < keep {
+                        1.0 / keep
+                    } else {
+                        0.0
+                    }
+                })
+                .collect()
+        })
         .collect();
     let empty: Vec<f64> = Vec::new();
     let batch = Batch {
@@ -436,13 +519,16 @@ fn elbo_step<R: Rng>(
         masks2: &masks2,
         masks_t: &masks_t,
     };
-    let (loss, cache, stats) =
-        batch_forward(&s.w, &s.bn_mu, &s.bn_lv, &s.bn_dec, prior_mu, prior_var, alpha_vec, opts, &batch);
+    let (loss, cache, stats) = batch_forward(
+        &s.w, &s.bn_mu, &s.bn_lv, &s.bn_dec, prior_mu, prior_var, alpha_vec, opts, &batch,
+    );
     s.bn_mu.update_running(&stats[0].0, &stats[0].1);
     s.bn_lv.update_running(&stats[1].0, &stats[1].1);
     s.bn_dec.update_running(&stats[2].0, &stats[2].1);
     let mut g = Grad::zeros(&s.w);
-    batch_backward(&s.w, prior_mu, prior_var, alpha_vec, opts, &batch, &cache, &mut g);
+    batch_backward(
+        &s.w, prior_mu, prior_var, alpha_vec, opts, &batch, &cache, &mut g,
+    );
     g.scale(1.0 / n as f64);
     (loss / n as f64, g)
 }
@@ -517,7 +603,18 @@ mod tests {
         let (temp, weight) = (0.2, 5.0);
         let mut ga = vec![0.0; beta_a.len()];
         let mut gb = vec![0.0; beta_b.len()];
-        tami(&beta_a, &beta_b, k, va, vb, &mab, &mba, temp, weight, Some((&mut ga, &mut gb)));
+        tami(
+            &beta_a,
+            &beta_b,
+            k,
+            va,
+            vb,
+            &mab,
+            &mba,
+            temp,
+            weight,
+            Some((&mut ga, &mut gb)),
+        );
 
         let fd = 1e-6;
         let mut max_rel: f64 = 0.0;
@@ -525,7 +622,11 @@ mod tests {
         for (beta, g, vv) in [(beta_a.clone(), &ga, va), (beta_b.clone(), &gb, vb)] {
             for idx in 0..beta.len() {
                 let mut bp = beta.clone();
-                let (other, kk, ii) = if vv == va { (&beta_b, idx / va, idx % va) } else { (&beta_a, idx / vb, idx % vb) };
+                let (other, kk, ii) = if vv == va {
+                    (&beta_b, idx / va, idx % va)
+                } else {
+                    (&beta_a, idx / vb, idx % vb)
+                };
                 let _ = (kk, ii);
                 bp[idx] += fd;
                 let lp = if vv == va {
@@ -556,7 +657,9 @@ mod tests {
         (0..n)
             .map(|d| {
                 let b = d % k;
-                (0..15).map(|_| (b * per + (rng.gen::<f64>() * per as f64) as usize) as u32).collect()
+                (0..15)
+                    .map(|_| (b * per + (rng.gen::<f64>() * per as f64) as usize) as u32)
+                    .collect()
             })
             .collect()
     }
@@ -581,8 +684,8 @@ mod tests {
         let trans = block_dict(va, vb, k);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         fit_infoctm(
-            &docs_a, &docs_b, va, vb, &trans, None, None, k, 32, 0.0, 60, 40, 0.01, 30.0, 0.2,
-            0.4, 0.0, &mut rng,
+            &docs_a, &docs_b, va, vb, &trans, None, None, k, 32, 0.0, 60, 40, 0.01, 30.0, 0.2, 0.4,
+            0.0, &mut rng,
         )
     }
 

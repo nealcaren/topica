@@ -1,9 +1,9 @@
-use topica::{corpus, model, optimize, output, sampler};
 use std::path::Path;
 use std::time::Instant;
+use topica::{corpus, model, optimize, output, sampler};
 
-use rand_pcg::Pcg64Mcg;
 use rand::SeedableRng;
+use rand_pcg::Pcg64Mcg;
 
 fn print_usage() {
     eprintln!(
@@ -38,66 +38,113 @@ Output:
 }
 
 struct Args {
-    corpus:                Option<String>,
-    num_topics:            usize,
-    iterations:            usize,
-    burn_in:               usize,
-    optimize_interval:     usize,
-    num_samples:           usize,
-    sample_interval:       usize,
-    topic_word_output:     String,
-    doc_topic_output:      String,
-    alpha_sum:             Option<f64>,
-    beta:                  f64,
-    seed:                  u64,
-    show_topics_interval:  usize,
-    words_per_topic:       usize,
+    corpus: Option<String>,
+    num_topics: usize,
+    iterations: usize,
+    burn_in: usize,
+    optimize_interval: usize,
+    num_samples: usize,
+    sample_interval: usize,
+    topic_word_output: String,
+    doc_topic_output: String,
+    alpha_sum: Option<f64>,
+    beta: f64,
+    seed: u64,
+    show_topics_interval: usize,
+    words_per_topic: usize,
 }
 
 impl Default for Args {
     fn default() -> Self {
         Args {
-            corpus:               None,
-            num_topics:           10,
-            iterations:           1000,
-            burn_in:              200,
-            optimize_interval:    50,
-            num_samples:          5,
-            sample_interval:      25,
-            topic_word_output:    "topic_word.tsv".to_string(),
-            doc_topic_output:     "doc_topic.tsv".to_string(),
-            alpha_sum:            None,
-            beta:                 0.01,
-            seed:                 42,
+            corpus: None,
+            num_topics: 10,
+            iterations: 1000,
+            burn_in: 200,
+            optimize_interval: 50,
+            num_samples: 5,
+            sample_interval: 25,
+            topic_word_output: "topic_word.tsv".to_string(),
+            doc_topic_output: "doc_topic.tsv".to_string(),
+            alpha_sum: None,
+            beta: 0.01,
+            seed: 42,
             show_topics_interval: 50,
-            words_per_topic:      7,
+            words_per_topic: 7,
         }
     }
 }
 
 fn parse_args() -> Option<Args> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
-    if raw.is_empty() { return None; }
+    if raw.is_empty() {
+        return None;
+    }
     let mut args = Args::default();
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
-            "--corpus"               => { i += 1; args.corpus = Some(raw[i].clone()); }
-            "--num-topics"           => { i += 1; args.num_topics        = raw[i].parse().ok()?; }
-            "--iterations"           => { i += 1; args.iterations        = raw[i].parse().ok()?; }
-            "--burn-in"              => { i += 1; args.burn_in           = raw[i].parse().ok()?; }
-            "--optimize-interval"    => { i += 1; args.optimize_interval = raw[i].parse().ok()?; }
-            "--num-samples"          => { i += 1; args.num_samples       = raw[i].parse().ok()?; }
-            "--sample-interval"      => { i += 1; args.sample_interval   = raw[i].parse().ok()?; }
-            "--topic-word"           => { i += 1; args.topic_word_output = raw[i].clone(); }
-            "--doc-topic"            => { i += 1; args.doc_topic_output  = raw[i].clone(); }
-            "--alpha-sum"            => { i += 1; args.alpha_sum = Some(raw[i].parse().ok()?); }
-            "--beta"                 => { i += 1; args.beta              = raw[i].parse().ok()?; }
-            "--seed"                 => { i += 1; args.seed              = raw[i].parse().ok()?; }
-            "--show-topics-interval" => { i += 1; args.show_topics_interval = raw[i].parse().ok()?; }
-            "--words-per-topic"      => { i += 1; args.words_per_topic   = raw[i].parse().ok()?; }
-            "--help" | "-h"          => return None,
-            other => { eprintln!("Unknown argument: {}", other); return None; }
+            "--corpus" => {
+                i += 1;
+                args.corpus = Some(raw[i].clone());
+            }
+            "--num-topics" => {
+                i += 1;
+                args.num_topics = raw[i].parse().ok()?;
+            }
+            "--iterations" => {
+                i += 1;
+                args.iterations = raw[i].parse().ok()?;
+            }
+            "--burn-in" => {
+                i += 1;
+                args.burn_in = raw[i].parse().ok()?;
+            }
+            "--optimize-interval" => {
+                i += 1;
+                args.optimize_interval = raw[i].parse().ok()?;
+            }
+            "--num-samples" => {
+                i += 1;
+                args.num_samples = raw[i].parse().ok()?;
+            }
+            "--sample-interval" => {
+                i += 1;
+                args.sample_interval = raw[i].parse().ok()?;
+            }
+            "--topic-word" => {
+                i += 1;
+                args.topic_word_output = raw[i].clone();
+            }
+            "--doc-topic" => {
+                i += 1;
+                args.doc_topic_output = raw[i].clone();
+            }
+            "--alpha-sum" => {
+                i += 1;
+                args.alpha_sum = Some(raw[i].parse().ok()?);
+            }
+            "--beta" => {
+                i += 1;
+                args.beta = raw[i].parse().ok()?;
+            }
+            "--seed" => {
+                i += 1;
+                args.seed = raw[i].parse().ok()?;
+            }
+            "--show-topics-interval" => {
+                i += 1;
+                args.show_topics_interval = raw[i].parse().ok()?;
+            }
+            "--words-per-topic" => {
+                i += 1;
+                args.words_per_topic = raw[i].parse().ok()?;
+            }
+            "--help" | "-h" => return None,
+            other => {
+                eprintln!("Unknown argument: {}", other);
+                return None;
+            }
         }
         i += 1;
     }
@@ -105,14 +152,20 @@ fn parse_args() -> Option<Args> {
 }
 
 fn format_elapsed(total_secs: u64) -> String {
-    let days    = total_secs / 86400;
-    let hours   = (total_secs % 86400) / 3600;
+    let days = total_secs / 86400;
+    let hours = (total_secs % 86400) / 3600;
     let minutes = (total_secs % 3600) / 60;
     let seconds = total_secs % 60;
     let mut s = String::new();
-    if days > 0    { s.push_str(&format!("{} days ", days)); }
-    if hours > 0   { s.push_str(&format!("{} hours ", hours)); }
-    if minutes > 0 { s.push_str(&format!("{} minutes ", minutes)); }
+    if days > 0 {
+        s.push_str(&format!("{} days ", days));
+    }
+    if hours > 0 {
+        s.push_str(&format!("{} hours ", hours));
+    }
+    if minutes > 0 {
+        s.push_str(&format!("{} minutes ", minutes));
+    }
     s.push_str(&format!("{} seconds", seconds));
     s
 }
@@ -129,18 +182,18 @@ fn accumulate_phi(m: &model::TopicModel, acc: &mut Vec<Vec<f64>>) {
 }
 
 /// Snapshot the current smoothed document-topic distribution into acc_theta.
-fn accumulate_theta(
-    m: &model::TopicModel,
-    c: &corpus::Corpus,
-    acc: &mut Vec<Vec<f64>>,
-) {
+fn accumulate_theta(m: &model::TopicModel, c: &corpus::Corpus, acc: &mut Vec<Vec<f64>>) {
     let mut counts = vec![0u32; m.num_topics];
     for doc_idx in 0..c.num_docs() {
-        for t in 0..m.num_topics { counts[t] = 0; }
-        for &t in &m.doc_topics[doc_idx] { counts[t as usize] += 1; }
+        for t in 0..m.num_topics {
+            counts[t] = 0;
+        }
+        for &t in &m.doc_topics[doc_idx] {
+            counts[t as usize] += 1;
+        }
 
         let doc_len = c.docs[doc_idx].len() as f64;
-        let denom   = doc_len + m.alpha_sum;
+        let denom = doc_len + m.alpha_sum;
         for t in 0..m.num_topics {
             acc[doc_idx][t] += (counts[t] as f64 + m.alpha[t]) / denom;
         }
@@ -150,17 +203,27 @@ fn accumulate_theta(
 fn main() {
     let args = match parse_args() {
         Some(a) => a,
-        None => { print_usage(); std::process::exit(1); }
+        None => {
+            print_usage();
+            std::process::exit(1);
+        }
     };
 
     let corpus_path = match &args.corpus {
         Some(p) => p.clone(),
-        None => { eprintln!("Error: --corpus is required"); print_usage(); std::process::exit(1); }
+        None => {
+            eprintln!("Error: --corpus is required");
+            print_usage();
+            std::process::exit(1);
+        }
     };
 
     let c = match corpus::load_corpus(Path::new(&corpus_path)) {
         Ok(c) => c,
-        Err(e) => { eprintln!("Error loading corpus: {}", e); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("Error loading corpus: {}", e);
+            std::process::exit(1);
+        }
     };
 
     if c.num_docs() == 0 {
@@ -175,7 +238,10 @@ fn main() {
         "Mallet LDA: {} topics, {} topic bits, {:b} topic mask",
         m.num_topics, m.topic_bits, m.topic_mask
     );
-    eprintln!("max tokens: {}", c.docs.iter().map(|d| d.len()).max().unwrap_or(0));
+    eprintln!(
+        "max tokens: {}",
+        c.docs.iter().map(|d| d.len()).max().unwrap_or(0)
+    );
     eprintln!("total tokens: {}", c.total_tokens());
     if args.optimize_interval > 0 {
         eprintln!(
@@ -188,7 +254,7 @@ fn main() {
     m.initialize(&c, &mut rng);
 
     let total_tokens = c.total_tokens();
-    let train_start  = Instant::now();
+    let train_start = Instant::now();
 
     // -----------------------------------------------------------------------
     // Main training loop
@@ -197,20 +263,17 @@ fn main() {
         sampler::run_iteration(&mut m, &c, &mut rng);
 
         // Hyperparameter optimization after burn-in
-        if args.optimize_interval > 0
-            && iter > args.burn_in
-            && iter % args.optimize_interval == 0
-        {
+        if args.optimize_interval > 0 && iter > args.burn_in && iter % args.optimize_interval == 0 {
             optimize::optimize_alpha(&mut m, &c);
             optimize::optimize_beta(&mut m);
-            eprintln!(
-                "[O] alpha_sum={:.5}  beta={:.5}",
-                m.alpha_sum, m.beta
-            );
+            eprintln!("[O] alpha_sum={:.5}  beta={:.5}", m.alpha_sum, m.beta);
         }
 
         if args.show_topics_interval > 0 && iter % args.show_topics_interval == 0 {
-            eprint!("\n{}", output::display_top_words(&m, &c, args.words_per_topic));
+            eprint!(
+                "\n{}",
+                output::display_top_words(&m, &c, args.words_per_topic)
+            );
         }
 
         if iter % 10 == 0 {
@@ -219,13 +282,16 @@ fn main() {
         }
     }
 
-    eprintln!("\nTotal time: {}", format_elapsed(train_start.elapsed().as_secs()));
+    eprintln!(
+        "\nTotal time: {}",
+        format_elapsed(train_start.elapsed().as_secs())
+    );
 
     // -----------------------------------------------------------------------
     // Sampling phase: collect num_samples samples separated by sample_interval
     // iterations each, then average for final distribution estimates.
     // -----------------------------------------------------------------------
-    let num_samples     = args.num_samples;
+    let num_samples = args.num_samples;
     let sample_interval = args.sample_interval;
 
     eprintln!(
@@ -233,7 +299,7 @@ fn main() {
         num_samples, sample_interval
     );
 
-    let mut acc_phi   = vec![vec![0.0f64; m.num_topics]; m.num_types];
+    let mut acc_phi = vec![vec![0.0f64; m.num_topics]; m.num_types];
     let mut acc_theta = vec![vec![0.0f64; m.num_topics]; c.num_docs()];
 
     for s in 0..num_samples {
@@ -247,23 +313,37 @@ fn main() {
 
     // Normalise by sample count
     let n = num_samples as f64;
-    for row in acc_phi.iter_mut()   { for v in row.iter_mut() { *v /= n; } }
-    for row in acc_theta.iter_mut() { for v in row.iter_mut() { *v /= n; } }
+    for row in acc_phi.iter_mut() {
+        for v in row.iter_mut() {
+            *v /= n;
+        }
+    }
+    for row in acc_theta.iter_mut() {
+        for v in row.iter_mut() {
+            *v /= n;
+        }
+    }
 
     // -----------------------------------------------------------------------
     // Write output
     // -----------------------------------------------------------------------
-    eprintln!("Writing topic-word probabilities to: {}", args.topic_word_output);
-    if let Err(e) = output::write_topic_word_matrix(
-        &acc_phi, &c, Path::new(&args.topic_word_output),
-    ) {
+    eprintln!(
+        "Writing topic-word probabilities to: {}",
+        args.topic_word_output
+    );
+    if let Err(e) =
+        output::write_topic_word_matrix(&acc_phi, &c, Path::new(&args.topic_word_output))
+    {
         eprintln!("Error writing topic-word file: {}", e);
     }
 
-    eprintln!("Writing document-topic probabilities to: {}", args.doc_topic_output);
-    if let Err(e) = output::write_doc_topic_matrix(
-        &acc_theta, &c, Path::new(&args.doc_topic_output),
-    ) {
+    eprintln!(
+        "Writing document-topic probabilities to: {}",
+        args.doc_topic_output
+    );
+    if let Err(e) =
+        output::write_doc_topic_matrix(&acc_theta, &c, Path::new(&args.doc_topic_output))
+    {
         eprintln!("Error writing doc-topic file: {}", e);
     }
 }

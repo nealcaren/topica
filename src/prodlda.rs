@@ -36,7 +36,9 @@ use rand::Rng;
 /// entries uniform on `[-1/sqrt(fan_in), 1/sqrt(fan_in)]`.
 fn kaiming<R: Rng>(len: usize, fan_in: usize, rng: &mut R) -> Vec<f64> {
     let bound = 1.0 / (fan_in.max(1) as f64).sqrt();
-    (0..len).map(|_| (rng.gen::<f64>() * 2.0 - 1.0) * bound).collect()
+    (0..len)
+        .map(|_| (rng.gen::<f64>() * 2.0 - 1.0) * bound)
+        .collect()
 }
 
 /// A standard-normal sample via Box-Muller.
@@ -87,7 +89,11 @@ struct BnCache {
 
 impl BatchNorm {
     pub(crate) fn new(f: usize) -> Self {
-        BatchNorm { running_mean: vec![0.0; f], running_var: vec![1.0; f], momentum: 0.1 }
+        BatchNorm {
+            running_mean: vec![0.0; f],
+            running_var: vec![1.0; f],
+            momentum: 0.1,
+        }
     }
 
     /// Forward over a minibatch `x` (N x F) using batch statistics. Returns the
@@ -199,10 +205,10 @@ pub struct Weights {
     pub hidden: usize,
     pub k: usize,
     pub mode: InputMode,
-    pub w1: Vec<f64>, // hidden x (V + E)
-    pub b1: Vec<f64>, // hidden
-    pub w2: Vec<f64>, // hidden x hidden
-    pub b2: Vec<f64>, // hidden
+    pub w1: Vec<f64>,   // hidden x (V + E)
+    pub b1: Vec<f64>,   // hidden
+    pub w2: Vec<f64>,   // hidden x hidden
+    pub b2: Vec<f64>,   // hidden
     pub w_mu: Vec<f64>, // K x hidden
     pub b_mu: Vec<f64>, // K
     pub w_ls: Vec<f64>, // K x hidden
@@ -299,7 +305,14 @@ impl Weights {
             mu_raw[c] = sm;
             lv_raw[c] = sl;
         }
-        DocCache { pre1, h1, pre2, hd, mu_raw, lv_raw }
+        DocCache {
+            pre1,
+            h1,
+            pre2,
+            hd,
+            mu_raw,
+            lv_raw,
+        }
     }
 }
 
@@ -344,8 +357,15 @@ impl Grad {
     }
     pub(crate) fn scale(&mut self, s: f64) {
         for blk in [
-            &mut self.w1, &mut self.b1, &mut self.w2, &mut self.b2, &mut self.w_mu,
-            &mut self.b_mu, &mut self.w_ls, &mut self.b_ls, &mut self.beta,
+            &mut self.w1,
+            &mut self.b1,
+            &mut self.w2,
+            &mut self.b2,
+            &mut self.w_mu,
+            &mut self.b_mu,
+            &mut self.w_ls,
+            &mut self.b_ls,
+            &mut self.beta,
         ] {
             for x in blk.iter_mut() {
                 *x *= s;
@@ -362,8 +382,10 @@ pub(crate) fn laplace_prior(alpha: &[f64]) -> (Vec<f64>, Vec<f64>) {
     let mean_log: f64 = alpha.iter().map(|&a| a.ln()).sum::<f64>() / kf;
     let sum_inv: f64 = alpha.iter().map(|&a| 1.0 / a).sum();
     let mu1: Vec<f64> = alpha.iter().map(|&a| a.ln() - mean_log).collect();
-    let var1: Vec<f64> =
-        alpha.iter().map(|&a| (1.0 / a) * (1.0 - 2.0 / kf) + sum_inv / (kf * kf)).collect();
+    let var1: Vec<f64> = alpha
+        .iter()
+        .map(|&a| (1.0 / a) * (1.0 - 2.0 / kf) + sum_inv / (kf * kf))
+        .collect();
     (mu1, var1)
 }
 
@@ -550,11 +572,11 @@ pub(crate) struct BatchCache {
     bn_mu: BnCache,
     bn_lv: BnCache,
     bn_dec: BnCache,
-    mu: Vec<Vec<f64>>,      // N x K (post-BN)
-    lv: Vec<Vec<f64>>,      // N x K (post-BN)
-    theta: Vec<Vec<f64>>,   // N x K
+    mu: Vec<Vec<f64>>,       // N x K (post-BN)
+    lv: Vec<Vec<f64>>,       // N x K (post-BN)
+    theta: Vec<Vec<f64>>,    // N x K
     theta_do: Vec<Vec<f64>>, // N x K (post-dropout)
-    recon: Vec<Vec<f64>>,   // N x V
+    recon: Vec<Vec<f64>>,    // N x V
     // Dirichlet (Weibull) reparameterization scratch, empty on the laplace path.
     // For each (doc, topic): Weibull shape `kw`, scale `lam`, the constant
     // `L = -ln(1-u)` from the noise, and the unnormalized weight `g = lam * L^(1/kw)`.
@@ -576,11 +598,11 @@ struct SbCache {
 
 /// Per-(doc, topic) Weibull reparameterization quantities for the Dirichlet prior.
 struct DirCache {
-    kw: Vec<Vec<f64>>,  // N x K Weibull shape  = softplus(mu) + floor
-    lam: Vec<Vec<f64>>, // N x K Weibull scale  = softplus(lv) + floor
+    kw: Vec<Vec<f64>>,   // N x K Weibull shape  = softplus(mu) + floor
+    lam: Vec<Vec<f64>>,  // N x K Weibull scale  = softplus(lv) + floor
     ln_l: Vec<Vec<f64>>, // N x K  ln L, L = -ln(1-u), u = Phi(eps) (constant in params)
-    g: Vec<Vec<f64>>,   // N x K unnormalized weight g = lam * L^(1/kw)
-    s: Vec<f64>,        // N      normalizer sum_t g
+    g: Vec<Vec<f64>>,    // N x K unnormalized weight g = lam * L^(1/kw)
+    s: Vec<f64>,         // N      normalizer sum_t g
 }
 
 /// The contrastive positive view: a second deterministic topic vector per document.
@@ -621,8 +643,7 @@ pub(crate) fn weibull_weight(a: f64, b: f64, ln_l: f64) -> (f64, f64, f64) {
 /// into independent `Gamma(alpha, 1)` priors on the unnormalized weights, so the KL
 /// sums these per-topic terms.
 pub(crate) fn weibull_gamma_kl(kw: f64, lam: f64, alpha: f64) -> f64 {
-    EULER_GAMMA * alpha / kw - alpha * lam.ln() + kw.ln()
-        + lam * lgamma(1.0 + 1.0 / kw).exp()
+    EULER_GAMMA * alpha / kw - alpha * lam.ln() + kw.ln() + lam * lgamma(1.0 + 1.0 / kw).exp()
         - EULER_GAMMA
         - 1.0
         + lgamma(alpha)
@@ -652,8 +673,7 @@ fn digamma(mut x: f64) -> f64 {
     }
     let inv = 1.0 / x;
     let inv2 = inv * inv;
-    result + x.ln() - 0.5 * inv
-        - inv2 * (1.0 / 12.0 - inv2 * (1.0 / 120.0 - inv2 / 252.0))
+    result + x.ln() - 0.5 * inv - inv2 * (1.0 / 12.0 - inv2 * (1.0 / 120.0 - inv2 / 252.0))
 }
 
 /// InfoNCE contrastive loss (CLNTM, Nguyen & Luu 2021) over a minibatch of topic
@@ -728,7 +748,11 @@ fn cosine_grad_a(a: &[f64], b: &[f64]) -> Vec<f64> {
 /// InfoNCE loss w.r.t. the anchor vectors `z` and the positive-view vectors `z_pos`.
 /// Each anchor `z_i` appears both as its own anchor and as a negative for every
 /// other document, so its gradient accumulates both contributions.
-pub(crate) fn info_nce_backward(z: &[Vec<f64>], z_pos: &[Vec<f64>], temp: f64) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
+pub(crate) fn info_nce_backward(
+    z: &[Vec<f64>],
+    z_pos: &[Vec<f64>],
+    temp: f64,
+) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
     let n = z.len();
     let k = if n > 0 { z[0].len() } else { 0 };
     let mut dz = vec![vec![0.0; k]; n];
@@ -790,8 +814,9 @@ pub(crate) fn batch_forward(
     let n = batch.xns.len();
 
     // Encoder up to the pre-BN heads.
-    let doc: Vec<DocCache> =
-        (0..n).map(|i| w.encode_raw(batch.xns[i], batch.embs[i], &batch.masks2[i])).collect();
+    let doc: Vec<DocCache> = (0..n)
+        .map(|i| w.encode_raw(batch.xns[i], batch.embs[i], &batch.masks2[i]))
+        .collect();
     let mu_raw: Vec<Vec<f64>> = doc.iter().map(|d| d.mu_raw.clone()).collect();
     let lv_raw: Vec<Vec<f64>> = doc.iter().map(|d| d.lv_raw.clone()).collect();
 
@@ -916,7 +941,8 @@ pub(crate) fn batch_forward(
             for t in 0..k {
                 let s0 = lv[i][t].exp();
                 let dm = prior_mu[t] - mu[i][t];
-                kl += s0 / prior_var[t] + dm * dm / prior_var[t] - 1.0 + prior_var[t].ln() - lv[i][t];
+                kl +=
+                    s0 / prior_var[t] + dm * dm / prior_var[t] - 1.0 + prior_var[t].ln() - lv[i][t];
             }
             loss += 0.5 * kl;
         }
@@ -939,13 +965,27 @@ pub(crate) fn batch_forward(
         theta_do,
         recon,
         dir: if dirichlet {
-            Some(DirCache { kw: d_kw, lam: d_lam, ln_l: d_ln_l, g: d_g, s: d_s })
+            Some(DirCache {
+                kw: d_kw,
+                lam: d_lam,
+                ln_l: d_ln_l,
+                g: d_g,
+                s: d_s,
+            })
         } else {
             None
         },
-        sb: if stick { Some(SbCache { eta: sb_eta }) } else { None },
+        sb: if stick {
+            Some(SbCache { eta: sb_eta })
+        } else {
+            None
+        },
         contrast: if contrastive {
-            Some(ContrastCache { theta_pos, g_pos, s_pos })
+            Some(ContrastCache {
+                theta_pos,
+                g_pos,
+                s_pos,
+            })
         } else {
             None
         },
@@ -1045,7 +1085,11 @@ pub(crate) fn batch_backward(
         }
         let dzp: Vec<Vec<f64>> = dzp
             .into_iter()
-            .map(|row| row.into_iter().map(|x| x * opts.contrastive_weight).collect())
+            .map(|row| {
+                row.into_iter()
+                    .map(|x| x * opts.contrastive_weight)
+                    .collect()
+            })
             .collect();
         (Some(dz), Some(dzp))
     } else {
@@ -1069,8 +1113,16 @@ pub(crate) fn batch_backward(
         if dirichlet {
             let dir = c.dir.as_ref().unwrap();
             weibull_reparam_backward(
-                &dtheta, &dir.g[i], dir.s[i], &dir.kw[i], &dir.lam[i], &dir.ln_l[i],
-                &c.mu[i], &c.lv[i], &mut dmu[i], &mut dlv[i],
+                &dtheta,
+                &dir.g[i],
+                dir.s[i],
+                &dir.kw[i],
+                &dir.lam[i],
+                &dir.ln_l[i],
+                &c.mu[i],
+                &c.lv[i],
+                &mut dmu[i],
+                &mut dlv[i],
             );
             // KL( Weibull || Gamma ) gradients, through softplus on each head.
             for t in 0..k {
@@ -1107,11 +1159,23 @@ pub(crate) fn batch_backward(
                 // theta_pos via Weibull at u = 0.5 (L = ln 2), depends on mu and lv.
                 let ln2 = std::f64::consts::LN_2;
                 let ln_l_pos = vec![ln2.ln(); k]; // ln L, L = -ln(1-0.5) = ln 2
-                let kw_pos: Vec<f64> = (0..k).map(|t| softplus(c.mu[i][t]) + WEIBULL_SHAPE_FLOOR).collect();
-                let lam_pos: Vec<f64> = (0..k).map(|t| softplus(c.lv[i][t]) + WEIBULL_FLOOR).collect();
+                let kw_pos: Vec<f64> = (0..k)
+                    .map(|t| softplus(c.mu[i][t]) + WEIBULL_SHAPE_FLOOR)
+                    .collect();
+                let lam_pos: Vec<f64> = (0..k)
+                    .map(|t| softplus(c.lv[i][t]) + WEIBULL_FLOOR)
+                    .collect();
                 weibull_reparam_backward(
-                    &dzp[i], &cc.g_pos[i], cc.s_pos[i], &kw_pos, &lam_pos, &ln_l_pos,
-                    &c.mu[i], &c.lv[i], &mut dmu[i], &mut dlv[i],
+                    &dzp[i],
+                    &cc.g_pos[i],
+                    cc.s_pos[i],
+                    &kw_pos,
+                    &lam_pos,
+                    &ln_l_pos,
+                    &c.mu[i],
+                    &c.lv[i],
+                    &mut dmu[i],
+                    &mut dlv[i],
                 );
             } else if stick {
                 // theta_pos via no-noise stick-breaking on z = mu; grad into mu only.
@@ -1210,7 +1274,14 @@ struct Adam {
 
 impl Adam {
     fn new(len: usize, lr: f64, b1: f64, wd: f64) -> Self {
-        Adam { m: vec![0.0; len], v: vec![0.0; len], t: 0, lr, b1, wd }
+        Adam {
+            m: vec![0.0; len],
+            v: vec![0.0; len],
+            t: 0,
+            lr,
+            b1,
+            wd,
+        }
     }
     fn step(&mut self, p: &mut [f64], grad: &[f64]) {
         const B2: f64 = 0.999;
@@ -1218,8 +1289,9 @@ impl Adam {
         self.t += 1;
         let bc1 = 1.0 - self.b1.powi(self.t as i32);
         let bc2 = 1.0 - B2.powi(self.t as i32);
-        for (pi, (&g0, (mi, vi))) in
-            p.iter_mut().zip(grad.iter().zip(self.m.iter_mut().zip(self.v.iter_mut())))
+        for (pi, (&g0, (mi, vi))) in p
+            .iter_mut()
+            .zip(grad.iter().zip(self.m.iter_mut().zip(self.v.iter_mut())))
         {
             let g = g0 + self.wd * *pi;
             *mi = self.b1 * *mi + (1.0 - self.b1) * g;
@@ -1294,7 +1366,9 @@ impl ProdldaModel {
     /// topic display.
     pub fn topic_word(&self) -> Vec<Vec<f64>> {
         let (k, v) = (self.num_topics, self.num_types);
-        (0..k).map(|t| softmax(&self.weights.beta[t * v..(t + 1) * v])).collect()
+        (0..k)
+            .map(|t| softmax(&self.weights.beta[t * v..(t + 1) * v]))
+            .collect()
     }
 
     /// Topic proportions for new documents: one encoder forward pass each,
@@ -1375,8 +1449,21 @@ pub fn fit_prodlda<R: Rng>(
 ) -> ProdldaModel {
     let empty: Vec<Vec<f64>> = vec![Vec::new(); docs.len()];
     fit_avitm(
-        docs, &empty, InputMode::BowOnly, num_topics, num_types, 0, hidden, alpha,
-        dropout, epochs, batch_size, lr, em_tol, AvitmOptions::default(), rng,
+        docs,
+        &empty,
+        InputMode::BowOnly,
+        num_topics,
+        num_types,
+        0,
+        hidden,
+        alpha,
+        dropout,
+        epochs,
+        batch_size,
+        lr,
+        em_tol,
+        AvitmOptions::default(),
+        rng,
     )
 }
 
@@ -1408,7 +1495,10 @@ pub fn fit_avitm<R: Rng>(
     let d = docs.len();
     let xn: Vec<Vec<(usize, f64)>> = docs.iter().map(|doc| normalized_bow(doc)).collect();
     let bows: Vec<Vec<(usize, f64)>> = docs.iter().map(|doc| raw_bow(doc)).collect();
-    let totals: Vec<f64> = bows.iter().map(|b| b.iter().map(|&(_, c)| c).sum()).collect();
+    let totals: Vec<f64> = bows
+        .iter()
+        .map(|b| b.iter().map(|&(_, c)| c).sum())
+        .collect();
 
     let alpha_vec = vec![alpha; k];
     let (prior_mu, prior_var) = laplace_prior(&alpha_vec);
@@ -1441,18 +1531,33 @@ pub fn fit_avitm<R: Rng>(
                 continue; // batchnorm needs at least two documents
             }
             // Per-document reparameterization noise and dropout masks.
-            let eps: Vec<Vec<f64>> =
-                (0..n).map(|_| (0..k).map(|_| randn(rng)).collect()).collect();
+            let eps: Vec<Vec<f64>> = (0..n)
+                .map(|_| (0..k).map(|_| randn(rng)).collect())
+                .collect();
             let masks2: Vec<Vec<f64>> = (0..n)
                 .map(|_| {
                     (0..hidden)
-                        .map(|_| if rng.gen::<f64>() < keep { 1.0 / keep } else { 0.0 })
+                        .map(|_| {
+                            if rng.gen::<f64>() < keep {
+                                1.0 / keep
+                            } else {
+                                0.0
+                            }
+                        })
                         .collect()
                 })
                 .collect();
             let masks_t: Vec<Vec<f64>> = (0..n)
                 .map(|_| {
-                    (0..k).map(|_| if rng.gen::<f64>() < keep { 1.0 / keep } else { 0.0 }).collect()
+                    (0..k)
+                        .map(|_| {
+                            if rng.gen::<f64>() < keep {
+                                1.0 / keep
+                            } else {
+                                0.0
+                            }
+                        })
+                        .collect()
                 })
                 .collect();
             let batch = Batch {
@@ -1473,7 +1578,9 @@ pub fn fit_avitm<R: Rng>(
             bn_dec.update_running(&stats[2].0, &stats[2].1);
 
             let mut g = Grad::zeros(&w);
-            batch_backward(&w, &prior_mu, &prior_var, &alpha_vec, &opts, &batch, &cache, &mut g);
+            batch_backward(
+                &w, &prior_mu, &prior_var, &alpha_vec, &opts, &batch, &cache, &mut g,
+            );
             g.scale(1.0 / n as f64);
             opt.step(&mut w, &g);
 
@@ -1561,7 +1668,10 @@ mod tests {
         let bn_mu = BatchNorm::new(w.k);
         let bn_lv = BatchNorm::new(w.k);
         let bn_dec = BatchNorm::new(w.v);
-        batch_forward(w, &bn_mu, &bn_lv, &bn_dec, prior_mu, prior_var, alpha, opts, batch).0
+        batch_forward(
+            w, &bn_mu, &bn_lv, &bn_dec, prior_mu, prior_var, alpha, opts, batch,
+        )
+        .0
     }
 
     // FD gradient check for a given encoder input mode and option set. Every weight
@@ -1576,18 +1686,33 @@ mod tests {
         let (prior_mu, prior_var) = laplace_prior(&alpha);
 
         // A small batch (>=2 docs so batchnorm statistics are well-defined).
-        let docs: Vec<Vec<u32>> =
-            vec![vec![0, 0, 2, 3, 6], vec![1, 4, 4, 5], vec![2, 2, 3, 5, 6, 0]];
+        let docs: Vec<Vec<u32>> = vec![
+            vec![0, 0, 2, 3, 6],
+            vec![1, 4, 4, 5],
+            vec![2, 2, 3, 5, 6, 0],
+        ];
         let xns: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| normalized_bow(d)).collect();
         let bows: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| raw_bow(d)).collect();
-        let totals: Vec<f64> = bows.iter().map(|b| b.iter().map(|&(_, c)| c).sum()).collect();
+        let totals: Vec<f64> = bows
+            .iter()
+            .map(|b| b.iter().map(|&(_, c)| c).sum())
+            .collect();
         let n = docs.len();
         // Distinct, nonzero embeddings so the embedding columns get a real signal.
         let embs: Vec<Vec<f64>> = (0..n)
-            .map(|i| (0..emb_dim).map(|j| 0.3 * (i as f64 + 1.0) - 0.17 * j as f64 + 0.05).collect())
+            .map(|i| {
+                (0..emb_dim)
+                    .map(|j| 0.3 * (i as f64 + 1.0) - 0.17 * j as f64 + 0.05)
+                    .collect()
+            })
             .collect();
-        let eps: Vec<Vec<f64>> =
-            (0..n).map(|i| (0..k).map(|t| 0.1 * (i as f64 + 1.0) - 0.05 * t as f64).collect()).collect();
+        let eps: Vec<Vec<f64>> = (0..n)
+            .map(|i| {
+                (0..k)
+                    .map(|t| 0.1 * (i as f64 + 1.0) - 0.05 * t as f64)
+                    .collect()
+            })
+            .collect();
         let masks2 = vec![vec![1.0; hidden]; n]; // dropout disabled for the check
         let masks_t = vec![vec![1.0; k]; n];
         let batch = Batch {
@@ -1604,10 +1729,13 @@ mod tests {
         let bn_mu = BatchNorm::new(k);
         let bn_lv = BatchNorm::new(k);
         let bn_dec = BatchNorm::new(v);
-        let (_, cache, _) =
-            batch_forward(&w0, &bn_mu, &bn_lv, &bn_dec, &prior_mu, &prior_var, &alpha, &opts, &batch);
+        let (_, cache, _) = batch_forward(
+            &w0, &bn_mu, &bn_lv, &bn_dec, &prior_mu, &prior_var, &alpha, &opts, &batch,
+        );
         let mut g = Grad::zeros(&w0);
-        batch_backward(&w0, &prior_mu, &prior_var, &alpha, &opts, &batch, &cache, &mut g);
+        batch_backward(
+            &w0, &prior_mu, &prior_var, &alpha, &opts, &batch, &cache, &mut g,
+        );
 
         let fd = 1e-6;
         let mut max_rel = 0.0f64;
@@ -1636,7 +1764,11 @@ mod tests {
                     assert!(
                         abs_err < 1e-4,
                         "{:?} {} [{}]: analytic {} vs numeric {}",
-                        mode, $label, idx, analytic, num
+                        mode,
+                        $label,
+                        idx,
+                        analytic,
+                        num
                     );
                 }
             };
@@ -1683,7 +1815,10 @@ mod tests {
             ..AvitmOptions::default()
         };
         let max_rel = fd_check_mode_opts(InputMode::BowOnly, 0, opts);
-        assert!(max_rel < 1e-4, "contrastive bow-only max relative error {max_rel}");
+        assert!(
+            max_rel < 1e-4,
+            "contrastive bow-only max relative error {max_rel}"
+        );
     }
 
     #[test]
@@ -1695,36 +1830,63 @@ mod tests {
             ..AvitmOptions::default()
         };
         let max_rel = fd_check_mode_opts(InputMode::BowEmb, 6, opts);
-        assert!(max_rel < 1e-4, "contrastive bow+emb max relative error {max_rel}");
+        assert!(
+            max_rel < 1e-4,
+            "contrastive bow+emb max relative error {max_rel}"
+        );
     }
 
     // --- #176 Dirichlet (Weibull) prior FD checks (BowOnly + an embedding mode) --
     #[test]
     fn dirichlet_gradients_match_fd_bow_only() {
-        let opts = AvitmOptions { prior: Prior::Dirichlet, ..AvitmOptions::default() };
+        let opts = AvitmOptions {
+            prior: Prior::Dirichlet,
+            ..AvitmOptions::default()
+        };
         let max_rel = fd_check_mode_opts(InputMode::BowOnly, 0, opts);
-        assert!(max_rel < 1e-4, "dirichlet bow-only max relative error {max_rel}");
+        assert!(
+            max_rel < 1e-4,
+            "dirichlet bow-only max relative error {max_rel}"
+        );
     }
 
     #[test]
     fn dirichlet_gradients_match_fd_emb_only() {
-        let opts = AvitmOptions { prior: Prior::Dirichlet, ..AvitmOptions::default() };
+        let opts = AvitmOptions {
+            prior: Prior::Dirichlet,
+            ..AvitmOptions::default()
+        };
         let max_rel = fd_check_mode_opts(InputMode::EmbOnly, 6, opts);
-        assert!(max_rel < 1e-4, "dirichlet emb-only max relative error {max_rel}");
+        assert!(
+            max_rel < 1e-4,
+            "dirichlet emb-only max relative error {max_rel}"
+        );
     }
 
     #[test]
     fn stick_breaking_gradients_match_fd_bow_only() {
-        let opts = AvitmOptions { prior: Prior::StickBreaking, ..AvitmOptions::default() };
+        let opts = AvitmOptions {
+            prior: Prior::StickBreaking,
+            ..AvitmOptions::default()
+        };
         let max_rel = fd_check_mode_opts(InputMode::BowOnly, 0, opts);
-        assert!(max_rel < 1e-4, "stick-breaking bow-only max relative error {max_rel}");
+        assert!(
+            max_rel < 1e-4,
+            "stick-breaking bow-only max relative error {max_rel}"
+        );
     }
 
     #[test]
     fn stick_breaking_gradients_match_fd_emb_only() {
-        let opts = AvitmOptions { prior: Prior::StickBreaking, ..AvitmOptions::default() };
+        let opts = AvitmOptions {
+            prior: Prior::StickBreaking,
+            ..AvitmOptions::default()
+        };
         let max_rel = fd_check_mode_opts(InputMode::EmbOnly, 6, opts);
-        assert!(max_rel < 1e-4, "stick-breaking emb-only max relative error {max_rel}");
+        assert!(
+            max_rel < 1e-4,
+            "stick-breaking emb-only max relative error {max_rel}"
+        );
     }
 
     // --- composition: both flags on at once must still FD-check ------------------
@@ -1737,7 +1899,10 @@ mod tests {
             contrastive_temp: 0.5,
         };
         let max_rel = fd_check_mode_opts(InputMode::BowEmb, 6, opts);
-        assert!(max_rel < 1e-4, "contrastive+dirichlet max relative error {max_rel}");
+        assert!(
+            max_rel < 1e-4,
+            "contrastive+dirichlet max relative error {max_rel}"
+        );
     }
 
     #[test]
@@ -1749,7 +1914,10 @@ mod tests {
             contrastive_temp: 0.5,
         };
         let max_rel = fd_check_mode_opts(InputMode::BowEmb, 6, opts);
-        assert!(max_rel < 1e-4, "contrastive+stick-breaking max relative error {max_rel}");
+        assert!(
+            max_rel < 1e-4,
+            "contrastive+stick-breaking max relative error {max_rel}"
+        );
     }
 
     // The Weibull-to-Gamma KL gradient checked directly against finite differences.
@@ -1758,8 +1926,10 @@ mod tests {
         let fd = 1e-7;
         for &(kw, lam, a) in &[(0.7, 1.3, 1.0), (2.0, 0.5, 0.8), (1.1, 2.2, 1.5)] {
             let (dkw, dlam) = weibull_gamma_kl_grad(kw, lam, a);
-            let num_kw = (weibull_gamma_kl(kw + fd, lam, a) - weibull_gamma_kl(kw - fd, lam, a)) / (2.0 * fd);
-            let num_lam = (weibull_gamma_kl(kw, lam + fd, a) - weibull_gamma_kl(kw, lam - fd, a)) / (2.0 * fd);
+            let num_kw = (weibull_gamma_kl(kw + fd, lam, a) - weibull_gamma_kl(kw - fd, lam, a))
+                / (2.0 * fd);
+            let num_lam = (weibull_gamma_kl(kw, lam + fd, a) - weibull_gamma_kl(kw, lam - fd, a))
+                / (2.0 * fd);
             assert!((dkw - num_kw).abs() < 1e-5, "dkw {dkw} vs {num_kw}");
             assert!((dlam - num_lam).abs() < 1e-5, "dlam {dlam} vs {num_lam}");
         }
@@ -1788,7 +1958,9 @@ mod tests {
         let docs: Vec<Vec<u32>> = (0..180)
             .map(|d| {
                 let b = d % k;
-                (0..15).map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32).collect()
+                (0..15)
+                    .map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                    .collect()
             })
             .collect();
 
@@ -1822,7 +1994,9 @@ mod tests {
         let docs: Vec<Vec<u32>> = (0..180)
             .map(|d| {
                 let b = d % k;
-                (0..15).map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32).collect()
+                (0..15)
+                    .map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                    .collect()
             })
             .collect();
         let m = fit_prodlda(&docs, k, v, 32, 1.0, 0.0, 250, 60, 0.01, 0.0, &mut rng);
@@ -1876,8 +2050,21 @@ mod tests {
         let (docs, embs, k, block, v) = planted_emb_corpus(180, 1);
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let m = fit_avitm(
-            &docs, &embs, InputMode::BowEmb, k, v, k, 32, 1.0, 0.0, 250, 60, 0.01, 0.0,
-            AvitmOptions::default(), &mut rng,
+            &docs,
+            &embs,
+            InputMode::BowEmb,
+            k,
+            v,
+            k,
+            32,
+            1.0,
+            0.0,
+            250,
+            60,
+            0.01,
+            0.0,
+            AvitmOptions::default(),
+            &mut rng,
         );
         let tw = m.topic_word();
         for row in &tw {
@@ -1886,7 +2073,11 @@ mod tests {
         for row in &m.doc_topic {
             assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
         }
-        assert_eq!(top_blocks(&tw, k, v, block), k, "topics did not cover all blocks");
+        assert_eq!(
+            top_blocks(&tw, k, v, block),
+            k,
+            "topics did not cover all blocks"
+        );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }
@@ -1896,15 +2087,32 @@ mod tests {
         let (docs, embs, k, block, v) = planted_emb_corpus(180, 1);
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let m = fit_avitm(
-            &docs, &embs, InputMode::EmbOnly, k, v, k, 32, 1.0, 0.0, 250, 60, 0.01, 0.0,
-            AvitmOptions::default(), &mut rng,
+            &docs,
+            &embs,
+            InputMode::EmbOnly,
+            k,
+            v,
+            k,
+            32,
+            1.0,
+            0.0,
+            250,
+            60,
+            0.01,
+            0.0,
+            AvitmOptions::default(),
+            &mut rng,
         );
         let tw = m.topic_word();
         for row in &tw {
             assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
         }
         // The encoder never saw the BoW; topics are recovered from embeddings alone.
-        assert_eq!(top_blocks(&tw, k, v, block), k, "topics did not cover all blocks");
+        assert_eq!(
+            top_blocks(&tw, k, v, block),
+            k,
+            "topics did not cover all blocks"
+        );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }
@@ -1915,10 +2123,49 @@ mod tests {
         for mode in [InputMode::BowEmb, InputMode::EmbOnly] {
             let mut r1 = ChaCha8Rng::seed_from_u64(11);
             let mut r2 = ChaCha8Rng::seed_from_u64(11);
-            let a = fit_avitm(&docs, &embs, mode, k, v, k, 16, 1.0, 0.0, 30, 30, 0.01, 0.0, AvitmOptions::default(), &mut r1);
-            let b = fit_avitm(&docs, &embs, mode, k, v, k, 16, 1.0, 0.0, 30, 30, 0.01, 0.0, AvitmOptions::default(), &mut r2);
-            assert_eq!(a.topic_word(), b.topic_word(), "{mode:?} topic_word not bit-identical");
-            assert_eq!(a.doc_topic, b.doc_topic, "{mode:?} doc_topic not bit-identical");
+            let a = fit_avitm(
+                &docs,
+                &embs,
+                mode,
+                k,
+                v,
+                k,
+                16,
+                1.0,
+                0.0,
+                30,
+                30,
+                0.01,
+                0.0,
+                AvitmOptions::default(),
+                &mut r1,
+            );
+            let b = fit_avitm(
+                &docs,
+                &embs,
+                mode,
+                k,
+                v,
+                k,
+                16,
+                1.0,
+                0.0,
+                30,
+                30,
+                0.01,
+                0.0,
+                AvitmOptions::default(),
+                &mut r2,
+            );
+            assert_eq!(
+                a.topic_word(),
+                b.topic_word(),
+                "{mode:?} topic_word not bit-identical"
+            );
+            assert_eq!(
+                a.doc_topic, b.doc_topic,
+                "{mode:?} doc_topic not bit-identical"
+            );
         }
     }
 
@@ -1931,16 +2178,38 @@ mod tests {
         let docs: Vec<Vec<u32>> = (0..180)
             .map(|d| {
                 let b = d % k;
-                (0..15).map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32).collect()
+                (0..15)
+                    .map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                    .collect()
             })
             .collect();
-        let opts = AvitmOptions { contrastive: true, ..AvitmOptions::default() };
+        let opts = AvitmOptions {
+            contrastive: true,
+            ..AvitmOptions::default()
+        };
         let m = fit_avitm(
-            &docs, &vec![Vec::new(); docs.len()], InputMode::BowOnly, k, v, 0, 32, 1.0, 0.0,
-            250, 60, 0.01, 0.0, opts, &mut rng,
+            &docs,
+            &vec![Vec::new(); docs.len()],
+            InputMode::BowOnly,
+            k,
+            v,
+            0,
+            32,
+            1.0,
+            0.0,
+            250,
+            60,
+            0.01,
+            0.0,
+            opts,
+            &mut rng,
         );
         let tw = m.topic_word();
-        assert_eq!(top_blocks(&tw, k, v, block), k, "contrastive: topics did not cover all blocks");
+        assert_eq!(
+            top_blocks(&tw, k, v, block),
+            k,
+            "contrastive: topics did not cover all blocks"
+        );
     }
 
     #[test]
@@ -1951,13 +2220,31 @@ mod tests {
         let docs: Vec<Vec<u32>> = (0..180)
             .map(|d| {
                 let b = d % k;
-                (0..15).map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32).collect()
+                (0..15)
+                    .map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                    .collect()
             })
             .collect();
-        let opts = AvitmOptions { prior: Prior::Dirichlet, ..AvitmOptions::default() };
+        let opts = AvitmOptions {
+            prior: Prior::Dirichlet,
+            ..AvitmOptions::default()
+        };
         let m = fit_avitm(
-            &docs, &vec![Vec::new(); docs.len()], InputMode::BowOnly, k, v, 0, 32, 0.5, 0.0,
-            400, 60, 0.005, 0.0, opts, &mut rng,
+            &docs,
+            &vec![Vec::new(); docs.len()],
+            InputMode::BowOnly,
+            k,
+            v,
+            0,
+            32,
+            0.5,
+            0.0,
+            400,
+            60,
+            0.005,
+            0.0,
+            opts,
+            &mut rng,
         );
         let tw = m.topic_word();
         for row in &tw {
@@ -1979,10 +2266,17 @@ mod tests {
                 counts[w / block] += 1;
             }
             let (dom, &cnt) = counts.iter().enumerate().max_by_key(|(_, &c)| c).unwrap();
-            assert!(cnt >= 2, "dirichlet topic top words do not concentrate in a block");
+            assert!(
+                cnt >= 2,
+                "dirichlet topic top words do not concentrate in a block"
+            );
             covered.insert(dom);
         }
-        assert_eq!(covered.len(), k, "dirichlet: topics did not cover all blocks");
+        assert_eq!(
+            covered.len(),
+            k,
+            "dirichlet: topics did not cover all blocks"
+        );
     }
 
     #[test]
@@ -1993,13 +2287,31 @@ mod tests {
         let docs: Vec<Vec<u32>> = (0..180)
             .map(|d| {
                 let b = d % k;
-                (0..15).map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32).collect()
+                (0..15)
+                    .map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                    .collect()
             })
             .collect();
-        let opts = AvitmOptions { prior: Prior::StickBreaking, ..AvitmOptions::default() };
+        let opts = AvitmOptions {
+            prior: Prior::StickBreaking,
+            ..AvitmOptions::default()
+        };
         let m = fit_avitm(
-            &docs, &vec![Vec::new(); docs.len()], InputMode::BowOnly, k, v, 0, 32, 0.5, 0.0,
-            400, 60, 0.005, 0.0, opts, &mut rng,
+            &docs,
+            &vec![Vec::new(); docs.len()],
+            InputMode::BowOnly,
+            k,
+            v,
+            0,
+            32,
+            0.5,
+            0.0,
+            400,
+            60,
+            0.005,
+            0.0,
+            opts,
+            &mut rng,
         );
         let tw = m.topic_word();
         for row in &tw {
@@ -2021,12 +2333,16 @@ mod tests {
                 counts[w / block] += 1;
             }
             let (dom, &cnt) = counts.iter().enumerate().max_by_key(|(_, &c)| c).unwrap();
-            assert!(cnt >= 2, "stick-breaking topic top words do not concentrate in a block");
+            assert!(
+                cnt >= 2,
+                "stick-breaking topic top words do not concentrate in a block"
+            );
             covered.insert(dom);
         }
-        assert_eq!(covered.len(), k, "stick-breaking: topics did not cover all blocks");
+        assert_eq!(
+            covered.len(),
+            k,
+            "stick-breaking: topics did not cover all blocks"
+        );
     }
 }
-
-
-

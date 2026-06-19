@@ -83,10 +83,7 @@ pub fn spd_inverse(a: &[f64], n: usize) -> Option<Vec<f64>> {
 pub fn make_diagonally_dominant(a: &mut [f64], n: usize) {
     let diag: Vec<f64> = (0..n).map(|i| a[i * n + i]).collect();
     for i in 0..n {
-        let off: f64 = (0..n)
-            .filter(|&j| j != i)
-            .map(|j| a[i * n + j].abs())
-            .sum();
+        let off: f64 = (0..n).filter(|&j| j != i).map(|j| a[i * n + j].abs()).sum();
         if diag[i] < off {
             a[i * n + i] = off;
         }

@@ -65,13 +65,20 @@ jobs:
       # build, and the suite is dominated by model fits, so an optimized build
       # turns a ~20-minute debug run into a few minutes. The extra compile time is
       # repaid many times over (and cached by rust-cache above).
+      # Formatting gate: the whole workspace must be rustfmt-clean. Mechanical,
+      # so it catches drift without depending on reviewer discipline.
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
       # Rust unit tests. Run without the `python` feature: pyo3's
       # extension-module mode does not link libpython into a standalone test
-      # binary, so the bindings crate cannot be unit-tested that way. This
-      # covers the core/model/saveformat tests. Cheap and cached; part of the
-      # test contract in CONTRIBUTING.md, so it gates PRs here too.
+      # binary, so the bindings crate cannot be unit-tested that way. `--workspace`
+      # so the extracted `topica-core` member is tested too, not just the root
+      # crate (otherwise the core can regress while CI stays green). Covers the
+      # core/model/saveformat tests. Cheap and cached; part of the test contract
+      # in CONTRIBUTING.md, so it gates PRs here too.
       - name: cargo test
-        run: cargo test --lib
+        run: cargo test --workspace --lib
 
       - name: Build extension and run tests
         shell: bash

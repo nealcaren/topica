@@ -625,7 +625,9 @@ impl Estimator for HldaModel {
 
     fn topic_word(&self) -> Vec<Vec<f64>> {
         // Disambiguate: inherent topic_word(i) takes an index; the trait method takes none.
-        (0..self.num_nodes()).map(|i| HldaModel::topic_word(self, i)).collect()
+        (0..self.num_nodes())
+            .map(|i| HldaModel::topic_word(self, i))
+            .collect()
     }
 
     fn doc_topic(&self) -> Vec<Vec<f64>> {
@@ -711,10 +713,7 @@ mod tests {
         let root_top = top_words(&model.topic_word(root), shared.len());
         let shared_set: std::collections::HashSet<usize> =
             shared.iter().map(|&w| w as usize).collect();
-        let shared_in_root = root_top
-            .iter()
-            .filter(|w| shared_set.contains(w))
-            .count();
+        let shared_in_root = root_top.iter().filter(|w| shared_set.contains(w)).count();
         assert!(
             shared_in_root >= shared.len() - 1,
             "root top words not dominated by shared words: {:?}",

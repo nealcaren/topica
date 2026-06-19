@@ -13,8 +13,7 @@ pub fn digamma(mut x: f64) -> f64 {
     // Asymptotic: ln x - 1/(2x) - 1/(12x²) + 1/(120x⁴) - 1/(252x⁶)
     let inv = 1.0 / x;
     let inv2 = inv * inv;
-    result + x.ln() - 0.5 * inv
-        - inv2 * (1.0 / 12.0 - inv2 * (1.0 / 120.0 - inv2 / 252.0))
+    result + x.ln() - 0.5 * inv - inv2 * (1.0 / 12.0 - inv2 * (1.0 / 120.0 - inv2 / 252.0))
 }
 
 /// One Minka fixed-point step for a symmetric Dirichlet concentration parameter.
@@ -38,7 +37,7 @@ fn update_symmetric_concentration(
 ) -> f64 {
     let per_dim = concentration / num_dims as f64;
     let dg_per_dim = digamma(per_dim);
-    let dg_conc   = digamma(concentration);
+    let dg_conc = digamma(concentration);
 
     let numerator: f64 = count_hist
         .iter()
@@ -74,7 +73,7 @@ pub fn optimize_alpha(model: &mut TopicModel, corpus: &Corpus) {
     let max_len = corpus.docs.iter().map(|d| d.len()).max().unwrap_or(0);
 
     let mut doc_length_hist = vec![0u32; max_len + 1];
-    let mut topic_doc_hist  = vec![vec![0u32; max_len + 1]; model.num_topics];
+    let mut topic_doc_hist = vec![vec![0u32; max_len + 1]; model.num_topics];
 
     for doc_idx in 0..corpus.num_docs() {
         let doc_len = corpus.docs[doc_idx].len();
@@ -148,7 +147,10 @@ pub fn optimize_alpha_symmetric(model: &mut TopicModel, corpus: &Corpus) {
     }
 
     let new_sum = update_symmetric_concentration(
-        &count_hist, &doc_length_hist, model.num_topics, model.alpha_sum,
+        &count_hist,
+        &doc_length_hist,
+        model.num_topics,
+        model.alpha_sum,
     );
     model.alpha_sum = new_sum;
     let per_topic = new_sum / model.num_topics as f64;
@@ -196,6 +198,6 @@ pub fn optimize_beta(model: &mut TopicModel) {
         model.beta_sum,
     );
 
-    model.beta     = new_beta_sum / model.num_types as f64;
+    model.beta = new_beta_sum / model.num_types as f64;
     model.beta_sum = new_beta_sum;
 }

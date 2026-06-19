@@ -53,7 +53,12 @@ pub fn reduce(
 /// layout, and run the crate's layout optimization. Returns `n_rows ×
 /// n_components`, deterministic for a fixed `seed`. Only built under `umap`.
 #[cfg(feature = "umap")]
-pub fn umap(data: &[Vec<f64>], n_components: usize, n_neighbors: usize, seed: u64) -> Vec<Vec<f64>> {
+pub fn umap(
+    data: &[Vec<f64>],
+    n_components: usize,
+    n_neighbors: usize,
+    seed: u64,
+) -> Vec<Vec<f64>> {
     use ndarray::Array2;
     use rayon::prelude::*;
     use umap_rs::{GraphParams, Umap, UmapConfig};
@@ -67,7 +72,10 @@ pub fn umap(data: &[Vec<f64>], n_components: usize, n_neighbors: usize, seed: u6
     // we can supply at most n-1 neighbors.
     let k = n_neighbors.clamp(1, n.saturating_sub(1).max(1));
 
-    let data_f32: Vec<f32> = data.iter().flat_map(|r| r.iter().map(|&v| v as f32)).collect();
+    let data_f32: Vec<f32> = data
+        .iter()
+        .flat_map(|r| r.iter().map(|&v| v as f32))
+        .collect();
     let data_arr = Array2::from_shape_vec((n, dim), data_f32).expect("data shape");
 
     // Brute-force kNN graph, self excluded (umap-rs treats column 0 as a genuine
@@ -88,7 +96,10 @@ pub fn umap(data: &[Vec<f64>], n_components: usize, n_neighbors: usize, seed: u6
                 .collect();
             d.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
             d.truncate(k);
-            (d.iter().map(|&(_, j)| j).collect(), d.iter().map(|&(dd, _)| dd).collect())
+            (
+                d.iter().map(|&(_, j)| j).collect(),
+                d.iter().map(|&(dd, _)| dd).collect(),
+            )
         })
         .collect();
     let mut idx = Vec::with_capacity(n * k);
@@ -102,20 +113,37 @@ pub fn umap(data: &[Vec<f64>], n_components: usize, n_neighbors: usize, seed: u6
 
     // Random initial layout in a small range; the layout optimization expands it.
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let init_vec: Vec<f32> = (0..n * n_components).map(|_| rng.gen_range(-1.0f32..1.0)).collect();
+    let init_vec: Vec<f32> = (0..n * n_components)
+        .map(|_| rng.gen_range(-1.0f32..1.0))
+        .collect();
     let init = Array2::from_shape_vec((n, n_components), init_vec).expect("init shape");
 
     use umap_rs::{ManifoldParams, OptimizationParams};
     let config = UmapConfig {
         n_components,
-        graph: GraphParams { n_neighbors: k, ..Default::default() },
-        manifold: ManifoldParams { min_dist: 0.0, ..Default::default() },
-        optimization: OptimizationParams { n_epochs: Some(500), ..Default::default() },
+        graph: GraphParams {
+            n_neighbors: k,
+            ..Default::default()
+        },
+        manifold: ManifoldParams {
+            min_dist: 0.0,
+            ..Default::default()
+        },
+        optimization: OptimizationParams {
+            n_epochs: Some(500),
+            ..Default::default()
+        },
     };
-    let fitted =
-        Umap::new(config).fit(data_arr.view(), knn_indices.view(), knn_dists.view(), init.view());
+    let fitted = Umap::new(config).fit(
+        data_arr.view(),
+        knn_indices.view(),
+        knn_dists.view(),
+        init.view(),
+    );
     let emb = fitted.into_embedding();
-    (0..n).map(|i| (0..n_components).map(|c| emb[[i, c]] as f64).collect()).collect()
+    (0..n)
+        .map(|i| (0..n_components).map(|c| emb[[i, c]] as f64).collect())
+        .collect()
 }
 
 /// Whether the Barnes-Hut t-SNE reducer is compiled in (the `tsne` feature).
@@ -157,7 +185,11 @@ pub fn tsne(
         .collect();
     let samples: Vec<&[f32]> = owned.iter().map(|r| r.as_slice()).collect();
     let metric = |a: &&[f32], b: &&[f32]| -> f32 {
-        a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum::<f32>().sqrt()
+        a.iter()
+            .zip(b.iter())
+            .map(|(x, y)| (x - y).powi(2))
+            .sum::<f32>()
+            .sqrt()
     };
 
     let mut t = bhtsne::tSNE::new(&samples);
@@ -171,7 +203,11 @@ pub fn tsne(
     }
     let flat = t.embedding(); // row-major Vec<f32>, length n * n_components
     (0..n)
-        .map(|i| (0..n_components).map(|c| flat[i * n_components + c] as f64).collect())
+        .map(|i| {
+            (0..n_components)
+                .map(|c| flat[i * n_components + c] as f64)
+                .collect()
+        })
         .collect()
 }
 
@@ -482,7 +518,7 @@ pub fn jacobi_eigen_symmetric(a: &[f64], l: usize) -> (Vec<f64>, Vec<Vec<f64>>) 
         return (Vec::new(), Vec::new());
     }
     let mut m = a.to_vec(); // working copy, modified in place
-    // Accumulated rotations; v starts as the identity, columns end as eigenvectors.
+                            // Accumulated rotations; v starts as the identity, columns end as eigenvectors.
     let mut v = vec![0.0f64; l * l];
     for i in 0..l {
         v[i * l + i] = 1.0;
@@ -548,7 +584,11 @@ pub fn jacobi_eigen_symmetric(a: &[f64], l: usize) -> (Vec<f64>, Vec<Vec<f64>>) 
     // Diagonal of m holds the eigenvalues; column k of v is its eigenvector.
     let mut order: Vec<usize> = (0..l).collect();
     let diag: Vec<f64> = (0..l).map(|i| m[i * l + i]).collect();
-    order.sort_by(|&i, &j| diag[j].partial_cmp(&diag[i]).unwrap_or(std::cmp::Ordering::Equal));
+    order.sort_by(|&i, &j| {
+        diag[j]
+            .partial_cmp(&diag[i])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let eigenvalues: Vec<f64> = order.iter().map(|&k| diag[k]).collect();
     let eigenvectors: Vec<Vec<f64>> = order
@@ -572,10 +612,7 @@ mod tests {
     /// Build points that lie on a 2-D plane embedded in 5-D: random 2-D
     /// coordinates pushed through a fixed 2×5 basis, plus a constant offset.
     fn plane_in_5d(n: usize) -> (Vec<[f64; 2]>, Vec<Vec<f64>>) {
-        let basis: [[f64; 5]; 2] = [
-            [1.0, 0.5, -0.3, 0.2, 0.8],
-            [-0.4, 1.2, 0.7, -0.6, 0.1],
-        ];
+        let basis: [[f64; 5]; 2] = [[1.0, 0.5, -0.3, 0.2, 0.8], [-0.4, 1.2, 0.7, -0.6, 0.1]];
         let offset = [3.0, -1.0, 2.0, 0.5, -2.5];
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let mut coords = Vec::with_capacity(n);
@@ -689,10 +726,16 @@ mod tests {
         // Leading eigenvector aligns with (1, 1) up to sign.
         let v = &vecs[0];
         assert!((v[0].abs() - v[1].abs()).abs() < 1e-9);
-        assert!(v[0] * v[1] > 0.0, "leading eigenvector should have equal signs");
+        assert!(
+            v[0] * v[1] > 0.0,
+            "leading eigenvector should have equal signs"
+        );
         // Second eigenvector aligns with (1, -1).
         let w = &vecs[1];
-        assert!(w[0] * w[1] < 0.0, "second eigenvector should have opposite signs");
+        assert!(
+            w[0] * w[1] < 0.0,
+            "second eigenvector should have opposite signs"
+        );
     }
 
     #[test]
@@ -737,7 +780,10 @@ mod umap_tests {
         let emb = umap(&data, 2, 10, 1);
         assert_eq!(emb.len(), data.len());
         assert_eq!(emb[0].len(), 2);
-        assert!(emb.iter().all(|r| r.iter().all(|v| v.is_finite())), "embedding has NaN");
+        assert!(
+            emb.iter().all(|r| r.iter().all(|v| v.is_finite())),
+            "embedding has NaN"
+        );
         // Note: we do not assert clean cluster separation here. umap-rs embeds a
         // fully disconnected kNN graph (which cleanly separated blobs produce)
         // poorly; separation is validated on real connected embeddings instead.
@@ -761,8 +807,9 @@ mod tsne_tests {
             let mut center = vec![0.0; dim];
             center[c] = 20.0;
             for _ in 0..30 {
-                let row: Vec<f64> =
-                    (0..dim).map(|t| center[t] + (rng.gen::<f64>() - 0.5) * 4.0).collect();
+                let row: Vec<f64> = (0..dim)
+                    .map(|t| center[t] + (rng.gen::<f64>() - 0.5) * 4.0)
+                    .collect();
                 data.push(row);
                 truth.push(c);
             }
@@ -770,7 +817,10 @@ mod tsne_tests {
         let emb = tsne(&data, 2, 30.0, 0.5, 500, 0);
         assert_eq!(emb.len(), data.len());
         assert_eq!(emb[0].len(), 2);
-        assert!(emb.iter().all(|r| r.iter().all(|v| v.is_finite())), "embedding has NaN");
+        assert!(
+            emb.iter().all(|r| r.iter().all(|v| v.is_finite())),
+            "embedding has NaN"
+        );
         // Per-blob 2-D centroids, then check each point is nearest its own.
         let mut cents = vec![[0.0f64; 2]; 3];
         let mut counts = vec![0.0f64; 3];
@@ -797,17 +847,23 @@ mod tsne_tests {
             }
         }
         // Allow a few stragglers; the embedding is stochastic and unseeded.
-        assert!(correct as f64 / truth.len() as f64 > 0.9, "t-SNE did not separate blobs");
+        assert!(
+            correct as f64 / truth.len() as f64 > 0.9,
+            "t-SNE did not separate blobs"
+        );
     }
 
     // The dispatcher routes "tsne" to the t-SNE reducer and yields finite 2-D points.
     #[test]
     fn project_routes_tsne() {
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        let data: Vec<Vec<f64>> =
-            (0..20).map(|_| (0..6).map(|_| rng.gen::<f64>()).collect()).collect();
+        let data: Vec<Vec<f64>> = (0..20)
+            .map(|_| (0..6).map(|_| rng.gen::<f64>()).collect())
+            .collect();
         let emb = project(&data, 2, "tsne", 15, 30.0, 0.5, 250, 0);
         assert_eq!(emb.len(), 20);
-        assert!(emb.iter().all(|r| r.len() == 2 && r.iter().all(|v| v.is_finite())));
+        assert!(emb
+            .iter()
+            .all(|r| r.len() == 2 && r.iter().all(|v| v.is_finite())));
     }
 }

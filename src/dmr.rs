@@ -265,11 +265,7 @@ mod tests {
     fn gradient_matches_finite_difference() {
         let num_topics = 3;
         let num_features = 2;
-        let lambda = vec![
-            vec![0.1, -0.2],
-            vec![-0.3, 0.4],
-            vec![0.05, 0.15],
-        ];
+        let lambda = vec![vec![0.1, -0.2], vec![-0.3, 0.4], vec![0.05, 0.15]];
         let features = vec![
             vec![1.0, 0.5],
             vec![1.0, -1.0],
@@ -285,7 +281,13 @@ mod tests {
         let sigma2 = 10.0;
 
         let (_, grad) = dmr_objective_and_gradient(
-            &lambda, &features, &counts, num_topics, num_features, sigma2, None,
+            &lambda,
+            &features,
+            &counts,
+            num_topics,
+            num_features,
+            sigma2,
+            None,
         );
 
         let eps = 1e-6;
@@ -295,15 +297,32 @@ mod tests {
                 let mut lm = lambda.clone();
                 lp[t][f] += eps;
                 lm[t][f] -= eps;
-                let (vp, _) =
-                    dmr_objective_and_gradient(&lp, &features, &counts, num_topics, num_features, sigma2, None);
-                let (vm, _) =
-                    dmr_objective_and_gradient(&lm, &features, &counts, num_topics, num_features, sigma2, None);
+                let (vp, _) = dmr_objective_and_gradient(
+                    &lp,
+                    &features,
+                    &counts,
+                    num_topics,
+                    num_features,
+                    sigma2,
+                    None,
+                );
+                let (vm, _) = dmr_objective_and_gradient(
+                    &lm,
+                    &features,
+                    &counts,
+                    num_topics,
+                    num_features,
+                    sigma2,
+                    None,
+                );
                 let numeric = (vp - vm) / (2.0 * eps);
                 assert!(
                     (numeric - grad[t][f]).abs() < 1e-4,
                     "grad[{}][{}]: analytic {} vs numeric {}",
-                    t, f, grad[t][f], numeric
+                    t,
+                    f,
+                    grad[t][f],
+                    numeric
                 );
             }
         }
@@ -329,7 +348,16 @@ mod tests {
             }
         }
         let mut lambda = vec![vec![0.0f64; num_features]; num_topics];
-        optimize_lambda(&mut lambda, &features, &counts, num_topics, num_features, 100.0, 100, None);
+        optimize_lambda(
+            &mut lambda,
+            &features,
+            &counts,
+            num_topics,
+            num_features,
+            100.0,
+            100,
+            None,
+        );
 
         // The covariate weight should push topic 1 up and topic 0 down.
         let effect_topic1 = lambda[1][1] - lambda[0][1];
@@ -340,4 +368,3 @@ mod tests {
         );
     }
 }
-

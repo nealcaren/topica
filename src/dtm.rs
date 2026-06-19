@@ -18,8 +18,8 @@
 //! (`INIT_VARIANCE_CONST = 1000`, `OBS_NORM_CUTOFF = 2`, chain/obs variance
 //! defaults 0.005 / 0.5), so results track the reference implementation.
 
-use crate::variational::lbfgs_minimize;
 use crate::optimize::digamma;
+use crate::variational::lbfgs_minimize;
 use rand::Rng;
 use rayon::prelude::*;
 
@@ -95,14 +95,22 @@ impl Sslm {
         let fv = &mut self.fwd_variance[w];
         fv[0] = cv * INIT_VARIANCE_CONST;
         for i in 1..=t {
-            let c = if ov != 0.0 { ov / (fv[i - 1] + cv + ov) } else { 0.0 };
+            let c = if ov != 0.0 {
+                ov / (fv[i - 1] + cv + ov)
+            } else {
+                0.0
+            };
             fv[i] = c * (fv[i - 1] + cv);
         }
         let var = &mut self.variance[w];
         var[t] = self.fwd_variance[w][t];
         for i in (0..t).rev() {
             let fvt = self.fwd_variance[w][i];
-            let c = if fvt > 0.0 { (fvt / (fvt + cv)).powi(2) } else { 0.0 };
+            let c = if fvt > 0.0 {
+                (fvt / (fvt + cv)).powi(2)
+            } else {
+                0.0
+            };
             var[i] = c * (var[i + 1] - cv) + (1.0 - c) * fvt;
         }
     }
@@ -118,7 +126,11 @@ impl Sslm {
         }
         self.mean[w][t] = self.fwd_mean[w][t];
         for i in (0..t).rev() {
-            let c = if cv == 0.0 { 0.0 } else { cv / (self.fwd_variance[w][i] + cv) };
+            let c = if cv == 0.0 {
+                0.0
+            } else {
+                cv / (self.fwd_variance[w][i] + cv)
+            };
             self.mean[w][i] = c * self.fwd_mean[w][i] + (1.0 - c) * self.mean[w][i + 1];
         }
     }
@@ -149,7 +161,11 @@ impl Sslm {
         let var = &self.variance[w];
         let mut deriv = vec![0.0; t + 1];
         for i in 1..=t {
-            let coef = if ov > 0.0 { ov / (var[i - 1] + cv + ov) } else { 0.0 };
+            let coef = if ov > 0.0 {
+                ov / (var[i - 1] + cv + ov)
+            } else {
+                0.0
+            };
             let mut val = coef * deriv[i - 1];
             if time == i - 1 {
                 val += 1.0 - coef;
@@ -177,7 +193,11 @@ fn post_mean_from_obs(obs: &[f64], fwd_variance: &[f64], cv: f64, ov: f64) -> Ve
     let mut mean = vec![0.0; t + 1];
     mean[t] = fwd_mean[t];
     for i in (0..t).rev() {
-        let c = if cv == 0.0 { 0.0 } else { cv / (fwd_variance[i] + cv) };
+        let c = if cv == 0.0 {
+            0.0
+        } else {
+            cv / (fwd_variance[i] + cv)
+        };
         mean[i] = c * fwd_mean[i] + (1.0 - c) * mean[i + 1];
     }
     mean
@@ -185,15 +205,22 @@ fn post_mean_from_obs(obs: &[f64], fwd_variance: &[f64], cv: f64, ov: f64) -> Ve
 
 /// `f_obs` from gensim: the (negated) state-space bound as a function of the
 /// observations, evaluated through the resulting posterior `mean`.
-fn f_obs_val(mean: &[f64], variance: &[f64], wc: &[f64], totals: &[f64], zeta: &[f64], cv: f64) -> f64 {
+fn f_obs_val(
+    mean: &[f64],
+    variance: &[f64],
+    wc: &[f64],
+    totals: &[f64],
+    zeta: &[f64],
+    cv: f64,
+) -> f64 {
     let t = wc.len();
     let mut term1 = 0.0;
     let mut term2 = 0.0;
     for i in 1..=t {
         let d = mean[i] - mean[i - 1];
         term1 += d * d;
-        term2 += wc[i - 1] * mean[i]
-            - totals[i - 1] * (mean[i] + variance[i] / 2.0).exp() / zeta[i - 1];
+        term2 +=
+            wc[i - 1] * mean[i] - totals[i - 1] * (mean[i] + variance[i] / 2.0).exp() / zeta[i - 1];
     }
     if cv > 0.0 {
         term1 = -(term1 / (2.0 * cv)) - mean[0] * mean[0] / (2.0 * INIT_VARIANCE_CONST * cv);
@@ -215,7 +242,9 @@ fn obs_deriv(
     cv: f64,
 ) -> Vec<f64> {
     let t = wc.len();
-    let temp_vect: Vec<f64> = (0..t).map(|u| (mean[u + 1] + variance[u + 1] / 2.0).exp()).collect();
+    let temp_vect: Vec<f64> = (0..t)
+        .map(|u| (mean[u + 1] + variance[u + 1] / 2.0).exp())
+        .collect();
     let mut deriv = vec![0.0; t];
     for (slot, md) in deriv.iter_mut().zip(mean_deriv_mtx) {
         let mut term1 = 0.0;
@@ -268,7 +297,9 @@ impl Sslm {
             self.compute_post_mean(w);
         }
         self.update_zeta();
-        let mut val: f64 = (0..v).map(|w| self.variance[w][0] - self.variance[w][t]).sum();
+        let mut val: f64 = (0..v)
+            .map(|w| self.variance[w][0] - self.variance[w][t])
+            .sum();
         // (val / 2) * cv, matching gensim's sslm.compute_bound verbatim:
         //   val = sum(variance[w][0] - variance[w][t]) / 2 * chain_variance
         // (ldaseqmodel.py; `/ 2 * cv` is left-associative, i.e. a *multiply* by cv).
@@ -316,7 +347,15 @@ impl Sslm {
             let obj = |x: &[f64]| -> (f64, Vec<f64>) {
                 let mean = post_mean_from_obs(x, &fwd_variance_w, cv, ov);
                 let f = f_obs_val(&mean, &variance_w, &wc, &totals_v, &zeta, cv);
-                let mut d = obs_deriv(&mean, &variance_w, &mean_deriv_mtx, &zeta, &wc, &totals_v, cv);
+                let mut d = obs_deriv(
+                    &mean,
+                    &variance_w,
+                    &mean_deriv_mtx,
+                    &zeta,
+                    &wc,
+                    &totals_v,
+                    cv,
+                );
                 for di in d.iter_mut() {
                     *di = -*di; // gensim's df_obs returns the negated gradient
                 }
@@ -471,7 +510,9 @@ impl DtmModel {
 
     /// The full (num_topics × num_words) topic-word matrix at one slice.
     pub fn topic_word_matrix(&self, time: usize) -> Vec<Vec<f64>> {
-        (0..self.num_topics).map(|k| self.topic_word(k, time)).collect()
+        (0..self.num_topics)
+            .map(|k| self.topic_word(k, time))
+            .collect()
     }
 }
 
@@ -590,7 +631,8 @@ pub fn fit_dtm<R: Rng>(
     let bags: Vec<Vec<(usize, f64)>> = docs
         .iter()
         .map(|doc| {
-            let mut counts: std::collections::BTreeMap<usize, f64> = std::collections::BTreeMap::new();
+            let mut counts: std::collections::BTreeMap<usize, f64> =
+                std::collections::BTreeMap::new();
             for &w in doc {
                 *counts.entry(w as usize).or_insert(0.0) += 1.0;
             }
@@ -641,7 +683,14 @@ pub fn fit_dtm<R: Rng>(
         }
     }
 
-    DtmModel { num_topics: k, num_times: t, num_types: v, alpha, chains, bound }
+    DtmModel {
+        num_topics: k,
+        num_times: t,
+        num_types: v,
+        alpha,
+        chains,
+        bound,
+    }
 }
 
 use crate::estimator::{Estimator, ModelFamily};
@@ -699,7 +748,9 @@ mod tests {
                 docs.push(vec![aw[0], aw[1], aw[2], aw[0], aw[1], aw[2]]);
                 times.push(slice);
                 // topic-B document
-                docs.push(vec![b_words[0], b_words[1], b_words[2], b_words[0], b_words[1], b_words[2]]);
+                docs.push(vec![
+                    b_words[0], b_words[1], b_words[2], b_words[0], b_words[1], b_words[2],
+                ]);
                 times.push(slice);
             }
         }
@@ -712,7 +763,9 @@ mod tests {
         // slices; the other should be the stable {10,11,12} topic.
         let top_at = |k: usize, t: usize| -> usize {
             let d = model.topic_word(k, t);
-            (0..v).max_by(|&a, &b| d[a].partial_cmp(&d[b]).unwrap()).unwrap()
+            (0..v)
+                .max_by(|&a, &b| d[a].partial_cmp(&d[b]).unwrap())
+                .unwrap()
         };
         let drift_topic = (0..2)
             .find(|&k| top_at(k, 0) != top_at(k, 2))
@@ -727,8 +780,14 @@ mod tests {
         let d2 = model.topic_word(drift_topic, 2);
         let early_block = |d: &[f64]| -> f64 { [0usize, 1, 2].iter().map(|&w| d[w]).sum() };
         let late_block = |d: &[f64]| -> f64 { [4usize, 5, 6].iter().map(|&w| d[w]).sum() };
-        assert!(top_at(drift_topic, 0) <= 2, "t=0 top word not in early block");
-        assert!((4..=6).contains(&top_at(drift_topic, 2)), "t=2 top word not in late block");
+        assert!(
+            top_at(drift_topic, 0) <= 2,
+            "t=0 top word not in early block"
+        );
+        assert!(
+            (4..=6).contains(&top_at(drift_topic, 2)),
+            "t=2 top word not in late block"
+        );
         assert!(
             late_block(&d2) > late_block(&d0),
             "late-block mass should grow over time: t0={} t2={}",

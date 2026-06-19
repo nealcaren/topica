@@ -1,6 +1,6 @@
-use rand::Rng;
 use crate::corpus::Corpus;
-use crate::estimator::{Estimator, ModelFamily, DirichletModel};
+use crate::estimator::{DirichletModel, Estimator, ModelFamily};
+use rand::Rng;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct TopicModel {
@@ -91,7 +91,9 @@ impl TopicModel {
             .iter()
             .zip(self.doc_topics.iter())
             .flat_map(|(doc, topics)| {
-                doc.iter().map(|&w| w as usize).zip(topics.iter().map(|&t| t as usize))
+                doc.iter()
+                    .map(|&w| w as usize)
+                    .zip(topics.iter().map(|&t| t as usize))
             })
             .collect();
 
@@ -123,7 +125,9 @@ impl TopicModel {
             .iter()
             .zip(self.doc_topics.iter())
             .flat_map(|(doc, topics)| {
-                doc.iter().map(|&w| w as usize).zip(topics.iter().map(|&t| t as usize))
+                doc.iter()
+                    .map(|&w| w as usize)
+                    .zip(topics.iter().map(|&t| t as usize))
             })
             .collect();
         for (word_id, topic) in assignments {
@@ -143,12 +147,7 @@ impl TopicModel {
     /// Deterministic given `rng`. Equivalent in every other respect to
     /// [`Self::initialize`] (same count-table sizing and accumulation); only
     /// the initial topic draw differs.
-    pub fn initialize_spectral<R: Rng>(
-        &mut self,
-        corpus: &Corpus,
-        beta: &[Vec<f64>],
-        rng: &mut R,
-    ) {
+    pub fn initialize_spectral<R: Rng>(&mut self, corpus: &Corpus, beta: &[Vec<f64>], rng: &mut R) {
         let k = self.num_topics;
 
         let mut type_totals = vec![0usize; self.num_types];
@@ -204,7 +203,9 @@ impl TopicModel {
             .iter()
             .zip(self.doc_topics.iter())
             .flat_map(|(doc, topics)| {
-                doc.iter().map(|&w| w as usize).zip(topics.iter().map(|&t| t as usize))
+                doc.iter()
+                    .map(|&w| w as usize)
+                    .zip(topics.iter().map(|&t| t as usize))
             })
             .collect();
         for (word_id, topic) in assignments {
@@ -242,8 +243,6 @@ impl TopicModel {
             index -= 1;
         }
     }
-
-
 
     /// Decrement the count for (word_id, topic) in type_topic_counts,
     /// maintaining descending sort (mirror of `increment_type_topic`, used by
@@ -302,11 +301,12 @@ impl TopicModel {
             .map(|t| self.beta_sum + self.tokens_per_topic[t] as f64)
             .collect();
         // start every cell at the no-count value β/denom
-        let mut phi: Vec<Vec<f64>> =
-            (0..k).map(|t| vec![self.beta / denom[t]; v]).collect();
+        let mut phi: Vec<Vec<f64>> = (0..k).map(|t| vec![self.beta / denom[t]; v]).collect();
         for w in 0..v {
             for &entry in &self.type_topic_counts[w] {
-                if entry == 0 { break; }
+                if entry == 0 {
+                    break;
+                }
                 let t = (entry & self.topic_mask) as usize;
                 let count = (entry >> self.topic_bits) as f64;
                 phi[t][w] = (self.beta + count) / denom[t];
@@ -323,7 +323,9 @@ impl TopicModel {
             .iter()
             .map(|topics| {
                 let mut cnt = vec![0.0f64; k];
-                for &t in topics { cnt[t as usize] += 1.0; }
+                for &t in topics {
+                    cnt[t as usize] += 1.0;
+                }
                 let denom = topics.len() as f64 + self.alpha_sum;
                 (0..k).map(|t| (cnt[t] + self.alpha[t]) / denom).collect()
             })
@@ -332,18 +334,36 @@ impl TopicModel {
 }
 
 impl Estimator for TopicModel {
-    fn num_topics(&self) -> usize { self.num_topics }
-    fn topic_word(&self) -> Vec<Vec<f64>> { TopicModel::topic_word(self) }
-    fn doc_topic(&self) -> Vec<Vec<f64>> { TopicModel::doc_topic(self) }
-    fn fit_history(&self) -> Vec<(usize, f64)> { Vec::new() }
-    fn converged(&self) -> Option<bool> { None }
-    fn model_family(&self) -> ModelFamily { ModelFamily::Dirichlet }
+    fn num_topics(&self) -> usize {
+        self.num_topics
+    }
+    fn topic_word(&self) -> Vec<Vec<f64>> {
+        TopicModel::topic_word(self)
+    }
+    fn doc_topic(&self) -> Vec<Vec<f64>> {
+        TopicModel::doc_topic(self)
+    }
+    fn fit_history(&self) -> Vec<(usize, f64)> {
+        Vec::new()
+    }
+    fn converged(&self) -> Option<bool> {
+        None
+    }
+    fn model_family(&self) -> ModelFamily {
+        ModelFamily::Dirichlet
+    }
 }
 
 impl DirichletModel for TopicModel {
-    fn alpha(&self) -> Vec<f64> { self.alpha.clone() }
-    fn theta_draws(&self) -> Vec<Vec<Vec<f64>>> { Vec::new() }
-    fn doc_lengths(&self) -> Vec<usize> { self.doc_topics.iter().map(|d| d.len()).collect() }
+    fn alpha(&self) -> Vec<f64> {
+        self.alpha.clone()
+    }
+    fn theta_draws(&self) -> Vec<Vec<Vec<f64>>> {
+        Vec::new()
+    }
+    fn doc_lengths(&self) -> Vec<usize> {
+        self.doc_topics.iter().map(|d| d.len()).collect()
+    }
 }
 
 #[cfg(test)]

@@ -52,8 +52,8 @@
 //!            × (γ₁ + nk1[k]) / (γ₁+γ₂ + nk0[k]+nk1[k])
 //! ```
 
+use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 use rand::Rng;
-use crate::estimator::{Estimator, ModelFamily, DirichletModel};
 
 // ---------------------------------------------------------------------------
 // Token weighting (keyATM's "weighted LDA")
@@ -495,27 +495,50 @@ impl KeyAtmModel {
 }
 
 impl Estimator for KeyAtmModel {
-    fn num_topics(&self) -> usize { self.num_topics }
-    fn topic_word(&self) -> Vec<Vec<f64>> { self.topic_word_all() }
-    fn doc_topic(&self) -> Vec<Vec<f64>> { self.doc_topic() }
-    fn fit_history(&self) -> Vec<(usize, f64)> {
-        self.log_likelihood_history.iter().map(|&(i, ll, _)| (i, ll)).collect()
+    fn num_topics(&self) -> usize {
+        self.num_topics
     }
-    fn converged(&self) -> Option<bool> { Some(self.converged) }
-    fn model_family(&self) -> ModelFamily { ModelFamily::Dirichlet }
+    fn topic_word(&self) -> Vec<Vec<f64>> {
+        self.topic_word_all()
+    }
+    fn doc_topic(&self) -> Vec<Vec<f64>> {
+        self.doc_topic()
+    }
+    fn fit_history(&self) -> Vec<(usize, f64)> {
+        self.log_likelihood_history
+            .iter()
+            .map(|&(i, ll, _)| (i, ll))
+            .collect()
+    }
+    fn converged(&self) -> Option<bool> {
+        Some(self.converged)
+    }
+    fn model_family(&self) -> ModelFamily {
+        ModelFamily::Dirichlet
+    }
 }
 
 impl DirichletModel for KeyAtmModel {
     fn alpha(&self) -> Vec<f64> {
-        self.alpha_vec.clone().unwrap_or_else(|| vec![self.alpha; self.num_topics])
+        self.alpha_vec
+            .clone()
+            .unwrap_or_else(|| vec![self.alpha; self.num_topics])
     }
     fn theta_draws(&self) -> Vec<Vec<Vec<f64>>> {
-        self.theta_draws.iter().map(|d| {
-            d.iter().map(|r| r.iter().map(|&x| x as f64).collect()).collect()
-        }).collect()
+        self.theta_draws
+            .iter()
+            .map(|d| {
+                d.iter()
+                    .map(|r| r.iter().map(|&x| x as f64).collect())
+                    .collect()
+            })
+            .collect()
     }
     fn doc_lengths(&self) -> Vec<usize> {
-        self.ndk.iter().map(|r| r.iter().sum::<f64>() as usize).collect()
+        self.ndk
+            .iter()
+            .map(|r| r.iter().sum::<f64>() as usize)
+            .collect()
     }
 }
 
@@ -645,7 +668,10 @@ impl KeywordIndex {
     /// cheaper than the hash map it replaces.
     #[inline]
     fn keyword_index(&self, k: usize, w: usize) -> Option<usize> {
-        self.by_word[w].iter().find(|&&(t, _)| t == k).map(|&(_, j)| j)
+        self.by_word[w]
+            .iter()
+            .find(|&&(t, _)| t == k)
+            .map(|&(_, j)| j)
     }
 }
 
@@ -709,7 +735,9 @@ fn resample_token_inner<R: Rng>(
         nkw_t_row[old_z] -= wt;
         nk0[old_z] -= wt;
     } else {
-        let j = ki.keyword_index(old_z, w).expect("old s=1 but w not a keyword");
+        let j = ki
+            .keyword_index(old_z, w)
+            .expect("old s=1 but w not a keyword");
         nkx[old_z][j] -= wt;
         nk1[old_z] -= wt;
     }
@@ -760,7 +788,9 @@ fn resample_token_inner<R: Rng>(
         nkw_t_row[new_k] += wt;
         nk0[new_k] += wt;
     } else {
-        let j = ki.keyword_index(new_k, w).expect("new s=1 but w not a keyword");
+        let j = ki
+            .keyword_index(new_k, w)
+            .expect("new s=1 but w not a keyword");
         nkx[new_k][j] += wt;
         nk1[new_k] += wt;
     }
@@ -817,9 +847,22 @@ fn sweep<R: Rng>(
             let wt = model.vocab_weights[w];
             let (old_z, old_s) = assignments[d][pos];
             let (new_z, new_s) = resample_token_inner(
-                &mut model.nkw, &mut nkw_t[w], &mut model.nk0, &mut model.nkx, &mut model.nk1,
-                &mut model.ndk[d], &model.l, ki, p, alpha_row, w, wt, old_z, old_s,
-                &mut scratch, rng,
+                &mut model.nkw,
+                &mut nkw_t[w],
+                &mut model.nk0,
+                &mut model.nkx,
+                &mut model.nk1,
+                &mut model.ndk[d],
+                &model.l,
+                ki,
+                p,
+                alpha_row,
+                w,
+                wt,
+                old_z,
+                old_s,
+                &mut scratch,
+                rng,
             );
             assignments[d][pos] = (new_z, new_s);
         }
@@ -857,8 +900,8 @@ fn parallel_sweep_keyatm(
     num_threads: usize,
     sweep_seed: u64,
 ) {
-    use rand_pcg::Pcg64Mcg;
     use rand::SeedableRng;
+    use rand_pcg::Pcg64Mcg;
     use rayon::prelude::*;
 
     let p = sample_params(model);
@@ -910,8 +953,22 @@ fn parallel_sweep_keyatm(
                     let wt = vocab_weights[w];
                     let (old_z, old_s) = asgn[li][pos];
                     let (new_z, new_s) = resample_token_inner(
-                        &mut nkw, &mut local_t[w], &mut nk0, &mut nkx, &mut nk1, &mut ndk[li],
-                        l, ki, p, alpha_row, w, wt, old_z, old_s, &mut scratch, &mut rng,
+                        &mut nkw,
+                        &mut local_t[w],
+                        &mut nk0,
+                        &mut nkx,
+                        &mut nk1,
+                        &mut ndk[li],
+                        l,
+                        ki,
+                        p,
+                        alpha_row,
+                        w,
+                        wt,
+                        old_z,
+                        old_s,
+                        &mut scratch,
+                        &mut rng,
                     );
                     asgn[li][pos] = (new_z, new_s);
                 }
@@ -920,7 +977,16 @@ fn parallel_sweep_keyatm(
             let mut touched: Vec<u32> = docs[start..end].iter().flatten().copied().collect();
             touched.sort_unstable();
             touched.dedup();
-            WorkerOut { nkw, nk0, nkx, nk1, start, ndk, asgn, touched }
+            WorkerOut {
+                nkw,
+                nk0,
+                nkx,
+                nk1,
+                start,
+                ndk,
+                asgn,
+                touched,
+            }
         })
         .collect();
 
@@ -1004,7 +1070,16 @@ fn run_sweep<R: Rng>(
         sweep(model, docs, assignments, nkw_t, ki, doc_alpha, rng);
     } else {
         let seed: u64 = rng.gen();
-        parallel_sweep_keyatm(model, docs, assignments, nkw_t, ki, doc_alpha, num_threads, seed);
+        parallel_sweep_keyatm(
+            model,
+            docs,
+            assignments,
+            nkw_t,
+            ki,
+            doc_alpha,
+            num_threads,
+            seed,
+        );
     }
 }
 
@@ -1083,11 +1158,32 @@ pub fn fit_keyatm<R: Rng>(
     let mut nkw_t = build_nkw_t(&model.nkw, num_types, num_topics);
 
     for it in 0..iters {
-        run_sweep(&mut model, docs, &mut assignments, &mut nkw_t, &ki, &doc_alpha, num_threads, rng);
+        run_sweep(
+            &mut model,
+            docs,
+            &mut assignments,
+            &mut nkw_t,
+            &ki,
+            &doc_alpha,
+            num_threads,
+            rng,
+        );
         if estimate_alpha {
             dyn_sample_alpha_state(
-                &mut alpha_vec, num_keyword_topics, 0, docs.len() - 1, &model.ndk, &doc_len,
-                1.0, 1.0, 2.0, 1.0, min_v, max_v, alpha_stride, rng,
+                &mut alpha_vec,
+                num_keyword_topics,
+                0,
+                docs.len() - 1,
+                &model.ndk,
+                &doc_len,
+                1.0,
+                1.0,
+                2.0,
+                1.0,
+                min_v,
+                max_v,
+                alpha_stride,
+                rng,
             );
             for row in doc_alpha.iter_mut() {
                 row.clone_from(&alpha_vec);
@@ -1173,7 +1269,8 @@ fn init_state<R: Rng>(
                     let (z, s): (usize, u8) = if cands.is_empty() {
                         ((rng.gen::<f64>() * k as f64) as usize % k, 0)
                     } else {
-                        let z = cands[(rng.gen::<f64>() * cands.len() as f64) as usize % cands.len()];
+                        let z =
+                            cands[(rng.gen::<f64>() * cands.len() as f64) as usize % cands.len()];
                         (z, 1)
                     };
                     ndk[d][z] += wt;
@@ -1251,7 +1348,11 @@ pub fn fit_keyatm_cvb0<R: Rng>(
     weights: WeightScheme,
     rng: &mut R,
 ) -> KeyAtmModel {
-    assert_eq!(keywords.len(), num_topics, "keywords length must equal num_topics");
+    assert_eq!(
+        keywords.len(),
+        num_topics,
+        "keywords length must equal num_topics"
+    );
     let (mut model, _assign, ki) = init_state(
         docs, num_types, num_topics, keywords, alpha, beta, beta_key, gamma1, gamma2, weights, rng,
     );
@@ -1278,8 +1379,14 @@ pub fn fit_keyatm_cvb0<R: Rng>(
     for row in model.ndk.iter_mut() {
         row.iter_mut().for_each(|x| *x = 0.0);
     }
-    model.nkw.iter_mut().for_each(|r| r.iter_mut().for_each(|x| *x = 0.0));
-    model.nkx.iter_mut().for_each(|r| r.iter_mut().for_each(|x| *x = 0.0));
+    model
+        .nkw
+        .iter_mut()
+        .for_each(|r| r.iter_mut().for_each(|x| *x = 0.0));
+    model
+        .nkx
+        .iter_mut()
+        .for_each(|r| r.iter_mut().for_each(|x| *x = 0.0));
     model.nk0.iter_mut().for_each(|x| *x = 0.0);
     model.nk1.iter_mut().for_each(|x| *x = 0.0);
 
@@ -1360,8 +1467,8 @@ pub fn fit_keyatm_cvb0<R: Rng>(
                     let ndk_val = model.ndk[d][t] + alpha;
                     let lk = model.l[t] as f64;
                     let key = (model.nkx[t][j] + beta_key) / (lk * beta_key + model.nk1[t]);
-                    let sw1 = (gamma1 + model.nk1[t])
-                        / (gamma1 + gamma2 + model.nk0[t] + model.nk1[t]);
+                    let sw1 =
+                        (gamma1 + model.nk1[t]) / (gamma1 + gamma2 + model.nk0[t] + model.nk1[t]);
                     let val = ndk_val * key * sw1;
                     let val = if val > 0.0 { val } else { 0.0 };
                     g1[d][ci][idx] = val;
@@ -1429,7 +1536,11 @@ impl ThetaDrawOpts {
     /// snapshots over the run so the ring-buffered `cap` land in the back half.
     pub fn new(keep: bool, num_draws: usize, iters: usize) -> Self {
         let cap = if keep { num_draws } else { 0 };
-        let thin = if cap == 0 { 0 } else { (iters / (2 * cap)).max(1) };
+        let thin = if cap == 0 {
+            0
+        } else {
+            (iters / (2 * cap)).max(1)
+        };
         ThetaDrawOpts { cap, thin }
     }
 
@@ -1495,10 +1606,22 @@ pub fn fit_keyatm_cov<R: Rng>(
     convergence_tol: f64,
     rng: &mut R,
 ) -> KeyAtmModel {
-    assert_eq!(keywords.len(), num_topics, "keywords length must equal num_topics");
-    assert_eq!(features.len(), docs.len(), "features rows must equal number of documents");
+    assert_eq!(
+        keywords.len(),
+        num_topics,
+        "keywords length must equal num_topics"
+    );
+    assert_eq!(
+        features.len(),
+        docs.len(),
+        "features rows must equal number of documents"
+    );
     if let Some(off) = offset {
-        assert_eq!(off.len(), docs.len(), "offset rows must equal number of documents");
+        assert_eq!(
+            off.len(),
+            docs.len(),
+            "offset rows must equal number of documents"
+        );
         assert!(
             off.iter().all(|r| r.len() == num_topics),
             "offset columns must equal num_topics"
@@ -1522,7 +1645,16 @@ pub fn fit_keyatm_cov<R: Rng>(
     let mut nkw_t = build_nkw_t(&model.nkw, num_types, num_topics);
 
     for it in 0..iters {
-        run_sweep(&mut model, docs, &mut assignments, &mut nkw_t, &ki, &doc_alpha, num_threads, rng);
+        run_sweep(
+            &mut model,
+            docs,
+            &mut assignments,
+            &mut nkw_t,
+            &ki,
+            &doc_alpha,
+            num_threads,
+            rng,
+        );
         if opt_interval > 0 && it + 1 > burn_in && (it + 1 - burn_in) % opt_interval == 0 {
             crate::dmr::optimize_lambda(
                 &mut lambda,
@@ -1603,7 +1735,16 @@ fn dyn_alpha_loglik_sub(
     stride: usize,
 ) -> f64 {
     if stride <= 1 {
-        return dyn_alpha_loglik(alpha, k, doc_start, doc_end, ndk, doc_len, prior_shape, prior_scale);
+        return dyn_alpha_loglik(
+            alpha,
+            k,
+            doc_start,
+            doc_end,
+            ndk,
+            doc_len,
+            prior_shape,
+            prior_scale,
+        );
     }
     let alpha_sum: f64 = alpha.iter().sum();
     let fixed = lgamma(alpha_sum) - lgamma(alpha[k]);
@@ -1681,19 +1822,22 @@ fn dyn_sample_alpha_state<R: Rng>(
         };
 
         let keep = alpha[k];
-        let store_loglik =
-            dyn_alpha_loglik_sub(alpha, k, doc_start, doc_end, ndk, doc_len, shape, scale, stride);
+        let store_loglik = dyn_alpha_loglik_sub(
+            alpha, k, doc_start, doc_end, ndk, doc_len, shape, scale, stride,
+        );
 
         let mut start = min_v;
         let mut end = max_v;
         let previous_p = shrinkp(alpha[k]);
-        let slice_ = store_loglik - 2.0 * (1.0 - previous_p).ln() + rng.gen::<f64>().max(1e-300).ln();
+        let slice_ =
+            store_loglik - 2.0 * (1.0 - previous_p).ln() + rng.gen::<f64>().max(1e-300).ln();
 
         for _ in 0..MAX_SHRINK_TIME {
             let new_p = start + (end - start) * rng.gen::<f64>();
             alpha[k] = new_p / (1.0 - new_p); // expandp
-            let new_loglik =
-                dyn_alpha_loglik_sub(alpha, k, doc_start, doc_end, ndk, doc_len, shape, scale, stride);
+            let new_loglik = dyn_alpha_loglik_sub(
+                alpha, k, doc_start, doc_end, ndk, doc_len, shape, scale, stride,
+            );
             let new_likelihood = new_loglik - 2.0 * (1.0 - new_p).ln();
 
             if slice_ < new_likelihood {
@@ -1756,16 +1900,30 @@ pub fn fit_keyatm_dynamic<R: Rng>(
     convergence_tol: f64,
     rng: &mut R,
 ) -> KeyAtmModel {
-    assert_eq!(keywords.len(), num_topics, "keywords length must equal num_topics");
-    assert_eq!(time_index.len(), docs.len(), "time_index length must equal number of documents");
+    assert_eq!(
+        keywords.len(),
+        num_topics,
+        "keywords length must equal num_topics"
+    );
+    assert_eq!(
+        time_index.len(),
+        docs.len(),
+        "time_index length must equal number of documents"
+    );
     assert!(num_states >= 1, "num_states must be at least 1");
 
     // Time segments must be contiguous and non-decreasing (docs sorted by time).
     for w in time_index.windows(2) {
-        assert!(w[1] >= w[0], "documents must be sorted by time_index (non-decreasing)");
+        assert!(
+            w[1] >= w[0],
+            "documents must be sorted by time_index (non-decreasing)"
+        );
     }
     let num_time = time_index.iter().copied().max().map(|m| m + 1).unwrap_or(0);
-    assert!(num_time >= num_states, "num_time ({num_time}) must be >= num_states ({num_states})");
+    assert!(
+        num_time >= num_states,
+        "num_time ({num_time}) must be >= num_states ({num_states})"
+    );
 
     // Document index ranges for each time segment.
     let mut time_doc_start = vec![0usize; num_time];
@@ -1844,7 +2002,16 @@ pub fn fit_keyatm_dynamic<R: Rng>(
             .iter()
             .map(|&t| alphas[r_est[t]].clone())
             .collect();
-        run_sweep(&mut model, docs, &mut assignments, &mut nkw_t, &ki, &doc_alpha, num_threads, rng);
+        run_sweep(
+            &mut model,
+            docs,
+            &mut assignments,
+            &mut nkw_t,
+            &ki,
+            &doc_alpha,
+            num_threads,
+            rng,
+        );
         // Snapshot under the (ndk, doc_alpha) pair this sweep just used — coherent
         // smoothing even though r_est/alphas are resampled below.
         draws.maybe_collect(&mut theta_draw_buf, it + 1, &model.ndk, &doc_alpha);
@@ -1865,8 +2032,8 @@ pub fn fit_keyatm_dynamic<R: Rng>(
                 .collect()
         };
         if num_threads > 1 {
-            use rand_pcg::Pcg64Mcg;
             use rand::SeedableRng;
+            use rand_pcg::Pcg64Mcg;
             use rayon::prelude::*;
             let base: u64 = rng.gen();
             let ndk = &model.ndk;
@@ -1879,15 +2046,39 @@ pub fn fit_keyatm_dynamic<R: Rng>(
                         base ^ (r as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
                     );
                     dyn_sample_alpha_state(
-                        alpha, num_keyword_topics, d_start, d_end, ndk, &doc_len,
-                        eta1, eta2, eta1_reg, eta2_reg, min_v, max_v, 1, &mut srng,
+                        alpha,
+                        num_keyword_topics,
+                        d_start,
+                        d_end,
+                        ndk,
+                        &doc_len,
+                        eta1,
+                        eta2,
+                        eta1_reg,
+                        eta2_reg,
+                        min_v,
+                        max_v,
+                        1,
+                        &mut srng,
                     );
                 });
         } else {
             for (r, &(d_start, d_end)) in ranges.iter().enumerate() {
                 dyn_sample_alpha_state(
-                    &mut alphas[r], num_keyword_topics, d_start, d_end, &model.ndk, &doc_len,
-                    eta1, eta2, eta1_reg, eta2_reg, min_v, max_v, 1, rng,
+                    &mut alphas[r],
+                    num_keyword_topics,
+                    d_start,
+                    d_end,
+                    &model.ndk,
+                    &doc_len,
+                    eta1,
+                    eta2,
+                    eta1_reg,
+                    eta2_reg,
+                    min_v,
+                    max_v,
+                    1,
+                    rng,
                 );
             }
         }
@@ -1902,7 +2093,15 @@ pub fn fit_keyatm_dynamic<R: Rng>(
                 .into_par_iter()
                 .map(|t| {
                     (0..num_states)
-                        .map(|r| dyn_polyapdfln(&alphas[r], time_doc_start[t], time_doc_end[t], ndk, &doc_len))
+                        .map(|r| {
+                            dyn_polyapdfln(
+                                &alphas[r],
+                                time_doc_start[t],
+                                time_doc_end[t],
+                                ndk,
+                                &doc_len,
+                            )
+                        })
                         .collect()
                 })
                 .collect()
@@ -1910,7 +2109,15 @@ pub fn fit_keyatm_dynamic<R: Rng>(
             (1..num_time)
                 .map(|t| {
                     (0..num_states)
-                        .map(|r| dyn_polyapdfln(&alphas[r], time_doc_start[t], time_doc_end[t], &model.ndk, &doc_len))
+                        .map(|r| {
+                            dyn_polyapdfln(
+                                &alphas[r],
+                                time_doc_start[t],
+                                time_doc_end[t],
+                                &model.ndk,
+                                &doc_len,
+                            )
+                        })
                         .collect()
                 })
                 .collect()
@@ -1952,7 +2159,9 @@ pub fn fit_keyatm_dynamic<R: Rng>(
         r_count[num_states - 1] += 1;
         for t in (0..num_time - 1).rev() {
             let next = r_est[t + 1];
-            let probs: Vec<f64> = (0..num_states).map(|r| prk[t][r] * p_est[r][next]).collect();
+            let probs: Vec<f64> = (0..num_states)
+                .map(|r| prk[t][r] * p_est[r][next])
+                .collect();
             let s = sample_index(&probs, rng);
             r_est[t] = s;
             r_count[s] += 1;
@@ -2055,7 +2264,24 @@ mod tests {
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         let model = fit_keyatm(
-            &docs, v, 3, &keywords, 0.1, 0.1, 0.5, 1.0, 1.0, 200, 0, true, WeightScheme::None, 1, ThetaDrawOpts::new(false, 0, 0), 0.0, 1, &mut rng,
+            &docs,
+            v,
+            3,
+            &keywords,
+            0.1,
+            0.1,
+            0.5,
+            1.0,
+            1.0,
+            200,
+            0,
+            true,
+            WeightScheme::None,
+            1,
+            ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            1,
+            &mut rng,
         );
 
         // Helper: block with max probability mass in topic_word(k).
@@ -2094,8 +2320,9 @@ mod tests {
         for b in 0..num_blocks {
             let offset = b * block_size;
             for d in 0..100usize {
-                let mut doc: Vec<u32> =
-                    (0..5).map(|i| (offset + (i + d) % block_size) as u32).collect();
+                let mut doc: Vec<u32> = (0..5)
+                    .map(|i| (offset + (i + d) % block_size) as u32)
+                    .collect();
                 doc.push(((b + 1) % num_blocks * block_size + d % block_size) as u32);
                 docs.push(doc);
             }
@@ -2103,7 +2330,18 @@ mod tests {
         let keywords: Vec<Vec<usize>> = vec![vec![0, 1], vec![10, 11], vec![]];
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         let model = fit_keyatm_cvb0(
-            &docs, v, 3, &keywords, 0.1, 0.1, 0.5, 1.0, 1.0, 100, WeightScheme::None, &mut rng,
+            &docs,
+            v,
+            3,
+            &keywords,
+            0.1,
+            0.1,
+            0.5,
+            1.0,
+            1.0,
+            100,
+            WeightScheme::None,
+            &mut rng,
         );
         let dominant_block = |k: usize| -> usize {
             let phi = model.topic_word(k);
@@ -2127,8 +2365,21 @@ mod tests {
         let keywords: Vec<Vec<usize>> = vec![vec![0], vec![6], vec![]];
         let run = || {
             let mut rng = ChaCha8Rng::seed_from_u64(7);
-            fit_keyatm_cvb0(&docs, 12, 3, &keywords, 0.1, 0.1, 0.5, 1.0, 1.0, 40, WeightScheme::None, &mut rng)
-                .doc_topic()
+            fit_keyatm_cvb0(
+                &docs,
+                12,
+                3,
+                &keywords,
+                0.1,
+                0.1,
+                0.5,
+                1.0,
+                1.0,
+                40,
+                WeightScheme::None,
+                &mut rng,
+            )
+            .doc_topic()
         };
         let (a, b) = (run(), run());
         for (ra, rb) in a.iter().zip(b.iter()) {
@@ -2148,15 +2399,32 @@ mod tests {
             .collect();
 
         let keywords: Vec<Vec<usize>> = vec![
-            vec![0, 1, 2],  // keyword topic
-            vec![10, 11],   // keyword topic
-            vec![],         // regular
-            vec![],         // regular
+            vec![0, 1, 2], // keyword topic
+            vec![10, 11],  // keyword topic
+            vec![],        // regular
+            vec![],        // regular
         ];
 
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let model = fit_keyatm(
-            &docs, v, 4, &keywords, 0.1, 0.1, 0.5, 1.0, 1.0, 50, 0, true, WeightScheme::None, 1, ThetaDrawOpts::new(false, 0, 0), 0.0, 1, &mut rng,
+            &docs,
+            v,
+            4,
+            &keywords,
+            0.1,
+            0.1,
+            0.5,
+            1.0,
+            1.0,
+            50,
+            0,
+            true,
+            WeightScheme::None,
+            1,
+            ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            1,
+            &mut rng,
         );
 
         let rates = model.keyword_rate();
@@ -2172,7 +2440,10 @@ mod tests {
         }
         // Regular topics must be exactly 0.
         for k in 2..4 {
-            assert_eq!(rates[k], 0.0, "keyword_rate[{k}] should be 0 for regular topic");
+            assert_eq!(
+                rates[k], 0.0,
+                "keyword_rate[{k}] should be 0 for regular topic"
+            );
         }
     }
 
@@ -2192,7 +2463,24 @@ mod tests {
 
         let mut rng = ChaCha8Rng::seed_from_u64(123);
         let model = fit_keyatm(
-            &docs, v, 3, &keywords, 0.5, 0.1, 0.5, 1.0, 1.0, 30, 0, true, WeightScheme::None, 1, ThetaDrawOpts::new(false, 0, 0), 0.0, 1, &mut rng,
+            &docs,
+            v,
+            3,
+            &keywords,
+            0.5,
+            0.1,
+            0.5,
+            1.0,
+            1.0,
+            30,
+            0,
+            true,
+            WeightScheme::None,
+            1,
+            ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            1,
+            &mut rng,
         );
 
         let d = docs.len();
@@ -2238,9 +2526,7 @@ mod tests {
             let b_heavy = t >= 5;
             for d in 0..30usize {
                 let (heavy_off, light_off) = if b_heavy { (6, 0) } else { (0, 6) };
-                let mut doc: Vec<u32> = (0..6)
-                    .map(|i| (heavy_off + (i + d) % 6) as u32)
-                    .collect();
+                let mut doc: Vec<u32> = (0..6).map(|i| (heavy_off + (i + d) % 6) as u32).collect();
                 doc.push((light_off + d % 6) as u32);
                 docs.push(doc);
                 time_index.push(t);
@@ -2249,8 +2535,27 @@ mod tests {
 
         let mut rng = ChaCha8Rng::seed_from_u64(1);
         let model = fit_keyatm_dynamic(
-            &docs, 12, 2, &keywords, &time_index, 2, 0.01, 0.1, 1.0, 1.0, 1.0, 1.0,
-            2.0, 1.0, 300, 0, WeightScheme::None, 1, ThetaDrawOpts::new(false, 0, 0), 0.0, &mut rng,
+            &docs,
+            12,
+            2,
+            &keywords,
+            &time_index,
+            2,
+            0.01,
+            0.1,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            2.0,
+            1.0,
+            300,
+            0,
+            WeightScheme::None,
+            1,
+            ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            &mut rng,
         );
 
         let dyn_ = model.dynamic.as_ref().expect("dynamic state present");
@@ -2265,7 +2570,10 @@ mod tests {
         let tp = model.time_prevalence().unwrap();
         let early = tp[0][1];
         let late = tp[num_time - 1][1];
-        assert!(late - early > 0.3, "social prevalence should rise: {early} -> {late}");
+        assert!(
+            late - early > 0.3,
+            "social prevalence should rise: {early} -> {late}"
+        );
     }
 
     /// Dynamic fits with the same seed must be identical.
@@ -2284,10 +2592,50 @@ mod tests {
         let mut r1 = ChaCha8Rng::seed_from_u64(9);
         let mut r2 = ChaCha8Rng::seed_from_u64(9);
         let m1 = fit_keyatm_dynamic(
-            &docs, 12, 2, &keywords, &time_index, 2, 0.01, 0.1, 1.0, 1.0, 1.0, 1.0, 2.0, 1.0, 100, 0, WeightScheme::None, 1, ThetaDrawOpts::new(false, 0, 0), 0.0, &mut r1,
+            &docs,
+            12,
+            2,
+            &keywords,
+            &time_index,
+            2,
+            0.01,
+            0.1,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            2.0,
+            1.0,
+            100,
+            0,
+            WeightScheme::None,
+            1,
+            ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            &mut r1,
         );
         let m2 = fit_keyatm_dynamic(
-            &docs, 12, 2, &keywords, &time_index, 2, 0.01, 0.1, 1.0, 1.0, 1.0, 1.0, 2.0, 1.0, 100, 0, WeightScheme::None, 1, ThetaDrawOpts::new(false, 0, 0), 0.0, &mut r2,
+            &docs,
+            12,
+            2,
+            &keywords,
+            &time_index,
+            2,
+            0.01,
+            0.1,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            2.0,
+            1.0,
+            100,
+            0,
+            WeightScheme::None,
+            1,
+            ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            &mut r2,
         );
         assert_eq!(
             m1.dynamic.as_ref().unwrap().r_est,
@@ -2313,8 +2661,46 @@ mod tests {
         let mut r1 = ChaCha8Rng::seed_from_u64(77);
         let mut r2 = ChaCha8Rng::seed_from_u64(77);
 
-        let m1 = fit_keyatm(&docs, v, 3, &keywords, 0.1, 0.1, 0.5, 1.0, 1.0, 40, 0, true, WeightScheme::None, 1, ThetaDrawOpts::new(false, 0, 0), 0.0, 1, &mut r1);
-        let m2 = fit_keyatm(&docs, v, 3, &keywords, 0.1, 0.1, 0.5, 1.0, 1.0, 40, 0, true, WeightScheme::None, 1, ThetaDrawOpts::new(false, 0, 0), 0.0, 1, &mut r2);
+        let m1 = fit_keyatm(
+            &docs,
+            v,
+            3,
+            &keywords,
+            0.1,
+            0.1,
+            0.5,
+            1.0,
+            1.0,
+            40,
+            0,
+            true,
+            WeightScheme::None,
+            1,
+            ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            1,
+            &mut r1,
+        );
+        let m2 = fit_keyatm(
+            &docs,
+            v,
+            3,
+            &keywords,
+            0.1,
+            0.1,
+            0.5,
+            1.0,
+            1.0,
+            40,
+            0,
+            true,
+            WeightScheme::None,
+            1,
+            ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            1,
+            &mut r2,
+        );
 
         assert_eq!(
             m1.topic_word_all(),
@@ -2344,13 +2730,35 @@ mod tests {
 
         let mut rng = ChaCha8Rng::seed_from_u64(3);
         let model = fit_keyatm(
-            &docs, v, 3, &keywords, 0.1, 0.1, 0.5, 1.0, 1.0, 60, 10, true, WeightScheme::None, 1, ThetaDrawOpts::new(false, 0, 0), 0.0, 1, &mut rng,
+            &docs,
+            v,
+            3,
+            &keywords,
+            0.1,
+            0.1,
+            0.5,
+            1.0,
+            1.0,
+            60,
+            10,
+            true,
+            WeightScheme::None,
+            1,
+            ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            1,
+            &mut rng,
         );
         let h = &model.log_likelihood_history;
         // iters=60, interval=10 -> sweeps 10,20,30,40,50,60.
-        assert_eq!(h.iter().map(|&(i, _, _)| i).collect::<Vec<_>>(), vec![10, 20, 30, 40, 50, 60]);
+        assert_eq!(
+            h.iter().map(|&(i, _, _)| i).collect::<Vec<_>>(),
+            vec![10, 20, 30, 40, 50, 60]
+        );
         // (iter, collapsed log-likelihood < 0, perplexity > 1).
-        assert!(h.iter().all(|&(_, ll, ppl)| ll.is_finite() && ll < 0.0 && ppl > 1.0));
+        assert!(h
+            .iter()
+            .all(|&(_, ll, ppl)| ll.is_finite() && ll < 0.0 && ppl > 1.0));
         // The collapsed log-likelihood rises (toward 0) as Gibbs converges.
         assert!(
             h.last().unwrap().1 >= h.first().unwrap().1 - 1e-6,
@@ -2360,7 +2768,24 @@ mod tests {
         // interval 0 disables tracing.
         let mut rng2 = ChaCha8Rng::seed_from_u64(3);
         let none = fit_keyatm(
-            &docs, v, 3, &keywords, 0.1, 0.1, 0.5, 1.0, 1.0, 20, 0, true, WeightScheme::None, 1, ThetaDrawOpts::new(false, 0, 0), 0.0, 1, &mut rng2,
+            &docs,
+            v,
+            3,
+            &keywords,
+            0.1,
+            0.1,
+            0.5,
+            1.0,
+            1.0,
+            20,
+            0,
+            true,
+            WeightScheme::None,
+            1,
+            ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            1,
+            &mut rng2,
         );
         assert!(none.log_likelihood_history.is_empty());
     }
@@ -2374,8 +2799,24 @@ mod tests {
         let keywords: Vec<Vec<usize>> = vec![vec![0, 1], vec![10, 11], vec![]];
         let mut rng = ChaCha8Rng::seed_from_u64(77);
         let m = fit_keyatm(
-            &docs, v, 3, &keywords, 0.1, 0.1, 0.5, 1.0, 1.0, 20, 0, true,
-            WeightScheme::None, 1, ThetaDrawOpts::new(false, 0, 0), 0.0, 1, &mut rng,
+            &docs,
+            v,
+            3,
+            &keywords,
+            0.1,
+            0.1,
+            0.5,
+            1.0,
+            1.0,
+            20,
+            0,
+            true,
+            WeightScheme::None,
+            1,
+            ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            1,
+            &mut rng,
         );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
@@ -2396,8 +2837,24 @@ mod tests {
         let f = |stride: usize, seed: u64| {
             let mut r = ChaCha8Rng::seed_from_u64(seed);
             fit_keyatm(
-                &docs, v, 3, &keywords, 0.1, 0.1, 0.5, 1.0, 1.0, 60, 0, true,
-                WeightScheme::None, 1, ThetaDrawOpts::new(false, 0, 0), 0.0, stride, &mut r,
+                &docs,
+                v,
+                3,
+                &keywords,
+                0.1,
+                0.1,
+                0.5,
+                1.0,
+                1.0,
+                60,
+                0,
+                true,
+                WeightScheme::None,
+                1,
+                ThetaDrawOpts::new(false, 0, 0),
+                0.0,
+                stride,
+                &mut r,
             )
         };
         // stride = 1 is the exact path: identical to a no-stride fit.
