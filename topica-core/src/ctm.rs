@@ -353,7 +353,8 @@ pub fn ctm_hpb(
 /// from these; the κ pieces are the identifying information R `stm`'s
 /// `sageLabels()` / `labelTopics()` rank words by (and cannot be recovered from
 /// the per-group β alone).
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ContentKappa {
     /// Background log word-frequency `m`, length V.
     pub m: Vec<f64>,
@@ -1512,6 +1513,47 @@ pub fn recompute_nu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Golden parity guard: a frozen `fit_ctm` output on a fixed fixture, so the
+    /// extraction into `topica-core` is provably a numerical no-op and `topica`
+    /// (which re-exports this `fit_ctm`) stays in lock-step. Two fits from the same
+    /// seed must be bit-identical, and the topic-word matrix must match the frozen
+    /// reference. If this fails, the CTM numerics changed — intended or not.
+    #[test]
+    fn fit_ctm_golden() {
+        use rand::SeedableRng;
+        use rand_chacha::ChaCha8Rng;
+        let docs: Vec<Vec<u32>> = vec![
+            vec![0, 1, 0, 1, 2, 2], vec![1, 2, 1, 2, 0, 0], vec![2, 0, 2, 0, 1, 1],
+            vec![3, 4, 3, 4, 5, 5], vec![4, 5, 4, 5, 3, 3], vec![5, 3, 5, 3, 4, 4],
+        ];
+        let fit = || {
+            let mut rng = ChaCha8Rng::seed_from_u64(123);
+            fit_ctm(&docs, 2, 6, 30, 0.0, 0.0, None, None, false, None,
+                    GammaPrior::Pooled, true, false, &mut rng)
+        };
+        let a = fit();
+        let b = fit();
+        // Reproducibility: same seed -> bit-identical beta.
+        assert_eq!(a.beta, b.beta, "fit_ctm is not seed-reproducible");
+        // Frozen reference: each topic concentrates on one disjoint 3-word block.
+        let on = 0.333_333_332_8_f64;
+        let off = 0.000_000_000_6_f64;
+        let expected = [
+            [off, off, off, on, on, on],
+            [on, on, on, off, off, off],
+        ];
+        for k in 0..2 {
+            for v in 0..6 {
+                assert!(
+                    (a.beta[k][v] - expected[k][v]).abs() < 1e-9,
+                    "beta[{k}][{v}] = {} drifted from frozen {}",
+                    a.beta[k][v], expected[k][v]
+                );
+            }
+        }
+    }
+
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
@@ -1821,47 +1863,8 @@ mod tests {
         (x, lam, true_coef)
     }
 
-    #[test]
-    fn ctm_conforms() {
-        use crate::conformance::{check_conformance, check_logistic_normal};
-        use crate::variational::LogisticNormalModel;
-
-        let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let docs: Vec<Vec<u32>> = vec![
-            vec![0, 1, 0, 1, 2],
-            vec![1, 2, 1, 2, 0],
-            vec![2, 0, 2, 0, 1],
-            vec![0, 0, 1, 2, 0],
-            vec![1, 1, 2, 0, 1],
-            vec![2, 2, 0, 1, 2],
-        ];
-        let model = fit_ctm(&docs, 3, 3, 5, 0.0, 0.0, None, None, false, None, GammaPrior::Pooled, true, false, &mut rng);
-
-        let base_violations = check_conformance(&model);
-        assert!(
-            base_violations.is_empty(),
-            "check_conformance violations: {:?}",
-            base_violations
-        );
-
-        let ln_violations = check_logistic_normal(&model);
-        assert!(
-            ln_violations.is_empty(),
-            "check_logistic_normal violations: {:?}",
-            ln_violations
-        );
-
-        assert_eq!(
-            model.eta_dim(),
-            model.num_topics - 1,
-            "eta_dim should be num_topics - 1"
-        );
-        assert_eq!(
-            model.eta_mean().len(),
-            model.eta_cov().len(),
-            "eta_mean and eta_cov should have the same number of rows (one per document)"
-        );
-    }
+    // (The `ctm_conforms` test lives in `topica`'s conformance.rs — it depends on
+    // `crate::conformance`, which stays in the `topica` crate, not `topica-core`.)
 
     #[test]
     fn enet_sparser_than_ridge_on_sparse_signal() {

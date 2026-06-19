@@ -1,0 +1,27 @@
+[package]
+name = "topica-core"
+version = "0.1.0"
+edition = "2021"
+description = "Logistic-normal structural-topic-model core (CTM/STM/SAGE + CVB0) extracted from the topica crate: small, dependency-light, and independently vendorable."
+license = "Apache-2.0"
+repository = "https://github.com/nealcaren/topica"
+
+[lib]
+name = "topica_core"
+path = "src/lib.rs"
+
+[dependencies]
+# Lean, pure-Rust, vendorable deps only — so downstream consumers (e.g. the faSTM
+# R package on CRAN) can `cargo vendor` this crate without pulling pyo3/numpy/etc.
+rand = "0.8"
+rand_chacha = "0.3"   # ChaCha8 for the spectral random projection
+rayon = "1"           # parallel variational E-step
+regex = "1"           # corpus tokenizer (DEFAULT_TOKEN_REGEX)
+# Serialization is opt-in: `topica` enables it; downstream minimal builds skip it.
+serde = { version = "1", features = ["derive"], optional = true }
+
+[dev-dependencies]
+rand_pcg = "0.3"      # used only by the cvb0 unit tests
+
+[features]
+serde = ["dep:serde"]

@@ -955,7 +955,20 @@ dependencies = [
  "rayon",
  "regex",
  "serde",
+ "topica-core",
  "umap-rs",
+]
+
+[[package]]
+name = "topica-core"
+version = "0.1.0"
+dependencies = [
+ "rand 0.8.6",
+ "rand_chacha 0.3.1",
+ "rand_pcg",
+ "rayon",
+ "regex",
+ "serde",
 ]
 
 [[package]]

@@ -23,7 +23,6 @@
 use rand::Rng;
 
 use crate::corpus::Corpus;
-use crate::model::TopicModel;
 
 /// A CVB0 inference engine over per-(document, word-type) responsibilities.
 pub struct Cvb0 {
@@ -389,21 +388,14 @@ impl Cvb0 {
         }
     }
 
-    /// Pack into a [`TopicModel`] via the MAP hard assignment (argmax γ per
-    /// token) so the rest of the codebase (coherence, save/load, held-out
-    /// inference) is reused. The φ/θ point estimates above are the soft CVB0
-    /// solution and are what `fit` returns; this backs the archival/diagnostic
-    /// machinery that expects integer counts.
-    pub fn to_topic_model(&self, corpus: &Corpus) -> TopicModel {
-        let mut model =
-            TopicModel::new(self.num_topics, self.alpha_sum, self.beta, self.num_types);
-        model.alpha.copy_from_slice(&self.alpha);
-        model.alpha_sum = self.alpha_sum;
-        model.beta = self.beta;
-        model.beta_sum = self.beta_sum;
-
-        // Per-(doc,word) argmax topic; assign every token of that cell to it.
-        let doc_topics: Vec<Vec<u32>> = corpus
+    /// The MAP hard assignment (argmax γ per cell): `doc_topics[d][i]` is the
+    /// most-probable topic for token `i` of document `d`. This is the only piece
+    /// of the old `to_topic_model` that needs the private `cells`/`gamma`; the
+    /// `topica` crate's `Cvb0ToModel` extension trait packs these into a
+    /// `TopicModel` (which lives in `topica`, not the core), so the rest of the
+    /// codebase — coherence, save/load, held-out inference — is reused unchanged.
+    pub fn map_topic_assignments(&self, corpus: &Corpus) -> Vec<Vec<u32>> {
+        corpus
             .docs
             .iter()
             .enumerate()
@@ -423,9 +415,7 @@ impl Cvb0 {
                 }
                 doc.iter().map(|&w| best[&w]).collect()
             })
-            .collect();
-        model.initialize_from_assignments(corpus, doc_topics);
-        model
+            .collect()
     }
 }
 
