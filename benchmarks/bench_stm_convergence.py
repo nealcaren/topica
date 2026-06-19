@@ -57,10 +57,12 @@ EM_TOL = float(os.environ.get("STM_EM_TOL", "1e-5"))
 MAX_EM_ITERS = int(os.environ.get("STM_MAX_EM_ITERS", "500"))
 
 
+def corpus_path(cfg):
+    return os.path.join(HERE, cfg["csv"])
+
+
 def load(cfg):
-    path = os.path.join(HERE, cfg["csv"])
-    if not os.path.exists(path):
-        raise SystemExit(f"missing {path} (see this script's docstring to build it)")
+    path = corpus_path(cfg)
     rows = list(csv.DictReader(open(path, newline="")))
     docs = [r["text"].split() for r in rows]
     group = np.array([1.0 if r[cfg["group"]] == cfg["pos"] else 0.0 for r in rows])
@@ -137,6 +139,10 @@ def time_r_stm(docs, x, names):
 
 def main():
     cfg = CORPORA[CORPUS]
+    if not os.path.exists(corpus_path(cfg)):
+        print(f"SKIP: {corpus_path(cfg)} not found "
+              f"(build it — see this script's docstring; CORPUS={CORPUS})")
+        return
     docs, group, cont = load(cfg)
     x, names = design(group, cont, cfg)
     have_r = r_stm_available()
