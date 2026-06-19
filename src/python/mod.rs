@@ -59,6 +59,10 @@ use crate::{
     coherence as coh, ctm, cvb0, lightlda, optimize, output, sampler, spectral, sts, warplda,
 };
 
+// ndarray <-> serializable-state adapters (Arr2/Arr3/Arr3f32 + arr*_opt/arr*_back).
+mod arrays;
+use arrays::*;
+
 // ---------------------------------------------------------------------------
 // Error helpers
 // ---------------------------------------------------------------------------
@@ -148,67 +152,6 @@ fn py_num_topics_opt(ob: &Bound<'_, PyAny>) -> PyResult<Option<usize>> {
     Ok(Some(require_count(ob.extract()?, 1, "num_topics")?))
 }
 
-// ---------------------------------------------------------------------------
-// Model serialization (save / load)
-// ---------------------------------------------------------------------------
-
-/// Serializable form of an ndarray `Array2` (shape + row-major data).
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Arr2 {
-    rows: usize,
-    cols: usize,
-    data: Vec<f64>,
-}
-/// Serializable form of an ndarray `Array3` (f64).
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Arr3 {
-    d0: usize,
-    d1: usize,
-    d2: usize,
-    data: Vec<f64>,
-}
-/// Serializable form of an ndarray `Array3<f32>` (used for theta_draws).
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Arr3f32 {
-    d0: usize,
-    d1: usize,
-    d2: usize,
-    data: Vec<f32>,
-}
-
-fn arr2_opt(a: &Option<Array2<f64>>) -> Option<Arr2> {
-    a.as_ref().map(|m| Arr2 {
-        rows: m.nrows(),
-        cols: m.ncols(),
-        data: m.iter().copied().collect(),
-    })
-}
-fn arr2_back(s: Option<Arr2>) -> PyResult<Option<Array2<f64>>> {
-    s.map(|a| {
-        Array2::from_shape_vec((a.rows, a.cols), a.data)
-            .map_err(|e| PyValueError::new_err(format!("corrupt saved 2-D array: {e}")))
-    })
-    .transpose()
-}
-fn arr3_opt(a: &Option<Array3<f64>>) -> Option<Arr3> {
-    a.as_ref().map(|m| {
-        let d = m.dim();
-        Arr3 {
-            d0: d.0,
-            d1: d.1,
-            d2: d.2,
-            data: m.iter().copied().collect(),
-        }
-    })
-}
-fn arr3_back(s: Option<Arr3>) -> PyResult<Option<Array3<f64>>> {
-    s.map(|a| {
-        Array3::from_shape_vec((a.d0, a.d1, a.d2), a.data)
-            .map_err(|e| PyValueError::new_err(format!("corrupt saved 3-D array: {e}")))
-    })
-    .transpose()
-}
-
 /// Run `f` on a rayon pool of `num_threads` workers, or on the global pool (all
 /// cores) when `num_threads` is `None`/0. The variational fits are deterministic
 /// regardless of worker count, so this controls only resource use, not output.
@@ -221,30 +164,6 @@ fn run_with_threads<T: Send, F: FnOnce() -> T + Send>(num_threads: Option<usize>
         },
         _ => f(),
     }
-}
-fn arr3f32_opt(a: &Option<Array3<f32>>) -> Option<Arr3f32> {
-    a.as_ref().map(|m| {
-        let d = m.dim();
-        Arr3f32 {
-            d0: d.0,
-            d1: d.1,
-            d2: d.2,
-            data: m.iter().copied().collect(),
-        }
-    })
-}
-fn arr3f32_back(s: Option<Arr3f32>) -> PyResult<Option<Array3<f32>>> {
-    s.map(|a| {
-        Array3::from_shape_vec((a.d0, a.d1, a.d2), a.data)
-            .map_err(|e| PyValueError::new_err(format!("corrupt saved 3-D array: {e}")))
-    })
-    .transpose()
-}
-fn arr1_opt(a: &Option<Array1<f64>>) -> Option<Vec<f64>> {
-    a.as_ref().map(|m| m.to_vec())
-}
-fn arr1_back(s: Option<Vec<f64>>) -> Option<Array1<f64>> {
-    s.map(Array1::from)
 }
 
 // ---------------------------------------------------------------------------
