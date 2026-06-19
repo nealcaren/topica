@@ -24,9 +24,9 @@
 //!    `score(t) = (α + ndk[d][t]) × (β_{t,w} + nkw[t][w]) / (β_sum[t] + nk[t])`
 //! 3. Sample a new topic proportionally; increment counts.
 
+use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 use rand::Rng;
 use std::collections::HashSet;
-use crate::estimator::{Estimator, ModelFamily, DirichletModel};
 
 // ---------------------------------------------------------------------------
 // Model struct
@@ -170,7 +170,10 @@ impl SeededModel {
                     let n_d: u32 = row.iter().sum();
                     let a_sum: f64 = a.iter().sum();
                     let denom = n_d as f64 + a_sum;
-                    row.iter().zip(a).map(|(&c, &av)| (c as f64 + av) / denom).collect()
+                    row.iter()
+                        .zip(a)
+                        .map(|(&c, &av)| (c as f64 + av) / denom)
+                        .collect()
                 })
                 .collect();
         }
@@ -189,23 +192,45 @@ impl SeededModel {
 }
 
 impl Estimator for SeededModel {
-    fn num_topics(&self) -> usize { self.num_topics }
-    fn topic_word(&self) -> Vec<Vec<f64>> { self.topic_word_all() }
-    fn doc_topic(&self) -> Vec<Vec<f64>> { self.doc_topic() }
-    fn fit_history(&self) -> Vec<(usize, f64)> { Vec::new() }
-    fn converged(&self) -> Option<bool> { None }
-    fn model_family(&self) -> ModelFamily { ModelFamily::Dirichlet }
+    fn num_topics(&self) -> usize {
+        self.num_topics
+    }
+    fn topic_word(&self) -> Vec<Vec<f64>> {
+        self.topic_word_all()
+    }
+    fn doc_topic(&self) -> Vec<Vec<f64>> {
+        self.doc_topic()
+    }
+    fn fit_history(&self) -> Vec<(usize, f64)> {
+        Vec::new()
+    }
+    fn converged(&self) -> Option<bool> {
+        None
+    }
+    fn model_family(&self) -> ModelFamily {
+        ModelFamily::Dirichlet
+    }
 }
 
 impl DirichletModel for SeededModel {
-    fn alpha(&self) -> Vec<f64> { vec![self.alpha; self.num_topics] }
+    fn alpha(&self) -> Vec<f64> {
+        vec![self.alpha; self.num_topics]
+    }
     fn theta_draws(&self) -> Vec<Vec<Vec<f64>>> {
-        self.theta_draws.iter().map(|d| {
-            d.iter().map(|r| r.iter().map(|&x| x as f64).collect()).collect()
-        }).collect()
+        self.theta_draws
+            .iter()
+            .map(|d| {
+                d.iter()
+                    .map(|r| r.iter().map(|&x| x as f64).collect())
+                    .collect()
+            })
+            .collect()
     }
     fn doc_lengths(&self) -> Vec<usize> {
-        self.ndk.iter().map(|r| r.iter().map(|&c| c as usize).sum()).collect()
+        self.ndk
+            .iter()
+            .map(|r| r.iter().map(|&c| c as usize).sum())
+            .collect()
     }
 }
 
@@ -257,7 +282,9 @@ fn seeded_theta_snapshot(
                 }
                 None => {
                     let denom = n_d as f64 + k as f64 * alpha;
-                    row.iter().map(|&c| ((c as f64 + alpha) / denom) as f32).collect()
+                    row.iter()
+                        .map(|&c| ((c as f64 + alpha) / denom) as f32)
+                        .collect()
                 }
             }
         })
@@ -305,8 +332,15 @@ pub fn fit_seeded_lda<R: Rng>(
     let v = num_types;
     let d_count = docs.len();
     if let Some(da) = &doc_alpha {
-        assert_eq!(da.len(), d_count, "doc_alpha must have one row per document");
-        assert!(da.iter().all(|r| r.len() == k), "each doc_alpha row must have num_topics entries");
+        assert_eq!(
+            da.len(),
+            d_count,
+            "doc_alpha must have one row per document"
+        );
+        assert!(
+            da.iter().all(|r| r.len() == k),
+            "each doc_alpha row must have num_topics entries"
+        );
     }
 
     // Normalise seeds: sort and de-dup so `contains` scans are minimal.
@@ -407,7 +441,11 @@ pub fn fit_seeded_lda<R: Rng>(
             for w in 0..v {
                 let n_tw = nkw[t][w] as f64;
                 if n_tw > 0.0 {
-                    let beta_tw = if seed_sets[t].contains(&w) { beta + seed_weight } else { beta };
+                    let beta_tw = if seed_sets[t].contains(&w) {
+                        beta + seed_weight
+                    } else {
+                        beta
+                    };
                     ll += digamma(beta_tw + n_tw) - digamma(beta_tw);
                 }
             }
@@ -439,8 +477,7 @@ pub fn fit_seeded_lda<R: Rng>(
                         beta
                     };
                     let a_t = a_row.map_or(alpha, |r| r[t]);
-                    scores[t] = (a_t + ndk[d][t] as f64)
-                        * (beta_tw + nkw[t][w] as f64)
+                    scores[t] = (a_t + ndk[d][t] as f64) * (beta_tw + nkw[t][w] as f64)
                         / (beta_sum_k[t] + nk[t] as f64);
                 }
 
@@ -559,17 +596,27 @@ mod tests {
         // topic with its block; seed_weight=50 gives each seed word ~50x the
         // base beta prior, which is far stronger than the random-init pull.
         let seeds = vec![
-            vec![0usize, 1usize, 2usize, 3usize],   // first 4 words of block 0
+            vec![0usize, 1usize, 2usize, 3usize], // first 4 words of block 0
             vec![10usize, 11usize, 12usize, 13usize], // first 4 words of block 1
-            vec![],                                   // unseeded / residual
+            vec![],                               // unseeded / residual
         ];
         let seed_blocks = [0usize, 1usize]; // expected dominant block for topics 0 and 1
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         let (model, _, _) = fit_seeded_lda(
-            &docs, v, 3, &seeds,
-            0.1, 0.01, 50.0, None, 300, crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
-            0.0, 0, &mut rng,
+            &docs,
+            v,
+            3,
+            &seeds,
+            0.1,
+            0.01,
+            50.0,
+            None,
+            300,
+            crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            0,
+            &mut rng,
         );
 
         // For each seeded topic (0 and 1), the seed words' total φ mass should
@@ -579,15 +626,19 @@ mod tests {
         for (ki, &expected_block) in seed_blocks.iter().enumerate() {
             let phi_ki = model.topic_word(ki);
             // Mass on the seed words' block in topic ki.
-            let mass_ki: f64 = phi_ki[expected_block * block_size..(expected_block + 1) * block_size]
+            let mass_ki: f64 = phi_ki
+                [expected_block * block_size..(expected_block + 1) * block_size]
                 .iter()
                 .sum();
             // Check that no other topic has MORE mass on this block than topic ki does.
             // (Equivalently: ki is the topic most concentrated on its seed block.)
             for other in 0..3usize {
-                if other == ki { continue; }
+                if other == ki {
+                    continue;
+                }
                 let phi_other = model.topic_word(other);
-                let mass_other: f64 = phi_other[expected_block * block_size..(expected_block + 1) * block_size]
+                let mass_other: f64 = phi_other
+                    [expected_block * block_size..(expected_block + 1) * block_size]
                     .iter()
                     .sum();
                 assert!(
@@ -612,12 +663,30 @@ mod tests {
         let seeds: Vec<Vec<usize>> = vec![vec![]; k];
 
         let mut rng = ChaCha8Rng::seed_from_u64(123);
-        let (model, _, _) = fit_seeded_lda(&docs, v, k, &seeds, 0.1, 0.1, 0.0, None, 50, crate::keyatm::ThetaDrawOpts::new(false, 0, 0), 0.0, 0, &mut rng);
+        let (model, _, _) = fit_seeded_lda(
+            &docs,
+            v,
+            k,
+            &seeds,
+            0.1,
+            0.1,
+            0.0,
+            None,
+            50,
+            crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            0,
+            &mut rng,
+        );
 
         // topic_word rows sum to 1.
         for t in 0..k {
             let phi = model.topic_word(t);
-            assert_eq!(phi.len(), v, "topic_word({t}) length should equal num_types");
+            assert_eq!(
+                phi.len(),
+                v,
+                "topic_word({t}) length should equal num_types"
+            );
             let s: f64 = phi.iter().sum();
             assert!(
                 (s - 1.0).abs() < 1e-10,
@@ -627,7 +696,11 @@ mod tests {
 
         // doc_topic rows sum to 1.
         let theta = model.doc_topic();
-        assert_eq!(theta.len(), docs.len(), "doc_topic() row count should equal D");
+        assert_eq!(
+            theta.len(),
+            docs.len(),
+            "doc_topic() row count should equal D"
+        );
         for (d, row) in theta.iter().enumerate() {
             assert_eq!(row.len(), k, "doc_topic row {d} length should equal K");
             let s: f64 = row.iter().sum();
@@ -650,8 +723,36 @@ mod tests {
 
         let mut r1 = ChaCha8Rng::seed_from_u64(55);
         let mut r2 = ChaCha8Rng::seed_from_u64(55);
-        let (m1, _, _) = fit_seeded_lda(&docs, v, k, &seeds, 0.1, 0.1, 2.0, None, 80, crate::keyatm::ThetaDrawOpts::new(false, 0, 0), 0.0, 0, &mut r1);
-        let (m2, _, _) = fit_seeded_lda(&docs, v, k, &seeds, 0.1, 0.1, 2.0, None, 80, crate::keyatm::ThetaDrawOpts::new(false, 0, 0), 0.0, 0, &mut r2);
+        let (m1, _, _) = fit_seeded_lda(
+            &docs,
+            v,
+            k,
+            &seeds,
+            0.1,
+            0.1,
+            2.0,
+            None,
+            80,
+            crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            0,
+            &mut r1,
+        );
+        let (m2, _, _) = fit_seeded_lda(
+            &docs,
+            v,
+            k,
+            &seeds,
+            0.1,
+            0.1,
+            2.0,
+            None,
+            80,
+            crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            0,
+            &mut r2,
+        );
 
         assert_eq!(
             m1.topic_word_all(),
@@ -675,8 +776,19 @@ mod tests {
         let seeds: Vec<Vec<usize>> = vec![vec![]; k];
         let mut rng = ChaCha8Rng::seed_from_u64(99);
         let (m, _, _) = fit_seeded_lda(
-            &docs, v, k, &seeds, 0.1, 0.1, 0.0, None, 20,
-            crate::keyatm::ThetaDrawOpts::new(false, 0, 0), 0.0, 0, &mut rng,
+            &docs,
+            v,
+            k,
+            &seeds,
+            0.1,
+            0.1,
+            0.0,
+            None,
+            20,
+            crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            0,
+            &mut rng,
         );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);

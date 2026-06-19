@@ -167,7 +167,11 @@ impl WarpLda {
         for row in inv_seeds.iter_mut() {
             row.sort_unstable();
         }
-        self.seed = Some(SeedBeta { seed_weight, beta_sum_k, inv_seeds });
+        self.seed = Some(SeedBeta {
+            seed_weight,
+            beta_sum_k,
+            inv_seeds,
+        });
     }
 
     /// β_{k,w}: the base β plus the seed boost when word `w` seeds topic `k`.
@@ -381,10 +385,8 @@ impl WarpLda {
                 // delayed snapshot, so exclude it with a -1 on the `cur` side.
                 let mut new = cur;
                 if prop != cur {
-                    let num = (c_w[prop] as f64 + beta)
-                        * (self.n_k[cur] as f64 - 1.0 + beta_sum);
-                    let den = (c_w[cur] as f64 - 1.0 + beta)
-                        * (self.n_k[prop] as f64 + beta_sum);
+                    let num = (c_w[prop] as f64 + beta) * (self.n_k[cur] as f64 - 1.0 + beta_sum);
+                    let den = (c_w[cur] as f64 - 1.0 + beta) * (self.n_k[prop] as f64 + beta_sum);
                     if num >= den || rng.gen::<f64>() * den < num {
                         new = prop;
                     }
@@ -493,8 +495,8 @@ impl WarpLda {
                 c_w[self.z[d as usize][pos as usize] as usize] += 1;
             }
             for t in 0..k {
-                phi[t][w] =
-                    (c_w[t] as f64 + self.beta_at(t, w)) / (self.n_k[t] as f64 + self.beta_sum_at(t));
+                phi[t][w] = (c_w[t] as f64 + self.beta_at(t, w))
+                    / (self.n_k[t] as f64 + self.beta_sum_at(t));
             }
         }
         phi
@@ -541,8 +543,7 @@ impl WarpLda {
     /// (optimisation, save/load, log-likelihood, held-out inference) is reused
     /// unchanged. Mirrors [`crate::lightlda::LightLda::to_topic_model`].
     pub fn to_topic_model(&self) -> TopicModel {
-        let mut model =
-            TopicModel::new(self.num_topics, self.alpha_sum, self.beta, self.num_types);
+        let mut model = TopicModel::new(self.num_topics, self.alpha_sum, self.beta, self.num_types);
         model.alpha.copy_from_slice(&self.alpha);
         model.alpha_sum = self.alpha_sum;
         model.beta = self.beta;
@@ -649,8 +650,7 @@ mod tests {
             idx.sort_by(|&a, &b| phi[t][b].partial_cmp(&phi[t][a]).unwrap());
             let top: std::collections::HashSet<usize> = idx[..wpb].iter().copied().collect();
             for b in 0..n_blocks {
-                let block: std::collections::HashSet<usize> =
-                    (b * wpb..(b + 1) * wpb).collect();
+                let block: std::collections::HashSet<usize> = (b * wpb..(b + 1) * wpb).collect();
                 if block.is_subset(&top) {
                     covered.insert(b);
                 }
@@ -689,8 +689,7 @@ mod tests {
             idx.sort_by(|&a, &b| phi[t][b].partial_cmp(&phi[t][a]).unwrap());
             let top: std::collections::HashSet<usize> = idx[..wpb].iter().copied().collect();
             for b in 0..n_blocks {
-                let block: std::collections::HashSet<usize> =
-                    (b * wpb..(b + 1) * wpb).collect();
+                let block: std::collections::HashSet<usize> = (b * wpb..(b + 1) * wpb).collect();
                 if block.is_subset(&top) {
                     covered.insert(b);
                 }
@@ -725,8 +724,7 @@ mod tests {
             idx.sort_by(|&a, &b| phi[t][b].partial_cmp(&phi[t][a]).unwrap());
             let top: std::collections::HashSet<usize> = idx[..wpb].iter().copied().collect();
             for b in 0..n_blocks {
-                let block: std::collections::HashSet<usize> =
-                    (b * wpb..(b + 1) * wpb).collect();
+                let block: std::collections::HashSet<usize> = (b * wpb..(b + 1) * wpb).collect();
                 if block.is_subset(&top) {
                     covered.insert(b);
                 }

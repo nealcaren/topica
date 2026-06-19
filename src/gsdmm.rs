@@ -168,8 +168,7 @@ impl GsdmmModel {
 
                 // Stable softmax.
                 let max_lp = log_probs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-                let mut probs: Vec<f64> =
-                    log_probs.iter().map(|&lp| (lp - max_lp).exp()).collect();
+                let mut probs: Vec<f64> = log_probs.iter().map(|&lp| (lp - max_lp).exp()).collect();
                 let total: f64 = probs.iter().sum();
                 for p in &mut probs {
                     *p /= total;
@@ -201,12 +200,7 @@ fn sample_index<R: Rng>(probs: &[f64], rng: &mut R) -> usize {
 /// Process step).  The document is removed from its current cluster before
 /// computing the sampling probabilities and is added to the new cluster
 /// afterwards.
-fn resample_doc<R: Rng>(
-    model: &mut GsdmmModel,
-    d: usize,
-    doc: &[u32],
-    rng: &mut R,
-) {
+fn resample_doc<R: Rng>(model: &mut GsdmmModel, d: usize, doc: &[u32], rng: &mut R) {
     let k = model.k_max;
     let v = model.num_types;
     let vbeta = v as f64 * model.beta;
@@ -359,11 +353,14 @@ impl Estimator for GsdmmModel {
     }
 
     fn doc_topic(&self) -> Vec<Vec<f64>> {
-        self.z.iter().map(|&k| {
-            let mut v = vec![0.0f64; self.k_max];
-            v[k] = 1.0;
-            v
-        }).collect()
+        self.z
+            .iter()
+            .map(|&k| {
+                let mut v = vec![0.0f64; self.k_max];
+                v[k] = 1.0;
+                v
+            })
+            .collect()
     }
 
     fn fit_history(&self) -> Vec<(usize, f64)> {
@@ -435,12 +432,8 @@ mod tests {
             // Sum φ over each block and pick the best.
             (0..num_blocks)
                 .max_by(|&ba, &bb| {
-                    let sa: f64 = (0..block_size)
-                        .map(|i| phi[ba * block_size + i])
-                        .sum();
-                    let sb: f64 = (0..block_size)
-                        .map(|i| phi[bb * block_size + i])
-                        .sum();
+                    let sa: f64 = (0..block_size).map(|i| phi[ba * block_size + i]).sum();
+                    let sb: f64 = (0..block_size).map(|i| phi[bb * block_size + i]).sum();
                     sa.partial_cmp(&sb).unwrap()
                 })
                 .unwrap()
@@ -506,7 +499,11 @@ mod tests {
         // cluster_word(k) sums to 1 for every non-empty cluster.
         for &k in model.used_clusters().iter() {
             let phi = model.cluster_word(k);
-            assert_eq!(phi.len(), v, "cluster_word({k}) length should equal num_types");
+            assert_eq!(
+                phi.len(),
+                v,
+                "cluster_word({k}) length should equal num_types"
+            );
             let s: f64 = phi.iter().sum();
             assert!(
                 (s - 1.0).abs() < 1e-10,
@@ -518,7 +515,11 @@ mod tests {
         let dists = model.doc_cluster_dist(&docs);
         assert_eq!(dists.len(), docs.len());
         for (d, row) in dists.iter().enumerate() {
-            assert_eq!(row.len(), model.k_max, "doc_cluster_dist row {d} wrong length");
+            assert_eq!(
+                row.len(),
+                model.k_max,
+                "doc_cluster_dist row {d} wrong length"
+            );
             let s: f64 = row.iter().sum();
             assert!(
                 (s - 1.0).abs() < 1e-10,

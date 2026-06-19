@@ -106,8 +106,9 @@ pub fn fit_lsa(
     let mut u_rows: Vec<Vec<f64>> = (0..d)
         .map(|i| (0..kk).map(|c| u.at(i, c)).collect())
         .collect();
-    let mut vt_rows: Vec<Vec<f64>> =
-        (0..kk).map(|c| (0..v).map(|j| vt.at(c, j)).collect()).collect();
+    let mut vt_rows: Vec<Vec<f64>> = (0..kk)
+        .map(|c| (0..v).map(|j| vt.at(c, j)).collect())
+        .collect();
 
     svd_flip(&mut u_rows, &mut vt_rows, kk, v);
 
@@ -210,7 +211,11 @@ mod tests {
         let mut covered = std::collections::HashSet::new();
         for t in 0..k {
             let mut ord: Vec<usize> = (0..v).collect();
-            ord.sort_by(|&a, &b| m.topic_word[t][b].abs().total_cmp(&m.topic_word[t][a].abs()));
+            ord.sort_by(|&a, &b| {
+                m.topic_word[t][b]
+                    .abs()
+                    .total_cmp(&m.topic_word[t][a].abs())
+            });
             let blocks: std::collections::HashSet<usize> =
                 ord[..4].iter().map(|&w| w / block).collect();
             assert_eq!(blocks.len(), 1, "component {t} top loadings mix blocks");
@@ -249,8 +254,14 @@ mod tests {
                 .build()
                 .unwrap()
                 .install(|| fit_lsa(&docs, k, v, tfidf, 77));
-            assert_eq!(one.topic_word, many.topic_word, "topic_word differs by thread count");
-            assert_eq!(one.doc_topic, many.doc_topic, "doc_topic differs by thread count");
+            assert_eq!(
+                one.topic_word, many.topic_word,
+                "topic_word differs by thread count"
+            );
+            assert_eq!(
+                one.doc_topic, many.doc_topic,
+                "doc_topic differs by thread count"
+            );
             assert_eq!(one.singular_values, many.singular_values);
         }
     }
@@ -297,7 +308,11 @@ mod tests {
             .collect();
         let docs: Vec<Vec<u32>> = (0..nd).map(|_| doc.clone()).collect();
         let m = fit_lsa(&docs, 2, v, false, 42);
-        let bnorm: f64 = b.iter().map(|&x| (x as f64) * (x as f64)).sum::<f64>().sqrt();
+        let bnorm: f64 = b
+            .iter()
+            .map(|&x| (x as f64) * (x as f64))
+            .sum::<f64>()
+            .sqrt();
         let want = (nd as f64).sqrt() * bnorm;
         assert!(
             (m.singular_values[0] - want).abs() / want < 1e-6,

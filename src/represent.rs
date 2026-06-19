@@ -51,7 +51,12 @@ pub fn ctfidf(docs: &[Vec<u32>], labels: &[i64], vocab_size: usize) -> Vec<Vec<f
 
 /// Number of topics implied by a label vector (max non-noise label + 1).
 fn label_count(labels: &[i64]) -> usize {
-    labels.iter().filter(|&&l| l >= 0).map(|&l| l as usize + 1).max().unwrap_or(0)
+    labels
+        .iter()
+        .filter(|&&l| l >= 0)
+        .map(|&l| l as usize + 1)
+        .max()
+        .unwrap_or(0)
 }
 
 /// Relabel after merging topics: every id in a group collapses to one cluster,
@@ -85,8 +90,11 @@ pub fn merge_labels(labels: &[i64], groups: &[Vec<usize>]) -> Vec<i64> {
     let mut distinct: Vec<usize> = rep.clone();
     distinct.sort_unstable();
     distinct.dedup();
-    let dense: std::collections::HashMap<usize, i64> =
-        distinct.iter().enumerate().map(|(i, &r)| (r, i as i64)).collect();
+    let dense: std::collections::HashMap<usize, i64> = distinct
+        .iter()
+        .enumerate()
+        .map(|(i, &r)| (r, i as i64))
+        .collect();
     labels
         .iter()
         .map(|&l| if l < 0 { -1 } else { dense[&rep[l as usize]] })
@@ -332,7 +340,10 @@ mod tests {
         assert_ne!(merged[0], merged[1]);
         assert_eq!(merged[4], -1);
         // dense range 0..2
-        assert!(merged.iter().filter(|&&l| l >= 0).all(|&l| l == 0 || l == 1));
+        assert!(merged
+            .iter()
+            .filter(|&&l| l >= 0)
+            .all(|&l| l == 0 || l == 1));
     }
 
     #[test]
@@ -352,12 +363,7 @@ mod tests {
         // Vocab: 0 = shared, 1 = distinctive-A, 2 = distinctive-B.
         // Class 0 is all word 1 plus some shared word 0; class 1 is all word 2
         // plus the same shared word 0.
-        let docs = vec![
-            vec![0, 1, 1],
-            vec![0, 1, 1],
-            vec![0, 2, 2],
-            vec![0, 2, 2],
-        ];
+        let docs = vec![vec![0, 1, 1], vec![0, 1, 1], vec![0, 2, 2], vec![0, 2, 2]];
         let labels = vec![0, 0, 1, 1];
         let m = ctfidf(&docs, &labels, 3);
 
@@ -376,12 +382,7 @@ mod tests {
     #[test]
     fn ctfidf_weighted_default_matches_ctfidf() {
         // With both knobs off, ctfidf_weighted must reproduce ctfidf exactly.
-        let docs = vec![
-            vec![0, 1, 1],
-            vec![0, 1, 1],
-            vec![0, 2, 2],
-            vec![0, 2, 2],
-        ];
+        let docs = vec![vec![0, 1, 1], vec![0, 1, 1], vec![0, 2, 2], vec![0, 2, 2]];
         let labels = vec![0, 0, 1, 1];
         let base = ctfidf(&docs, &labels, 3);
         let weighted = ctfidf_weighted(&docs, &labels, 3, false, false);
@@ -420,12 +421,7 @@ mod tests {
     #[test]
     fn ctfidf_bm25_is_finite_nonneg_and_downweights_ubiquitous() {
         // Word 0 appears in every class; words 1 and 2 are class-specific.
-        let docs = vec![
-            vec![0, 1, 1],
-            vec![0, 1, 1],
-            vec![0, 2, 2],
-            vec![0, 2, 2],
-        ];
+        let docs = vec![vec![0, 1, 1], vec![0, 1, 1], vec![0, 2, 2], vec![0, 2, 2]];
         let labels = vec![0, 0, 1, 1];
         let m = ctfidf_weighted(&docs, &labels, 3, true, false);
 
@@ -453,10 +449,10 @@ mod tests {
     fn centroids_average_each_cluster() {
         let vectors = vec![
             vec![0.0, 0.0],
-            vec![2.0, 0.0],  // cluster 0 mean -> (1, 0)
+            vec![2.0, 0.0], // cluster 0 mean -> (1, 0)
             vec![0.0, 4.0],
-            vec![0.0, 6.0],  // cluster 1 mean -> (0, 5)
-            vec![9.0, 9.0],  // noise, excluded
+            vec![0.0, 6.0], // cluster 1 mean -> (0, 5)
+            vec![9.0, 9.0], // noise, excluded
         ];
         let labels = vec![0, 0, 1, 1, -1];
         let c = centroids(&vectors, &labels, 2);
@@ -481,9 +477,9 @@ mod tests {
     fn nearest_by_cosine_ranks_aligned_first() {
         let query = vec![1.0, 0.0];
         let candidates = vec![
-            vec![0.0, 1.0],  // orthogonal, sim 0
-            vec![1.0, 0.0],  // aligned, sim 1
-            vec![0.5, 0.5],  // 45 degrees
+            vec![0.0, 1.0], // orthogonal, sim 0
+            vec![1.0, 0.0], // aligned, sim 1
+            vec![0.5, 0.5], // 45 degrees
         ];
         let ranked = nearest_by_cosine(&query, &candidates, 3);
         assert_eq!(ranked[0].0, 1);
@@ -497,7 +493,7 @@ mod tests {
     fn nearest_by_cosine_tolerates_zero_norm() {
         let query = vec![1.0, 0.0];
         let candidates = vec![
-            vec![0.0, 0.0],  // zero norm: sim 0, no panic
+            vec![0.0, 0.0], // zero norm: sim 0, no panic
             vec![1.0, 0.0],
         ];
         let ranked = nearest_by_cosine(&query, &candidates, 2);

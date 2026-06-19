@@ -56,7 +56,10 @@ pub fn softmax(v: &[f64]) -> Vec<f64> {
 /// For `p_k = softmax(z)_k`, `dL/dz_l = p_l (g_p_l - sum_k g_p_k p_k)`.
 fn softmax_backward(p: &[f64], g_p: &[f64]) -> Vec<f64> {
     let dot: f64 = p.iter().zip(g_p).map(|(&pk, &gk)| pk * gk).sum();
-    p.iter().zip(g_p).map(|(&pl, &gl)| pl * (gl - dot)).collect()
+    p.iter()
+        .zip(g_p)
+        .map(|(&pl, &gl)| pl * (gl - dot))
+        .collect()
 }
 
 /// Squared-Euclidean cost between every row of `x` (n rows) and every row of `y`
@@ -158,7 +161,15 @@ pub fn sinkhorn_forward(
         }
     }
 
-    Sinkhorn { plan, n, m, alpha, log_k, log_u_traj, log_v_traj }
+    Sinkhorn {
+        plan,
+        n,
+        m,
+        alpha,
+        log_k,
+        log_u_traj,
+        log_v_traj,
+    }
 }
 
 impl Sinkhorn {
@@ -317,7 +328,12 @@ struct Adam {
 
 impl Adam {
     fn new(len: usize, lr: f64) -> Self {
-        Adam { m: vec![0.0; len], v: vec![0.0; len], t: 0, lr }
+        Adam {
+            m: vec![0.0; len],
+            v: vec![0.0; len],
+            t: 0,
+            lr,
+        }
     }
     fn step(&mut self, params: &mut [f64], grad: &[f64]) {
         const B1: f64 = 0.9;
@@ -326,7 +342,11 @@ impl Adam {
         self.t += 1;
         let bc1 = 1.0 - B1.powi(self.t as i32);
         let bc2 = 1.0 - B2.powi(self.t as i32);
-        for ((p, &g), (mi, vi)) in params.iter_mut().zip(grad).zip(self.m.iter_mut().zip(self.v.iter_mut())) {
+        for ((p, &g), (mi, vi)) in params
+            .iter_mut()
+            .zip(grad)
+            .zip(self.m.iter_mut().zip(self.v.iter_mut()))
+        {
             *mi = B1 * *mi + (1.0 - B1) * g;
             *vi = B2 * *vi + (1.0 - B2) * g * g;
             let m_hat = *mi / bc1;
@@ -376,8 +396,26 @@ fn loss_and_grad(
     let log_a2: Vec<f64> = vec![-(k as f64).ln(); k];
     let log_b2: Vec<f64> = b2.iter().map(|&p| p.max(1e-30).ln()).collect();
 
-    let dt = sinkhorn_forward(&c1, n, k, &log_a1, &log_b1, dt_alpha, sinkhorn_iters, sinkhorn_tol);
-    let tw = sinkhorn_forward(&c2, k, v, &log_a2, &log_b2, tw_alpha, sinkhorn_iters, sinkhorn_tol);
+    let dt = sinkhorn_forward(
+        &c1,
+        n,
+        k,
+        &log_a1,
+        &log_b1,
+        dt_alpha,
+        sinkhorn_iters,
+        sinkhorn_tol,
+    );
+    let tw = sinkhorn_forward(
+        &c2,
+        k,
+        v,
+        &log_a2,
+        &log_b2,
+        tw_alpha,
+        sinkhorn_iters,
+        sinkhorn_tol,
+    );
     let theta: Vec<f64> = dt.plan.iter().map(|&p| p * n as f64).collect(); // N×K
     let beta: Vec<f64> = tw.plan.iter().map(|&p| p * k as f64).collect(); // K×V
 
@@ -430,8 +468,16 @@ fn loss_and_grad(
     }
 
     // log_b = log(softmax(logit)); chain log -> softmax -> logit.
-    let g_b1: Vec<f64> = g_log_b1.iter().zip(&b1).map(|(&g, &p)| g / p.max(1e-30)).collect();
-    let g_b2: Vec<f64> = g_log_b2.iter().zip(&b2).map(|(&g, &p)| g / p.max(1e-30)).collect();
+    let g_b1: Vec<f64> = g_log_b1
+        .iter()
+        .zip(&b1)
+        .map(|(&g, &p)| g / p.max(1e-30))
+        .collect();
+    let g_b2: Vec<f64> = g_log_b2
+        .iter()
+        .zip(&b2)
+        .map(|(&g, &p)| g / p.max(1e-30))
+        .collect();
     let g_topic_logit = softmax_backward(&b1, &g_b1);
     let g_word_logit = softmax_backward(&b2, &g_b2);
 
@@ -494,7 +540,11 @@ pub fn fit_fastopic<R: Rng>(
 ) -> FastopicModel {
     let k = num_topics;
     let v = num_types;
-    let h = if !doc_emb.is_empty() { doc_emb[0].len() } else { 0 };
+    let h = if !doc_emb.is_empty() {
+        doc_emb[0].len()
+    } else {
+        0
+    };
     let bow: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| doc_bow(d)).collect();
 
     let mut topic_emb = init_embeddings(k, h, rng);
@@ -514,8 +564,16 @@ pub fn fit_fastopic<R: Rng>(
     for epoch in 0..epochs {
         epochs_run = epoch + 1;
         let (loss, g_te, g_we, g_tl, g_wl) = loss_and_grad(
-            &bow, doc_emb, &topic_emb, &word_emb, &topic_logit, &word_logit, dt_alpha, tw_alpha,
-            sinkhorn_iters, sinkhorn_tol,
+            &bow,
+            doc_emb,
+            &topic_emb,
+            &word_emb,
+            &topic_logit,
+            &word_logit,
+            dt_alpha,
+            tw_alpha,
+            sinkhorn_iters,
+            sinkhorn_tol,
         );
         loss_history.push(loss);
 
@@ -550,7 +608,16 @@ pub fn fit_fastopic<R: Rng>(
     let b2 = softmax(&word_logit);
     let log_a2: Vec<f64> = vec![-(k as f64).ln(); k];
     let log_b2: Vec<f64> = b2.iter().map(|&p| p.max(1e-30).ln()).collect();
-    let tw = sinkhorn_forward(&c2, k, v, &log_a2, &log_b2, tw_alpha, sinkhorn_iters, sinkhorn_tol);
+    let tw = sinkhorn_forward(
+        &c2,
+        k,
+        v,
+        &log_a2,
+        &log_b2,
+        tw_alpha,
+        sinkhorn_iters,
+        sinkhorn_tol,
+    );
     let topic_word: Vec<Vec<f64>> = (0..k)
         .map(|t| (0..v).map(|j| tw.plan[t * v + j] * k as f64).collect())
         .collect();
@@ -624,11 +691,22 @@ mod tests {
         let z = [0.3, -1.2, 0.8, 0.1];
         let g_p = [0.5, -0.2, 1.0, 0.3];
         // L = sum_k g_p[k] * softmax(z)[k]
-        let loss = |z: &[f64]| softmax(z).iter().zip(&g_p).map(|(&p, &g)| p * g).sum::<f64>();
+        let loss = |z: &[f64]| {
+            softmax(z)
+                .iter()
+                .zip(&g_p)
+                .map(|(&p, &g)| p * g)
+                .sum::<f64>()
+        };
         let analytic = softmax_backward(&softmax(&z), &g_p);
         for i in 0..z.len() {
             let num = fd(loss, &z, i, 1e-6);
-            assert!((analytic[i] - num).abs() < 1e-7, "i={i}: {} vs {}", analytic[i], num);
+            assert!(
+                (analytic[i] - num).abs() < 1e-7,
+                "i={i}: {} vs {}",
+                analytic[i],
+                num
+            );
         }
     }
 
@@ -641,7 +719,9 @@ mod tests {
         let log_a = vec![-(n as f64).ln(); n];
         let b = softmax(&[0.4, -0.3, 0.1, 0.7]);
         let log_b: Vec<f64> = b.iter().map(|&p| p.ln()).collect();
-        let g_plan = [0.5, -0.2, 0.3, 0.1, 0.4, 0.0, -0.6, 0.2, 0.1, 0.3, -0.1, 0.5];
+        let g_plan = [
+            0.5, -0.2, 0.3, 0.1, 0.4, 0.0, -0.6, 0.2, 0.1, 0.3, -0.1, 0.5,
+        ];
         let alpha = 2.5;
         let iters = 40;
 
@@ -656,7 +736,12 @@ mod tests {
                 readout(&s.plan)
             };
             let num = fd(f, &cost, i, 1e-6);
-            assert!((g_cost[i] - num).abs() < 1e-5, "g_cost[{i}]: {} vs {}", g_cost[i], num);
+            assert!(
+                (g_cost[i] - num).abs() < 1e-5,
+                "g_cost[{i}]: {} vs {}",
+                g_cost[i],
+                num
+            );
         }
         // Column log-marginal gradient.
         for k in 0..m {
@@ -665,7 +750,12 @@ mod tests {
                 readout(&s.plan)
             };
             let num = fd(f, &log_b, k, 1e-6);
-            assert!((g_log_b[k] - num).abs() < 1e-5, "g_log_b[{k}]: {} vs {}", g_log_b[k], num);
+            assert!(
+                (g_log_b[k] - num).abs() < 1e-5,
+                "g_log_b[{k}]: {} vs {}",
+                g_log_b[k],
+                num
+            );
         }
     }
 
@@ -673,22 +763,34 @@ mod tests {
     fn loss_grad_matches_fd() {
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let (n, k, v, h) = (5usize, 3usize, 6usize, 4usize);
-        let doc_emb: Vec<Vec<f64>> =
-            (0..n).map(|_| (0..h).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect()).collect();
+        let doc_emb: Vec<Vec<f64>> = (0..n)
+            .map(|_| (0..h).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect())
+            .collect();
         let topic_emb = init_embeddings(k, h, &mut rng);
         let word_emb = init_embeddings(v, h, &mut rng);
         let topic_logit: Vec<f64> = (0..k).map(|_| rng.gen::<f64>() * 0.4 - 0.2).collect();
         let word_logit: Vec<f64> = (0..v).map(|_| rng.gen::<f64>() * 0.4 - 0.2).collect();
-        let docs: Vec<Vec<u32>> =
-            (0..n).map(|i| (0..6).map(|j| ((i + j) % v) as u32).collect()).collect();
+        let docs: Vec<Vec<u32>> = (0..n)
+            .map(|i| (0..6).map(|j| ((i + j) % v) as u32).collect())
+            .collect();
         let bow: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| doc_bow(d)).collect();
         let (dt_a, tw_a, it) = (3.0, 2.0, 30usize);
 
         let loss_of = |te: &[Vec<f64>], we: &[Vec<f64>], tl: &[f64], wl: &[f64]| {
             loss_and_grad(&bow, &doc_emb, te, we, tl, wl, dt_a, tw_a, it, 0.0).0
         };
-        let (_, g_te, g_we, g_tl, g_wl) =
-            loss_and_grad(&bow, &doc_emb, &topic_emb, &word_emb, &topic_logit, &word_logit, dt_a, tw_a, it, 0.0);
+        let (_, g_te, g_we, g_tl, g_wl) = loss_and_grad(
+            &bow,
+            &doc_emb,
+            &topic_emb,
+            &word_emb,
+            &topic_logit,
+            &word_logit,
+            dt_a,
+            tw_a,
+            it,
+            0.0,
+        );
 
         // Topic embeddings.
         for t in 0..k {
@@ -699,7 +801,12 @@ mod tests {
                     loss_of(&te, &word_emb, &topic_logit, &word_logit)
                 };
                 let num = (f(topic_emb[t][hh] + 1e-6) - f(topic_emb[t][hh] - 1e-6)) / 2e-6;
-                assert!((g_te[t][hh] - num).abs() < 1e-4, "g_te[{t}][{hh}]: {} vs {}", g_te[t][hh], num);
+                assert!(
+                    (g_te[t][hh] - num).abs() < 1e-4,
+                    "g_te[{t}][{hh}]: {} vs {}",
+                    g_te[t][hh],
+                    num
+                );
             }
         }
         // Word embeddings.
@@ -711,7 +818,12 @@ mod tests {
                     loss_of(&topic_emb, &we, &topic_logit, &word_logit)
                 };
                 let num = (f(word_emb[j][hh] + 1e-6) - f(word_emb[j][hh] - 1e-6)) / 2e-6;
-                assert!((g_we[j][hh] - num).abs() < 1e-4, "g_we[{j}][{hh}]: {} vs {}", g_we[j][hh], num);
+                assert!(
+                    (g_we[j][hh] - num).abs() < 1e-4,
+                    "g_we[{j}][{hh}]: {} vs {}",
+                    g_we[j][hh],
+                    num
+                );
             }
         }
         // Topic and word logits.
@@ -722,7 +834,12 @@ mod tests {
                 loss_of(&topic_emb, &word_emb, &tl, &word_logit)
             };
             let num = (f(topic_logit[t] + 1e-6) - f(topic_logit[t] - 1e-6)) / 2e-6;
-            assert!((g_tl[t] - num).abs() < 1e-4, "g_tl[{t}]: {} vs {}", g_tl[t], num);
+            assert!(
+                (g_tl[t] - num).abs() < 1e-4,
+                "g_tl[{t}]: {} vs {}",
+                g_tl[t],
+                num
+            );
         }
         for j in 0..v {
             let f = |val: f64| {
@@ -731,7 +848,12 @@ mod tests {
                 loss_of(&topic_emb, &word_emb, &topic_logit, &wl)
             };
             let num = (f(word_logit[j] + 1e-6) - f(word_logit[j] - 1e-6)) / 2e-6;
-            assert!((g_wl[j] - num).abs() < 1e-4, "g_wl[{j}]: {} vs {}", g_wl[j], num);
+            assert!(
+                (g_wl[j] - num).abs() < 1e-4,
+                "g_wl[{j}]: {} vs {}",
+                g_wl[j],
+                num
+            );
         }
     }
 
@@ -746,7 +868,9 @@ mod tests {
         let docs: Vec<Vec<u32>> = (0..120)
             .map(|d| {
                 let b = d % k;
-                (0..10).map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32).collect()
+                (0..10)
+                    .map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                    .collect()
             })
             .collect();
         // Document embedding: one-hot on its block axis plus noise.
@@ -754,11 +878,15 @@ mod tests {
             .iter()
             .map(|doc| {
                 let b = doc[0] as usize / block;
-                (0..h).map(|dim| if dim == b { 3.0 } else { 0.0 } + (rng.gen::<f64>() - 0.5) * 0.3).collect()
+                (0..h)
+                    .map(|dim| if dim == b { 3.0 } else { 0.0 } + (rng.gen::<f64>() - 0.5) * 0.3)
+                    .collect()
             })
             .collect();
 
-        let m = fit_fastopic(&docs, &doc_emb, k, v, 300, 0.05, 3.0, 2.0, 1.0, 1e-6, 50, 1e-4, &mut rng);
+        let m = fit_fastopic(
+            &docs, &doc_emb, k, v, 300, 0.05, 3.0, 2.0, 1.0, 1e-6, 50, 1e-4, &mut rng,
+        );
         assert_eq!(m.topic_word.len(), k);
         // Loss decreases overall.
         assert!(m.loss_history.last().unwrap() < &m.loss_history[0]);
@@ -771,7 +899,8 @@ mod tests {
         for t in 0..k {
             let mut order: Vec<usize> = (0..v).collect();
             order.sort_by(|&a, &b| m.topic_word[t][b].total_cmp(&m.topic_word[t][a]));
-            let blocks: std::collections::HashSet<usize> = order[..3].iter().map(|&w| w / block).collect();
+            let blocks: std::collections::HashSet<usize> =
+                order[..3].iter().map(|&w| w / block).collect();
             assert_eq!(blocks.len(), 1, "topic {t} top words mix blocks");
             covered.insert(*blocks.iter().next().unwrap());
         }
@@ -786,17 +915,23 @@ mod tests {
         let docs: Vec<Vec<u32>> = (0..120)
             .map(|d| {
                 let b = d % k;
-                (0..10).map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32).collect()
+                (0..10)
+                    .map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                    .collect()
             })
             .collect();
         let doc_emb: Vec<Vec<f64>> = docs
             .iter()
             .map(|doc| {
                 let b = doc[0] as usize / block;
-                (0..h).map(|dim| if dim == b { 3.0 } else { 0.0 } + (rng.gen::<f64>() - 0.5) * 0.3).collect()
+                (0..h)
+                    .map(|dim| if dim == b { 3.0 } else { 0.0 } + (rng.gen::<f64>() - 0.5) * 0.3)
+                    .collect()
             })
             .collect();
-        let m = fit_fastopic(&docs, &doc_emb, k, v, 300, 0.05, 3.0, 2.0, 1.0, 1e-6, 50, 1e-4, &mut rng);
+        let m = fit_fastopic(
+            &docs, &doc_emb, k, v, 300, 0.05, 3.0, 2.0, 1.0, 1e-6, 50, 1e-4, &mut rng,
+        );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }

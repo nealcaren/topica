@@ -48,7 +48,14 @@ impl BertopicModel {
         window: usize,
         stride: usize,
     ) -> Vec<Vec<f64>> {
-        approximate_distribution(docs, &self.ctfidf_raw, &self.idf, self.num_topics, window, stride)
+        approximate_distribution(
+            docs,
+            &self.ctfidf_raw,
+            &self.idf,
+            self.num_topics,
+            window,
+            stride,
+        )
     }
 
     /// Merge each group of topics into one and rebuild the representation.
@@ -95,7 +102,8 @@ impl BertopicModel {
         stride: usize,
     ) {
         self.num_topics = topic_count(&self.labels);
-        self.ctfidf_raw = represent::ctfidf_weighted(docs, &self.labels, vocab_size, bm25, reduce_frequent);
+        self.ctfidf_raw =
+            represent::ctfidf_weighted(docs, &self.labels, vocab_size, bm25, reduce_frequent);
         self.idf = idf_weights(docs, &self.labels, vocab_size);
         self.topic_word = self
             .ctfidf_raw
@@ -109,8 +117,14 @@ impl BertopicModel {
                 }
             })
             .collect();
-        self.doc_topic =
-            approximate_distribution(docs, &self.ctfidf_raw, &self.idf, self.num_topics, window, stride);
+        self.doc_topic = approximate_distribution(
+            docs,
+            &self.ctfidf_raw,
+            &self.idf,
+            self.num_topics,
+            window,
+            stride,
+        );
     }
 }
 
@@ -147,14 +161,20 @@ pub fn fit_bertopic(
         doc_embeddings.to_vec()
     };
     let mut labels = cluster::cluster_points(
-        &reduced, clusterer, num_clusters, min_cluster_size, min_samples, seed,
+        &reduced,
+        clusterer,
+        num_clusters,
+        min_cluster_size,
+        min_samples,
+        seed,
     );
     let mut num_topics = topic_count(&labels);
 
     // (3) optional topic reduction: merge the most c-TF-IDF-similar topics.
     if let Some(target) = nr_topics {
         while num_topics > target.max(1) {
-            let ctfidf = represent::ctfidf_weighted(docs, &labels, vocab_size, bm25, reduce_frequent);
+            let ctfidf =
+                represent::ctfidf_weighted(docs, &labels, vocab_size, bm25, reduce_frequent);
             let (a, b) = most_similar_pair(&ctfidf);
             if a == b {
                 break;
@@ -183,11 +203,23 @@ pub fn fit_bertopic(
     }
     let doc_topic = approximate_distribution(docs, &ctfidf_raw, &idf, num_topics, window, stride);
 
-    BertopicModel { num_topics, labels, topic_word, doc_topic, ctfidf_raw, idf }
+    BertopicModel {
+        num_topics,
+        labels,
+        topic_word,
+        doc_topic,
+        ctfidf_raw,
+        idf,
+    }
 }
 
 fn topic_count(labels: &[i64]) -> usize {
-    labels.iter().filter(|&&l| l >= 0).map(|&l| l as usize + 1).max().unwrap_or(0)
+    labels
+        .iter()
+        .filter(|&&l| l >= 0)
+        .map(|&l| l as usize + 1)
+        .max()
+        .unwrap_or(0)
 }
 
 /// idf factor `ln(1 + A / f_t)` per term, matching `represent::ctfidf` (A is the
@@ -209,8 +241,14 @@ fn idf_weights(docs: &[Vec<u32>], labels: &[i64], vocab_size: usize) -> Vec<f64>
             }
         }
     }
-    let a = if k > 0 { class_size.iter().sum::<f64>() / k as f64 } else { 0.0 };
-    f.iter().map(|&ft| if ft > 0.0 { (1.0 + a / ft).ln() } else { 0.0 }).collect()
+    let a = if k > 0 {
+        class_size.iter().sum::<f64>() / k as f64
+    } else {
+        0.0
+    };
+    f.iter()
+        .map(|&ft| if ft > 0.0 { (1.0 + a / ft).ln() } else { 0.0 })
+        .collect()
 }
 
 /// The most cosine-similar pair of topics by their c-TF-IDF rows, `(keep, drop)`
@@ -368,10 +406,16 @@ mod tests {
         let mut emb = Vec::new();
         for d in 0..(n_clusters * per) {
             let c = d % n_clusters;
-            let toks: Vec<u32> =
-                (0..8).map(|_| (c * block + rng.gen_range(0..block)) as u32).collect();
+            let toks: Vec<u32> = (0..8)
+                .map(|_| (c * block + rng.gen_range(0..block)) as u32)
+                .collect();
             docs.push(toks);
-            emb.push(centers[c].iter().map(|&v| v + rng.gen::<f64>() * 0.5).collect());
+            emb.push(
+                centers[c]
+                    .iter()
+                    .map(|&v| v + rng.gen::<f64>() * 0.5)
+                    .collect(),
+            );
         }
         (docs, emb, vocab_size)
     }
@@ -379,8 +423,14 @@ mod tests {
     #[test]
     fn recovers_topics_via_ctfidf() {
         let (docs, emb, vocab) = planted(3, 40, 1);
-        let m = fit_bertopic(&docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None, 1);
-        assert!(m.num_topics >= 3, "expected >=3 topics, got {}", m.num_topics);
+        let m = fit_bertopic(
+            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None, 1,
+        );
+        assert!(
+            m.num_topics >= 3,
+            "expected >=3 topics, got {}",
+            m.num_topics
+        );
         // Each topic's top words come from a single planted block (block = ids 0..5,
         // 5..10, 10..15).
         for t in 0..m.num_topics {
@@ -398,16 +448,37 @@ mod tests {
     #[test]
     fn nr_topics_reduces_to_target() {
         let (docs, emb, vocab) = planted(4, 40, 2);
-        let full = fit_bertopic(&docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None, 2);
+        let full = fit_bertopic(
+            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None, 2,
+        );
         assert!(full.num_topics >= 3);
-        let reduced = fit_bertopic(&docs, &emb, vocab, 5, false, 15, 15, 2, Some(2), 4, 1, false, false, "hdbscan", None, 2);
+        let reduced = fit_bertopic(
+            &docs,
+            &emb,
+            vocab,
+            5,
+            false,
+            15,
+            15,
+            2,
+            Some(2),
+            4,
+            1,
+            false,
+            false,
+            "hdbscan",
+            None,
+            2,
+        );
         assert_eq!(reduced.num_topics, 2, "should reduce to 2 topics");
     }
 
     #[test]
     fn approximate_distribution_favors_own_topic() {
         let (docs, emb, vocab) = planted(3, 40, 3);
-        let m = fit_bertopic(&docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None, 3);
+        let m = fit_bertopic(
+            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None, 3,
+        );
         // A document made only of block-0 words should put its largest mass on the
         // topic whose top words are block 0.
         let block0_topic = (0..m.num_topics)
@@ -415,14 +486,18 @@ mod tests {
             .expect("a block-0 topic exists");
         let doc0: Vec<u32> = vec![0, 1, 2, 3, 4, 0, 1, 2];
         let dist = m.approximate_distribution(&[doc0], 4, 1);
-        let argmax = (0..m.num_topics).max_by(|&a, &b| dist[0][a].total_cmp(&dist[0][b])).unwrap();
+        let argmax = (0..m.num_topics)
+            .max_by(|&a, &b| dist[0][a].total_cmp(&dist[0][b]))
+            .unwrap();
         assert_eq!(argmax, block0_topic, "dist: {:?}", dist[0]);
     }
 
     #[test]
     fn bertopic_conforms() {
         let (docs, emb, vocab) = planted(3, 40, 1);
-        let m = fit_bertopic(&docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None, 1);
+        let m = fit_bertopic(
+            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None, 1,
+        );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }

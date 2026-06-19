@@ -185,7 +185,21 @@ fn solve_and_blend_content(
     let kkg_old = kkg.to_vec();
     let kkgp_old = kkgp.to_vec();
     optimize_content(
-        m, kt, kkp, kkg, kkgp, &counts, k, g, p, v, sigma2, rw_kp, rw_kgp, shrink_kgp, inner_iters,
+        m,
+        kt,
+        kkp,
+        kkg,
+        kkgp,
+        &counts,
+        k,
+        g,
+        p,
+        v,
+        sigma2,
+        rw_kp,
+        rw_kgp,
+        shrink_kgp,
+        inner_iters,
     );
     blend_kappa(kt, &kt_old, rho);
     blend_kappa(kkp, &kkp_old, rho);
@@ -195,7 +209,12 @@ fn solve_and_blend_content(
     // content-model convergence signal: still-large at the end => not converged.
     let mut num = 0.0f64;
     let mut den = 0.0f64;
-    for (cur, old) in [(&*kt, &kt_old), (&*kkp, &kkp_old), (&*kkg, &kkg_old), (&*kkgp, &kkgp_old)] {
+    for (cur, old) in [
+        (&*kt, &kt_old),
+        (&*kkp, &kkp_old),
+        (&*kkg, &kkg_old),
+        (&*kkgp, &kkgp_old),
+    ] {
         for (cr, orow) in cur.iter().zip(old) {
             for (&c, &o) in cr.iter().zip(orow) {
                 num += (c - o) * (c - o);
@@ -265,8 +284,9 @@ fn optimize_content(
             let kt_i = |t: usize, w: usize| flat[t * v + w];
             let kkp_i = |t: usize, per: usize, w: usize| flat[off_kp + (t * p + per) * v + w];
             let kkg_i = |t: usize, grp: usize, w: usize| flat[off_kg + (t * g + grp) * v + w];
-            let kkgp_i =
-                |t: usize, grp: usize, per: usize, w: usize| flat[off_kgp + ((t * g + grp) * p + per) * v + w];
+            let kkgp_i = |t: usize, grp: usize, per: usize, w: usize| {
+                flat[off_kgp + ((t * g + grp) * p + per) * v + w]
+            };
 
             let mut value = 0.0f64;
             let mut grad = vec![0.0f64; flat.len()];
@@ -516,7 +536,9 @@ pub fn fit_ectm<R: Rng>(
         let mut sigma_ss = vec![0.0f64; km1 * km1];
         let mut lambda_sum = vec![0.0f64; km1];
 
-        let chunk = (128 * 1024 * 1024 / (km1 * km1 * 8).max(1)).max(256).min(d.max(1));
+        let chunk = (128 * 1024 * 1024 / (km1 * km1 * 8).max(1))
+            .max(256)
+            .min(d.max(1));
         let mut total_bound = 0.0f64;
         let mut base = 0usize;
         while base < d {
@@ -534,7 +556,9 @@ pub fn fit_ectm<R: Rng>(
                         7,
                         1e-5,
                     );
-                    let res = ctm_hpb(&opt, beta_doc, words, counts, &mu_d, &siginv, entropy, diagonal);
+                    let res = ctm_hpb(
+                        &opt, beta_doc, words, counts, &mu_d, &siginv, entropy, diagonal,
+                    );
                     (opt, res)
                 });
 
@@ -608,8 +632,21 @@ pub fn fit_ectm<R: Rng>(
 
         // Content M-step.
         content_beta = optimize_content(
-            &m_bg, &mut kt, &mut kkp, &mut kkg, &mut kkgp, &content_ss, k, g, p, num_types, sigma2,
-            rw_kp, rw_kgp, shrink_kgp, 20,
+            &m_bg,
+            &mut kt,
+            &mut kkp,
+            &mut kkg,
+            &mut kkgp,
+            &content_ss,
+            k,
+            g,
+            p,
+            num_types,
+            sigma2,
+            rw_kp,
+            rw_kgp,
+            shrink_kgp,
+            20,
         );
     }
 
@@ -834,7 +871,9 @@ pub fn fit_ectm_svi<R: Rng>(
                     7,
                     1e-5,
                 );
-                let res = ctm_hpb(&opt, beta_doc, words, counts, &mu_d, &siginv, entropy, diagonal);
+                let res = ctm_hpb(
+                    &opt, beta_doc, words, counts, &mu_d, &siginv, entropy, diagonal,
+                );
                 for (wi, &w) in words.iter().enumerate() {
                     for t in 0..k {
                         content_ss[t * num_cells + c][w] += res.phi[t][wi];
@@ -877,7 +916,10 @@ pub fn fit_ectm_svi<R: Rng>(
             }
 
             // Σ: blend toward the minibatch covariance estimate.
-            let mus: Vec<Vec<f64>> = chunk.iter().map(|&di| doc_mu(di, &gamma, &mu_shared)).collect();
+            let mus: Vec<Vec<f64>> = chunk
+                .iter()
+                .map(|&di| doc_mu(di, &gamma, &mu_shared))
+                .collect();
             for i in 0..km1 {
                 for j in 0..km1 {
                     let mut cross = 0.0;
@@ -901,11 +943,28 @@ pub fn fit_ectm_svi<R: Rng>(
                 n_ksolve += 1;
                 let rho_k = svi::rho(1.0, kappa, n_ksolve);
                 let shift = solve_and_blend_content(
-                    &m_bg, &mut kt, &mut kkp, &mut kkg, &mut kkgp, &content_ss, win_docs, d,
-                    k, g, p, num_types, sigma2, rw_kp, rw_kgp, shrink_kgp, rho_k, kiters,
+                    &m_bg,
+                    &mut kt,
+                    &mut kkp,
+                    &mut kkg,
+                    &mut kkgp,
+                    &content_ss,
+                    win_docs,
+                    d,
+                    k,
+                    g,
+                    p,
+                    num_types,
+                    sigma2,
+                    rw_kp,
+                    rw_kgp,
+                    shrink_kgp,
+                    rho_k,
+                    kiters,
                 );
                 content_shift_history.push(shift);
-                content_beta = build_content_beta(&m_bg, &kt, &kkp, &kkg, &kkgp, k, g, p, num_types);
+                content_beta =
+                    build_content_beta(&m_bg, &kt, &kkp, &kkg, &kkgp, k, g, p, num_types);
                 for row in content_ss.iter_mut() {
                     for c in row.iter_mut() {
                         *c = 0.0;
@@ -922,8 +981,24 @@ pub fn fit_ectm_svi<R: Rng>(
         n_ksolve += 1;
         let rho_k = svi::rho(1.0, kappa, n_ksolve);
         let shift = solve_and_blend_content(
-            &m_bg, &mut kt, &mut kkp, &mut kkg, &mut kkgp, &content_ss, win_docs, d, k, g, p,
-            num_types, sigma2, rw_kp, rw_kgp, shrink_kgp, rho_k, kiters,
+            &m_bg,
+            &mut kt,
+            &mut kkp,
+            &mut kkg,
+            &mut kkgp,
+            &content_ss,
+            win_docs,
+            d,
+            k,
+            g,
+            p,
+            num_types,
+            sigma2,
+            rw_kp,
+            rw_kgp,
+            shrink_kgp,
+            rho_k,
+            kiters,
         );
         content_shift_history.push(shift);
         content_beta = build_content_beta(&m_bg, &kt, &kkp, &kkg, &kkgp, k, g, p, num_types);
@@ -940,7 +1015,9 @@ pub fn fit_ectm_svi<R: Rng>(
         Some(l) => half_logdet(&l, km1),
         None => 0.0,
     };
-    let chunk = (128 * 1024 * 1024 / (km1 * km1 * 8).max(1)).max(256).min(d.max(1));
+    let chunk = (128 * 1024 * 1024 / (km1 * km1 * 8).max(1))
+        .max(256)
+        .min(d.max(1));
     let mut total_bound = 0.0f64;
     let mut base = 0usize;
     while base < d {
@@ -958,7 +1035,9 @@ pub fn fit_ectm_svi<R: Rng>(
                     7,
                     1e-5,
                 );
-                let res = ctm_hpb(&opt, beta_doc, words, counts, &mu_d, &siginv, entropy, diagonal);
+                let res = ctm_hpb(
+                    &opt, beta_doc, words, counts, &mu_d, &siginv, entropy, diagonal,
+                );
                 (opt, res)
             });
         for (local_di, (opt, res)) in &chunk_results {
@@ -1038,7 +1117,11 @@ impl Estimator for EctmModel {
     }
 
     fn fit_history(&self) -> Vec<(usize, f64)> {
-        self.bound_history.iter().enumerate().map(|(i, &b)| (i + 1, b)).collect()
+        self.bound_history
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| (i + 1, b))
+            .collect()
     }
 
     fn converged(&self) -> Option<bool> {
@@ -1098,8 +1181,25 @@ mod tests {
         let (docs, groups, periods) = growing_contrast_corpus();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         fit_ectm(
-            &docs, 2, 4, &groups, 2, &periods, 3, 60, 0.0, 0.0, None, 1.0, 5.0, 5.0, 2.0, true, false,
-            init_spectral, &mut rng,
+            &docs,
+            2,
+            4,
+            &groups,
+            2,
+            &periods,
+            3,
+            60,
+            0.0,
+            0.0,
+            None,
+            1.0,
+            5.0,
+            5.0,
+            2.0,
+            true,
+            false,
+            init_spectral,
+            &mut rng,
         )
     }
 
@@ -1138,7 +1238,10 @@ mod tests {
             c2 > c0 + 0.2,
             "contrast should grow across periods: period0={c0:.3}, period2={c2:.3}"
         );
-        assert!(c2 > 0.3, "final-period contrast should be substantial: {c2:.3}");
+        assert!(
+            c2 > 0.3,
+            "final-period contrast should be substantial: {c2:.3}"
+        );
     }
 
     #[test]
@@ -1171,9 +1274,8 @@ mod tests {
             }
         }
         let cc = fit_small_init(8, false);
-        let any_diff = (0..a.content_beta.len()).any(|c| {
-            (0..a.num_topics).any(|k| a.content_beta[c][k] != cc.content_beta[c][k])
-        });
+        let any_diff = (0..a.content_beta.len())
+            .any(|c| (0..a.num_topics).any(|k| a.content_beta[c][k] != cc.content_beta[c][k]));
         assert!(any_diff, "different seeds should differ under random init");
     }
 

@@ -12,10 +12,10 @@
 //! consumers (e.g. the faSTM R package, which vendors a minimal crate for CRAN)
 //! can depend on `topica-core` alone.
 
-pub mod linalg;
 pub mod corpus;
-pub mod spectral;
-pub mod variational;
-pub mod estimator;
 pub mod ctm;
 pub mod cvb0;
+pub mod estimator;
+pub mod linalg;
+pub mod spectral;
+pub mod variational;

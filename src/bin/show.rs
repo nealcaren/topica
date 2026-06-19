@@ -21,20 +21,20 @@ Options:
 
 struct Args {
     topic_word: String,
-    doc_topic:  String,
-    words:      usize,
+    doc_topic: String,
+    words: usize,
     doc_topics: usize,
-    threshold:  f64,
+    threshold: f64,
 }
 
 impl Default for Args {
     fn default() -> Self {
         Args {
             topic_word: "topic_word.tsv".to_string(),
-            doc_topic:  "doc_topic.tsv".to_string(),
-            words:      10,
+            doc_topic: "doc_topic.tsv".to_string(),
+            words: 10,
             doc_topics: 0,
-            threshold:  0.1,
+            threshold: 0.1,
         }
     }
 }
@@ -45,13 +45,31 @@ fn parse_args() -> Option<Args> {
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
-            "--topic-word"  => { i += 1; args.topic_word  = raw[i].clone(); }
-            "--doc-topic"   => { i += 1; args.doc_topic   = raw[i].clone(); }
-            "--words"       => { i += 1; args.words       = raw[i].parse().ok()?; }
-            "--doc-topics"  => { i += 1; args.doc_topics  = raw[i].parse().ok()?; }
-            "--threshold"   => { i += 1; args.threshold   = raw[i].parse().ok()?; }
+            "--topic-word" => {
+                i += 1;
+                args.topic_word = raw[i].clone();
+            }
+            "--doc-topic" => {
+                i += 1;
+                args.doc_topic = raw[i].clone();
+            }
+            "--words" => {
+                i += 1;
+                args.words = raw[i].parse().ok()?;
+            }
+            "--doc-topics" => {
+                i += 1;
+                args.doc_topics = raw[i].parse().ok()?;
+            }
+            "--threshold" => {
+                i += 1;
+                args.threshold = raw[i].parse().ok()?;
+            }
             "--help" | "-h" => return None,
-            other => { eprintln!("Unknown argument: {}", other); return None; }
+            other => {
+                eprintln!("Unknown argument: {}", other);
+                return None;
+            }
         }
         i += 1;
     }
@@ -65,9 +83,13 @@ fn load_topic_word(path: &Path) -> io::Result<BTreeMap<usize, Vec<(String, f64)>
 
     for (line_idx, line) in reader.lines().enumerate() {
         let line = line?;
-        if line_idx == 0 { continue; } // skip header
+        if line_idx == 0 {
+            continue;
+        } // skip header
         let cols: Vec<&str> = line.splitn(3, '\t').collect();
-        if cols.len() < 3 { continue; }
+        if cols.len() < 3 {
+            continue;
+        }
         let topic: usize = match cols[0].parse() {
             Ok(t) => t,
             Err(_) => continue,
@@ -91,7 +113,11 @@ fn show_topics(topics: &BTreeMap<usize, Vec<(String, f64)>>, n_words: usize) {
 
     for (&topic_idx, words) in topics {
         print!("Topic {:>width$}: ", topic_idx, width = width);
-        let top: Vec<&str> = words.iter().take(n_words).map(|(w, _)| w.as_str()).collect();
+        let top: Vec<&str> = words
+            .iter()
+            .take(n_words)
+            .map(|(w, _)| w.as_str())
+            .collect();
         println!("{}", top.join("  "));
     }
 }
@@ -129,7 +155,7 @@ fn show_doc_topics(path: &Path, n_topics: usize, threshold: f64) -> io::Result<(
         }
 
         let doc_name = fields[0];
-        let label    = if has_label { Some(fields[1]) } else { None };
+        let label = if has_label { Some(fields[1]) } else { None };
 
         // Collect (topic_idx, probability) pairs.
         let mut probs: Vec<(usize, f64)> = fields[first_topic_col..]
@@ -156,7 +182,7 @@ fn show_doc_topics(path: &Path, n_topics: usize, threshold: f64) -> io::Result<(
 
         match label {
             Some(lbl) => println!("{} [{}]:  {}", doc_name, lbl, top.join(", ")),
-            None       => println!("{}:  {}", doc_name, top.join(", ")),
+            None => println!("{}:  {}", doc_name, top.join(", ")),
         }
     }
 
@@ -166,7 +192,10 @@ fn show_doc_topics(path: &Path, n_topics: usize, threshold: f64) -> io::Result<(
 fn main() {
     let args = match parse_args() {
         Some(a) => a,
-        None => { print_usage(); std::process::exit(1); }
+        None => {
+            print_usage();
+            std::process::exit(1);
+        }
     };
 
     let tw_path = Path::new(&args.topic_word);
@@ -180,7 +209,10 @@ fn main() {
 
     let topics = match load_topic_word(tw_path) {
         Ok(t) => t,
-        Err(e) => { eprintln!("Error reading {}: {}", args.topic_word, e); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("Error reading {}: {}", args.topic_word, e);
+            std::process::exit(1);
+        }
     };
 
     show_topics(&topics, args.words);

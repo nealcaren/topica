@@ -52,8 +52,7 @@ pub fn decode_state<S: serde::de::DeserializeOwned>(
             tag_name(expected_tag),
         ));
     }
-    bincode::deserialize(&bytes[8..])
-        .map_err(|e| format!("not a valid topica model file: {e}"))
+    bincode::deserialize(&bytes[8..]).map_err(|e| format!("not a valid topica model file: {e}"))
 }
 
 #[cfg(test)]
@@ -66,7 +65,11 @@ mod tests {
     const TAG_BAR: u8 = 2;
 
     fn tag_name(t: u8) -> &'static str {
-        match t { TAG_FOO => "Foo", TAG_BAR => "Bar", _ => "unknown" }
+        match t {
+            TAG_FOO => "Foo",
+            TAG_BAR => "Bar",
+            _ => "unknown",
+        }
     }
 
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -88,7 +91,12 @@ mod tests {
 
     #[test]
     fn foo_state_round_trip() {
-        let orig = FooState { x: 42, y: 3.14, flags: true, draws: Some(vec![0.1, 0.2, 0.3]) };
+        let orig = FooState {
+            x: 42,
+            y: 3.14,
+            flags: true,
+            draws: Some(vec![0.1, 0.2, 0.3]),
+        };
         let buf = encode_state(TAG_FOO, &orig).unwrap();
         let loaded: FooState = decode_state(&buf, TAG_FOO, tag_name).unwrap();
         assert_eq!(loaded, orig);
@@ -112,7 +120,12 @@ mod tests {
     #[test]
     fn theta_draws_survive_round_trip() {
         let draws: Vec<f32> = (0..30).map(|i| i as f32 / 30.0).collect();
-        let orig = FooState { x: 1, y: 0.0, flags: false, draws: Some(draws.clone()) };
+        let orig = FooState {
+            x: 1,
+            y: 0.0,
+            flags: false,
+            draws: Some(draws.clone()),
+        };
         let buf = encode_state(TAG_FOO, &orig).unwrap();
         let loaded: FooState = decode_state(&buf, TAG_FOO, tag_name).unwrap();
         assert_eq!(loaded.draws.unwrap(), draws);
@@ -122,14 +135,25 @@ mod tests {
 
     #[test]
     fn wrong_model_tag_gives_clear_error() {
-        let orig = FooState { x: 1, y: 2.0, flags: false, draws: None };
+        let orig = FooState {
+            x: 1,
+            y: 2.0,
+            flags: false,
+            draws: None,
+        };
         let buf = encode_state(TAG_FOO, &orig).unwrap();
 
         let result: Result<BarState, String> = decode_state(&buf, TAG_BAR, tag_name);
         assert!(result.is_err());
         let msg = result.unwrap_err();
-        assert!(msg.contains("Foo"), "error should mention the file's model: {msg}");
-        assert!(msg.contains("Bar"), "error should mention the expected model: {msg}");
+        assert!(
+            msg.contains("Foo"),
+            "error should mention the file's model: {msg}"
+        );
+        assert!(
+            msg.contains("Bar"),
+            "error should mention the expected model: {msg}"
+        );
     }
 
     // --- Garbage / truncated buffers give 'not a topica model file' ---
@@ -158,7 +182,12 @@ mod tests {
 
     #[test]
     fn wrong_version_gives_clear_error() {
-        let orig = FooState { x: 1, y: 2.0, flags: false, draws: None };
+        let orig = FooState {
+            x: 1,
+            y: 2.0,
+            flags: false,
+            draws: None,
+        };
         let mut buf = encode_state(TAG_FOO, &orig).unwrap();
         // Overwrite the version byte with an unsupported value.
         buf[6] = 99;

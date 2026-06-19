@@ -19,8 +19,7 @@ pub trait Cvb0ToModel {
 
 impl Cvb0ToModel for Cvb0 {
     fn to_topic_model(&self, corpus: &Corpus) -> TopicModel {
-        let mut model =
-            TopicModel::new(self.num_topics, self.alpha_sum, self.beta, self.num_types);
+        let mut model = TopicModel::new(self.num_topics, self.alpha_sum, self.beta, self.num_types);
         model.alpha.copy_from_slice(&self.alpha);
         model.alpha_sum = self.alpha_sum;
         model.beta = self.beta;

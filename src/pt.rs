@@ -18,8 +18,8 @@
 //!   - `doc_topic()[d][k]`   = (n_{l_d,k} + α) / (n_{l_d} + K·α)   (D × K)
 //!     i.e. the real doc inherits its pseudo-doc's topic distribution.
 
+use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 use rand::Rng;
-use crate::estimator::{Estimator, ModelFamily, DirichletModel};
 
 // ---------------------------------------------------------------------------
 // Log-Gamma helper (Stirling series shifted to z ≥ 10, matching dmr.rs)
@@ -80,7 +80,9 @@ impl PtmModel {
             .zip(&self.nk)
             .map(|(row, &nk)| {
                 let denom = nk as f64 + v as f64 * self.beta;
-                row.iter().map(|&c| (c as f64 + self.beta) / denom).collect()
+                row.iter()
+                    .map(|&c| (c as f64 + self.beta) / denom)
+                    .collect()
             })
             .collect()
     }
@@ -103,22 +105,43 @@ impl PtmModel {
 }
 
 impl Estimator for PtmModel {
-    fn num_topics(&self) -> usize { self.num_topics }
-    fn topic_word(&self) -> Vec<Vec<f64>> { PtmModel::topic_word(self) }
-    fn doc_topic(&self) -> Vec<Vec<f64>> { PtmModel::doc_topic(self) }
-    fn fit_history(&self) -> Vec<(usize, f64)> { Vec::new() }
-    fn converged(&self) -> Option<bool> { None }
-    fn model_family(&self) -> ModelFamily { ModelFamily::Dirichlet }
+    fn num_topics(&self) -> usize {
+        self.num_topics
+    }
+    fn topic_word(&self) -> Vec<Vec<f64>> {
+        PtmModel::topic_word(self)
+    }
+    fn doc_topic(&self) -> Vec<Vec<f64>> {
+        PtmModel::doc_topic(self)
+    }
+    fn fit_history(&self) -> Vec<(usize, f64)> {
+        Vec::new()
+    }
+    fn converged(&self) -> Option<bool> {
+        None
+    }
+    fn model_family(&self) -> ModelFamily {
+        ModelFamily::Dirichlet
+    }
 }
 
 impl DirichletModel for PtmModel {
-    fn alpha(&self) -> Vec<f64> { vec![self.alpha; self.num_topics] }
-    fn theta_draws(&self) -> Vec<Vec<Vec<f64>>> {
-        self.theta_draws.iter().map(|d| {
-            d.iter().map(|r| r.iter().map(|&x| x as f64).collect()).collect()
-        }).collect()
+    fn alpha(&self) -> Vec<f64> {
+        vec![self.alpha; self.num_topics]
     }
-    fn doc_lengths(&self) -> Vec<usize> { self.z.iter().map(|d| d.len()).collect() }
+    fn theta_draws(&self) -> Vec<Vec<Vec<f64>>> {
+        self.theta_draws
+            .iter()
+            .map(|d| {
+                d.iter()
+                    .map(|r| r.iter().map(|&x| x as f64).collect())
+                    .collect()
+            })
+            .collect()
+    }
+    fn doc_lengths(&self) -> Vec<usize> {
+        self.z.iter().map(|d| d.len()).collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +164,14 @@ fn sample_index<R: Rng>(probs: &[f64], rng: &mut R) -> usize {
 impl PtmModel {
     /// Sample a new topic for token (d, i) with word w, given pseudo-doc p.
     /// Removes the token from counts before sampling, then re-adds.
-    fn resample_token<R: Rng>(&mut self, d: usize, i: usize, w: usize, probs: &mut [f64], rng: &mut R) {
+    fn resample_token<R: Rng>(
+        &mut self,
+        d: usize,
+        i: usize,
+        w: usize,
+        probs: &mut [f64],
+        rng: &mut R,
+    ) {
         let p = self.l[d];
         let k_old = self.z[d][i];
         // Remove token from counts.
@@ -179,12 +209,7 @@ impl PtmModel {
     ///
     /// This is the PTM pseudo-document posterior (uniform prior over pseudo-docs,
     /// matching the simplest PTM variant — no pseudo-doc count prior term).
-    fn resample_pseudo<R: Rng>(
-        &mut self,
-        d: usize,
-        doc: &[u32],
-        rng: &mut R,
-    ) {
+    fn resample_pseudo<R: Rng>(&mut self, d: usize, doc: &[u32], rng: &mut R) {
         let k = self.num_topics;
         let p_old = self.l[d];
 
@@ -321,9 +346,16 @@ pub fn fit_ptm<R: Rng>(
     // Plain fit is the draw-collecting fit with collection disabled, so the
     // sampler lives in exactly one place (see `fit_ptm_with_draws`).
     let (model, _, _) = fit_ptm_with_draws(
-        docs, num_types, num_topics, num_pseudo, alpha, beta, iters,
+        docs,
+        num_types,
+        num_topics,
+        num_pseudo,
+        alpha,
+        beta,
+        iters,
         crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
-        0.0, 0,
+        0.0,
+        0,
         rng,
     );
     model
@@ -352,7 +384,9 @@ pub fn fit_ptm_with_draws<R: Rng>(
     let p = num_pseudo;
     let v = num_types;
 
-    let l: Vec<usize> = (0..d_count).map(|_| (rng.gen::<f64>() * p as f64) as usize % p).collect();
+    let l: Vec<usize> = (0..d_count)
+        .map(|_| (rng.gen::<f64>() * p as f64) as usize % p)
+        .collect();
     let z: Vec<Vec<usize>> = docs
         .iter()
         .map(|doc| {
@@ -399,10 +433,16 @@ pub fn fit_ptm_with_draws<R: Rng>(
     for iter in 1..=iters {
         model.sweep(docs, rng);
         if opts.thin > 0 && iter % opts.thin == 0 {
-            let snap: Vec<Vec<f32>> = model.l.iter().map(|&pd| {
-                let denom = model.np[pd] as f64 + k as f64 * model.alpha;
-                (0..k).map(|kk| ((model.npk[pd][kk] as f64 + model.alpha) / denom) as f32).collect()
-            }).collect();
+            let snap: Vec<Vec<f32>> = model
+                .l
+                .iter()
+                .map(|&pd| {
+                    let denom = model.np[pd] as f64 + k as f64 * model.alpha;
+                    (0..k)
+                        .map(|kk| ((model.npk[pd][kk] as f64 + model.alpha) / denom) as f32)
+                        .collect()
+                })
+                .collect();
             if model.theta_draws.len() < opts.cap {
                 model.theta_draws.push(snap);
             } else {
@@ -487,10 +527,18 @@ mod tests {
             .fold(0.0f64, f64::max);
         // Which block is best for each topic?
         let argmax_0 = (0..num_topics)
-            .max_by(|&a, &b| block_score(&tw[0], a).partial_cmp(&block_score(&tw[0], b)).unwrap())
+            .max_by(|&a, &b| {
+                block_score(&tw[0], a)
+                    .partial_cmp(&block_score(&tw[0], b))
+                    .unwrap()
+            })
             .unwrap();
         let argmax_1 = (0..num_topics)
-            .max_by(|&a, &b| block_score(&tw[1], a).partial_cmp(&block_score(&tw[1], b)).unwrap())
+            .max_by(|&a, &b| {
+                block_score(&tw[1], a)
+                    .partial_cmp(&block_score(&tw[1], b))
+                    .unwrap()
+            })
             .unwrap();
 
         // Short docs (3 tokens each) produce noisy per-document statistics; PTM
@@ -501,17 +549,22 @@ mod tests {
             "topic 0 should concentrate on one block but max block mass is {:.3}.\n\
              Block masses: {:?}",
             best_0,
-            (0..num_topics).map(|bi| block_score(&tw[0], bi)).collect::<Vec<_>>()
+            (0..num_topics)
+                .map(|bi| block_score(&tw[0], bi))
+                .collect::<Vec<_>>()
         );
         assert!(
             best_1 > 0.65,
             "topic 1 should concentrate on one block but max block mass is {:.3}.\n\
              Block masses: {:?}",
             best_1,
-            (0..num_topics).map(|bi| block_score(&tw[1], bi)).collect::<Vec<_>>()
+            (0..num_topics)
+                .map(|bi| block_score(&tw[1], bi))
+                .collect::<Vec<_>>()
         );
         assert_ne!(
-            argmax_0, argmax_1,
+            argmax_0,
+            argmax_1,
             "both topics concentrated on the same block ({argmax_0}); \
              no block coverage for block {}",
             1 - argmax_0

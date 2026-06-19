@@ -14,10 +14,7 @@ fn log_gamma(mut z: f64) -> f64 {
         z += 1.0;
         shift += 1;
     }
-    let mut result = HALF_LOG_TWO_PI
-        + (z - 0.5) * z.ln()
-        - z
-        + 1.0 / (12.0 * z)
+    let mut result = HALF_LOG_TWO_PI + (z - 0.5) * z.ln() - z + 1.0 / (12.0 * z)
         - 1.0 / (360.0 * z * z * z)
         + 1.0 / (1260.0 * z * z * z * z * z);
     while shift > 0 {
@@ -49,8 +46,7 @@ pub fn model_log_likelihood(model: &TopicModel, corpus: &Corpus) -> f64 {
         let doc_len = corpus.docs[doc_idx].len();
         for t in 0..model.num_topics {
             if topic_counts[t] > 0 {
-                ll += log_gamma(model.alpha[t] + topic_counts[t] as f64)
-                    - topic_log_gammas[t];
+                ll += log_gamma(model.alpha[t] + topic_counts[t] as f64) - topic_log_gammas[t];
             }
         }
         ll -= log_gamma(model.alpha_sum + doc_len as f64);
@@ -86,14 +82,20 @@ pub fn display_top_words(model: &TopicModel, corpus: &Corpus, n: usize) -> Strin
         let mut word_scores: Vec<(u32, usize)> = (0..model.num_types)
             .filter_map(|word_id| {
                 let count = model.get_type_topic_count(word_id, topic);
-                if count > 0 { Some((count, word_id)) } else { None }
+                if count > 0 {
+                    Some((count, word_id))
+                } else {
+                    None
+                }
             })
             .collect();
         word_scores.sort_by(|a, b| b.0.cmp(&a.0));
 
         out.push_str(&format!("{}\t{:.5}\t", topic, model.alpha[topic]));
         for (i, (_, id)) in word_scores.iter().take(n).enumerate() {
-            if i > 0 { out.push(' '); }
+            if i > 0 {
+                out.push(' ');
+            }
             out.push_str(&corpus.id_to_word[*id]);
         }
         out.push('\n');
@@ -138,7 +140,9 @@ pub fn write_doc_topic(model: &TopicModel, corpus: &Corpus, path: &Path) -> io::
 
     // Header
     write!(writer, "doc")?;
-    if has_labels { write!(writer, "\tlabel")?; }
+    if has_labels {
+        write!(writer, "\tlabel")?;
+    }
     for t in 0..model.num_topics {
         write!(writer, "\ttopic_{}", t)?;
     }
@@ -155,7 +159,9 @@ pub fn write_doc_topic(model: &TopicModel, corpus: &Corpus, path: &Path) -> io::
         }
 
         write!(writer, "{}", corpus.doc_names[doc_idx])?;
-        if has_labels { write!(writer, "\t{}", corpus.doc_labels[doc_idx])?; }
+        if has_labels {
+            write!(writer, "\t{}", corpus.doc_labels[doc_idx])?;
+        }
         for t in 0..model.num_topics {
             let prob = (topic_counts[t] as f64 + model.alpha[t]) / denominator;
             write!(writer, "\t{:.8}", prob)?;
@@ -168,11 +174,7 @@ pub fn write_doc_topic(model: &TopicModel, corpus: &Corpus, path: &Path) -> io::
 
 /// Write topic-word probabilities from a pre-averaged matrix.
 /// `phi[word_id][topic]` = averaged probability estimate.
-pub fn write_topic_word_matrix(
-    phi: &[Vec<f64>],
-    corpus: &Corpus,
-    path: &Path,
-) -> io::Result<()> {
+pub fn write_topic_word_matrix(phi: &[Vec<f64>], corpus: &Corpus, path: &Path) -> io::Result<()> {
     let file = fs::File::create(path)?;
     let mut writer = BufWriter::new(file);
 
@@ -193,11 +195,7 @@ pub fn write_topic_word_matrix(
 
 /// Write document-topic probabilities from a pre-averaged matrix.
 /// `theta[doc_idx][topic]` = averaged probability estimate.
-pub fn write_doc_topic_matrix(
-    theta: &[Vec<f64>],
-    corpus: &Corpus,
-    path: &Path,
-) -> io::Result<()> {
+pub fn write_doc_topic_matrix(theta: &[Vec<f64>], corpus: &Corpus, path: &Path) -> io::Result<()> {
     let file = fs::File::create(path)?;
     let mut writer = BufWriter::new(file);
 
@@ -205,7 +203,9 @@ pub fn write_doc_topic_matrix(
     let has_labels = corpus.has_labels();
 
     write!(writer, "doc")?;
-    if has_labels { write!(writer, "\tlabel")?; }
+    if has_labels {
+        write!(writer, "\tlabel")?;
+    }
     for t in 0..num_topics {
         write!(writer, "\ttopic_{}", t)?;
     }
@@ -213,7 +213,9 @@ pub fn write_doc_topic_matrix(
 
     for doc_idx in 0..corpus.num_docs() {
         write!(writer, "{}", corpus.doc_names[doc_idx])?;
-        if has_labels { write!(writer, "\t{}", corpus.doc_labels[doc_idx])?; }
+        if has_labels {
+            write!(writer, "\t{}", corpus.doc_labels[doc_idx])?;
+        }
         for t in 0..num_topics {
             write!(writer, "\t{:.8}", theta[doc_idx][t])?;
         }
@@ -221,4 +223,3 @@ pub fn write_doc_topic_matrix(
     }
     Ok(())
 }
-

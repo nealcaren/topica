@@ -18,7 +18,11 @@ use rand_chacha::ChaCha8Rng;
 /// HDBSCAN / BERTopic outlier convention. `min_cluster_size` is the smallest
 /// group that counts as a topic; `min_samples` controls how conservative the
 /// density estimate is (larger = more points called noise).
-pub fn hdbscan_labels(points: &[Vec<f64>], min_cluster_size: usize, min_samples: usize) -> Vec<i64> {
+pub fn hdbscan_labels(
+    points: &[Vec<f64>],
+    min_cluster_size: usize,
+    min_samples: usize,
+) -> Vec<i64> {
     let n = points.len();
     if n == 0 {
         return Vec::new();
@@ -74,9 +78,7 @@ pub fn cluster_points(
 ) -> Vec<i64> {
     match clusterer {
         "kmeans" => kmeans_labels(points, num_clusters.unwrap_or(min_cluster_size), seed),
-        "agglomerative" => {
-            agglomerative_labels(points, num_clusters.unwrap_or(min_cluster_size))
-        }
+        "agglomerative" => agglomerative_labels(points, num_clusters.unwrap_or(min_cluster_size)),
         _ => hdbscan_labels(points, min_cluster_size, min_samples),
     }
 }
@@ -270,7 +272,10 @@ mod tests {
             pts.push(vec![rng.gen::<f64>() * 0.3, rng.gen::<f64>() * 0.3]); // near origin
         }
         for _ in 0..30 {
-            pts.push(vec![5.0 + rng.gen::<f64>() * 0.3, 5.0 + rng.gen::<f64>() * 0.3]); // near (5,5)
+            pts.push(vec![
+                5.0 + rng.gen::<f64>() * 0.3,
+                5.0 + rng.gen::<f64>() * 0.3,
+            ]); // near (5,5)
         }
         let labels = hdbscan_labels(&pts, 5, 2);
 
@@ -281,7 +286,10 @@ mod tests {
                     *counts.entry(l).or_insert(0) += 1;
                 }
             }
-            counts.into_iter().max_by_key(|&(_, c)| c).map(|(l, c)| (l, c))
+            counts
+                .into_iter()
+                .max_by_key(|&(_, c)| c)
+                .map(|(l, c)| (l, c))
         };
         let (a, na) = majority(&labels[..30]).expect("blob 1 has a cluster");
         let (b, nb) = majority(&labels[30..]).expect("blob 2 has a cluster");
@@ -315,7 +323,10 @@ mod tests {
             pts.push(vec![rng.gen::<f64>() * 0.3, rng.gen::<f64>() * 0.3]);
         }
         for _ in 0..30 {
-            pts.push(vec![5.0 + rng.gen::<f64>() * 0.3, 5.0 + rng.gen::<f64>() * 0.3]);
+            pts.push(vec![
+                5.0 + rng.gen::<f64>() * 0.3,
+                5.0 + rng.gen::<f64>() * 0.3,
+            ]);
         }
         pts
     }

@@ -26,19 +26,25 @@ pub struct SageModel {
     pub alpha: Vec<f64>,
     pub prior_variance: f64,
 
-    pub m: Vec<f64>,              // background log-freq, len V
-    pub kappa_t: Vec<Vec<f64>>,  // [K][V]
-    pub kappa_c: Vec<Vec<f64>>,  // [G][V]
-    pub kappa_i: Vec<Vec<f64>>,  // [K*G][V]  (index k*G+g)
+    pub m: Vec<f64>,            // background log-freq, len V
+    pub kappa_t: Vec<Vec<f64>>, // [K][V]
+    pub kappa_c: Vec<Vec<f64>>, // [G][V]
+    pub kappa_i: Vec<Vec<f64>>, // [K*G][V]  (index k*G+g)
 
-    pub beta: Vec<Vec<f64>>,     // [K*G][V] cached normalized topic-word dists
-    pub counts: Vec<Vec<u32>>,   // [K*G][V] token counts n_{k,g,v}
-    pub totals: Vec<u32>,        // [K*G] = Σ_v counts
+    pub beta: Vec<Vec<f64>>,   // [K*G][V] cached normalized topic-word dists
+    pub counts: Vec<Vec<u32>>, // [K*G][V] token counts n_{k,g,v}
+    pub totals: Vec<u32>,      // [K*G] = Σ_v counts
     pub doc_topics: Vec<Vec<u32>>,
 }
 
 impl SageModel {
-    pub fn new(num_topics: usize, num_groups: usize, num_types: usize, alpha: f64, prior_variance: f64) -> Self {
+    pub fn new(
+        num_topics: usize,
+        num_groups: usize,
+        num_types: usize,
+        alpha: f64,
+        prior_variance: f64,
+    ) -> Self {
         let kg = num_topics * num_groups;
         SageModel {
             num_topics,
@@ -84,7 +90,8 @@ impl SageModel {
                 let c = self.cell(k, g);
                 let mut max = f64::NEG_INFINITY;
                 for v in 0..self.num_types {
-                    let eta = self.m[v] + self.kappa_t[k][v] + self.kappa_c[g][v] + self.kappa_i[c][v];
+                    let eta =
+                        self.m[v] + self.kappa_t[k][v] + self.kappa_c[g][v] + self.kappa_i[c][v];
                     self.beta[c][v] = eta;
                     if eta > max {
                         max = eta;
@@ -108,7 +115,11 @@ impl SageModel {
         self.recompute_beta();
         self.doc_topics = docs
             .iter()
-            .map(|doc| doc.iter().map(|_| rng.gen_range(0..self.num_topics) as u32).collect())
+            .map(|doc| {
+                doc.iter()
+                    .map(|_| rng.gen_range(0..self.num_topics) as u32)
+                    .collect()
+            })
             .collect();
         for (d, doc) in docs.iter().enumerate() {
             let g = groups[d];
@@ -275,7 +286,7 @@ pub fn optimize_kappa(model: &mut SageModel, max_iter: usize) {
     model.recompute_beta();
 }
 
-use crate::estimator::{Estimator, ModelFamily, DirichletModel};
+use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 
 impl Estimator for SageModel {
     fn num_topics(&self) -> usize {
@@ -284,26 +295,39 @@ impl Estimator for SageModel {
 
     fn topic_word(&self) -> Vec<Vec<f64>> {
         // Average the cached beta (shape (K*G)×V, indexed k*num_groups+g) over groups.
-        (0..self.num_topics).map(|k| {
-            let mut avg = vec![0.0f64; self.num_types];
-            for g in 0..self.num_groups {
-                let row = &self.beta[k * self.num_groups + g];
-                for v in 0..self.num_types { avg[v] += row[v]; }
-            }
-            for v in 0..self.num_types { avg[v] /= self.num_groups as f64; }
-            avg
-        }).collect()
+        (0..self.num_topics)
+            .map(|k| {
+                let mut avg = vec![0.0f64; self.num_types];
+                for g in 0..self.num_groups {
+                    let row = &self.beta[k * self.num_groups + g];
+                    for v in 0..self.num_types {
+                        avg[v] += row[v];
+                    }
+                }
+                for v in 0..self.num_types {
+                    avg[v] /= self.num_groups as f64;
+                }
+                avg
+            })
+            .collect()
     }
 
     fn doc_topic(&self) -> Vec<Vec<f64>> {
         // Smoothed proportions from per-token topic ids with per-topic alpha.
         let alpha_sum: f64 = self.alpha.iter().sum();
-        self.doc_topics.iter().map(|toks| {
-            let mut cnt = vec![0.0f64; self.num_topics];
-            for &t in toks { cnt[t as usize] += 1.0; }
-            let denom = toks.len() as f64 + alpha_sum;
-            (0..self.num_topics).map(|t| (cnt[t] + self.alpha[t]) / denom).collect()
-        }).collect()
+        self.doc_topics
+            .iter()
+            .map(|toks| {
+                let mut cnt = vec![0.0f64; self.num_topics];
+                for &t in toks {
+                    cnt[t as usize] += 1.0;
+                }
+                let denom = toks.len() as f64 + alpha_sum;
+                (0..self.num_topics)
+                    .map(|t| (cnt[t] + self.alpha[t]) / denom)
+                    .collect()
+            })
+            .collect()
     }
 
     fn fit_history(&self) -> Vec<(usize, f64)> {

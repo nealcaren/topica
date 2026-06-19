@@ -1,6 +1,6 @@
-use rand::Rng;
 use crate::corpus::Corpus;
 use crate::model::TopicModel;
+use rand::Rng;
 
 /// Run one full Gibbs sweep over all documents.
 pub fn run_iteration<R: Rng>(model: &mut TopicModel, corpus: &Corpus, rng: &mut R) {
@@ -88,26 +88,28 @@ pub fn run_sweep<R: Rng>(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sample_doc<R: Rng>(
     type_topic_counts: &mut [Vec<u32>],
-    tokens_per_topic:  &mut [u32],
-    doc_topics:        &mut [Vec<u32>],
-    alpha:             &[f64],
-    beta:              f64,
-    beta_sum:          f64,
-    topic_mask:        u32,
-    topic_bits:        u32,
-    num_topics:        usize,
-    corpus_doc:        &[u32],
-    doc_idx:           usize,
-    rng:               &mut R,
+    tokens_per_topic: &mut [u32],
+    doc_topics: &mut [Vec<u32>],
+    alpha: &[f64],
+    beta: f64,
+    beta_sum: f64,
+    topic_mask: u32,
+    topic_bits: u32,
+    num_topics: usize,
+    corpus_doc: &[u32],
+    doc_idx: usize,
+    rng: &mut R,
     smoothing_only_mass: &mut f64,
     cached_coefficients: &mut [f64],
-    local_topic_counts:  &mut [u32],
-    local_topic_index:   &mut [u32],
-    scored_positions:    &mut [usize],
-    scored_values:       &mut [f64],
+    local_topic_counts: &mut [u32],
+    local_topic_index: &mut [u32],
+    scored_positions: &mut [usize],
+    scored_values: &mut [f64],
 ) {
     let doc_len = corpus_doc.len();
-    if doc_len == 0 { return; }
+    if doc_len == 0 {
+        return;
+    }
 
     // --- Populate local topic counts for this document ---
     //
@@ -142,12 +144,12 @@ pub(crate) fn sample_doc<R: Rng>(
 
     // --- Sample each token ---
     for pos in 0..doc_len {
-        let word_id   = corpus_doc[pos] as usize;
+        let word_id = corpus_doc[pos] as usize;
         let old_topic = doc_topics[doc_idx][pos] as usize;
 
         // --- Phase A: remove old token from all counts ---
-        *smoothing_only_mass -= alpha[old_topic] * beta
-            / (tokens_per_topic[old_topic] as f64 + beta_sum);
+        *smoothing_only_mass -=
+            alpha[old_topic] * beta / (tokens_per_topic[old_topic] as f64 + beta_sum);
         topic_beta_mass -= beta * local_topic_counts[old_topic] as f64
             / (tokens_per_topic[old_topic] as f64 + beta_sum);
 
@@ -155,7 +157,9 @@ pub(crate) fn sample_doc<R: Rng>(
 
         if local_topic_counts[old_topic] == 0 {
             let mut di = 0;
-            while local_topic_index[di] as usize != old_topic { di += 1; }
+            while local_topic_index[di] as usize != old_topic {
+                di += 1;
+            }
             while di + 1 < non_zero_topics {
                 local_topic_index[di] = local_topic_index[di + 1];
                 di += 1;
@@ -165,8 +169,8 @@ pub(crate) fn sample_doc<R: Rng>(
 
         tokens_per_topic[old_topic] -= 1;
 
-        *smoothing_only_mass += alpha[old_topic] * beta
-            / (tokens_per_topic[old_topic] as f64 + beta_sum);
+        *smoothing_only_mass +=
+            alpha[old_topic] * beta / (tokens_per_topic[old_topic] as f64 + beta_sum);
         topic_beta_mass += beta * local_topic_counts[old_topic] as f64
             / (tokens_per_topic[old_topic] as f64 + beta_sum);
         cached_coefficients[old_topic] = (alpha[old_topic] + local_topic_counts[old_topic] as f64)
@@ -234,7 +238,9 @@ pub(crate) fn sample_doc<R: Rng>(
             let mut i = 0;
             while sample > 0.0 && i < num_scored {
                 sample -= scored_values[i];
-                if sample > 0.0 { i += 1; }
+                if sample > 0.0 {
+                    i += 1;
+                }
             }
             let array_idx = scored_positions[i.min(num_scored - 1)];
             let entry = type_counts[array_idx];
@@ -257,9 +263,12 @@ pub(crate) fn sample_doc<R: Rng>(
                 let mut chosen = local_topic_index[non_zero_topics - 1] as usize;
                 for di in 0..non_zero_topics {
                     let t = local_topic_index[di] as usize;
-                    sample -= local_topic_counts[t] as f64
-                        / (tokens_per_topic[t] as f64 + beta_sum);
-                    if sample <= 0.0 { chosen = t; break; }
+                    sample -=
+                        local_topic_counts[t] as f64 / (tokens_per_topic[t] as f64 + beta_sum);
+                    if sample <= 0.0 {
+                        chosen = t;
+                        break;
+                    }
                 }
                 new_topic = chosen;
             } else {
@@ -269,7 +278,10 @@ pub(crate) fn sample_doc<R: Rng>(
                 let mut chosen = num_topics - 1;
                 for t in 0..num_topics {
                     sample -= alpha[t] / (tokens_per_topic[t] as f64 + beta_sum);
-                    if sample <= 0.0 { chosen = t; break; }
+                    if sample <= 0.0 {
+                        chosen = t;
+                        break;
+                    }
                 }
                 new_topic = chosen;
             }
@@ -277,7 +289,9 @@ pub(crate) fn sample_doc<R: Rng>(
             // Find or create the slot for new_topic and increment.
             let mut idx = 0;
             while idx < entries_len && type_counts[idx] > 0 {
-                if (type_counts[idx] & topic_mask) as usize == new_topic { break; }
+                if (type_counts[idx] & topic_mask) as usize == new_topic {
+                    break;
+                }
                 idx += 1;
             }
             if idx == entries_len {
@@ -297,8 +311,8 @@ pub(crate) fn sample_doc<R: Rng>(
         // --- Phase C: assign new topic and update all counts ---
         doc_topics[doc_idx][pos] = new_topic as u32;
 
-        *smoothing_only_mass -= alpha[new_topic] * beta
-            / (tokens_per_topic[new_topic] as f64 + beta_sum);
+        *smoothing_only_mass -=
+            alpha[new_topic] * beta / (tokens_per_topic[new_topic] as f64 + beta_sum);
         topic_beta_mass -= beta * local_topic_counts[new_topic] as f64
             / (tokens_per_topic[new_topic] as f64 + beta_sum);
 
@@ -319,8 +333,8 @@ pub(crate) fn sample_doc<R: Rng>(
         cached_coefficients[new_topic] = (alpha[new_topic] + local_topic_counts[new_topic] as f64)
             / (tokens_per_topic[new_topic] as f64 + beta_sum);
 
-        *smoothing_only_mass += alpha[new_topic] * beta
-            / (tokens_per_topic[new_topic] as f64 + beta_sum);
+        *smoothing_only_mass +=
+            alpha[new_topic] * beta / (tokens_per_topic[new_topic] as f64 + beta_sum);
         topic_beta_mass += beta * local_topic_counts[new_topic] as f64
             / (tokens_per_topic[new_topic] as f64 + beta_sum);
     }

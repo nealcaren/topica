@@ -224,7 +224,11 @@ impl Cvb0 {
         for row in inv_seeds.iter_mut() {
             row.sort_unstable();
         }
-        self.seed = Some(CvbSeedBeta { seed_weight, beta_sum_k, inv_seeds });
+        self.seed = Some(CvbSeedBeta {
+            seed_weight,
+            beta_sum_k,
+            inv_seeds,
+        });
     }
 
     /// Expected document-topic counts `E[n_dk]` — the soft input the DMR λ
@@ -295,7 +299,11 @@ impl Cvb0 {
 
                 // Normalize, accumulate |Δγ|, and add the new mass back.
                 for &t in topics {
-                    let new = if sum > 0.0 { self.gamma[d][i][t] / sum } else { uniform };
+                    let new = if sum > 0.0 {
+                        self.gamma[d][i][t] / sum
+                    } else {
+                        uniform
+                    };
                     self.gamma[d][i][t] = new;
                     total_change += (new - old[t]).abs();
                     self.n_dk[d][t] += cf * new;
@@ -489,8 +497,7 @@ mod tests {
         let mut rng = Pcg64Mcg::seed_from_u64(1);
         let mut m = Cvb0::new(&corpus, k, &alpha, 0.01, &mut rng);
         // doc d (block d % n_blocks) is allowed only topic (d % n_blocks).
-        let allowed: Vec<Vec<usize>> =
-            (0..corpus.docs.len()).map(|d| vec![d % n_blocks]).collect();
+        let allowed: Vec<Vec<usize>> = (0..corpus.docs.len()).map(|d| vec![d % n_blocks]).collect();
         m.set_allowed(allowed.clone());
         for _ in 0..60 {
             m.sweep();

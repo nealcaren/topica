@@ -49,23 +49,23 @@
 //! prior informative and stable. The sampler is self-contained and deterministic
 //! for a fixed `rng`.
 
+use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 use rand::Rng;
-use crate::estimator::{Estimator, ModelFamily, DirichletModel};
 
 /// A fitted Pachinko Allocation model (four-level, two-tier).
 pub struct PamModel {
-    pub num_types: usize, // V, vocabulary size
-    pub num_super: usize, // S, number of super-topics
-    pub num_sub: usize,   // K, number of sub-topics
-    pub alpha: f64,       // symmetric Dirichlet prior on the doc→super multinomial
-    pub beta: f64,        // symmetric Dirichlet prior on the sub-topic→word multinomials
+    pub num_types: usize,         // V, vocabulary size
+    pub num_super: usize,         // S, number of super-topics
+    pub num_sub: usize,           // K, number of sub-topics
+    pub alpha: f64,               // symmetric Dirichlet prior on the doc→super multinomial
+    pub beta: f64,                // symmetric Dirichlet prior on the sub-topic→word multinomials
     pub alpha_sk: Vec<Vec<f64>>,  // S × K  estimated super→sub Dirichlet parameters
     pub nkw: Vec<Vec<u32>>,       // K × V  sub-topic ↦ word counts
     pub nk: Vec<u32>,             // K      sub-topic totals
     pub nds: Vec<Vec<u32>>,       // D × S  doc ↦ super-topic counts
     pub ndsk: Vec<Vec<Vec<u32>>>, // D × S × K  doc ↦ (super, sub) counts
-    pub zs: Vec<Vec<usize>>, // per-document token super-topic assignments
-    pub zk: Vec<Vec<usize>>, // per-document token sub-topic assignments
+    pub zs: Vec<Vec<usize>>,      // per-document token super-topic assignments
+    pub zk: Vec<Vec<usize>>,      // per-document token sub-topic assignments
     /// Thinned θ draws (num_draws, D, K): sub-topic proportions marginalized
     /// over super-topics at each snapshot. Empty when draw_cap=0.
     pub theta_draws: Vec<Vec<Vec<f32>>>,
@@ -89,7 +89,9 @@ impl PamModel {
             .zip(&self.nk)
             .map(|(row, &nk)| {
                 let denom = nk as f64 + v as f64 * self.beta;
-                row.iter().map(|&c| (c as f64 + self.beta) / denom).collect()
+                row.iter()
+                    .map(|&c| (c as f64 + self.beta) / denom)
+                    .collect()
             })
             .collect()
     }
@@ -149,20 +151,39 @@ impl PamModel {
 }
 
 impl Estimator for PamModel {
-    fn num_topics(&self) -> usize { self.num_sub }
-    fn topic_word(&self) -> Vec<Vec<f64>> { PamModel::topic_word(self) }
-    fn doc_topic(&self) -> Vec<Vec<f64>> { PamModel::doc_topic(self) }
-    fn fit_history(&self) -> Vec<(usize, f64)> { Vec::new() }
-    fn converged(&self) -> Option<bool> { None }
-    fn model_family(&self) -> ModelFamily { ModelFamily::Dirichlet }
+    fn num_topics(&self) -> usize {
+        self.num_sub
+    }
+    fn topic_word(&self) -> Vec<Vec<f64>> {
+        PamModel::topic_word(self)
+    }
+    fn doc_topic(&self) -> Vec<Vec<f64>> {
+        PamModel::doc_topic(self)
+    }
+    fn fit_history(&self) -> Vec<(usize, f64)> {
+        Vec::new()
+    }
+    fn converged(&self) -> Option<bool> {
+        None
+    }
+    fn model_family(&self) -> ModelFamily {
+        ModelFamily::Dirichlet
+    }
 }
 
 impl DirichletModel for PamModel {
-    fn alpha(&self) -> Vec<f64> { vec![self.alpha; self.num_sub] }
+    fn alpha(&self) -> Vec<f64> {
+        vec![self.alpha; self.num_sub]
+    }
     fn theta_draws(&self) -> Vec<Vec<Vec<f64>>> {
-        self.theta_draws.iter().map(|d| {
-            d.iter().map(|r| r.iter().map(|&x| x as f64).collect()).collect()
-        }).collect()
+        self.theta_draws
+            .iter()
+            .map(|d| {
+                d.iter()
+                    .map(|r| r.iter().map(|&x| x as f64).collect())
+                    .collect()
+            })
+            .collect()
     }
     fn doc_lengths(&self) -> Vec<usize> {
         self.zk.iter().map(|d| d.len()).collect()
@@ -185,7 +206,14 @@ impl PamModel {
     /// Draw a `(super, sub)` pair for token (d, i)=w from the current state (the
     /// token's counts must already be removed) and add the token back under the
     /// chosen pair.
-    fn assign_token<R: Rng>(&mut self, d: usize, i: usize, w: usize, probs: &mut [f64], rng: &mut R) {
+    fn assign_token<R: Rng>(
+        &mut self,
+        d: usize,
+        i: usize,
+        w: usize,
+        probs: &mut [f64],
+        rng: &mut R,
+    ) {
         let v = self.num_types;
         let s_count = self.num_super;
         let k = self.num_sub;
@@ -327,9 +355,16 @@ pub fn fit_pam<R: Rng>(
     // Plain fit is the draw-collecting fit with collection disabled, so the
     // sampler lives in exactly one place (see `fit_pam_with_draws`).
     let (model, _, _) = fit_pam_with_draws(
-        docs, num_types, num_super, num_sub, alpha, beta, iters,
+        docs,
+        num_types,
+        num_super,
+        num_sub,
+        alpha,
+        beta,
+        iters,
         crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
-        0.0, 0,
+        0.0,
+        0,
         rng,
     );
     model
@@ -368,7 +403,11 @@ pub fn fit_pam_with_draws<R: Rng>(
             (0..num_sub)
                 .map(|kk| {
                     let owner = (kk * num_super) / num_sub;
-                    if owner == s { alpha * 5.0 } else { alpha }
+                    if owner == s {
+                        alpha * 5.0
+                    } else {
+                        alpha
+                    }
                 })
                 .collect()
         })
@@ -414,15 +453,21 @@ pub fn fit_pam_with_draws<R: Rng>(
         }
         let iter = it + 1;
         if opts.thin > 0 && iter % opts.thin == 0 {
-            let snap: Vec<Vec<f32>> = model.ndsk.iter().map(|doc| {
-                let mut row = vec![0.0f64; k];
-                for sub in 0..k {
-                    let total: u32 = (0..model.num_super).map(|s| doc[s][sub]).sum();
-                    row[sub] = total as f64 + model.alpha;
-                }
-                let s: f64 = row.iter().sum();
-                row.iter().map(|&x| (if s > 0.0 { x / s } else { 1.0 / k as f64 }) as f32).collect()
-            }).collect();
+            let snap: Vec<Vec<f32>> = model
+                .ndsk
+                .iter()
+                .map(|doc| {
+                    let mut row = vec![0.0f64; k];
+                    for sub in 0..k {
+                        let total: u32 = (0..model.num_super).map(|s| doc[s][sub]).sum();
+                        row[sub] = total as f64 + model.alpha;
+                    }
+                    let s: f64 = row.iter().sum();
+                    row.iter()
+                        .map(|&x| (if s > 0.0 { x / s } else { 1.0 / k as f64 }) as f32)
+                        .collect()
+                })
+                .collect();
             if model.theta_draws.len() < opts.cap {
                 model.theta_draws.push(snap);
             } else {
@@ -506,14 +551,20 @@ mod tests {
                 }
             }
             assert_ne!(
-                sub_to_block[k], usize::MAX,
+                sub_to_block[k],
+                usize::MAX,
                 "sub-topic {} top words do not fill a single planted block",
                 k
             );
         }
         // All four blocks should be covered, one per sub-topic (a bijection).
         let covered: std::collections::HashSet<usize> = sub_to_block.iter().copied().collect();
-        assert_eq!(covered.len(), 4, "sub-topics did not recover all 4 blocks: {:?}", sub_to_block);
+        assert_eq!(
+            covered.len(),
+            4,
+            "sub-topics did not recover all 4 blocks: {:?}",
+            sub_to_block
+        );
 
         // (2) The super_sub() matrix groups the co-occurring sub-topics. For each
         // super-topic take its top-2 sub-topics, translate to the blocks they
@@ -527,10 +578,8 @@ mod tests {
             idx[..2].iter().map(|&k| sub_to_block[k]).collect()
         };
         let recovered: Vec<std::collections::HashSet<usize>> = (0..2).map(top2_blocks).collect();
-        let planted: Vec<std::collections::HashSet<usize>> = groups
-            .iter()
-            .map(|g| g.iter().copied().collect())
-            .collect();
+        let planted: Vec<std::collections::HashSet<usize>> =
+            groups.iter().map(|g| g.iter().copied().collect()).collect();
 
         // Match super-topics to planted groups up to permutation.
         let matches = |perm: [usize; 2]| -> bool {

@@ -69,7 +69,11 @@ pub(crate) struct Mat {
 
 impl Mat {
     pub(crate) fn zeros(rows: usize, cols: usize) -> Self {
-        Mat { rows, cols, data: vec![0.0; rows * cols] }
+        Mat {
+            rows,
+            cols,
+            data: vec![0.0; rows * cols],
+        }
     }
     #[inline]
     pub(crate) fn at(&self, r: usize, c: usize) -> f64 {
@@ -250,17 +254,20 @@ fn sp_x_bt(x: &SpMat, b: &Mat) -> Mat {
     let n = b.rows;
     let k = b.cols;
     let mut out = Mat::zeros(x.rows, n);
-    out.data.par_chunks_mut(n).enumerate().for_each(|(i, orow)| {
-        let (cols, vals) = x.row(i);
-        for (j, ocell) in orow.iter_mut().enumerate() {
-            let brow = &b.data[j * k..(j + 1) * k];
-            let mut s = 0.0;
-            for (&c, &xv) in cols.iter().zip(vals.iter()) {
-                s += xv * brow[c];
+    out.data
+        .par_chunks_mut(n)
+        .enumerate()
+        .for_each(|(i, orow)| {
+            let (cols, vals) = x.row(i);
+            for (j, ocell) in orow.iter_mut().enumerate() {
+                let brow = &b.data[j * k..(j + 1) * k];
+                let mut s = 0.0;
+                for (&c, &xv) in cols.iter().zip(vals.iter()) {
+                    s += xv * brow[c];
+                }
+                *ocell = s;
             }
-            *ocell = s;
-        }
-    });
+        });
     out
 }
 
@@ -271,15 +278,18 @@ fn sp_x_b(x: &SpMat, b: &Mat) -> Mat {
     debug_assert_eq!(x.cols, b.rows);
     let n = b.cols;
     let mut out = Mat::zeros(x.rows, n);
-    out.data.par_chunks_mut(n).enumerate().for_each(|(i, orow)| {
-        let (cols, vals) = x.row(i);
-        for (&c, &xv) in cols.iter().zip(vals.iter()) {
-            let brow = &b.data[c * n..(c + 1) * n];
-            for j in 0..n {
-                orow[j] += xv * brow[j];
+    out.data
+        .par_chunks_mut(n)
+        .enumerate()
+        .for_each(|(i, orow)| {
+            let (cols, vals) = x.row(i);
+            for (&c, &xv) in cols.iter().zip(vals.iter()) {
+                let brow = &b.data[c * n..(c + 1) * n];
+                for j in 0..n {
+                    orow[j] += xv * brow[j];
+                }
             }
-        }
-    });
+        });
     out
 }
 
@@ -645,18 +655,15 @@ fn frobenius_error(x: &SpMat, w: &Mat, h: &Mat) -> f64 {
     // collect per-row partials into an indexed Vec and sum sequentially, so the
     // total is independent of thread completion order (deterministic).
     let mut partials = vec![0.0; x.rows];
-    partials
-        .par_iter_mut()
-        .enumerate()
-        .for_each(|(i, slot)| {
-            let wrow = &w.data[i * k..(i + 1) * k];
-            let (cols, vals) = x.row(i);
-            let mut s = 0.0;
-            for (&j, &xv) in cols.iter().zip(vals.iter()) {
-                s += xv * wh_cell(wrow, h, j, k);
-            }
-            *slot = s;
-        });
+    partials.par_iter_mut().enumerate().for_each(|(i, slot)| {
+        let wrow = &w.data[i * k..(i + 1) * k];
+        let (cols, vals) = x.row(i);
+        let mut s = 0.0;
+        for (&j, &xv) in cols.iter().zip(vals.iter()) {
+            s += xv * wh_cell(wrow, h, j, k);
+        }
+        *slot = s;
+    });
     let cross: f64 = partials.iter().sum();
     // tr((W^T W)(H H^T)) = sum_{a,b} (W^T W)_ab (H H^T)_ab.
     let wtw = matmul_at(w, w); // k x k
@@ -679,21 +686,18 @@ fn kl_error(x: &SpMat, w: &Mat, h: &Mat) -> f64 {
     // sum over nnz of X ln(X/WH), parallel over independent rows. Per-row
     // partials are summed sequentially so the total is thread-count-independent.
     let mut partials = vec![0.0; x.rows];
-    partials
-        .par_iter_mut()
-        .enumerate()
-        .for_each(|(i, slot)| {
-            let wrow = &w.data[i * k..(i + 1) * k];
-            let (cols, vals) = x.row(i);
-            let mut s = 0.0;
-            for (&j, &xv) in cols.iter().zip(vals.iter()) {
-                if xv > 0.0 {
-                    let whij = wh_cell(wrow, h, j, k).max(EPS);
-                    s += xv * (xv / whij).ln();
-                }
+    partials.par_iter_mut().enumerate().for_each(|(i, slot)| {
+        let wrow = &w.data[i * k..(i + 1) * k];
+        let (cols, vals) = x.row(i);
+        let mut s = 0.0;
+        for (&j, &xv) in cols.iter().zip(vals.iter()) {
+            if xv > 0.0 {
+                let whij = wh_cell(wrow, h, j, k).max(EPS);
+                s += xv * (xv / whij).ln();
             }
-            *slot = s;
-        });
+        }
+        *slot = s;
+    });
     let nnz_term: f64 = partials.iter().sum();
     // sum WH = sum_k (sum_i W_ik) (sum_j H_kj).
     let mut sum_wh = 0.0;
@@ -886,7 +890,13 @@ pub(crate) fn count_matrix(docs: &[Vec<u32>], num_types: usize) -> SpMat {
         touched.clear();
         indptr.push(col_idx.len());
     }
-    SpMat { rows: d, cols: num_types, indptr, col_idx, vals }
+    SpMat {
+        rows: d,
+        cols: num_types,
+        indptr,
+        col_idx,
+        vals,
+    }
 }
 
 /// Build the sparse TF-IDF document-term matrix (CSR): `tf * (ln((1+D)/(1+df))
@@ -1042,7 +1052,13 @@ mod tests {
 
     /// A planted-block corpus: K well-separated word blocks, each document drawn
     /// from a single block.
-    fn planted(k: usize, block: usize, ndocs: usize, dlen: usize, seed: u64) -> (Vec<Vec<u32>>, usize) {
+    fn planted(
+        k: usize,
+        block: usize,
+        ndocs: usize,
+        dlen: usize,
+        seed: u64,
+    ) -> (Vec<Vec<u32>>, usize) {
         let v = k * block;
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let docs: Vec<Vec<u32>> = (0..ndocs)
@@ -1060,7 +1076,17 @@ mod tests {
     fn fit_recovers_planted_blocks() {
         let (k, block) = (3usize, 8usize);
         let (docs, v) = planted(k, block, 180, 15, 1);
-        let m = fit_nmf(&docs, k, v, BetaLoss::Frobenius, Init::Nndsvd, false, 200, 1e-4, 42);
+        let m = fit_nmf(
+            &docs,
+            k,
+            v,
+            BetaLoss::Frobenius,
+            Init::Nndsvd,
+            false,
+            200,
+            1e-4,
+            42,
+        );
         assert_eq!(m.num_topics, k);
         let tw = &m.topic_word;
         let mut covered = std::collections::HashSet::new();
@@ -1080,13 +1106,53 @@ mod tests {
         let (k, block) = (3usize, 6usize);
         let (docs, v) = planted(k, block, 90, 12, 7);
         // NNDSVD path (seed-independent init).
-        let a = fit_nmf(&docs, k, v, BetaLoss::Frobenius, Init::Nndsvd, false, 60, 0.0, 42);
-        let b = fit_nmf(&docs, k, v, BetaLoss::Frobenius, Init::Nndsvd, false, 60, 0.0, 42);
+        let a = fit_nmf(
+            &docs,
+            k,
+            v,
+            BetaLoss::Frobenius,
+            Init::Nndsvd,
+            false,
+            60,
+            0.0,
+            42,
+        );
+        let b = fit_nmf(
+            &docs,
+            k,
+            v,
+            BetaLoss::Frobenius,
+            Init::Nndsvd,
+            false,
+            60,
+            0.0,
+            42,
+        );
         assert_eq!(a.topic_word, b.topic_word);
         assert_eq!(a.doc_topic, b.doc_topic);
         // Random path (seeded by user seed).
-        let c = fit_nmf(&docs, k, v, BetaLoss::Frobenius, Init::Random, false, 60, 0.0, 99);
-        let d = fit_nmf(&docs, k, v, BetaLoss::Frobenius, Init::Random, false, 60, 0.0, 99);
+        let c = fit_nmf(
+            &docs,
+            k,
+            v,
+            BetaLoss::Frobenius,
+            Init::Random,
+            false,
+            60,
+            0.0,
+            99,
+        );
+        let d = fit_nmf(
+            &docs,
+            k,
+            v,
+            BetaLoss::Frobenius,
+            Init::Random,
+            false,
+            60,
+            0.0,
+            99,
+        );
         assert_eq!(c.topic_word, d.topic_word);
         assert_eq!(c.doc_topic, d.doc_topic);
     }
@@ -1124,10 +1190,21 @@ mod tests {
             }
             indptr.push(col_idx.len());
         }
-        let x = SpMat { rows: d, cols: v, indptr, col_idx, vals };
+        let x = SpMat {
+            rows: d,
+            cols: v,
+            indptr,
+            col_idx,
+            vals,
+        };
         let (_, s, _) = randomized_svd(&x, 2);
         let want = norm(&a) * norm(&b);
-        assert!((s[0] - want).abs() / want < 1e-6, "sigma0 {} vs {}", s[0], want);
+        assert!(
+            (s[0] - want).abs() / want < 1e-6,
+            "sigma0 {} vs {}",
+            s[0],
+            want
+        );
         // The second singular value of a rank-1 matrix is ~0.
         assert!(s[1] < 1e-6, "sigma1 {} should be near zero", s[1]);
     }
@@ -1138,9 +1215,7 @@ mod tests {
         // proving the parallel matmuls do not depend on thread completion order.
         let (k, block) = (4usize, 7usize);
         let (docs, v) = planted(k, block, 200, 18, 11);
-        let fit = |loss, init| {
-            fit_nmf(&docs, k, v, loss, init, false, 120, 0.0, 77)
-        };
+        let fit = |loss, init| fit_nmf(&docs, k, v, loss, init, false, 120, 0.0, 77);
         for &loss in &[BetaLoss::Frobenius, BetaLoss::KullbackLeibler] {
             for &init in &[Init::Nndsvd, Init::Random] {
                 let one = rayon::ThreadPoolBuilder::new()
@@ -1153,10 +1228,14 @@ mod tests {
                     .build()
                     .unwrap()
                     .install(|| fit(loss, init));
-                assert_eq!(one.topic_word, many.topic_word,
-                    "topic_word differs by thread count (loss={loss:?}, init={init:?})");
-                assert_eq!(one.doc_topic, many.doc_topic,
-                    "doc_topic differs by thread count (loss={loss:?}, init={init:?})");
+                assert_eq!(
+                    one.topic_word, many.topic_word,
+                    "topic_word differs by thread count (loss={loss:?}, init={init:?})"
+                );
+                assert_eq!(
+                    one.doc_topic, many.doc_topic,
+                    "doc_topic differs by thread count (loss={loss:?}, init={init:?})"
+                );
             }
         }
     }
@@ -1165,7 +1244,17 @@ mod tests {
     fn nmf_conforms() {
         let (k, block) = (3usize, 8usize);
         let (docs, v) = planted(k, block, 180, 15, 1);
-        let m = fit_nmf(&docs, k, v, BetaLoss::Frobenius, Init::Nndsvd, false, 150, 1e-4, 42);
+        let m = fit_nmf(
+            &docs,
+            k,
+            v,
+            BetaLoss::Frobenius,
+            Init::Nndsvd,
+            false,
+            150,
+            1e-4,
+            42,
+        );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }

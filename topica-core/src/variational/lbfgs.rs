@@ -7,7 +7,13 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
 /// Minimize `f` (value + gradient) with limited-memory BFGS and a backtracking
 /// Armijo line search. Compact by design: DMR re-optimizes frequently between
 /// sampling sweeps, so a short history and iteration budget suffice.
-pub fn lbfgs_minimize<F>(x0: Vec<f64>, mut f: F, max_iter: usize, history: usize, tol: f64) -> Vec<f64>
+pub fn lbfgs_minimize<F>(
+    x0: Vec<f64>,
+    mut f: F,
+    max_iter: usize,
+    history: usize,
+    tol: f64,
+) -> Vec<f64>
 where
     F: FnMut(&[f64]) -> (f64, Vec<f64>),
 {

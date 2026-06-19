@@ -178,7 +178,11 @@ pub fn fit_top2vec(
     seed: u64,
 ) -> Top2VecModel {
     let n_docs = doc_embeddings.len();
-    let emb_dim = if n_docs > 0 { doc_embeddings[0].len() } else { 0 };
+    let emb_dim = if n_docs > 0 {
+        doc_embeddings[0].len()
+    } else {
+        0
+    };
 
     // (1) Reduce, unless the embeddings are already at or below the target dim.
     let reduced: Vec<Vec<f64>> = if emb_dim > n_components && n_components > 0 {
@@ -190,7 +194,12 @@ pub fn fit_top2vec(
     // (2) Cluster the reduced points. HDBSCAN (the default) leaves sparse points
     // as `-1` noise; KMeans / agglomerative assign every document instead.
     let labels = cluster::cluster_points(
-        &reduced, clusterer, num_clusters, min_cluster_size, min_samples, seed,
+        &reduced,
+        clusterer,
+        num_clusters,
+        min_cluster_size,
+        min_samples,
+        seed,
     );
     let num_topics = labels
         .iter()
@@ -235,7 +244,10 @@ fn soft_doc_topic(doc_embeddings: &[Vec<f64>], topic_vectors: &[Vec<f64>]) -> Ve
             if k == 0 {
                 return Vec::new();
             }
-            let mut row: Vec<f64> = topic_vectors.iter().map(|t| cosine(d, t).max(0.0)).collect();
+            let mut row: Vec<f64> = topic_vectors
+                .iter()
+                .map(|t| cosine(d, t).max(0.0))
+                .collect();
             let sum: f64 = row.iter().sum();
             if sum > 0.0 {
                 for v in row.iter_mut() {
@@ -320,7 +332,12 @@ mod tests {
         let mut doc_emb = Vec::new();
         for d in 0..40 {
             if d % 2 == 0 {
-                docs.push(vec![0u32, 1, 2, 3, 4].into_iter().map(|w| w as u32).collect::<Vec<_>>());
+                docs.push(
+                    vec![0u32, 1, 2, 3, 4]
+                        .into_iter()
+                        .map(|w| w as u32)
+                        .collect::<Vec<_>>(),
+                );
                 doc_emb.push(jitter(&mut rng, &center_a));
             } else {
                 docs.push((5u32..10).collect::<Vec<_>>());
@@ -334,12 +351,22 @@ mod tests {
             word_emb.push(jitter(&mut rng, c));
         }
 
-        let m = fit_top2vec(&docs, &doc_emb, &word_emb, 10, 5, false, 15, 5, 2, "hdbscan", None, 1);
-        assert!(m.num_topics >= 2, "expected >=2 topics, got {}", m.num_topics);
+        let m = fit_top2vec(
+            &docs, &doc_emb, &word_emb, 10, 5, false, 15, 5, 2, "hdbscan", None, 1,
+        );
+        assert!(
+            m.num_topics >= 2,
+            "expected >=2 topics, got {}",
+            m.num_topics
+        );
 
         // Each topic's nearest words should come from a single block.
         for t in 0..m.num_topics {
-            let words: Vec<usize> = m.topic_neighbors(4, t).into_iter().map(|(w, _)| w).collect();
+            let words: Vec<usize> = m
+                .topic_neighbors(4, t)
+                .into_iter()
+                .map(|(w, _)| w)
+                .collect();
             let low = words.iter().filter(|&&w| w < 5).count();
             assert!(
                 low == 0 || low == words.len(),
@@ -360,7 +387,9 @@ mod tests {
         let doc_emb: Vec<Vec<f64>> = (0..5).map(|i| vec![i as f64 * 10.0, 0.0]).collect();
         let docs: Vec<Vec<u32>> = (0..5).map(|_| vec![0u32]).collect();
         let word_emb = vec![vec![1.0, 0.0]];
-        let m = fit_top2vec(&docs, &doc_emb, &word_emb, 1, 2, false, 15, 5, 2, "hdbscan", None, 1);
+        let m = fit_top2vec(
+            &docs, &doc_emb, &word_emb, 1, 2, false, 15, 5, 2, "hdbscan", None, 1,
+        );
         assert_eq!(m.num_topics, 0);
         assert!(m.topic_vectors.is_empty());
     }
@@ -394,7 +423,9 @@ mod tests {
             let c = if w < 5 { &center_a } else { &center_b };
             word_emb.push(jitter(&mut rng, c));
         }
-        let m = fit_top2vec(&docs, &doc_emb, &word_emb, 10, 5, false, 15, 5, 2, "hdbscan", None, 1);
+        let m = fit_top2vec(
+            &docs, &doc_emb, &word_emb, 10, 5, false, 15, 5, 2, "hdbscan", None, 1,
+        );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }

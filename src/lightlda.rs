@@ -223,8 +223,7 @@ impl LightLda {
                 if word_tables[w].is_none() {
                     let mut qw = vec![0.0f64; k];
                     for t in 0..k {
-                        qw[t] = (self.n_wk[w][t] as f64 + beta)
-                            / (self.n_k[t] as f64 + beta_sum);
+                        qw[t] = (self.n_wk[w][t] as f64 + beta) / (self.n_k[t] as f64 + beta_sum);
                     }
                     let table = Alias::build(&qw);
                     word_tables[w] = Some((table, qw));
@@ -265,10 +264,9 @@ impl LightLda {
                     let n_s_di = self.n_k[s] as f64;
 
                     // True conditional masses p(t), p(s) (shared numerator forms).
-                    let p_t = (n_td_excl + self.alpha[t_prop]) * (n_tw_di + beta)
-                        / (n_t_di + beta_sum);
-                    let p_s = (n_sd_excl + self.alpha[s]) * (n_sw_di + beta)
-                        / (n_s_di + beta_sum);
+                    let p_t =
+                        (n_td_excl + self.alpha[t_prop]) * (n_tw_di + beta) / (n_t_di + beta_sum);
+                    let p_s = (n_sd_excl + self.alpha[s]) * (n_sw_di + beta) / (n_s_di + beta_sum);
 
                     let pi = if word_prop {
                         // π_w = (p(t)/p(s)) · (p_w(s)/p_w(t)), Eq. 8.
@@ -329,8 +327,7 @@ impl LightLda {
     /// (optimisation, save/load, log-likelihood, held-out inference) can be
     /// reused without knowing the sampler ran on dense tables.
     pub fn to_topic_model(&self) -> TopicModel {
-        let mut model =
-            TopicModel::new(self.num_topics, self.alpha_sum, self.beta, self.num_types);
+        let mut model = TopicModel::new(self.num_topics, self.alpha_sum, self.beta, self.num_types);
         model.alpha.copy_from_slice(&self.alpha);
         model.alpha_sum = self.alpha_sum;
         model.beta = self.beta;

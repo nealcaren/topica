@@ -6,16 +6,14 @@ pub use topica_core::{corpus, ctm, cvb0, estimator, linalg, spectral, variationa
 // because `TopicModel` stays in `topica`).
 pub mod cvb0_ext;
 
-pub mod saveformat;
 pub mod coherence;
 pub mod conformance;
-pub mod dmr;
-pub mod ectm;
-pub mod sts;
 pub mod detm;
+pub mod dmr;
+pub mod dtm;
+pub mod ectm;
 pub mod etm;
 pub mod etm_vae;
-pub mod dtm;
 pub mod gsdmm;
 pub mod hdp;
 pub mod hlda;
@@ -34,24 +32,26 @@ pub mod prodlda;
 pub mod pt;
 pub mod sage;
 pub mod sampler;
+pub mod saveformat;
 pub mod seeded;
 pub mod slda;
+pub mod sts;
 pub mod warplda;
 
 // Embedding-native model branch (Top2Vec/BERTopic/...): clustering pipeline over
 // user-supplied embeddings. Behind the `embeddings` feature (implied by `python`).
 // reduce -> cluster -> represent are the three pipeline stages.
 #[cfg(feature = "embeddings")]
+pub mod bertopic;
+#[cfg(feature = "embeddings")]
 pub mod cluster;
+pub mod fastopic;
 #[cfg(feature = "embeddings")]
 pub mod reduce;
 #[cfg(feature = "embeddings")]
 pub mod represent;
 #[cfg(feature = "embeddings")]
 pub mod top2vec;
-#[cfg(feature = "embeddings")]
-pub mod bertopic;
-pub mod fastopic;
 
 #[cfg(feature = "python")]
 mod python;

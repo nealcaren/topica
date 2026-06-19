@@ -14,8 +14,7 @@ use regex::Regex;
 ///   ·  U+00B7  middle dot     (Catalan col·legi, Welsh, other scripts)
 ///
 /// Em-dash (U+2014), en-dash (U+2013), and all other punctuation break tokens.
-pub const DEFAULT_TOKEN_REGEX: &str =
-    r"\p{L}[-'\u{2019}.\u{00B7}\p{L}]*\p{L}";
+pub const DEFAULT_TOKEN_REGEX: &str = r"\p{L}[-'\u{2019}.\u{00B7}\p{L}]*\p{L}";
 
 // Version 2 adds per-document labels.
 const MAGIC: &[u8; 4] = b"CRP2";
@@ -35,9 +34,15 @@ pub struct Corpus {
 }
 
 impl Corpus {
-    pub fn num_types(&self) -> usize { self.id_to_word.len() }
-    pub fn num_docs(&self)  -> usize { self.docs.len() }
-    pub fn total_tokens(&self) -> usize { self.docs.iter().map(|d| d.len()).sum() }
+    pub fn num_types(&self) -> usize {
+        self.id_to_word.len()
+    }
+    pub fn num_docs(&self) -> usize {
+        self.docs.len()
+    }
+    pub fn total_tokens(&self) -> usize {
+        self.docs.iter().map(|d| d.len()).sum()
+    }
 
     /// True when at least one document has a non-empty label.
     pub fn has_labels(&self) -> bool {
@@ -116,7 +121,9 @@ pub fn load_text_file(path: &Path, opts: &LoadOptions) -> io::Result<Corpus> {
     for (line_idx, line) in reader.lines().enumerate() {
         let line = line?;
         let line = line.trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
 
         let (doc_name, doc_label, text_slice): (String, String, &str) = match &opts.format {
             InputFormat::Plain { id_field } => {
@@ -124,19 +131,26 @@ pub fn load_text_file(path: &Path, opts: &LoadOptions) -> io::Result<Corpus> {
                     // First whitespace token is the name; rest is text.
                     match line.find(|c: char| c.is_whitespace()) {
                         Some(pos) => (line[..pos].to_string(), String::new(), line[pos..].trim()),
-                        None      => (format!("doc_{}", line_idx), String::new(), line),
+                        None => (format!("doc_{}", line_idx), String::new(), line),
                     }
                 } else {
                     (format!("doc_{}", line_idx), String::new(), line)
                 }
             }
 
-            InputFormat::Tsv { id_column, label_column, text_column } => {
-                let cols: Vec<&str> = line.splitn(
-                    // Only need to split up to max column + 1; splitn remainder holds the rest.
-                    // For safety just collect all tabs and index into the vec.
-                    usize::MAX, '\t'
-                ).collect();
+            InputFormat::Tsv {
+                id_column,
+                label_column,
+                text_column,
+            } => {
+                let cols: Vec<&str> = line
+                    .splitn(
+                        // Only need to split up to max column + 1; splitn remainder holds the rest.
+                        // For safety just collect all tabs and index into the vec.
+                        usize::MAX,
+                        '\t',
+                    )
+                    .collect();
 
                 let max_needed = [*id_column, *text_column]
                     .iter()
@@ -150,11 +164,11 @@ pub fn load_text_file(path: &Path, opts: &LoadOptions) -> io::Result<Corpus> {
                     continue;
                 }
 
-                let name  = cols[*id_column].trim().to_string();
+                let name = cols[*id_column].trim().to_string();
                 let label = label_column
                     .map(|c| cols[c].trim().to_string())
                     .unwrap_or_default();
-                let text  = cols[*text_column];
+                let text = cols[*text_column];
                 (name, label, text)
             }
         };
@@ -164,7 +178,9 @@ pub fn load_text_file(path: &Path, opts: &LoadOptions) -> io::Result<Corpus> {
 
         for m in re.find_iter(text_slice) {
             let token_lower = m.as_str().to_lowercase();
-            if opts.stopwords.contains(&token_lower) { continue; }
+            if opts.stopwords.contains(&token_lower) {
+                continue;
+            }
 
             let id = if let Some(&eid) = vocab.get(&token_lower) {
                 eid
@@ -194,7 +210,7 @@ pub fn load_text_file(path: &Path, opts: &LoadOptions) -> io::Result<Corpus> {
     }
 
     let num_types = id_to_word.len();
-    let num_docs  = docs.len();
+    let num_docs = docs.len();
 
     // Accumulate document frequencies.
     let mut doc_freqs = vec![0u32; num_types];
@@ -211,14 +227,21 @@ pub fn load_text_file(path: &Path, opts: &LoadOptions) -> io::Result<Corpus> {
         .collect();
 
     if keep.iter().all(|&k| k) {
-        return Ok(Corpus { id_to_word, docs, doc_names, doc_labels, doc_freqs, total_freqs });
+        return Ok(Corpus {
+            id_to_word,
+            docs,
+            doc_names,
+            doc_labels,
+            doc_freqs,
+            total_freqs,
+        });
     }
 
     // Remap vocabulary.
     let mut remap: Vec<Option<usize>> = vec![None; num_types];
     let mut new_id_to_word: Vec<String> = Vec::new();
-    let mut new_doc_freqs:  Vec<u32>    = Vec::new();
-    let mut new_total_freqs: Vec<u32>   = Vec::new();
+    let mut new_doc_freqs: Vec<u32> = Vec::new();
+    let mut new_total_freqs: Vec<u32> = Vec::new();
 
     for id in 0..num_types {
         if keep[id] {
@@ -231,13 +254,17 @@ pub fn load_text_file(path: &Path, opts: &LoadOptions) -> io::Result<Corpus> {
 
     let new_docs: Vec<Vec<u32>> = docs
         .into_iter()
-        .map(|doc| doc.into_iter().filter_map(|id| remap[id as usize].map(|r| r as u32)).collect())
+        .map(|doc| {
+            doc.into_iter()
+                .filter_map(|id| remap[id as usize].map(|r| r as u32))
+                .collect()
+        })
         .collect();
 
     // Drop documents emptied by pruning, keeping labels aligned.
-    let mut final_docs:   Vec<Vec<u32>> = Vec::new();
-    let mut final_names:  Vec<String>     = Vec::new();
-    let mut final_labels: Vec<String>     = Vec::new();
+    let mut final_docs: Vec<Vec<u32>> = Vec::new();
+    let mut final_names: Vec<String> = Vec::new();
+    let mut final_labels: Vec<String> = Vec::new();
 
     for ((doc, name), label) in new_docs
         .into_iter()
@@ -274,7 +301,7 @@ pub fn save_corpus(corpus: &Corpus, path: &Path) -> io::Result<()> {
 
     w.write_all(MAGIC)?;
     write_u32(&mut w, corpus.num_types() as u32)?;
-    write_u32(&mut w, corpus.num_docs()  as u32)?;
+    write_u32(&mut w, corpus.num_docs() as u32)?;
 
     for id in 0..corpus.num_types() {
         write_str(&mut w, &corpus.id_to_word[id])?;
@@ -313,10 +340,10 @@ pub fn load_corpus(path: &Path) -> io::Result<Corpus> {
     }
 
     let num_types = read_u32(&mut f)? as usize;
-    let num_docs  = read_u32(&mut f)? as usize;
+    let num_docs = read_u32(&mut f)? as usize;
 
-    let mut id_to_word  = Vec::with_capacity(num_types);
-    let mut doc_freqs   = Vec::with_capacity(num_types);
+    let mut id_to_word = Vec::with_capacity(num_types);
+    let mut doc_freqs = Vec::with_capacity(num_types);
     let mut total_freqs = Vec::with_capacity(num_types);
 
     for _ in 0..num_types {
@@ -325,8 +352,8 @@ pub fn load_corpus(path: &Path) -> io::Result<Corpus> {
         total_freqs.push(read_u32(&mut f)?);
     }
 
-    let mut docs       = Vec::with_capacity(num_docs);
-    let mut doc_names  = Vec::with_capacity(num_docs);
+    let mut docs = Vec::with_capacity(num_docs);
+    let mut doc_names = Vec::with_capacity(num_docs);
     let mut doc_labels = Vec::with_capacity(num_docs);
 
     for _ in 0..num_docs {
@@ -340,7 +367,14 @@ pub fn load_corpus(path: &Path) -> io::Result<Corpus> {
         docs.push(tokens);
     }
 
-    Ok(Corpus { id_to_word, docs, doc_names, doc_labels, doc_freqs, total_freqs })
+    Ok(Corpus {
+        id_to_word,
+        docs,
+        doc_names,
+        doc_labels,
+        doc_freqs,
+        total_freqs,
+    })
 }
 
 // ---------------------------------------------------------------------------

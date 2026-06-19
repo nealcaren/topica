@@ -27,9 +27,9 @@ use rand::Rng;
 /// A fitted HDP topic model. `num_topics()` is the inferred K.
 pub struct HdpModel {
     pub num_types: usize,
-    pub eta: f64,   // topic-word Dirichlet (symmetric base measure)
-    pub alpha: f64, // α0, document-level DP concentration
-    pub gamma: f64, // γ, top-level DP concentration
+    pub eta: f64,           // topic-word Dirichlet (symmetric base measure)
+    pub alpha: f64,         // α0, document-level DP concentration
+    pub gamma: f64,         // γ, top-level DP concentration
     pub nkw: Vec<Vec<u32>>, // K × V topic-word counts
     pub nk: Vec<u32>,       // K topic totals
     pub beta: Vec<f64>,     // K top-level topic weights
@@ -214,7 +214,10 @@ impl HdpModel {
         for (new, &old) in keep.iter().enumerate() {
             remap[old] = new;
         }
-        self.nkw = keep.iter().map(|&t| std::mem::take(&mut self.nkw[t])).collect();
+        self.nkw = keep
+            .iter()
+            .map(|&t| std::mem::take(&mut self.nkw[t]))
+            .collect();
         self.nk = keep.iter().map(|&t| self.nk[t]).collect();
         self.beta = keep.iter().map(|&t| self.beta[t]).collect();
         for doc in &mut self.njk {
@@ -269,9 +272,12 @@ impl HdpModel {
         let (a, b) = (1.0, 1.0); // weak Gamma(shape, rate) prior
         let eta = sample_beta_dist(self.gamma + 1.0, m, rng).max(1e-12);
         let pi = (a + k - 1.0) / (a + k - 1.0 + m * (b - eta.ln()));
-        let shape = if rng.gen::<f64>() < pi { a + k } else { a + k - 1.0 };
-        self.gamma = (sample_gamma(shape, rng) / (b - eta.ln()))
-            .clamp(1e-3, CONCENTRATION_MAX);
+        let shape = if rng.gen::<f64>() < pi {
+            a + k
+        } else {
+            a + k - 1.0
+        };
+        self.gamma = (sample_gamma(shape, rng) / (b - eta.ln())).clamp(1e-3, CONCENTRATION_MAX);
     }
 
     /// Resample the document-level concentration α0 given per-document word
@@ -310,7 +316,14 @@ impl HdpModel {
     /// Draw a topic for token (j, i)=w from the current state (counts for this
     /// token must already be removed), instantiating a fresh topic if drawn, and
     /// add the token back under the chosen topic.
-    fn assign_token<R: Rng>(&mut self, j: usize, i: usize, w: usize, probs: &mut Vec<f64>, rng: &mut R) {
+    fn assign_token<R: Rng>(
+        &mut self,
+        j: usize,
+        i: usize,
+        w: usize,
+        probs: &mut Vec<f64>,
+        rng: &mut R,
+    ) {
         let v = self.num_types;
         let base = 1.0 / v as f64; // base-measure likelihood for a fresh topic
         let k = self.nk.len();
@@ -319,8 +332,7 @@ impl HdpModel {
         probs.clear();
         probs.resize(k + 1, 0.0);
         for t in 0..k {
-            let f =
-                (self.nkw[t][w] as f64 + self.eta) / (self.nk[t] as f64 + v as f64 * self.eta);
+            let f = (self.nkw[t][w] as f64 + self.eta) / (self.nk[t] as f64 + v as f64 * self.eta);
             probs[t] = (self.njk[j][t] as f64 + self.alpha * self.beta[t]) * f;
         }
         probs[k] = self.alpha * self.beta_u * base;
@@ -425,7 +437,7 @@ pub fn fit_hdp<R: Rng>(
     model
 }
 
-use crate::estimator::{Estimator, ModelFamily, DirichletModel};
+use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 
 impl Estimator for HdpModel {
     fn num_topics(&self) -> usize {
@@ -442,7 +454,10 @@ impl Estimator for HdpModel {
     }
 
     fn fit_history(&self) -> Vec<(usize, f64)> {
-        self.trace.iter().map(|&(it, _, ll, _, _)| (it, ll)).collect()
+        self.trace
+            .iter()
+            .map(|&(it, _, ll, _, _)| (it, ll))
+            .collect()
     }
 
     fn converged(&self) -> Option<bool> {
@@ -464,7 +479,10 @@ impl DirichletModel for HdpModel {
     }
 
     fn doc_lengths(&self) -> Vec<usize> {
-        self.njk.iter().map(|c| c.iter().map(|&x| x as usize).sum()).collect()
+        self.njk
+            .iter()
+            .map(|c| c.iter().map(|&x| x as usize).sum())
+            .collect()
     }
 }
 
@@ -492,7 +510,11 @@ mod tests {
         let k = model.num_topics();
         // Auto-K is approximate and HDP tends to slightly over-segment; the firm
         // requirement is that it recovers a sane count, not the exact 5.
-        assert!((4..=12).contains(&k), "inferred K={} not in a sane band for 5", k);
+        assert!(
+            (4..=12).contains(&k),
+            "inferred K={} not in a sane band for 5",
+            k
+        );
 
         // The substantive check: every planted block is the top of some topic.
         let tw = model.topic_word();
@@ -507,7 +529,12 @@ mod tests {
                 }
             }
         }
-        assert_eq!(covered.len(), 5, "recovered only {} of 5 planted blocks", covered.len());
+        assert_eq!(
+            covered.len(),
+            5,
+            "recovered only {} of 5 planted blocks",
+            covered.len()
+        );
     }
 
     #[test]
@@ -536,10 +563,14 @@ mod tests {
 
         let trace = &model.trace;
         // iters=120, interval=10 -> sweeps 10,20,...,120.
-        assert_eq!(trace.iter().map(|t| t.0).collect::<Vec<_>>(),
-                   (1..=12).map(|i| i * 10).collect::<Vec<_>>());
+        assert_eq!(
+            trace.iter().map(|t| t.0).collect::<Vec<_>>(),
+            (1..=12).map(|i| i * 10).collect::<Vec<_>>()
+        );
         // Topic count and log-likelihood are sane; the final K is recorded.
-        assert!(trace.iter().all(|t| t.1 >= 1 && t.2.is_finite() && t.2 < 0.0));
+        assert!(trace
+            .iter()
+            .all(|t| t.1 >= 1 && t.2.is_finite() && t.2 < 0.0));
         assert_eq!(trace.last().unwrap().1, model.num_topics());
         // The fit improves from the first recorded sweep to the last.
         assert!(trace.last().unwrap().2 > trace.first().unwrap().2);
@@ -571,8 +602,16 @@ mod tests {
             let (m_total, t_j) = model.resample_beta(&mut rng);
             model.resample_gamma(m_total, &mut rng);
             model.resample_alpha(&t_j, &mut rng);
-            assert!(model.gamma <= CONCENTRATION_MAX + 1e-9, "gamma {} > cap", model.gamma);
-            assert!(model.alpha <= CONCENTRATION_MAX + 1e-9, "alpha {} > cap", model.alpha);
+            assert!(
+                model.gamma <= CONCENTRATION_MAX + 1e-9,
+                "gamma {} > cap",
+                model.gamma
+            );
+            assert!(
+                model.alpha <= CONCENTRATION_MAX + 1e-9,
+                "alpha {} > cap",
+                model.alpha
+            );
         }
     }
 
