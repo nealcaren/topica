@@ -42,9 +42,17 @@ Goal: a written spec you can implement and check against, before any code.
    effect, a change-point, a keyword rate).
 2. Decide where it sits in topica's family (count-based Gibbs, logistic-normal
    variational, embedding-based, …) — this determines which existing core file it
-   most resembles (`src/lda.rs`, `src/ctm.rs`, `src/keyatm.rs`, `src/etm.rs`, …).
-   Reuse the closest shared machinery (`src/sampler.rs`, `src/optimize.rs`,
-   `src/coherence.rs`) rather than re-deriving it.
+   most resembles. **The core is split across two crates** (a Cargo workspace):
+   - `topica-core/src/` holds the logistic-normal *structural* cluster and shared
+     numerics — `ctm.rs` (CTM/STM/SAGE), `spectral.rs`, `cvb0.rs`, `estimator.rs`,
+     `linalg.rs`, and the `variational/` kernels (L-BFGS, the Laplace E-step, the
+     Σ/Γ M-step). This crate is dependency-light so downstream Rust (e.g. faSTM)
+     can vendor it; touch it only for the structural-variational family.
+   - `src/` holds every other model (`keyatm.rs`, `etm.rs`, `dmr.rs`, `hdp.rs`,
+     `prodlda.rs`, the Gibbs/embedding/VAE models, …) plus the shared
+     `sampler.rs`, `optimize.rs`, `coherence.rs`. `topica` re-exports `topica-core`,
+     so `topica::ctm::*` still resolves. Most new models land here.
+   Reuse the closest shared machinery rather than re-deriving it.
 3. Fix the public name now: the canonical topica name follows our conventions, with
    aliases for the reference package's spelling. See `references/conventions.md`.
 
@@ -75,7 +83,10 @@ Follow `references/conventions.md` closely. In short:
 1. Add `src/<model>.rs` with the fit/inference loop. Preserve topica's
    **bit-for-bit determinism**: a fixed seed (and thread count, for samplers) must
    reproduce exactly; parallel reductions must sum in a fixed (document) order.
-2. Wire the PyO3 binding in `src/python.rs`; keep `python/topica/_topica.pyi` in
+2. Wire the PyO3 binding in `src/python/` (a directory module, not a single file):
+   add `src/python/<model>.rs` with the pyclass and bring it in via `use super::*`
+   (the established per-model recipe — see `nmf_lsa.rs`), and register it in
+   `src/python/mod.rs`. Keep `python/topica/_topica.pyi` in
    sync with the binding signature. Expose the standard surface every model has:
    `fit(docs, …)`, then `topic_word`, `doc_topic`, `top_words(n)`, `save`/`load`.
 3. Apply the naming contract: canonical argument names, reference-package aliases
@@ -107,6 +118,14 @@ agent must not have implemented the model.
 Act on its findings before proceeding. Re-verify any fix yourself (rebuild, re-run
 the parity check) — do not merge on the agent's word alone.
 
+"Fast" is part of the deliverable, so the benchmark agent applies a **speed gate**
+(within ≈2-3x of the reference on realistic-density inputs, or justify the gap). If
+it is missed, a **performance-optimization iteration is a normal sub-phase**, not a
+failure — optimize and re-benchmark before shipping; the first cut being slow is
+expected. To amortize the multi-minute `--release` build + venv each agent pays,
+**fold related checks into one agent** (e.g. run the live-reference real-corpus
+parity inside the benchmark agent) rather than spawning a separate agent per check.
+
 ## Phase 5 — Author-emulation review agent
 
 Goal: a faithfulness critique from the perspective of the method's originator.
@@ -129,15 +148,18 @@ Goal: a merged PR that follows GitHub best practices and leaves the docs current
 
 Read `references/pr-and-docs.md` for the checklist. In short:
 
-1. File a tracking **issue** describing the model, the reference, and the
-   validation result.
+1. **Create or reference** a tracking **issue** describing the model, the reference,
+   and the validation result (one often already exists — reuse it, e.g. #178 for NMF).
 2. Open a **PR** from the feature branch (squash-merge, delete branch on merge, per
    `CLAUDE.md`). The PR body summarizes the method, the parity result, and both
    agents' verdicts.
-3. **Update the README and docs as part of the same PR**: add the model to the
-   README model table and the `docs/guides/models.md` roster, and add a
-   validation/replication note where the existing models keep theirs. (Updating the
-   paper is out of scope — that is the maintainer's, not a contributor's, job.)
+3. **Update the docs as part of the same PR.** The README/docs roster *tables* are
+   **registry-generated** (`scripts/gen_model_tables.py`, enforced by
+   `test_registry.py`) — register the model there and regenerate; do NOT hand-edit a
+   table row (it fights the generator). Your hand-written work is the per-model prose
+   section (in `docs/guides/models.md`), a validation/replication note where the
+   existing models keep theirs, and the README acknowledgement. (Updating the paper
+   is out of scope — that is the maintainer's, not a contributor's, job.)
 4. Confirm all gates green (`cargo test --lib`, `pytest`, `mkdocs build --strict`)
    before requesting merge.
 

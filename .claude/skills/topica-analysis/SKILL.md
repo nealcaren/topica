@@ -253,8 +253,13 @@ with the diagnostics to defend each one.
 ## Quick reference
 
 - **Build:** `Corpus.from_documents`, `tokenize`, `learn_phrases` / `apply_phrases`
-- **Models:** `LDA`, `STM`, `CTM`, `STS` (sentiment), `DMR`, `HDP`, `KeyATM`,
-  `SeededLDA`, `BERTopic`, `GSDMM` (short text), and more in the README table
+- **Models:** the names below are *illustrative, not the full roster* — topica ships
+  ~30 models and the list grows, so do not treat this as complete. The canonical,
+  always-current list is the generated roster in the docs
+  (<https://nealcaren.github.io/topica/guides/models/>, from `docs/guides/models.md`)
+  and the README table; consult it rather than relying on any hardcoded list here.
+  Common starting points: `LDA`, `STM`, `CTM`, `STS` (sentiment), `DMR`, `HDP`,
+  `KeyATM`, `SeededLDA`, `BERTopic`, `GSDMM` (short text)
 - **Read topics:** `top_words`, `label_topics`, `frex`, `relevance`,
   `find_thoughts`, `topic_table`, `summary`
 - **Choose K:** `search_k`, `quality_frontier`, `topica.viz.search_k`

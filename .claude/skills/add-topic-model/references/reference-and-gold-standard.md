@@ -60,6 +60,26 @@ Calibrate the bar against the reference's own seed-to-seed variation — two run
 the reference with different seeds set the noise floor; the port should land within
 that floor, not below it.
 
+**Two model properties change the bar. Decide both up front and write them into the
+spec note:**
+
+1. **Is the reference initialization deterministic?** If so (e.g. NMF with NNDSVDa,
+   any SVD/anchor-word init), the seed-to-seed floor is *degenerate* — zero variance
+   — and "land within the floor" silently collapses to "must equal 1.0000 exactly,"
+   which will flag even a 4e-5 difference as a failure. That happened porting NMF.
+   Calibrate instead against an **init-perturbation floor**: run the reference with
+   `init="random"` (or jitter the deterministic init) across seeds and use that
+   spread as the noise floor.
+
+2. **Does the model match a *solution* or only an *objective*?** Non-convex /
+   non-identified models (NMF, and many LDA-ish models) have multiple equal-quality
+   optima, so topic-aligned cosine ~1 is the **wrong** bar — topica can find an
+   alternate factorization of equal or better quality at cosine ~0.86 (NMF at K=20
+   on poliblog5k did exactly this). For these, the bar is **objective parity**
+   (reconstruction loss / held-out likelihood within tolerance, plus planted-structure
+   recovery), not reproducing the reference's specific decomposition. Reserve the
+   "match the exact decomposition (cosine ~1)" bar for convex / identified methods.
+
 ## The `parity/` pattern
 
 `parity/` holds cross-implementation checks against R (`stm`, `keyATM`) and Java

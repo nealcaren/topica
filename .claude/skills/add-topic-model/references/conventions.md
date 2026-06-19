@@ -74,8 +74,14 @@ least one Rust `#[test]` in `src/<model>.rs`. Write scratch/benchmark files to
 ## File layout
 
 - `src/<model>.rs` — one file per model; the fit/inference loop and its unit tests.
-- `src/python.rs` — the PyO3 bindings (the `#[pymethods]` for the class). Keep the
-  binding thin; logic lives in `src/<model>.rs`.
+  (The CTM/STM/SAGE structural-variational cluster and shared numeric kernels live
+  in the `topica-core` workspace crate — `topica-core/src/ctm.rs`,
+  `topica-core/src/variational/`, `spectral.rs`, `linalg.rs` — which `topica`
+  re-exports; new models usually go in `src/`, not `topica-core`.)
+- `src/python/` — the PyO3 bindings, a directory module: one `src/python/<model>.rs`
+  per model/family wired in via `use super::*` and registered in `mod.rs` (shared
+  helpers in `arrays.rs`/`error.rs`/`save.rs`). Keep the binding thin; logic lives
+  in the model's core file.
 - `python/topica/_topica.pyi` — the type stub. Update it to match any binding
   signature you add or change, or the stub drifts from reality.
 - `python/topica/` — the thin Python layer, if the model needs Python-side helpers

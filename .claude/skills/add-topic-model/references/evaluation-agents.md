@@ -10,6 +10,15 @@ Note: an isolated worktree does NOT contain `CLAUDE.md` (it is git-excluded) or 
 dev venv. Each agent must create its own venv. Paste the build/test commands into
 the prompt (they are included below).
 
+**Concurrency: pin agents to an explicit commit SHA, not "the current branch."**
+`isolation: "worktree"` bases off whatever the main tree has checked out *now*. For
+a solo dev the main tree may be on other in-flight work mid-run (this bit us: the
+main tree switched to `feat/detm` while the agents ran, and two worktrees cannot
+check out the same branch). Capture the SHA up front (`git rev-parse HEAD` on the
+finished model branch) and tell each agent to work from a **detached** worktree at
+that SHA (`git worktree add --detach <sha>`). Detached worktrees at the same commit
+do not conflict; never assume the feature branch is checked out anywhere.
+
 ## Parity rubric (shared by both agents)
 
 Topic models are stochastic and implementations differ in RNG and update order, so
@@ -22,7 +31,14 @@ the target is **topic-aligned similarity**, not bit equality:
 3. Calibrate the bar against the **reference's own seed-to-seed variation**: run the
    reference twice with different seeds; the port should match the reference about
    as well as the reference matches itself. Landing inside that noise floor is a
-   pass; landing clearly below it is a fidelity gap.
+   pass; landing clearly below it is a fidelity gap. **Two traps** (see
+   `reference-and-gold-standard.md`): if the reference init is *deterministic* the
+   floor is degenerate (zero variance ⇒ a 1.0000-exact bar) — use an
+   init-perturbation / `init="random"` floor instead; and if the model is *non-convex
+   / non-identified* (NMF, many LDA-ish), the bar is **objective parity**
+   (reconstruction/held-out likelihood within tolerance), not reproducing the
+   reference's specific decomposition, because equal-quality alternate solutions are
+   legitimate.
 4. Also check that any model-specific diagnostic (a covariate effect's sign and
    rough magnitude, a recovered change-point, a keyword rate) agrees with the
    reference.
@@ -61,9 +77,15 @@ Prompt template (fill the `<…>` slots):
 >    in sign and rough magnitude.
 > 3. **Determinism.** Fit twice with the same seed (and, for a sampler, two thread
 >    counts) and confirm `topic_word`/`doc_topic` are bit-identical (`np.array_equal`).
-> 4. **Speed.** Time fit (fit only, excluding import/build) at small/medium/large
->    corpus sizes you choose (state them), single- and multi-threaded if applicable,
->    and against the reference where a fair comparison exists.
+> 4. **Speed (this is a gate, not just a measurement).** Time fit (fit only,
+>    excluding import/build) at small/medium/large corpus sizes you choose (state
+>    them), single- and multi-threaded if applicable, and against the reference where
+>    a fair comparison exists. **Bar: within a small constant (≈2-3x) of the reference
+>    on realistic-density inputs, or justify the gap.** "Fast" is in the deliverable;
+>    a port that is 18-43x slower (the first NMF cut) is not done. Use
+>    realistic-density inputs — a toy or all-sparse matrix can hide the gap (NMF was
+>    ~1.3x on sparse text but ~1.6x on near-dense X). If the bar is missed, a
+>    perf-optimization iteration is a normal, expected sub-phase — flag it, don't ship.
 > 5. **Gates.** Run `cargo test --lib` and `pytest tests/ -q`; report pass/fail.
 >
 > Deliverable (your final message, a raw report): the parity table with the noise
@@ -89,8 +111,9 @@ Prompt template (fill the `<…>` slots):
 >
 > Materials:
 > - Your paper: `<path or summary of the generative model + inference>`.
-> - The topica implementation: the diff on branch `<branch>` (`src/<model>.rs`, the
->   binding in `src/python.rs`, the tests). Read it.
+> - The topica implementation: the diff on branch `<branch>` (the model core in
+>   `src/<model>.rs` or `topica-core/src/` for the structural-variational family, the
+>   binding in `src/python/<model>.rs`, the tests). Read it.
 > - `<if the reference code was readable: the reference is at <path>; if not: note
 >   that the port is paper-derived and you should review against the paper only>`.
 >
