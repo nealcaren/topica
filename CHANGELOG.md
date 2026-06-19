@@ -6,6 +6,28 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-06-19
+
+### Fixed
+
+- STM/CTM `gamma_prior="pooled"` is now empirical Bayes, a faithful port of R
+  `stm`'s `vb.variational.reg` (`gamma.prior="Pooled"`): the prevalence
+  regression estimates its coefficient and noise precisions from the data
+  (adaptive shrinkage, intercept unpenalised) instead of applying a fixed 1e-6
+  ridge. On a wide prevalence design (a `s(day)` spline, or many one-hot
+  covariate levels) the old near-OLS coefficients refit freely each M-step, so
+  EM took noticeably more iterations to converge than `stm`. The fit is
+  unchanged (topic-word cosine vs R `stm` stays 0.958 on poliblog5k K=20), the
+  bound is still monotone, and convergence is faster on covariate-rich designs.
+  Golden-tested bit-close to stm 1.3.8 (#247).
+
+### Added
+
+- `parity/stm_spline_iters_247.py`: a skip-clean cross-engine EM-iteration anchor
+  (topica vs R `stm`, with a QR-orthonormal control) documenting #247, plus a
+  `docs/benchmarks.md` note to time covariate-rich STM to convergence rather than
+  at a fixed iteration count.
+
 ## [0.25.0] - 2026-06-18
 
 ### Changed

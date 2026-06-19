@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use topica in published work, please cite it as below."
 title: "topica: fast, all-purpose topic modeling for Python"
-version: 0.25.0
+version: 0.26.0
 date-released: 2026-06-18
 abstract: >-
   A fast, all-purpose topic-modeling library for Python: a Rust core with a
