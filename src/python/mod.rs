@@ -15,7 +15,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 
-use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 
@@ -59,98 +59,16 @@ use crate::{
     coherence as coh, ctm, cvb0, lightlda, optimize, output, sampler, spectral, sts, warplda,
 };
 
-// ndarray <-> serializable-state adapters (Arr2/Arr3/Arr3f32 + arr*_opt/arr*_back).
+// Binding submodules carved out of the original monolithic python.rs:
+//   arrays — ndarray <-> serializable-state adapters
+//   error  — argument validation + finite-ness guards + count `from_py_with` hooks
+//   save   — model tag table + write_state/read_state over crate::saveformat
 mod arrays;
+mod error;
+mod save;
 use arrays::*;
-
-// ---------------------------------------------------------------------------
-// Error helpers
-// ---------------------------------------------------------------------------
-
-fn io_err(e: std::io::Error) -> PyErr {
-    PyIOError::new_err(e.to_string())
-}
-
-/// Validate a count argument given as a signed Python int, so negatives raise a
-/// clean `ValueError` instead of PyO3's raw "can't convert negative int to
-/// unsigned" `OverflowError`. Accepting `i64` at the signature keeps the boundary
-/// from rejecting negatives before our own message can run.
-fn require_count(value: i64, min: i64, name: &str) -> PyResult<usize> {
-    if value < min {
-        return Err(PyValueError::new_err(format!(
-            "{name} must be >= {min}, got {value}"
-        )));
-    }
-    Ok(value as usize)
-}
-
-/// Guard that every element of a 2-D feature/covariate/embedding matrix is
-/// finite. Called right after `parse_features` returns and the row-count check
-/// passes, so the error names the parameter exactly as the user passed it.
-fn check_all_finite_2d(name: &str, rows: &[Vec<f64>]) -> PyResult<()> {
-    for (i, row) in rows.iter().enumerate() {
-        for (j, &v) in row.iter().enumerate() {
-            if !v.is_finite() {
-                return Err(PyValueError::new_err(format!(
-                    "{name} contains non-finite values (NaN or inf) at row {i}, col {j}"
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Guard that every element of a 2-D ndarray view is finite. Used when data
-/// enters via `PyReadonlyArray2` rather than through `parse_features`.
-fn check_all_finite_arr2(name: &str, arr: &numpy::ndarray::ArrayView2<f64>) -> PyResult<()> {
-    for ((i, j), &v) in arr.indexed_iter() {
-        if !v.is_finite() {
-            return Err(PyValueError::new_err(format!(
-                "{name} contains non-finite values (NaN or inf) at row {i}, col {j}"
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// Guard that every element of a 1-D numeric sequence (e.g. timestamps) is
-/// finite.
-fn check_all_finite_1d(name: &str, vals: &[f64]) -> PyResult<()> {
-    for (i, &v) in vals.iter().enumerate() {
-        if !v.is_finite() {
-            return Err(PyValueError::new_err(format!(
-                "{name} contains non-finite values (NaN or inf) at index {i}"
-            )));
-        }
-    }
-    Ok(())
-}
-
-// `from_py_with` hooks for count constructor arguments. They take the int as a
-// signed `i64` so a negative value yields a clean `ValueError` here rather than
-// PyO3's raw `OverflowError`. Per-model minimums above 1 (e.g. CTM/STM need >= 2)
-// stay enforced by the existing guards inside each constructor body.
-fn py_num_topics(ob: &Bound<'_, PyAny>) -> PyResult<usize> {
-    require_count(ob.extract()?, 1, "num_topics")
-}
-fn py_num_pseudo(ob: &Bound<'_, PyAny>) -> PyResult<usize> {
-    require_count(ob.extract()?, 1, "num_pseudo")
-}
-fn py_num_super(ob: &Bound<'_, PyAny>) -> PyResult<usize> {
-    require_count(ob.extract()?, 1, "num_super")
-}
-fn py_num_sub(ob: &Bound<'_, PyAny>) -> PyResult<usize> {
-    require_count(ob.extract()?, 1, "num_sub")
-}
-fn py_depth(ob: &Bound<'_, PyAny>) -> PyResult<usize> {
-    require_count(ob.extract()?, 1, "depth")
-}
-fn py_num_topics_opt(ob: &Bound<'_, PyAny>) -> PyResult<Option<usize>> {
-    if ob.is_none() {
-        return Ok(None);
-    }
-    Ok(Some(require_count(ob.extract()?, 1, "num_topics")?))
-}
+use error::*;
+use save::*;
 
 /// Run `f` on a rayon pool of `num_threads` workers, or on the global pool (all
 /// cores) when `num_threads` is `None`/0. The variational fits are deterministic
@@ -164,93 +82,6 @@ fn run_with_threads<T: Send, F: FnOnce() -> T + Send>(num_threads: Option<usize>
         },
         _ => f(),
     }
-}
-
-// ---------------------------------------------------------------------------
-// Save-file header: magic + format version + model tag
-//
-// Layout (8 bytes prepended before the bincode payload):
-//   bytes 0..6  : b"TOPICA"   (magic, 6 bytes)
-//   byte  6     : format version u8 = 1
-//   byte  7     : model tag u8 (see MODEL_TAG_* constants below)
-//   bytes 8..   : bincode payload
-//
-// Header encode/decode logic lives in src/saveformat.rs (always compiled, so
-// it can have Rust unit tests without the `python` feature gate or libpython).
-// Old (headerless) files produce a clear "not a topica model file" error
-// rather than a bincode panic.
-// ---------------------------------------------------------------------------
-
-// One tag per concrete model type that calls write_state / read_state.
-const MODEL_TAG_LDA: u8 = 1;
-const MODEL_TAG_DMR: u8 = 2;
-const MODEL_TAG_LABELED: u8 = 3;
-const MODEL_TAG_SAGE: u8 = 4;
-const MODEL_TAG_CTM: u8 = 5;
-const MODEL_TAG_STM: u8 = 6;
-const MODEL_TAG_STS: u8 = 7;
-const MODEL_TAG_HDP: u8 = 8;
-const MODEL_TAG_DTM: u8 = 9;
-const MODEL_TAG_SLDA: u8 = 10;
-const MODEL_TAG_PT: u8 = 11;
-const MODEL_TAG_GSDMM: u8 = 12;
-const MODEL_TAG_SEEDED: u8 = 13;
-const MODEL_TAG_TOP2VEC: u8 = 14;
-const MODEL_TAG_BERTOPIC: u8 = 15;
-const MODEL_TAG_ETM: u8 = 16;
-const MODEL_TAG_PRODLDA: u8 = 17;
-const MODEL_TAG_FASTOPIC: u8 = 18;
-const MODEL_TAG_KEYATM: u8 = 19;
-const MODEL_TAG_PA: u8 = 20;
-const MODEL_TAG_HLDA: u8 = 21;
-const MODEL_TAG_NMF: u8 = 22;
-const MODEL_TAG_LSA: u8 = 23;
-const MODEL_TAG_COMBINEDTM: u8 = 24;
-const MODEL_TAG_ZEROSHOTTM: u8 = 25;
-const MODEL_TAG_DETM: u8 = 26;
-const MODEL_TAG_ECTM: u8 = 27;
-
-fn model_tag_name(tag: u8) -> &'static str {
-    match tag {
-        MODEL_TAG_LDA => "LDA",
-        MODEL_TAG_DMR => "DMR",
-        MODEL_TAG_LABELED => "LabeledLDA",
-        MODEL_TAG_SAGE => "SAGE",
-        MODEL_TAG_CTM => "CTM",
-        MODEL_TAG_STM => "STM",
-        MODEL_TAG_STS => "STS",
-        MODEL_TAG_HDP => "HDP",
-        MODEL_TAG_DTM => "DTM",
-        MODEL_TAG_SLDA => "SupervisedLDA",
-        MODEL_TAG_PT => "PT",
-        MODEL_TAG_GSDMM => "GSDMM",
-        MODEL_TAG_SEEDED => "SeededLDA",
-        MODEL_TAG_TOP2VEC => "Top2Vec",
-        MODEL_TAG_BERTOPIC => "BERTopic",
-        MODEL_TAG_ETM => "ETM",
-        MODEL_TAG_PRODLDA => "ProdLDA",
-        MODEL_TAG_FASTOPIC => "FASTopic",
-        MODEL_TAG_KEYATM => "KeyATM",
-        MODEL_TAG_PA => "PA",
-        MODEL_TAG_HLDA => "HLDA",
-        MODEL_TAG_NMF => "NMF",
-        MODEL_TAG_LSA => "LSA",
-        MODEL_TAG_COMBINEDTM => "CombinedTM",
-        MODEL_TAG_ZEROSHOTTM => "ZeroShotTM",
-        MODEL_TAG_DETM => "DETM",
-        MODEL_TAG_ECTM => "ECTM",
-        _ => "unknown",
-    }
-}
-
-fn write_state<S: serde::Serialize>(path: &str, model_tag: u8, state: &S) -> PyResult<()> {
-    let buf = crate::saveformat::encode_state(model_tag, state).map_err(PyValueError::new_err)?;
-    std::fs::write(path, buf).map_err(io_err)
-}
-fn read_state<S: serde::de::DeserializeOwned>(path: &str, expected_tag: u8) -> PyResult<S> {
-    let bytes = std::fs::read(path).map_err(io_err)?;
-    crate::saveformat::decode_state(&bytes, expected_tag, model_tag_name)
-        .map_err(PyValueError::new_err)
 }
 
 // Per-model serializable snapshots (ndarray fields stored as Arr2/Arr3/Vec).
