@@ -20,7 +20,8 @@ pub const DEFAULT_TOKEN_REGEX: &str =
 // Version 2 adds per-document labels.
 const MAGIC: &[u8; 4] = b"CRP2";
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Corpus {
     pub id_to_word: Vec<String>,
     pub docs: Vec<Vec<u32>>,

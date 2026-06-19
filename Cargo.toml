@@ -25,7 +25,15 @@ path = "src/bin/train.rs"
 name = "show"
 path = "src/bin/show.rs"
 
+[workspace]
+members = ["topica-core"]
+resolver = "2"
+
 [dependencies]
+# The STM/CTM/SAGE + CVB0 core lives in the topica-core workspace member; topica
+# re-exports it (see src/lib.rs) so topica::ctm::* and the public API are unchanged.
+# serde is enabled here so topica keeps full serialization.
+topica-core = { path = "topica-core", features = ["serde"] }
 rand = "0.8"
 rand_chacha = "0.3"
 rand_pcg = "0.3"

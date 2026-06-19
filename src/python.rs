@@ -22,6 +22,7 @@ use pyo3::types::{PyDict, PyList, PyTuple};
 use numpy::ndarray::{Array1, Array2, Array3};
 use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArray2, ToPyArray};
 
+use crate::cvb0_ext::Cvb0ToModel;  // re-adds Cvb0::to_topic_model (TopicModel lives in topica)
 use crate::detm;
 use crate::dmr;
 use crate::dtm;

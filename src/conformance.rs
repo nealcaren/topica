@@ -178,3 +178,54 @@ mod registry_tests {
         assert_eq!(RUST_ESTIMATORS.len(), 26, "registry size drifted from the Python REGISTRY");
     }
 }
+
+#[cfg(test)]
+mod ctm_conformance_tests {
+    // Relocated from ctm.rs when CTM moved to the `topica-core` member: this test
+    // exercises `topica`'s conformance checks against a `topica_core` CTM fit.
+    use crate::conformance::{check_conformance, check_logistic_normal};
+    use crate::ctm::{fit_ctm, GammaPrior};
+    use crate::variational::LogisticNormalModel;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    #[test]
+    fn ctm_conforms() {
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        let docs: Vec<Vec<u32>> = vec![
+            vec![0, 1, 0, 1, 2],
+            vec![1, 2, 1, 2, 0],
+            vec![2, 0, 2, 0, 1],
+            vec![0, 0, 1, 2, 0],
+            vec![1, 1, 2, 0, 1],
+            vec![2, 2, 0, 1, 2],
+        ];
+        let model = fit_ctm(&docs, 3, 3, 5, 0.0, 0.0, None, None, false, None,
+                            GammaPrior::Pooled, true, false, &mut rng);
+
+        let base_violations = check_conformance(&model);
+        assert!(
+            base_violations.is_empty(),
+            "check_conformance violations: {:?}",
+            base_violations
+        );
+
+        let ln_violations = check_logistic_normal(&model);
+        assert!(
+            ln_violations.is_empty(),
+            "check_logistic_normal violations: {:?}",
+            ln_violations
+        );
+
+        assert_eq!(
+            model.eta_dim(),
+            model.num_topics - 1,
+            "eta_dim should be num_topics - 1"
+        );
+        assert_eq!(
+            model.eta_mean().len(),
+            model.eta_cov().len(),
+            "eta_mean and eta_cov should have the same number of rows (one per document)"
+        );
+    }
+}
