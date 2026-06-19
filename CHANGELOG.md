@@ -6,6 +6,26 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-06-18
+
+### Changed
+
+- Internal refactor (no public API change): the logistic-normal structural-topic
+  core — `corpus`, `spectral`, the shared `variational` kernels, `estimator`,
+  `ctm` (CTM/STM/SAGE), `cvb0`, and `linalg` — now lives in a new Cargo workspace
+  member, `topica-core`, which `topica` depends on and re-exports. `topica::ctm::*`
+  and the entire Python/Rust API are unchanged. The split lets downstream Rust
+  consumers (e.g. the faSTM R package, heading for CRAN) vendor a small,
+  dependency-light crate (`rand`, `rand_chacha`, `rayon`, `regex`; serde opt-in)
+  instead of all of `topica`. A golden parity test pins `fit_ctm` output so the two
+  crates stay in lock-step (#242).
+
+### Added
+
+- Paper appendix: a side-by-side validation appendix that fits both the reference
+  package and `topica` on the poliblog corpus for 15 models and shows the results
+  together, with a master validation map covering every model (#241).
+
 ## [0.24.1] - 2026-06-18
 
 ### Added
