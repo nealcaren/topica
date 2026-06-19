@@ -59,6 +59,7 @@ parity/*.class
 
 # Benchmark generated artifacts (commit the generators, not the data)
 benchmarks/poliblog5k_prepped.csv
+benchmarks/congress_prepped.csv
 benchmarks/bench_results.json
 benchmarks/speed_vs_size.json
 benchmarks/website_table.md
