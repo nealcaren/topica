@@ -21,7 +21,7 @@ use crate::linalg::{
     spd_inverse_from_chol, spd_inverse_jitter,
 };
 use crate::variational::LogisticNormalModel;
-use crate::variational::{doc_sparse, fit_gamma_ridge, lbfgs_minimize};
+use crate::variational::{doc_sparse, fit_gamma_vb, lbfgs_minimize};
 
 /// Prior on the prevalence coefficients γ in the STM M-step.
 ///
@@ -1167,7 +1167,7 @@ pub fn fit_ctm<R: Rng>(
         // M-step: prevalence regression (γ) or shared mean (μ).
         if let Some(x) = prevalence {
             gamma = Some(match gamma_prior {
-                GammaPrior::Pooled => fit_gamma_ridge(x, &lambda, nf.unwrap(), km1, 1e-6),
+                GammaPrior::Pooled => fit_gamma_vb(x, &lambda, nf.unwrap(), km1, 1000),
                 GammaPrior::L1 { alpha } => fit_gamma_enet(x, &lambda, nf.unwrap(), km1, alpha),
             });
         } else {
@@ -2023,7 +2023,7 @@ mod tests {
         let km1 = 1;
 
         let g_enet = fit_gamma_enet(&x, &lam, f, km1, 1.0);
-        let g_ridge = fit_gamma_ridge(&x, &lam, f, km1, 1e-6);
+        let g_ridge = crate::variational::fit_gamma_ridge(&x, &lam, f, km1, 1e-6);
 
         // Count zeros (|coef| < 1e-6) among the 30 penalised predictors.
         let enet_zeros = g_enet[1..].iter().filter(|r| r[0].abs() < 1e-6).count();

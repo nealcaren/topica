@@ -6451,8 +6451,13 @@ impl STM {
     /// steps. Inspect :attr:`converged` and :attr:`bound` after fitting.
     ///
     /// `gamma_prior` controls the prevalence-coefficient (γ) regression in the
-    /// M-step. ``"pooled"`` (default) uses ridge regression, matching R `stm`'s
-    /// ``gamma.prior="Pooled"`` path. ``"l1"`` fits an elastic-net path by
+    /// M-step. ``"pooled"`` (default) is a variational-Bayes ridge that *estimates*
+    /// the coefficient and noise precisions from the data (adaptive shrinkage,
+    /// intercept unpenalised), a faithful port of R `stm`'s ``gamma.prior="Pooled"``
+    /// path (`vb.variational.reg`). The adaptive shrinkage keeps μ = Xγ stable
+    /// across EM iterations on wide designs (e.g. a day spline), so EM converges in
+    /// far fewer iterations than a fixed ridge would (see issue #247). ``"l1"`` fits
+    /// an elastic-net path by
     /// coordinate descent with the penalty selected by AIC — recommended when the
     /// prevalence design is high-dimensional (many one-hot levels). `gamma_enet`
     /// is the elastic-net mix: 1.0 is pure lasso, values in (0, 1) add a ridge

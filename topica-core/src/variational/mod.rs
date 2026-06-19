@@ -11,7 +11,7 @@ pub mod sparse;
 pub use sparse::doc_sparse;
 
 pub mod mstep;
-pub use mstep::{fit_gamma_ridge, fit_gamma_ridge_from_ss, gamma_ss};
+pub use mstep::{fit_gamma_ridge, fit_gamma_ridge_from_ss, fit_gamma_vb, gamma_ss};
 
 pub mod laplace;
 pub use laplace::laplace_estep;

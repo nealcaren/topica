@@ -45,6 +45,18 @@ RAYON_NUM_THREADS=1 python benchmarks/bench_stm.py  # single core
     R `stm` is single-threaded by design; the all-cores column is topica's
     automatic parallelism, which is the speed you actually get.
 
+!!! warning "Time to convergence with a wide prevalence design"
+    The number of EM iterations to convergence is not the same across engines, and
+    a wide prevalence design (a `s(day)` spline, or many one-hot covariate levels)
+    can cost topica somewhat more EM iterations than R `stm` even at the same
+    `emtol`. On poliblog5k (5,000 docs, K=20, `~ rating + s(day)`) topica converges
+    in roughly 32 iterations to R's 20; with `~ rating` alone both are near 20. The
+    fit is the same (topics match R `stm`) and the bound increases monotonically —
+    it just takes a few more steps near the optimum. So when you report wall-clock
+    for a covariate-rich STM, time it **to convergence**, not at a fixed iteration
+    count, or the comparison flatters whichever engine converges in fewer steps.
+    `parity/stm_spline_iters_247.py` reproduces and explains this.
+
 ## LDA: MALLET's algorithm without the JVM
 
 topica's LDA began as a port of RustMallet, David Mimno's Rust port of MALLET's
