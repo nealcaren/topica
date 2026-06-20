@@ -33,6 +33,7 @@ pub mod corpus;
 pub mod ctm;
 pub mod cvb0;
 pub mod estimator;
+pub mod inspect;
 pub mod linalg;
 pub mod spectral;
 pub mod variational;
