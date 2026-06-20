@@ -83,6 +83,9 @@ pub struct LoadOptions {
     pub min_doc_freq: u32,
     /// Drop words appearing in more than this fraction of documents (0.0–1.0).
     pub max_doc_fraction: f64,
+    /// Lowercase tokens before counting (default true). When false, tokens keep
+    /// their original case (and stopword matching is then case-sensitive).
+    pub lowercase: bool,
 }
 
 impl Default for LoadOptions {
@@ -93,6 +96,7 @@ impl Default for LoadOptions {
             stopwords: HashSet::new(),
             min_doc_freq: 1,
             max_doc_fraction: 1.0,
+            lowercase: true,
         }
     }
 }
@@ -177,17 +181,21 @@ pub fn load_text_file(path: &Path, opts: &LoadOptions) -> io::Result<Corpus> {
         let mut seen_in_doc: HashSet<usize> = HashSet::new();
 
         for m in re.find_iter(text_slice) {
-            let token_lower = m.as_str().to_lowercase();
-            if opts.stopwords.contains(&token_lower) {
+            let token = if opts.lowercase {
+                m.as_str().to_lowercase()
+            } else {
+                m.as_str().to_string()
+            };
+            if opts.stopwords.contains(&token) {
                 continue;
             }
 
-            let id = if let Some(&eid) = vocab.get(&token_lower) {
+            let id = if let Some(&eid) = vocab.get(&token) {
                 eid
             } else {
                 let new_id = id_to_word.len();
-                vocab.insert(token_lower.clone(), new_id);
-                id_to_word.push(token_lower);
+                vocab.insert(token.clone(), new_id);
+                id_to_word.push(token);
                 total_freqs.push(0);
                 new_id
             };
@@ -323,16 +331,20 @@ pub fn from_texts(
         let mut seen_in_doc: HashSet<usize> = HashSet::new();
 
         for m in re.find_iter(text) {
-            let token_lower = m.as_str().to_lowercase();
-            if opts.stopwords.contains(&token_lower) {
+            let token = if opts.lowercase {
+                m.as_str().to_lowercase()
+            } else {
+                m.as_str().to_string()
+            };
+            if opts.stopwords.contains(&token) {
                 continue;
             }
-            let id = if let Some(&eid) = vocab.get(&token_lower) {
+            let id = if let Some(&eid) = vocab.get(&token) {
                 eid
             } else {
                 let new_id = id_to_word.len();
-                vocab.insert(token_lower.clone(), new_id);
-                id_to_word.push(token_lower);
+                vocab.insert(token.clone(), new_id);
+                id_to_word.push(token);
                 total_freqs.push(0);
                 new_id
             };
