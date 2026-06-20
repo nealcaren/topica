@@ -41,7 +41,7 @@ diagnostics to support those decisions, declining, for instance, to report
 confidence intervals for a model that has no posterior to draw them from. A parallel \proglang{Rust} core
 makes the fits fast and reproducible. Fit to convergence, the structural and other
 variational models run roughly one and a half to three times faster than
-\proglang{R} \pkg{stm} on a single core and five to eight times faster on a typical
+\proglang{R} \pkg{stm} on a single core and five to seven times faster on a typical
 multicore workstation (faster still per iteration, depending on the machine and
 corpus), and \pkg{topica} is at parity with the compiled \pkg{MALLET} and
 \pkg{keyATM} samplers, while reproducing the variational models to the bit and the
@@ -697,7 +697,7 @@ with both engines stopped at the same relative-bound tolerance
 (\code{emtol}$=10^{-5}$); the collapsed-Gibbs models have no convergence criterion,
 so there the user fixes a sweep budget and we report cost at a matched budget. The
 structural timings are on a documented HPC node (a two-socket \proglang{AMD}
-\pkg{EPYC} 7713 with OpenBLAS, \proglang{R} 4.5.0 / \pkg{stm} 1.3.8) on real
+\pkg{EPYC} 7702 with OpenBLAS, \proglang{R} 4.5.0 / \pkg{stm} 1.3.8) on real
 corpora; \proglang{R} \pkg{stm} is single-threaded by design, and we cap
 \pkg{topica} at sixteen cores, a typical workstation rather than the full node.
 Speed depends on corpus size, vocabulary, the number of topics, and hardware, so
@@ -713,10 +713,12 @@ topic-count crossover.
 \centering
 \caption{\pkg{topica} versus \proglang{R} \pkg{stm}, wall-clock \emph{to
 convergence} (both at \code{emtol}$=10^{-5}$, spectral start, $K=20$,
-\code{$\sim$rating $+$ s(time)}) on a two-socket \proglang{AMD} \pkg{EPYC} 7713,
-single-core and capped at sixteen cores. EM iterations to converge in parentheses.
-\proglang{R} \pkg{stm} is single-threaded by design. At a fixed tolerance
-\pkg{topica} drives its bound to a tighter point than \proglang{R} (more
+\code{$\sim$rating $+$ s(time)}) on a documented two-socket \proglang{AMD}
+\pkg{EPYC} 7702 node, single-core and capped at sixteen cores; mean of two
+repeats, with single-core speedups ranging $2.6$--$2.9\times$ (\code{poliblog})
+and $1.6$--$1.8\times$ (Congress) across repeats. EM iterations to converge in
+parentheses. \proglang{R} \pkg{stm} is single-threaded by design. At a fixed
+tolerance \pkg{topica} drives its bound to a tighter point than \proglang{R} (more
 iterations; see text), so its per-iteration speed exceeds these wall-clock ratios.}
 \label{tab:stm}
 \small
@@ -726,8 +728,8 @@ iterations; see text), so its per-iteration speed exceeds these wall-clock ratio
 \cmidrule(lr){3-4}\cmidrule(lr){5-6}
 Corpus & docs & \pkg{topica} & \proglang{R} \pkg{stm} & \pkg{topica} & speedup & 1-core sp. \\
 \midrule
-\code{poliblog} & 5{,}000  & 24.7s (27) & 71.7s (20) & 8.9s (27)  & 8.0$\times$ & 2.9$\times$ \\
-Congress        & 25{,}000 & 392s (81)  & 607s (49)  & 112s (81)  & 5.4$\times$ & 1.5$\times$ \\
+\code{poliblog} & 5{,}000  & 23.8s (27) & 64.9s (20) & 9.3s (27)  & 7.0$\times$ & 2.7$\times$ \\
+Congress        & 25{,}000 & 385s (81)  & 641s (49)  & 134s (81)  & 4.8$\times$ & 1.7$\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -735,20 +737,21 @@ Congress        & 25{,}000 & 392s (81)  & 607s (49)  & 112s (81)  & 5.4$\times$ 
 The structural topic model is the comparison that matters most for social
 scientists, since \proglang{R} \pkg{stm} is the field standard and its fits can
 take minutes. Run to convergence (Table~\ref{tab:stm}), \pkg{topica} fits it
-$1.5$ to $2.9$ times faster than \proglang{R} \pkg{stm} on a single core and $5.4$
-to $8.0$ times faster on sixteen cores, in well under half \proglang{R} \pkg{stm}'s
-memory (it holds the corpus and the variational state in compact native arrays
+$1.7$ to $2.7$ times faster than \proglang{R} \pkg{stm} on a single core and
+roughly five to seven times faster on sixteen cores, in about a quarter of
+\proglang{R} \pkg{stm}'s memory (about 180MB against 675MB at 5{,}000 documents,
+since it holds the corpus and the variational state in compact native arrays
 rather than \proglang{R} objects). The per-iteration decomposition is sharper and
-explains the wall-clock: \pkg{topica}'s variational E-step is $2.6$ to $3.9$ times
-cheaper per iteration single-threaded ($9$ to $11$ times on sixteen cores). It runs
-\emph{more} EM iterations than \proglang{R}, though ($27$ versus $20$ on
+explains the wall-clock: \pkg{topica}'s variational E-step is roughly three to four
+times cheaper per iteration single-threaded (eight to nine times on sixteen cores).
+It runs \emph{more} EM iterations than \proglang{R}, though ($27$ versus $20$ on
 \code{poliblog}, $81$ versus $49$ on Congress), because at a fixed \code{emtol} it
 drives its evidence bound to a tighter optimum: past \proglang{R}'s stopping point
 \pkg{topica}'s topic-word matrix still shifts, but by well under one percent
 (aligned cosine above $0.99$ to its own converged fit). The to-convergence ratios therefore
 understate \pkg{topica}'s engine speed, and the single-core advantage narrows on the
 larger corpus, where those extra convergence iterations accumulate; the multicore
-advantage, which is what a user on a workstation sees, holds at $5$ to $8$ times.
+advantage, which is what a user on a workstation sees, holds near five times even there.
 The full machine-stamped report is regenerated by \code{paper/reproduce.py} and
 committed at \code{paper/generated/replication\_report\_longleaf.md} (the
 machine-independent parity checks of Section~\ref{sec:validation} are in the
