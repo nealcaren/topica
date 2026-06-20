@@ -593,8 +593,8 @@ mod from_texts_tests {
         let texts = vec![
             "the cat sat on the mat".to_string(),
             "a dog and a cat".to_string(),
-            "".to_string(),               // empty -> dropped
-            "!!! 1 2 3 ???".to_string(),  // no word tokens -> dropped
+            "".to_string(),              // empty -> dropped
+            "!!! 1 2 3 ???".to_string(), // no word tokens -> dropped
         ];
         // Pass row indices as names so we can recover which rows survived.
         let names: Vec<String> = (0..texts.len()).map(|i| i.to_string()).collect();
