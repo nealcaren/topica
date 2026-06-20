@@ -8202,6 +8202,28 @@ fn inspect_score_scores(py: Python<'_>, beta: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
     py.allow_threads(move || topica_core::inspect::score_scores(&beta))
 }
 
+/// stm-faithful per-topic exclusivity (`topica-core` `inspect::exclusivity`): the
+/// FREX-summary over each topic's top-`m` words, with frequency/exclusivity weight
+/// `frexw` (stm default 0.7). Returns K values. Internal; see [`inspect_frex_scores`].
+#[pyfunction]
+#[pyo3(signature = (beta, m, frexw=0.7))]
+fn inspect_exclusivity(py: Python<'_>, beta: Vec<Vec<f64>>, m: usize, frexw: f64) -> Vec<f64> {
+    py.allow_threads(move || topica_core::inspect::exclusivity(&beta, m, frexw))
+}
+
+/// stm-faithful semantic coherence (`topica-core` `inspect::semantic_coherence`,
+/// stm's `semCoh1beta`): UMass over each topic's top-`m` words with stm's 0.01
+/// smoothing. `docs` are token-id lists. Returns K values. Internal.
+#[pyfunction]
+fn inspect_semantic_coherence(
+    py: Python<'_>,
+    beta: Vec<Vec<f64>>,
+    docs: Vec<Vec<u32>>,
+    m: usize,
+) -> Vec<f64> {
+    py.allow_threads(move || topica_core::inspect::semantic_coherence(&beta, &docs, m))
+}
+
 /// Warn that a neighbor-preserving projection (UMAP / t-SNE) distorts global
 /// geometry and is not reproducible across runs, so PCA stays the honest default.
 fn warn_stochastic(py: Python<'_>, method: &str) -> PyResult<()> {
@@ -18092,6 +18114,8 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(inspect_frex_scores, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_lift_scores, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_score_scores, m)?)?;
+    m.add_function(wrap_pyfunction!(inspect_exclusivity, m)?)?;
+    m.add_function(wrap_pyfunction!(inspect_semantic_coherence, m)?)?;
     m.add_function(wrap_pyfunction!(project, m)?)?;
     m.add_function(wrap_pyfunction!(set_experimental, m)?)?;
     m.add_function(wrap_pyfunction!(experimental_is_enabled, m)?)?;

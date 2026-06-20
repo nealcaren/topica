@@ -122,9 +122,23 @@ def topic_semantic_diversity(topics: Any, topn: int = 25) -> float:
     ...
 
 
-def exclusivity(model_or_phi: Any, *, n: int = 10) -> numpy.typing.NDArray[numpy.float64]:
-    """Per-topic exclusivity of the top-n words, shape (num_topics,). Pair with
-    per-topic coherence for the coherence-vs-exclusivity quality plot."""
+def exclusivity(model_or_phi: Any, *, n: int = 10, w: float = 0.7) -> numpy.typing.NDArray[numpy.float64]:
+    """Per-topic exclusivity (stm's FREX summary over the top-n words), shape
+    (num_topics,). Pair with per-topic coherence for the coherence-vs-exclusivity
+    quality plot. From topica's stm-faithful Rust core."""
+    ...
+
+
+def semantic_coherence(
+    model_or_phi: Any,
+    texts: Any,
+    vocabulary: list[str] | None = None,
+    *,
+    n: int = 10,
+) -> numpy.typing.NDArray[numpy.float64]:
+    """Per-topic semantic coherence (stm's semCoh1beta, UMass with 0.01 smoothing)
+    over the top-n words, shape (num_topics,). ``texts`` is a Corpus or list of
+    token lists. From topica's stm-faithful Rust core."""
     ...
 
 

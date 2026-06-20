@@ -34,7 +34,9 @@ class TestExclusivity:
         m, _, _ = _two_topic_model()
         ex = topica.exclusivity(m, n=5)
         assert ex.shape == (2,)
-        assert np.all(ex >= 0.0) and np.all(ex <= 1.0)
+        # stm's exclusivity is a FREX summary over the top-n words (roughly [0, n]),
+        # not a [0, 1] mean — assert non-negative and finite.
+        assert np.all(ex >= 0.0) and np.all(np.isfinite(ex))
 
     def test_disjoint_vocab_is_highly_exclusive(self):
         # The two planted vocabularies don't overlap, so each topic's top words

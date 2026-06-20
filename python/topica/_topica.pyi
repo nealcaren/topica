@@ -71,6 +71,22 @@ def inspect_score_scores(beta: list[list[float]]) -> list[list[float]]:
     """stm-faithful score matrix (K x V): beta * (log beta - mean_k log beta) (internal)."""
     ...
 
+def inspect_exclusivity(
+    beta: list[list[float]],
+    m: int,
+    frexw: float = 0.7,
+) -> list[float]:
+    """stm-faithful per-topic exclusivity (FREX summary over top-m words) (internal)."""
+    ...
+
+def inspect_semantic_coherence(
+    beta: list[list[float]],
+    docs: list[list[int]],
+    m: int,
+) -> list[float]:
+    """stm-faithful per-topic semantic coherence (semCoh1beta) over top-m words (internal)."""
+    ...
+
 def window_cooccurrence(
     docs: list[list[int]],
     num_relevant: int,

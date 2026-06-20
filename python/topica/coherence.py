@@ -460,28 +460,62 @@ def _vocabulary_of(obj, vocabulary):
     raise ValueError("vocabulary is required when the model/array carries none")
 
 
-def exclusivity(model_or_phi, *, n=10):
-    """Per-topic exclusivity, shape ``(num_topics,)``.
+def exclusivity(model_or_phi, *, n=10, w=0.7):
+    """Per-topic exclusivity, shape ``(num_topics,)`` — stm's ``exclusivity``.
 
-    For each topic, the mean over its top-``n`` words (by probability) of the
-    exclusivity ``φ_{t,v} / Σ_k φ_{k,v}`` — how concentrated a word is in this
-    topic rather than shared across topics. Pair with per-topic coherence (e.g.
-    a model's ``coherence(n)``) to make stm's coherence-vs-exclusivity quality
-    plot: good topics sit toward the upper-right (coherent *and* distinctive).
+    For each topic, the **FREX summary** over its top-``n`` words (by probability):
+    the sum of each word's frequency–exclusivity score (the rank harmonic mean of
+    probability and exclusivity ``φ_{t,v} / Σ_k φ_{k,v}``, weighted by ``w``, stm's
+    default 0.7). Higher means the topic's top words are more distinctive. Pair with
+    per-topic coherence to make stm's coherence-vs-exclusivity quality plot: good
+    topics sit toward the upper-right (coherent *and* distinctive).
+
+    The scores come from the single stm-faithful implementation in topica's Rust
+    core (``topica-core``'s ``inspect``), shared with faSTM and the Stata plugin.
+
+    .. note::
+       This is stm's exclusivity (a sum of FREX scores over the top ``n`` words,
+       roughly in ``[0, n]``), not a mean exclusivity in ``[0, 1]``. The scale
+       changed in the move to the shared stm-faithful core.
 
     `model_or_phi` is a fitted model (uses its ``topic_word``) or a ``(K, V)``
     array.
     """
+    from ._topica import inspect_exclusivity
+
     phi = _as_topic_word(model_or_phi)
-    K, _ = phi.shape
-    col = phi.sum(axis=0)
-    col[col == 0] = 1.0
-    excl = phi / col
-    out = np.empty(K, dtype=np.float64)
-    for t in range(K):
-        top = np.argsort(phi[t])[::-1][:n]
-        out[t] = excl[t, top].mean()
-    return out
+    return np.asarray(
+        inspect_exclusivity(phi.tolist(), int(n), float(w)), dtype=np.float64
+    )
+
+
+def semantic_coherence(model_or_phi, texts, vocabulary=None, *, n=10):
+    """Per-topic semantic coherence, shape ``(num_topics,)`` — stm's ``semCoh1beta``.
+
+    The UMass document-co-occurrence coherence over each topic's top-``n`` words,
+    with stm's 0.01 smoothing (higher = better). This is stm's exact semantic
+    coherence, from topica's Rust core (``topica-core``'s ``inspect``), shared with
+    faSTM and the Stata plugin. For the broader, gensim-aligned coherence measures
+    (``c_v``, ``c_npmi``, ``u_mass``) use :func:`coherence` instead.
+
+    `model_or_phi` is a fitted model (uses its ``topic_word`` / ``vocabulary``) or a
+    ``(K, V)`` array (then pass ``vocabulary``). ``texts`` is the reference corpus:
+    a :class:`topica.Corpus`, or a list of token lists (the words per document).
+    """
+    from ._topica import inspect_semantic_coherence
+
+    phi = _as_topic_word(model_or_phi)
+    # Fall back to the corpus's own vocabulary when the model/array carries none.
+    if vocabulary is None and not hasattr(model_or_phi, "vocabulary") \
+            and hasattr(texts, "vocabulary"):
+        vocabulary = list(texts.vocabulary)
+    vocab_list = _vocabulary_of(model_or_phi, vocabulary)
+    vocab = {w: i for i, w in enumerate(vocab_list)}
+    docs = texts.documents() if hasattr(texts, "documents") else texts
+    docs_ids = [[vocab[w] for w in d if w in vocab] for d in docs]
+    return np.asarray(
+        inspect_semantic_coherence(phi.tolist(), docs_ids, int(n)), dtype=np.float64
+    )
 
 
 def word_intrusion(model_or_phi, vocabulary=None, *, n_words=5, seed=0):
