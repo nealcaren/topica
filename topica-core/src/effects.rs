@@ -28,8 +28,9 @@ fn theta_from_eta(eta: &[f64]) -> Vec<f64> {
     e.iter().map(|x| x / s).collect()
 }
 
-/// estimateEffect for one topic. Returns `(coef, se)`, each length P (the design
-/// columns, e.g. intercept + covariates).
+/// estimateEffect for one topic. Returns `(coef, vcov)` where `coef` has length P
+/// (the design columns, e.g. intercept + covariates) and `vcov` is the P×P pooled
+/// covariance (row-major). The standard errors are `sqrt(vcov[j*P+j])`.
 ///
 /// - `lambda`: D × (K-1) variational means.
 /// - `nu`: D × (K-1)² row-major Laplace covariances; pass empty to treat the
@@ -48,7 +49,7 @@ pub fn estimate_effect_topic<R: Rng>(
     let km1 = if d > 0 { lambda[0].len() } else { 0 };
     let p = if d > 0 { x[0].len() } else { 0 };
     if d == 0 || p == 0 || d <= p {
-        return (vec![0.0; p], vec![0.0; p]);
+        return (vec![0.0; p], vec![0.0; p * p]);
     }
 
     // (X'X)^-1, and M = (X'X)^-1 X'  (P×D) — fixed across draws.
@@ -133,7 +134,7 @@ pub fn estimate_effect_topic<R: Rng>(
         sigma2_draws.push(sigma2);
     }
 
-    // Pool by Rubin's rules.
+    // Pool by Rubin's rules into the full P×P covariance.
     let b = sims as f64;
     let mut coef = vec![0.0f64; p];
     for draw in &beta_draws {
@@ -141,22 +142,26 @@ pub fn estimate_effect_topic<R: Rng>(
             coef[j] += draw[j] / b;
         }
     }
-    let mut se = vec![0.0f64; p];
-    for j in 0..p {
-        // within: mean over draws of sigma2 * (X'X)^-1_jj
-        let within: f64 =
-            sigma2_draws.iter().sum::<f64>() / b * xtxinv[j * p + j];
-        // between: sample variance of beta_j across draws
-        let between = if sims > 1 {
-            let m = coef[j];
-            beta_draws.iter().map(|d2| (d2[j] - m).powi(2)).sum::<f64>() / (b - 1.0)
-        } else {
-            0.0
-        };
-        let total = within + (1.0 + 1.0 / b) * between;
-        se[j] = total.max(0.0).sqrt();
+    let sigbar: f64 = sigma2_draws.iter().sum::<f64>() / b;
+    let mut vcov = vec![0.0f64; p * p];
+    for i in 0..p {
+        for j in 0..p {
+            // within = mean_b sigma2_b * (X'X)^-1_ij  (sigma2 averaged over draws)
+            let within = sigbar * xtxinv[i * p + j];
+            // between = sample covariance of (beta_i, beta_j) across draws
+            let between = if sims > 1 {
+                beta_draws
+                    .iter()
+                    .map(|dr| (dr[i] - coef[i]) * (dr[j] - coef[j]))
+                    .sum::<f64>()
+                    / (b - 1.0)
+            } else {
+                0.0
+            };
+            vcov[i * p + j] = within + (1.0 + 1.0 / b) * between;
+        }
     }
-    (coef, se)
+    (coef, vcov)
 }
 
 #[cfg(test)]
@@ -181,10 +186,12 @@ mod tests {
         }
         let nu: Vec<Vec<f64>> = Vec::new(); // no uncertainty -> single OLS
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        let (coef, se) = estimate_effect_topic(&lambda, &nu, &x, 0, 50, &mut rng);
+        let (coef, vcov) = estimate_effect_topic(&lambda, &nu, &x, 0, 50, &mut rng);
         // Proportion clearly increases with the covariate: positive slope.
         assert!(coef[1] > 0.1, "slope should be positive, got {}", coef[1]);
-        assert!(se.iter().all(|s| s.is_finite() && *s >= 0.0));
+        // Diagonal of vcov is the variance of each coef.
+        let p = 2;
+        assert!(vcov[1 * p + 1] >= 0.0 && vcov[1 * p + 1].is_finite());
     }
 
     #[test]
@@ -200,10 +207,13 @@ mod tests {
             x.push(vec![1.0, cov]);
         }
         let mut rng = ChaCha8Rng::seed_from_u64(7);
-        let (_c0, se0) = estimate_effect_topic(&lambda, &Vec::new(), &x, 0, 100, &mut rng);
-        let (_c1, se1) = estimate_effect_topic(&lambda, &nu, &x, 0, 200, &mut rng);
+        let p = 2;
+        let (_c0, v0) = estimate_effect_topic(&lambda, &Vec::new(), &x, 0, 100, &mut rng);
+        let (_c1, v1) = estimate_effect_topic(&lambda, &nu, &x, 0, 200, &mut rng);
+        let se0 = v0[1 * p + 1].sqrt();
+        let se1 = v1[1 * p + 1].sqrt();
         // Propagating per-doc uncertainty should not shrink the SE below the
         // no-uncertainty case.
-        assert!(se1[1] + 1e-9 >= se0[1], "se with nu {} vs without {}", se1[1], se0[1]);
+        assert!(se1 + 1e-9 >= se0, "se with nu {} vs without {}", se1, se0);
     }
 }
