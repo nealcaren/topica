@@ -91,7 +91,9 @@ pub fn js_estimate(prob: &[f64], ct: f64) -> Vec<f64> {
         return vec![unif; n];
     }
     lambda = lambda.clamp(0.0, 1.0);
-    prob.iter().map(|&p| lambda * unif + (1.0 - lambda) * p).collect()
+    prob.iter()
+        .map(|&p| lambda * unif + (1.0 - lambda) * p)
+        .collect()
 }
 
 /// Indices of the top `n` words per topic by `scoremat` (K rows of n indices).
@@ -164,7 +166,11 @@ pub fn score_scores(beta: &[Vec<f64>]) -> Vec<Vec<f64>> {
         .map(|vv| (0..k).map(|kk| logbeta[kk][vv]).sum::<f64>() / k as f64)
         .collect();
     (0..k)
-        .map(|kk| (0..v).map(|vv| beta[kk][vv] * (logbeta[kk][vv] - colmean[vv])).collect())
+        .map(|kk| {
+            (0..v)
+                .map(|vv| beta[kk][vv] * (logbeta[kk][vv] - colmean[vv]))
+                .collect()
+        })
         .collect()
 }
 
@@ -184,8 +190,8 @@ pub fn semantic_coherence(beta: &[Vec<f64>], docs: &[Vec<u32>], m: usize) -> Vec
     let mut wordlist: Vec<usize> = Vec::new();
     for row in &topw {
         for &word in row {
-            if !pos_of_word.contains_key(&word) {
-                pos_of_word.insert(word, wordlist.len());
+            if let std::collections::hash_map::Entry::Vacant(e) = pos_of_word.entry(word) {
+                e.insert(wordlist.len());
                 wordlist.push(word);
             }
         }
@@ -278,7 +284,10 @@ mod tests {
     #[test]
     fn rank_avg_handles_ties() {
         // values: 10, 20, 20, 40 -> ranks 1, 2.5, 2.5, 4
-        assert_eq!(rank_avg(&[10.0, 20.0, 20.0, 40.0]), vec![1.0, 2.5, 2.5, 4.0]);
+        assert_eq!(
+            rank_avg(&[10.0, 20.0, 20.0, 40.0]),
+            vec![1.0, 2.5, 2.5, 4.0]
+        );
     }
 
     fn toy_beta() -> Vec<Vec<f64>> {
