@@ -138,6 +138,7 @@ impl Corpus {
             stopwords: stop,
             min_doc_freq,
             max_doc_fraction,
+            lowercase: true,
         };
         let inner = corpus::load_text_file(Path::new(path), &opts).map_err(io_err)?;
         let kept_indices = (0..inner.num_docs()).collect();

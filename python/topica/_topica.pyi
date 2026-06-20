@@ -47,6 +47,30 @@ def project(
     ...
 
 
+def inspect_frex_scores(
+    beta: list[list[float]],
+    word_counts: list[int],
+    w: float = 0.5,
+) -> list[list[float]]:
+    """stm-faithful FREX score matrix (K x V) from topica-core's `inspect` (internal).
+
+    `word_counts` (length V) enables stm's James-Stein exclusivity shrinkage when
+    non-empty; pass [] to skip it. Backs the cross-language FREX parity check
+    against the pure-Python topica.frex.
+    """
+    ...
+
+def inspect_lift_scores(
+    beta: list[list[float]],
+    word_counts: list[int],
+) -> list[list[float]]:
+    """stm-faithful lift matrix (K x V): log(beta) - log(empirical word freq) (internal)."""
+    ...
+
+def inspect_score_scores(beta: list[list[float]]) -> list[list[float]]:
+    """stm-faithful score matrix (K x V): beta * (log beta - mean_k log beta) (internal)."""
+    ...
+
 def window_cooccurrence(
     docs: list[list[int]],
     num_relevant: int,
