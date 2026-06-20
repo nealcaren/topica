@@ -623,8 +623,10 @@ mod from_texts_tests {
             "alpha beta".to_string(),
             "alpha".to_string(),
         ];
-        let mut opts = LoadOptions::default();
-        opts.min_doc_freq = 2; // drop words in <2 docs (gamma appears once)
+        let opts = LoadOptions {
+            min_doc_freq: 2, // drop words in <2 docs (gamma appears once)
+            ..Default::default()
+        };
         let c = from_texts(&texts, None, None, &opts).unwrap();
         assert!(c.id_to_word.contains(&"alpha".to_string()));
         assert!(c.id_to_word.contains(&"beta".to_string()));
