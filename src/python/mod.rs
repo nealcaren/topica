@@ -8167,6 +8167,41 @@ fn window_cooccurrence(
     py.allow_threads(move || coh::cooccurrence(&docs, num_relevant, &pairs, window))
 }
 
+/// stm-faithful FREX score matrix (K×V) from the `topica-core` `inspect` module
+/// (the same port faSTM and the Stata plugin use). `beta` is the K×V topic-word
+/// probability matrix as a list of lists; `word_counts` (length V) enables stm's
+/// James-Stein exclusivity shrinkage when non-empty (pass `[]` to skip it); `w`
+/// is the frequency/exclusivity weight. Internal: backs the cross-language FREX
+/// parity check against the pure-Python `topica.frex` (issue #260).
+#[pyfunction]
+#[pyo3(signature = (beta, word_counts, w=0.5))]
+fn inspect_frex_scores(
+    py: Python<'_>,
+    beta: Vec<Vec<f64>>,
+    word_counts: Vec<u32>,
+    w: f64,
+) -> Vec<Vec<f64>> {
+    py.allow_threads(move || topica_core::inspect::frex_scores(&beta, &word_counts, w))
+}
+
+/// stm-faithful lift score matrix (K×V): `log(beta) - log(empirical word freq)`
+/// (`topica-core` `inspect::lift_scores`). Internal; see [`inspect_frex_scores`].
+#[pyfunction]
+fn inspect_lift_scores(
+    py: Python<'_>,
+    beta: Vec<Vec<f64>>,
+    word_counts: Vec<u32>,
+) -> Vec<Vec<f64>> {
+    py.allow_threads(move || topica_core::inspect::lift_scores(&beta, &word_counts))
+}
+
+/// stm-faithful score matrix (K×V): `beta * (log beta - mean_k log beta)`
+/// (`topica-core` `inspect::score_scores`). Internal; see [`inspect_frex_scores`].
+#[pyfunction]
+fn inspect_score_scores(py: Python<'_>, beta: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
+    py.allow_threads(move || topica_core::inspect::score_scores(&beta))
+}
+
 /// Warn that a neighbor-preserving projection (UMAP / t-SNE) distorts global
 /// geometry and is not reproducible across runs, so PCA stays the honest default.
 fn warn_stochastic(py: Python<'_>, method: &str) -> PyResult<()> {
@@ -18054,6 +18089,9 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Corpus>()?;
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(window_cooccurrence, m)?)?;
+    m.add_function(wrap_pyfunction!(inspect_frex_scores, m)?)?;
+    m.add_function(wrap_pyfunction!(inspect_lift_scores, m)?)?;
+    m.add_function(wrap_pyfunction!(inspect_score_scores, m)?)?;
     m.add_function(wrap_pyfunction!(project, m)?)?;
     m.add_function(wrap_pyfunction!(set_experimental, m)?)?;
     m.add_function(wrap_pyfunction!(experimental_is_enabled, m)?)?;
