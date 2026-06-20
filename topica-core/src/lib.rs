@@ -32,6 +32,7 @@
 pub mod corpus;
 pub mod ctm;
 pub mod cvb0;
+pub mod effects;
 pub mod estimator;
 pub mod inspect;
 pub mod linalg;
