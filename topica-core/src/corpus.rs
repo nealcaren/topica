@@ -285,6 +285,167 @@ pub fn load_text_file(path: &Path, opts: &LoadOptions) -> io::Result<Corpus> {
 }
 
 // ---------------------------------------------------------------------------
+// In-memory text loading
+// ---------------------------------------------------------------------------
+
+/// Build a [`Corpus`] from in-memory documents (one `String` per document),
+/// applying the same tokenisation, stopword removal, and document-frequency
+/// filtering as [`load_text_file`]. This is the in-process counterpart used by
+/// embedding hosts (e.g. the Stata plugin) that already hold the text in memory.
+///
+/// `names` and `labels`, when `Some`, are indexed positionally against `texts`;
+/// entries past their end fall back to `doc_<i>` / empty. `opts.format` is
+/// ignored (each element of `texts` is already one document's raw text).
+///
+/// Documents left empty after tokenisation and pruning are dropped, with
+/// `doc_names` / `doc_labels` kept aligned. A caller can therefore pass row
+/// indices as `names` and read them back from `doc_names` to learn which input
+/// rows survived (the rest produced no usable tokens).
+pub fn from_texts(
+    texts: &[String],
+    names: Option<&[String]>,
+    labels: Option<&[String]>,
+    opts: &LoadOptions,
+) -> io::Result<Corpus> {
+    let re = Regex::new(&opts.token_regex)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
+
+    let mut vocab: HashMap<String, usize> = HashMap::new();
+    let mut id_to_word: Vec<String> = Vec::new();
+    let mut docs: Vec<Vec<u32>> = Vec::new();
+    let mut doc_names: Vec<String> = Vec::new();
+    let mut doc_labels: Vec<String> = Vec::new();
+    let mut total_freqs: Vec<u32> = Vec::new();
+    let mut per_doc_type_sets: Vec<HashSet<usize>> = Vec::new();
+
+    for (i, text) in texts.iter().enumerate() {
+        let mut token_ids: Vec<u32> = Vec::new();
+        let mut seen_in_doc: HashSet<usize> = HashSet::new();
+
+        for m in re.find_iter(text) {
+            let token_lower = m.as_str().to_lowercase();
+            if opts.stopwords.contains(&token_lower) {
+                continue;
+            }
+            let id = if let Some(&eid) = vocab.get(&token_lower) {
+                eid
+            } else {
+                let new_id = id_to_word.len();
+                vocab.insert(token_lower.clone(), new_id);
+                id_to_word.push(token_lower);
+                total_freqs.push(0);
+                new_id
+            };
+            total_freqs[id] += 1;
+            token_ids.push(id as u32);
+            seen_in_doc.insert(id);
+        }
+
+        if !token_ids.is_empty() {
+            let name = names
+                .and_then(|n| n.get(i))
+                .cloned()
+                .unwrap_or_else(|| format!("doc_{}", i));
+            let label = labels.and_then(|l| l.get(i)).cloned().unwrap_or_default();
+            doc_names.push(name);
+            doc_labels.push(label);
+            docs.push(token_ids);
+            per_doc_type_sets.push(seen_in_doc);
+        }
+    }
+
+    Ok(finalize_corpus(
+        id_to_word,
+        docs,
+        doc_names,
+        doc_labels,
+        total_freqs,
+        per_doc_type_sets,
+        opts,
+    ))
+}
+
+/// Apply document-frequency filtering and drop emptied documents, producing the
+/// final [`Corpus`]. Shared tail used by [`from_texts`].
+fn finalize_corpus(
+    id_to_word: Vec<String>,
+    docs: Vec<Vec<u32>>,
+    doc_names: Vec<String>,
+    doc_labels: Vec<String>,
+    total_freqs: Vec<u32>,
+    per_doc_type_sets: Vec<HashSet<usize>>,
+    opts: &LoadOptions,
+) -> Corpus {
+    let num_types = id_to_word.len();
+    let num_docs = docs.len();
+
+    let mut doc_freqs = vec![0u32; num_types];
+    for set in &per_doc_type_sets {
+        for &id in set {
+            doc_freqs[id] += 1;
+        }
+    }
+
+    let max_df = (num_docs as f64 * opts.max_doc_fraction).ceil() as u32;
+    let keep: Vec<bool> = (0..num_types)
+        .map(|id| doc_freqs[id] >= opts.min_doc_freq && doc_freqs[id] <= max_df)
+        .collect();
+
+    if keep.iter().all(|&k| k) {
+        return Corpus {
+            id_to_word,
+            docs,
+            doc_names,
+            doc_labels,
+            doc_freqs,
+            total_freqs,
+        };
+    }
+
+    let mut remap: Vec<Option<usize>> = vec![None; num_types];
+    let mut new_id_to_word: Vec<String> = Vec::new();
+    let mut new_doc_freqs: Vec<u32> = Vec::new();
+    let mut new_total_freqs: Vec<u32> = Vec::new();
+    for id in 0..num_types {
+        if keep[id] {
+            remap[id] = Some(new_id_to_word.len());
+            new_id_to_word.push(id_to_word[id].clone());
+            new_doc_freqs.push(doc_freqs[id]);
+            new_total_freqs.push(total_freqs[id]);
+        }
+    }
+
+    let new_docs: Vec<Vec<u32>> = docs
+        .into_iter()
+        .map(|doc| {
+            doc.into_iter()
+                .filter_map(|id| remap[id as usize].map(|r| r as u32))
+                .collect()
+        })
+        .collect();
+
+    let mut final_docs: Vec<Vec<u32>> = Vec::new();
+    let mut final_names: Vec<String> = Vec::new();
+    let mut final_labels: Vec<String> = Vec::new();
+    for ((doc, name), label) in new_docs.into_iter().zip(doc_names).zip(doc_labels) {
+        if !doc.is_empty() {
+            final_docs.push(doc);
+            final_names.push(name);
+            final_labels.push(label);
+        }
+    }
+
+    Corpus {
+        id_to_word: new_id_to_word,
+        docs: final_docs,
+        doc_names: final_names,
+        doc_labels: final_labels,
+        doc_freqs: new_doc_freqs,
+        total_freqs: new_total_freqs,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Binary serialisation  (magic "CRP2")
 // Header:   4 magic | u32 num_types | u32 num_docs
 // Vocab:    per type: str word | u32 doc_freq | u32 total_freq
@@ -417,4 +578,56 @@ pub fn load_stoplist(path: &Path) -> io::Result<HashSet<String>> {
         }
     }
     Ok(words)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod from_texts_tests {
+    use super::*;
+
+    #[test]
+    fn tokenises_and_filters_in_memory() {
+        let texts = vec![
+            "the cat sat on the mat".to_string(),
+            "a dog and a cat".to_string(),
+            "".to_string(),               // empty -> dropped
+            "!!! 1 2 3 ???".to_string(),  // no word tokens -> dropped
+        ];
+        // Pass row indices as names so we can recover which rows survived.
+        let names: Vec<String> = (0..texts.len()).map(|i| i.to_string()).collect();
+        let opts = LoadOptions::default();
+
+        let c = from_texts(&texts, Some(&names), None, &opts).unwrap();
+
+        assert_eq!(c.num_docs(), 2, "two non-empty docs survive");
+        assert_eq!(c.doc_names, vec!["0".to_string(), "1".to_string()]);
+        assert!(c.id_to_word.contains(&"cat".to_string()));
+        // "cat" appears in both docs -> doc_freq 2.
+        let cat = c.id_to_word.iter().position(|w| w == "cat").unwrap();
+        assert_eq!(c.doc_freqs[cat], 2);
+        // tokens are valid ids and round-trip to words.
+        for doc in &c.docs {
+            for &t in doc {
+                assert!((t as usize) < c.num_types());
+            }
+        }
+    }
+
+    #[test]
+    fn min_doc_freq_prunes_singletons() {
+        let texts = vec![
+            "alpha beta gamma".to_string(),
+            "alpha beta".to_string(),
+            "alpha".to_string(),
+        ];
+        let mut opts = LoadOptions::default();
+        opts.min_doc_freq = 2; // drop words in <2 docs (gamma appears once)
+        let c = from_texts(&texts, None, None, &opts).unwrap();
+        assert!(c.id_to_word.contains(&"alpha".to_string()));
+        assert!(c.id_to_word.contains(&"beta".to_string()));
+        assert!(!c.id_to_word.contains(&"gamma".to_string()), "gamma pruned");
+    }
 }
