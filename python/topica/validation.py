@@ -458,21 +458,53 @@ def perplexity(model, held_out, *, seed=0):
 # labelTopics: prob / FREX / lift / score
 # ---------------------------------------------------------------------------
 
-def _ecdf_ranks(x: np.ndarray) -> np.ndarray:
-    """Empirical-CDF rank of each value within `x` (ties share the high rank)."""
-    order = np.argsort(x)
-    ranks = np.empty_like(order, dtype=np.float64)
-    ranks[order] = np.arange(1, len(x) + 1)
-    return ranks / len(x)
+def _counts_from(word_counts, corpus):
+    """Resolve ``word_counts`` / ``corpus`` to a counts array, or ``None``.
+
+    Pass at most one. A ``corpus`` contributes its ``word_counts`` (empirical
+    corpus frequencies, aligned to the vocabulary the model was fit on).
+    """
+    if word_counts is not None and corpus is not None:
+        raise ValueError("pass either word_counts= or corpus=, not both")
+    if corpus is not None:
+        wc = getattr(corpus, "word_counts", None)
+        if wc is None:
+            raise ValueError(
+                "corpus= must be a topica.Corpus (it exposes word_counts)"
+            )
+        return np.asarray(wc, dtype=np.float64)
+    return None if word_counts is None else np.asarray(word_counts, dtype=np.float64)
 
 
-def frex(topic_word, vocabulary=None, *, w=0.5, n=10):
+def _resolve_word_counts(word_counts, V):
+    """Validate ``word_counts`` to a length-``V`` list of ints, or ``[]`` if None."""
+    if word_counts is None:
+        return []
+    wc = np.asarray(word_counts, dtype=np.float64)
+    if wc.shape != (V,):
+        raise ValueError(f"word_counts must have length {V} (the vocabulary size)")
+    if np.any(wc < 0) or not np.all(np.isfinite(wc)):
+        raise ValueError("word_counts must be finite and non-negative")
+    return [int(round(c)) for c in wc]
+
+
+def frex(topic_word, vocabulary=None, *, w=0.5, n=10, word_counts=None, corpus=None):
     """FREX (FRequency–EXclusivity) top words per topic.
 
-    For each topic, words are scored by the weighted harmonic mean of the ECDF
-    rank of their probability (frequency) and the ECDF rank of their exclusivity
-    ``φ_{t,v} / Σ_k φ_{k,v}`` — the same combination stm uses. ``w`` weights
-    frequency vs exclusivity. Returns a list (per topic) of ``(word, frex)``.
+    For each topic, words are scored by the weighted harmonic mean of the rank of
+    their probability (frequency) and the rank of their exclusivity
+    ``φ_{t,v} / Σ_k φ_{k,v}`` — stm's ``calcfrex``. ``w`` weights frequency vs
+    exclusivity. Returns a list (per topic) of ``(word, frex)``.
+
+    The scores come from the single, stm-faithful implementation in topica's Rust
+    core (``topica-core``'s ``inspect`` module — the same one faSTM and the Stata
+    plugin use), so the FREX definition can never drift between languages.
+
+    Pass ``word_counts`` (a length-``V`` array of corpus word frequencies) or
+    ``corpus`` (a :class:`topica.Corpus`, whose word counts are read for you) to
+    apply stm's James-Stein exclusivity shrinkage, which is stm's default; it damps
+    the exclusivity of rare words that appear in only one topic by chance. Without
+    either (the default here) no shrinkage is applied.
 
     `topic_word` is a fitted model (uses its ``topic_word`` and ``vocabulary``)
     or a ``(K, V)`` array, in which case pass ``vocabulary``.
@@ -481,21 +513,18 @@ def frex(topic_word, vocabulary=None, *, w=0.5, n=10):
         raise ValueError(f"w (frequency weight) must be in [0, 1], got {w!r}")
     if not isinstance(n, (int, np.integer)) or n < 1:
         raise ValueError(f"n must be a positive integer, got {n!r}")
+    from ._topica import inspect_frex_scores
+
     vocabulary = _vocabulary_of(topic_word, vocabulary)
     phi = _as_topic_word(topic_word)
     K, V = phi.shape
-    col = phi.sum(axis=0)
-    col[col == 0] = 1.0
-    excl = phi / col  # exclusivity per (topic, word)
+    wc = _resolve_word_counts(_counts_from(word_counts, corpus), V)
+    scores = np.asarray(inspect_frex_scores(phi.tolist(), wc, float(w)))
 
     results = []
     for t in range(K):
-        f_rank = _ecdf_ranks(phi[t])
-        e_rank = _ecdf_ranks(excl[t])
-        with np.errstate(divide="ignore", invalid="ignore"):
-            score = 1.0 / (w / f_rank + (1.0 - w) / e_rank)
-        idx = np.argsort(score)[::-1][:n]
-        results.append([(vocabulary[i], float(score[i])) for i in idx])
+        idx = np.argsort(scores[t])[::-1][:n]
+        results.append([(vocabulary[i], float(scores[t][i])) for i in idx])
     return results
 
 
@@ -558,15 +587,28 @@ def mmr(topic_word, word_embeddings, vocabulary=None, *, n=10, diversity=0.3, n_
     return out
 
 
-def label_topics(topic_word, vocabulary=None, *, n=10):
+def label_topics(topic_word, vocabulary=None, *, n=10, word_counts=None, corpus=None):
     """stm-style topic labels: prob, FREX, lift, and score word lists per topic.
 
     Returns a list (per topic) of dicts with keys ``prob``, ``frex``, ``lift``,
-    ``score``, each a list of ``(word, value)`` pairs.
+    ``score``, each a list of ``(word, value)`` pairs. FREX, lift, and score all
+    come from the single stm-faithful implementation in topica's Rust core
+    (``topica-core``'s ``inspect``), so they cannot drift from faSTM / the Stata
+    plugin.
+
+    ``lift`` is stm's lift, ``log P(w|topic) − log P(w)``, where ``P(w)`` is the
+    empirical word frequency. Pass ``word_counts`` (a length-``V`` array) or
+    ``corpus`` (a :class:`topica.Corpus`, whose word counts are read for you) for
+    the exact value; without either, ``P(w)`` is estimated from the topic-word
+    matrix's column marginal (lift depends only on relative word frequency, so the
+    ranking matches). ``word_counts`` / ``corpus`` also enable stm's James-Stein
+    FREX shrinkage (see :func:`frex`).
 
     `topic_word` is a fitted model (uses its ``topic_word`` and ``vocabulary``)
     or a ``(K, V)`` array, in which case pass ``vocabulary``.
     """
+    from ._topica import inspect_lift_scores, inspect_score_scores
+
     vocabulary = _vocabulary_of(topic_word, vocabulary)
     phi = _as_topic_word(topic_word)
     if phi.ndim != 2 or phi.shape[0] == 0:
@@ -576,24 +618,29 @@ def label_topics(topic_word, vocabulary=None, *, n=10):
             "or check the scale of your embeddings."
         )
     K, V = phi.shape
-    marginal = phi.mean(axis=0)
-    marginal_safe = np.where(marginal > 0, marginal, 1e-12)
-    log_phi = np.log(np.clip(phi, 1e-12, None))
-    mean_log = log_phi.mean(axis=0)
+    word_counts = _counts_from(word_counts, corpus)
 
-    frex_words = frex(topic_word, vocabulary, n=n)
+    if word_counts is None:
+        # Estimate P(w) from the column marginal. Lift depends only on count
+        # ratios, so any common scale works; this yields log(beta) - log(marginal).
+        marginal = phi.mean(axis=0)
+        lift_counts = [max(int(round(m * 1e6)), 1) for m in marginal]
+    else:
+        lift_counts = _resolve_word_counts(word_counts, V)
+    lift_mat = np.asarray(inspect_lift_scores(phi.tolist(), lift_counts))
+    score_mat = np.asarray(inspect_score_scores(phi.tolist()))
+
+    frex_words = frex(topic_word, vocabulary, n=n, word_counts=word_counts)
     out = []
     for t in range(K):
         prob_idx = np.argsort(phi[t])[::-1][:n]
-        lift = phi[t] / marginal_safe
-        lift_idx = np.argsort(lift)[::-1][:n]
-        score = phi[t] * (log_phi[t] - mean_log)
-        score_idx = np.argsort(score)[::-1][:n]
+        lift_idx = np.argsort(lift_mat[t])[::-1][:n]
+        score_idx = np.argsort(score_mat[t])[::-1][:n]
         out.append({
             "prob": [(vocabulary[i], float(phi[t, i])) for i in prob_idx],
             "frex": frex_words[t],
-            "lift": [(vocabulary[i], float(lift[i])) for i in lift_idx],
-            "score": [(vocabulary[i], float(score[i])) for i in score_idx],
+            "lift": [(vocabulary[i], float(lift_mat[t, i])) for i in lift_idx],
+            "score": [(vocabulary[i], float(score_mat[t, i])) for i in score_idx],
         })
     return out
 

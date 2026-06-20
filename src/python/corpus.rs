@@ -198,6 +198,16 @@ impl Corpus {
         self.inner.id_to_word.clone()
     }
 
+    /// Corpus word frequencies: total occurrences of each vocabulary term across
+    /// all documents, parallel to :attr:`vocabulary` (length ``num_words``). This
+    /// is the empirical ``P(w)`` (up to normalization) that stm's lift and FREX
+    /// James-Stein shrinkage use; pass it (or the corpus) to
+    /// :func:`topica.label_topics` / :func:`topica.frex` for stm-faithful labels.
+    #[getter]
+    fn word_counts(&self) -> Vec<u32> {
+        self.inner.total_freqs.clone()
+    }
+
     /// The corpus as token lists — one list of word strings per document, in the
     /// pruned vocabulary and the kept-document order. The inverse of
     /// ``from_documents``: use it to recover tokens for ``prepare_pyldavis``,
