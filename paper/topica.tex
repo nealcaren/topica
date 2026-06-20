@@ -775,10 +775,10 @@ large-$K$ regime (Figure~\ref{fig:scaling}). Storing that covariance as
 entirely, recomputing each document's covariance on demand only when
 method-of-composition standard errors are requested; on the same
 5{,}000-document corpus at $K=200$ this holds peak memory near 0.4GB against about
-4.0GB for the stored full covariance, and roughly flat in $K$. Independently,
+3.7GB for the stored full covariance, and roughly flat in $K$. Independently,
 \code{variational="diagonal"} replaces the full Laplace covariance with a
 mean-field diagonal, skipping the per-document $O(K^3)$ inverse: the same $K=200$
-fit drops from about 92s to 13s, at the cost of the off-diagonal posterior
+fit drops from about 31s to 17s, at the cost of the off-diagonal posterior
 correlations. The default path is unchanged and bit-for-bit identical to prior
 releases.
 
