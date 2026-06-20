@@ -42,6 +42,7 @@ embeddings. Both range over `[0, 1]`, and higher means more diverse.
 
 ```python
 topica.label_topics(model.topic_word, model.vocabulary, n=10)   # prob / frex / lift / score
+topica.label_topics(model.topic_word, corpus=corpus, n=10)     # stm-faithful: lift + FREX James-Stein shrinkage from corpus word counts
 topica.frex(model.topic_word, model.vocabulary, n=10)           # frequent + exclusive
 topica.relevance(model.topic_word, model.vocabulary, lam=0.6)   # LDAvis relevance
 topica.find_thoughts(model.doc_topic, texts, topic=0, n=3)      # representative docs

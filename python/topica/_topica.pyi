@@ -159,6 +159,12 @@ class Corpus:
         ...
 
     @property
+    def word_counts(self) -> list[int]:
+        """Total occurrences of each vocabulary term across all documents, parallel
+        to ``vocabulary``. The empirical P(w) for stm's lift / FREX shrinkage."""
+        ...
+
+    @property
     def vocabulary(self) -> list[str]:
         """Ordered list of vocabulary terms."""
         ...

@@ -18,6 +18,7 @@ No R or external data needed.
 import numpy as np
 import pytest
 
+import topica
 from topica import _topica
 from topica import validation as val
 
@@ -93,6 +94,26 @@ def test_label_topics_lift_is_stm_log_lift_with_word_counts():
     py = _matrix_from_labels([d["lift"] for d in labels], *beta.shape)
     finite = np.isfinite(py)
     np.testing.assert_allclose(py[finite], rust[finite], atol=1e-9, rtol=1e-6)
+
+
+def test_corpus_supplies_word_counts():
+    # corpus= reads the corpus word frequencies (aligned to the vocabulary), so it
+    # is equivalent to passing those counts explicitly — the zero-effort
+    # stm-faithful path.
+    docs = [["a", "b", "b", "c"], ["a", "a", "c", "c", "c"], ["b", "c", "d"],
+            ["d", "d", "a"]] * 6
+    corpus = topica.Corpus.from_documents(docs, min_doc_freq=1)
+    vocab = corpus.vocabulary
+    wc = np.array(corpus.word_counts)
+    assert len(wc) == corpus.num_words and wc.sum() == corpus.total_tokens
+    rng = np.random.default_rng(0)
+    beta = rng.gamma(0.4, size=(4, corpus.num_words))
+    beta /= beta.sum(axis=1, keepdims=True)
+    assert val.label_topics(beta, vocab, corpus=corpus) == \
+        val.label_topics(beta, vocab, word_counts=wc)
+    assert val.frex(beta, vocab, corpus=corpus) == val.frex(beta, vocab, word_counts=wc)
+    with pytest.raises(ValueError):
+        val.frex(beta, vocab, word_counts=wc, corpus=corpus)
 
 
 def test_lift_without_counts_ranks_like_marginal_lift():

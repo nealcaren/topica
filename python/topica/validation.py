@@ -458,6 +458,24 @@ def perplexity(model, held_out, *, seed=0):
 # labelTopics: prob / FREX / lift / score
 # ---------------------------------------------------------------------------
 
+def _counts_from(word_counts, corpus):
+    """Resolve ``word_counts`` / ``corpus`` to a counts array, or ``None``.
+
+    Pass at most one. A ``corpus`` contributes its ``word_counts`` (empirical
+    corpus frequencies, aligned to the vocabulary the model was fit on).
+    """
+    if word_counts is not None and corpus is not None:
+        raise ValueError("pass either word_counts= or corpus=, not both")
+    if corpus is not None:
+        wc = getattr(corpus, "word_counts", None)
+        if wc is None:
+            raise ValueError(
+                "corpus= must be a topica.Corpus (it exposes word_counts)"
+            )
+        return np.asarray(wc, dtype=np.float64)
+    return None if word_counts is None else np.asarray(word_counts, dtype=np.float64)
+
+
 def _resolve_word_counts(word_counts, V):
     """Validate ``word_counts`` to a length-``V`` list of ints, or ``[]`` if None."""
     if word_counts is None:
@@ -470,7 +488,7 @@ def _resolve_word_counts(word_counts, V):
     return [int(round(c)) for c in wc]
 
 
-def frex(topic_word, vocabulary=None, *, w=0.5, n=10, word_counts=None):
+def frex(topic_word, vocabulary=None, *, w=0.5, n=10, word_counts=None, corpus=None):
     """FREX (FRequency–EXclusivity) top words per topic.
 
     For each topic, words are scored by the weighted harmonic mean of the rank of
@@ -482,10 +500,11 @@ def frex(topic_word, vocabulary=None, *, w=0.5, n=10, word_counts=None):
     core (``topica-core``'s ``inspect`` module — the same one faSTM and the Stata
     plugin use), so the FREX definition can never drift between languages.
 
-    Pass ``word_counts`` (a length-``V`` array of corpus word frequencies) to apply
-    stm's James-Stein exclusivity shrinkage, which is stm's default; it damps the
-    exclusivity of rare words that appear in only one topic by chance. Without it
-    (the default here) no shrinkage is applied.
+    Pass ``word_counts`` (a length-``V`` array of corpus word frequencies) or
+    ``corpus`` (a :class:`topica.Corpus`, whose word counts are read for you) to
+    apply stm's James-Stein exclusivity shrinkage, which is stm's default; it damps
+    the exclusivity of rare words that appear in only one topic by chance. Without
+    either (the default here) no shrinkage is applied.
 
     `topic_word` is a fitted model (uses its ``topic_word`` and ``vocabulary``)
     or a ``(K, V)`` array, in which case pass ``vocabulary``.
@@ -499,7 +518,7 @@ def frex(topic_word, vocabulary=None, *, w=0.5, n=10, word_counts=None):
     vocabulary = _vocabulary_of(topic_word, vocabulary)
     phi = _as_topic_word(topic_word)
     K, V = phi.shape
-    wc = _resolve_word_counts(word_counts, V)
+    wc = _resolve_word_counts(_counts_from(word_counts, corpus), V)
     scores = np.asarray(inspect_frex_scores(phi.tolist(), wc, float(w)))
 
     results = []
@@ -568,7 +587,7 @@ def mmr(topic_word, word_embeddings, vocabulary=None, *, n=10, diversity=0.3, n_
     return out
 
 
-def label_topics(topic_word, vocabulary=None, *, n=10, word_counts=None):
+def label_topics(topic_word, vocabulary=None, *, n=10, word_counts=None, corpus=None):
     """stm-style topic labels: prob, FREX, lift, and score word lists per topic.
 
     Returns a list (per topic) of dicts with keys ``prob``, ``frex``, ``lift``,
@@ -578,11 +597,12 @@ def label_topics(topic_word, vocabulary=None, *, n=10, word_counts=None):
     plugin.
 
     ``lift`` is stm's lift, ``log P(w|topic) − log P(w)``, where ``P(w)`` is the
-    empirical word frequency. Pass ``word_counts`` (a length-``V`` array of corpus
-    word frequencies) for the exact value; without it, ``P(w)`` is estimated from
-    the topic-word matrix's column marginal (lift depends only on relative word
-    frequency, so the ranking matches). ``word_counts`` also enables stm's
-    James-Stein FREX shrinkage (see :func:`frex`).
+    empirical word frequency. Pass ``word_counts`` (a length-``V`` array) or
+    ``corpus`` (a :class:`topica.Corpus`, whose word counts are read for you) for
+    the exact value; without either, ``P(w)`` is estimated from the topic-word
+    matrix's column marginal (lift depends only on relative word frequency, so the
+    ranking matches). ``word_counts`` / ``corpus`` also enable stm's James-Stein
+    FREX shrinkage (see :func:`frex`).
 
     `topic_word` is a fitted model (uses its ``topic_word`` and ``vocabulary``)
     or a ``(K, V)`` array, in which case pass ``vocabulary``.
@@ -598,6 +618,7 @@ def label_topics(topic_word, vocabulary=None, *, n=10, word_counts=None):
             "or check the scale of your embeddings."
         )
     K, V = phi.shape
+    word_counts = _counts_from(word_counts, corpus)
 
     if word_counts is None:
         # Estimate P(w) from the column marginal. Lift depends only on count
