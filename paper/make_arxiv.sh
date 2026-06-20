@@ -37,14 +37,15 @@ for fig in fig_poliblog_effect.pdf fig_poliblog_report.pdf fig_thread_scaling.pd
   [ -f "$HERE/$fig" ] || {
     echo "ERROR: $fig missing. Generate it (replication.py --quick / benchmarks/bench.py)"; exit 1; }
 done
-# Appendix A is \input-ed from generated/validation_appendix.tex (committed).
+# The side-by-side validation appendix now lives in the supplement
+# (supplementary.tex), which \input-s generated/validation_appendix.tex (committed).
 APP="$HERE/generated/validation_appendix.tex"
 [ -f "$APP" ] || {
   echo "ERROR: $APP missing. Generate it (python paper/gen_validation_appendix.py)"; exit 1; }
 
 # --- build the .bbl ---------------------------------------------------------
 BUILD="$STAGE/build"; mkdir -p "$BUILD/generated"
-cp "$HERE/topica.tex" "$HERE/topica.bib" "$JSS_CLS" "$JSS_BST" \
+cp "$HERE/topica.tex" "$HERE/supplementary.tex" "$HERE/topica.bib" "$JSS_CLS" "$JSS_BST" \
    "$HERE/fig_poliblog_effect.pdf" "$HERE/fig_poliblog_report.pdf" "$HERE/fig_thread_scaling.pdf" "$BUILD/"
 cp "$APP" "$BUILD/generated/"
 ( cd "$BUILD"
@@ -52,12 +53,15 @@ cp "$APP" "$BUILD/generated/"
   pdflatex -interaction=nonstopmode topica.tex >build.log 2>&1
   bibtex topica >>build.log 2>&1
   pdflatex -interaction=nonstopmode topica.tex >>build.log 2>&1
-  pdflatex -interaction=nonstopmode topica.tex >>build.log 2>&1 ) || {
+  pdflatex -interaction=nonstopmode topica.tex >>build.log 2>&1
+  # The supplement has no citations, so it just needs two pdflatex passes.
+  pdflatex -interaction=nonstopmode supplementary.tex >>build.log 2>&1
+  pdflatex -interaction=nonstopmode supplementary.tex >>build.log 2>&1 ) || {
     echo "ERROR: .bbl build failed; tail of $BUILD/build.log:"; tail -30 "$BUILD/build.log"; exit 1; }
 
 # --- assemble the submission (tex + bbl + class/style + figure) -------------
 SUB="$STAGE/submission"; mkdir -p "$SUB/generated"
-cp "$BUILD/topica.tex" "$BUILD/topica.bbl" "$JSS_CLS" "$JSS_BST" \
+cp "$BUILD/topica.tex" "$BUILD/topica.bbl" "$HERE/supplementary.tex" "$JSS_CLS" "$JSS_BST" \
    "$HERE/fig_poliblog_effect.pdf" "$HERE/fig_poliblog_report.pdf" \
    "$HERE/fig_thread_scaling.pdf" "$SUB/"
 cp "$APP" "$SUB/generated/"
@@ -66,12 +70,14 @@ cp "$APP" "$SUB/generated/"
 ( cd "$SUB"
   export TEXINPUTS=".:" BSTINPUTS=".:"
   pdflatex -interaction=nonstopmode topica.tex >/dev/null
-  pdflatex -interaction=nonstopmode topica.tex > /tmp/arxiv_compile.log 2>&1 )
+  pdflatex -interaction=nonstopmode topica.tex > /tmp/arxiv_compile.log 2>&1
+  pdflatex -interaction=nonstopmode supplementary.tex >> /tmp/arxiv_compile.log 2>&1
+  pdflatex -interaction=nonstopmode supplementary.tex >> /tmp/arxiv_compile.log 2>&1 )
 if grep -qiE "Citation .* undefined|LaTeX Error|Undefined control" /tmp/arxiv_compile.log; then
   echo "ERROR: isolated compile had problems; see /tmp/arxiv_compile.log"; exit 1
 fi
 
-tar czf "$OUT" -C "$SUB" topica.tex topica.bbl jss.cls jss.bst \
+tar czf "$OUT" -C "$SUB" topica.tex topica.bbl supplementary.tex jss.cls jss.bst \
   fig_poliblog_effect.pdf fig_poliblog_report.pdf fig_thread_scaling.pdf \
   generated/validation_appendix.tex
 echo "wrote $OUT"

@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH -J topica_bench
 #SBATCH -n 1
-#SBATCH --cpus-per-task=44          # near-whole-node; with --mem below it starves
-#SBATCH --mem=340g                  # co-tenants -> near-exclusive but normal priority.
-#SBATCH -t 12:00:00                 # NOTE: do NOT use --mem=0 (it silently caps at
-#SBATCH -p general                  # 1G here -> OOM). --exclusive is cleanest but can
-#SBATCH -o /work/users/n/c/ncaren/topica_bench_%j.out   # queue for days; 44c/340g
-#SBATCH -e /work/users/n/c/ncaren/topica_bench_%j.err   # schedules in normal priority.
+#SBATCH --cpus-per-task=32          # room for the 16-core STM cap + 8-thread Gibbs
+#SBATCH --mem=96g                   # scaling, with headroom. NOTE: do NOT use --mem=0
+#SBATCH -t 6:00:00                  # (silently caps at 1G here -> OOM); and do NOT ask
+#SBATCH -p general                  # for 340g -- only the 3TB 4-socket Xeon E7 nodes
+#SBATCH --exclude=t0601,t0602,t0603,t0604,t0605   # have it, and those are slow/NUMA.
+#SBATCH -o /work/users/n/c/ncaren/topica_bench_%j.out   # 96g fits the modern 2-socket
+#SBATCH -e /work/users/n/c/ncaren/topica_bench_%j.err   # EPYC nodes (even K=200 scaling).
 #
 # Section 6 (machine-dependent) benchmarks on a documented node, repeated for
 # variance. Section 5 parity + Section 7 are machine-INDEPENDENT and run on the

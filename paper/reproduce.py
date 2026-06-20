@@ -62,9 +62,11 @@ STEPS = [
     ("sts", 5, ["parity/sts_r_compare.py"], 1800, None),
     ("mallet_lda", 5, ["parity/mallet_parity.py"], 1800, None),
     ("validation_appendix", 5, ["paper/gen_validation_appendix.py"], 5400, None),  # Appendix A side-by-side tables
-    ("bench", 6, ["benchmarks/bench.py"], 3600, None),  # fig_thread_scaling, fig_memory
-    ("bench_stm_st", 6, ["benchmarks/bench_stm.py"], 1800, {"RAYON_NUM_THREADS": "1"}),  # STM table, single-thread column
-    ("bench_stm_mt", 6, ["benchmarks/bench_stm.py"], 1800, None),  # STM table, all-cores column
+    ("bench", 6, ["benchmarks/bench.py"], 6000, None),  # fig_thread_scaling, fig_memory (full thread+size sweep; ~4500s on a busy 2-socket node, so 3600 was too tight)
+    ("bench_stm_st", 6, ["benchmarks/bench_stm.py"], 1800, {"RAYON_NUM_THREADS": "1"}),  # STM per-iteration mechanism, single-thread
+    ("bench_stm_mt", 6, ["benchmarks/bench_stm.py"], 1800, None),  # STM per-iteration mechanism, all-cores
+    ("stm_convergence", 6, ["benchmarks/bench_stm_convergence.py"], 3600, None),  # to-convergence headline, poliblog5k (single+multi in one run)
+    ("stm_convergence_congress", 6, ["benchmarks/bench_stm_convergence.py"], 14400, {"CORPUS": "congress"}),  # medium ~25k Congress point (skips if CSV absent)
     ("speed_vs_r", 6, ["benchmarks/speed_vs_r.py"], 3600, None),
     ("speed_vs_size", 6, ["benchmarks/speed_vs_size.py"], 3600, None),
     ("bench_scaling", 6, ["benchmarks/bench_scaling.py"], 3600, None),  # fig_scaling

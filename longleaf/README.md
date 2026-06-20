@@ -16,6 +16,26 @@ sbatch longleaf/bench.sl             # §6 ×3 for variance; writes $WORK/bench_
 Setup defaults to checking out `main` (it must include the temp-dir portability
 fix; `v0.23.1` predates it). Pass a ref to override: `bash longleaf/setup_env.sh v0.24.0`.
 
+### The to-convergence STM headline (poliblog5k + Congress)
+
+§6's STM speedup is reported as **wall-clock to convergence** (the number a user
+waits for), with per-iteration cost as the mechanism. `reproduce.py --only 6` runs
+`bench_stm_convergence.py` on poliblog5k automatically. The medium **Congress**
+point (~25k speeches, `~party + s(congress)`) needs its corpus, which lives in the
+separate ECTM project and is **not** on Longleaf — ship the prepped CSV from your
+laptop first (it's small, ~40 MB):
+
+```bash
+# on the laptop (needs the ECTM congress_prepped.pkl):
+python benchmarks/export_congress.py                       # -> benchmarks/congress_prepped.csv
+scp benchmarks/congress_prepped.csv \
+    longleaf:/work/users/n/c/ncaren/topica/benchmarks/
+```
+
+If the CSV is absent the Congress leg skips cleanly (the poliblog5k headline still
+runs). Note R `stm` to convergence on 25k docs is the long pole — `bench.sl`'s
+12 h walltime covers the ×3 repeats, but watch the first repeat's timing.
+
 ## What `setup_env.sh` installs
 A fresh, dedicated `topica-bench` conda env (Python 3.11) with: rustup + `maturin`
 build of topica from source; `numpy pandas scipy scikit-learn gensim tomotopy
@@ -28,10 +48,15 @@ not installed into the env.)
 Running this cross-platform shook out several issues; the scripts now encode the fixes:
 
 - **`--mem=0` is a trap on this cluster** — it silently caps at 1 GB (not "all node
-  memory") → OOM. `bench.sl` requests an explicit `--mem=340g`.
-- **`--exclusive` is cleanest but queues for days** here. `bench.sl` instead asks for
-  44 cores + 340 GB on `general`, which starves co-tenants (near-exclusive) while
-  scheduling at normal priority.
+  memory") → OOM. Request an explicit `--mem`.
+- **But a *large* `--mem` is the opposite trap: it steers you onto the bad node.**
+  Only the 3 TB 4-socket Xeon E7 boxes (`t0601`–`t0605`) have hundreds of GB free,
+  so asking for `--mem=340g` pins you there (it cost two wasted runs). `bench.sl`
+  asks for `--mem=96g` (enough for the K=200 scaling covariance) and
+  `--exclude=t0601..t0605`, so it lands on a modern 2-socket EPYC node.
+- **`--exclusive` queues for days** here, and a big core/mem ask queues for hours
+  under normal fairshare. `bench.sl` asks for 32 cores + 96 GB on `general`, enough
+  for the 16-core STM cap and 8-thread Gibbs scaling, which schedules far sooner.
 - **No `rust` module** on Longleaf → rustup (user space).
 - **R has no writable default library** → create `R_LIBS_USER` before
   `install.packages`, else it fails with "unable to install packages".

@@ -1,16 +1,23 @@
-"""Benchmark topica's STM fit time, optionally against the R ``stm`` package.
+"""Benchmark topica's STM per-iteration fit cost against R ``stm``.
 
-Measures wall-clock **fit time only** (import/startup excluded), at matched
-``K`` / EM iterations / Spectral initialization, on synthetic corpora of varying
-size and vocabulary. If ``Rscript`` with the ``stm`` package is on the PATH, the
-identical integer-coded documents are also handed to R ``stm`` and the ratio is
-reported; otherwise only topica numbers are printed.
+This is the *mechanism* benchmark: it isolates per-iteration engine efficiency by
+running both engines a fixed number of EM iterations from a common Spectral init
+(R with ``max.em.its=iters, emtol=0`` so it does not stop early; topica with
+``convergence_tol=0``), on synthetic corpora, on a realistic covariate-rich
+design (``~ rating + s(day)``, a day spline). It answers "how fast is one EM
+iteration," not "how long to converge."
 
-Both engines run a fixed number of EM iterations from a Spectral init (R with
-``max.em.its=iters, emtol=0`` so it does not stop early), so the comparison is
-per-iteration cost, not time-to-convergence. R ``stm`` is single-threaded;
-topica's variational E-step uses all cores by default — set
-``RAYON_NUM_THREADS=1`` for an apples-to-apples single-core comparison.
+The wall-clock a user actually waits is time *to convergence*, reported on real
+text by ``speed_vs_size.py`` / ``speed_vs_r.py`` (the headline). The two differ
+because topica converges in somewhat more EM iterations than R ``stm`` on a wide
+spline design (issue #247), so this per-iteration ratio is larger than the
+to-convergence ratio; we report it as the mechanism behind the headline. Synthetic
+corpora are used here precisely because per-iteration cost is design-controlled
+and reproducible; convergence behavior is only meaningful on real text, which is
+why the to-convergence numbers live in the real-data scripts.
+
+R ``stm`` is single-threaded by design; topica's variational E-step uses all
+cores by default — set ``RAYON_NUM_THREADS=1`` for the single-core comparison.
 
 Run::
 
@@ -33,6 +40,7 @@ import time
 import numpy as np
 
 from topica import STM
+from topica.stm import spline
 
 # (num_docs, vocab, num_topics) — a small/moderate/large-vocab sweep.
 CONFIGS = [
@@ -40,13 +48,15 @@ CONFIGS = [
     (2000, 2000, 10),
     (5000, 5000, 20),
 ]
-EM_ITERS = 30
+EM_ITERS = 30          # fixed iteration budget, both engines (per-iteration cost)
+SPLINE_DF = 10         # day-spline basis dimension (a realistic covariate design)
 TOKENS_PER_DOC = 60
 
 
 def synthetic_corpus(v, d, k_true, seed=0, length=TOKENS_PER_DOC):
     """A fixed-seed corpus of `d` docs over vocab `v` from `k_true` planted
-    topics, with one prevalence covariate correlated with topic 0."""
+    topics, with a realistic prevalence design: a binary ``rating`` correlated
+    with topic 0 and a continuous ``day`` whose spline basis enters the model."""
     rng = np.random.default_rng(seed)
     beta = np.zeros((k_true, v))
     band = v // k_true
@@ -55,19 +65,33 @@ def synthetic_corpus(v, d, k_true, seed=0, length=TOKENS_PER_DOC):
         beta[kk, cols] = 1.0
         beta[kk] += 0.01
         beta[kk] /= beta[kk].sum()
-    docs, cov = [], []
+    docs, rating, day = [], [], []
     for _ in range(d):
         theta = rng.dirichlet(np.ones(k_true) * 0.3)
         z = rng.choice(k_true, size=length, p=theta)
         docs.append([f"w{int(rng.choice(v, p=beta[zz]))}" for zz in z])
-        cov.append(theta[0])
-    return docs, np.array(cov).reshape(-1, 1)
+        rating.append(1.0 if theta[0] > 0.2 else 0.0)  # correlated with topic 0
+        day.append(float(rng.integers(1, 366)))
+    basis, _ = spline(np.array(day), df=SPLINE_DF)
+    x = np.column_stack([np.array(rating), basis])
+    names = ["rating"] + [f"day_s{j}" for j in range(basis.shape[1])]
+    return docs, x, names
 
 
-def time_topica(docs, x, k, iters):
+# Representative core cap for the multi-core column: an explicit thread count so
+# the number reflects a normal machine, not every core of a big HPC node. Honors
+# RAYON_NUM_THREADS when set (so the single-core step's =1 still means 1);
+# otherwise caps at 16.
+_RNT = os.environ.get("RAYON_NUM_THREADS")
+NUM_THREADS = int(_RNT) if _RNT else min(16, os.cpu_count() or 16)
+
+
+def time_topica(docs, x, names, k, iters):
     t0 = time.perf_counter()
     m = STM(num_topics=k, init="spectral", seed=1)
-    m.fit(docs, x, prevalence_names=["cov"], iters=iters)
+    # convergence_tol=0 disables early stop, so the full iters budget runs.
+    m.fit(docs, x, prevalence_names=names, iters=iters, convergence_tol=0.0,
+          num_threads=NUM_THREADS)
     return time.perf_counter() - t0
 
 
@@ -92,24 +116,24 @@ documents <- lapply(toks, function(d) {
   tb <- table(d); idx <- as.integer(vmap[names(tb)]); o <- order(idx)
   matrix(as.integer(rbind(idx[o], as.integer(tb)[o])), nrow = 2)
 })
-meta <- read.csv(file.path(dir, "meta.csv"))
+X <- as.matrix(read.csv(file.path(dir, "design.csv")))
 el <- system.time(
-  fit <- stm(documents, vocab, K = K, prevalence = ~cov, data = meta,
+  fit <- stm(documents, vocab, K = K, prevalence = X,
              init.type = "Spectral", max.em.its = ITERS, emtol = 0, verbose = FALSE)
 )["elapsed"]
 cat(sprintf("ELAPSED %f\n", el))
 """
 
 
-def time_r_stm(docs, x, k, iters):
+def time_r_stm(docs, x, names, k, iters):
     with tempfile.TemporaryDirectory() as d:
         with open(os.path.join(d, "docs.txt"), "w") as f:
             f.write("\n".join(" ".join(doc) for doc in docs) + "\n")
-        with open(os.path.join(d, "meta.csv"), "w", newline="") as f:
+        with open(os.path.join(d, "design.csv"), "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["cov"])
-            for c in x[:, 0]:
-                w.writerow([c])
+            w.writerow(["intercept"] + names)
+            for row in np.column_stack([np.ones(len(docs)), x]):
+                w.writerow(list(row))
         script = f'dir <- "{d}"\nK <- {k}\nITERS <- {iters}\n' + _R_DRIVER
         out = subprocess.run(
             ["Rscript", "-e", script], capture_output=True, text=True, timeout=1800
@@ -121,23 +145,25 @@ def time_r_stm(docs, x, k, iters):
 
 
 def main():
-    threads = os.environ.get("RAYON_NUM_THREADS", f"all ({os.cpu_count()} cores)")
     have_r = r_stm_available()
-    print(f"topica threads: {threads};  EM iterations: {EM_ITERS};  "
+    print(f"topica threads: {NUM_THREADS};  design: ~rating + s(day, df={SPLINE_DF});  "
+          f"fixed {EM_ITERS} EM iterations (per-iteration cost);  "
           f"R stm: {'available' if have_r else 'not found (topica only)'}\n")
-    header = f"{'docs':>6} {'vocab':>6} {'K':>3} | {'topica':>12}"
+    header = f"{'docs':>6} {'vocab':>6} {'K':>3} | {'topica':>10} {'ms/it':>6}"
     if have_r:
-        header += f" {'R stm':>10} {'speedup':>8}"
+        header += f" {'R stm':>10} {'ms/it':>7} {'speedup':>8}"
     print(header)
     print("-" * len(header))
     for d, v, k in CONFIGS:
-        docs, x = synthetic_corpus(v, d, k_true=max(k, 20))
-        tt = time_topica(docs, x, k, EM_ITERS)
-        row = f"{d:>6} {v:>6} {k:>3} | {tt:>10.2f}s"
+        docs, x, names = synthetic_corpus(v, d, k_true=max(k, 20))
+        tt = time_topica(docs, x, names, k, EM_ITERS)
+        row = f"{d:>6} {v:>6} {k:>3} | {tt:>9.2f}s {tt / EM_ITERS * 1000:>6.0f}"
         if have_r:
-            rt = time_r_stm(docs, x, k, EM_ITERS)
-            row += f" {rt:>8.2f}s {rt / tt:>7.1f}x"
+            rt = time_r_stm(docs, x, names, k, EM_ITERS)
+            row += f" {rt:>9.2f}s {rt / EM_ITERS * 1000:>7.0f} {rt / tt:>7.1f}x"
         print(row)
+    print(f"\nspeedup = per-iteration cost ratio (both run {EM_ITERS} fixed iters); "
+          "to-convergence wall-clock is in speed_vs_size.py")
 
 
 if __name__ == "__main__":

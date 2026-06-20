@@ -39,12 +39,13 @@ credible: what the corpus represents, how many topics is the right granularity,
 and what each topic means. The software supplies the mechanics and the
 diagnostics to support those decisions, declining, for instance, to report
 confidence intervals for a model that has no posterior to draw them from. A parallel \proglang{Rust} core
-makes the fits fast and reproducible. For the structural and other variational
-models it runs roughly ten to eighteen times faster than \proglang{R} \pkg{stm}
-on a single core (depending on the machine and corpus) and up to thirty-two times
-faster multithreaded, and it is at parity with
-the compiled \pkg{MALLET} and \pkg{keyATM} samplers, while reproducing the
-variational models to the bit and the samplers from a fixed seed.
+makes the fits fast and reproducible. Fit to convergence, the structural and other
+variational models run roughly one and a half to three times faster than
+\proglang{R} \pkg{stm} on a single core and five to seven times faster on a typical
+multicore workstation (faster still per iteration, depending on the machine and
+corpus), and \pkg{topica} is at parity with the compiled \pkg{MALLET} and
+\pkg{keyATM} samplers, while reproducing the variational models to the bit and the
+samplers from a fixed seed.
 Each model on the default surface is validated against its reference
 implementation where one exists, or by recovery and invariance checks where the
 model is novel. We describe the design, the
@@ -344,6 +345,18 @@ answers. The breadth is the point: a single import covers the span from the LDA
 baseline to the structural topic model, neural clustering, cross-lingual
 alignment, and LLM-driven discovery.
 
+In every case \pkg{topica} \emph{implements} a method introduced elsewhere; the
+statistical contribution belongs to the cited authors, and \pkg{topica} is an
+implementation and workflow integration, not a reimagining of the underlying
+models. The Reference column of Table~\ref{tab:models} gives the originating
+paper for each model, and a user who fits one should cite that paper alongside
+\pkg{topica} \citep{caren2026topica}. This is most consequential for the methods
+whose own software social scientists already rely on---the structural topic model
+\citep{roberts2016model} and keyword-assisted topic modeling
+\citep{eshima2024keyatm}---where \pkg{topica} reimplements the published model
+family and validates against the authors' package (Section~\ref{sec:validation})
+rather than supplanting it.
+
 \begin{table}[t!]
 \centering
 \caption{The \pkg{topica} model family. Nearly all present the \code{fit}\,$\rightarrow$\,
@@ -587,7 +600,31 @@ as \pkg{topica}, align the fitted topics, and report the overlap;
 toolchain is absent. Because the engines share no code and no random number
 generator, ``agreement'' means \emph{statistical} agreement on the fitted topics,
 benchmarked against each reference's own run-to-run reproducibility, arguably the
-fairest yardstick for stochastic inference. We report it without inflating it.
+fairest yardstick for stochastic inference. We report it without inflating it. The
+supplementary material shows the underlying picture in full: for fifteen models it
+fits both the reference package and \pkg{topica} on the same poliblog corpus and
+displays the recovered topics twice, side by side, word for word rather than as a
+single summary statistic.
+
+``Validated'' means different things for different models, and we are explicit
+about which applies. We distinguish four kinds of evidence. \emph{Reference
+parity} compares \pkg{topica} to an established implementation on shared inputs
+(LDA against \pkg{MALLET}; STM, CTM, and content against \proglang{R}~\pkg{stm};
+\code{KeyATM} against \proglang{R}~\pkg{keyATM}; NMF and LSA against
+\pkg{scikit-learn}; and the side-by-side legs of the supplement). \emph{Planted
+recovery} checks that a model recovers known structure on a synthetic corpus with
+a fixed, separable answer---the right test where two stochastic engines need not
+produce identical matrices, and the only one for a model with no single canonical
+reference. \emph{Structural and invariance checks} verify properties the method
+must have regardless of data: bit-for-bit determinism under a fixed seed, a
+monotone variational bound, and conformance to the shared interface contract. The
+neural and embedding models are validated against their own reference
+implementations on the corpora those references use. Each of these applies to a
+model on the \emph{default surface}; a fourth category, \emph{experimental} models
+behind an explicit opt-in gate (Section~\ref{sec:extending}), is deliberately
+excluded from the default surface precisely because it has not yet cleared a
+reference-parity or recovery bar, and we make no validation claim for it. When we
+say every model is validated, we mean every model a user gets by default.
 
 \paragraph{Collapsed-Gibbs LDA.} \pkg{topica}'s LDA began as a port of
 \pkg{RustMallet}, David Mimno's \proglang{Rust} port of \pkg{MALLET}'s SparseLDA
@@ -653,63 +690,82 @@ cleanly when it, \proglang{R}, or \pkg{stm} is unavailable.
 \section{Performance}\label{sec:performance}
 %% ===========================================================================
 
-We benchmark fit time only (construction and import excluded) on fixed-seed
-synthetic corpora, on one 14-core Apple M-series machine, against the reference
-implementations on matched iterations from a common initialization, so the
-comparison measures per-iteration cost rather than time to convergence. Speed
-depends on corpus size, vocabulary, the number of topics, and hardware, so the
-numbers are orders of magnitude, not guarantees. Each comparison here is
-reproduced by a script in \code{benchmarks/} that times the identical fits in
-\pkg{topica} and the reference: \code{bench\_stm.py} for the structural-model
-timings (Table~\ref{tab:stm}), \code{bench.py} for the LDA, keyword-assisted,
-memory, and thread-scaling figures, and \code{k\_crossover.py} for the
-\pkg{tomotopy} topic-count crossover.
+We benchmark fit time (construction and import excluded) the way each model family
+terminates. The variational structural models have a convergence criterion, so for
+them we report wall-clock \emph{to convergence}, the time a user actually waits,
+with both engines stopped at the same relative-bound tolerance
+(\code{emtol}$=10^{-5}$); the collapsed-Gibbs models have no convergence criterion,
+so there the user fixes a sweep budget and we report cost at a matched budget. The
+structural timings are on a documented HPC node (a two-socket \proglang{AMD}
+\pkg{EPYC} 7702 with OpenBLAS, \proglang{R} 4.5.0 / \pkg{stm} 1.3.8) on real
+corpora; \proglang{R} \pkg{stm} is single-threaded by design, and we cap
+\pkg{topica} at sixteen cores, a typical workstation rather than the full node. The
+collapsed-Gibbs and thread-scaling comparisons (and Figures~\ref{fig:scaling} and
+\ref{fig:threads}) are on a quiet 14-core Apple M-series machine, where the
+memory-bound parallel samplers are free of the cross-tenant bandwidth contention an
+HPC node's other jobs would impose.
+Speed depends on corpus size, vocabulary, the number of topics, and hardware, so
+the numbers are orders of magnitude, not guarantees. Each comparison is reproduced
+by a script in \code{benchmarks/} that times the identical fits in \pkg{topica} and
+the reference: \code{bench\_stm\_convergence.py} for the structural-model
+time-to-convergence (Table~\ref{tab:stm}), \code{bench\_stm.py} for its
+per-iteration decomposition, \code{bench.py} for the LDA, keyword-assisted, memory,
+and thread-scaling figures, and \code{k\_crossover.py} for the \pkg{tomotopy}
+topic-count crossover.
 
 \begin{table}[t!]
 \centering
-\caption{\pkg{topica} versus \proglang{R} \pkg{stm}, fit time on matched EM
-iterations from a spectral start, on an Apple M3 Max. \proglang{R} \pkg{stm} is
-single-threaded by design; \pkg{topica} parallelizes the variational E-step. An
-independent, thrice-repeated run on a Xeon-class HPC node reproduces the
-single-core advantage on real data (reported below).}
+\caption{\pkg{topica} versus \proglang{R} \pkg{stm}, wall-clock \emph{to
+convergence} (both at \code{emtol}$=10^{-5}$, spectral start, $K=20$,
+\code{$\sim$rating $+$ s(time)}) on a documented two-socket \proglang{AMD}
+\pkg{EPYC} 7702 node, single-core and capped at sixteen cores; mean of two
+repeats, with single-core speedups ranging $2.6$--$2.9\times$ (\code{poliblog})
+and $1.6$--$1.8\times$ (Congress) across repeats. EM iterations to converge in
+parentheses. \proglang{R} \pkg{stm} is single-threaded by design. At a fixed
+tolerance \pkg{topica} drives its bound to a tighter point than \proglang{R} (more
+iterations; see text), so its per-iteration speed exceeds these wall-clock ratios.}
 \label{tab:stm}
 \small
-\begin{tabular}{rrrrrrr}
+\begin{tabular}{lrrrrrr}
 \toprule
-\multicolumn{3}{c}{Corpus} & \multicolumn{2}{c}{Single core} & \multicolumn{2}{c}{All cores}\\
-\cmidrule(lr){1-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
-docs & vocab & $K$ & \pkg{topica} & \proglang{R} \pkg{stm} & \pkg{topica} & speedup \\
+& & \multicolumn{2}{c}{Single core} & \multicolumn{2}{c}{16 cores} & \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+Corpus & docs & \pkg{topica} & \proglang{R} \pkg{stm} & \pkg{topica} & speedup & 1-core sp. \\
 \midrule
-1{,}000 & 500   & 10 & 0.30s & 3.21s & 0.10s & 31.7$\times$ \\
-2{,}000 & 2{,}000 & 10 & 1.13s & 6.74s & 0.45s & 14.9$\times$ \\
-5{,}000 & 5{,}000 & 20 & 6.87s & 27.32s & 2.38s & 11.0$\times$ \\
+\code{poliblog} & 5{,}000  & 23.8s (27) & 64.9s (20) & 9.3s (27)  & 7.0$\times$ & 2.7$\times$ \\
+Congress        & 25{,}000 & 385s (81)  & 641s (49)  & 134s (81)  & 4.8$\times$ & 1.7$\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 The structural topic model is the comparison that matters most for social
 scientists, since \proglang{R} \pkg{stm} is the field standard and its fits can
-take minutes. Table~\ref{tab:stm} shows \pkg{topica} fitting the same model four
-to ten times faster on a single core and eleven to thirty-two times faster across
-cores. It also fits in under a third of \proglang{R} \pkg{stm}'s memory
-(about 480MB against 1.6GB at 5{,}000 documents and $K=20$), since it holds the
-corpus and the variational state in compact native arrays rather than
-\proglang{R} objects.
-An independent run on a documented HPC node (a two-socket \proglang{AMD}
-\pkg{EPYC} 9654 with OpenBLAS, \proglang{R} 4.5.0 / \pkg{stm} 1.3.8), repeated
-three times, reproduces this on real data: across 2{,}000 to 5{,}000
-\code{poliblog} documents \pkg{topica} fits the same structural model fourteen to
-eighteen times faster single-threaded (for example 1.8s against 32.6s at 2{,}000
-documents) in roughly a quarter of \proglang{R} \pkg{stm}'s memory (180MB against
-670MB). The full machine-stamped report is regenerated by \code{paper/reproduce.py}
-and committed at \code{paper/generated/replication\_report\_longleaf.md} (the
+take minutes. Run to convergence (Table~\ref{tab:stm}), \pkg{topica} fits it
+$1.7$ to $2.7$ times faster than \proglang{R} \pkg{stm} on a single core and
+roughly five to seven times faster on sixteen cores, in about a quarter of
+\proglang{R} \pkg{stm}'s memory (about 180MB against 675MB at 5{,}000 documents,
+since it holds the corpus and the variational state in compact native arrays
+rather than \proglang{R} objects). The per-iteration decomposition is sharper and
+explains the wall-clock: \pkg{topica}'s variational E-step is roughly three to four
+times cheaper per iteration single-threaded (eight to nine times on sixteen cores).
+It runs \emph{more} EM iterations than \proglang{R}, though ($27$ versus $20$ on
+\code{poliblog}, $81$ versus $49$ on Congress), because at a fixed \code{emtol} it
+drives its evidence bound to a tighter optimum: past \proglang{R}'s stopping point
+\pkg{topica}'s topic-word matrix still shifts, but by well under one percent
+(aligned cosine above $0.99$ to its own converged fit). The to-convergence ratios therefore
+understate \pkg{topica}'s engine speed, and the single-core advantage narrows on the
+larger corpus, where those extra convergence iterations accumulate; the multicore
+advantage, which is what a user on a workstation sees, holds near five times even there.
+The full machine-stamped report is regenerated by \code{paper/reproduce.py} and
+committed at \code{paper/generated/replication\_report\_longleaf.md} (the
 machine-independent parity checks of Section~\ref{sec:validation} are in the
 companion \code{replication\_report.md}).
 The keyword-assisted model matches \proglang{R} \pkg{keyATM}'s
-\proglang{C++} sampler single-threaded (22.5s versus 24.4s on a
-2{,}000-document, 10-topic fit of 1{,}000 sweeps) and runs about 2.0 times as fast
-on four cores (11.7s), through a document-partitioned parallel sweep that the
-\proglang{R} package has no equivalent of.
+\proglang{C++} sampler single-threaded (22.5s versus 23.0s on a
+2{,}000-document, 10-topic fit of 1{,}000 sweeps) and runs about 1.7 times as fast
+on four cores and 2.1 times on eight (13.6s and 11.0s), through a
+document-partitioned parallel sweep that the \proglang{R} package has no
+equivalent of.
 
 Those figures are at $K=20$. The Laplace E-step stores a $(K-1)\times(K-1)$
 posterior covariance per document, an $O(NK^2)$ term that dominates both memory
@@ -719,10 +775,10 @@ large-$K$ regime (Figure~\ref{fig:scaling}). Storing that covariance as
 entirely, recomputing each document's covariance on demand only when
 method-of-composition standard errors are requested; on the same
 5{,}000-document corpus at $K=200$ this holds peak memory near 0.4GB against about
-4.0GB for the stored full covariance, and roughly flat in $K$. Independently,
+3.7GB for the stored full covariance, and roughly flat in $K$. Independently,
 \code{variational="diagonal"} replaces the full Laplace covariance with a
 mean-field diagonal, skipping the per-document $O(K^3)$ inverse: the same $K=200$
-fit drops from about 92s to 13s, at the cost of the off-diagonal posterior
+fit drops from about 31s to 17s, at the cost of the off-diagonal posterior
 correlations. The default path is unchanged and bit-for-bit identical to prior
 releases.
 
@@ -743,7 +799,7 @@ We report the LDA comparison straight, because it does not uniformly favor us.
 Against \pkg{MALLET}, the original \proglang{Java} sampler, the two are at parity
 single-threaded and stay close at matched thread counts, with \pkg{topica}'s
 document-partitioned parallelism pulling ahead on the larger corpora (a
-5{,}000-document fit on eight threads runs in 14.2s against \pkg{MALLET}'s 20.0s),
+5{,}000-document fit on eight threads runs in 13.0s against \pkg{MALLET}'s 21.2s),
 and \pkg{topica} adds no JVM startup. Against \pkg{tomotopy} \citep{tomotopy}, a
 \proglang{C++} library, the comparison turns on the number of topics, because the
 two make opposite algorithmic bets. \pkg{tomotopy} computes a dense topic
@@ -1063,9 +1119,10 @@ model, into the validated family as reference results are published.
 \section{Availability}\label{sec:availability}
 %% ===========================================================================
 
-\pkg{topica} is released under the Apache-2.0 license and installs from the
-Python Package Index with \code{pip install topica}; the core requires only
-\pkg{NumPy} and \pkg{pandas}. The benchmarks and validation reported here were
+\pkg{topica} is released under the Apache-2.0 license, which is compatible with
+the GPL-3 terms \proglang{R} and several reference packages carry, and installs
+from the Python Package Index with \code{pip install topica}; the core requires
+only \pkg{NumPy} and \pkg{pandas}. The benchmarks and validation reported here were
 produced with \pkg{topica} 0.24.0 by \code{paper/reproduce.py}; the exact
 hardware, operating system, and reference-toolchain versions are recorded in the
 generated replication report. Source code, documentation, and worked examples are available at
@@ -1081,61 +1138,6 @@ each reported value to the run that produced it. \pkg{topica} reimplements publi
 methods and is validated against their reference implementations; it does not
 replace the original work, and users should cite both \pkg{topica}
 \citep{caren2026topica} and the model they use.
-
-%% ===========================================================================
-\appendix
-\section{Side by side with the reference implementations}\label{app:sidebyside}
-%% ===========================================================================
-
-Section~\ref{sec:validation} summarizes the cross-implementation agreement as a
-single alignment cosine per model. This appendix shows the underlying picture: for
-each reference package \pkg{topica} validates against, both the original package
-and \pkg{topica} are fit on the \emph{same} poliblog corpus with the same
-settings, and their output is displayed twice, side by side. The fifteen legs span
-the classical roster---LDA, NMF, LSA, STM, CTM, content/SAGE, DMR, g-DMR, keyATM,
-supervised LDA, labeled LDA, HDP, Pachinko allocation, the dynamic topic model, and
-the structural topic-and-sentiment model---each against an established
-implementation: Java \pkg{MALLET} and \pkg{tomotopy} (LDA), \pkg{scikit-learn} (NMF,
-LSA), \proglang{R}~\pkg{stm} (STM, CTM, content), \proglang{R}~\pkg{keyATM},
-\pkg{tomotopy} (DMR, g-DMR, sLDA, labeled LDA, HDP, Pachinko, DTM), and the authors'
-\proglang{R} reference (STS). Each subsection aligns the two engines' topics (by
-topic-word cosine, except keyATM keyword topics and labeled-LDA label topics, which
-are index-aligned by construction) and reports the top words from each, plus the
-feature that distinguishes that model: covariate prevalence effects (STM, DMR),
-continuous-time prevalence (g-DMR), topic correlations (CTM), per-group wording
-(content/SAGE), seeded keywords (keyATM), a response regression (sLDA), label-topic
-correspondence (labeled LDA), the inferred topic count (HDP), the super/sub-topic
-hierarchy (Pachinko), word drift over time (DTM), and covariate-driven sentiment
-(STS). LDA is shown against two independent references at once (Java \pkg{MALLET}
-and \pkg{tomotopy}).
-
-Agreement falls into three regimes. The spectral-initialized structural models (STM,
-CTM, content) and the deterministic factorizations (NMF, LSA) start from the same
-solution as their reference and coincide almost exactly (cosine $\geq 0.95$); the
-supervised models constrained by labels likewise match near-exactly. For the
-random-initialized collapsed-Gibbs models (LDA, DMR, g-DMR, sLDA, HDP, Pachinko,
-DTM) the agreement is statistical, as Section~\ref{sec:validation} notes: the
-dominant topics coincide while the diffuse, low-prevalence tail topics, which differ
-between any two random-initialized runs, account for most of the alignment gap. For
-those legs the relevant yardstick is not an absolute cosine but the reference's own
-seed-to-seed agreement---the ceiling any two independent samplers can reach---which
-the subsections report alongside the cross-implementation figure (DMR, for instance,
-sits at the level two \pkg{tomotopy} runs reach with each other). For the
-nonparametric HDP the headline result is instead that both engines infer nearly the
-same topic count (about thirty) without being told it, since HDP topic identities are
-seed-sensitive even within one engine.
-
-The neural and embedding models (ETM, ProdLDA, CombinedTM, ZeroShotTM, InfoCTM,
-FASTopic, the dynamic ETM, BERTopic, Top2Vec, the embedding LDA) and the LLM-based
-TopicGPT are validated in Section~\ref{sec:validation} and \code{parity/} against
-their own reference implementations on the corpora those references use, and so are
-not part of this poliblog side-by-side. The tables here are generated by
-\code{paper/gen\_validation\_appendix.py} as part of \code{reproduce.py}; legs whose
-reference toolchain (\proglang{R} with \pkg{stm}/\pkg{keyATM}, the \pkg{MALLET}
-CLI, \pkg{scikit-learn}, \pkg{tomotopy}, or the \pkg{STS} replication package) was
-absent at build time are marked skipped.
-
-\input{generated/validation_appendix}
 
 \bibliography{topica}
 
