@@ -61,6 +61,7 @@ STEPS = [
     ("keyatm", 5, ["parity/keyatm_r_compare.py"], 1800, None),
     ("sts", 5, ["parity/sts_r_compare.py"], 1800, None),
     ("mallet_lda", 5, ["parity/mallet_parity.py"], 1800, None),
+    ("weights_ame", 5, ["parity/weights_ame_faSTM_compare.py"], 600, None),  # survey-weighted effects + AME vs faSTM's formulas
     ("validation_appendix", 5, ["paper/gen_validation_appendix.py"], 5400, None),  # Appendix A side-by-side tables
     ("bench", 6, ["benchmarks/bench.py"], 6000, None),  # fig_thread_scaling, fig_memory (full thread+size sweep; ~4500s on a busy 2-socket node, so 3600 was too tight)
     ("bench_stm_st", 6, ["benchmarks/bench_stm.py"], 1800, {"RAYON_NUM_THREADS": "1"}),  # STM per-iteration mechanism, single-thread

@@ -205,3 +205,109 @@ class TestEstimateEffectExtras:
             stm.estimate_effect(theta, x, link="probit")
         with pytest.raises(ValueError):
             stm.estimate_effect(theta, x, cluster=groups[:5])
+
+    def test_exposes_full_vcov(self):
+        theta, x, _ = self._data()
+        eff = stm.estimate_effect(theta, x, feature_names=["x"])[0]
+        assert eff.vcov is not None and eff.vcov.shape == (2, 2)
+        np.testing.assert_allclose(np.sqrt(np.diag(eff.vcov)), eff.se, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# estimate_effect: survey weights (WLS), and average marginal effects
+# ---------------------------------------------------------------------------
+
+class TestSurveyWeights:
+    def _data(self):
+        rng = np.random.default_rng(3)
+        D = 250
+        x = rng.normal(size=D)
+        g = rng.integers(0, 2, D).astype(float)
+        t0 = np.clip(0.3 + 0.05 * x + 0.1 * g + 0.05 * rng.normal(size=D), 0.01, 0.99)
+        theta = np.column_stack([t0, 1 - t0])
+        w = rng.uniform(0.5, 2.0, D)
+        return theta, x, g, w
+
+    def test_weighted_ols_matches_closed_form(self):
+        theta, x, g, w = self._data()
+        eff = stm.estimate_effect(theta, np.column_stack([x, g]),
+                                  feature_names=["x", "g"], weights=w)[0]
+        n = len(x)
+        X = np.column_stack([np.ones(n), x, g])
+        W = np.diag(w)
+        beta = np.linalg.solve(X.T @ W @ X, X.T @ W @ theta[:, 0])
+        resid = theta[:, 0] - X @ beta
+        sigma2 = float((w * resid ** 2).sum()) / (n - 3)
+        cov = sigma2 * np.linalg.inv(X.T @ W @ X)
+        np.testing.assert_allclose(eff.coef, beta, atol=1e-10)
+        np.testing.assert_allclose(eff.se, np.sqrt(np.diag(cov)), atol=1e-10)
+
+    def test_unit_weights_equal_unweighted(self):
+        theta, x, g, _ = self._data()
+        base = stm.estimate_effect(theta, np.column_stack([x, g]), feature_names=["x", "g"])[0]
+        wone = stm.estimate_effect(theta, np.column_stack([x, g]), feature_names=["x", "g"],
+                                   weights=np.ones(len(x)))[0]
+        np.testing.assert_allclose(base.coef, wone.coef, atol=1e-9)
+        np.testing.assert_allclose(base.se, wone.se, atol=1e-9)
+
+    def test_weights_compose_with_cluster_and_draws(self):
+        theta, x, g, w = self._data()
+        groups = np.repeat(np.arange(25), 10)
+        draws = np.stack([theta + 0.001 * np.random.default_rng(s).normal(size=theta.shape)
+                          for s in range(5)])
+        eff = stm.estimate_effect(draws, np.column_stack([x, g]),
+                                  feature_names=["x", "g"], weights=w, cluster=groups)
+        assert len(eff) == 2 and np.isfinite(eff[0].se).all()
+
+    def test_bad_weights(self):
+        theta, x, _, _ = self._data()
+        with pytest.raises(ValueError):
+            stm.estimate_effect(theta, x, weights=np.ones(5))
+        with pytest.raises(ValueError):
+            stm.estimate_effect(theta, x, weights=-np.ones(len(x)))
+
+
+class TestAverageMarginalEffects:
+    def _data(self):
+        import pandas as pd
+        rng = np.random.default_rng(4)
+        D = 300
+        year = rng.normal(size=D)
+        party = np.where(rng.integers(0, 2, D) == 1, "R", "D")
+        t0 = np.clip(0.3 + 0.05 * year + 0.12 * (party == "R") + 0.05 * rng.normal(size=D),
+                     0.01, 0.99)
+        theta = np.column_stack([t0, 1 - t0])
+        data = pd.DataFrame({"year": year, "party": party})
+        return theta, data
+
+    def test_continuous_ame_equals_linear_coef(self):
+        theta, data = self._data()
+        eff = stm.estimate_effect(theta, formula="~ year + party", data=data)[0]
+        res = stm.average_marginal_effects(theta, "year", formula="~ year + party", data=data)
+        row = res.to_frame().query("topic == 0 and term == 'year'").iloc[0]
+        j = eff.feature_names.index("year")
+        assert np.isclose(row.ame, eff.coef[j])
+        assert np.isclose(row.se, eff.se[j])
+
+    def test_factor_ame_equals_dummy_coef(self):
+        theta, data = self._data()
+        eff = stm.estimate_effect(theta, formula="~ year + party", data=data)[0]
+        res = stm.average_marginal_effects(theta, "party", formula="~ year + party", data=data)
+        row = res.to_frame().query("topic == 0 and term == 'partyR'").iloc[0]
+        j = eff.feature_names.index("party[T.R]")
+        assert np.isclose(row.ame, eff.coef[j])
+        assert np.isclose(row.se, eff.se[j])
+
+    def test_spline_ame_is_finite_and_aliased(self):
+        theta, data = self._data()
+        res = topica.ame(theta, "year", formula="~ spline(year, df=3) + party", data=data)
+        df = res.to_frame()
+        assert len(df) == 2 and np.isfinite(df["ame"]).all()
+        assert topica.ame is topica.average_marginal_effects
+
+    def test_requires_formula_and_known_covariate(self):
+        theta, data = self._data()
+        with pytest.raises(ValueError):
+            stm.average_marginal_effects(theta, "year", formula=None, data=data)
+        with pytest.raises(ValueError):
+            stm.average_marginal_effects(theta, "nope", formula="~ year", data=data)
