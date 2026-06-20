@@ -50,6 +50,7 @@ class TopicEffect:
     ci_low: np.ndarray
     ci_high: np.ndarray
     r_squared: float
+    vcov: np.ndarray = None  # full (p, p) coefficient covariance (Rubin-pooled)
 
     def as_dict(self) -> dict:
         return {
@@ -94,14 +95,28 @@ class TopicEffect:
         )
 
 
-def _ols(y, X, hat, XtX_inv, dof):
-    """One OLS fit. Returns (beta, cov, r2)."""
+def _ols(y, X, hat, XtX_inv, dof, weights=None):
+    """One (weighted) OLS fit. Returns (beta, cov, r2).
+
+    With ``weights`` (a length-n vector), this is weighted least squares: ``hat``
+    and ``XtX_inv`` are expected to already carry the weights (the caller builds
+    them once), and the residual sum of squares, total sum of squares, and R^2 are
+    weighted. The classical covariance is ``(rss/dof) · (X'WX)^-1`` — matching R
+    ``lm`` / faSTM's ``estimateEffect`` weighted path.
+    """
     beta = hat @ y
     resid = y - X @ beta
-    sigma2 = float(resid @ resid) / dof
+    if weights is None:
+        rss = float(resid @ resid)
+        sigma2 = rss / dof
+        tss = float(((y - y.mean()) ** 2).sum())
+    else:
+        rss = float((weights * resid * resid).sum())
+        sigma2 = rss / dof
+        ybar = float((weights * y).sum() / weights.sum())
+        tss = float((weights * (y - ybar) ** 2).sum())
     cov = sigma2 * XtX_inv
-    tss = float(((y - y.mean()) ** 2).sum())
-    r2 = 1.0 - float(resid @ resid) / tss if tss > 0 else 0.0
+    r2 = 1.0 - rss / tss if tss > 0 else 0.0
     return beta, cov, r2
 
 
@@ -113,19 +128,23 @@ def _link_inv(eta, link):
     return eta
 
 
-def _sandwich(X, bread, score_resid, groups, n, p):
+def _sandwich(X, bread, score_resid, groups, n, p, weights=None):
     """Robust covariance ``bread · meat · bread``. With `groups` (a list of index
     arrays) the cluster-robust CR1 estimator; otherwise heteroskedasticity-robust
-    HC1. `score_resid` is the estimating-equation residual (y−μ)."""
+    HC1. `score_resid` is the estimating-equation residual (y−μ). With `weights`
+    (survey weights), the score rows become ``w_i · X_i · resid_i`` and `bread` is
+    the weighted ``(X'WX)^-1`` the caller supplies — matching faSTM's weighted
+    cluster-robust meat."""
+    sr = score_resid if weights is None else weights * score_resid
     if groups is None:
-        meat = X.T @ (X * (score_resid ** 2)[:, None])
+        meat = X.T @ (X * (sr ** 2)[:, None])
         cov = bread @ meat @ bread
         cov *= n / max(n - p, 1)                       # HC1 small-sample factor
     else:
         g_count = len(groups)
         meat = np.zeros((p, p))
         for g in groups:
-            s = X[g].T @ score_resid[g]
+            s = X[g].T @ sr[g]
             meat += np.outer(s, s)
         cov = bread @ meat @ bread
         if g_count > 1:                                # CR1 small-sample factor
@@ -133,9 +152,11 @@ def _sandwich(X, bread, score_resid, groups, n, p):
     return cov
 
 
-def _glm_irls(y, X, link, *, iters=50, tol=1e-9):
+def _glm_irls(y, X, link, *, iters=50, tol=1e-9, sw=None):
     """Iteratively reweighted least squares for a quasi-likelihood GLM (binomial
-    for ``logit``, Poisson for ``log``). Returns (beta, final IRLS weights)."""
+    for ``logit``, Poisson for ``log``). With ``sw`` (survey weights) the IRLS
+    weights are scaled by ``sw`` (weighted estimating equations). Returns (beta,
+    final combined weights)."""
     p = X.shape[1]
     beta = np.zeros(p)
     W = np.ones(X.shape[0])
@@ -150,6 +171,8 @@ def _glm_irls(y, X, link, *, iters=50, tol=1e-9):
             mu = np.clip(mu, 1e-8, None)
             gprime = 1.0 / mu
             W = mu
+        if sw is not None:
+            W = W * sw
         z = eta + (y - mu) * gprime                    # working response
         new = np.linalg.pinv(X.T @ (X * W[:, None])) @ (X.T @ (W * z))
         if np.max(np.abs(new - beta)) < tol:
@@ -159,28 +182,31 @@ def _glm_irls(y, X, link, *, iters=50, tol=1e-9):
     return beta, np.clip(W, 1e-12, None)
 
 
-def _fit_one(y, X, *, link, groups, hat, XtX_inv, dof):
+def _fit_one(y, X, *, link, groups, hat, XtX_inv, dof, weights=None):
     """Fit one topic's regression. ``link`` is identity (OLS) / logit (fractional
     logit) / log (quasi-Poisson); ``groups`` (or None) selects cluster-robust vs
-    classical/robust covariance. Returns (beta, cov, r2)."""
+    classical/robust covariance; ``weights`` (or None) are survey weights (WLS).
+    When weighted, ``hat`` and ``XtX_inv`` already carry the weights. Returns
+    (beta, cov, r2)."""
     n, p = X.shape
     if link == "identity" and groups is None:
-        return _ols(y, X, hat, XtX_inv, dof)           # legacy classical OLS
+        return _ols(y, X, hat, XtX_inv, dof, weights=weights)  # classical (W)LS
     if link == "identity":
         beta = hat @ y
-        cov = _sandwich(X, XtX_inv, y - X @ beta, groups, n, p)
+        cov = _sandwich(X, XtX_inv, y - X @ beta, groups, n, p, weights=weights)
         mu = X @ beta
     else:
-        beta, W = _glm_irls(y, X, link)
+        beta, W = _glm_irls(y, X, link, sw=weights)
         bread = np.linalg.pinv(X.T @ (X * W[:, None]))
         mu = _link_inv(X @ beta, link)
-        cov = _sandwich(X, bread, y - mu, groups, n, p)  # GLM ψ_i = X_i(y_i−μ_i)
+        cov = _sandwich(X, bread, y - mu, groups, n, p, weights=weights)  # ψ_i = w_i X_i(y_i−μ_i)
     tss = float(((y - y.mean()) ** 2).sum())
     r2 = 1.0 - float(((y - mu) ** 2).sum()) / tss if tss > 0 else 0.0
     return beta, cov, r2
 
 
-def _pooled_coefficients(theta, X, *, link, groups, hat, XtX_inv, dof, topic_list):
+def _pooled_coefficients(theta, X, *, link, groups, hat, XtX_inv, dof, topic_list,
+                         weights=None):
     """Fit per-topic regressions and pool by Rubin's rules.
 
     Returns a list of ``(beta, Sigma, r2)`` tuples — one per topic in
@@ -206,7 +232,9 @@ def _pooled_coefficients(theta, X, *, link, groups, hat, XtX_inv, dof, topic_lis
     pooled = theta.ndim == 3
     if pooled:
         nsims_inner = theta.shape[0]
-    fast = link == "identity" and groups is None
+    # The fast batched path is plain (unweighted) OLS without clustering; survey
+    # weights route through the per-topic slow path (weighted hat/XtX_inv supplied).
+    fast = link == "identity" and groups is None and weights is None
     p = X.shape[1]
     n = X.shape[0]
 
@@ -252,7 +280,8 @@ def _pooled_coefficients(theta, X, *, link, groups, hat, XtX_inv, dof, topic_lis
             r2s = np.empty(nsims_inner)
             for m in range(nsims_inner):
                 b, cov_m, r2_m = _fit_one(theta[m, :, t], X, link=link, groups=groups,
-                                           hat=hat, XtX_inv=XtX_inv, dof=dof)
+                                           hat=hat, XtX_inv=XtX_inv, dof=dof,
+                                           weights=weights)
                 betas[m] = b
                 within += cov_m
                 r2s[m] = r2_m
@@ -263,7 +292,8 @@ def _pooled_coefficients(theta, X, *, link, groups, hat, XtX_inv, dof, topic_lis
             out.append((beta, Sigma, float(r2s.mean())))
         else:
             beta, cov, r2 = _fit_one(theta[:, t], X, link=link, groups=groups,
-                                     hat=hat, XtX_inv=XtX_inv, dof=dof)
+                                     hat=hat, XtX_inv=XtX_inv, dof=dof,
+                                     weights=weights)
             out.append((beta, cov, r2))
     return out
 
@@ -279,6 +309,7 @@ def estimate_effect(
     add_intercept=True,
     ci=0.95,
     cluster=None,
+    weights=None,
     link="identity",
     corpus=None,
     nsims=None,
@@ -305,6 +336,12 @@ def estimate_effect(
       proportions live in ``[0, 1]``, the logit link keeps fitted values in
       bounds where OLS can wander outside them (Papke & Wooldridge). Non-identity
       links report heteroskedasticity- or cluster-robust standard errors.
+    - ``weights`` — a length-``num_docs`` array of (survey) weights, or a column
+      name in ``data``. Switches to weighted least squares: documents enter the
+      regression in proportion to their weight, so a weighted sample (e.g. a
+      survey-weighted corpus, or documents weighted by length) estimates the
+      population-level effect. Composes with ``cluster`` (weighted cluster-robust
+      SEs) and with ``link``. Matches faSTM's weighted ``estimateEffect``.
 
     Specifying the design. Give the covariates one of two ways: a prebuilt design
     matrix as ``X`` (with ``feature_names``), or an R-style ``formula`` together
@@ -362,8 +399,12 @@ def estimate_effect(
         X, feature_names = design_matrix(formula, data)
         if isinstance(cluster, str):
             cluster = np.asarray(data[cluster])
+        if isinstance(weights, str):
+            weights = np.asarray(data[weights], dtype=np.float64)
     elif X is None:
         raise ValueError("provide X (a design matrix), or formula= with data=.")
+    if isinstance(weights, str):
+        raise ValueError("weights= as a column name requires formula= with data=.")
 
     # Accept a fitted model as the first argument and draw theta internally: with
     # nsims, the family-appropriate posterior is sampled for method-of-composition
@@ -411,9 +452,21 @@ def estimate_effect(
             raise ValueError("cluster must have one label per document")
         groups = [np.where(cluster == g)[0] for g in np.unique(cluster)]
 
+    if weights is not None:
+        weights = np.asarray(weights, dtype=np.float64)
+        if weights.shape[0] != n:
+            raise ValueError("weights must have one value per document")
+        if np.any(weights < 0) or not np.all(np.isfinite(weights)):
+            raise ValueError("weights must be finite and non-negative")
+
     p = X.shape[1]
-    XtX_inv = np.linalg.pinv(X.T @ X)
-    hat = XtX_inv @ X.T  # (p, n)
+    if weights is None:
+        XtX_inv = np.linalg.pinv(X.T @ X)
+        hat = XtX_inv @ X.T  # (p, n)
+    else:
+        Xw = X * weights[:, None]
+        XtX_inv = np.linalg.pinv(Xw.T @ X)     # (X'WX)^-1
+        hat = XtX_inv @ Xw.T                    # weighted: hat @ y = (X'WX)^-1 X'W y
     dof = max(n - p, 1)
     z_crit = _normal_ppf(0.5 + ci / 2.0)  # normal-approx critical value (no scipy)
 
@@ -424,7 +477,7 @@ def estimate_effect(
 
     pooled_results = _pooled_coefficients(
         theta, X, link=link, groups=groups, hat=hat, XtX_inv=XtX_inv, dof=dof,
-        topic_list=topic_list,
+        topic_list=topic_list, weights=weights,
     )
 
     out: list[TopicEffect] = []
@@ -442,9 +495,212 @@ def estimate_effect(
                 ci_low=beta - z_crit * se,
                 ci_high=beta + z_crit * se,
                 r_squared=r2,
+                vcov=Sigma,
             )
         )
     return out
+
+
+@dataclass
+class MarginalEffect:
+    """One average marginal effect: a (topic, covariate term) pair.
+
+    Produced by :func:`average_marginal_effects`. ``ame`` is the average expected
+    change in the topic's proportion for the covariate term (a unit change for a
+    continuous covariate, a level-vs-reference contrast for a factor), averaged
+    over the observed documents.
+    """
+
+    topic: int
+    topic_name: str
+    term: str
+    ame: float
+    se: float
+    ci_low: float
+    ci_high: float
+
+    def as_dict(self) -> dict:
+        return {
+            "topic": self.topic,
+            "topic_name": self.topic_name,
+            "term": self.term,
+            "ame": self.ame,
+            "se": self.se,
+            "ci_low": self.ci_low,
+            "ci_high": self.ci_high,
+        }
+
+
+@dataclass
+class AverageMarginalEffects:
+    """The full set of average marginal effects for one covariate.
+
+    Returned by :func:`average_marginal_effects`. Iterate ``.effects`` for the
+    per-(topic, term) :class:`MarginalEffect` rows, or call :meth:`to_frame` for a
+    tidy DataFrame.
+    """
+
+    covariate: str
+    effects: list
+
+    def __iter__(self):
+        return iter(self.effects)
+
+    def __len__(self):
+        return len(self.effects)
+
+    def to_frame(self):
+        """Return a tidy pandas DataFrame, one row per (topic, term)."""
+        import pandas as pd
+
+        return pd.DataFrame([e.as_dict() for e in self.effects])
+
+
+def average_marginal_effects(
+    doc_topic,
+    covariate,
+    *,
+    formula,
+    data,
+    topics=None,
+    h=None,
+    ci=0.95,
+    cluster=None,
+    weights=None,
+    corpus=None,
+    nsims=None,
+    seed=0,
+    add_intercept=True,
+):
+    """Average marginal effects of a covariate on topic prevalence.
+
+    The average expected change in a topic's proportion per unit of ``covariate``,
+    averaged over the observed documents. For a **continuous** covariate this is
+    the average numeric derivative (central difference); for a **factor** it is the
+    average contrast of each non-reference level against the reference level. This
+    is cleaner than reading raw regression coefficients, especially when the design
+    has splines or interactions, where no single coefficient is the effect (cf. the
+    ``margins`` package, and faSTM's ``ame()``).
+
+    The marginal effect is computed on the identity (proportion) scale: each
+    topic's prevalence is regressed on the design via the method of composition
+    (the same path as :func:`estimate_effect`), and the averaged design-change
+    vector is contracted with the per-topic coefficient posterior, propagating
+    topic-estimation uncertainty into the standard error via the Rubin-pooled
+    coefficient covariance.
+
+    Parameters
+    ----------
+    doc_topic : array or fitted model
+        As in :func:`estimate_effect` — a fitted model (theta drawn internally
+        when ``nsims`` is given), a ``(num_docs, K)`` point theta, or
+        ``(nsims, num_docs, K)`` posterior draws.
+    covariate : str
+        Column in ``data`` to compute marginal effects for.
+    formula : str
+        R-style formula for the design (must reference ``covariate``). Splines are
+        replayed with the training knots, so a perturbed covariate uses the same
+        basis as the fit.
+    data : pandas.DataFrame
+        One row per document; the design is rebuilt on perturbed copies of it.
+    topics : sequence[int], optional
+        Restrict to these topics. Defaults to all.
+    h : float, optional
+        Step for the numeric derivative of a continuous covariate. Defaults to
+        ``0.01 * sd(covariate)``.
+    ci : float
+        Confidence level for the (normal-approximation) intervals.
+    cluster, weights : optional
+        Passed through to :func:`estimate_effect` for the underlying regression
+        (cluster-robust SEs, survey weights). When ``weights`` is given the
+        design-change is averaged with those weights (a population marginal
+        effect); otherwise it is a plain sample average.
+    corpus, nsims, seed, add_intercept : optional
+        As in :func:`estimate_effect`.
+
+    Returns
+    -------
+    AverageMarginalEffects
+        Iterable of :class:`MarginalEffect`; ``.to_frame()`` for a tidy table.
+    """
+    if formula is None or data is None:
+        raise ValueError("average_marginal_effects requires formula= and data=.")
+    if covariate not in data.columns:
+        raise ValueError(f"covariate {covariate!r} is not a column of data.")
+
+    from .formulas import _KnotCapturingContext, design_matrix, design_matrix_predict
+
+    # Underlying per-topic regression (identity link): gives coef + full vcov.
+    effects = estimate_effect(
+        doc_topic, formula=formula, data=data, topics=topics, ci=ci,
+        cluster=cluster, weights=weights, link="identity", corpus=corpus,
+        nsims=nsims, seed=seed, add_intercept=add_intercept,
+    )
+
+    # Capture training knots/factor encoding so perturbed designs match the fit.
+    knot_ctx = _KnotCapturingContext()
+    design_matrix(formula, data, _knot_ctx=knot_ctx)
+
+    def _design(df):
+        Xd, _ = design_matrix_predict(formula, df, knot_ctx)
+        if add_intercept:
+            Xd = np.hstack([np.ones((Xd.shape[0], 1)), Xd])
+        return Xd
+
+    if weights is not None:
+        w = np.asarray(weights, dtype=np.float64)
+        def _wmean(M):
+            return (w[:, None] * M).sum(axis=0) / w.sum()
+    else:
+        def _wmean(M):
+            return M.mean(axis=0)
+
+    from pandas.api.types import is_bool_dtype, is_numeric_dtype
+
+    col = data[covariate]
+    is_factor = (not is_numeric_dtype(col)) or is_bool_dtype(col)
+
+    contrasts = {}  # term name -> averaged design-change vector
+    if is_factor:
+        levels = sorted(map(str, col.dropna().unique()))
+        ref = levels[0]
+        d_ref = _design(data.assign(**{covariate: ref}))
+        for lv in levels[1:]:
+            d_lv = _design(data.assign(**{covariate: lv}))
+            contrasts[f"{covariate}{lv}"] = _wmean(d_lv - d_ref)
+    else:
+        x = np.asarray(col, dtype=np.float64)
+        hh = h if h is not None else 0.01 * float(np.std(x))
+        if hh <= 0:
+            raise ValueError("covariate has zero variance; cannot form a derivative.")
+        d_plus = _design(data.assign(**{covariate: x + hh}))
+        d_minus = _design(data.assign(**{covariate: x - hh}))
+        contrasts[covariate] = _wmean((d_plus - d_minus) / (2.0 * hh))
+
+    z_crit = _normal_ppf(0.5 + ci / 2.0)
+    rows = []
+    for eff in effects:
+        coef = np.asarray(eff.coef, dtype=np.float64)
+        Sigma = np.asarray(eff.vcov, dtype=np.float64)
+        tname = getattr(eff, "topic_name", None) or f"topic_{eff.topic}"
+        for term, cv in contrasts.items():
+            est = float(cv @ coef)
+            var = float(cv @ Sigma @ cv)
+            se = float(np.sqrt(max(var, 0.0)))
+            rows.append(MarginalEffect(
+                topic=eff.topic,
+                topic_name=tname,
+                term=term,
+                ame=est,
+                se=se,
+                ci_low=est - z_crit * se,
+                ci_high=est + z_crit * se,
+            ))
+    return AverageMarginalEffects(covariate=covariate, effects=rows)
+
+
+# Short alias matching faSTM's `ame()`.
+ame = average_marginal_effects
 
 
 @dataclass

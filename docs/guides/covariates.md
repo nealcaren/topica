@@ -78,7 +78,8 @@ model.topic_word_by_group        # per-group β
 ## Estimating effects
 
 Regress topic proportions on covariates with honest uncertainty, using the method
-of composition, optionally with clustered standard errors and GLM links:
+of composition, optionally with clustered standard errors, survey weights, and
+GLM links:
 
 ```python
 import pandas as pd
@@ -88,6 +89,7 @@ draws = topica.posterior_theta_samples(model, nsims=50, seed=0)
 effects = topica.estimate_effect(
     draws, X, feature_names=names,
     cluster=source_id,     # cluster-robust SEs for nested data
+    weights=survey_weight,  # weighted least squares (e.g. survey weights)
     # link="logit",        # keep predictions in [0, 1]
 )
 
@@ -98,6 +100,23 @@ table = pd.concat([e.to_frame() for e in effects], ignore_index=True)
 Build non-linear and interaction terms with `topica.spline` and
 `topica.interaction`. Full detail and the journal-grade treatment are in the
 [Publishing](../publishing/effects.md) track.
+
+### Average marginal effects
+
+When the design has splines or interactions, no single coefficient is "the
+effect" of a covariate. `topica.average_marginal_effects` (alias `topica.ame`)
+reports the average change in a topic's proportion per unit of a covariate —
+the average derivative for a continuous covariate, or the average
+level-vs-reference contrast for a factor — averaged over the observed documents,
+with standard errors that propagate the topic-estimation uncertainty:
+
+```python
+# Average marginal effect of `year` on every topic (year enters via a spline).
+ame = topica.average_marginal_effects(
+    model, "year", formula="~ party + spline(year, df=4)", data=meta, nsims=50,
+)
+ame.to_frame()   # tidy: topic, term, ame, se, ci_low, ci_high
+```
 
 !!! warning "Use the same design for `fit` and `estimate_effect`"
     `estimate_effect` regresses on the covariates you pass it, not on whatever

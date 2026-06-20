@@ -35,6 +35,8 @@ from . import keyatm as keyatm
 from . import effects as effects
 from .effects import (
     estimate_effect as estimate_effect,
+    average_marginal_effects as average_marginal_effects,
+    ame as ame,
     by_strata as by_strata,
     top_topics as top_topics,
     posterior_theta_samples as posterior_theta_samples,

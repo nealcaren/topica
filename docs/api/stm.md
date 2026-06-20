@@ -8,6 +8,12 @@ post-hoc diagnostics (labeling, alignment, pyLDAvis, …) are on the
 
 ::: topica.stm.estimate_effect
 
+::: topica.stm.average_marginal_effects
+
+::: topica.stm.MarginalEffect
+
+::: topica.stm.AverageMarginalEffects
+
 ::: topica.effects.dirichlet_theta_samples
 
 ::: topica.stm.posterior_theta_samples

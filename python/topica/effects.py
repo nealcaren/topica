@@ -20,7 +20,16 @@ import inspect
 
 import numpy as np
 
-from .stm import estimate_effect, posterior_theta_samples, predicted_prevalence, PredictedPrevalence
+from .stm import (
+    estimate_effect,
+    posterior_theta_samples,
+    predicted_prevalence,
+    PredictedPrevalence,
+    average_marginal_effects,
+    ame,
+    MarginalEffect,
+    AverageMarginalEffects,
+)
 from .keyatm import by_strata, top_topics
 
 __all__ = [
@@ -28,6 +37,10 @@ __all__ = [
     "posterior_theta_samples",
     "predicted_prevalence",
     "PredictedPrevalence",
+    "average_marginal_effects",
+    "ame",
+    "MarginalEffect",
+    "AverageMarginalEffects",
     "dirichlet_theta_samples",
     "by_strata",
     "top_topics",
