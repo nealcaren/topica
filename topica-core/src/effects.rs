@@ -191,7 +191,7 @@ mod tests {
         assert!(coef[1] > 0.1, "slope should be positive, got {}", coef[1]);
         // Diagonal of vcov is the variance of each coef.
         let p = 2;
-        assert!(vcov[1 * p + 1] >= 0.0 && vcov[1 * p + 1].is_finite());
+        assert!(vcov[p + 1] >= 0.0 && vcov[p + 1].is_finite());
     }
 
     #[test]
@@ -210,8 +210,8 @@ mod tests {
         let p = 2;
         let (_c0, v0) = estimate_effect_topic(&lambda, &Vec::new(), &x, 0, 100, &mut rng);
         let (_c1, v1) = estimate_effect_topic(&lambda, &nu, &x, 0, 200, &mut rng);
-        let se0 = v0[1 * p + 1].sqrt();
-        let se1 = v1[1 * p + 1].sqrt();
+        let se0 = v0[p + 1].sqrt();
+        let se1 = v1[p + 1].sqrt();
         // Propagating per-doc uncertainty should not shrink the SE below the
         // no-uncertainty case.
         assert!(se1 + 1e-9 >= se0, "se with nu {} vs without {}", se1, se0);
