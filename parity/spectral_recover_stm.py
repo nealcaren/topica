@@ -17,6 +17,13 @@ its exponentiated gradient diverged at a fixed eta=50.) #240 note: an end-to-end
 gap observed downstream comes from feeding a *differently prepared* corpus, not
 from the spectral algorithm — given identical prepped input, topica matches stm.
 
+The reference uses stm's ACTUAL word weighting in recovery — the pooled unigram
+frequency ``colSums(mat)/sum(mat)`` that ``stm.init`` passes to ``recoverL2`` —
+which topica now matches (previously topica weighted by the gram row sums; #260
+follow-up). recoverL2 is still called with ``recoverEG=FALSE`` for the converged
+QP optimum, since stm's default ``recoverEG=TRUE`` is a non-converging
+exponentiated-gradient approximation, not the recovery target.
+
 Skips cleanly if Rscript or the stm/Matrix packages are unavailable.
 """
 import json
@@ -47,7 +54,10 @@ for(i in seq_along(docs)){m<-docs[[i]];rows<-c(rows,rep(i,ncol(m)));cols<-c(cols
 mat <- sparseMatrix(i=rows,j=cols,x=vals,dims=c(length(docs),V))
 Q <- stm:::gram(mat); Qsums <- rowSums(Q); Qbar <- Q/Qsums
 anchors <- stm:::fastAnchor(Qbar, K, verbose=FALSE)
-beta <- stm:::recoverL2(Qbar, anchors, Qsums/sum(Qsums), verbose=FALSE, recoverEG=FALSE)$A
+# wprob = stm's ACTUAL word weighting: the pooled unigram frequency that
+# stm.init passes to recoverL2 (colSums(mat)/sum(mat)), not the gram row sums.
+wprob <- as.numeric(Matrix::colSums(mat)/sum(mat))
+beta <- stm:::recoverL2(Qbar, anchors, wprob, verbose=FALSE, recoverEG=FALSE)$A
 writeLines(vocab, file.path(outdir, "vocab.txt"))
 write.table(beta, file.path(outdir, "beta.csv"), sep=",", row.names=FALSE, col.names=FALSE)
 cat("OK\n")
