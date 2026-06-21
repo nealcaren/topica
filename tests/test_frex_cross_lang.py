@@ -116,6 +116,41 @@ def test_corpus_supplies_word_counts():
         val.frex(beta, vocab, word_counts=wc, corpus=corpus)
 
 
+def test_exclusivity_routes_through_core():
+    beta, _ = _continuous_beta(seed=6)
+    rust = np.array(_topica.inspect_exclusivity(beta.tolist(), 10, 0.7))
+    py = topica.exclusivity(beta, n=10, w=0.7)
+    np.testing.assert_allclose(py, rust, atol=1e-12, rtol=0)
+    # stm's exclusivity is a FREX summary (~[0, n]), not a [0, 1] mean.
+    assert np.all(py >= 0.0) and py.max() > 1.0
+
+
+def test_semantic_coherence_routes_through_core():
+    beta, vocab = _continuous_beta(seed=7, K=4, V=60)
+    rng = np.random.default_rng(7)
+    docs = [[f"w{i}" for i in rng.integers(0, 60, rng.integers(5, 20))]
+            for _ in range(200)]
+    py = topica.semantic_coherence(beta, docs, vocab, n=10)
+    vmap = {w: i for i, w in enumerate(vocab)}
+    docs_ids = [[vmap[w] for w in d if w in vmap] for d in docs]
+    rust = np.array(_topica.inspect_semantic_coherence(beta.tolist(), docs_ids, 10))
+    np.testing.assert_allclose(py, rust, atol=1e-12, rtol=0)
+    assert py.shape == (4,)
+
+
+def test_semantic_coherence_reads_corpus_vocabulary():
+    docs = [["a", "b", "c"], ["a", "a", "b"], ["b", "c", "c"], ["a", "c"]] * 8
+    corpus = topica.Corpus.from_documents(docs, min_doc_freq=1)
+    rng = np.random.default_rng(0)
+    beta = rng.gamma(0.4, size=(3, corpus.num_words))
+    beta /= beta.sum(axis=1, keepdims=True)
+    # Passing the Corpus supplies both the documents and the vocabulary.
+    from_corpus = topica.semantic_coherence(beta, corpus, n=5)
+    from_lists = topica.semantic_coherence(beta, corpus.documents(),
+                                           corpus.vocabulary, n=5)
+    np.testing.assert_allclose(from_corpus, from_lists, atol=1e-12)
+
+
 def test_lift_without_counts_ranks_like_marginal_lift():
     # No word_counts: P(w) is estimated from the column marginal, so lift is
     # log(beta) - log(marginal) — the same ranking as the historical beta/marginal

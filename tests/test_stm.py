@@ -520,9 +520,11 @@ class TestSearchK:
         for row in search_k_results:
             assert row["coherence"] <= 0.0
 
-    def test_exclusivity_in_unit_interval(self, search_k_results):
+    def test_exclusivity_nonnegative(self, search_k_results):
+        # stm's exclusivity is a FREX summary over the top words (roughly [0, n]),
+        # not a [0, 1] mean.
         for row in search_k_results:
-            assert 0.0 <= row["exclusivity"] <= 1.0
+            assert row["exclusivity"] >= 0.0 and np.isfinite(row["exclusivity"])
 
     def test_with_held_out_has_perplexity(self):
         rng = np.random.default_rng(77)
