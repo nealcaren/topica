@@ -32,11 +32,22 @@ const PROJ_DIM: usize = 1024;
 const PROJ_SEED: u64 = 0x5EED_C0FFEE;
 
 /// Build the row-normalized co-occurrence matrix `Q̄` (V×V) and the word
-/// marginals `p`. Returns `None` if the corpus is too small/degenerate.
+/// probabilities `wprob`. `wprob` is the pooled unigram frequency
+/// (`colSums(mat)/sum(mat)`, over all documents), matching Arora et al. and R
+/// `stm`'s `wprob` — the word weighting the recovery uses. Returns `None` if the
+/// corpus is too small/degenerate.
 fn cooccurrence(docs: &[Vec<u32>], v: usize) -> Option<(Vec<Vec<f64>>, Vec<f64>)> {
     let mut q = vec![vec![0.0f64; v]; v];
+    let mut total_count = vec![0.0f64; v];
+    let mut total_tokens = 0.0f64;
     let mut used_docs = 0usize;
     for doc in docs {
+        // Unigram counts over ALL documents (stm computes wprob from the full
+        // term-document matrix, before the gram step drops length-<2 docs).
+        for &w in doc {
+            total_count[w as usize] += 1.0;
+            total_tokens += 1.0;
+        }
         let n = doc.len();
         if n < 2 {
             continue;
@@ -55,16 +66,10 @@ fn cooccurrence(docs: &[Vec<u32>], v: usize) -> Option<(Vec<Vec<f64>>, Vec<f64>)
             }
         }
     }
-    if used_docs == 0 {
+    if used_docs == 0 || total_tokens == 0.0 {
         return None;
     }
-    for row in &mut q {
-        for x in row.iter_mut() {
-            *x /= used_docs as f64;
-        }
-    }
-    let p: Vec<f64> = q.iter().map(|r| r.iter().sum()).collect();
-    // Row-normalize → Q̄.
+    // Row-normalize → Q̄ (the per-document scaling cancels here, so no /used_docs).
     let mut qbar = q;
     for row in qbar.iter_mut() {
         let s: f64 = row.iter().sum();
@@ -74,7 +79,8 @@ fn cooccurrence(docs: &[Vec<u32>], v: usize) -> Option<(Vec<Vec<f64>>, Vec<f64>)
             }
         }
     }
-    Some((qbar, p))
+    let wprob: Vec<f64> = total_count.iter().map(|&c| c / total_tokens).collect();
+    Some((qbar, wprob))
 }
 
 fn dot(a: &[f64], b: &[f64]) -> f64 {
@@ -266,9 +272,15 @@ fn cooccurrence_projected(
         .collect();
 
     let mut qp = vec![vec![0.0f64; m]; v];
-    let mut p = vec![0.0f64; v];
+    let mut rowsum = vec![0.0f64; v]; // co-occurrence row marginal (for Q̄ normalization)
+    let mut total_count = vec![0.0f64; v]; // unigram counts over all docs (for wprob)
+    let mut total_tokens = 0.0f64;
     let mut used_docs = 0usize;
     for doc in docs {
+        for &w in doc {
+            total_count[w as usize] += 1.0;
+            total_tokens += 1.0;
+        }
         let n = doc.len();
         if n < 2 {
             continue;
@@ -292,33 +304,26 @@ fn cooccurrence_projected(
             for j in 0..m {
                 qp[w][j] += coef * (s[j] - r[w][j]);
             }
-            p[w] += c / nf; // row marginal (matches the exact path's p)
+            rowsum[w] += c / nf; // matches the dense path's pre-normalization row sum
         }
     }
-    if used_docs == 0 {
+    if used_docs == 0 || total_tokens == 0.0 {
         return None;
     }
-    let inv = 1.0 / used_docs as f64;
-    for row in &mut qp {
-        for x in row.iter_mut() {
-            *x *= inv;
-        }
-    }
-    for x in &mut p {
-        *x *= inv;
-    }
-    // Q̄·R = (Q·R) row-normalized by the marginal p (projection is linear, so
-    // proj(q[w]/p[w]) = (q[w]·R)/p[w]).
+    // Q̄·R = (Q·R) row-normalized by the row marginal (projection is linear, so
+    // proj(q[w]/rowsum[w]) = (q[w]·R)/rowsum[w]). The per-document scaling cancels.
     let mut qbar = qp;
     for (w, row) in qbar.iter_mut().enumerate() {
-        if p[w] > 0.0 {
-            let pw = p[w];
+        if rowsum[w] > 0.0 {
+            let rw = rowsum[w];
             for x in row.iter_mut() {
-                *x /= pw;
+                *x /= rw;
             }
         }
     }
-    Some((qbar, p))
+    // wprob = pooled unigram frequency (Arora / stm wprob), as in the dense path.
+    let wprob: Vec<f64> = total_count.iter().map(|&c| c / total_tokens).collect();
+    Some((qbar, wprob))
 }
 
 /// Deterministic anchor-word initialization of the K×V topic-word matrix.
