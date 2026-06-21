@@ -6,6 +6,52 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-06-21
+
+### Added
+
+- Survey weights and average marginal effects for covariate inference:
+  `estimate_effect(weights=)` runs weighted least squares (composing with
+  `cluster=` and `link=`), and `average_marginal_effects()` / `ame()` reports the
+  average change in a topic's proportion per unit of a covariate (the average
+  derivative for a continuous covariate, the average level-vs-reference contrast
+  for a factor) — cleaner than raw coefficients under splines or interactions.
+  `TopicEffect` now also exposes the full Rubin-pooled coefficient covariance
+  `.vcov`. Validated bit-for-bit against faSTM's effect layer (#258).
+- `semantic_coherence()` — stm's `semCoh1beta` semantic coherence, from the shared
+  Rust core. The broader gensim-aligned `coherence()` suite is unchanged (#260).
+- `frex()` and `label_topics()` accept `word_counts=` or `corpus=` to apply stm's
+  James-Stein FREX shrinkage and exact lift; `Corpus.word_counts` exposes the
+  per-term corpus frequencies (#260).
+- `topica-core` gains `inspect` (FREX / lift / score / exclusivity / semantic
+  coherence) and `effects` (`estimate_effect_topic`) modules plus
+  `Corpus::from_texts` — the engine shared by faSTM (R) and stmata (Stata), so the
+  stm-faithful diagnostics have one definition across languages (#259).
+
+### Changed
+
+- FREX, lift, score, exclusivity, and semantic coherence now all come from the
+  single stm-faithful implementation in `topica-core`'s `inspect`, so they cannot
+  drift between topica, faSTM, and stmata (#260). Two definitions changed as a
+  result:
+  - **`label_topics` lift** is now stm's lift, `log P(w|topic) − log P(w)`, not
+    the previous `beta / mean_k beta` ratio (which was not lift). With
+    `word_counts=`/`corpus=` it is exact; without, `P(w)` is estimated from the
+    column marginal (same ranking, correct log scale).
+  - **`exclusivity`** is now stm's FREX-summary over the top words (roughly
+    `[0, n]`), not a mean exclusivity in `[0, 1]`. The model-selection frontier
+    uses z-scores, so K selection is unaffected by the rescale.
+- Spectral initialization now weights the Arora recovery by the pooled unigram
+  frequency (stm's `wprob`), matching R `stm`'s spectral start exactly (per-topic
+  cosine 1.0 on gadarian); previously it used the gram row sums. The converged
+  STM fit is unchanged (0.996 cosine to the prior solution) (#265).
+
+### Fixed
+
+- Restore the `--features python` build: the `LoadOptions.lowercase` field added
+  to `topica-core` had left the Python binding's struct literal incomplete; this
+  also cleared two pre-existing `cargo fmt`/`clippy` lints (#262).
+
 ## [0.26.0] - 2026-06-19
 
 ### Fixed
