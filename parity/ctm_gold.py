@@ -4,17 +4,21 @@
 A Structural Topic Model with no prevalence or content covariates *is* a Correlated
 Topic Model: the same logistic-normal variational EM with Arora-style spectral
 initialization. topica's CTM and R `stm` are independent implementations, so
-validation is statistical: fit both on the SAME tokenized gadarian corpus and ask
-whether they land on the same topics.
+validation is statistical: fit both on the SAME tokenized corpus and ask whether
+they land on the same topics.
 
-The benchmark is R's own reproducibility. Under matched (Spectral) init, topica-vs-R
-agreement should meet or exceed R's own Spectral-vs-Random basin spread.
+The corpus is the same fixed-seed 2,000-document poliblog subsample as the STM
+gold (Roberts, Stewart & Tingley's JSS example), at K=20 but with no covariates.
+Unlike the multimodal gadarian K=3 corpus, poliblog K=20 is well-identified:
+under matched Spectral init topica lands essentially on R's solution (aligned
+topic-word cosine ~0.9), far above gadarian's ~0.55. So the absolute cosine — not
+just the gap to R's own seed-to-seed noise floor — is a meaningful validation.
 
 Two phases:
 
   * ``--regenerate`` (needs Rscript + the ``stm`` package): fits R `stm` (no
     covariates) once, computes R's noise floor, writes ``parity/ctm_gold.npz`` +
-    ``.json``.
+    ``.json`` (R's beta, vocab, the exact tokenized corpus, the noise floor).
   * default (no R): loads the committed gold, fits topica CTM, checks the bar.
 
 Run directly::
@@ -33,8 +37,8 @@ import numpy as np
 import harness
 
 NAME = "ctm"
-K = 3
-ITERS = 80
+K = 20
+ITERS = 200
 MARGIN = 0.15
 
 # R driver: fits stm with prevalence=NULL (a CTM) Spectral + two Random seeds.
@@ -49,7 +53,7 @@ documents <- lapply(toks, function(d) {
   matrix(as.integer(rbind(idx[o], as.integer(tb)[o])), nrow = 2)
 })
 beta_of <- function(seed, init) {
-  f <- stm(documents, vocab, K = 3, prevalence = NULL, init.type = init,
+  f <- stm(documents, vocab, K = KVAL, prevalence = NULL, init.type = init,
            seed = seed, verbose = FALSE)
   b <- exp(f$beta$logbeta[[1]]); colnames(b) <- vocab; b
 }
@@ -99,14 +103,14 @@ def regenerate() -> None:
         print("Rscript with the 'stm' package not available; cannot regenerate.")
         sys.exit(1)
 
-    docs, _, _, _ = harness.gadarian_corpus()
-    vdocs = "\n".join(" ".join(doc) for doc in docs) + "\n"
+    docs, _, _, _ = harness.poliblog_corpus()
+    vdocs = harness.docs_to_lines(docs)
 
     out = harness.run_rscript(
-        _R_DRIVER,
+        _R_DRIVER.replace("KVAL", str(K)),
         files={"vdocs.txt": vdocs},
         reads=["r_spectral.csv", "r_rand1.csv", "r_rand2.csv", "r_vocab.txt"],
-        timeout=600,
+        timeout=1800,
     )
     r_vocab = out["r_vocab.txt"].split()
     r_spectral = harness.read_r_beta_csv(out["r_spectral.csv"], r_vocab)
@@ -122,16 +126,22 @@ def regenerate() -> None:
 
     harness.save_gold(
         NAME,
+        # Only r_spectral is needed offline (and for the non-vacuous shuffle
+        # check); the Random betas were used here for the noise floor /
+        # Spectral-vs-Random bar (recorded in the JSON), so they're not
+        # committed. beta as float32 keeps the fixture small.
         arrays={
-            "r_spectral": r_spectral,
-            "r_rand1": r_rand1,
-            "r_rand2": r_rand2,
+            "r_spectral": r_spectral.astype(np.float32),
             "vocab": np.array(r_vocab, dtype=object),
+            "corpus": np.array(harness.docs_to_lines(docs), dtype=object),
         },
         meta={
             "reference": _r_version(),
             "model": "CTM (R stm with prevalence=NULL)",
-            "corpus": "gadarian (examples/gadarian.csv), vignette preprocessing",
+            "corpus": (
+                f"poliblog (examples/poliblog.csv), fixed-seed {harness.POLIBLOG_N_DOCS}-doc "
+                f"subsample (seed {harness.POLIBLOG_SEED}), vignette preprocessing"
+            ),
             "num_docs": len(docs),
             "vocab_size": len(r_vocab),
             "K": K,
@@ -149,6 +159,7 @@ def regenerate() -> None:
     )
     npz, js = harness.gold_paths(NAME)
     print(f"wrote {npz.name} + {js.name}")
+    print(f"  corpus: {len(docs)} docs, {len(r_vocab)} vocab, K={K}")
     print(f"  R noise floor (rand-vs-rand): {noise_floor:.4f}")
     print(f"  R Spectral-vs-Random:        {spec_vs_rand:.4f}")
     print(f"  topica-vs-R Spectral cosine: {t_cos:.4f}")
@@ -161,7 +172,8 @@ def run(verbose: bool = True) -> dict:
     spec_vs_rand = float(meta.get("r_spectral_vs_random", 0.0))
     noise_floor = float(meta.get("noise_floor_random_vs_random", 0.0))
 
-    docs, _, _, _ = harness.gadarian_corpus()
+    # Refit on the EXACT corpus frozen in the gold (offline; no R).
+    docs = harness.lines_to_docs(str(arrays["corpus"]))
     from topica import CTM
 
     model = CTM(num_topics=K, init="spectral")

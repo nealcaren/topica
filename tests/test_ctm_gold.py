@@ -2,10 +2,13 @@
 (no covariates) — issue #271, Wave 1.
 
 Loads the committed gold (``parity/ctm_gold.npz`` + ``.json``), fits topica CTM on
-the same gadarian corpus + vocab, aligns to R's Spectral beta, and asserts the
-aligned cosine clears R's own Spectral-vs-Random basin spread (minus a small
-multimodality margin). Runs in CI WITHOUT Rscript — the reference fit is frozen in
-the committed gold.
+the SAME corpus that R was fit on (a fixed-seed poliblog subsample, frozen in the
+gold), aligns to R's Spectral beta, and asserts the aligned cosine clears R's own
+Spectral-vs-Random basin spread (minus a small multimodality margin). On
+well-identified poliblog K=20 the absolute cosine is high (~0.9), a meaningful
+validation. Runs in CI WITHOUT Rscript — the reference fit and exact corpus are
+frozen in the committed gold. The topica refit is fast (~2s), so it stays in the
+default suite (not marked slow).
 """
 
 import sys
