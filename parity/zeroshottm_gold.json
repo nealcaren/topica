@@ -1,0 +1,26 @@
+{
+  "alpha": 1.0,
+  "batch": 200,
+  "corpus": "synthetic planted-block, 600 docs x 25 tokens, K=5 blocks of 10 words, per-doc one-hot+noise embedding (encoder reads the embedding alone; from parity/zeroshot_compare.py)",
+  "cosine_bar": 0.8373648517526509,
+  "date": "2026-06-22",
+  "dropout": 0.2,
+  "emb_dim": 5,
+  "epochs": 150,
+  "hidden": 100,
+  "kind": "cross-implementation (PyTorch AVITM reference)",
+  "lr": 0.002,
+  "margin": 0.1,
+  "model": "ZeroShotTM (Bianchi, Nozza & Hovy 2021)",
+  "num_docs": 600,
+  "num_topics": 5,
+  "pass_bar": "topica-vs-reference Hungarian-aligned topic-word cosine >= reference seed-to-seed self cosine - margin",
+  "reference": "torch 2.12.0 (AVITM reference, parity/refs/avitm.py)",
+  "reference_self_cosine": 0.9373648517526508,
+  "seeds": {
+    "gold": 0,
+    "noise_floor": 1
+  },
+  "topica_vs_reference_cosine": 0.9758191896640772,
+  "vocab_size": 50
+}
