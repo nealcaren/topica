@@ -1610,7 +1610,13 @@ fn standardize_features(
         .iter()
         .map(|r| {
             (0..num_features)
-                .map(|f| if f == 0 { r[0] } else { (r[f] - mean[f]) / sd[f] })
+                .map(|f| {
+                    if f == 0 {
+                        r[0]
+                    } else {
+                        (r[f] - mean[f]) / sd[f]
+                    }
+                })
                 .collect()
         })
         .collect();
