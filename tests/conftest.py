@@ -10,6 +10,13 @@ def pytest_configure(config: pytest.Config) -> None:
         "parity: slow CLI-parity check; builds the release binaries and "
         "compares binding output against the `train` CLI byte-for-byte.",
     )
+    config.addinivalue_line(
+        "markers",
+        "slow: realistic-scale / high-iteration check (issue #271). Some bugs "
+        "(e.g. #270's covariate-keyATM collapse) only appear at scale, so these "
+        "fit tens of thousands of documents and are opt-in: run with "
+        "`-m slow`; the default suite deselects them.",
+    )
 
 
 # ---------------------------------------------------------------------------
