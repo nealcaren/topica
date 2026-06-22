@@ -1,0 +1,18 @@
+{
+  "corpus": "shared-stopword + K=4 leaf-block corpus, 300 docs, depth-2 nCRP tree (tests/test_model_invariants _fit_hlda)",
+  "cosine_bar": 0.99,
+  "coverage_bar": 2,
+  "date": "2026-06-22",
+  "eff_paths_bar": 2.0,
+  "kind": "PLANTED self-consistency gold (NO external reference exists for HLDA (Blei et al. 2003, nested CRP tree)). Locks topica's own fixed-seed output: a refit must reproduce the frozen topic-word matrix in cosine, the planted block structure must be recovered, and the validity invariants must hold; non-vacuous via the shuffle check.",
+  "model": "HLDA (Blei et al. 2003, nested CRP tree)",
+  "num_topics": 4,
+  "pass_bar": "refit-vs-gold aligned topic-word cosine >= cosine_bar AND planted recovery clears its bar",
+  "purity_bar": 0.6,
+  "recovery": {
+    "effective_paths": 3.463695713894909,
+    "num_nodes": 4
+  },
+  "reference": "topica HLDA (Blei et al. 2003, nested CRP tree) (self-consistency / planted-recovery gold)",
+  "vocab_size": 19
+}
