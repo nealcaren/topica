@@ -255,6 +255,36 @@ def doc_topic_correlation(theta_a: np.ndarray, theta_b: np.ndarray) -> float:
     return float(np.mean(cors)) if cors else float("nan")
 
 
+def adjusted_rand_index(labels_true, labels_pred) -> float:
+    """Adjusted Rand index between two label assignments, numpy-only.
+
+    A vendored equivalent of ``sklearn.metrics.adjusted_rand_score`` so the
+    clustering gold tests (Top2Vec/BERTopic) stay reference-toolchain-free at test
+    time — CI installs numpy/scipy but not scikit-learn (which is only a *reference*
+    here, used at regenerate time)."""
+    a = np.asarray(labels_true)
+    b = np.asarray(labels_pred)
+    _, a_idx = np.unique(a, return_inverse=True)
+    _, b_idx = np.unique(b, return_inverse=True)
+    n = a.shape[0]
+    cont = np.zeros((a_idx.max() + 1, b_idx.max() + 1), dtype=np.int64)
+    np.add.at(cont, (a_idx, b_idx), 1)
+
+    def _comb2(x):
+        x = np.asarray(x, dtype=np.float64)
+        return (x * (x - 1.0) / 2.0).sum()
+
+    sum_comb = _comb2(cont.ravel())
+    sum_comb_a = _comb2(cont.sum(axis=1))
+    sum_comb_b = _comb2(cont.sum(axis=0))
+    comb_n = n * (n - 1.0) / 2.0
+    expected = sum_comb_a * sum_comb_b / comb_n if comb_n else 0.0
+    max_index = 0.5 * (sum_comb_a + sum_comb_b)
+    if max_index == expected:
+        return 1.0
+    return float((sum_comb - expected) / (max_index - expected))
+
+
 # --------------------------------------------------------------------------- #
 # Gold fixture I/O
 # --------------------------------------------------------------------------- #
