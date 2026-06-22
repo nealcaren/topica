@@ -1,0 +1,30 @@
+{
+  "K": 5,
+  "convergence_tol": 1e-05,
+  "corpus": "poliblog (examples/poliblog.csv), fixed-seed 2000-doc subsample (seed 271), vignette preprocessing \u2014 the same slim corpus as the STM gold",
+  "date": "2026-06-22",
+  "design": "~rating (Liberal dummy) drives both prevalence and the sentiment seed",
+  "init": "Spectral",
+  "kappa_estimation": "lasso (matches the reference glmnet estimator)",
+  "margin": 0.15,
+  "model": "STS (Chen & Mankad 2024) vs R stm-on-slim",
+  "noise_floor_random_vs_random": 0.92256251958971,
+  "num_docs": 2000,
+  "pass_bar": "topica-STS cosine vs R-stm >= max(topica-STM cosine vs R-stm, r_spectral_vs_random) - margin; AND topica-STS vs topica-STM >= sts_vs_stm_min (STS extends STM)",
+  "r_spectral_vs_random": 0.8478222053178098,
+  "reference": "R 4.5.2 / stm 1.3.8",
+  "reference_path": "R stm baseline on the slim subsample (the authors' poliblog STS RDS is a full-corpus pre-fit that cannot be re-fit on a subsample; STS reduces to STM structurally, so R-stm-on-slim is the slim-corpus cross-impl reference. The authors'-RDS full-corpus comparison stays in parity/sts_r_compare.py)",
+  "seeds": {
+    "random_1": 11,
+    "random_2": 22,
+    "spectral": 1
+  },
+  "stm_iters": 80,
+  "sts_iters": 50,
+  "sts_vs_stm_min": 0.85,
+  "topic_word_view": "mean sentiment-discourse alpha^(s) (the reference print.topWords 'Avg alpha' view)",
+  "topica_stm_vs_r_cosine": 0.9997615190028835,
+  "topica_sts_vs_r_cosine": 0.9369399377111535,
+  "topica_sts_vs_stm_cosine": 0.939938174543426,
+  "vocab_size": 2632
+}
