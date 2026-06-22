@@ -3509,6 +3509,18 @@ class KeyATM:
         `num_threads` overrides the constructor's num_threads for this fit call
         only (None = use constructor value).
 
+        The covariate model's lambda is re-estimated by L-BFGS:
+        `optimize_interval` sweeps between updates, starting after `burn_in`
+        sweeps, `lbfgs_iters` L-BFGS steps per update, under a Gaussian prior of
+        variance `prior_variance` on lambda. `prior_offset` (an optional
+        (num_docs, num_topics) array) adds a fixed per-document log-prior offset.
+        These apply to the covariate variant only and are ignored otherwise.
+
+        `keep_theta_draws` (default True) retains `num_theta_draws` thinned MCMC
+        theta snapshots in `theta_draws` (the cross-sweep posterior samples
+        `composition_theta` prefers over the Dirichlet approximation); set it
+        False to save memory.
+
         `progress_interval` sets how often model_fit is recorded for
         `log_likelihood_history` (keyATM's model_fit / plot_modelfit): 0
         (default) records ~50 evenly spaced points across the run; a positive

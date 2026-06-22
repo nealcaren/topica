@@ -327,6 +327,10 @@ class GDMR:
             are clipped to [-1, 1] in Legendre space. As in :class:`DMR`,
             ``covariates=`` is an accepted alias; ``metadata=`` is also accepted
             for users porting from tomotopy's ``GDMRModel``. Pass exactly one.
+        metadata_names:
+            Optional human-readable labels for the ``D`` covariate columns,
+            surfaced in the Legendre-basis ``feature_names``. Defaults to
+            ``x0, x1, ...``.
         iters:
             Total Gibbs sweeps.
         num_samples:

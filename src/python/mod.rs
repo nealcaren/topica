@@ -904,6 +904,19 @@ impl LDA {
     /// `num_topics`, i.e. 1.0 per topic). `beta` is the per-word topic-word
     /// prior. With `optimize_interval > 0`, α and β are re-estimated every
     /// that-many iterations once past `burn_in`.
+    ///
+    /// `seed` seeds the Gibbs RNG. `num_threads` ``>1`` enables MALLET-style
+    /// approximate parallel Gibbs in `fit` (deterministic for a fixed
+    /// `num_threads`+`seed`); ``1`` is the exact CLI-identical path. `sampler`
+    /// selects the backend: ``"sparse"`` (default, MALLET SparseLDA), ``"lightlda"``
+    /// (alias-table Metropolis-Hastings, with `mh_steps` MH proposals per token),
+    /// ``"warp"`` (cache-efficient WarpLDA, flat per-sweep cost in K), or ``"cvb0"``
+    /// (zeroth-order collapsed variational Bayes, deterministic, no MCMC draws).
+    /// `use_symmetric_alpha` mirrors MALLET's ``--use-symmetric-alpha``: when True,
+    /// optimization learns only the α concentration and keeps the per-topic α equal
+    /// instead of an asymmetric prior. `init` is ``"random"`` (default,
+    /// MALLET-compatible) or ``"spectral"`` (deterministic anchor-word seed, better
+    /// coherence at larger K).
     #[new]
     #[pyo3(signature = (num_topics, *, alpha_sum=None, beta=0.01,
                         optimize_interval=50, burn_in=200, seed=42, num_threads=1,
@@ -1016,6 +1029,11 @@ impl LDA {
     /// threads); on smaller corpora it does not help and can run slower, so leave
     /// it at the default unless profiling shows the merge is your bottleneck.
     /// Recommended range when it helps: 3 to 4.
+    ///
+    /// `keep_theta_draws` (default True) retains the last `num_theta_draws`
+    /// thinned MCMC θ snapshots in `theta_draws` for `composition_theta` standard
+    /// errors; set it False to save memory. `num_threads` overrides the
+    /// constructor's `num_threads` for this fit call only (None = constructor value).
     #[pyo3(signature = (data, *, iters=1000, num_samples=5, sample_interval=25,
                         progress=None, progress_interval=50,
                         keep_theta_draws=true, num_theta_draws=25,
@@ -1821,6 +1839,7 @@ impl LDA {
     /// P(data)), `perplexity` (``exp(-LL / num_tokens)``, lower is better),
     /// `num_tokens` (scored), and `num_oov` (dropped). Cost grows with the
     /// square of document length, so keep `num_particles` modest.
+    /// `seed` seeds the inference RNG (defaults to the model's seed).
     #[pyo3(signature = (data, *, num_particles=10, seed=None))]
     fn evaluate<'py>(
         &self,
@@ -1861,6 +1880,7 @@ impl LDA {
 
     /// Held-out perplexity (lower is better) — convenience wrapper over
     /// :meth:`evaluate`. See `evaluate` for `data`/`num_particles` semantics.
+    /// `seed` seeds the inference RNG (defaults to the model's seed).
     #[pyo3(signature = (data, *, num_particles=10, seed=None))]
     fn perplexity<'py>(
         &self,
@@ -1898,6 +1918,7 @@ impl LDA {
     /// documents), `uniform_dist` (KL of φ_t from uniform) and `corpus_dist`
     /// (KL of φ_t from the corpus word distribution), `rank1_docs` (documents
     /// whose dominant topic is this one), `alpha`, and `top_words`.
+    /// `n` is the number of top words per topic surfaced in `top_words`.
     #[pyo3(signature = (n=10))]
     fn diagnostics<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyList>> {
         self.require_fitted()?;
@@ -2027,6 +2048,11 @@ impl LDA {
     /// string (OOV dropped). A document with no in-vocabulary tokens gets the
     /// prior θ. Returns an array of shape ``(num_new_docs, num_topics)`` whose
     /// rows sum to 1.
+    ///
+    /// The collapsed-Gibbs controls are per-document: `iters` sweeps each new
+    /// document, discarding the first `burn_in`, then averaging `num_samples` θ
+    /// snapshots taken `sample_interval` sweeps apart; `seed` seeds the inference
+    /// RNG. `iterations` is a deprecated alias for `iters`.
     #[pyo3(signature = (data, *, iters=100, burn_in=10, num_samples=10,
                         sample_interval=5, seed=None, iterations=None))]
     fn transform<'py>(
@@ -3307,6 +3333,12 @@ impl DMR {
     /// Create an unfitted DMR model. `prior_variance` is the Gaussian prior
     /// variance σ² on the feature weights λ (smaller = stronger shrinkage);
     /// `lbfgs_iters` caps the L-BFGS steps per optimization round.
+    ///
+    /// `num_topics` is the number of topics K; `beta` is the topic-word Dirichlet
+    /// smoothing. λ is re-estimated by L-BFGS every `optimize_interval` sweeps once
+    /// past `burn_in`. `seed` seeds the Gibbs RNG. `sampler` selects the inference
+    /// backend: ``"sparse"`` (default), ``"warp"`` (WarpLDA), or ``"cvb0"``
+    /// (deterministic collapsed variational Bayes).
     #[new]
     #[pyo3(signature = (num_topics, *, beta=0.01, optimize_interval=50,
                         burn_in=200, seed=42, prior_variance=1.0, lbfgs_iters=20,
@@ -3368,6 +3400,26 @@ impl DMR {
     /// intercept column is prepended automatically). `feature_names` (length F)
     /// names the columns; an "intercept" name is prepended.
     /// `covariates` is accepted as a no-deprecation alias for `features`.
+    ///
+    /// `iters` is the number of Gibbs sweeps.
+    /// After burn-in, `num_samples` posterior snapshots are collected
+    /// `sample_interval` sweeps apart for the retained draws.
+    /// `progress` toggles a progress display; `progress_interval` sets how often the
+    /// model-fit/log-likelihood trace is recorded (0 = ~50 evenly spaced points);
+    /// `report_interval` is a deprecated alias for `progress_interval`.
+    /// `keep_theta_draws` (default True) retains `num_theta_draws` thinned MCMC θ
+    /// snapshots in `theta_draws`, the cross-sweep posterior samples
+    /// `composition_theta` prefers over the Dirichlet approximation; set it False to
+    /// save memory.
+    /// `convergence_tol` (default 0.0, disabled) enables opt-in early stopping: the
+    /// run stops once the relative change in the recorded log-likelihood between the
+    /// last two trace points, |ΔLL| / |LL|, falls below it, setting `converged`. The
+    /// monitored quantity is the collapsed model-fit log-likelihood; the comparison
+    /// window is the trace cadence (`check_every` / `progress_interval`), so a coarser
+    /// cadence compares more widely spaced sweeps. This is a pragmatic early-stop
+    /// heuristic on the log-likelihood trace, not a guarantee the Gibbs chain has
+    /// mixed. `check_every` is how often, in sweeps, the log-likelihood is recorded
+    /// and the `convergence_tol` test is applied.
     #[pyo3(signature = (data, features=None, *, feature_names=None, iters=1000,
                         num_samples=5, sample_interval=25, progress=None, progress_interval=50,
                         keep_theta_draws=true, num_theta_draws=25,
@@ -3993,6 +4045,8 @@ impl DMR {
     }
 
     /// UMass topic coherence per topic, shape ``(num_topics,)``.
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -4007,6 +4061,11 @@ impl DMR {
     /// ``(num_docs, F)`` covariate array matching training, no intercept) sets
     /// each document's Dirichlet prior `α_d = exp(Xγ)`; if omitted the
     /// intercept-only baseline prior is used. Returns ``(num_docs, num_topics)``.
+    ///
+    /// The collapsed-Gibbs controls are per-document: `iters` sweeps each new
+    /// document, discarding the first `burn_in`, then averaging `num_samples` θ
+    /// snapshots taken `sample_interval` sweeps apart; `seed` seeds the inference
+    /// RNG. `iterations` is a deprecated alias for `iters`.
     #[pyo3(signature = (data, features=None, *, iters=100, burn_in=10,
                         num_samples=10, sample_interval=5, seed=None, iterations=None))]
     #[allow(clippy::too_many_arguments)]
@@ -4224,6 +4283,9 @@ impl LabeledLDA {
 impl LabeledLDA {
     /// Create an unfitted model. `alpha` is the (symmetric) per-topic prior
     /// over a document's allowed topics.
+    /// `beta` is the topic-word Dirichlet smoothing; `seed` seeds the Gibbs RNG.
+    /// `sampler` selects the inference backend: ``"sparse"`` (default), ``"warp"``
+    /// (WarpLDA), or ``"cvb0"`` (deterministic collapsed variational Bayes).
     #[new]
     #[pyo3(signature = (*, alpha=0.1, beta=0.01, seed=42, sampler="sparse"))]
     fn new(alpha: f64, beta: f64, seed: u64, sampler: &str) -> PyResult<Self> {
@@ -4267,6 +4329,17 @@ impl LabeledLDA {
     ///
     /// `convergence_tol` (default 0.0, disabled) enables early stopping based
     /// on the relative change in log-likelihood every `check_every` sweeps.
+    ///
+    /// `iters` is the number of Gibbs sweeps.
+    /// After burn-in, `num_samples` posterior snapshots are collected
+    /// `sample_interval` sweeps apart for the retained draws.
+    /// `progress` toggles a progress display; `progress_interval` sets how often the
+    /// model-fit/log-likelihood trace is recorded (0 = ~50 evenly spaced points);
+    /// `report_interval` is a deprecated alias for `progress_interval`.
+    /// `keep_theta_draws` (default True) retains `num_theta_draws` thinned MCMC θ
+    /// snapshots in `theta_draws`, the cross-sweep posterior samples
+    /// `composition_theta` prefers over the Dirichlet approximation; set it False to
+    /// save memory.
     #[pyo3(signature = (data, labels, *, label_names=None, iters=1000,
                         num_samples=5, sample_interval=25, progress=None, progress_interval=50,
                         keep_theta_draws=true, num_theta_draws=25,
@@ -4684,6 +4757,8 @@ impl LabeledLDA {
     }
 
     /// UMass topic coherence per topic, shape ``(num_topics,)``.
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -4697,6 +4772,11 @@ impl LabeledLDA {
     /// (unsupervised inference). `data` is a :class:`Corpus` or
     /// `list[list[str]]`; OOV tokens are dropped. Returns ``(num_docs,
     /// num_topics)``; columns align with :attr:`labels`.
+    ///
+    /// The collapsed-Gibbs controls are per-document: `iters` sweeps each new
+    /// document, discarding the first `burn_in`, then averaging `num_samples` θ
+    /// snapshots taken `sample_interval` sweeps apart; `seed` seeds the inference
+    /// RNG. `iterations` is a deprecated alias for `iters`.
     #[pyo3(signature = (data, *, iters=100, burn_in=10, num_samples=10,
                         sample_interval=5, seed=None, iterations=None))]
     fn transform<'py>(
@@ -4866,6 +4946,9 @@ impl SAGE {
 impl SAGE {
     /// Create an unfitted model. `alpha` is the symmetric document-topic prior;
     /// `prior_variance` is the Gaussian prior on the κ content deviations.
+    /// `num_topics` is the number of topics K; `seed` seeds the Gibbs RNG. The κ
+    /// content deviations are re-estimated by L-BFGS every `optimize_interval`
+    /// sweeps once past `burn_in`, `lbfgs_iters` steps per update.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=0.1, prior_variance=1.0,
                         optimize_interval=50, burn_in=200, seed=42, lbfgs_iters=20))]
@@ -4908,6 +4991,26 @@ impl SAGE {
     /// Fit the model. `data` is a :class:`Corpus` or `list[list[str]]`;
     /// `groups` is a per-document group label (strings or ints), one per
     /// document. `group_names` fixes the group order (defaults to sorted union).
+    ///
+    /// `iters` is the number of Gibbs sweeps.
+    /// After burn-in, `num_samples` posterior snapshots are collected
+    /// `sample_interval` sweeps apart for the retained draws.
+    /// `progress` toggles a progress display; `progress_interval` sets how often the
+    /// model-fit/log-likelihood trace is recorded (0 = ~50 evenly spaced points);
+    /// `report_interval` is a deprecated alias for `progress_interval`.
+    /// `keep_theta_draws` (default True) retains `num_theta_draws` thinned MCMC θ
+    /// snapshots in `theta_draws`, the cross-sweep posterior samples
+    /// `composition_theta` prefers over the Dirichlet approximation; set it False to
+    /// save memory.
+    /// `convergence_tol` (default 0.0, disabled) enables opt-in early stopping: the
+    /// run stops once the relative change in the recorded log-likelihood between the
+    /// last two trace points, |ΔLL| / |LL|, falls below it, setting `converged`. The
+    /// monitored quantity is the collapsed model-fit log-likelihood; the comparison
+    /// window is the trace cadence (`check_every` / `progress_interval`), so a coarser
+    /// cadence compares more widely spaced sweeps. This is a pragmatic early-stop
+    /// heuristic on the log-likelihood trace, not a guarantee the Gibbs chain has
+    /// mixed. `check_every` is how often, in sweeps, the log-likelihood is recorded
+    /// and the `convergence_tol` test is applied.
     #[pyo3(signature = (data, groups, *, group_names=None, iters=1000,
                         num_samples=5, sample_interval=25, progress=None, progress_interval=50,
                         keep_theta_draws=true, num_theta_draws=25,
@@ -5301,6 +5404,7 @@ impl SAGE {
     /// Words that most distinguish how `topic` is worded in `group_a` vs
     /// `group_b`, by log-ratio of the two groups' word probabilities. Returns
     /// ``(word, log_ratio)`` — positive favours `group_a`.
+    /// `n` is the number of most contrastive words to return.
     #[pyo3(signature = (topic, group_a, group_b, n=10))]
     fn word_contrast<'py>(
         &self,
@@ -5333,6 +5437,8 @@ impl SAGE {
     }
 
     /// UMass topic coherence per topic (group-averaged), shape ``(num_topics,)``.
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -5410,6 +5516,11 @@ impl SAGE {
     /// a group covariate for new documents. This is a baseline projection;
     /// the group-specific word distributions are a training-time device and
     /// cannot be recovered for documents whose group label is unknown.
+    ///
+    /// The collapsed-Gibbs controls are per-document: `iters` sweeps each new
+    /// document, discarding the first `burn_in`, then averaging `num_samples` θ
+    /// snapshots taken `sample_interval` sweeps apart; `seed` seeds the inference
+    /// RNG. `iterations` is a deprecated alias for `iters`.
     #[pyo3(signature = (data, *, iters=100, burn_in=10, num_samples=10,
                         sample_interval=5, seed=None, iterations=None))]
     fn transform<'py>(
@@ -5659,6 +5770,7 @@ impl CTM {
     /// ``"diagonal"`` (mean-field ν = diag(1/H_ii), which skips the per-document
     /// Cholesky/inverse for a large E-step speedup at high K, at the cost of the
     /// off-diagonal posterior covariance — topic-correlation/SE precision is lower).
+    /// `num_topics` is the number of topics K.
     #[new]
     #[pyo3(signature = (num_topics, *, sigma_shrink=0.0, seed=42, init="spectral", variational="laplace"))]
     fn new(
@@ -5726,6 +5838,10 @@ impl CTM {
     /// the per-document variational covariance (an O(N*K^2) array), cutting memory
     /// sharply at large K; `posterior_theta_samples` / `estimate_effect` with
     /// draws transparently recompute it on demand when needed.
+    /// `beta_init` is an optional initial topic-word matrix to warm-start from.
+    /// `em_tol` is the relative-bound tolerance for EM early stopping — the run
+    /// stops when the relative change in the variational evidence bound falls below
+    /// it (the criterion R `stm` uses).
     #[pyo3(signature = (data, *, iters=500, convergence_tol=1e-5, inference="batch",
                         batch_size=256, tau=64.0, kappa=0.7, beta_init=None, em_tol=None,
                         keep_eta_cov=true, num_threads=None))]
@@ -6169,6 +6285,8 @@ impl CTM {
     }
 
     /// UMass topic coherence per topic, shape ``(num_topics,)``.
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -6384,6 +6502,7 @@ impl STM {
     /// ``"diagonal"`` (mean-field ν = diag(1/H_ii), which skips the per-document
     /// Cholesky/inverse for a large E-step speedup at high K, at the cost of the
     /// off-diagonal posterior covariance — topic-correlation/SE precision is lower).
+    /// `num_topics` is the number of topics K.
     #[new]
     #[pyo3(signature = (num_topics, *, sigma_shrink=0.0, seed=42, init="spectral", variational="laplace"))]
     fn new(
@@ -6472,6 +6591,12 @@ impl STM {
     /// demand. The covariance approximation is set on the constructor via
     /// `variational=` (``"laplace"`` default, or ``"diagonal"`` for a faster,
     /// lower-precision mean-field covariance).
+    /// `prevalence_names` and `content_names` are human-readable labels for the
+    /// columns of the prevalence and content design matrices, surfaced in the effect
+    /// outputs. `convergence_tol` is the relative-bound tolerance for EM early
+    /// stopping — the run stops when the relative change in the variational evidence
+    /// bound falls below it (the criterion R `stm` uses). `beta_init` is an optional
+    /// initial topic-word matrix to warm-start from.
     #[pyo3(signature = (data, prevalence=None, *, prevalence_names=None,
                         content=None, content_names=None, iters=500, convergence_tol=1e-5,
                         gamma_prior="pooled", gamma_enet=1.0, beta_init=None, em_tol=None,
@@ -7065,6 +7190,7 @@ impl STM {
     /// Words that most distinguish how `topic` is worded in `group_a` vs
     /// `group_b` (log word-probability ratio; positive favours `group_a`).
     /// Requires content covariates.
+    /// `n` is the number of most contrastive words to return.
     #[pyo3(signature = (topic, group_a, group_b, n=10))]
     fn word_contrast<'py>(
         &self,
@@ -7163,6 +7289,8 @@ impl STM {
     }
 
     /// UMass topic coherence per topic, shape ``(num_topics,)``.
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -7433,6 +7561,7 @@ impl ECTM {
     /// group×period content deviations starting at zero as R `stm` does for κ) or
     /// ``"random"`` (seeded). The spectral base removes the multimodal collapse of
     /// a random base β (issue #220); with ``init="random"`` `seed` matters.
+    /// `num_topics` is the number of topics K.
     #[new]
     #[pyo3(signature = (num_topics, *, sigma_shrink=0.0, seed=42, variational="laplace", init="spectral"))]
     fn new(
@@ -7502,6 +7631,19 @@ impl ECTM {
     /// term (larger ⇒ the changing contrast is pulled harder toward zero unless
     /// the data demand it). EM runs until the relative change in the variational
     /// bound drops below `convergence_tol` or `iters` iterations are reached.
+    /// `prevalence_names`, `content_names`, and `period_names` are human-readable
+    /// labels for the columns of the prevalence and content design matrices and for
+    /// the time periods, surfaced in the effect outputs. `inference` selects the
+    /// algorithm: ``"batch"`` (full-batch variational EM, default) or ``"svi"``
+    /// (stochastic variational EM for large corpora). `batch_size` is the number of
+    /// documents per minibatch under ``"svi"`` (ignored in batch mode). `tau` and
+    /// `kappa` parameterize the Robbins-Monro SVI learning-rate schedule
+    /// ``rho_t = (tau + t)^(-kappa)``: larger `tau` down-weights early, noisier
+    /// minibatches and `kappa` in (0.5, 1] sets the forgetting rate. `content_every`
+    /// sets how many minibatches between content-deviation (κ) M-step solves under
+    /// SVI (0 = auto, ~10 solves per epoch). `keep_eta_cov` (default True) stores the
+    /// full per-document logistic-normal covariances; set it False to save memory.
+    /// `num_threads` sets the thread count (None = automatic).
     #[pyo3(signature = (data, times, content, *, prevalence=None, prevalence_names=None,
                         content_names=None, period_names=None, iters=500, convergence_tol=1e-5,
                         content_prior_var=1.0, period_smooth=5.0, interaction_shrink=2.0,
@@ -8032,6 +8174,8 @@ impl ECTM {
     }
 
     /// UMass topic coherence per topic, shape ``(num_topics,)``.
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -8205,6 +8349,9 @@ fn inspect_score_scores(py: Python<'_>, beta: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
 /// stm-faithful per-topic exclusivity (`topica-core` `inspect::exclusivity`): the
 /// FREX-summary over each topic's top-`m` words, with frequency/exclusivity weight
 /// `frexw` (stm default 0.7). Returns K values. Internal; see [`inspect_frex_scores`].
+///
+/// `beta` is the ``(num_topics, num_words)`` topic-word probability matrix to
+/// score.
 #[pyfunction]
 #[pyo3(signature = (beta, m, frexw=0.7))]
 fn inspect_exclusivity(py: Python<'_>, beta: Vec<Vec<f64>>, m: usize, frexw: f64) -> Vec<f64> {
@@ -8245,6 +8392,10 @@ fn warn_stochastic(py: Python<'_>, method: &str) -> PyResult<()> {
 /// "umap", or "tsne"; the latter two preserve local neighborhoods but distort
 /// global geometry and are not reproducible (a warning is issued). `data` is a 2D
 /// float array or a list of float lists. Returns an `(n_rows, n_components)` array.
+///
+/// `n_neighbors` is the local-neighborhood size for the UMAP graph; `perplexity`
+/// is t-SNE's effective neighborhood size; `seed` seeds the reducer (UMAP/PCA)
+/// for reproducibility.
 #[pyfunction]
 #[pyo3(signature = (data, n_components=2, *, method="pca", n_neighbors=15, perplexity=30.0, seed=0))]
 fn project<'py>(
@@ -8314,6 +8465,10 @@ fn project<'py>(
 /// Tokenize a string the way the corpus loader does: find regex tokens,
 /// optionally lowercase, drop short tokens and stopwords. Handy for building
 /// `list[list[str]]` input outside of `Corpus.from_text_file`.
+///
+/// `text` is the input string. `token_regex` is the token-matching pattern
+/// (None = the default word regex). `min_length` drops tokens shorter than that
+/// many characters.
 #[pyfunction]
 #[pyo3(signature = (text, *, lowercase=true, stopwords=None, token_regex=None, min_length=1))]
 fn tokenize(
@@ -8448,6 +8603,7 @@ impl STS {
 impl STS {
     /// Create an unfitted model. `init` is ``"spectral"`` (default; deterministic
     /// anchor-word β init) or ``"random"`` (seeded).
+    /// `num_topics` is the number of topics K; `seed` seeds the RNG.
     #[new]
     #[pyo3(signature = (num_topics, *, seed=42, init="spectral"))]
     fn new(
@@ -8506,6 +8662,12 @@ impl STS {
     /// ridge); ``"lasso"`` is an L1 Poisson path with AIC-selected penalty,
     /// matching the reference R `sts` exactly (sparser κ) at a higher cost. The
     /// two give the same topics on well-conditioned corpora.
+    /// `prevalence_names` are human-readable labels for the prevalence design-matrix
+    /// columns, surfaced in the effect outputs. `em_tol` is the relative-bound
+    /// tolerance for EM early stopping — the run stops when the relative change in
+    /// the variational evidence bound falls below it. `keep_eta_cov` (default True)
+    /// stores the full per-document logistic-normal covariances; set it False to
+    /// save memory.
     #[pyo3(signature = (data, sentiment_seed, prevalence=None, *,
                         prevalence_names=None, iters=30, convergence_tol=1e-5,
                         kappa_estimation="ridge", kappa_ridge=1e-3, em_tol=None, covariates=None,
@@ -9136,6 +9298,8 @@ impl STS {
     }
 
     /// UMass topic coherence per topic, shape ``(num_topics,)``.
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -9233,6 +9397,7 @@ impl HDP {
     /// (issue #68). The resampled concentrations are now capped to keep that
     /// bounded, but fixed concentrations remain the recommended default; set
     /// `gamma` to choose the granularity directly.
+    /// `beta` is the topic-word Dirichlet smoothing; `seed` seeds the Gibbs RNG.
     #[new]
     #[pyo3(signature = (*, alpha=0.1, gamma=0.1, beta=0.01, seed=42, resample_conc=false, eta=None))]
     fn new(
@@ -9289,6 +9454,12 @@ impl HDP {
 
     /// Fit by Gibbs sampling for `iters` sweeps. `data` is a :class:`Corpus` or
     /// `list[list[str]]`. The inferred topic count is available as `num_topics`.
+    /// `progress_interval` sets how often the discovery trace is recorded (0 = ~50
+    /// evenly spaced points); `report_interval` is a deprecated alias for it.
+    /// `keep_theta_draws` (default True) retains `num_theta_draws` thinned MCMC θ
+    /// snapshots in `theta_draws`, the cross-sweep posterior samples
+    /// `composition_theta` prefers over the Dirichlet approximation; set it False to
+    /// save memory.
     #[pyo3(signature = (data, *, iters=150, progress_interval=0,
                         keep_theta_draws=true, num_theta_draws=25, report_interval=None))]
     fn fit(
@@ -9592,6 +9763,8 @@ impl HDP {
     }
 
     /// UMass topic coherence per topic, shape ``(num_topics,)``.
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -9605,6 +9778,11 @@ impl HDP {
     /// :class:`Corpus` or `list[list[str]]`; OOV tokens are dropped. The
     /// document-level prior is symmetric with total mass equal to the learned
     /// concentration α. Returns a ``(num_docs, num_topics)`` array.
+    ///
+    /// The collapsed-Gibbs controls are per-document: `iters` sweeps each new
+    /// document, discarding the first `burn_in`, then averaging `num_samples` θ
+    /// snapshots taken `sample_interval` sweeps apart; `seed` seeds the inference
+    /// RNG. `iterations` is a deprecated alias for `iters`.
     #[pyo3(signature = (data, *, iters=100, burn_in=10, num_samples=10,
                         sample_interval=5, seed=None, iterations=None))]
     fn transform<'py>(
@@ -9777,6 +9955,7 @@ impl DTM {
     /// reproducible across seeds and avoids the multimodal scatter a random seed
     /// can fall into). The default tracks DTM's reference implementation; choose
     /// ``"spectral"`` when you want a single deterministic fit.
+    /// `num_topics` is the number of topics K, shared across all time slices.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=0.01, chain_variance=0.005, obs_variance=0.5, seed=42, init="random"))]
     fn new(
@@ -9819,6 +9998,7 @@ impl DTM {
     /// Fit by variational EM. `data` is a :class:`Corpus` or `list[list[str]]`;
     /// `times` gives each document's integer time-slice index (0-based,
     /// contiguous). The number of slices is inferred as ``max(times) + 1``.
+    /// `iters` is the number of variational-EM iterations.
     #[pyo3(signature = (data, times, *, iters=20))]
     fn fit(
         &mut self,
@@ -9982,6 +10162,7 @@ impl DTM {
     /// each a list of ``(word, delta)`` pairs (largest gain first; largest drop
     /// first). This is how you see *what* makes a topic's vocabulary evolve, not
     /// just that it does.
+    /// `n` is the number of top drifting words to return per direction.
     #[pyo3(signature = (topic, *, n=10, from_time=0, to_time=None))]
     fn word_drift<'py>(
         &self,
@@ -10202,6 +10383,7 @@ impl SupervisedLDA {
 impl SupervisedLDA {
     /// Create an unfitted model. `alpha` is the symmetric Dirichlet
     /// concentration on document-topic proportions.
+    /// `num_topics` is the number of topics K; `seed` seeds the RNG.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=0.1, seed=42))]
     fn new(
@@ -10235,6 +10417,22 @@ impl SupervisedLDA {
 
     /// Fit by variational EM. `data` is a :class:`Corpus` or `list[list[str]]`;
     /// `y` is the per-document real-valued response (length = number of docs).
+    ///
+    /// `iters` is the number of variational-EM iterations; `var_iters` is the
+    /// number of variational E-step iterations per document.
+    /// `keep_theta_draws` (default True) retains `num_theta_draws` thinned MCMC θ
+    /// snapshots in `theta_draws`, the cross-sweep posterior samples
+    /// `composition_theta` prefers over the Dirichlet approximation; set it False to
+    /// save memory.
+    /// `convergence_tol` (default 0.0, disabled) enables opt-in early stopping: the
+    /// run stops once the relative change in the recorded log-likelihood between the
+    /// last two trace points, |ΔLL| / |LL|, falls below it, setting `converged`. The
+    /// monitored quantity is the collapsed model-fit log-likelihood; the comparison
+    /// window is the trace cadence (`check_every` / `progress_interval`), so a coarser
+    /// cadence compares more widely spaced sweeps. This is a pragmatic early-stop
+    /// heuristic on the log-likelihood trace, not a guarantee the Gibbs chain has
+    /// mixed. `check_every` is how often, in sweeps, the log-likelihood is recorded
+    /// and the `convergence_tol` test is applied.
     #[pyo3(signature = (data, y, *, iters=25, var_iters=15,
                         keep_theta_draws=true, num_theta_draws=25,
                         convergence_tol=0.0_f64, check_every=1_usize))]
@@ -10362,6 +10560,7 @@ impl SupervisedLDA {
     /// Predict the response ŷ for new documents (`list[list[str]]` or a
     /// :class:`Corpus`). Out-of-vocabulary words are ignored. Returns a 1-D array
     /// of length = number of documents.
+    /// `var_iters` is the number of variational E-step iterations per new document.
     #[pyo3(signature = (data, *, var_iters=20))]
     fn predict<'py>(
         &self,
@@ -10545,6 +10744,8 @@ impl SupervisedLDA {
     }
 
     /// UMass topic coherence per topic, shape ``(num_topics,)``.
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -10558,6 +10759,11 @@ impl SupervisedLDA {
     /// unsupervised E-step). `data` is a :class:`Corpus` or `list[list[str]]`;
     /// OOV tokens are dropped. Returns ``(num_docs, num_topics)``. To predict the
     /// response for new documents, take ``transform(data) @ eta``.
+    ///
+    /// The collapsed-Gibbs controls are per-document: `iters` sweeps each new
+    /// document, discarding the first `burn_in`, then averaging `num_samples` θ
+    /// snapshots taken `sample_interval` sweeps apart; `seed` seeds the inference
+    /// RNG. `iterations` is a deprecated alias for `iters`.
     #[pyo3(signature = (data, *, iters=100, burn_in=10, num_samples=10,
                         sample_interval=5, seed=None, iterations=None))]
     fn transform<'py>(
@@ -10711,6 +10917,9 @@ impl PT {
 impl PT {
     /// Create an unfitted model. `num_pseudo` is the number of pseudo-documents
     /// short texts are aggregated into (more = finer, fewer = more aggregation).
+    /// `num_topics` is the number of topics K; `alpha` is the document-topic
+    /// Dirichlet prior, `beta` the topic-word Dirichlet smoothing; `seed` seeds
+    /// the Gibbs RNG.
     #[new]
     #[pyo3(signature = (num_topics, *, num_pseudo=100, alpha=0.1, beta=0.01, seed=42))]
     fn new(
@@ -10747,6 +10956,19 @@ impl PT {
     }
 
     /// Fit by collapsed Gibbs sampling for `iters` sweeps.
+    /// `keep_theta_draws` (default True) retains `num_theta_draws` thinned MCMC θ
+    /// snapshots in `theta_draws`, the cross-sweep posterior samples
+    /// `composition_theta` prefers over the Dirichlet approximation; set it False to
+    /// save memory.
+    /// `convergence_tol` (default 0.0, disabled) enables opt-in early stopping: the
+    /// run stops once the relative change in the recorded log-likelihood between the
+    /// last two trace points, |ΔLL| / |LL|, falls below it, setting `converged`. The
+    /// monitored quantity is the collapsed model-fit log-likelihood; the comparison
+    /// window is the trace cadence (`check_every` / `progress_interval`), so a coarser
+    /// cadence compares more widely spaced sweeps. This is a pragmatic early-stop
+    /// heuristic on the log-likelihood trace, not a guarantee the Gibbs chain has
+    /// mixed. `check_every` is how often, in sweeps, the log-likelihood is recorded
+    /// and the `convergence_tol` test is applied.
     #[pyo3(signature = (data, *, iters=1000, keep_theta_draws=true, num_theta_draws=25,
                         convergence_tol=0.0_f64, check_every=10_usize))]
     fn fit(
@@ -10897,6 +11119,10 @@ impl PT {
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
 
+    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    ///
+    /// Returns a list of `n`-length lists (one per topic), or — when `topic`
+    /// is given — just that topic's list.
     #[pyo3(signature = (n=10, *, topic=None))]
     fn top_words<'py>(
         &self,
@@ -10914,6 +11140,8 @@ impl PT {
             topic,
         )
     }
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -10982,6 +11210,11 @@ impl PT {
     /// aggregation device. Held-out documents infer θ over the K topics
     /// directly under the fitted topic-word matrix, without pseudo-document
     /// assignment.
+    ///
+    /// The collapsed-Gibbs controls are per-document: `iters` sweeps each new
+    /// document, discarding the first `burn_in`, then averaging `num_samples` θ
+    /// snapshots taken `sample_interval` sweeps apart; `seed` seeds the inference
+    /// RNG. `iterations` is a deprecated alias for `iters`.
     #[pyo3(signature = (data, *, iters=100, burn_in=10, num_samples=10,
                         sample_interval=5, seed=None, iterations=None))]
     fn transform<'py>(
@@ -11067,6 +11300,7 @@ impl GSDMM {
     /// `K`; the number actually used (non-empty after fitting) is reported by the
     /// `num_topics` getter and is usually smaller. `alpha` controls the pull
     /// toward populous clusters; `beta` is the word-Dirichlet smoothing.
+    /// `seed` seeds the Movie Group Process Gibbs RNG.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=0.1, beta=0.1, seed=42))]
     fn new(
@@ -11103,6 +11337,7 @@ impl GSDMM {
     /// `progress_interval` controls the cluster-discovery trace
     /// (`cluster_count_history` / `log_likelihood_history`): 0 = auto (~50
     /// points), a positive value records every that-many sweeps.
+    /// `report_interval` is a deprecated alias for `progress_interval`.
     #[pyo3(signature = (data, *, iters=30, progress_interval=0, report_interval=None))]
     fn fit(
         &mut self,
@@ -11293,6 +11528,10 @@ impl GSDMM {
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
 
+    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    ///
+    /// Returns a list of `n`-length lists (one per topic), or — when `topic`
+    /// is given — just that topic's list.
     #[pyo3(signature = (n=10, *, topic=None))]
     fn top_words<'py>(
         &self,
@@ -11310,6 +11549,8 @@ impl GSDMM {
             topic,
         )
     }
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -11477,6 +11718,8 @@ impl SeededLDA {
     /// `residual` adds that many extra unseeded topics. `weight` (default 0.01,
     /// matching the seededlda package) scales the seed prior. `alpha` is the
     /// per-topic Dirichlet, `beta` the base topic-word smoothing.
+    /// `sampler` selects the inference backend: ``"sparse"`` (default), ``"warp"``
+    /// (WarpLDA), or ``"cvb0"`` (deterministic collapsed variational Bayes).
     #[new]
     #[pyo3(signature = (seed_words, *, residual=0, alpha=0.1, beta=0.01, weight=0.01, seed=42,
                         sampler="sparse"))]
@@ -11543,6 +11786,10 @@ impl SeededLDA {
     /// compared; if it falls below `convergence_tol` the loop stops and
     /// :attr:`converged` is set to ``True``. When 0 (default), the full `iters`
     /// run exactly as before.
+    /// `keep_theta_draws` (default True) retains `num_theta_draws` thinned MCMC θ
+    /// snapshots in `theta_draws`, the cross-sweep posterior samples
+    /// `composition_theta` prefers over the Dirichlet approximation; set it False to
+    /// save memory.
     #[pyo3(signature = (data, *, iters=2000, doc_topic_prior=None,
                         keep_theta_draws=true, num_theta_draws=25,
                         convergence_tol=0.0_f64, check_every=10_usize))]
@@ -11820,6 +12067,10 @@ impl SeededLDA {
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
 
+    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    ///
+    /// Returns a list of `n`-length lists (one per topic), or — when `topic`
+    /// is given — just that topic's list.
     #[pyo3(signature = (n=10, *, topic=None))]
     fn top_words<'py>(
         &self,
@@ -11837,6 +12088,8 @@ impl SeededLDA {
             topic,
         )
     }
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -11910,6 +12163,11 @@ impl SeededLDA {
     /// **Approximation:** the seed-word boost is baked into the fitted
     /// topic-word matrix. New documents infer θ under those distributions
     /// without re-estimating the seed prior.
+    ///
+    /// The collapsed-Gibbs controls are per-document: `iters` sweeps each new
+    /// document, discarding the first `burn_in`, then averaging `num_samples` θ
+    /// snapshots taken `sample_interval` sweeps apart; `seed` seeds the inference
+    /// RNG. `iterations` is a deprecated alias for `iters`.
     #[pyo3(signature = (data, *, iters=100, burn_in=10, num_samples=10,
                         sample_interval=5, seed=None, iterations=None))]
     fn transform<'py>(
@@ -12095,6 +12353,10 @@ impl Top2Vec {
     /// its knobs), or `"kmeans"` / `"agglomerative"`, which assign every document
     /// to `num_clusters` clusters (no noise). `min_samples` defaults to
     /// `min_cluster_size`.
+    ///
+    /// `reducer` is the dimensionality-reduction method, ``"pca"`` (default,
+    /// deterministic) or ``"umap"`` (stochastic); `n_neighbors` is the
+    /// neighborhood size for the reducer; `seed` seeds the deterministic phases.
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
                         reducer="pca", n_neighbors=15, clusterer="hdbscan",
@@ -12403,6 +12665,8 @@ impl Top2Vec {
     /// Soft topic membership for new documents from their embeddings (cosine to
     /// each topic vector, normalized). `data` is accepted for API symmetry but
     /// Top2Vec assigns by embedding only. Returns `(num_docs, num_topics)`.
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let m = self.fitted_model()?;
@@ -12445,6 +12709,9 @@ impl Top2Vec {
         Ok(Array1::from(umass_coherence(&corpus, &tops)).to_pyarray_bound(py))
     }
 
+    /// Assign new documents to the nearest topic by cosine distance.
+    /// `doc_embeddings` is the ``(num_docs, embedding_dim)`` embedding matrix,
+    /// one row per document.
     #[pyo3(signature = (data, doc_embeddings=None))]
     fn transform<'py>(
         &self,
@@ -12467,6 +12734,10 @@ impl Top2Vec {
     }
 
     /// Fit, then return the document-topic proportions (`fit_transform`).
+    ///
+    /// `doc_embeddings` and `word_embeddings` are the ``(num_docs, E)`` and
+    /// ``(len(vocabulary), E)`` dense embedding matrices; `vocabulary` lists the
+    /// word strings aligned to the rows of `word_embeddings`.
     #[pyo3(signature = (data, doc_embeddings, *, word_embeddings=None, vocabulary=None))]
     fn fit_transform<'py>(
         &mut self,
@@ -12666,6 +12937,17 @@ impl BERTopic {
     /// Create an unfitted model. `nr_topics` (optional) reduces the discovered
     /// topics to that many by merging the most c-TF-IDF-similar; `window`/`stride`
     /// parameterize the soft `doc_topic` distribution.
+    ///
+    /// `n_components` is the reduced dimensionality before clustering;
+    /// `min_cluster_size` is the smallest HDBSCAN cluster and `min_samples` its
+    /// core-point neighborhood (defaults to `min_cluster_size`). `reducer` is
+    /// ``"pca"`` (default, deterministic) or ``"umap"`` (stochastic) and
+    /// `n_neighbors` its neighborhood size. `bm25` switches the c-TF-IDF term
+    /// weighting to class-based BM25 and `reduce_frequent` dampens frequent terms
+    /// by a square-root before IDF. `clusterer` is ``"hdbscan"`` (default),
+    /// ``"kmeans"`` or ``"agglomerative"``; `num_clusters` sets the target count
+    /// for the latter two (ignored by HDBSCAN). `seed` seeds the deterministic
+    /// phases.
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
                         nr_topics=None, window=4, stride=1, reducer="pca", n_neighbors=15,
@@ -12970,6 +13252,8 @@ impl BERTopic {
     }
 
     /// Fit, then return the document-topic distribution (`fit_transform`).
+    /// `doc_embeddings` is the ``(num_docs, embedding_dim)`` embedding matrix,
+    /// one row per document in corpus order.
     #[pyo3(signature = (data, doc_embeddings))]
     fn fit_transform<'py>(
         &mut self,
@@ -13287,6 +13571,14 @@ impl ETM {
     /// `max_inner`/`sigma_shrink` govern the EM path; `hidden_size`/
     /// `batch_size`/`lr`/`wdecay`/`convergence_tol` govern the VAE path.
     /// Pass `iters` to :meth:`fit` to set the iteration count.
+    ///
+    /// `num_topics` is the number of topics K; `seed` seeds the RNG. `prior` sets
+    /// the document-topic prior on the VAE path: ``"laplace"`` (default,
+    /// logistic-normal Laplace approximation to a Dirichlet), ``"dirichlet"`` (true
+    /// Dirichlet via a Weibull reparameterization) or ``"stick_breaking"`` (Gaussian
+    /// stick-breaking). `contrastive` adds an InfoNCE contrastive term on the topic
+    /// vectors, scaled by `contrastive_weight` with InfoNCE temperature
+    /// `contrastive_temp`. `em_tol` is a deprecated alias for `convergence_tol`.
     #[new]
     #[pyo3(signature = (num_topics, *, inference="em", convergence_tol=1e-4,
                         sigma_shrink=0.0, prior_variance=1e6, max_inner=25,
@@ -13587,6 +13879,10 @@ impl ETM {
         self.ensure_fitted()?;
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
+    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    ///
+    /// Returns a list of `n`-length lists (one per topic), or — when `topic`
+    /// is given — just that topic's list.
     #[pyo3(signature = (n=10, *, topic=None))]
     fn top_words<'py>(
         &self,
@@ -13815,6 +14111,11 @@ impl ETM {
     }
 
     /// Fit, then return the document-topic proportions (`fit_transform`).
+    ///
+    /// `word_embeddings` is the ``(len(vocabulary), E)`` dense embedding matrix
+    /// aligned to `vocabulary`, the list of word strings; tokens outside it are
+    /// dropped. `iters` is the number of training iterations (EM iterations or VAE
+    /// epochs).
     #[pyo3(signature = (data, word_embeddings, vocabulary, *, iters=None))]
     fn fit_transform<'py>(
         &mut self,
@@ -13930,6 +14231,7 @@ impl DETM {
     /// log-variances are additionally clamped before every ``exp`` for stability; that
     /// clamp is internal and never reached on a well-behaved fit.) Pass ``iters`` to
     /// :meth:`fit` for the epoch count.
+    /// `num_topics` is the number of topics K; `seed` seeds the RNG.
     #[new]
     #[pyo3(signature = (num_topics, *, delta=0.005, hidden_size=800,
                         eta_hidden_size=200, eta_nlayers=3, batch_size=1000,
@@ -13992,6 +14294,9 @@ impl DETM {
     /// (`(len(vocabulary), L)`) and the aligned `vocabulary`. `times` is each
     /// document's integer time-slice index (0-based, contiguous; alias
     /// `timestamps`). `iters` sets the number of training epochs.
+    /// `convergence_tol` is the relative-bound tolerance for EM early stopping —
+    /// the run stops when the relative change in the variational evidence bound
+    /// falls below it.
     #[pyo3(signature = (data, word_embeddings, vocabulary, *, times=None, timestamps=None,
                         iters=100, convergence_tol=None))]
     #[allow(clippy::too_many_arguments)]
@@ -14512,6 +14817,11 @@ impl InfoCTM {
     /// is the cosine cutoff for the embedding-densified positive mask (0.4, used
     /// only when embeddings are given). `languages` names the two corpora for the
     /// `lang=` selector (default `("a", "b")`). Pass `iters`/`batch_size` to `fit`.
+    ///
+    /// `num_topics` is the number of topics K; `seed` seeds the RNG.
+    /// `hidden_size` is the encoder hidden-layer width, `dropout` the encoder
+    /// dropout rate, and `lr` the Adam learning rate. `convergence_tol` is the
+    /// relative-bound tolerance for EM early stopping (0 disables it).
     #[new]
     #[pyo3(signature = (num_topics, *, mi_weight=30.0, mi_temperature=0.2,
                         pos_threshold=0.4, hidden_size=100, dropout=0.0, lr=0.002,
@@ -14562,6 +14872,7 @@ impl InfoCTM {
     /// are optional `{word: vector}` maps that densify the alignment mask; absent,
     /// the positives are the direct dictionary pairs. `iters` is the number of
     /// epochs (reference 500).
+    /// `batch_size` is the number of documents per minibatch.
     #[pyo3(signature = (data_a, data_b, *, dictionary, embeddings_a=None,
                         embeddings_b=None, iters=None, batch_size=128))]
     #[allow(clippy::too_many_arguments)]
@@ -14698,18 +15009,24 @@ impl InfoCTM {
     }
 
     /// Document-topic proportions for one language (num_docs, num_topics).
+    /// `lang` selects which language's output to return (the language name, or
+    /// ``"a"``/``"b"`` / ``"0"``/``"1"`` for the first/second corpus).
     #[pyo3(signature = (lang="a"))]
     fn doc_topic<'py>(&self, py: Python<'py>, lang: &str) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(&self.model_for(lang)?.doc_topic).to_pyarray_bound(py))
     }
 
     /// Vocabulary for one language, in id order.
+    /// `lang` selects which language's vocabulary to return (the language name, or
+    /// ``"a"``/``"b"`` / ``"0"``/``"1"`` for the first/second corpus).
     #[pyo3(signature = (lang="a"))]
     fn vocabulary(&self, lang: &str) -> PyResult<Vec<String>> {
         Ok(self.corpus_for(lang)?.id_to_word.clone())
     }
 
     /// Top-`n` words per topic for one language as `(word, weight)` pairs.
+    /// `lang` selects which language's output to return (the language name, or
+    /// ``"a"``/``"b"`` / ``"0"``/``"1"`` for the first/second corpus).
     #[pyo3(signature = (n=10, *, lang="a"))]
     fn top_words(&self, n: usize, lang: &str) -> PyResult<Vec<Vec<(String, f64)>>> {
         let model = self.model_for(lang)?;
@@ -14731,6 +15048,8 @@ impl InfoCTM {
     /// Assign held-out documents of one language to the discovered topics
     /// (num_docs, num_topics) via a single encoder pass. Words outside that
     /// language's vocabulary are dropped.
+    /// `lang` selects which language's output to return (the language name, or
+    /// ``"a"``/``"b"`` / ``"0"``/``"1"`` for the first/second corpus).
     #[pyo3(signature = (data, *, lang="a"))]
     fn transform<'py>(
         &self,
@@ -14923,6 +15242,11 @@ impl ProdLDA {
     /// `batch_size`/`lr` drive Adam (reference 200/0.002, with `beta1 = 0.99`);
     /// `convergence_tol > 0` stops early on the relative change in the epoch ELBO (0 runs
     /// all epochs). Pass `iters` to :meth:`fit` to set the number of epochs.
+    ///
+    /// `num_topics` is the number of topics K; `seed` seeds the RNG. `contrastive`
+    /// adds an InfoNCE contrastive term on the topic vectors, scaled by
+    /// `contrastive_weight` with InfoNCE temperature `contrastive_temp`. `em_tol`
+    /// is a deprecated alias for `convergence_tol`.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=1.0, hidden_size=100, dropout=0.2,
                         batch_size=200, lr=0.002, convergence_tol=0.0, seed=42,
@@ -15150,6 +15474,10 @@ impl ProdLDA {
         self.fitted_model()?;
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
+    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    ///
+    /// Returns a list of `n`-length lists (one per topic), or — when `topic`
+    /// is given — just that topic's list.
     #[pyo3(signature = (n=10, *, topic=None))]
     fn top_words<'py>(
         &self,
@@ -15167,6 +15495,8 @@ impl ProdLDA {
             topic,
         )
     }
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
@@ -15457,6 +15787,10 @@ macro_rules! ctm_embedding_model {
             /// with `beta1 = 0.99`); `convergence_tol > 0` stops early on the
             /// relative change in the epoch ELBO (0 runs all epochs). Pass `iters`
             /// to :meth:`fit` to set the number of epochs.
+            ///
+            /// `num_topics` is the number of topics K; `seed` seeds the RNG. `contrastive`
+            /// adds an InfoNCE contrastive term on the topic vectors, scaled by
+            /// `contrastive_weight` with InfoNCE temperature `contrastive_temp`.
             #[new]
             #[pyo3(signature = (num_topics, *, alpha=1.0, hidden_size=100, dropout=0.2,
                                         batch_size=200, lr=0.002, convergence_tol=0.0, seed=42,
@@ -15673,6 +16007,10 @@ macro_rules! ctm_embedding_model {
                 self.fitted_model()?;
                 Ok(self.corpus.as_ref().unwrap().doc_names.clone())
             }
+            /// Top `n` words per topic as ``(word, probability)`` pairs.
+            ///
+            /// Returns a list of `n`-length lists (one per topic), or — when `topic`
+            /// is given — just that topic's list.
             #[pyo3(signature = (n=10, *, topic=None))]
             fn top_words<'py>(
                 &self,
@@ -15690,6 +16028,8 @@ macro_rules! ctm_embedding_model {
                     topic,
                 )
             }
+            /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+            /// of top words per topic scored.
             #[pyo3(signature = (n=10))]
             fn coherence<'py>(
                 &self,
@@ -15725,6 +16065,9 @@ macro_rules! ctm_embedding_model {
             }
 
             /// Fit, then return the document-topic proportions (`fit_transform`).
+            ///
+            /// `doc_embeddings` is the ``(num_docs, E)`` dense embedding matrix, one row
+            /// per document in corpus order. `iters` is the number of training epochs.
             #[pyo3(signature = (data, doc_embeddings, *, iters=None))]
             fn fit_transform<'py>(
                 &mut self,
@@ -15973,6 +16316,9 @@ impl FASTopic {
     /// `theta_temp` is the inference temperature; `convergence_tol` stops on the relative
     /// loss change. `sinkhorn_iters`/`sinkhorn_tol` cap each Sinkhorn solve.
     /// Pass `iters` to :meth:`fit` to set the number of training epochs.
+    ///
+    /// `num_topics` is the number of topics K; `seed` seeds the RNG. `em_tol` is a
+    /// deprecated alias for `convergence_tol`.
     #[new]
     #[pyo3(signature = (num_topics, *, lr=0.002, dt_alpha=3.0, tw_alpha=2.0,
                         theta_temp=1.0, convergence_tol=1e-6, sinkhorn_iters=50, sinkhorn_tol=1e-4, seed=42, em_tol=None))]
@@ -16183,6 +16529,10 @@ impl FASTopic {
         self.fitted_model()?;
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
+    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    ///
+    /// Returns a list of `n`-length lists (one per topic), or — when `topic`
+    /// is given — just that topic's list.
     #[pyo3(signature = (n=10, *, topic=None))]
     fn top_words<'py>(
         &self,
@@ -16227,6 +16577,9 @@ impl FASTopic {
     }
 
     /// Fit, then return the document-topic proportions (`fit_transform`).
+    /// `doc_embeddings` is the ``(num_docs, E)`` matrix of frozen document
+    /// embeddings, one row per document; FASTopic learns the word embeddings
+    /// itself.
     #[pyo3(signature = (data, doc_embeddings))]
     fn fit_transform<'py>(
         &mut self,
@@ -16397,6 +16750,16 @@ impl KeyATM {
     /// base prior (this is the starting point when `estimate_alpha` is on).
     /// `beta`/`beta_keyword` are the regular and keyword topic-word smoothing, and
     /// `gamma1`/`gamma2` the Beta prior on the keyword-vs-regular switch.
+    ///
+    /// `estimate_alpha` (default True, matching R keyATM) slice-samples an
+    /// asymmetric document-topic α each sweep; set it False for a fixed symmetric
+    /// α — a faster fit that skips the dominant non-sweep cost, at the price of the
+    /// R-matching prior (base model only). `sampler` selects inference: ``"sparse"``
+    /// (default, the collapsed-Gibbs sampler validated against R keyATM) or
+    /// ``"cvb0"`` (deterministic collapsed variational Bayes; base model only, no
+    /// R-parity and no MCMC `theta_draws`). `num_threads` ``>1`` enables approximate
+    /// parallel Gibbs (AD-LDA-style), overridable per-call in `fit`. `seed` seeds
+    /// the RNG.
     #[new]
     #[pyo3(signature = (keywords, *, num_topics=None, alpha=None, beta=0.01, beta_keyword=0.1, gamma1=1.0, gamma2=1.0, seed=42, estimate_alpha=true, sampler="sparse", num_threads=1))]
     #[allow(clippy::too_many_arguments)]
@@ -16484,6 +16847,10 @@ impl KeyATM {
     /// baseline next to a keyword-assisted :class:`KeyATM`. `fit` it the same
     /// way (the `weights` argument controls the token weighting); the
     /// keyword-specific outputs (``keyword_rate``, ``pi_history``) are empty.
+    ///
+    /// `num_topics` is the number of topics K; `alpha` is the document-topic
+    /// Dirichlet prior (the estimated asymmetric α starts here), `beta` the
+    /// topic-word Dirichlet smoothing; `seed` seeds the Gibbs RNG.
     #[staticmethod]
     #[pyo3(signature = (num_topics, *, alpha=0.1, beta=0.01, seed=42))]
     fn weighted_lda(
@@ -16549,6 +16916,28 @@ impl KeyATM {
     /// `time_labels`) and the per-segment regime as `time_state`. `times`
     /// and `covariates` are mutually exclusive. `timestamps=` is an accepted
     /// alias for `times=` (the canonical cross-model name, as in DTM).
+    ///
+    /// `weights` is keyATM's token weighting: ``"information-theory"`` (default,
+    /// each token counts by its word's surprisal in bits), ``"inv-freq"`` or
+    /// ``"none"``. `num_threads` overrides the constructor's `num_threads` for this
+    /// fit call only (None = constructor value). The covariate model's λ is
+    /// re-estimated by L-BFGS every `optimize_interval` sweeps starting after
+    /// `burn_in`, `lbfgs_iters` steps per update, under a Gaussian prior of variance
+    /// `prior_variance` on λ; `prior_offset` is an optional (num_docs, num_topics)
+    /// fixed per-document log-prior offset (covariate variant only, ignored
+    /// otherwise). `keep_theta_draws` (default True) retains `num_theta_draws`
+    /// thinned MCMC θ snapshots in `theta_draws`, the cross-sweep posterior samples
+    /// `composition_theta` prefers over the Dirichlet approximation; set it False
+    /// to save memory. `progress_interval` sets how often model_fit is recorded for
+    /// `log_likelihood_history` (0 = ~50 evenly spaced points); `report_interval` is
+    /// a deprecated alias for it. `convergence_tol` (default 0.0, disabled) enables
+    /// opt-in early stopping: the run stops once the relative change in the recorded
+    /// model-fit log-likelihood between the last two trace points falls below it,
+    /// setting `converged` (ignored by the CVB0 backend, which keeps no trace).
+    /// `turbo_alpha_stride` (default 1, exact) subsamples the base model's α
+    /// slice-sampler data term over every s-th document and scales it up by s, an
+    /// unbiased estimate that touches ~1/s of the documents; it changes the
+    /// estimated α (base model only, `estimate_alpha=True`).
     #[pyo3(signature = (data, *, iters=1500, covariates=None, feature_names=None,
                         times=None, timestamps=None, num_states=5, weights="information-theory",
                         num_threads=None, optimize_interval=50, burn_in=200, prior_variance=1.0,
@@ -17177,6 +17566,10 @@ impl KeyATM {
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
 
+    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    ///
+    /// Returns a list of `n`-length lists (one per topic), or — when `topic`
+    /// is given — just that topic's list.
     #[pyo3(signature = (n=10, *, topic=None))]
     fn top_words<'py>(
         &self,
@@ -17194,6 +17587,8 @@ impl KeyATM {
             topic,
         )
     }
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -17283,6 +17678,11 @@ impl KeyATM {
     /// estimated asymmetric document-topic prior α (falling back to the
     /// symmetric base value when α was not estimated). The keyword switch
     /// variable is not re-estimated for new tokens.
+    ///
+    /// The collapsed-Gibbs controls are per-document: `iters` sweeps each new
+    /// document, discarding the first `burn_in`, then averaging `num_samples` θ
+    /// snapshots taken `sample_interval` sweeps apart; `seed` seeds the inference
+    /// RNG. `iterations` is a deprecated alias for `iters`.
     #[pyo3(signature = (data, *, iters=100, burn_in=10, num_samples=10,
                         sample_interval=5, seed=None, iterations=None))]
     fn transform<'py>(
@@ -17372,6 +17772,9 @@ impl PA {
 impl PA {
     /// Create an unfitted model with `num_super` super-topics and `num_sub`
     /// sub-topics (the sub-topics are the word-level topics).
+    /// `alpha` is the symmetric Dirichlet prior on each document's distribution
+    /// over super-topics; `beta` is the topic-word Dirichlet smoothing; `seed`
+    /// seeds the Gibbs RNG.
     #[new]
     #[pyo3(signature = (num_super, num_sub, *, alpha=0.1, beta=0.01, seed=42))]
     fn new(
@@ -17408,6 +17811,19 @@ impl PA {
     }
 
     /// Fit by collapsed Gibbs sampling for `iters` sweeps.
+    /// `keep_theta_draws` (default True) retains `num_theta_draws` thinned MCMC θ
+    /// snapshots in `theta_draws`, the cross-sweep posterior samples
+    /// `composition_theta` prefers over the Dirichlet approximation; set it False to
+    /// save memory.
+    /// `convergence_tol` (default 0.0, disabled) enables opt-in early stopping: the
+    /// run stops once the relative change in the recorded log-likelihood between the
+    /// last two trace points, |ΔLL| / |LL|, falls below it, setting `converged`. The
+    /// monitored quantity is the collapsed model-fit log-likelihood; the comparison
+    /// window is the trace cadence (`check_every` / `progress_interval`), so a coarser
+    /// cadence compares more widely spaced sweeps. This is a pragmatic early-stop
+    /// heuristic on the log-likelihood trace, not a guarantee the Gibbs chain has
+    /// mixed. `check_every` is how often, in sweeps, the log-likelihood is recorded
+    /// and the `convergence_tol` test is applied.
     #[pyo3(signature = (data, *, iters=1000, keep_theta_draws=true, num_theta_draws=25,
                         convergence_tol=0.0_f64, check_every=10_usize))]
     fn fit(
@@ -17575,6 +17991,10 @@ impl PA {
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
 
+    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    ///
+    /// Returns a list of `n`-length lists (one per topic), or — when `topic`
+    /// is given — just that topic's list.
     #[pyo3(signature = (n=10, *, topic=None))]
     fn top_words<'py>(
         &self,
@@ -17592,6 +18012,8 @@ impl PA {
             topic,
         )
     }
+    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
+    /// of top words per topic scored.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
@@ -17662,6 +18084,11 @@ impl PA {
     /// fitted sub-topics, marginalizing the super-topic layer. The
     /// super-topic assignments are a training-time device and are not
     /// re-estimated for new documents.
+    ///
+    /// The collapsed-Gibbs controls are per-document: `iters` sweeps each new
+    /// document, discarding the first `burn_in`, then averaging `num_samples` θ
+    /// snapshots taken `sample_interval` sweeps apart; `seed` seeds the inference
+    /// RNG. `iterations` is a deprecated alias for `iters`.
     #[pyo3(signature = (data, *, iters=100, burn_in=10, num_samples=10,
                         sample_interval=5, seed=None, iterations=None))]
     fn transform<'py>(
@@ -17745,6 +18172,8 @@ impl HLDA {
     /// Create an unfitted model. `depth` is the (fixed) tree depth; `gamma` is
     /// the nested-CRP concentration (larger => more child topics); `beta` the
     /// topic-word Dirichlet; `alpha` the per-document level distribution.
+    /// `seed` seeds the Gibbs RNG. `eta` is a deprecated alias for `beta` (kept
+    /// for back-compat; pass `beta` instead).
     #[new]
     #[pyo3(signature = (*, depth=3, gamma=1.0, beta=0.01, alpha=0.1, seed=42, eta=None))]
     fn new(

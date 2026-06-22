@@ -347,7 +347,8 @@ class EmbeddingLDA:
         """Fit on ``data`` (a Corpus or list of token lists). If ``doc_embeddings``
         is given (one row per document, same embedding space as the vocabulary),
         each document's topic mixture is biased toward the topics its embedding is
-        nearest, as a prior the sampler can still override."""
+        nearest, as a prior the sampler can still override. ``iters`` is the number
+        of Gibbs sweeps for the underlying SeededLDA fit."""
         prior = self.document_topic_prior(doc_embeddings) if doc_embeddings is not None else None
         self._model.fit(data, iters=iters, doc_topic_prior=prior)
         return self

@@ -505,10 +505,12 @@ def estimate_effect(
 class MarginalEffect:
     """One average marginal effect: a (topic, covariate term) pair.
 
-    Produced by :func:`average_marginal_effects`. ``ame`` is the average expected
-    change in the topic's proportion for the covariate term (a unit change for a
-    continuous covariate, a level-vs-reference contrast for a factor), averaged
-    over the observed documents.
+    Produced by :func:`average_marginal_effects`. ``topic_name`` is the topic's
+    label. ``ame`` is the average expected change in the topic's proportion for the
+    covariate term (a unit change for a continuous covariate, a level-vs-reference
+    contrast for a factor), averaged over the observed documents. ``se`` is its
+    standard error and ``ci_low``/``ci_high`` the bounds of the confidence
+    interval.
     """
 
     topic: int
