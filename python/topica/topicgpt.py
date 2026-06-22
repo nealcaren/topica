@@ -821,7 +821,8 @@ class TopicGPT:
 
     def transform(self, new_docs) -> np.ndarray:
         """Assign held-out documents to the discovered taxonomy via the assignment
-        prompt. Returns a (n, K) assignment matrix (one-hot/soft per ``assignment``).
+        prompt. ``new_docs`` is a list of raw document texts (or a Corpus). Returns
+        a (n, K) assignment matrix (one-hot/soft per ``assignment``).
 
         This is ``llm-bounded`` and more capable than the count-based models'
         transform: the LLM places new documents directly into the named taxonomy.
