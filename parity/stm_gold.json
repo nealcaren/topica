@@ -1,22 +1,24 @@
 {
-  "K": 3,
-  "corpus": "gadarian (examples/gadarian.csv), vignette preprocessing",
+  "K": 20,
+  "convergence_tol": 1e-05,
+  "corpus": "poliblog (examples/poliblog.csv), fixed-seed 2000-doc subsample (seed 271), vignette preprocessing",
   "date": "2026-06-22",
-  "formula": "~treatment + pid_rep",
+  "formula": "~ rating + s(day)",
   "init": "Spectral",
   "margin": 0.15,
   "model": "STM",
-  "noise_floor_random_vs_random": 0.8120732481185975,
-  "num_docs": 339,
+  "noise_floor_random_vs_random": 0.6275895381356806,
+  "num_docs": 2000,
   "pass_bar": "topica cosine >= r_spectral_vs_random - margin",
-  "r_spectral_vs_random": 0.6205964572742241,
+  "r_spectral_vs_random": 0.6303099911800143,
   "reference": "R 4.5.2 / stm 1.3.8",
   "seeds": {
     "random_1": 11,
     "random_2": 22,
     "spectral": 1
   },
-  "topica_iters": 80,
-  "topica_vs_r_spectral_cosine": 0.5497331836528229,
-  "vocab_size": 303
+  "spline_df": 10,
+  "topica_iters": 200,
+  "topica_vs_r_spectral_cosine": 0.9754301838552131,
+  "vocab_size": 2632
 }

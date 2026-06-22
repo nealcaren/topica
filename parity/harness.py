@@ -35,6 +35,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 GADARIAN = ROOT / "examples" / "gadarian.csv"
+POLIBLOG = ROOT / "examples" / "poliblog.csv"
 STOPLIST = ROOT / "examples" / "english-stoplist.txt"
 
 
@@ -94,6 +95,60 @@ def gadarian_corpus():
     keep = np.array([len(d) > 0 for d in toks])
     docs = [d for d, k in zip(toks, keep) if k]
     return docs, treatment[keep], pid[keep], sorted({w for d in docs for w in d})
+
+
+# Default poliblog subsample: fixed size + seed so the committed gold stays small
+# and the offline refit reproduces the EXACT documents the gold was built from.
+POLIBLOG_N_DOCS = 2000
+POLIBLOG_SEED = 271
+POLIBLOG_MIN_DF = 3
+
+
+def poliblog_corpus(n_docs: int = POLIBLOG_N_DOCS, seed: int = POLIBLOG_SEED):
+    """Subsample + preprocess the poliblog vignette corpus deterministically.
+
+    The poliblog text is already stemmed/stopworded; we take a fixed-seed
+    subsample of ``n_docs`` rows (so the committed gold fixture stays small and
+    the model is well-identified), apply a light document-frequency prune, and
+    return ``(docs, rating_lib, day, vocab)`` where ``docs`` is
+    ``list[list[str]]``, ``rating_lib`` is the 0/1 Liberal dummy (Conservative =
+    baseline, matching R's alphabetical factor coding), and ``day`` is the raw
+    day-of-year covariate. Both engines get the identical surviving vocabulary,
+    so this only sets corpus size, not the parity.
+
+    Used by both the STM gold (prevalence ``~ rating + s(day)``) and the CTM gold
+    (no covariates). Unlike multimodal gadarian K=3, poliblog K=20 is
+    well-identified, so topica and R land on essentially the same Spectral
+    solution.
+    """
+    with open(POLIBLOG, newline="") as f:
+        rows = list(csv.DictReader(f))
+    rng = np.random.default_rng(seed)
+    idx = np.sort(rng.choice(len(rows), size=min(n_docs, len(rows)), replace=False))
+    rows = [rows[i] for i in idx]
+
+    toks = [r["text"].split() for r in rows]
+    rating_lib = np.array([1.0 if r["rating"] == "Liberal" else 0.0 for r in rows])
+    day = np.array([float(r["day"]) for r in rows])
+
+    df = Counter()
+    for d in toks:
+        df.update(set(d))
+    vocab = {w for w, c in df.items() if c >= POLIBLOG_MIN_DF}
+    toks = [[w for w in d if w in vocab] for d in toks]
+    keep = np.array([len(d) > 0 for d in toks])
+    docs = [d for d, k in zip(toks, keep) if k]
+    return docs, rating_lib[keep], day[keep], sorted({w for d in docs for w in d})
+
+
+def docs_to_lines(docs: list[list[str]]) -> str:
+    """Serialize tokenized docs to one space-joined line per doc (for the npz)."""
+    return "\n".join(" ".join(doc) for doc in docs) + "\n"
+
+
+def lines_to_docs(text: str) -> list[list[str]]:
+    """Inverse of :func:`docs_to_lines`: parse space-joined lines into docs."""
+    return [line.split() for line in text.splitlines() if line.strip()]
 
 
 # --------------------------------------------------------------------------- #
@@ -218,7 +273,7 @@ def save_gold(name: str, arrays: dict, meta: dict) -> None:
     string, the reference's own seed-to-seed noise floor, and the metric summary.
     """
     npz_path, json_path = gold_paths(name)
-    np.savez(npz_path, **{k: np.asarray(v) for k, v in arrays.items()})
+    np.savez_compressed(npz_path, **{k: np.asarray(v) for k, v in arrays.items()})
     json_path.write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
 
 
