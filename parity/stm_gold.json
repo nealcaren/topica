@@ -1,0 +1,22 @@
+{
+  "K": 3,
+  "corpus": "gadarian (examples/gadarian.csv), vignette preprocessing",
+  "date": "2026-06-22",
+  "formula": "~treatment + pid_rep",
+  "init": "Spectral",
+  "margin": 0.15,
+  "model": "STM",
+  "noise_floor_random_vs_random": 0.8120732481185975,
+  "num_docs": 339,
+  "pass_bar": "topica cosine >= r_spectral_vs_random - margin",
+  "r_spectral_vs_random": 0.6205964572742241,
+  "reference": "R 4.5.2 / stm 1.3.8",
+  "seeds": {
+    "random_1": 11,
+    "random_2": 22,
+    "spectral": 1
+  },
+  "topica_iters": 80,
+  "topica_vs_r_spectral_cosine": 0.5497331836528229,
+  "vocab_size": 303
+}
