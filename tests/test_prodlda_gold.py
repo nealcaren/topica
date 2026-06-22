@@ -17,12 +17,15 @@ V~1.1k, 120 epochs) takes ~15s, so the heavy refit assertion is marked
 non-vacuous checks run by default.
 """
 
+import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
 
-PARITY = Path(__file__).resolve().parents[1] / "parity"
+ROOT = Path(__file__).resolve().parents[1]
+PARITY = ROOT / "parity"
 sys.path.insert(0, str(PARITY))
 
 import harness  # noqa: E402
@@ -50,10 +53,34 @@ def test_prodlda_gold_shape():
 
 
 def test_prodlda_no_torch_at_test_time():
-    """The committed gold must validate with no deep-learning framework present."""
-    assert "torch" not in sys.modules, (
-        "torch was imported at test time; the gold must validate offline"
+    """The committed gold must validate with NO deep-learning framework.
+
+    Proven in a fresh subprocess that hard-blocks torch via an import finder, then
+    runs the full offline ``prodlda_gold.run()``. A subprocess (not a bare
+    ``sys.modules`` check) is used because a sibling test in the same pytest session
+    may have already imported torch; the point is that the GOLD PATH needs none."""
+    script = textwrap.dedent(
+        f"""
+        import sys
+        BLOCKED = {{"torch"}}
+        class _Blocker:
+            def find_spec(self, name, path=None, target=None):
+                if name.split(".")[0] in BLOCKED:
+                    raise ImportError(f"blocked {{name}} for offline gold test")
+                return None
+        sys.meta_path.insert(0, _Blocker())
+        sys.path.insert(0, {str(PARITY)!r})
+        import prodlda_gold
+        r = prodlda_gold.run(verbose=False)
+        assert r["passes"], r
+        assert not (BLOCKED & set(sys.modules)), sorted(BLOCKED & set(sys.modules))
+        print("OK")
+        """
     )
+    proc = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, cwd=str(ROOT)
+    )
+    assert "OK" in proc.stdout, f"offline gold path imported a blocked module:\n{proc.stderr}"
 
 
 def test_prodlda_gold_is_non_vacuous():
