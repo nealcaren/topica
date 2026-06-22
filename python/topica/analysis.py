@@ -47,6 +47,41 @@ def _has_labels(model) -> bool:
     return labels is not None and len(labels) > 0
 
 
+def stop_reason(model) -> str:
+    """Why a fitted model's training loop stopped: early convergence vs the
+    iteration cap (issue #267).
+
+    Reads the model-neutral ``converged`` flag and ``fit_history`` (the
+    ``(iteration, objective)`` trace — the collapsed log-likelihood for the Gibbs
+    samplers, the variational bound for STM/CTM/STS). It answers the question
+    ``converged`` alone leaves implicit: did ``iters`` act as a floor (the run
+    stopped early on ``convergence_tol``) or a ceiling (it ran the full budget)?
+
+    Returns a human-readable line, e.g.
+    ``"converged at iteration 312: ... (last relative change 8.0e-05)"`` or
+    ``"ran to the iteration cap (800 iterations) without early stopping; ..."``.
+    """
+    converged = bool(getattr(model, "converged", False))
+    hist = list(getattr(model, "fit_history", None) or [])
+    last_iter = hist[-1][0] if hist else None
+    rel = None
+    if len(hist) >= 2:
+        prev, cur = hist[-2][1], hist[-1][1]
+        rel = abs(cur - prev) / (abs(prev) + 1e-12)
+    rel_str = f" (last relative change {rel:.1e})" if rel is not None else ""
+    if converged:
+        where = f" at iteration {last_iter}" if last_iter is not None else ""
+        return (
+            f"converged{where}: the monitored objective's relative change fell "
+            f"below convergence_tol{rel_str}"
+        )
+    ran = f" ({last_iter} iterations)" if last_iter is not None else ""
+    return (
+        f"ran to the iteration cap{ran} without early stopping{rel_str}; "
+        f"convergence_tol was disabled (0) or never reached"
+    )
+
+
 def topic_sizes(model) -> dict:
     """Per-topic size and expected mass for any fitted model.
 

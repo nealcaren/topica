@@ -160,17 +160,17 @@ See [diagnostics](https://nealcaren.github.io/topica/guides/diagnostics/) and [c
 
 ## Performance
 
-topica runs on a parallel Rust core. It is several times faster than R `stm` — the single-threaded field standard — for the structural and other variational models, and it matches the hand-tuned compiled samplers core for core: parity with Java MALLET on plain LDA and with the C++ `keyATM` on keyword models. On the political-blog corpus (2,000 documents, fit time only, same iterations on both sides):
+topica runs on a parallel Rust core. It is several times faster than R `stm` — the single-threaded field standard — for the structural and other variational models, and it matches the hand-tuned compiled samplers core for core: parity with Java MALLET on plain LDA and with the C++ `keyATM` on keyword models. Fit to convergence (both at the same `emtol`, spectral start), on real corpora:
 
-| Model | Reference | topica speedup |
+| Model | Reference | topica speedup (to convergence) |
 |-------|-----------|----------------|
-| STM | R `stm` | **4–10× single-threaded, ~11–32× multithreaded** |
+| STM | R `stm` | **1.7–2.7× single-threaded, ~5–7× multicore** |
 | LDA | Java MALLET | parity single-threaded; multithread speedup **grows with corpus size** |
 | keyATM | R `keyATM` | parity single-threaded, **~2×** multithreaded |
 
-For the approximate parallel Gibbs samplers the multithreaded speedup **grows with corpus size**: the per-sweep count-table merge is fixed overhead, so larger corpora amortize it over more sampling work. LDA's eight-core speedup over MALLET runs about 3× at 2,000 documents and reaches ~4× at 5,000, so the small-corpus figures above understate what large-corpus users see.
+topica also fits in about a quarter of R `stm`'s memory (≈180MB against ≈675MB at 5,000 documents). For the approximate parallel Gibbs samplers the multithreaded speedup **grows with corpus size**: the per-sweep count-table merge is fixed overhead, so larger corpora amortize it over more sampling work. LDA's eight-core speedup over MALLET runs about 3× at 2,000 documents and reaches ~4× at 5,000.
 
-Every fit is reproducible from a fixed seed and validated against its reference. See [Benchmarks](https://nealcaren.github.io/topica/benchmarks/) for the full methodology; reproduce the 2,000-document table with `python benchmarks/speed_vs_r.py` and the size-varying curve with `python benchmarks/speed_vs_size.py`.
+Every fit is reproducible from a fixed seed and validated against its reference. See [Benchmarks](https://nealcaren.github.io/topica/benchmarks/) for the full methodology; reproduce the structural-model table with `python benchmarks/bench_stm_convergence.py` and the size-varying LDA curve with `python benchmarks/speed_vs_size.py`.
 
 ## Install from source
 

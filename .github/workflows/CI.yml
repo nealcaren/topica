@@ -106,6 +106,20 @@ jobs:
           maturin develop --release --features python
           pytest -q
 
+      # Offline-gold guard (issue #271): the committed gold-fixture tests must
+      # validate topica WITHOUT importing any reference toolchain (torch, sklearn,
+      # bertopic, ...) — those are regenerate-time only and are not installed here.
+      # `pytest -q` above already runs them in this reference-free venv, but this
+      # step additionally hard-blocks the reference packages at import so the rule
+      # holds even if the environment later gains one (it bit us once: a gold test
+      # reached for sklearn and turned main red). Ubuntu only — one run suffices.
+      - name: Offline-gold guard
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          source .venv/bin/activate
+          python scripts/ci_sim.py tests/test_*_gold.py
+
   # ---------------------------------------------------------------------------
   # Job: docs
   # Builds the mkdocs site with --strict on Linux, so a broken nav entry, a dead

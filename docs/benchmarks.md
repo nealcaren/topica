@@ -9,53 +9,40 @@ read these as orders of magnitude, not guarantees.
 ## STM vs R `stm`
 
 This is the comparison that matters for social scientists. R's `stm` is the
-field standard, and a fit you wait minutes for in R runs in seconds in topica.
-Both engines run the **same** number of EM iterations from a spectral
-initialization (R with `emtol=0` so it does not stop early), so this measures
-per-iteration cost, not time to convergence.
+field standard. We report **wall-clock to convergence** — the time a user
+actually waits — with both engines run to their own stopping point at the same
+relative-bound tolerance (`emtol=1e-5`) from a spectral start, on the poliblog
+corpus (5,000 documents, K=20, `~ rating + s(day)`):
 
-**All cores** (topica parallelizes the variational E-step; R `stm` is single-threaded):
+| docs | K | topica (1 core) | topica (8 cores) | R `stm` | single | 8-core |
+|-----:|--:|----------------:|-----------------:|--------:|-------:|-------:|
+| 5,000 | 20 | 65.8s (32 it) | 23.4s (32 it) | 116.6s (20 it) | **1.8×** | **5.0×** |
 
-| docs | vocab | K | topica | R `stm` | speedup |
-|-----:|------:|---:|-------:|--------:|--------:|
-| 1,000 | 500 | 10 | 0.10s | 3.21s | **32.2×** |
-| 2,000 | 2,000 | 10 | 0.47s | 6.78s | **14.4×** |
-| 5,000 | 5,000 | 20 | 2.35s | 26.6s | **11.3×** |
-
-**Single core** (apples-to-apples, `RAYON_NUM_THREADS=1`):
-
-| docs | vocab | K | topica | R `stm` | speedup |
-|-----:|------:|---:|-------:|--------:|--------:|
-| 1,000 | 500 | 10 | 0.30s | 3.13s | **10.4×** |
-| 2,000 | 2,000 | 10 | 1.16s | 6.60s | **5.7×** |
-| 5,000 | 5,000 | 20 | 6.95s | 27.5s | **3.9×** |
-
-So topica is roughly **4 to 10 times faster single-threaded and 11 to 32 times on
-all cores**, and it produces the same fit (the content and prevalence models are
-[validated against R `stm`](publishing/validation.md)). Reproduce:
+So topica fits the structural model about **1.8× faster single-threaded and 5×
+on eight cores, to convergence**, in roughly a quarter of R `stm`'s memory, and
+produces the same fit (the content and prevalence models are
+[validated against R `stm`](publishing/validation.md), poliblog topic-word cosine
+~0.97). On a larger workstation or HPC node the multicore multiple is higher: the
+[paper's §6](https://github.com/nealcaren/topica/tree/main/paper) reports 1.7–2.7×
+single-core and 5–7× on sixteen cores across poliblog and a 25,000-document
+Congress corpus. Reproduce:
 
 ```bash
-python benchmarks/bench_stm.py                      # all cores
-RAYON_NUM_THREADS=1 python benchmarks/bench_stm.py  # single core
+python benchmarks/bench_stm_convergence.py                  # poliblog (above)
+CORPUS=congress python benchmarks/bench_stm_convergence.py  # 25k Congress
 ```
 
-!!! note "What this is, and is not"
-    Per-iteration fit time, not time to convergence (the two engines may need a
-    different number of iterations to converge). One machine, synthetic corpora.
-    R `stm` is single-threaded by design; the all-cores column is topica's
-    automatic parallelism, which is the speed you actually get.
-
-!!! warning "Time to convergence with a wide prevalence design"
-    The number of EM iterations to convergence is not the same across engines, and
-    a wide prevalence design (a `s(day)` spline, or many one-hot covariate levels)
-    can cost topica somewhat more EM iterations than R `stm` even at the same
-    `emtol`. On poliblog5k (5,000 docs, K=20, `~ rating + s(day)`) topica converges
-    in roughly 32 iterations to R's 20; with `~ rating` alone both are near 20. The
-    fit is the same (topics match R `stm`) and the bound increases monotonically —
-    it just takes a few more steps near the optimum. So when you report wall-clock
-    for a covariate-rich STM, time it **to convergence**, not at a fixed iteration
-    count, or the comparison flatters whichever engine converges in fewer steps.
-    `parity/stm_spline_iters_247.py` reproduces and explains this.
+!!! note "Why the iteration counts differ"
+    topica converges in somewhat more EM iterations than R `stm` (here 32 to R's
+    20) because at a fixed `emtol` it drives its evidence bound to a tighter
+    optimum; the fit is the same (the bound increases monotonically, topics match
+    R) — it just takes a few more steps near the optimum, more so under a wide
+    prevalence design (an `s(day)` spline or many one-hot levels). That is exactly
+    why we time **to convergence** rather than at a fixed iteration count: a
+    fixed-count comparison flatters whichever engine stops in fewer steps. topica's
+    per-iteration E-step is in fact ~3–4× cheaper single-threaded; see the paper's
+    per-iteration decomposition. `parity/stm_spline_iters_247.py` reproduces the
+    iteration-count difference.
 
 ## LDA: MALLET's algorithm without the JVM
 

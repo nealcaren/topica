@@ -221,6 +221,7 @@ from .analysis import (  # noqa: E402  (model-neutral fitted-model analysis surf
     representative_docs,
     topics_over_time,
     topics_per_class,
+    stop_reason,
     plot_report,
 )
 
@@ -339,6 +340,7 @@ __all__ = [
     "representative_docs",
     "topics_over_time",
     "topics_per_class",
+    "stop_reason",
     "plot_report",
     "fighting_words",
     "top_fighting_words",
