@@ -1,0 +1,25 @@
+{
+  "burn_in": 100,
+  "corpus": "synthetic two-cluster, 300 docs x 10 tokens, 1-D metadata in [0,1] switching space/animal vocab (from parity/test_gdmr_tomotopy.py)",
+  "date": "2026-06-22",
+  "degrees": [
+    2
+  ],
+  "iters": 500,
+  "kind": "cross-implementation (tomotopy GDMRModel)",
+  "margin": 0.15,
+  "model": "GDMR (g-DMR, Lee & Song 2020)",
+  "num_docs": 300,
+  "num_topics": 2,
+  "pass_bar": "topica space-topic tdf Pearson r vs tomotopy >= tomotopy_tdf_self_r - margin, AND space-word cosine >= 0.9",
+  "reference": "tomotopy 0.14.0",
+  "seeds": {
+    "gold": 0,
+    "noise_floor": 100
+  },
+  "sigma": 1.0,
+  "sigma0": 3.0,
+  "tomotopy_tdf_self_r": 0.9999849565928172,
+  "topica_tdf_r": 0.9898057091596998,
+  "topica_word_cosine": 0.9999999999950222
+}

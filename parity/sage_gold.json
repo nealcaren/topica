@@ -1,0 +1,28 @@
+{
+  "burn_in": 50,
+  "corpus": "synthetic bilingual 2-topic x 2-group, disjoint per-group vocab, 200 docs (from tests/test_sage.py)",
+  "corpus_seed": 42,
+  "cosine_bar": 0.99,
+  "date": "2026-06-22",
+  "fit_seed": 1,
+  "groups": [
+    "de",
+    "en"
+  ],
+  "iters": 300,
+  "kind": "PLANTED self-consistency gold (NO external reference exists for SAGE). Validates reproducibility + planted bilingual structure recovery; non-vacuous via the shuffle check.",
+  "model": "SAGE (Eisenstein, Ahmed & Xing 2011)",
+  "num_docs": 200,
+  "num_groups": 2,
+  "num_samples": 3,
+  "num_topics": 2,
+  "optimize_interval": 25,
+  "pass_bar": "refit-vs-gold aligned (topic,group) cosine >= cosine_bar AND all recovery invariants true",
+  "recovery_invariants": {
+    "de_words_german": true,
+    "en_words_english": true,
+    "groups_disjoint": true
+  },
+  "reference": "topica SAGE (self-consistency / planted-recovery gold)",
+  "sample_interval": 10
+}
