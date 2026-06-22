@@ -1575,10 +1575,61 @@ impl ThetaDrawOpts {
     }
 }
 
+/// Bound on the standardized regression coefficients `λ`, matching R keyATM's
+/// `slice_max`/`slice_min` of ±5. Without it (and without standardized
+/// covariates) a high-dimensional design lets one topic's `λ` run away over the
+/// sweeps, so `α = exp(x · λ)` blows up and θ collapses onto a single topic
+/// (issue #270).
+const LAMBDA_BOUND: f64 = 5.0;
+
+/// R keyATM's covariate standardization (issue #270): z-score each non-intercept
+/// column to mean 0, sd 1. Column 0 (the prepended intercept) is left untouched.
+/// Constant columns (sd ≈ 0) are centered to 0 and given sd 1 (a null direction
+/// the N(0,1) prior regularizes). Returns the standardized matrix and the per-
+/// column means/sds (index 0 = intercept: mean 0, sd 1) so `λ` can be mapped back
+/// to the original covariate scale after fitting.
+fn standardize_features(
+    features: &[Vec<f64>],
+    num_features: usize,
+) -> (Vec<Vec<f64>>, Vec<f64>, Vec<f64>) {
+    let n = features.len();
+    let mut mean = vec![0.0f64; num_features];
+    let mut sd = vec![1.0f64; num_features];
+    if n == 0 {
+        return (features.to_vec(), mean, sd);
+    }
+    // Column 0 is the intercept (all 1.0); skip it.
+    for f in 1..num_features {
+        let m: f64 = features.iter().map(|r| r[f]).sum::<f64>() / n as f64;
+        let var: f64 = features.iter().map(|r| (r[f] - m).powi(2)).sum::<f64>() / n as f64;
+        let s = var.sqrt();
+        mean[f] = m;
+        sd[f] = if s > 1e-9 { s } else { 1.0 };
+    }
+    let std: Vec<Vec<f64>> = features
+        .iter()
+        .map(|r| {
+            (0..num_features)
+                .map(|f| {
+                    if f == 0 {
+                        r[0]
+                    } else {
+                        (r[f] - mean[f]) / sd[f]
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    (std, mean, sd)
+}
+
 /// Fit a keyATM **Covariate** model. The document-topic prior is a
 /// Dirichlet-Multinomial regression on document features,
 /// `α_{d,k} = exp(x_d · λ_k)` (Mimno & McCallum 2008), matching the keyATM R
-/// package's covariate model. `λ` is re-estimated by L-BFGS every
+/// package's covariate model. Following R keyATM, the covariates are standardized
+/// and `λ` is bounded to ±5 (see [`LAMBDA_BOUND`] and [`standardize_features`])
+/// to keep `α` from blowing up; `λ` is re-estimated by L-BFGS (MAP under an
+/// N(0,1) prior) every
 /// `opt_interval` sweeps once past `burn_in`; the keyword (z, s) sampler is
 /// otherwise identical to the base model.
 #[allow(clippy::too_many_arguments)]
@@ -1628,18 +1679,25 @@ pub fn fit_keyatm_cov<R: Rng>(
         );
     }
 
+    // Standardize covariates (issue #270): we fit λ in the standardized space,
+    // bounded to ±LAMBDA_BOUND, then map λ back to the original scale for storage.
+    let (features_std, feat_mean, feat_sd) = standardize_features(features, num_features);
+
     // α is replaced by the covariate prior; pass a nominal 1.0 for the struct.
     let (mut model, mut assignments, ki) = init_state(
         docs, num_types, num_topics, keywords, 1.0, beta, beta_key, gamma1, gamma2, weights, rng,
     );
 
     let mut lambda = vec![vec![0.0f64; num_features]; num_topics];
-    let mut doc_alpha = crate::dmr::compute_doc_alpha(&lambda, features, offset);
+    let mut doc_alpha = crate::dmr::compute_doc_alpha(&lambda, &features_std, offset);
     let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
     // So the log-likelihood trace uses the covariate doc-topic prior: doc_topic()
-    // takes the (lambda, features) path only when both are set on the model.
+    // takes the (lambda, features) path only when both are set on the model. While
+    // fitting we keep the standardized features and standardized-space λ on the
+    // model so the trace is self-consistent; both are converted to the original
+    // scale at the end.
     if ll_interval > 0 {
-        model.features = Some(features.to_vec());
+        model.features = Some(features_std.clone());
         model.prior_offset = offset.map(|o| o.to_vec());
     }
     let mut nkw_t = build_nkw_t(&model.nkw, num_types, num_topics);
@@ -1658,7 +1716,7 @@ pub fn fit_keyatm_cov<R: Rng>(
         if opt_interval > 0 && it + 1 > burn_in && (it + 1 - burn_in).is_multiple_of(opt_interval) {
             crate::dmr::optimize_lambda(
                 &mut lambda,
-                features,
+                &features_std,
                 &model.ndk,
                 num_topics,
                 num_features,
@@ -1666,11 +1724,20 @@ pub fn fit_keyatm_cov<R: Rng>(
                 lbfgs_iters,
                 offset,
             );
-            doc_alpha = crate::dmr::compute_doc_alpha(&lambda, features, offset);
+            // Bound λ to ±LAMBDA_BOUND in the standardized space (R keyATM's
+            // slice bounds), so a runaway coefficient cannot blow up α (#270).
+            for lk in lambda.iter_mut() {
+                for v in lk.iter_mut() {
+                    *v = v.clamp(-LAMBDA_BOUND, LAMBDA_BOUND);
+                }
+            }
+            doc_alpha = crate::dmr::compute_doc_alpha(&lambda, &features_std, offset);
         }
         draws.maybe_collect(&mut theta_draw_buf, it + 1, &model.ndk, &doc_alpha);
         if record_ll(it + 1, ll_interval, iters) {
+            // During the trace, λ and features are both in the standardized space.
             model.lambda = Some(lambda.clone());
+            model.features = Some(features_std.clone());
             model.prior_offset = offset.map(|o| o.to_vec());
             model
                 .log_likelihood_history
@@ -1683,7 +1750,24 @@ pub fn fit_keyatm_cov<R: Rng>(
         }
     }
 
-    model.lambda = Some(lambda);
+    // Map λ from the standardized space back to the original covariate scale, so
+    // that exp(features · λ_orig) == exp(features_std · λ_std): for f ≥ 1,
+    // λ_orig[f] = λ_std[f] / sd_f, with the intercept absorbing the mean shift.
+    // `feature_effects` and held-out `transform` then operate on raw covariates.
+    let lambda_orig: Vec<Vec<f64>> = lambda
+        .iter()
+        .map(|lk| {
+            let mut row = lk.clone();
+            let mut shift = 0.0;
+            for f in 1..num_features {
+                row[f] = lk[f] / feat_sd[f];
+                shift += lk[f] * feat_mean[f] / feat_sd[f];
+            }
+            row[0] = lk[0] - shift;
+            row
+        })
+        .collect();
+    model.lambda = Some(lambda_orig);
     model.features = Some(features.to_vec());
     model.prior_offset = offset.map(|o| o.to_vec());
     model.theta_draws = theta_draw_buf;
@@ -2217,6 +2301,60 @@ mod tests {
     use super::*;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha8Rng;
+
+    /// Covariate standardization (#270): non-intercept columns come out mean ~0,
+    /// sd ~1, the intercept is untouched, and mapping λ from standardized back to
+    /// the original scale reproduces the same α = exp(features · λ) for every doc.
+    #[test]
+    fn standardize_and_lambda_mapback_roundtrip() {
+        // features: [intercept, a continuous col, a 0/1 dummy col]
+        let features = vec![
+            vec![1.0, 2.0, 0.0],
+            vec![1.0, 4.0, 1.0],
+            vec![1.0, 6.0, 0.0],
+            vec![1.0, 8.0, 1.0],
+        ];
+        let nf = 3;
+        let (fstd, mean, sd) = standardize_features(&features, nf);
+        // Intercept untouched.
+        assert!(fstd.iter().all(|r| (r[0] - 1.0).abs() < 1e-12));
+        assert!((mean[0]).abs() < 1e-12 && (sd[0] - 1.0).abs() < 1e-12);
+        // Non-intercept columns standardized to mean ~0, sd ~1.
+        for f in 1..nf {
+            let m: f64 = fstd.iter().map(|r| r[f]).sum::<f64>() / 4.0;
+            let v: f64 = fstd.iter().map(|r| (r[f] - m).powi(2)).sum::<f64>() / 4.0;
+            assert!(m.abs() < 1e-9, "col {f} mean {m}");
+            assert!((v.sqrt() - 1.0).abs() < 1e-9, "col {f} sd {}", v.sqrt());
+        }
+        // A λ in standardized space, mapped back to the original scale, must give
+        // the same linear predictor (hence the same α) on the raw features.
+        let lambda_std = vec![vec![0.5, -1.2, 0.8], vec![-0.3, 2.0, -1.5]];
+        let lambda_orig: Vec<Vec<f64>> = lambda_std
+            .iter()
+            .map(|lk| {
+                let mut row = lk.clone();
+                let mut shift = 0.0;
+                for f in 1..nf {
+                    row[f] = lk[f] / sd[f];
+                    shift += lk[f] * mean[f] / sd[f];
+                }
+                row[0] = lk[0] - shift;
+                row
+            })
+            .collect();
+        let a_std = crate::dmr::compute_doc_alpha(&lambda_std, &fstd, None);
+        let a_orig = crate::dmr::compute_doc_alpha(&lambda_orig, &features, None);
+        for d in 0..features.len() {
+            for k in 0..lambda_std.len() {
+                assert!(
+                    (a_std[d][k] - a_orig[d][k]).abs() < 1e-9,
+                    "doc {d} topic {k}: {} vs {}",
+                    a_std[d][k],
+                    a_orig[d][k]
+                );
+            }
+        }
+    }
 
     /// Build a small keyword-annotated corpus and verify that keyword topics
     /// are pulled toward their designated keyword blocks.

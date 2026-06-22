@@ -16906,8 +16906,12 @@ impl KeyATM {
     /// the **covariate** keyATM: the document-topic prior becomes a
     /// Dirichlet-multinomial regression, ``α_{d,k} = exp(x_d · λ_k)`` (an
     /// intercept is prepended). `feature_names` (length F) labels the columns;
-    /// the learned `λ` is exposed as `feature_effects`. With no `covariates`,
-    /// this is the base symmetric-α keyATM.
+    /// the learned `λ` is exposed as `feature_effects` (on the original covariate
+    /// scale). With no `covariates`, this is the base symmetric-α keyATM.
+    /// Following R keyATM, the covariates are standardized internally and `λ` is
+    /// bounded (±5 in standardized space) under the N(0,1) prior, which keeps a
+    /// high-dimensional design (e.g. many one-hot levels) from driving `α` to a
+    /// degenerate fit on one topic (issue #270).
     ///
     /// Pass `times` (one value per document) for the **dynamic** keyATM: a
     /// Chib (1998) change-point HMM lets topic prevalence shift over time across
