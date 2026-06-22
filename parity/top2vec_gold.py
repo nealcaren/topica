@@ -67,9 +67,9 @@ PURITY_MIN = 0.9
 
 
 def _ari(a, b) -> float:
-    from sklearn.metrics import adjusted_rand_score
-
-    return float(adjusted_rand_score(a, b))
+    # numpy-only ARI (harness) so the offline gold test needs no scikit-learn,
+    # which CI does not install (sklearn is only a regenerate-time reference).
+    return harness.adjusted_rand_index(a, b)
 
 
 def _topica_fit(docs, doc_emb, word_emb, vocab):

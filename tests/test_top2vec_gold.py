@@ -93,18 +93,18 @@ def test_top2vec_gold_is_non_vacuous():
     Jaccard: a permuted label vector keeps the same cluster sizes but destroys the
     doc->cluster correspondence, so its ARI against the truth must drop near zero."""
     import numpy as np
-    from sklearn.metrics import adjusted_rand_score
 
     arrays, meta = harness.load_gold("top2vec")
     truth = arrays["truth"].astype(np.int64)
     bt_labels = arrays["bertopic_labels"].astype(np.int64)
 
     # The frozen BERTopic labels recover the truth (sanity on the gold itself).
-    assert adjusted_rand_score(truth, bt_labels) >= meta["truth_ari_min"]
+    # Uses the harness's numpy-only ARI so the test needs no scikit-learn (CI).
+    assert harness.adjusted_rand_index(truth, bt_labels) >= meta["truth_ari_min"]
 
     rng = np.random.default_rng(0)
     shuffled = rng.permutation(bt_labels)
-    jumbled_ari = adjusted_rand_score(truth, shuffled)
+    jumbled_ari = harness.adjusted_rand_index(truth, shuffled)
     bar = max(meta["truth_ari_min"], meta["bertopic_truth_ari"] - meta["ari_margin"])
     assert jumbled_ari < bar, (
         f"shuffled-partition ARI {jumbled_ari:.3f} should be far below the bar "
