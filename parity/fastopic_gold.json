@@ -1,0 +1,32 @@
+{
+  "corpus": "20-newsgroups 5-group subset (420-doc fixed-seed subsample of parity/fastopic_compare.py's load()), MiniLM all-MiniLM-L6-v2 document embeddings frozen into the npz",
+  "cosine_bar": 0.544344440969358,
+  "date": "2026-06-22",
+  "emb_dim": 384,
+  "epochs": 200,
+  "groups": [
+    "rec.sport.baseball",
+    "sci.space",
+    "talk.politics.guns",
+    "comp.graphics",
+    "sci.med"
+  ],
+  "kind": "cross-implementation (fastopic package reference)",
+  "lr": 0.002,
+  "margin": 0.15,
+  "model": "FASTopic (Wu et al. 2024)",
+  "num_docs": 420,
+  "num_topics": 10,
+  "pass_bar": "topica-vs-reference Hungarian-aligned topic-word cosine (over the shared vocabulary) >= reference seed-to-seed self cosine - margin",
+  "reference": "fastopic 1.0.1 (all-MiniLM-L6-v2 embeddings)",
+  "reference_self_cosine": 0.694344440969358,
+  "seeds": {
+    "gold": 0,
+    "noise_floor": 1
+  },
+  "shared_vocab_size": 3293,
+  "subsample_n": 420,
+  "subsample_seed": 271,
+  "topica_vs_reference_cosine": 0.6066757582595604,
+  "vocab_size": 3293
+}
