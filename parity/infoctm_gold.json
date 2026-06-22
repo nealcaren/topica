@@ -1,0 +1,29 @@
+{
+  "align_bar": 0.8,
+  "corpus": "synthetic matched bilingual planted-block, A=300/B=270 docs x 15 tokens, K=5 blocks of 6 words/lang, block-aligned dictionary (from parity/infoctm_compare.py)",
+  "date": "2026-06-22",
+  "hidden": 64,
+  "iters": 200,
+  "kind": "cross-implementation (paper-derived PyTorch InfoCTM); alignment / top-word bar, NOT topic-word cosine -- topica is sharper by design",
+  "model": "InfoCTM (Wu et al. 2023, AAAI)",
+  "num_docs_a": 300,
+  "num_docs_b": 270,
+  "num_topics": 5,
+  "pass_bar": "topica cross-lingual alignment >= align_bar (0.8, the live infoctm_compare bar); per-language top-word block agreement vs the reference is a reported diagnostic, not the bar",
+  "per": 6,
+  "reference": "torch 2.12.0 (paper-derived InfoCTM, parity/refs/avitm.py backbone)",
+  "reference_alignment": 1.0,
+  "reference_alignment_floor": 0.8,
+  "reference_purity_a": 0.2773974366486073,
+  "reference_purity_b": 0.26216758564114573,
+  "seeds": {
+    "gold": 1,
+    "noise_floor": 2,
+    "topica": 1
+  },
+  "topica_alignment": 1.0,
+  "topica_purity_a": 0.3841677988368425,
+  "topica_purity_b": 0.3595643882570874,
+  "vocab_size_a": 30,
+  "vocab_size_b": 30
+}

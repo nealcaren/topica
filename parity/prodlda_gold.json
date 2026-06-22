@@ -1,0 +1,33 @@
+{
+  "alpha": 1.0,
+  "batch": 200,
+  "corpus": "20-newsgroups subset ['rec.sport.baseball', 'sci.space', 'talk.politics.guns'], min_df=20, headers/footers/quotes removed, tokenized as parity/prodlda_compare.py",
+  "date": "2026-06-22",
+  "dropout": 0.2,
+  "epochs": 120,
+  "hidden": 100,
+  "kind": "cross-implementation (PyTorch AVITM reference); coherence-parity bar",
+  "lower_bar": -0.2822008540626734,
+  "lr": 0.002,
+  "model": "ProdLDA / AVITM (Srivastava & Sutton 2017)",
+  "num_docs": 1497,
+  "num_topics": 10,
+  "pass_bar": "topica mean c_npmi >= reference_mean - sd_mult * reference_sd (objective/coherence parity, one-sided: topica no worse than the reference within its own seed noise; more coherent is a pass -- NOT topic-word cosine, the live prodlda_compare bar)",
+  "ref_seeds": [
+    0,
+    1,
+    2
+  ],
+  "reference": "torch 2.12.0 (AVITM reference, parity/refs/avitm.py)",
+  "reference_c_npmi_mean": -0.2256036662717166,
+  "reference_c_npmi_per_seed": [
+    -0.2443636607264536,
+    -0.24683841354329003,
+    -0.18560892454540628
+  ],
+  "reference_c_npmi_sd": 0.02829859389547842,
+  "sd_mult": 2.0,
+  "topica_c_npmi": -0.13726443859070664,
+  "topica_seed": 0,
+  "vocab_size": 1088
+}
