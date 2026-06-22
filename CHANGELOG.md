@@ -6,6 +6,48 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-06-22
+
+### Added
+
+- `topica.stop_reason(model)` — a model-neutral report of why a fit's training
+  loop stopped: early convergence on `convergence_tol` (a floor) versus the
+  iteration cap (a ceiling), with the last relative change. Answers the question
+  `converged` alone leaves implicit (#267).
+- Statistical-validity test coverage for every model (#271): universal invariant
+  and metamorphic checks (no degenerate/collapsed θ, an effective-topics floor,
+  finite parameters, "more iterations must not collapse the fit") with a coverage
+  manifest that fails if a new model ships without them. This is the layer that
+  catches the class of bug #270 was.
+- Committed gold-fixture parity for 30 models, validating topica **offline** in CI
+  (no reference toolchain installed): cross-implementation against the reference
+  where one exists — R `stm` (STM/CTM/STS), R `keyATM`, Java MALLET (LDA/DMR/
+  LabeledLDA), tomotopy (GDMR), gensim (DTM), scikit-learn (NMF/LSA), the AVITM
+  PyTorch reference (ProdLDA/CombinedTM/ZeroShotTM/InfoCTM), BERTopic, and
+  FASTopic — and against a frozen planted self-consistency baseline where no
+  reference implementation exists (SAGE, HDP, PA, HLDA, ETM, DETM, ECTM,
+  SupervisedLDA, SeededLDA, GSDMM, PT, EmbeddingLDA). Each fixture ships a JSON
+  provenance log and a non-vacuous control. A shared `parity/harness.py` and a
+  `scripts/ci_sim.py` offline-gold guard support it.
+
+### Fixed
+
+- Covariate keyATM (`fit(covariates=...)`) no longer silently collapses the
+  document-topic matrix onto a single topic on a high-dimensional design at scale.
+  Following R `keyATM`, the covariates are now standardized and the regression
+  coefficients bounded under the N(0,1) prior, which keeps `α = exp(x·λ)` from
+  running away; validated against R `keyATM`'s covariate model (#270).
+
+### Documentation
+
+- Every public binding parameter is now documented, with a doc-coverage lint
+  (constructors included) so the runtime `help()` text and the API site can no
+  longer drift behind the signatures (#268). `convergence_tol`'s units and scale
+  are documented across the model `fit` methods (#267).
+- Speed is reported **to convergence** — the time a user actually waits — across
+  the README, the paper, and `docs/benchmarks.md`, replacing the earlier
+  per-iteration framing (the per-iteration decomposition is noted, not headlined).
+
 ## [0.27.0] - 2026-06-21
 
 ### Added
