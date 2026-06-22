@@ -120,9 +120,10 @@ share one contract, so the same diagnostic, labeling, and covariate-effect tools
 apply to every model and cross-model comparison costs no extra plumbing
 (Sections~\ref{sec:design} and~\ref{sec:models}).
 \item \textbf{Speed.} A parallel \proglang{Rust} core fits the structural and
-other variational models roughly ten to eighteen times faster than \proglang{R}
-\pkg{stm} on a single core and up to thirty-two times faster multithreaded, and matches the
-compiled \pkg{MALLET} and \pkg{keyATM} samplers core for core, without a JVM and
+other variational models, run to convergence, roughly one and a half to three
+times faster than \proglang{R} \pkg{stm} on a single core and five to seven times
+faster on a typical multicore workstation (faster still per iteration), and matches
+the compiled \pkg{MALLET} and \pkg{keyATM} samplers core for core, without a JVM and
 without \pkg{PyTorch} (Section~\ref{sec:performance}).
 \item \textbf{Reproducibility by construction.} The variational models are
 deterministic to the bit even when multithreaded, and the sampling models are
