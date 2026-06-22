@@ -1,0 +1,24 @@
+{
+  "chain_variance": 0.1,
+  "corpus": "synthetic smooth-drift, 4 time slices x 300 docs, drift topic mass sliding along w0..w9, stable topic on w10..w13",
+  "cosine_bar": 0.9,
+  "date": "2026-06-22",
+  "gensim_passes": 15,
+  "kind": "cross-implementation (gensim LdaSeqModel)",
+  "model": "DTM (Blei & Lafferty 2006)",
+  "note": "Uses a SMOOTH Gaussian-random-walk drift, the regime DTM models. An abrupt planted drift is not well-identified across implementations (the drifting chain disagrees).",
+  "num_docs": 1200,
+  "num_times": 4,
+  "num_topics": 2,
+  "pass_bar": "topica per-slice/per-topic topic-word cosine vs gensim, minimum across all (topic, slice) >= cosine_bar",
+  "reference": "gensim 4.4.0",
+  "seeds": {
+    "corpus": 0,
+    "gensim": 1,
+    "topica": 1
+  },
+  "topica_iters": 40,
+  "topica_mean_cosine": 0.9996150412749373,
+  "topica_min_cosine": 0.9987084901583173,
+  "vocab_size": 20
+}
