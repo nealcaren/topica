@@ -1,0 +1,19 @@
+{
+  "corpus": "paired-block corpus, 160 docs, 4 sub-blocks under 2 super-topics (tests/test_model_invariants _fit_pa)",
+  "cosine_bar": 0.99,
+  "coverage_bar": 4,
+  "date": "2026-06-22",
+  "eff_paths_bar": null,
+  "kind": "PLANTED self-consistency gold (NO external reference exists for PA (Pachinko Allocation, Li & McCallum 2006)). Locks topica's own fixed-seed output: a refit must reproduce the frozen topic-word matrix in cosine, the planted block structure must be recovered, and the validity invariants must hold; non-vacuous via the shuffle check.",
+  "model": "PA (Pachinko Allocation, Li & McCallum 2006)",
+  "num_topics": 4,
+  "pass_bar": "refit-vs-gold aligned topic-word cosine >= cosine_bar AND planted recovery clears its bar",
+  "purity_bar": 0.55,
+  "recovery": {
+    "block_purity": 0.6,
+    "blocks_covered": 4,
+    "n_topics": 4
+  },
+  "reference": "topica PA (Pachinko Allocation, Li & McCallum 2006) (self-consistency / planted-recovery gold)",
+  "vocab_size": 20
+}

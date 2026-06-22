@@ -1,0 +1,19 @@
+{
+  "corpus": "supervised 2-block corpus, 200 docs, continuous response driven by block-0 prevalence (tests/test_model_invariants _supervised_corpus)",
+  "cosine_bar": 0.99,
+  "coverage_bar": 2,
+  "date": "2026-06-22",
+  "eff_paths_bar": null,
+  "kind": "PLANTED self-consistency gold (NO external reference exists for SupervisedLDA (Blei & McAuliffe 2007)). Locks topica's own fixed-seed output: a refit must reproduce the frozen topic-word matrix in cosine, the planted block structure must be recovered, and the validity invariants must hold; non-vacuous via the shuffle check.",
+  "model": "SupervisedLDA (Blei & McAuliffe 2007)",
+  "num_topics": 2,
+  "pass_bar": "refit-vs-gold aligned topic-word cosine >= cosine_bar AND planted recovery clears its bar",
+  "purity_bar": 0.9,
+  "recovery": {
+    "block_purity": 1.0,
+    "blocks_covered": 2,
+    "n_topics": 2
+  },
+  "reference": "topica SupervisedLDA (Blei & McAuliffe 2007) (self-consistency / planted-recovery gold)",
+  "vocab_size": 12
+}

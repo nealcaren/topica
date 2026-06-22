@@ -1,0 +1,19 @@
+{
+  "corpus": "short (3-token) K=4 planted-block corpus, 300 docs, 10 pseudo-documents",
+  "cosine_bar": 0.99,
+  "coverage_bar": 4,
+  "date": "2026-06-22",
+  "eff_paths_bar": null,
+  "kind": "PLANTED self-consistency gold (NO external reference exists for PT (Pseudo-document Topic model / Zuo et al. 2016)). Locks topica's own fixed-seed output: a refit must reproduce the frozen topic-word matrix in cosine, the planted block structure must be recovered, and the validity invariants must hold; non-vacuous via the shuffle check.",
+  "model": "PT (Pseudo-document Topic model / Zuo et al. 2016)",
+  "num_topics": 4,
+  "pass_bar": "refit-vs-gold aligned topic-word cosine >= cosine_bar AND planted recovery clears its bar",
+  "purity_bar": 0.9,
+  "recovery": {
+    "block_purity": 1.0,
+    "blocks_covered": 4,
+    "n_topics": 4
+  },
+  "reference": "topica PT (Pseudo-document Topic model / Zuo et al. 2016) (self-consistency / planted-recovery gold)",
+  "vocab_size": 16
+}

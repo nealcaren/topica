@@ -1,0 +1,19 @@
+{
+  "corpus": "planted K=4 block corpus (block=6, 240 docs, 4 time slices) + planted block-axis word embeddings (frozen in npz)",
+  "cosine_bar": 0.99,
+  "coverage_bar": 4,
+  "date": "2026-06-22",
+  "eff_paths_bar": null,
+  "kind": "PLANTED self-consistency gold (NO external reference exists for DETM (Dieng, Ruiz & Blei 2019, dynamic embedded)). Locks topica's own fixed-seed output: a refit must reproduce the frozen topic-word matrix in cosine, the planted block structure must be recovered, and the validity invariants must hold; non-vacuous via the shuffle check.",
+  "model": "DETM (Dieng, Ruiz & Blei 2019, dynamic embedded)",
+  "num_topics": 4,
+  "pass_bar": "refit-vs-gold aligned topic-word cosine >= cosine_bar AND planted recovery clears its bar",
+  "purity_bar": 0.6,
+  "recovery": {
+    "block_purity": 0.75,
+    "blocks_covered": 4,
+    "n_topics": 4
+  },
+  "reference": "topica DETM (Dieng, Ruiz & Blei 2019, dynamic embedded) (self-consistency / planted-recovery gold)",
+  "vocab_size": 24
+}
