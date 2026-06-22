@@ -1,0 +1,21 @@
+{
+  "K": 2,
+  "corpus": "synthetic two-cluster fixture, 160 docs x 8 tokens, binary is_space covariate switching animal/space vocab (from parity/mallet_parity.py dmr_parity)",
+  "date": "2026-06-22",
+  "iters": 800,
+  "kind": "cross-implementation (Java MALLET DMRTopicModel)",
+  "mallet_effect": 5.68982654487006,
+  "mallet_self_cosine": 0.9999999999951155,
+  "margin": 0.1,
+  "model": "DMR (Dirichlet-Multinomial Regression LDA)",
+  "num_docs": 160,
+  "pass_bar": "aligned topic cosine vs MALLET >= MALLET's own seed-to-seed floor - margin, AND both effects (space-minus-animal is_space weight) > 1.0",
+  "reference": "Java MALLET /opt/homebrew/Cellar/mallet/202108/libexec (DMRDriver.java)",
+  "seeds": {
+    "gold": 1,
+    "noise_floor": 2
+  },
+  "topica_cosine": 0.9999999999951155,
+  "topica_effect": 6.7726826290873525,
+  "vocab_size": 12
+}

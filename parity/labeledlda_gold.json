@@ -1,0 +1,21 @@
+{
+  "alpha": 0.1,
+  "beta": 0.01,
+  "corpus": "synthetic multi-label fixture, 200 docs, 1-2 of three labels (sports/politics/tech), six-word per-label vocab (from parity/mallet_parity.py labeled_parity)",
+  "date": "2026-06-22",
+  "iters": 800,
+  "kind": "cross-implementation (Java MALLET LabeledLDA)",
+  "mallet_self_cosine": 0.9999999999940327,
+  "margin": 0.05,
+  "model": "LabeledLDA (label-constrained LDA)",
+  "num_docs": 200,
+  "num_labels": 3,
+  "pass_bar": "mean per-label topic-word cosine vs MALLET >= MALLET's own seed-to-seed floor - margin",
+  "reference": "Java MALLET /opt/homebrew/Cellar/mallet/202108/libexec (LabeledLDADriver.java)",
+  "seeds": {
+    "gold": 1,
+    "noise_floor": 2
+  },
+  "topica_cosine": 0.9999996633769802,
+  "vocab_size": 18
+}
