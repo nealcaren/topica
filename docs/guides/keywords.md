@@ -73,3 +73,26 @@ about equally by both sides (`usage_diff` near zero) but splits hard on
 `vocab_shift`: liberals write `iraq / surge / bush`, conservatives `israel /
 hamas / taliban`. Reporting both columns keeps that distinction visible. It works
 on any model exposing `doc_topic` and `vocabulary` (LDA, STM, DMR, CTM, keyATM).
+
+### Relationship to STM's content model
+
+This does not replace a [content-covariate STM](covariates.md). R stm splits the
+same question into two tools: `estimateEffect` for prevalence (which topics a
+group uses more) and a `content = ~group` model with `sageLabels()` /
+`plot(type="perspectives")` for wording (how a group words a topic). topica ports
+both faithfully — `estimate_effect` and STM's `content=` plus `word_contrast`.
+`contrastive_topics` is a third, lighter option that sits between them:
+
+- It is **post-hoc and model-neutral**: no content covariate is specified at fit
+  time and nothing is re-estimated, so it runs on any already-fitted model (plain
+  LDA, CTM, keyATM, or a prevalence-only STM) and you can re-slice the same fit by
+  different groupings for free.
+- It reports **both signals at once** (`usage_diff` and `vocab_shift`), which is
+  what surfaces the equal-usage-but-divergent-wording case that prevalence alone
+  misses.
+- It is **descriptive**: the per-word score is a Fighting Words z, not the content
+  model's regularized sparse deviations, and `usage_diff` is a point estimate with
+  no confidence interval. For shrinkage across the corpus use STM's
+  `word_contrast`; for uncertainty on prevalence differences use
+  `estimate_effect`. Reach for `contrastive_topics` to decide *whether* a content
+  model is worth fitting, and for the quick look that works on any model.
