@@ -352,6 +352,22 @@ def topics_per_class(model: Any, groups: Sequence[object], *, ci: float = 0.95) 
     ...
 
 
+def contrastive_topics(
+    model: Any,
+    texts: Sequence[Sequence[str]],
+    groups: Sequence[object],
+    *,
+    prior: float = 0.01,
+    informative: bool = False,
+    min_count: int = 5,
+    n_words: int = 10,
+    group_order: tuple[object, object] | None = None,
+) -> list:
+    """Topic-conditional Fighting Words: per topic, which words separate two
+    groups and how much each topic divides them (usage_diff / vocab_shift)."""
+    ...
+
+
 def plot_report(
     model: Any,
     *,
@@ -452,6 +468,7 @@ __all__ = [
     "representative_docs",
     "topics_over_time",
     "topics_per_class",
+    "contrastive_topics",
     "plot_report",
     "llm_topic_labels",
     "llm_backend",

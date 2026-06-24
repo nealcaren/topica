@@ -25,6 +25,30 @@ def _counts(corpus, vocab_index):
     return c
 
 
+def _zeta(y_a, y_b, *, prior=0.01, informative=False):
+    """The Monroe-Colaresi-Quinn weighted log-odds z-score for two word-count
+    vectors over a shared vocabulary.
+
+    ``y_a`` and ``y_b`` may be fractional (e.g. responsibility-weighted counts),
+    which is what makes the same estimator reusable for the topic-conditional
+    contrast in :func:`topica.contrastive_topics`. Returns the per-word ``ζ``;
+    positive marks an A-distinctive word, negative a B-distinctive one. The math
+    is Monroe et al. eq. 16-22 and must stay identical to the body of
+    :func:`fighting_words`.
+    """
+    y_a = np.asarray(y_a, dtype=np.float64)
+    y_b = np.asarray(y_b, dtype=np.float64)
+    combined = y_a + y_b
+    alpha = prior * combined if informative else np.full(len(combined), float(prior))
+    a0 = alpha.sum()
+    n_a, n_b = y_a.sum(), y_b.sum()
+    odds_a = (y_a + alpha) / (n_a + a0 - y_a - alpha)
+    odds_b = (y_b + alpha) / (n_b + a0 - y_b - alpha)
+    delta = np.log(odds_a) - np.log(odds_b)
+    var = 1.0 / (y_a + alpha) + 1.0 / (y_b + alpha)
+    return delta / np.sqrt(var)
+
+
 def fighting_words(corpus_a, corpus_b, *, prior=0.01, informative=False, min_count=1):
     """Monroe-Colaresi-Quinn *Fighting Words* — words that distinguish corpus A
     from corpus B, with their statistical significance.
@@ -67,16 +91,7 @@ def fighting_words(corpus_a, corpus_b, *, prior=0.01, informative=False, min_cou
 
     # Compute the statistic over the FULL vocabulary so the corpus totals n_·
     # and prior mass α₀ stay correct; `min_count` only filters what is returned.
-    alpha = prior * combined if informative else np.full(len(vocab), float(prior))
-    a0 = alpha.sum()
-    n_a, n_b = y_a.sum(), y_b.sum()
-
-    # Log-odds within each corpus, then their difference (Monroe et al. eq. 16-22).
-    odds_a = (y_a + alpha) / (n_a + a0 - y_a - alpha)
-    odds_b = (y_b + alpha) / (n_b + a0 - y_b - alpha)
-    delta = np.log(odds_a) - np.log(odds_b)
-    var = 1.0 / (y_a + alpha) + 1.0 / (y_b + alpha)
-    zeta = delta / np.sqrt(var)
+    zeta = _zeta(y_a, y_b, prior=prior, informative=informative)
 
     keep = combined >= float(min_count)
     order = np.argsort(zeta)[::-1]
