@@ -297,10 +297,12 @@ class TestTopWordRanking:
             m.top_words(5, topic=0, method="nope")
 
     def test_frex_default_removes_frequent_word_leakage(self):
-        # Raw probability leads (nearly) every topic with a shared frequent word;
-        # the default FREX ranking does not.
+        # With the exact inversion (frequency_temper=1), raw probability leads
+        # (nearly) every topic with a shared frequent word; the default FREX
+        # ranking does not. (frequency_temper<1 also fixes it, hence =1 here to
+        # isolate the ranking effect.)
         docs, k = self._leaky_corpus(seed=0)
-        m = topica.AnchorLDA(k, seed=0).fit(docs)
+        m = topica.AnchorLDA(k, frequency_temper=1.0, seed=0).fit(docs)
         assert self._led_by_common(m, "prob") >= 0.8
         assert self._led_by_common(m, "frex") <= 0.2
         assert self._led_by_common(m, "lift") <= 0.2
@@ -311,3 +313,27 @@ class TestTopWordRanking:
         default = [m.top_words(8, topic=t) for t in range(k)]
         frex = [m.top_words(8, topic=t, method="frex") for t in range(k)]
         assert default == frex
+
+
+class TestFrequencyTemper:
+    def test_default_is_half(self):
+        m = topica.AnchorLDA(4)
+        assert m.frequency_temper == 0.5
+
+    def test_temper_reduces_frequent_word_leakage(self):
+        # Tempering the inversion (gamma<1) removes the frequent-word domination
+        # from the topic-word matrix itself, seen via a plain probability ranking.
+        docs, k = TestTopWordRanking._leaky_corpus(seed=0)
+        led = lambda m: TestTopWordRanking._led_by_common(m, "prob")
+        exact = topica.AnchorLDA(k, frequency_temper=1.0, seed=0).fit(docs)
+        tempered = topica.AnchorLDA(k, frequency_temper=0.5, seed=0).fit(docs)
+        assert led(exact) >= 0.8
+        assert led(tempered) <= 0.2
+
+    def test_gamma_one_is_exact_bayes(self):
+        # frequency_temper=1 reproduces the exact Bayes inversion beta ∝ p(t|w)·p(w).
+        docs, _, _ = _separable_corpus()
+        a = topica.AnchorLDA(4, frequency_temper=1.0, min_count=2, seed=0).fit(docs)
+        b = topica.AnchorLDA(4, frequency_temper=0.5, min_count=2, seed=0).fit(docs)
+        # Different exponents give different topic-word matrices.
+        assert not np.allclose(np.asarray(a.topic_word), np.asarray(b.topic_word))

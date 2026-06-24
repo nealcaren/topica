@@ -564,7 +564,12 @@ Two recovery solvers are available through `recover`. The default `"kl"` minimiz
 
 Anchor-words trades a little coherence for determinism and speed. On poliblog (K=15) it reaches about 93% of fully-converged LDA's c_v in roughly a fifth of the time, and it beats short-run LDA on both quality and time; on separable synthetic data it recovers the planted topics almost exactly.
 
-One quirk needs care in how you *read* the topics. The Bayes inversion sets `beta ∝ p(topic | word) · p(word)`, so `beta` is weighted by raw word frequency — more than a Gibbs model's `beta`, where sparse priors push frequent words down. Ranking a topic's words by raw probability therefore surfaces pervasive words ("will", "one", "people") across many topics, which reads as redundant topics. For that reason `top_words` defaults to a **FREX** ranking (`method="frex"`, the frequency/exclusivity balance topica's `frex`/`label_topics` use; `"lift"` and `"prob"` are also available), which divides the frequency back out and recovers distinctive, well-separated word lists. On poliblog at K=50 this lifts top-word diversity from ~0.33 (probability) to ~0.76 (FREX) and raises c_v at the same time. The underlying topics are fine; it is the ranking that matters. `AnchorLDA` is a strong fast first pass and a deterministic baseline; for a final model on real text, compare against `LDA` or `STM`.
+One quirk needs handling: the exact Bayes inversion sets `beta ∝ p(topic | word) · p(word)`, so `beta` is weighted by raw word frequency — more than a Gibbs model's `beta`, where sparse priors push frequent words down. Left alone, pervasive words ("will", "one", "people") dominate many topics, which reads as redundant topics. Two defaults handle this and compose:
+
+- `frequency_temper` (default `0.5`) tempers the inversion to `beta ∝ p(topic | word) · p(word)**γ`, dividing the excess frequency back out of the topic-word matrix itself. On poliblog at K=50 this lifts probability-ranked top-word diversity from ~0.33 (`γ=1`, the exact inversion) to ~0.79, and raises c_v. Set `frequency_temper=1` for the textbook Arora et al. estimate.
+- `top_words` then defaults to a **FREX** ranking (`method="frex"`, the frequency/exclusivity balance topica's `frex`/`label_topics` use; `"lift"` and `"prob"` are also available), refining the display further — top-word diversity ~0.88 and c_v ~0.49 at K=50 with both defaults.
+
+The underlying topics were always there; these two knobs keep frequent words from masking them. `AnchorLDA` is a strong fast first pass and a deterministic baseline; for a final model on real text, compare against `LDA` or `STM`.
 
 ## Short-text models
 
