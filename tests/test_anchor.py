@@ -254,3 +254,60 @@ class TestHighKTheory:
         a = topica.AnchorLDA(k, seed=0).fit(docs)
         b = topica.AnchorLDA(k, seed=0).fit(docs)
         assert np.array_equal(np.asarray(a.topic_word), np.asarray(b.topic_word))
+
+
+class TestTopWordRanking:
+    """The Bayes inversion weights beta by raw word frequency, so the default
+    FREX ranking matters for anchor-words: it removes pervasive words that a
+    plain probability ranking surfaces across many topics (see PR #290)."""
+
+    @staticmethod
+    def _leaky_corpus(k=20, block=6, n_common=4, common_tok=20, n=1000, seed=0):
+        """A corpus with a few ultra-frequent shared words. Because anchor's
+        Bayes inversion weights beta by word frequency, those words top every
+        topic under a probability ranking."""
+        rng = np.random.default_rng(seed)
+        blocks = [[f"b{b}_w{j}" for j in range(block)] for b in range(k)]
+        anchors = [f"b{b}_anchor" for b in range(k)]
+        common = [f"common_{j}" for j in range(n_common)]
+        docs = []
+        for d in range(n):
+            b = d % k
+            docs.append([anchors[b], anchors[b]]
+                        + list(rng.choice(blocks[b], 28 - common_tok))
+                        + list(rng.choice(common, common_tok)))
+        return docs, k
+
+    @staticmethod
+    def _led_by_common(m, method):
+        return float(np.mean([m.top_words(1, topic=t, method=method)[0][0].startswith("common_")
+                              for t in range(m.num_topics)]))
+
+    def test_methods_return_pairs(self):
+        docs, _, _ = _separable_corpus()
+        m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
+        for method in ("frex", "prob", "lift"):
+            tw = m.top_words(5, topic=0, method=method)
+            assert len(tw) == 5 and all(isinstance(w, str) for w, _ in tw)
+
+    def test_bad_method_raises(self):
+        docs, _, _ = _separable_corpus()
+        m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
+        with pytest.raises(ValueError, match="method must be"):
+            m.top_words(5, topic=0, method="nope")
+
+    def test_frex_default_removes_frequent_word_leakage(self):
+        # Raw probability leads (nearly) every topic with a shared frequent word;
+        # the default FREX ranking does not.
+        docs, k = self._leaky_corpus(seed=0)
+        m = topica.AnchorLDA(k, seed=0).fit(docs)
+        assert self._led_by_common(m, "prob") >= 0.8
+        assert self._led_by_common(m, "frex") <= 0.2
+        assert self._led_by_common(m, "lift") <= 0.2
+
+    def test_frex_is_default(self):
+        docs, k = self._leaky_corpus(seed=0)
+        m = topica.AnchorLDA(k, seed=0).fit(docs)
+        default = [m.top_words(8, topic=t) for t in range(k)]
+        frex = [m.top_words(8, topic=t, method="frex") for t in range(k)]
+        assert default == frex

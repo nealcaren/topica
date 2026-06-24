@@ -197,10 +197,14 @@ class AnchorLDA:
         ``"l2"``). Values above ~1.5 can overshoot and collapse topics.
     convergence_tol : float, default 1e-5
         Relative-objective tolerance for the ``recover="kl"`` early stop.
+    frex_w : float, default 0.5
+        Frequency/exclusivity balance for the default FREX top-word ranking (see
+        :meth:`top_words`). ``0`` is pure exclusivity, ``1`` pure frequency.
     """
 
     def __init__(self, num_topics: int, *, recover: str = "kl", min_count: int = 5,
-                 seed: int = 42, eta: float = 1.0, convergence_tol: float = 1e-5):
+                 seed: int = 42, eta: float = 1.0, convergence_tol: float = 1e-5,
+                 frex_w: float = 0.5):
         if not experimental_enabled():
             raise RuntimeError(_GATE_MESSAGE)
         if num_topics < 2:
@@ -213,6 +217,7 @@ class AnchorLDA:
         self.seed = int(seed)
         self.eta = float(eta)
         self.convergence_tol = float(convergence_tol)
+        self.frex_w = float(frex_w)
         self._fitted = False
         self._topic_word = None
         self._doc_topic = None
@@ -223,6 +228,7 @@ class AnchorLDA:
         self._topic_names = None
         self._fit_history = []
         self._converged = None
+        self._word_counts = None
 
     # -- fitting ------------------------------------------------------------
     def fit(self, data, *, iters=None, min_count=None):
@@ -266,6 +272,7 @@ class AnchorLDA:
         self._doc_names = names
         self._anchors = [vocab[i] for i in anchors]
         self._texts = docs
+        self._word_counts = counts.sum(axis=0)    # per-word totals, for FREX/lift
         self._fitted = True
         return self
 
@@ -330,14 +337,49 @@ class AnchorLDA:
         ``None`` for the non-iterative ``"l2"`` recovery."""
         return self._converged
 
-    def top_words(self, n: int = 10, *, topic=None):
+    def _word_count_vector(self):
+        if self._word_counts is None:
+            idx = {w: i for i, w in enumerate(self._vocab)}
+            c = np.zeros(len(self._vocab))
+            for doc in self._texts:
+                for w in doc:
+                    j = idx.get(w)
+                    if j is not None:
+                        c[j] += 1.0
+            self._word_counts = c
+        return self._word_counts
+
+    def top_words(self, n: int = 10, *, topic=None, method="frex"):
+        """Top ``n`` words per topic as ``(word, score)`` pairs.
+
+        ``method`` controls the ranking. The default ``"frex"`` ranks by the
+        FREX score (the frequency/exclusivity harmonic mean, balance ``frex_w``),
+        which matters more for anchor-words than for the Gibbs models: the
+        Bayes-inversion ``beta ∝ p(topic|word)·p(word)`` weights ``beta`` by raw
+        word frequency, so ranking by ``"prob"`` surfaces pervasive words across
+        many topics. ``"lift"`` ranks by ``beta / p(word)`` (pure exclusivity,
+        which can over-reward rare words). Pass ``topic`` for a single topic's
+        list, else a list per topic is returned.
+        """
         self._require_fit()
         beta = self._topic_word
         vocab = self._vocab
+        if method == "frex":
+            from .validation import frex as _frex
+            pairs = _frex(beta, vocab, w=self.frex_w, n=n,
+                          word_counts=self._word_count_vector())
+            return pairs[int(topic)] if topic is not None else pairs
+        if method == "lift":
+            wc = self._word_count_vector()
+            score = beta / np.where(wc > 0, wc, 1.0)
+        elif method == "prob":
+            score = beta
+        else:
+            raise ValueError(f"method must be 'frex', 'prob', or 'lift'; got {method!r}")
 
         def one(t):
-            idx = np.argsort(beta[t])[::-1][:n]
-            return [(vocab[i], float(beta[t, i])) for i in idx]
+            idx = np.argsort(score[t])[::-1][:n]
+            return [(vocab[i], float(score[t, i])) for i in idx]
 
         if topic is not None:
             return one(int(topic))
@@ -361,6 +403,7 @@ class AnchorLDA:
             "seed": self.seed,
             "eta": self.eta,
             "convergence_tol": self.convergence_tol,
+            "frex_w": self.frex_w,
             "vocabulary": list(self._vocab),
             "doc_names": list(self._doc_names),
             "anchors": list(self._anchors),
@@ -392,7 +435,8 @@ class AnchorLDA:
             m = AnchorLDA(meta["num_topics"], recover=meta.get("recover", "l2"),
                           min_count=meta["min_count"], seed=meta["seed"],
                           eta=meta.get("eta", 1.0),
-                          convergence_tol=meta.get("convergence_tol", 1e-5))
+                          convergence_tol=meta.get("convergence_tol", 1e-5),
+                          frex_w=meta.get("frex_w", 0.5))
         finally:
             if not was_on:
                 from . import enable_experimental
