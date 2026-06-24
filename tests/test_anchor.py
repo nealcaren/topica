@@ -168,3 +168,89 @@ class TestRegistry:
         info = {m.name: m for m in topica.list_models()}
         assert "AnchorLDA" in info
         assert info["AnchorLDA"].experimental is True
+
+
+def _overlap_corpus(k=30, block=8, shared=15, n=1500, length=40, seed=0):
+    """A high-K corpus whose topics share a heavy common-word background. Each
+    document is one block's distinctive words plus a unique per-block anchor word,
+    diluted by ~50% shared common words. The common words are the most frequent
+    tokens, so they dominate a plain LDA topic's mass; anchor-words divides word
+    frequency out (Bayes inversion), so its topics still lead with the block's
+    distinctive words. This is the regime where the high-K theory bites."""
+    rng = np.random.default_rng(seed)
+    blocks = [[f"b{b}_w{j}" for j in range(block)] for b in range(k)]
+    anchors = [f"b{b}_anchor" for b in range(k)]
+    common = [f"common_{j}" for j in range(shared)]
+    docs = []
+    for d in range(n):
+        b = d % k
+        docs.append([anchors[b], anchors[b]]
+                    + list(rng.choice(blocks[b], 18))
+                    + list(rng.choice(common, 20)))
+    return docs, set(anchors), k
+
+
+def _is_common(w):
+    return w.startswith("common_")
+
+
+def _anchors_surfaced(model, true_anchors, n=10):
+    """Fraction of true anchor words that appear in some topic's top-n."""
+    v = list(model.vocabulary)
+    tw = np.asarray(model.topic_word)
+    top = set()
+    for t in range(tw.shape[0]):
+        top |= {v[i] for i in np.argsort(tw[t])[::-1][:n]}
+    return len(top & true_anchors) / len(true_anchors)
+
+
+def _distinctive_lead(model):
+    """Fraction of topics whose single top word is not a shared common word."""
+    v = list(model.vocabulary)
+    tw = np.asarray(model.topic_word)
+    return float(np.mean([not _is_common(v[int(np.argmax(tw[t]))])
+                          for t in range(tw.shape[0])]))
+
+
+class TestHighKTheory:
+    """At high K with overlapping (shared-background) vocabulary, anchor-words
+    recovers the per-topic distinctive words that a random-init Gibbs LDA, at a
+    comparable budget, loses to frequency domination. See PR #290 discussion."""
+
+    K = 30
+
+    @pytest.fixture(scope="class")
+    def fits(self):
+        was = topica.experimental_enabled()
+        topica.enable_experimental(True)
+        try:
+            docs, true_anchors, k = _overlap_corpus(k=self.K, seed=0)
+            anchor = topica.AnchorLDA(k, seed=0).fit(docs)
+            lda = topica.LDA(num_topics=k, seed=0)
+            lda.fit(docs, iters=100)
+        finally:
+            topica.enable_experimental(was)
+        return anchor, lda, true_anchors
+
+    def test_anchor_recovers_distinctive_structure(self, fits):
+        anchor, _, true_anchors = fits
+        # Anchor-words should surface (nearly) every planted anchor and lead every
+        # topic with a distinctive (non-common) word despite the shared background.
+        assert _anchors_surfaced(anchor, true_anchors) >= 0.9
+        assert _distinctive_lead(anchor) >= 0.9
+
+    def test_anchor_beats_lda_at_high_k(self, fits):
+        anchor, lda, true_anchors = fits
+        a_surf, l_surf = _anchors_surfaced(anchor, true_anchors), _anchors_surfaced(lda, true_anchors)
+        a_lead, l_lead = _distinctive_lead(anchor), _distinctive_lead(lda)
+        # The theory: a plain Gibbs LDA at high K loses distinctive words to the
+        # frequent common background, while anchor-words does not.
+        assert l_surf < 0.8, f"LDA unexpectedly recovered anchors (surf={l_surf})"
+        assert a_surf >= l_surf + 0.2, f"anchor {a_surf} not clearly above LDA {l_surf}"
+        assert a_lead >= l_lead + 0.15, f"anchor {a_lead} not clearly above LDA {l_lead}"
+
+    def test_anchor_deterministic_at_high_k(self):
+        docs, _, k = _overlap_corpus(k=self.K, seed=0)
+        a = topica.AnchorLDA(k, seed=0).fit(docs)
+        b = topica.AnchorLDA(k, seed=0).fit(docs)
+        assert np.array_equal(np.asarray(a.topic_word), np.asarray(b.topic_word))
