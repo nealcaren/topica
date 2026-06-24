@@ -79,6 +79,12 @@ and in the `topica.validation` module.
 
 ::: topica.check_residuals
 
+::: topica.document_residuals
+
+::: topica.flag_topics
+
+::: topica.topic_dendrogram
+
 ::: topica.align_topics
 
 ::: topica.topic_stability
