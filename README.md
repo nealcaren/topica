@@ -136,6 +136,7 @@ Shipped before a published paper and reference-implementation parity (topica's b
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
+| `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `ECTM` | text, metadata, times | variational | bit-exact | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
 
 <!-- END MODEL TABLE -->
