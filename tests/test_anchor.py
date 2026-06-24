@@ -58,8 +58,35 @@ class TestFit:
         assert np.asarray(m.topic_word).shape == (4, v)
         assert np.asarray(m.doc_topic).shape == (len(docs), 4)
         assert len(m.anchors) == 4
+
+    def test_kl_default_is_iterative(self):
+        docs, _, _ = _separable_corpus()
+        m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)  # recover="kl"
+        assert m.fit_history, "KL recovery should record an objective trace"
+        assert isinstance(m.converged, bool)
+        # The KL objective is non-increasing along the recorded trace.
+        objs = [o for _, o in m.fit_history]
+        assert all(b <= a + 1e-9 for a, b in zip(objs, objs[1:]))
+
+    def test_l2_is_noniterative(self):
+        docs, _, _ = _separable_corpus()
+        m = topica.AnchorLDA(4, recover="l2", min_count=2, seed=0).fit(docs)
         assert m.fit_history == []
         assert m.converged is None
+
+    def test_bad_recover_raises(self):
+        with pytest.raises(ValueError, match="recover must be"):
+            topica.AnchorLDA(4, recover="nope")
+
+    def test_both_recoveries_recover_separable(self):
+        # Both recovery methods should recover the planted separable topics.
+        docs, _, anchors = _separable_corpus(k=4, seed=1)
+        for rec in ("kl", "l2"):
+            m = topica.AnchorLDA(4, recover=rec, min_count=2, seed=0).fit(docs)
+            assert set(m.anchors) == set(anchors), rec
+            for t in range(4):
+                blocks = {w.split("_")[0] for w, _ in m.top_words(8, topic=t)}
+                assert len(blocks) == 1, (rec, t)
 
     def test_topic_word_rows_are_distributions(self):
         docs, _, _ = _separable_corpus()

@@ -114,7 +114,8 @@ def _find_anchors(q, k, seed):
 
 def _recover_l2(q, anchors):
     """RecoverL2: for each word solve the simplex-constrained non-negative least
-    squares ``Q_i ≈ Σ_k C_ik Q_{anchor_k}`` for ``C_ik = p(topic k | word i)``."""
+    squares ``Q_i ≈ Σ_k C_ik Q_{anchor_k}`` for ``C_ik = p(topic k | word i)``.
+    One serial NNLS solve per word — exact but ``O(V)`` Python iterations."""
     from scipy.optimize import nnls
 
     qa = q[anchors]
@@ -126,6 +127,40 @@ def _recover_l2(q, anchors):
         s = c.sum()
         out[i] = c / s if s > 0 else c
     return out
+
+
+def _recover_kl(q, anchors, *, iters, eta, tol, check_every=5):
+    """RecoverKL: recover ``C_ik = p(topic k | word i)`` by minimizing
+    ``KL(Q_i ‖ Σ_k C_ik Q_{anchor_k})`` over the simplex with exponentiated
+    gradient (Arora et al. 2013). Vectorized over all words at once — a few BLAS
+    matmuls per step instead of ``O(V)`` serial solves — and stops early when the
+    objective flattens. The objective is checked every ``check_every`` steps
+    (it reuses the step's own reconstruction, so the check adds only a masked
+    log-sum, not another matmul). Returns ``(C, history, converged)``."""
+    qa = q[anchors]
+    v, k = q.shape[0], len(anchors)
+    c = np.full((v, k), 1.0 / k)
+    mask = q > 0
+    q_m = q[mask]
+    q_logq = float((q_m * np.log(q_m)).sum())     # constant part of the mean KL
+    history = []
+    converged = False
+    prev = np.inf
+    for it in range(int(iters)):
+        recon = np.clip(c @ qa, 1e-12, None)
+        last = it == int(iters) - 1
+        if it % check_every == 0 or last:
+            obj = (q_logq - float((q_m * np.log(recon[mask])).sum())) / v
+            history.append((it, obj))
+            if prev - obj < tol * max(abs(prev), 1e-12):
+                converged = True
+                break
+            prev = obj
+        upd = eta * ((q / recon) @ qa.T)          # = -eta * dKL/dC
+        upd -= upd.max(axis=1, keepdims=True)      # stabilize exp (cancels on renorm)
+        c *= np.exp(upd)
+        c /= c.sum(axis=1, keepdims=True)
+    return c, history, converged
 
 
 class AnchorLDA:
@@ -146,21 +181,38 @@ class AnchorLDA:
     ----------
     num_topics : int
         The number of topics (and anchors) to recover.
+    recover : {"kl", "l2"}, default "kl"
+        The recovery step. ``"kl"`` minimizes ``KL(Q_i ‖ C_i Q_anchors)`` with a
+        vectorized exponentiated-gradient solver — faster (a few BLAS matmuls
+        instead of one NNLS per word) and a closer co-occurrence fit. ``"l2"`` is
+        the simplex-constrained non-negative least squares of Arora et al.'s
+        RecoverL2: exact but a serial solve per word.
     min_count : int, default 5
         Drop vocabulary words occurring fewer than this many times overall.
     seed : int, default 42
         Affects only the degenerate-anchor fallback; recovery is otherwise
         deterministic.
+    eta : float, default 1.0
+        Exponentiated-gradient step size for ``recover="kl"`` (unused for
+        ``"l2"``). Values above ~1.5 can overshoot and collapse topics.
+    convergence_tol : float, default 1e-5
+        Relative-objective tolerance for the ``recover="kl"`` early stop.
     """
 
-    def __init__(self, num_topics: int, *, min_count: int = 5, seed: int = 42):
+    def __init__(self, num_topics: int, *, recover: str = "kl", min_count: int = 5,
+                 seed: int = 42, eta: float = 1.0, convergence_tol: float = 1e-5):
         if not experimental_enabled():
             raise RuntimeError(_GATE_MESSAGE)
         if num_topics < 2:
             raise ValueError("num_topics must be at least 2")
+        if recover not in ("kl", "l2"):
+            raise ValueError(f"recover must be 'kl' or 'l2'; got {recover!r}")
         self._k = int(num_topics)
+        self.recover = recover
         self.min_count = int(min_count)
         self.seed = int(seed)
+        self.eta = float(eta)
+        self.convergence_tol = float(convergence_tol)
         self._fitted = False
         self._topic_word = None
         self._doc_topic = None
@@ -169,13 +221,17 @@ class AnchorLDA:
         self._anchors = None
         self._texts = None
         self._topic_names = None
+        self._fit_history = []
+        self._converged = None
 
     # -- fitting ------------------------------------------------------------
     def fit(self, data, *, iters=None, min_count=None):
         """Recover topics from ``data`` (a :class:`~topica.Corpus` or a list of
-        token lists). ``iters`` is accepted for interface uniformity but unused:
-        the recovery is non-iterative. ``min_count`` overrides the constructor
-        value for this fit."""
+        token lists). For ``recover="kl"`` ``iters`` is the maximum number of
+        exponentiated-gradient steps (default 200, with an early stop on
+        ``convergence_tol``);
+        for ``recover="l2"`` the recovery is non-iterative and ``iters`` is
+        ignored. ``min_count`` overrides the constructor value for this fit."""
         mc = self.min_count if min_count is None else int(min_count)
         docs, names = _corpus_to_token_lists(data)
         vocab, w2i = _build_vocab(docs, mc)
@@ -187,7 +243,13 @@ class AnchorLDA:
         counts = _doc_term(docs, w2i)
         q, pword = _build_q(counts)
         anchors = _find_anchors(q, self._k, self.seed)
-        c = _recover_l2(q, anchors)              # V x K, p(topic | word)
+        if self.recover == "kl":
+            n_iters = 200 if iters is None else int(iters)
+            c, self._fit_history, self._converged = _recover_kl(
+                q, anchors, iters=n_iters, eta=self.eta, tol=self.convergence_tol)
+        else:
+            c = _recover_l2(q, anchors)          # V x K, p(topic | word)
+            self._fit_history, self._converged = [], None
         a = c * pword[:, None]                    # Bayes inversion
         z = a.sum(axis=0, keepdims=True)
         z[z == 0] = 1.0
@@ -257,15 +319,16 @@ class AnchorLDA:
 
     @property
     def fit_history(self) -> list:
-        """Empty: anchor-words recovery is non-iterative, so there is no
-        per-iteration objective trace."""
-        return []
+        """For ``recover="kl"``, the ``(iteration, KL objective)`` trace of the
+        exponentiated-gradient recovery; empty for the non-iterative ``"l2"``."""
+        return list(self._fit_history)
 
     @property
     def converged(self):
-        """``None``: the recovery is non-iterative, so convergence does not
-        apply (matching the contract for non-iterative models)."""
-        return None
+        """For ``recover="kl"``, whether the recovery stopped early on
+        ``convergence_tol``;
+        ``None`` for the non-iterative ``"l2"`` recovery."""
+        return self._converged
 
     def top_words(self, n: int = 10, *, topic=None):
         self._require_fit()
@@ -293,12 +356,17 @@ class AnchorLDA:
         self._require_fit()
         meta = {
             "num_topics": self._k,
+            "recover": self.recover,
             "min_count": self.min_count,
             "seed": self.seed,
+            "eta": self.eta,
+            "convergence_tol": self.convergence_tol,
             "vocabulary": list(self._vocab),
             "doc_names": list(self._doc_names),
             "anchors": list(self._anchors),
             "topic_names": self._topic_names,
+            "fit_history": self._fit_history,
+            "converged": self._converged,
             "texts": self._texts,
         }
         np.savez(
@@ -321,8 +389,10 @@ class AnchorLDA:
             from . import enable_experimental
             enable_experimental(True)
         try:
-            m = AnchorLDA(meta["num_topics"], min_count=meta["min_count"],
-                          seed=meta["seed"])
+            m = AnchorLDA(meta["num_topics"], recover=meta.get("recover", "l2"),
+                          min_count=meta["min_count"], seed=meta["seed"],
+                          eta=meta.get("eta", 1.0),
+                          convergence_tol=meta.get("convergence_tol", 1e-5))
         finally:
             if not was_on:
                 from . import enable_experimental
@@ -333,6 +403,8 @@ class AnchorLDA:
         m._doc_names = list(meta["doc_names"])
         m._anchors = list(meta["anchors"])
         m._topic_names = meta["topic_names"]
+        m._fit_history = [tuple(h) for h in meta.get("fit_history", [])]
+        m._converged = meta.get("converged")
         m._texts = [list(d) for d in meta["texts"]]
         m._fitted = True
         return m
