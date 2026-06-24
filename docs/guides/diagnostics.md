@@ -169,6 +169,46 @@ topica.topic_stability([model_a, model_b], topn=10)       # cross-fit term overl
 topica.check_residuals(model, docs)                       # Taddy dispersion: is K too small?
 ```
 
+## Topic structure and document outliers
+
+Three post-hoc, no-refit diagnostics that read a fitted model's `topic_word` and
+`doc_topic` (so they work on any model — LDA, STM, DMR, CTM, keyATM):
+
+```python
+# Is K=20 really a few super-themes, and are any topics near-duplicates?
+dnd = topica.topic_dendrogram(model, metric="js")     # needs scipy
+dnd.cut(6)                                             # group label per topic at 6 super-topics
+dnd.groups(6, n=10)                                    # {group: (member topics, merged top words)}
+dnd.merge_candidates()                                 # near-duplicate pairs (relative threshold)
+dnd.linkage                                            # SciPy linkage matrix for plotting
+
+# Are these topics real, or did I forget to clean my corpus?
+rows = topica.flag_topics(model, docs)                 # per-topic quality + a junk flag
+junk = [r for r in rows if r["junk"]]                  # reasons: stopword-soup / dead-tiny / incoherent+flat
+
+# Which documents does the model fail to explain?
+res = topica.document_residuals(model, docs)           # per-doc novelty, most anomalous first
+res[:10]                                               # off-topic, repetitive, or anomalous docs
+```
+
+`topic_dendrogram` is the flat-model counterpart to `HLDA` (which fits a topic
+tree directly) and to `ensemble` (which merges across runs): it merges *one*
+fitted model's topics by distribution distance. Use a relative `merge_candidates`
+threshold — the absolute distance scale shifts with how much common-word mass the
+corpus shares.
+
+`flag_topics` scores coherence, exclusivity, topic-word flatness, prevalence, and
+top-word stopword fraction, then flags junk *relative to the run*. The cleanest
+signal it catches is a forgotten stopword pass, where boilerplate topics light up
+as `stopword-soup`.
+
+`document_residuals` reconstructs each document as `theta_d @ beta` and ranks how
+poorly that matches the actual words. It complements `check_residuals` (one
+corpus-level "is K too small?" number) by pointing at the *specific* documents
+the model misses. The headline `novelty` score folds in out-of-vocabulary mass so
+off-topic intruders surface; `cross_entropy` is the length-robust in-vocabulary
+component (use it, not `kl`, which is length-confounded).
+
 ## Ensemble: combining runs
 
 A single fit is one draw from a noisy procedure. Change the seed and the topics

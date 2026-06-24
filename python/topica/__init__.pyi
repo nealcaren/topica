@@ -251,6 +251,33 @@ def check_residuals(model: Any, docs: Any, *, tol: float = 0.01) -> Any:
     ...
 
 
+def document_residuals(model: Any, docs: Any, *, floor: float = 1e-12) -> list:
+    """Per-document novelty: how poorly the model reconstructs each document."""
+    ...
+
+
+def flag_topics(model: Any, texts: Any, *, n: int = 10, coherence_type: str = "c_v") -> list:
+    """Per-topic quality table with an automatic junk/boilerplate flag."""
+    ...
+
+
+class TopicDendrogram:
+    """Hierarchical merge tree over a fitted model's topics (see topic_dendrogram)."""
+    linkage: Any
+    distances: Any
+    topics: list
+    metric: str
+    def cut(self, m: int) -> Any: ...
+    def merge_candidates(self, *, rel: float = 0.6, threshold: float | None = None) -> list: ...
+    def groups(self, m: int, *, n: int = 10) -> dict: ...
+
+
+def topic_dendrogram(model: Any, *, metric: str = "js", method: str = "average",
+                     n_topwords: int = 20) -> TopicDendrogram:
+    """Agglomeratively merge topics into a multi-resolution dendrogram (no refit)."""
+    ...
+
+
 def align_topics(a: Any, b: Any, *, metric: str = "cosine") -> list:
     """One-to-one topic matching across two fits (Hungarian)."""
     ...
@@ -459,6 +486,10 @@ __all__ = [
     "relevance",
     "prepare_pyldavis",
     "check_residuals",
+    "document_residuals",
+    "flag_topics",
+    "topic_dendrogram",
+    "TopicDendrogram",
     "align_topics",
     "topic_stability",
     "topic_info",

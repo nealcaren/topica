@@ -27,7 +27,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .coherence import _as_topic_word, _as_doc_topic, _vocabulary_of
+from .coherence import (
+    _as_topic_word, _as_doc_topic, _vocabulary_of,
+    coherence as _coherence, exclusivity as _exclusivity,
+)
 
 
 def _ref_corpus(texts):
@@ -1879,6 +1882,332 @@ def bootstrap_stability(
     }
 
 
+# ---------------------------------------------------------------------------
+# Post-hoc topic structure: a multi-resolution dendrogram over a fitted model's
+# topics (no refit), for "are these K topics really m super-themes?".
+# ---------------------------------------------------------------------------
+
+def _topic_js_matrix(beta):
+    """Pairwise Jensen-Shannon divergence (base-2, in [0, 1]) over topic-word
+    rows; a symmetric ``K x K`` distance with a zero diagonal."""
+    P = beta / beta.sum(1, keepdims=True)
+    logP = np.where(P > 0, np.log2(np.where(P > 0, P, 1.0)), 0.0)
+    h_p = -(P * logP).sum(1)
+    k = P.shape[0]
+    D = np.zeros((k, k))
+    for i in range(k):
+        M = 0.5 * (P[i] + P)
+        logM = np.where(M > 0, np.log2(np.where(M > 0, M, 1.0)), 0.0)
+        h_m = -(M * logM).sum(1)
+        D[i] = np.clip(h_m - 0.5 * (h_p[i] + h_p), 0.0, 1.0)
+    np.fill_diagonal(D, 0.0)
+    return 0.5 * (D + D.T)
+
+
+def _topic_hellinger_matrix(beta):
+    P = beta / beta.sum(1, keepdims=True)
+    bc = np.clip(np.sqrt(P) @ np.sqrt(P).T, 0.0, 1.0)  # Bhattacharyya coefficient
+    D = np.sqrt(np.clip(1.0 - bc, 0.0, 1.0))
+    np.fill_diagonal(D, 0.0)
+    return 0.5 * (D + D.T)
+
+
+def _doctopic_corr_matrix(doc_topic):
+    D = 1.0 - np.corrcoef(np.asarray(doc_topic, dtype=np.float64).T)
+    np.fill_diagonal(D, 0.0)
+    return 0.5 * (np.clip(D, 0.0, 2.0) + np.clip(D, 0.0, 2.0).T)
+
+
+@dataclass
+class TopicDendrogram:
+    """Result of :func:`topic_dendrogram`: a hierarchical merge tree over topics.
+
+    ``linkage`` is a SciPy linkage matrix (``(K-1) x 4``) you can pass straight to
+    ``scipy.cluster.hierarchy.dendrogram``; ``distances`` is the ``K x K`` topic
+    distance it was built from; ``topics`` are the per-topic top words used as leaf
+    labels. Use :meth:`cut` to flatten into ``m`` super-topics and
+    :meth:`merge_candidates` to list near-duplicate pairs.
+    """
+
+    linkage: np.ndarray
+    distances: np.ndarray
+    topics: list
+    metric: str
+
+    def cut(self, m: int) -> np.ndarray:
+        """Flatten the tree into ``m`` super-topics, returning a 0-based group
+        label per topic."""
+        from scipy.cluster.hierarchy import fcluster
+        lab = fcluster(self.linkage, t=m, criterion="maxclust")
+        remap = {v: i for i, v in enumerate(sorted(set(lab)))}
+        return np.array([remap[v] for v in lab])
+
+    def merge_candidates(self, *, rel: float = 0.6, threshold=None) -> list:
+        """Topic pairs close enough to be near-duplicates, as ``(i, j, distance)``
+        sorted by distance.
+
+        By default a pair is flagged when its distance is below ``rel`` times the
+        median off-diagonal distance — a *relative* cutoff, because the absolute
+        distance scale is corpus-dependent (shared common-word mass inflates it).
+        Pass an absolute ``threshold`` to override.
+        """
+        D = self.distances
+        k = D.shape[0]
+        off = D[~np.eye(k, dtype=bool)]
+        cut = float(threshold) if threshold is not None else rel * float(np.median(off))
+        out = [(i, j, float(D[i, j]))
+               for i in range(k) for j in range(i + 1, k) if D[i, j] < cut]
+        return sorted(out, key=lambda t: t[2])
+
+    def groups(self, m: int, *, n: int = 10) -> dict:
+        """The ``m``-way cut as ``{group: (member_topics, merged_top_words)}``,
+        where the words are the top ``n`` of the members' mean topic-word row."""
+        labels = self.cut(m)
+        beta = self._beta
+        out = {}
+        for g in sorted(set(labels)):
+            members = [int(t) for t in np.where(labels == g)[0]]
+            agg = beta[members].mean(0)
+            top = np.argsort(agg)[::-1][:n]
+            out[int(g)] = (members, [self._vocab[i] for i in top])
+        return out
+
+
+def topic_dendrogram(model, *, metric="js", method="average", n_topwords=20):
+    """Agglomeratively merge a fitted model's topics into a multi-resolution tree.
+
+    A post-hoc, no-refit answer to "are these ``K`` topics really a handful of
+    super-themes, and are any of them near-duplicates?". It builds a ``K x K``
+    topic distance and runs hierarchical clustering, returning a
+    :class:`TopicDendrogram` you can :meth:`~TopicDendrogram.cut` at any
+    resolution or query for :meth:`~TopicDendrogram.merge_candidates`. This is the
+    flat-model counterpart to :class:`~topica.HLDA` (which fits a topic *tree*
+    directly) and to :func:`topica.ensemble` (which merges across *runs*).
+
+    Works on any fitted model exposing ``topic_word`` and ``vocabulary``.
+
+    Parameters
+    ----------
+    model : a fitted topica model.
+    metric : {"js", "hellinger", "cosine", "doctopic"}, default "js"
+        Topic distance. ``js`` (Jensen-Shannon) and ``hellinger`` compare the
+        full topic-word distributions; ``cosine`` compares top-``n_topwords``
+        indicator sets; ``doctopic`` uses ``1 - correlation`` of the
+        ``doc_topic`` columns (how often topics co-occur in documents).
+    method : str, default "average"
+        SciPy linkage method ("average", "ward", "complete", ...).
+    n_topwords : int, default 20
+        Words per topic for the ``cosine`` metric and for leaf labels.
+
+    Returns
+    -------
+    :class:`TopicDendrogram`.
+
+    Notes
+    -----
+    Requires SciPy (``pip install 'topica[viz]'`` or ``scipy``).
+    """
+    try:
+        from scipy.cluster.hierarchy import linkage
+        from scipy.spatial.distance import squareform
+    except ImportError as exc:  # pragma: no cover - environment-dependent
+        raise ImportError(
+            "topic_dendrogram needs SciPy; install it with "
+            "`pip install 'topica[viz]'` or `pip install scipy`."
+        ) from exc
+
+    beta = np.asarray(model.topic_word, dtype=np.float64)
+    vocab = list(model.vocabulary)
+    if metric == "js":
+        D = _topic_js_matrix(beta)
+    elif metric == "hellinger":
+        D = _topic_hellinger_matrix(beta)
+    elif metric == "doctopic":
+        D = _doctopic_corr_matrix(model.doc_topic)
+    elif metric == "cosine":
+        k, v = beta.shape
+        ind = np.zeros((k, v))
+        for t in range(k):
+            ind[t, np.argsort(beta[t])[::-1][:n_topwords]] = 1.0
+        norm = np.linalg.norm(ind, axis=1, keepdims=True)
+        norm[norm == 0] = 1.0
+        U = ind / norm
+        D = 1.0 - np.clip(U @ U.T, 0.0, 1.0)
+        np.fill_diagonal(D, 0.0)
+        D = 0.5 * (D + D.T)
+    else:
+        raise ValueError(
+            f"metric must be 'js', 'hellinger', 'cosine', or 'doctopic'; got {metric!r}"
+        )
+
+    Z = linkage(squareform(D, checks=False), method=method)
+    topics = [[vocab[i] for i in np.argsort(beta[t])[::-1][:n_topwords]]
+              for t in range(beta.shape[0])]
+    result = TopicDendrogram(linkage=Z, distances=D, topics=topics, metric=metric)
+    result._beta = beta      # for groups(); not part of the public dataclass fields
+    result._vocab = vocab
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Per-topic quality table + automatic junk/boilerplate flag.
+# ---------------------------------------------------------------------------
+
+def flag_topics(model, texts, *, n=10, coherence_type="c_v"):
+    """Score every topic on cheap quality features and flag likely junk.
+
+    A quick "are these topics real, or did I forget to clean my corpus?" check.
+    For each topic it gathers :func:`topica.coherence`,
+    :func:`topica.exclusivity`, the normalized topic-word entropy (1.0 = a
+    perfectly flat, uninformative topic), corpus prevalence, and the fraction of
+    its top words that are stopwords, then flags a topic as junk when any of:
+
+    - **stopword-soup** — at least 40% of the top words are stopwords;
+    - **dead/tiny** — prevalence below half its uniform share (``0.5 / K``);
+    - **incoherent+flat** — coherence in the run's bottom quartile *and* topic-word
+      entropy in its top quartile.
+
+    The thresholds are relative to the run, so the flag reads as "junk *for this
+    model*". ``texts`` are the tokenized documents (used only for coherence; they
+    need not align to ``doc_topic``).
+
+    Returns a list of per-topic dicts (in topic order) with ``topic``,
+    ``coherence``, ``exclusivity``, ``beta_entropy``, ``prevalence``,
+    ``stopword_frac``, ``junk`` (bool), ``reasons`` (list of str), and
+    ``top_words``.
+    """
+    from .stopwords import ENGLISH_STOPWORDS
+
+    tw = np.asarray(model.topic_word, dtype=np.float64)
+    dt = np.asarray(model.doc_topic, dtype=np.float64)
+    vocab = list(model.vocabulary)
+    k, v = tw.shape
+    top_idx = np.argsort(tw, axis=1)[:, ::-1][:, :n]
+    topics = [[vocab[i] for i in top_idx[t]] for t in range(k)]
+
+    coh = np.asarray(_coherence(topics, texts, coherence_type=coherence_type, topn=n),
+                     dtype=np.float64)
+    excl = np.asarray(_exclusivity(model, n=n), dtype=np.float64)
+    beta_ent = np.empty(k)
+    for t in range(k):
+        p = tw[t][tw[t] > 0]
+        beta_ent[t] = (-(p * np.log(p)).sum()) / np.log(v) if v > 1 else 0.0
+    prev = dt.mean(axis=0)
+    prev = prev / prev.sum()
+    stop_frac = np.array([np.mean([w in ENGLISH_STOPWORDS for w in topics[t]])
+                          for t in range(k)])
+
+    coh_lo = np.quantile(coh, 0.25)
+    ent_hi = np.quantile(beta_ent, 0.75)
+    dead = 0.5 / k
+
+    rows = []
+    for t in range(k):
+        reasons = []
+        if stop_frac[t] >= 0.4:
+            reasons.append("stopword-soup")
+        if prev[t] < dead:
+            reasons.append("dead/tiny")
+        if coh[t] <= coh_lo and beta_ent[t] >= ent_hi:
+            reasons.append("incoherent+flat")
+        rows.append({
+            "topic": t,
+            "coherence": float(coh[t]),
+            "exclusivity": float(excl[t]),
+            "beta_entropy": float(beta_ent[t]),
+            "prevalence": float(prev[t]),
+            "stopword_frac": float(stop_frac[t]),
+            "junk": bool(reasons),
+            "reasons": reasons,
+            "top_words": topics[t],
+        })
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Per-document novelty / coverage residual.
+# ---------------------------------------------------------------------------
+
+def document_residuals(model, docs, *, floor=1e-12):
+    """How poorly the fitted model explains each document, for outlier hunting.
+
+    Reconstructs each document's expected word distribution as
+    ``theta_d @ beta`` and compares it to the document's actual word counts. A
+    high residual marks a document the current topics cannot account for: an
+    off-topic intruder, an anomaly, or a sign the model is missing a theme. This
+    is the per-document complement to :func:`check_residuals`, which collapses the
+    whole corpus into one "is K too small?" dispersion statistic.
+
+    ``docs`` are the tokenized documents aligned row-for-row to
+    ``model.doc_topic`` (the corpus the model was fit on). To score *new*
+    documents, get their ``theta`` with ``model.transform`` first.
+
+    Returns a list of per-document dicts sorted by descending ``novelty`` (most
+    anomalous first). Each has ``doc`` (row index), ``novelty`` (the headline
+    score: OOV-aware per-word cross-entropy), ``cross_entropy`` (the length-robust
+    in-vocabulary-only per-word log-loss; ``nan`` if the document has no in-vocab
+    tokens), ``kl`` (``KL(actual || recon)``; length-confounded, use with care),
+    ``cosine_dist`` (``1 - cosine``), ``oov`` (out-of-vocabulary token fraction),
+    ``n_tokens`` and ``n_invocab``.
+
+    A pure cross-entropy residual can only see in-vocabulary tokens, so a document
+    written entirely in unknown words would otherwise look perfectly explained;
+    ``novelty`` folds the OOV mass back in, which is what makes off-topic-vocabulary
+    intruders rank at the top.
+    """
+    theta = np.asarray(model.doc_topic, dtype=np.float64)
+    phi = np.asarray(model.topic_word, dtype=np.float64)
+    vocab = list(model.vocabulary)
+    n = theta.shape[0]
+    if len(docs) != n:
+        raise ValueError(
+            f"docs has {len(docs)} entries but doc_topic has {n} rows; pass the "
+            "same documents used to fit the model (use model.transform for new docs)."
+        )
+    vindex = {w: i for i, w in enumerate(vocab)}
+    floor_ce = -np.log(floor)
+
+    recon = np.clip(theta @ phi, floor, None)
+    recon /= recon.sum(1, keepdims=True)
+
+    rows = []
+    for d in range(n):
+        x = np.zeros(phi.shape[1])
+        total = 0
+        for w in docs[d]:
+            total += 1
+            i = vindex.get(w)
+            if i is not None:
+                x[i] += 1.0
+        m = int(x.sum())
+        oov = (total - m) / total if total else 0.0
+        if m == 0:
+            ce = float("nan")
+            kl = float("nan")
+            cos = float("nan")
+            novelty = floor_ce
+        else:
+            actual = x / m
+            r = recon[d]
+            ce = float(-(actual * np.log(r)).sum())
+            nz = actual > 0
+            kl = float((actual[nz] * np.log(actual[nz] / r[nz])).sum())
+            cos = float(1.0 - (actual @ r) / (np.linalg.norm(actual) * np.linalg.norm(r)))
+            novelty = (1.0 - oov) * ce + oov * floor_ce
+        rows.append({
+            "doc": d,
+            "novelty": float(novelty),
+            "cross_entropy": ce,
+            "kl": kl,
+            "cosine_dist": cos,
+            "oov": float(oov),
+            "n_tokens": total,
+            "n_invocab": m,
+        })
+    rows.sort(key=lambda r: r["novelty"], reverse=True)
+    return rows
+
+
 __all__ = [
     "diagnostics",
     "perplexity",
@@ -1905,6 +2234,10 @@ __all__ = [
     "PyLDAvisInputs",
     "check_residuals",
     "ResidualCheck",
+    "document_residuals",
+    "flag_topics",
+    "topic_dendrogram",
+    "TopicDendrogram",
     "align_topics",
     "topic_stability",
 ]
