@@ -53,6 +53,7 @@ from .embedding import (
     load_embeddings as load_embeddings,
 )
 from .topicgpt import TopicGPT as TopicGPT
+from .anchor import AnchorLDA as AnchorLDA
 
 __citation__: str
 ENGLISH_STOPWORDS: frozenset[str]
@@ -505,6 +506,7 @@ __all__ = [
     "llm_backend",
     "topic_label_prompts",
     "TopicGPT",
+    "AnchorLDA",
     "align_corpus",
     "spline",
     "interaction",

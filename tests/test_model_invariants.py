@@ -166,6 +166,20 @@ def _fit_lsa(iters=None):
     return dt, tw, K
 
 
+def _fit_anchorlda(iters=None):
+    # AnchorLDA is experimental and gated. The planted blocks are separable, so
+    # anchor-words should recover one healthy topic per block.
+    was = topica.experimental_enabled()
+    topica.enable_experimental(True)
+    try:
+        docs, _ = _planted_blocks(seed=0)
+        m = topica.AnchorLDA(K, min_count=2, seed=1)
+        m.fit(docs)
+        return m.doc_topic, m.topic_word, K
+    finally:
+        topica.enable_experimental(was)
+
+
 # ---- Covariates & structure -------------------------------------------------
 
 def _covariate_corpus(seed=0):
@@ -463,6 +477,7 @@ FIT_ADAPTERS = {
     "HDP": _fit_hdp,
     "NMF": _fit_nmf,
     "LSA": _fit_lsa,
+    "AnchorLDA": _fit_anchorlda,
     "STM": _fit_stm,
     "STS": _fit_sts,
     "SAGE": _fit_sage,

@@ -90,6 +90,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("LSA", "general-purpose", ("text",), "svd", "seed-reproducible", (),
            "Latent semantic analysis: a truncated SVD of the weighted document-term matrix.",
            "guides/models.md#lsa"),
+        _m("AnchorLDA", "general-purpose", ("text",), "matrix-factorization", "bit-exact", (),
+           "Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix.",
+           "guides/models.md#anchorlda", experimental=True),
         # ---- Covariates & structure ----------------------------------------
         _m("STM", "covariates", ("text", "metadata"), "variational", "bit-exact", (),
            "Structural topic model: relate topic prevalence and content to covariates.",

@@ -105,6 +105,7 @@ Shipped before a published paper and reference-implementation parity (topica's b
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
+| `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `ECTM` | text, metadata, times | variational | bit-exact | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
 
 <!-- END MODEL TABLE -->
@@ -537,6 +538,38 @@ LSA is not a probabilistic topic model, and its outputs reflect that. `topic_wor
 The SVD is unique only up to a per-component sign, so we fix the sign with the `svd_flip` convention scikit-learn uses: for each component we flip the `(u, v)` pair together so the largest-magnitude entry of the right singular vector is positive. That makes the fit deterministic and directly comparable to the reference. `weighting` builds `X` from topica's own TF-IDF (default, classic LSI) or from raw counts. The Rust core reuses NMF's BLAS-free randomized truncated SVD (rayon-parallel dense products, sparse document-term products), so fits are bit-identical regardless of thread count. The SVD is a direct solve, so there is no `iters` argument, `fit_history` is empty, and `converged` is `None`.
 
 We validate against `sklearn.decomposition.TruncatedSVD` (`algorithm='randomized'`) in `parity/lsa_vs_sklearn.py`. On the same document-term matrix, after applying `svd_flip` on both sides, topica reproduces sklearn's solution exactly: per-component right-singular-vector cosine 1.000000, singular values agreeing to a maximum relative error of 1.5e-9, and document-coordinate correlation 1.000000. Because the truncated SVD is well-posed (a unique solution up to sign when the singular values are distinct), this is a match-the-solution result, not agreement within a noise band.
+
+## AnchorLDA
+
+!!! warning "Experimental"
+    `AnchorLDA` ships before a published paper and a reference-implementation
+    parity check, topica's bar for a validated model. It is gated: call
+    `topica.enable_experimental()` (or set `TOPICA_EXPERIMENTAL=1`) before
+    constructing one. Experimental models may change or be removed without a
+    deprecation cycle.
+
+The anchor-words algorithm ([Arora et al. 2013](https://proceedings.mlr.press/v28/arora13.html)) recovers topics without Gibbs sampling or EM. It rests on a *separability* assumption: each topic has an anchor word that occurs (almost) only in that topic. Given the anchors, every other word's topic distribution is fixed by how it co-occurs with them, so the whole topic-word matrix follows from one convex solve per word. The result is deterministic, fast, and gives each topic a single human-readable anchor word.
+
+```python
+topica.enable_experimental()
+m = topica.AnchorLDA(num_topics=20, min_count=5, seed=0)
+m.fit(docs)
+m.anchors                # the anchor word identifying each topic
+m.top_words(10)          # the recovered topic-word distributions
+```
+
+The pipeline is the standard one (Arora et al. 2013): form the word-word co-occurrence matrix `Q` from the unbiased per-document estimator `(h hᵀ − diag(h)) / (n(n−1))` and row-normalize it to `p(w₂ | w₁)`; select one anchor per topic by greedy farthest-point search on the rows of `Q` (the near-extreme points of the word simplex); recover `p(topic | word)` for every word against the anchor rows; and Bayes-invert with the word frequencies to the topic-word matrix `p(word | topic)`. `doc_topic` is `p(topic | document)` from the per-word topic responsibilities.
+
+Two recovery solvers are available through `recover`. The default `"kl"` minimizes `KL(Q_i ‖ p(topic | word_i) · Q_anchors)` with a vectorized exponentiated-gradient solver: a handful of matrix multiplies over the whole vocabulary at once, so `iters` is the maximum number of steps (default 200, with an early stop on `tol`) and `fit_history` / `converged` report the objective trace. `recover="l2"` is Arora et al.'s RecoverL2, a simplex-constrained non-negative least squares solved once per word — exact but a serial loop, so it is non-iterative (`fit_history` empty, `converged` `None`). On poliblog (K=15) `"kl"` fits in about a third of `"l2"`'s time at the same coherence and a closer co-occurrence fit; the two give effectively the same topics.
+
+Anchor-words trades a little coherence for determinism and speed. On poliblog (K=15) it reaches about 93% of fully-converged LDA's c_v in roughly a fifth of the time, and it beats short-run LDA on both quality and time; on separable synthetic data it recovers the planted topics almost exactly.
+
+One quirk needs handling: the exact Bayes inversion sets `beta ∝ p(topic | word) · p(word)`, so `beta` is weighted by raw word frequency — more than a Gibbs model's `beta`, where sparse priors push frequent words down. Left alone, pervasive words ("will", "one", "people") dominate many topics, which reads as redundant topics. Two defaults handle this and compose:
+
+- `frequency_temper` (default `0.5`) tempers the inversion to `beta ∝ p(topic | word) · p(word)**γ`, dividing the excess frequency back out of the topic-word matrix itself. On poliblog at K=50 this lifts probability-ranked top-word diversity from ~0.33 (`γ=1`, the exact inversion) to ~0.79, and raises c_v. Set `frequency_temper=1` for the textbook Arora et al. estimate.
+- `top_words` then defaults to a **FREX** ranking (`method="frex"`, the frequency/exclusivity balance topica's `frex`/`label_topics` use; `"lift"` and `"prob"` are also available), refining the display further — top-word diversity ~0.88 and c_v ~0.49 at K=50 with both defaults.
+
+The underlying topics were always there; these two knobs keep frequent words from masking them. `AnchorLDA` is a strong fast first pass and a deterministic baseline; for a final model on real text, compare against `LDA` or `STM`.
 
 ## Short-text models
 
