@@ -337,3 +337,29 @@ class TestFrequencyTemper:
         b = topica.AnchorLDA(4, frequency_temper=0.5, min_count=2, seed=0).fit(docs)
         # Different exponents give different topic-word matrices.
         assert not np.allclose(np.asarray(a.topic_word), np.asarray(b.topic_word))
+
+
+class TestKLStability:
+    """RecoverKL must not diverge to NaN on sparse co-occurrence (large vocab,
+    short documents), where words that never co-occur with an anchor drive recon
+    to its floor and explode the exponentiated-gradient step (see 20NG)."""
+
+    @staticmethod
+    def _sparse_corpus(k=20, block=30, n=2000, length=5, seed=0):
+        rng = np.random.default_rng(seed)
+        blocks = [[f"b{b}_w{j}" for j in range(block)] for b in range(k)]
+        anchors = [f"b{b}_a" for b in range(k)]
+        return [[anchors[d % k]] + list(rng.choice(blocks[d % k], length - 1))
+                for d in range(n)]
+
+    def test_no_nan_on_sparse_cooccurrence(self):
+        docs = self._sparse_corpus()
+        m = topica.AnchorLDA(20, min_count=1, seed=0).fit(docs)  # recover="kl"
+        tw = np.asarray(m.topic_word)
+        dt = np.asarray(m.doc_topic)
+        assert np.isfinite(tw).all(), "topic_word has NaN/inf"
+        assert np.isfinite(dt).all(), "doc_topic has NaN/inf"
+        # And the topics are non-degenerate (the NaN collapse made them identical).
+        tops = [[w for w, _ in m.top_words(8, topic=t)] for t in range(20)]
+        flat = [w for t in tops for w in t]
+        assert len(set(flat)) / len(flat) > 0.5

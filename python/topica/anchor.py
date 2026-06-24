@@ -158,6 +158,12 @@ def _recover_kl(q, anchors, *, iters, eta, tol, check_every=5):
             prev = obj
         upd = eta * ((q / recon) @ qa.T)          # = -eta * dKL/dC
         upd -= upd.max(axis=1, keepdims=True)      # stabilize exp (cancels on renorm)
+        # On sparse co-occurrence (large vocab), words that never co-occur with an
+        # anchor drive recon -> floor and the gradient explodes (|upd| ~ 1e8), so
+        # every entry but the row max underflows to 0 and the renormalization
+        # divides 0/0 -> NaN. Flooring the exponent keeps a tiny mass on the
+        # non-max topics (exp(-50) ~ 2e-22, negligible) so the row never collapses.
+        np.maximum(upd, -50.0, out=upd)
         c *= np.exp(upd)
         c /= c.sum(axis=1, keepdims=True)
     return c, history, converged
