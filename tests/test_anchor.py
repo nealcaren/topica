@@ -363,3 +363,28 @@ class TestKLStability:
         tops = [[w for w, _ in m.top_words(8, topic=t)] for t in range(20)]
         flat = [w for t in tops for w in t]
         assert len(set(flat)) / len(flat) > 0.5
+
+
+class TestAnchorDocFreq:
+    def test_default_is_small_fraction(self):
+        assert topica.AnchorLDA(4).anchor_min_doc_freq == 0.01
+
+    def test_restriction_excludes_rare_anchor_words(self):
+        # A distinctive but very rare word (one document) should be eligible as an
+        # anchor only when the doc-frequency floor is off.
+        rng = np.random.default_rng(0)
+        common = [f"w{j}" for j in range(40)]
+        docs = [list(rng.choice(common, 15)) for _ in range(400)]
+        docs[0] = docs[0] + ["rareanchor", "rareanchor"]   # appears in 1 doc
+        off = topica.AnchorLDA(5, min_count=1, anchor_min_doc_freq=0.0, seed=0).fit(docs)
+        on = topica.AnchorLDA(5, min_count=1, anchor_min_doc_freq=0.05, seed=0).fit(docs)
+        assert "rareanchor" in off.anchors
+        assert "rareanchor" not in on.anchors
+
+    def test_too_few_candidates_falls_back(self):
+        # An impossibly high floor leaves < num_topics candidates; the fit should
+        # still succeed (restriction dropped) rather than fail.
+        docs, _, _ = _separable_corpus()
+        m = topica.AnchorLDA(4, min_count=2, anchor_min_doc_freq=0.999, seed=0).fit(docs)
+        assert len(m.anchors) == 4
+        assert np.isfinite(np.asarray(m.topic_word)).all()

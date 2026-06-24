@@ -86,29 +86,41 @@ def _build_q(counts):
     return qbar / rowsum, rowsum.ravel()
 
 
-def _find_anchors(q, k, seed):
+def _find_anchors(q, k, seed, candidates=None):
     """Greedy farthest-point (Gram-Schmidt) anchor selection on the rows of
     ``Q`` — Arora et al.'s FastAnchorWords. Picks the row of largest norm, then
-    repeatedly the row farthest from the span of those already chosen."""
+    repeatedly the row farthest from the span of those already chosen.
+
+    ``candidates`` (a boolean mask over words) restricts which words may be
+    chosen as anchors. Restricting to well-attested (high document-frequency)
+    words keeps the farthest-point search from latching onto rare, noisy rows,
+    which is the standard practical refinement for real corpora."""
     rng = np.random.default_rng(seed)
     v = q.shape[0]
-    anchors = [int(np.argmax((q * q).sum(axis=1)))]
+    if candidates is None:
+        candidates = np.ones(v, dtype=bool)
+    if candidates.sum() < k:               # too few candidates: fall back to all words
+        candidates = np.ones(v, dtype=bool)
+    norms = (q * q).sum(axis=1)
+    norms = np.where(candidates, norms, -1.0)
+    anchors = [int(np.argmax(norms))]
     basis = [q[anchors[0]] / np.linalg.norm(q[anchors[0]])]
     for _ in range(k - 1):
         bmat = np.array(basis)
         resid = q - (q @ bmat.T) @ bmat
         dist = (resid * resid).sum(axis=1)
+        dist[~candidates] = -1.0
         dist[anchors] = -1.0
         nxt = int(np.argmax(dist))
         b = resid[nxt]
         nb = np.linalg.norm(b)
         if nb < 1e-12:
-            cand = [i for i in range(v) if i not in anchors]
-            nxt = int(rng.choice(cand))
+            pool = [i for i in range(v) if candidates[i] and i not in anchors]
+            nxt = int(rng.choice(pool)) if pool else nxt
             b = resid[nxt]
             nb = np.linalg.norm(b)
         anchors.append(nxt)
-        basis.append(b / nb)
+        basis.append(b / nb if nb > 1e-12 else b)
     return anchors
 
 
@@ -214,11 +226,20 @@ class AnchorLDA:
         distinctive, higher-coherence topics. The default ``0.5`` roughly tripled
         top-word diversity and raised c_v on poliblog; ``γ=1`` restores the exact
         Arora et al. estimate, ``γ=0`` is pure lift.
+    anchor_min_doc_freq : float, default 0.01
+        Minimum document frequency for a word to be eligible as an anchor — a
+        fraction of documents when ``<1``, else an absolute count. Restricting
+        anchors to well-attested words keeps the farthest-point search from
+        latching onto rare, noisy rows, which sharpens topics on large
+        vocabularies (it lifted c_v on 20 Newsgroups with no change on poliblog).
+        ``0`` disables the restriction; if fewer than ``num_topics`` words
+        qualify, it is dropped for that fit.
     """
 
     def __init__(self, num_topics: int, *, recover: str = "kl", min_count: int = 5,
                  seed: int = 42, eta: float = 1.0, convergence_tol: float = 1e-5,
-                 frex_w: float = 0.5, frequency_temper: float = 0.5):
+                 frex_w: float = 0.5, frequency_temper: float = 0.5,
+                 anchor_min_doc_freq: float = 0.01):
         if not experimental_enabled():
             raise RuntimeError(_GATE_MESSAGE)
         if num_topics < 2:
@@ -233,6 +254,7 @@ class AnchorLDA:
         self.convergence_tol = float(convergence_tol)
         self.frex_w = float(frex_w)
         self.frequency_temper = float(frequency_temper)
+        self.anchor_min_doc_freq = float(anchor_min_doc_freq)
         self._fitted = False
         self._topic_word = None
         self._doc_topic = None
@@ -263,7 +285,15 @@ class AnchorLDA:
             )
         counts = _doc_term(docs, w2i)
         q, pword = _build_q(counts)
-        anchors = _find_anchors(q, self._k, self.seed)
+        # Restrict anchor candidates to well-attested words (document frequency
+        # >= anchor_min_doc_freq, read as a fraction of documents when < 1, else
+        # an absolute count) so the farthest-point search skips rare, noisy rows.
+        doc_freq = (counts > 0).sum(axis=0)
+        n_docs = counts.shape[0]
+        thresh = (self.anchor_min_doc_freq * n_docs
+                  if self.anchor_min_doc_freq < 1.0 else self.anchor_min_doc_freq)
+        candidates = doc_freq >= max(1.0, thresh) if thresh > 0 else None
+        anchors = _find_anchors(q, self._k, self.seed, candidates)
         if self.recover == "kl":
             n_iters = 200 if iters is None else int(iters)
             c, self._fit_history, self._converged = _recover_kl(
@@ -420,6 +450,7 @@ class AnchorLDA:
             "convergence_tol": self.convergence_tol,
             "frex_w": self.frex_w,
             "frequency_temper": self.frequency_temper,
+            "anchor_min_doc_freq": self.anchor_min_doc_freq,
             "vocabulary": list(self._vocab),
             "doc_names": list(self._doc_names),
             "anchors": list(self._anchors),
@@ -453,7 +484,8 @@ class AnchorLDA:
                           eta=meta.get("eta", 1.0),
                           convergence_tol=meta.get("convergence_tol", 1e-5),
                           frex_w=meta.get("frex_w", 0.5),
-                          frequency_temper=meta.get("frequency_temper", 1.0))
+                          frequency_temper=meta.get("frequency_temper", 1.0),
+                          anchor_min_doc_freq=meta.get("anchor_min_doc_freq", 0.0))
         finally:
             if not was_on:
                 from . import enable_experimental
