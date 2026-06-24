@@ -115,3 +115,5 @@ Model-neutral summaries that work on any fitted model.
 ::: topica.topics_over_time
 
 ::: topica.topics_per_class
+
+::: topica.contrastive_topics

@@ -29,6 +29,7 @@ import numpy as np
 
 from . import validation as _diagnostics
 from . import effects as _effects
+from .keywords import _zeta as _fw_zeta
 
 
 # A custom-label registry keyed by ``id(model)``. PyO3 extension classes may not
@@ -259,6 +260,137 @@ def topics_per_class(model, groups, *, ci=0.95):
     return _effects.by_strata(model.doc_topic, groups, ci=ci)
 
 
+def contrastive_topics(model, texts, groups, *, prior=0.01, informative=False,
+                       min_count=5, n_words=10, group_order=None):
+    """Which topics most separate two groups, and the words that shift inside each.
+
+    This is the topic-conditional extension of :func:`topica.fighting_words`. A
+    plain Fighting Words contrast pools the whole corpus into two bags of words;
+    here we hold the topic fixed and ask, *within* topic ``t``, how the two groups
+    word it differently. Each document's word counts are weighted by its
+    responsibility for the topic (``model.doc_topic[d, t]``), the weighted counts
+    are split by group, and the Monroe-Colaresi-Quinn z-score is computed per
+    topic. We report two complementary signals, since a topic both groups use
+    equally can still split sharply on *how* they word it:
+
+    - ``usage_diff`` — mean ``doc_topic`` for group A minus group B: which topics
+      one side simply talks about more.
+    - ``vocab_shift`` — the root-mean-square topic-conditional z over the words it
+      keeps: how much the two groups diverge in their wording of the topic.
+
+    Works on any fitted model that exposes ``doc_topic`` and ``vocabulary`` (LDA,
+    STM, DMR, CTM, keyATM, ...). ``texts`` must be the same documents, in the same
+    order, that produced ``model.doc_topic``.
+
+    Parameters
+    ----------
+    model : a fitted topica model with ``doc_topic`` (D x K) and ``vocabulary``.
+    texts : sequence of token lists (``list[list[str]]``), one per document,
+        aligned row-for-row with ``model.doc_topic``.
+    groups : sequence of one label per document. Must take exactly two distinct
+        values (a binary contrast).
+    prior : float, default 0.01
+        Dirichlet pseudocount passed to the z-score; see :func:`fighting_words`.
+    informative : bool, default False
+        Use Monroe et al.'s informative (frequency-scaled) prior.
+    min_count : int, default 5
+        Within a topic, ignore words whose responsibility-weighted count across
+        both groups is below this. Keeps the per-topic word lists and
+        ``vocab_shift`` from being dominated by near-zero-mass words.
+    n_words : int, default 10
+        How many distinctive words to return per side, per topic.
+    group_order : (a, b), optional
+        Fix which group is A (positive z, positive ``usage_diff``). Defaults to
+        the two labels sorted, so the result is deterministic.
+
+    Returns
+    -------
+    list[dict], one row per topic sorted by descending ``abs(usage_diff)``. Each
+    row has ``topic`` (id), ``name`` (effective label), ``a_label``/``b_label``
+    (the two groups), ``usage_diff``, ``leans`` (the label that uses the topic
+    more), ``vocab_shift``, and ``a_words``/``b_words`` (lists of ``(word, z)``,
+    each side's most distinctive within-topic words).
+    """
+    theta = _doc_topic(model)
+    n_docs, k = theta.shape
+    if len(texts) != n_docs:
+        raise ValueError(
+            f"texts has {len(texts)} documents but the model's doc_topic has "
+            f"{n_docs} rows; pass the same corpus, in the same order, that was fit."
+        )
+    groups = list(groups)
+    if len(groups) != n_docs:
+        raise ValueError(
+            f"groups has {len(groups)} labels but the model's doc_topic has "
+            f"{n_docs} rows."
+        )
+
+    levels = sorted(set(groups)) if group_order is None else list(group_order)
+    if len(levels) != 2 or len(set(levels)) != 2:
+        raise ValueError(
+            "contrastive_topics needs exactly two distinct groups; got "
+            f"{sorted(set(groups))}. For more levels, contrast a pair at a time."
+        )
+    a_label, b_label = levels
+    in_a = np.array([g == a_label for g in groups])
+    in_b = np.array([g == b_label for g in groups])
+    if not in_a.any() or not in_b.any():
+        raise ValueError(
+            f"both groups must have documents; '{a_label}' has {int(in_a.sum())}, "
+            f"'{b_label}' has {int(in_b.sum())}."
+        )
+
+    vocab = list(model.vocabulary)
+    vindex = {w: i for i, w in enumerate(vocab)}
+    n_vocab = len(vocab)
+
+    # Responsibility-weighted word counts per group, accumulated into K x V
+    # without ever materializing a dense D x V matrix: each document adds the
+    # outer product of its topic responsibilities and its (sparse) token counts.
+    y_a = np.zeros((k, n_vocab), dtype=np.float64)
+    y_b = np.zeros((k, n_vocab), dtype=np.float64)
+    for d, doc in enumerate(texts):
+        local = {}
+        for tok in doc:
+            j = vindex.get(tok)
+            if j is not None:
+                local[j] = local.get(j, 0.0) + 1.0
+        if not local:
+            continue
+        idx = np.fromiter(local.keys(), dtype=np.intp, count=len(local))
+        cnt = np.fromiter(local.values(), dtype=np.float64, count=len(local))
+        target = y_a if in_a[d] else (y_b if in_b[d] else None)
+        if target is not None:
+            target[:, idx] += np.outer(theta[d], cnt)
+
+    usage_diff = theta[in_a].mean(axis=0) - theta[in_b].mean(axis=0)
+    names = topic_labels(model)
+
+    rows = []
+    for t in range(k):
+        zeta = _fw_zeta(y_a[t], y_b[t], prior=prior, informative=informative)
+        keep = (y_a[t] + y_b[t]) >= float(min_count)
+        z = np.where(keep, zeta, 0.0)
+        order = np.argsort(z)
+        a_words = [(vocab[i], float(z[i])) for i in order[::-1][:n_words] if z[i] > 0]
+        b_words = [(vocab[i], float(z[i])) for i in order[:n_words] if z[i] < 0]
+        shift = float(np.sqrt(np.mean(zeta[keep] ** 2))) if keep.any() else 0.0
+        rows.append({
+            "topic": t,
+            "name": names[t] if t < len(names) else f"topic_{t}",
+            "a_label": a_label,
+            "b_label": b_label,
+            "usage_diff": float(usage_diff[t]),
+            "leans": a_label if usage_diff[t] > 0 else b_label,
+            "vocab_shift": shift,
+            "a_words": a_words,
+            "b_words": b_words,
+        })
+
+    rows.sort(key=lambda r: abs(r["usage_diff"]), reverse=True)
+    return rows
+
+
 def _short(label, words, width=42):
     """A compact 'label: word word word' caption, truncated to `width`."""
     ws = " ".join(w for w, _ in words) if words and isinstance(words[0], tuple) else " ".join(map(str, words))
@@ -458,5 +590,6 @@ __all__ = [
     "representative_docs",
     "topics_over_time",
     "topics_per_class",
+    "contrastive_topics",
     "plot_report",
 ]
