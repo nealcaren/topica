@@ -265,6 +265,7 @@ from .stopwords import ENGLISH_STOPWORDS, stopwords, stopword_languages  # noqa:
 from .phrases import learn_phrases, apply_phrases, add_ngrams, Phrases  # noqa: E402
 from .frames import from_dataframe, align, prep_documents, plot_removed  # noqa: E402
 from .formulas import design_matrix  # noqa: E402
+from .scaling import bimodality, split_half_reliability  # noqa: E402  (intrinsic ideal-point diagnostics)
 from . import datasets  # noqa: E402  (bundled + fetch-on-demand example datasets)
 
 __all__ = [
@@ -399,6 +400,8 @@ __all__ = [
     "prep_documents",
     "plot_removed",
     "design_matrix",
+    "bimodality",
+    "split_half_reliability",
     "summary",
     "diagnostics",
     "perplexity",

@@ -758,6 +758,30 @@ Inference is closed-form EM over a Gaussian mixture: the E-step is the soft topi
 
 This is the only model in the family that takes embeddings *directly* rather than deriving topic-word distributions, so it has no `topic_word` or `coherence` — its topics are clusters, summarized by `topic_centroids` (use a nearest-document or nearest-word lookup to label them). It is the continuous corner of the comparison with [`IdealPointTM`](#idealpointtm) (word embeddings), [`IdealPointLDA`](#idealpointlda) (word counts), and [`Wordfish`](#wordfish) (word counts, no topics): pass sentence embeddings grouped by author to ask whether a continuous representation recovers the same latent scale.
 
+## Validating an ideal-point axis without an external scale
+
+The ideal-point family ([`Wordfish`](#wordfish), [`IdealPointLDA`](#idealpointlda), [`IdealPointTM`](#idealpointtm), [`SentenceIdealTM`](#sentenceidealtm)) returns author positions, but how do you know the discovered axis is a real, partisan dimension rather than an artifact, *without* a validated external score like DW-NOMINATE? topica ships two intrinsic diagnostics that answer this from the model and the text alone.
+
+`topica.bimodality(positions)` is the bimodality coefficient of the positions: above ~0.555 the authors split into two camps (a polarized, two-pole structure) rather than one blob. It is computed from `author_positions` alone.
+
+`topica.split_half_reliability(fit, group)` refits the scale on two disjoint halves of each author's documents and correlates the two position vectors. A high value means the axis is a stable, reproducible trait of the text, not an artifact of one fit. You supply a one-line `fit` closure, so it is model-agnostic:
+
+```python
+import topica
+topica.enable_experimental()
+
+def fit(idx):                        # fit on a subset of unit (document) indices
+    m = topica.IdealPointLDA(20, seed=1)
+    m.fit([docs[i] for i in idx], group=[author[i] for i in idx])
+    return m.author_names, m.author_positions[:, 0]
+
+m = topica.IdealPointLDA(20, seed=1); m.fit(docs, group=author)
+topica.bimodality(m.author_positions)        # > 0.555 => two camps (polarized)
+topica.split_half_reliability(fit, author)   # how much real signal the axis carries
+```
+
+We validated these against DW-NOMINATE on U.S. House press releases: split-half reliability tracks the external recovery across congresses (it ranks them correctly and approximates the magnitude), so it stands in for an external scale when none exists. By measurement theory the reliability also bounds how well the axis can correlate with *any* external score, so a low value is an early warning that the axis is too noisy to validate.
+
 ## Short-text models
 
 `PT` and `GSDMM` are built for short documents; see the
