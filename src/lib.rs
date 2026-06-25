@@ -39,6 +39,7 @@ pub mod gsdmm;
 pub mod hdp;
 pub mod hlda;
 pub mod idealpoint;
+pub mod idealpoint_lda;
 pub mod infoctm;
 pub mod keyatm;
 pub mod labeled;

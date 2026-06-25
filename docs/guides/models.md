@@ -109,6 +109,7 @@ Shipped before a published paper and reference-implementation parity (topica's b
 | `ECTM` | text, metadata, times | variational | bit-exact | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Embedded topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. The unsupervised, latent-trait twin of the STM content covariate; the embedding-native generalization of Wordfish. |
 | `Wordfish` | text | em | bit-exact | Poisson scaling (Slapin & Proksch 2008): an unsupervised one-dimensional ideal-point estimate from word frequencies alone, no topics. The word-frequency baseline companion to IdealPointTM. |
+| `IdealPointLDA` | text | variational | seed-reproducible | The count-based twin of IdealPointTM: a topic model whose per-topic word distributions are displaced by a latent author ideal point, parameterized directly over the vocabulary (no embeddings). Wordfish with topics. |
 
 <!-- END MODEL TABLE -->
 
@@ -688,6 +689,28 @@ within-topic content or as topic-splitting. And `num_dims > 1` is implemented bu
 robustly identified for the first dimension; a multi-dimensional, issue-specific position
 (in the spirit of a hierarchical ideal-point topic model) is the natural next step and the
 likely path to both finer interpretation and more robustness.
+
+## IdealPointLDA
+
+!!! warning "Experimental"
+    `IdealPointLDA` is gated: call `topica.enable_experimental()` (or set
+    `TOPICA_EXPERIMENTAL=1`) before constructing one.
+
+`IdealPointLDA` is the count-based twin of [`IdealPointTM`](#idealpointtm): the same position-displaced topic-word model, but parameterized directly over the vocabulary instead of through word embeddings. Each topic `k` has a log-profile `alpha_{k,v}` and a per-word loading `W_{k,j,v}`, and an author position `x_a` displaces word choice within the topic, `beta_{a,k,v} = softmax_v(alpha_{k,v} + sum_j x_{a,j} W_{k,j,v})`. It is "Wordfish with topics": each topic carries its own Wordfish-style discrimination, and documents mix the topics. It takes no embeddings, only text.
+
+```python
+topica.enable_experimental()
+m = topica.IdealPointLDA(num_topics=20)
+m.fit(docs, group=author, anchors={"left_author": -1.0, "right_author": 1.0})
+m.author_positions       # (num_authors, num_dims): the latent ideal points
+m.topic_word             # (K, vocab): topics at the neutral position
+m.topic_discrimination   # (K,): which topics carry the cleavage
+m.position_shift(k)      # the within-topic word shift along the axis
+```
+
+Inference is the same variational EM as IdealPointTM (logistic-normal document topics, the same Laplace E-step), with the embedding projection removed so the topic-word parameters live directly in vocabulary space. In the comparison grid it sits between Wordfish and IdealPointTM: it adds topics to Wordfish, and drops the embedding factorization from IdealPointTM.
+
+One honest difference from IdealPointTM: because the loadings are full-vocabulary (one per word per topic) rather than low-rank in an embedding space, the per-topic discrimination is less concentrated, so the position signal can spread across several topics rather than localizing to one. The recovered author scale is the dependable output; read `topic_discrimination` as suggestive rather than a clean per-topic verdict. Reach for [`IdealPointTM`](#idealpointtm) when you want the discrimination to localize or when pretrained embeddings carry signal the raw counts miss, and for `IdealPointLDA` when you have no embeddings or want a purely count-based comparison.
 
 ## Wordfish
 

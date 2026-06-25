@@ -433,6 +433,21 @@ def _fit_idealpoint(iters=40):
         topica.enable_experimental(was)
 
 
+def _fit_idealpoint_lda(iters=40):
+    # IdealPointLDA is experimental and gated. Count-based twin of IdealPointTM:
+    # topics displaced by a latent author position, parameterized over the vocabulary.
+    was = topica.experimental_enabled()
+    topica.enable_experimental(True)
+    try:
+        docs, _ = _planted_blocks(k=K, block=8, n=240, length=12, seed=0)
+        group = [f"a{i % 16}" for i in range(len(docs))]
+        m = topica.IdealPointLDA(num_topics=K, num_dims=1, seed=1)
+        m.fit(docs, group=group, iters=iters)
+        return m.doc_topic, m.topic_word, K
+    finally:
+        topica.enable_experimental(was)
+
+
 def _fit_fastopic(iters=200):
     docs, vocab = _planted_blocks(k=K, block=6, n=200, length=10, seed=0)
     doc_emb = _doc_embeddings(docs, k=K, block=6, seed=0)
@@ -514,6 +529,7 @@ FIT_ADAPTERS = {
     "Top2Vec": _fit_top2vec,
     "ETM": _fit_etm,
     "IdealPointTM": _fit_idealpoint,
+    "IdealPointLDA": _fit_idealpoint_lda,
     "FASTopic": _fit_fastopic,
     "EmbeddingLDA": _fit_embeddinglda,
     "CombinedTM": _fit_combinedtm,

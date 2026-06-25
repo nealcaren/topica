@@ -47,6 +47,7 @@ pub(crate) const MODEL_TAG_ECTM: u8 = 27;
 // 28-30 reserved for the parked experimental trio (HyperLDA/TopicRBM/DiffusionTM).
 pub(crate) const MODEL_TAG_IDEALPOINT: u8 = 31;
 pub(crate) const MODEL_TAG_WORDFISH: u8 = 32;
+pub(crate) const MODEL_TAG_IDEALPOINT_LDA: u8 = 33;
 
 pub(crate) fn model_tag_name(tag: u8) -> &'static str {
     match tag {
@@ -79,6 +80,7 @@ pub(crate) fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_ECTM => "ECTM",
         MODEL_TAG_IDEALPOINT => "IdealPointTM",
         MODEL_TAG_WORDFISH => "Wordfish",
+        MODEL_TAG_IDEALPOINT_LDA => "IdealPointLDA",
         _ => "unknown",
     }
 }
