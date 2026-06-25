@@ -110,6 +110,7 @@ Shipped before a published paper and reference-implementation parity (topica's b
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Embedded topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. The unsupervised, latent-trait twin of the STM content covariate; the embedding-native generalization of Wordfish. |
 | `Wordfish` | text | em | bit-exact | Poisson scaling (Slapin & Proksch 2008): an unsupervised one-dimensional ideal-point estimate from word frequencies alone, no topics. The word-frequency baseline companion to IdealPointTM. |
 | `IdealPointLDA` | text | variational | seed-reproducible | The count-based twin of IdealPointTM: a topic model whose per-topic word distributions are displaced by a latent author ideal point, parameterized directly over the vocabulary (no embeddings). Wordfish with topics. |
+| `SentenceIdealTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The embedding-native analog of IdealPointTM, fit by EM. |
 
 <!-- END MODEL TABLE -->
 
@@ -733,6 +734,29 @@ m.discriminating_words(10)  # the words at the two ends of the axis
 We fit by the standard Wordfish EM: alternate Newton updates of the per-word `(psi, beta)` and per-author `(alpha, theta)`, with weak Gaussian priors on `beta` and `theta` (`beta_prior_sd`, `theta_prior_sd`; pass `math.inf` for none). Identification is applied every iteration and is lossless: `theta` is standardized to mean 0 / unit variance (the scale absorbed into `beta`, the location into `psi`), `psi` is centered into `alpha`, and the sign is oriented to the anchors. There is no RNG and the reductions run in a fixed order, so the fit is bit-reproducible. We validate against `quanteda.textmodels::textmodel_wordfish`: on a corpus sampled from the model the two recover the same scale at correlation 1.00 (`parity/wordfish_r_compare.py`).
 
 As a scaling model Wordfish has no topics, so it cannot tell you what is being talked about or how language differs within a topic. When you want the scale and the topics together, reach for [`IdealPointTM`](#idealpointtm) (word embeddings). On clean messaging text the two are comparable on the scale itself; IdealPointTM adds the per-topic framing Wordfish structurally cannot produce.
+
+## SentenceIdealTM
+
+!!! warning "Experimental"
+    `SentenceIdealTM` is gated: call `topica.enable_experimental()` (or set
+    `TOPICA_EXPERIMENTAL=1`) before constructing one.
+
+`SentenceIdealTM` is the embedding-native analog of [`IdealPointTM`](#idealpointtm), working on sentence or document *embeddings* instead of words. Topics are Gaussian clusters in embedding space with centroids `mu_k`; an author position `x_a` displaces a topic centroid along a loading `V_k`, so an embedding from author `a` in topic `k` is drawn from `N(mu_k + sum_j x_{a,j} V_{k,j}, sigma^2 I)`. Where IdealPointTM shifts a topic word-softmax by position, SentenceIdealTM shifts a topic centroid; `||V_k||` is the discrimination.
+
+```python
+topica.enable_experimental()
+# embeddings: (N, D) sentence or document embeddings; group: author per row
+m = topica.SentenceIdealTM(num_topics=20, num_dims=1)
+m.fit(embeddings, group=author, anchors={"left_author": -1.0, "right_author": 1.0})
+m.author_positions       # (num_authors, num_dims)
+m.doc_topic              # (N, num_topics): soft topic assignment per embedding
+m.topic_centroids        # (num_topics, D)
+m.topic_discrimination   # (num_topics,)
+```
+
+Inference is closed-form EM over a Gaussian mixture: the E-step is the soft topic assignment, and the M-step solves weighted least squares for each topics `(mu_k, V_k)`, a small linear system for each authors position, and a residual update for the variance. Positions are standardized each iteration (absorbed losslessly into `mu`/`V`) and oriented to the anchors, exactly as in the other ideal-point models.
+
+This is the only model in the family that takes embeddings *directly* rather than deriving topic-word distributions, so it has no `topic_word` or `coherence` — its topics are clusters, summarized by `topic_centroids` (use a nearest-document or nearest-word lookup to label them). It is the continuous corner of the comparison with [`IdealPointTM`](#idealpointtm) (word embeddings), [`IdealPointLDA`](#idealpointlda) (word counts), and [`Wordfish`](#wordfish) (word counts, no topics): pass sentence embeddings grouped by author to ask whether a continuous representation recovers the same latent scale.
 
 ## Short-text models
 

@@ -448,6 +448,23 @@ def _fit_idealpoint_lda(iters=40):
         topica.enable_experimental(was)
 
 
+def _fit_sentence_ideal(iters=60):
+    # SentenceIdealTM is experimental and gated. Continuous ideal-point model over
+    # per-document embeddings: topics are Gaussian clusters; doc_topic is the soft
+    # cluster assignment. No topic_word (it is embedding-, not word-, based).
+    was = topica.experimental_enabled()
+    topica.enable_experimental(True)
+    try:
+        docs, _ = _planted_blocks(k=K, block=8, n=240, length=12, seed=0)
+        emb = _doc_embeddings(docs, k=K, block=8, seed=0)
+        group = [f"a{i % 16}" for i in range(len(docs))]
+        m = topica.SentenceIdealTM(num_topics=K, num_dims=1, seed=1)
+        m.fit(emb, group=group, iters=iters)
+        return m.doc_topic, None, K
+    finally:
+        topica.enable_experimental(was)
+
+
 def _fit_fastopic(iters=200):
     docs, vocab = _planted_blocks(k=K, block=6, n=200, length=10, seed=0)
     doc_emb = _doc_embeddings(docs, k=K, block=6, seed=0)
@@ -530,6 +547,7 @@ FIT_ADAPTERS = {
     "ETM": _fit_etm,
     "IdealPointTM": _fit_idealpoint,
     "IdealPointLDA": _fit_idealpoint_lda,
+    "SentenceIdealTM": _fit_sentence_ideal,
     "FASTopic": _fit_fastopic,
     "EmbeddingLDA": _fit_embeddinglda,
     "CombinedTM": _fit_combinedtm,
