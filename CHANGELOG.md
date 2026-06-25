@@ -6,6 +6,26 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-06-25
+
+### Added
+
+- Three experimental **ideal-point comparison companions** to `IdealPointTM`, spanning
+  the representation x structure grid (so the contribution of topics vs embeddings can be
+  measured head to head):
+  - `Wordfish` (#293) — Slapin & Proksch (2008) Poisson scaling: a one-dimensional
+    unsupervised ideal point from word frequencies alone, no topics. Deterministic;
+    validated bit-for-scale against R `quanteda.textmodels::textmodel_wordfish` (r = 1.00).
+  - `IdealPointLDA` (#294) — the count-based twin of `IdealPointTM`: the same
+    position-displaced topic-word model parameterized directly over the vocabulary (no
+    embeddings). "Wordfish with topics."
+  - `SentenceIdealTM` (#295) — a continuous ideal-point model over sentence/document
+    embeddings: topics are Gaussian clusters whose centroids are displaced by a latent
+    author position. Closed-form EM.
+  - `examples/ideal_point_comparison.py` fits all four on one corpus and reports recovery
+    and pairwise agreement.
+  All gated behind `topica.enable_experimental()`.
+
 ## [0.29.0] - 2026-06-25
 
 ### Added
