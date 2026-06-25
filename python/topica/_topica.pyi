@@ -3779,3 +3779,66 @@ class IdealPointTM:
     @staticmethod
     def load(path: str) -> IdealPointTM: ...
     def __repr__(self) -> str: ...
+
+
+class Wordfish:
+    """Wordfish (Slapin & Proksch 2008): a word-frequency ideal-point scaler with
+    no topics and no embeddings (EXPERIMENTAL). Counts are modeled as
+    y_ij ~ Poisson(exp(alpha_i + psi_j + beta_j * theta_i)); theta_i is the author's
+    latent position, beta_j the word's discrimination. The word-frequency baseline
+    companion to IdealPointTM. The fit is deterministic. Gated behind
+    topica.enable_experimental()."""
+
+    def __init__(
+        self,
+        *,
+        beta_prior_sd: float = 3.0,
+        theta_prior_sd: float = 1.0,
+        min_count: int = 1,
+        convergence_tol: float = 1e-6,
+        seed: int = 42,
+    ) -> None:
+        """beta_prior_sd / theta_prior_sd are the standard deviations of the weak
+        Gaussian priors regularizing word discriminations and positions (pass
+        math.inf for none); min_count drops words with corpus frequency below it.
+        seed is accepted for API uniformity; the fit is deterministic."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        *,
+        group: Sequence[str] | None = None,
+        anchors: dict[str, float] | None = None,
+        iters: int | None = None,
+        convergence_tol: float | None = None,
+    ) -> None:
+        """group pools documents sharing a label into one unit with one position;
+        anchors orients the sign of the axis."""
+        ...
+    @property
+    def num_authors(self) -> int: ...
+    @property
+    def author_positions(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def author_names(self) -> list[str]: ...
+    @property
+    def word_discrimination(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def word_intercept(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    def discriminating_words(
+        self, n: int = 10
+    ) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def log_likelihood(self) -> float: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def converged(self) -> bool | None: ...
+    @property
+    def iters_run(self) -> int: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> Wordfish: ...
+    def __repr__(self) -> str: ...

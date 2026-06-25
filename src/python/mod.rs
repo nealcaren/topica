@@ -73,12 +73,14 @@ mod nmf_lsa;
 #[path = "corpus.rs"]
 mod py_corpus;
 mod save;
+mod wordfish;
 use arrays::*;
 use error::*;
 use idealpoint::IdealPointTM;
 use nmf_lsa::{LSA, NMF};
 use py_corpus::Corpus;
 use save::*;
+use wordfish::Wordfish;
 
 /// Run `f` on a rayon pool of `num_threads` workers, or on the global pool (all
 /// cores) when `num_threads` is `None`/0. The variational fits are deterministic
@@ -18534,6 +18536,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BERTopic>()?;
     m.add_class::<ETM>()?;
     m.add_class::<IdealPointTM>()?;
+    m.add_class::<Wordfish>()?;
     m.add_class::<ProdLDA>()?;
     m.add_class::<InfoCTM>()?;
     m.add_class::<FASTopic>()?;

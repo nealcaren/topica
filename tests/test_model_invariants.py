@@ -522,7 +522,11 @@ FIT_ADAPTERS = {
 }
 
 # Models that need an external LLM/API and so cannot be fit here.
-SKIP_MODELS = {"TopicGPT": "needs an LLM / external API"}
+SKIP_MODELS = {
+    "TopicGPT": "needs an LLM / external API",
+    "Wordfish": "a pure ideal-point scaler with no topic/doc-topic distribution; "
+    "validated by its own recovery test in tests/test_wordfish.py",
+}
 
 # Models for which the cheap metamorphic "more iters not worse" check is run.
 # These are the stochastic count-based / Gibbs models where it is fast and where

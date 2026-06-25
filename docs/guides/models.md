@@ -108,6 +108,7 @@ Shipped before a published paper and reference-implementation parity (topica's b
 | `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `ECTM` | text, metadata, times | variational | bit-exact | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Embedded topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. The unsupervised, latent-trait twin of the STM content covariate; the embedding-native generalization of Wordfish. |
+| `Wordfish` | text | em | bit-exact | Poisson scaling (Slapin & Proksch 2008): an unsupervised one-dimensional ideal-point estimate from word frequencies alone, no topics. The word-frequency baseline companion to IdealPointTM. |
 
 <!-- END MODEL TABLE -->
 
@@ -687,6 +688,28 @@ within-topic content or as topic-splitting. And `num_dims > 1` is implemented bu
 robustly identified for the first dimension; a multi-dimensional, issue-specific position
 (in the spirit of a hierarchical ideal-point topic model) is the natural next step and the
 likely path to both finer interpretation and more robustness.
+
+## Wordfish
+
+!!! warning "Experimental"
+    `Wordfish` is gated: call `topica.enable_experimental()` (or set
+    `TOPICA_EXPERIMENTAL=1`) before constructing one.
+
+`Wordfish` ([Slapin and Proksch 2008](https://doi.org/10.1111/j.1540-5907.2008.00338.x)) is the standard text-scaling model and the word-frequency baseline in the [`IdealPointTM`](#idealpointtm) family: it places authors on a single latent axis from word counts alone, with no topics and no embeddings. It is here so you can measure what topics and embeddings actually add. The count of word `j` by author `i` is Poisson with `log rate = alpha_i + psi_j + beta_j * theta_i`, where `theta_i` is the author position, `beta_j` the word discrimination, `psi_j` its baseline log-rate, and `alpha_i` the author verbosity.
+
+```python
+topica.enable_experimental()
+m = topica.Wordfish()
+m.fit(docs, group=author,                      # pool documents into one position per author
+      anchors={"Sanders": -1.0, "Cruz": 1.0})  # orient the sign of the axis
+m.author_positions          # (num_authors, 1): standardized positions
+m.word_discrimination       # (vocab,): per-word beta
+m.discriminating_words(10)  # the words at the two ends of the axis
+```
+
+We fit by the standard Wordfish EM: alternate Newton updates of the per-word `(psi, beta)` and per-author `(alpha, theta)`, with weak Gaussian priors on `beta` and `theta` (`beta_prior_sd`, `theta_prior_sd`; pass `math.inf` for none). Identification is applied every iteration and is lossless: `theta` is standardized to mean 0 / unit variance (the scale absorbed into `beta`, the location into `psi`), `psi` is centered into `alpha`, and the sign is oriented to the anchors. There is no RNG and the reductions run in a fixed order, so the fit is bit-reproducible. We validate against `quanteda.textmodels::textmodel_wordfish`: on a corpus sampled from the model the two recover the same scale at correlation 1.00 (`parity/wordfish_r_compare.py`).
+
+As a scaling model Wordfish has no topics, so it cannot tell you what is being talked about or how language differs within a topic. When you want the scale and the topics together, reach for [`IdealPointTM`](#idealpointtm) (word embeddings). On clean messaging text the two are comparable on the scale itself; IdealPointTM adds the per-topic framing Wordfish structurally cannot produce.
 
 ## Short-text models
 

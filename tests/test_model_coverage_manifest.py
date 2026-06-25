@@ -23,6 +23,8 @@ from test_model_invariants import FIT_ADAPTERS
 # left uncovered, each with a documented reason.
 INVARIANT_EXEMPT = {
     "TopicGPT": "needs an LLM / external API",
+    "Wordfish": "a pure ideal-point scaler with no topic/doc-topic distribution; "
+    "the topic-health invariants do not apply (covered by tests/test_wordfish.py)",
 }
 
 _PARITY_DIR = Path(__file__).resolve().parents[1] / "parity"
