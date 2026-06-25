@@ -1,0 +1,102 @@
+"""SentenceIdealTM: continuous ideal-point model over embeddings. EXPERIMENTAL.
+
+It has a doc_topic distribution (soft cluster assignment), so it is covered by the
+topic-health invariants; these tests check the ideal-point head: recovering planted
+positions from embeddings, anchor orientation, determinism, and round-trip.
+"""
+import numpy as np
+import pytest
+
+import topica
+
+
+@pytest.fixture(autouse=True)
+def _experimental():
+    was = topica.experimental_enabled()
+    topica.enable_experimental(True)
+    yield
+    topica.enable_experimental(was)
+
+
+def _planted(n_authors=40, dim=8, obs_per=20, seed=0):
+    """Two Gaussian clusters; topic 0's centroid shifts along the author position."""
+    rng = np.random.default_rng(seed)
+    mu = np.zeros((2, dim))
+    mu[0, 0] = 3.0
+    mu[1, 1] = 3.0
+    v = np.zeros((2, dim))
+    v[0, 2] = 2.0
+    v[0, 3] = -2.0  # topic 0 discriminates
+    theta = rng.uniform(-1.0, 1.0, n_authors)
+    emb, group = [], []
+    for a in range(n_authors):
+        for _ in range(obs_per):
+            t = rng.integers(0, 2)
+            mean = mu[t] + theta[a] * v[t]
+            emb.append(mean + rng.normal(0, 0.5, dim))
+            group.append(f"a{a}")
+    return np.array(emb), group, theta
+
+
+def test_requires_experimental():
+    was = topica.experimental_enabled()
+    topica.enable_experimental(False)
+    try:
+        with pytest.raises(Exception):
+            topica.SentenceIdealTM(num_topics=2)
+    finally:
+        topica.enable_experimental(was)
+
+
+def test_recovers_positions():
+    emb, group, theta = _planted(seed=1)
+    m = topica.SentenceIdealTM(num_topics=2, num_dims=1, seed=1)
+    m.fit(emb, group=group, anchors={"a0": -1.0, "a39": 1.0}, iters=80)
+
+    assert m.num_authors == 40
+    pos = dict(zip(m.author_names, m.author_positions[:, 0]))
+    recovered = np.array([pos[f"a{a}"] for a in range(40)])
+    r = abs(np.corrcoef(recovered, theta)[0, 1])
+    assert r > 0.8, f"position recovery r={r:.3f}"
+    assert abs(recovered.mean()) < 1e-6
+
+
+def test_shapes_and_topics():
+    emb, group, _ = _planted(seed=2)
+    m = topica.SentenceIdealTM(num_topics=2, seed=1)
+    m.fit(emb, group=group, iters=50)
+    assert m.doc_topic.shape == (emb.shape[0], 2)
+    assert np.allclose(m.doc_topic.sum(axis=1), 1.0, atol=1e-6)
+    assert m.topic_centroids.shape == (2, emb.shape[1])
+    assert m.topic_discrimination.shape == (2,)
+    c = m.position_centroid(0, [1.0])
+    assert c.shape == (emb.shape[1],)
+
+
+def test_anchors_orient_sign():
+    emb, group, _ = _planted(seed=3)
+    m = topica.SentenceIdealTM(num_topics=2, seed=1)
+    m.fit(emb, group=group, anchors={"a0": -1.0, "a39": 1.0})
+    pos = dict(zip(m.author_names, m.author_positions[:, 0]))
+    assert pos["a0"] < pos["a39"]
+
+
+def test_determinism():
+    emb, group, _ = _planted(seed=4)
+    a = topica.SentenceIdealTM(num_topics=2, seed=1)
+    a.fit(emb, group=group, iters=40)
+    b = topica.SentenceIdealTM(num_topics=2, seed=1)
+    b.fit(emb, group=group, iters=40)
+    assert np.array_equal(a.author_positions, b.author_positions)
+
+
+def test_save_load(tmp_path):
+    emb, group, _ = _planted(seed=5)
+    m = topica.SentenceIdealTM(num_topics=2, seed=1)
+    m.fit(emb, group=group, anchors={"a0": -1.0, "a39": 1.0})
+    p = tmp_path / "sitm.topica"
+    m.save(str(p))
+    m2 = topica.SentenceIdealTM.load(str(p))
+    assert np.array_equal(m.author_positions, m2.author_positions)
+    assert np.array_equal(m.topic_centroids, m2.topic_centroids)
+    assert m.author_names == m2.author_names

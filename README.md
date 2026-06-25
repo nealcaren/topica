@@ -141,6 +141,7 @@ Shipped before a published paper and reference-implementation parity (topica's b
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Embedded topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. The unsupervised, latent-trait twin of the STM content covariate; the embedding-native generalization of Wordfish. |
 | `Wordfish` | text | em | bit-exact | Poisson scaling (Slapin & Proksch 2008): an unsupervised one-dimensional ideal-point estimate from word frequencies alone, no topics. The word-frequency baseline companion to IdealPointTM. |
 | `IdealPointLDA` | text | variational | seed-reproducible | The count-based twin of IdealPointTM: a topic model whose per-topic word distributions are displaced by a latent author ideal point, parameterized directly over the vocabulary (no embeddings). Wordfish with topics. |
+| `SentenceIdealTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The embedding-native analog of IdealPointTM, fit by EM. |
 
 <!-- END MODEL TABLE -->
 

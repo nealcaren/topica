@@ -74,6 +74,7 @@ mod nmf_lsa;
 #[path = "corpus.rs"]
 mod py_corpus;
 mod save;
+mod sentence_ideal;
 mod wordfish;
 use arrays::*;
 use error::*;
@@ -82,6 +83,7 @@ use idealpoint_lda::IdealPointLDA;
 use nmf_lsa::{LSA, NMF};
 use py_corpus::Corpus;
 use save::*;
+use sentence_ideal::SentenceIdealTM;
 use wordfish::Wordfish;
 
 /// Run `f` on a rayon pool of `num_threads` workers, or on the global pool (all
@@ -18539,6 +18541,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ETM>()?;
     m.add_class::<IdealPointTM>()?;
     m.add_class::<IdealPointLDA>()?;
+    m.add_class::<SentenceIdealTM>()?;
     m.add_class::<Wordfish>()?;
     m.add_class::<ProdLDA>()?;
     m.add_class::<InfoCTM>()?;
