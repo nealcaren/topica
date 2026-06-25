@@ -38,6 +38,7 @@ pub mod etm_vae;
 pub mod gsdmm;
 pub mod hdp;
 pub mod hlda;
+pub mod idealpoint;
 pub mod infoctm;
 pub mod keyatm;
 pub mod labeled;

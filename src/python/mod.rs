@@ -68,12 +68,14 @@ use crate::{
 mod arrays;
 mod error;
 // Model legs (one pyclass family per file; each does `use super::*`).
+mod idealpoint;
 mod nmf_lsa;
 #[path = "corpus.rs"]
 mod py_corpus;
 mod save;
 use arrays::*;
 use error::*;
+use idealpoint::IdealPointTM;
 use nmf_lsa::{LSA, NMF};
 use py_corpus::Corpus;
 use save::*;
@@ -18531,6 +18533,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Top2Vec>()?;
     m.add_class::<BERTopic>()?;
     m.add_class::<ETM>()?;
+    m.add_class::<IdealPointTM>()?;
     m.add_class::<ProdLDA>()?;
     m.add_class::<InfoCTM>()?;
     m.add_class::<FASTopic>()?;

@@ -107,6 +107,7 @@ Shipped before a published paper and reference-implementation parity (topica's b
 |---|---|---|---|---|
 | `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `ECTM` | text, metadata, times | variational | bit-exact | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
+| `IdealPointTM` | text, embeddings | variational | seed-reproducible | Embedded topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. The unsupervised, latent-trait twin of the STM content covariate; the embedding-native generalization of Wordfish. |
 
 <!-- END MODEL TABLE -->
 
@@ -570,6 +571,122 @@ One quirk needs handling: the exact Bayes inversion sets `beta ∝ p(topic | wor
 - `top_words` then defaults to a **FREX** ranking (`method="frex"`, the frequency/exclusivity balance topica's `frex`/`label_topics` use; `"lift"` and `"prob"` are also available), refining the display further — top-word diversity ~0.88 and c_v ~0.49 at K=50 with both defaults.
 
 The underlying topics were always there; these two knobs keep frequent words from masking them. `AnchorLDA` is a strong fast first pass and a deterministic baseline; for a final model on real text, compare against `LDA` or `STM`.
+
+## IdealPointTM
+
+!!! warning "Experimental"
+    `IdealPointTM` is an original construction with no reference implementation to
+    validate against. It is gated: call `topica.enable_experimental()` (or set
+    `TOPICA_EXPERIMENTAL=1`) before constructing one. Experimental models may
+    change or be removed without a deprecation cycle.
+
+A topic model tells you what is talked about. It does not tell you where a speaker stands. The political scientist who wants both runs two models, a topic model for description and a separate ideal-point model for position, and the two never reconcile. `IdealPointTM` estimates both in one fit. It is [`ETM`](embedding.md) with a latent trait per author: as in ETM each topic `k` is a point `alpha_k` in the word-embedding space and `beta_{k,v} = softmax_v(rho_v . alpha_k)`, but each author `a` also has a low-dimensional position `x_a`, and that position displaces the topic embedding before the softmax,
+
+```
+beta_{a,k,v} = softmax_v( rho_v . alpha_k + sum_j x_{a,j} (rho_v . W_{k,j}) ).
+```
+
+So two authors who discuss the same topic produce systematically different word distributions, shifted along the loading `W_k` by their position. `alpha_k` is the topic at the neutral position `x = 0`; the loading norm `||W_k||` is the topic's **discrimination**, large where word choice within the topic separates positions and near zero where the topic is neutral. The position is latent and estimated, not supplied, which makes this the unsupervised, latent-trait twin of the [`STM`](#stm) content covariate, and the embedding-native generalization of Wordfish ([Slapin and Proksch 2008](https://doi.org/10.1111/j.1540-5907.2008.00338.x)): with one topic and one dimension the log word-rate is `base_v + x_a (rho_v . w)`, Wordfish with a discrimination that is shared across semantically related words.
+
+```python
+topica.enable_experimental()
+m = topica.IdealPointTM(num_topics=30, num_dims=1, seed=0)
+m.fit(docs, word_embeddings, vocabulary,
+      group=speaker_id,                       # documents sharing a speaker share a position
+      anchors={"Sanders": -1.0, "Cruz": 1.0}) # orient the sign of the axis
+m.author_positions          # (num_authors, num_dims): the estimated ideal points
+m.topic_discrimination      # (num_topics,): which topics carry the cleavage
+m.position_shift(topic=k)   # the words that move within topic k from one end to the other
+```
+
+We fit by variational EM on ETM's core: the E-step is the logistic-normal Laplace step with the author's position-displaced `beta`, and the M-step updates the topic embeddings, the loadings, and the positions in turn. Positions are initialized from the leading principal components of the author-word matrix, as Wordfish does, which keeps the fit off the trivial zero-loading fixed point. Identification is exact and loss-free: each iteration standardizes the positions to mean zero and unit variance and absorbs the rescaling into the embeddings and loadings, then orients the sign to the anchors. On data simulated from the model the positions recover the planted trait at a correlation above 0.98 and `position_shift` reads off the discriminating axis.
+
+We fit by variational EM on ETM's core, with one design choice worth knowing: the
+position update reuses a per-topic grid over the latent axis so the cost stays manageable
+as the number of authors grows, and the whole fit stays thread-count independent.
+
+### When it works
+
+The single most important thing to know is that **the genre of the text matters more than
+any model setting**. We validated `IdealPointTM` against DW-NOMINATE on U.S. congressional
+text. On floor speech, recovery is weak (Pearson around 0.4, mostly a party split with
+little within-party ordering), because floor speech is dominated by procedure and
+boilerplate. On congressional **press releases** for the same chamber, recovery is strong
+and replicates across the 115th, 117th, and 118th Houses (Pearson 0.79 to 0.88), because
+press releases are crafted ideological messaging. So reach for `IdealPointTM` when:
+
+- the text is **expressive** (messaging, opinion, manifestos, op-eds), not procedural;
+- you can **group by author** (`group=`) so each speaker, outlet, or legislator accumulates
+  enough text for a stable position;
+- the corpus is **clean** (one language, low boilerplate). The model's single position axis
+  latches onto the dominant axis of within-topic word choice, so a strong off-topic axis
+  (mixed languages, heavy templated text) will capture the scale. Filter those first.
+
+On clean messaging text the model is competitive with Wordfish on the scale itself, and it
+adds what Wordfish cannot: coherent topics and a per-topic account of how language differs
+by position (`position_shift`).
+
+### Walkthrough
+
+`IdealPointTM` needs word embeddings aligned to your vocabulary, exactly like
+[`ETM`](embedding.md). Training them on the corpus itself works well:
+
+```python
+import gensim, numpy as np, topica
+topica.enable_experimental()
+
+# docs: list[list[str]] (tokenized); author: one author label per document
+w2v = gensim.models.Word2Vec(docs, vector_size=100, window=5, min_count=5, sg=1, seed=1)
+vocab = list(w2v.wv.index_to_key)
+embeddings = np.array([w2v.wv[w] for w in vocab])
+
+m = topica.IdealPointTM(num_topics=20, num_dims=1, seed=1)
+m.fit([[w for w in d if w in set(vocab)] for d in docs],
+      embeddings, vocab,
+      group=author,                                   # one position per author
+      anchors={"known_left": -1.0, "known_right": 1.0})  # orient the sign
+
+# the scale
+positions = dict(zip(m.author_names, m.author_positions[:, 0]))
+
+# the topics (the other half of the double job)
+m.top_words(8)                       # top words per topic
+m.topic_discrimination               # (K,): which topics carry the cleavage
+
+# how language splits by position, within the most discriminating topic
+k = int(np.argmax(m.topic_discrimination))
+pos, neg = m.position_shift(k, n=10)  # (positive-end words, negative-end words)
+
+m.save("ideal.topica"); m2 = topica.IdealPointTM.load("ideal.topica")
+```
+
+`author_positions` are standardized (mean 0, unit variance per dimension). `anchors` only
+fixes the otherwise-arbitrary sign and scale, so pass two authors you know sit on opposite
+ends; the magnitude of the recovered ordering does not depend on them. `position_shift`
+defaults to a probability-weighted score that keeps the contrast inside the topic's own
+vocabulary; pass `weighting="logratio"` for the older, rare-word-sensitive ranking. The raw
+loadings are exposed as `m.loadings` for inspecting the discrimination directions.
+
+**Word embeddings, not sentence embeddings.** `IdealPointTM` factors the topic-word matrix
+through per-word vectors `rho`, so it takes word (or phrase) embeddings, like ETM. We use
+word2vec trained on the corpus, and gensim phrase detection (bigrams/trigrams, so
+`estate_tax` becomes one token) helps modestly. We also tested sentence embeddings
+(Sentence-Transformers, discretized into sentence "concepts"): they make ideology a more
+accessible raw axis, but inside the model they show no consistent advantage over word2vec
+for recovering external scores, and on messaging text word2vec with phrases matched or beat
+them. Representation is a minor lever next to genre; word2vec with phrases is the default we
+recommend.
+
+### Limits
+
+`IdealPointTM` stays experimental for honest reasons. Its single position axis behaves as a
+party detector first and an ideology gradient second, and it is more fragile than plain
+Wordfish to a contaminating off-topic axis, so clean inputs matter. Which topic carries the
+discrimination is not always stable, since a partisan contrast can show up either as
+within-topic content or as topic-splitting. And `num_dims > 1` is implemented but only
+robustly identified for the first dimension; a multi-dimensional, issue-specific position
+(in the spirit of a hierarchical ideal-point topic model) is the natural next step and the
+likely path to both finer interpretation and more robustness.
 
 ## Short-text models
 

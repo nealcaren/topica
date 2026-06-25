@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-06-25
+
+### Added
+
+- `IdealPointTM` (experimental) — an embedded topic model with a latent ideal-point
+  head. One unsupervised fit yields topics *and* a one-dimensional scaling of authors
+  along a discovered latent axis: `author_positions` (the ideal points),
+  `topic_discrimination` (which topics carry the cleavage), and `position_shift` (how
+  word choice within a topic differs across the axis). Takes word embeddings like
+  `ETM`, plus an optional `group=` (one position per author) and `anchors=` (orient the
+  sign). Gated behind `topica.enable_experimental()`. Validated against DW-NOMINATE on
+  U.S. congressional press releases (Pearson ~0.79-0.88 across the 115th-118th House);
+  recovery depends strongly on genre, working best on expressive, author-grouped text.
+  See `docs/guides/models.md#idealpointtm` and `examples/idealpoint.py`.
+
 ## [0.28.0] - 2026-06-22
 
 ### Added
