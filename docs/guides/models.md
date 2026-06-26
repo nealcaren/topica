@@ -782,6 +782,19 @@ topica.split_half_reliability(fit, author)   # how much real signal the axis car
 
 We validated these against DW-NOMINATE on U.S. House press releases: split-half reliability tracks the external recovery across congresses (it ranks them correctly and approximates the magnitude), so it stands in for an external scale when none exists. By measurement theory the reliability also bounds how well the axis can correlate with *any* external score, so a low value is an early warning that the axis is too noisy to validate.
 
+For uncertainty on the positions themselves, `topica.position_intervals(fit, group)` returns model-agnostic **bootstrap** standard errors and confidence intervals for any of the four models — it resamples each author's documents and refits, so it reflects the real estimation variability (including the seed-to-seed instability a local analytic SE would miss). `Wordfish` additionally exposes an analytic `position_se` (the Hessian-based standard error, validated equal to R `quanteda`'s `se.theta` at correlation 1.00 in `parity/wordfish_r_compare.py`).
+
+```python
+m = topica.Wordfish(); m.fit(docs, group=author, anchors={"left": -1.0, "right": 1.0})
+m.position_se                                 # analytic SE per author (quanteda-equivalent)
+
+def fit(idx):                                 # bootstrap intervals for any model
+    mm = topica.IdealPointLDA(20, seed=1)
+    mm.fit([docs[i] for i in idx], group=[author[i] for i in idx])
+    return mm.author_names, mm.author_positions[:, 0]
+ci = topica.position_intervals(fit, author, n_boot=50)   # author -> (estimate, se, lo, hi)
+```
+
 ## Short-text models
 
 `PT` and `GSDMM` are built for short documents; see the

@@ -73,6 +73,28 @@ def test_recovers_positions_and_discrimination():
     assert abs(recovered.mean()) < 1e-6
 
 
+def test_position_se():
+    # SE is finite/positive, aligned to author_positions, and smaller for authors with
+    # more text (more information -> tighter estimate).
+    docs, group, theta, _ = _planted(n_authors=40, docs_per=3, seed=1)
+    # give the first 20 authors much more text than the last 20
+    docs2, group2 = [], []
+    for d, g in zip(docs, group):
+        reps = 5 if int(g[1:]) < 20 else 1
+        for _ in range(reps):
+            docs2.append(d)
+            group2.append(g)
+    m = topica.Wordfish(seed=1)
+    m.fit(docs2, group=group2, anchors={"a0": -1.0, "a39": 1.0})
+    se = m.position_se
+    assert se.shape == (m.num_authors,)
+    assert np.all(np.isfinite(se)) and np.all(se > 0)
+    se_by = dict(zip(m.author_names, se))
+    se_more = np.mean([se_by[f"a{a}"] for a in range(20)])
+    se_less = np.mean([se_by[f"a{a}"] for a in range(20, 40)])
+    assert se_more < se_less, f"more text should give smaller SE: {se_more:.3f} vs {se_less:.3f}"
+
+
 def test_anchors_orient_sign():
     docs, group, theta, _ = _planted(seed=2)
     m = topica.Wordfish(seed=1)

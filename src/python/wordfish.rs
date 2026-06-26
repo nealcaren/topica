@@ -248,6 +248,13 @@ impl Wordfish {
     fn author_positions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(&self.fitted_model()?.positions()).to_pyarray_bound(py))
     }
+    /// Asymptotic standard error of each author position (num_authors,), from the
+    /// observed information of the penalized Poisson log-likelihood — the same
+    /// Hessian-based SE R quanteda reports as `se.theta`. Aligned to `author_names`.
+    #[getter]
+    fn position_se<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        Ok(Array1::from(self.fitted_model()?.position_se()).to_pyarray_bound(py))
+    }
     /// The author labels, in the row order of `author_positions`.
     #[getter]
     fn author_names(&self) -> PyResult<Vec<String>> {
@@ -359,6 +366,7 @@ impl Wordfish {
                 ll_history: s.ll_history.unwrap_or_default(),
                 converged: s.converged.unwrap_or(false),
                 iters_run: s.iters_run.unwrap_or(0),
+                theta_prior_sd: s.theta_prior_sd,
             })
         } else {
             None
