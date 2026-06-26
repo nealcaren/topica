@@ -6,6 +6,27 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-06-26
+
+### Added
+
+- `TBIP` (#299) — **Text-Based Ideal Points** (Vafa, Naidu & Blei 2020), experimental: a
+  Poisson factorization in which an author's latent ideal point rescales a neutral
+  topic-word intensity by a per-word ideological factor, fit by the paper's mean-field
+  variational inference (reparameterized SVI, Adam). The official implementation is
+  TensorFlow 1.14, so topica reimplements the published model and inference in the Rust core
+  (hand-coded reverse-mode gradients, FD-checked); the VI minibatch is rayon-parallel with a
+  fixed-chunk deterministic reduction. Validated by synthetic planted-position recovery and
+  against a PyTorch reference. Joins the ideal-point family; gated behind
+  `topica.enable_experimental()`. Save tag 35.
+- Standard errors for ideal-point positions (#298): `topica.position_intervals(fit, group)`
+  returns model-agnostic bootstrap standard errors and confidence intervals for any of the
+  ideal-point models; `Wordfish.position_se` adds an analytic asymptotic standard error,
+  validated equal to R `quanteda`'s `se.theta` (|r| = 1.00).
+- Intrinsic ideal-point diagnostics (#297): `topica.bimodality` (a bimodality coefficient
+  for the positions) and `topica.split_half_reliability` (refit on disjoint document halves
+  and correlate), so an unsupervised scale can be certified without an external reference.
+
 ## [0.30.0] - 2026-06-25
 
 ### Added
