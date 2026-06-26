@@ -24,6 +24,7 @@
 //! synthetic planted-position recovery, and FD gradient checks.
 
 use rand::Rng;
+use rayon::prelude::*;
 
 const SQRT_FLOOR: f64 = 1e-4; // sigma = softplus(rs) + this
 const RATE_FLOOR: f64 = 1e-7; // Poisson rate floor (matches the reference)
@@ -344,75 +345,117 @@ fn elbo_and_grads(
         }
     }
 
-    // ---- accumulators for likelihood gradients wrt SAMPLES ----
+    // ---- likelihood + gradient pass: chunk-parallel over the minibatch ----
+    // Each document's rate and gradient contributions are independent, so we split
+    // the batch into a FIXED number of contiguous chunks, evaluate them in parallel
+    // (rayon), and reduce them in chunk order. Fixing both the partition and the
+    // reduction order keeps the fit bit-reproducible for a given seed regardless of
+    // how many threads run -- the determinism guarantee topica requires. Within a
+    // doc we cache `adj = exp(clamp(xb*eta))` once and reuse it in the gradient pass
+    // (the exp was the dominant cost, previously computed twice).
+    let _ = &counts_buf; // each chunk uses its own scratch
+    const NCHUNKS: usize = 16;
+    let nchunks = NCHUNKS.min(b).max(1);
+    let chunk_size = b.div_ceil(nchunks);
+
+    struct Partial {
+        loglik: f64,
+        dl_dbeta: Vec<f64>,  // K*V
+        dl_deta: Vec<f64>,   // K*V
+        dl_dx: Vec<f64>,     // A
+        start: usize,        // first bi handled by this chunk
+        dl_dtheta: Vec<f64>, // (end-start)*K
+    }
+
+    let partials: Vec<Partial> = (0..nchunks)
+        .into_par_iter()
+        .map(|ci| {
+            let start = ci * chunk_size;
+            let end = ((ci + 1) * chunk_size).min(b);
+            let rows = end.saturating_sub(start);
+            let mut part = Partial {
+                loglik: 0.0,
+                dl_dbeta: vec![0.0f64; k * v],
+                dl_deta: vec![0.0f64; k * v],
+                dl_dx: vec![0.0f64; a_n],
+                start,
+                dl_dtheta: vec![0.0f64; rows * k],
+            };
+            let mut rate = vec![0.0f64; v];
+            let mut adj = vec![0.0f64; k * v]; // exp(clamp(xb*eta)), cached per doc
+            let mut counts = vec![0.0f64; v];
+            for bi in start..end {
+                let dd = bidx[bi];
+                let s = group[dd];
+                let xb = x[s];
+                for c in counts.iter_mut() {
+                    *c = 0.0;
+                }
+                for &w in &docs[dd] {
+                    counts[w as usize] += 1.0;
+                }
+                for vv in 0..v {
+                    rate[vv] = RATE_FLOOR;
+                }
+                // rate, caching adj (single exp per (k,v)).
+                for kk in 0..k {
+                    let th = theta[bi * k + kk];
+                    let base = kk * v;
+                    for vv in 0..v {
+                        let a = (xb * eta[base + vv]).clamp(-8.0, 8.0).exp();
+                        adj[base + vv] = a;
+                        rate[vv] += th * beta[base + vv] * a;
+                    }
+                }
+                for vv in 0..v {
+                    let r = rate[vv];
+                    part.loglik += counts[vv] * r.ln() - r;
+                }
+                // gradient pass (reuse cached adj).
+                for kk in 0..k {
+                    let th = theta[bi * k + kk];
+                    let base = kk * v;
+                    let mut acc_theta = 0.0;
+                    for vv in 0..v {
+                        let bv = beta[base + vv];
+                        let et = eta[base + vv];
+                        let c = th * bv * adj[base + vv]; // contribution
+                        let g = counts[vv] / rate[vv] - 1.0;
+                        let gc = g * c;
+                        acc_theta += gc / th;
+                        part.dl_dbeta[base + vv] += gc / bv;
+                        // chain through the clamp on xb*eta (zero gradient when clamped)
+                        if (-8.0..=8.0).contains(&(xb * et)) {
+                            part.dl_deta[base + vv] += gc * xb;
+                            part.dl_dx[s] += gc * et;
+                        }
+                    }
+                    part.dl_dtheta[(bi - start) * k + kk] = acc_theta;
+                }
+            }
+            part
+        })
+        .collect();
+
+    // ---- deterministic reduction in chunk order ----
     let mut dl_dtheta = vec![0.0f64; b * k]; // (B,K)
     let mut dl_dbeta = vec![0.0f64; k * v]; // (K,V)
     let mut dl_deta = vec![0.0f64; k * v]; // (K,V)
     let mut dl_dx = vec![0.0f64; a_n]; // (A,)
     let mut loglik = 0.0f64;
-
-    // Per-document pass. We materialize the dense rate over V (V is modest for the
-    // experimental tier; matches the reference's dense einsum).
-    let mut rate = vec![0.0f64; v];
-    for bi in 0..b {
-        let dd = bidx[bi];
-        let s = group[dd];
-        let xb = x[s];
-        // counts for this doc (dense over V)
-        for c in counts_buf.iter_mut() {
-            *c = 0.0;
+    for part in &partials {
+        loglik += part.loglik;
+        for i in 0..k * v {
+            dl_dbeta[i] += part.dl_dbeta[i];
+            dl_deta[i] += part.dl_deta[i];
         }
-        for &w in &docs[dd] {
-            counts_buf[w as usize] += 1.0;
+        for s in 0..a_n {
+            dl_dx[s] += part.dl_dx[s];
         }
-        // adj[k,v] = exp(clamp(xb*eta[k,v],-8,8)); c[k,v]=theta*beta*adj; rate[v]=sum_k c.
-        // We recompute adj on the fly (K*V per doc).
-        for vv in 0..v {
-            rate[vv] = RATE_FLOOR;
-        }
-        // First pass: rate.
-        // (store adj implicitly; recompute in the gradient pass to save memory)
-        for kk in 0..k {
-            let th = theta[bi * k + kk];
-            for vv in 0..v {
-                let bv = beta[kk * v + vv];
-                let raw = (xb * eta[kk * v + vv]).clamp(-8.0, 8.0);
-                let adj = raw.exp();
-                rate[vv] += th * bv * adj;
-            }
-        }
-        // g[v] = y[v]/rate[v] - 1.
-        for vv in 0..v {
-            let r = rate[vv];
-            loglik += counts_buf[vv] * r.ln() - r;
-        }
-        // Gradient pass: accumulate dL/dtheta, dL/dbeta, dL/deta, dL/dx.
-        for kk in 0..k {
-            let th = theta[bi * k + kk];
-            let mut acc_theta = 0.0;
-            for vv in 0..v {
-                let bv = beta[kk * v + vv];
-                let et = eta[kk * v + vv];
-                let raw_unclamped = xb * et;
-                let raw = raw_unclamped.clamp(-8.0, 8.0);
-                let adj = raw.exp();
-                let c = th * bv * adj; // contribution
-                let g = counts_buf[vv] / rate[vv] - 1.0;
-                let gc = g * c;
-                // dL/dtheta[b,k] = sum_v g*c/theta
-                acc_theta += gc / th;
-                // dL/dbeta[k,v] += g*c/beta  (theta-scaled? no: global, but accumulated
-                //   over the batch; SVI scaling applied to the whole likelihood below)
-                dl_dbeta[kk * v + vv] += gc / bv;
-                // dL/deta[k,v] += g*c*xb  (chain through the clamp on xb*eta)
-                if (-8.0..=8.0).contains(&raw_unclamped) {
-                    dl_deta[kk * v + vv] += gc * xb;
-                    // dL/dx[s] += g*c*eta
-                    dl_dx[s] += gc * et;
-                }
-                // if clamped, d adj / d(.) = 0 for both eta and x on this entry.
-            }
-            dl_dtheta[bi * k + kk] = acc_theta;
+        let rows = part.dl_dtheta.len() / k;
+        for r in 0..rows {
+            let bi = part.start + r;
+            dl_dtheta[bi * k..bi * k + k].copy_from_slice(&part.dl_dtheta[r * k..r * k + k]);
         }
     }
 
