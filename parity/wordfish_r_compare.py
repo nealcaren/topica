@@ -29,7 +29,8 @@ args <- commandArgs(trailingOnly = TRUE)
 m <- read.csv(args[1], row.names = 1, check.names = FALSE)
 d <- as.dfm(as.matrix(m))
 wf <- textmodel_wordfish(d)
-out <- data.frame(speakerid = rownames(m), theta = as.numeric(wf$theta))
+out <- data.frame(speakerid = rownames(m), theta = as.numeric(wf$theta),
+                  se = as.numeric(wf$se.theta))
 write.csv(out, args[2], row.names = FALSE)
 """
 
@@ -75,6 +76,7 @@ def main() -> int:
     m = topica.Wordfish(seed=1)
     m.fit(docs, group=group, anchors={"a000": -1.0, "a049": 1.0}, iters=200)
     pos = dict(zip(m.author_names, m.author_positions[:, 0]))
+    se = dict(zip(m.author_names, m.position_se))
     authors = sorted(pos)
     topica_theta = [pos[a] for a in authors]
 
@@ -106,6 +108,7 @@ def main() -> int:
             return 0
         rows = list(csv.DictReader(open(outfile, encoding="utf-8")))
     r_theta = {row["speakerid"]: float(row["theta"]) for row in rows}
+    r_se = {row["speakerid"]: float(row["se"]) for row in rows if row.get("se")}
     quanteda_theta = [r_theta[a] for a in authors]
 
     planted = [theta_true[int(a[1:])] for a in authors]
@@ -116,6 +119,18 @@ def main() -> int:
     print(f"topica Wordfish vs quanteda textmodel_wordfish : |r| = {r_vs_quanteda:.4f}")
     print(f"topica   vs planted truth                      : |r| = {r_topica_truth:.4f}")
     print(f"quanteda vs planted truth                      : |r| = {r_quanteda_truth:.4f}")
+
+    # standard errors: topica's analytic position_se vs quanteda's se.theta
+    se_r = float("nan"); se_ratio = float("nan")
+    if r_se:
+        common_se = [a for a in authors if a in r_se]
+        ts = np.array([se[a] for a in common_se])
+        qs = np.array([r_se[a] for a in common_se])
+        se_r = _pearson(ts, qs)
+        se_ratio = float(np.median(ts / qs))
+        print(f"topica position_se vs quanteda se.theta        : |r| = {se_r:.4f} "
+              f"(median ratio {se_ratio:.3f})")
+
     if r_vs_quanteda < 0.95:
         print(f"FAIL: topica and quanteda disagree (|r|={r_vs_quanteda:.4f} < 0.95)")
         return 1

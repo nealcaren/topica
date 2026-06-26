@@ -52,6 +52,68 @@ def test_split_half_reliability_low_for_noise():
     assert r < 0.5, f"noise reliability={r:.3f}"
 
 
+def test_position_intervals_mechanics():
+    # Authors with different numbers of units; per-unit values are the author's trait
+    # plus noise. More units -> a tighter bootstrap SE; estimates track the trait.
+    rng = np.random.default_rng(0)
+    group, val, trait = [], [], {}
+    for a in range(20):
+        trait[a] = rng.normal()
+        nunits = 4 if a % 2 == 0 else 16
+        for _ in range(nunits):
+            group.append(f"a{a}")
+            val.append(trait[a] + rng.normal(0, 1.0))
+    val = np.array(val)
+
+    def fit(idx):
+        idx = list(idx)
+        acc = {}
+        for i in idx:
+            acc.setdefault(group[i], []).append(val[i])
+        authors = sorted(acc)
+        return authors, np.array([np.mean(acc[a]) for a in authors])
+
+    res = topica.position_intervals(fit, group, n_boot=60, seed=0)
+    assert set(res) == {f"a{a}" for a in range(20)}
+    est = np.array([res[f"a{a}"].estimate for a in range(20)])
+    tru = np.array([trait[a] for a in range(20)])
+    assert abs(np.corrcoef(est, tru)[0, 1]) > 0.9
+    # the lo/hi bracket the estimate; SE positive
+    for a in range(20):
+        pi = res[f"a{a}"]
+        assert pi.lo <= pi.estimate <= pi.hi and pi.se > 0
+    se_few = np.mean([res[f"a{a}"].se for a in range(0, 20, 2)])    # 4-unit authors
+    se_many = np.mean([res[f"a{a}"].se for a in range(1, 20, 2)])   # 16-unit authors
+    assert se_few > se_many, f"more data should mean smaller SE: {se_few:.3f} vs {se_many:.3f}"
+
+
+def test_position_intervals_with_wordfish():
+    topica.enable_experimental(True)
+    try:
+        rng = np.random.default_rng(1)
+        theta = np.linspace(-1, 1, 24)
+        docs, group = [], []
+        for a in range(24):
+            for _ in range(6):
+                doc = []
+                for j in range(50):
+                    lam = np.exp(1.0 + ((j % 2) * 2 - 1) * theta[a] * (j < 25))
+                    doc += [f"w{j}"] * int(rng.poisson(max(lam, 0.05)))
+                docs.append(doc)
+                group.append(f"a{a}")
+
+        def fit(idx):
+            m = topica.Wordfish(seed=1)
+            m.fit([docs[i] for i in idx], group=[group[i] for i in idx],
+                  anchors={"a0": -1.0, "a23": 1.0}, iters=80)
+            return m.author_names, m.author_positions[:, 0]
+
+        res = topica.position_intervals(fit, group, n_boot=10, seed=0)
+        assert all(np.isfinite(pi.se) and pi.se >= 0 for pi in res.values())
+    finally:
+        topica.enable_experimental(False)
+
+
 def test_split_half_reliability_with_idealpointlda():
     # Integration: a planted IdealPointLDA corpus should be reliable.
     topica.enable_experimental(True)

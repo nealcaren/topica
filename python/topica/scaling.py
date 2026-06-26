@@ -15,9 +15,14 @@ theory, reliability also caps how well the axis can correlate with any external 
 """
 from __future__ import annotations
 
+from collections import namedtuple
+
 import numpy as np
 
-__all__ = ["bimodality", "split_half_reliability"]
+__all__ = ["bimodality", "split_half_reliability", "position_intervals"]
+
+#: One author's position estimate with a bootstrap standard error and CI.
+PositionInterval = namedtuple("PositionInterval", "estimate se lo hi")
 
 
 def bimodality(positions) -> float:
@@ -111,3 +116,78 @@ def split_half_reliability(fit, group, *, seed: int = 0, repeats: int = 1) -> fl
             continue
         rs.append(abs(float(np.corrcoef(va, vb)[0, 1])))
     return float(np.mean(rs)) if rs else float("nan")
+
+
+def position_intervals(fit, group, *, n_boot: int = 50, ci: float = 0.90, seed: int = 0):
+    """Bootstrap standard errors and confidence intervals for a latent author scale.
+
+    Resamples each author's units (documents, or per-observation embeddings) with
+    replacement, refits the model, and aggregates the recovered first-dimension
+    positions across resamples. This is model-agnostic (you supply how to fit) and
+    captures the *actual* estimation variability — including multimodality/instability
+    that a local analytic standard error would miss.
+
+    Parameters
+    ----------
+    fit : callable(unit_indices) -> (author_labels, positions)
+        Fit a *fresh* model on the given unit indices (positions into ``group``) and
+        return author labels and 1-D positions (same contract as
+        :func:`split_half_reliability`). Duplicate indices are passed through (the
+        bootstrap resamples with replacement).
+    group : sequence, length n_units
+        The author label of each unit.
+    n_boot : int
+        Number of bootstrap resamples.
+    ci : float
+        Central confidence level for the percentile interval (e.g. 0.90 -> 5th/95th).
+    seed : int
+        Base RNG seed.
+
+    Returns
+    -------
+    dict[author -> PositionInterval(estimate, se, lo, hi)]
+        ``estimate`` is the full-data position; ``se`` the bootstrap standard error;
+        ``lo``/``hi`` the percentile interval. Positions are sign-aligned across
+        resamples to the full-data fit before aggregating.
+    """
+    group = list(group)
+    n = len(group)
+    by_author: dict = {}
+    for i, a in enumerate(group):
+        by_author.setdefault(a, []).append(i)
+
+    ref = _positions_dict(*fit(list(range(n))))
+    authors = [a for a in by_author if a in ref]
+    ref_vec = {a: ref[a] for a in authors}
+
+    draws: dict = {a: [] for a in authors}
+    for rep in range(max(1, n_boot)):
+        rng = np.random.default_rng(seed + rep)
+        idx = []
+        for a in authors:
+            units = by_author[a]
+            idx.extend(rng.choice(units, size=len(units), replace=True).tolist())
+        pos = _positions_dict(*fit(sorted(idx)))
+        common = [a for a in authors if a in pos]
+        if len(common) < 3:
+            continue
+        # sign-align this resample to the full-data fit
+        rv = np.array([ref_vec[a] for a in common])
+        bv = np.array([pos[a] for a in common])
+        if rv.std() > 0 and bv.std() > 0 and np.corrcoef(rv, bv)[0, 1] < 0:
+            pos = {a: -p for a, p in pos.items()}
+        for a in common:
+            draws[a].append(pos[a])
+
+    lo_q, hi_q = (1 - ci) / 2 * 100, (1 + ci) / 2 * 100
+    out = {}
+    for a in authors:
+        d = np.array(draws[a])
+        if d.size < 2:
+            out[a] = PositionInterval(ref_vec[a], float("nan"), float("nan"), float("nan"))
+        else:
+            out[a] = PositionInterval(
+                ref_vec[a], float(d.std(ddof=1)),
+                float(np.percentile(d, lo_q)), float(np.percentile(d, hi_q)),
+            )
+    return out

@@ -30,6 +30,45 @@ pub struct WordfishModel {
     pub ll_history: Vec<f64>,
     pub converged: bool,
     pub iters_run: usize,
+    /// Prior sd on theta, retained so the asymptotic standard error can be computed.
+    pub theta_prior_sd: f64,
+}
+
+impl WordfishModel {
+    /// Asymptotic standard error of each author position, from the observed
+    /// information of the penalized Poisson log-likelihood. For author `i` the
+    /// document-level 2x2 information in `(alpha_i, theta_i)` is
+    /// `I_aa = sum_j mu_ij`, `I_at = sum_j mu_ij beta_j`,
+    /// `I_tt = sum_j mu_ij beta_j^2 + 1/sd^2` (with `mu_ij = exp(alpha_i + psi_j +
+    /// beta_j theta_i)`); the marginal variance of `theta_i`, accounting for the
+    /// verbosity nuisance `alpha_i`, is `I_aa / (I_aa I_tt - I_at^2)`. This is the
+    /// same Hessian-based SE R quanteda reports as `se.theta`.
+    pub fn position_se(&self) -> Vec<f64> {
+        let inv_var = if self.theta_prior_sd.is_finite() && self.theta_prior_sd > 0.0 {
+            1.0 / (self.theta_prior_sd * self.theta_prior_sd)
+        } else {
+            0.0
+        };
+        (0..self.num_authors)
+            .map(|i| {
+                let ai = self.alpha[i];
+                let ti = self.theta[i];
+                let (mut i_aa, mut i_at, mut i_tt) = (0.0, 0.0, inv_var);
+                for j in 0..self.num_types {
+                    let mu = (ai + self.psi[j] + self.beta[j] * ti).exp();
+                    i_aa += mu;
+                    i_at += mu * self.beta[j];
+                    i_tt += mu * self.beta[j] * self.beta[j];
+                }
+                let det = i_aa * i_tt - i_at * i_at;
+                if det > 0.0 && i_aa > 0.0 {
+                    (i_aa / det).sqrt()
+                } else {
+                    f64::NAN
+                }
+            })
+            .collect()
+    }
 }
 
 /// Sparse author-major counts: `counts[i]` is the list of `(word_id, count)` for
@@ -180,6 +219,7 @@ pub fn fit_wordfish(
         ll_history,
         converged,
         iters_run,
+        theta_prior_sd,
     }
 }
 
