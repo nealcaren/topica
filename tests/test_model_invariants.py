@@ -448,6 +448,22 @@ def _fit_idealpoint_lda(iters=40):
         topica.enable_experimental(was)
 
 
+def _fit_tbip(iters=600):
+    # TBIP is experimental and gated. Text-Based Ideal Points: a Poisson
+    # factorization whose neutral topics are rescaled by a per-word ideological
+    # factor exp(x_s * eta_kv), fit by mean-field VI (reparameterized SVI).
+    was = topica.experimental_enabled()
+    topica.enable_experimental(True)
+    try:
+        docs, _ = _planted_blocks(k=K, block=8, n=240, length=12, seed=0)
+        group = [f"a{i % 16}" for i in range(len(docs))]
+        m = topica.TBIP(num_topics=K, seed=1, iters=iters, batch_size=len(docs))
+        m.fit(docs, group=group)
+        return m.doc_topic, m.topic_word, K
+    finally:
+        topica.enable_experimental(was)
+
+
 def _fit_sentence_ideal(iters=60):
     # SentenceIdealTM is experimental and gated. Continuous ideal-point model over
     # per-document embeddings: topics are Gaussian clusters; doc_topic is the soft
@@ -548,6 +564,7 @@ FIT_ADAPTERS = {
     "IdealPointTM": _fit_idealpoint,
     "IdealPointLDA": _fit_idealpoint_lda,
     "SentenceIdealTM": _fit_sentence_ideal,
+    "TBIP": _fit_tbip,
     "FASTopic": _fit_fastopic,
     "EmbeddingLDA": _fit_embeddinglda,
     "CombinedTM": _fit_combinedtm,

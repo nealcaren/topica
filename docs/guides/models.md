@@ -111,6 +111,7 @@ Shipped before a published paper and reference-implementation parity (topica's b
 | `Wordfish` | text | em | bit-exact | Poisson scaling (Slapin & Proksch 2008): an unsupervised one-dimensional ideal-point estimate from word frequencies alone, no topics. The word-frequency baseline companion to IdealPointTM. |
 | `IdealPointLDA` | text | variational | seed-reproducible | The count-based twin of IdealPointTM: a topic model whose per-topic word distributions are displaced by a latent author ideal point, parameterized directly over the vocabulary (no embeddings). Wordfish with topics. |
 | `SentenceIdealTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The embedding-native analog of IdealPointTM, fit by EM. |
+| `TBIP` | text | variational | seed-reproducible | Text-Based Ideal Points (Vafa, Naidu & Blei 2020): a Poisson factorization whose neutral topic-word intensities are rescaled by a per-word ideological factor exp(x_s * eta_kv), with the author position x_s latent. Fit by the paper's mean-field variational inference (reparameterized SVI). Recovers ideological scales from unlabeled text. |
 
 <!-- END MODEL TABLE -->
 
@@ -757,6 +758,33 @@ m.topic_discrimination   # (num_topics,)
 Inference is closed-form EM over a Gaussian mixture: the E-step is the soft topic assignment, and the M-step solves weighted least squares for each topics `(mu_k, V_k)`, a small linear system for each authors position, and a residual update for the variance. Positions are standardized each iteration (absorbed losslessly into `mu`/`V`) and oriented to the anchors, exactly as in the other ideal-point models.
 
 This is the only model in the family that takes embeddings *directly* rather than deriving topic-word distributions, so it has no `topic_word` or `coherence` — its topics are clusters, summarized by `topic_centroids` (use a nearest-document or nearest-word lookup to label them). It is the continuous corner of the comparison with [`IdealPointTM`](#idealpointtm) (word embeddings), [`IdealPointLDA`](#idealpointlda) (word counts), and [`Wordfish`](#wordfish) (word counts, no topics): pass sentence embeddings grouped by author to ask whether a continuous representation recovers the same latent scale.
+
+## TBIP
+
+!!! warning "Experimental"
+    `TBIP` is gated: call `topica.enable_experimental()` (or set
+    `TOPICA_EXPERIMENTAL=1`) before constructing one.
+
+`TBIP` is Text-Based Ideal Points (Vafa, Naidu & Blei 2020), a Poisson factorization of word counts. A *neutral* topic-word intensity `beta_kv` is rescaled by a per-word *ideological* factor `exp(x_s * eta_kv)`, where `x_s` is the author's latent ideal point and `eta_kv` is how strongly word `v` in topic `k` separates the two ends of the axis. A document by author `a_d` mixes topics with positive per-doc intensities `theta_dk`:
+
+```text
+y_dv ~ Poisson( sum_k theta_dk * beta_kv * exp(x_{a_d} * eta_kv) )
+```
+
+A positive `eta_kv` makes word `v` more likely as the author moves to the positive end of the scale; a near-zero `eta_kv` makes the word non-ideological. The position `x_s` is estimated from the text alone — no votes, no labels.
+
+```python
+topica.enable_experimental()
+m = topica.TBIP(num_topics=15)
+m.fit(docs, group=author)        # group: author label per document
+m.ideal_points                   # (num_authors,): author positions (posterior mean)
+m.author_names                   # aligned with ideal_points
+m.topic_word                     # (num_topics, vocab): neutral topics, exp(mu_beta) normalized
+m.ideological_topics             # (num_topics, vocab): eta, the per-word ideological loadings
+m.doc_topic                      # (num_docs, num_topics)
+```
+
+Inference is the paper's mean-field variational inference (not the MAP shortcut): a fully factored `q` with LogNormal factors for the positive `theta`/`beta` and Normal factors for the real `eta`/`x`, maximized by reparameterized single-sample stochastic gradient ascent (Adam) with document minibatching. KL is analytic for the Gaussian factors; the LogNormal-vs-Gamma terms use the same Monte Carlo sample. The fit is deterministic under a fixed `seed`. TBIP is the word-count member of the ideal-point family that, unlike [`Wordfish`](#wordfish), carries topics, and unlike [`IdealPointLDA`](#idealpointlda), separates a word's neutral intensity from its ideological loading explicitly.
 
 ## Validating an ideal-point axis without an external scale
 
