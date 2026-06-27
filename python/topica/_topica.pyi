@@ -3783,11 +3783,11 @@ class IdealPointTM:
 
 class Wordfish:
     """Wordfish (Slapin & Proksch 2008): a word-frequency ideal-point scaler with
-    no topics and no embeddings (EXPERIMENTAL). Counts are modeled as
+    no topics and no embeddings. Counts are modeled as
     y_ij ~ Poisson(exp(alpha_i + psi_j + beta_j * theta_i)); theta_i is the author's
     latent position, beta_j the word's discrimination. The word-frequency baseline
-    companion to IdealPointTM. The fit is deterministic. Gated behind
-    topica.enable_experimental()."""
+    companion to IdealPointTM. The fit is deterministic. Validated against R
+    quanteda's textmodel_wordfish (parity/wordfish_r_compare.py)."""
 
     def __init__(
         self,
@@ -3991,13 +3991,14 @@ class SentenceIdealTM:
 
 
 class TBIP:
-    """TBIP, Text-Based Ideal Points (Vafa, Naidu & Blei 2020; EXPERIMENTAL). A
+    """TBIP, Text-Based Ideal Points (Vafa, Naidu & Blei 2020). A
     Poisson factorization in which an author's latent ideal point x_s rescales a
     neutral topic-word intensity beta_kv by a per-word ideological factor
     exp(x_s * eta_kv); documents mix topics with positive per-doc intensities
     theta_dk. Fit by the paper's mean-field variational inference (reparameterized
     single-sample SVI, Adam, document minibatching). Recovers ideological scales
-    from unlabeled text. Gated behind topica.enable_experimental()."""
+    from unlabeled text. Validated by planted-position recovery and a PyTorch
+    reference (parity/tbip_parity.py)."""
 
     def __init__(
         self,

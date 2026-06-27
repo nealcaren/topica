@@ -72,7 +72,6 @@ def main() -> int:
         return 0
 
     docs, group, theta_true = _planted()
-    topica.enable_experimental(True)
     m = topica.Wordfish(seed=1)
     m.fit(docs, group=group, anchors={"a000": -1.0, "a049": 1.0}, iters=200)
     pos = dict(zip(m.author_names, m.author_positions[:, 0]))

@@ -1,4 +1,4 @@
-"""Wordfish: the word-frequency ideal-point baseline. EXPERIMENTAL, gated.
+"""Wordfish: the word-frequency ideal-point baseline.
 
 Wordfish has no topic distribution, so it is exempt from the registry-driven
 topic-health invariant suite; its validity is checked here: it recovers planted
@@ -7,17 +7,8 @@ positions and word discriminations from counts sampled from its own model.
 import math
 
 import numpy as np
-import pytest
 
 import topica
-
-
-@pytest.fixture(autouse=True)
-def _experimental():
-    was = topica.experimental_enabled()
-    topica.enable_experimental(True)
-    yield
-    topica.enable_experimental(was)
 
 
 def _planted(n_authors=40, n_words=60, docs_per=3, seed=0):
@@ -38,16 +29,6 @@ def _planted(n_authors=40, n_words=60, docs_per=3, seed=0):
             docs.append(doc)
             group.append(f"a{a}")
     return docs, group, theta, beta
-
-
-def test_requires_experimental():
-    was = topica.experimental_enabled()
-    topica.enable_experimental(False)
-    try:
-        with pytest.raises(Exception):
-            topica.Wordfish()
-    finally:
-        topica.enable_experimental(was)
 
 
 def test_recovers_positions_and_discrimination():
