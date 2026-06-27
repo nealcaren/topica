@@ -6,6 +6,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- `PartyEmbeddings` (#TBD) — **party embeddings** (Rheault & Cochrane 2020), the
+  corpus-trained word-embedding member of the `ideal-point` family. A PV-DM
+  (distributed-memory paragraph-vector) model trained by negative sampling with
+  party-period metadata tags; the ideological placement is the leading principal
+  components of the learned party vectors, and because words share the space a
+  party's language can be read off by proximity. Exposes the family surface
+  (`author_positions`/`author_names`/`anchors=`) plus `nearest_words`,
+  `guided_positions` (a custom lexicon axis), and `distance` (polarization).
+  topica reimplements the PV-DM negative-sampling training in Rust (no
+  word2vec/doc2vec engine existed) from Mikolov et al. (2013) and Le & Mikolov
+  (2014); the reference package builds on gensim `Doc2Vec`, and the topica scale
+  matches it at correlation 1.00 on a planted ordering
+  (`parity/party_embeddings_compare.py`). Save tag 36.
+
 ## [0.32.0] - 2026-06-27
 
 ### Changed
