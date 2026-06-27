@@ -159,7 +159,11 @@ pub fn fit_sentence_ideal<R: Rng>(
         // E-step: responsibilities r_{i,k} ∝ pi_k N(e_i | mu_k + x_a V_k, sigma2 I).
         let inv2s = 1.0 / (2.0 * sigma2);
         let log_pi: Vec<f64> = pi.iter().map(|&p| p.max(1e-300).ln()).collect();
-        let ll: f64 = emb
+        // Per-document log-likelihood, collected in document order then summed
+        // sequentially so the total is independent of rayon's work-stealing order
+        // (a parallel `.sum()` of f64 is not associative and would break the
+        // fixed-seed determinism guarantee).
+        let ll_parts: Vec<f64> = emb
             .par_iter()
             .zip(resp.par_iter_mut())
             .zip(group.par_iter())
@@ -189,7 +193,8 @@ pub fn fit_sentence_ideal<R: Rng>(
                 }
                 max + z.ln()
             })
-            .sum();
+            .collect();
+        let ll: f64 = ll_parts.iter().sum();
         ll_history.push(ll);
 
         // M-step: mixture weights.
@@ -313,8 +318,9 @@ pub fn fit_sentence_ideal<R: Rng>(
             }
         }
 
-        // M-step: spherical variance from the mean squared residual.
-        let ss: f64 = (0..n)
+        // M-step: spherical variance from the mean squared residual. Collected in
+        // index order then summed sequentially (fixed-order, see the E-step note).
+        let ss_parts: Vec<f64> = (0..n)
             .into_par_iter()
             .map(|i| {
                 let a = group[i];
@@ -334,7 +340,8 @@ pub fn fit_sentence_ideal<R: Rng>(
                 }
                 s
             })
-            .sum();
+            .collect();
+        let ss: f64 = ss_parts.iter().sum();
         sigma2 = (ss / (n.max(1) * dim.max(1)) as f64).max(1e-8);
 
         // Identification: standardize positions (lossless into mu/V), orient sign.
