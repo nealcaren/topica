@@ -18,7 +18,11 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             archive: tar.gz
-          - os: macos-13
+          # Cross-compiled from the arm64 macos-latest runner: the deprecated
+          # macos-13 Intel runners are starved (the v0.32.0 release job queued
+          # ~1h before it was cancelled). CI.yml's wheel job already cross-builds
+          # the x86_64 macOS wheel on macos-latest the same way, so this works.
+          - os: macos-latest
             target: x86_64-apple-darwin
             archive: tar.gz
           - os: macos-latest
