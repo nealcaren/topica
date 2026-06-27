@@ -21,6 +21,52 @@ def test_bimodality_needs_enough_points():
         topica.bimodality([0.1, 0.2, 0.3])
 
 
+def test_polarization_centroid_distance():
+    pos = np.array([-1.0, -0.9, -1.1, 1.0, 0.9, 1.1])
+    lab = ["L", "L", "L", "R", "R", "R"]
+    # raw = distance between camp means (centroids at -1 and +1)
+    assert topica.polarization(pos, lab) == pytest.approx(2.0, abs=1e-9)
+    # accepts an (n, 1) column (e.g. author_positions)
+    assert topica.polarization(pos.reshape(-1, 1), lab) == pytest.approx(2.0, abs=1e-9)
+    # rises as the camps move apart
+    near = topica.polarization([-0.2, -0.2, 0.2, 0.2], ["L", "L", "R", "R"])
+    far = topica.polarization([-2.0, -2.0, 2.0, 2.0], ["L", "L", "R", "R"])
+    assert far > near
+
+
+def test_polarization_multidim_is_euclidean():
+    pos = np.array([[-1.0, 0.0], [-1.0, 0.0], [2.0, 4.0], [2.0, 4.0]])
+    lab = ["L", "L", "R", "R"]
+    assert topica.polarization(pos, lab) == pytest.approx(5.0, abs=1e-9)  # 3-4-5
+
+
+def test_polarization_normalize_is_scale_free():
+    # Doubling the axis scale doubles the raw distance but leaves the normalized
+    # (effect-size) form unchanged.
+    pos = np.array([-1.0, -0.8, 0.8, 1.0])
+    lab = ["L", "L", "R", "R"]
+    raw1 = topica.polarization(pos, lab)
+    raw2 = topica.polarization(pos * 2, lab)
+    assert raw2 == pytest.approx(2 * raw1)
+    assert topica.polarization(pos, lab, normalize=True) == pytest.approx(
+        topica.polarization(pos * 2, lab, normalize=True)
+    )
+
+
+def test_polarization_more_than_two_camps():
+    pos = np.array([-2.0, -2.0, 0.0, 0.0, 2.0, 2.0])
+    lab = ["A", "A", "B", "B", "C", "C"]
+    # mean of pairwise centroid distances: |A-B|=2, |A-C|=4, |B-C|=2 -> 8/3
+    assert topica.polarization(pos, lab) == pytest.approx(8.0 / 3.0, abs=1e-9)
+
+
+def test_polarization_errors():
+    with pytest.raises(ValueError):
+        topica.polarization([0.1, 0.2, 0.3], ["L", "R"])  # length mismatch
+    with pytest.raises(ValueError):
+        topica.polarization([0.1, 0.2], ["L", "L"])  # one camp
+
+
 def test_split_half_reliability_mechanics():
     # A toy "fit" with a fixed per-author trait plus tiny per-call noise: reliability
     # should be near 1. Exercises the splitting/correlation without a heavy model.

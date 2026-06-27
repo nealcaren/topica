@@ -806,9 +806,11 @@ Two notes on use. `nearest_words` returns the raw cosine ranking of words to a p
 
 ## Validating an ideal-point axis without an external scale
 
-The ideal-point family ([`Wordfish`](#wordfish), [`IdealPointLDA`](#idealpointlda), [`IdealPointTM`](#idealpointtm), [`SentenceIdealTM`](#sentenceidealtm)) returns author positions, but how do you know the discovered axis is a real, partisan dimension rather than an artifact, *without* a validated external score like DW-NOMINATE? topica ships two intrinsic diagnostics that answer this from the model and the text alone.
+The ideal-point family ([`Wordfish`](#wordfish), [`IdealPointLDA`](#idealpointlda), [`IdealPointTM`](#idealpointtm), [`SentenceIdealTM`](#sentenceidealtm), [`PartyEmbeddings`](#partyembeddings)) returns author positions, but how do you know the discovered axis is a real, partisan dimension rather than an artifact, *without* a validated external score like DW-NOMINATE? topica ships intrinsic diagnostics that answer this from the model and the text alone.
 
 `topica.bimodality(positions)` is the bimodality coefficient of the positions: above ~0.555 the authors split into two camps (a polarized, two-pole structure) rather than one blob. It is computed from `author_positions` alone.
+
+`topica.polarization(positions, labels)` measures how far two known camps sit apart on the axis: the distance between the camps' centroids, with `labels` assigning each author to a camp (e.g. their party). It works on any model's `author_positions` (1-D, or Euclidean distance for a multi-dimensional fit), so calling it once per time period traces polarization over time, the way Rheault and Cochrane (2020) use the distance between party embeddings. Pass `normalize=True` for an effect-size form (divided by the pooled within-camp spread) that is comparable across corpora and model scales. Where `bimodality` asks whether *some* two-camp structure exists without labels, `polarization` measures the separation of camps you can name.
 
 `topica.split_half_reliability(fit, group)` refits the scale on two disjoint halves of each author's documents and correlates the two position vectors. A high value means the axis is a stable, reproducible trait of the text, not an artifact of one fit. You supply a one-line `fit` closure, so it is model-agnostic:
 
@@ -823,6 +825,7 @@ def fit(idx):                        # fit on a subset of unit (document) indice
 
 m = topica.IdealPointLDA(20, seed=1); m.fit(docs, group=author)
 topica.bimodality(m.author_positions)        # > 0.555 => two camps (polarized)
+topica.polarization(m.author_positions, party_of_author)  # gap between named camps
 topica.split_half_reliability(fit, author)   # how much real signal the axis carries
 ```
 
