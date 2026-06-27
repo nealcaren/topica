@@ -71,6 +71,7 @@ mod error;
 mod idealpoint;
 mod idealpoint_lda;
 mod nmf_lsa;
+mod party_embeddings;
 #[path = "corpus.rs"]
 mod py_corpus;
 mod save;
@@ -82,6 +83,7 @@ use error::*;
 use idealpoint::IdealPointTM;
 use idealpoint_lda::IdealPointLDA;
 use nmf_lsa::{LSA, NMF};
+use party_embeddings::PartyEmbeddings;
 use py_corpus::Corpus;
 use save::*;
 use sentence_ideal::SentenceIdealTM;
@@ -18546,6 +18548,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SentenceIdealTM>()?;
     m.add_class::<TBIP>()?;
     m.add_class::<Wordfish>()?;
+    m.add_class::<PartyEmbeddings>()?;
     m.add_class::<ProdLDA>()?;
     m.add_class::<InfoCTM>()?;
     m.add_class::<FASTopic>()?;

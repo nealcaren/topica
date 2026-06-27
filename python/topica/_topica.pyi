@@ -4056,3 +4056,80 @@ class TBIP:
     @staticmethod
     def load(path: str) -> TBIP: ...
     def __repr__(self) -> str: ...
+
+
+class PartyEmbeddings:
+    """PartyEmbeddings (Rheault & Cochrane 2020): a PV-DM (distributed-memory
+    paragraph-vector) model trained by negative sampling, where each document is
+    tagged with party-period metadata. The learned party (tag) vectors share a
+    space with the word vectors; the leading principal components of the party
+    vectors give the ideological placement (column 0 is the left-right scale). A
+    scaling model with no topics, in the ideal-point family alongside Wordfish.
+    Implemented from Mikolov et al. (2013) and Le & Mikolov (2014); validated by
+    planted-position recovery and correlation against the gensim reference
+    (parity/party_embeddings_compare.py)."""
+
+    def __init__(
+        self,
+        num_dims: int = 2,
+        *,
+        vector_size: int = 200,
+        window: int = 20,
+        min_count: int = 5,
+        negative: int = 5,
+        sample: float = 1e-4,
+        learning_rate: float = 0.025,
+        seed: int = 42,
+    ) -> None:
+        """num_dims is the number of placement dimensions returned in
+        author_positions (leading principal components of the party vectors).
+        vector_size is the embedding dimension M; window the context width;
+        min_count drops words below that corpus frequency; negative the number of
+        negative samples; sample the frequent-word subsampling threshold;
+        learning_rate the initial SGD step. The fit is single-threaded and
+        reproducible from seed."""
+        ...
+    def fit(
+        self,
+        data: Any,
+        *,
+        group: Sequence[str],
+        control: Sequence[str] | None = None,
+        anchors: dict[str, float] | None = None,
+        iters: int = 5,
+    ) -> None:
+        """data is a Corpus or list of token lists; group (length num_docs) is the
+        party-period label of each document. control is an optional second
+        per-document metadata tag (estimated but not placed); anchors
+        ({group_label: value}) orients the sign of each placement dimension; iters
+        is the number of training epochs."""
+        ...
+    @property
+    def num_authors(self) -> int: ...
+    @property
+    def author_positions(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def author_names(self) -> list[str]: ...
+    @property
+    def author_vectors(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def word_vectors(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def converged(self) -> bool | None: ...
+    def nearest_words(self, group: str, n: int = 10) -> list[tuple[str, float]]:
+        """The top-n words by cosine to a party's vector (linguistic specificity).
+        A raw ranking: high-frequency words can crowd the top, so read it relative
+        to another party or the average party rather than in isolation."""
+        ...
+    def guided_positions(
+        self, left: Sequence[str], right: Sequence[str]
+    ) -> numpy.typing.NDArray[numpy.float64]: ...
+    def distance(self, group_a: str, group_b: str) -> float: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> PartyEmbeddings: ...
+    def __repr__(self) -> str: ...

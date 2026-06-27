@@ -99,6 +99,7 @@ generated from `python/topica/registry.py`.
 |---|---|---|---|---|
 | `Wordfish` | text | em | bit-exact | Poisson scaling (Slapin & Proksch 2008): an unsupervised one-dimensional ideal-point estimate from word frequencies alone, no topics. The word-frequency baseline companion to IdealPointTM. |
 | `TBIP` | text | variational | seed-reproducible | Text-Based Ideal Points (Vafa, Naidu & Blei 2020): a Poisson factorization whose neutral topic-word intensities are rescaled by a per-word ideological factor exp(x_s * eta_kv), with the author position x_s latent. Fit by the paper's mean-field variational inference (reparameterized SVI). Recovers ideological scales from unlabeled text. |
+| `PartyEmbeddings` | text, metadata | neural-embedding | seed-reproducible | Party embeddings (Rheault & Cochrane 2020): a PV-DM paragraph-vector model trained by negative sampling with party-period metadata tags; the leading principal components of the learned party vectors give the ideological scale, and words share the space so a party's language can be read off by proximity. The corpus-trained word-embedding member of the ideal-point family. |
 
 ### LLM-based
 
@@ -780,6 +781,28 @@ m.doc_topic                      # (num_docs, num_topics)
 ```
 
 Inference is the paper's mean-field variational inference (not the MAP shortcut): a fully factored `q` with LogNormal factors for the positive `theta`/`beta` and Normal factors for the real `eta`/`x`, maximized by reparameterized single-sample stochastic gradient ascent (Adam) with document minibatching. KL is analytic for the Gaussian factors; the LogNormal-vs-Gamma terms use the same Monte Carlo sample. The fit is deterministic under a fixed `seed`. TBIP is the word-count member of the ideal-point family that, unlike [`Wordfish`](#wordfish), carries topics, and unlike [`IdealPointLDA`](#idealpointlda), separates a word's neutral intensity from its ideological loading explicitly.
+
+## PartyEmbeddings
+
+`PartyEmbeddings` ([Rheault and Cochrane 2020](https://doi.org/10.1017/pan.2019.26)) is the corpus-trained word-embedding member of the ideal-point family. Where the others either count words or read pretrained embeddings, this one *learns* its own embeddings from the corpus and places parties by where their learned vectors land. It trains a PV-DM (distributed-memory paragraph-vector) model: a shallow network that predicts each word from the mean of its context-word embeddings plus the document's metadata-tag embeddings, fit by negative sampling. The tags are political metadata, by default a party-period label (so each party gets a vector per parliament, and parties can move over time), with an optional second `control` tag (government status, region) that absorbs a confound without being placed. Because the tag vectors are trained in the same space as the word vectors, you can read a party's language directly off its neighbors.
+
+```python
+m = topica.PartyEmbeddings(num_dims=2, vector_size=200, window=20, seed=1)
+m.fit(docs, group=party_period,                 # e.g. "D_114", "R_114"
+      control=parliament,                        # optional confounder tag
+      anchors={"D_114": -1.0, "R_114": 1.0})     # orient the axis
+m.author_positions          # (num_parties, num_dims): PCA of the party vectors; col 0 is left-right
+m.author_names              # the party-period labels, row order of author_positions
+m.nearest_words("R_114")    # the words closest to a party (its "linguistic specificity")
+m.guided_positions(left=["public", "workers"], right=["market", "taxpayers"])  # a custom axis
+m.distance("D_114", "R_114")  # Euclidean distance between two parties (polarization)
+```
+
+The placement is the leading principal components of the learned party vectors: the first is the latent left-right scale, oriented by the `anchors`. The fit is single-threaded stochastic gradient descent, so it is reproducible from a fixed `seed`. The negative-sampling objective is the standard word2vec/doc2vec update (Slapin-style party-period indicators, but estimated at the word level in context). We validate against the gensim `Doc2Vec` reference the original package builds on: on a corpus sampled with a planted party ordering, the two recover the same scale at correlation 1.00 (`parity/party_embeddings_compare.py`).
+
+This is the model to reach for when you want the scale to come from *learned* representations of language in context rather than raw counts ([`Wordfish`](#wordfish), [`IdealPointLDA`](#idealpointlda)) or a topic-structured generative model ([`IdealPointTM`](#idealpointtm)); it is the natural comparison point for asking what topics and a latent-position head add over a plain embedding scaler. It is a pure scaling model: it has no `topic_word`, only party and word vectors and their placement.
+
+Two notes on use. `nearest_words` returns the raw cosine ranking of words to a party; high-frequency function words can crowd the top, so read it relative to a baseline (compare a party's neighbors against another party's, or against the corpus-average party) rather than in isolation. And phrase detection (collocations like "health care", "free enterprise") is preprocessing the caller does upstream: `PartyEmbeddings` consumes token lists, so phrase them before fitting if you want multiword expressions, as the paper does. Implementation notes for fidelity: the hidden layer is the mean of the context-word and tag vectors, the context window shrinks dynamically per token (standard word2vec), and the fit is single-threaded so a fixed `seed` is bit-reproducible (multi-threaded async SGD would not be).
 
 ## Validating an ideal-point axis without an external scale
 

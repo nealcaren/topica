@@ -26,7 +26,8 @@ class ModelInfo:
     brings : what the user supplies beyond raw text — any of ``"text"``,
         ``"embeddings"``, ``"metadata"``, ``"seeds"``, ``"labels"``, ``"times"``.
     inference : the inference engine — ``"gibbs"``, ``"variational"``, ``"vae"``,
-        ``"optimal-transport"``, ``"clustering"`` (more as models are added).
+        ``"optimal-transport"``, ``"clustering"``, ``"neural-embedding"``
+        (word2vec/doc2vec-style SGD) (more as models are added).
     determinism : ``"bit-exact"`` (identical regardless of thread count),
         ``"seed-reproducible"`` (identical from a fixed seed and thread count), or
         ``"llm-bounded"`` (subject to an external model's nondeterminism).
@@ -173,6 +174,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("TBIP", "ideal-point", ("text",), "variational", "seed-reproducible", (),
            "Text-Based Ideal Points (Vafa, Naidu & Blei 2020): a Poisson factorization whose neutral topic-word intensities are rescaled by a per-word ideological factor exp(x_s * eta_kv), with the author position x_s latent. Fit by the paper's mean-field variational inference (reparameterized SVI). Recovers ideological scales from unlabeled text.",
            "guides/models.md#tbip"),
+        _m("PartyEmbeddings", "ideal-point", ("text", "metadata"), "neural-embedding", "seed-reproducible", (),
+           "Party embeddings (Rheault & Cochrane 2020): a PV-DM paragraph-vector model trained by negative sampling with party-period metadata tags; the leading principal components of the learned party vectors give the ideological scale, and words share the space so a party's language can be read off by proximity. The corpus-trained word-embedding member of the ideal-point family.",
+           "guides/models.md#partyembeddings"),
         _m("FASTopic", "embedding", ("text", "embeddings"), "optimal-transport", "seed-reproducible", (),
            "Topics from optimal-transport plans between document, topic, and word embeddings.",
            "guides/embedding.md"),
