@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Fixed
+
+- `SentenceIdealTM` is now deterministic from a fixed `seed` regardless of thread
+  count. Two parallel `f64` reductions (the E-step log-likelihood and the M-step
+  variance) summed in rayon work-stealing order, which is not associative, so two
+  same-seed fits could differ by ULPs and diverge (the log-likelihood drives the EM
+  early-stop). Both now collect in index order and sum sequentially, matching
+  topica's determinism guarantee. Surfaced as an intermittent macOS CI failure of
+  `test_sentence_ideal.py::test_determinism`.
+
 ### Added
 
 - `Wordfish.fit(control=...)` — a categorical confound covariate for Wordfish. When a
