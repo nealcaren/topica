@@ -399,6 +399,9 @@ impl PartyEmbeddings {
 
     /// The words whose embeddings are closest (cosine) to a party's, the
     /// "linguistic specificity" of that party. Returns the top-`n` `(word, cosine)`.
+    /// This is the raw cosine ranking; high-frequency function words can crowd the
+    /// top, so read it relative to a baseline (another party, or the average party)
+    /// rather than in isolation.
     #[pyo3(signature = (group, n=10))]
     fn nearest_words(&self, group: &str, n: usize) -> PyResult<Vec<(String, f64)>> {
         let m = self.fitted_model()?;

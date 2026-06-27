@@ -8,7 +8,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
-- `PartyEmbeddings` (#TBD) — **party embeddings** (Rheault & Cochrane 2020), the
+- `PartyEmbeddings` (#303) — **party embeddings** (Rheault & Cochrane 2020), the
   corpus-trained word-embedding member of the `ideal-point` family. A PV-DM
   (distributed-memory paragraph-vector) model trained by negative sampling with
   party-period metadata tags; the ideological placement is the leading principal
