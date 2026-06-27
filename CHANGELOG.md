@@ -6,6 +6,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Changed
+
+- New `ideal-point` model group ("Ideal point"), and `Wordfish` and `TBIP` graduate
+  from the experimental tier into it. Both clear topica's bar for a validated model — a
+  published reference (Slapin & Proksch 2008; Vafa, Naidu & Blei 2020) plus a
+  reference-implementation parity check (`parity/wordfish_r_compare.py` against R
+  `quanteda`, |r| = 1.00; `parity/tbip_parity.py` against a PyTorch reference) — so they
+  no longer require `topica.enable_experimental()`. `IdealPointTM`, `IdealPointLDA`, and
+  `SentenceIdealTM` remain experimental (original constructions with no external
+  reference) and stay in their current groups.
+
 ## [0.31.0] - 2026-06-26
 
 ### Added

@@ -1,7 +1,7 @@
 //! Wordfish pyclass: the Slapin & Proksch (2008) Poisson scaling model — a
 //! word-frequency ideal-point estimator with no topics and no embeddings. The
-//! baseline companion to `IdealPointTM`. Experimental-tier, gated. `use super::*`
-//! pulls in the shared bindings (Corpus, arrays, save/load, the experimental gate).
+//! baseline companion to `IdealPointTM`. `use super::*` pulls in the shared
+//! bindings (Corpus, arrays, save/load).
 
 use super::*;
 use crate::wordfish::{self, WordfishModel};
@@ -68,7 +68,6 @@ impl Wordfish {
         convergence_tol: f64,
         seed: u64,
     ) -> PyResult<Self> {
-        require_experimental("Wordfish")?;
         Ok(Wordfish {
             beta_prior_sd,
             theta_prior_sd,
@@ -352,7 +351,6 @@ impl Wordfish {
 
     #[staticmethod]
     fn load(path: &str) -> PyResult<Self> {
-        require_experimental("Wordfish")?;
         let s: WordfishState = read_state(path, MODEL_TAG_WORDFISH)?;
         let model = if s.fitted && s.theta.is_some() {
             Some(WordfishModel {

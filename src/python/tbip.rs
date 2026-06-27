@@ -1,8 +1,8 @@
 //! TBIP pyclass: Text-Based Ideal Points (Vafa, Naidu & Blei 2020). A Poisson
 //! factorization whose neutral topic-word intensities are rescaled by a per-word
 //! ideological factor `exp(x_s * eta_kv)`, with the author position `x_s` latent.
-//! Fit by the paper's mean-field VI (reparameterized SVI, Adam). Experimental,
-//! gated. `use super::*` pulls in the shared bindings.
+//! Fit by the paper's mean-field VI (reparameterized SVI, Adam). `use super::*`
+//! pulls in the shared bindings.
 
 use super::*;
 use crate::tbip::{self, TbipConfig, TbipModel, TbipParams};
@@ -86,7 +86,6 @@ impl TBIP {
         min_count: usize,
         seed: u64,
     ) -> PyResult<Self> {
-        require_experimental("TBIP")?;
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
@@ -404,7 +403,6 @@ impl TBIP {
 
     #[staticmethod]
     fn load(path: &str) -> PyResult<Self> {
-        require_experimental("TBIP")?;
         let s: TbipState = read_state(path, MODEL_TAG_TBIP)?;
         let model = if s.fitted && s.mu_x.is_some() {
             let k = s.num_topics;

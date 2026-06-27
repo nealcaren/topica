@@ -1,21 +1,12 @@
-"""TBIP: Text-Based Ideal Points (Vafa, Naidu & Blei 2020). EXPERIMENTAL, gated.
+"""TBIP: Text-Based Ideal Points (Vafa, Naidu & Blei 2020).
 
 It is a topic model (covered by the registry-driven topic-health invariants); these
-tests check the ideal-point head specifically -- the experimental gate, getter
-shapes, determinism, save/load, and the group= default.
+tests check the ideal-point head specifically -- getter shapes, determinism,
+save/load, and the group= default.
 """
 import numpy as np
-import pytest
 
 import topica
-
-
-@pytest.fixture(autouse=True)
-def _experimental():
-    was = topica.experimental_enabled()
-    topica.enable_experimental(True)
-    yield
-    topica.enable_experimental(was)
 
 
 def _planted(n_authors=12, vocab=24, docs_per=6, seed=0):
@@ -45,16 +36,6 @@ def _planted(n_authors=12, vocab=24, docs_per=6, seed=0):
             docs.append(doc)
             group.append(f"a{a}")
     return docs, group, x
-
-
-def test_requires_experimental():
-    was = topica.experimental_enabled()
-    topica.enable_experimental(False)
-    try:
-        with pytest.raises(Exception):
-            topica.TBIP(num_topics=3)
-    finally:
-        topica.enable_experimental(was)
 
 
 def test_shapes_and_getters():

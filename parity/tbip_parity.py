@@ -22,7 +22,6 @@ except Exception:
 
 import topica
 
-topica.enable_experimental()
 RNG = np.random.default_rng(0)
 A, K, V, DOCS_PER_A, NWORDS = 30, 4, 60, 12, 120
 A_GAMMA = B_GAMMA = 0.3

@@ -93,6 +93,13 @@ generated from `python/topica/registry.py`.
 | `ZeroShotTM` | text, embeddings | vae | seed-reproducible | Contextualized ProdLDA: encoder reads the document embedding alone, enabling cross-lingual transfer. |
 | `InfoCTM` | text, dictionary | vae | seed-reproducible | Cross-lingual: two ProdLDA models aligned by a bilingual dictionary through a mutual-information term. |
 
+### Ideal point
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
+| `Wordfish` | text | em | bit-exact | Poisson scaling (Slapin & Proksch 2008): an unsupervised one-dimensional ideal-point estimate from word frequencies alone, no topics. The word-frequency baseline companion to IdealPointTM. |
+| `TBIP` | text | variational | seed-reproducible | Text-Based Ideal Points (Vafa, Naidu & Blei 2020): a Poisson factorization whose neutral topic-word intensities are rescaled by a per-word ideological factor exp(x_s * eta_kv), with the author position x_s latent. Fit by the paper's mean-field variational inference (reparameterized SVI). Recovers ideological scales from unlabeled text. |
+
 ### LLM-based
 
 | Model | Brings | Inference | Reproducibility | Summary |
@@ -108,10 +115,8 @@ Shipped before a published paper and reference-implementation parity (topica's b
 | `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `ECTM` | text, metadata, times | variational | bit-exact | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Embedded topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. The unsupervised, latent-trait twin of the STM content covariate; the embedding-native generalization of Wordfish. |
-| `Wordfish` | text | em | bit-exact | Poisson scaling (Slapin & Proksch 2008): an unsupervised one-dimensional ideal-point estimate from word frequencies alone, no topics. The word-frequency baseline companion to IdealPointTM. |
 | `IdealPointLDA` | text | variational | seed-reproducible | The count-based twin of IdealPointTM: a topic model whose per-topic word distributions are displaced by a latent author ideal point, parameterized directly over the vocabulary (no embeddings). Wordfish with topics. |
 | `SentenceIdealTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The embedding-native analog of IdealPointTM, fit by EM. |
-| `TBIP` | text | variational | seed-reproducible | Text-Based Ideal Points (Vafa, Naidu & Blei 2020): a Poisson factorization whose neutral topic-word intensities are rescaled by a per-word ideological factor exp(x_s * eta_kv), with the author position x_s latent. Fit by the paper's mean-field variational inference (reparameterized SVI). Recovers ideological scales from unlabeled text. |
 
 <!-- END MODEL TABLE -->
 
@@ -716,14 +721,9 @@ One honest difference from IdealPointTM: because the loadings are full-vocabular
 
 ## Wordfish
 
-!!! warning "Experimental"
-    `Wordfish` is gated: call `topica.enable_experimental()` (or set
-    `TOPICA_EXPERIMENTAL=1`) before constructing one.
-
 `Wordfish` ([Slapin and Proksch 2008](https://doi.org/10.1111/j.1540-5907.2008.00338.x)) is the standard text-scaling model and the word-frequency baseline in the [`IdealPointTM`](#idealpointtm) family: it places authors on a single latent axis from word counts alone, with no topics and no embeddings. It is here so you can measure what topics and embeddings actually add. The count of word `j` by author `i` is Poisson with `log rate = alpha_i + psi_j + beta_j * theta_i`, where `theta_i` is the author position, `beta_j` the word discrimination, `psi_j` its baseline log-rate, and `alpha_i` the author verbosity.
 
 ```python
-topica.enable_experimental()
 m = topica.Wordfish()
 m.fit(docs, group=author,                      # pool documents into one position per author
       anchors={"Sanders": -1.0, "Cruz": 1.0})  # orient the sign of the axis
@@ -761,10 +761,6 @@ This is the only model in the family that takes embeddings *directly* rather tha
 
 ## TBIP
 
-!!! warning "Experimental"
-    `TBIP` is gated: call `topica.enable_experimental()` (or set
-    `TOPICA_EXPERIMENTAL=1`) before constructing one.
-
 `TBIP` is Text-Based Ideal Points (Vafa, Naidu & Blei 2020), a Poisson factorization of word counts. A *neutral* topic-word intensity `beta_kv` is rescaled by a per-word *ideological* factor `exp(x_s * eta_kv)`, where `x_s` is the author's latent ideal point and `eta_kv` is how strongly word `v` in topic `k` separates the two ends of the axis. A document by author `a_d` mixes topics with positive per-doc intensities `theta_dk`:
 
 ```text
@@ -774,7 +770,6 @@ y_dv ~ Poisson( sum_k theta_dk * beta_kv * exp(x_{a_d} * eta_kv) )
 A positive `eta_kv` makes word `v` more likely as the author moves to the positive end of the scale; a near-zero `eta_kv` makes the word non-ideological. The position `x_s` is estimated from the text alone — no votes, no labels.
 
 ```python
-topica.enable_experimental()
 m = topica.TBIP(num_topics=15)
 m.fit(docs, group=author)        # group: author label per document
 m.ideal_points                   # (num_authors,): author positions (posterior mean)
