@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-06-27
+
 ### Changed
 
 - New `ideal-point` model group ("Ideal point"), and `Wordfish` and `TBIP` graduate
