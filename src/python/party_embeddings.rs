@@ -136,7 +136,7 @@ impl PartyEmbeddings {
         if negative < 1 {
             return Err(PyValueError::new_err("negative must be >= 1"));
         }
-        if !(learning_rate > 0.0) {
+        if !learning_rate.is_finite() || learning_rate <= 0.0 {
             return Err(PyValueError::new_err("learning_rate must be > 0"));
         }
         Ok(PartyEmbeddings {
@@ -297,7 +297,9 @@ impl PartyEmbeddings {
                 let mut pairs = Vec::with_capacity(m.len());
                 for (label, &target) in m {
                     let i = group_names.iter().position(|x| x == label).ok_or_else(|| {
-                        PyValueError::new_err(format!("anchor label {label:?} is not a group label"))
+                        PyValueError::new_err(format!(
+                            "anchor label {label:?} is not a group label"
+                        ))
                     })?;
                     pairs.push((i, target));
                 }

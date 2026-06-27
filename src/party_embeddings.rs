@@ -205,8 +205,7 @@ pub fn fit_pvdm(
             };
 
             // Learning-rate linear decay.
-            let lr = (cfg.start_lr
-                - (cfg.start_lr - cfg.min_lr) * (done / total_train))
+            let lr = (cfg.start_lr - (cfg.start_lr - cfg.min_lr) * (done / total_train))
                 .max(cfg.min_lr) as f32;
 
             let len = kept.len();
