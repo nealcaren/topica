@@ -115,9 +115,8 @@ Shipped before a published paper and reference-implementation parity (topica's b
 |---|---|---|---|---|
 | `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `ECTM` | text, metadata, times | variational | bit-exact | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
-| `IdealPointTM` | text, embeddings | variational | seed-reproducible | Embedded topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. The unsupervised, latent-trait twin of the STM content covariate; the embedding-native generalization of Wordfish. |
-| `IdealPointLDA` | text | variational | seed-reproducible | The count-based twin of IdealPointTM: a topic model whose per-topic word distributions are displaced by a latent author ideal point, parameterized directly over the vocabulary (no embeddings). Wordfish with topics. |
-| `SentenceIdealTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The embedding-native analog of IdealPointTM, fit by EM. |
+| `IdealPointTM` | text, embeddings | variational | seed-reproducible | Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate. |
+| `IdealPointSentenceTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The sentence-embedding sibling of IdealPointTM, fit by EM. |
 
 <!-- END MODEL TABLE -->
 
@@ -598,15 +597,20 @@ beta_{a,k,v} = softmax_v( rho_v . alpha_k + sum_j x_{a,j} (rho_v . W_{k,j}) ).
 
 So two authors who discuss the same topic produce systematically different word distributions, shifted along the loading `W_k` by their position. `alpha_k` is the topic at the neutral position `x = 0`; the loading norm `||W_k||` is the topic's **discrimination**, large where word choice within the topic separates positions and near zero where the topic is neutral. The position is latent and estimated, not supplied, which makes this the unsupervised, latent-trait twin of the [`STM`](#stm) content covariate, and the embedding-native generalization of Wordfish ([Slapin and Proksch 2008](https://doi.org/10.1111/j.1540-5907.2008.00338.x)): with one topic and one dimension the log word-rate is `base_v + x_a (rho_v . w)`, Wordfish with a discrimination that is shared across semantically related words.
 
+**Counts or word embeddings.** The representation is a fit-time choice. Pass no `word_embeddings` (the default) and the displacement is parameterized directly over the vocabulary, `beta_{a,k,v} = softmax_v(alpha_{k,v} + sum_j x_{a,j} W_{k,j,v})` — "Wordfish with topics", every word its own dimension, no embeddings needed. Pass `word_embeddings` with the aligned `vocabulary` and the same displacement is factored through them as above (the ETM form). Both are the same model; the embedding is a low-rank factorization of the displaced topic-word matrix. The difference is concentration: the embedding bottleneck localizes the discrimination onto a topic, while the full-vocabulary counts spread it across several, so the recovered author scale is the dependable output in the count form and `topic_discrimination` reads as suggestive. Empirically the two recover author positions about equally well, so the count form is the cheap, robust default and word embeddings are worth it when pretrained vectors carry signal the counts miss or when you want the discrimination to localize. `m.representation` reports which one a fitted model used.
+
 ```python
 topica.enable_experimental()
 m = topica.IdealPointTM(num_topics=30, num_dims=1, seed=0)
-m.fit(docs, word_embeddings, vocabulary,
+m.fit(docs,                                   # counts: no embeddings needed
       group=speaker_id,                       # documents sharing a speaker share a position
       anchors={"Sanders": -1.0, "Cruz": 1.0}) # orient the sign of the axis
 m.author_positions          # (num_authors, num_dims): the estimated ideal points
 m.topic_discrimination      # (num_topics,): which topics carry the cleavage
 m.position_shift(topic=k)   # the words that move within topic k from one end to the other
+
+# or factor through word embeddings (ETM-style), passing the aligned vocabulary:
+m.fit(docs, word_embeddings=rho, vocabulary=vocab, group=speaker_id)
 ```
 
 We fit by variational EM on ETM's core: the E-step is the logistic-normal Laplace step with the author's position-displaced `beta`, and the M-step updates the topic embeddings, the loadings, and the positions in turn. Positions are initialized from the leading principal components of the author-word matrix, as Wordfish does, which keeps the fit off the trivial zero-loading fixed point. Identification is exact and loss-free: each iteration standardizes the positions to mean zero and unit variance and absorbs the rescaling into the embeddings and loadings, then orients the sign to the anchors. On data simulated from the model the positions recover the planted trait at a correlation above 0.98 and `position_shift` reads off the discriminating axis.
@@ -652,7 +656,7 @@ embeddings = np.array([w2v.wv[w] for w in vocab])
 
 m = topica.IdealPointTM(num_topics=20, num_dims=1, seed=1)
 m.fit([[w for w in d if w in set(vocab)] for d in docs],
-      embeddings, vocab,
+      word_embeddings=embeddings, vocabulary=vocab,
       group=author,                                   # one position per author
       anchors={"known_left": -1.0, "known_right": 1.0})  # orient the sign
 
@@ -677,8 +681,10 @@ defaults to a probability-weighted score that keeps the contrast inside the topi
 vocabulary; pass `weighting="logratio"` for the older, rare-word-sensitive ranking. The raw
 loadings are exposed as `m.loadings` for inspecting the discrimination directions.
 
-**Word embeddings, not sentence embeddings.** `IdealPointTM` factors the topic-word matrix
-through per-word vectors `rho`, so it takes word (or phrase) embeddings, like ETM. We use
+**Word embeddings, not sentence embeddings.** When you do pass embeddings, `IdealPointTM`
+factors the topic-word matrix through per-word vectors `rho`, so it takes word (or phrase)
+embeddings, like ETM, not document-level sentence embeddings (for those, see
+[`IdealPointSentenceTM`](#idealpointsentencetm)). We use
 word2vec trained on the corpus, and gensim phrase detection (bigrams/trigrams, so
 `estate_tax` becomes one token) helps modestly. We also tested sentence embeddings
 (Sentence-Transformers, discretized into sentence "concepts"): they make ideology a more
@@ -697,28 +703,6 @@ within-topic content or as topic-splitting. And `num_dims > 1` is implemented bu
 robustly identified for the first dimension; a multi-dimensional, issue-specific position
 (in the spirit of a hierarchical ideal-point topic model) is the natural next step and the
 likely path to both finer interpretation and more robustness.
-
-## IdealPointLDA
-
-!!! warning "Experimental"
-    `IdealPointLDA` is gated: call `topica.enable_experimental()` (or set
-    `TOPICA_EXPERIMENTAL=1`) before constructing one.
-
-`IdealPointLDA` is the count-based twin of [`IdealPointTM`](#idealpointtm): the same position-displaced topic-word model, but parameterized directly over the vocabulary instead of through word embeddings. Each topic `k` has a log-profile `alpha_{k,v}` and a per-word loading `W_{k,j,v}`, and an author position `x_a` displaces word choice within the topic, `beta_{a,k,v} = softmax_v(alpha_{k,v} + sum_j x_{a,j} W_{k,j,v})`. It is "Wordfish with topics": each topic carries its own Wordfish-style discrimination, and documents mix the topics. It takes no embeddings, only text.
-
-```python
-topica.enable_experimental()
-m = topica.IdealPointLDA(num_topics=20)
-m.fit(docs, group=author, anchors={"left_author": -1.0, "right_author": 1.0})
-m.author_positions       # (num_authors, num_dims): the latent ideal points
-m.topic_word             # (K, vocab): topics at the neutral position
-m.topic_discrimination   # (K,): which topics carry the cleavage
-m.position_shift(k)      # the within-topic word shift along the axis
-```
-
-Inference is the same variational EM as IdealPointTM (logistic-normal document topics, the same Laplace E-step), with the embedding projection removed so the topic-word parameters live directly in vocabulary space. In the comparison grid it sits between Wordfish and IdealPointTM: it adds topics to Wordfish, and drops the embedding factorization from IdealPointTM.
-
-One honest difference from IdealPointTM: because the loadings are full-vocabulary (one per word per topic) rather than low-rank in an embedding space, the per-topic discrimination is less concentrated, so the position signal can spread across several topics rather than localizing to one. The recovered author scale is the dependable output; read `topic_discrimination` as suggestive rather than a clean per-topic verdict. Reach for [`IdealPointTM`](#idealpointtm) when you want the discrimination to localize or when pretrained embeddings carry signal the raw counts miss, and for `IdealPointLDA` when you have no embeddings or want a purely count-based comparison.
 
 ## Wordfish
 
@@ -751,18 +735,18 @@ On a corpus where a control-aligned nuisance axis dominates, plain Wordfish reco
 
 As a scaling model Wordfish has no topics, so it cannot tell you what is being talked about or how language differs within a topic. When you want the scale and the topics together, reach for [`IdealPointTM`](#idealpointtm) (word embeddings). On clean messaging text the two are comparable on the scale itself; IdealPointTM adds the per-topic framing Wordfish structurally cannot produce.
 
-## SentenceIdealTM
+## IdealPointSentenceTM
 
 !!! warning "Experimental"
-    `SentenceIdealTM` is gated: call `topica.enable_experimental()` (or set
+    `IdealPointSentenceTM` is gated: call `topica.enable_experimental()` (or set
     `TOPICA_EXPERIMENTAL=1`) before constructing one.
 
-`SentenceIdealTM` is the embedding-native analog of [`IdealPointTM`](#idealpointtm), working on sentence or document *embeddings* instead of words. Topics are Gaussian clusters in embedding space with centroids `mu_k`; an author position `x_a` displaces a topic centroid along a loading `V_k`, so an embedding from author `a` in topic `k` is drawn from `N(mu_k + sum_j x_{a,j} V_{k,j}, sigma^2 I)`. Where IdealPointTM shifts a topic word-softmax by position, SentenceIdealTM shifts a topic centroid; `||V_k||` is the discrimination.
+`IdealPointSentenceTM` is the embedding-native analog of [`IdealPointTM`](#idealpointtm), working on sentence or document *embeddings* instead of words. Topics are Gaussian clusters in embedding space with centroids `mu_k`; an author position `x_a` displaces a topic centroid along a loading `V_k`, so an embedding from author `a` in topic `k` is drawn from `N(mu_k + sum_j x_{a,j} V_{k,j}, sigma^2 I)`. Where IdealPointTM shifts a topic word-softmax by position, IdealPointSentenceTM shifts a topic centroid; `||V_k||` is the discrimination.
 
 ```python
 topica.enable_experimental()
 # embeddings: (N, D) sentence or document embeddings; group: author per row
-m = topica.SentenceIdealTM(num_topics=20, num_dims=1)
+m = topica.IdealPointSentenceTM(num_topics=20, num_dims=1)
 m.fit(embeddings, group=author, anchors={"left_author": -1.0, "right_author": 1.0})
 m.author_positions       # (num_authors, num_dims)
 m.doc_topic              # (N, num_topics): soft topic assignment per embedding
@@ -772,7 +756,7 @@ m.topic_discrimination   # (num_topics,)
 
 Inference is closed-form EM over a Gaussian mixture: the E-step is the soft topic assignment, and the M-step solves weighted least squares for each topics `(mu_k, V_k)`, a small linear system for each authors position, and a residual update for the variance. Positions are standardized each iteration (absorbed losslessly into `mu`/`V`) and oriented to the anchors, exactly as in the other ideal-point models.
 
-This is the only model in the family that takes embeddings *directly* rather than deriving topic-word distributions, so it has no `topic_word` or `coherence` — its topics are clusters, summarized by `topic_centroids` (use a nearest-document or nearest-word lookup to label them). It is the continuous corner of the comparison with [`IdealPointTM`](#idealpointtm) (word embeddings), [`IdealPointLDA`](#idealpointlda) (word counts), and [`Wordfish`](#wordfish) (word counts, no topics): pass sentence embeddings grouped by author to ask whether a continuous representation recovers the same latent scale.
+This is the only model in the family that takes embeddings *directly* rather than deriving topic-word distributions, so it has no `topic_word` or `coherence` — its topics are clusters, summarized by `topic_centroids` (use a nearest-document or nearest-word lookup to label them). It is the continuous corner of the comparison with [`IdealPointTM`](#idealpointtm) (word tokens, as counts or word embeddings) and [`Wordfish`](#wordfish) (word counts, no topics): pass sentence embeddings grouped by author to ask whether a continuous representation recovers the same latent scale.
 
 ## TBIP
 
@@ -794,7 +778,7 @@ m.ideological_topics             # (num_topics, vocab): eta, the per-word ideolo
 m.doc_topic                      # (num_docs, num_topics)
 ```
 
-Inference is the paper's mean-field variational inference (not the MAP shortcut): a fully factored `q` with LogNormal factors for the positive `theta`/`beta` and Normal factors for the real `eta`/`x`, maximized by reparameterized single-sample stochastic gradient ascent (Adam) with document minibatching. KL is analytic for the Gaussian factors; the LogNormal-vs-Gamma terms use the same Monte Carlo sample. The fit is deterministic under a fixed `seed`. TBIP is the word-count member of the ideal-point family that, unlike [`Wordfish`](#wordfish), carries topics, and unlike [`IdealPointLDA`](#idealpointlda), separates a word's neutral intensity from its ideological loading explicitly.
+Inference is the paper's mean-field variational inference (not the MAP shortcut): a fully factored `q` with LogNormal factors for the positive `theta`/`beta` and Normal factors for the real `eta`/`x`, maximized by reparameterized single-sample stochastic gradient ascent (Adam) with document minibatching. KL is analytic for the Gaussian factors; the LogNormal-vs-Gamma terms use the same Monte Carlo sample. The fit is deterministic under a fixed `seed`. TBIP is the word-count member of the ideal-point family that, unlike [`Wordfish`](#wordfish), carries topics, and unlike [`IdealPointTM`](#idealpointtm) in its count form, separates a word's neutral intensity from its ideological loading explicitly.
 
 ## PartyEmbeddings
 
@@ -814,13 +798,13 @@ m.distance("D_114", "R_114")  # Euclidean distance between two parties (polariza
 
 The placement is the leading principal components of the learned party vectors: the first is the latent left-right scale, oriented by the `anchors`. The fit is single-threaded stochastic gradient descent, so it is reproducible from a fixed `seed`. The negative-sampling objective is the standard word2vec/doc2vec update (Slapin-style party-period indicators, but estimated at the word level in context). We validate against the gensim `Doc2Vec` reference the original package builds on: on a corpus sampled with a planted party ordering, the two recover the same scale at correlation 1.00 (`parity/party_embeddings_compare.py`).
 
-This is the model to reach for when you want the scale to come from *learned* representations of language in context rather than raw counts ([`Wordfish`](#wordfish), [`IdealPointLDA`](#idealpointlda)) or a topic-structured generative model ([`IdealPointTM`](#idealpointtm)); it is the natural comparison point for asking what topics and a latent-position head add over a plain embedding scaler. It is a pure scaling model: it has no `topic_word`, only party and word vectors and their placement.
+This is the model to reach for when you want the scale to come from *learned* representations of language in context rather than raw counts ([`Wordfish`](#wordfish), [`IdealPointTM`](#idealpointtm) in its count form) or a topic-structured generative model ([`IdealPointTM`](#idealpointtm) with word embeddings); it is the natural comparison point for asking what topics and a latent-position head add over a plain embedding scaler. It is a pure scaling model: it has no `topic_word`, only party and word vectors and their placement.
 
 Two notes on use. `nearest_words` returns the raw cosine ranking of words to a party; high-frequency function words can crowd the top, so read it relative to a baseline (compare a party's neighbors against another party's, or against the corpus-average party) rather than in isolation. And phrase detection (collocations like "health care", "free enterprise") is preprocessing the caller does upstream: `PartyEmbeddings` consumes token lists, so phrase them before fitting if you want multiword expressions, as the paper does. Implementation notes for fidelity: the hidden layer is the mean of the context-word and tag vectors, the context window shrinks dynamically per token (standard word2vec), and the fit is single-threaded so a fixed `seed` is bit-reproducible (multi-threaded async SGD would not be).
 
 ## Validating an ideal-point axis without an external scale
 
-The ideal-point family ([`Wordfish`](#wordfish), [`IdealPointLDA`](#idealpointlda), [`IdealPointTM`](#idealpointtm), [`SentenceIdealTM`](#sentenceidealtm), [`PartyEmbeddings`](#partyembeddings)) returns author positions, but how do you know the discovered axis is a real, partisan dimension rather than an artifact, *without* a validated external score like DW-NOMINATE? topica ships intrinsic diagnostics that answer this from the model and the text alone.
+The ideal-point family ([`Wordfish`](#wordfish), [`IdealPointTM`](#idealpointtm), [`IdealPointSentenceTM`](#idealpointsentencetm), [`TBIP`](#tbip), [`PartyEmbeddings`](#partyembeddings)) returns author positions, but how do you know the discovered axis is a real, partisan dimension rather than an artifact, *without* a validated external score like DW-NOMINATE? topica ships intrinsic diagnostics that answer this from the model and the text alone.
 
 `topica.bimodality(positions)` is the bimodality coefficient of the positions: above ~0.555 the authors split into two camps (a polarized, two-pole structure) rather than one blob. It is computed from `author_positions` alone.
 
@@ -833,11 +817,11 @@ import topica
 topica.enable_experimental()
 
 def fit(idx):                        # fit on a subset of unit (document) indices
-    m = topica.IdealPointLDA(20, seed=1)
+    m = topica.IdealPointTM(20, seed=1)
     m.fit([docs[i] for i in idx], group=[author[i] for i in idx])
     return m.author_names, m.author_positions[:, 0]
 
-m = topica.IdealPointLDA(20, seed=1); m.fit(docs, group=author)
+m = topica.IdealPointTM(20, seed=1); m.fit(docs, group=author)
 topica.bimodality(m.author_positions)        # > 0.555 => two camps (polarized)
 topica.polarization(m.author_positions, party_of_author)  # gap between named camps
 topica.split_half_reliability(fit, author)   # how much real signal the axis carries
@@ -852,7 +836,7 @@ m = topica.Wordfish(); m.fit(docs, group=author, anchors={"left": -1.0, "right":
 m.position_se                                 # analytic SE per author (quanteda-equivalent)
 
 def fit(idx):                                 # bootstrap intervals for any model
-    mm = topica.IdealPointLDA(20, seed=1)
+    mm = topica.IdealPointTM(20, seed=1)
     mm.fit([docs[i] for i in idx], group=[author[i] for i in idx])
     return mm.author_names, mm.author_positions[:, 0]
 ci = topica.position_intervals(fit, author, n_boot=50)   # author -> (estimate, se, lo, hi)

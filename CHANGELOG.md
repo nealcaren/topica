@@ -6,9 +6,31 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Changed
+
+- The experimental ideal-point family was consolidated under the `IdealPoint` stem,
+  with the topic-model badge (`TM`) kept on both members:
+  - `IdealPointLDA` is **removed** as a separate class and folded into `IdealPointTM`
+    as its count representation. `IdealPointTM.fit` now takes `word_embeddings` and
+    `vocabulary` as optional keyword arguments: omit them for the count representation
+    (the former `IdealPointLDA`, "Wordfish with topics"); pass them for the
+    word-embedding representation (the ETM form). The two are the same model — the
+    embedding is a low-rank factorization of the same displaced topic-word matrix — so
+    one class with a fit-time knob replaces two. A new `representation` property
+    reports `"counts"` or `"word2vec"`. Migration: `IdealPointLDA(...)` →
+    `IdealPointTM(...)`; `IdealPointTM(...).fit(docs, emb, vocab, ...)` →
+    `IdealPointTM(...).fit(docs, word_embeddings=emb, vocabulary=vocab, ...)`
+    (`word_embeddings`/`vocabulary` are now keyword-only).
+  - `SentenceIdealTM` is **renamed** to `IdealPointSentenceTM` for prefix consistency;
+    it remains the separate continuous (Gaussian-mixture, EM) model over sentence or
+    document embeddings.
+  - Save files are unchanged on disk: `IdealPointTM` reads both representations' save
+    tags (31, 33) and `IdealPointSentenceTM` reads tag 34, so models saved before the
+    rename still load.
+
 ### Fixed
 
-- `SentenceIdealTM` is now deterministic from a fixed `seed` regardless of thread
+- `IdealPointSentenceTM` is now deterministic from a fixed `seed` regardless of thread
   count. Two parallel `f64` reductions (the E-step log-likelihood and the M-step
   variance) summed in rayon work-stealing order, which is not associative, so two
   same-seed fits could differ by ULPs and diverge (the log-likelihood drives the EM

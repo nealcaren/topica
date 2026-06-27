@@ -1,5 +1,5 @@
 """Intrinsic diagnostics for latent author scales (the ideal-point family: Wordfish,
-IdealPointLDA, IdealPointTM, SentenceIdealTM).
+IdealPointTM, IdealPointSentenceTM, TBIP, PartyEmbeddings).
 
 These answer "how partisan / how real is the discovered axis?" from the model and the
 text alone, with no external scale (no DW-NOMINATE, no party labels):
@@ -144,7 +144,7 @@ def split_half_reliability(fit, group, *, seed: int = 0, repeats: int = 1) -> fl
         ``group``) and return the author labels and their 1-D positions. For example::
 
             def fit(idx):
-                m = topica.IdealPointLDA(20, seed=1)
+                m = topica.IdealPointTM(20, seed=1)
                 m.fit([docs[i] for i in idx], group=[group[i] for i in idx])
                 return m.author_names, m.author_positions[:, 0]
 

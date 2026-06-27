@@ -418,30 +418,16 @@ def _fit_etm(iters=80):
 
 
 def _fit_idealpoint(iters=40):
-    # IdealPointTM is experimental and gated. Embedded topic model with a latent
-    # ideal-point head; documents grouped into authors that carry a position.
-    was = topica.experimental_enabled()
-    topica.enable_experimental(True)
-    try:
-        docs, vocab = _planted_blocks(k=K, block=8, n=240, length=12, seed=0)
-        _, word_emb = _planted_embeddings(k=K, block=8, seed=0)
-        group = [f"a{i % 16}" for i in range(len(docs))]
-        m = topica.IdealPointTM(num_topics=K, num_dims=1, seed=1)
-        m.fit(docs, word_emb, vocab, group=group, iters=iters)
-        return m.doc_topic, m.topic_word, K
-    finally:
-        topica.enable_experimental(was)
-
-
-def _fit_idealpoint_lda(iters=40):
-    # IdealPointLDA is experimental and gated. Count-based twin of IdealPointTM:
-    # topics displaced by a latent author position, parameterized over the vocabulary.
+    # IdealPointTM is experimental and gated. Topic model with a latent ideal-point
+    # head; documents grouped into authors that carry a position. The default fit
+    # (no word_embeddings) is the count representation, exercised here; the
+    # word-embedding representation is covered in tests/test_idealpoint.py.
     was = topica.experimental_enabled()
     topica.enable_experimental(True)
     try:
         docs, _ = _planted_blocks(k=K, block=8, n=240, length=12, seed=0)
         group = [f"a{i % 16}" for i in range(len(docs))]
-        m = topica.IdealPointLDA(num_topics=K, num_dims=1, seed=1)
+        m = topica.IdealPointTM(num_topics=K, num_dims=1, seed=1)
         m.fit(docs, group=group, iters=iters)
         return m.doc_topic, m.topic_word, K
     finally:
@@ -460,16 +446,16 @@ def _fit_tbip(iters=600):
 
 
 def _fit_sentence_ideal(iters=60):
-    # SentenceIdealTM is experimental and gated. Continuous ideal-point model over
-    # per-document embeddings: topics are Gaussian clusters; doc_topic is the soft
-    # cluster assignment. No topic_word (it is embedding-, not word-, based).
+    # IdealPointSentenceTM is experimental and gated. Continuous ideal-point model
+    # over per-document embeddings: topics are Gaussian clusters; doc_topic is the
+    # soft cluster assignment. No topic_word (it is embedding-, not word-, based).
     was = topica.experimental_enabled()
     topica.enable_experimental(True)
     try:
         docs, _ = _planted_blocks(k=K, block=8, n=240, length=12, seed=0)
         emb = _doc_embeddings(docs, k=K, block=8, seed=0)
         group = [f"a{i % 16}" for i in range(len(docs))]
-        m = topica.SentenceIdealTM(num_topics=K, num_dims=1, seed=1)
+        m = topica.IdealPointSentenceTM(num_topics=K, num_dims=1, seed=1)
         m.fit(emb, group=group, iters=iters)
         return m.doc_topic, None, K
     finally:
@@ -557,8 +543,7 @@ FIT_ADAPTERS = {
     "Top2Vec": _fit_top2vec,
     "ETM": _fit_etm,
     "IdealPointTM": _fit_idealpoint,
-    "IdealPointLDA": _fit_idealpoint_lda,
-    "SentenceIdealTM": _fit_sentence_ideal,
+    "IdealPointSentenceTM": _fit_sentence_ideal,
     "TBIP": _fit_tbip,
     "FASTopic": _fit_fastopic,
     "EmbeddingLDA": _fit_embeddinglda,

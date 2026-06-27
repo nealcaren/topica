@@ -161,7 +161,7 @@ def test_position_intervals_with_wordfish():
 
 
 def test_split_half_reliability_with_idealpointlda():
-    # Integration: a planted IdealPointLDA corpus should be reliable.
+    # Integration: a planted IdealPointTM (counts) corpus should be reliable.
     topica.enable_experimental(True)
     try:
         rng = np.random.default_rng(3)
@@ -190,7 +190,7 @@ def test_split_half_reliability_with_idealpointlda():
                 group.append(f"a{a}")
 
         def fit(idx):
-            m = topica.IdealPointLDA(num_topics=2, num_dims=1, seed=1)
+            m = topica.IdealPointTM(num_topics=2, num_dims=1, seed=1)
             m.fit([docs[i] for i in idx], group=[group[i] for i in idx], iters=30)
             return m.author_names, m.author_positions[:, 0]
 

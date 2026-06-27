@@ -61,7 +61,7 @@ for a in range(A):
 # opposite ends. Here we use the two with the most extreme planted positions.
 lo, hi = f"author_{int(np.argmin(x_true))}", f"author_{int(np.argmax(x_true))}"
 m = topica.IdealPointTM(num_topics=K, num_dims=1, seed=1)
-m.fit(docs, rho, vocab, group=author, anchors={lo: -1.0, hi: 1.0}, iters=40)
+m.fit(docs, word_embeddings=rho, vocabulary=vocab, group=author, anchors={lo: -1.0, hi: 1.0}, iters=40)
 
 # --- 1. the scale: author positions ------------------------------------------
 pos = dict(zip(m.author_names, m.author_positions[:, 0]))

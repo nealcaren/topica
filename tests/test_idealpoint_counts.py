@@ -1,8 +1,10 @@
-"""IdealPointLDA: the count-based twin of IdealPointTM. EXPERIMENTAL, gated.
+"""IdealPointTM, count representation (fit without word_embeddings). EXPERIMENTAL,
+gated.
 
 It is a topic model (covered by the registry-driven topic-health invariants); these
 tests check the ideal-point head specifically — that it recovers planted positions
-from counts, orients to anchors, and round-trips.
+from counts, orients to anchors, reports representation="counts", and round-trips
+(save tag 33).
 """
 import numpy as np
 import pytest
@@ -55,16 +57,17 @@ def test_requires_experimental():
     topica.enable_experimental(False)
     try:
         with pytest.raises(Exception):
-            topica.IdealPointLDA(num_topics=2)
+            topica.IdealPointTM(num_topics=2)
     finally:
         topica.enable_experimental(was)
 
 
 def test_recovers_positions():
     docs, group, theta = _planted(seed=1)
-    m = topica.IdealPointLDA(num_topics=2, num_dims=1, seed=1)
+    m = topica.IdealPointTM(num_topics=2, num_dims=1, seed=1)
     m.fit(docs, group=group, anchors={"a0": -1.0, "a29": 1.0}, iters=40)
 
+    assert m.representation == "counts"
     assert m.num_authors == 30
     pos = dict(zip(m.author_names, m.author_positions[:, 0]))
     recovered = np.array([pos[f"a{a}"] for a in range(30)])
@@ -76,7 +79,7 @@ def test_recovers_positions():
 
 def test_topics_and_shapes():
     docs, group, _ = _planted(seed=2)
-    m = topica.IdealPointLDA(num_topics=2, seed=1)
+    m = topica.IdealPointTM(num_topics=2, seed=1)
     m.fit(docs, group=group, iters=30)
     assert m.topic_word.shape == (2, len(m.vocabulary))
     assert m.doc_topic.shape[1] == 2
@@ -89,7 +92,7 @@ def test_topics_and_shapes():
 
 def test_anchors_orient_sign():
     docs, group, _ = _planted(seed=3)
-    m = topica.IdealPointLDA(num_topics=2, seed=1)
+    m = topica.IdealPointTM(num_topics=2, seed=1)
     m.fit(docs, group=group, anchors={"a0": -1.0, "a29": 1.0})
     pos = dict(zip(m.author_names, m.author_positions[:, 0]))
     assert pos["a0"] < pos["a29"]
@@ -97,9 +100,9 @@ def test_anchors_orient_sign():
 
 def test_determinism():
     docs, group, _ = _planted(seed=4)
-    a = topica.IdealPointLDA(num_topics=2, seed=1)
+    a = topica.IdealPointTM(num_topics=2, seed=1)
     a.fit(docs, group=group, iters=20)
-    b = topica.IdealPointLDA(num_topics=2, seed=1)
+    b = topica.IdealPointTM(num_topics=2, seed=1)
     b.fit(docs, group=group, iters=20)
     assert np.array_equal(a.author_positions, b.author_positions)
     assert np.array_equal(a.topic_word, b.topic_word)
@@ -107,11 +110,11 @@ def test_determinism():
 
 def test_save_load(tmp_path):
     docs, group, _ = _planted(seed=5)
-    m = topica.IdealPointLDA(num_topics=2, seed=1)
+    m = topica.IdealPointTM(num_topics=2, seed=1)
     m.fit(docs, group=group, anchors={"a0": -1.0, "a29": 1.0})
     p = tmp_path / "iplda.topica"
     m.save(str(p))
-    m2 = topica.IdealPointLDA.load(str(p))
+    m2 = topica.IdealPointTM.load(str(p))
     assert np.array_equal(m.author_positions, m2.author_positions)
     assert np.array_equal(m.topic_word, m2.topic_word)
     assert m.author_names == m2.author_names

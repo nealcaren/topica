@@ -81,7 +81,7 @@ def test_gate_blocks_construction():
 def test_fitted_surface_is_well_shaped():
     docs, vocab, emb, group, _ = _planted(seed=1)
     m = topica.IdealPointTM(K, num_dims=1, seed=1)
-    m.fit(docs, emb, vocab, group=group, iters=25)
+    m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, iters=25)
 
     assert m.topic_word.shape == (K, len(vocab))
     assert m.doc_topic.shape == (len(docs), K)
@@ -108,7 +108,7 @@ def test_recovers_positions():
     lo, hi = int(np.argmin(trait)), int(np.argmax(trait))
     anchors = {f"author_{lo}": -1.0, f"author_{hi}": 1.0}
     m = topica.IdealPointTM(K, num_dims=1, seed=3)
-    m.fit(docs, emb, vocab, group=group, anchors=anchors, iters=60)
+    m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, anchors=anchors, iters=60)
 
     pos = m.author_positions[:, 0]
     order = [int(name.split("_")[1]) for name in m.author_names]
@@ -122,7 +122,7 @@ def test_anchors_orient_sign_deterministically():
     docs, vocab, emb, group, trait = _planted(seed=4)
     lo, hi = int(np.argmin(trait)), int(np.argmax(trait))
     m = topica.IdealPointTM(K, num_dims=1, seed=5)
-    m.fit(docs, emb, vocab, group=group,
+    m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group,
           anchors={f"author_{lo}": -1.0, f"author_{hi}": 1.0}, iters=40)
     names = m.author_names
     pos = m.author_positions[:, 0]
@@ -135,7 +135,7 @@ def test_position_shift_reads_the_axis():
     docs, vocab, emb, group, trait = _planted(seed=6)
     lo, hi = int(np.argmin(trait)), int(np.argmax(trait))
     m = topica.IdealPointTM(K, num_dims=1, seed=7)
-    m.fit(docs, emb, vocab, group=group,
+    m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group,
           anchors={f"author_{lo}": -1.0, f"author_{hi}": 1.0}, iters=60)
     # read the most discriminating topic's within-topic contrast.
     kd = int(np.argmax(m.topic_discrimination))
@@ -152,7 +152,7 @@ def test_position_shift_reads_the_axis():
 def test_loadings_and_weighting_surface():
     docs, vocab, emb, group, _ = _planted(seed=11)
     m = topica.IdealPointTM(K, num_dims=1, seed=2)
-    m.fit(docs, emb, vocab, group=group, iters=25)
+    m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, iters=25)
     # loadings expose the per-topic discrimination directions.
     L = m.loadings
     assert L.shape == (K, emb.shape[1])  # (num_topics, num_dims*E), d=1
@@ -168,9 +168,9 @@ def test_loadings_and_weighting_surface():
 def test_reproducible_from_seed():
     docs, vocab, emb, group, _ = _planted(seed=8)
     a = topica.IdealPointTM(K, seed=11)
-    a.fit(docs, emb, vocab, group=group, iters=20)
+    a.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, iters=20)
     b = topica.IdealPointTM(K, seed=11)
-    b.fit(docs, emb, vocab, group=group, iters=20)
+    b.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, iters=20)
     assert np.array_equal(a.topic_word, b.topic_word)
     assert np.array_equal(a.author_positions, b.author_positions)
 
@@ -178,7 +178,7 @@ def test_reproducible_from_seed():
 def test_save_load_roundtrip():
     docs, vocab, emb, group, _ = _planted(seed=9)
     m = topica.IdealPointTM(K, num_dims=1, seed=13)
-    m.fit(docs, emb, vocab, group=group, iters=20)
+    m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, iters=20)
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "ip.topica")
         m.save(path)
@@ -193,6 +193,6 @@ def test_save_load_roundtrip():
 def test_ungrouped_defaults_to_per_document_authors():
     docs, vocab, emb, _, _ = _planted(n_authors=6, docs_per=4, seed=10)
     m = topica.IdealPointTM(K, seed=1)
-    m.fit(docs, emb, vocab, iters=12)  # no group
+    m.fit(docs, word_embeddings=emb, vocabulary=vocab, iters=12)  # no group
     assert m.num_authors == len(docs)
     assert m.author_positions.shape == (len(docs), 1)

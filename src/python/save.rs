@@ -81,10 +81,12 @@ pub(crate) fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_ZEROSHOTTM => "ZeroShotTM",
         MODEL_TAG_DETM => "DETM",
         MODEL_TAG_ECTM => "ECTM",
+        // Tags 31 and 33 are both IdealPointTM: word-embedding and count
+        // representations of the same model, merged into one pyclass.
         MODEL_TAG_IDEALPOINT => "IdealPointTM",
         MODEL_TAG_WORDFISH => "Wordfish",
-        MODEL_TAG_IDEALPOINT_LDA => "IdealPointLDA",
-        MODEL_TAG_SENTENCE_IDEAL => "SentenceIdealTM",
+        MODEL_TAG_IDEALPOINT_LDA => "IdealPointTM",
+        MODEL_TAG_SENTENCE_IDEAL => "IdealPointSentenceTM",
         MODEL_TAG_TBIP => "TBIP",
         MODEL_TAG_PARTY_EMBEDDINGS => "PartyEmbeddings",
         _ => "unknown",
@@ -106,4 +108,12 @@ pub(crate) fn read_state<S: serde::de::DeserializeOwned>(
     let bytes = std::fs::read(path).map_err(io_err)?;
     crate::saveformat::decode_state(&bytes, expected_tag, model_tag_name)
         .map_err(PyValueError::new_err)
+}
+
+/// Read just the model tag from a save file, for classes whose `load` dispatches
+/// on the tag (e.g. IdealPointTM, which reads both its word-embedding and count
+/// save formats).
+pub(crate) fn peek_model_tag(path: &str) -> PyResult<u8> {
+    let bytes = std::fs::read(path).map_err(io_err)?;
+    crate::saveformat::peek_tag(&bytes).map_err(PyValueError::new_err)
 }

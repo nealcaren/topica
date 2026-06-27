@@ -26,6 +26,24 @@ pub fn encode_state<S: serde::Serialize>(model_tag: u8, state: &S) -> Result<Vec
     Ok(buf)
 }
 
+/// Read just the model tag from a headed byte buffer, validating the magic and
+/// version. Used by models whose `load` accepts more than one tag (e.g. a class
+/// that absorbed a sibling's save format).
+pub fn peek_tag(bytes: &[u8]) -> Result<u8, String> {
+    if bytes.len() < 8 || &bytes[..6] != FILE_MAGIC {
+        return Err(
+            "not a topica model file (unrecognized header; file may be corrupt or saved by an older version)".into()
+        );
+    }
+    let version = bytes[6];
+    if version != FORMAT_VERSION {
+        return Err(format!(
+            "unsupported save-format version {version} (this build supports version {FORMAT_VERSION})"
+        ));
+    }
+    Ok(bytes[7])
+}
+
 /// Deserialize a byte buffer that was written by `encode_state`.
 /// Returns a clear error if the header is missing, wrong version, or wrong model tag.
 pub fn decode_state<S: serde::de::DeserializeOwned>(
