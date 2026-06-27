@@ -3808,12 +3808,15 @@ class Wordfish:
         data: Corpus | Sequence[Sequence[str]],
         *,
         group: Sequence[str] | None = None,
+        control: Sequence[str] | None = None,
         anchors: dict[str, float] | None = None,
         iters: int | None = None,
         convergence_tol: float | None = None,
     ) -> None:
         """group pools documents sharing a label into one unit with one position;
-        anchors orients the sign of the axis."""
+        control is an optional categorical confound (constant within each author)
+        whose level-specific word usage is absorbed into per-level offsets so it does
+        not contaminate the position; anchors orients the sign of the axis."""
         ...
     @property
     def num_authors(self) -> int: ...
@@ -3823,6 +3826,10 @@ class Wordfish:
     def position_se(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
     def author_names(self) -> list[str]: ...
+    @property
+    def control_names(self) -> list[str]: ...
+    @property
+    def control_word_offsets(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
     def word_discrimination(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property

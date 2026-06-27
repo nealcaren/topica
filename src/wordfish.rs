@@ -32,6 +32,13 @@ pub struct WordfishModel {
     pub iters_run: usize,
     /// Prior sd on theta, retained so the asymptotic standard error can be computed.
     pub theta_prior_sd: f64,
+    /// Per-control-level per-word log-rate offsets `delta[c][j]` (the control
+    /// covariate). `delta[0]` is the baseline level and is held at zero. With no
+    /// control covariate this is a single all-zero row, so the model reduces exactly
+    /// to plain Wordfish.
+    pub delta: Vec<Vec<f64>>,
+    /// Each author's control level (index into `delta`); all zero with no control.
+    pub level: Vec<usize>,
 }
 
 impl WordfishModel {
@@ -53,9 +60,10 @@ impl WordfishModel {
             .map(|i| {
                 let ai = self.alpha[i];
                 let ti = self.theta[i];
+                let dl = &self.delta[self.level[i]];
                 let (mut i_aa, mut i_at, mut i_tt) = (0.0, 0.0, inv_var);
                 for j in 0..self.num_types {
-                    let mu = (ai + self.psi[j] + self.beta[j] * ti).exp();
+                    let mu = (ai + self.psi[j] + self.beta[j] * ti + dl[j]).exp();
                     i_aa += mu;
                     i_at += mu * self.beta[j];
                     i_tt += mu * self.beta[j] * self.beta[j];
@@ -74,10 +82,48 @@ impl WordfishModel {
 /// Sparse author-major counts: `counts[i]` is the list of `(word_id, count)` for
 /// author `i`. `num_types` is the vocabulary size; `anchors` is a list of
 /// `(author_index, target)` used only to orient the sign of the axis.
+///
+/// Plain Wordfish (no control covariate). Equivalent to
+/// [`fit_wordfish_controlled`] with a single control level, so the fit is
+/// bit-identical to the historical implementation.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_wordfish(
     counts: &[Vec<(u32, f64)>],
     num_types: usize,
+    anchors: &[(usize, f64)],
+    iters: usize,
+    tol: f64,
+    beta_prior_sd: f64,
+    theta_prior_sd: f64,
+) -> WordfishModel {
+    let level = vec![0usize; counts.len()];
+    fit_wordfish_controlled(
+        counts,
+        num_types,
+        &level,
+        1,
+        anchors,
+        iters,
+        tol,
+        beta_prior_sd,
+        theta_prior_sd,
+    )
+}
+
+/// Wordfish with a categorical **control covariate**. `level[i]` is the control
+/// level of author `i` (an index in `0..num_levels`); level 0 is the baseline.
+/// Each non-baseline level `c` gets a per-word log-rate offset `delta[c][j]`, so
+/// the rate is `exp(alpha_i + psi_j + beta_j theta_i + delta[level_i][j])`. This
+/// absorbs systematic, level-specific word usage (a chamber, a government/opposition
+/// status, an era, a language) into `delta` instead of letting it contaminate the
+/// latent position `theta`. With `num_levels == 1` the offsets are all zero and the
+/// fit is exactly plain Wordfish.
+#[allow(clippy::too_many_arguments)]
+pub fn fit_wordfish_controlled(
+    counts: &[Vec<(u32, f64)>],
+    num_types: usize,
+    level: &[usize],
+    num_levels: usize,
     anchors: &[(usize, f64)],
     iters: usize,
     tol: f64,
@@ -112,6 +158,24 @@ pub fn fit_wordfish(
         }
     }
 
+    // Control covariate: authors grouped by level, and the level-major word totals
+    // (y_{c,j}) that drive the per-(level, word) offset step. Empty work when
+    // num_levels == 1 (the plain-Wordfish path), keeping delta all-zero.
+    let mut level_authors: Vec<Vec<usize>> = vec![Vec::new(); num_levels];
+    for (i, &c) in level.iter().enumerate() {
+        level_authors[c].push(i);
+    }
+    let mut level_word_total: Vec<Vec<f64>> = vec![vec![0.0; v]; num_levels];
+    for (i, doc) in counts.iter().enumerate() {
+        let c = level[i];
+        for &(w, cnt) in doc {
+            level_word_total[c][w as usize] += cnt;
+        }
+    }
+    // delta[c][j]: per-level per-word log-rate offset; level 0 is the held-out
+    // baseline and stays zero.
+    let mut delta: Vec<Vec<f64>> = vec![vec![0.0; v]; num_levels];
+
     // --- deterministic initialization ---------------------------------------
     // alpha_i = log author total; psi_j = log mean word rate; theta from the
     // leading principal axis of the row-normalized, column-centered log matrix.
@@ -122,7 +186,7 @@ pub fn fit_wordfish(
         .map(|&t| (t.max(1.0) / a as f64).ln())
         .collect();
     let mut beta = vec![0.0f64; v];
-    let mut theta = init_theta(counts, a, v, eps);
+    let mut theta = init_theta(counts, level, num_levels, a, v, eps);
 
     standardize_theta(&mut theta, &mut beta, &mut psi);
     center_psi(&mut psi, &mut alpha);
@@ -147,7 +211,7 @@ pub fn fit_wordfish(
                 y_theta += c * theta[i as usize];
             }
             for i in 0..a {
-                let mu = (alpha[i] + psi[j] + beta[j] * theta[i]).exp();
+                let mu = (alpha[i] + psi[j] + beta[j] * theta[i] + delta[level[i]][j]).exp();
                 g0 -= mu;
                 g1 -= mu * theta[i];
                 h00 -= mu;
@@ -172,8 +236,9 @@ pub fn fit_wordfish(
                 y_sum += c;
                 y_beta += c * beta[w as usize];
             }
+            let dl = &delta[level[i]];
             for j in 0..v {
-                let mu = (alpha[i] + psi[j] + beta[j] * theta[i]).exp();
+                let mu = (alpha[i] + psi[j] + beta[j] * theta[i] + dl[j]).exp();
                 g0 -= mu;
                 g1 -= mu * beta[j];
                 h00 -= mu;
@@ -188,12 +253,28 @@ pub fn fit_wordfish(
             theta[i] -= dt;
         }
 
+        // M-step part 3: per-(level, word) control offset delta[c][j], a 1-D Newton
+        // step over the authors in level c. Level 0 is the baseline (delta == 0), so
+        // this loop is empty for plain Wordfish (num_levels == 1).
+        for c in 1..num_levels {
+            for j in 0..v {
+                let mut mu_sum = 0.0;
+                for &i in &level_authors[c] {
+                    mu_sum += (alpha[i] + psi[j] + beta[j] * theta[i] + delta[c][j]).exp();
+                }
+                let grad = level_word_total[c][j] - mu_sum; // d loglik / d delta
+                let hess = -mu_sum - 1e-9; // observed information (negative), ridged
+                let step = (grad / hess).clamp(-5.0, 5.0);
+                delta[c][j] -= step;
+            }
+        }
+
         // Identification: standardize theta (lossless), center psi (lossless).
         standardize_theta(&mut theta, &mut beta, &mut psi);
         center_psi(&mut psi, &mut alpha);
 
         // Convergence on the Poisson log-likelihood.
-        let ll = loglik(counts, &alpha, &psi, &beta, &theta, a, v);
+        let ll = loglik(counts, &alpha, &psi, &beta, &theta, level, &delta, a, v);
         ll_history.push(ll);
         if prev_ll.is_finite() {
             let denom = prev_ll.abs().max(1.0);
@@ -220,27 +301,42 @@ pub fn fit_wordfish(
         converged,
         iters_run,
         theta_prior_sd,
+        delta,
+        level: level.to_vec(),
     }
 }
 
 /// Leading principal axis of the doubly-centered log-count matrix, via power
 /// iteration on the author x author gram (no dense V x V). Deterministic.
-fn init_theta(counts: &[Vec<(u32, f64)>], a: usize, v: usize, eps: f64) -> Vec<f64> {
+///
+/// Column centering is done **per control level**: subtracting `col_mean[level][j]`
+/// removes the control axis from the starting position, so `theta` is not initialized
+/// on a dominant, level-specific nuisance axis. With `num_levels == 1` this is the
+/// plain global column centering, bit-identical to before.
+fn init_theta(
+    counts: &[Vec<(u32, f64)>],
+    level: &[usize],
+    num_levels: usize,
+    a: usize,
+    v: usize,
+    eps: f64,
+) -> Vec<f64> {
     // Doubly-centered residual on present entries: r_ij = log1p(y_ij) minus the row
-    // mean, the column mean, plus the grand mean. Its leading author-space axis is a
-    // robust, dependency-free starting position (correspondence-analysis flavored).
+    // mean, the (level-specific) column mean, plus the grand mean. Its leading
+    // author-space axis is a robust, dependency-free starting position.
     let val = |c: f64| (c + 1.0).ln();
     let mut row_mean = vec![0.0f64; a];
-    let mut col_mean = vec![0.0f64; v];
-    let mut col_n = vec![0.0f64; v];
+    let mut col_mean = vec![vec![0.0f64; v]; num_levels];
+    let mut col_n = vec![vec![0.0f64; v]; num_levels];
     let mut grand_mean = 0.0;
     let mut nnz = 0.0;
     for (i, doc) in counts.iter().enumerate() {
-        for &(w, c) in doc {
-            let x = val(c);
+        let c = level[i];
+        for &(w, cnt) in doc {
+            let x = val(cnt);
             row_mean[i] += x;
-            col_mean[w as usize] += x;
-            col_n[w as usize] += 1.0;
+            col_mean[c][w as usize] += x;
+            col_n[c][w as usize] += 1.0;
             grand_mean += x;
             nnz += 1.0;
         }
@@ -248,21 +344,29 @@ fn init_theta(counts: &[Vec<(u32, f64)>], a: usize, v: usize, eps: f64) -> Vec<f
     for (i, rm) in row_mean.iter_mut().enumerate() {
         *rm /= counts[i].len().max(1) as f64;
     }
-    for j in 0..v {
-        if col_n[j] > 0.0 {
-            col_mean[j] /= col_n[j];
+    for c in 0..num_levels {
+        for j in 0..v {
+            if col_n[c][j] > 0.0 {
+                col_mean[c][j] /= col_n[c][j];
+            }
         }
     }
     if nnz > 0.0 {
         grand_mean /= nnz;
     }
-    // Sparse residual rows: r_i = { (j, val - row_mean_i - col_mean_j + grand_mean) }.
+    // Sparse residual rows: r_i = { (j, val - row_mean_i - col_mean[level_i][j] + grand_mean) }.
     let resid: Vec<Vec<(u32, f64)>> = counts
         .iter()
         .enumerate()
         .map(|(i, doc)| {
+            let c = level[i];
             doc.iter()
-                .map(|&(w, c)| (w, val(c) - row_mean[i] - col_mean[w as usize] + grand_mean))
+                .map(|&(w, cnt)| {
+                    (
+                        w,
+                        val(cnt) - row_mean[i] - col_mean[c][w as usize] + grand_mean,
+                    )
+                })
                 .collect()
         })
         .collect();
@@ -403,27 +507,31 @@ fn solve2(h00: f64, h01: f64, h10: f64, h11: f64, g0: f64, g1: f64) -> (f64, f64
     (clamp(d0), clamp(d1))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn loglik(
     counts: &[Vec<(u32, f64)>],
     alpha: &[f64],
     psi: &[f64],
     beta: &[f64],
     theta: &[f64],
+    level: &[usize],
+    delta: &[Vec<f64>],
     a: usize,
     v: usize,
 ) -> f64 {
-    // sum_ij [ y_ij * eta_ij - exp(eta_ij) ], eta = alpha + psi + beta*theta.
-    // The -exp term is dense; the y*eta term is sparse.
+    // sum_ij [ y_ij * eta_ij - exp(eta_ij) ], eta = alpha + psi + beta*theta +
+    // delta[level_i][j]. The -exp term is dense; the y*eta term is sparse.
     let mut ll = 0.0;
     for i in 0..a {
         let ai = alpha[i];
         let ti = theta[i];
+        let dl = &delta[level[i]];
         for j in 0..v {
-            ll -= (ai + psi[j] + beta[j] * ti).exp();
+            ll -= (ai + psi[j] + beta[j] * ti + dl[j]).exp();
         }
         for &(w, c) in &counts[i] {
             let j = w as usize;
-            ll += c * (ai + psi[j] + beta[j] * ti);
+            ll += c * (ai + psi[j] + beta[j] * ti + dl[j]);
         }
     }
     ll
@@ -515,5 +623,86 @@ mod tests {
         assert!(mean.abs() < 1e-6, "theta not centered: {mean}");
         // anchors orient the sign: low anchor negative, high anchor positive
         assert!(m.theta[0] < m.theta[a - 1], "anchors did not orient");
+    }
+
+    #[test]
+    fn control_covariate_rescues_axis_under_contamination() {
+        // A corpus with a weak ideology signal plus a DOMINANT, control-aligned
+        // nuisance axis. Without the control, theta is hijacked by the nuisance;
+        // with it, theta recovers ideology.
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let a = 50usize;
+        // vocab: 0..8 ideology-left, 8..16 ideology-right, 16..24 nuisance-level0,
+        // 24..32 nuisance-level1, 32..62 filler
+        let v = 62usize;
+        let ideo: Vec<f64> = (0..a)
+            .map(|i| (i as f64 / (a as f64 - 1.0)) * 2.0 - 1.0)
+            .collect();
+        let level: Vec<usize> = (0..a).map(|i| i % 2).collect();
+        let mut counts: Vec<Vec<(u32, f64)>> = Vec::with_capacity(a);
+        for i in 0..a {
+            let mut row = vec![0.0f64; v];
+            let pr_right = (ideo[i] + 1.0) / 2.0;
+            for _ in 0..560 {
+                let u: f64 = rng.gen();
+                let w = if u < 0.45 {
+                    // dominant nuisance, determined by the control level
+                    let base = if level[i] == 1 { 24 } else { 16 };
+                    base + (rng.gen::<usize>() % 8)
+                } else if u < 0.85 {
+                    if rng.gen::<f64>() < pr_right {
+                        8 + (rng.gen::<usize>() % 8)
+                    } else {
+                        rng.gen::<usize>() % 8
+                    }
+                } else {
+                    32 + (rng.gen::<usize>() % 30)
+                };
+                row[w] += 1.0;
+            }
+            counts.push(
+                row.iter()
+                    .enumerate()
+                    .filter(|&(_, &c)| c > 0.0)
+                    .map(|(j, &c)| (j as u32, c))
+                    .collect(),
+            );
+        }
+        let no_control = fit_wordfish(&counts, v, &[], 120, 1e-8, 3.0, 1.0);
+        let with_control = fit_wordfish_controlled(&counts, v, &level, 2, &[], 120, 1e-8, 3.0, 1.0);
+        let r_plain = pearson(&no_control.theta, &ideo).abs();
+        let r_ctrl = pearson(&with_control.theta, &ideo).abs();
+        assert!(
+            r_plain < 0.4,
+            "expected the nuisance to hijack plain Wordfish, got ideology r={r_plain}"
+        );
+        assert!(
+            r_ctrl > 0.8,
+            "control covariate should recover ideology, got r={r_ctrl}"
+        );
+    }
+
+    #[test]
+    fn single_level_control_is_plain_wordfish() {
+        // num_levels == 1 must reproduce plain Wordfish bit-for-bit.
+        let mut rng = ChaCha8Rng::seed_from_u64(3);
+        let (a, v) = (30usize, 40usize);
+        let mut counts = Vec::new();
+        for _ in 0..a {
+            let mut row = Vec::new();
+            for j in 0..v {
+                let c = poisson(&mut rng, 3.0);
+                if c > 0.0 {
+                    row.push((j as u32, c));
+                }
+            }
+            counts.push(row);
+        }
+        let plain = fit_wordfish(&counts, v, &[], 50, 1e-8, 3.0, 1.0);
+        let level = vec![0usize; a];
+        let ctrl = fit_wordfish_controlled(&counts, v, &level, 1, &[], 50, 1e-8, 3.0, 1.0);
+        assert_eq!(plain.theta, ctrl.theta);
+        assert_eq!(plain.beta, ctrl.beta);
+        assert_eq!(plain.psi, ctrl.psi);
     }
 }

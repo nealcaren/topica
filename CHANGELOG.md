@@ -8,6 +8,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- `Wordfish.fit(control=...)` — a categorical confound covariate for Wordfish. When a
+  corpus has a dominant non-ideological axis (a chamber, government/opposition status,
+  an era, a language) the latent position is otherwise hijacked by it; `control`
+  absorbs that level-specific word usage into per-level word offsets
+  (`log rate += delta[level, word]`, baseline level held at zero), and the
+  initialization is residualized by level so `theta` does not start on the nuisance
+  axis. Exposed via `control_names` / `control_word_offsets`. With no `control` the fit
+  is exactly the historical Wordfish, bit-for-bit (quanteda parity preserved). On a
+  planted contaminated corpus, ideology recovery rises from ~0.03 to ~0.8.
 - `topica.polarization(positions, labels)` — a model-agnostic ideal-point diagnostic:
   the distance between named camps' centroids on any model's `author_positions` (1-D,
   or Euclidean for a multi-dimensional fit), so polarization can be traced over time
