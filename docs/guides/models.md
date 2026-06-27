@@ -735,6 +735,20 @@ m.discriminating_words(10)  # the words at the two ends of the axis
 
 We fit by the standard Wordfish EM: alternate Newton updates of the per-word `(psi, beta)` and per-author `(alpha, theta)`, with weak Gaussian priors on `beta` and `theta` (`beta_prior_sd`, `theta_prior_sd`; pass `math.inf` for none). Identification is applied every iteration and is lossless: `theta` is standardized to mean 0 / unit variance (the scale absorbed into `beta`, the location into `psi`), `psi` is centered into `alpha`, and the sign is oriented to the anchors. There is no RNG and the reductions run in a fixed order, so the fit is bit-reproducible. We validate against `quanteda.textmodels::textmodel_wordfish`: on a corpus sampled from the model the two recover the same scale at correlation 1.00 (`parity/wordfish_r_compare.py`).
 
+### Controlling for a confound
+
+Text scaling fails in a specific, well-documented way: when a corpus has a dominant axis of variation that is *not* the one you want (a chamber, a government/opposition split, an era, a language), the single latent position latches onto it and the ideological signal is lost. Wordfish accepts a `control` covariate to absorb exactly that. Pass a categorical label per document (constant within each author); each non-baseline level gets a per-word log-rate offset `delta[level, word]`, so systematic level-specific word usage is explained away instead of contaminating `theta`. The model becomes `log rate = alpha_i + psi_j + beta_j * theta_i + delta[level_i, j]`.
+
+```python
+m = topica.Wordfish()
+m.fit(docs, group=author, control=chamber,        # absorb the chamber's word usage
+      anchors={"Sanders": -1.0, "Cruz": 1.0})
+m.control_names           # the level labels (row 0 is the held-out baseline)
+m.control_word_offsets    # (num_levels, vocab): the absorbed per-level word effects
+```
+
+On a corpus where a control-aligned nuisance axis dominates, plain Wordfish recovers the ideological scale at essentially zero correlation while `control=` restores it (in our planted test, `|r|` with the true scale rises from ~0.03 to ~0.8). The initialization is residualized by level too, so `theta` does not start on the nuisance axis. With no `control` the fit is exactly the historical Wordfish, bit-for-bit.
+
 As a scaling model Wordfish has no topics, so it cannot tell you what is being talked about or how language differs within a topic. When you want the scale and the topics together, reach for [`IdealPointTM`](#idealpointtm) (word embeddings). On clean messaging text the two are comparable on the scale itself; IdealPointTM adds the per-topic framing Wordfish structurally cannot produce.
 
 ## SentenceIdealTM

@@ -17,6 +17,8 @@ pub struct Wordfish {
     fitted: bool,
     author_names: Vec<String>,
     id_to_word: Vec<String>,
+    /// Control-covariate level labels (row order of `delta`); empty with no control.
+    control_names: Vec<String>,
     model: Option<WordfishModel>,
 }
 
@@ -40,6 +42,12 @@ struct WordfishState {
     ll_history: Option<Vec<f64>>,
     converged: Option<bool>,
     iters_run: Option<usize>,
+    #[serde(default)]
+    delta: Option<Vec<Vec<f64>>>,
+    #[serde(default)]
+    level: Option<Vec<usize>>,
+    #[serde(default)]
+    control_names: Vec<String>,
 }
 
 impl Wordfish {
@@ -77,6 +85,7 @@ impl Wordfish {
             fitted: false,
             author_names: Vec::new(),
             id_to_word: Vec::new(),
+            control_names: Vec::new(),
             model: None,
         })
     }
@@ -84,16 +93,21 @@ impl Wordfish {
     /// Fit on `data` (a Corpus or list of token lists). `group` is an optional list
     /// of author labels (length num_docs): documents sharing a label are pooled into
     /// one unit with one position; if omitted, each document is its own unit.
-    /// `anchors` is an optional `{author_label: value}` mapping used to orient the
-    /// sign of the axis so positions align with the supplied direction. `iters` sets
-    /// the EM iteration cap (default 100).
-    #[pyo3(signature = (data, *, group=None, anchors=None, iters=None,
+    /// `control` is an optional categorical confound (length num_docs) that must be
+    /// constant within each author: it absorbs systematic, level-specific word usage
+    /// (a chamber, a government/opposition status, an era, a language) into per-level
+    /// word offsets so it does not contaminate the latent position. `anchors` is an
+    /// optional `{author_label: value}` mapping used to orient the sign of the axis so
+    /// positions align with the supplied direction. `iters` sets the EM iteration cap
+    /// (default 100).
+    #[pyo3(signature = (data, *, group=None, control=None, anchors=None, iters=None,
                         convergence_tol=None))]
     fn fit(
         &mut self,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         group: Option<Vec<String>>,
+        control: Option<Vec<String>>,
         anchors: Option<HashMap<String, f64>>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
@@ -151,6 +165,43 @@ impl Wordfish {
                 "Wordfish needs at least 2 authors/documents to scale",
             ));
         }
+
+        // Resolve the control covariate into a per-author level (constant within
+        // each author; baseline level 0 is the first label in sorted order).
+        let (author_level, control_names, num_levels): (Vec<usize>, Vec<String>, usize) =
+            match &control {
+                None => (vec![0usize; num_authors], Vec::new(), 1),
+                Some(labels) => {
+                    if labels.len() != num_docs {
+                        return Err(PyValueError::new_err(format!(
+                            "control must have length num_docs ({num_docs}), got {}",
+                            labels.len()
+                        )));
+                    }
+                    let mut names: Vec<String> = labels.clone();
+                    names.sort();
+                    names.dedup();
+                    let index: HashMap<&str, usize> = names
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| (s.as_str(), i))
+                        .collect();
+                    let mut author_level = vec![usize::MAX; num_authors];
+                    for (d, lab) in labels.iter().enumerate() {
+                        let a = group_idx[d];
+                        let lv = index[lab.as_str()];
+                        if author_level[a] == usize::MAX {
+                            author_level[a] = lv;
+                        } else if author_level[a] != lv {
+                            return Err(PyValueError::new_err(
+                                "control must be constant within each author group",
+                            ));
+                        }
+                    }
+                    let nl = names.len();
+                    (author_level, names, nl)
+                }
+            };
 
         // Build the vocabulary (corpus frequency >= min_count), deterministically
         // ordered by descending frequency then word.
@@ -227,12 +278,23 @@ impl Wordfish {
         let it = iters.unwrap_or(100);
         let (bsd, tsd) = (self.beta_prior_sd, self.theta_prior_sd);
         let model = py.allow_threads(move || {
-            wordfish::fit_wordfish(&counts, num_types, &anchor_pairs, it, tol, bsd, tsd)
+            wordfish::fit_wordfish_controlled(
+                &counts,
+                num_types,
+                &author_level,
+                num_levels,
+                &anchor_pairs,
+                it,
+                tol,
+                bsd,
+                tsd,
+            )
         });
 
         self.model = Some(model);
         self.id_to_word = id_to_word;
         self.author_names = author_names;
+        self.control_names = control_names;
         self.fitted = true;
         Ok(())
     }
@@ -320,6 +382,21 @@ impl Wordfish {
     fn iters_run(&self) -> PyResult<usize> {
         Ok(self.fitted_model()?.iters_run)
     }
+    /// The control-covariate level labels, in the row order of
+    /// `control_word_offsets`. Empty when no control covariate was supplied; the
+    /// first label is the held-out baseline level.
+    #[getter]
+    fn control_names(&self) -> PyResult<Vec<String>> {
+        self.fitted_model()?;
+        Ok(self.control_names.clone())
+    }
+    /// Per-level per-word log-rate offsets `delta` as a (num_levels, num_types)
+    /// matrix: how much more (or less) each control level uses each word, relative
+    /// to the baseline level (row 0, all zeros). The covariate's absorbed effect.
+    #[getter]
+    fn control_word_offsets<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        Ok(vecs_to_arr2(&self.fitted_model()?.delta).to_pyarray_bound(py))
+    }
 
     fn save(&self, path: &str) -> PyResult<()> {
         let m = self.model.as_ref();
@@ -345,6 +422,9 @@ impl Wordfish {
                 ll_history: m.map(|m| m.ll_history.clone()),
                 converged: m.map(|m| m.converged),
                 iters_run: m.map(|m| m.iters_run),
+                delta: m.map(|m| m.delta.clone()),
+                level: m.map(|m| m.level.clone()),
+                control_names: self.control_names.clone(),
             },
         )
     }
@@ -353,9 +433,18 @@ impl Wordfish {
     fn load(path: &str) -> PyResult<Self> {
         let s: WordfishState = read_state(path, MODEL_TAG_WORDFISH)?;
         let model = if s.fitted && s.theta.is_some() {
+            let num_authors = s.num_authors.unwrap_or(0);
+            let num_types = s.num_types.unwrap_or(0);
+            // Old saves predate the control covariate: default to a single
+            // all-zero baseline level (plain Wordfish).
+            let delta = s
+                .delta
+                .clone()
+                .unwrap_or_else(|| vec![vec![0.0; num_types]]);
+            let level = s.level.clone().unwrap_or_else(|| vec![0usize; num_authors]);
             Some(WordfishModel {
-                num_authors: s.num_authors.unwrap_or(0),
-                num_types: s.num_types.unwrap_or(0),
+                num_authors,
+                num_types,
                 theta: s.theta.unwrap_or_default(),
                 alpha: s.alpha.unwrap_or_default(),
                 psi: s.psi.unwrap_or_default(),
@@ -365,6 +454,8 @@ impl Wordfish {
                 converged: s.converged.unwrap_or(false),
                 iters_run: s.iters_run.unwrap_or(0),
                 theta_prior_sd: s.theta_prior_sd,
+                delta,
+                level,
             })
         } else {
             None
@@ -378,6 +469,7 @@ impl Wordfish {
             fitted: s.fitted,
             author_names: s.author_names,
             id_to_word: s.id_to_word,
+            control_names: s.control_names,
             model,
         })
     }

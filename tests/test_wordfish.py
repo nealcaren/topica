@@ -7,6 +7,7 @@ positions and word discriminations from counts sampled from its own model.
 import math
 
 import numpy as np
+import pytest
 
 import topica
 
@@ -123,3 +124,87 @@ def test_inf_prior_is_flat():
     pos = dict(zip(m.author_names, m.author_positions[:, 0]))
     recovered = np.array([pos[f"a{a}"] for a in range(40)])
     assert abs(np.corrcoef(recovered, theta)[0, 1]) > 0.85
+
+
+def _contaminated(seed=0, n_authors=50, docs_per=14, doc_len=40, p_nu=0.45, p_id=0.40):
+    """A weak ideology signal plus a DOMINANT, control-aligned nuisance axis. Plain
+    Wordfish is hijacked by the nuisance; the control covariate should absorb it and
+    recover ideology."""
+    rng = np.random.default_rng(seed)
+    ideo = np.linspace(-1.0, 1.0, n_authors)
+    ctrl = np.array([i % 2 for i in range(n_authors)])
+    iL = [f"iL{i}" for i in range(8)]; iR = [f"iR{i}" for i in range(8)]
+    nA = [f"nA{i}" for i in range(8)]; nB = [f"nB{i}" for i in range(8)]
+    fill = [f"f{i}" for i in range(30)]
+    docs, group, control = [], [], []
+    for a in range(n_authors):
+        pr_right = (ideo[a] + 1) / 2
+        for _ in range(docs_per):
+            d = []
+            for _ in range(doc_len):
+                u = rng.random()
+                if u < p_nu:
+                    d.append((nB if ctrl[a] == 1 else nA)[rng.integers(8)])
+                elif u < p_nu + p_id:
+                    d.append((iR if rng.random() < pr_right else iL)[rng.integers(8)])
+                else:
+                    d.append(fill[rng.integers(30)])
+            docs.append(d); group.append(f"a{a:02d}"); control.append(f"c{ctrl[a]}")
+    return docs, group, control, ideo
+
+
+def _ideology_recovery(m, ideo):
+    pos = m.author_positions[:, 0]
+    truth = np.array([ideo[int(n[1:])] for n in m.author_names])
+    return abs(np.corrcoef(pos, truth)[0, 1])
+
+
+def test_control_covariate_rescues_axis():
+    docs, group, control, ideo = _contaminated(seed=0)
+    plain = topica.Wordfish(min_count=1, seed=1)
+    plain.fit(docs, group=group, iters=120)
+    ctrl = topica.Wordfish(min_count=1, seed=1)
+    ctrl.fit(docs, group=group, control=control, iters=120)
+    r_plain = _ideology_recovery(plain, ideo)
+    r_ctrl = _ideology_recovery(ctrl, ideo)
+    assert r_plain < 0.4, f"nuisance should hijack plain Wordfish, got {r_plain:.3f}"
+    assert r_ctrl > 0.8, f"control should recover ideology, got {r_ctrl:.3f}"
+    # the absorbed effect is exposed
+    assert ctrl.control_names == ["c0", "c1"]
+    assert ctrl.control_word_offsets.shape == (2, len(ctrl.vocabulary))
+    # baseline level row is held at zero
+    assert np.allclose(ctrl.control_word_offsets[0], 0.0)
+
+
+def test_control_none_matches_plain():
+    # control=None must give exactly the historical Wordfish fit.
+    docs, group, _, _ = _planted(seed=2)
+    a = topica.Wordfish(seed=1); a.fit(docs, group=group, iters=60)
+    b = topica.Wordfish(seed=1); b.fit(docs, group=group, control=None, iters=60)
+    assert np.array_equal(a.author_positions, b.author_positions)
+
+
+def test_control_save_load(tmp_path):
+    docs, group, control, _ = _contaminated(seed=3)
+    m = topica.Wordfish(min_count=1, seed=1)
+    m.fit(docs, group=group, control=control, iters=40)
+    p = tmp_path / "wfc.topica"
+    m.save(str(p))
+    m2 = topica.Wordfish.load(str(p))
+    assert np.array_equal(m.author_positions, m2.author_positions)
+    assert np.array_equal(m.control_word_offsets, m2.control_word_offsets)
+    assert m.control_names == m2.control_names
+
+
+def test_control_validation():
+    docs, group, control, _ = _contaminated(seed=4)
+    m = topica.Wordfish(min_count=1, seed=1)
+    # wrong length
+    with pytest.raises(Exception):
+        m.fit(docs, group=group, control=control[:-5], iters=10)
+    # not constant within an author: flip one document's control within author a00
+    bad = list(control)
+    first = group.index("a00")
+    bad[first] = "cX" if bad[first] != "cX" else "cY"
+    with pytest.raises(Exception):
+        m.fit(docs, group=group, control=bad, iters=10)
