@@ -5,6 +5,7 @@ These answer "how partisan / how real is the discovered axis?" from the model an
 text alone, with no external scale (no DW-NOMINATE, no party labels):
 
 - :func:`bimodality` — is the position distribution two-camped (polarized) vs one blob?
+- :func:`polarization` — how far apart are two (or more) known camps on the axis?
 - :func:`split_half_reliability` — refit the scale on two disjoint halves of each
   author's documents and correlate; this is how reproducible (hence real) the axis is.
 
@@ -19,7 +20,7 @@ from collections import namedtuple
 
 import numpy as np
 
-__all__ = ["bimodality", "split_half_reliability", "position_intervals"]
+__all__ = ["bimodality", "polarization", "split_half_reliability", "position_intervals"]
 
 #: One author's position estimate with a bootstrap standard error and CI.
 PositionInterval = namedtuple("PositionInterval", "estimate se lo hi")
@@ -47,6 +48,79 @@ def bimodality(positions) -> float:
     kurt = np.mean(c ** 4) / m2 ** 2 - 3.0  # excess kurtosis
     denom = kurt + 3.0 * (n - 1) ** 2 / ((n - 2) * (n - 3))
     return float((skew ** 2 + 1.0) / denom)
+
+
+def polarization(positions, labels, *, normalize: bool = False) -> float:
+    """Between-camp polarization on a latent scale: the distance between the camps'
+    centroids.
+
+    The standard text-scaling polarization measure (Rheault and Cochrane 2020 use
+    the Euclidean distance between party embeddings; Wordfish-style scalers use the
+    gap between party means). It is model-agnostic: pass any fitted ideal-point
+    model's ``author_positions`` and a label per row assigning each author to a camp
+    (e.g. their party). Call it once per time slice / congress to trace polarization
+    over time.
+
+    Parameters
+    ----------
+    positions : array-like, shape ``(n,)`` or ``(n, d)``
+        The latent positions, e.g. ``model.author_positions`` (1-D uses the first
+        column; multi-D uses Euclidean distance in the full position space).
+    labels : sequence, length n
+        The camp of each position (e.g. party label of each author).
+    normalize : bool
+        When ``False`` (default), return the raw centroid distance, comparable
+        across time within one model's scale. When ``True``, divide by the pooled
+        within-camp standard deviation (an effect-size form, like Cohen's d on the
+        axis), comparable across corpora and model scales.
+
+    Returns
+    -------
+    float
+        For two camps, the distance between their centroids. For more than two, the
+        mean distance over all camp pairs. ``normalize=True`` divides by the pooled
+        within-camp spread.
+
+    Raises
+    ------
+    ValueError
+        If fewer than two distinct camps are present.
+    """
+    x = np.asarray(positions, dtype=float)
+    if x.ndim == 1:
+        x = x.reshape(-1, 1)
+    labels = list(labels)
+    if len(labels) != x.shape[0]:
+        raise ValueError(
+            f"labels length ({len(labels)}) must match positions rows ({x.shape[0]})"
+        )
+    camps: dict = {}
+    for i, lab in enumerate(labels):
+        camps.setdefault(lab, []).append(i)
+    if len(camps) < 2:
+        raise ValueError("polarization needs at least 2 distinct camps in labels")
+
+    keys = list(camps)
+    centroids = {k: x[camps[k]].mean(axis=0) for k in keys}
+    dists = [
+        float(np.linalg.norm(centroids[a] - centroids[b]))
+        for i, a in enumerate(keys)
+        for b in keys[i + 1:]
+    ]
+    dist = float(np.mean(dists))
+    if not normalize:
+        return dist
+
+    # pooled within-camp standard deviation (root mean squared distance of each
+    # point to its own camp centroid), the denominator of the effect-size form
+    ss, n = 0.0, 0
+    for k in keys:
+        c = centroids[k]
+        for i in camps[k]:
+            ss += float(np.sum((x[i] - c) ** 2))
+            n += 1
+    pooled_sd = (ss / n) ** 0.5 if n > 0 else 0.0
+    return dist / pooled_sd if pooled_sd > 0 else float("inf")
 
 
 def _positions_dict(labels, positions) -> dict:

@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- `topica.polarization(positions, labels)` — a model-agnostic ideal-point diagnostic:
+  the distance between named camps' centroids on any model's `author_positions` (1-D,
+  or Euclidean for a multi-dimensional fit), so polarization can be traced over time
+  (the Rheault & Cochrane 2020 party-distance metric). `normalize=True` gives an
+  effect-size form comparable across corpora. Joins `bimodality` /
+  `split_half_reliability` / `position_intervals` in `topica.scaling`.
 - `PartyEmbeddings` (#303) — **party embeddings** (Rheault & Cochrane 2020), the
   corpus-trained word-embedding member of the `ideal-point` family. A PV-DM
   (distributed-memory paragraph-vector) model trained by negative sampling with
