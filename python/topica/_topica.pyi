@@ -3668,15 +3668,18 @@ class KeyATM:
     def __repr__(self) -> str: ...
 
 class IdealPointTM:
-    """IdealPointTM, an embedded topic model with a latent ideal-point head
-    (EXPERIMENTAL, original construction). As in ETM each topic is a point in the
-    word-embedding space; IdealPointTM additionally estimates a low-dimensional
-    position per author and a loading per topic, so an author's position shifts
-    word choice *within* a topic (content), with a per-topic discrimination
-    (||W_k||) flagging which topics carry the cleavage. The position is latent and
-    estimated, making this the unsupervised, latent-trait twin of the STM content
-    covariate, and the embedding-native generalization of Wordfish (Slapin &
-    Proksch 2008). Gated behind topica.enable_experimental()."""
+    """IdealPointTM, a topic model with a latent ideal-point head (EXPERIMENTAL,
+    original construction). Each topic carries a per-author low-dimensional position
+    and a per-topic loading, so an author's position shifts word choice *within* a
+    topic (content), with a per-topic discrimination (||W_k||) flagging which topics
+    carry the cleavage. The position is latent and estimated, making this the
+    unsupervised, latent-trait twin of the STM content covariate.
+
+    IdealPointTM consumes word tokens in one of two representations, selected at fit
+    time by whether you pass `word_embeddings`: omit them and the topic-word matrix
+    is parameterized directly over the vocabulary (counts; "Wordfish with topics");
+    pass them and it is factored through word embeddings, as in ETM. Both are the
+    same model. Gated behind topica.enable_experimental()."""
 
     def __init__(
         self,
@@ -3689,36 +3692,47 @@ class IdealPointTM:
         w_prior_variance: float = 10.0,
         x_prior_variance: float = 1.0,
         max_inner: int = 15,
+        min_count: int = 1,
         seed: int = 42,
     ) -> None:
         """num_dims is the dimensionality d of the latent ideal point.
-        prior_variance is the Gaussian prior on the topic embeddings (weak, as
-        ETM); w_prior_variance regularizes the position loadings (smaller = more
-        shrinkage toward neutral topics); x_prior_variance is the prior on the
-        positions (1.0 matches the unit-variance standardization)."""
+        prior_variance is the Gaussian prior on the topic profiles (weak, as ETM);
+        w_prior_variance regularizes the position loadings (smaller = more shrinkage
+        toward neutral topics); x_prior_variance is the prior on the positions (1.0
+        matches the unit-variance standardization); min_count drops words below that
+        corpus frequency (count representation only; ignored when word_embeddings is
+        passed, where the vocabulary is supplied)."""
         ...
     def fit(
         self,
         data: Corpus | Sequence[Sequence[str]],
-        word_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
-        vocabulary: Sequence[str],
         *,
+        word_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]] | None = None,
+        vocabulary: Sequence[str] | None = None,
         group: Sequence[str] | None = None,
         anchors: dict[str, float] | None = None,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
     ) -> None:
-        """Fit on token documents plus word embeddings (len(vocabulary) x E) and
-        the aligned vocabulary, as in ETM. `group` is an optional list of author
-        labels (length num_docs): documents sharing a label share one latent
-        position; if omitted, each document is its own author. `anchors` is an
-        optional {author_label: value} mapping that orients the sign of the first
-        latent dimension. `iters` is the EM iteration count (default 50)."""
+        """Fit on token documents. Omit `word_embeddings` for the count
+        representation (the vocabulary is built from the corpus by min_count; do not
+        pass `vocabulary`). Pass `word_embeddings` (len(vocabulary) x E) with the
+        aligned `vocabulary` for the word-embedding representation, as in ETM.
+        `group` is an optional list of author labels (length num_docs): documents
+        sharing a label share one latent position; if omitted, each document is its
+        own author. `anchors` is an optional {author_label: value} mapping that
+        orients the sign of the first latent dimension. `iters` is the EM iteration
+        count (default 50)."""
         ...
     @property
     def num_topics(self) -> int: ...
     @property
     def num_dims(self) -> int: ...
+    @property
+    def representation(self) -> Optional[str]:
+        """"word2vec" if fitted with word_embeddings, "counts" if fitted without,
+        None if unfitted."""
+        ...
     @property
     def num_authors(self) -> int: ...
     @property
@@ -3751,9 +3765,11 @@ class IdealPointTM:
         ...
     @property
     def loadings(self) -> numpy.typing.NDArray[numpy.float64]:
-        """Position loadings W, shape (num_topics, num_dims*embedding_dim), row-
-        major over (dim, embedding). Per-topic discrimination directions; their
-        pairwise cosine shows whether topics share one axis or split on several."""
+        """Position loadings W, shape (num_topics, num_dims*feature_dim), row-major
+        over (dim, feature), where the feature dimension is the embedding dimension
+        (word-embedding representation) or the vocabulary (count representation).
+        Per-topic discrimination directions; their pairwise cosine shows whether
+        topics share one axis or split on several."""
         ...
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
@@ -3853,90 +3869,12 @@ class Wordfish:
     def __repr__(self) -> str: ...
 
 
-class IdealPointLDA:
-    """IdealPointLDA, the count-based twin of IdealPointTM (EXPERIMENTAL). A topic
-    model whose per-topic word distributions are displaced by a latent author ideal
-    point, parameterized directly over the vocabulary (every word its own dimension,
-    no embeddings) -- "Wordfish with topics". An author's position shifts word choice
-    within each topic; ||W_k|| is the topic's discrimination (less concentrated than
-    IdealPointTM's, since the loadings are full-vocabulary). Gated behind
-    topica.enable_experimental()."""
-
-    def __init__(
-        self,
-        num_topics: int,
-        *,
-        num_dims: int = 1,
-        convergence_tol: float = 1e-4,
-        sigma_shrink: float = 0.0,
-        prior_variance: float = 1e6,
-        w_prior_variance: float = 10.0,
-        x_prior_variance: float = 1.0,
-        max_inner: int = 15,
-        min_count: int = 1,
-        seed: int = 42,
-    ) -> None: ...
-    def fit(
-        self,
-        data: Corpus | Sequence[Sequence[str]],
-        *,
-        group: Sequence[str] | None = None,
-        anchors: dict[str, float] | None = None,
-        iters: int | None = None,
-        convergence_tol: float | None = None,
-    ) -> None: ...
-    @property
-    def num_topics(self) -> int: ...
-    @property
-    def num_dims(self) -> int: ...
-    @property
-    def num_authors(self) -> int: ...
-    @property
-    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
-    @property
-    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
-    @property
-    def author_positions(self) -> numpy.typing.NDArray[numpy.float64]: ...
-    @property
-    def author_names(self) -> list[str]: ...
-    @property
-    def topic_discrimination(self) -> numpy.typing.NDArray[numpy.float64]: ...
-    @property
-    def loadings(self) -> numpy.typing.NDArray[numpy.float64]: ...
-    def position_shift(
-        self, topic: int, *, n: int = 10, magnitude: float = 1.0, dim: int = 0,
-        weighting: str = "prob",
-    ) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]: ...
-    @property
-    def fit_history(self) -> list[tuple[int, float]]: ...
-    @property
-    def converged(self) -> bool | None: ...
-    @property
-    def bound(self) -> float: ...
-    @property
-    def iters_run(self) -> int: ...
-    @property
-    def topic_names(self) -> list[str]: ...
-    @topic_names.setter
-    def topic_names(self, names: Sequence[str]) -> None: ...
-    @property
-    def vocabulary(self) -> list[str]: ...
-    @property
-    def doc_names(self) -> list[str]: ...
-    def top_words(self, n: int = 10, *, topic: int | None = None) -> Any: ...
-    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
-    def save(self, path: str) -> None: ...
-    @staticmethod
-    def load(path: str) -> IdealPointLDA: ...
-    def __repr__(self) -> str: ...
-
-
-class SentenceIdealTM:
-    """SentenceIdealTM, a continuous ideal-point topic model over sentence or
+class IdealPointSentenceTM:
+    """IdealPointSentenceTM, a continuous ideal-point topic model over sentence or
     document embeddings (EXPERIMENTAL). Topics are Gaussian clusters in embedding
     space whose centroids are displaced by a latent author position
     (e ~ N(mu_k + x_a . V_k, sigma^2)); ||V_k|| is the topic's discrimination. The
-    embedding-native analog of IdealPointTM, fit by EM. Gated behind
+    sentence-embedding sibling of IdealPointTM, fit by EM. Gated behind
     topica.enable_experimental()."""
 
     def __init__(
@@ -3993,7 +3931,7 @@ class SentenceIdealTM:
     def topic_names(self, names: Sequence[str]) -> None: ...
     def save(self, path: str) -> None: ...
     @staticmethod
-    def load(path: str) -> SentenceIdealTM: ...
+    def load(path: str) -> IdealPointSentenceTM: ...
     def __repr__(self) -> str: ...
 
 

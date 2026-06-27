@@ -69,7 +69,6 @@ mod arrays;
 mod error;
 // Model legs (one pyclass family per file; each does `use super::*`).
 mod idealpoint;
-mod idealpoint_lda;
 mod nmf_lsa;
 mod party_embeddings;
 #[path = "corpus.rs"]
@@ -81,12 +80,11 @@ mod wordfish;
 use arrays::*;
 use error::*;
 use idealpoint::IdealPointTM;
-use idealpoint_lda::IdealPointLDA;
 use nmf_lsa::{LSA, NMF};
 use party_embeddings::PartyEmbeddings;
 use py_corpus::Corpus;
 use save::*;
-use sentence_ideal::SentenceIdealTM;
+use sentence_ideal::IdealPointSentenceTM;
 use tbip::TBIP;
 use wordfish::Wordfish;
 
@@ -18544,8 +18542,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BERTopic>()?;
     m.add_class::<ETM>()?;
     m.add_class::<IdealPointTM>()?;
-    m.add_class::<IdealPointLDA>()?;
-    m.add_class::<SentenceIdealTM>()?;
+    m.add_class::<IdealPointSentenceTM>()?;
     m.add_class::<TBIP>()?;
     m.add_class::<Wordfish>()?;
     m.add_class::<PartyEmbeddings>()?;

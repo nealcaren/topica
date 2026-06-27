@@ -1,7 +1,7 @@
-//! SentenceIdealTM: a continuous ideal-point topic model over sentence (or
+//! IdealPointSentenceTM: a continuous ideal-point topic model over sentence (or
 //! document) embeddings. The embedding-native analog of [`crate::idealpoint`]:
 //! where IdealPointTM displaces a topic's word *softmax* by the author's position,
-//! SentenceIdealTM displaces a topic's *centroid* in embedding space.
+//! IdealPointSentenceTM displaces a topic's *centroid* in embedding space.
 //!
 //! Each topic `k` is a Gaussian cluster with centroid `mu_k in R^D`; each author has
 //! a position `x_a in R^d`; each topic has a loading `V_{k,j} in R^D`. An embedding
@@ -21,7 +21,7 @@ use crate::linalg::spd_inverse;
 use rand::Rng;
 use rayon::prelude::*;
 
-/// A fitted SentenceIdealTM. `mu` (K x D) are the topic centroids at the neutral
+/// A fitted IdealPointSentenceTM. `mu` (K x D) are the topic centroids at the neutral
 /// position, `v` (K x d x D) the position loadings, `x` (A x d) the author
 /// positions, `resp` (N x K) the soft topic assignments, `pi` the mixture weights.
 pub struct SentenceIdealModel {
@@ -80,7 +80,7 @@ fn topic_mean(mu_k: &[f64], v_k: &[Vec<f64>], x_a: &[f64]) -> Vec<f64> {
     m
 }
 
-/// Fit SentenceIdealTM by EM. `emb` are the per-observation embeddings (N x D),
+/// Fit IdealPointSentenceTM by EM. `emb` are the per-observation embeddings (N x D),
 /// `group[i]` the author of observation `i`. `anchors` orient the sign of the first
 /// dimension. `x_prior_variance` is the Gaussian prior on the positions.
 #[allow(clippy::too_many_arguments)]

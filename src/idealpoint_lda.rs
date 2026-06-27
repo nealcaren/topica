@@ -1,7 +1,8 @@
-//! IdealPointLDA: the count-based twin of [`crate::idealpoint`] (IdealPointTM).
+//! The count representation of IdealPointTM (the binding merges both behind one
+//! pyclass; see [`crate::idealpoint`] for the word-embedding representation).
 //!
-//! Where IdealPointTM factors the topic-word matrix through word *embeddings*,
-//! IdealPointLDA parameterizes it directly over the vocabulary, so it is the
+//! Where the embedded core factors the topic-word matrix through word *embeddings*,
+//! this one parameterizes it directly over the vocabulary, so it is the
 //! identity-embedding (every word its own dimension) case of the same model:
 //!
 //! ```text
@@ -52,7 +53,7 @@ fn topic_beta(alpha_k: &[f64], w_k: &[Vec<f64>], x_a: &[f64]) -> Vec<f64> {
     eta.iter().map(|e| (e - max).exp() / z).collect()
 }
 
-/// A fitted IdealPointLDA. `beta0` (K x V) is the topic-word matrix at `x = 0`;
+/// A fitted count-representation model. `beta0` (K x V) is the topic-word matrix at `x = 0`;
 /// `alpha` (K x V) the topic log-profiles, `w` (K x d x V) the position loadings,
 /// `x` (A x d) the author positions.
 pub struct IdealPointLdaModel {
@@ -110,7 +111,7 @@ impl IdealPointLdaModel {
     }
 }
 
-/// Fit IdealPointLDA by variational EM. `group[d]` maps document `d` to its author.
+/// Fit the count representation by variational EM. `group[d]` maps document `d` to its author.
 /// `anchors` are `(author, target)` pairs orienting the sign of the first latent
 /// dimension. The prior variances are Gaussian priors on `alpha`, the loadings `W`,
 /// and the positions `x`.

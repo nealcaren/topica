@@ -1,4 +1,4 @@
-//! SentenceIdealTM pyclass: a continuous ideal-point topic model over sentence (or
+//! IdealPointSentenceTM pyclass: a continuous ideal-point topic model over sentence (or
 //! document) embeddings. Topics are Gaussian clusters whose centroids are displaced
 //! by the author's latent position. The embedding-native analog of IdealPointTM.
 //! Experimental, gated. `use super::*` pulls in the shared bindings.
@@ -8,7 +8,7 @@ use crate::sentence_ideal::{self, SentenceIdealModel};
 use std::collections::HashMap;
 
 #[pyclass(module = "topica")]
-pub struct SentenceIdealTM {
+pub struct IdealPointSentenceTM {
     num_topics: usize,
     num_dims: usize,
     convergence_tol: f64,
@@ -45,7 +45,7 @@ struct SentenceIdealState {
     iters_run: Option<usize>,
 }
 
-impl SentenceIdealTM {
+impl IdealPointSentenceTM {
     fn fitted_model(&self) -> PyResult<&SentenceIdealModel> {
         self.model
             .as_ref()
@@ -54,7 +54,7 @@ impl SentenceIdealTM {
 }
 
 #[pymethods]
-impl SentenceIdealTM {
+impl IdealPointSentenceTM {
     /// Create an unfitted model. `num_topics` is K (>= 2); `num_dims` the latent
     /// ideal-point dimensionality (default 1). `x_prior_variance` is the Gaussian
     /// prior on the positions (1.0 matches the unit-variance standardization).
@@ -69,7 +69,7 @@ impl SentenceIdealTM {
         x_prior_variance: f64,
         seed: u64,
     ) -> PyResult<Self> {
-        require_experimental("SentenceIdealTM")?;
+        require_experimental("IdealPointSentenceTM")?;
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
@@ -79,7 +79,7 @@ impl SentenceIdealTM {
         if !finite_pos(x_prior_variance) {
             return Err(PyValueError::new_err("x_prior_variance must be > 0"));
         }
-        Ok(SentenceIdealTM {
+        Ok(IdealPointSentenceTM {
             num_topics,
             num_dims,
             convergence_tol,
@@ -149,7 +149,7 @@ impl SentenceIdealTM {
         let num_authors = author_names.len();
         if num_authors < 2 {
             return Err(PyValueError::new_err(
-                "SentenceIdealTM needs at least 2 authors/observations to scale",
+                "IdealPointSentenceTM needs at least 2 authors/observations to scale",
             ));
         }
 
@@ -331,7 +331,7 @@ impl SentenceIdealTM {
 
     #[staticmethod]
     fn load(path: &str) -> PyResult<Self> {
-        require_experimental("SentenceIdealTM")?;
+        require_experimental("IdealPointSentenceTM")?;
         let s: SentenceIdealState = read_state(path, MODEL_TAG_SENTENCE_IDEAL)?;
         let model = if s.fitted && s.mu.is_some() {
             Some(SentenceIdealModel {
@@ -354,7 +354,7 @@ impl SentenceIdealTM {
         } else {
             None
         };
-        Ok(SentenceIdealTM {
+        Ok(IdealPointSentenceTM {
             num_topics: s.num_topics,
             num_dims: s.num_dims,
             convergence_tol: s.convergence_tol,
@@ -369,7 +369,7 @@ impl SentenceIdealTM {
 
     fn __repr__(&self) -> String {
         format!(
-            "SentenceIdealTM(num_topics={}, num_dims={}, fitted={})",
+            "IdealPointSentenceTM(num_topics={}, num_dims={}, fitted={})",
             self.num_topics, self.num_dims, self.fitted
         )
     }
