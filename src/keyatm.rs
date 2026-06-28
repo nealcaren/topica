@@ -1708,10 +1708,11 @@ fn covariate_lambda_se(
                 mc[ff][ff] / feat_sd[ff]
             };
             let clamped = lambda_std[k][ff].abs() >= LAMBDA_BOUND - bound_tol;
-            se[k][ff] = if clamped || !(var > 0.0) {
-                f64::NAN
-            } else {
+            // A clamped coefficient, or a non-positive/NaN variance, has no valid SE.
+            se[k][ff] = if !clamped && var > 0.0 {
                 var.sqrt()
+            } else {
+                f64::NAN
             };
         }
     }
@@ -2543,9 +2544,7 @@ mod tests {
             }
         }
 
-        let se = covariate_lambda_se(
-            &lambda_std, &fstd, &counts, t, f, sigma2, &mean, &sd, None,
-        );
+        let se = covariate_lambda_se(&lambda_std, &fstd, &counts, t, f, sigma2, &mean, &sd, None);
         for k in 0..t {
             for ff in 0..f {
                 assert!(
@@ -2560,9 +2559,7 @@ mod tests {
         // A coefficient at the ±LAMBDA_BOUND clamp is flagged NaN.
         let mut clamped = lambda_std.clone();
         clamped[1][2] = LAMBDA_BOUND;
-        let se_c = covariate_lambda_se(
-            &clamped, &fstd, &counts, t, f, sigma2, &mean, &sd, None,
-        );
+        let se_c = covariate_lambda_se(&clamped, &fstd, &counts, t, f, sigma2, &mean, &sd, None);
         assert!(se_c[1][2].is_nan(), "clamped λ must give NaN SE");
         assert!(se_c[0][0].is_finite(), "unclamped entries stay finite");
     }
