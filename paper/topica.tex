@@ -129,7 +129,7 @@ without \pkg{PyTorch} (Section~\ref{sec:performance}).
 deterministic to the bit even when multithreaded, and the sampling models are
 reproducible from a fixed seed and thread count (Section~\ref{sec:design}).
 \item \textbf{Reference validation.} Each model is checked against its original
-implementation, and we report the agreement honestly, including where two correct
+implementation, and we report the agreement as measured, including where two correct
 engines disagree because the model is non-convex (Section~\ref{sec:validation}).
 \end{enumerate}
 
@@ -465,7 +465,7 @@ supports held-out inference rather than only \code{LDA}.
 trade-off, and because a single fit of a non-convex model can land on a poor
 local optimum, \code{topica.select\_model} fits several models at a fixed $K$
 under different seeds and returns them with their per-run coherence and
-exclusivity, for the researcher to choose among. The honest procedure is to
+exclusivity, for the researcher to choose among. The procedure we recommend is to
 fit a small range around a theoretically plausible $K$, label the topics at each,
 count the uninterpretable ones, and let the researcher choose, reporting
 sensitivity to that choice.
@@ -577,11 +577,11 @@ fitted model into publication figures. A single call to \code{topica.plot\_repor
 (or the interactive \code{dashboard}) assembles a composite report from
 \code{topic\_word} and \code{doc\_topic} alone, so the same report renders for
 every model in the family; Figure~\ref{fig:report} shows it for the poliblog
-\code{STM}. The toolkit is built to be an \emph{honest} successor to \pkg{LDAvis}
+\code{STM}. The toolkit is built to be a \emph{disciplined} successor to \pkg{LDAvis}
 \citep{sievert2014ldavis}: it draws confidence bands only where a posterior
 exists, labels each topic-word weight for what it is, reports a closure-corrected
 topic correlation rather than the spuriously strong raw version, flags \emph{dead}
-and near-duplicate topics, and refuses panels a model cannot honestly support: a
+and near-duplicate topics, and refuses panels a model cannot support: a
 clustering of embeddings with no posterior over $\theta$ gets no uncertainty
 ribbons. Interactive views render through \pkg{Plotly}, and
 \code{topica.prepare\_pyldavis} still feeds the original \pkg{LDAvis} when wanted.
