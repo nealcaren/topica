@@ -37,8 +37,8 @@ of it. \pkg{topica} is built around the premise that the researcher, not the
 software, owns the theoretical decisions that make a topic-model study
 credible: what the corpus represents, how many topics is the right granularity,
 and what each topic means. The software supplies the mechanics and the
-diagnostics to support those decisions, declining, for instance, to report
-confidence intervals for a model that has no posterior to draw them from. A parallel \proglang{Rust} core
+diagnostics to support those decisions, and matches the uncertainty it reports to
+what each model can support. A parallel \proglang{Rust} core
 makes the fits fast and reproducible. Fit to convergence, the structural and other
 variational models run roughly one and a half to three times faster than
 \proglang{R} \pkg{stm} on a single core and five to seven times faster on a typical
@@ -132,18 +132,6 @@ reproducible from a fixed seed and thread count (Section~\ref{sec:design}).
 implementation, and we report the agreement honestly, including where two correct
 engines disagree because the model is non-convex (Section~\ref{sec:validation}).
 \end{enumerate}
-
-A fifth commitment runs through the design rather than appearing as a feature.
-A topic model is a measurement instrument, not a discovery oracle, and the
-decisions that make a topic-model study credible are theoretical: what the corpus
-represents, how many topics is the right granularity for the question, what each
-topic means, which covariates belong in the model, and whether a pattern is
-substantively interesting. \pkg{topica} is built so that the researcher makes
-those decisions and the software supplies the mechanics and the diagnostics
-to support them (Section~\ref{sec:workflow}). The library refuses to
-manufacture certainty the data does not support: it declines to report confidence
-intervals for a model that has no posterior to draw them from, rather than
-returning a plausible-looking number.
 
 %% ===========================================================================
 \section{Related software}\label{sec:related}
@@ -1009,12 +997,11 @@ the collapsed-Gibbs LDA and logistic-normal $\theta$ for the variational STM, so
 each conservative effect arrives with a method-of-composition interval rather than
 a bare point. Where two model families agree, within their intervals, on which
 topics are partisan, that agreement is a cross-model robustness check no
-single-model tool can pose; and the same call, asked of the embedding clustering
-of Table~\ref{tab:spanning}, finds no posterior over $\theta$ and declines the
-interval rather than manufacture one. This is the measurement stance of
-Section~\ref{sec:design} made operational: uncertainty is propagated from topic
-estimation into the effect where a posterior exists, and withheld where it does
-not, uniformly across the model family.
+single-model tool can pose. The embedding clustering of Table~\ref{tab:spanning}
+has no posterior over $\theta$ to draw from, so its effect uncertainty comes from
+the bootstrap rather than the method of composition. Across the family, then,
+every effect carries an interval matched to what the model supports: propagated
+from a posterior where one exists, and from resampling where it does not.
 
 \subsection{One model in depth: covariate effects and their uncertainty}
 
