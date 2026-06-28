@@ -1,7 +1,7 @@
 # topica paper: reproduction report
 
-- Date: 2026-06-17 — machine-independent (§5 parity + §7), macOS 15 / Apple M3 Max, topica 0.23.1
-- topica: 0.23.1
+- Date: 2026-06-27
+- topica: 0.32.0
 - Machine: macOS-26.5.1-arm64-arm-64bit-Mach-O, 14 cores (arm)
 - Toolchains: Rscript=yes, R:stm=yes, R:keyATM=yes, java=yes, mallet=yes
 
@@ -11,12 +11,14 @@
 
 | Step | Section | Status | Time |
 |---|---|---|---|
-| worked_example | 7 | OK | 20s |
-| stm_prevalence | 5 | OK | 433s |
+| worked_example | 7 | OK | 22s |
+| stm_prevalence | 5 | OK | 452s |
 | stm_content | 5 | OK | 2s |
-| keyatm | 5 | OK | 113s |
-| sts | 5 | OK | 327s |
+| keyatm | 5 | OK | 125s |
+| sts | 5 | OK | 582s |
 | mallet_lda | 5 | OK | 2s |
+| weights_ame | 5 | OK | 1s |
+| validation_appendix | 5 | OK | 976s |
 
 ## Paper claims to update
 
@@ -27,6 +29,7 @@
 | 5 | keyATM agreement with R keyATM | log: keyatm |
 | 5 | STS benchmarks vs the sts package | log: sts |
 | 5 | LDA vs Java MALLET (cosine / Jaccard) | log: mallet_lda |
+| A | Side-by-side reference tables (Appendix A) | tex: generated/validation_appendix.tex + log: validation_appendix |
 | 6 | STM 3-22x faster than R stm (single / multi-thread) | json: bench_results.json + speed_vs_r |
 | 6 | LDA at parity with MALLET; multithread speedup grows with size | json: bench_results.json, speed_vs_size.json |
 | 6 | keyATM ~2x multithreaded vs R keyATM | json: bench_results.json |
@@ -45,270 +48,270 @@
     "vocab": 2632,
     "model": "stm",
     "threads": 1,
-    "topica_time": 1.7322174169821665,
-    "ref_time": 21.452,
-    "topica_rss_mb": 299.28125,
-    "ref_rss_mb": 1476.953125
+    "topica_time": 1.921349000011105,
+    "ref_time": 20.717,
+    "topica_rss_mb": 290.203125,
+    "ref_rss_mb": 1453.078125
   },
   {
     "n_docs": 2000,
     "vocab": 2632,
     "model": "keyatm",
     "threads": 1,
-    "topica_time": 22.513707582984352,
-    "ref_time": 24.391,
-    "topica_rss_mb": 104.109375,
-    "ref_rss_mb": 421.109375
-  },
-  {
-    "n_docs": 2000,
-    "vocab": 2632,
-    "model": "keyatm",
-    "threads": 2,
-    "topica_time": 17.15082637500018,
-    "ref_time": 23.003,
-    "topica_rss_mb": 116.609375,
-    "ref_rss_mb": 375.6875
-  },
-  {
-    "n_docs": 2000,
-    "vocab": 2632,
-    "model": "keyatm",
-    "threads": 4,
-    "topica_time": 11.681865041988203,
-    "ref_time": 23.014,
-    "topica_rss_mb": 117.859375,
-    "ref_rss_mb": 398.75
-  },
-  {
-    "n_docs": 2000,
-    "vocab": 2632,
-    "model": "keyatm",
-    "threads": 8,
-    "topica_time": 11.057358999998542,
-    "ref_time": 23.342,
-    "topica_rss_mb": 115.921875,
-    "ref_rss_mb": 413.46875
-  },
-  {
-    "n_docs": 2000,
-    "vocab": 2632,
-    "model": "lda",
-    "threads": 1,
-    "topica_time": 17.876091749989428,
-    "ref_time": 18.918263915984426,
+    "topica_time": 22.53854133299319,
+    "ref_time": 23.037,
     "topica_rss_mb": 104.484375,
-    "ref_rss_mb": 94.265625
+    "ref_rss_mb": 414.15625
+  },
+  {
+    "n_docs": 2000,
+    "vocab": 2632,
+    "model": "keyatm",
+    "threads": 2,
+    "topica_time": 17.42804641701514,
+    "ref_time": 23.447,
+    "topica_rss_mb": 116.375,
+    "ref_rss_mb": 408.203125
+  },
+  {
+    "n_docs": 2000,
+    "vocab": 2632,
+    "model": "keyatm",
+    "threads": 4,
+    "topica_time": 13.616511999978684,
+    "ref_time": 23.514,
+    "topica_rss_mb": 113.90625,
+    "ref_rss_mb": 384.4375
+  },
+  {
+    "n_docs": 2000,
+    "vocab": 2632,
+    "model": "keyatm",
+    "threads": 8,
+    "topica_time": 10.9513549170224,
+    "ref_time": 23.083,
+    "topica_rss_mb": 115.8125,
+    "ref_rss_mb": 396.140625
+  },
+  {
+    "n_docs": 2000,
+    "vocab": 2632,
+    "model": "lda",
+    "threads": 1,
+    "topica_time": 17.947071541973855,
+    "ref_time": 19.069887332967483,
+    "topica_rss_mb": 105.03125,
+    "ref_rss_mb": 97.9375
   },
   {
     "n_docs": 2000,
     "vocab": 2632,
     "model": "lda",
     "threads": 2,
-    "topica_time": 11.125859375024447,
-    "ref_time": 13.594176374987,
-    "topica_rss_mb": 112.234375,
-    "ref_rss_mb": 102.671875
+    "topica_time": 11.314257959020324,
+    "ref_time": 13.631589125026949,
+    "topica_rss_mb": 111.15625,
+    "ref_rss_mb": 99.421875
   },
   {
     "n_docs": 2000,
     "vocab": 2632,
     "model": "lda",
     "threads": 4,
-    "topica_time": 8.385870208003325,
-    "ref_time": 8.084937165986048,
-    "topica_rss_mb": 113.109375,
-    "ref_rss_mb": 102.125
+    "topica_time": 7.671337541018147,
+    "ref_time": 8.033928457996808,
+    "topica_rss_mb": 112.40625,
+    "ref_rss_mb": 102.875
   },
   {
     "n_docs": 2000,
     "vocab": 2632,
     "model": "lda",
     "threads": 8,
-    "topica_time": 5.723200000007637,
-    "ref_time": 6.250574208010221,
-    "topica_rss_mb": 108.0,
-    "ref_rss_mb": 105.109375
+    "topica_time": 5.71411016600905,
+    "ref_time": 4.77178237499902,
+    "topica_rss_mb": 111.953125,
+    "ref_rss_mb": 105.1875
   },
   {
     "n_docs": 3500,
     "vocab": 2632,
     "model": "stm",
     "threads": 1,
-    "topica_time": 2.7588249999971595,
-    "ref_time": 29.493,
-    "topica_rss_mb": 390.046875,
-    "ref_rss_mb": 1551.859375
+    "topica_time": 2.8674497079919092,
+    "ref_time": 29.482,
+    "topica_rss_mb": 382.75,
+    "ref_rss_mb": 1520.765625
   },
   {
     "n_docs": 3500,
     "vocab": 2632,
     "model": "keyatm",
     "threads": 1,
-    "topica_time": 41.472926499991445,
+    "topica_time": 41.11587099998724,
+    "ref_time": 43.292,
+    "topica_rss_mb": 145.328125,
+    "ref_rss_mb": 549.625
+  },
+  {
+    "n_docs": 3500,
+    "vocab": 2632,
+    "model": "keyatm",
+    "threads": 2,
+    "topica_time": 32.25427745800698,
+    "ref_time": 42.939,
+    "topica_rss_mb": 171.140625,
+    "ref_rss_mb": 536.640625
+  },
+  {
+    "n_docs": 3500,
+    "vocab": 2632,
+    "model": "keyatm",
+    "threads": 4,
+    "topica_time": 24.82255283300765,
+    "ref_time": 42.729,
+    "topica_rss_mb": 175.5,
+    "ref_rss_mb": 528.515625
+  },
+  {
+    "n_docs": 3500,
+    "vocab": 2632,
+    "model": "keyatm",
+    "threads": 8,
+    "topica_time": 20.87278916698415,
     "ref_time": 42.082,
-    "topica_rss_mb": 145.859375,
-    "ref_rss_mb": 585.359375
-  },
-  {
-    "n_docs": 3500,
-    "vocab": 2632,
-    "model": "keyatm",
-    "threads": 2,
-    "topica_time": 30.621552583004814,
-    "ref_time": 43.189,
-    "topica_rss_mb": 172.328125,
-    "ref_rss_mb": 543.046875
-  },
-  {
-    "n_docs": 3500,
-    "vocab": 2632,
-    "model": "keyatm",
-    "threads": 4,
-    "topica_time": 25.898009625001578,
-    "ref_time": 42.986,
-    "topica_rss_mb": 183.234375,
-    "ref_rss_mb": 544.03125
-  },
-  {
-    "n_docs": 3500,
-    "vocab": 2632,
-    "model": "keyatm",
-    "threads": 8,
-    "topica_time": 21.606027624977287,
-    "ref_time": 45.562,
-    "topica_rss_mb": 175.109375,
-    "ref_rss_mb": 571.453125
+    "topica_rss_mb": 172.9375,
+    "ref_rss_mb": 504.03125
   },
   {
     "n_docs": 3500,
     "vocab": 2632,
     "model": "lda",
     "threads": 1,
-    "topica_time": 34.070702291006455,
-    "ref_time": 36.27563445799751,
-    "topica_rss_mb": 146.609375,
-    "ref_rss_mb": 97.796875
+    "topica_time": 34.029078709019814,
+    "ref_time": 34.84574341698317,
+    "topica_rss_mb": 150.15625,
+    "ref_rss_mb": 96.546875
   },
   {
     "n_docs": 3500,
     "vocab": 2632,
     "model": "lda",
     "threads": 2,
-    "topica_time": 22.886093165987404,
-    "ref_time": 26.90651495900238,
-    "topica_rss_mb": 160.609375,
-    "ref_rss_mb": 103.125
+    "topica_time": 20.690476707997732,
+    "ref_time": 25.35564358299598,
+    "topica_rss_mb": 156.78125,
+    "ref_rss_mb": 99.140625
   },
   {
     "n_docs": 3500,
     "vocab": 2632,
     "model": "lda",
     "threads": 4,
-    "topica_time": 14.397758000006434,
-    "ref_time": 15.45437354198657,
-    "topica_rss_mb": 160.265625,
-    "ref_rss_mb": 102.578125
+    "topica_time": 14.452566375024617,
+    "ref_time": 15.098499416024424,
+    "topica_rss_mb": 160.15625,
+    "ref_rss_mb": 100.90625
   },
   {
     "n_docs": 3500,
     "vocab": 2632,
     "model": "lda",
     "threads": 8,
-    "topica_time": 9.673319875000743,
-    "ref_time": 9.94051041698549,
-    "topica_rss_mb": 160.90625,
-    "ref_rss_mb": 158.78125
+    "topica_time": 8.978368333016988,
+    "ref_time": 8.348230708041228,
+    "topica_rss_mb": 161.140625,
+    "ref_rss_mb": 160.765625
   },
   {
     "n_docs": 5000,
     "vocab": 2632,
     "model": "stm",
     "threads": 1,
-    "topica_time": 3.797926583007211,
-    "ref_time": 37.684,
-    "topica_rss_mb": 481.96875,
-    "ref_rss_mb": 1616.203125
+    "topica_time": 3.807014291989617,
+    "ref_time": 36.604,
+    "topica_rss_mb": 476.375,
+    "ref_rss_mb": 1613.328125
   },
   {
     "n_docs": 5000,
     "vocab": 2632,
     "model": "keyatm",
     "threads": 1,
-    "topica_time": 59.32411062499159,
-    "ref_time": 66.397,
-    "topica_rss_mb": 189.421875,
-    "ref_rss_mb": 641.890625
+    "topica_time": 58.72746412502602,
+    "ref_time": 61.45,
+    "topica_rss_mb": 190.046875,
+    "ref_rss_mb": 567.125
   },
   {
     "n_docs": 5000,
     "vocab": 2632,
     "model": "keyatm",
     "threads": 2,
-    "topica_time": 43.984526209009346,
-    "ref_time": 63.107,
-    "topica_rss_mb": 225.21875,
-    "ref_rss_mb": 645.234375
+    "topica_time": 45.440015415952075,
+    "ref_time": 60.835,
+    "topica_rss_mb": 234.96875,
+    "ref_rss_mb": 612.140625
   },
   {
     "n_docs": 5000,
     "vocab": 2632,
     "model": "keyatm",
     "threads": 4,
-    "topica_time": 34.38470445902203,
-    "ref_time": 63.092,
-    "topica_rss_mb": 246.4375,
-    "ref_rss_mb": 628.734375
+    "topica_time": 35.95400870795129,
+    "ref_time": 62.685,
+    "topica_rss_mb": 237.765625,
+    "ref_rss_mb": 589.671875
   },
   {
     "n_docs": 5000,
     "vocab": 2632,
     "model": "keyatm",
     "threads": 8,
-    "topica_time": 27.370394833007595,
-    "ref_time": 60.918,
-    "topica_rss_mb": 242.09375,
-    "ref_rss_mb": 625.0625
+    "topica_time": 30.366369833005592,
+    "ref_time": 60.874,
+    "topica_rss_mb": 226.15625,
+    "ref_rss_mb": 652.234375
   },
   {
     "n_docs": 5000,
     "vocab": 2632,
     "model": "lda",
     "threads": 1,
-    "topica_time": 50.42945162500837,
-    "ref_time": 51.369629041000735,
-    "topica_rss_mb": 202.1875,
-    "ref_rss_mb": 101.171875
+    "topica_time": 50.157592834031675,
+    "ref_time": 52.266874750028364,
+    "topica_rss_mb": 189.484375,
+    "ref_rss_mb": 103.78125
   },
   {
     "n_docs": 5000,
     "vocab": 2632,
     "model": "lda",
     "threads": 2,
-    "topica_time": 29.983983541984344,
-    "ref_time": 35.693671334011015,
-    "topica_rss_mb": 214.3125,
-    "ref_rss_mb": 105.328125
+    "topica_time": 29.427663874987047,
+    "ref_time": 35.8862297089654,
+    "topica_rss_mb": 214.375,
+    "ref_rss_mb": 108.390625
   },
   {
     "n_docs": 5000,
     "vocab": 2632,
     "model": "lda",
     "threads": 4,
-    "topica_time": 20.624890999984927,
-    "ref_time": 19.69585795799503,
-    "topica_rss_mb": 214.609375,
-    "ref_rss_mb": 104.625
+    "topica_time": 19.722003375005443,
+    "ref_time": 20.24327491701115,
+    "topica_rss_mb": 210.21875,
+    "ref_rss_mb": 105.375
   },
   {
     "n_docs": 5000,
     "vocab": 2632,
     "model": "lda",
     "threads": 8,
-    "topica_time": 14.239972958981525,
-    "ref_time": 20.023035541002173,
-    "topica_rss_mb": 215.734375,
-    "ref_rss_mb": 159.328125
+    "topica_time": 12.981792000005953,
+    "ref_time": 21.236610917025246,
+    "topica_rss_mb": 214.640625,
+    "ref_rss_mb": 161.890625
   }
 ]
 ```
@@ -390,44 +393,44 @@
   "variants": {
     "laplace_keep": {
       "time": [
-        1.3647,
-        3.9059,
-        13.794,
-        91.6225
+        0.6927,
+        2.1617,
+        6.905,
+        30.6251
       ],
       "rss": [
-        230.046875,
-        618.4375,
-        1415.34375,
-        3987.40625
+        230.21875,
+        518.6875,
+        1349.296875,
+        3657.21875
       ]
     },
     "laplace_nokeep": {
       "time": [
-        0.7007,
-        2.409,
-        8.6724,
-        58.8754
+        0.6574,
+        2.1018,
+        6.7972,
+        29.6441
       ],
       "rss": [
-        187.390625,
-        362.78125,
-        380.546875,
-        411.203125
+        190.515625,
+        374.890625,
+        392.125,
+        399.03125
       ]
     },
     "diagonal_keep": {
       "time": [
-        0.6035,
-        1.6623,
-        3.8724,
-        12.8205
+        0.6189,
+        1.8386,
+        5.0796,
+        16.9477
       ],
       "rss": [
-        230.125,
-        619.375,
-        1053.1875,
-        3735.40625
+        214.625,
+        622.484375,
+        1357.6875,
+        4242.40625
       ]
     }
   }
@@ -556,16 +559,16 @@
 ========================================================================
 Spanning comparison: different model families, one scoring loop
 ========================================================================
-  fit LDA        K=15   11.0s
-  fit CTM        K=15    1.0s
-  fit STM        K=15    0.9s
-  fit BERTopic   K=3     2.6s
+  fit LDA        K=15   12.0s
+  fit CTM        K=15    1.2s
+  fit STM        K=15    1.2s
+  fit BERTopic   K=3     2.9s
   model       K   coherence(c_v)  exclusivity  diversity
   --------------------------------------------------------
-  LDA        15        0.365        0.580     0.717
-  CTM        15        0.351        0.446     0.579
-  STM        15        0.350        0.435     0.565
-  BERTopic   3         0.459        0.526     0.693
+  LDA        15        0.365        9.723     0.717
+  CTM        15        0.365        9.476     0.589
+  STM        15        0.366        9.474     0.581
+  BERTopic   3         0.459        7.464     0.693
 ========================================================================
 STM covariate-effect figure (fig_poliblog_effect.pdf)
 ========================================================================
@@ -573,41 +576,41 @@ STM covariate-effect figure (fig_poliblog_effect.pdf)
   wrote /Users/nealcaren/Documents/GitHub/topica/paper/fig_poliblog_effect.pdf
   wrote /Users/nealcaren/Documents/GitHub/topica/paper/fig_poliblog_report.pdf
   Per-topic effect of conservative rating on prevalence:
-    topic  7 mccain, sen, joe               coef=-0.0843  [-0.0943, -0.0744]
-    topic  6 rove, tortur, administr        coef=-0.0652  [-0.0770, -0.0533]
-    topic 13 hillari, clinton, deleg        coef=-0.0226  [-0.0339, -0.0113]
-    topic 10 republican, parti, democrat    coef=-0.0115  [-0.0221, -0.0009]
-    topic  9 iraqi, iraq, afghanistan       coef=-0.0083  [-0.0210, +0.0044]
-    topic  0 poll, margin, percent          coef=-0.0062  [-0.0193, +0.0068]
-    topic  5 billion, price, market         coef=-0.0028  [-0.0178, +0.0122]
-    topic  2 school, abort, children        coef=-0.0020  [-0.0134, +0.0095]
-    topic 14 romney, huckabe, reagan        coef=+0.0095  [+0.0028, +0.0161]
-    topic 12 blagojevich, investig, governo coef=+0.0139  [+0.0015, +0.0264]
-    topic 11 pentagon, russia, build        coef=+0.0170  [+0.0081, +0.0258]
-    topic  8 ballot, immigr, franken        coef=+0.0179  [+0.0078, +0.0281]
-    topic  4 media, stori, coverag          coef=+0.0431  [+0.0274, +0.0587]
-    topic  3 wright, barack, ayer           coef=+0.0458  [+0.0344, +0.0571]
-    topic  1 israel, isra, hama             coef=+0.0557  [+0.0437, +0.0677]
+    topic  7 sen, mccain, lieberman         coef=-0.0844  [-0.0941, -0.0747]
+    topic  6 rove, tortur, cheney           coef=-0.0653  [-0.0771, -0.0534]
+    topic 13 hillari, clinton, primari      coef=-0.0198  [-0.0309, -0.0088]
+    topic 10 republican, parti, democrat    coef=-0.0119  [-0.0223, -0.0015]
+    topic  0 poll, margin, percent          coef=-0.0071  [-0.0200, +0.0059]
+    topic  9 iraqi, iraq, afghanistan       coef=-0.0057  [-0.0184, +0.0071]
+    topic  5 billion, price, market         coef=-0.0030  [-0.0179, +0.0120]
+    topic  2 school, abort, gay             coef=-0.0016  [-0.0130, +0.0097]
+    topic 14 romney, huckabe, reagan        coef=+0.0086  [+0.0018, +0.0154]
+    topic 12 blagojevich, investig, governo coef=+0.0143  [+0.0022, +0.0265]
+    topic 11 pentagon, russia, build        coef=+0.0147  [+0.0056, +0.0237]
+    topic  8 ballot, immigr, franken        coef=+0.0190  [+0.0090, +0.0289]
+    topic  4 media, matthew, stori          coef=+0.0428  [+0.0274, +0.0582]
+    topic  3 wright, barack, obama          coef=+0.0448  [+0.0336, +0.0560]
+    topic  1 isra, israel, hama             coef=+0.0546  [+0.0427, +0.0664]
 ```
 
 ### §5 stm_prevalence — OK
 
 ```
 corpus: 2000 docs, 2632 vocab, K=20
-topica EM: converged after 40 iterations (em_tol=1e-5)
-R-Spectral vs topica-Spectral cosine      : 0.974
+topica EM: converged after 36 iterations (em_tol=1e-5)
+R-Spectral vs topica-Spectral cosine      : 0.975
 R-Spectral vs R-Random (within-R basins)   : 0.611
 R Random-vs-Random self-consistency        : 0.618
-per-topic cosine: min 0.863  median 0.994  max 0.999
-PASS — topica reproduces R's Spectral solution (cosine 0.974)
+per-topic cosine: min 0.858  median 0.994  max 0.999
+PASS — topica reproduces R's Spectral solution (cosine 0.975)
 ```
 
 ### §5 stm_content — OK
 
 ```
 R levels ['de', 'en'] | topica groups ['de', 'en']
-  de: R sep=0.032 tt sep=0.063 cosine=1.000
-  en: R sep=0.037 tt sep=0.067 cosine=0.999
+  de: R sep=0.032 tt sep=0.081 cosine=1.000
+  en: R sep=0.037 tt sep=0.091 cosine=0.999
 ```
 
 ### §5 keyatm — OK
@@ -624,10 +627,10 @@ PASS — topica's keyword topics match R's as well as R matches itself across se
 ```
   vocab regen=6366 fit=6365 shared=6365 overlap=1.0000
 docs=13246  vocab=6365  K=5
-topica-STS vs R-STS:  0.931  (chance 0.084, top-10 Jaccard 0.624)
-topica-STM vs R-STM:  0.973  <- cross-implementation baseline
+topica-STS vs R-STS:  0.930  (chance 0.083, top-10 Jaccard 0.624)
+topica-STM vs R-STM:  0.976  <- cross-implementation baseline
 R-STS   vs R-STM:     0.959  <- same-ecosystem ceiling
-topica-STS vs topica-STM: 0.935  <- STS extends STM
+topica-STS vs topica-STM: 0.934  <- STS extends STM
 OK: topica STS recovers the published poliblog topics, as faithfully as STM does.
 ```
 
@@ -637,4 +640,50 @@ OK: topica STS recovers the published poliblog topics, as faithfully as STM does
 LDA        vs MALLET: Jaccard=1.000 cosine=1.000
 LabeledLDA vs MALLET: cosine=1.000
 DMR        vs MALLET: topic cosine=1.000 effect MALLET=+5.69 ours=+6.77
+```
+
+### §5 weights_ame — OK
+
+```
+quantity               topica      faSTM (R)     |diff|
+b_int              0.30201725     0.30201725   4.44e-16
+b_year             0.06020481     0.06020481   7.63e-17
+b_party            0.12474212     0.12474212   4.44e-16
+se_year            0.00212265     0.00212265   5.20e-18
+se_party           0.00389391     0.00389391   3.90e-18
+sec_year           0.00219116     0.00219116   5.20e-18
+sec_party          0.00329665     0.00329665   1.30e-18
+ame_year           0.06020481     0.06020481   5.55e-17
+ame_year_se        0.00212265     0.00212265   5.64e-18
+ame_party          0.12474212     0.12474212   4.44e-16
+ame_party_se       0.00389391     0.00389391   3.90e-18
+max |diff| = 4.44e-16  (tol 1e-08)
+OK: topica's weighted estimate_effect and AME match faSTM's formulas.
+```
+
+### §5 validation_appendix — OK
+
+```
+/Users/nealcaren/Documents/GitHub/topica/.venv-dev/lib/python3.13/site-packages/tomotopy/models.py:637: RuntimeWarning: The training result may differ even with fixed seed if `workers` != 1.
+  return self._train(iterations, workers, parallel, freeze_topics, callback_interval, callback)
+  lda: ok
+  nmf: ok
+  lsa: ok
+  stm: ok
+  ctm: ok
+  content: ok
+/Users/nealcaren/Documents/GitHub/topica/.venv-dev/lib/python3.13/site-packages/tomotopy/models.py:637: RuntimeWarning: The training result may differ even with fixed seed if `workers` != 1.
+  return self._train(iterations, workers, parallel, freeze_topics, callback_interval, callback)
+  dmr: ok
+  gdmr: ok
+  keyatm: ok
+/Users/nealcaren/Documents/GitHub/topica/.venv-dev/lib/python3.13/site-packages/tomotopy/models.py:637: RuntimeWarning: The training result may differ even with fixed seed if `workers` != 1.
+  return self._train(iterations, workers, parallel, freeze_topics, callback_interval, callback)
+  slda: ok
+  labeledlda: ok
+  hdp: ok
+  pa: ok
+  dtm: ok
+  sts: ok
+wrote /Users/nealcaren/Documents/GitHub/topica/paper/generated/validation_appendix.tex
 ```
