@@ -1243,6 +1243,92 @@ def posterior_theta_samples(model, nsims=25, seed=0):
     return theta.transpose(1, 0, 2).copy()               # (nsims, D, K)
 
 
+@dataclass
+class TopicCorrelationCI:
+    """A topic-correlation matrix with a credible interval per cell.
+
+    ``estimate``/``se``/``ci_low``/``ci_high`` are each ``(num_topics,
+    num_topics)`` arrays: the point estimate (the model's ``topic_correlation``),
+    the posterior standard deviation, and the lower/upper credible bounds.
+    """
+
+    estimate: np.ndarray
+    se: np.ndarray
+    ci_low: np.ndarray
+    ci_high: np.ndarray
+
+
+def _theta_correlation(theta):
+    """Across-document correlation of a doc-topic matrix ``theta`` (D, K) -> (K, K),
+    matching the core ``topic_correlation`` (biased covariance, unit diagonal, zero
+    where a topic has no variance)."""
+    cov = np.cov(np.asarray(theta, dtype=np.float64), rowvar=False, bias=True)
+    cov = np.atleast_2d(cov)
+    d = np.sqrt(np.clip(np.diag(cov), 0.0, None))
+    den = np.outer(d, d)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cor = np.where(den > 0.0, cov / den, 0.0)
+    np.fill_diagonal(cor, 1.0)
+    return cor
+
+
+def topic_correlation_ci(model, *, nsims=200, ci=0.9, seed=0):
+    """Credible interval on an STM/CTM topic-correlation matrix.
+
+    ``model.topic_correlation`` is the across-document correlation of the
+    *posterior-mean* doc-topic matrix. This propagates the model's logistic-normal
+    posterior into that statistic: it draws ``nsims`` doc-topic matrices from the
+    per-document posterior ``η_d ~ N(λ_d, ν_d)`` (via
+    :func:`posterior_theta_samples`), recomputes the correlation on each draw, and
+    reports the per-cell posterior mean, SD, and percentile interval. A cell whose
+    interval straddles zero is not a reliably signed topic relationship.
+
+    The returned ``estimate`` is the posterior *mean* of the across-draw
+    correlations, so the interval is centered on it. This is deliberately distinct
+    from ``model.topic_correlation``: the latter correlates the posterior means and
+    so ignores within-document posterior variance, which makes it more extreme than
+    the uncertainty-aware draw-based estimate here (adding per-document posterior
+    noise attenuates an across-document correlation). Use ``estimate`` with its
+    interval when you need honest uncertainty; ``model.topic_correlation`` remains
+    the conventional point summary.
+
+    Reuses the same posterior draws as method-of-composition effect estimation, so
+    it adds no new model state. Only logistic-normal models (STM/CTM/STS, which
+    carry ``eta_mean``/``eta_cov``) are supported.
+
+    Parameters
+    ----------
+    model : STM or CTM
+        A fitted logistic-normal topic model.
+    nsims : int
+        Number of posterior draws.
+    ci : float
+        Central interval mass (default 0.9 for a 90% interval).
+    seed : int
+        Seed for the posterior draws.
+
+    Returns
+    -------
+    TopicCorrelationCI
+        ``(estimate, se, ci_low, ci_high)``, each ``(num_topics, num_topics)``.
+    """
+    cls = type(model)
+    if not (hasattr(cls, "eta_mean") and hasattr(cls, "eta_cov")):
+        raise TypeError(
+            "topic_correlation_ci requires a logistic-normal model (STM/CTM/STS) "
+            "with eta_mean/eta_cov; this model exposes neither"
+        )
+    draws = posterior_theta_samples(model, nsims=nsims, seed=seed)  # (nsims, D, K)
+    cors = np.stack([_theta_correlation(draws[s]) for s in range(draws.shape[0])])
+    estimate = cors.mean(axis=0)
+    np.fill_diagonal(estimate, 1.0)
+    lo_q, hi_q = (1.0 - ci) / 2.0, 1.0 - (1.0 - ci) / 2.0
+    ci_low = np.quantile(cors, lo_q, axis=0)
+    ci_high = np.quantile(cors, hi_q, axis=0)
+    se = cors.std(axis=0, ddof=1) if cors.shape[0] > 1 else np.zeros_like(estimate)
+    return TopicCorrelationCI(estimate, se, ci_low, ci_high)
+
+
 def spline(x, df=4, knots=None):
     """Restricted (natural) cubic-spline basis for a covariate — the building
     block for nonlinear prevalence terms like R ``stm``'s ``~ s(day)``.

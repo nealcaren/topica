@@ -176,6 +176,38 @@ def test_composition_top_words_is_rejected():
         topica.standard_errors(m, corpus, of="top_words", method="composition")
 
 
+def test_topic_correlation_ci_well_shaped_and_coherent():
+    # CTM/STM topic-correlation credible interval from the logistic-normal posterior:
+    # K x K, symmetric, unit diagonal, ci_low <= estimate <= ci_high in every cell,
+    # and the estimate is the posterior mean of the draw correlations.
+    _, corpus, _ = _planted()
+    m = topica.CTM(num_topics=3, seed=1)
+    m.fit(corpus, iters=40)
+    res = topica.topic_correlation_ci(m, nsims=150, ci=0.9, seed=0)
+    K = m.num_topics
+    for arr in (res.estimate, res.se, res.ci_low, res.ci_high):
+        assert arr.shape == (K, K)
+    assert np.allclose(res.estimate, res.estimate.T)
+    assert np.allclose(np.diag(res.estimate), 1.0)
+    assert np.all(res.ci_low <= res.estimate + 1e-9)
+    assert np.all(res.estimate <= res.ci_high + 1e-9)
+    assert np.all(res.ci_low <= res.ci_high + 1e-9)
+    assert np.all(np.isfinite(res.se))
+    # Wider interval mass gives a wider band.
+    narrow = topica.topic_correlation_ci(m, nsims=150, ci=0.5, seed=0)
+    span90 = float(np.sum(res.ci_high - res.ci_low))
+    span50 = float(np.sum(narrow.ci_high - narrow.ci_low))
+    assert span90 > span50
+
+
+def test_topic_correlation_ci_rejects_non_logistic_normal():
+    _, corpus, _ = _planted()
+    m = topica.LDA(2, seed=1)
+    m.fit(corpus, iters=50)
+    with pytest.raises(TypeError, match="logistic-normal"):
+        topica.topic_correlation_ci(m)
+
+
 def test_bootstrap_prevalence_matches_composition_on_clean_data():
     m, corpus, _ = _planted()
     comp = topica.standard_errors(m, corpus, of="prevalence", nsims=40)
