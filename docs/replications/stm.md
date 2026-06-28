@@ -88,7 +88,7 @@ Pearson correlation of 0.84, and the same sign and significance on 13 of 15
 topics. The [Poliblog](../examples/poliblog.md) and
 [Gadarian](../examples/gadarian.md) worked examples refit the canonical `stm`
 vignettes end to end and recover the prevalence effects the package documents,
-with honest standard errors from the method of composition.
+with well-calibrated standard errors from the method of composition.
 
 The smaller Gadarian survey corpus (339 documents, K = 3) is a deliberately
 harder, more multimodal case: with so few short open-ended responses, R itself

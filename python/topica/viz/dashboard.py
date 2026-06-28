@@ -52,7 +52,7 @@ class Dashboard:
             self._try("groups", lambda: PrevalenceHeatmap(model, groups))
         if timestamps is not None:
             self._try("temporal", lambda: TopicsOverTime(model, timestamps))
-        if self.cap.soft_theta:  # the honest correlation layer, where theta is real
+        if self.cap.soft_theta:  # the compositionally-aware correlation layer, where theta is real
             self._try("correlation", lambda: TopicCorrelation(model))
         if self.cap.content_covariate:  # STM/SAGE: how the lead topic is worded by group
             self._try("content", lambda: ContentCovariate(model, topic=topic))

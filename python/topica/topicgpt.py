@@ -35,7 +35,7 @@ generative posterior over document-topic proportions, so:
   ``coherence``, ``topic_diversity``, ``exclusivity``, ``label_topics``, and
   ``find_thoughts`` run.
 - ``estimate_effect``, ``posterior_theta_samples``, and ``ensemble`` are declined
-  with an informative error: there is no theta posterior, so there are no honest
+  with an informative error: there is no theta posterior, so there are no defensible
   confidence intervals to report.
 
 Determinism is ``llm-bounded``: with ``temperature=0`` and a backend ``seed`` the
@@ -398,7 +398,7 @@ class TopicGPT:
     documents, so it is a *descriptor* for word ranking, not a generative
     ``P(w | topic)``. The model declines ``estimate_effect``,
     ``posterior_theta_samples``, and ``ensemble``: with no theta posterior there
-    are no honest confidence intervals.
+    are no defensible confidence intervals.
 
     Parameters
     ----------
@@ -848,10 +848,10 @@ class TopicGPT:
                 out[i] /= out[i].sum()
         return out
 
-    # -- honest declines (no theta posterior) ------------------------------
+    # -- principled declines (no theta posterior) ------------------------------
 
     def estimate_effect(self, *args, **kwargs):
-        """Declined: TopicGPT has no theta posterior, so there are no honest
+        """Declined: TopicGPT has no theta posterior, so there are no defensible
         confidence intervals on covariate effects."""
         raise NotImplementedError(_DECLINE_MSG.format(name="estimate_effect"))
 
@@ -931,7 +931,7 @@ class TopicGPT:
 
 _DECLINE_MSG = (
     "TopicGPT does not support {name}: it is an llm-bounded, cluster-style model "
-    "with no posterior over theta, so there are no honest confidence intervals to "
+    "with no posterior over theta, so there are no defensible confidence intervals to "
     "report. This refusal is by design (the 'no CIs without a posterior' "
     "principle). Use a generative model (LDA, STM, ...) when you need {name}."
 )

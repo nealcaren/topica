@@ -3,7 +3,7 @@
 Most social-science topic-model papers don't stop at "here are the themes."
 They ask **how topic prevalence relates to something**: time, group, treatment,
 ideology. Doing this credibly means modeling the relationship *and* reporting
-honest uncertainty.
+well-calibrated uncertainty.
 
 ## Make prevalence depend on covariates: STM
 
@@ -18,7 +18,7 @@ model = topica.STM(num_topics=20, seed=1)
 model.fit(docs, prevalence=X, prevalence_names=names)
 ```
 
-## Estimate effects with honest uncertainty
+## Estimate effects with well-calibrated uncertainty
 
 A naive regression of point topic proportions on covariates treats θ as if it
 were observed exactly. It isn't. R's `stm` uses the **method of composition**

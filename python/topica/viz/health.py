@@ -1,4 +1,4 @@
-"""The dead / duplicate-topic panel -- honest reporting, and essential for HDP.
+"""The dead / duplicate-topic panel -- candid reporting, and essential for HDP.
 
 Two failure modes a topic model hides from the headline table: **dead topics**
 (near-zero expected mass, so they describe almost no documents) and **duplicate

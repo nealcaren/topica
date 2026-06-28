@@ -1,9 +1,9 @@
-"""Honest topic correlation -- the compositionally-aware layer.
+"""Topic correlation -- the compositionally-aware layer.
 
 Raw across-document correlation of theta is *compositionally biased*: the
 sum-to-one constraint forces a spurious negative correlation (about -1/(K-1) even
 under independence), so ``topica.topic_correlation`` (and pyLDAvis-style topic
-graphs built on it) over-reads anti-correlation. This panel offers the honest
+graphs built on it) over-reads anti-correlation. This panel offers the compositionally-aware
 alternatives:
 
 - ``method="clr"`` (default): correlate the centered-log-ratio transform of theta,
@@ -53,7 +53,7 @@ def _partial_from_corr(cor):
 
 
 class TopicCorrelation(Panel):
-    """An honest topic-correlation heatmap (clr / partial / η-space / raw)."""
+    """A compositionally-aware topic-correlation heatmap (clr / partial / η-space / raw)."""
 
     title = "Topic correlation"
 

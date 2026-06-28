@@ -327,7 +327,7 @@ changes the default result on well-behaved corpora.
 DETM is [validated against the reference](https://github.com/adjidieng/DETM)
 (Dieng, Ruiz & Blei 2019, MIT) on the paper's UN-debates and ACL corpora: it
 recovers topics at the reference's own seed-to-seed agreement (aligned cosine
-0.74 / 0.59 against a 0.74 / 0.58 reference-vs-reference floor). One honest
+0.74 / 0.59 against a 0.74 / 0.58 reference-vs-reference floor). One important
 caveat: the per-time *prevalence* trajectory (`eta`) is weakly identified in DETM
 — the reference implementation cannot reproduce its own `eta` across random seeds
 either — so read the topic-word evolution (`beta_over_time`), which is stable, and

@@ -151,7 +151,7 @@ def polarization_ci(
     ``N(estimate, se**2)`` (independently per dimension), recompute the polarization
     on each draw, and report the point estimate together with the simulation
     standard error and a percentile interval. This makes the centroid-distance
-    measure honest about how much of the gap is signal versus noise in the placement
+    measure explicit about how much of the gap is signal versus noise in the placement
     -- a wide interval that straddles zero means the camps are not reliably apart.
 
     It is the analytic-SE companion to :func:`position_intervals` (which gets the

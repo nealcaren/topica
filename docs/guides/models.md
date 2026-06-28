@@ -723,7 +723,7 @@ recommend.
 
 ### Limits
 
-`IdealPointTM` stays experimental for honest reasons. Its single position axis behaves as a
+`IdealPointTM` stays experimental for good reason. Its single position axis behaves as a
 party detector first and an ideology gradient second, and it is more fragile than plain
 Wordfish to a contaminating off-topic axis, so clean inputs matter. Which topic carries the
 discrimination is not always stable, since a partisan contrast can show up either as
@@ -887,7 +887,7 @@ equations the fit solves (`|coef| > ~2·SE` is the significance cue), so you can
 say which topics reliably move the outcome. `predict(docs, return_std=True)`
 returns `(mean, std)`, where `std` is the posterior-predictive standard
 deviation — the document's topic uncertainty propagated through the regression
-plus the residual `σ²` — so a prediction comes with an honest interval
+plus the residual `σ²` — so a prediction comes with a proper interval
 (`mean ± 1.96·std`) rather than a bare point.
 
 ```python

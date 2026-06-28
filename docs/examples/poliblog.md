@@ -123,7 +123,7 @@ Clustering inflates the standard errors three- to six-fold. The Rove/torture
 topic looks overwhelmingly liberal under iid errors (z ≈ −10) but is **not
 significant** once we account for all those posts coming from a handful of blogs
 (z = −1.9). Conservatives reliably talk more about Israel/Iran and the
-Obama–Wright story. The apparent torture effect does not survive honest
+Obama–Wright story. The apparent torture effect does not survive well-calibrated
 uncertainty.
 
 !!! warning "Report the caveat"

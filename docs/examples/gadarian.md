@@ -23,7 +23,7 @@ The design is a randomized experiment with a single binary covariate. We want to
 know how that covariate moves **topic prevalence**, with a valid hypothesis test.
 That is precisely what the [Structural Topic Model](../publishing/choosing-model.md)
 is for: prevalence regressed on `treatment`, plus the method of composition for
-honest standard errors. A small `K` suits short responses and a handful of
+well-calibrated standard errors. A small `K` suits short responses and a handful of
 theoretically motivated frames.
 
 ```python

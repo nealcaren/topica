@@ -1,7 +1,7 @@
 """Panel 2: the covariate effect plot -- *the* results figure for STM papers.
 
 A per-topic forest plot of one covariate's effect on topic prevalence, with the
-method-of-composition confidence intervals, and the honest guardrails the design
+method-of-composition confidence intervals, and the guardrails the design
 calls for:
 
 - CIs are drawn only where a theta posterior exists. For an embedding / cluster

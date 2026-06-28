@@ -172,7 +172,7 @@ pub fn tsne(
         return vec![Vec::new(); n];
     }
     if n < 4 {
-        // t-SNE's neighborhood estimate is degenerate at this size; PCA is honest.
+        // t-SNE's neighborhood estimate is degenerate at this size; PCA is reproducible.
         return pca(data, n_components, seed);
     }
     // bhtsne computes 3 * perplexity neighbors, so perplexity must stay below n/3.

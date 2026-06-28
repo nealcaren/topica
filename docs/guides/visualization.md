@@ -1,6 +1,6 @@
 # Visualization
 
-`topica.viz` is a manuscript-first visualization toolkit: an honest successor to
+`topica.viz` is a manuscript-first visualization toolkit: a disciplined successor to
 pyLDAvis that works across model families, exports the numbers behind every
 figure, and refuses to draw what it cannot justify.
 
@@ -30,7 +30,7 @@ Install the toolkit with `pip install topica[viz]` (matplotlib, pandas, scipy,
 and plotly for the interactive `.to_html()` builds), or `pip install topica[all]`
 for everything.
 
-## Honest by capability
+## Disciplined by capability
 
 The panels read a per-model **capability descriptor** (`viz.capabilities(model)`)
 and switch their statistics and labels on it, so they never overclaim:
@@ -116,7 +116,7 @@ viz.topics_over_time(model, timestamps=meta["year"]).to_png("over_time.png")
 viz.topics_over_time(model, meta["year"], corpus=corpus, nsims=50).to_png("over_time_ci.png")
 ```
 
-## Topic correlation, honestly
+## Topic correlation, compositionally aware
 
 Raw across-document θ correlation is compositionally biased: the sum-to-one
 constraint forces a spurious negative correlation (about −1/(K−1) even under
@@ -216,5 +216,5 @@ report.to_frame()                # {panel_name: DataFrame}
 
 The topic-similarity heatmap, term barchart, and topic-health panels are always
 included; the coherence frontier (with `texts`), effect plot (with a design), group
-heatmap (with `groups`), time small-multiples (with `timestamps`), and the honest
+heatmap (with `groups`), time small-multiples (with `timestamps`), and the compositionally-aware
 correlation layer (for soft-θ models) are added by introspecting what you pass.

@@ -8448,7 +8448,7 @@ fn inspect_semantic_coherence(
 }
 
 /// Warn that a neighbor-preserving projection (UMAP / t-SNE) distorts global
-/// geometry and is not reproducible across runs, so PCA stays the honest default.
+/// geometry and is not reproducible across runs, so PCA stays the reproducible default.
 fn warn_stochastic(py: Python<'_>, method: &str) -> PyResult<()> {
     let warnings = py.import_bound("warnings")?;
     warnings.call_method1(

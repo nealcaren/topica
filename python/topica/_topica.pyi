@@ -40,7 +40,7 @@ def project(
     `method` is "pca" (default, deterministic, distance-faithful), "umap", or
     "tsne". UMAP and t-SNE preserve local neighborhoods but distort global geometry
     (between-cluster distances and cluster sizes are not meaningful) and are not
-    reproducible across runs (a warning is issued); PCA is the honest default.
+    reproducible across runs (a warning is issued); PCA is the reproducible default.
     `data` is a 2D float array or a list of float lists. Returns an
     `(n_rows, n_components)` array.
     """

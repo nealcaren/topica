@@ -3,7 +3,7 @@
 Views read a uniform analysis surface (``topic_word``, ``doc_topic``,
 ``vocabulary``, ``num_topics``, optional ``labels`` / ``topic_names``), but the
 *statistics and encodings* they apply switch on this small descriptor, mirroring
-``topica.effects.model_family``. This is what keeps the toolkit honest: a c-TF-IDF
+``topica.effects.model_family``. This is what keeps the toolkit disciplined: a c-TF-IDF
 ``topic_word`` is not a probability, a cluster model's ``doc_topic`` is degenerate,
 and an effect-plot CI must be refused where there is no posterior to draw it from.
 """
