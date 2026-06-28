@@ -1,7 +1,7 @@
 # topica paper: reproduction report
 
-- Date: 2026-06-27
-- topica: 0.32.0
+- Date: 2026-06-28
+- topica: 0.33.0
 - Machine: macOS-26.5.1-arm64-arm-64bit-Mach-O, 14 cores (arm)
 - Toolchains: Rscript=yes, R:stm=yes, R:keyATM=yes, java=yes, mallet=yes
 
@@ -12,13 +12,13 @@
 | Step | Section | Status | Time |
 |---|---|---|---|
 | worked_example | 7 | OK | 22s |
-| stm_prevalence | 5 | OK | 452s |
+| stm_prevalence | 5 | OK | 449s |
 | stm_content | 5 | OK | 2s |
-| keyatm | 5 | OK | 125s |
-| sts | 5 | OK | 582s |
+| keyatm | 5 | OK | 126s |
+| sts | 5 | OK | 516s |
 | mallet_lda | 5 | OK | 2s |
 | weights_ame | 5 | OK | 1s |
-| validation_appendix | 5 | OK | 976s |
+| validation_appendix | 5 | OK | 913s |
 
 ## Paper claims to update
 
@@ -559,9 +559,9 @@
 ========================================================================
 Spanning comparison: different model families, one scoring loop
 ========================================================================
-  fit LDA        K=15   12.0s
-  fit CTM        K=15    1.2s
-  fit STM        K=15    1.2s
+  fit LDA        K=15   12.2s
+  fit CTM        K=15    1.3s
+  fit STM        K=15    1.3s
   fit BERTopic   K=3     2.9s
   model       K   coherence(c_v)  exclusivity  diversity
   --------------------------------------------------------
