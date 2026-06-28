@@ -193,7 +193,7 @@ federal    -61.8 +/- 10.3  z=-6.0
 That looks decisive, but it counts each **token** as independent. Our paragraphs
 nest in platforms (about twenty per party, one per election), so the real number
 of independent units is far smaller. `content_trajectory_ci` resamples whole
-**platforms** and refits, giving the honest band:
+**platforms** and refits, giving the correct band:
 
 ```python
 from topica.ectm import content_trajectory_ci
@@ -209,7 +209,7 @@ band = content_trajectory_ci(refit, docs, party, year, anchor_words=anchor,
 
 ```
 'climate' D-R contrast (per mille), 95% CI:
-              platform-clustered (honest)   paragraph-level (too tight)
+              platform-clustered (correct)   paragraph-level (too tight)
    2000:       2.3  [-0.1,  6.8]             0.9  [-0.7,  4.7]
    2016:      14.9  [ 0.1, 44.1]             6.3  [-0.0, 29.0]
    2020:      18.4  [ 1.9, 40.5]             6.3  [-0.9, 22.8]
@@ -217,7 +217,7 @@ band = content_trajectory_ci(refit, docs, party, year, anchor_words=anchor,
 
 Two lessons. First, clustering by platform gives **much wider** bands than
 resampling paragraphs: bootstrapping paragraphs treats correlated text as
-independent and understates uncertainty. Second, under honest platform-level
+independent and understates uncertainty. Second, under correct platform-level
 resampling the `climate` gap is large and directionally robust but only
 **separates from zero in the last decade**, not the 1990s. The analytic z-scores
 above, which assume token independence, overstate the certainty for this corpus.
@@ -328,5 +328,5 @@ What not to over-read: these are platform paragraphs, heavily correlated within
 each platform, so single-election wiggles are mostly noise (trust the smoothed
 arcs), and topic boundaries drift over seventy-six years, so the civil-rights
 attention numbers are suggestive rather than nailed down. ECTM gives you the two
-surfaces, content and prevalence, each with uncertainty. Reading them honestly is
+surfaces, content and prevalence, each with uncertainty. Reading them carefully is
 the analysis.

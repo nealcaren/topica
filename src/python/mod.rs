@@ -8448,7 +8448,7 @@ fn inspect_semantic_coherence(
 }
 
 /// Warn that a neighbor-preserving projection (UMAP / t-SNE) distorts global
-/// geometry and is not reproducible across runs, so PCA stays the honest default.
+/// geometry and is not reproducible across runs, so PCA stays the reproducible default.
 fn warn_stochastic(py: Python<'_>, method: &str) -> PyResult<()> {
     let warnings = py.import_bound("warnings")?;
     warnings.call_method1(
@@ -16820,6 +16820,9 @@ pub struct KeyATM {
     corpus: Option<corpus::Corpus>,
     // Covariate model only: learned λ (K × F+1, intercept first) and column names.
     feature_effects: Option<Array2<f64>>,
+    // Covariate model only: SE of λ on the original covariate scale (K × F+1),
+    // aligned to feature_effects; NaN where the standardized λ hit the ±5 clamp.
+    feature_effect_se: Option<Array2<f64>>,
     feature_names: Vec<String>,
     // Dynamic model only: the HMM state of each time segment (length T), the
     // smoothed prevalence per segment (T × K), the segment labels, and the
@@ -16943,6 +16946,7 @@ impl KeyATM {
             theta: None,
             corpus: None,
             feature_effects: None,
+            feature_effect_se: None,
             feature_names: Vec::new(),
             time_state: Vec::new(),
             time_prevalence: None,
@@ -17001,6 +17005,7 @@ impl KeyATM {
             theta: None,
             corpus: None,
             feature_effects: None,
+            feature_effect_se: None,
             feature_names: Vec::new(),
             time_state: Vec::new(),
             time_prevalence: None,
@@ -17479,6 +17484,7 @@ impl KeyATM {
         self.alpha_vec = model.alpha_vec.clone();
         if let Some(lam) = &model.lambda {
             self.feature_effects = Some(vecs_to_arr2(lam));
+            self.feature_effect_se = model.lambda_se.as_ref().map(|se| vecs_to_arr2(se));
             self.feature_names = cov_names;
         }
         let mut names = self.key_names.clone();
@@ -17497,6 +17503,23 @@ impl KeyATM {
     fn feature_effects<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         self.feature_effects
+            .as_ref()
+            .map(|e| e.to_pyarray_bound(py))
+            .ok_or_else(|| PyRuntimeError::new_err("model was fit without covariates"))
+    }
+
+    /// Covariate model: standard errors of `feature_effects` (λ), same shape
+    /// ``(num_topics, F+1)`` and column order, on the original covariate scale.
+    /// From the observed information of the penalized Dirichlet-multinomial in the
+    /// standardized fit space, mapped back by the standardization Jacobian
+    /// (issue #316). A coefficient is notable when ``|feature_effects| /
+    /// feature_effect_se`` exceeds ~2. Entries are ``NaN`` where the standardized
+    /// λ hit the ±5 bound (the constrained estimate has no valid asymptotic SE).
+    /// Raises if the model was fit without covariates.
+    #[getter]
+    fn feature_effect_se<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        self.feature_effect_se
             .as_ref()
             .map(|e| e.to_pyarray_bound(py))
             .ok_or_else(|| PyRuntimeError::new_err("model was fit without covariates"))
@@ -17773,6 +17796,7 @@ impl KeyATM {
             theta: arr2_back(s.theta)?,
             corpus: s.corpus,
             feature_effects: None,
+            feature_effect_se: None,
             feature_names: Vec::new(),
             time_state: Vec::new(),
             time_prevalence: None,

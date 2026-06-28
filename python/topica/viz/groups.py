@@ -3,7 +3,7 @@
 A groups x topics heatmap of mean topic prevalence, reading the same
 ``by_strata`` surface ``topica.topics_per_class`` exposes. Pass a fitted model and
 a per-document grouping label; with ``corpus=`` and ``nsims=`` the per-cell means
-are widened by the method of composition (so the ``.to_frame()`` carries honest
+are widened by the method of composition (so the ``.to_frame()`` carries well-calibrated
 intervals), but the heatmap itself encodes the mean -- a grid of CIs is unreadable.
 """
 

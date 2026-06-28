@@ -45,6 +45,30 @@ def test_recovers_covariate_effect_on_prevalence(cov_model):
     assert m.feature_effects[si, 1] - m.feature_effects[ei, 1] > 1.0
 
 
+def test_feature_effect_se_shape_and_finite(cov_model):
+    m, _, _ = cov_model
+    se = m.feature_effect_se
+    assert se.shape == m.feature_effects.shape == (2, 2)
+    # No clamped coefficients in this well-identified design, so all finite & > 0.
+    assert np.all(np.isfinite(se)) and np.all(se > 0.0)
+
+
+def test_strong_effect_is_significant(cov_model):
+    """The planted party->social effect is large, so it sits many SEs from zero."""
+    m, _, _ = cov_model
+    si = m.topic_names.index("social")
+    z = m.feature_effects[si, 1] / m.feature_effect_se[si, 1]
+    assert abs(z) > 2.0, f"z={z:.2f} for a planted effect"
+
+
+def test_feature_effect_se_base_model_raises():
+    docs, _ = _corpus()
+    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m.fit(docs, iters=200)
+    with pytest.raises(RuntimeError):
+        _ = m.feature_effect_se
+
+
 def test_theta_tracks_covariate(cov_model):
     m, _, party = cov_model
     th = m.doc_topic

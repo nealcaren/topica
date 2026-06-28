@@ -77,7 +77,7 @@ model.topic_word_by_group        # per-group β
 
 ## Estimating effects
 
-Regress topic proportions on covariates with honest uncertainty, using the method
+Regress topic proportions on covariates with well-calibrated uncertainty, using the method
 of composition, optionally with clustered standard errors, survey weights, and
 GLM links:
 

@@ -1,4 +1,4 @@
-"""topica.viz -- an honest, manuscript-first visualization toolkit.
+"""topica.viz -- a disciplined, manuscript-first visualization toolkit.
 
 Each view is a :class:`~topica.viz.base.Panel`: it reads a model's analysis
 surface plus a per-model capability descriptor and exposes three renderers --
@@ -44,7 +44,7 @@ def search_k(rows) -> SearchK:
 
 
 def effect_plot(model, corpus=None, **kwargs) -> EffectPlot:
-    """One covariate's effect on each topic's prevalence, with honest CIs."""
+    """One covariate's effect on each topic's prevalence, with well-calibrated CIs."""
     return EffectPlot(model, corpus, **kwargs)
 
 
@@ -65,7 +65,7 @@ def term_barchart(model, *, topic, mode="prob", n=10, texts=None, error_bars=Fal
 
 
 def topic_similarity(model, **kwargs) -> TopicSimilarity:
-    """Seriated K x K topic-similarity heatmap (the honest pyLDAvis overview)."""
+    """Seriated K x K topic-similarity heatmap (the disciplined pyLDAvis overview)."""
     return TopicSimilarity(model, **kwargs)
 
 
@@ -85,7 +85,7 @@ def topics_over_time(model, timestamps, **kwargs) -> TopicsOverTime:
 
 
 def topic_correlation(model, *, method="clr", **kwargs) -> TopicCorrelation:
-    """Honest topic correlation (clr / partial / η-space / raw), 0-centered map."""
+    """Compositionally-aware topic correlation (clr / partial / η-space / raw), 0-centered map."""
     return TopicCorrelation(model, method=method, **kwargs)
 
 

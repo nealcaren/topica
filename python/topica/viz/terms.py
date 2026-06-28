@@ -1,4 +1,4 @@
-"""Panel 3: the honest pyLDAvis replacement.
+"""Panel 3: the disciplined pyLDAvis replacement.
 
 A **term barchart** (top words with named weighting modes, gated by the model's
 capability descriptor) and a **seriated topic-similarity heatmap** (K x K, ordered

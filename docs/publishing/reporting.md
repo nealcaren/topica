@@ -100,7 +100,7 @@ model.save("model.tt")                                    # full state, reloadab
 
 !!! success "You're done"
     A corpus you can defend, a `K` you can justify, topics you've validated,
-    effects with honest uncertainty, and a pipeline anyone can rerun. That is a
+    effects with well-calibrated uncertainty, and a pipeline anyone can rerun. That is a
     topic-modeling analysis a social-science journal can publish.
 
 See the [worked examples](../examples/dubois.md) for this workflow applied end to

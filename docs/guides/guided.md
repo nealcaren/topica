@@ -73,10 +73,19 @@ model.fit(docs, covariates=is_dem, feature_names=["is_dem"], iters=1000)
 
 model.feature_names       # ['intercept', 'is_dem']
 model.feature_effects     # (num_topics, 2): coefficient of each covariate per topic
+model.feature_effect_se   # same shape: standard error of each coefficient
+z = model.feature_effects / model.feature_effect_se   # |z| > ~2 ⇒ notable
 ```
 
 A larger `feature_effects[k, j]` means covariate `j` raises topic `k`'s
-prevalence. For uncertainty, pair the fitted `doc_topic` with
+prevalence. `feature_effect_se` gives the standard error of each λ, so you can
+tell a real effect from noise: it is the observed information of the same
+penalized Dirichlet-multinomial that `DMR` uses, computed in the standardized fit
+space (keyATM z-scores covariates internally, issue #270) and mapped back to the
+original covariate scale, so it is exact (no bootstrap) and computed once at fit
+time. An entry is `NaN` when its standardized coefficient hit keyATM's ±5 bound,
+where the constrained estimate has no valid asymptotic standard error. For
+uncertainty on the resulting topic prevalences, pair the fitted `doc_topic` with
 [`estimate_effect`](covariates.md).
 
 ### Dynamic keyATM

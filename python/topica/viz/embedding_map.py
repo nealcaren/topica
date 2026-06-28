@@ -1,7 +1,7 @@
 """The document map -- a 2-D projection of the document cloud (supplement figure).
 
 A *document* projection, not a topic one. It answers "do the documents separate the
-way the topics claim?" and is honest about what a 2-D layout can and cannot say:
+way the topics claim?" and is explicit about what a 2-D layout can and cannot say:
 
 - The projection runs in topica's own Rust core (``topica.project``): PCA by default
   (deterministic, distance-faithful), or UMAP / t-SNE (neighbor-preserving but
@@ -165,7 +165,7 @@ class DocumentMap(Panel):
                            alpha=0.75, linewidths=0, label=f"topic {t}")
             ax.legend(fontsize=7, loc="best", ncol=2, markerscale=1.5)
         else:
-            # Too many topics for a categorical palette: an honest density hexbin.
+            # Too many topics for a categorical palette: a plain density hexbin.
             hb = ax.hexbin(xy[inl, 0], xy[inl, 1], gridsize=40, cmap=SEQ_CMAP, mincnt=1)
             fig.colorbar(hb, ax=ax, fraction=0.046, pad=0.04, label="documents")
             ax.text(0.99, 0.01, f"{len(topics)} topics — pass highlight_topic= to color one",

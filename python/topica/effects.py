@@ -108,7 +108,7 @@ def dirichlet_theta_samples(doc_topic, doc_lengths, *, nsims=25, seed=0, prior=0
 # Standard errors: one entry point that propagates topic-estimation uncertainty
 # ---------------------------------------------------------------------------
 #
-# Two routes (see issue #15). Method-of-composition (the cheap, honest default)
+# Two routes (see issue #15). Method-of-composition (the cheap, principled default)
 # draws theta from a model's own posterior and pools by Rubin's rules — it covers
 # effects and prevalence on the models that *have* a posterior (logistic-normal
 # for STM/CTM, Dirichlet for the Gibbs models). The bootstrap refits on resampled
@@ -396,7 +396,7 @@ def _match_to_reference(ref_sets, boot_sets):
     much better that match is than the next-best boot topic. A small margin means
     the match is ambiguous (e.g. topics that split/merge, or a reference whose
     topics are not distinct) even when the Jaccard itself looks high, so it is the
-    honest flag for unstable alignment."""
+    reliable flag for unstable alignment."""
     from .validation import _hungarian
 
     k, kb = len(ref_sets), len(boot_sets)
@@ -507,7 +507,7 @@ def standard_errors(
         ``"prevalence"`` (each topic's mean proportion), or ``"top_words"``
         (per-topic top-word stability; ``method="bootstrap"`` only).
     method : ``"composition"`` (default) draws theta from the model's posterior and
-        pools by Rubin's rules — cheap, no refit, honest for effects/prevalence on
+        pools by Rubin's rules — cheap, no refit, sound for effects/prevalence on
         STM/CTM/LDA/keyATM. ``"bootstrap"`` refits on resampled documents and
         aligns topics across refits — the only route for ``of="top_words"`` and for
         the embedding models, but it flags topics whose alignment is unstable.

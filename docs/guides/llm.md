@@ -42,7 +42,7 @@ the standard fitted-model surface — `doc_topic`, `topic_word`, `top_words`,
 `coherence`, `transform`, `save`/`load` — so `coherence`, `topic_diversity`,
 `exclusivity`, `label_topics`, and `find_thoughts` all run on it.
 
-Two honest caveats follow from there being **no generative posterior**:
+Two caveats follow from there being **no generative posterior**:
 
 - **`topic_word` is a descriptor, not a distribution.** It is synthesized after
   the fact by class-based TF-IDF over each topic's assigned documents (the same
@@ -51,7 +51,7 @@ Two honest caveats follow from there being **no generative posterior**:
   probabilities.
 - **No confidence intervals.** `estimate_effect`, `posterior_theta_samples`, and
   `ensemble` are declined with an informative error. With no posterior over topic
-  proportions there is nothing honest to put an interval around; use a generative
+  proportions there is nothing to put an interval around; use a generative
   model (LDA, STM, ...) when you need covariate effects with uncertainty.
 
 ### Determinism and cost

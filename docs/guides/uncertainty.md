@@ -20,7 +20,7 @@ Given a fixed fit, `θ` is still uncertain: each document's topic proportions ar
 estimated from its tokens. The **method of composition** (Treier & Jackman 2008,
 the procedure R `stm` uses) draws `θ` from the model's own posterior, computes the
 quantity on each draw, and pools by Rubin's rules, so the standard errors inflate
-over a naive regression on point `θ`. It is cheap (no refit) and honest for
+over a naive regression on point `θ`. It is cheap (no refit) and sound for
 covariate effects and group prevalence.
 
 `standard_errors` detects the model family and picks the right sampler for you.

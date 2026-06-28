@@ -1,6 +1,6 @@
 # Benchmarks
 
-How fast topica is, measured honestly. Every number here is fit time only (model
+How fast topica is, measured carefully. Every number here is fit time only (model
 construction and import excluded), on fixed-seed synthetic corpora, on one
 machine (Apple M-series, 14 cores), and reproducible with the command shown.
 Speed depends on corpus size, vocabulary, the number of topics, and hardware, so

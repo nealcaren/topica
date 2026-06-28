@@ -8,7 +8,7 @@ The single biggest critique of topic modeling in the social sciences is that it
 can become a *fishing expedition*: run a model, read the topics, tell a story.
 Reviewers know this, and they push back. A publishable analysis answers their
 objections before they raise them. It treats the topic model as a **measurement
-instrument** that must be specified, validated, and used with honest uncertainty.
+instrument** that must be specified, validated, and used with well-calibrated uncertainty.
 
 This is a six-step workflow. Each step maps onto specific topica functions.
 
@@ -36,7 +36,7 @@ This is a six-step workflow. Each step maps onto specific topica functions.
 
 - :material-chart-line: **[5. Measure effects properly](effects.md)**
 
-    Relate topics to covariates with honest uncertainty: the method of
+    Relate topics to covariates with well-calibrated uncertainty: the method of
     composition, **clustered standard errors**, and bounded GLM links.
 
 - :material-file-document-check: **[6. Report and make reproducible](reporting.md)**

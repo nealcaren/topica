@@ -102,7 +102,7 @@ fixed.
 Some requirements will never apply to certain models because their statistics
 differ structurally. These exemptions are recorded in
 `topica.conformance.EXEMPT`. Do not add a workaround to make a model fake-pass
-a requirement it cannot honestly satisfy; add it to `EXEMPT` instead with a
+a requirement it cannot genuinely satisfy; add it to `EXEMPT` instead with a
 brief reason.
 
 `topica.conformance.EXEMPT` and `KNOWN_GAPS` are the authoritative lists; the

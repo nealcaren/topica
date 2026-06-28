@@ -392,7 +392,7 @@ def coherence_ci(
     recompute coherence on each resample, and report the per-topic standard error
     and percentile interval. The topics never change, so there is no refit and no
     topic-alignment step — the interval reflects how much a topic's coherence score
-    would wobble under a different sample of the reference corpus, the honest answer
+    would wobble under a different sample of the reference corpus, the right answer
     to "is topic A's coherence reliably higher than topic B's?".
 
     ``estimate`` is the coherence on the full corpus (the conventional point

@@ -1289,7 +1289,7 @@ def topic_correlation_ci(model, *, nsims=200, ci=0.9, seed=0):
     so ignores within-document posterior variance, which makes it more extreme than
     the uncertainty-aware draw-based estimate here (adding per-document posterior
     noise attenuates an across-document correlation). Use ``estimate`` with its
-    interval when you need honest uncertainty; ``model.topic_correlation`` remains
+    interval when you need well-calibrated uncertainty; ``model.topic_correlation`` remains
     the conventional point summary.
 
     Reuses the same posterior draws as method-of-composition effect estimation, so

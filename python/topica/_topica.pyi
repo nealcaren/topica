@@ -40,7 +40,7 @@ def project(
     `method` is "pca" (default, deterministic, distance-faithful), "umap", or
     "tsne". UMAP and t-SNE preserve local neighborhoods but distort global geometry
     (between-cluster distances and cluster sizes are not meaningful) and are not
-    reproducible across runs (a warning is issued); PCA is the honest default.
+    reproducible across runs (a warning is issued); PCA is the reproducible default.
     `data` is a 2D float array or a list of float lists. Returns an
     `(n_rows, n_components)` array.
     """
@@ -3613,6 +3613,14 @@ class KeyATM:
     def feature_effects(self) -> numpy.typing.NDArray[numpy.float64]:
         """Covariate model: learned lambda, shape (num_topics, F+1); column 0 is
         the intercept. Raises if fit without covariates."""
+        ...
+    @property
+    def feature_effect_se(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Covariate model: standard errors of feature_effects (lambda), same
+        shape and column order, on the original covariate scale (observed
+        information in the standardized fit space mapped back by the
+        standardization Jacobian, issue #316). NaN where the standardized lambda
+        hit the +/-5 bound. Raises if fit without covariates."""
         ...
     @property
     def feature_names(self) -> list[str]:

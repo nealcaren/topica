@@ -28,7 +28,7 @@ model.fit(corpus)                             # sensible defaults; no tuning req
 print(topica.summary(model))                  # top words per topic
 ```
 
-`from_dataframe` keeps your metadata aligned to the documents that survive pruning, so the same corpus feeds a structural topic model that relates topic prevalence to a covariate, with an honest hypothesis test:
+`from_dataframe` keeps your metadata aligned to the documents that survive pruning, so the same corpus feeds a structural topic model that relates topic prevalence to a covariate, with a well-calibrated hypothesis test:
 
 ```python
 prevalence = corpus.metadata[["treatment"]].to_numpy(float)

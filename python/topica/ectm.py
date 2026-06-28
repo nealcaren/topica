@@ -110,7 +110,7 @@ def content_contrast_se(model, topic, group_a, group_b, period, groups, periods,
     when documents cluster (e.g. paragraphs of one platform, where the real number
     of independent units is the platform count, not the token count) it can badly
     *overstate* precision -- there :func:`content_trajectory_ci` with ``clusters=``
-    is the honest measure. It also **ignores the random-walk pooling and prior
+    is the correct measure. It also **ignores the random-walk pooling and prior
     shrinkage**, which pull the other way. Use it as a fast within-cell screen for
     which words separate the groups, not as a final p-value. Returns a list of
     ``(word, contrast, se)`` for the ``n`` words with the largest ``|contrast|``.
