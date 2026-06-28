@@ -307,7 +307,11 @@ topica's STM matches R's STM.
 
 The Correlated Topic Model (logistic-normal): topics can co-occur, unlike LDA's
 Dirichlet. This is the engine STM builds on; `topic_correlation` reports the
-learned structure. Fit by parallel variational EM.
+learned structure, and `topica.topic_correlation_ci(model)` puts a credible
+interval on each cell by propagating the per-document logistic-normal posterior
+(it draws θ from `η_d ~ N(λ_d, ν_d)` and recomputes the correlation on each draw),
+so you can tell a reliably signed topic relationship from one whose interval
+straddles zero. Fit by parallel variational EM.
 
 For corpora too large to sweep in full each EM step, `fit(..., inference="svi")`
 switches to stochastic variational inference (online VB, Hoffman et al. 2013):
