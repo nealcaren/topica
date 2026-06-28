@@ -175,6 +175,8 @@ from .keyatm import time_prevalence_ci  # noqa: E402  (dynamic keyATM credible b
 from . import phrases  # noqa: E402
 from .coherence import (  # noqa: E402
     coherence,
+    coherence_ci,
+    CoherenceCI,
     semantic_coherence,
     topic_diversity,
     topic_semantic_diversity,
@@ -323,6 +325,8 @@ __all__ = [
     "TopicCorrelationCI",
     "phrases",
     "coherence",
+    "coherence_ci",
+    "CoherenceCI",
     "topic_diversity",
     "topic_semantic_diversity",
     "exclusivity",

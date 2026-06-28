@@ -15,6 +15,8 @@ and in the `topica.validation` module.
 
 ::: topica.coherence
 
+::: topica.coherence_ci
+
 ::: topica.semantic_coherence
 
 ::: topica.topic_diversity

@@ -46,6 +46,45 @@ class TestCoherenceRanksTopics:
         assert s.shape == (3,)
 
 
+class TestCoherenceCI:
+    def test_shape_and_estimate_matches_point(self, reference):
+        r = topica.coherence_ci(
+            [COHERENT, INCOHERENT], reference, coherence_type="c_npmi", topn=3, n_boot=100, seed=0
+        )
+        point = topica.coherence([COHERENT, INCOHERENT], reference, coherence_type="c_npmi", topn=3)
+        for arr in (r.estimate, r.se, r.ci_low, r.ci_high):
+            assert arr.shape == (2,)
+        np.testing.assert_allclose(r.estimate, point)
+
+    def test_interval_brackets_estimate_and_orders(self, reference):
+        r = topica.coherence_ci(
+            [COHERENT, INCOHERENT], reference, coherence_type="c_npmi", topn=3, n_boot=150, seed=1
+        )
+        assert np.all(r.ci_low <= r.estimate + 1e-9)
+        assert np.all(r.estimate <= r.ci_high + 1e-9)
+        assert np.all(r.ci_low <= r.ci_high)
+        assert np.all(np.isfinite(r.se)) and np.all(r.se >= 0.0)
+
+    def test_wider_ci_widens_band(self, reference):
+        wide = topica.coherence_ci(
+            [COHERENT, INCOHERENT], reference, coherence_type="c_npmi", topn=3, n_boot=150, ci=0.95, seed=2
+        )
+        narrow = topica.coherence_ci(
+            [COHERENT, INCOHERENT], reference, coherence_type="c_npmi", topn=3, n_boot=150, ci=0.5, seed=2
+        )
+        assert float(np.sum(wide.ci_high - wide.ci_low)) > float(np.sum(narrow.ci_high - narrow.ci_low))
+
+    def test_accepts_fitted_model(self, reference):
+        m = LDA(num_topics=2, seed=1)
+        m.fit(reference, iters=200)
+        r = topica.coherence_ci(m, reference, coherence_type="c_npmi", topn=3, n_boot=50, seed=0)
+        assert r.estimate.shape == (2,)
+
+    def test_empty_texts_raises(self):
+        with pytest.raises(ValueError, match="texts is empty"):
+            topica.coherence_ci([COHERENT], [], n_boot=10)
+
+
 class TestRanges:
     def test_npmi_in_unit_range(self, reference):
         s = topica.coherence([COHERENT, INCOHERENT], reference, coherence_type="c_npmi", topn=3)

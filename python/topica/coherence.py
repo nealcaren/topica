@@ -27,6 +27,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from itertools import combinations
 
 import numpy as np
@@ -354,6 +355,97 @@ def coherence(topics, texts, *, coherence_type="c_v", topn=10, window_size=None,
     p = occ / nw
     scorer = {"c_uci": _score_uci, "c_npmi": _score_npmi, "c_v": _score_cv}[ct]
     return np.array([scorer(t, vocab, p, co, nw, epsilon) for t in tops])
+
+
+@dataclass
+class CoherenceCI:
+    """Per-topic coherence with a bootstrap standard error and interval.
+
+    ``estimate``/``se``/``ci_low``/``ci_high`` are each ``(num_topics,)`` arrays:
+    the coherence on the full reference corpus, the bootstrap standard error, and
+    the lower/upper percentile bounds.
+    """
+
+    estimate: np.ndarray
+    se: np.ndarray
+    ci_low: np.ndarray
+    ci_high: np.ndarray
+
+
+def coherence_ci(
+    topics,
+    texts,
+    *,
+    coherence_type="c_v",
+    topn=10,
+    window_size=None,
+    n_boot=200,
+    ci=0.9,
+    seed=0,
+    epsilon=1e-12,
+):
+    """Bootstrap standard errors and a credible interval for topic coherence.
+
+    Coherence is a corpus statistic with no model likelihood or posterior behind
+    it, so its uncertainty is obtained by bootstrap: hold each topic's top words
+    fixed, resample the reference documents with replacement ``n_boot`` times,
+    recompute coherence on each resample, and report the per-topic standard error
+    and percentile interval. The topics never change, so there is no refit and no
+    topic-alignment step — the interval reflects how much a topic's coherence score
+    would wobble under a different sample of the reference corpus, the honest answer
+    to "is topic A's coherence reliably higher than topic B's?".
+
+    ``estimate`` is the coherence on the full corpus (the conventional point
+    summary); because resampling documents estimates the sampling distribution of
+    that same statistic, the percentile interval is centered on it (unlike the
+    posterior-draw intervals elsewhere).
+
+    Parameters
+    ----------
+    topics : a fitted model, or a list of topics (each a list of words / ``(word,
+        prob)`` pairs). The top words are extracted once and held fixed.
+    texts : list of tokenized documents — the reference corpus to resample.
+    coherence_type, topn, window_size, epsilon : as in :func:`coherence`.
+    n_boot : number of bootstrap resamples (each recomputes co-occurrence, so this
+        is O(n_boot x corpus size); the windowed measures (``c_v`` etc.) are the
+        costliest).
+    ci : central interval mass (default 0.9 for a 90% interval).
+    seed : seed for the document resampling.
+
+    Returns
+    -------
+    CoherenceCI
+        ``(estimate, se, ci_low, ci_high)``, each ``(num_topics,)``.
+    """
+    if len(texts) == 0:
+        raise ValueError("texts is empty; pass the reference corpus as list[list[str]]")
+    # Fix the top words once; pass them as the `topics` argument on every resample
+    # so the coherence is recomputed for the same words against new corpora.
+    tops = _extract_topics(topics, topn)
+    texts = [list(d) for d in texts]
+    common = dict(coherence_type=coherence_type, topn=topn, window_size=window_size, epsilon=epsilon)
+    estimate = coherence(tops, texts, **common)
+
+    d = len(texts)
+    k = len(tops)
+    rng = np.random.default_rng(seed)
+    draws = np.empty((n_boot, k), dtype=float)
+    for b in range(n_boot):
+        picks = rng.integers(0, d, size=d)
+        boot = [texts[i] for i in picks]
+        draws[b] = coherence(tops, boot, **common)
+
+    lo_q, hi_q = (1.0 - ci) / 2.0, 1.0 - (1.0 - ci) / 2.0
+    se = np.full(k, np.nan)
+    ci_low = np.full(k, np.nan)
+    ci_high = np.full(k, np.nan)
+    for t in range(k):
+        col = draws[:, t]
+        col = col[np.isfinite(col)]
+        if col.size >= 2:
+            se[t] = col.std(ddof=1)
+            ci_low[t], ci_high[t] = np.quantile(col, [lo_q, hi_q])
+    return CoherenceCI(np.asarray(estimate, dtype=float), se, ci_low, ci_high)
 
 
 def topic_diversity(topics, topn=25):
