@@ -162,6 +162,9 @@ struct DmrState {
     // Thinned MCMC theta draws (num_draws, num_docs, num_topics), f32.
     #[serde(default)]
     theta_draws: Option<Arr3f32>,
+    // SE of the feature weights (num_topics, num_features); absent in old saves.
+    #[serde(default)]
+    feature_effect_se: Option<Arr2>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct LabeledState {
@@ -3320,6 +3323,7 @@ pub struct DMR {
     // keep_theta_draws=False. Feeds composition_theta's cross-sweep uncertainty.
     theta_draws: Option<Array3<f32>>,
     feature_effects: Option<Array2<f64>>, // (num_topics, num_features)
+    feature_effect_se: Option<Array2<f64>>, // (num_topics, num_features), SE of λ
     feature_names: Vec<String>,
     corpus: Option<corpus::Corpus>,
     log_likelihood_history: Vec<(usize, f64)>,
@@ -3398,6 +3402,7 @@ impl DMR {
             theta: None,
             theta_draws: None,
             feature_effects: None,
+            feature_effect_se: None,
             feature_names: Vec::new(),
             corpus: None,
             log_likelihood_history: Vec::new(),
@@ -3557,6 +3562,7 @@ impl DMR {
             acc_theta,
             theta_draw_buf,
             feat_eff,
+            feat_eff_se,
             ll_history,
             converged_flag,
             model,
@@ -3589,12 +3595,22 @@ impl DMR {
                 let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
                 cv.phi_into(&mut acc_phi);
                 cv.theta_into(&mut acc_theta);
+                let se = dmr::dmr_lambda_se(
+                    &lambda,
+                    &feats,
+                    cv.doc_topic_expected(),
+                    k,
+                    nf,
+                    prior_variance,
+                    None,
+                );
                 let model = cv.to_topic_model(&corpus);
                 (
                     acc_phi,
                     acc_theta,
                     Vec::new(),
                     lambda,
+                    se,
                     Vec::new(),
                     false,
                     model,
@@ -3700,12 +3716,22 @@ impl DMR {
                         *v /= n;
                     }
                 }
+                let se = dmr::dmr_lambda_se(
+                    &lambda,
+                    &feats,
+                    &doc_topic_counts(ws.doc_topics(), k),
+                    k,
+                    nf,
+                    prior_variance,
+                    None,
+                );
                 let model = ws.to_topic_model();
                 (
                     acc_phi,
                     acc_theta,
                     theta_draw_buf,
                     lambda,
+                    se,
                     Vec::new(),
                     false,
                     model,
@@ -3850,11 +3876,21 @@ impl DMR {
                     }
                 }
 
+                let se = dmr::dmr_lambda_se(
+                    &lambda,
+                    &feats,
+                    &doc_topic_counts(&model.doc_topics, k),
+                    k,
+                    nf,
+                    prior_variance,
+                    None,
+                );
                 (
                     acc_phi,
                     acc_theta,
                     theta_draw_buf,
                     lambda,
+                    se,
                     ll_history,
                     converged_flag,
                     model,
@@ -3882,12 +3918,19 @@ impl DMR {
                 fe[[t, f]] = val;
             }
         }
+        let mut fe_se = Array2::<f64>::zeros((k, nf));
+        for (t, row) in feat_eff_se.iter().enumerate() {
+            for (f, &val) in row.iter().enumerate() {
+                fe_se[[t, f]] = val;
+            }
+        }
 
         self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
         self.phi = Some(phi);
         self.theta = Some(theta);
         self.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, k, None);
         self.feature_effects = Some(fe);
+        self.feature_effect_se = Some(fe_se);
         self.feature_names = names;
         self.log_likelihood_history = ll_history;
         self.converged = converged_flag;
@@ -3950,6 +3993,24 @@ impl DMR {
     fn feature_effects<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         Ok(self.feature_effects.as_ref().unwrap().to_pyarray_bound(py))
+    }
+
+    /// Standard error of each feature weight λ, shape ``(num_topics, num_features)``,
+    /// from the observed information of the penalized Dirichlet-multinomial
+    /// likelihood at the fit — the curvature of the same objective L-BFGS maximizes
+    /// to estimate :attr:`feature_effects`. Aligned to ``feature_effects``; an
+    /// effect more than ~2 SEs from zero is the usual significance cue. ``None`` for
+    /// models saved before this was added.
+    #[getter]
+    fn feature_effect_se<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Option<Bound<'py, PyArray2<f64>>>> {
+        self.require_fitted()?;
+        Ok(self
+            .feature_effect_se
+            .as_ref()
+            .map(|a| a.to_pyarray_bound(py)))
     }
 
     /// Feature names aligned with the columns of :attr:`feature_effects`
@@ -4201,6 +4262,7 @@ impl DMR {
                 log_likelihood_history: self.log_likelihood_history.clone(),
                 converged: self.converged,
                 theta_draws: arr3f32_opt(&self.theta_draws),
+                feature_effect_se: arr2_opt(&self.feature_effect_se),
             },
         )
     }
@@ -4229,6 +4291,7 @@ impl DMR {
             phi: arr2_back(s.phi)?,
             theta: arr2_back(s.theta)?,
             feature_effects: arr2_back(s.feature_effects)?,
+            feature_effect_se: arr2_back(s.feature_effect_se)?,
             feature_names: s.feature_names,
             corpus: s.corpus,
             theta_draws: arr3f32_back(s.theta_draws)?,

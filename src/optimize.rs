@@ -16,6 +16,24 @@ pub fn digamma(mut x: f64) -> f64 {
     result + x.ln() - 0.5 * inv - inv2 * (1.0 / 12.0 - inv2 * (1.0 / 120.0 - inv2 / 252.0))
 }
 
+/// Trigamma function ψ'(x) via recurrence + asymptotic expansion (the derivative
+/// of [`digamma`]). Used for observed-information / standard-error computations.
+pub fn trigamma(mut x: f64) -> f64 {
+    let mut result = 0.0;
+    // Recurrence: ψ'(x) = ψ'(x+1) + 1/x²  →  shift x into the asymptotic region.
+    while x < 6.0 {
+        result += 1.0 / (x * x);
+        x += 1.0;
+    }
+    // Asymptotic: 1/x + 1/(2x²) + 1/(6x³) - 1/(30x⁵) + 1/(42x⁷) - 1/(30x⁹).
+    let inv = 1.0 / x;
+    let inv2 = inv * inv;
+    result
+        + inv
+        + 0.5 * inv2
+        + inv * inv2 * (1.0 / 6.0 - inv2 * (1.0 / 30.0 - inv2 * (1.0 / 42.0 - inv2 / 30.0)))
+}
+
 /// One Minka fixed-point step for a symmetric Dirichlet concentration parameter.
 ///
 /// Both alpha (document-topic) and beta (topic-word) optimisation use this

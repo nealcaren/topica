@@ -241,6 +241,12 @@ class TestGDMRShapesAndInvariants:
         expected_num_basis = 3  # prod(d+1 for d in [2]) = 3
         assert fitted.feature_effects.shape == (K, expected_num_basis)
 
+    def test_feature_effect_se_shape_and_finite(self, fitted):
+        se = fitted.feature_effect_se
+        assert se is not None
+        assert se.shape == fitted.feature_effects.shape
+        assert np.all(np.isfinite(se)) and np.all(se > 0.0)
+
     def test_alpha_shape(self, fitted):
         K = fitted.num_topics
         assert fitted.alpha.shape == (K,)

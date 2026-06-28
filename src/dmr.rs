@@ -204,6 +204,112 @@ pub fn dmr_objective_and_gradient(
     (value, grad)
 }
 
+/// Standard errors of the DMR feature weights `lambda`, from the observed
+/// information of the penalized Dirichlet-multinomial log-likelihood at the fit.
+///
+/// `lambda` is fit by maximizing the penalized likelihood (see
+/// [`dmr_objective_and_gradient`]), so its asymptotic covariance is the inverse of
+/// the negative Hessian of that objective. The topics couple through the Dirichlet
+/// normalizer `α_{d,·}`, so the Hessian is not block-diagonal across topics; per
+/// document `d` it is
+/// ```text
+///   ∂²L_d/∂λ_{t,f}∂λ_{u,g} = x_{d,f} x_{d,g} ( c_d a_t a_u + [t=u] a_t b_t )
+/// ```
+/// with `a_t = α_{d,t}`, `c_d = ψ'(α_{d,·}) − ψ'(α_{d,·}+N_d)`,
+/// `g_t = ψ(α_·) − ψ(α_·+N_d) + ψ(a_t+n_t) − ψ(a_t)`, and
+/// `b_t = a_t(ψ'(a_t+n_t) − ψ'(a_t)) + g_t`. The observed information is
+/// `J = (1/σ²)I − Σ_d H_d` (a `(T·F)×(T·F)` SPD matrix); the SE of `λ_{t,f}` is
+/// `sqrt(diag(J^{-1}))`. Returns `[num_topics][num_features]`, aligned to `lambda`.
+pub fn dmr_lambda_se(
+    lambda: &[Vec<f64>],
+    features: &[Vec<f64>],
+    doc_topic_counts: &[Vec<f64>],
+    num_topics: usize,
+    num_features: usize,
+    prior_variance: f64,
+    offset: Option<&[Vec<f64>]>,
+) -> Vec<Vec<f64>> {
+    use crate::linalg::{make_diagonally_dominant, spd_inverse};
+    use crate::optimize::trigamma;
+
+    let t = num_topics;
+    let f = num_features;
+    let p = t * f;
+    // Observed information J, assembled as (1/σ²)I − Σ_d H_d (row-major p x p).
+    let mut info = vec![0.0f64; p * p];
+    let mut a = vec![0.0f64; t];
+    let mut b = vec![0.0f64; t];
+
+    for (d, x) in features.iter().enumerate() {
+        let mut alpha_sum = 0.0f64;
+        for tt in 0..t {
+            let dot: f64 = lambda[tt].iter().zip(x).map(|(l, xi)| l * xi).sum();
+            let off = offset.map_or(0.0, |o| o[d][tt]);
+            a[tt] = (dot + off).exp();
+            alpha_sum += a[tt];
+        }
+        let counts = &doc_topic_counts[d];
+        let n_d: f64 = counts.iter().sum();
+        let c_d = trigamma(alpha_sum) - trigamma(alpha_sum + n_d);
+        let dg_asum = digamma(alpha_sum);
+        let dg_asum_n = digamma(alpha_sum + n_d);
+        for tt in 0..t {
+            let at = a[tt];
+            let n = counts[tt];
+            let g_t = dg_asum - dg_asum_n + digamma(at + n) - digamma(at);
+            b[tt] = at * (trigamma(at + n) - trigamma(at)) + g_t;
+        }
+        // Add −H_d = −x_f x_g ( c_d a_t a_u + [t=u] a_t b_t ) into J.
+        for tt in 0..t {
+            for uu in 0..t {
+                let mut coef = -c_d * a[tt] * a[uu];
+                if tt == uu {
+                    coef -= a[tt] * b[tt];
+                }
+                if coef == 0.0 {
+                    continue;
+                }
+                for ff in 0..f {
+                    let xf = x[ff];
+                    if xf == 0.0 {
+                        continue;
+                    }
+                    let row = (tt * f + ff) * p + uu * f;
+                    for gg in 0..f {
+                        info[row + gg] += coef * xf * x[gg];
+                    }
+                }
+            }
+        }
+    }
+    // Gaussian prior contributes (1/σ²) to the diagonal.
+    let inv_var = 1.0 / prior_variance;
+    for i in 0..p {
+        info[i * p + i] += inv_var;
+    }
+
+    let cov = spd_inverse(&info, p).unwrap_or_else(|| {
+        let mut s = info.clone();
+        make_diagonally_dominant(&mut s, p);
+        spd_inverse(&s, p).unwrap_or_else(|| vec![f64::NAN; p * p])
+    });
+    (0..t)
+        .map(|tt| {
+            (0..f)
+                .map(|ff| {
+                    let idx = tt * f + ff;
+                    let v = cov[idx * p + idx];
+                    if v > 0.0 {
+                        v.sqrt()
+                    } else {
+                        f64::NAN
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
 use crate::variational::lbfgs_minimize;
 
 /// Optimize `lambda` in place to maximize the penalized DMR likelihood for the
@@ -324,6 +430,113 @@ mod tests {
                     grad[t][f],
                     numeric
                 );
+            }
+        }
+    }
+
+    // The observed-information matrix used for SEs must equal the negative Hessian
+    // of the objective: finite-difference the analytic gradient w.r.t. each lambda
+    // entry and compare to -(J - prior) reconstructed from dmr_lambda_se's assembly.
+    // We check the full Hessian via the gradient's central difference.
+    #[test]
+    fn lambda_se_hessian_matches_finite_difference() {
+        use crate::linalg::spd_inverse;
+        let (t, f) = (3usize, 2usize);
+        let lambda = vec![vec![0.1, -0.2], vec![-0.3, 0.4], vec![0.05, 0.15]];
+        let features = vec![
+            vec![1.0, 0.5],
+            vec![1.0, -1.0],
+            vec![1.0, 2.0],
+            vec![1.0, 0.0],
+            vec![1.0, 1.3],
+        ];
+        let counts = vec![
+            vec![3.0f64, 1.0, 0.0],
+            vec![0.0f64, 2.0, 2.0],
+            vec![1.0f64, 1.0, 5.0],
+            vec![2.0f64, 0.0, 1.0],
+            vec![1.0f64, 3.0, 2.0],
+        ];
+        let sigma2 = 10.0;
+        let p = t * f;
+
+        // Analytic observed information J from the same assembly the SE uses.
+        // Rebuild J by inverting the SE-derived covariance is circular, so instead
+        // FD the gradient: H[i,j] = d g_i / d lambda_j, and J = -H + (1/sigma2)I.
+        let grad_flat = |lam: &[Vec<f64>]| -> Vec<f64> {
+            let (_, g) = dmr_objective_and_gradient(lam, &features, &counts, t, f, sigma2, None);
+            let mut out = vec![0.0; p];
+            for tt in 0..t {
+                for ff in 0..f {
+                    out[tt * f + ff] = g[tt][ff];
+                }
+            }
+            out
+        };
+        let eps = 1e-6;
+        let mut j_fd = vec![0.0f64; p * p];
+        for j in 0..p {
+            let (tj, fj) = (j / f, j % f);
+            let mut lp = lambda.clone();
+            let mut lm = lambda.clone();
+            lp[tj][fj] += eps;
+            lm[tj][fj] -= eps;
+            let gp = grad_flat(&lp);
+            let gm = grad_flat(&lm);
+            for i in 0..p {
+                // J = -H = -(dg/dlambda)
+                j_fd[i * p + j] = -(gp[i] - gm[i]) / (2.0 * eps);
+            }
+        }
+        let se_fd: Vec<f64> = {
+            let cov = spd_inverse(&j_fd, p).expect("FD info not invertible");
+            (0..p).map(|i| cov[i * p + i].sqrt()).collect()
+        };
+        let se = dmr_lambda_se(&lambda, &features, &counts, t, f, sigma2, None);
+        for tt in 0..t {
+            for ff in 0..f {
+                let analytic = se[tt][ff];
+                let numeric = se_fd[tt * f + ff];
+                assert!(
+                    (analytic - numeric).abs() < 1e-4 * (1.0 + numeric.abs()),
+                    "se[{tt}][{ff}]: analytic {analytic} vs FD {numeric}"
+                );
+            }
+        }
+    }
+
+    // More documents at the same design shrinks the standard errors.
+    #[test]
+    fn lambda_se_shrinks_with_more_data() {
+        let (t, f) = (2usize, 2usize);
+        let lambda = vec![vec![0.0, 0.6], vec![0.0, -0.6]];
+        let mk = |reps: usize| -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
+            let mut features = Vec::new();
+            let mut counts = Vec::new();
+            for i in 0..reps {
+                let cov = if i % 2 == 0 { 1.0 } else { -1.0 };
+                features.push(vec![1.0, cov]);
+                counts.push(if cov > 0.0 {
+                    vec![2.0f64, 8.0]
+                } else {
+                    vec![8.0f64, 2.0]
+                });
+            }
+            (features, counts)
+        };
+        let (fs, cs) = mk(40);
+        let (fl, cl) = mk(400);
+        let se_small = dmr_lambda_se(&lambda, &fs, &cs, t, f, 100.0, None);
+        let se_large = dmr_lambda_se(&lambda, &fl, &cl, t, f, 100.0, None);
+        for tt in 0..t {
+            for ff in 0..f {
+                assert!(
+                    se_large[tt][ff] < se_small[tt][ff],
+                    "se[{tt}][{ff}] should shrink: {} -> {}",
+                    se_small[tt][ff],
+                    se_large[tt][ff]
+                );
+                assert!(se_large[tt][ff].is_finite() && se_large[tt][ff] > 0.0);
             }
         }
     }

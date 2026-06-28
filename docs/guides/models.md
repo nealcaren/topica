@@ -342,14 +342,24 @@ model.fit(corpus)
 
 Dirichlet-Multinomial Regression: each document's topic prior depends on its
 metadata, `α_d = exp(Xγ)`. The learned `feature_effects` show how covariates
-shift topic propensity.
+shift topic propensity, and `feature_effect_se` reports the standard error of
+each, so you can tell a real effect from noise.
 
 ```python
 import numpy as np
 X, names = topica.one_hot(party)
 model = topica.DMR(num_topics=20, seed=1)
 model.fit(docs, X, feature_names=names)
+z = model.feature_effects / model.feature_effect_se   # |z| > ~2 ⇒ notable
 ```
+
+`feature_effect_se` is the standard error of each weight λ from the observed
+information of the penalized Dirichlet-multinomial likelihood at the fit — the
+curvature of the very objective L-BFGS maximizes to estimate the effects, so it
+is exact (no bootstrap) and computed once at fit time. The topics couple through
+the Dirichlet normalizer, so the full cross-topic Hessian is inverted rather than
+a per-topic approximation. `GDMR` exposes the same getter, rescaled to its
+Legendre basis.
 
 Like `LDA`, `DMR` accepts the alternate inference backends via `sampler=`:
 `"warp"` (WarpLDA with a per-document-α doc phase) for fine-grained, large-`K`
