@@ -435,7 +435,7 @@ def leg_lda(k):
         for d in docs:
             mdl.add_doc(d)
         mdl.burn_in = 200
-        mdl.train(1000, show_progress=False)
+        mdl.train(1000, workers=1, show_progress=False)
         phi = np.array([mdl.get_topic_word_dist(t) for t in range(k)])
         refs.append((r"\pkg{tomotopy}", realign_to(tvocab, list(mdl.used_vocabs), phi)))
     n = TOP_N if len(refs) == 1 else 6
@@ -543,7 +543,7 @@ def leg_dmr(k):
         for doc, r in zip(docs, rating):
             mm.add_doc(doc, metadata=r)
         mm.burn_in = 200
-        mm.train(1000, show_progress=False)
+        mm.train(1000, workers=1, show_progress=False)
         return mm
     mdl = _fit_tomo(1)
     mvocab = list(mdl.used_vocabs)
@@ -654,7 +654,7 @@ def leg_hdp(k):
     for doc in docs:
         mdl.add_doc(doc)
     mdl.burn_in = 200
-    mdl.train(800, show_progress=False)
+    mdl.train(800, workers=1, show_progress=False)
     counts = np.array(mdl.get_count_by_topics(), dtype=float)
     live = sorted((t for t in range(mdl.k) if mdl.is_live_topic(t)), key=lambda t: -counts[t])
     mvocab = list(mdl.used_vocabs)
@@ -700,8 +700,19 @@ def leg_hdp(k):
         r" & \pkg{tomotopy} & \pkg{topica} \\",
         r"\midrule", *rows, r"\bottomrule", r"\end{tabular}", r"\end{table}"])
     RESULTS["hdp"] = f"count {mdl.live_k}$\\approx${h.num_topics}"
+    # The agreement adjective is conditional on the realized count gap so the prose
+    # can never contradict its own numbers (the reference is pinned to workers=1
+    # above, but a future toolchain could still drift the discovered count).
+    gap = abs(mdl.live_k - h.num_topics)
+    base = max(h.num_topics, mdl.live_k, 1)
+    if gap <= max(2, round(0.10 * base)):
+        agree = "and they land in nearly the same place"
+    elif gap <= max(4, round(0.25 * base)):
+        agree = "and they land in the same range"
+    else:
+        agree = "though the discovered counts differ"
     intro = (r"The nonparametric model: both engines \emph{infer} the topic count rather "
-             rf"than fixing it, and they land in nearly the same place --- \pkg{{tomotopy}} "
+             rf"than fixing it, {agree} --- \pkg{{tomotopy}} "
              rf"discovered \textbf{{{mdl.live_k}}} live topics, \pkg{{topica}} "
              rf"\textbf{{{h.num_topics}}}, a quantity neither was told. That count recovery "
              r"is HDP's headline check. Topic identities, by contrast, are seed-sensitive in "
@@ -725,7 +736,7 @@ def leg_pa(k):
     for doc in docs:
         mdl.add_doc(doc)
     mdl.burn_in = 200
-    mdl.train(1000, show_progress=False)
+    mdl.train(1000, workers=1, show_progress=False)
     mvocab = list(mdl.used_vocabs)
     msub = np.array([mdl.get_topic_word_dist(s) for s in range(num_sub)])
     p = PA(num_super, num_sub, seed=1)
@@ -844,7 +855,7 @@ def leg_gdmr(k):
     for d, xx in zip(docs, x):
         mdl.add_doc(d, numeric_metadata=[float(xx)])
     mdl.burn_in = 200
-    mdl.train(800, show_progress=False)
+    mdl.train(800, workers=1, show_progress=False)
     mvocab = list(mdl.used_vocabs)
     mphi = np.array([mdl.get_topic_word_dist(t) for t in range(k)])
     g = GDMR(num_topics=k, degrees=deg, seed=1)
@@ -897,7 +908,7 @@ def leg_slda(k):
     for d, r in zip(docs, y):
         mdl.add_doc(d, y=[float(r)])
     mdl.burn_in = 200
-    mdl.train(1000, show_progress=False)
+    mdl.train(1000, workers=1, show_progress=False)
     mvocab = list(mdl.used_vocabs)
     mphi = np.array([mdl.get_topic_word_dist(t) for t in range(k)])
     mcoef = np.asarray(mdl.get_regression_coef(0))
@@ -948,7 +959,7 @@ def leg_labeledlda(k):
     for d, r in zip(docs, rating):
         mdl.add_doc(d, labels=[r])
     mdl.burn_in = 200
-    mdl.train(1000, show_progress=False)
+    mdl.train(1000, workers=1, show_progress=False)
     mvocab = list(mdl.used_vocabs)
     ldict = list(mdl.topic_label_dict)
     mphi_by = {ldict[t]: np.array(mdl.get_topic_word_dist(t)) for t in range(len(ldict))}
@@ -995,7 +1006,7 @@ def leg_dtm(k):
     mdl = tp.DTModel(tw=tp.TermWeight.ONE, k=k, t=T, seed=1)
     for d, s in zip(docs, slc):
         mdl.add_doc(d, timepoint=int(s))
-    mdl.train(1000, show_progress=False)  # converged: DTModel separates slowly here
+    mdl.train(1000, workers=1, show_progress=False)  # converged: DTModel separates slowly here; workers=1 for reproducibility
     mvocab = list(mdl.used_vocabs)
     last = T - 1
     mphi = np.array([mdl.get_topic_word_dist(t, last) for t in range(k)])
