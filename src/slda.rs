@@ -30,6 +30,9 @@ pub struct SldaModel {
     pub eta: Vec<f64>,           // K regression coefficients
     pub sigma2: f64,             // response variance
     pub gamma: Vec<Vec<f64>>,    // D × K variational Dirichlet (training docs)
+    /// `M = Σ_d E[z̄_d z̄_dᵀ]` (K×K, row-major, ridge-stabilized) — the
+    /// normal-equations matrix the η estimate solves, retained for coefficient SEs.
+    pub m_mat: Vec<f64>,
 }
 
 impl SldaModel {
@@ -150,11 +153,23 @@ fn infer_doc(
 
 /// Predict the response for a new document (ŷ = ηᵀ z̄, z̄ = Σφ / N).
 pub fn predict_one(model: &SldaModel, doc: &[u32], var_iters: usize) -> f64 {
+    predict_one_var(model, doc, var_iters).0
+}
+
+/// Predict the response and its posterior-predictive variance for a new document.
+///
+/// Returns `(ŷ, var)` with `ŷ = ηᵀ z̄` and
+/// `var = ηᵀ Cov(z̄) η + σ²`, where the variational posterior over the topic
+/// frequency `z̄ = (1/N) Σ_n z_n` (each token `z_n ~ Categorical(φ_n)`) has
+/// `Cov(z̄) = (1/N²) Σ_n [diag(φ_n) − φ_n φ_nᵀ]`. The first term is the topic
+/// uncertainty for this document, the second the irreducible response noise. An
+/// empty document carries no topic information, so only the residual `σ²` remains.
+pub fn predict_one_var(model: &SldaModel, doc: &[u32], var_iters: usize) -> (f64, f64) {
     let bag = to_bag(doc);
     if bag.is_empty() {
-        return 0.0;
+        return (0.0, model.sigma2);
     }
-    let (_, _, sum_phi) = infer_doc(
+    let (_, phi, sum_phi) = infer_doc(
         &bag,
         &model.log_beta,
         &model.eta,
@@ -163,10 +178,40 @@ pub fn predict_one(model: &SldaModel, doc: &[u32], var_iters: usize) -> f64 {
         None,
         var_iters,
     );
+    let k = model.num_topics;
     let n: f64 = bag.iter().map(|&(_, c)| c).sum();
-    (0..model.num_topics)
-        .map(|k| model.eta[k] * sum_phi[k] / n)
-        .sum()
+    let mean: f64 = (0..k).map(|kk| model.eta[kk] * sum_phi[kk] / n).sum();
+    // ηᵀ Cov(z̄) η = (1/N²)[ Σ_k η_k² sum_phi_k − Σ_w c_w (ηᵀ φ_w)² ].
+    let diag_term: f64 = (0..k)
+        .map(|kk| model.eta[kk] * model.eta[kk] * sum_phi[kk])
+        .sum();
+    let mut quad_term = 0.0f64;
+    for (i, &(_, c)) in bag.iter().enumerate() {
+        let eta_dot_phi: f64 = (0..k).map(|kk| model.eta[kk] * phi[i][kk]).sum();
+        quad_term += c * eta_dot_phi * eta_dot_phi;
+    }
+    let topic_var = ((diag_term - quad_term) / (n * n)).max(0.0);
+    (mean, topic_var + model.sigma2)
+}
+
+/// Standard errors of the regression coefficients `η`, from the OLS-style
+/// covariance `σ² M⁻¹` where `M = Σ_d E[z̄ z̄ᵀ]` is the (ridge-stabilized)
+/// normal-equations matrix that produced `η`. Returns length `num_topics`
+/// (`NaN` where `M` is not invertible).
+pub fn coefficient_se(m_mat: &[f64], sigma2: f64, num_topics: usize) -> Vec<f64> {
+    match spd_inverse(m_mat, num_topics) {
+        Some(minv) => (0..num_topics)
+            .map(|a| {
+                let v = sigma2 * minv[a * num_topics + a];
+                if v > 0.0 {
+                    v.sqrt()
+                } else {
+                    f64::NAN
+                }
+            })
+            .collect(),
+        None => vec![f64::NAN; num_topics],
+    }
 }
 
 /// Per-EM-iteration objective: the Gaussian log-likelihood of the response
@@ -239,6 +284,7 @@ pub fn fit_slda<R: Rng>(
 
     let mut bound_history: Vec<(usize, f64)> = Vec::new();
     let mut converged = false;
+    let mut last_m = vec![0.0f64; k * k]; // final M = Σ_d E[z̄ z̄ᵀ], for coefficient SEs
 
     for em_iter in 1..=em_iters {
         let mut beta_ss = vec![vec![1e-6; v]; k]; // K × V, with smoothing
@@ -306,6 +352,7 @@ pub fn fit_slda<R: Rng>(
         for a in 0..k {
             m_mat[a * k + a] += 1e-6;
         }
+        last_m.copy_from_slice(&m_mat); // retain the (ridge-stabilized) M for SEs
         if let Some(minv) = spd_inverse(&m_mat, k) {
             for a in 0..k {
                 eta[a] = (0..k).map(|c| minv[a * k + c] * b_vec[c]).sum();
@@ -338,6 +385,7 @@ pub fn fit_slda<R: Rng>(
             eta,
             sigma2,
             gamma,
+            m_mat: last_m,
         },
         bound_history,
         converged,
@@ -462,6 +510,43 @@ mod tests {
         let preds: Vec<f64> = docs.iter().map(|d| predict_one(&model, d, 20)).collect();
         let corr = pearson(&preds, &y);
         assert!(corr > 0.7, "prediction correlation too low: {}", corr);
+    }
+
+    #[test]
+    fn coefficient_se_and_predictive_variance() {
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let (docs, y, v) = supervised_corpus(&mut rng);
+        let (model, _, _) = fit_slda(&docs, &y, v, 2, 0.1, 25, 15, 0.0, 0, &mut rng);
+
+        // Coefficient SEs: finite, positive, and the strong predictive topic's
+        // coefficient is many SEs from zero on this well-separated corpus.
+        let se = coefficient_se(&model.m_mat, model.sigma2, 2);
+        assert_eq!(se.len(), 2);
+        assert!(
+            se.iter().all(|s| s.is_finite() && *s > 0.0),
+            "bad SE: {se:?}"
+        );
+        let hi = if model.eta[0].abs() >= model.eta[1].abs() {
+            0
+        } else {
+            1
+        };
+        assert!(
+            model.eta[hi].abs() / se[hi] > 2.0,
+            "predictive coefficient should be significant: eta={:?} se={se:?}",
+            model.eta
+        );
+
+        // Predictive variance is at least the residual σ² and finite; the mean
+        // matches predict_one.
+        for d in docs.iter().take(20) {
+            let (m, var) = predict_one_var(&model, d, 20);
+            assert!(var.is_finite() && var >= model.sigma2 - 1e-9, "var={var}");
+            assert!((m - predict_one(&model, d, 20)).abs() < 1e-9);
+        }
+        // An empty document falls back to the residual variance.
+        let (_, var0) = predict_one_var(&model, &[], 20);
+        assert!((var0 - model.sigma2).abs() < 1e-12);
     }
 
     #[test]
