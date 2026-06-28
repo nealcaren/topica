@@ -21,10 +21,10 @@ g-DMR & \pkg{tomotopy} & poliblog & 0.74 & Tab.~\ref{tab:app:gdmr} \\
 KeyATM & \proglang{R}~\pkg{keyATM} & poliblog & 0.89 & Tab.~\ref{tab:app:keyatm} \\
 sLDA & \pkg{tomotopy} & poliblog & 0.68 & Tab.~\ref{tab:app:slda} \\
 LabeledLDA & \pkg{tomotopy} & poliblog & 1.00 & Tab.~\ref{tab:app:labeledlda} \\
-HDP & \pkg{tomotopy} & poliblog & count 26$\approx$28 & Tab.~\ref{tab:app:hdp} \\
-PA & \pkg{tomotopy} & poliblog & 0.84 & Tab.~\ref{tab:app:pa} \\
+HDP & \pkg{tomotopy} & poliblog & count 27$\approx$28 & Tab.~\ref{tab:app:hdp} \\
+PA & \pkg{tomotopy} & poliblog & 0.75 & Tab.~\ref{tab:app:pa} \\
 DTM & \pkg{tomotopy} & poliblog & 0.71 & Tab.~\ref{tab:app:dtm} \\
-STS & \proglang{R} (authors) & poliblog & 0.91 & Tab.~\ref{tab:app:sts} \\
+STS & \proglang{R} (authors) & poliblog & 0.93 & Tab.~\ref{tab:app:sts} \\
 \addlinespace \multicolumn{5}{@{}l}{\textit{Neural (autoencoding / optimal-transport)}} \\[1pt]
 ProdLDA & PyTorch AVITM & 20\,Newsgroups & $c_v$, $c_{\text{npmi}}$, cross-NMI within reference seed noise & \code{parity/prodlda\_compare.py} \\
 CombinedTM & PyTorch CTM & synthetic & $c_v$, $c_{\text{npmi}}$, cross-NMI & \code{parity/combinedtm\_compare.py} \\
@@ -148,12 +148,12 @@ Both engines fit \code{prevalence = \textasciitilde{} rating + s(day)} on the sa
 \midrule
 1 & will, tax, american, year, economi, govern, econom, can & will, tax, american, year, economi, govern, econom, can \\
 2 & obama, barack, campaign, polit, report, senat, wright, said & obama, barack, campaign, polit, report, senat, wright, chicago \\
-3 & one, like, get, time, just, know, think, peopl & one, like, get, time, just, peopl, think, know \\
-4 & mccain, senat, john, campaign, said, republican, democrat, bill & mccain, senat, john, campaign, said, republican, bill, say \\
-5 & obama, hillari, mccain, democrat, poll, will, clinton, voter & obama, hillari, mccain, democrat, poll, clinton, will, voter \\
-6 & palin, peopl, right, american, one, will, think, romney & palin, peopl, right, american, will, one, romney, school \\
-7 & bush, administr, presid, said, court, law, hous, report & bush, presid, administr, said, court, hous, law, report \\
-8 & vote, elect, state, democrat, will, immigr, voter, republican & vote, elect, state, democrat, will, republican, immigr, voter \\
+3 & mccain, senat, john, campaign, said, republican, democrat, bill & mccain, senat, john, said, campaign, republican, bill, democrat \\
+4 & one, like, get, time, just, know, think, peopl & one, like, get, time, just, peopl, think, know \\
+5 & palin, peopl, right, american, one, will, think, romney & palin, peopl, right, american, will, one, romney, school \\
+6 & bush, administr, presid, said, court, law, hous, report & bush, presid, administr, said, court, hous, law, report \\
+7 & obama, hillari, mccain, democrat, poll, will, clinton, voter & obama, hillari, mccain, democrat, clinton, poll, will, campaign \\
+8 & vote, elect, state, democrat, will, immigr, voter, republican & vote, elect, state, democrat, will, immigr, voter, republican \\
 9 & will, world, iran, israel, attack, terrorist, nation, nuclear & will, world, iran, israel, attack, build, terrorist, nuclear \\
 10 & iraq, war, militari, iraqi, troop, report, forc, armi & iraq, war, forc, iraqi, troop, militari, bush, secur \\
 \bottomrule
@@ -165,9 +165,9 @@ Both engines fit \code{prevalence = \textasciitilde{} rating + s(day)} on the sa
 \toprule
 topic (\pkg{topica} top words) & \pkg{stm} & \pkg{topica} \\
 \midrule
-mccain, senat, john, campaign & +0.098 & +0.101 \\
-will, world, iran, israel & -0.088 & -0.079 \\
-one, like, get, time & -0.068 & -0.070 \\
+mccain, senat, john, said & +0.098 & +0.096 \\
+will, world, iran, israel & -0.088 & -0.078 \\
+one, like, get, time & -0.068 & -0.069 \\
 \bottomrule
 \end{tabular}\end{center}
 
@@ -184,15 +184,15 @@ No covariates, so this is the logistic-normal (correlated) topic model. Aligned 
  & \proglang{R}~\pkg{stm} & \pkg{topica} \\
 \midrule
 1 & will, tax, american, year, govern, economi, econom, can & will, tax, american, year, economi, govern, econom, can \\
-2 & obama, campaign, barack, polit, clinton, report, said, senat & obama, barack, campaign, polit, report, senat, wright, said \\
-3 & one, like, get, time, just, know, think, peopl & one, like, get, time, just, peopl, know, think \\
-4 & mccain, senat, john, republican, said, campaign, democrat, bill & mccain, senat, john, said, republican, campaign, democrat, bill \\
+2 & mccain, senat, john, republican, said, campaign, democrat, bill & mccain, senat, john, republican, said, campaign, democrat, bill \\
+3 & one, like, get, time, just, know, think, peopl & one, like, get, just, time, peopl, know, think \\
+4 & obama, campaign, barack, polit, clinton, report, said, senat & obama, campaign, barack, polit, report, senat, said, wright \\
 5 & bush, administr, presid, said, court, law, hous, report & bush, administr, presid, said, court, hous, law, report \\
-6 & obama, hillari, mccain, poll, democrat, will, voter, clinton & obama, hillari, mccain, poll, democrat, will, clinton, voter \\
-7 & palin, peopl, right, american, one, will, romney, think & palin, peopl, right, american, romney, will, one, school \\
-8 & vote, elect, state, democrat, will, immigr, voter, republican & vote, elect, state, democrat, will, voter, immigr, republican \\
+6 & palin, peopl, right, american, one, will, romney, think & palin, peopl, right, will, american, one, romney, school \\
+7 & obama, hillari, mccain, poll, democrat, will, voter, clinton & obama, hillari, mccain, poll, democrat, clinton, will, voter \\
+8 & vote, elect, state, democrat, will, immigr, voter, republican & elect, vote, state, democrat, will, immigr, voter, republican \\
 9 & will, world, iran, israel, attack, terrorist, nation, nuclear & world, will, iran, israel, attack, build, terrorist, nuclear \\
-10 & iraq, war, militari, iraqi, troop, report, forc, armi & iraq, war, forc, iraqi, troop, militari, secur, bush \\
+10 & iraq, war, militari, iraqi, troop, report, forc, armi & iraq, war, forc, iraqi, troop, militari, bush, secur \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -208,7 +208,7 @@ world, will, iran / mccain, senat, john & -0.23 \\
 
 \subsection[Content covariate / SAGE (vs R stm)]{Content covariate / SAGE (vs \proglang{R}~\pkg{stm})}
 
-\code{content = \textasciitilde{} rating}: each topic's words shift by ideology. Marginal aligned cosine \textbf{0.955}.
+\code{content = \textasciitilde{} rating}: each topic's words shift by ideology. Marginal aligned cosine \textbf{0.964}.
 
 \begin{table}[ht]\centering\footnotesize
 \caption{Content-model (SAGE) topics on poliblog (K=10); marginal topic-word averaged over rating levels.}
@@ -217,24 +217,24 @@ world, will, iran / mccain, senat, john & -0.23 \\
 \toprule
  & \proglang{R}~\pkg{stm} & \pkg{topica} \\
 \midrule
-1 & mccain, obama, campaign, john, poll, will, state, hillari & mccain, obama, campaign, will, john, poll, state, democrat \\
-2 & will, tax, year, american, govern, economi, econom, can & will, american, tax, year, govern, can, make, economi \\
-3 & one, like, think, just, get, peopl, know, time & one, like, get, time, peopl, think, can, just \\
+1 & will, tax, year, american, govern, economi, econom, can & will, tax, american, year, govern, economi, can, make \\
+2 & obama, campaign, barack, hillari, said, polit, clinton, say & obama, campaign, barack, polit, hillari, said, clinton, say \\
+3 & one, like, think, just, get, peopl, know, time & one, like, get, time, think, peopl, just, know \\
 4 & elect, vote, state, democrat, will, voter, republican, law & vote, elect, state, democrat, will, voter, republican, one \\
-5 & obama, campaign, barack, hillari, said, polit, clinton, say & obama, campaign, barack, polit, hillari, said, say, will \\
-6 & bush, presid, administr, iran, said, will, nation, state & bush, presid, administr, will, said, hous, time, year \\
-7 & will, world, peopl, american, countri, israel, war, america & will, world, war, peopl, american, one, militari, said \\
-8 & palin, mccain, romney, said, sarah, governor, right, say & palin, said, mccain, say, peopl, one, will, right \\
-9 & iraq, war, iraqi, troop, build, report, pentagon, armi & iraq, iraqi, troop, forc, war, secur, will, govern \\
-10 & senat, democrat, republican, vote, bill, hous, sen, parti & senat, democrat, vote, mccain, obama, republican, will, bill \\
+5 & mccain, obama, campaign, john, poll, will, state, hillari & obama, mccain, campaign, john, will, poll, state, hillari \\
+6 & bush, presid, administr, iran, said, will, nation, state & bush, presid, administr, will, said, hous, iran, nation \\
+7 & palin, mccain, romney, said, sarah, governor, right, say & palin, said, mccain, say, peopl, romney, right, one \\
+8 & will, world, peopl, american, countri, israel, war, america & will, world, war, peopl, american, militari, one, israel \\
+9 & senat, democrat, republican, vote, bill, hous, sen, parti & senat, democrat, vote, republican, obama, bill, mccain, will \\
+10 & iraq, war, iraqi, troop, build, report, pentagon, armi & iraq, iraqi, war, troop, forc, secur, said, will \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \noindent\emph{Per-group wording} of one topic in \pkg{topica} (the SAGE deviation, TV distance 0.26):
 \begin{center}\footnotesize\begin{tabular}{@{}l p{0.7\textwidth}@{}}\toprule
-Conservative & mccain, obama, will, democrat, campaign, poll, hillari, clinton \\
-Liberal & mccain, obama, campaign, john, poll, new, will, state \\
+Conservative & obama, mccain, will, democrat, campaign, hillari, clinton, poll \\
+Liberal & mccain, obama, campaign, john, poll, new, state, will \\
 \bottomrule\end{tabular}\end{center}
 
 
@@ -383,7 +383,7 @@ Liberal & mccain, obama, will, said, campaign, one, say, presid & mccain, obama,
 
 \subsection[Hierarchical Dirichlet process (vs tomotopy)]{Hierarchical Dirichlet process (vs \pkg{tomotopy})}
 
-The nonparametric model: both engines \emph{infer} the topic count rather than fixing it, and they land in nearly the same place --- \pkg{tomotopy} discovered \textbf{26} live topics, \pkg{topica} \textbf{28}, a quantity neither was told. That count recovery is HDP's headline check. Topic identities, by contrast, are seed-sensitive in any HDP sampler: \pkg{topica}'s 10 most prevalent topics match \pkg{tomotopy}'s at cosine 0.586, which is its own seed-to-seed ceiling (0.585 between two \pkg{topica} seeds) --- the cross-engine match is as tight as the model is reproducible with itself.
+The nonparametric model: both engines \emph{infer} the topic count rather than fixing it, and they land in nearly the same place --- \pkg{tomotopy} discovered \textbf{27} live topics, \pkg{topica} \textbf{28}, a quantity neither was told. That count recovery is HDP's headline check. Topic identities, by contrast, are seed-sensitive in any HDP sampler: \pkg{topica}'s 10 most prevalent topics match \pkg{tomotopy}'s at cosine 0.570, which is its own seed-to-seed ceiling (0.585 between two \pkg{topica} seeds) --- the cross-engine match is as tight as the model is reproducible with itself.
 
 \begin{table}[ht]\centering\footnotesize
 \caption{HDP topics on poliblog: \pkg{topica}'s 10 most prevalent topics beside their best-matched \pkg{tomotopy} topic.}
@@ -392,16 +392,16 @@ The nonparametric model: both engines \emph{infer} the topic count rather than f
 \toprule
  & \pkg{tomotopy} & \pkg{topica} \\
 \midrule
-1 & obama, one, peopl, will, like, time, say, just & will, can, one, like, think, even, want, say \\
-2 & bush, iraq, presid, will, administr, war, said, american & peopl, make, said, get, just, right, support, presid \\
-3 & will, iraq, forc, war, said, govern, iran, militari & iraq, war, militari, iran, bush, forc, govern, secur \\
-4 & financi, home, bank, trillion, three, fed, credit, rescu & time, new, stori, live, man, post, american, day \\
-5 & vote, elect, state, immigr, voter, will, ballot, illeg & obama, vote, democrat, voter, poll, state, elect, will \\
-6 & obama, mccain, campaign, will, hillari, poll, democrat, state & obama, mccain, campaign, john, barack, palin, senat, say \\
-7 & report, blagojevich, obama, senat, hous, investig, state, pentagon & state, report, court, law, investig, administr, offic, feder \\
-8 & will, american, year, tax, can, govern, make, one & tax, will, govern, econom, economi, american, plan, billion \\
-9 & democrat, vote, obama, republican, senat, will, parti, bill & senat, democrat, vote, republican, hous, bill, bush, presid \\
-10 & energi, price, natur, american, hous, republican, black, clear & oil, energi, price, compani, drill, global, state, increas \\
+1 & obama, one, will, like, time, peopl, say, can & will, can, one, like, think, even, want, say \\
+2 & iraq, bush, presid, will, war, nation, govern, troop & peopl, make, said, get, just, right, support, presid \\
+3 & iraq, will, iran, war, said, forc, attack, israel & iraq, war, militari, iran, bush, forc, govern, secur \\
+4 & gaza, isra, day, per, border, one, close, daili & time, new, stori, live, man, post, american, day \\
+5 & obama, mccain, democrat, vote, campaign, will, hillari, state & obama, vote, democrat, voter, poll, state, elect, will \\
+6 & obama, mccain, will, campaign, one, democrat, republican, like & obama, mccain, campaign, john, barack, palin, senat, say \\
+7 & bush, said, report, presid, hous, senat, administr, one & state, report, court, law, investig, administr, offic, feder \\
+8 & will, american, tax, year, can, mccain, govern, make & tax, will, govern, econom, economi, american, plan, billion \\
+9 & democrat, parti, republican, voter, district, eastern, conserv, american & senat, democrat, vote, republican, hous, bill, bush, presid \\
+10 & oil, hunt, contract, state, iraq, deal, committe, knew & oil, energi, price, compani, drill, global, state, increas \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -409,7 +409,7 @@ The nonparametric model: both engines \emph{infer} the topic count rather than f
 
 \subsection[Pachinko allocation (vs tomotopy)]{Pachinko allocation (vs \pkg{tomotopy})}
 
-A DAG of 3 super-topics over 10 shared sub-topics, capturing topic correlation through the hierarchy. Sub-topics aligned: cosine \textbf{0.841}.
+A DAG of 3 super-topics over 10 shared sub-topics, capturing topic correlation through the hierarchy. Sub-topics aligned: cosine \textbf{0.752}.
 
 \begin{table}[ht]\centering\footnotesize
 \caption{Pachinko sub-topics on poliblog (3 super-topics over 10 sub-topics), \pkg{tomotopy} vs \pkg{topica}.}
@@ -418,16 +418,16 @@ A DAG of 3 super-topics over 10 shared sub-topics, capturing topic correlation t
 \toprule
  & \pkg{tomotopy} & \pkg{topica} \\
 \midrule
-1 & obama, campaign, barack, clinton, hillari, said, polit, senat & obama, campaign, barack, hillari, clinton, polit, candid, question \\
-2 & mccain, palin, john, campaign, said, say, romney, sen & mccain, palin, john, campaign, said, sen, senat, today \\
-3 & iraq, war, militari, iran, forc, secur, will, iraqi & iraq, war, militari, forc, iran, american, attack, bush \\
-4 & like, one, get, can, just, think, make, peopl & one, like, peopl, say, just, think, make, can \\
-5 & obama, vote, poll, voter, state, elect, democrat, mccain & democrat, obama, vote, state, republican, voter, elect, poll \\
-6 & will, tax, govern, year, american, economi, econom, plan & tax, american, will, govern, economi, econom, plan, year \\
-7 & report, stori, news, new, media, time, said, post & report, stori, news, time, new, media, york, show \\
-8 & peopl, american, will, america, countri, world, right, nation & american, peopl, america, world, countri, school, will, build \\
-9 & state, law, court, investig, case, report, offic, administr & hous, bush, presid, state, administr, law, senat, said \\
-10 & bush, presid, senat, democrat, hous, republican, vote, said & will, can, year, time, nation, take, even, also \\
+1 & iraq, war, militari, iran, forc, will, govern, secur & iraq, war, militari, forc, iran, american, attack, bush \\
+2 & obama, vote, democrat, poll, voter, state, elect, will & democrat, obama, vote, state, republican, voter, elect, poll \\
+3 & like, one, get, can, make, just, think, even & one, like, peopl, say, just, think, make, can \\
+4 & will, tax, govern, oil, year, compani, million, energi & tax, american, will, govern, economi, econom, plan, year \\
+5 & obama, mccain, campaign, barack, palin, john, clinton, said & obama, campaign, barack, hillari, clinton, polit, candid, question \\
+6 & report, news, new, stori, media, said, time, build & report, stori, news, time, new, media, york, show \\
+7 & peopl, american, will, right, america, world, polit, mani & american, peopl, america, world, countri, school, will, build \\
+8 & state, law, court, investig, offic, administr, depart, case & hous, bush, presid, state, administr, law, senat, said \\
+9 & mccain, will, can, health, american, romney, tax, immigr & will, can, year, time, nation, take, even, also \\
+10 & bush, presid, democrat, senat, republican, hous, vote, said & mccain, palin, john, campaign, said, sen, senat, today \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -475,7 +475,7 @@ falling & romney, huckabe, fred, thompson, paul, global \\
 
 \subsection[Structural topic and sentiment-discourse (vs the authors' R reference)]{Structural topic and sentiment-discourse (vs the authors' \proglang{R} reference)}
 
-The authors' published poliblog\,2008 fit vs \pkg{topica}, both read at the mean sentiment (the reference's \code{print.topWords} view). Aligned cosine \textbf{0.912}.
+The authors' published poliblog\,2008 fit vs \pkg{topica}, both read at the mean sentiment (the reference's \code{print.topWords} view). Aligned cosine \textbf{0.930}.
 
 \begin{table}[ht]\centering\footnotesize
 \caption{STS topics on the published poliblog fit (K=5), read at each topic's mean sentiment-discourse.}
@@ -484,11 +484,11 @@ The authors' published poliblog\,2008 fit vs \pkg{topica}, both read at the mean
 \toprule
  & \proglang{R} reference & \pkg{topica} \\
 \midrule
-1 & obama, democrat, vote, will, republican, elect, hillari, clinton & obama, democrat, vote, will, hillari, clinton, elect, republican \\
+1 & obama, democrat, vote, will, republican, elect, hillari, clinton & obama, democrat, vote, will, hillari, elect, clinton, republican \\
 2 & obama, mccain, campaign, said, barack, john, palin, say & obama, mccain, campaign, barack, palin, john, said, say \\
-3 & one, peopl, like, will, can, just, right, think & will, one, peopl, like, can, year, time, american \\
-4 & iraq, war, will, militari, bush, iran, american, said & will, bush, iraq, presid, said, govern, war, state \\
-5 & will, bush, govern, hous, tax, year, american, presid & conserv, oil, year, hous, democrat, energi, one, republican \\
+3 & one, peopl, like, will, can, just, right, think & will, one, peopl, like, can, time, year, american \\
+4 & iraq, war, will, militari, bush, iran, american, said & bush, iraq, will, presid, said, govern, war, state \\
+5 & will, bush, govern, hous, tax, year, american, presid & oil, energi, year, democrat, will, price, tax, hous \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -496,8 +496,8 @@ The authors' published poliblog\,2008 fit vs \pkg{topica}, both read at the mean
 \noindent\emph{Sentiment by ideology.} Effect of \code{rating} (Liberal) on each topic's sentiment-discourse latent in \pkg{topica} (positive = more positive among Liberal posts) — the dimension STS adds over STM:
 \begin{center}\footnotesize\begin{tabular}{@{}p{0.6\textwidth} r@{}}\toprule
 topic (top words) & sentiment effect \\ \midrule
-obama, mccain, campaign, barack, palin & +0.417 \\
-obama, democrat, vote, will, republican & +0.239 \\
-allah, qur, sura, muhammad, ibn & +0.090 \\
+obama, mccain, campaign, barack, palin & +0.429 \\
+obama, democrat, vote, republican, will & +0.195 \\
+allah, qur, sura, ibn, muhammad & +0.072 \\
 \bottomrule\end{tabular}\end{center}
 

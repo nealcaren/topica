@@ -45,6 +45,7 @@ model you use, and, where you rely on a feature ported from a specific package
 | `FASTopic` | Wu et al. (2024) |
 | `Wordfish` | Slapin & Proksch (2008) |
 | `TBIP` | Vafa, Naidu & Blei (2020) |
+| `PartyEmbeddings` | Rheault & Cochrane (2020) |
 
 ## Full references
 
@@ -76,6 +77,7 @@ model you use, and, where you rely on a feature ported from a specific package
 - Wu, X., Nguyen, T., Zhang, D. C., Wang, W. Y., & Luu, A. T. (2024). FASTopic: A fast, adaptive, stable, and transferable topic modeling paradigm. *NeurIPS 2024*. [arXiv:2405.17978](https://arxiv.org/abs/2405.17978)
 - Slapin, J. B., & Proksch, S.-O. (2008). A scaling model for estimating time-series party positions from texts. *American Journal of Political Science*, 52(3), 705–722. [doi:10.1111/j.1540-5907.2008.00338.x](https://doi.org/10.1111/j.1540-5907.2008.00338.x) (Wordfish)
 - Vafa, K., Naidu, S., & Blei, D. M. (2020). Text-based ideal points. *Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics (ACL 2020)*, 5345–5357. [doi:10.18653/v1/2020.acl-main.475](https://doi.org/10.18653/v1/2020.acl-main.475) (TBIP)
+- Rheault, L., & Cochrane, C. (2020). Word embeddings for the analysis of ideological placement in parliamentary corpora. *Political Analysis*, 28(1), 112–133. [doi:10.1017/pan.2019.26](https://doi.org/10.1017/pan.2019.26) (PartyEmbeddings)
 
 ### Methods used in the diagnostics and effects tools
 

@@ -338,13 +338,16 @@ default surface is only models checked against a reference implementation.
 models learn topics from word counts, by collapsed-Gibbs sampling, variational
 EM, or an amortized variational autoencoder, and present topic-word weights on
 the probability simplex. \emph{Matrix-factorization} models decompose the
-document-term matrix directly. \emph{Embedding-based} models start from document
-vectors the user supplies, and include contextualized and cross-lingual variants.
-A final \emph{LLM-based} model drives discovery by prompting a large language
-model. Table~\ref{tab:models} lists the family and the question each model
-answers. The breadth is the point: a single import covers the span from the LDA
-baseline to the structural topic model, neural clustering, cross-lingual
-alignment, and LLM-driven discovery.
+document-term matrix directly. \emph{Ideal-point} models estimate a latent
+one-dimensional position for each author or document---the text-scaling tradition
+political scientists use to place actors on a left--right axis---from word
+frequencies or from trained embeddings. \emph{Embedding-based} models start from
+document vectors the user supplies, and include contextualized and cross-lingual
+variants. A final \emph{LLM-based} model drives discovery by prompting a large
+language model. Table~\ref{tab:models} lists the family and the question each
+model answers. The breadth is the point: a single import covers the span from the
+LDA baseline to the structural topic model, text scaling, neural clustering,
+cross-lingual alignment, and LLM-driven discovery.
 
 In every case \pkg{topica} \emph{implements} a method introduced elsewhere; the
 statistical contribution belongs to the cited authors, and \pkg{topica} is an
@@ -390,6 +393,11 @@ Model & What it is for & Reference \\
 \multicolumn{3}{l}{\emph{Matrix factorization}}\\
 \code{NMF}          & Non-negative factorization of the document-term matrix & \citet{lee2001nmf} \\
 \code{LSA}          & Latent semantic analysis (truncated {SVD})           & \citet{deerwester1990lsa} \\
+\midrule
+\multicolumn{3}{l}{\emph{Ideal point}}\\
+\code{Wordfish}     & One-dimensional party scaling from word frequencies  & \citet{slapin2008wordfish} \\
+\code{TBIP}         & Text-based ideal points (Poisson factorization)      & \citet{vafa2020tbip} \\
+\code{PartyEmbeddings} & Ideological placement from party paragraph vectors & \citet{rheault2020party} \\
 \midrule
 \multicolumn{3}{l}{\emph{Embedding-based}}\\
 \code{BERTopic}     & Cluster embeddings, label by class-TF-IDF            & \citet{grootendorst2022bertopic} \\
@@ -558,6 +566,22 @@ kind of uncertainty it reports. For a clustering of embeddings, which has no
 posterior over $\theta$, it declines to report confidence intervals and says so,
 rather than returning a number that looks like one.
 
+The same principle reaches the parameters a model estimates directly, not only
+the downstream effect regression: where a model reports a point estimate,
+\pkg{topica} attaches an uncertainty to it. The covariate weights of \code{DMR}
+and \code{GDMR} and of the covariate \code{KeyATM} carry a \code{feature\_effect\_se}
+from the observed information of the penalized Dirichlet-multinomial they
+maximize; the ideal-point family reports a \code{position\_se} for each estimated
+position; \code{SupervisedLDA} reports a standard error on each regression
+coefficient and a posterior-predictive standard deviation on each prediction; and
+the \code{STM}/\code{CTM} topic correlations come with a credible interval. These
+are analytic wherever the model affords one---the curvature of the fitted
+objective or the variational posterior---so they are exact given the fit and
+computed once, with the bootstrap reserved for the one quantity, topic coherence,
+that has no likelihood or posterior to read an interval from. The discipline is
+the same throughout: report the uncertainty the estimate actually carries, and
+where there is none to report, say so.
+
 \subsection{Visualization and reporting}
 
 The same contract drives a visualization layer, \code{topica.viz}, that turns a
@@ -657,7 +681,7 @@ the right question is not whether two engines produce identical matrices, which
 they need not, but whether \pkg{topica} lands on \proglang{R}'s solution as closely
 as \proglang{R} lands on its own. On the poliblog vignette, with both engines given
 the same Spectral initialization, \pkg{topica}'s prevalence fit agrees with
-\proglang{R} \pkg{stm}'s at a topic-word cosine of $0.976$ (per-topic median
+\proglang{R} \pkg{stm}'s at a topic-word cosine of $0.975$ (per-topic median
 $0.994$), far inside \proglang{R}'s own spectral-versus-random spread of about
 $0.61$: \pkg{topica} reproduces \proglang{R}'s solution more closely than
 \proglang{R}, reinitialized, reproduces itself (\code{parity/stm\_poliblog\_compare.py}).
@@ -672,17 +696,17 @@ authors' published political-blog fit ($K=5$, the same 13{,}246-document poliblo
 corpus the worked example of Section~\ref{sec:example} runs on) from the
 \citet{chen2024sts} replication package, on the corpus their \proglang{R} code
 regenerates (\code{parity/sts\_r\_compare.py}). \pkg{topica}'s \code{STS} recovers
-the published topics at a topic-word cosine of $0.91$, against $0.08$ for a
+the published topics at a topic-word cosine of $0.93$, against $0.08$ for a
 vocabulary-permuted control, with the leading topics clearly recognizable
 (campaign, Iraq and the war, the Obama--Clinton primary, energy and taxes). The
 representative topic is read at the mean sentiment rather than at zero, because
 \code{STS} parks the topic signal in the sentiment direction $\kappa^{(s)}$ when
 the sentiment seed correlates with content, exactly as the reference's
 \code{print.topWords} does. We benchmark the agreement rather than assert a
-threshold: $0.91$ sits just below the $0.97$ at which \pkg{topica}'s already
+threshold: $0.93$ sits just below the $0.98$ at which \pkg{topica}'s already
 validated \code{STM} matches \proglang{R} \pkg{stm} on this corpus and the $0.96$
 at which the reference's own \code{STS} and \code{STM} agree, and \pkg{topica}'s
-\code{STS} agrees with its own \code{STM} at $0.92$, confirming that \code{STS}
+\code{STS} agrees with its own \code{STM} at $0.93$, confirming that \code{STS}
 correctly extends \code{STM}. The script reads the (non-redistributable)
 replication package via the \code{STS\_REPL\_DIR} environment variable and skips
 cleanly when it, \proglang{R}, or \pkg{stm} is unavailable.
@@ -931,8 +955,9 @@ identical interface.
 \centering
 \caption{Four models from two families, fit on the same 2{,}000-post poliblog
 corpus and scored by the same three diagnostics in one loop (the code above).
-Coherence is windowed $c_v$ \citep{lau2014coherence}; exclusivity and diversity
-measure topic distinctness. The comparison costs no extra plumbing because every
+Coherence is windowed $c_v$ \citep{lau2014coherence}; exclusivity (stm's
+FREX-sum over each topic's top words, roughly $0$--$10$) and diversity measure
+topic distinctness. The comparison costs no extra plumbing because every
 model presents the same surface. Numbers reproduce from \code{paper/replication.py}.}
 \label{tab:spanning}
 \small
@@ -940,10 +965,10 @@ model presents the same surface. Numbers reproduce from \code{paper/replication.
 \toprule
 Model & Family & Topics & Coherence ($c_v$) & Exclusivity & Diversity \\
 \midrule
-\code{LDA}      & count-based     & 15 & 0.365 & 0.580 & 0.717 \\
-\code{CTM}      & count-based     & 15 & 0.351 & 0.446 & 0.579 \\
-\code{STM}      & count-based     & 15 & 0.350 & 0.435 & 0.565 \\
-\code{BERTopic} & embedding-based &  3 & 0.459 & 0.526 & 0.693 \\
+\code{LDA}      & count-based     & 15 & 0.365 & 9.723 & 0.717 \\
+\code{CTM}      & count-based     & 15 & 0.365 & 9.476 & 0.589 \\
+\code{STM}      & count-based     & 15 & 0.366 & 9.474 & 0.581 \\
+\code{BERTopic} & embedding-based &  3 & 0.459 & 7.464 & 0.693 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1030,9 +1055,9 @@ it are discussed at similar rates on both sides.}
 The fit recovers the partisan division the \pkg{stm} poliblog analysis documents
 (Figure~\ref{fig:poliblog}). Conservative blogs disproportionately discuss the
 Reverend Wright and Bill Ayers attacks on Obama
-($+0.046$, 95\% CI $[0.034, 0.057]$), media coverage and bias ($+0.043$,
-$[0.027, 0.059]$), and Israel ($+0.056$, $[0.044, 0.068]$); liberal blogs
-disproportionately discuss McCain ($-0.084$, $[-0.094, -0.074]$) and the Bush
+($+0.045$, 95\% CI $[0.034, 0.056]$), media coverage and bias ($+0.043$,
+$[0.027, 0.058]$), and Israel ($+0.055$, $[0.043, 0.066]$); liberal blogs
+disproportionately discuss McCain ($-0.084$, $[-0.094, -0.075]$) and the Bush
 administration and torture ($-0.065$, $[-0.077, -0.053]$). Topics such as the
 economy and abortion straddle zero, discussed at similar rates on both sides. The
 intervals come from the method of composition, so they reflect the uncertainty in
@@ -1133,7 +1158,7 @@ model, into the validated family as reference results are published.
 the GPL-3 terms \proglang{R} and several reference packages carry, and installs
 from the Python Package Index with \code{pip install topica}; the core requires
 only \pkg{NumPy} and \pkg{pandas}. The benchmarks and validation reported here were
-produced with \pkg{topica} 0.28.0 by \code{paper/reproduce.py}; the exact
+produced with \pkg{topica} 0.32.0 by \code{paper/reproduce.py}; the exact
 hardware, operating system, and reference-toolchain versions are recorded in the
 generated replication report. Source code, documentation, and worked examples are available at
 \url{https://github.com/nealcaren/topica} and
