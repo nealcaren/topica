@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-06-28
+
 ### Changed
 
 - The experimental ideal-point family was consolidated under the `IdealPoint` stem,
@@ -68,6 +70,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   (2014); the reference package builds on gensim `Doc2Vec`, and the topica scale
   matches it at correlation 1.00 on a planted ordering
   (`parity/party_embeddings_compare.py`). Save tag 36.
+- `KeyATM.feature_effect_se` (#316) — standard errors for the covariate keyATM's
+  feature effects `λ`, mirroring `DMR.feature_effect_se` and completing the
+  standard-errors roadmap (#309). Computed from the observed information of the
+  penalized Dirichlet-multinomial in the standardized fit space (where `λ` is fit,
+  z-scored and ±5-bounded per #270), then mapped to the original covariate scale by
+  the standardization Jacobian (the intercept mixes the slopes, so it is not a
+  per-column rescale). Entries whose standardized `λ` sat at the ±5 bound are
+  returned as `NaN` (a constrained estimate has no valid asymptotic SE). Computed at
+  fit time alongside `feature_effects`; `dmr::dmr_lambda_cov` now exposes the full
+  covariance the Jacobian needs.
 
 ## [0.32.0] - 2026-06-27
 
