@@ -562,9 +562,9 @@ quantity of interest \pkg{stm}'s \code{estimateEffect} plots).
 \code{topica.permutation\_test} gives a distribution-free check of whether a
 topic's prevalence differs across a binary covariate. The model-agnostic
 \code{topica.standard\_errors} extends this to any model and is explicit about the
-kind of uncertainty it reports. For a clustering of embeddings, which has no
-posterior over $\theta$, it declines to report confidence intervals and says so,
-rather than returning a number that looks like one.
+kind of uncertainty it reports. For a model with no posterior over $\theta$ to
+propagate---an embedding clustering like \code{BERTopic}, or a neural autoencoder
+like \code{ProdLDA}---we provide bootstrap standard errors instead.
 
 The same principle reaches the parameters a model estimates directly, not only
 the downstream effect regression: where a model reports a point estimate,
