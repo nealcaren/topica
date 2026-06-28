@@ -229,6 +229,50 @@ pub fn dmr_lambda_se(
     prior_variance: f64,
     offset: Option<&[Vec<f64>]>,
 ) -> Vec<Vec<f64>> {
+    let t = num_topics;
+    let f = num_features;
+    let p = t * f;
+    let cov = dmr_lambda_cov(
+        lambda,
+        features,
+        doc_topic_counts,
+        num_topics,
+        num_features,
+        prior_variance,
+        offset,
+    );
+    (0..t)
+        .map(|tt| {
+            (0..f)
+                .map(|ff| {
+                    let idx = tt * f + ff;
+                    let v = cov[idx * p + idx];
+                    if v > 0.0 {
+                        v.sqrt()
+                    } else {
+                        f64::NAN
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Full asymptotic covariance of the DMR feature weights `λ`: the inverse of the
+/// observed information described in [`dmr_lambda_se`], returned as a flattened
+/// row-major `(T·F)×(T·F)` matrix (index `(t·F+f)`). [`dmr_lambda_se`] is the
+/// square root of its diagonal. The full matrix is needed when `λ` is later
+/// transformed by a non-diagonal map (e.g. keyATM's standardization Jacobian),
+/// which mixes the within-topic covariance entries.
+pub fn dmr_lambda_cov(
+    lambda: &[Vec<f64>],
+    features: &[Vec<f64>],
+    doc_topic_counts: &[Vec<f64>],
+    num_topics: usize,
+    num_features: usize,
+    prior_variance: f64,
+    offset: Option<&[Vec<f64>]>,
+) -> Vec<f64> {
     use crate::linalg::{make_diagonally_dominant, spd_inverse};
     use crate::optimize::trigamma;
 
@@ -288,26 +332,11 @@ pub fn dmr_lambda_se(
         info[i * p + i] += inv_var;
     }
 
-    let cov = spd_inverse(&info, p).unwrap_or_else(|| {
+    spd_inverse(&info, p).unwrap_or_else(|| {
         let mut s = info.clone();
         make_diagonally_dominant(&mut s, p);
         spd_inverse(&s, p).unwrap_or_else(|| vec![f64::NAN; p * p])
-    });
-    (0..t)
-        .map(|tt| {
-            (0..f)
-                .map(|ff| {
-                    let idx = tt * f + ff;
-                    let v = cov[idx * p + idx];
-                    if v > 0.0 {
-                        v.sqrt()
-                    } else {
-                        f64::NAN
-                    }
-                })
-                .collect()
-        })
-        .collect()
+    })
 }
 
 use crate::variational::lbfgs_minimize;

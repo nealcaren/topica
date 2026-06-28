@@ -3615,6 +3615,14 @@ class KeyATM:
         the intercept. Raises if fit without covariates."""
         ...
     @property
+    def feature_effect_se(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Covariate model: standard errors of feature_effects (lambda), same
+        shape and column order, on the original covariate scale (observed
+        information in the standardized fit space mapped back by the
+        standardization Jacobian, issue #316). NaN where the standardized lambda
+        hit the +/-5 bound. Raises if fit without covariates."""
+        ...
+    @property
     def feature_names(self) -> list[str]:
         """Covariate model: names for feature_effects columns ('intercept' first)."""
         ...

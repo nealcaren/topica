@@ -206,6 +206,15 @@ pub struct KeyAtmModel {
     /// on, and not persisted across save/load.
     #[serde(skip)]
     pub theta_draws: Vec<Vec<Vec<f32>>>,
+    /// Covariate model only: standard errors of `lambda` on the **original**
+    /// covariate scale (`[K][F]`, aligned to `lambda`), from the observed
+    /// information of the penalized Dirichlet-multinomial in the standardized fit
+    /// space mapped back by the standardization Jacobian (issue #316). Entries
+    /// whose standardized `λ` sat at the ±[`LAMBDA_BOUND`] clamp are `NaN` (the
+    /// unconstrained asymptotic SE is invalid at the bound). `None` for the base
+    /// and dynamic models. A fit-time artifact, not persisted across save/load.
+    #[serde(default)]
+    pub lambda_se: Option<Vec<Vec<f64>>>,
 }
 
 /// Fitted state of the keyATM **Dynamic** model (Eshima, Imai & Sasaki 2024,
@@ -1315,6 +1324,7 @@ fn init_state<R: Rng>(
         pi_history: Vec::new(),
         converged: false,
         theta_draws: Vec::new(),
+        lambda_se: None,
     };
     (model, assignments, ki)
 }
@@ -1623,6 +1633,91 @@ fn standardize_features(
     (std, mean, sd)
 }
 
+/// Standard errors of the covariate-keyATM `λ` on the **original** covariate
+/// scale (issue #316). `λ` is fit in the standardized space (z-scored covariates,
+/// N(0,1) prior, bounded to ±[`LAMBDA_BOUND`]); its asymptotic covariance is the
+/// inverse observed information of the penalized Dirichlet-multinomial there
+/// ([`crate::dmr::dmr_lambda_cov`]). The mapping back to the raw scale,
+/// `λ_orig = M λ_std` with (per topic)
+/// ```text
+///   λ_orig[0] = λ_std[0] − Σ_{g≥1} (mean_g/sd_g) λ_std[g],   λ_orig[f] = λ_std[f]/sd_f,
+/// ```
+/// is a non-diagonal linear map (the intercept mixes the slopes), so the raw-scale
+/// covariance of topic `k` is `Cov_orig = M Cov_std[k] Mᵀ` and the SE is
+/// `sqrt(diag)`. The map is block-diagonal across topics, so only the within-topic
+/// `F×F` blocks of the standardized covariance are needed. Entries whose
+/// standardized `λ` sits at the ±[`LAMBDA_BOUND`] clamp are returned as `NaN`: the
+/// coefficient is constrained, not at an interior optimum, so the unconstrained
+/// asymptotic SE does not apply.
+fn covariate_lambda_se(
+    lambda_std: &[Vec<f64>],
+    features_std: &[Vec<f64>],
+    doc_topic_counts: &[Vec<f64>],
+    num_topics: usize,
+    num_features: usize,
+    prior_variance: f64,
+    feat_mean: &[f64],
+    feat_sd: &[f64],
+    offset: Option<&[Vec<f64>]>,
+) -> Vec<Vec<f64>> {
+    let t = num_topics;
+    let f = num_features;
+    let p = t * f;
+    let cov_std = crate::dmr::dmr_lambda_cov(
+        lambda_std,
+        features_std,
+        doc_topic_counts,
+        t,
+        f,
+        prior_variance,
+        offset,
+    );
+    // Per-topic Jacobian M (F×F), identical across topics: row 0 maps the
+    // intercept and subtracts each standardized slope's mean shift; row g≥1
+    // rescales by 1/sd_g.
+    let mut se = vec![vec![0.0f64; f]; t];
+    // tol: treat |λ_std| within 1e-6 of the bound as clamped.
+    let bound_tol = 1e-6;
+    for k in 0..t {
+        let base = k * f;
+        // Extract the within-topic block C (F×F) from the flat covariance.
+        let cblk = |i: usize, j: usize| cov_std[(base + i) * p + (base + j)];
+        // Build M·C (F×F).
+        let mut mc = vec![vec![0.0f64; f]; f];
+        for j in 0..f {
+            // Row 0 of M: [1, -mean_1/sd_1, ..., -mean_{F-1}/sd_{F-1}].
+            let mut acc = cblk(0, j);
+            for g in 1..f {
+                acc += -(feat_mean[g] / feat_sd[g]) * cblk(g, j);
+            }
+            mc[0][j] = acc;
+            // Rows f≥1 of M: scale row f of C by 1/sd_f.
+            for ff in 1..f {
+                mc[ff][j] = cblk(ff, j) / feat_sd[ff];
+            }
+        }
+        // diag of (M·C)·Mᵀ, then sqrt; flag clamped entries as NaN.
+        for ff in 0..f {
+            let var = if ff == 0 {
+                let mut acc = mc[0][0];
+                for g in 1..f {
+                    acc += mc[0][g] * (-(feat_mean[g] / feat_sd[g]));
+                }
+                acc
+            } else {
+                mc[ff][ff] / feat_sd[ff]
+            };
+            let clamped = lambda_std[k][ff].abs() >= LAMBDA_BOUND - bound_tol;
+            se[k][ff] = if clamped || !(var > 0.0) {
+                f64::NAN
+            } else {
+                var.sqrt()
+            };
+        }
+    }
+    se
+}
+
 /// Fit a keyATM **Covariate** model. The document-topic prior is a
 /// Dirichlet-Multinomial regression on document features,
 /// `α_{d,k} = exp(x_d · λ_k)` (Mimno & McCallum 2008), matching the keyATM R
@@ -1750,6 +1845,22 @@ pub fn fit_keyatm_cov<R: Rng>(
         }
     }
 
+    // Standard errors of λ (issue #316): computed in the standardized fit space
+    // at the final counts, then mapped to the original scale by the same
+    // standardization Jacobian used for λ below. Done before the λ mapback so the
+    // bound check sees the standardized coefficients that were actually clamped.
+    let lambda_se = covariate_lambda_se(
+        &lambda,
+        &features_std,
+        &model.ndk,
+        num_topics,
+        num_features,
+        prior_variance,
+        &feat_mean,
+        &feat_sd,
+        offset,
+    );
+
     // Map λ from the standardized space back to the original covariate scale, so
     // that exp(features · λ_orig) == exp(features_std · λ_std): for f ≥ 1,
     // λ_orig[f] = λ_std[f] / sd_f, with the intercept absorbing the mean shift.
@@ -1770,6 +1881,7 @@ pub fn fit_keyatm_cov<R: Rng>(
     model.lambda = Some(lambda_orig);
     model.features = Some(features.to_vec());
     model.prior_offset = offset.map(|o| o.to_vec());
+    model.lambda_se = Some(lambda_se);
     model.theta_draws = theta_draw_buf;
     model
 }
@@ -2354,6 +2466,105 @@ mod tests {
                 );
             }
         }
+    }
+
+    // The covariate λ SE (#316) maps the standardized-space covariance to the
+    // original scale by the standardization Jacobian. Check the helper against a
+    // brute-force full-matrix transform (M ⊗-block applied to the whole p×p
+    // covariance), and that a clamped coefficient is flagged NaN.
+    #[test]
+    fn covariate_lambda_se_matches_full_jacobian_transform() {
+        let (t, f) = (3usize, 3usize);
+        let features = vec![
+            vec![1.0, 2.0, 0.0],
+            vec![1.0, 4.0, 1.0],
+            vec![1.0, 6.0, 0.0],
+            vec![1.0, 8.0, 1.0],
+            vec![1.0, 5.0, 1.0],
+            vec![1.0, 3.0, 0.0],
+        ];
+        let nf = f;
+        let (fstd, mean, sd) = standardize_features(&features, nf);
+        let lambda_std = vec![
+            vec![0.5, -1.2, 0.8],
+            vec![-0.3, 2.0, -1.5],
+            vec![0.1, 0.4, -0.6],
+        ];
+        let counts = vec![
+            vec![3.0f64, 1.0, 0.0],
+            vec![0.0f64, 2.0, 2.0],
+            vec![1.0f64, 1.0, 5.0],
+            vec![2.0f64, 0.0, 1.0],
+            vec![1.0f64, 3.0, 2.0],
+            vec![4.0f64, 1.0, 1.0],
+        ];
+        let sigma2 = 1.0;
+
+        // Reference: full p×p covariance in std space, transformed by the full
+        // block-diagonal Jacobian J (each topic block = M), SE = sqrt(diag).
+        let p = t * f;
+        let cov = crate::dmr::dmr_lambda_cov(&lambda_std, &fstd, &counts, t, f, sigma2, None);
+        // M (F×F): row 0 = [1, -mean_g/sd_g...]; row g≥1 = e_g / sd_g.
+        let mut m = vec![vec![0.0f64; f]; f];
+        m[0][0] = 1.0;
+        for g in 1..f {
+            m[0][g] = -mean[g] / sd[g];
+            m[g][g] = 1.0 / sd[g];
+        }
+        // Full J (p×p) block-diagonal with M on each topic block.
+        let mut jac = vec![0.0f64; p * p];
+        for k in 0..t {
+            for i in 0..f {
+                for j in 0..f {
+                    jac[(k * f + i) * p + (k * f + j)] = m[i][j];
+                }
+            }
+        }
+        // cov_orig = J cov Jᵀ; reference SE = sqrt(diag).
+        let mut jc = vec![0.0f64; p * p];
+        for i in 0..p {
+            for j in 0..p {
+                let mut s = 0.0;
+                for l in 0..p {
+                    s += jac[i * p + l] * cov[l * p + j];
+                }
+                jc[i * p + j] = s;
+            }
+        }
+        let mut ref_se = vec![vec![0.0f64; f]; t];
+        for k in 0..t {
+            for ff in 0..f {
+                let i = k * f + ff;
+                let mut var = 0.0;
+                for l in 0..p {
+                    var += jc[i * p + l] * jac[i * p + l];
+                }
+                ref_se[k][ff] = var.sqrt();
+            }
+        }
+
+        let se = covariate_lambda_se(
+            &lambda_std, &fstd, &counts, t, f, sigma2, &mean, &sd, None,
+        );
+        for k in 0..t {
+            for ff in 0..f {
+                assert!(
+                    (se[k][ff] - ref_se[k][ff]).abs() < 1e-9,
+                    "se[{k}][{ff}]: helper {} vs full-transform {}",
+                    se[k][ff],
+                    ref_se[k][ff]
+                );
+            }
+        }
+
+        // A coefficient at the ±LAMBDA_BOUND clamp is flagged NaN.
+        let mut clamped = lambda_std.clone();
+        clamped[1][2] = LAMBDA_BOUND;
+        let se_c = covariate_lambda_se(
+            &clamped, &fstd, &counts, t, f, sigma2, &mean, &sd, None,
+        );
+        assert!(se_c[1][2].is_nan(), "clamped λ must give NaN SE");
+        assert!(se_c[0][0].is_finite(), "unclamped entries stay finite");
     }
 
     /// Build a small keyword-annotated corpus and verify that keyword topics
