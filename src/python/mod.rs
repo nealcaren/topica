@@ -408,6 +408,9 @@ struct SldaState {
     log_likelihood_history: Vec<(usize, f64)>,
     #[serde(default)]
     converged: bool,
+    // K×K normal-equations matrix for coefficient SEs; absent in old saves.
+    #[serde(default)]
+    m_mat: Option<Vec<f64>>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PtState {
@@ -10429,7 +10432,8 @@ pub struct SupervisedLDA {
     topic_names: Vec<String>,
     sigma2: f64,
     eta: Option<Array1<f64>>,
-    beta: Option<Array2<f64>>,  // K × V
+    m_mat: Option<Vec<f64>>, // K×K normal-equations matrix, for coefficient SEs
+    beta: Option<Array2<f64>>, // K × V
     theta: Option<Array2<f64>>, // D × K
     log_beta: Option<Vec<Vec<f64>>>,
     corpus: Option<corpus::Corpus>,
@@ -10478,6 +10482,7 @@ impl SupervisedLDA {
             topic_names: Vec::new(),
             sigma2: 0.0,
             eta: None,
+            m_mat: None,
             beta: None,
             theta: None,
             log_beta: None,
@@ -10620,6 +10625,7 @@ impl SupervisedLDA {
         self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
         self.sigma2 = model.sigma2;
         self.eta = Some(Array1::from(model.eta.clone()));
+        self.m_mat = Some(model.m_mat.clone());
         self.beta = Some(beta);
         self.theta = Some(theta);
         self.log_beta = Some(model.log_beta.clone());
@@ -10631,16 +10637,22 @@ impl SupervisedLDA {
     }
 
     /// Predict the response ŷ for new documents (`list[list[str]]` or a
-    /// :class:`Corpus`). Out-of-vocabulary words are ignored. Returns a 1-D array
-    /// of length = number of documents.
+    /// :class:`Corpus`). Out-of-vocabulary words are ignored.
+    ///
+    /// With `return_std=False` (default) returns a 1-D array of predictions. With
+    /// `return_std=True` returns `(mean, std)`, where `std` is the posterior-
+    /// predictive standard deviation: the document's topic uncertainty propagated
+    /// through the regression, `ηᵀ Cov(z̄) η`, plus the residual variance σ². A
+    /// 95% predictive interval is `mean ± 1.96 * std`.
     /// `var_iters` is the number of variational E-step iterations per new document.
-    #[pyo3(signature = (data, *, var_iters=20))]
+    #[pyo3(signature = (data, *, var_iters=20, return_std=false))]
     fn predict<'py>(
         &self,
         py: Python<'py>,
         data: &Bound<'_, PyAny>,
         var_iters: usize,
-    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        return_std: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         let vocab = &self.corpus.as_ref().unwrap().id_to_word;
         let word_id: std::collections::HashMap<&str, u32> = vocab
@@ -10674,19 +10686,35 @@ impl SupervisedLDA {
             eta: self.eta.as_ref().unwrap().to_vec(),
             sigma2: self.sigma2,
             gamma: Vec::new(),
+            m_mat: Vec::new(),
         };
 
+        let ids_of = |doc: &[String]| -> Vec<u32> {
+            doc.iter()
+                .filter_map(|w| word_id.get(w.as_str()).copied())
+                .collect()
+        };
+        if return_std {
+            // Posterior-predictive mean and SD (topic uncertainty + residual σ²).
+            let mut means = Vec::with_capacity(docs.len());
+            let mut stds = Vec::with_capacity(docs.len());
+            for doc in &docs {
+                let (m, var) = slda::predict_one_var(&model, &ids_of(doc), var_iters);
+                means.push(m);
+                stds.push(var.max(0.0).sqrt());
+            }
+            let out: Py<PyAny> = (
+                Array1::from(means).to_pyarray_bound(py),
+                Array1::from(stds).to_pyarray_bound(py),
+            )
+                .into_py(py);
+            return Ok(out.into_bound(py));
+        }
         let preds: Vec<f64> = docs
             .iter()
-            .map(|doc| {
-                let ids: Vec<u32> = doc
-                    .iter()
-                    .filter_map(|w| word_id.get(w.as_str()).copied())
-                    .collect();
-                slda::predict_one(&model, &ids, var_iters)
-            })
+            .map(|doc| slda::predict_one(&model, &ids_of(doc), var_iters))
             .collect();
-        Ok(Array1::from(preds).to_pyarray_bound(py))
+        Ok(Array1::from(preds).to_pyarray_bound(py).into_any())
     }
 
     /// Topic-word matrix β, shape ``(num_topics, num_words)``.
@@ -10737,6 +10765,19 @@ impl SupervisedLDA {
     fn coefficients<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
         Ok(self.eta.as_ref().unwrap().to_pyarray_bound(py))
+    }
+
+    /// Standard error of each regression coefficient η, shape ``(num_topics,)``,
+    /// from the OLS-style covariance σ²M⁻¹ where M = Σ_d E[z̄ z̄ᵀ] is the
+    /// normal-equations matrix the fit solves for η. Aligned to ``coefficients``;
+    /// |η| > ~2·SE is the usual significance cue. ``None`` for models saved before
+    /// this was added.
+    #[getter]
+    fn coefficient_se<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray1<f64>>>> {
+        self.require_fitted()?;
+        Ok(self.m_mat.as_ref().map(|m| {
+            Array1::from(slda::coefficient_se(m, self.sigma2, self.num_topics)).to_pyarray_bound(py)
+        }))
     }
 
     /// The fitted response variance σ².
@@ -10908,6 +10949,7 @@ impl SupervisedLDA {
                 topic_names: self.topic_names.clone(),
                 log_likelihood_history: self.log_likelihood_history.clone(),
                 converged: self.converged,
+                m_mat: self.m_mat.clone(),
             },
         )
     }
@@ -10929,6 +10971,7 @@ impl SupervisedLDA {
             topic_names,
             sigma2: s.sigma2,
             eta: arr1_back(s.eta),
+            m_mat: s.m_mat,
             beta: arr2_back(s.beta)?,
             theta: arr2_back(s.theta)?,
             log_beta: s.log_beta,

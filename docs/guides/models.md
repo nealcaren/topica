@@ -881,6 +881,22 @@ Topics shaped to predict a per-document real-valued response (Blei & McAuliffe).
 `coefficients` give each topic's pull on the outcome, and `predict` scores new
 documents.
 
+Both come with uncertainty. `coefficient_se` is the standard error of each
+regression coefficient, from the OLS covariance `σ²M⁻¹` of the same normal
+equations the fit solves (`|coef| > ~2·SE` is the significance cue), so you can
+say which topics reliably move the outcome. `predict(docs, return_std=True)`
+returns `(mean, std)`, where `std` is the posterior-predictive standard
+deviation — the document's topic uncertainty propagated through the regression
+plus the residual `σ²` — so a prediction comes with an honest interval
+(`mean ± 1.96·std`) rather than a bare point.
+
+```python
+m = topica.SupervisedLDA(num_topics=20, seed=1)
+m.fit(docs, y)
+z = m.coefficients / m.coefficient_se        # which topics matter
+mean, std = m.predict(new_docs, return_std=True)
+```
+
 ## LabeledLDA
 
 Supervised: each label is a topic, and a document's tokens are restricted to its

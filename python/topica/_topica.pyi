@@ -1448,10 +1448,22 @@ class SupervisedLDA:
         ...
 
     def predict(
-        self, data: Corpus | Sequence[Sequence[str]], *, var_iters: int = 20
-    ) -> numpy.typing.NDArray[numpy.float64]:
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        *,
+        var_iters: int = 20,
+        return_std: bool = False,
+    ) -> (
+        numpy.typing.NDArray[numpy.float64]
+        | tuple[numpy.typing.NDArray[numpy.float64], numpy.typing.NDArray[numpy.float64]]
+    ):
         """Predict y-hat for new documents. Out-of-vocabulary words are ignored.
-        Returns a 1-D array of length = number of documents."""
+
+        With return_std=False (default) returns a 1-D array of predictions. With
+        return_std=True returns (mean, std), where std is the posterior-predictive
+        standard deviation — the document's topic uncertainty propagated through the
+        regression plus the residual variance sigma^2. A 95% interval is
+        mean +/- 1.96 * std."""
         ...
 
     @property
@@ -1475,6 +1487,14 @@ class SupervisedLDA:
     def coefficients(self) -> numpy.typing.NDArray[numpy.float64]:
         """Regression coefficients eta, shape (num_topics,) — how each topic
         moves the response per unit of topic frequency."""
+        ...
+    @property
+    def coefficient_se(self) -> numpy.typing.NDArray[numpy.float64] | None:
+        """Standard error of each regression coefficient eta, shape (num_topics,),
+        from the OLS covariance sigma^2 * M^-1 where M = sum_d E[zbar zbar^T] is the
+        normal-equations matrix the fit solves for eta. Aligned to coefficients;
+        |eta| > ~2*SE is the usual significance cue. None for models saved before
+        this was added."""
         ...
     @property
     def sigma2(self) -> float:

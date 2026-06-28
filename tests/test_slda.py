@@ -71,6 +71,35 @@ class TestSupervision:
         assert np.corrcoef(pred, yh)[0, 1] > 0.6
 
 
+class TestUncertainty:
+    def test_coefficient_se_shape_and_significance(self, fitted):
+        m, _, _ = fitted
+        se = m.coefficient_se
+        assert se is not None
+        assert se.shape == m.coefficients.shape == (2,)
+        assert np.all(np.isfinite(se)) and np.all(se > 0.0)
+        # On this well-separated corpus both coefficients are far from zero.
+        z = m.coefficients / se
+        assert np.all(np.abs(z) > 2.0)
+
+    def test_predict_return_std(self, fitted):
+        m, docs, _ = fitted
+        mean, std = m.predict(docs[:10], return_std=True)
+        point = m.predict(docs[:10])
+        assert mean.shape == std.shape == (10,)
+        np.testing.assert_allclose(mean, point)
+        # Predictive SD is at least the residual SD (topic uncertainty adds to it).
+        assert np.all(std >= np.sqrt(m.sigma2) - 1e-9)
+        assert np.all(np.isfinite(std))
+
+    def test_coefficient_se_survives_save_load(self, fitted, tmp_path):
+        m, _, _ = fitted
+        path = tmp_path / "slda.topica"
+        m.save(str(path))
+        m2 = SupervisedLDA.load(str(path))
+        np.testing.assert_array_equal(m.coefficient_se, m2.coefficient_se)
+
+
 class TestOutputs:
     def test_shapes(self, fitted):
         m, docs, _ = fitted
