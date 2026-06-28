@@ -98,6 +98,46 @@ def test_fitted_surface_is_well_shaped():
     assert len(m.top_words(5)) == K
 
 
+@pytest.mark.parametrize("representation", ["word2vec", "counts"])
+def test_position_se_is_well_shaped_and_shrinks_with_data(representation):
+    # Observed-information SE on the latent positions: aligned to author_positions,
+    # finite and positive, capped by the prior SD (sqrt(x_prior_variance)=1), and
+    # smaller for authors who contribute more tokens. Holds for both representations.
+    docs, vocab, emb, group, _ = _planted(seed=4)
+    # Give author_0 many extra documents so it is the data-rich author.
+    extra = [docs[i] for i in range(len(group)) if group[i] == "author_0"]
+    docs = docs + extra * 6
+    group = group + ["author_0"] * (len(extra) * 6)
+
+    m = topica.IdealPointTM(K, num_dims=1, seed=1)
+    kw = dict(word_embeddings=emb, vocabulary=vocab) if representation == "word2vec" else {}
+    m.fit(docs, group=group, iters=25, **kw)
+    assert m.representation == representation
+
+    se = m.position_se
+    assert se.shape == m.author_positions.shape == (m.num_authors, 1)
+    assert np.all(np.isfinite(se)) and np.all(se > 0.0)
+    assert np.all(se <= 1.0 + 1e-9)  # prior SD caps the SE
+
+    names = list(m.author_names)
+    rich = names.index("author_0")
+    others = [i for i in range(len(names)) if i != rich]
+    assert se[rich, 0] < np.median(se[others, 0])
+
+
+def test_position_se_survives_save_load():
+    # The SE is reconstructed from saved state (corpus + doc-topic proportions), so
+    # it is identical after a round trip even though it is not itself persisted.
+    docs, vocab, emb, group, _ = _planted(seed=5)
+    m = topica.IdealPointTM(K, num_dims=1, seed=1)
+    m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, iters=20)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "m.topica")
+        m.save(path)
+        m2 = topica.IdealPointTM.load(path)
+    assert np.array_equal(m.position_se, m2.position_se)
+
+
 def test_recovers_positions():
     # The headline ideal-point claim: latent positions recover the planted author
     # trait. (Which topic absorbs the contrast is not asserted here -- on this

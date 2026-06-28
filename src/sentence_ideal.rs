@@ -67,6 +67,85 @@ impl SentenceIdealModel {
             })
             .collect()
     }
+
+    /// Asymptotic standard error of each author position `(A x d)`. The position is
+    /// a linear-Gaussian weighted least squares (E-step responsibilities held
+    /// fixed), so the negative-log-posterior Hessian is exact and constant in `x`:
+    /// `H_a = (sum_k N_{a,k} G_k) / sigma^2 + I / x_prior_variance`, with
+    /// `N_{a,k} = sum_{i in a} r_{i,k}` the expected number of the author's
+    /// observations in topic `k` and `G_k[j,l] = V_{k,j}.V_{k,l}`. The SE is
+    /// `sqrt(diag(H_a^{-1}))` -- the closed-form analog of Wordfish's `se.theta`,
+    /// exact here because the model is Gaussian in `x` given the responsibilities.
+    pub fn position_se(&self, x_prior_variance: f64) -> Vec<Vec<f64>> {
+        let dd = self.num_dims;
+        let inv_xvar = 1.0 / x_prior_variance;
+        let inv_s2 = 1.0 / self.sigma2.max(1e-300);
+        // Per-topic G_k[j,l] = V_{k,j} . V_{k,l} (d x d), constant across authors.
+        let g_topic: Vec<Vec<f64>> = self
+            .v
+            .iter()
+            .map(|vk| {
+                let mut g = vec![0.0f64; dd * dd];
+                for j in 0..dd {
+                    for l in j..dd {
+                        let dot: f64 = vk[j].iter().zip(&vk[l]).map(|(&a, &b)| a * b).sum();
+                        g[j * dd + l] = dot;
+                        g[l * dd + j] = dot;
+                    }
+                }
+                g
+            })
+            .collect();
+        // N_{a,k} = sum_{i in a} resp[i][k].
+        let mut nak = vec![vec![0.0f64; self.num_topics]; self.num_authors];
+        for (i, ri) in self.resp.iter().enumerate() {
+            let a = self.group[i];
+            for (kk, &r) in ri.iter().enumerate() {
+                nak[a][kk] += r;
+            }
+        }
+        (0..self.num_authors)
+            .map(|a| {
+                let mut h = vec![0.0f64; dd * dd];
+                for kk in 0..self.num_topics {
+                    let n = nak[a][kk];
+                    if n <= 0.0 {
+                        continue;
+                    }
+                    for idx in 0..dd * dd {
+                        h[idx] += n * inv_s2 * g_topic[kk][idx];
+                    }
+                }
+                for j in 0..dd {
+                    h[j * dd + j] += inv_xvar;
+                }
+                if dd == 1 {
+                    return vec![if h[0] > 0.0 {
+                        h[0].sqrt().recip()
+                    } else {
+                        f64::NAN
+                    }];
+                }
+                let cov = spd_inverse(&h, dd).unwrap_or_else(|| {
+                    let mut id = vec![0.0f64; dd * dd];
+                    for j in 0..dd {
+                        id[j * dd + j] = f64::NAN;
+                    }
+                    id
+                });
+                (0..dd)
+                    .map(|j| {
+                        let var = cov[j * dd + j];
+                        if var > 0.0 {
+                            var.sqrt()
+                        } else {
+                            f64::NAN
+                        }
+                    })
+                    .collect()
+            })
+            .collect()
+    }
 }
 
 /// Displaced mean `mu_k + sum_j x_{a,j} V_{k,j}` (length D).
@@ -582,6 +661,73 @@ mod tests {
         assert!(
             disc[hi] > disc[lo],
             "discrimination should differ: {disc:?}"
+        );
+
+        // Position SEs are finite, positive, capped by the prior SD (=1), and the
+        // exact Laplace covariance, so they are reproducible across calls.
+        let se = m.position_se(1.0);
+        assert_eq!(se.len(), a_n);
+        for row in &se {
+            assert_eq!(row.len(), dd);
+            assert!(row[0].is_finite() && row[0] > 0.0, "bad SE: {row:?}");
+            assert!(row[0] <= 1.0 + 1e-9, "SE exceeds prior SD: {}", row[0]);
+        }
+    }
+
+    // An author with many observations is placed more precisely than one with few.
+    #[test]
+    fn sentence_position_se_shrinks_with_data() {
+        let mut rng = ChaCha8Rng::seed_from_u64(9);
+        let (k, dim, dd) = (2usize, 6usize, 1usize);
+        let a_n = 12usize;
+        let mut mu_true = vec![vec![0.0f64; dim]; k];
+        mu_true[0][0] = 3.0;
+        mu_true[1][1] = 3.0;
+        let mut v_true = vec![vec![vec![0.0f64; dim]; dd]; k];
+        v_true[0][0][2] = 2.0;
+        v_true[0][0][3] = -2.0;
+        let x_true: Vec<f64> = (0..a_n).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect();
+        let sigma = 0.5;
+        let mut emb: Vec<Vec<f64>> = Vec::new();
+        let mut group: Vec<usize> = Vec::new();
+        for a in 0..a_n {
+            // author 0 data-rich, author 1 data-poor, the rest moderate
+            let nobs = if a == 0 {
+                120
+            } else if a == 1 {
+                6
+            } else {
+                25
+            };
+            for _ in 0..nobs {
+                let t = rng.gen_range(0..k);
+                let mean = topic_mean(&mu_true[t], &v_true[t], &[x_true[a]]);
+                let e: Vec<f64> = mean
+                    .iter()
+                    .map(|&m| m + (rng.gen::<f64>() - 0.5) * 2.0 * sigma * 1.732)
+                    .collect();
+                emb.push(e);
+                group.push(a);
+            }
+        }
+        let m = fit_sentence_ideal(
+            &emb,
+            &group,
+            a_n,
+            k,
+            dd,
+            &[(0, x_true[0])],
+            60,
+            1e-7,
+            1.0,
+            &mut rng,
+        );
+        let se = m.position_se(1.0);
+        assert!(
+            se[0][0] < se[1][0],
+            "data-rich author should have smaller SE: {} vs {}",
+            se[0][0],
+            se[1][0]
         );
     }
 }

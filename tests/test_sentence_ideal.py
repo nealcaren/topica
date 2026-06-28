@@ -73,6 +73,39 @@ def test_shapes_and_topics():
     assert c.shape == (emb.shape[1],)
 
 
+def test_position_se_is_well_shaped_and_shrinks_with_data():
+    # The position SE is the exact Laplace posterior SE of the linear-Gaussian
+    # position system: aligned to author_positions, finite/positive, capped by the
+    # prior SD (sqrt(x_prior_variance)=1), and smaller for authors with more
+    # observations. Author a0 is made data-rich by replicating its observations.
+    emb, group, _ = _planted(seed=6)
+    emb = np.asarray(emb)
+    a0 = [i for i, g in enumerate(group) if g == "a0"]
+    emb = np.concatenate([emb] + [emb[a0]] * 6, axis=0)
+    group = list(group) + ["a0"] * (len(a0) * 6)
+
+    m = topica.IdealPointSentenceTM(num_topics=2, num_dims=1, seed=1)
+    m.fit(emb, group=group, iters=50)
+    se = m.position_se
+    assert se.shape == m.author_positions.shape == (m.num_authors, 1)
+    assert np.all(np.isfinite(se)) and np.all(se > 0.0)
+    assert np.all(se <= 1.0 + 1e-9)
+    names = list(m.author_names)
+    rich = names.index("a0")
+    others = [i for i in range(len(names)) if i != rich]
+    assert se[rich, 0] < np.median(se[others, 0])
+
+
+def test_position_se_survives_save_load(tmp_path):
+    emb, group, _ = _planted(seed=7)
+    m = topica.IdealPointSentenceTM(num_topics=2, num_dims=1, seed=1)
+    m.fit(emb, group=group, iters=40)
+    path = tmp_path / "s.topica"
+    m.save(str(path))
+    m2 = topica.IdealPointSentenceTM.load(str(path))
+    assert np.array_equal(m.position_se, m2.position_se)
+
+
 def test_anchors_orient_sign():
     emb, group, _ = _planted(seed=3)
     m = topica.IdealPointSentenceTM(num_topics=2, seed=1)

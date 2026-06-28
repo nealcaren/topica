@@ -220,6 +220,15 @@ impl IdealPointSentenceTM {
     fn author_positions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(&self.fitted_model()?.x).to_pyarray_bound(py))
     }
+    /// Standard error of each author position (num_authors, num_dims). The position
+    /// is a linear-Gaussian least squares given the topic responsibilities, so this
+    /// is the exact Laplace posterior SE, sqrt(diag(H_a^-1)); it shrinks with the
+    /// number of the author's observations. Aligned to `author_positions`.
+    #[getter]
+    fn position_se<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let se = self.fitted_model()?.position_se(self.x_prior_variance);
+        Ok(vecs_to_arr2(&se).to_pyarray_bound(py))
+    }
     #[getter]
     fn author_names(&self) -> PyResult<Vec<String>> {
         self.fitted_model()?;

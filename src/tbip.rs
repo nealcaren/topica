@@ -135,6 +135,19 @@ impl TbipModel {
         self.params.mu_x.clone()
     }
 
+    /// Standard error of each author ideal point (length A): the standard deviation
+    /// of the Gaussian variational posterior `q(x_s) = N(mu_x, sig_x^2)`,
+    /// `sig_x = softplus(rs_x) + SQRT_FLOOR`. This is the model's own (mean-field)
+    /// posterior uncertainty on the position, estimated jointly with the mean; like
+    /// any mean-field VI it can understate the true posterior spread.
+    pub fn position_se(&self) -> Vec<f64> {
+        self.params
+            .rs_x
+            .iter()
+            .map(|&rs| softplus(rs) + SQRT_FLOOR)
+            .collect()
+    }
+
     /// Neutral topic-word matrix from `exp(mu_beta)`, row-normalized for display
     /// (K x V simplices).
     pub fn topic_word(&self) -> Vec<Vec<f64>> {
@@ -1089,6 +1102,37 @@ mod tests {
         let r = pearson(&xhat, &x_true).abs();
         println!("synthetic recovery Pearson r = {r:.4}");
         assert!(r > 0.9, "ideal-point recovery too low: r={r:.4}");
+    }
+
+    // The position SE is the variational posterior SD: positive, finite, and equal
+    // to softplus(rs_x) + SQRT_FLOOR for every author.
+    #[test]
+    fn position_se_is_variational_posterior_sd() {
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
+        let (k, block) = (2usize, 6usize);
+        let v = k * block;
+        let docs: Vec<Vec<u32>> = (0..30)
+            .map(|d| {
+                let bk = d % k;
+                (0..10)
+                    .map(|_| (bk * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                    .collect()
+            })
+            .collect();
+        let group: Vec<usize> = (0..docs.len()).map(|d| d % 6).collect();
+        let cfg = TbipConfig {
+            iters: 40,
+            batch_size: docs.len(),
+            ..Default::default()
+        };
+        let m = fit_tbip(&docs, &group, 6, k, v, &cfg, &mut rng);
+        let se = m.position_se();
+        assert_eq!(se.len(), 6);
+        for (s, &sd) in se.iter().enumerate() {
+            assert!(sd.is_finite() && sd > 0.0, "bad SE: {sd}");
+            let expect = softplus(m.params.rs_x[s]) + SQRT_FLOOR;
+            assert!((sd - expect).abs() < 1e-12, "{sd} vs {expect}");
+        }
     }
 
     #[test]
