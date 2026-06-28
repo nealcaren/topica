@@ -59,6 +59,17 @@ def test_shapes_and_getters():
     assert m.iters_run == 200
 
 
+def test_position_se_is_variational_posterior_sd():
+    # The ideal-point SE is the SD of the Gaussian variational posterior q(x_s):
+    # aligned to ideal_points, finite and strictly positive.
+    docs, group, _ = _planted(seed=2)
+    m = topica.TBIP(num_topics=3, seed=0, iters=200, batch_size=64)
+    m.fit(docs, group=group)
+    se = m.position_se
+    assert se.shape == m.ideal_points.shape == (12,)
+    assert np.all(np.isfinite(se)) and np.all(se > 0.0)
+
+
 def test_recovers_positions():
     docs, group, x_true = _planted(seed=2, n_authors=15, docs_per=8)
     m = topica.TBIP(num_topics=3, seed=0, iters=1500, batch_size=len(docs))

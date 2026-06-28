@@ -60,6 +60,48 @@ def test_polarization_more_than_two_camps():
     assert topica.polarization(pos, lab) == pytest.approx(8.0 / 3.0, abs=1e-9)
 
 
+def test_polarization_ci_propagates_position_se():
+    # The point estimate matches polarization(); tight SEs give a narrow interval
+    # bracketing the estimate, large SEs widen it toward (and past) zero.
+    pos = np.array([-1.0, -0.9, -1.1, 1.0, 0.9, 1.1])
+    lab = ["L", "L", "L", "R", "R", "R"]
+    point = topica.polarization(pos, lab)
+
+    tight = topica.polarization_ci(pos, lab, np.full(6, 0.02), n_sim=2000, seed=0)
+    assert tight.estimate == pytest.approx(point, abs=1e-9)
+    assert tight.lo <= point <= tight.hi
+    assert tight.se > 0.0
+
+    wide = topica.polarization_ci(pos, lab, np.full(6, 1.0), n_sim=2000, seed=0)
+    assert wide.se > tight.se
+    assert wide.hi - wide.lo > tight.hi - tight.lo
+
+
+def test_polarization_ci_matches_model_surface():
+    # End to end: an ideal-point model's position_se feeds polarization_ci directly.
+    topica.enable_experimental(True)
+    rng = np.random.default_rng(0)
+    docs, group, lab = [], [], []
+    for camp in (0, 1):
+        for a in range(5):
+            p = np.ones(20)
+            p[:10] += 4 if camp == 0 else 0
+            p[10:] += 0 if camp == 0 else 4
+            p /= p.sum()
+            for _ in range(8):
+                docs.append(list(rng.choice([f"w{i}" for i in range(20)], size=25, p=p)))
+                group.append(f"{camp}_{a}")
+    m = topica.IdealPointTM(3, num_dims=1, seed=1)
+    m.fit(docs, group=group)
+    camp_of = {n: n.split("_")[0] for n in m.author_names}
+    labels = [camp_of[n] for n in m.author_names]
+    res = topica.polarization_ci(m.author_positions, labels, m.position_se, n_sim=500, seed=0)
+    assert res.estimate == pytest.approx(
+        topica.polarization(m.author_positions, labels), abs=1e-9
+    )
+    assert res.lo <= res.estimate <= res.hi
+
+
 def test_polarization_errors():
     with pytest.raises(ValueError):
         topica.polarization([0.1, 0.2, 0.3], ["L", "R"])  # length mismatch

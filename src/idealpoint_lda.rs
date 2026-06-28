@@ -109,6 +109,21 @@ impl IdealPointLdaModel {
             })
             .collect()
     }
+
+    /// Asymptotic standard error of each author position, `(A x d)`. Same observed-
+    /// information derivation as the embedded core; here the discrimination logits
+    /// are the per-word loadings `W_{k,j,v}` directly. See
+    /// [`crate::idealpoint::position_ses`].
+    pub fn position_se(&self, ntot: &[Vec<f64>], x_prior_variance: f64) -> Vec<Vec<f64>> {
+        crate::idealpoint::position_ses(
+            self.num_authors,
+            self.num_dims,
+            ntot,
+            &self.w,
+            &|a, k| self.position_topic_beta(k, &self.x[a]),
+            x_prior_variance,
+        )
+    }
 }
 
 /// Fit the count representation by variational EM. `group[d]` maps document `d` to its author.

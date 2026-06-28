@@ -193,6 +193,111 @@ impl IdealPointModel {
             })
             .collect()
     }
+
+    /// Asymptotic standard error of each author position, `(A x d)`, from the
+    /// observed information of the penalized position objective at the fit. `ntot`
+    /// is the per-author expected topic-token count `n_{a,k}` (the E-step soft
+    /// counts), `x_prior_variance` the Gaussian prior on the positions. The
+    /// discrimination logits are `disc_{k,j,v} = rho_v . W_{k,j}`. See
+    /// [`position_ses`] for the derivation.
+    pub fn position_se(&self, ntot: &[Vec<f64>], x_prior_variance: f64) -> Vec<Vec<f64>> {
+        position_ses(
+            self.num_authors,
+            self.num_dims,
+            ntot,
+            &self.disc,
+            &|a, k| self.position_topic_beta(k, &self.x[a]),
+            x_prior_variance,
+        )
+    }
+}
+
+/// Observed-information standard errors for author positions, shared by both
+/// IdealPointTM cores (the embedded `disc` is `rho.W`, the count `disc` is `W`).
+///
+/// For author `a` the position objective is a sum over topics of multinomial
+/// log-likelihoods in `x_a` plus a Gaussian prior:
+/// `Q(x_a) = sum_k [ S_{a,k}.eta_{a,k}(x_a) - n_{a,k} logZ_{a,k}(x_a) ] - ||x_a||^2 / 2v`.
+/// The data term is linear in `x_a`, so the curvature is carried entirely by the
+/// `-n_{a,k} logZ` terms, giving the `d x d` observed information
+/// `J_a[j,l] = sum_k n_{a,k} Cov_{beta_{a,k}}(disc_{k,j}, disc_{k,l}) + I[j=l]/v`,
+/// where the covariance is over the topic's word distribution `beta_{a,k}` at the
+/// author's position. The position SE is `sqrt(diag(J_a^{-1}))`. This conditions on
+/// the fitted topic content (`alpha`/`W`), exactly as Wordfish's `se.theta`
+/// conditions on its word parameters; an author with no tokens falls back to the
+/// prior SD `sqrt(v)`. Sequential over authors, so it is thread-count independent.
+pub fn position_ses(
+    num_authors: usize,
+    num_dims: usize,
+    ntot: &[Vec<f64>],
+    disc: &[Vec<Vec<f64>>],
+    beta: &dyn Fn(usize, usize) -> Vec<f64>,
+    x_prior_variance: f64,
+) -> Vec<Vec<f64>> {
+    let k = disc.len();
+    let d = num_dims;
+    let inv_v = 1.0 / x_prior_variance;
+    (0..num_authors)
+        .map(|a| {
+            let mut info = vec![0.0f64; d * d];
+            for kk in 0..k {
+                let n = ntot[a][kk];
+                if n <= 0.0 {
+                    continue;
+                }
+                let b = beta(a, kk);
+                let disc_k = &disc[kk];
+                // Weighted means mean_j = sum_v beta_v disc_{k,j,v}.
+                let mut mean = vec![0.0f64; d];
+                for (j, dj) in disc_k.iter().enumerate().take(d) {
+                    mean[j] = b.iter().zip(dj).map(|(&bv, &g)| bv * g).sum();
+                }
+                // n * Cov_beta(disc_j, disc_l) into the (symmetric) information.
+                for j in 0..d {
+                    let dj = &disc_k[j];
+                    for l in j..d {
+                        let dl = &disc_k[l];
+                        let m2: f64 = b
+                            .iter()
+                            .zip(dj)
+                            .zip(dl)
+                            .map(|((&bv, &gj), &gl)| bv * gj * gl)
+                            .sum();
+                        let c = n * (m2 - mean[j] * mean[l]);
+                        info[j * d + l] += c;
+                        if l != j {
+                            info[l * d + j] += c;
+                        }
+                    }
+                }
+            }
+            for j in 0..d {
+                info[j * d + j] += inv_v;
+            }
+            if d == 1 {
+                return vec![if info[0] > 0.0 {
+                    info[0].sqrt().recip()
+                } else {
+                    f64::NAN
+                }];
+            }
+            let cov = spd_inverse(&info, d).unwrap_or_else(|| {
+                let mut s = info.clone();
+                make_diagonally_dominant(&mut s, d);
+                spd_inverse(&s, d).unwrap()
+            });
+            (0..d)
+                .map(|j| {
+                    let var = cov[j * d + j];
+                    if var > 0.0 {
+                        var.sqrt()
+                    } else {
+                        f64::NAN
+                    }
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// Fit IdealPointTM by variational EM. `group[d] in 0..num_authors` maps each
@@ -1061,6 +1166,85 @@ mod tests {
         let x_hat: Vec<f64> = (0..a_n).map(|a| m.x[a][0]).collect();
         let r = pearson(&x_hat, &x_true).abs();
         assert!(r > 0.8, "grid-path position correlation too low: {r}");
+    }
+
+    // Position SEs are finite and positive, and an author with more tokens has a
+    // smaller SE than an otherwise-identical author with fewer tokens. ntot is the
+    // per-author expected topic-token count, reconstructed here the same way the
+    // binding does (doc length x doc-topic proportions).
+    #[test]
+    fn position_se_finite_and_shrinks_with_data() {
+        let mut rng = ChaCha8Rng::seed_from_u64(11);
+        let (k, e, dd) = (2usize, 5usize, 1usize);
+        let vsz = 30usize;
+        let a_n = 16usize;
+        let rho: Vec<Vec<f64>> = (0..vsz)
+            .map(|_| (0..e).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect())
+            .collect();
+        let alpha_true: Vec<Vec<f64>> = (0..k)
+            .map(|_| (0..e).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect())
+            .collect();
+        let mut w_true = vec![vec![vec![0.0f64; e]; dd]; k];
+        for ee in 0..e {
+            w_true[0][0][ee] = (rng.gen::<f64>() * 2.0 - 1.0) * 2.5;
+        }
+        let x_true: Vec<f64> = (0..a_n).map(|_| rng.gen::<f64>() * 2.0 - 1.0).collect();
+        let (base, disc) = build_cache(&rho, &alpha_true, &w_true);
+        // Author 0 gets many documents; author 1 gets few. The rest get a moderate
+        // count. Same generative position scale across authors.
+        let mut docs: Vec<Vec<u32>> = Vec::new();
+        let mut group: Vec<usize> = Vec::new();
+        for a in 0..a_n {
+            let beta_a: Vec<Vec<f64>> = (0..k)
+                .map(|t| topic_beta(&base[t], &disc[t], &[x_true[a]]))
+                .collect();
+            let ndocs = if a == 0 {
+                40
+            } else if a == 1 {
+                3
+            } else {
+                10
+            };
+            for _ in 0..ndocs {
+                let mut doc = Vec::new();
+                for _ in 0..40 {
+                    let t = rng.gen_range(0..k);
+                    doc.push(sample_cat(&beta_a[t], &mut rng) as u32);
+                }
+                docs.push(doc);
+                group.push(a);
+            }
+        }
+        let anchors = vec![(0usize, x_true[0])];
+        let m = fit_idealpoint(
+            &docs, &group, a_n, k, vsz, dd, &rho, &anchors, 40, 1e-6, 0.0, 1e6, 10.0, 1.0, 15,
+            &mut rng,
+        );
+        // Reconstruct ntot[a][k] = sum_{d in a} L_d theta_{d,k}, as the binding does.
+        let theta = m.doc_topics();
+        let mut ntot = vec![vec![0.0f64; k]; a_n];
+        for (d, theta_d) in theta.iter().enumerate() {
+            let a = group[d];
+            let len = docs[d].len() as f64;
+            for (kk, &t) in theta_d.iter().enumerate() {
+                ntot[a][kk] += len * t;
+            }
+        }
+        let se = m.position_se(&ntot, 1.0);
+        assert_eq!(se.len(), a_n);
+        for row in &se {
+            assert_eq!(row.len(), dd);
+            assert!(row[0].is_finite() && row[0] > 0.0, "bad SE: {row:?}");
+            // The prior alone caps the SE at sqrt(x_prior_variance) = 1.
+            assert!(row[0] <= 1.0 + 1e-9, "SE exceeds prior SD: {}", row[0]);
+        }
+        // The data-rich author (0) is more precisely placed than the data-poor one (1).
+        assert!(
+            se[0][0] < se[1][0],
+            "data-rich author should have smaller SE: {} vs {}",
+            se[0][0],
+            se[1][0]
+        );
     }
 
     #[test]

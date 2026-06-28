@@ -3746,6 +3746,14 @@ class IdealPointTM:
         """The latent ideal points (num_authors, num_dims)."""
         ...
     @property
+    def position_se(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Asymptotic standard error of each author position (num_authors,
+        num_dims), from the observed information of the penalized position objective
+        at the fit. The multinomial-content analog of Wordfish's Hessian-based
+        `se.theta`: it conditions on the fitted topic content and shrinks with the
+        number of tokens an author contributes. Aligned to author_positions."""
+        ...
+    @property
     def author_names(self) -> list[str]: ...
     @property
     def topic_discrimination(self) -> numpy.typing.NDArray[numpy.float64]:
@@ -3907,6 +3915,13 @@ class IdealPointSentenceTM:
     @property
     def author_positions(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
+    def position_se(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Standard error of each author position (num_authors, num_dims). The
+        position is a linear-Gaussian least squares given the topic responsibilities,
+        so this is the exact Laplace posterior SE; it shrinks with the number of the
+        author's observations. Aligned to author_positions."""
+        ...
+    @property
     def author_names(self) -> list[str]: ...
     @property
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
@@ -3975,6 +3990,13 @@ class TBIP:
     def num_authors(self) -> int: ...
     @property
     def ideal_points(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def position_se(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Standard error of each author ideal point (num_authors,): the standard
+        deviation of the Gaussian variational posterior q(x_s), estimated jointly
+        with the mean. As with any mean-field VI this can understate the true
+        posterior spread. Aligned to ideal_points / author_names."""
+        ...
     @property
     def author_names(self) -> list[str]: ...
     @property

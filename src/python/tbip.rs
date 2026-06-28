@@ -282,6 +282,14 @@ impl TBIP {
     fn ideal_points<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         Ok(Array1::from(self.fitted_model()?.ideal_points()).to_pyarray_bound(py))
     }
+    /// Standard error of each author ideal point (num_authors,): the standard
+    /// deviation of the Gaussian variational posterior q(x_s) estimated jointly with
+    /// the mean. As with any mean-field VI this can understate the true posterior
+    /// spread. Aligned to `ideal_points` / `author_names`.
+    #[getter]
+    fn position_se<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        Ok(Array1::from(self.fitted_model()?.position_se()).to_pyarray_bound(py))
+    }
     #[getter]
     fn author_names(&self) -> PyResult<Vec<String>> {
         self.fitted_model()?;

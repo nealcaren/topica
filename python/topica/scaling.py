@@ -20,10 +20,20 @@ from collections import namedtuple
 
 import numpy as np
 
-__all__ = ["bimodality", "polarization", "split_half_reliability", "position_intervals"]
+__all__ = [
+    "bimodality",
+    "polarization",
+    "polarization_ci",
+    "split_half_reliability",
+    "position_intervals",
+]
 
 #: One author's position estimate with a bootstrap standard error and CI.
 PositionInterval = namedtuple("PositionInterval", "estimate se lo hi")
+
+#: A polarization estimate with a standard error and confidence interval, from
+#: propagating per-author position standard errors.
+PolarizationCI = namedtuple("PolarizationCI", "estimate se lo hi")
 
 
 def bimodality(positions) -> float:
@@ -121,6 +131,79 @@ def polarization(positions, labels, *, normalize: bool = False) -> float:
             n += 1
     pooled_sd = (ss / n) ** 0.5 if n > 0 else 0.0
     return dist / pooled_sd if pooled_sd > 0 else float("inf")
+
+
+def polarization_ci(
+    positions,
+    labels,
+    position_se,
+    *,
+    normalize: bool = False,
+    n_sim: int = 1000,
+    ci: float = 0.95,
+    seed: int = 0,
+) -> "PolarizationCI":
+    """Confidence interval on :func:`polarization`, propagating per-author position
+    uncertainty.
+
+    The polarization statistic is a nonlinear function of the author positions, so
+    its uncertainty is obtained by Monte Carlo: draw each author's position from
+    ``N(estimate, se**2)`` (independently per dimension), recompute the polarization
+    on each draw, and report the point estimate together with the simulation
+    standard error and a percentile interval. This makes the centroid-distance
+    measure honest about how much of the gap is signal versus noise in the placement
+    -- a wide interval that straddles zero means the camps are not reliably apart.
+
+    It is the analytic-SE companion to :func:`position_intervals` (which gets the
+    same uncertainty by bootstrap when no SE is available). Pass any ideal-point
+    model's ``position_se``: ``IdealPointTM``, ``IdealPointSentenceTM``, ``TBIP``
+    (variational posterior SD), or ``Wordfish`` (Hessian SE). ``PartyEmbeddings``
+    has no analytic SE -- use :func:`position_intervals` for it.
+
+    Parameters
+    ----------
+    positions : array-like, shape ``(n,)`` or ``(n, d)``
+        The latent positions, e.g. ``model.author_positions``.
+    labels : sequence, length n
+        The camp of each position (e.g. party label of each author).
+    position_se : array-like, broadcastable to ``positions``
+        The standard error of each position, e.g. ``model.position_se``.
+    normalize : bool
+        Passed through to :func:`polarization` on every draw (raw centroid distance
+        vs the pooled-within-camp effect-size form).
+    n_sim : int
+        Number of Monte Carlo draws.
+    ci : float
+        Central interval mass (default 0.95 for a 95% interval).
+    seed : int
+        Seed for the simulation noise.
+
+    Returns
+    -------
+    PolarizationCI
+        ``(estimate, se, lo, hi)``: the point estimate at the given positions, the
+        standard deviation across draws, and the percentile interval bounds.
+    """
+    x = np.asarray(positions, dtype=float)
+    if x.ndim == 1:
+        x = x.reshape(-1, 1)
+    se = np.asarray(position_se, dtype=float)
+    if se.ndim == 1:
+        se = se.reshape(-1, 1)
+    se = np.broadcast_to(se, x.shape)
+
+    estimate = polarization(x, labels, normalize=normalize)
+    rng = np.random.default_rng(seed)
+    draws = np.empty(n_sim, dtype=float)
+    for s in range(n_sim):
+        xs = x + rng.standard_normal(x.shape) * se
+        draws[s] = polarization(xs, labels, normalize=normalize)
+    finite = draws[np.isfinite(draws)]
+    lo_q, hi_q = (1.0 - ci) / 2.0, 1.0 - (1.0 - ci) / 2.0
+    if finite.size == 0:
+        return PolarizationCI(float(estimate), float("nan"), float("nan"), float("nan"))
+    lo, hi = np.quantile(finite, [lo_q, hi_q])
+    return PolarizationCI(float(estimate), float(finite.std(ddof=1)), float(lo), float(hi))
 
 
 def _positions_dict(labels, positions) -> dict:

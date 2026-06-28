@@ -606,12 +606,26 @@ m.fit(docs,                                   # counts: no embeddings needed
       group=speaker_id,                       # documents sharing a speaker share a position
       anchors={"Sanders": -1.0, "Cruz": 1.0}) # orient the sign of the axis
 m.author_positions          # (num_authors, num_dims): the estimated ideal points
+m.position_se               # (num_authors, num_dims): standard error of each position
 m.topic_discrimination      # (num_topics,): which topics carry the cleavage
 m.position_shift(topic=k)   # the words that move within topic k from one end to the other
 
 # or factor through word embeddings (ETM-style), passing the aligned vocabulary:
 m.fit(docs, word_embeddings=rho, vocabulary=vocab, group=speaker_id)
 ```
+
+**Uncertainty on the positions.** `position_se` is the standard error of each
+author's ideal point, from the observed information of the penalized position
+objective at the fit — the multinomial-content analog of Wordfish's Hessian-based
+`se.theta`. It conditions on the fitted topic content and shrinks with the number of
+tokens an author contributes, so a prolific author is placed more precisely than a
+quiet one. The same getter is on `IdealPointSentenceTM` (the exact Laplace SE of its
+linear-Gaussian position step) and on `TBIP` (the variational posterior SD); `Wordfish`
+has had `position_se` all along. To carry that uncertainty into a polarization estimate,
+`topica.polarization_ci` propagates the per-author SEs by simulation and returns a
+confidence interval on the camp gap — a band that straddles zero means the camps are
+not reliably apart. (`PartyEmbeddings`, whose positions are a PCA of doc2vec tag
+vectors, has no analytic SE; use `topica.position_intervals` to bootstrap one.)
 
 We fit by variational EM on ETM's core: the E-step is the logistic-normal Laplace step with the author's position-displaced `beta`, and the M-step updates the topic embeddings, the loadings, and the positions in turn. Positions are initialized from the leading principal components of the author-word matrix, as Wordfish does, which keeps the fit off the trivial zero-loading fixed point. Identification is exact and loss-free: each iteration standardizes the positions to mean zero and unit variance and absorbs the rescaling into the embeddings and loadings, then orients the sign to the anchors. On data simulated from the model the positions recover the planted trait at a correlation above 0.98 and `position_shift` reads off the discriminating axis.
 

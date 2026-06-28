@@ -54,6 +54,18 @@ impl IpInner {
             IpInner::Count(m) => &m.x,
         }
     }
+    fn group(&self) -> &Vec<usize> {
+        match self {
+            IpInner::Embedded(m) => &m.group,
+            IpInner::Count(m) => &m.group,
+        }
+    }
+    fn position_se(&self, ntot: &[Vec<f64>], x_prior_variance: f64) -> Vec<Vec<f64>> {
+        match self {
+            IpInner::Embedded(m) => m.position_se(ntot, x_prior_variance),
+            IpInner::Count(m) => m.position_se(ntot, x_prior_variance),
+        }
+    }
     fn topic_discrimination(&self) -> Vec<f64> {
         match self {
             IpInner::Embedded(m) => m.topic_discrimination(),
@@ -200,6 +212,31 @@ impl IdealPointTM {
         self.model
             .as_ref()
             .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+    }
+
+    /// Per-author expected topic-token counts `n_{a,k}` (`A x K`), reconstructed
+    /// from the stored corpus and document topic proportions:
+    /// `n_{a,k} = sum_{d in a} L_d theta_{d,k}`, where `L_d` is the doc's in-vocab
+    /// length. This is the data weight each author's position SE conditions on, and
+    /// it is recoverable from saved state, so the SE is available after `load`.
+    fn author_topic_counts(&self) -> PyResult<Vec<Vec<f64>>> {
+        let m = self.fitted_model()?;
+        let theta = m.doc_topics();
+        let group = m.group();
+        let a_n = m.num_authors();
+        let corpus = self
+            .corpus
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))?;
+        let mut ntot = vec![vec![0.0f64; self.num_topics]; a_n];
+        for (d, theta_d) in theta.iter().enumerate() {
+            let a = group[d];
+            let len = corpus.docs[d].len() as f64;
+            for (kk, &t) in theta_d.iter().enumerate() {
+                ntot[a][kk] += len * t;
+            }
+        }
+        Ok(ntot)
     }
 
     /// Shared front matter for both fit paths: resolve docs, author grouping, and
@@ -428,6 +465,20 @@ impl IdealPointTM {
     #[getter]
     fn author_positions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(self.fitted_model()?.x()).to_pyarray_bound(py))
+    }
+    /// Asymptotic standard error of each author position (num_authors, num_dims),
+    /// from the observed information of the penalized position objective at the fit.
+    /// Conditions on the fitted topic content (alpha/W), the multinomial-content
+    /// analog of Wordfish's Hessian-based `se.theta`; an author's SE shrinks with
+    /// the number of tokens they contribute. Aligned to `author_positions` /
+    /// `author_names`.
+    #[getter]
+    fn position_se<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let ntot = self.author_topic_counts()?;
+        let se = self
+            .fitted_model()?
+            .position_se(&ntot, self.x_prior_variance);
+        Ok(vecs_to_arr2(&se).to_pyarray_bound(py))
     }
     /// The author labels, in the row order of `author_positions`.
     #[getter]
