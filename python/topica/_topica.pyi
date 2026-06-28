@@ -308,6 +308,15 @@ class DMR:
         ...
 
     @property
+    def feature_effect_se(self) -> numpy.typing.NDArray[numpy.float64] | None:
+        """Standard error of each feature weight lambda, shape (num_topics,
+        num_features), from the observed information of the penalized
+        Dirichlet-multinomial likelihood at the fit. Aligned to feature_effects; an
+        effect more than ~2 SEs from zero is the usual significance cue. None for
+        models saved before this was added."""
+        ...
+
+    @property
     def feature_names(self) -> list[str]:
         """Feature names aligned with feature_effects columns ('intercept' first)."""
         ...

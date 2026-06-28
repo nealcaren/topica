@@ -194,6 +194,12 @@ class TestDMRShapesAndProperties:
         # (num_topics, num_features) = (2, 2) [intercept + is_A]
         assert fitted_model.feature_effects.shape == (2, 2)
 
+    def test_feature_effect_se_shape_and_finite(self, fitted_model):
+        se = fitted_model.feature_effect_se
+        assert se is not None
+        assert se.shape == fitted_model.feature_effects.shape == (2, 2)
+        assert np.all(np.isfinite(se)) and np.all(se > 0.0)
+
     def test_feature_names_intercept_first(self, fitted_model):
         assert fitted_model.feature_names[0] == "intercept"
         assert fitted_model.feature_names == ["intercept", "is_A"]
@@ -247,6 +253,13 @@ class TestDMRCovariateRecovery:
             f"Covariate recovery failed: effect_diff={effect_diff:.4f} "
             f"(A_topic={A_topic}, feature_effects=\n{recovery_model.feature_effects})"
         )
+
+    def test_strong_effect_is_significant(self, recovery_model):
+        """The planted is_A effect is large, so it should sit many SEs from zero."""
+        A_topic = _identify_A_topic(recovery_model)
+        eff = recovery_model.feature_effects[A_topic, 1]
+        se = recovery_model.feature_effect_se[A_topic, 1]
+        assert abs(eff) / se > 2.0, f"z={eff / se:.2f} for a planted effect"
 
     def test_a_topic_has_positive_is_A_effect(self, recovery_model):
         """The A-topic (space words) should have a positive is_A feature effect."""

@@ -667,6 +667,21 @@ class GDMR:
         return self._get_true_feature_effects()
 
     @property
+    def feature_effect_se(self) -> np.ndarray | None:
+        """Standard error of :attr:`feature_effects`, shape ``(num_topics,
+        num_basis)``, from the underlying DMR's observed-information SE rescaled by
+        the same per-column factor that undoes the basis standardization. Aligned to
+        ``feature_effects``; ``None`` for models saved before this was added.
+        """
+        self._require_fitted()
+        dmr_se = self._dmr.feature_effect_se
+        if dmr_se is None:
+            return None
+        # The basis rescaling is a per-column linear map, so the SE scales by the
+        # same (non-negative) factor as the effect itself.
+        return dmr_se * np.abs(self._recover_scales)[np.newaxis, :]
+
+    @property
     def degrees(self) -> list[int]:
         """Maximum Legendre degree per metadata dimension (read-only)."""
         return list(self._degrees)
