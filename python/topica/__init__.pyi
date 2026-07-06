@@ -224,8 +224,8 @@ def find_thoughts(doc_topic: Any, texts: Sequence[str] | None = None, *, topic: 
     ...
 
 
-def search_k(docs: Any, ks: Sequence[int], *, held_out: Any = None, **kwargs: Any) -> list[dict]:
-    """Fit an LDA per K; report coherence, exclusivity, and (optional) perplexity."""
+def search_k(docs: Any, ks: Sequence[int], *, model: str = ..., prevalence: Any | None = ..., content: Any | None = ..., held_out: Any = None, coherence_type: str = ..., **kwargs: Any) -> list[dict]:
+    """Fit an LDA/STM per K; report coherence, exclusivity, and (optional) perplexity."""
     ...
 
 

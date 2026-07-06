@@ -876,22 +876,24 @@ def search_k(
     *,
     model="lda",
     prevalence=None,
+    content=None,
     held_out=None,
     iters=500,
     num_samples=3,
     sample_interval=10,
     seed=42,
     coherence_n=10,
+    coherence_type="u_mass",
 ):
     """Fit a model for each K and report quality metrics (stm's ``searchK``).
 
     With ``model="lda"`` (default) fits an :class:`~topica.LDA` per K. With
     ``model="stm"`` fits an :class:`~topica.STM` per K — pass ``prevalence``
-    (a covariate design matrix) to scan K for the model you'll actually report.
+    (a covariate design matrix) and optional ``content`` (group labels) to
+    scan K for the model you'll actually report.
 
     Returns a :class:`SearchKResult` (a list of per-K dicts) with ``k``,
-    ``coherence`` (mean UMass, so negative; the metric is named in
-    ``coherence_metric`` since ``plot_report`` reports c_v on a different scale),
+    ``coherence`` (mean of selected coherence type, default ``"u_mass"``),
     ``exclusivity`` (mean top-word exclusivity), and — when ``held_out`` is
     supplied — a held-out quality metric. The result also carries
     ``.directions`` (whether higher or lower is better per metric) and a
@@ -916,6 +918,7 @@ def search_k(
     ks : sequence of topic counts to scan.
     model : ``"lda"`` (default) or ``"stm"``.
     prevalence : covariate design matrix for ``model="stm"``; ignored otherwise.
+    content : optional content group labels (sequence of str/int) for ``model="stm"``.
     held_out : optional held-out set. Pass a :class:`Heldout` (from
         :func:`make_heldout`) or a separate corpus / token lists.
     iters : training iterations per fit.
@@ -923,25 +926,54 @@ def search_k(
     sample_interval : iterations between Gibbs samples (LDA only).
     seed : RNG seed for every fit and transform call.
     coherence_n : top-word count used for coherence and exclusivity.
+    coherence_type : one of ``"u_mass"``, ``"c_uci"``, ``"c_npmi"``, ``"c_v"`` (default ``"u_mass"``).
     """
     from . import LDA, STM  # local import to avoid a cycle at module load
 
     if model not in ("lda", "stm"):
         raise ValueError("model must be 'lda' or 'stm'")
+    if content is not None and model != "stm":
+        raise ValueError("content covariates are only supported when model='stm'")
+
+    valid_coh = ("u_mass", "c_uci", "c_npmi", "c_v")
+    coherence_type = coherence_type.lower()
+    if coherence_type not in valid_coh:
+        raise ValueError(f"coherence_type must be one of {valid_coh}, got {coherence_type!r}")
+
+    if model == "stm" and content is not None:
+        warnings.warn(
+            "Exclusivity and coherence calculations on a model with content covariates "
+            "are computed on the baseline/group-average topic-word distributions. "
+            "These metrics do not capture group-specific wording variations.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     rows = []
     for k in ks:
         if model == "stm":
             m = STM(num_topics=k, seed=seed)
-            m.fit(docs, prevalence, iters=iters)
+            m.fit(docs, prevalence, content=content, iters=iters)
         else:
             m = LDA(num_topics=k, seed=seed)
             m.fit(docs, iters=iters, num_samples=num_samples,
                   sample_interval=sample_interval)
+
+        if coherence_type == "u_mass" and hasattr(m, "coherence"):
+            coh_val = float(np.mean(m.coherence(coherence_n)))
+        else:
+            from .coherence import coherence as external_coherence
+            # m.top_words(coherence_n) returns a list of lists of (word, weight) tuples.
+            # Convert to list[list[str]]
+            topics = [[w for w, _ in top_list] for top_list in m.top_words(coherence_n)]
+            ref_docs = _ref_corpus(docs)
+            scores = external_coherence(topics, ref_docs, coherence_type=coherence_type, topn=coherence_n)
+            coh_val = float(np.mean(scores))
+
         row = {
             "k": k,
-            "coherence": float(np.mean(m.coherence(coherence_n))),
-            "coherence_metric": "u_mass",
+            "coherence": coh_val,
+            "coherence_metric": coherence_type,
             "exclusivity": _mean_exclusivity(m.topic_word, coherence_n),
         }
         if held_out is not None:
