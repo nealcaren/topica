@@ -315,6 +315,73 @@ def align_topics(
     ...
 
 
+class EnsembleResult:
+    topic_word: Any
+    doc_topic: Any
+    vocabulary: list[str] | None
+    stability: Any
+    support: Any
+    reliable: Any
+    agreement: float
+    method: str
+    cluster_sizes: Any
+    reference: int | None
+    n_runs: int
+    runs: list
+    def __init__(
+        self,
+        *,
+        topic_word: Any,
+        doc_topic: Any,
+        vocabulary: list[str] | None,
+        stability: Any,
+        support: Any,
+        reliable: Any,
+        agreement: float,
+        method: str,
+        cluster_sizes: Any,
+        reference: int | None,
+        n_runs: int,
+        runs: list,
+    ) -> None: ...
+
+
+def ensemble(
+    runs: Any,
+    *,
+    method: str = "cluster",
+    num_topics: int | None = None,
+    lambda_: float = 0.5,
+    distance: str = "rbo",
+    topn: int = 10,
+    reference: Any = "medoid",
+    metric: str = "cosine",
+    weights: Any = None,
+    eps: float = 0.1,
+    min_samples: int | None = None,
+    min_cores: int | None = None,
+    masking: str = "mass",
+    masking_threshold: float | None = None,
+) -> EnsembleResult:
+    """Combine several topic-model fits into one consensus model."""
+    ...
+
+
+def cross_ensemble(
+    models: list,
+    texts: Any = None,
+    *,
+    method: str = "cluster",
+    num_topics: int | None = None,
+    lambda_: float = 0.5,
+    distance: str = "rbo",
+    topn: int = 10,
+    weights: Any = None,
+) -> EnsembleResult:
+    """Combine several topic-model fits from different architectures into one consensus."""
+    ...
+
+
 def topic_stability(runs: Any, *, topn: int = 10, metric: str = "cosine") -> float:
     """Term-centric topic stability across fits (Greene et al. 2014)."""
     ...
@@ -524,6 +591,9 @@ __all__ = [
     "TopicDendrogram",
     "align_topics",
     "topic_stability",
+    "ensemble",
+    "EnsembleResult",
+    "cross_ensemble",
     "topic_info",
     "topic_sizes",
     "topic_labels",

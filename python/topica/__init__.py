@@ -224,7 +224,7 @@ from .validation import (  # noqa: E402  general, model-agnostic post-hoc analys
     align_topics,
     topic_stability,
 )
-from .ensemble import ensemble, EnsembleResult  # noqa: E402  (consensus across runs)
+from .ensemble import ensemble, EnsembleResult, cross_ensemble  # noqa: E402  (consensus across runs)
 from .analysis import (  # noqa: E402  (model-neutral fitted-model analysis surface)
     topic_info,
     topic_sizes,
@@ -359,6 +359,7 @@ __all__ = [
     "topic_stability",
     "ensemble",
     "EnsembleResult",
+    "cross_ensemble",
     "find_thoughts_html",
     "quality_frontier",
     "bootstrap_stability",

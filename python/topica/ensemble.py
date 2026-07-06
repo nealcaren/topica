@@ -769,3 +769,179 @@ def ensemble(runs, *, method="cluster", num_topics=None, lambda_=0.5,
             masking=masking, masking_threshold=masking_threshold,
         )
     raise ValueError("method must be 'cluster', 'align', or 'stable'")
+
+
+def cross_ensemble(
+    models,
+    texts=None,
+    *,
+    method="cluster",
+    num_topics=None,
+    lambda_=0.5,
+    distance="rbo",
+    topn=10,
+    weights=None,
+) -> EnsembleResult:
+    """Combine several topic-model fits from different architectures into one consensus.
+
+    Unlike ``ensemble``, ``cross_ensemble`` allows combining models with different
+    architectures (e.g. classical parametric models like LDA/STM and neural embedding
+    models like BERTopic) and automatically intersects/aligns their vocabularies if they
+    expose a ``.vocabulary`` attribute.
+
+    Parameters
+    ----------
+    models : list of fitted model instances.
+    texts : optional text corpus / tokenized documents, used for validating document counts.
+    method : ``"cluster"`` (default) - pools and clusters the topics.
+    num_topics : number of consensus topics (default: median K of the input models).
+    lambda_ : weight on topic-word distance vs document-topic distance.
+    distance : distance metric for clustering (``"rbo"`` or ``"jaccard"``).
+    topn : number of top words to use for distance calculation.
+    weights : optional per-model weights.
+
+    Returns
+    -------
+    An ``EnsembleResult``.
+    """
+    if len(models) < 2:
+        raise ValueError("need at least two models to build an ensemble")
+    if method != "cluster":
+        raise ValueError("Currently only method='cluster' is supported for cross-model ensembling.")
+
+    from .coherence import _as_topic_word, _as_doc_topic
+
+    # 1. Align vocabularies across all models
+    vocabularies = [getattr(m, "vocabulary", None) for m in models]
+    if all(v is not None for v in vocabularies):
+        vocabularies = [list(v) for v in vocabularies]
+        common_vocab = set(vocabularies[0])
+        for v in vocabularies[1:]:
+            common_vocab = common_vocab.intersection(set(v))
+        common_vocab = sorted(list(common_vocab))
+        if len(common_vocab) == 0:
+            raise ValueError("The models share no common vocabulary terms.")
+        
+        # Project topic_word distributions to common_vocab
+        betas = []
+        for i, m in enumerate(models):
+            raw_beta = _as_topic_word(m)
+            idx_map = {w: idx for idx, w in enumerate(vocabularies[i])}
+            idx_proj = [idx_map[w] for w in common_vocab]
+            proj_beta = raw_beta[:, idx_proj]
+            # Re-normalize rows to sum to 1.0
+            proj_beta = proj_beta / np.clip(proj_beta.sum(axis=1, keepdims=True), 1e-12, None)
+            betas.append(proj_beta)
+    else:
+        # Fallback if vocabulary attributes are not present
+        betas = [_as_topic_word(m) for m in models]
+        K_ref, V_ref = betas[0].shape
+        for i, b in enumerate(betas[1:]):
+            if b.shape[1] != V_ref:
+                raise ValueError(
+                    f"Models have incompatible vocabulary sizes: {V_ref} and {b.shape[1]}."
+                )
+        common_vocab = getattr(models[0], "vocabulary", None)
+        if common_vocab is not None:
+            common_vocab = list(common_vocab)
+        else:
+            common_vocab = [str(i) for i in range(V_ref)]
+
+    # 2. Extract document-topic distributions
+    thetas = []
+    has_thetas = True
+    for i, m in enumerate(models):
+        if hasattr(m, "doc_topic") and m.doc_topic is not None:
+            thetas.append(_as_doc_topic(m).T)
+        else:
+            has_thetas = False
+            break
+
+    # Verify document counts and texts length
+    if has_thetas:
+        num_docs = thetas[0].shape[1]
+        for i, t in enumerate(thetas[1:]):
+            if t.shape[1] != num_docs:
+                raise ValueError(
+                    f"Models must share the same document count; model 0 has {num_docs} "
+                    f"but model {i+1} has {t.shape[1]}."
+                )
+        if texts is not None and len(texts) != num_docs:
+            raise ValueError(
+                f"Model document count ({num_docs}) does not match length of texts ({len(texts)})."
+            )
+    else:
+        thetas = None
+
+    # 3. Pool topics
+    m_runs = len(models)
+    K_list = [b.shape[0] for b in betas]
+    all_beta = np.vstack(betas)                       # (N_total, V_common)
+    run_of = np.repeat(np.arange(m_runs), K_list)      # which model each pooled topic came from
+    w = _normalize_weights(weights, m_runs)
+
+    all_theta = np.vstack(thetas) if thetas is not None else None  # (N_total, D)
+
+    # 4. Calculate distances
+    D = _rank_distance(_ranked(all_beta, topn), distance)
+    lam = float(lambda_)
+    if all_theta is not None and lam < 1.0:
+        D_theta = _rank_distance(_ranked(all_theta, topn), distance)
+        D = lam * D + (1.0 - lam) * D_theta
+    elif lam < 1.0:
+        warnings.warn(
+            "Models do not all share document-topic distributions, so document-topic "
+            "distance is unavailable; using topic-word distance only (lambda_=1).",
+            stacklevel=3,
+        )
+        lam = 1.0
+
+    # 5. Cluster
+    nc = int(num_topics) if num_topics is not None else int(np.median(K_list))
+    if nc < 1:
+        raise ValueError(f"num_topics must be a positive integer, got {num_topics!r}")
+
+    labels = _agglomerative(D, nc)
+
+    # 6. Construct consensus
+    rows_beta, rows_theta = [], [] if thetas is not None else None
+    stability, support, sizes = [], [], []
+    for c in range(labels.max() + 1):
+        members = np.flatnonzero(labels == c)
+        wm = w[run_of[members]]
+        wm = wm / wm.sum()
+        rows_beta.append(np.average(all_beta[members], axis=0, weights=wm))
+        if thetas is not None:
+            rows_theta.append(np.average(all_theta[members], axis=0, weights=wm))
+        
+        # Internal consistency: 1 - mean pairwise distance among members
+        if len(members) > 1:
+            sub = D[np.ix_(members, members)]
+            stab = 1.0 - sub[np.triu_indices(len(members), 1)].mean()
+        else:
+            stab = 1.0
+        stability.append(float(stab))
+        support.append(len(np.unique(run_of[members])) / m_runs)
+        sizes.append(len(members))
+
+    beta_bar = np.vstack(rows_beta)
+    stability = np.array(stability)
+    support = np.array(support)
+    sizes = np.array(sizes, dtype=int)
+
+    # Order topics by trustworthiness (support first, then consistency)
+    order = np.lexsort((-stability, -support))
+    beta_bar = beta_bar[order]
+    beta_bar = beta_bar / np.clip(beta_bar.sum(axis=1, keepdims=True), 1e-300, None)
+    theta_bar = None
+    if thetas is not None:
+        theta_bar = np.vstack(rows_theta)[order].T  # back to (D, K)
+        theta_bar = theta_bar / np.clip(theta_bar.sum(axis=1, keepdims=True), 1e-300, None)
+
+    reliable = (stability >= _MIN_STABILITY) & (support >= _MIN_SUPPORT)
+    return EnsembleResult(
+        topic_word=beta_bar, doc_topic=theta_bar, vocabulary=common_vocab,
+        stability=stability[order], support=support[order], reliable=reliable[order],
+        agreement=float(np.mean(stability)), method="cluster",
+        cluster_sizes=sizes[order], reference=None, n_runs=m_runs, runs=models,
+    )
