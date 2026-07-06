@@ -169,6 +169,29 @@ topica.topic_stability([model_a, model_b], topn=10)       # cross-fit term overl
 topica.check_residuals(model, docs)                       # Taddy dispersion: is K too small?
 ```
 
+### Topic Alignment
+
+To compare topics across different runs, seeds, or even architectures, `topica.align_topics(model_a, model_b)` performs Kuhn-Munkres (Hungarian) matching to align topics one-to-one. It returns a custom `AlignmentResult` object containing matched tuples of `(topic_a, topic_b, distance)`.
+
+It supports several distance metrics:
+- `metric="cosine"` (default): Cosine distance.
+- `metric="js"`: Jensen-Shannon distance.
+- `metric="rbo"`: Rank-Biased Overlap over the top `depth` words, focusing weight on high-probability words.
+- `metric="emd"` (or `"ot"`): Earth Mover's Distance / Optimal Transport, which can use a word embeddings dictionary or matrix.
+
+If the models have different vocabularies, `align_topics` automatically intersects them, projects the distributions, and re-normalizes them.
+
+You can inspect relationship classifications (e.g. splits, merges, and unaligned topics) based on a similarity threshold:
+```python
+result = topica.align_topics(model_a, model_b, metric="cosine", threshold=0.3)
+
+result.matches     # clean 1-to-1 matches
+result.splits      # topic in A splitting to multiple in B
+result.merges      # topic in B merging from multiple in A
+result.unaligned_a # topics in A with no match above threshold
+result.unaligned_b # topics in B with no match above threshold
+```
+
 ## Topic structure and document outliers
 
 Three post-hoc, no-refit diagnostics that read a fitted model's `topic_word` and
@@ -254,6 +277,19 @@ Three methods are available:
 ```python
 topica.ensemble(runs, method="align")                  # reference matching
 topica.ensemble(runs, method="stable", eps=0.1)        # discover stable topics
+```
+
+### Cross-Model Consensus Ensembling
+
+While `topica.ensemble` is designed to combine independent runs (from different seeds) of the same model class, you can use `topica.cross_ensemble` to combine and align topics across entirely different architectures (e.g. combining LDA, STM, and BERTopic).
+
+This is particularly valuable for proving that your target topics are robust, persisting regardless of whether they are recovered by a Gibbs sampler, variational EM, or neural clustering.
+
+If the models have different vocabularies (due to different preprocessing options), `cross_ensemble` automatically intersects them, projects the models' `topic_word` matrices onto the common vocabulary intersection, and re-normalizes them. If the models have different numbers of topics, it automatically defaults to the median K of the input models.
+
+```python
+# Combine different architectures fit on the same corpus
+cons = topica.cross_ensemble([lda_model, stm_model, bertopic_model])
 ```
 
 ## Convergence

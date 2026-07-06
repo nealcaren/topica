@@ -95,6 +95,8 @@ and in the `topica.validation` module.
 
 ::: topica.EnsembleResult
 
+::: topica.cross_ensemble
+
 ## Held-out likelihood
 
 Build a within-corpus word-heldout set — the analogue of R `stm`'s
