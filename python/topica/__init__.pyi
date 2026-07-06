@@ -281,7 +281,36 @@ def topic_dendrogram(model: Any, *, metric: str = "js", method: str = "average",
     ...
 
 
-def align_topics(a: Any, b: Any, *, metric: str = "cosine") -> list:
+class AlignmentResult(list):
+    matches: list[tuple[int, int, float]]
+    splits: dict[int, list[tuple[int, float]]]
+    merges: dict[int, list[tuple[int, float]]]
+    unaligned_a: list[int]
+    unaligned_b: list[int]
+    similarity_matrix: Any
+    def __init__(
+        self,
+        pairs: list,
+        *,
+        matches: list,
+        splits: dict,
+        merges: dict,
+        unaligned_a: list,
+        unaligned_b: list,
+        similarity_matrix: Any,
+    ) -> None: ...
+
+
+def align_topics(
+    a: Any,
+    b: Any,
+    *,
+    metric: str = "cosine",
+    threshold: float = 0.3,
+    depth: int = 50,
+    p: float = 0.9,
+    word_embeddings: Any = None,
+) -> AlignmentResult:
     """One-to-one topic matching across two fits (Hungarian)."""
     ...
 

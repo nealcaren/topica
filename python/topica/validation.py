@@ -1602,24 +1602,242 @@ def _hungarian(cost):
     return sorted(out)
 
 
-def align_topics(a, b, *, metric="cosine"):
+class AlignmentResult(list):
+    """Result of cross-model topic alignment.
+
+    Behaves as a list of ``(topic_a, topic_b, distance)`` tuples for backward
+    compatibility, but exposes additional attributes for advanced analysis:
+    - ``matches``: List of 1-to-1 matched pairs ``(topic_a, topic_b, similarity)``
+    - ``splits``: Dictionary mapping ``topic_a -> list of (topic_b, similarity)``
+    - ``merges``: Dictionary mapping ``topic_b -> list of (topic_a, similarity)``
+    - ``unaligned_a``: List of unmatched topics in Model A
+    - ``unaligned_b``: List of unmatched topics in Model B
+    - ``similarity_matrix``: Raw pairwise similarity matrix of shape ``(K_A, K_B)``
+    """
+    def __init__(
+        self,
+        pairs,
+        *,
+        matches,
+        splits,
+        merges,
+        unaligned_a,
+        unaligned_b,
+        similarity_matrix,
+    ):
+        super().__init__(pairs)
+        self.matches = matches
+        self.splits = splits
+        self.merges = merges
+        self.unaligned_a = unaligned_a
+        self.unaligned_b = unaligned_b
+        self.similarity_matrix = similarity_matrix
+
+    def __repr__(self):
+        return (
+            f"AlignmentResult(matches={len(self.matches)}, "
+            f"splits={len(self.splits)}, merges={len(self.merges)}, "
+            f"unaligned_a={len(self.unaligned_a)}, unaligned_b={len(self.unaligned_b)})"
+        )
+
+
+def _rbo(s, t, p, depth):
+    """Calculate Rank-Biased Overlap (RBO) between two lists of words."""
+    s = s[:depth]
+    t = t[:depth]
+    h = min(len(s), len(t), depth)
+    if h == 0:
+        return 0.0
+    
+    s_set = set()
+    t_set = set()
+    rbo_sum = 0.0
+    
+    for d in range(1, h + 1):
+        s_set.add(s[d - 1])
+        t_set.add(t[d - 1])
+        overlap = len(s_set.intersection(t_set))
+        rbo_sum += (p ** (d - 1)) * (overlap / d)
+        
+    overlap_h = len(s_set.intersection(t_set))
+    rbo_val = (1.0 - p) * rbo_sum + (p ** h) * (overlap_h / h)
+    return rbo_val
+
+
+def _emd_similarity(p_a, p_b, top_idx_a, top_idx_b, word_embeddings, depth):
+    """Calculate Earth Mover's Distance similarity between two topic distributions."""
+    try:
+        from scipy.optimize import linprog
+    except ImportError:
+        raise ImportError(
+            "SciPy is required for Optimal Transport ('emd') topic alignment. "
+            "Install it via `pip install scipy` or `pip install topica[viz]`."
+        )
+
+    # 1. Take union of top indices
+    union_idx = list(set(top_idx_a[:depth]).union(set(top_idx_b[:depth])))
+    M = len(union_idx)
+    if M == 0:
+        return 0.0
+
+    # 2. Project probability vectors onto union and re-normalize
+    mass_a = p_a[union_idx]
+    mass_b = p_b[union_idx]
+    
+    sum_a = mass_a.sum()
+    sum_b = mass_b.sum()
+    
+    mass_a = mass_a / sum_a if sum_a > 1e-12 else np.ones(M) / M
+    mass_b = mass_b / sum_b if sum_b > 1e-12 else np.ones(M) / M
+
+    # 3. Calculate distance matrix between words in union
+    if word_embeddings is not None:
+        try:
+            vectors = word_embeddings[union_idx]
+        except Exception:
+            vectors = None
+        
+        if vectors is not None:
+            vectors = np.asarray(vectors, dtype=np.float64)
+            if vectors.ndim == 2:
+                norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+                norms = np.clip(norms, 1e-12, None)
+                normed_vectors = vectors / norms
+                C = 1.0 - normed_vectors @ normed_vectors.T
+                C = np.clip(C, 0.0, 2.0)
+            else:
+                C = np.ones((M, M)) - np.eye(M)
+        else:
+            C = np.ones((M, M)) - np.eye(M)
+    else:
+        C = np.ones((M, M)) - np.eye(M)
+
+    # 4. Set up and solve the LP using linprog
+    c_lp = C.flatten()
+    A_eq = []
+    b_eq = []
+    
+    for u in range(M):
+        row = np.zeros((M, M))
+        row[u, :] = 1.0
+        A_eq.append(row.flatten())
+        b_eq.append(mass_a[u])
+        
+    for v in range(M):
+        col = np.zeros((M, M))
+        col[:, v] = 1.0
+        A_eq.append(col.flatten())
+        b_eq.append(mass_b[v])
+        
+    A_eq = np.array(A_eq)
+    b_eq = np.array(b_eq)
+    bounds = [(0.0, None) for _ in range(M * M)]
+    
+    res = linprog(c=c_lp, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
+    if res.success:
+        emd_dist = res.fun
+    else:
+        emd_dist = 0.5 * np.sum(np.abs(mass_a - mass_b))
+
+    max_c = C.max()
+    if max_c > 1e-12:
+        similarity = np.clip(1.0 - emd_dist / max_c, 0.0, 1.0)
+    else:
+        similarity = 1.0 if emd_dist < 1e-9 else 0.0
+    return float(similarity)
+
+
+def align_topics(
+    a,
+    b,
+    *,
+    metric="cosine",
+    threshold=0.3,
+    depth=50,
+    p=0.9,
+    word_embeddings=None,
+) -> AlignmentResult:
     """Match the topics of two fits one-to-one by minimal total distance
     (Hungarian on the cross-fit topic-word distance matrix). Use it to compare
-    runs across seeds, across K, or train vs. resample — your fits are
-    deterministic, so the matching is reproducible.
+    runs across seeds, across K, or train vs. resample.
 
-    `a`, `b` are fitted models or K×V topic-word arrays (same vocabulary order).
-    `metric` is ``"cosine"`` or ``"js"`` (Jensen-Shannon). Returns a list of
-    ``(topic_a, topic_b, distance)`` sorted by ``topic_a``.
+    `a`, `b` are fitted models or K×V topic-word arrays (same vocabulary order, or
+    automatically intersected if `.vocabulary` is available).
+    `metric` is ``"cosine"``, ``"js"`` (Jensen-Shannon), ``"rbo"`` (Rank-biased overlap),
+    or ``"emd"``/``"ot"`` (Earth Mover's Distance).
+    Returns an `AlignmentResult` object which behaves as a list of ``(topic_a, topic_b, distance)``
+    tuples sorted by ``topic_a``, but exposes additional attributes: ``matches``, ``splits``,
+    ``merges``, ``unaligned_a``, ``unaligned_b``, and ``similarity_matrix``.
     """
     A = _as_topic_word(a)
     B = _as_topic_word(b)
-    if A.shape[1] != B.shape[1]:
-        raise ValueError("the two fits must share a vocabulary (same V)")
+
+    vocab_a = getattr(a, "vocabulary", None)
+    vocab_b = getattr(b, "vocabulary", None)
+
+    # 1. Align vocabularies if available
+    if vocab_a is not None and vocab_b is not None:
+        vocab_a = list(vocab_a)
+        vocab_b = list(vocab_b)
+        common_vocab = sorted(list(set(vocab_a).intersection(set(vocab_b))))
+        if len(common_vocab) == 0:
+            raise ValueError("The two fits share no common vocabulary terms.")
+        
+        idx_map_a = {w: i for i, w in enumerate(vocab_a)}
+        idx_map_b = {w: i for i, w in enumerate(vocab_b)}
+        
+        idx_a = [idx_map_a[w] for w in common_vocab]
+        idx_b = [idx_map_b[w] for w in common_vocab]
+        
+        A_proj = A[:, idx_a]
+        B_proj = B[:, idx_b]
+        
+        A = A_proj / np.clip(A_proj.sum(axis=1, keepdims=True), 1e-12, None)
+        B = B_proj / np.clip(B_proj.sum(axis=1, keepdims=True), 1e-12, None)
+    else:
+        if A.shape[1] != B.shape[1]:
+            raise ValueError("the two fits must share a vocabulary (same V)")
+        common_vocab = [str(i) for i in range(A.shape[1])]
+
+    # Normalize word_embeddings to a matrix aligned to common_vocab
+    embeddings_matrix = None
+    if word_embeddings is not None:
+        if isinstance(word_embeddings, dict):
+            first_val = next(iter(word_embeddings.values()))
+            dim = len(first_val) if hasattr(first_val, "__len__") else 1
+            embeddings_matrix = np.zeros((len(common_vocab), dim))
+            for i, w in enumerate(common_vocab):
+                if w in word_embeddings:
+                    embeddings_matrix[i] = word_embeddings[w]
+        elif isinstance(word_embeddings, np.ndarray) or hasattr(word_embeddings, "__len__"):
+            word_embeddings = np.asarray(word_embeddings)
+            if word_embeddings.shape[0] == len(vocab_a) if vocab_a else False:
+                idx_map_a = {w: i for i, w in enumerate(vocab_a)}
+                idx_a = [idx_map_a[w] for w in common_vocab]
+                embeddings_matrix = word_embeddings[idx_a]
+            elif word_embeddings.shape[0] == len(vocab_b) if vocab_b else False:
+                idx_map_b = {w: i for i, w in enumerate(vocab_b)}
+                idx_b = [idx_map_b[w] for w in common_vocab]
+                embeddings_matrix = word_embeddings[idx_b]
+            elif word_embeddings.shape[0] == len(common_vocab):
+                embeddings_matrix = word_embeddings
+            else:
+                raise ValueError(
+                    f"word_embeddings shape {word_embeddings.shape} is not compatible with vocabulary size."
+                )
+
+    # 2. Get top word indices (descending order of probability)
+    top_indices_a = [np.argsort(A[i])[::-1] for i in range(A.shape[0])]
+    top_indices_b = [np.argsort(B[j])[::-1] for j in range(B.shape[0])]
+
+    words_a = [[common_vocab[idx] for idx in top_indices_a[i]] for i in range(A.shape[0])]
+    words_b = [[common_vocab[idx] for idx in top_indices_b[j]] for j in range(B.shape[0])]
+
+    # 3. Calculate similarity matrix
     if metric == "cosine":
         an = A / np.clip(np.linalg.norm(A, axis=1, keepdims=True), 1e-12, None)
         bn = B / np.clip(np.linalg.norm(B, axis=1, keepdims=True), 1e-12, None)
-        dist = 1.0 - an @ bn.T
+        similarity_matrix = an @ bn.T
     elif metric == "js":
         dist = np.zeros((A.shape[0], B.shape[0]))
         for i in range(A.shape[0]):
@@ -1628,9 +1846,81 @@ def align_topics(a, b, *, metric="cosine"):
                 qj = B[j]
                 mm = 0.5 * (pi + qj)
                 dist[i, j] = 0.5 * _kl(pi, mm) + 0.5 * _kl(qj, mm)
+        similarity_matrix = np.clip(1.0 - dist, 0.0, 1.0)
+    elif metric == "rbo":
+        similarity_matrix = np.zeros((A.shape[0], B.shape[0]))
+        for i in range(A.shape[0]):
+            for j in range(B.shape[0]):
+                similarity_matrix[i, j] = _rbo(words_a[i], words_b[j], p, depth)
+    elif metric in ("emd", "ot"):
+        similarity_matrix = np.zeros((A.shape[0], B.shape[0]))
+        for i in range(A.shape[0]):
+            for j in range(B.shape[0]):
+                similarity_matrix[i, j] = _emd_similarity(
+                    A[i], B[j], top_indices_a[i], top_indices_b[j],
+                    embeddings_matrix, depth
+                )
     else:
-        raise ValueError("metric must be 'cosine' or 'js'")
-    return [(i, j, float(dist[i, j])) for (i, j) in _hungarian(dist)]
+        raise ValueError("metric must be 'cosine', 'js', 'rbo', or 'emd'/'ot'")
+
+    # 4. Generate legacy pairs (Hungarian matching)
+    legacy_pairs = []
+    for i, j in _hungarian(1.0 - similarity_matrix):
+        if metric == "js":
+            legacy_dist = float(dist[i, j])
+        else:
+            legacy_dist = float(1.0 - similarity_matrix[i, j])
+        legacy_pairs.append((i, j, legacy_dist))
+
+    # 5. Threshold-based classification (splits, merges, matches, unaligned)
+    matches = []
+    splits = {}
+    merges = {}
+    unaligned_a = []
+    unaligned_b = []
+    
+    adj_a = {i: [] for i in range(A.shape[0])}
+    adj_b = {j: [] for j in range(B.shape[0])}
+    
+    for i in range(A.shape[0]):
+        for j in range(B.shape[0]):
+            sim = float(similarity_matrix[i, j])
+            if sim >= threshold:
+                adj_a[i].append((j, sim))
+                adj_b[j].append((i, sim))
+                
+    for i in adj_a:
+        adj_a[i].sort(key=lambda x: x[1], reverse=True)
+    for j in adj_b:
+        adj_b[j].sort(key=lambda x: x[1], reverse=True)
+        
+    for i in range(A.shape[0]):
+        targets = adj_a[i]
+        if len(targets) == 0:
+            unaligned_a.append(i)
+        elif len(targets) == 1:
+            j, sim = targets[0]
+            if len(adj_b[j]) == 1:
+                matches.append((i, j, sim))
+        else:
+            splits[i] = targets
+            
+    for j in range(B.shape[0]):
+        sources = adj_b[j]
+        if len(sources) == 0:
+            unaligned_b.append(j)
+        elif len(sources) > 1:
+            merges[j] = sources
+
+    return AlignmentResult(
+        legacy_pairs,
+        matches=matches,
+        splits=splits,
+        merges=merges,
+        unaligned_a=unaligned_a,
+        unaligned_b=unaligned_b,
+        similarity_matrix=similarity_matrix,
+    )
 
 
 def _kl(p, q):
