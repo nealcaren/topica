@@ -551,6 +551,51 @@ class TestSearchK:
             assert isinstance(row["coherence"], float)
             assert isinstance(row["exclusivity"], float)
 
+    def test_search_k_with_content_covariates(self):
+        rng = np.random.default_rng(101)
+        docs = []
+        for _ in range(15):
+            docs.append(list(rng.choice(["alpha", "beta", "gamma"], size=10, replace=True)))
+        for _ in range(15):
+            docs.append(list(rng.choice(["uno", "dos", "tres"], size=10, replace=True)))
+        
+        # Prevalence design (30, 1)
+        X = np.array([1.0] * 15 + [0.0] * 15, dtype=np.float64).reshape(-1, 1)
+        # Content covariate
+        groups = ["en"] * 15 + ["es"] * 15
+
+        # Running search_k with stm model, prevalence, and content
+        with pytest.warns(UserWarning, match="Exclusivity and coherence calculations"):
+            results = stm.search_k(
+                docs,
+                ks=[2],
+                model="stm",
+                prevalence=X,
+                content=groups,
+                iters=10,
+                seed=42
+            )
+        assert len(results) == 1
+        assert results[0]["k"] == 2
+        assert "coherence" in results[0]
+        assert "exclusivity" in results[0]
+
+        # Also test with non-default coherence type (e.g. c_npmi)
+        with pytest.warns(UserWarning, match="Exclusivity and coherence calculations"):
+            results_npmi = stm.search_k(
+                docs,
+                ks=[2],
+                model="stm",
+                prevalence=X,
+                content=groups,
+                iters=10,
+                seed=42,
+                coherence_type="c_npmi"
+            )
+        assert len(results_npmi) == 1
+        assert results_npmi[0]["coherence_metric"] == "c_npmi"
+        assert -1.0 <= results_npmi[0]["coherence"] <= 1.0
+
 
 def test_stm_beta_init_warm_start():
     """STM accepts a caller-supplied base beta (the warm-start hook, issue #234B):
