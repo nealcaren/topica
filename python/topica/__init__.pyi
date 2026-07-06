@@ -54,6 +54,8 @@ from .embedding import (
 )
 from .topicgpt import TopicGPT as TopicGPT
 from .anchor import AnchorLDA as AnchorLDA
+from .gdmr import GDMR as GDMR
+from .narrative import NarrativeTM as NarrativeTM
 
 __citation__: str
 ENGLISH_STOPWORDS: frozenset[str]
@@ -507,6 +509,8 @@ __all__ = [
     "topic_label_prompts",
     "TopicGPT",
     "AnchorLDA",
+    "GDMR",
+    "NarrativeTM",
     "align_corpus",
     "spline",
     "interaction",

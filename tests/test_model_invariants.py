@@ -250,6 +250,15 @@ def _fit_gdmr(iters=300):
     return m.doc_topic, m.topic_word, K
 
 
+def _fit_narrativetm(iters=300):
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    topica.enable_experimental()
+    m = topica.NarrativeTM(num_topics=K, degree=3, seed=1, optimize_interval=25, burn_in=50)
+    m.fit(docs, iters=iters, num_samples=2, sample_interval=10)
+    return m.doc_topic, m.topic_word, K
+
+
+
 # ---- Guided & supervised ----------------------------------------------------
 
 def _fit_keyatm(iters=400):
@@ -529,6 +538,7 @@ FIT_ADAPTERS = {
     "ECTM": _fit_ectm,
     "DMR": _fit_dmr,
     "GDMR": _fit_gdmr,
+    "NarrativeTM": _fit_narrativetm,
     "KeyATM": _fit_keyatm,
     "SeededLDA": _fit_seededlda,
     "LabeledLDA": _fit_labeledlda,

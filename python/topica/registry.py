@@ -115,6 +115,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("GDMR", "covariates", ("text", "metadata"), "gibbs", "seed-reproducible", (),
            "Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates.",
            "guides/models.md#gdmr"),
+        _m("NarrativeTM", "covariates", ("text",), "gibbs", "seed-reproducible", ("temporal",),
+           "Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text.",
+           "guides/models.md#narrativetm", experimental=True),
         # ---- Guided & supervised -------------------------------------------
         _m("KeyATM", "guided", ("text", "seeds"), "gibbs", "seed-reproducible", (),
            "Keyword-assisted topics: anchor named topics with a few seed words each.",
