@@ -522,7 +522,7 @@ input (\code{parity/ensemblelda\_gensim\_compare.py}). Because the procedure
 operates on any model's topic-word and document-topic matrices, the same
 reliability tooling applies across the whole family, neural models included.
 
-\subsection{Measure effects with uncertainty you can defend}
+\subsection{Measure effects with defensible uncertainty}
 
 When the question is about variation across groups or over time, the result is a
 regression of topic prevalence on covariates. \pkg{topica} implements the method
@@ -685,7 +685,7 @@ corpus the worked example of Section~\ref{sec:example} runs on) from the
 \citet{chen2024sts} replication package, on the corpus their \proglang{R} code
 regenerates (\code{parity/sts\_r\_compare.py}). \pkg{topica}'s \code{STS} recovers
 the published topics at a topic-word cosine of $0.93$, against $0.08$ for a
-vocabulary-permuted control, with the leading topics clearly recognizable
+vocabulary-permuted control, with the leading topics recognizable
 (campaign, Iraq and the war, the Obama--Clinton primary, energy and taxes). The
 representative topic is read at the mean sentiment rather than at zero, because
 \code{STS} parks the topic signal in the sentiment direction $\kappa^{(s)}$ when

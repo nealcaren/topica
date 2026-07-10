@@ -33,7 +33,7 @@ find_tex() {
 JSS_CLS="$(find_tex jss.cls)"
 JSS_BST="$(find_tex jss.bst)"
 
-for fig in fig_poliblog_effect.pdf fig_poliblog_report.pdf fig_thread_scaling.pdf; do
+for fig in fig_poliblog_effect.pdf fig_poliblog_report.pdf fig_scaling.pdf fig_thread_scaling.pdf; do
   [ -f "$HERE/$fig" ] || {
     echo "ERROR: $fig missing. Generate it (replication.py --quick / benchmarks/bench.py)"; exit 1; }
 done
@@ -46,7 +46,8 @@ APP="$HERE/generated/validation_appendix.tex"
 # --- build the .bbl ---------------------------------------------------------
 BUILD="$STAGE/build"; mkdir -p "$BUILD/generated"
 cp "$HERE/topica.tex" "$HERE/supplementary.tex" "$HERE/topica.bib" "$JSS_CLS" "$JSS_BST" \
-   "$HERE/fig_poliblog_effect.pdf" "$HERE/fig_poliblog_report.pdf" "$HERE/fig_thread_scaling.pdf" "$BUILD/"
+   "$HERE/fig_poliblog_effect.pdf" "$HERE/fig_poliblog_report.pdf" "$HERE/fig_scaling.pdf" \
+   "$HERE/fig_thread_scaling.pdf" "$BUILD/"
 cp "$APP" "$BUILD/generated/"
 ( cd "$BUILD"
   export TEXINPUTS=".:" BSTINPUTS=".:" BIBINPUTS=".:"
@@ -62,7 +63,7 @@ cp "$APP" "$BUILD/generated/"
 # --- assemble the submission (tex + bbl + class/style + figure) -------------
 SUB="$STAGE/submission"; mkdir -p "$SUB/generated"
 cp "$BUILD/topica.tex" "$BUILD/topica.bbl" "$HERE/supplementary.tex" "$JSS_CLS" "$JSS_BST" \
-   "$HERE/fig_poliblog_effect.pdf" "$HERE/fig_poliblog_report.pdf" \
+   "$HERE/fig_poliblog_effect.pdf" "$HERE/fig_poliblog_report.pdf" "$HERE/fig_scaling.pdf" \
    "$HERE/fig_thread_scaling.pdf" "$SUB/"
 cp "$APP" "$SUB/generated/"
 
@@ -78,7 +79,7 @@ if grep -qiE "Citation .* undefined|LaTeX Error|Undefined control" /tmp/arxiv_co
 fi
 
 tar czf "$OUT" -C "$SUB" topica.tex topica.bbl supplementary.tex jss.cls jss.bst \
-  fig_poliblog_effect.pdf fig_poliblog_report.pdf fig_thread_scaling.pdf \
+  fig_poliblog_effect.pdf fig_poliblog_report.pdf fig_scaling.pdf fig_thread_scaling.pdf \
   generated/validation_appendix.tex
 echo "wrote $OUT"
 echo "contents:"; tar tzf "$OUT" | sed 's/^/  /'

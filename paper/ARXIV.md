@@ -15,8 +15,8 @@ This produces `paper/arxiv-submission.tar.gz` containing exactly:
 - `topica.bbl` — the compiled bibliography, so arXiv does not run BibTeX
 - `jss.cls`, `jss.bst` — bundled so the build does not depend on arXiv carrying
   the `jss` package (it does, but bundling is belt-and-suspenders)
-- `fig_poliblog_report.pdf`, `fig_poliblog_effect.pdf`, `fig_thread_scaling.pdf`
-  — the three figures the manuscript includes
+- `fig_poliblog_report.pdf`, `fig_poliblog_effect.pdf`, `fig_scaling.pdf`,
+  `fig_thread_scaling.pdf` — the four figures the manuscript includes
 
 The script compiles the assembled tarball in isolation before packing it, so what
 ships is what was verified. Upload the tarball directly to arXiv (do not unpack).
@@ -39,7 +39,7 @@ Sciences  (must match the `\title` in topica.tex)
 **License:** CC BY 4.0 (recommended; permissive, matches the Apache-2.0 software).
 The arXiv non-exclusive license is the fallback if a target journal forbids CC BY.
 
-**Comments field:** 21 pages, 3 figures. Software: https://github.com/nealcaren/topica
+**Comments field:** 26 pages, 4 figures. Software: https://github.com/nealcaren/topica
 
 **Abstract (plain text for the web form):**
 
