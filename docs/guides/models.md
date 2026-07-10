@@ -397,6 +397,57 @@ aligned with `feature_effects`. Because a continuous covariate's per-degree
 coefficients are rarely interpretable on their own, read the surface with `tdf`
 rather than the individual basis coefficients.
 
+## NarrativeTM
+
+!!! warning "Experimental — unvalidated"
+    NarrativeTM ships before a published paper and a reference-implementation
+    parity check, topica's bar for a validated model. It is an original
+    construction. It is **gated**: call `topica.enable_experimental()` (or set the
+    `TOPICA_EXPERIMENTAL=1` environment variable) before constructing or loading
+    it, or construction raises. Treat its results as provisional, and expect that
+    it may change or be removed without a deprecation cycle.
+
+The Intra-Document Narrative Trajectory Model asks a question the document-level
+models cannot: not *which* topics a corpus covers, but *where inside a text* each
+topic tends to appear. Introductions, methods, and conclusions draw on different
+topics; a news story opens on the event and closes on reaction. NarrativeTM
+recovers that average arc from beginning to end.
+
+It works by segmenting each document into ordered pieces, recording each piece's
+**relative position** in `[0, 1]` (0 = start, 1 = end), and fitting a
+[`GDMR`](#gdmr) with position as its single continuous covariate. The Legendre
+basis GDMR already uses to trace prevalence along a continuous axis becomes, here,
+the smooth topic-versus-position curve. Because the model is one GDMR underneath,
+its topic-word estimates, `top_words`, and `coherence` behave exactly as GDMR's.
+
+```python
+topica.enable_experimental()               # NarrativeTM is experimental and gated
+m = topica.NarrativeTM(num_topics=10, degree=3, segment_by="sentence", seed=42)
+m.fit(docs, iters=1000)
+
+m.top_words(10)                            # topics, read like any GDMR/LDA fit
+traj = m.global_trajectory([0.0, 0.5, 1.0])   # (3, K): topic mix at start / middle / end
+m.doc_topic                                # (D, K) document-level θ, token-weighted
+```
+
+`segment_by="sentence"` splits on sentence punctuation (`. ? ! ;`) and falls back
+to fixed chunks when a document carries no such markers; `segment_by="chunk"`
+(the default) always cuts fixed windows of `chunk_size` tokens. `degree` sets the
+Legendre order of the position curve (3 captures a rise-then-fall arc; raise it
+for more inflections, and the `sigma`/`sigma0`/`decay` priors carry over from
+GDMR to keep higher orders from overfitting).
+
+The distinctive method is `global_trajectory(t)`: it evaluates the fitted
+position curve at any `t` in `[0, 1]` (scalar or array) and returns the topic
+proportions the model expects at that point in a text. Sweeping `t` from 0 to 1
+traces each topic's narrative arc, the intra-document analogue of GDMR's
+`tdf_linspace` over calendar time. The document-level `doc_topic` is reconstructed
+as a token-weighted average of the per-segment proportions, so it lines up with
+the θ from a plain document-level fit and flows into the usual diagnostics.
+`save`/`load` persist the model (the inner GDMR is written alongside);
+`scripts/verify_narrative.py` fits it on a synthetic corpus with planted
+beginning-middle-end structure and reports the recovered trajectory.
+
 ## DTM
 
 The Dynamic Topic Model: a fixed number of topics whose word distributions

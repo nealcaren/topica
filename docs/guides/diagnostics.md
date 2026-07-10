@@ -169,7 +169,7 @@ topica.topic_stability([model_a, model_b], topn=10)       # cross-fit term overl
 topica.check_residuals(model, docs)                       # Taddy dispersion: is K too small?
 ```
 
-### Topic Alignment
+### Topic alignment
 
 To compare topics across different runs, seeds, or even architectures, `topica.align_topics(model_a, model_b)` performs Kuhn-Munkres (Hungarian) matching to align topics one-to-one. It returns a custom `AlignmentResult` object containing matched tuples of `(topic_a, topic_b, distance)`.
 
@@ -279,7 +279,7 @@ topica.ensemble(runs, method="align")                  # reference matching
 topica.ensemble(runs, method="stable", eps=0.1)        # discover stable topics
 ```
 
-### Cross-Model Consensus Ensembling
+### Cross-model consensus ensembling
 
 While `topica.ensemble` is designed to combine independent runs (from different seeds) of the same model class, you can use `topica.cross_ensemble` to combine and align topics across entirely different architectures (e.g. combining LDA, STM, and BERTopic).
 
