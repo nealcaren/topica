@@ -125,7 +125,7 @@ pub fn cooccurrence(
 
         if l <= w {
             // One whole-document window: boolean presence per word / pair.
-            for (&a, _) in posmap.iter() {
+            for &a in posmap.keys() {
                 occ[a as usize] += 1.0;
                 for &(b, pidx) in &adj[a as usize] {
                     if posmap.contains_key(&b) {
@@ -141,7 +141,7 @@ pub fn cooccurrence(
                 occ[a as usize] += interval_len(&m) as f64;
                 merged.insert(a, m);
             }
-            for (&a, _) in posmap.iter() {
+            for &a in posmap.keys() {
                 let ma = &merged[&a];
                 for &(b, pidx) in &adj[a as usize] {
                     if let Some(mb) = merged.get(&b) {
