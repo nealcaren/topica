@@ -85,6 +85,7 @@ nav:
   - What you can do:
       - Overview: can-do/index.md
       - The models: guides/models.md
+      - Comparing the models: guides/model-comparison.md
       - Preprocessing: guides/preprocessing.md
       - Covariates & STM: guides/covariates.md
       - Diagnostics & validation: guides/diagnostics.md
