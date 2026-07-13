@@ -43,6 +43,7 @@ model you use, and, where you rely on a feature ported from a specific package
 | `ETM` | Dieng, Ruiz & Blei (2020) |
 | `ProdLDA` | Srivastava & Sutton (2017) |
 | `FASTopic` | Wu et al. (2024) |
+| `TensorLDA` | Kangaslahti et al. (2026) |
 | `Wordfish` | Slapin & Proksch (2008) |
 | `TBIP` | Vafa, Naidu & Blei (2020) |
 | `PartyEmbeddings` | Rheault & Cochrane (2020) |
@@ -75,6 +76,7 @@ model you use, and, where you rely on a feature ported from a specific package
 - Dieng, A. B., Ruiz, F. J. R., & Blei, D. M. (2020). Topic modeling in embedding spaces. *Transactions of the Association for Computational Linguistics*, 8, 439–453. [doi:10.1162/tacl_a_00325](https://doi.org/10.1162/tacl_a_00325)
 - Srivastava, A., & Sutton, C. (2017). Autoencoding variational inference for topic models. *ICLR 2017*. [arXiv:1703.01488](https://arxiv.org/abs/1703.01488) (ProdLDA / AVITM)
 - Wu, X., Nguyen, T., Zhang, D. C., Wang, W. Y., & Luu, A. T. (2024). FASTopic: A fast, adaptive, stable, and transferable topic modeling paradigm. *NeurIPS 2024*. [arXiv:2405.17978](https://arxiv.org/abs/2405.17978)
+- Kangaslahti, S., Ebanks, D., Kossaifi, J., Liu, A., Alvarez, R. M., & Anandkumar, A. (2026). Analyzing political text at scale with online tensor LDA. *Political Analysis*, 34(1), 53–77. [doi:10.1017/pan.2025.10024](https://doi.org/10.1017/pan.2025.10024)
 - Slapin, J. B., & Proksch, S.-O. (2008). A scaling model for estimating time-series party positions from texts. *American Journal of Political Science*, 52(3), 705–722. [doi:10.1111/j.1540-5907.2008.00338.x](https://doi.org/10.1111/j.1540-5907.2008.00338.x) (Wordfish)
 - Vafa, K., Naidu, S., & Blei, D. M. (2020). Text-based ideal points. *Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics (ACL 2020)*, 5345–5357. [doi:10.18653/v1/2020.acl-main.475](https://doi.org/10.18653/v1/2020.acl-main.475) (TBIP)
 - Rheault, L., & Cochrane, C. (2020). Word embeddings for the analysis of ideological placement in parliamentary corpora. *Political Analysis*, 28(1), 112–133. [doi:10.1017/pan.2019.26](https://doi.org/10.1017/pan.2019.26) (PartyEmbeddings)
@@ -102,6 +104,7 @@ topica is validated against, and in places ports features from, these projects:
 - [tomotopy](https://github.com/bab2min/tomotopy) (bab2min)
 - [BERTopic](https://github.com/MaartenGr/BERTopic) (Grootendorst) and [Top2Vec](https://github.com/ddangelov/Top2Vec) (Angelov)
 - [ETM](https://github.com/adjidieng/ETM) (Dieng, Ruiz & Blei) and [FASTopic](https://github.com/BobXWu/FASTopic) (Wu et al.)
+- [TensorLy TLDA](https://github.com/tensorly/tlda) (Kangaslahti et al.) — TensorLDA reference implementation
 - [quanteda.textmodels](https://github.com/quanteda/quanteda.textmodels) (Benoit et al.) — Wordfish (`textmodel_wordfish`)
 - [tbip](https://github.com/keyonvafa/tbip) (Vafa, Naidu & Blei) — TBIP (TensorFlow reference)
 - [petal-clustering](https://github.com/petabi/petal-clustering) (HDBSCAN) and [umap-rs](https://github.com/wilsonzlin/umap-rs) (UMAP), both pure-Rust and BLAS-free
