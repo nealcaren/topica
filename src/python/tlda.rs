@@ -197,18 +197,27 @@ impl TensorLDA {
             )?
             .0
         };
-        if corpus.num_docs() < self.num_topics {
+        let num_docs = corpus.num_docs();
+        let num_types = corpus.num_types();
+        if num_docs < self.num_topics {
             return Err(PyValueError::new_err(format!(
                 "corpus must have at least num_topics={} documents, got {}",
-                self.num_topics,
-                corpus.num_docs()
+                self.num_topics, num_docs
             )));
         }
-        let num_types = corpus.num_types();
         if num_types < self.num_topics {
             return Err(PyValueError::new_err(
                 "vocabulary must have at least num_topics words",
             ));
+        }
+
+        let max_rank = num_docs.min(num_types);
+        let n_eigen = self.n_eigenvec.unwrap_or(self.num_topics);
+        if n_eigen > max_rank {
+            return Err(PyValueError::new_err(format!(
+                "whitening rank n_eigenvec={} cannot exceed min(num_docs, vocab_size)={}",
+                n_eigen, max_rank
+            )));
         }
 
         let n_iter_train = iters.unwrap_or(self.n_iter_train);

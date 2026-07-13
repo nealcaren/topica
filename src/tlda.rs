@@ -429,14 +429,14 @@ pub fn fit_tlda(
     }
 
     let mut eig_vals = vec![0.0; num_topics];
-    for j in 0..num_topics {
+    for i in 0..num_topics {
         let mut sum2 = 0.0;
-        for i in 0..n_eigen {
+        for j in 0..num_topics {
             let val = factors[i * num_topics + j];
             sum2 += val * val;
         }
-        let col_norm = sum2.sqrt();
-        eig_vals[j] = col_norm.powi(3);
+        let row_norm = sum2.sqrt();
+        eig_vals[i] = row_norm.powi(3);
     }
 
     let mut alpha = vec![0.0; num_topics];
@@ -510,7 +510,7 @@ mod tests {
         let block = 6;
         let (docs, v) = planted_corpus(k, block, 60, 10, 42);
 
-        let m = fit_tlda(&docs, k, v, 1.0, 50, 20, 0.01, 10, 0.01, 42);
+        let m = fit_tlda(&docs, k, v, 1.0, 50, 20, 0.01, 10, 0.01, 1.0, None, 42);
         assert_eq!(m.num_topics(), k);
         assert_eq!(m.topic_word.len(), k);
         assert_eq!(m.topic_word[0].len(), v);
@@ -534,8 +534,8 @@ mod tests {
         let block = 5;
         let (docs, v) = planted_corpus(k, block, 40, 8, 123);
 
-        let m1 = fit_tlda(&docs, k, v, 0.5, 30, 15, 0.05, 5, 0.05, 999);
-        let m2 = fit_tlda(&docs, k, v, 0.5, 30, 15, 0.05, 5, 0.05, 999);
+        let m1 = fit_tlda(&docs, k, v, 0.5, 30, 15, 0.05, 5, 0.05, 1.0, None, 999);
+        let m2 = fit_tlda(&docs, k, v, 0.5, 30, 15, 0.05, 5, 0.05, 1.0, None, 999);
 
         assert_eq!(m1.topic_word, m2.topic_word);
         assert_eq!(m1.doc_topic, m2.doc_topic);
