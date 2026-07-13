@@ -30,6 +30,23 @@ permissions:
 # because the wheel is abi3 (CPython >=3.9 compatible).
 # ---------------------------------------------------------------------------
 jobs:
+  # A tag is the immutable public statement of the version. Refuse to publish
+  # if either package manifest disagrees with it.
+  release-version:
+    name: release version
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify tag and manifests agree
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          py_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml | head -1)"
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          test "$tag" = "$py_version"
+          test "$tag" = "$cargo_version"
+
   # Rust hygiene gate, run once (OS-independent): the whole workspace must be
   # rustfmt-clean and clippy-clean (-D warnings, all features so python.rs is
   # linted too). Catches drift without relying on reviewer discipline.
@@ -224,6 +241,19 @@ jobs:
           # Rust source is at the repo root.
           working-directory: .
 
+      # Exercise the actual wheel, rather than only the in-place development
+      # extension. Cross-compiled wheels are built here but cannot run on this
+      # runner, so smoke-test each native architecture.
+      - name: Smoke-test native wheel
+        if: >-
+          (matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64') ||
+          (matrix.os == 'macos-latest' && matrix.target == 'aarch64') ||
+          (matrix.os == 'windows-latest' && matrix.target == 'x64')
+        shell: bash
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          python -c "import topica; print(topica.__version__)"
+
       # Upload each leg's wheel as a separate artifact so the release job can
       # download them all cleanly.
       - name: Upload wheel artifact
@@ -259,7 +289,13 @@ jobs:
         run: pip install maturin
 
       - name: Build sdist
-        run: maturin sdist --out dist
+        shell: bash
+        run: |
+          # A source release must exactly represent the tagged checkout. This
+          # prevents an accidental manual release from bundling local notes or
+          # scratch files that maturin would otherwise discover.
+          test -z "$(git status --porcelain)"
+          maturin sdist --out dist
 
       - name: Upload sdist artifact
         uses: actions/upload-artifact@v6
@@ -279,7 +315,9 @@ jobs:
     name: release (PyPI)
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-wheels, sdist]
+    # Publishing is a terminal action: no PyPI artifact is released unless
+    # every lint, native test, documentation, and packaging gate succeeded.
+    needs: [release-version, lint, test, docs, build-wheels, sdist]
 
     # PyPI Trusted Publishing (OIDC): no API token needed. The id-token
     # permission lets GitHub mint a short-lived OIDC token that PyPI trades for
@@ -314,3 +352,82 @@ jobs:
         with:
           packages-dir: dist
           skip-existing: true
+
+  # ---------------------------------------------------------------------------
+  # Job: cli-release
+  # Build and attach the standalone CLI only after the same complete release
+  # gate that protects the PyPI artifacts. Keeping this in CI.yml avoids the
+  # race caused by a separate tag-triggered publishing workflow.
+  # ---------------------------------------------------------------------------
+  cli-release:
+    name: CLI release / ${{ matrix.target }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release-version, lint, test, docs, build-wheels, sdist]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools (Linux)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          STAGING="topica-cli-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir "$STAGING"
+          for bin in preprocess analyze train show; do
+            cp "target/${{ matrix.target }}/release/$bin" "$STAGING/"
+          done
+          cp README.md "$STAGING/"
+          cp -r examples "$STAGING/"
+          tar -czf "$STAGING.tar.gz" "$STAGING"
+          echo "ASSET=$STAGING.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $staging = "topica-cli-${{ github.ref_name }}-${{ matrix.target }}"
+          New-Item -ItemType Directory $staging
+          foreach ($bin in @('preprocess','analyze','train','show')) {
+            Copy-Item "target/${{ matrix.target }}/release/$bin.exe" "$staging/"
+          }
+          Copy-Item README.md "$staging/"
+          Copy-Item -Recurse examples "$staging/"
+          Compress-Archive -Path "$staging/*" -DestinationPath "$staging.zip"
+          echo "ASSET=$staging.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: ${{ env.ASSET }}
+          generate_release_notes: true

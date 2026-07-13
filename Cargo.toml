@@ -1,7 +1,16 @@
 [package]
 name = "topica"
-version = "0.33.0"
+version = "0.34.0"
 edition = "2021"
+description = "Fast, all-purpose topic modeling for Python, with a Rust core"
+license = "Apache-2.0"
+readme = "README.md"
+homepage = "https://nealcaren.github.io/topica/"
+repository = "https://github.com/nealcaren/topica"
+documentation = "https://nealcaren.github.io/topica/"
+# The agent instructions are useful in the repository but are not part of the
+# source package consumed by PyPI users.
+exclude = [".claude/**", "AGENTS.md"]
 
 [lib]
 name = "topica"

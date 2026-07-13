@@ -43,6 +43,22 @@ being `GDMR`) matches by construction rather than by memory.
    `iters, num_samples, sample_interval, progress, progress_interval,
    keep_theta_draws, num_theta_draws, convergence_tol, check_every`.
 
+## Threads and stopping rules
+
+Reproducibility is the default. Gibbs samplers use `num_threads=1` by default:
+this is the exact, reference-comparable path. Passing `num_threads > 1` is an
+explicit opt-in to an approximate parallel sampler; the result remains
+reproducible for the same seed and thread count, but it is not expected to equal
+the single-threaded fit. Variational and matrix-factorization models may use all
+available cores by default when their parallel reductions remain bit-exact.
+
+Likewise, `convergence_tol=0.0` is the default for Gibbs samplers. It means
+"run the requested number of sweeps," not "the chain has converged." A positive
+tolerance is only a pragmatic early-stop heuristic on the log-likelihood trace;
+it does not establish MCMC mixing. Use `stop_reason(model)` to report whether
+the heuristic stopped a fit, and reserve MCMC-native diagnostics for retained
+draws or multiple chains.
+
 ### The `fit` side-input vocabulary
 
 The second positional argument names what the model conditions on. One concept,

@@ -6,6 +6,25 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-07-13
+
+### Changed
+
+- The release pipeline now verifies that the tag and both package manifests agree,
+  builds and smoke-tests native wheels, builds the source distribution from a
+  clean checkout, and gates both PyPI and CLI publishing on lint, tests, and the
+  strict documentation build.
+
+### Documentation
+
+- Added the contributor release checklist, including a manual real-corpus
+  dogfood check for changes to estimators, samplers, optimizers, or covariate
+  paths.
+- Documented the default policy for Gibbs sampling: single-threaded fits are the
+  exact, reference-comparable path; parallel Gibbs is an explicit approximate
+  opt-in, and its likelihood-plateau stopping heuristic is disabled by default.
+- Expanded acknowledgements with the project's inspiration and origin story.
+
 ## [0.33.0] - 2026-06-28
 
 ### Changed

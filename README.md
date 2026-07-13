@@ -197,7 +197,9 @@ Requires `numpy >= 1.21`. Use `--release` (the debug build is much slower).
 
 ## Acknowledgements
 
-Topica stands on a generation of open topic-modeling research and code. Each entry below lists the reference, its authors and year, and the topica class(es) it underlies; the other models are Rust ports or reimplementations, validated against these reference implementations.
+Topica was inspired by [a post from David Mimno](https://bsky.app/profile/dmimno.bsky.social/post/3mnd6bqn4qc2d) about porting Java MALLET to Rust. As a long-time Python user, I had long been jealous of the topic-modeling tools available in other languages; this seemed like an opportunity to make those capabilities easier to use in Python for me and for others.
+
+As such, Topica stands on a generation of open topic-modeling research and code. Each entry below lists the reference, its authors and year, and the topica class(es) it underlies; the other models are Rust ports or reimplementations, validated against these reference implementations.
 
 - [**MALLET**](https://github.com/mimno/Mallet) (McCallum, 2002) — `LDA`, `DMR`, `LabeledLDA`: the SparseLDA sampler, Dirichlet-multinomial regression, and hyperparameter optimization. `LDA` began as a port of David Mimno's [**RustMallet**](https://github.com/mimno/RustMallet) (Apache-2.0) and follows its SparseLDA sampler and fixed-point optimizer closely, but uses its own RNG (PCG), so it is not byte-identical to RustMallet. Against Java MALLET (also a different RNG) it recovers the same topics on a planted corpus (cosine 1.000)
 - [**stm**](https://github.com/bstewart/stm) (Roberts, Stewart & Tingley, 2019) — `STM`, `CTM`, `SAGE`: variational EM, `estimateEffect`, `searchK`, FREX, spectral initialization, and the method of composition

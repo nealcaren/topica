@@ -57,8 +57,9 @@ def enable_experimental(enabled: bool = True) -> None:
     model). They are flagged **experimental**: kept out of the validated roster
     and the README model table, documented separately, and refused at
     construction or load until you opt in here. Call this once, early, before
-    constructing such a model (currently :class:`ECTM`); pass ``False`` to turn
-    the gate back on. Equivalent to setting the ``TOPICA_EXPERIMENTAL=1``
+    constructing an experimental model; pass ``False`` to turn the gate back
+    on. Use :func:`list_models` with ``experimental=True`` to see the current
+    set. Equivalent to setting the ``TOPICA_EXPERIMENTAL=1``
     environment variable. Experimental models may change or be removed without a
     deprecation cycle.
     """
