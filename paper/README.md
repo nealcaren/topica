@@ -49,7 +49,7 @@ MALLET from <https://github.com/mimno/Mallet/releases> (set `MALLET_HOME` to the
 unpacked dir and add `$MALLET_HOME/bin` to `PATH`). §5 parity and §7 are
 machine-independent; **§6 timings are hardware-dependent** — for a documented,
 repeatable §6 on UNC's Longleaf HPC (with a turnkey env-setup + SLURM script and
-the gotchas we hit), see [`longleaf/README.md`](../longleaf/README.md).
+the gotchas we hit), see [`longleaf/README.md`](longleaf/README.md).
 
 ## Building
 
