@@ -180,6 +180,18 @@ def _fit_anchorlda(iters=None):
         topica.enable_experimental(was)
 
 
+def _fit_tensorlda(iters=50):
+    was = topica.experimental_enabled()
+    topica.enable_experimental(True)
+    try:
+        docs, _ = _planted_blocks(seed=0)
+        m = topica.TensorLDA(num_topics=K, alpha_0=1.0, seed=1)
+        m.fit(docs, iters=iters)
+        return m.doc_topic, m.topic_word, K
+    finally:
+        topica.enable_experimental(was)
+
+
 # ---- Covariates & structure -------------------------------------------------
 
 def _covariate_corpus(seed=0):
@@ -532,6 +544,7 @@ FIT_ADAPTERS = {
     "NMF": _fit_nmf,
     "LSA": _fit_lsa,
     "AnchorLDA": _fit_anchorlda,
+    "TensorLDA": _fit_tensorlda,
     "STM": _fit_stm,
     "STS": _fit_sts,
     "SAGE": _fit_sage,

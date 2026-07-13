@@ -95,6 +95,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("AnchorLDA", "general-purpose", ("text",), "matrix-factorization", "bit-exact", (),
            "Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix.",
            "guides/models.md#anchorlda", experimental=True),
+        _m("TensorLDA", "general-purpose", ("text",), "svd", "seed-reproducible", (),
+           "Online Tensor LDA (Kangaslahti et al. 2026): deterministic method-of-moments topic modeling via second and third-order cumulants.",
+           "guides/models.md#tensorlda", experimental=True),
         # ---- Covariates & structure ----------------------------------------
         _m("STM", "covariates", ("text", "metadata"), "variational", "bit-exact", (),
            "Structural topic model: relate topic prevalence and content to covariates.",

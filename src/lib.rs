@@ -62,6 +62,7 @@ pub mod sentence_ideal;
 pub mod slda;
 pub mod sts;
 pub mod tbip;
+pub mod tlda;
 pub mod warplda;
 pub mod wordfish;
 

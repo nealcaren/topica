@@ -188,6 +188,15 @@ def fit_embeddinglda(iters=300):
     return m
 
 
+def fit_tlda(iters=100):
+    import topica
+    topica.enable_experimental(True)
+    docs, _ = tmi._planted_blocks(k=K, block=6, n=240, seed=0)
+    m = topica.TensorLDA(num_topics=K, alpha_0=1.0, seed=42)
+    m.fit(docs, iters=iters)
+    return m
+
+
 # --------------------------------------------------------------------------- #
 # Topic-word extraction aligned to a fixed vocab order.
 # --------------------------------------------------------------------------- #

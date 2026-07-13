@@ -116,6 +116,7 @@ nav:
       - Overview: replications/index.md
       - STM (the stm vignette): replications/stm.md
       - Dynamic keyATM (Supreme Court): replications/keyatm-dynamic.md
+      - TensorLDA validation: replications/tlda.md
   - API reference:
       - Datasets: api/datasets.md
       - Models: api/models.md

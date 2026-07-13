@@ -114,6 +114,7 @@ Shipped before a published paper and reference-implementation parity (topica's b
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
 | `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
+| `TensorLDA` | text | svd | seed-reproducible | Online Tensor LDA (Kangaslahti et al. 2026): deterministic method-of-moments topic modeling via second and third-order cumulants. |
 | `ECTM` | text, metadata, times | variational | bit-exact | Evolving content topic model: STM content covariates that vary by group and drift across time periods. |
 | `NarrativeTM` | text | gibbs | seed-reproducible | Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate. |
@@ -191,6 +192,30 @@ Like CTM, STM takes `variational="diagonal"` to use the mean-field E-step in
 place of the default Laplace one (`variational="laplace"`): faster at high K, but
 it drops the off-diagonal posterior covariance, so the precision of
 topic-correlation and method-of-composition standard errors is lower.
+
+## TensorLDA
+
+!!! warning "Experimental — validation in progress"
+    TensorLDA implements the published Online Tensor LDA method of
+    Kangaslahti et al. (2026), but topica's Rust implementation has not yet
+    cleared the project's reference-parity and known-truth recovery bar. Enable
+    it explicitly with `topica.enable_experimental()`. Treat `weights` as model
+    diagnostics rather than calibrated topic prevalence. See the
+    [TensorLDA validation record](../replications/tlda.md) for the current
+    evidence and limitations.
+
+TensorLDA is a method-of-moments topic model: it whitens second-order count
+moments and fits a factorized third-order cumulant. It is most useful when you
+want a fast, count-based experimental alternative for large corpora. It is not
+the right default for covariate-effect or prevalence-measurement questions;
+prefer STM or DMR for those.
+
+```python
+topica.enable_experimental()
+m = topica.TensorLDA(num_topics=20, n_eigenvec=20, seed=42)
+m.fit(docs)
+print(m.top_words(10))
+```
 
 ## ECTM
 
