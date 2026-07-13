@@ -1,9 +1,8 @@
-\documentclass[article,nojss]{jss}
+\documentclass[article]{jss}
 
-%% --- arXiv-first preprint. The `nojss` option drops the journal masthead and
-%% logo, so only jss.cls and jss.bst are needed (no jsslogo.jpg). Obtain them from
-%% https://www.jstatsoft.org/style; arXiv's TeXLive also carries the jss package.
-%% For an eventual JSS journal submission, remove the `nojss` option.
+%% --- JSS submission source. The local JSS style files and logo come from the
+%% official template at https://www.jstatsoft.org/style. make_arxiv.sh changes
+%% this to the masthead-free nojss variant in its temporary arXiv build.
 
 \usepackage{amsmath,amssymb,booktabs,tabularx}
 
@@ -117,7 +116,7 @@ this article defends in turn:
 \begin{enumerate}
 \item \textbf{Breadth in one interface.} Count-based and embedding-based models
 share one contract, so the same diagnostic, labeling, and covariate-effect tools
-apply to every model and cross-model comparison costs no extra plumbing
+apply to every model and support cross-model comparison
 (Sections~\ref{sec:design} and~\ref{sec:models}).
 \item \textbf{Speed.} A parallel \proglang{Rust} core fits the structural and
 other variational models, run to convergence, roughly one and a half to three
@@ -286,16 +285,15 @@ ships with the package documents the contract for contributors.
 
 \subsection{Determinism as a constraint}
 
-We engineer reproducibility rather than hope for it. The
-variational models (the correlated and structural topic models, the dynamic topic
-model, and supervised LDA) produce bit-for-bit identical fits on repeated runs,
+Reproducibility is designed into the implementation. The correlated and
+structural topic models produce bit-for-bit identical fits on repeated runs,
 including when the variational E-step is parallelized across cores, because the
 parallel reductions are performed in a fixed order rather than in whatever order
-the threads happen to finish. The collapsed-Gibbs models are reproducible from a
-fixed seed. The practical consequence is that the most basic robustness check a
-topic-model study should report, refitting under different seeds to confirm that
-the topics persist, is a clean experiment in \pkg{topica}: the only thing that
-varies is the seed.
+the threads happen to finish. The dynamic topic model and the collapsed-Gibbs
+models are reproducible from a fixed seed and thread count. The practical
+consequence is that refitting under different seeds provides a direct stability
+check: with the corpus and all other settings held fixed, the seed is the only
+source of variation.
 
 \subsection{A lean core with optional extras}
 
@@ -504,9 +502,9 @@ for the human task, not a deterministic metric.
 A single fit is one draw from a stochastic procedure, and the topics it returns
 can move from one random seed to the next, enough that recent work questions
 whether the newer neural models are reproducible at all \citep{hoyle2022broken}.
-The disciplined response is not to fit once and hope, nor to fit many and quietly
-pick the most convenient, but to combine independent runs into a consensus that is
-more reliable than any single fit. \code{topica.select\_model} fits a model from
+\pkg{topica} supports this stability assessment by combining independent runs
+into a consensus that can be more reliable than any single fit.
+\code{topica.select\_model} fits a model from
 many seeds, and \code{topica.ensemble} reduces those runs to one consensus model
 that carries the usual \code{topic\_word}/\code{doc\_topic} contract, so it flows
 into the same diagnostics as any other fit. Each consensus topic reports a
@@ -577,13 +575,12 @@ fitted model into publication figures. A single call to \code{topica.plot\_repor
 (or the interactive \code{dashboard}) assembles a composite report from
 \code{topic\_word} and \code{doc\_topic} alone, so the same report renders for
 every model in the family; Figure~\ref{fig:report} shows it for the poliblog
-\code{STM}. The toolkit is built to be a \emph{disciplined} successor to \pkg{LDAvis}
-\citep{sievert2014ldavis}: it draws confidence bands only where a posterior
-exists, labels each topic-word weight for what it is, reports a closure-corrected
-topic correlation rather than the spuriously strong raw version, flags \emph{dead}
-and near-duplicate topics, and refuses panels a model cannot support: a
-clustering of embeddings with no posterior over $\theta$ gets no uncertainty
-ribbons. Interactive views render through \pkg{Plotly}, and
+\code{STM}. The toolkit extends \pkg{LDAvis} \citep{sievert2014ldavis} with
+confidence bands where a posterior exists, explicit labels for topic-word
+weights, a closure-corrected topic correlation, and indicators for \emph{dead}
+and near-duplicate topics. Panels that require a posterior are omitted for
+models that do not provide one; for example, an embedding clustering with no
+posterior over $\theta$ has no uncertainty ribbons. Interactive views render through \pkg{Plotly}, and
 \code{topica.prepare\_pyldavis} still feeds the original \pkg{LDAvis} when wanted.
 
 \begin{figure}[t!]
@@ -603,17 +600,15 @@ so the same report renders for any model in Table~\ref{tab:models}. Reproduced b
 \section{Validation against reference implementations}\label{sec:validation}
 %% ===========================================================================
 
-A framework that reimplements published methods earns trust only by agreeing with
-the implementations social scientists already use, so rather than assert that
-agreement, we ship the scripts that run the reference packages themselves and
-report what they produce. The checks in \code{parity/} drive Java \pkg{MALLET} and
+We assess reimplementations by comparison with the reference implementations
+used in social-science research. The repository includes scripts that run the
+reference packages and report their outputs. The checks in \code{parity/} drive Java \pkg{MALLET} and
 the \proglang{R} \pkg{stm} and \pkg{keyATM} packages on the same tokenized inputs
 as \pkg{topica}, align the fitted topics, and report the overlap;
 \code{paper/replication.py} runs them end to end and skips, visibly, any whose
 toolchain is absent. Because the engines share no code and no random number
 generator, ``agreement'' means \emph{statistical} agreement on the fitted topics,
-benchmarked against each reference's own run-to-run reproducibility, arguably the
-fairest yardstick for stochastic inference. We report it without inflating it. The
+benchmarked against each reference's own run-to-run reproducibility. The
 supplementary material shows the underlying picture in full: for fifteen models it
 fits both the reference package and \pkg{topica} on the same poliblog corpus and
 displays the recovered topics twice, side by side, word for word rather than as a
@@ -705,7 +700,7 @@ cleanly when it, \proglang{R}, or \pkg{stm} is unavailable.
 
 We benchmark fit time (construction and import excluded) the way each model family
 terminates. The variational structural models have a convergence criterion, so for
-them we report wall-clock \emph{to convergence}, the time a user actually waits,
+them we report wall-clock \emph{to convergence},
 with both engines stopped at the same relative-bound tolerance
 (\code{emtol}$=10^{-5}$); the collapsed-Gibbs models have no convergence criterion,
 so there the user fixes a sweep budget and we report cost at a matched budget. The
@@ -817,8 +812,8 @@ skips the per-document $O(K^3)$ inverse. Reproduced by
 \label{fig:scaling}
 \end{figure}
 
-We report the LDA comparison straight, because it does not uniformly favor us.
-Against \pkg{MALLET}, the original \proglang{Java} sampler, the two are at parity
+The LDA comparison does not uniformly favor \pkg{topica}. Against \pkg{MALLET},
+the original \proglang{Java} sampler, the two are at parity
 single-threaded and stay close at matched thread counts, with \pkg{topica}'s
 document-partitioned parallelism pulling ahead on the larger corpora (a
 5{,}000-document fit on eight threads runs in 13.0s against \pkg{MALLET}'s 21.2s),
@@ -890,18 +885,18 @@ each EM step, with the full-batch variational EM remaining the default.
 \section{Worked example: many models, one workflow}\label{sec:example}
 %% ===========================================================================
 
-\pkg{topica}'s value shows in two directions at once on a single corpus: across
-models, where the shared contract makes a many-model comparison nearly free, and
-within one model, where the structural topic model answers a substantive question
-with uncertainty it can defend. Both run on the political-blog corpus of the \pkg{stm}
+This example uses a single corpus to illustrate comparison across models and
+inference within one model. The shared contract supports a common comparison of
+models, while the structural topic model supports covariate-effect estimation
+with uncertainty. Both analyses use the political-blog corpus of the \pkg{stm}
 literature \citep{roberts2016model}, weblog posts from the 2008 \proglang{U.S.}
 presidential campaign, rated by the blog's political leaning. The full, runnable
 script is \code{paper/replication.py}.
 
 \subsection{Comparing models behind one contract}
 
-Because every model exposes the same surface, scoring a heterogeneous set of them
-is one loop, not four pipelines. Here four models from two families, three
+Because every model exposes the same surface, a heterogeneous set can be scored
+with a common loop. Here four models from two families, three
 count-based and one embedding-based, are fit on the same corpus and scored by the
 same diagnostics:
 
@@ -935,9 +930,8 @@ for name, m in [("LDA", lda), ("CTM", ctm),
 Table~\ref{tab:spanning} collects the result. The count-based models resolve
 fifteen granular topics; the embedding clustering resolves three broad, highly
 coherent macro-topics. Which granularity is right is the researcher's call, not
-the software's, and the point is that the comparison needed to make that call
-costs no translation between tools, because all four models are scored through the
-identical interface.
+the software's. All four models are scored through the same interface, making
+their diagnostic results directly comparable.
 
 \begin{table}[t!]
 \centering
@@ -945,8 +939,8 @@ identical interface.
 corpus and scored by the same three diagnostics in one loop (the code above).
 Coherence is windowed $c_v$ \citep{lau2014coherence}; exclusivity (stm's
 FREX-sum over each topic's top words, roughly $0$--$10$) and diversity measure
-topic distinctness. The comparison costs no extra plumbing because every
-model presents the same surface. Numbers reproduce from \code{paper/replication.py}.}
+topic distinctness. Every model presents the same analysis surface. Numbers
+reproduce from \code{paper/replication.py}.}
 \label{tab:spanning}
 \small
 \begin{tabular}{llrrrr}
@@ -1096,7 +1090,8 @@ sentiment-discourse latent into existence, a quantity the initial port had
 computed internally and then discarded. A model cannot satisfy the trait without
 exposing that posterior, so the omission failed a test rather than shipping as a
 silent gap, and the method-of-composition uncertainty of
-Section~\ref{sec:workflow} became available for the new model for free.
+Section~\ref{sec:workflow} became available for the new model through the shared
+interface.
 
 Adding a model is therefore a bounded, well-specified task. The implementer
 writes the algorithm in \proglang{Rust} with planted-data recovery and
@@ -1106,7 +1101,7 @@ entire analysis and reporting surface then apply with no further code. An
 implementer's guide that ships with the package documents each step, and the
 machine-readable contract makes a missing piece a failing test rather than a
 latent defect. The result is that the cost of a new model scales with the novelty
-of its algorithm, not with the plumbing around it.
+of its algorithm rather than with surrounding infrastructure.
 
 %% ===========================================================================
 \section{Discussion}\label{sec:discussion}
@@ -1119,18 +1114,15 @@ are only as good as the embeddings the user supplies, and the optional UMAP
 reducer is not seedable in its current upstream form; \pkg{topica} contains that
 nondeterminism by following the \pkg{BERTopic} pattern of a stochastic discovery
 fit and a deterministic prediction phase, and warns when the reducer is used. The
-conservative refusal to report intervals for models without a posterior is a
-deliberate trade: it costs a number the analyst might have wanted and buys against
-a number that would have been misleading.
+For models without a posterior, the package does not report intervals whose
+interpretation would require one.
 
-The design commitment that the researcher owns the theoretical decisions is also
-a limitation by choice. \pkg{topica} will not pick $K$ from a metric, will not
-auto-label topics as if the labels were facts, and will not present a finished
-result that looks authoritative and is theoretically ungrounded. A study done
-well with \pkg{topica} leaves the researcher having made every decision a reviewer
-will question, with the diagnostics to defend each one. As large-language-model
-agents increasingly drive analysis pipelines, this division of labor matters more,
-not less, and the package ships a companion guide that encodes it for agent use.
+The workflow leaves theoretical decisions to the researcher, including the choice
+of $K$, the interpretation and labeling of topics, and the specification of
+covariates. The package supplies diagnostics and uncertainty estimates to inform
+those decisions. This distinction is especially relevant when large-language-model
+agents are used in analysis pipelines; the package includes a companion guide for
+such use.
 
 Future work includes scaling the amortized-VAE and embedding-based models to
 larger corpora, a wider set of links and estimands for the effect-estimation

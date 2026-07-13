@@ -14,5 +14,7 @@ fig_*.pdf
 
 # arXiv submission tarball (regenerate with make_arxiv.sh)
 arxiv-submission.tar.gz
+# JSS review archive (regenerate with make_jss_submission.sh)
+topica-jss-submission.tar.gz
 *.fdb_latexmk
 *.fls
