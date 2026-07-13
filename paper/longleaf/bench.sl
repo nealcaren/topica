@@ -12,7 +12,7 @@
 # Section 6 (machine-dependent) benchmarks on a documented node, repeated for
 # variance. Section 5 parity + Section 7 are machine-INDEPENDENT and run on the
 # laptop (paper/reproduce.py --no-benchmarks). Requires the env from
-# longleaf/setup_env.sh (topica built + R stm/keyATM + matplotlib).
+# paper/longleaf/setup_env.sh (topica built + R stm/keyATM + matplotlib).
 #
 # Smoke-test before batch (lesson: never batch an untested script):
 #   srun -p general --cpus-per-task=8 --mem=32g -t 0:30:00 --pty bash

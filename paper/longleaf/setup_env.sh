@@ -68,4 +68,4 @@ echo "mallet: $WORK/mallet/bin/mallet"
 
 # 7. Smoke-test (catches build/import/data issues before any batch job).
 python -c "import topica,numpy,pandas,sklearn,gensim,tomotopy,matplotlib; print('topica', topica.__version__, '- env OK')"
-echo "Setup done. Activate: conda activate $ENV_PREFIX ; then: sbatch longleaf/bench.sl"
+echo "Setup done. Activate: conda activate $ENV_PREFIX ; then: sbatch paper/longleaf/bench.sl"

@@ -10,11 +10,11 @@ laptop via `paper/reproduce.py --no-benchmarks` and are not repeated here.)
 ## Quick start
 ```bash
 # on a Longleaf login node:
-bash longleaf/setup_env.sh           # one-time: clone, build, install deps (~20 min)
-sbatch longleaf/bench.sl             # §6 ×3 for variance; writes $WORK/bench_rep*.md
+bash paper/longleaf/setup_env.sh     # one-time: clone, build, install deps (~20 min)
+sbatch paper/longleaf/bench.sl       # §6 ×3 for variance; writes $WORK/bench_rep*.md
 ```
 Setup defaults to checking out `main` (it must include the temp-dir portability
-fix; `v0.23.1` predates it). Pass a ref to override: `bash longleaf/setup_env.sh v0.24.0`.
+fix; `v0.23.1` predates it). Pass a ref to override: `bash paper/longleaf/setup_env.sh v0.24.0`.
 
 ### The to-convergence STM headline (poliblog5k + Congress)
 
