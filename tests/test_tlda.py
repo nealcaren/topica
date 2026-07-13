@@ -153,3 +153,56 @@ def test_tlda_parameter_validations():
     assert m_custom.topic_word.shape == (3, len(m_custom.vocabulary))
     assert m_custom.doc_topic.shape == (len(docs), 3)
 
+
+def test_tlda_unequal_prevalences():
+    topica.enable_experimental(True)
+    rng = np.random.default_rng(2)
+    k = 3
+    block = 8
+    length = 15
+
+    # 300 docs for topic 0, 200 docs for topic 1, 100 docs for topic 2
+    docs = []
+    for num_docs, b in [(300, 0), (200, 1), (100, 2)]:
+        for _ in range(num_docs):
+            docs.append([f"b{b}w{int(rng.integers(block))}" for _ in range(length)])
+
+    # Check for R = K (n_eigenvec = 3)
+    m3 = topica.TensorLDA(3, alpha_0=1.0, n_eigenvec=3, seed=2)
+    m3.fit(docs)
+    assert m3.weights.shape == (3,)
+
+    vocab3 = list(m3.vocabulary)
+    topic_blocks = []
+    for j in range(3):
+        block_sums = []
+        for b in range(3):
+            indices = [idx for idx, w in enumerate(vocab3) if w.startswith(f"b{b}")]
+            block_sums.append(m3.topic_word[j, indices].sum())
+        topic_blocks.append(np.argmax(block_sums))
+
+    block_weights = {b: m3.weights[j] for j, b in enumerate(topic_blocks)}
+    assert len(block_weights) == 3, f"Each topic must map to a unique block, got mapping to blocks: {topic_blocks}"
+    assert block_weights[0] > block_weights[1]
+    assert block_weights[1] > block_weights[2]
+
+    # Check for R > K (n_eigenvec = 5)
+    m5 = topica.TensorLDA(3, alpha_0=1.0, n_eigenvec=5, seed=2)
+    m5.fit(docs)
+    assert m5.weights.shape == (3,)
+
+    vocab5 = list(m5.vocabulary)
+    topic_blocks5 = []
+    for j in range(3):
+        block_sums = []
+        for b in range(3):
+            indices = [idx for idx, w in enumerate(vocab5) if w.startswith(f"b{b}")]
+            block_sums.append(m5.topic_word[j, indices].sum())
+        topic_blocks5.append(np.argmax(block_sums))
+
+    block_weights5 = {b: m5.weights[j] for j, b in enumerate(topic_blocks5)}
+    assert len(block_weights5) == 3, f"Each topic must map to a unique block, got mapping to blocks: {topic_blocks5}"
+    assert block_weights5[0] > block_weights5[1]
+    assert block_weights5[1] > block_weights5[2]
+
+

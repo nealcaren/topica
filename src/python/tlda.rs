@@ -319,6 +319,21 @@ impl TensorLDA {
         Ok(Array1::from(self.fitted_model()?.weights.clone()).to_pyarray_bound(py))
     }
 
+    /// Unwhitened, raw factor matrix (vocab_size, num_topics) before normalization.
+    #[getter]
+    fn unwhitened_raw<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let m = self.fitted_model()?;
+        let v = self.corpus.as_ref().unwrap().num_types();
+        let k = self.num_topics;
+        let mut raw_matrix = vec![vec![0.0; k]; v];
+        for w in 0..v {
+            for j in 0..k {
+                raw_matrix[w][j] = m.unwhitened_raw[w * k + j];
+            }
+        }
+        Ok(vecs_to_arr2(&raw_matrix).to_pyarray_bound(py))
+    }
+
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
         Ok(self.fitted_model()?.fit_history.clone())

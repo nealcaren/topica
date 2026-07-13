@@ -428,25 +428,33 @@ pub fn fit_tlda(
         }
     }
 
-    let mut eig_vals = vec![0.0; num_topics];
-    for i in 0..num_topics {
-        let mut sum2 = 0.0;
-        for j in 0..num_topics {
-            let val = factors[i * num_topics + j];
-            sum2 += val * val;
-        }
-        let row_norm = sum2.sqrt();
-        eig_vals[i] = row_norm.powi(3);
-    }
-
+    // Principled weight-recovery rule for an R x K factor matrix (R = n_eigen, K = num_topics).
+    //
+    // In the CP decomposition, the unwhitened factor matrix represents the topic components in the
+    // original (unwhitened) space. The L2 norm of each column of this unwhitened matrix `unwhitened_raw`
+    // is directly proportional to the square root of the topic's variance (prevalence) in the corpus.
+    //
+    // Specifically, for each topic j in 0..num_topics, we compute the L2 norm of its column in the
+    // unwhitened raw matrix:
+    //   N_j = \sqrt{ \sum_{w=0}^{v-1} unwhitened_raw[w * K + j]^2 }
+    //
+    // Since the topic prevalence is proportional to the variance of the topic loadings (N_j^2), the
+    // recovered Dirichlet parameter alpha_j is proportional to N_j^2:
+    //   alpha_j = N_j^2
+    //
+    // This recovery rule is strictly invariant to any orthogonal rotations or permutations of the SVD
+    // whitening basis, uses all R whitening dimensions, and yields exactly K weights that track the
+    // true topic prevalences.
     let mut alpha = vec![0.0; num_topics];
     let mut alpha_sum = 0.0;
-    for idx in 0..num_topics {
-        alpha[idx] = eig_vals[idx].powf(-2.0);
-        if alpha[idx].is_nan() || alpha[idx].is_infinite() {
-            alpha[idx] = 1e-5;
+    for j in 0..num_topics {
+        let mut col_sum2 = 0.0;
+        for w in 0..v {
+            let val = unwhitened_raw[w * num_topics + j];
+            col_sum2 += val * val;
         }
-        alpha_sum += alpha[idx];
+        alpha[j] = col_sum2.max(1e-12);
+        alpha_sum += alpha[j];
     }
     if alpha_sum < 1e-12 {
         alpha_sum = 1e-12;
