@@ -395,10 +395,7 @@ mod tests {
     fn test_qr_reduced() {
         // 4 x 3 matrix
         let a = vec![
-            12.0, -51.0,   4.0,
-             6.0,  167.0, -68.0,
-            -4.0,   24.0, -41.0,
-            -1.0,    1.0,   2.0,
+            12.0, -51.0, 4.0, 6.0, 167.0, -68.0, -4.0, 24.0, -41.0, -1.0, 1.0, 2.0,
         ];
         let (q, r) = qr_reduced(&a, 4, 3);
 
@@ -410,7 +407,13 @@ mod tests {
                     dot += q[r_idx * 3 + i] * q[r_idx * 3 + j];
                 }
                 let expect = if i == j { 1.0 } else { 0.0 };
-                assert!((dot - expect).abs() < 1e-9, "Q orthogonality fails at ({}, {}): {}", i, j, dot);
+                assert!(
+                    (dot - expect).abs() < 1e-9,
+                    "Q orthogonality fails at ({}, {}): {}",
+                    i,
+                    j,
+                    dot
+                );
             }
         }
 
@@ -422,7 +425,14 @@ mod tests {
                     sum += q[i * 3 + k] * r[k * 3 + j];
                 }
                 let idx = i * 3 + j;
-                assert!((sum - a[idx]).abs() < 1e-9, "QR reconstruction fails at ({}, {}): expected {}, got {}", i, j, a[idx], sum);
+                assert!(
+                    (sum - a[idx]).abs() < 1e-9,
+                    "QR reconstruction fails at ({}, {}): expected {}, got {}",
+                    i,
+                    j,
+                    a[idx],
+                    sum
+                );
             }
         }
     }
@@ -430,11 +440,7 @@ mod tests {
     #[test]
     fn test_jacobi_eigen() {
         // Symmetric 3x3 matrix
-        let a = vec![
-            4.0, 1.0, 2.0,
-            1.0, 3.0, 0.5,
-            2.0, 0.5, 2.0,
-        ];
+        let a = vec![4.0, 1.0, 2.0, 1.0, 3.0, 0.5, 2.0, 0.5, 2.0];
         let (vals, vecs) = jacobi_eigen(&a, 3, 1e-15, 100).expect("eigenvalues");
 
         // Check V is orthogonal: V^T * V = I
@@ -445,7 +451,13 @@ mod tests {
                     dot += vecs[r_idx * 3 + i] * vecs[r_idx * 3 + j];
                 }
                 let expect = if i == j { 1.0 } else { 0.0 };
-                assert!((dot - expect).abs() < 1e-9, "V orthogonality fails at ({}, {}): {}", i, j, dot);
+                assert!(
+                    (dot - expect).abs() < 1e-9,
+                    "V orthogonality fails at ({}, {}): {}",
+                    i,
+                    j,
+                    dot
+                );
             }
         }
 
@@ -454,7 +466,14 @@ mod tests {
         for i in 0..3 {
             for j in 0..3 {
                 let expect = vecs[i * 3 + j] * vals[j];
-                assert!((av[i * 3 + j] - expect).abs() < 1e-9, "A*V = V*L fails at ({}, {}): expected {}, got {}", i, j, expect, av[i * 3 + j]);
+                assert!(
+                    (av[i * 3 + j] - expect).abs() < 1e-9,
+                    "A*V = V*L fails at ({}, {}): expected {}, got {}",
+                    i,
+                    j,
+                    expect,
+                    av[i * 3 + j]
+                );
             }
         }
     }
@@ -464,25 +483,11 @@ mod tests {
         // Generate a low-rank matrix plus small noise
         // Rank 2 matrix of size 10 x 5
         let u_true = vec![
-            1.0, 0.0,
-            1.0, 1.0,
-            0.0, 1.0,
-            1.0, -1.0,
-            2.0, 0.0,
-            -1.0, 2.0,
-            0.5, 0.5,
-            -0.5, 1.5,
-            1.0, 1.0,
-            0.0, 0.0,
+            1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, -1.0, 2.0, 0.0, -1.0, 2.0, 0.5, 0.5, -0.5, 1.5, 1.0,
+            1.0, 0.0, 0.0,
         ]; // 10 x 2
         let s_true = vec![10.0, 5.0];
-        let v_true = vec![
-            1.0,  0.5,
-            0.0,  1.0,
-            -1.0, 0.0,
-            2.0,  -1.0,
-            0.5,  0.5,
-        ]; // 5 x 2
+        let v_true = vec![1.0, 0.5, 0.0, 1.0, -1.0, 0.0, 2.0, -1.0, 0.5, 0.5]; // 5 x 2
 
         let mut a = vec![0.0; 10 * 5];
         for i in 0..10 {

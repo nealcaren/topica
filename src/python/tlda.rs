@@ -1,8 +1,8 @@
 //! Python bindings for Online Tensor LDA (TensorLDA) topic model.
 
 use super::*;
-use pyo3::types::PyType;
 use numpy::{PyArray1, PyArray2};
+use pyo3::types::PyType;
 use std::collections::HashMap;
 
 /// Online Tensor LDA (TensorLDA) topic model.
@@ -54,7 +54,9 @@ impl TensorLDA {
 
     fn require_fitted(&self) -> PyResult<()> {
         if !self.fitted || self.model.is_none() || self.corpus.is_none() {
-            return Err(PyRuntimeError::new_err("model is not fitted yet; call fit() first"));
+            return Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ));
         }
         Ok(())
     }
@@ -80,9 +82,7 @@ fn map_heldout(corpus: &corpus::Corpus, data: &Bound<'_, PyAny>) -> PyResult<Vec
             .collect()
     } else {
         data.extract::<Vec<Vec<String>>>().map_err(|_| {
-            PyValueError::new_err(
-                "expected a Corpus or a list of token lists (list[list[str]])",
-            )
+            PyValueError::new_err("expected a Corpus or a list of token lists (list[list[str]])")
         })?
     };
 

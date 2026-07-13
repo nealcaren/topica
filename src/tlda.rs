@@ -82,7 +82,14 @@ fn transpose(a: &[f64], rows: usize, cols: usize) -> Vec<f64> {
 
 /// Computes the gradient of the third-order cumulant reconstruction loss with respect to
 /// the factors. Matches `cumulant_gradient` in Python.
-fn cumulant_gradient(factors: &[f64], y: &[f64], k: usize, b: usize, alpha_0: f64, theta: f64) -> Vec<f64> {
+fn cumulant_gradient(
+    factors: &[f64],
+    y: &[f64],
+    k: usize,
+    b: usize,
+    alpha_0: f64,
+    theta: f64,
+) -> Vec<f64> {
     let factors_t = transpose(factors, k, k);
     let pt_p = matmul(&factors_t, factors, k, k, k);
     let mut pt_p2 = vec![0.0; k * k];
@@ -109,7 +116,15 @@ fn cumulant_gradient(factors: &[f64], y: &[f64], k: usize, b: usize, alpha_0: f6
 }
 
 /// Run one SGD batch update step for the third-order cumulant factors.
-fn partial_fit_step(factors: &mut [f64], y: &[f64], k: usize, b: usize, alpha_0: f64, theta: f64, lr: f64) {
+fn partial_fit_step(
+    factors: &mut [f64],
+    y: &[f64],
+    k: usize,
+    b: usize,
+    alpha_0: f64,
+    theta: f64,
+    lr: f64,
+) {
     let grad = cumulant_gradient(factors, y, k, b, alpha_0, theta);
     for i in 0..(k * k) {
         factors[i] -= lr * grad[i];
@@ -295,7 +310,8 @@ pub fn fit_tlda(
         }
     }
 
-    let (s_vals, u_proj) = randomized_svd(&z, d, v, num_topics, 5, 2, seed).expect("SVD failed in whitening");
+    let (s_vals, u_proj) =
+        randomized_svd(&z, d, v, num_topics, 5, 2, seed).expect("SVD failed in whitening");
 
     let mut lambdas = vec![0.0; num_topics];
     for i in 0..num_topics {
@@ -306,7 +322,8 @@ pub fn fit_tlda(
     let mut w_mat = vec![0.0; v * num_topics];
     for w_idx in 0..v {
         for k_idx in 0..num_topics {
-            w_mat[w_idx * num_topics + k_idx] = u_proj[w_idx * num_topics + k_idx] / lambdas[k_idx].sqrt();
+            w_mat[w_idx * num_topics + k_idx] =
+                u_proj[w_idx * num_topics + k_idx] / lambdas[k_idx].sqrt();
         }
     }
 
@@ -339,7 +356,15 @@ pub fn fit_tlda(
         for j in (0..d).step_by(batch_size) {
             let b_size = (d - j).min(batch_size);
             let y = &x_whit[j * num_topics..(j + b_size) * num_topics];
-            partial_fit_step(&mut factors, y, num_topics, b_size, alpha_0, theta, learning_rate);
+            partial_fit_step(
+                &mut factors,
+                y,
+                num_topics,
+                b_size,
+                alpha_0,
+                theta,
+                learning_rate,
+            );
         }
 
         let mut diff = 0.0f64;
@@ -361,7 +386,8 @@ pub fn fit_tlda(
     let mut u_scaled = vec![0.0; v * num_topics];
     for w_idx in 0..v {
         for k_idx in 0..num_topics {
-            u_scaled[w_idx * num_topics + k_idx] = u_proj[w_idx * num_topics + k_idx] * lambdas[k_idx].sqrt();
+            u_scaled[w_idx * num_topics + k_idx] =
+                u_proj[w_idx * num_topics + k_idx] * lambdas[k_idx].sqrt();
         }
     }
     let mut factors_unwhitened = matmul(&u_scaled, &factors, v, num_topics, num_topics);
@@ -378,7 +404,8 @@ pub fn fit_tlda(
     let unwhitened_raw = factors_unwhitened.clone();
 
     for idx in 0..(v * num_topics) {
-        factors_unwhitened[idx] = factors_unwhitened[idx] * (1.0 - smoothing) + (smoothing / v as f64);
+        factors_unwhitened[idx] =
+            factors_unwhitened[idx] * (1.0 - smoothing) + (smoothing / v as f64);
     }
 
     let mut topic_word = vec![vec![0.0; v]; num_topics];
@@ -424,7 +451,15 @@ pub fn fit_tlda(
     }
 
     // 4. Document-topic inference
-    let doc_topic = predict_doc_topics(&x, &unwhitened_raw, &weights, num_topics, v, n_iter_test, seed);
+    let doc_topic = predict_doc_topics(
+        &x,
+        &unwhitened_raw,
+        &weights,
+        num_topics,
+        v,
+        n_iter_test,
+        seed,
+    );
 
     TensorLdaModel {
         num_topics,
@@ -443,7 +478,13 @@ pub fn fit_tlda(
 mod tests {
     use super::*;
 
-    fn planted_corpus(k: usize, block: usize, ndocs: usize, dlen: usize, seed: u64) -> (Vec<Vec<u32>>, usize) {
+    fn planted_corpus(
+        k: usize,
+        block: usize,
+        ndocs: usize,
+        dlen: usize,
+        seed: u64,
+    ) -> (Vec<Vec<u32>>, usize) {
         let v = k * block;
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let docs: Vec<Vec<u32>> = (0..ndocs)
