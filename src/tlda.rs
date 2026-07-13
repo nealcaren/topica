@@ -85,31 +85,32 @@ fn transpose(a: &[f64], rows: usize, cols: usize) -> Vec<f64> {
 fn cumulant_gradient(
     factors: &[f64],
     y: &[f64],
-    k: usize,
+    rows: usize,
+    cols: usize,
     b: usize,
     alpha_0: f64,
     theta: f64,
 ) -> Vec<f64> {
-    let factors_t = transpose(factors, k, k);
-    let pt_p = matmul(&factors_t, factors, k, k, k);
-    let mut pt_p2 = vec![0.0; k * k];
-    for i in 0..(k * k) {
+    let factors_t = transpose(factors, rows, cols);
+    let pt_p = matmul(&factors_t, factors, cols, rows, cols);
+    let mut pt_p2 = vec![0.0; cols * cols];
+    for i in 0..(cols * cols) {
         pt_p2[i] = pt_p[i] * pt_p[i];
     }
-    let term1 = matmul(factors, &pt_p2, k, k, k);
+    let term1 = matmul(factors, &pt_p2, rows, cols, cols);
 
-    let y_phi = matmul(y, factors, b, k, k);
-    let mut y_phi2 = vec![0.0; b * k];
-    for i in 0..(b * k) {
+    let y_phi = matmul(y, factors, b, rows, cols);
+    let mut y_phi2 = vec![0.0; b * cols];
+    for i in 0..(b * cols) {
         y_phi2[i] = y_phi[i] * y_phi[i];
     }
-    let y_t = transpose(y, b, k);
-    let term2 = matmul(&y_t, &y_phi2, k, b, k);
+    let y_t = transpose(y, b, rows);
+    let term2 = matmul(&y_t, &y_phi2, rows, b, cols);
 
-    let mut grad = vec![0.0; k * k];
+    let mut grad = vec![0.0; rows * cols];
     let coef1 = 3.0 * (1.0 + theta);
     let coef2 = 3.0 * (1.0 + alpha_0) * (2.0 + alpha_0) / (2.0 * b as f64);
-    for i in 0..(k * k) {
+    for i in 0..(rows * cols) {
         grad[i] = coef1 * term1[i] - coef2 * term2[i];
     }
     grad
@@ -119,29 +120,30 @@ fn cumulant_gradient(
 fn partial_fit_step(
     factors: &mut [f64],
     y: &[f64],
-    k: usize,
+    rows: usize,
+    cols: usize,
     b: usize,
     alpha_0: f64,
     theta: f64,
     lr: f64,
 ) {
-    let grad = cumulant_gradient(factors, y, k, b, alpha_0, theta);
-    for i in 0..(k * k) {
+    let grad = cumulant_gradient(factors, y, rows, cols, b, alpha_0, theta);
+    for i in 0..(rows * cols) {
         factors[i] -= lr * grad[i];
     }
     // Normalize columns
-    let mut col_norms = vec![0.0; k];
-    for j in 0..k {
+    let mut col_norms = vec![0.0; cols];
+    for j in 0..cols {
         let mut sum2 = 0.0;
-        for i in 0..k {
-            let val = factors[i * k + j];
+        for i in 0..rows {
+            let val = factors[i * cols + j];
             sum2 += val * val;
         }
         col_norms[j] = sum2.sqrt().max(1e-12);
     }
-    for i in 0..k {
-        for j in 0..k {
-            factors[i * k + j] /= col_norms[j];
+    for i in 0..rows {
+        for j in 0..cols {
+            factors[i * cols + j] /= col_norms[j];
         }
     }
 }
@@ -278,6 +280,8 @@ pub fn fit_tlda(
     learning_rate: f64,
     batch_size: usize,
     smoothing: f64,
+    theta: f64,
+    n_eigenvec: Option<usize>,
     seed: u64,
 ) -> TensorLdaModel {
     let d = docs.len();
@@ -290,6 +294,8 @@ pub fn fit_tlda(
             }
         }
     }
+
+    let n_eigen = n_eigenvec.unwrap_or(num_topics);
 
     // 1. Whitening (2nd-order cumulant)
     let mut mean = vec![0.0; v];
@@ -311,19 +317,19 @@ pub fn fit_tlda(
     }
 
     let (s_vals, u_proj) =
-        randomized_svd(&z, d, v, num_topics, 5, 2, seed).expect("SVD failed in whitening");
+        randomized_svd(&z, d, v, n_eigen, 5, 2, seed).expect("SVD failed in whitening");
 
-    let mut lambdas = vec![0.0; num_topics];
-    for i in 0..num_topics {
+    let mut lambdas = vec![0.0; n_eigen];
+    for i in 0..n_eigen {
         let s_i = s_vals[i];
         lambdas[i] = ((s_i * s_i) / (d as f64)).max(1e-12);
     }
 
-    let mut w_mat = vec![0.0; v * num_topics];
+    let mut w_mat = vec![0.0; v * n_eigen];
     for w_idx in 0..v {
-        for k_idx in 0..num_topics {
-            w_mat[w_idx * num_topics + k_idx] =
-                u_proj[w_idx * num_topics + k_idx] / lambdas[k_idx].sqrt();
+        for k_idx in 0..n_eigen {
+            w_mat[w_idx * n_eigen + k_idx] =
+                u_proj[w_idx * n_eigen + k_idx] / lambdas[k_idx].sqrt();
         }
     }
 
@@ -334,17 +340,16 @@ pub fn fit_tlda(
         }
     }
 
-    let x_whit = matmul(&x_centered, &w_mat, d, v, num_topics);
+    let x_whit = matmul(&x_centered, &w_mat, d, v, n_eigen);
 
     // 2. CP decomposition on whitened 3rd-order cumulant
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let mut init_mat = vec![0.0; num_topics * num_topics];
-    for i in 0..(num_topics * num_topics) {
+    let mut init_mat = vec![0.0; n_eigen * num_topics];
+    for i in 0..(n_eigen * num_topics) {
         init_mat[i] = rng.gen_range(-1.0..1.0);
     }
-    let mut factors = qr_reduced(&init_mat, num_topics, num_topics).0;
+    let mut factors = qr_reduced(&init_mat, n_eigen, num_topics).0;
 
-    let theta = 1.0;
     let mut fit_history = Vec::new();
     let mut converged = false;
     let mut i = 1;
@@ -355,10 +360,11 @@ pub fn fit_tlda(
         let prev_fac = factors.clone();
         for j in (0..d).step_by(batch_size) {
             let b_size = (d - j).min(batch_size);
-            let y = &x_whit[j * num_topics..(j + b_size) * num_topics];
+            let y = &x_whit[j * n_eigen..(j + b_size) * n_eigen];
             partial_fit_step(
                 &mut factors,
                 y,
+                n_eigen,
                 num_topics,
                 b_size,
                 alpha_0,
@@ -368,7 +374,7 @@ pub fn fit_tlda(
         }
 
         let mut diff = 0.0f64;
-        for idx in 0..(num_topics * num_topics) {
+        for idx in 0..(n_eigen * num_topics) {
             let d_val = (factors[idx] - prev_fac[idx]).abs();
             if d_val > diff {
                 diff = d_val;
@@ -383,14 +389,14 @@ pub fn fit_tlda(
     }
 
     // 3. Parameter recovery (unwhitening + normalization)
-    let mut u_scaled = vec![0.0; v * num_topics];
+    let mut u_scaled = vec![0.0; v * n_eigen];
     for w_idx in 0..v {
-        for k_idx in 0..num_topics {
-            u_scaled[w_idx * num_topics + k_idx] =
-                u_proj[w_idx * num_topics + k_idx] * lambdas[k_idx].sqrt();
+        for k_idx in 0..n_eigen {
+            u_scaled[w_idx * n_eigen + k_idx] =
+                u_proj[w_idx * n_eigen + k_idx] * lambdas[k_idx].sqrt();
         }
     }
-    let mut factors_unwhitened = matmul(&u_scaled, &factors, v, num_topics, num_topics);
+    let mut factors_unwhitened = matmul(&u_scaled, &factors, v, n_eigen, num_topics);
 
     for w_idx in 0..v {
         for k_idx in 0..num_topics {
@@ -423,14 +429,14 @@ pub fn fit_tlda(
     }
 
     let mut eig_vals = vec![0.0; num_topics];
-    for r_idx in 0..num_topics {
-        let mut r_sum = 0.0;
-        for c_idx in 0..num_topics {
-            let val = factors[r_idx * num_topics + c_idx];
-            r_sum += val * val;
+    for j in 0..num_topics {
+        let mut sum2 = 0.0;
+        for i in 0..n_eigen {
+            let val = factors[i * num_topics + j];
+            sum2 += val * val;
         }
-        let row_norm = r_sum.sqrt();
-        eig_vals[r_idx] = row_norm.powi(3);
+        let col_norm = sum2.sqrt();
+        eig_vals[j] = col_norm.powi(3);
     }
 
     let mut alpha = vec![0.0; num_topics];

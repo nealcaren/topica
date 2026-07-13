@@ -3368,6 +3368,8 @@ class TensorLDA:
         learning_rate: float = 0.01,
         batch_size: int = 10,
         smoothing: float = 0.01,
+        theta: float = 1.0,
+        n_eigenvec: int | None = None,
         seed: int = 42,
     ) -> None: ...
     def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int | None = None) -> None: ...

@@ -16,6 +16,8 @@ pub struct TensorLDA {
     learning_rate: f64,
     batch_size: usize,
     smoothing: f64,
+    theta: f64,
+    n_eigenvec: Option<usize>,
     seed: u64,
     fitted: bool,
     topic_names: Vec<String>,
@@ -32,6 +34,8 @@ struct TensorLdaState {
     learning_rate: f64,
     batch_size: usize,
     smoothing: f64,
+    theta: f64,
+    n_eigenvec: Option<usize>,
     seed: u64,
     fitted: bool,
     topic_names: Vec<String>,
@@ -104,7 +108,8 @@ impl TensorLDA {
     /// Create an unfitted TensorLDA model.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha_0=1.0, n_iter_train=100, n_iter_test=30,
-                        learning_rate=0.01, batch_size=10, smoothing=0.01, seed=42))]
+                        learning_rate=0.01, batch_size=10, smoothing=0.01,
+                        theta=1.0, n_eigenvec=None, seed=42))]
     fn new(
         num_topics: usize,
         alpha_0: f64,
@@ -113,6 +118,8 @@ impl TensorLDA {
         learning_rate: f64,
         batch_size: usize,
         smoothing: f64,
+        theta: f64,
+        n_eigenvec: Option<usize>,
         seed: u64,
     ) -> PyResult<Self> {
         require_experimental("TensorLDA")?;
@@ -138,6 +145,14 @@ impl TensorLDA {
         if !(0.0..1.0).contains(&smoothing) {
             return Err(PyValueError::new_err("smoothing must be in [0.0, 1.0)"));
         }
+        if theta <= 0.0 {
+            return Err(PyValueError::new_err("theta must be > 0.0"));
+        }
+        if let Some(ne) = n_eigenvec {
+            if ne < num_topics {
+                return Err(PyValueError::new_err("n_eigenvec must be >= num_topics"));
+            }
+        }
         Ok(TensorLDA {
             num_topics,
             alpha_0,
@@ -146,6 +161,8 @@ impl TensorLDA {
             learning_rate,
             batch_size,
             smoothing,
+            theta,
+            n_eigenvec,
             seed,
             fitted: false,
             topic_names: Vec::new(),
@@ -195,13 +212,15 @@ impl TensorLDA {
         }
 
         let n_iter_train = iters.unwrap_or(self.n_iter_train);
-        let (k, alpha_0, n_iter_test, lr, bs, smoothing, seed) = (
+        let (k, alpha_0, n_iter_test, lr, bs, smoothing, theta, n_eigen, seed) = (
             self.num_topics,
             self.alpha_0,
             self.n_iter_test,
             self.learning_rate,
             self.batch_size,
             self.smoothing,
+            self.theta,
+            self.n_eigenvec,
             self.seed,
         );
 
@@ -216,6 +235,8 @@ impl TensorLDA {
                 lr,
                 bs,
                 smoothing,
+                theta,
+                n_eigen,
                 seed,
             );
             (m, corpus)
@@ -380,6 +401,8 @@ impl TensorLDA {
                 learning_rate: self.learning_rate,
                 batch_size: self.batch_size,
                 smoothing: self.smoothing,
+                theta: self.theta,
+                n_eigenvec: self.n_eigenvec,
                 seed: self.seed,
                 fitted: self.fitted,
                 topic_names: self.topic_names.clone(),
@@ -424,6 +447,8 @@ impl TensorLDA {
             learning_rate: s.learning_rate,
             batch_size: s.batch_size,
             smoothing: s.smoothing,
+            theta: s.theta,
+            n_eigenvec: s.n_eigenvec,
             seed: s.seed,
             fitted: s.fitted,
             topic_names: s.topic_names,

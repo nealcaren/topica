@@ -331,7 +331,7 @@ pub fn randomized_svd(
     let bt = transpose(&b, d, cols);
     let m = matmul(&b, &bt, d, cols, d);
 
-    let (eig_vals, u_m) = jacobi_eigen(&m, d, 1e-15, 200)?;
+    let (eig_vals, u_m) = jacobi_eigen(&m, d, 1e-12, 2000)?;
     let mut s_vals = vec![0.0; d];
     for i in 0..d {
         s_vals[i] = eig_vals[i].max(0.0).sqrt();

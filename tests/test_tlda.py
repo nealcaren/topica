@@ -135,3 +135,21 @@ def test_tlda_parameter_validations():
     m_1iter.fit([["a", "b"], ["b", "c"]])
     assert len(m_1iter.fit_history) == 1
 
+    # 8. Invalid theta
+    with pytest.raises(ValueError) as exc:
+        topica.TensorLDA(2, theta=0.0)
+    assert "theta must be > 0.0" in str(exc.value)
+
+    # 9. Invalid n_eigenvec
+    with pytest.raises(ValueError) as exc:
+        topica.TensorLDA(3, n_eigenvec=2)
+    assert "n_eigenvec must be >= num_topics" in str(exc.value)
+
+    # 10. Fit with custom theta and larger n_eigenvec works successfully
+    docs, _ = _planted()
+    m_custom = topica.TensorLDA(3, theta=5.005, n_eigenvec=10, seed=42)
+    m_custom.fit(docs)
+    assert m_custom.num_topics == 3
+    assert m_custom.topic_word.shape == (3, len(m_custom.vocabulary))
+    assert m_custom.doc_topic.shape == (len(docs), 3)
+
