@@ -76,6 +76,7 @@ mod py_corpus;
 mod save;
 mod sentence_ideal;
 mod tbip;
+mod tlda;
 mod wordfish;
 use arrays::*;
 use error::*;
@@ -86,6 +87,7 @@ use py_corpus::Corpus;
 use save::*;
 use sentence_ideal::IdealPointSentenceTM;
 use tbip::TBIP;
+use tlda::TensorLDA;
 use wordfish::Wordfish;
 
 /// Run `f` on a rayon pool of `num_threads` workers, or on the global pool (all
@@ -18674,6 +18676,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IdealPointTM>()?;
     m.add_class::<IdealPointSentenceTM>()?;
     m.add_class::<TBIP>()?;
+    m.add_class::<TensorLDA>()?;
     m.add_class::<Wordfish>()?;
     m.add_class::<PartyEmbeddings>()?;
     m.add_class::<ProdLDA>()?;

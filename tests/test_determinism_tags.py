@@ -86,6 +86,10 @@ def _combinedtm(seed):
 def _zeroshottm(seed):
     m = topica.ZeroShotTM(num_topics=_K, seed=seed); m.fit(_DOCS, _DOC_EMB, iters=_ITERS); return m
 
+def _tensorlda(seed):
+    topica.enable_experimental(True)
+    m = topica.TensorLDA(num_topics=_K, seed=seed); m.fit(_DOCS, iters=_ITERS); return m
+
 
 BUILDERS = {
     "CTM": _ctm,
@@ -98,6 +102,7 @@ BUILDERS = {
     "ProdLDA": _prodlda,
     "CombinedTM": _combinedtm,
     "ZeroShotTM": _zeroshottm,
+    "TensorLDA": _tensorlda,
 }
 
 
