@@ -351,7 +351,7 @@ pub fn fit_tlda(
     let mut max_diff = 1.0;
     let tol = 1e-5;
 
-    while (i <= 10 || max_diff >= tol) && i < n_iter_train {
+    while (i <= 10 || max_diff >= tol) && i <= n_iter_train {
         let prev_fac = factors.clone();
         for j in (0..d).step_by(batch_size) {
             let b_size = (d - j).min(batch_size);

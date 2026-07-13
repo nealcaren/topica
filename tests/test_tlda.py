@@ -94,3 +94,44 @@ def test_determinism():
     assert np.allclose(m1.topic_word, m2.topic_word)
     assert np.allclose(m1.doc_topic, m2.doc_topic)
     assert np.allclose(m1.weights, m2.weights)
+
+
+def test_tlda_parameter_validations():
+    topica.enable_experimental(True)
+
+    # 1. Invalid topics
+    with pytest.raises(ValueError) as exc:
+        topica.TensorLDA(1)
+    assert "num_topics must be >= 2" in str(exc.value)
+
+    # 2. Invalid alpha_0
+    with pytest.raises(ValueError) as exc:
+        topica.TensorLDA(2, alpha_0=0.0)
+    assert "alpha_0 must be > 0.0" in str(exc.value)
+
+    # 3. Invalid n_iter_train
+    with pytest.raises(ValueError) as exc:
+        topica.TensorLDA(2, n_iter_train=0)
+    assert "n_iter_train must be > 0" in str(exc.value)
+
+    # 4. Invalid batch_size
+    with pytest.raises(ValueError) as exc:
+        topica.TensorLDA(2, batch_size=0)
+    assert "batch_size must be > 0" in str(exc.value)
+
+    # 5. Invalid smoothing
+    with pytest.raises(ValueError) as exc:
+        topica.TensorLDA(2, smoothing=1.0)
+    assert "smoothing must be in [0.0, 1.0)" in str(exc.value)
+
+    # 6. Fit small corpus (num_docs < num_topics) raises error, doesn't panic
+    m = topica.TensorLDA(5)
+    with pytest.raises(ValueError) as exc:
+        m.fit([["a", "b"]])
+    assert "corpus must have at least num_topics=5 documents" in str(exc.value)
+
+    # 7. Inclusive / 1-based training works (iters=1 executes exactly 1 step)
+    m_1iter = topica.TensorLDA(2, n_iter_train=1)
+    m_1iter.fit([["a", "b"], ["b", "c"]])
+    assert len(m_1iter.fit_history) == 1
+

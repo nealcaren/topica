@@ -118,7 +118,25 @@ impl TensorLDA {
         require_experimental("TensorLDA")?;
 
         if num_topics < 2 {
-            return Err(PyValueError::new_err("need at least 2 topics"));
+            return Err(PyValueError::new_err("num_topics must be >= 2"));
+        }
+        if alpha_0 <= 0.0 {
+            return Err(PyValueError::new_err("alpha_0 must be > 0.0"));
+        }
+        if n_iter_train == 0 {
+            return Err(PyValueError::new_err("n_iter_train must be > 0"));
+        }
+        if n_iter_test == 0 {
+            return Err(PyValueError::new_err("n_iter_test must be > 0"));
+        }
+        if learning_rate <= 0.0 {
+            return Err(PyValueError::new_err("learning_rate must be > 0.0"));
+        }
+        if batch_size == 0 {
+            return Err(PyValueError::new_err("batch_size must be > 0"));
+        }
+        if !(0.0..1.0).contains(&smoothing) {
+            return Err(PyValueError::new_err("smoothing must be in [0.0, 1.0)"));
         }
         Ok(TensorLDA {
             num_topics,
@@ -162,8 +180,12 @@ impl TensorLDA {
             )?
             .0
         };
-        if corpus.num_docs() == 0 {
-            return Err(PyValueError::new_err("corpus contains no documents"));
+        if corpus.num_docs() < self.num_topics {
+            return Err(PyValueError::new_err(format!(
+                "corpus must have at least num_topics={} documents, got {}",
+                self.num_topics,
+                corpus.num_docs()
+            )));
         }
         let num_types = corpus.num_types();
         if num_types < self.num_topics {
