@@ -1,13 +1,12 @@
 # paper/
 
-A software paper introducing topica. **arXiv-first**: the manuscript is the
-`nojss` preprint (clean article look, no journal masthead), built with the JSS
-class for its formatting and bibliography style. A JSS journal submission, if we
-make one later, is the same source with the `nojss` option removed.
+A software paper introducing topica. The manuscript is prepared in the JSS
+article format for journal submission. make_arxiv.sh produces a separate,
+masthead-free nojss preprint from a temporary copy of the same source.
 
 ## Files
 
-- `topica.tex` — the manuscript (`\documentclass[article,nojss]{jss}`).
+- `topica.tex` — the JSS submission manuscript (`\documentclass[article]{jss}`).
 - `topica.bib` — BibTeX, grounded in `docs/citing.md`, with DOIs.
 - `replication.py` — regenerates the worked-example figures and the spanning
   model-comparison table, and (where the toolchains are installed) drives MALLET

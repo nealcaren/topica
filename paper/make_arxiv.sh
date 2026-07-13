@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build a self-contained arXiv submission tarball for the topica paper.
-# topica.tex is already the [article,nojss] preprint (no masthead/logo), so this
-# just:
+# topica.tex is the JSS submission source. This script changes its class to the
+# [article,nojss] preprint variant (no masthead/logo), then:
 #   1. Generates the .bbl and ships it, so arXiv does not need to run bibtex.
 #   2. Bundles jss.cls and jss.bst (arXiv's TeXLive has the jss package, but
 #      bundling guarantees the build) and the worked-example figure.
@@ -49,6 +49,10 @@ cp "$HERE/topica.tex" "$HERE/supplementary.tex" "$HERE/topica.bib" "$JSS_CLS" "$
    "$HERE/fig_poliblog_effect.pdf" "$HERE/fig_poliblog_report.pdf" "$HERE/fig_scaling.pdf" \
    "$HERE/fig_thread_scaling.pdf" "$BUILD/"
 cp "$APP" "$BUILD/generated/"
+# The journal manuscript carries a masthead; the arXiv preprint does not.
+sed -i.bak 's/\\documentclass\[article\]{jss}/\\documentclass[article,nojss]{jss}/' \
+  "$BUILD/topica.tex"
+rm -f "$BUILD/topica.tex.bak"
 ( cd "$BUILD"
   export TEXINPUTS=".:" BSTINPUTS=".:" BIBINPUTS=".:"
   pdflatex -interaction=nonstopmode topica.tex >build.log 2>&1
