@@ -174,6 +174,7 @@ fn solve_and_blend_content(
     shrink_kgp: f64,
     rho: f64,
     inner_iters: usize,
+    seed_mean: &[f64],
 ) -> f64 {
     let scale = d as f64 / win_docs.max(1.0);
     let counts: Vec<Vec<f64>> = content_ss
@@ -200,6 +201,7 @@ fn solve_and_blend_content(
         rw_kgp,
         shrink_kgp,
         inner_iters,
+        seed_mean,
     );
     blend_kappa(kt, &kt_old, rho);
     blend_kappa(kkp, &kkp_old, rho);
@@ -251,6 +253,7 @@ fn optimize_content(
     rw_kgp: f64,
     shrink_kgp: f64,
     max_iter: usize,
+    seed_mean: &[f64],
 ) -> Vec<Vec<Vec<f64>>> {
     let n_t = k * v;
     let n_kp = k * p * v;
@@ -330,8 +333,16 @@ fn optimize_content(
                 }
             }
 
-            // L2 priors on every coefficient. κKGP gets the extra shrink factor.
-            for i in 0..off_kgp {
+            // L2 priors. κT (the topic baseline, indices 0..n_t) is pulled toward
+            // `seed_mean` -- zero everywhere except seeded (topic, word) entries,
+            // which anchor a topic's shared vocabulary. The L2 defends the shift so
+            // the M-step cannot cancel it. κKP/κKG keep a plain zero-mean L2.
+            for i in 0..n_t {
+                let resid = flat[i] - seed_mean.get(i).copied().unwrap_or(0.0);
+                value -= 0.5 * inv_var * resid * resid;
+                grad[i] -= inv_var * resid;
+            }
+            for i in n_t..off_kgp {
                 let xi = flat[i];
                 value -= 0.5 * inv_var * xi * xi;
                 grad[i] -= inv_var * xi;
@@ -427,6 +438,7 @@ pub fn fit_ectm<R: Rng>(
     keep_nu: bool,
     diagonal: bool,
     init_spectral: bool,
+    seed_mean: &[f64],
     rng: &mut R,
 ) -> EctmModel {
     let k = num_topics;
@@ -647,6 +659,7 @@ pub fn fit_ectm<R: Rng>(
             rw_kgp,
             shrink_kgp,
             20,
+            seed_mean,
         );
     }
 
@@ -719,6 +732,7 @@ pub fn fit_ectm_svi<R: Rng>(
     keep_nu: bool,
     diagonal: bool,
     init_spectral: bool,
+    seed_mean: &[f64],
     rng: &mut R,
 ) -> EctmModel {
     let k = num_topics;
@@ -961,6 +975,7 @@ pub fn fit_ectm_svi<R: Rng>(
                     shrink_kgp,
                     rho_k,
                     kiters,
+                    seed_mean,
                 );
                 content_shift_history.push(shift);
                 content_beta =
@@ -999,6 +1014,7 @@ pub fn fit_ectm_svi<R: Rng>(
             shrink_kgp,
             rho_k,
             kiters,
+            seed_mean,
         );
         content_shift_history.push(shift);
         content_beta = build_content_beta(&m_bg, &kt, &kkp, &kkg, &kkgp, k, g, p, num_types);
@@ -1199,6 +1215,7 @@ mod tests {
             true,
             false,
             init_spectral,
+            &[],
             &mut rng,
         )
     }
