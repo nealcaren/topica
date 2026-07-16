@@ -58,19 +58,19 @@ def _pruned_setup():
 def test_find_thoughts_rejects_misaligned_texts():
     m, _, texts = _pruned_setup()
     with pytest.raises(ValueError, match="rows"):
-        topica.find_thoughts(m.doc_topic, texts, topic=0, n=2)
+        topica.interpret.find_thoughts(m.doc_topic, texts, topic=0, n=2)
 
 
 def test_document_intrusion_rejects_misaligned_texts():
     m, _, texts = _pruned_setup()
     with pytest.raises(ValueError, match="rows"):
-        topica.document_intrusion(m.doc_topic, texts, n_docs=1)
+        topica.diagnostics.document_intrusion(m.doc_topic, texts, n_docs=1)
 
 
 def test_find_thoughts_accepts_aligned_texts():
     m, corpus, texts = _pruned_setup()
     aligned = [texts[i] for i in corpus.kept_indices]
-    out = topica.find_thoughts(m.doc_topic, aligned, topic=0, n=2)
+    out = topica.interpret.find_thoughts(m.doc_topic, aligned, topic=0, n=2)
     assert all(t in aligned for _, _, t in out)
 
 
@@ -78,7 +78,7 @@ def test_plot_report_warns_on_misaligned_groups():
     pytest.importorskip("matplotlib")
     m, _, _ = _pruned_setup()
     with pytest.warns(UserWarning, match="class.*rows|rows"):
-        fig = topica.plot_report(m, groups=["a", "b", "a", "b"])  # 4 vs 3 kept docs
+        fig = topica.viz.plot_report(m, groups=["a", "b", "a", "b"])  # 4 vs 3 kept docs
     # The misaligned panel is dropped, not silently drawn from the wrong rows.
     assert fig is not None
 
@@ -96,7 +96,7 @@ def test_bootstrap_refit_hook_typeerror_is_not_swallowed():
         raise TypeError("genuine bug inside the hook")
 
     with pytest.raises(TypeError, match="genuine bug"):
-        topica.standard_errors(
+        topica.effects.standard_errors(
             model, corpus, of="top_words", method="bootstrap",
             n_boot=2, refit=broken_refit,
         )
@@ -118,9 +118,9 @@ def test_coherence_works_for_sage_via_marginal():
     docs, _ = _toy_corpus()
     s = topica.models.SAGE(num_topics=3, seed=1, optimize_interval=25, burn_in=20)
     s.fit(docs, ["g"] * len(docs), iters=80, num_samples=2, sample_interval=10)
-    coh = topica.coherence(s, docs, coherence_type="u_mass")
+    coh = topica.diagnostics.coherence(s, docs, coherence_type="u_mass")
     assert coh.shape == (3,) and np.all(np.isfinite(coh))
-    assert topica.exclusivity(s).shape == (3,)
+    assert topica.diagnostics.exclusivity(s).shape == (3,)
 
 
 def test_coherence_rejects_dtm_with_clear_message():
@@ -130,7 +130,7 @@ def test_coherence_rejects_dtm_with_clear_message():
     dtm = topica.models.DTM(num_topics=2, seed=1)
     dtm.fit(docs, [0] * 20 + [1] * 20, iters=3)
     with pytest.raises(ValueError, match="time-sliced"):
-        topica.coherence(dtm, docs)
+        topica.diagnostics.coherence(dtm, docs)
 
 
 def test_capability_no_doc_topic_models_are_not_soft_theta():

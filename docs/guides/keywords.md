@@ -11,7 +11,7 @@ import topica
 conservative = [tokenize(t) for t in con_texts]
 liberal      = [tokenize(t) for t in lib_texts]
 
-scored = topica.fighting_words(conservative, liberal, prior=0.05)
+scored = topica.interpret.fighting_words(conservative, liberal, prior=0.05)
 # sorted by z-score: corpus-A markers at the top, corpus-B at the bottom
 for word, z in scored[:10]:
     print(f"{word:20s} {z:+.1f}")     # |z| > 1.96 ~ significant at 95%
@@ -24,7 +24,7 @@ the z-score already accounts for how much evidence each word carries.
 ## Top words per side
 
 ```python
-top = topica.top_fighting_words(conservative, liberal, n=15)
+top = topica.interpret.top_fighting_words(conservative, liberal, n=15)
 print("conservative:", [w for w, _ in top["a"]])
 print("liberal:     ", [w for w, _ in top["b"]])
 ```
@@ -36,7 +36,7 @@ the prior by each word's overall frequency: Monroe et al.'s informative
 Dirichlet prior, which pulls extreme estimates toward the corpus background:
 
 ```python
-topica.fighting_words(conservative, liberal, prior=0.01, informative=True)
+topica.interpret.fighting_words(conservative, liberal, prior=0.01, informative=True)
 ```
 
 This pairs naturally with [SAGE / content STM](covariates.md), which find
@@ -47,12 +47,12 @@ works directly on two raw corpora with no model at all.
 
 Plain Fighting Words pools the whole corpus into two bags of words. Once you have
 a fitted model, you can hold each topic fixed and ask how the two groups word it
-differently. `topica.contrastive_topics` weights every document's word counts by
+differently. `topica.interpret.contrastive_topics` weights every document's word counts by
 its responsibility for a topic, splits those weighted counts by group, and runs
 the same z-score per topic:
 
 ```python
-rows = topica.contrastive_topics(model, corpus, groups)  # groups: one label per doc
+rows = topica.interpret.contrastive_topics(model, corpus, groups)  # groups: one label per doc
 for r in rows[:3]:                                        # most contrastive first
     print(f"topic {r['topic']} {r['name']}  used more by {r['leans']}")
     print("  ", r['a_label'], "words:", [w for w, _ in r['a_words'][:6]])

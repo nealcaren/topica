@@ -42,10 +42,10 @@ def test_load_gadarian_return_path():
 def test_gadarian_feeds_from_dataframe_and_fits():
     """The quickstart smoke test: dataset -> corpus -> model, fully offline."""
     df = datasets.load_gadarian()
-    corpus = topica.from_dataframe(
+    corpus = topica.prep.from_dataframe(
         df,
         text_col="open.ended.response",
-        stopwords=topica.ENGLISH_STOPWORDS,
+        stopwords=topica.prep.ENGLISH_STOPWORDS,
         min_doc_freq=2,
     )
     model = topica.models.LDA(num_topics=4, seed=1)

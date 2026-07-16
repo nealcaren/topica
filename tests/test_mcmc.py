@@ -20,7 +20,7 @@ from topica.models import LDA
 def test_autocorrelation_of_iid_is_flat():
     rng = np.random.default_rng(0)
     x = rng.standard_normal(4000)
-    acf = topica.autocorrelation(x, max_lag=10)
+    acf = topica.diagnostics.autocorrelation(x, max_lag=10)
     assert acf[0] == pytest.approx(1.0)
     # lag>=1 autocorrelation of white noise is ~0 (1/sqrt(N) noise band)
     assert np.all(np.abs(acf[1:]) < 0.1)
@@ -33,7 +33,7 @@ def test_autocorrelation_recovers_ar1_coefficient():
     x[0] = 0.0
     for i in range(1, x.size):
         x[i] = phi * x[i - 1] + rng.standard_normal()
-    acf = topica.autocorrelation(x, max_lag=3)
+    acf = topica.diagnostics.autocorrelation(x, max_lag=3)
     assert acf[1] == pytest.approx(phi, abs=0.03)
     assert acf[2] == pytest.approx(phi**2, abs=0.05)
 
@@ -41,7 +41,7 @@ def test_autocorrelation_recovers_ar1_coefficient():
 def test_iac_time_iid_near_one():
     rng = np.random.default_rng(2)
     x = rng.standard_normal(5000)
-    tau = topica.integrated_autocorr_time(x)
+    tau = topica.diagnostics.integrated_autocorr_time(x)
     assert 0.8 < tau < 1.3
 
 
@@ -52,7 +52,7 @@ def test_iac_time_ar1_matches_theory():
     x[0] = 0.0
     for i in range(1, x.size):
         x[i] = phi * x[i - 1] + rng.standard_normal()
-    tau = topica.integrated_autocorr_time(x)
+    tau = topica.diagnostics.integrated_autocorr_time(x)
     theory = (1 + phi) / (1 - phi)  # = 9
     assert tau == pytest.approx(theory, rel=0.15)
 
@@ -60,7 +60,7 @@ def test_iac_time_ar1_matches_theory():
 def test_ess_iid_close_to_n():
     rng = np.random.default_rng(4)
     x = rng.standard_normal(3000)
-    assert topica.effective_sample_size(x) == pytest.approx(3000, rel=0.15)
+    assert topica.diagnostics.effective_sample_size(x) == pytest.approx(3000, rel=0.15)
 
 
 def test_ess_never_exceeds_n():
@@ -71,26 +71,26 @@ def test_ess_never_exceeds_n():
     x[0] = 0.0
     for i in range(1, x.size):
         x[i] = phi * x[i - 1] + rng.standard_normal()
-    assert topica.effective_sample_size(x) <= x.size
+    assert topica.diagnostics.effective_sample_size(x) <= x.size
 
 
 def test_constant_chain_has_zero_ess():
     const = np.ones(200)
-    assert np.isinf(topica.integrated_autocorr_time(const))
-    assert topica.effective_sample_size(const) == 0.0
+    assert np.isinf(topica.diagnostics.integrated_autocorr_time(const))
+    assert topica.diagnostics.effective_sample_size(const) == 0.0
 
 
 def test_ess_2d_is_columnwise():
     rng = np.random.default_rng(6)
     x = rng.standard_normal((2000, 4))
-    ess = topica.effective_sample_size(x)
+    ess = topica.diagnostics.effective_sample_size(x)
     assert ess.shape == (4,)
     assert np.all(ess == pytest.approx(2000, rel=0.2))
 
 
 def test_autocorrelation_short_and_constant_inputs():
-    assert topica.autocorrelation([1.0]).tolist() == [1.0]
-    acf = topica.autocorrelation(np.ones(10), max_lag=3)
+    assert topica.diagnostics.autocorrelation([1.0]).tolist() == [1.0]
+    acf = topica.diagnostics.autocorrelation(np.ones(10), max_lag=3)
     assert acf[0] == 1.0
     assert np.all(acf[1:] == 0.0)
 
@@ -110,7 +110,7 @@ def fitted_lda():
 
 
 def test_mcmc_diagnostics_on_fitted_model(fitted_lda):
-    d = topica.mcmc_diagnostics(fitted_lda)
+    d = topica.diagnostics.mcmc_diagnostics(fitted_lda)
     assert d.model == "LDA"
     assert d.inference == "gibbs"
     assert d.n_draws == 60
@@ -129,7 +129,7 @@ def test_mcmc_diagnostics_requires_theta_draws():
     model = LDA(num_topics=2, seed=0)
     model.fit(corpus, iters=40, keep_theta_draws=False)
     with pytest.raises(ValueError, match="theta_draws"):
-        topica.mcmc_diagnostics(model)
+        topica.diagnostics.mcmc_diagnostics(model)
 
 
 def test_mcmc_diagnostics_warns_for_variational_model():
@@ -140,11 +140,11 @@ def test_mcmc_diagnostics_warns_for_variational_model():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         with pytest.raises(ValueError):
-            topica.mcmc_diagnostics(model)
+            topica.diagnostics.mcmc_diagnostics(model)
     assert any("not Gibbs" in str(w.message) for w in caught)
 
 
 def test_mcmc_diagnostics_warn_false_is_silent(fitted_lda):
     with warnings.catch_warnings():
         warnings.simplefilter("error")  # any warning would fail the test
-        topica.mcmc_diagnostics(fitted_lda, warn=False)
+        topica.diagnostics.mcmc_diagnostics(fitted_lda, warn=False)

@@ -145,13 +145,13 @@ def main() -> int:
     cov = pd.DataFrame({"year": year, "party": party})
 
     # topica side.
-    eff_w = topica.estimate_effect(theta, formula="~ year + party", data=cov, weights=weights)[0]
-    eff_wc = topica.estimate_effect(theta, formula="~ year + party", data=cov,
+    eff_w = topica.effects.estimate_effect(theta, formula="~ year + party", data=cov, weights=weights)[0]
+    eff_wc = topica.effects.estimate_effect(theta, formula="~ year + party", data=cov,
                                     weights=weights, cluster=cluster)[0]
     j = {n: eff_w.feature_names.index(n) for n in ("intercept", "year", "party[T.R]")}
-    ame_y = topica.average_marginal_effects(theta, "year", formula="~ year + party",
+    ame_y = topica.effects.average_marginal_effects(theta, "year", formula="~ year + party",
                                             data=cov, weights=weights).to_frame()
-    ame_p = topica.average_marginal_effects(theta, "party", formula="~ year + party",
+    ame_p = topica.effects.average_marginal_effects(theta, "party", formula="~ year + party",
                                             data=cov, weights=weights).to_frame()
     y_row = ame_y.query("topic == 0 and term == 'year'").iloc[0]
     p_row = ame_p.query("topic == 0 and term == 'partyR'").iloc[0]

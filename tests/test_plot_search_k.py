@@ -16,7 +16,7 @@ ROWS = [
 
 
 def test_returns_axes_with_two_metric_lines():
-    ax = topica.plot_search_k(ROWS)
+    ax = topica.viz.plot_search_k(ROWS)
     assert ax.get_xlabel() == "number of topics (K)"
     assert list(ax.get_xticks()) == [10, 20, 30]
     # primary axis carries the first metric (coherence)
@@ -24,18 +24,18 @@ def test_returns_axes_with_two_metric_lines():
 
 
 def test_single_metric_and_unsorted_input():
-    ax = topica.plot_search_k(list(reversed(ROWS)), metrics=("coherence",))
+    ax = topica.viz.plot_search_k(list(reversed(ROWS)), metrics=("coherence",))
     line = ax.lines[0]
     assert list(line.get_xdata()) == [10, 20, 30]  # sorted by K
 
 
 def test_missing_metric_raises():
     with pytest.raises(ValueError):
-        topica.plot_search_k(ROWS, metrics=("perplexity",))
+        topica.viz.plot_search_k(ROWS, metrics=("perplexity",))
 
 
 def test_real_search_k_output_plots():
     docs = [["cat", "dog", "fish"]] * 30 + [["sun", "moon", "star"]] * 30
-    rows = topica.search_k(docs, ks=[2, 3], iters=80)
-    ax = topica.plot_search_k(rows)
+    rows = topica.select.search_k(docs, ks=[2, 3], iters=80)
+    ax = topica.viz.plot_search_k(rows)
     assert ax is not None

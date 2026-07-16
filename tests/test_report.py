@@ -59,7 +59,7 @@ def fake_cluster():
 
 def test_topic_sizes_lda(lda_corpus):
     m, docs, *_ = lda_corpus
-    sizes = topica.topic_sizes(m)
+    sizes = topica.interpret.topic_sizes(m)
     assert sizes["size"].shape == (2,)
     assert sizes["mass"].shape == (2,)
     assert int(sizes["size"].sum()) == len(docs)
@@ -68,7 +68,7 @@ def test_topic_sizes_lda(lda_corpus):
 
 
 def test_topic_sizes_clustering_counts_labels_and_outliers(fake_cluster):
-    sizes = topica.topic_sizes(fake_cluster)
+    sizes = topica.interpret.topic_sizes(fake_cluster)
     np.testing.assert_array_equal(sizes["size"], np.array([2, 1, 2]))
     assert sizes["outliers"] == 2
 
@@ -78,9 +78,9 @@ def test_topic_sizes_clustering_counts_labels_and_outliers(fake_cluster):
 # ---------------------------------------------------------------------------
 
 def test_topic_labels_default_and_override(fake_cluster):
-    assert topica.topic_labels(fake_cluster) == ["Topic A", "Topic B", "Topic C"]
-    topica.set_topic_labels(fake_cluster, {1: "Renamed"})
-    labels = topica.topic_labels(fake_cluster)
+    assert topica.interpret.topic_labels(fake_cluster) == ["Topic A", "Topic B", "Topic C"]
+    topica.interpret.set_topic_labels(fake_cluster, {1: "Renamed"})
+    labels = topica.interpret.topic_labels(fake_cluster)
     assert labels[1] == "Renamed"
     assert labels[0] == "Topic A"  # untouched
     assert labels[2] == "Topic C"
@@ -88,8 +88,8 @@ def test_topic_labels_default_and_override(fake_cluster):
 
 def test_set_topic_labels_roundtrip_lda(lda_corpus):
     m, *_ = lda_corpus
-    topica.set_topic_labels(m, {0: "Pets", 1: "Sky"})
-    assert topica.topic_labels(m) == ["Pets", "Sky"]
+    topica.interpret.set_topic_labels(m, {0: "Pets", 1: "Sky"})
+    assert topica.interpret.topic_labels(m) == ["Pets", "Sky"]
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ def test_set_topic_labels_roundtrip_lda(lda_corpus):
 
 def test_representative_docs_one_topic(lda_corpus):
     m, docs, texts, *_ = lda_corpus
-    reps = topica.representative_docs(m, texts, topic=0, n=3)
+    reps = topica.interpret.representative_docs(m, texts, topic=0, n=3)
     assert isinstance(reps, list)
     assert len(reps) == 3
     assert all(isinstance(t, str) for t in reps)
@@ -106,7 +106,7 @@ def test_representative_docs_one_topic(lda_corpus):
 
 def test_representative_docs_all_topics(lda_corpus):
     m, docs, texts, *_ = lda_corpus
-    reps = topica.representative_docs(m, texts, n=4)
+    reps = topica.interpret.representative_docs(m, texts, n=4)
     assert set(reps.keys()) == {0, 1}
     assert all(len(v) == 4 for v in reps.values())
 
@@ -117,7 +117,7 @@ def test_representative_docs_all_topics(lda_corpus):
 
 def test_topic_info_lda_one_row_per_topic(lda_corpus):
     m, docs, texts, *_ = lda_corpus
-    rows = topica.topic_info(m, texts, n=5)
+    rows = topica.interpret.topic_info(m, texts, n=5)
     assert len(rows) == 2
     assert [r["topic"] for r in rows] == [0, 1]
     for r in rows:
@@ -129,18 +129,18 @@ def test_topic_info_lda_one_row_per_topic(lda_corpus):
 
 def test_topic_info_no_texts_omits_reps(lda_corpus):
     m, *_ = lda_corpus
-    rows = topica.topic_info(m)
+    rows = topica.interpret.topic_info(m)
     assert all("representative_docs" not in r for r in rows)
 
 
 def test_topic_info_labels_override(lda_corpus):
     m, docs, texts, *_ = lda_corpus
-    rows = topica.topic_info(m, labels=["X", "Y"])
+    rows = topica.interpret.topic_info(m, labels=["X", "Y"])
     assert [r["label"] for r in rows] == ["X", "Y"]
 
 
 def test_topic_info_clustering_appends_outlier_row(fake_cluster):
-    rows = topica.topic_info(fake_cluster, n=3)
+    rows = topica.interpret.topic_info(fake_cluster, n=3)
     # 3 topics + one outlier row.
     assert len(rows) == 4
     assert [r["topic"] for r in rows] == [0, 1, 2, -1]
@@ -158,7 +158,7 @@ def test_topic_info_clustering_appends_outlier_row(fake_cluster):
 
 def test_topics_over_time_rows_sum_to_one(lda_corpus):
     m, docs, texts, timestamps, _ = lda_corpus
-    out = topica.topics_over_time(m, timestamps)
+    out = topica.effects.topics_over_time(m, timestamps)
     assert out["labels"] == [2019, 2020]
     assert out["prevalence"].shape == (2, 2)
     np.testing.assert_allclose(out["prevalence"].sum(axis=1), 1.0, atol=1e-9)
@@ -166,7 +166,7 @@ def test_topics_over_time_rows_sum_to_one(lda_corpus):
 
 def test_topics_over_time_unnormalized(lda_corpus):
     m, docs, texts, timestamps, _ = lda_corpus
-    out = topica.topics_over_time(m, timestamps, normalize=False)
+    out = topica.effects.topics_over_time(m, timestamps, normalize=False)
     # Each row is a mean of theta rows, so it already sums close to 1 but is
     # not forced to; the labels still align.
     assert out["prevalence"].shape == (2, 2)
@@ -175,7 +175,7 @@ def test_topics_over_time_unnormalized(lda_corpus):
 def test_topics_over_time_length_mismatch(lda_corpus):
     m, *_ = lda_corpus
     with pytest.raises(ValueError):
-        topica.topics_over_time(m, [2019, 2020])
+        topica.effects.topics_over_time(m, [2019, 2020])
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +184,7 @@ def test_topics_over_time_length_mismatch(lda_corpus):
 
 def test_topics_per_class(lda_corpus):
     m, docs, texts, timestamps, groups = lda_corpus
-    strata = topica.topics_per_class(m, groups)
+    strata = topica.effects.topics_per_class(m, groups)
     assert {s.stratum for s in strata} == {"pets", "sky"}
     for s in strata:
         assert s.mean.shape == (2,)
@@ -203,7 +203,7 @@ def test_plot_report_full(lda_corpus):
     import matplotlib.pyplot as plt
 
     m, docs, texts, timestamps, groups = lda_corpus
-    fig = topica.plot_report(m, texts=texts, timestamps=timestamps, groups=groups, n=5)
+    fig = topica.viz.plot_report(m, texts=texts, timestamps=timestamps, groups=groups, n=5)
     assert isinstance(fig, plt.Figure)
     # All five panels apply here, so there is more than one drawn axis.
     titles = {ax.get_title() for ax in fig.get_axes()}
@@ -219,7 +219,7 @@ def test_plot_report_minimal(lda_corpus):
 
     m, *_ = lda_corpus
     # No texts/timestamps/groups: the prevalence panel is always present.
-    fig = topica.plot_report(m)
+    fig = topica.viz.plot_report(m)
     titles = {ax.get_title() for ax in fig.get_axes()}
     assert "Topics by prevalence" in titles
     # The time/class panels need their inputs, so they are absent here.
@@ -232,7 +232,7 @@ def test_plot_report_saves(tmp_path, lda_corpus):
     import matplotlib.pyplot as plt
 
     m, docs, texts, *_ = lda_corpus
-    fig = topica.plot_report(m, texts=texts)
+    fig = topica.viz.plot_report(m, texts=texts)
     out = tmp_path / "report.png"
     fig.savefig(out, dpi=60)
     assert out.exists() and out.stat().st_size > 0
@@ -247,7 +247,7 @@ def test_plot_report_correlation_masks_diagonal(lda_corpus):
     import matplotlib.pyplot as plt
 
     m, docs, texts, *_ = lda_corpus
-    fig = topica.plot_report(m, texts=texts)
+    fig = topica.viz.plot_report(m, texts=texts)
     corr_axes = [ax for ax in fig.get_axes() if ax.get_title() == "Topic correlation"]
     if not corr_axes:
         plt.close(fig)

@@ -22,7 +22,7 @@ ROWS = {
 
 
 def test_from_dataframe_polars_in_polars_out():
-    cp = topica.from_dataframe(pl.DataFrame(ROWS), text_col="text", min_doc_freq=2)
+    cp = topica.prep.from_dataframe(pl.DataFrame(ROWS), text_col="text", min_doc_freq=2)
     assert isinstance(cp.metadata, pl.DataFrame)
     # Two docs dropped; metadata follows the surviving rows in order.
     assert cp.kept_indices == [0, 2, 4]
@@ -31,8 +31,8 @@ def test_from_dataframe_polars_in_polars_out():
 
 
 def test_from_dataframe_matches_pandas():
-    cp = topica.from_dataframe(pl.DataFrame(ROWS), text_col="text", min_doc_freq=2)
-    cd = topica.from_dataframe(pd.DataFrame(ROWS), text_col="text", min_doc_freq=2)
+    cp = topica.prep.from_dataframe(pl.DataFrame(ROWS), text_col="text", min_doc_freq=2)
+    cd = topica.prep.from_dataframe(pd.DataFrame(ROWS), text_col="text", min_doc_freq=2)
     assert cp.kept_indices == cd.kept_indices
     assert list(cp.metadata["year"]) == list(cd.metadata["year"])
     assert list(cp.metadata["party"]) == list(cd.metadata["party"])
@@ -45,26 +45,26 @@ def test_align_polars_series_and_frame():
     )
     assert c.kept_indices == [0, 2, 4]
     s = pl.Series("party", ["D", "R", "D", "R", "D"])
-    assert list(topica.align(s, c)) == ["D", "D", "D"]
+    assert list(topica.prep.align(s, c)) == ["D", "D", "D"]
     df = pl.DataFrame({"a": [10, 11, 12, 13, 14]})
-    aligned = topica.align(df, c)
+    aligned = topica.prep.align(df, c)
     assert isinstance(aligned, pl.DataFrame)
     assert list(aligned["a"]) == [10, 12, 14]
 
 
 def test_design_matrix_from_polars_matches_pandas():
-    cp = topica.from_dataframe(pl.DataFrame(ROWS), text_col="text", min_doc_freq=2)
-    cd = topica.from_dataframe(pd.DataFrame(ROWS), text_col="text", min_doc_freq=2)
+    cp = topica.prep.from_dataframe(pl.DataFrame(ROWS), text_col="text", min_doc_freq=2)
+    cd = topica.prep.from_dataframe(pd.DataFrame(ROWS), text_col="text", min_doc_freq=2)
     pytest.importorskip("formulaic")
-    Xp, np_names = topica.design_matrix("~ party", cp.metadata)
-    Xd, pd_names = topica.design_matrix("~ party", cd.metadata)
+    Xp, np_names = topica.design.design_matrix("~ party", cp.metadata)
+    Xd, pd_names = topica.design.design_matrix("~ party", cd.metadata)
     assert np_names == pd_names
     assert np.allclose(Xp, Xd)
 
 
 def test_design_matrix_spline_from_polars():
-    cp = topica.from_dataframe(pl.DataFrame(ROWS), text_col="text", min_doc_freq=2)
+    cp = topica.prep.from_dataframe(pl.DataFrame(ROWS), text_col="text", min_doc_freq=2)
     pytest.importorskip("formulaic")
-    X, names = topica.design_matrix("~ spline(year, df=3)", cp.metadata)
+    X, names = topica.design.design_matrix("~ spline(year, df=3)", cp.metadata)
     assert X.shape == (3, 3)
     assert len(names) == 3

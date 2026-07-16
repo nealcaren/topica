@@ -39,7 +39,7 @@ A complete methods section covers the corpus, the preprocessing, the model and
 import pandas as pd
 import topica
 
-labels = topica.label_topics(model.topic_word, model.vocabulary, n=7)
+labels = topica.interpret.label_topics(model.topic_word, model.vocabulary, n=7)
 prevalence = model.doc_topic.mean(axis=0)
 table = pd.DataFrame({
     "topic": range(model.num_topics),
@@ -50,7 +50,7 @@ table = pd.DataFrame({
 table.to_csv("topic_table.csv", index=False)
 ```
 
-For an at-a-glance figure of the whole model, `topica.plot_report` composes the
+For an at-a-glance figure of the whole model, `topica.viz.plot_report` composes the
 diagnostics into one matplotlib `Figure` you can save straight to a publication
 or supplement. Panels are adaptive: topic prevalence (with each topic's top
 words) and the coherence-vs-exclusivity quality plot are always drawn, and the
@@ -58,7 +58,7 @@ topic-correlation heatmap, topics over time, and prevalence by class appear when
 you pass `texts`, `timestamps`, or `groups`.
 
 ```python
-fig = topica.plot_report(model, texts=texts, timestamps=year, groups=party)
+fig = topica.viz.plot_report(model, texts=texts, timestamps=year, groups=party)
 fig.savefig("model_report.png", dpi=200)   # or .pdf
 ```
 

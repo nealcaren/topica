@@ -1,4 +1,4 @@
-"""`topica.stop_reason` — human-readable training-stop reason (issue #267).
+"""`topica.diagnostics.stop_reason` — human-readable training-stop reason (issue #267).
 
 Distinguishes the two cases `converged` alone leaves implicit: the run stopped
 early on `convergence_tol` (a floor), or it ran the full `iters` budget (a
@@ -23,7 +23,7 @@ def test_stop_reason_max_iters_when_tol_disabled():
     m = topica.models.LDA(num_topics=3, seed=1)
     m.fit(_corpus(), iters=40, convergence_tol=0.0)
     assert not m.converged
-    msg = topica.stop_reason(m)
+    msg = topica.diagnostics.stop_reason(m)
     assert "iteration cap" in msg and "without early stopping" in msg
     # reports the iteration count it ran
     assert "40" in msg
@@ -34,7 +34,7 @@ def test_stop_reason_converged_when_tol_loose():
     # A very loose tolerance trips on the first recorded relative change.
     m.fit(_corpus(), iters=400, convergence_tol=10.0, check_every=10)
     assert m.converged
-    msg = topica.stop_reason(m)
+    msg = topica.diagnostics.stop_reason(m)
     assert msg.startswith("converged")
     assert "convergence_tol" in msg
 
@@ -46,5 +46,5 @@ def test_stop_reason_variational_model():
     cov = rng.integers(0, 2, len(docs)).astype(float).reshape(-1, 1)
     m = topica.models.STM(num_topics=3, seed=1)
     m.fit(docs, cov, prevalence_names=["g"], iters=20, convergence_tol=0.0)
-    msg = topica.stop_reason(m)
+    msg = topica.diagnostics.stop_reason(m)
     assert "iteration cap" in msg or msg.startswith("converged")

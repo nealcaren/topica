@@ -2,53 +2,53 @@
 
 ## Distinguishing words
 
-::: topica.fighting_words
+::: topica.interpret.fighting_words
 
-::: topica.top_fighting_words
+::: topica.interpret.top_fighting_words
 
 ## Preprocessing
 
 ::: topica.tokenize
 
-::: topica.split_documents
+::: topica.prep.split_documents
 
-::: topica.one_hot
+::: topica.design.one_hot
 
 Prune rare (and optionally common) vocabulary from a corpus, keeping
 metadata row-aligned with the documents that survive — the analogue of R
 `stm`'s `prepDocuments`.
 
-::: topica.prep_documents
+::: topica.prep.prep_documents
 
 Sweep document-frequency thresholds and visualize how many documents and
 vocabulary terms are removed at each level, to inform the choice of
 `lower_thresh`.
 
-::: topica.plot_removed
+::: topica.viz.plot_removed
 
 ## DataFrames & metadata
 
 These accept pandas **or** Polars frames (and `align` also takes numpy arrays and
 lists), keeping document metadata aligned to the rows that survive pruning.
 
-::: topica.from_dataframe
+::: topica.prep.from_dataframe
 
-::: topica.align
+::: topica.prep.align
 
-::: topica.design_matrix
+::: topica.design.design_matrix
 
 ## Embeddings
 
-::: topica.llm_embed
+::: topica.embed.llm_embed
 
-::: topica.save_embeddings
+::: topica.embed.save_embeddings
 
-::: topica.load_embeddings
+::: topica.embed.load_embeddings
 
 ## Phrases
 
-::: topica.learn_phrases
+::: topica.prep.learn_phrases
 
-::: topica.apply_phrases
+::: topica.prep.apply_phrases
 
-::: topica.add_ngrams
+::: topica.prep.add_ngrams

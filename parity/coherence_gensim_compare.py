@@ -77,7 +77,7 @@ def _compare(docs: list, ks=(10, 20)) -> dict:
         m = topica.models.LDA(num_topics=k, seed=1)
         m.fit(docs, iters=300)
         top_words = [[w for w, _ in m.top_words(10, topic=t)] for t in range(k)]
-        topica_cv.extend(np.asarray(topica.coherence(m, docs, coherence_type="c_v")))
+        topica_cv.extend(np.asarray(topica.diagnostics.coherence(m, docs, coherence_type="c_v")))
         cm = CoherenceModel(topics=top_words, texts=docs, dictionary=dct,
                             coherence="c_v", processes=1)
         gensim_cv.extend(np.asarray(cm.get_coherence_per_topic()))

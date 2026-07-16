@@ -131,7 +131,7 @@ class TestSurface:
     def test_conformance(self):
         docs, _, _ = _separable_corpus()
         m = topica.models.AnchorLDA(4, min_count=2, seed=0).fit(docs)
-        assert topica.check_conformance(m) == []
+        assert topica.diagnostics.check_conformance(m) == []
 
     def test_coherence_returns_per_topic(self):
         docs, _, _ = _separable_corpus()

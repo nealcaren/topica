@@ -30,7 +30,7 @@ def test_namespace_surface():
     for gone in ("llm_coherence", "llm_intrusion", "llm_select_k", "LLM_EVAL_PROMPTS"):
         assert not hasattr(topica, gone), f"{gone} should be namespaced under topica.llm"
     # backend is also reachable flat (a shared, released constructor).
-    assert topica.llm.backend is topica.llm_backend
+    assert topica.llm.backend is topica.interpret.llm_backend
 
 
 class Rater:
@@ -112,7 +112,7 @@ def _planted_model(seed=0):
 def test_llm_intrusion_perfect_detector_scores_one():
     phi, vocab = _planted_model()
     # An oracle backend that returns the true intruder for each item.
-    items = topica.word_intrusion(phi, vocab, n_words=5, seed=0)
+    items = topica.diagnostics.word_intrusion(phi, vocab, n_words=5, seed=0)
     answer = {", ".join(it["words"]): it["intruder"] for it in items}
     def oracle(prompt):
         for words, intr in answer.items():
@@ -135,7 +135,7 @@ def test_llm_intrusion_wrong_picks_score_low():
 
 def test_llm_intrusion_majority_vote_over_samples():
     phi, vocab = _planted_model()
-    items = topica.word_intrusion(phi, vocab, n_words=5, seed=0)
+    items = topica.diagnostics.word_intrusion(phi, vocab, n_words=5, seed=0)
     intr0 = items[0]["intruder"]
     # 2 of 3 votes are the true intruder -> majority correct for topic 0.
     seq = {}
@@ -166,7 +166,7 @@ def test_adversarial_planted_outlier_is_detectable():
     # Topic of clearly-related words plus a blatant outlier; the task generator must
     # be able to surface a detectable intruder, and an oracle must score it.
     phi, vocab = _planted_model()
-    items = topica.word_intrusion(phi, vocab, n_words=5, seed=1)
+    items = topica.diagnostics.word_intrusion(phi, vocab, n_words=5, seed=1)
     # Each generated item has exactly one intruder from another block.
     for it in items:
         intr_block = it["intruder"][1]  # "t{block}w{i}"

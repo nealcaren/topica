@@ -54,330 +54,79 @@ __citation__ = (
 )
 
 
-def one_hot(values, *, drop_first=True, prefix=""):
-    """One-hot encode a categorical covariate for use as DMR features.
+# --- The public API is organized by role: what you are doing, not which model.
+# Each name below is a namespace; e.g. topica.diagnostics.coherence,
+# topica.effects.estimate_effect, topica.models.LDA. ---
+from . import models  # noqa: E402       the estimator roster (topica.models.LDA)
+from . import prep  # noqa: E402         corpus construction & text prep
+from . import design  # noqa: E402       covariate design matrices
+from . import embed  # noqa: E402        document-embedding helpers
+from . import diagnostics  # noqa: E402  quality / stability / held-out / MCMC convergence
+from . import select  # noqa: E402       choosing K / choosing a model
+from . import interpret  # noqa: E402    reading & labeling topics
+from . import effects  # noqa: E402      covariate / prevalence estimation
+from . import scaling  # noqa: E402      ideal-point scaling diagnostics
+from . import ensemble  # noqa: E402     combining runs
+from . import llm  # noqa: E402          LLM-based evaluation (topica.llm.*)
+# viz (all plotting) is heavier; it is imported lazily on first access to
+# topica.viz (see __getattr__ below) so `import topica` stays light.
 
-    Given a sequence of category labels (one per document), returns
-    ``(matrix, names)`` where ``matrix`` is a ``(num_docs, num_categories)``
-    float array of 0/1 indicators and ``names`` are the corresponding column
-    names. With ``drop_first=True`` (default) the first category (sorted) is
-    omitted as the reference level, which avoids collinearity with the DMR
-    intercept. Pass the result straight to ``DMR.fit(docs, matrix,
-    feature_names=names)``; combine multiple covariates with
-    ``numpy.hstack``.
-    """
-    import numpy as np
+# Model-specific helper toolkits, kept as their own namespaces (not roles):
+from . import stm  # noqa: E402          STM/CTM covariate-design + effect helpers
+from . import keyatm  # noqa: E402       keyATM-specific workflow helpers
+from . import ectm  # noqa: E402         ECTM content-trajectory helpers
 
-    values = list(values)
-    categories = sorted(set(values))
-    if drop_first and categories:
-        categories = categories[1:]
-    index = {c: j for j, c in enumerate(categories)}
-    matrix = np.zeros((len(values), len(categories)), dtype=np.float64)
-    for i, v in enumerate(values):
-        j = index.get(v)
-        if j is not None:
-            matrix[i, j] = 1.0
-    names = [f"{prefix}{c}" for c in categories]
-    return matrix, names
-
-
-def summary(model, topn=8):
-    """A human-readable overview of a fitted model (à la tomotopy's ``summary``).
-
-    Returns a multi-line string: the model's repr, its key scalar attributes
-    (num_topics, concentrations, etc.), the vocabulary size, and the top words of
-    each topic. Pass to ``print``. For models whose ``top_words`` needs extra
-    arguments (``DTM`` by time, ``SAGE`` by group) the per-topic word lists are
-    omitted.
-    """
-    lines = [repr(model)]
-    for attr in ("num_topics", "num_times", "num_groups", "alpha", "gamma",
-                 "sigma2", "bound"):
-        try:
-            value = getattr(model, attr)
-        except Exception:
-            continue
-        if not callable(value):
-            lines.append(f"  {attr}: {value}")
-    try:
-        lines.append(f"  vocab_size: {len(model.vocabulary)}")
-    except Exception:
-        pass
-    try:
-        tops = model.top_words(topn)
-        if isinstance(tops, list) and tops and isinstance(tops[0], list):
-            for i, words in enumerate(tops):
-                lines.append(f"  topic {i}: " + " ".join(w for w, _ in words))
-    except Exception:
-        pass
-    return "\n".join(lines)
+# Discovery + bundled data.
+from .registry import list_models, ModelInfo, REGISTRY  # noqa: E402
+from . import datasets  # noqa: E402
 
 
-from . import stm  # noqa: E402  (stm imports names defined above)
-from .stm import align_corpus, spline, interaction, topic_correlation_ci, TopicCorrelationCI  # noqa: E402  (general covariate-design helpers)
-from . import keyatm  # noqa: E402  (keyATM-specific workflow helpers)
-from . import ectm  # noqa: E402  (ECTM content-trajectory interpretation helpers)
-from . import effects  # noqa: E402  (model-neutral prevalence analysis)
-from . import validation  # noqa: E402  (post-hoc topic diagnostics surface)
-from . import conformance  # noqa: E402  (estimator contract and registry)
-from .conformance import check_conformance  # noqa: E402
-from .effects import (  # noqa: E402  general, work on any model's theta
-    estimate_effect,
-    by_strata,
-    prevalence_ci,
-    top_topics,
-    posterior_theta_samples,
-    dirichlet_theta_samples,
-    standard_errors,
-    model_family,
-    predicted_prevalence,
-    PredictedPrevalence,
-    average_marginal_effects,
-    ame,
-    MarginalEffect,
-    AverageMarginalEffects,
-    permutation_test,
-    PermutationResult,
-)
-from .keyatm import time_prevalence_ci  # noqa: E402  (dynamic keyATM credible bands)
-from . import phrases  # noqa: E402
-from .coherence import (  # noqa: E402
-    coherence,
-    coherence_ci,
-    CoherenceCI,
-    semantic_coherence,
-    topic_diversity,
-    topic_semantic_diversity,
-    exclusivity,
-    word_intrusion,
-    document_intrusion,
-)
-# LLM-based evaluation is exposed as a namespace, topica.llm.* (coherence,
-# intrusion, select_k, backend, PROMPTS) -- it is an llm-bounded family, kept
-# distinct from the bit-exact diagnostics above. See topica/llm.py.
-from . import llm  # noqa: E402
-from . import models  # noqa: E402  (the model roster, namespaced: topica.models.<Name>)
-from . import mcmc  # noqa: E402  (single-chain MCMC diagnostics for the Gibbs models)
-from .mcmc import (  # noqa: E402
-    mcmc_diagnostics,
-    effective_sample_size,
-    autocorrelation,
-    integrated_autocorr_time,
-    McmcDiagnostics,
-)
-from .registry import list_models, ModelInfo, REGISTRY  # noqa: E402  model taxonomy / discovery
-
-from .validation import (  # noqa: E402  general, model-agnostic post-hoc analyses
-    diagnostics,
-    perplexity,
-    make_heldout,
-    eval_heldout,
-    Heldout,
-    HeldoutResult,
-    frex,
-    mmr,
-    label_topics,
-    topic_table,
-    topic_correlation,
-    find_thoughts,
-    find_thoughts_html,
-    quality_frontier,
-    bootstrap_stability,
-    search_k,
-    SearchKResult,
-    select_model,
-    SelectModelResult,
-    plot_models,
-    plot_search_k,
-    plot_topic_discovery,
-    relevance,
-    prepare_pyldavis,
-    check_residuals,
-    document_residuals,
-    flag_topics,
-    topic_dendrogram,
-    TopicDendrogram,
-    align_topics,
-    topic_stability,
-)
-from .ensemble import ensemble, EnsembleResult, cross_ensemble  # noqa: E402  (consensus across runs)
-from .analysis import (  # noqa: E402  (model-neutral fitted-model analysis surface)
-    topic_info,
-    topic_sizes,
-    topic_labels,
-    set_topic_labels,
-    representative_docs,
-    topics_over_time,
-    topics_per_class,
-    contrastive_topics,
-    stop_reason,
-    plot_report,
-)
-
-
-def report(model, topn=8):
-    """One-call overview of a fitted model. Alias for :func:`summary`.
-
-    ``report`` reads like a verb, so ``report(model)`` is a natural thing to
-    try; it returns the same multi-line overview as ``summary(model)``. The
-    richer analysis surface (``topic_info``, ``topic_sizes``,
-    ``representative_docs``, ``topics_over_time``, ``plot_report``, …) lives in
-    ``topica.analysis`` and is also exported as top-level functions.
-    """
-    return summary(model, topn=topn)
-from .keywords import fighting_words, top_fighting_words  # noqa: E402
-from .labeling import (  # noqa: E402  LLM topic labeling as plumbing
-    llm_topic_labels,
-    llm_backend,
-    topic_label_prompts,
-)
-from .embedding import (  # noqa: E402
-    embedding_seeds,
-    llm_embed,
-    save_embeddings,
-    load_embeddings,
-)
-from .preprocess import split_documents  # noqa: E402
-from .stopwords import ENGLISH_STOPWORDS, stopwords, stopword_languages  # noqa: E402
-from .phrases import learn_phrases, apply_phrases, add_ngrams, Phrases  # noqa: E402
-from .frames import from_dataframe, align, prep_documents, plot_removed  # noqa: E402
-from .formulas import design_matrix  # noqa: E402
-from .scaling import bimodality, polarization, polarization_ci, split_half_reliability, position_intervals  # noqa: E402  (intrinsic ideal-point diagnostics)
-from . import datasets  # noqa: E402  (bundled + fetch-on-demand example datasets)
+def __getattr__(name):
+    # Lazily expose topica.viz so importing matplotlib is deferred until first use.
+    # import_module (not `from . import viz`) avoids re-entering this __getattr__.
+    if name == "viz":
+        import importlib
+        return importlib.import_module(".viz", __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
-    "models",
+    # core entry points
+    "Corpus",
+    "tokenize",
+    "project",
+    "DEFAULT_TOKEN_REGEX",
+    "__version__",
+    "__citation__",
+    # discovery
     "list_models",
     "ModelInfo",
     "REGISTRY",
     "enable_experimental",
     "experimental_enabled",
-    "Corpus",
-    "tokenize",
-    "project",
-    "one_hot",
-    "stm",
-    "ectm",
-    "keyatm",
-    "spline",
-    "interaction",
-    "topic_correlation_ci",
-    "TopicCorrelationCI",
-    "phrases",
-    "coherence",
-    "coherence_ci",
-    "CoherenceCI",
-    "topic_diversity",
-    "topic_semantic_diversity",
-    "exclusivity",
-    "semantic_coherence",
-    "word_intrusion",
-    "document_intrusion",
-    "llm",
-    "frex",
-    "label_topics",
-    "topic_table",
-    "topic_correlation",
-    "find_thoughts",
-    "search_k",
-    "SearchKResult",
-    "select_model",
-    "SelectModelResult",
-    "plot_models",
-    "plot_search_k",
-    "plot_topic_discovery",
-    "relevance",
-    "prepare_pyldavis",
-    "check_residuals",
-    "document_residuals",
-    "flag_topics",
-    "topic_dendrogram",
-    "TopicDendrogram",
-    "align_topics",
-    "topic_stability",
-    "ensemble",
-    "EnsembleResult",
-    "cross_ensemble",
-    "find_thoughts_html",
-    "quality_frontier",
-    "bootstrap_stability",
-    "report",
-    "topic_info",
-    "topic_sizes",
-    "topic_labels",
-    "set_topic_labels",
-    "representative_docs",
-    "topics_over_time",
-    "topics_per_class",
-    "contrastive_topics",
-    "stop_reason",
-    "plot_report",
-    "fighting_words",
-    "top_fighting_words",
-    "llm_topic_labels",
-    "llm_backend",
-    "topic_label_prompts",
-    "estimate_effect",
-    "by_strata",
-    "prevalence_ci",
-    "top_topics",
-    "posterior_theta_samples",
-    "dirichlet_theta_samples",
-    "standard_errors",
-    "model_family",
-    "predicted_prevalence",
-    "PredictedPrevalence",
-    "average_marginal_effects",
-    "ame",
-    "MarginalEffect",
-    "AverageMarginalEffects",
-    "permutation_test",
-    "PermutationResult",
-    "time_prevalence_ci",
-    "embedding_seeds",
-    "llm_embed",
-    "save_embeddings",
-    "load_embeddings",
-    "split_documents",
-    "ENGLISH_STOPWORDS",
-    "stopwords",
-    "stopword_languages",
-    "from_dataframe",
-    "align",
-    "prep_documents",
-    "plot_removed",
-    "design_matrix",
-    "bimodality",
-    "polarization",
-    "polarization_ci",
-    "split_half_reliability",
-    "position_intervals",
-    "summary",
+    # role namespaces (the organized public API)
+    "models",
+    "prep",
+    "design",
+    "embed",
     "diagnostics",
-    "mcmc",
-    "mcmc_diagnostics",
-    "effective_sample_size",
-    "autocorrelation",
-    "integrated_autocorr_time",
-    "McmcDiagnostics",
-    "perplexity",
-    "make_heldout",
-    "eval_heldout",
-    "Heldout",
-    "HeldoutResult",
-    "mmr",
-    "keywords",
-    "conformance",
-    "check_conformance",
-    "preprocess",
-    "learn_phrases",
-    "apply_phrases",
-    "add_ngrams",
-    "Phrases",
-    "align_corpus",
+    "select",
+    "interpret",
+    "effects",
+    "scaling",
+    "ensemble",
+    "llm",
+    "viz",
+    # model-specific helper toolkits
+    "stm",
+    "keyatm",
+    "ectm",
+    # bundled data
     "datasets",
-    "DEFAULT_TOKEN_REGEX",
-    "__version__",
-    "__citation__",
 ]
+
+
+def __dir__():
+    # Present only the curated public surface to dir()/tab-completion. The
+    # internal leaf modules (coherence, validation, analysis, ...) remain
+    # importable but are hidden to keep the namespace clean.
+    return sorted(__all__)

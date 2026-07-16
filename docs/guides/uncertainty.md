@@ -2,14 +2,14 @@
 
 Topic estimates are estimates. The proportions `θ`, the top words, the covariate
 effects you put in a table all carry sampling error, and a credible result
-reports it. `topica.standard_errors` is one entry point for the quantities people
+reports it. `topica.effects.standard_errors` is one entry point for the quantities people
 publish, and it propagates the topic-estimation uncertainty rather than treating
 the fit as if it were observed exactly.
 
 ```python
 import topica
 
-se = topica.standard_errors(model, corpus, of="effect", formula="~ year", data=meta)
+se = topica.effects.standard_errors(model, corpus, of="effect", formula="~ year", data=meta)
 ```
 
 There are two distinct uncertainties, and they call for two methods.
@@ -42,13 +42,13 @@ be wider than the real posterior for short documents and narrower for long ones.
 
 ```python
 # Covariate effects, uncertainty propagated (one regression per topic):
-eff = topica.standard_errors(model, corpus, of="effect",
+eff = topica.effects.standard_errors(model, corpus, of="effect",
                              formula="~ party", data=meta, nsims=50)
 for e in eff:
     print(e.topic, e.as_dict())
 
 # Each topic's mean prevalence, with an interval:
-prev = topica.standard_errors(model, corpus, of="prevalence", nsims=50)
+prev = topica.effects.standard_errors(model, corpus, of="prevalence", nsims=50)
 ```
 
 The effect result is the same `TopicEffect` list as `estimate_effect` (so
@@ -70,7 +70,7 @@ models and the only way to get top-word or topic-quality intervals.
 
 ```python
 # How stable is each topic's top-word list?
-tw = topica.standard_errors(model, corpus, of="top_words", method="bootstrap",
+tw = topica.effects.standard_errors(model, corpus, of="top_words", method="bootstrap",
                             n_boot=200, topn=10)
 for t in tw:
     for word, prob, lo, hi in t.words:
@@ -98,7 +98,7 @@ standard error (sets it to `NaN`, `reliable=False`) when matching is unstable**:
   interchangeable and the match is arbitrary, which the Jaccard alone would miss.
 
 ```python
-for t in topica.standard_errors(model, corpus, of="prevalence", method="bootstrap"):
+for t in topica.effects.standard_errors(model, corpus, of="prevalence", method="bootstrap"):
     if not t.reliable:
         print(f"topic {t.topic}: unstable alignment "
               f"(quality={t.alignment_quality:.2f}, margin={t.alignment_margin:.2f}) "
@@ -117,7 +117,7 @@ def refit(doc_indices):
     m.fit([docs[i] for i in doc_indices], doc_emb[doc_indices])
     return m
 
-tw = topica.standard_errors(bertopic, corpus, of="top_words",
+tw = topica.effects.standard_errors(bertopic, corpus, of="top_words",
                             method="bootstrap", refit=refit, n_boot=200)
 ```
 

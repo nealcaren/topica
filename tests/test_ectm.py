@@ -319,7 +319,7 @@ def test_svi_is_seed_reproducible_not_bit_exact():
 def test_svi_with_prevalence():
     """SVI threads a prevalence design through the blended ridge gamma."""
     docs, groups, times = _corpus(drift=True)
-    party, _ = topica.one_hot(groups)
+    party, _ = topica.design.one_hot(groups)
     m = topica.models.ECTM(num_topics=2, seed=1)
     m.fit(docs, times=times, content=groups, prevalence=party,
           iters=30, inference="svi", batch_size=48, tau=16.0, kappa=0.7)
@@ -362,6 +362,6 @@ def test_svi_save_load_roundtrip(tmp_path):
 
 def test_analysis_surface():
     m = _fit()
-    assert topica.summary(m) is not None
-    assert topica.topic_table(m) is not None
+    assert topica.interpret.summary(m) is not None
+    assert topica.diagnostics.topic_table(m) is not None
     assert m.coherence(5).shape == (2,)

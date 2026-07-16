@@ -90,7 +90,7 @@ class TestFit:
 class TestAnalysisSurface:
     def test_flows_into_coherence_and_top_words(self):
         m, docs, _ = _fit()
-        cv = topica.coherence(m, docs, coherence_type="c_v", topn=4)
+        cv = topica.diagnostics.coherence(m, docs, coherence_type="c_v", topn=4)
         assert np.asarray(cv).shape == (2,)
         rows = m.top_words(3)
         assert len(rows) == 2 and all(isinstance(w, str) for w, _ in rows[0])

@@ -108,7 +108,7 @@ def test_topic_quality_matches_sparse_on_real_corpus():
     def mean_cv(sampler):
         m = topica.models.LDA(num_topics=15, seed=1, sampler=sampler)
         m.fit(corpus, iters=400)
-        return float(np.mean(topica.coherence(m, docs, coherence_type="c_v", topn=10)))
+        return float(np.mean(topica.diagnostics.coherence(m, docs, coherence_type="c_v", topn=10)))
 
     sparse_cv = mean_cv("sparse")
     light_cv = mean_cv("lightlda")

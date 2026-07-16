@@ -61,14 +61,14 @@ def test_save_requires_fitted(tmp_path):
 
 def test_add_ngrams_basic():
     docs = [["machine", "learning", "model"], ["deep", "learning", "model"]]
-    out = topica.add_ngrams(docs, ngram_range=(1, 2))
+    out = topica.prep.add_ngrams(docs, ngram_range=(1, 2))
     assert "machine_learning" in out[0] and "learning_model" in out[0]
     assert "machine" in out[0]  # unigrams kept
     # bigrams only
-    only = topica.add_ngrams(docs, ngram_range=(2, 2))
+    only = topica.prep.add_ngrams(docs, ngram_range=(2, 2))
     assert all("_" in t for t in only[0])
     # min_df prunes rare terms, document count preserved
-    pruned = topica.add_ngrams(docs, ngram_range=(1, 2), min_df=2)
+    pruned = topica.prep.add_ngrams(docs, ngram_range=(1, 2), min_df=2)
     assert len(pruned) == len(docs)
     kept = {t for d in pruned for t in d}
     assert "learning" in kept and "machine_learning" not in kept  # df 1 dropped
@@ -76,7 +76,7 @@ def test_add_ngrams_basic():
 
 def test_add_ngrams_rejects_bad_range():
     with pytest.raises(ValueError, match="ngram_range"):
-        topica.add_ngrams([["a", "b"]], ngram_range=(2, 1))
+        topica.prep.add_ngrams([["a", "b"]], ngram_range=(2, 1))
 
 
 def test_bigrams_flow_into_bertopic_topic_words():
@@ -88,7 +88,7 @@ def test_bigrams_flow_into_bertopic_topic_words():
         for _ in range(60):
             base.append(list(rng.choice(words, size=10)))
             emb.append(rng.normal([ci * 6, 0], 0.5, 2))
-    ng = topica.add_ngrams(base, ngram_range=(1, 2), min_df=3)
+    ng = topica.prep.add_ngrams(base, ngram_range=(1, 2), min_df=3)
     assert len(ng) == len(base)  # alignment with embeddings preserved
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

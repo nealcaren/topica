@@ -28,4 +28,4 @@ backend (`sampler="cvb0"`) keeps no trace and never early-stops.
 Per-period topic prevalence with credible bands from the dynamic keyATM
 posterior's retained MCMC theta draws.
 
-::: topica.time_prevalence_ci
+::: topica.effects.time_prevalence_ci

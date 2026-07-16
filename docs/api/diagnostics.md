@@ -7,55 +7,55 @@ and in the `topica.validation` module.
 
 ## One-call table
 
-::: topica.diagnostics
+::: topica.diagnostics.diagnostics
 
-::: topica.perplexity
+::: topica.diagnostics.perplexity
 
 ## Quality
 
-::: topica.coherence
+::: topica.diagnostics.coherence
 
-::: topica.coherence_ci
+::: topica.diagnostics.coherence_ci
 
-::: topica.semantic_coherence
+::: topica.diagnostics.semantic_coherence
 
-::: topica.topic_diversity
+::: topica.diagnostics.topic_diversity
 
-::: topica.topic_semantic_diversity
+::: topica.diagnostics.topic_semantic_diversity
 
-::: topica.exclusivity
+::: topica.diagnostics.exclusivity
 
-::: topica.quality_frontier
+::: topica.diagnostics.quality_frontier
 
 ## Interpretation
 
-::: topica.label_topics
+::: topica.interpret.label_topics
 
-::: topica.llm_topic_labels
+::: topica.interpret.llm_topic_labels
 
-::: topica.llm_backend
+::: topica.interpret.llm_backend
 
-::: topica.topic_label_prompts
+::: topica.interpret.topic_label_prompts
 
-::: topica.frex
+::: topica.interpret.frex
 
-::: topica.mmr
+::: topica.interpret.mmr
 
-::: topica.relevance
+::: topica.interpret.relevance
 
-::: topica.find_thoughts
+::: topica.interpret.find_thoughts
 
-::: topica.find_thoughts_html
+::: topica.interpret.find_thoughts_html
 
-::: topica.topic_correlation
+::: topica.interpret.topic_correlation
 
-::: topica.prepare_pyldavis
+::: topica.viz.prepare_pyldavis
 
 ## Validation
 
-::: topica.word_intrusion
+::: topica.diagnostics.word_intrusion
 
-::: topica.document_intrusion
+::: topica.diagnostics.document_intrusion
 
 ### LLM-based evaluation (`topica.llm`)
 
@@ -75,27 +75,27 @@ and in the `topica.validation` module.
 
 ::: topica.llm.adversarial
 
-::: topica.bootstrap_stability
+::: topica.diagnostics.bootstrap_stability
 
-::: topica.search_k
+::: topica.select.search_k
 
-::: topica.check_residuals
+::: topica.diagnostics.check_residuals
 
-::: topica.document_residuals
+::: topica.diagnostics.document_residuals
 
-::: topica.flag_topics
+::: topica.diagnostics.flag_topics
 
-::: topica.topic_dendrogram
+::: topica.interpret.topic_dendrogram
 
-::: topica.align_topics
+::: topica.diagnostics.align_topics
 
-::: topica.topic_stability
+::: topica.diagnostics.topic_stability
 
-::: topica.ensemble
+::: topica.ensemble.ensemble
 
-::: topica.EnsembleResult
+::: topica.ensemble.EnsembleResult
 
-::: topica.cross_ensemble
+::: topica.ensemble.cross_ensemble
 
 ## MCMC convergence (`topica.mcmc`)
 
@@ -104,15 +104,15 @@ models, computed from the retained log-likelihood trace and `theta_draws`. See
 the [convergence section](../guides/diagnostics.md#has-the-chain-plateaued-or-mixed)
 of the diagnostics guide.
 
-::: topica.mcmc_diagnostics
+::: topica.diagnostics.mcmc_diagnostics
 
-::: topica.McmcDiagnostics
+::: topica.diagnostics.McmcDiagnostics
 
-::: topica.effective_sample_size
+::: topica.diagnostics.effective_sample_size
 
-::: topica.integrated_autocorr_time
+::: topica.diagnostics.integrated_autocorr_time
 
-::: topica.autocorrelation
+::: topica.diagnostics.autocorrelation
 
 ## Held-out likelihood
 
@@ -120,27 +120,27 @@ Build a within-corpus word-heldout set — the analogue of R `stm`'s
 `make.heldout` — and score it under a fitted model to get document-completion
 log-likelihood.
 
-::: topica.make_heldout
+::: topica.diagnostics.make_heldout
 
-::: topica.eval_heldout
+::: topica.diagnostics.eval_heldout
 
 ## Estimator conformance
 
 Check any fitted model or model class against the topica estimator contract;
 returns a list of violation strings (empty means fully conformant).
 
-::: topica.check_conformance
+::: topica.diagnostics.check_conformance
 
 ## Reporting
 
 Model-neutral summaries that work on any fitted model.
 
-::: topica.plot_report
+::: topica.viz.plot_report
 
-::: topica.topic_info
+::: topica.interpret.topic_info
 
-::: topica.topics_over_time
+::: topica.effects.topics_over_time
 
-::: topica.topics_per_class
+::: topica.effects.topics_per_class
 
-::: topica.contrastive_topics
+::: topica.interpret.contrastive_topics

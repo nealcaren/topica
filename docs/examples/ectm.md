@@ -60,9 +60,9 @@ attention can depend on party and a smooth year trend. Pass the party as
 `content`, the year as `times`, and the design as `prevalence`:
 
 ```python
-party_col, pn = topica.one_hot(party)                       # indicator(Republican)
-yr_basis,  sn = topica.spline(np.asarray(year, float), df=4)
-inter,     _  = topica.interaction(party_col, yr_basis, name="party_year")
+party_col, pn = topica.design.one_hot(party)                       # indicator(Republican)
+yr_basis,  sn = topica.design.spline(np.asarray(year, float), df=4)
+inter,     _  = topica.design.interaction(party_col, yr_basis, name="party_year")
 X = np.column_stack([party_col, yr_basis, inter])
 
 topica.enable_experimental()   # ECTM is experimental and gated; opt in first
@@ -258,7 +258,7 @@ civil_rights   obs=0.052  floor=0.039  p=0.180
 The environment topic's divergence clears its floor by a wide margin (the two
 parties really do word it differently); civil rights sits in the bulk of the
 null, divergence indistinguishable from the finite-sample artifact. This is the
-content-side counterpart of `topica.permutation_test`, which does the same shuffle
+content-side counterpart of `topica.effects.permutation_test`, which does the same shuffle
 to test *prevalence* rather than wording. Use `content_placebo` to establish a
 divergence is real before reading its trajectory.
 

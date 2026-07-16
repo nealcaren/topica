@@ -31,14 +31,14 @@ def test_kept_indices_tracks_dropped_docs():
 def test_align_numpy_array():
     c = topica.Corpus.from_documents(DOCS, min_doc_freq=2)
     X = np.arange(10, 15)
-    assert topica.align(X, c).tolist() == [10, 12, 14]
+    assert topica.prep.align(X, c).tolist() == [10, 12, 14]
 
 
 def test_align_list_and_dataframe():
     c = topica.Corpus.from_documents(DOCS, min_doc_freq=2)
-    assert topica.align(list("abcde"), c) == ["a", "c", "e"]
+    assert topica.prep.align(list("abcde"), c) == ["a", "c", "e"]
     df = pd.DataFrame({"y": [0, 1, 2, 3, 4]})
-    aligned = topica.align(df, c)
+    aligned = topica.prep.align(df, c)
     assert list(aligned["y"]) == [0, 2, 4]
     assert list(aligned.index) == [0, 1, 2]  # reset
 
@@ -51,7 +51,7 @@ def test_from_dataframe_aligns_metadata():
             "party": ["D", "R", "D", "R", "D"],
         }
     )
-    c = topica.from_dataframe(df, text_col="text", min_doc_freq=2)
+    c = topica.prep.from_dataframe(df, text_col="text", min_doc_freq=2)
     assert c.num_docs == 3
     # text_col excluded by default; surviving rows only.
     assert list(c.metadata.columns) == ["year", "party"]
@@ -66,7 +66,7 @@ def test_from_dataframe_explicit_columns_and_stm_payoff():
             "party": ["D", "R", "D", "R", "D"],
         }
     )
-    c = topica.from_dataframe(df, text_col="speech", metadata_cols=["party"], min_doc_freq=2)
+    c = topica.prep.from_dataframe(df, text_col="speech", metadata_cols=["party"], min_doc_freq=2)
     assert list(c.metadata.columns) == ["party"]
     # The aligned metadata feeds an STM prevalence design with no manual hstack.
     X = c.metadata["party"].eq("D").astype(float).values.reshape(-1, 1)

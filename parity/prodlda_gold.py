@@ -137,7 +137,7 @@ def _counts_matrix(token_docs, vocab):
 
 def _coherence(topics, token_docs):
     import topica
-    return float(np.mean(topica.coherence(topics, token_docs, coherence_type="c_npmi", topn=TOP_N)))
+    return float(np.mean(topica.diagnostics.coherence(topics, token_docs, coherence_type="c_npmi", topn=TOP_N)))
 
 
 # --------------------------------------------------------------------------- #

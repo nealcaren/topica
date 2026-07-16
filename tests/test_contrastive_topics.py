@@ -1,4 +1,4 @@
-"""Tests for topica.contrastive_topics — the topic-conditional Fighting Words
+"""Tests for topica.interpret.contrastive_topics — the topic-conditional Fighting Words
 contrast that ranks which topics most separate two groups and surfaces the
 within-topic words that shift between them.
 """
@@ -46,7 +46,7 @@ class TestContrastiveTopics:
     def test_recovers_within_topic_word_split(self):
         texts, groups = _two_group_corpus()
         model = _fit(texts)
-        rows = topica.contrastive_topics(model, texts, groups, min_count=2, n_words=6)
+        rows = topica.interpret.contrastive_topics(model, texts, groups, min_count=2, n_words=6)
 
         assert len(rows) == model.num_topics
         a_flavor = {"growth", "jobs", "surge", "strength"}
@@ -64,7 +64,7 @@ class TestContrastiveTopics:
     def test_signed_z_scores(self):
         texts, groups = _two_group_corpus()
         model = _fit(texts)
-        rows = topica.contrastive_topics(model, texts, groups, min_count=2)
+        rows = topica.interpret.contrastive_topics(model, texts, groups, min_count=2)
         for r in rows:
             assert all(z > 0 for _, z in r["a_words"])
             assert all(z < 0 for _, z in r["b_words"])
@@ -72,15 +72,15 @@ class TestContrastiveTopics:
     def test_vocab_shift_positive_when_groups_diverge(self):
         texts, groups = _two_group_corpus()
         model = _fit(texts)
-        rows = topica.contrastive_topics(model, texts, groups, min_count=2)
+        rows = topica.interpret.contrastive_topics(model, texts, groups, min_count=2)
         assert all(r["vocab_shift"] > 0 for r in rows)
 
     def test_group_order_flips_sign(self):
         texts, groups = _two_group_corpus()
         model = _fit(texts)
-        ab = {r["topic"]: r for r in topica.contrastive_topics(
+        ab = {r["topic"]: r for r in topica.interpret.contrastive_topics(
             model, texts, groups, group_order=("A", "B"), min_count=2)}
-        ba = {r["topic"]: r for r in topica.contrastive_topics(
+        ba = {r["topic"]: r for r in topica.interpret.contrastive_topics(
             model, texts, groups, group_order=("B", "A"), min_count=2)}
         for t, r in ab.items():
             assert r["a_label"] == "A" and r["b_label"] == "B"
@@ -91,13 +91,13 @@ class TestContrastiveTopics:
     def test_default_order_is_sorted_labels(self):
         texts, groups = _two_group_corpus()
         model = _fit(texts)
-        rows = topica.contrastive_topics(model, texts, groups, min_count=2)
+        rows = topica.interpret.contrastive_topics(model, texts, groups, min_count=2)
         assert rows[0]["a_label"] == "A" and rows[0]["b_label"] == "B"
 
     def test_sorted_by_absolute_usage_diff(self):
         texts, groups = _two_group_corpus()
         model = _fit(texts, k=4)
-        rows = topica.contrastive_topics(model, texts, groups, min_count=2)
+        rows = topica.interpret.contrastive_topics(model, texts, groups, min_count=2)
         mags = [abs(r["usage_diff"]) for r in rows]
         assert mags == sorted(mags, reverse=True)
 
@@ -111,7 +111,7 @@ class TestContrastiveTopics:
             texts.append(list(rng.choice(["tax", "budget", "economy", "jobs"], 10)))
             groups.append("B")
         model = _fit(texts, k=2)
-        rows = topica.contrastive_topics(model, texts, groups, min_count=2)
+        rows = topica.interpret.contrastive_topics(model, texts, groups, min_count=2)
         # The most contrastive topic should have a large, non-trivial usage gap.
         assert abs(rows[0]["usage_diff"]) > 0.3
         leans = {r["leans"] for r in rows}
@@ -123,7 +123,7 @@ class TestContrastiveTopics:
         x = np.array([[1.0] if g == "A" else [0.0] for g in groups])
         model = topica.models.DMR(num_topics=2, seed=0)
         model.fit(texts, x, iters=300)
-        rows = topica.contrastive_topics(model, texts, groups, min_count=2)
+        rows = topica.interpret.contrastive_topics(model, texts, groups, min_count=2)
         assert len(rows) == 2
         assert all("a_words" in r and "b_words" in r for r in rows)
 
@@ -133,13 +133,13 @@ class TestContrastiveTopicsValidation:
         texts, groups = _two_group_corpus()
         model = _fit(texts)
         with pytest.raises(ValueError, match="documents"):
-            topica.contrastive_topics(model, texts[:-1], groups, min_count=2)
+            topica.interpret.contrastive_topics(model, texts[:-1], groups, min_count=2)
 
     def test_rejects_wrong_group_count(self):
         texts, groups = _two_group_corpus()
         model = _fit(texts)
         with pytest.raises(ValueError, match="labels"):
-            topica.contrastive_topics(model, texts, groups[:-1], min_count=2)
+            topica.interpret.contrastive_topics(model, texts, groups[:-1], min_count=2)
 
     def test_rejects_non_binary_groups(self):
         texts, groups = _two_group_corpus()
@@ -147,11 +147,11 @@ class TestContrastiveTopicsValidation:
         three = list(groups)
         three[0] = "C"
         with pytest.raises(ValueError, match="two distinct groups"):
-            topica.contrastive_topics(model, texts, three, min_count=2)
+            topica.interpret.contrastive_topics(model, texts, three, min_count=2)
 
     def test_rejects_empty_group(self):
         texts, groups = _two_group_corpus()
         model = _fit(texts)
         with pytest.raises(ValueError, match="both groups"):
-            topica.contrastive_topics(
+            topica.interpret.contrastive_topics(
                 model, texts, groups, group_order=("A", "Z"), min_count=2)

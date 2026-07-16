@@ -32,6 +32,17 @@ from .content import ContentCovariate
 from .dashboard import Dashboard, dashboard
 from .permtest import PermutationTestPlot
 
+# The matplotlib plotting helpers that used to sit at the top level now live here,
+# the single home for plotting (import topica.viz).
+from ..analysis import plot_report
+from ..validation import (
+    plot_models,
+    plot_search_k,
+    plot_topic_discovery,
+    prepare_pyldavis,
+)
+from ..frames import plot_removed
+
 
 def coherence_frontier(model, texts=None, *, n=10, coherence_type=None) -> CoherenceFrontier:
     """Per-topic coherence vs exclusivity (size = prevalence)."""
@@ -147,4 +158,10 @@ __all__ = [
     "dashboard",
     "PermutationTestPlot",
     "permutation_test_plot",
+    "plot_report",
+    "plot_models",
+    "plot_search_k",
+    "plot_topic_discovery",
+    "prepare_pyldavis",
+    "plot_removed",
 ]

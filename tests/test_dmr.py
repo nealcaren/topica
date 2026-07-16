@@ -5,7 +5,8 @@ import numpy.testing as npt
 import pytest
 
 from topica.models import DMR
-from topica import Corpus, one_hot
+from topica import Corpus
+from topica.design import one_hot
 
 
 # ---------------------------------------------------------------------------

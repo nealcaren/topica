@@ -1,4 +1,4 @@
-"""Tests for topica.predicted_prevalence.
+"""Tests for topica.effects.predicted_prevalence.
 
 Coverage:
 - STM: continuous curve and difference contrast (closes #35).
@@ -108,7 +108,7 @@ class TestLDA:
                                        at={"treat": 0.0}, nsims=10, n_sim=200, seed=0)
         assert isinstance(result, list)
         assert len(result) == 2  # two topics
-        assert all(isinstance(r, topica.PredictedPrevalence) for r in result)
+        assert all(isinstance(r, topica.effects.PredictedPrevalence) for r in result)
 
     def test_at_mode_value(self, lda_model):
         m, treat = lda_model
@@ -464,10 +464,10 @@ class TestRefactorInvariance:
 
 class TestExports:
     def test_toplevel_export(self):
-        assert hasattr(topica, "predicted_prevalence")
-        assert hasattr(topica, "PredictedPrevalence")
-        assert topica.predicted_prevalence is topica.stm.predicted_prevalence
-        assert topica.predicted_prevalence is topica.effects.predicted_prevalence
+        assert hasattr(topica.effects, "predicted_prevalence")
+        assert hasattr(topica.effects, "PredictedPrevalence")
+        assert topica.effects.predicted_prevalence is topica.stm.predicted_prevalence
+        assert topica.effects.predicted_prevalence is topica.effects.predicted_prevalence
 
     def test_stm_module_export(self):
         assert hasattr(topica.stm, "predicted_prevalence")

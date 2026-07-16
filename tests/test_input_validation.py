@@ -86,22 +86,22 @@ def model():
 
 def test_topic_diversity_rejects_non_integer_topn(model):
     with pytest.raises(ValueError):
-        topica.topic_diversity(model.topic_word, model.vocabulary)  # vocab as topn
+        topica.diagnostics.topic_diversity(model.topic_word, model.vocabulary)  # vocab as topn
 
 
 def test_coherence_rejects_raw_matrix(model):
     with pytest.raises(ValueError):
-        topica.coherence(model.topic_word, DOCS)
+        topica.diagnostics.coherence(model.topic_word, DOCS)
 
 
 def test_coherence_rejects_empty_texts(model):
     with pytest.raises(ValueError):
-        topica.coherence(model, [])
+        topica.diagnostics.coherence(model, [])
 
 
 def test_diagnostics_on_model_still_work(model):
-    assert 0.0 < topica.topic_diversity(model) <= 1.0
-    assert topica.coherence(model, DOCS).shape == (2,)
+    assert 0.0 < topica.diagnostics.topic_diversity(model) <= 1.0
+    assert topica.diagnostics.coherence(model, DOCS).shape == (2,)
 
 
 # --- 5. frex weight range --------------------------------------------------
@@ -109,11 +109,11 @@ def test_diagnostics_on_model_still_work(model):
 @pytest.mark.parametrize("w", [-1.0, 2.0, -0.01, 1.01, NAN])
 def test_frex_rejects_bad_weight(model, w):
     with pytest.raises(ValueError):
-        topica.frex(model, w=w)
+        topica.interpret.frex(model, w=w)
 
 
 def test_frex_valid_weight_works(model):
-    out = topica.frex(model, w=0.5)
+    out = topica.interpret.frex(model, w=0.5)
     assert len(out) == 2 and isinstance(out[0][0][0], str)
 
 

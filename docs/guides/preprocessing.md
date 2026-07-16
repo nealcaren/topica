@@ -19,8 +19,8 @@ you need it.
 
 ### Stopword lists (58 languages)
 
-`topica.ENGLISH_STOPWORDS` is a short, stable English default. For other
-languages — or a fuller English list — `topica.stopwords(lang)` serves the
+`topica.prep.ENGLISH_STOPWORDS` is a short, stable English default. For other
+languages — or a fuller English list — `topica.prep.stopwords(lang)` serves the
 [stopwords-iso](https://github.com/stopwords-iso/stopwords-iso) lists (58
 languages, MIT licensed, bundled in the wheel). Accepts an ISO 639-1 code or an
 English name:
@@ -28,10 +28,10 @@ English name:
 ```python
 import topica
 
-fr = topica.stopwords("fr")            # or "french"; case-insensitive
-corpus = topica.from_dataframe(df, text_col="texte", stopwords=fr)
+fr = topica.prep.stopwords("fr")            # or "french"; case-insensitive
+corpus = topica.prep.from_dataframe(df, text_col="texte", stopwords=fr)
 
-topica.stopword_languages()            # ['af', 'ar', 'bg', ..., 'zh']
+topica.prep.stopword_languages()            # ['af', 'ar', 'bg', ..., 'zh']
 ```
 
 Unknown languages raise with the list of available codes. For the cross-lingual
@@ -53,9 +53,9 @@ from nltk.stem import WordNetLemmatizer   # pip install nltk; nltk.download("wor
 _lemm = WordNetLemmatizer()
 def lemmatize(text):
     return [_lemm.lemmatize(w)
-            for w in topica.tokenize(text, stopwords=topica.ENGLISH_STOPWORDS, min_length=3)]
+            for w in topica.tokenize(text, stopwords=topica.prep.ENGLISH_STOPWORDS, min_length=3)]
 
-corpus = topica.from_dataframe(df, text_col="text", tokenizer=lemmatize)
+corpus = topica.prep.from_dataframe(df, text_col="text", tokenizer=lemmatize)
 # top words now read "military", "economy" — not "militari", "economi"
 ```
 
@@ -88,8 +88,8 @@ tokens before modeling:
 
 ```python
 import topica
-phrases = topica.learn_phrases(docs, min_count=8, threshold=12.0)
-docs = topica.apply_phrases(docs, phrases)            # "health care" -> "health_care"
+phrases = topica.prep.learn_phrases(docs, min_count=8, threshold=12.0)
+docs = topica.prep.apply_phrases(docs, phrases)            # "health care" -> "health_care"
 ```
 
 ## Split long documents
@@ -98,7 +98,7 @@ Long, heterogeneous documents violate the bag-of-words assumption. Segment them
 into comparable chunks, copying each source's metadata onto every chunk:
 
 ```python
-chunks, chunk_meta = topica.split_documents(
+chunks, chunk_meta = topica.prep.split_documents(
     texts, metadata, max_words=200, min_words=50,
 )
 # chunk_meta[j] = the source row + {"parent": i, "chunk": j}

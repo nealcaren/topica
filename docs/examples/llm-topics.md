@@ -38,7 +38,7 @@ the matrix to disk so re-running the script reloads it instead of re-embedding
 (embeddings are the costly step).
 
 ```python
-doc_emb = topica.llm_embed(
+doc_emb = topica.embed.llm_embed(
     texts, model="sentence-transformers/all-MiniLM-L6-v2", cache="crisis_emb.npz"
 )
 doc_emb.shape          # (704, 384)
@@ -78,13 +78,13 @@ stable, and `set_labels=True` stores them so they flow into `topic_info` and the
 report.
 
 ```python
-backend = topica.llm_backend("gpt-4o-mini", temperature=0)
-labels = topica.llm_topic_labels(model, texts, backend=backend, set_labels=True)
+backend = topica.interpret.llm_backend("gpt-4o-mini", temperature=0)
+labels = topica.interpret.llm_topic_labels(model, texts, backend=backend, set_labels=True)
 
 for t, label in enumerate(labels):
     print(t, label)
 
-topica.topic_label_prompts(model, texts)[1]   # inspect exactly what the model saw
+topica.interpret.topic_label_prompts(model, texts)[1]   # inspect exactly what the model saw
 ```
 
 ```
@@ -111,7 +111,7 @@ replace the default labels everywhere, including the report below.
 ## 5. Report
 
 ```python
-fig = topica.plot_report(model, texts=docs, timestamps=decade, n=6,
+fig = topica.viz.plot_report(model, texts=docs, timestamps=decade, n=6,
                          title="FASTopic on W.E.B. Du Bois's Crisis essays")
 fig.savefig("crisis_report.png", dpi=200)
 ```

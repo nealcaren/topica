@@ -144,9 +144,9 @@ def test_coherence_runs():
 def test_composes_with_analysis_surface():
     # coherence() module function and find_thoughts read the standard surface.
     model, _ = _fit()
-    c = topica.coherence(model, DOCS, coherence_type="u_mass", topn=5)
+    c = topica.diagnostics.coherence(model, DOCS, coherence_type="u_mass", topn=5)
     assert np.asarray(c).shape == (3,)
-    thoughts = topica.find_thoughts(model.doc_topic, DOCS, topic=0, n=1)
+    thoughts = topica.interpret.find_thoughts(model.doc_topic, DOCS, topic=0, n=1)
     assert len(thoughts) >= 1
 
 
@@ -238,7 +238,7 @@ def test_declines_raise(method):
 
 def test_model_family_is_none():
     model, _ = _fit()
-    assert topica.model_family(model) == "none"
+    assert topica.effects.model_family(model) == "none"
 
 
 # ---------------------------------------------------------------------------

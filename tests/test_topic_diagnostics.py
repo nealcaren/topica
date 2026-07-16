@@ -44,7 +44,7 @@ def _paired_topics():
 class TestTopicDendrogram:
     def test_cut_recovers_paired_structure(self):
         pytest.importorskip("scipy")
-        dnd = topica.topic_dendrogram(_paired_topics(), metric="js")
+        dnd = topica.interpret.topic_dendrogram(_paired_topics(), metric="js")
         labels = dnd.cut(3)
         # Each designed pair shares a label; the three pairs are distinct.
         assert labels[0] == labels[1]
@@ -54,7 +54,7 @@ class TestTopicDendrogram:
 
     def test_merge_candidates_flags_near_duplicates(self):
         pytest.importorskip("scipy")
-        dnd = topica.topic_dendrogram(_paired_topics(), metric="js")
+        dnd = topica.interpret.topic_dendrogram(_paired_topics(), metric="js")
         pairs = {(i, j) for i, j, _ in dnd.merge_candidates()}
         assert {(0, 1), (2, 3), (4, 5)} <= pairs
         # No cross-block pair should be flagged as a near-duplicate.
@@ -62,7 +62,7 @@ class TestTopicDendrogram:
 
     def test_groups_returns_members_and_words(self):
         pytest.importorskip("scipy")
-        dnd = topica.topic_dendrogram(_paired_topics(), metric="js")
+        dnd = topica.interpret.topic_dendrogram(_paired_topics(), metric="js")
         groups = dnd.groups(3, n=3)
         assert len(groups) == 3
         all_members = sorted(m for members, _ in groups.values() for m in members)
@@ -75,14 +75,14 @@ class TestTopicDendrogram:
         model = _paired_topics()
         model.doc_topic = np.eye(6)[np.repeat(np.arange(6), 4)]  # for doctopic
         for metric in ("js", "hellinger", "cosine", "doctopic"):
-            dnd = topica.topic_dendrogram(model, metric=metric)
+            dnd = topica.interpret.topic_dendrogram(model, metric=metric)
             assert dnd.linkage.shape == (5, 4)
             assert dnd.distances.shape == (6, 6)
 
     def test_bad_metric_raises(self):
         pytest.importorskip("scipy")
         with pytest.raises(ValueError, match="metric must be"):
-            topica.topic_dendrogram(_paired_topics(), metric="nope")
+            topica.interpret.topic_dendrogram(_paired_topics(), metric="nope")
 
 
 def _two_block_corpus(seed=0, soup=False):
@@ -109,7 +109,7 @@ class TestFlagTopics:
         docs = _two_block_corpus()
         m = topica.models.LDA(num_topics=6, seed=0)
         m.fit(docs, iters=200)
-        rows = topica.flag_topics(m, docs)
+        rows = topica.diagnostics.flag_topics(m, docs)
         assert len(rows) == 6
         keys = {"topic", "coherence", "exclusivity", "beta_entropy", "prevalence",
                 "stopword_frac", "junk", "reasons", "top_words"}
@@ -119,7 +119,7 @@ class TestFlagTopics:
         soup = _two_block_corpus(soup=True)
         m = topica.models.LDA(num_topics=8, seed=0)
         m.fit(soup, iters=200)
-        rows = topica.flag_topics(m, soup)
+        rows = topica.diagnostics.flag_topics(m, soup)
         soupy = [r for r in rows if "stopword-soup" in r["reasons"]]
         assert soupy, "expected at least one stopword-soup topic on an uncleaned corpus"
 
@@ -127,7 +127,7 @@ class TestFlagTopics:
         clean = _two_block_corpus(soup=False)
         m = topica.models.LDA(num_topics=6, seed=0)
         m.fit(clean, iters=200)
-        rows = topica.flag_topics(m, clean)
+        rows = topica.diagnostics.flag_topics(m, clean)
         assert not any("stopword-soup" in r["reasons"] for r in rows)
 
 
@@ -148,7 +148,7 @@ class TestDocumentResiduals:
 
     def test_injected_offtopic_docs_rank_at_top(self):
         m, docs, inject_idx = self._model_with_injections(n_inject=12)
-        res = topica.document_residuals(m, docs)
+        res = topica.diagnostics.document_residuals(m, docs)
         k = len(inject_idx)
         top_k = {r["doc"] for r in res[:k]}
         precision = len(top_k & inject_idx) / k
@@ -164,16 +164,16 @@ class TestDocumentResiduals:
         clean = [list(rng.choice(on, 14)) for _ in range(120)]
         m = topica.models.LDA(num_topics=6, seed=0)
         m.fit(clean, iters=200)
-        base = {r["doc"]: r for r in topica.document_residuals(m, clean)}
+        base = {r["doc"]: r for r in topica.diagnostics.document_residuals(m, clean)}
         with_oov = [d + ["zzqq1", "zzqq2", "zzqq3"] for d in clean]
-        scored = {r["doc"]: r for r in topica.document_residuals(m, with_oov)}
+        scored = {r["doc"]: r for r in topica.diagnostics.document_residuals(m, with_oov)}
         assert all(scored[d]["oov"] > 0 for d in range(len(clean)))
         assert (np.mean([scored[d]["novelty"] for d in range(len(clean))])
                 > np.mean([base[d]["novelty"] for d in range(len(clean))]))
 
     def test_sorted_descending_and_fields(self):
         m, docs, _ = self._model_with_injections()
-        res = topica.document_residuals(m, docs)
+        res = topica.diagnostics.document_residuals(m, docs)
         nov = [r["novelty"] for r in res]
         assert nov == sorted(nov, reverse=True)
         keys = {"doc", "novelty", "cross_entropy", "kl", "cosine_dist",
@@ -183,4 +183,4 @@ class TestDocumentResiduals:
     def test_rejects_misaligned_docs(self):
         m, docs, _ = self._model_with_injections()
         with pytest.raises(ValueError, match="doc_topic has"):
-            topica.document_residuals(m, docs[:-3])
+            topica.diagnostics.document_residuals(m, docs[:-3])

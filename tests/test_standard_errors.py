@@ -34,9 +34,9 @@ def test_corpus_doc_lengths_aligns_with_doc_topic():
 
 def test_model_family_detection():
     m, _, _ = _planted()
-    assert topica.model_family(m) == "dirichlet"
-    assert topica.model_family(topica.models.STM(2)) == "logistic_normal"
-    assert topica.model_family(topica.models.BERTopic(min_cluster_size=5)) == "none"
+    assert topica.effects.model_family(m) == "dirichlet"
+    assert topica.effects.model_family(topica.models.STM(2)) == "logistic_normal"
+    assert topica.effects.model_family(topica.models.BERTopic(min_cluster_size=5)) == "none"
 
 
 # Issue #21: model_family must classify the *whole* registry, not just the
@@ -74,7 +74,7 @@ _FAMILY_REGISTRY = [
 @pytest.mark.parametrize("name, make, expected", _FAMILY_REGISTRY,
                          ids=[r[0] for r in _FAMILY_REGISTRY])
 def test_model_family_registry(name, make, expected):
-    assert topica.model_family(make()) == expected
+    assert topica.effects.model_family(make()) == expected
 
 
 def _fit_for_composition():
@@ -120,7 +120,7 @@ def test_composition_theta_runs_for_every_dirichlet_model():
     corpus, models = _fit_for_composition()
     n = len(corpus.doc_lengths)
     for name, model in models.items():
-        assert topica.model_family(model) == "dirichlet", name
+        assert topica.effects.model_family(model) == "dirichlet", name
         k = np.asarray(model.doc_topic).shape[1]
         # HDP's `alpha` is the DP concentration scalar by design; every other
         # Dirichlet model exposes a per-topic prior aligned with doc_topic.
@@ -142,8 +142,8 @@ def test_composition_effect_inflates_over_ols():
     m = topica.models.LDA(2, seed=1)
     m.fit(corpus, iters=250, keep_theta_draws=False)
     X = x[:, None]
-    ols = topica.estimate_effect(m.doc_topic, X, feature_names=["x"])
-    moc = topica.standard_errors(m, corpus, of="effect", X=X, feature_names=["x"], nsims=30)
+    ols = topica.effects.estimate_effect(m.doc_topic, X, feature_names=["x"])
+    moc = topica.effects.standard_errors(m, corpus, of="effect", X=X, feature_names=["x"], nsims=30)
     # K=2: the two topics' slopes are exact negatives; composition SEs are >= OLS.
     assert np.sign(moc[0].coef[1]) == -np.sign(moc[1].coef[1])
     for t in range(2):
@@ -156,24 +156,24 @@ def test_composition_self_sufficient_for_gibbs_and_rejects_embedding():
     _, corpus, _ = _planted()
     m = topica.models.LDA(2, seed=1)
     m.fit(corpus, iters=250, keep_theta_draws=False)
-    prev = topica.standard_errors(m, of="prevalence", nsims=10)  # no corpus needed
+    prev = topica.effects.standard_errors(m, of="prevalence", nsims=10)  # no corpus needed
     assert len(prev) == 2
 
     # HDP now retains doc_lengths, so it is also self-sufficient (phase 5).
     hdp = topica.models.HDP(seed=1)
     hdp.fit(corpus, iters=120)
-    prev_hdp = topica.standard_errors(hdp, of="prevalence", nsims=5)
+    prev_hdp = topica.effects.standard_errors(hdp, of="prevalence", nsims=5)
     assert len(prev_hdp) == hdp.num_topics
 
     bert = topica.models.BERTopic(min_cluster_size=5)
     with pytest.raises(ValueError, match="bootstrap"):
-        topica.standard_errors(bert, corpus, of="prevalence", method="composition", nsims=10)
+        topica.effects.standard_errors(bert, corpus, of="prevalence", method="composition", nsims=10)
 
 
 def test_composition_top_words_is_rejected():
     m, corpus, _ = _planted()
     with pytest.raises(ValueError, match="bootstrap"):
-        topica.standard_errors(m, corpus, of="top_words", method="composition")
+        topica.effects.standard_errors(m, corpus, of="top_words", method="composition")
 
 
 def test_topic_correlation_ci_well_shaped_and_coherent():
@@ -183,7 +183,7 @@ def test_topic_correlation_ci_well_shaped_and_coherent():
     _, corpus, _ = _planted()
     m = topica.models.CTM(num_topics=3, seed=1)
     m.fit(corpus, iters=40)
-    res = topica.topic_correlation_ci(m, nsims=150, ci=0.9, seed=0)
+    res = topica.effects.topic_correlation_ci(m, nsims=150, ci=0.9, seed=0)
     K = m.num_topics
     for arr in (res.estimate, res.se, res.ci_low, res.ci_high):
         assert arr.shape == (K, K)
@@ -194,7 +194,7 @@ def test_topic_correlation_ci_well_shaped_and_coherent():
     assert np.all(res.ci_low <= res.ci_high + 1e-9)
     assert np.all(np.isfinite(res.se))
     # Wider interval mass gives a wider band.
-    narrow = topica.topic_correlation_ci(m, nsims=150, ci=0.5, seed=0)
+    narrow = topica.effects.topic_correlation_ci(m, nsims=150, ci=0.5, seed=0)
     span90 = float(np.sum(res.ci_high - res.ci_low))
     span50 = float(np.sum(narrow.ci_high - narrow.ci_low))
     assert span90 > span50
@@ -205,13 +205,13 @@ def test_topic_correlation_ci_rejects_non_logistic_normal():
     m = topica.models.LDA(2, seed=1)
     m.fit(corpus, iters=50)
     with pytest.raises(TypeError, match="logistic-normal"):
-        topica.topic_correlation_ci(m)
+        topica.effects.topic_correlation_ci(m)
 
 
 def test_bootstrap_prevalence_matches_composition_on_clean_data():
     m, corpus, _ = _planted()
-    comp = topica.standard_errors(m, corpus, of="prevalence", nsims=40)
-    boot = topica.standard_errors(m, corpus, of="prevalence", method="bootstrap",
+    comp = topica.effects.standard_errors(m, corpus, of="prevalence", nsims=40)
+    boot = topica.effects.standard_errors(m, corpus, of="prevalence", method="bootstrap",
                                   n_boot=40, topn=5, iters=150, seed=0)
     for t in range(2):
         assert boot[t].reliable
@@ -222,7 +222,7 @@ def test_bootstrap_prevalence_matches_composition_on_clean_data():
 
 def test_bootstrap_top_words_inclusion_probs():
     m, corpus, _ = _planted()
-    res = topica.standard_errors(m, corpus, of="top_words", method="bootstrap",
+    res = topica.effects.standard_errors(m, corpus, of="top_words", method="bootstrap",
                                  n_boot=30, topn=5, iters=150, seed=0)
     assert len(res) == 2
     for r in res:
@@ -239,7 +239,7 @@ def test_alignment_margin_flags_indistinct_topics():
     # set identical: the Jaccard looks perfect but the match is arbitrary. The
     # margin diagnostic must catch this and suppress the SE.
     m, corpus, _ = _planted()
-    res = topica.standard_errors(m, corpus, of="prevalence", method="bootstrap",
+    res = topica.effects.standard_errors(m, corpus, of="prevalence", method="bootstrap",
                                  n_boot=20, topn=20, iters=150, seed=0)
     for r in res:
         assert r.alignment_margin < 0.1
@@ -258,6 +258,6 @@ def test_bootstrap_via_refit_hook():
         mm.fit([docs[i] for i in picks], iters=150)
         return mm
 
-    res = topica.standard_errors(m, corpus, of="prevalence", method="bootstrap",
+    res = topica.effects.standard_errors(m, corpus, of="prevalence", method="bootstrap",
                                  n_boot=20, topn=5, refit=refit, seed=0)
     assert len(res) == 2 and all(r.reliable for r in res)

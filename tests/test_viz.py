@@ -75,7 +75,7 @@ def test_every_panel_frames_and_renders(covariate_lda):
     m, corpus, x, texts = covariate_lda
     panels = [
         viz.coherence_frontier(m, texts),
-        viz.search_k(topica.search_k(
+        viz.search_k(topica.select.search_k(
             [t.split() for t in texts], [2, 3], iters=80, num_samples=1)),
         viz.effect_plot(m, corpus, X=x[:, None], feature_names=["x"], nsims=15),
         viz.term_barchart(m, topic=0, mode="frex", n=6),

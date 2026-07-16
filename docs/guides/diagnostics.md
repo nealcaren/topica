@@ -2,7 +2,7 @@
 
 All of these are **model-agnostic**: they take any fitted model's `topic_word` /
 `doc_topic`, so they work the same across LDA, STM, HDP, and the rest. They're
-exported at the top level (`topica.<name>`) and in `topica.diagnostics`. For how
+exported at the top level (`topica.<name>`) and in `topica.diagnostics.diagnostics`. For how
 to *use* them to make an analysis publishable, see
 [Validate the topics](../publishing/validation.md).
 
@@ -12,12 +12,12 @@ to *use* them to make an analysis publishable, see
 import topica
 
 model.coherence(10)                                   # per-topic UMass (built in)
-topica.coherence(model, texts, coherence_type="c_v")      # windowed, human-aligned
-topica.exclusivity(model, n=10)                           # per topic
-topica.topic_diversity(model, topn=25)                    # fraction of unique top words
-topica.topic_semantic_diversity(model, topn=25)           # fraction of unique top-word *pairs*
+topica.diagnostics.coherence(model, texts, coherence_type="c_v")      # windowed, human-aligned
+topica.diagnostics.exclusivity(model, n=10)                           # per topic
+topica.diagnostics.topic_diversity(model, topn=25)                    # fraction of unique top words
+topica.diagnostics.topic_semantic_diversity(model, topn=25)           # fraction of unique top-word *pairs*
 
-qf = topica.quality_frontier(model, n=10)                 # coherence, exclusivity, prevalence
+qf = topica.diagnostics.quality_frontier(model, n=10)                 # coherence, exclusivity, prevalence
 # qf["coherence"], qf["exclusivity"] -> the canonical STM quality scatter
 ```
 
@@ -28,7 +28,7 @@ yet co-locate the same word pairs, and a pair pins down word sense without any
 embeddings. Both range over `[0, 1]`, and higher means more diverse.
 
 !!! tip "Coherence is fast, even at large K"
-    `topica.coherence` runs its co-occurrence counting in the Rust core, scoring only
+    `topica.diagnostics.coherence` runs its co-occurrence counting in the Rust core, scoring only
     the word pairs that actually occur within a topic's top-N rather than a full
     vocabulary×vocabulary matrix. `c_v` on a 500-topic model that took minutes in
     a pure-Python loop now takes a fraction of a second. Two habits still help on
@@ -41,12 +41,12 @@ embeddings. Both range over `[0, 1]`, and higher means more diverse.
 ## Labeling and interpretation
 
 ```python
-topica.label_topics(model.topic_word, model.vocabulary, n=10)   # prob / frex / lift / score
-topica.label_topics(model.topic_word, corpus=corpus, n=10)     # stm-faithful: lift + FREX James-Stein shrinkage from corpus word counts
-topica.frex(model.topic_word, model.vocabulary, n=10)           # frequent + exclusive
-topica.relevance(model.topic_word, model.vocabulary, lam=0.6)   # LDAvis relevance
-topica.find_thoughts(model.doc_topic, texts, topic=0, n=3)      # representative docs
-topica.find_thoughts_html(model, texts, n_docs=3)               # highlighted close-reading
+topica.interpret.label_topics(model.topic_word, model.vocabulary, n=10)   # prob / frex / lift / score
+topica.interpret.label_topics(model.topic_word, corpus=corpus, n=10)     # stm-faithful: lift + FREX James-Stein shrinkage from corpus word counts
+topica.interpret.frex(model.topic_word, model.vocabulary, n=10)           # frequent + exclusive
+topica.interpret.relevance(model.topic_word, model.vocabulary, lam=0.6)   # LDAvis relevance
+topica.interpret.find_thoughts(model.doc_topic, texts, topic=0, n=3)      # representative docs
+topica.interpret.find_thoughts_html(model, texts, n_docs=3)               # highlighted close-reading
 ```
 
 For readable labels, `llm_topic_labels` asks an LLM to name each topic from its
@@ -58,13 +58,13 @@ local models via plugins.
 
 ```python
 # Bring your own callable (no extra dependency):
-labels = topica.llm_topic_labels(model, texts, backend=my_model_fn, set_labels=True)
+labels = topica.interpret.llm_topic_labels(model, texts, backend=my_model_fn, set_labels=True)
 
 # Or name a model via the `llm` adapter (pip install "topica[llm]"):
-backend = topica.llm_backend("gpt-4o-mini", temperature=0)   # pin for stability
-labels = topica.llm_topic_labels(model, texts, backend=backend, set_labels=True)
+backend = topica.interpret.llm_backend("gpt-4o-mini", temperature=0)   # pin for stability
+labels = topica.interpret.llm_topic_labels(model, texts, backend=backend, set_labels=True)
 
-topica.topic_label_prompts(model, texts)[0]   # inspect exactly what the model sees
+topica.interpret.topic_label_prompts(model, texts)[0]   # inspect exactly what the model sees
 ```
 
 `set_labels=True` flows the labels into `topic_info` and `plot_report`. LLM labels
@@ -74,8 +74,8 @@ and keep `label_topics` (FREX / probability / lift) as the defensible descriptor
 ## Human validation: intrusion tests
 
 ```python
-topica.word_intrusion(model, n_words=5, seed=0)           # top words + an intruder
-topica.document_intrusion(model, texts=texts, n_docs=3)   # top docs + an intruder
+topica.diagnostics.word_intrusion(model, n_words=5, seed=0)           # top words + an intruder
+topica.diagnostics.document_intrusion(model, texts=texts, n_docs=3)   # top docs + an intruder
 ```
 
 ## LLM-based evaluation
@@ -162,16 +162,16 @@ of these numbers.
 ## Stability and model selection
 
 ```python
-topica.search_k(docs, ks=[10, 20, 30], held_out=test)     # coherence/exclusivity/perplexity per K
-topica.bootstrap_stability(docs, k=20, n_boot=50)         # per-topic stability under resampling
-topica.align_topics(model_a, model_b)                     # one-to-one match across fits
-topica.topic_stability([model_a, model_b], topn=10)       # cross-fit term overlap
-topica.check_residuals(model, docs)                       # Taddy dispersion: is K too small?
+topica.select.search_k(docs, ks=[10, 20, 30], held_out=test)     # coherence/exclusivity/perplexity per K
+topica.diagnostics.bootstrap_stability(docs, k=20, n_boot=50)         # per-topic stability under resampling
+topica.diagnostics.align_topics(model_a, model_b)                     # one-to-one match across fits
+topica.diagnostics.topic_stability([model_a, model_b], topn=10)       # cross-fit term overlap
+topica.diagnostics.check_residuals(model, docs)                       # Taddy dispersion: is K too small?
 ```
 
 ### Topic alignment
 
-To compare topics across different runs, seeds, or even architectures, `topica.align_topics(model_a, model_b)` performs Kuhn-Munkres (Hungarian) matching to align topics one-to-one. It returns a custom `AlignmentResult` object containing matched tuples of `(topic_a, topic_b, distance)`.
+To compare topics across different runs, seeds, or even architectures, `topica.diagnostics.align_topics(model_a, model_b)` performs Kuhn-Munkres (Hungarian) matching to align topics one-to-one. It returns a custom `AlignmentResult` object containing matched tuples of `(topic_a, topic_b, distance)`.
 
 It supports several distance metrics:
 - `metric="cosine"` (default): Cosine distance.
@@ -183,7 +183,7 @@ If the models have different vocabularies, `align_topics` automatically intersec
 
 You can inspect relationship classifications (e.g. splits, merges, and unaligned topics) based on a similarity threshold:
 ```python
-result = topica.align_topics(model_a, model_b, metric="cosine", threshold=0.3)
+result = topica.diagnostics.align_topics(model_a, model_b, metric="cosine", threshold=0.3)
 
 result.matches     # clean 1-to-1 matches
 result.splits      # topic in A splitting to multiple in B
@@ -199,18 +199,18 @@ Three post-hoc, no-refit diagnostics that read a fitted model's `topic_word` and
 
 ```python
 # Is K=20 really a few super-themes, and are any topics near-duplicates?
-dnd = topica.topic_dendrogram(model, metric="js")     # needs scipy
+dnd = topica.interpret.topic_dendrogram(model, metric="js")     # needs scipy
 dnd.cut(6)                                             # group label per topic at 6 super-topics
 dnd.groups(6, n=10)                                    # {group: (member topics, merged top words)}
 dnd.merge_candidates()                                 # near-duplicate pairs (relative threshold)
 dnd.linkage                                            # SciPy linkage matrix for plotting
 
 # Are these topics real, or did I forget to clean my corpus?
-rows = topica.flag_topics(model, docs)                 # per-topic quality + a junk flag
+rows = topica.diagnostics.flag_topics(model, docs)                 # per-topic quality + a junk flag
 junk = [r for r in rows if r["junk"]]                  # reasons: stopword-soup / dead-tiny / incoherent+flat
 
 # Which documents does the model fail to explain?
-res = topica.document_residuals(model, docs)           # per-doc novelty, most anomalous first
+res = topica.diagnostics.document_residuals(model, docs)           # per-doc novelty, most anomalous first
 res[:10]                                               # off-topic, repetitive, or anomalous docs
 ```
 
@@ -249,13 +249,13 @@ it carries `topic_word`, `doc_topic`, and `vocabulary`, so it flows straight int
 on is marked rather than trusted.
 
 ```python
-runs = topica.select_model(docs, K=20, runs=10)   # ten initializations
-cons = topica.ensemble(runs)                       # combine them
+runs = topica.select.select_model(docs, K=20, runs=10)   # ten initializations
+cons = topica.ensemble.ensemble(runs)                       # combine them
 
 cons.topic_word.shape       # (20, V)
 cons.stability              # per-topic agreement across runs, in [0, 1]
 cons.reliable               # per-topic: consistent AND well-supported?
-topica.coherence(cons, docs)
+topica.diagnostics.coherence(cons, docs)
 ```
 
 Three methods are available:
@@ -275,13 +275,13 @@ Three methods are available:
   against gensim to floating-point precision.
 
 ```python
-topica.ensemble(runs, method="align")                  # reference matching
-topica.ensemble(runs, method="stable", eps=0.1)        # discover stable topics
+topica.ensemble.ensemble(runs, method="align")                  # reference matching
+topica.ensemble.ensemble(runs, method="stable", eps=0.1)        # discover stable topics
 ```
 
 ### Cross-model consensus ensembling
 
-While `topica.ensemble` is designed to combine independent runs (from different seeds) of the same model class, you can use `topica.cross_ensemble` to combine and align topics across entirely different architectures (e.g. combining LDA, STM, and BERTopic).
+While `topica.ensemble.ensemble` is designed to combine independent runs (from different seeds) of the same model class, you can use `topica.ensemble.cross_ensemble` to combine and align topics across entirely different architectures (e.g. combining LDA, STM, and BERTopic).
 
 This is particularly valuable for proving that your target topics are robust, persisting regardless of whether they are recovered by a Gibbs sampler, variational EM, or neural clustering.
 
@@ -289,7 +289,7 @@ If the models have different vocabularies (due to different preprocessing option
 
 ```python
 # Combine different architectures fit on the same corpus
-cons = topica.cross_ensemble([lda_model, stm_model, bertopic_model])
+cons = topica.ensemble.cross_ensemble([lda_model, stm_model, bertopic_model])
 ```
 
 ## Convergence
@@ -359,7 +359,7 @@ log-likelihood history and the thinned `theta_draws`.
 model = topica.models.LDA(num_topics=20, seed=1)
 model.fit(docs, iters=2000, num_theta_draws=200)   # more retained draws -> finer ESS
 
-d = topica.mcmc_diagnostics(model)
+d = topica.diagnostics.mcmc_diagnostics(model)
 print(d.summary())
 # MCMC diagnostics for LDA (inference=gibbs)
 #   retained draws          : 200
@@ -377,8 +377,8 @@ or thin further. The `theta_draws` are already thinned, so raise
 `num_theta_draws` on `fit` for a finer estimate.
 
 The underlying estimators are also exposed directly for any trace you hold —
-`topica.autocorrelation`, `topica.integrated_autocorr_time` (Geyer's
-initial-positive-sequence `tau`), and `topica.effective_sample_size` (`N / tau`,
+`topica.diagnostics.autocorrelation`, `topica.diagnostics.integrated_autocorr_time` (Geyer's
+initial-positive-sequence `tau`), and `topica.diagnostics.effective_sample_size` (`N / tau`,
 for one chain or columnwise over a `(draws, params)` matrix).
 
 Multi-chain R-hat (Gelman-Rubin), which needs several seeds run and compared, is
@@ -390,6 +390,6 @@ if you point it at one.
 ## Visualization
 
 ```python
-viz = topica.prepare_pyldavis(model, docs)                # pyLDAvis PreparedData if installed
-qf, fig = topica.quality_frontier(model, plot=True)       # matplotlib scatter if installed
+viz = topica.viz.prepare_pyldavis(model, docs)                # pyLDAvis PreparedData if installed
+qf, fig = topica.diagnostics.quality_frontier(model, plot=True)       # matplotlib scatter if installed
 ```

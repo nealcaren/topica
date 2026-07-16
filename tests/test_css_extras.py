@@ -22,7 +22,7 @@ class TestFightingWords:
 
     def test_distinguishes_groups(self):
         a, b = self._corpora()
-        scored = topica.fighting_words(a, b, prior=0.05)
+        scored = topica.interpret.fighting_words(a, b, prior=0.05)
         words = [w for w, _ in scored]
         assert words[0] in {"tax", "cut", "growth", "jobs", "market"}     # top -> A
         assert words[-1] in {"climate", "carbon", "green", "planet", "energy"}  # bottom -> B
@@ -33,21 +33,21 @@ class TestFightingWords:
     def test_shared_words_are_neutral(self):
         a = [["tax", "the", "of"]] * 40
         b = [["green", "the", "of"]] * 40
-        d = dict(topica.fighting_words(a, b, prior=0.05))
+        d = dict(topica.interpret.fighting_words(a, b, prior=0.05))
         assert abs(d["the"]) < abs(d["tax"])     # shared word near zero
 
     def test_top_helper_and_informative(self):
         a, b = self._corpora()
-        top = topica.top_fighting_words(a, b, n=3)
+        top = topica.interpret.top_fighting_words(a, b, n=3)
         assert set(top) == {"a", "b"} and len(top["a"]) == 3
         # Informative prior runs and returns the full vocabulary.
-        scored = topica.fighting_words(a, b, informative=True)
+        scored = topica.interpret.fighting_words(a, b, informative=True)
         assert len(scored) == 10
 
     def test_min_count_filter(self):
         a = [["common", "common", "rare_a"]]
         b = [["common", "common", "rare_b"]]
-        words = [w for w, _ in topica.fighting_words(a, b, min_count=2)]
+        words = [w for w, _ in topica.interpret.fighting_words(a, b, min_count=2)]
         assert words == ["common"]
 
 
@@ -58,7 +58,7 @@ class TestFightingWords:
 class TestSplitDocuments:
     def test_propagates_metadata(self):
         long = "word " * 500
-        chunks, meta = topica.split_documents([long.strip()], [{"year": 1920, "id": "a"}],
+        chunks, meta = topica.prep.split_documents([long.strip()], [{"year": 1920, "id": "a"}],
                                           max_words=100, min_words=20)
         assert len(chunks) == len(meta) > 1
         for j, row in enumerate(meta):
@@ -67,23 +67,23 @@ class TestSplitDocuments:
 
     def test_token_input_returns_tokens(self):
         doc = ["w"] * 250
-        chunks, meta = topica.split_documents([doc], max_words=100, min_words=20)
+        chunks, meta = topica.prep.split_documents([doc], max_words=100, min_words=20)
         assert all(isinstance(c, list) for c in chunks)
         assert sum(len(c) for c in chunks) == 250          # no text lost
 
     def test_short_doc_one_chunk(self):
-        chunks, meta = topica.split_documents(["just a short sentence."], max_words=100)
+        chunks, meta = topica.prep.split_documents(["just a short sentence."], max_words=100)
         assert len(chunks) == 1 and meta[0]["chunk"] == 0
 
     def test_runt_tail_merged(self):
         # 230 words, max 100 -> would be 100/100/30; the 30 merges into the prior.
-        chunks, _ = topica.split_documents([("w " * 230).strip()], max_words=100,
+        chunks, _ = topica.prep.split_documents([("w " * 230).strip()], max_words=100,
                                        min_words=50, sentence_aware=False)
         assert all(len(c.split()) >= 50 for c in chunks)
 
     def test_metadata_length_mismatch(self):
         with pytest.raises(ValueError):
-            topica.split_documents(["a", "b"], [{"x": 1}])
+            topica.prep.split_documents(["a", "b"], [{"x": 1}])
 
 
 # ---------------------------------------------------------------------------
@@ -102,25 +102,25 @@ class TestFindThoughtsHtml:
     def test_html_highlights_keywords(self, two_topic):
         m, docs = two_topic
         texts = [" ".join(d) for d in docs]
-        html = topica.find_thoughts_html(m, texts, n_docs=2, n_words=4)
+        html = topica.interpret.find_thoughts_html(m, texts, n_docs=2, n_words=4)
         assert "<mark>" in html and "Topic 0" in html and "Topic 1" in html
 
     def test_markdown_mode(self, two_topic):
         m, docs = two_topic
         texts = [" ".join(d) for d in docs]
-        md = topica.find_thoughts_html(m, texts, n_docs=1, markdown=True)
+        md = topica.interpret.find_thoughts_html(m, texts, n_docs=1, markdown=True)
         assert "**" in md and "### Topic" in md
 
     def test_alignment_checked(self, two_topic):
         m, docs = two_topic
         with pytest.raises(ValueError):
-            topica.find_thoughts_html(m, ["only one text"])
+            topica.interpret.find_thoughts_html(m, ["only one text"])
 
 
 class TestQualityFrontier:
     def test_returns_per_topic_arrays(self, two_topic):
         m, _ = two_topic
-        qf = topica.quality_frontier(m, n=5)
+        qf = topica.diagnostics.quality_frontier(m, n=5)
         for key in ("topic", "coherence", "exclusivity", "prevalence"):
             assert qf[key].shape == (2,)
         np.testing.assert_allclose(qf["prevalence"].sum(), 1.0, atol=1e-6)
@@ -129,7 +129,7 @@ class TestQualityFrontier:
 class TestBootstrapStability:
     def test_stable_topics_score_high(self, two_topic):
         _, docs = two_topic
-        res = topica.bootstrap_stability(docs, k=2, n_boot=4, iters=200, topn=4)
+        res = topica.diagnostics.bootstrap_stability(docs, k=2, n_boot=4, iters=200, topn=4)
         assert res["stability"].shape == (2,)
         assert 0.0 <= res["mean"] <= 1.0
         # Two clean, well-separated topics should be highly reproducible.
@@ -140,7 +140,7 @@ class TestBootstrapStability:
         # siblings perplexity / prepare_pyldavis), so it must not raise.
         _, docs = two_topic
         corpus = topica.Corpus.from_documents(docs)
-        res = topica.bootstrap_stability(corpus, k=2, n_boot=2, iters=80, topn=4)
+        res = topica.diagnostics.bootstrap_stability(corpus, k=2, n_boot=2, iters=80, topn=4)
         assert res["stability"].shape == (2,)
         assert 0.0 <= res["mean"] <= 1.0
 
@@ -155,7 +155,7 @@ class TestBootstrapStability:
         for i in range(120):
             blk = blocks[i % 2]
             docs.append(blk + [blk[int(rng.integers(3))], f"uniq_{i}"])
-        res = topica.bootstrap_stability(docs, k=2, n_boot=6, iters=200, topn=3)
+        res = topica.diagnostics.bootstrap_stability(docs, k=2, n_boot=6, iters=200, topn=3)
         assert res["mean"] > 0.4          # two clean blocks must stay reproducible
 
 
@@ -300,10 +300,10 @@ class TestAverageMarginalEffects:
 
     def test_spline_ame_is_finite_and_aliased(self):
         theta, data = self._data()
-        res = topica.ame(theta, "year", formula="~ spline(year, df=3) + party", data=data)
+        res = topica.effects.ame(theta, "year", formula="~ spline(year, df=3) + party", data=data)
         df = res.to_frame()
         assert len(df) == 2 and np.isfinite(df["ame"]).all()
-        assert topica.ame is topica.average_marginal_effects
+        assert topica.effects.ame is topica.effects.average_marginal_effects
 
     def test_requires_formula_and_known_covariate(self):
         theta, data = self._data()

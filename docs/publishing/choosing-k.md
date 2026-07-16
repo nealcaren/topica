@@ -42,7 +42,7 @@ import numpy as np
 
 # 1) Scan a theoretically plausible range.
 held_out = test_docs                     # a held-out split for perplexity
-results = topica.search_k(
+results = topica.select.search_k(
     train_docs, ks=[10, 15, 20, 25, 30],
     held_out=held_out, iters=800,
 )
@@ -59,16 +59,16 @@ coherence×exclusivity spread, and check held-out perplexity directly:
 model = topica.models.STM(num_topics=20, seed=1)
 model.fit(docs, prevalence=X)
 
-table = topica.diagnostics(model, texts)          # one row per topic: coherence,
+table = topica.diagnostics.diagnostics(model, texts)          # one row per topic: coherence,
                                                    # exclusivity, FREX, size, ...
-pp = topica.perplexity(model, held_out)            # held-out, lower is better
+pp = topica.diagnostics.perplexity(model, held_out)            # held-out, lower is better
 
-frontier = topica.quality_frontier(model, n=10)   # per-topic coherence & exclusivity
+frontier = topica.diagnostics.quality_frontier(model, n=10)   # per-topic coherence & exclusivity
 # scatter frontier["coherence"] vs frontier["exclusivity"];
 # weak topics cluster in the lower-left.
 ```
 
-`topica.perplexity(model, held_out)` works across the generative models (LDA,
+`topica.diagnostics.perplexity(model, held_out)` works across the generative models (LDA,
 DMR, CTM, STM, HDP, …) by inferring each held-out document's topic mixture from
 half its tokens and scoring the other half, so it is comparable across `K`.
 
@@ -82,11 +82,11 @@ then score the withheld words:
 ```python
 import topica
 
-h = topica.make_heldout(corpus, prop_docs=0.5, prop_words=0.5, seed=0)
+h = topica.diagnostics.make_heldout(corpus, prop_docs=0.5, prop_words=0.5, seed=0)
 model = topica.models.STM(num_topics=20, seed=1)
 model.fit(h.documents, prevalence=X)
 
-result = topica.eval_heldout(model, h)
+result = topica.diagnostics.eval_heldout(model, h)
 print(f"mean per-doc held-out log-likelihood: {result.mean_per_doc_loglik:.3f}")
 ```
 
@@ -100,7 +100,7 @@ values. `select_model` runs `runs` initializations at a fixed K and returns all
 fitted models with their coherence and exclusivity scores:
 
 ```python
-result = topica.select_model(
+result = topica.select.select_model(
     docs, K=20,
     runs=20,           # number of random initializations
     model="stm",       # "lda" or "stm"
@@ -108,7 +108,7 @@ result = topica.select_model(
     fraction=0.5,      # keep only the top 50% after a short burn-in
 )
 # inspect the coherence-exclusivity frontier across all runs:
-topica.plot_models(result)
+topica.viz.plot_models(result)
 
 # pick the run in the upper-right corner and use that model:
 best_idx = result.coherence.argmax()   # or use exclusivity, or visual inspection

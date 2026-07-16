@@ -12,16 +12,16 @@ documents that survive pruning. The example below runs as written, on a
 import topica
 
 df = topica.datasets.load_gadarian()          # bundled; loads offline
-corpus = topica.from_dataframe(
+corpus = topica.prep.from_dataframe(
     df,
     text_col="open.ended.response",
-    stopwords=topica.ENGLISH_STOPWORDS,        # without this, every topic is "the, and, of"
+    stopwords=topica.prep.ENGLISH_STOPWORDS,        # without this, every topic is "the, and, of"
     min_doc_freq=2,                            # drop words in fewer than 2 documents
 )
 
 model = topica.models.LDA(num_topics=5, seed=42)
 model.fit(corpus)                             # sensible defaults; no other arguments needed
-print(topica.summary(model))                  # top words per topic
+print(topica.interpret.summary(model))                  # top words per topic
 ```
 
 For your own data, swap the first line for `df = pandas.read_csv("yours.csv")`
@@ -40,7 +40,7 @@ point, K=10 gives broad themes, K=30 finer ones. `search_k` scores a range of K
 on coherence, exclusivity, and held-out likelihood:
 
 ```python
-result = topica.search_k(corpus, ks=[5, 10, 20, 30], seed=42)
+result = topica.select.search_k(corpus, ks=[5, 10, 20, 30], seed=42)
 print(result.best_k())
 ```
 
@@ -54,10 +54,10 @@ print(model.topic_word.shape)   # (K, V) — φ, topics × words
 print(model.doc_topic.shape)    # (D, K) — θ, docs × topics (rows sum to 1)
 
 # Publication-ready: prevalence + top words + distinctive (FREX) words per topic
-table = topica.topic_table(model)
+table = topica.diagnostics.topic_table(model)
 
 # The documents most associated with a topic — read these to name it
-examples = topica.find_thoughts(model, topic=0, n=3)
+examples = topica.interpret.find_thoughts(model, topic=0, n=3)
 ```
 
 !!! note "Stemmed words in the output?"
@@ -74,7 +74,7 @@ If your documents are not in a DataFrame, tokenize them yourself into a
 `list[list[str]]`:
 
 ```python
-docs = [topica.tokenize(t, stopwords=topica.ENGLISH_STOPWORDS) for t in texts]
+docs = [topica.tokenize(t, stopwords=topica.prep.ENGLISH_STOPWORDS) for t in texts]
 corpus = topica.Corpus.from_documents(docs, min_doc_freq=5, rm_top=15)
 ```
 
@@ -96,11 +96,11 @@ Fits are deterministic for a fixed `seed`.
 ```python
 # Per-topic coherence and exclusivity — the standard quality pair.
 coherence   = model.coherence(n=10)                 # UMass, per topic
-exclusivity = topica.exclusivity(model, n=10)       # per topic
-diversity   = topica.topic_diversity(model, topn=25)
+exclusivity = topica.diagnostics.exclusivity(model, n=10)       # per topic
+diversity   = topica.diagnostics.topic_diversity(model, topn=25)
 
 # Windowed, human-aligned coherence (gensim-style); needs the reference texts:
-cv = topica.coherence(model, corpus.documents(), coherence_type="c_v", topn=10)
+cv = topica.diagnostics.coherence(model, corpus.documents(), coherence_type="c_v", topn=10)
 ```
 
 ## Infer topics for new documents

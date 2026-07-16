@@ -39,7 +39,7 @@ print(corpus.num_docs, "docs, vocab", corpus.num_words)
 ## 3. Choose and justify K
 
 ```python
-for r in topica.search_k(docs, ks=[10, 15, 20], iters=500):
+for r in topica.select.search_k(docs, ks=[10, 15, 20], iters=500):
     print(f"K={r['k']:>2}  coherence={r['coherence']:.1f}  exclusivity={r['exclusivity']:.3f}")
 ```
 
@@ -82,11 +82,11 @@ the financial crisis, the primaries. Validate them with a human intrusion test
 and with bootstrap stability:
 
 ```python
-print(topica.word_intrusion(model, n_words=5, seed=0)[0])
+print(topica.diagnostics.word_intrusion(model, n_words=5, seed=0)[0])
 # {'topic': 0, 'words': ['voter','mccain','poll','state','obama','investig'],
 #  'intruder': 'investig', 'intruder_index': 5}
 
-boot = topica.bootstrap_stability(docs, k=15, n_boot=20, iters=400)
+boot = topica.diagnostics.bootstrap_stability(docs, k=15, n_boot=20, iters=400)
 print("mean topic stability:", round(boot["mean"], 2))   # 0.36
 ```
 

@@ -22,7 +22,7 @@ def frame():
 
 
 def test_design_matrix_strips_intercept_and_expands(frame):
-    X, names = topica.design_matrix("~ party * x", frame)
+    X, names = topica.design.design_matrix("~ party * x", frame)
     # No standalone intercept column (estimate_effect adds its own).
     assert not any(n.lower() == "intercept" for n in names)
     assert names == ["party[T.R]", "x", "party[T.R]:x"]
@@ -30,7 +30,7 @@ def test_design_matrix_strips_intercept_and_expands(frame):
 
 
 def test_design_matrix_spline_columns(frame):
-    X, names = topica.design_matrix("~ spline(year, df=3)", frame)
+    X, names = topica.design.design_matrix("~ spline(year, df=3)", frame)
     assert len(names) == 3
     assert all("spline(year" in n for n in names)
     assert X.shape == (20, 3)
@@ -38,7 +38,7 @@ def test_design_matrix_spline_columns(frame):
 
 def test_formula_path_matches_manual_X(frame):
     theta = np.random.default_rng(0).dirichlet([1, 1, 1], size=20)
-    X, names = topica.design_matrix("~ party + x", frame)
+    X, names = topica.design.design_matrix("~ party + x", frame)
     manual = stm.estimate_effect(theta, X, feature_names=names)
     viaform = stm.estimate_effect(theta, data=frame, formula="~ party + x")
     for a, b in zip(manual, viaform):
@@ -52,7 +52,7 @@ def test_string_cluster_matches_array_cluster(frame):
     frame["blog"] = ["a", "b", "c", "d", "e"] * 4
     theta = np.random.default_rng(1).dirichlet([1, 1], size=20)
     by_name = stm.estimate_effect(theta, data=frame, formula="~ party", cluster="blog")
-    X, names = topica.design_matrix("~ party", frame)
+    X, names = topica.design.design_matrix("~ party", frame)
     by_array = stm.estimate_effect(
         theta, X, feature_names=names, cluster=frame["blog"].to_numpy()
     )

@@ -193,7 +193,7 @@ def _coherence(topics, token_docs, measure):
     import topica
 
     return float(
-        np.mean(topica.coherence(topics, token_docs, coherence_type=measure, topn=TOP_N))
+        np.mean(topica.diagnostics.coherence(topics, token_docs, coherence_type=measure, topn=TOP_N))
     )
 
 

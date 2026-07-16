@@ -109,14 +109,14 @@ Unions rise, and Criminal procedure and First amendment decline. `time_prevalenc
 gives the smoothed proportion per year and `time_state` the regime each year
 occupies.
 
-To add credible bands to the time-trend figure, use `topica.time_prevalence_ci`,
+To add credible bands to the time-trend figure, use `topica.effects.time_prevalence_ci`,
 which reads the credible interval directly from the retained MCMC theta draws
 (pass `keep_theta_draws=True` at fit, which is the default):
 
 ```python
 import topica
 
-ci = topica.time_prevalence_ci(model, timestamps=years, ci=0.95)
+ci = topica.effects.time_prevalence_ci(model, timestamps=years, ci=0.95)
 # ci["labels"]   — list of period labels aligned with model.time_labels
 # ci["mean"]     — (T, K) posterior mean prevalence per period
 # ci["ci_low"]   — (T, K) lower 2.5th-percentile credible bound

@@ -10,9 +10,9 @@ import topica
 
 def test_english_stopwords_and_tokenize_accepts_iterable():
     # #3: a bundled stopword frozenset, and tokenize accepts any iterable.
-    assert isinstance(topica.ENGLISH_STOPWORDS, frozenset)
-    assert "the" in topica.ENGLISH_STOPWORDS and "cat" not in topica.ENGLISH_STOPWORDS
-    toks = topica.tokenize("The cat and the dog ran", stopwords=topica.ENGLISH_STOPWORDS)
+    assert isinstance(topica.prep.ENGLISH_STOPWORDS, frozenset)
+    assert "the" in topica.prep.ENGLISH_STOPWORDS and "cat" not in topica.prep.ENGLISH_STOPWORDS
+    toks = topica.tokenize("The cat and the dog ran", stopwords=topica.prep.ENGLISH_STOPWORDS)
     assert toks == ["cat", "dog", "ran"]
     # a plain set and a list work too
     assert topica.tokenize("a big cat", stopwords={"a"}) == ["big", "cat"]
@@ -32,7 +32,7 @@ def test_prepare_pyldavis_accepts_corpus():
     c = topica.Corpus.from_documents(docs)
     m = topica.models.LDA(2, seed=1)
     m.fit(c, iters=100)
-    out = topica.prepare_pyldavis(m, c)  # must not raise on a Corpus
+    out = topica.viz.prepare_pyldavis(m, c)  # must not raise on a Corpus
     assert out is not None
 
 
@@ -60,7 +60,7 @@ def test_empty_clustering_warns_and_diagnostics_guard():
     if m.num_topics == 0:
         assert any("no clusters" in str(x.message) for x in w)
         with pytest.raises(ValueError, match="no topics"):
-            topica.label_topics(m.topic_word, m.vocabulary)
+            topica.interpret.label_topics(m.topic_word, m.vocabulary)
 
 
 def test_citation_handle():
@@ -105,25 +105,25 @@ def test_flexible_first_arg_accepts_model_or_matrix():
     texts = [" ".join(d) for d in docs]
 
     # model-first (previously raised "float() argument ... not 'topica.models.LDA'")
-    assert topica.topic_correlation(m).cor.shape == (2, 2)
-    assert len(topica.find_thoughts(m, texts, topic=0)) == 3
-    assert len(topica.frex(m)) == 2
-    assert set(topica.label_topics(m)[0]) == {"prob", "frex", "lift", "score"}
-    assert len(topica.relevance(m, topic=0)) == m.topic_word.shape[1]  # capped at vocab
+    assert topica.interpret.topic_correlation(m).cor.shape == (2, 2)
+    assert len(topica.interpret.find_thoughts(m, texts, topic=0)) == 3
+    assert len(topica.interpret.frex(m)) == 2
+    assert set(topica.interpret.label_topics(m)[0]) == {"prob", "frex", "lift", "score"}
+    assert len(topica.interpret.relevance(m, topic=0)) == m.topic_word.shape[1]  # capped at vocab
 
     # matrix-first still works (backward compatible)
-    assert topica.topic_correlation(m.doc_topic).cor.shape == (2, 2)
-    assert len(topica.frex(m.topic_word, m.vocabulary)) == 2
+    assert topica.interpret.topic_correlation(m.doc_topic).cor.shape == (2, 2)
+    assert len(topica.interpret.frex(m.topic_word, m.vocabulary)) == 2
 
     # a bare matrix with no vocabulary gives a clear message, not a cryptic one
     with pytest.raises(ValueError, match="vocabulary is required"):
-        topica.frex(m.topic_word)
+        topica.interpret.frex(m.topic_word)
 
 
 def test_search_k_labels_its_coherence_metric():
     # #14: search_k reports UMass; label it so its scale isn't confused with c_v.
     docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12
-    rows = topica.search_k(docs, [2, 3], iters=60, num_samples=1)
+    rows = topica.select.search_k(docs, [2, 3], iters=60, num_samples=1)
     assert all(r["coherence_metric"] == "u_mass" for r in rows)
 
 
@@ -131,7 +131,7 @@ def test_search_k_best_k_and_directions():
     # #153: best_k optimizes in the correct direction; coherence is negative, so
     # the maximum (least-negative) K is best, not the minimum.
     docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12
-    res = topica.search_k(docs, [2, 3], iters=60, num_samples=1)
+    res = topica.select.search_k(docs, [2, 3], iters=60, num_samples=1)
     # still behaves as the list of rows it always was
     assert isinstance(res, list) and len(res) == 2
     assert res.directions["coherence"] == "maximize"
@@ -151,7 +151,7 @@ def test_search_k_best_k_defaults_to_frontier():
     # frontier (a knee), not bare coherence (which is monotone in K and would
     # return the grid floor). The frontier default must not warn.
     docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12
-    res = topica.search_k(docs, [2, 3, 4], iters=60, num_samples=1)
+    res = topica.select.search_k(docs, [2, 3, 4], iters=60, num_samples=1)
     with warnings.catch_warnings():
         warnings.simplefilter("error")  # frontier default is silent
         chosen = res.best_k()
@@ -190,7 +190,7 @@ def test_search_k_best_k_defaults_to_heldout_when_present():
     # (maximize) rather than coherence.
     docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12
     held = [["cat", "dog"], ["star", "moon"]]
-    res = topica.search_k(docs, [2, 3], iters=60, num_samples=1, held_out=held)
+    res = topica.select.search_k(docs, [2, 3], iters=60, num_samples=1, held_out=held)
     assert res.directions["perplexity"] == "minimize"
     assert res.best_k() == min(res, key=lambda r: r["perplexity"])["k"]
 
@@ -273,9 +273,9 @@ def test_clusterer_validation():
 
 def test_report_is_callable():
     # #12: report(model) works as a one-call overview (alias for summary).
-    assert callable(topica.report)
+    assert callable(topica.interpret.report)
     docs = [["cat", "dog"], ["star", "moon"]] * 8
     m = topica.models.LDA(2, seed=1)
     m.fit(docs, iters=50)
-    assert topica.report(m) == topica.summary(m)
-    assert "num_topics" in topica.report(m)
+    assert topica.interpret.report(m) == topica.interpret.summary(m)
+    assert "num_topics" in topica.interpret.report(m)

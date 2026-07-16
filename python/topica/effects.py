@@ -29,8 +29,10 @@ from .stm import (
     ame,
     MarginalEffect,
     AverageMarginalEffects,
+    topic_correlation_ci,
+    TopicCorrelationCI,
 )
-from .keyatm import by_strata, top_topics
+from .keyatm import by_strata, top_topics, time_prevalence_ci
 
 __all__ = [
     "estimate_effect",
@@ -41,13 +43,25 @@ __all__ = [
     "ame",
     "MarginalEffect",
     "AverageMarginalEffects",
+    "topic_correlation_ci",
+    "TopicCorrelationCI",
     "dirichlet_theta_samples",
     "by_strata",
     "top_topics",
+    "time_prevalence_ci",
     "standard_errors",
     "permutation_test",
     "PermutationResult",
+    "prevalence_ci",
+    "model_family",
+    "topics_over_time",
+    "topics_per_class",
 ]
+
+# topics_over_time / topics_per_class are covariate x topic breakdowns; they are
+# defined in analysis.py, which now imports validation/effects lazily so this
+# module-level import no longer forms a cycle.
+from .analysis import topics_over_time, topics_per_class  # noqa: E402
 
 
 def dirichlet_theta_samples(doc_topic, doc_lengths, *, nsims=25, seed=0, prior=0.0):

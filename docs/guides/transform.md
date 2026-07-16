@@ -74,7 +74,7 @@ New documents may contain tokens not seen at fit time. Use `align_corpus` to
 drop out-of-vocabulary tokens before passing the documents to `transform`:
 
 ```python
-aligned = topica.align_corpus(new_docs, stm_model)
+aligned = topica.prep.align_corpus(new_docs, stm_model)
 theta = topica.stm.transform(stm_model, aligned, prevalence=X_new)
 ```
 

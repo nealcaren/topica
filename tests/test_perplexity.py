@@ -1,4 +1,4 @@
-"""Model-agnostic held-out perplexity: topica.perplexity(model, held_out)."""
+"""Model-agnostic held-out perplexity: topica.diagnostics.perplexity(model, held_out)."""
 
 import numpy as np
 import pytest
@@ -21,7 +21,7 @@ def test_perplexity_is_positive_and_finite(split):
     train, held = split
     m = topica.models.LDA(4, seed=1)
     m.fit(train, iters=300)
-    pp = topica.perplexity(m, held)
+    pp = topica.diagnostics.perplexity(m, held)
     assert np.isfinite(pp) and pp > 1.0
 
 
@@ -34,7 +34,7 @@ def test_perplexity_discriminates_k(split):
     for k in (2, 4):
         m = topica.models.LDA(k, seed=1)
         m.fit(train, iters=300)
-        pp[k] = topica.perplexity(m, held)
+        pp[k] = topica.diagnostics.perplexity(m, held)
     assert pp[4] < pp[2]
 
 
@@ -43,7 +43,7 @@ def test_perplexity_accepts_corpus_and_variational(split):
     m = topica.models.CTM(4, seed=1)
     m.fit(train, iters=20)
     corpus = topica.Corpus.from_documents(held)
-    assert np.isfinite(topica.perplexity(m, corpus))
+    assert np.isfinite(topica.diagnostics.perplexity(m, corpus))
 
 
 def test_perplexity_rejects_clustering_models(split):
@@ -54,7 +54,7 @@ def test_perplexity_rejects_clustering_models(split):
         m = cls(min_cluster_size=5, seed=1)
         m.fit(train, emb)
         with pytest.raises(ValueError, match="no held-out perplexity|generative"):
-            topica.perplexity(m, train)
+            topica.diagnostics.perplexity(m, train)
 
 
 def test_perplexity_needs_scorable_documents(split):
@@ -62,4 +62,4 @@ def test_perplexity_needs_scorable_documents(split):
     m = topica.models.LDA(4, seed=1)
     m.fit(train, iters=150)
     with pytest.raises(ValueError, match="at least 2 tokens"):
-        topica.perplexity(m, [["a0"], ["b1"]])  # single-token docs cannot be split
+        topica.diagnostics.perplexity(m, [["a0"], ["b1"]])  # single-token docs cannot be split

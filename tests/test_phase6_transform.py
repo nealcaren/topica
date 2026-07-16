@@ -7,7 +7,7 @@ Tests that each model's transform:
 - a document with no in-vocabulary tokens returns a valid prior row
 - is deterministic given the same seed
 
-Payoff: topica.perplexity and topica.eval_heldout now work for KeyATM and
+Payoff: topica.diagnostics.perplexity and topica.diagnostics.eval_heldout now work for KeyATM and
 SeededLDA (they previously raised "no transform").
 """
 
@@ -78,15 +78,15 @@ class TestKeyATMTransform:
         np.testing.assert_array_equal(a, b)
 
     def test_perplexity_works(self, model):
-        pp = topica.perplexity(model, HELD_OUT[:2], seed=0)
+        pp = topica.diagnostics.perplexity(model, HELD_OUT[:2], seed=0)
         assert np.isfinite(pp) and pp > 0
 
     def test_eval_heldout_works(self, model):
-        heldout = topica.make_heldout(DOCS, seed=1)
+        heldout = topica.diagnostics.make_heldout(DOCS, seed=1)
         m2 = topica.models.KeyATM({"animals": ["cat", "dog"], "tech": ["code", "python"]},
                            num_topics=2, seed=7)
         m2.fit(heldout.documents, iters=50)
-        result = topica.eval_heldout(m2, heldout, seed=0)
+        result = topica.diagnostics.eval_heldout(m2, heldout, seed=0)
         assert np.isfinite(result.mean_per_doc_loglik)
 
 
@@ -125,15 +125,15 @@ class TestSeededLDATransform:
         np.testing.assert_array_equal(a, b)
 
     def test_perplexity_works(self, model):
-        pp = topica.perplexity(model, HELD_OUT[:2], seed=0)
+        pp = topica.diagnostics.perplexity(model, HELD_OUT[:2], seed=0)
         assert np.isfinite(pp) and pp > 0
 
     def test_eval_heldout_works(self, model):
-        heldout = topica.make_heldout(DOCS, seed=1)
+        heldout = topica.diagnostics.make_heldout(DOCS, seed=1)
         m2 = topica.models.SeededLDA({"animals": ["cat", "dog"], "tech": ["code", "python"]},
                                seed=7)
         m2.fit(heldout.documents, iters=50)
-        result = topica.eval_heldout(m2, heldout, seed=0)
+        result = topica.diagnostics.eval_heldout(m2, heldout, seed=0)
         assert np.isfinite(result.mean_per_doc_loglik)
 
 

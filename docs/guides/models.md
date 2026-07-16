@@ -265,7 +265,7 @@ ECTM answers two complementary questions, and exposes both. The **content** half
 logistic-normal regression on a `prevalence=` design. Because ECTM is
 logistic-normal, the prevalence side comes with method-of-composition standard
 errors: pass `prevalence=party*spline(year)` and use
-`topica.stm.predicted_prevalence` / `topica.estimate_effect` for attention
+`topica.stm.predicted_prevalence` / `topica.effects.estimate_effect` for attention
 trajectories with confidence bands, exactly as for STM. `prevalence_by_group(m,
 groups, periods)` gives the quick descriptive version. The two halves can tell
 different stories -- on the platforms the parties devote *similar attention* to
@@ -333,7 +333,7 @@ topica's STM matches R's STM.
 
 The Correlated Topic Model (logistic-normal): topics can co-occur, unlike LDA's
 Dirichlet. This is the engine STM builds on; `topic_correlation` reports the
-learned structure, and `topica.topic_correlation_ci(model)` puts a credible
+learned structure, and `topica.effects.topic_correlation_ci(model)` puts a credible
 interval on each cell by propagating the per-document logistic-normal posterior
 (it draws θ from `η_d ~ N(λ_d, ν_d)` and recomputes the correlation on each draw),
 so you can tell a reliably signed topic relationship from one whose interval
@@ -377,7 +377,7 @@ each, so you can tell a real effect from noise.
 
 ```python
 import numpy as np
-X, names = topica.one_hot(party)
+X, names = topica.design.one_hot(party)
 model = topica.models.DMR(num_topics=20, seed=1)
 model.fit(docs, X, feature_names=names)
 z = model.feature_effects / model.feature_effect_se   # |z| > ~2 ⇒ notable
@@ -713,10 +713,10 @@ tokens an author contributes, so a prolific author is placed more precisely than
 quiet one. The same getter is on `IdealPointSentenceTM` (the exact Laplace SE of its
 linear-Gaussian position step) and on `TBIP` (the variational posterior SD); `Wordfish`
 has had `position_se` all along. To carry that uncertainty into a polarization estimate,
-`topica.polarization_ci` propagates the per-author SEs by simulation and returns a
+`topica.scaling.polarization_ci` propagates the per-author SEs by simulation and returns a
 confidence interval on the camp gap — a band that straddles zero means the camps are
 not reliably apart. (`PartyEmbeddings`, whose positions are a PCA of doc2vec tag
-vectors, has no analytic SE; use `topica.position_intervals` to bootstrap one.)
+vectors, has no analytic SE; use `topica.scaling.position_intervals` to bootstrap one.)
 
 We fit by variational EM on ETM's core: the E-step is the logistic-normal Laplace step with the author's position-displaced `beta`, and the M-step updates the topic embeddings, the loadings, and the positions in turn. Positions are initialized from the leading principal components of the author-word matrix, as Wordfish does, which keeps the fit off the trivial zero-loading fixed point. Identification is exact and loss-free: each iteration standardizes the positions to mean zero and unit variance and absorbs the rescaling into the embeddings and loadings, then orients the sign to the anchors. On data simulated from the model the positions recover the planted trait at a correlation above 0.98 and `position_shift` reads off the discriminating axis.
 
@@ -911,11 +911,11 @@ Two notes on use. `nearest_words` returns the raw cosine ranking of words to a p
 
 The ideal-point family ([`Wordfish`](#wordfish), [`IdealPointTM`](#idealpointtm), [`IdealPointSentenceTM`](#idealpointsentencetm), [`TBIP`](#tbip), [`PartyEmbeddings`](#partyembeddings)) returns author positions, but how do you know the discovered axis is a real, partisan dimension rather than an artifact, *without* a validated external score like DW-NOMINATE? topica ships intrinsic diagnostics that answer this from the model and the text alone.
 
-`topica.bimodality(positions)` is the bimodality coefficient of the positions: above ~0.555 the authors split into two camps (a polarized, two-pole structure) rather than one blob. It is computed from `author_positions` alone.
+`topica.scaling.bimodality(positions)` is the bimodality coefficient of the positions: above ~0.555 the authors split into two camps (a polarized, two-pole structure) rather than one blob. It is computed from `author_positions` alone.
 
-`topica.polarization(positions, labels)` measures how far two known camps sit apart on the axis: the distance between the camps' centroids, with `labels` assigning each author to a camp (e.g. their party). It works on any model's `author_positions` (1-D, or Euclidean distance for a multi-dimensional fit), so calling it once per time period traces polarization over time, the way Rheault and Cochrane (2020) use the distance between party embeddings. Pass `normalize=True` for an effect-size form (divided by the pooled within-camp spread) that is comparable across corpora and model scales. Where `bimodality` asks whether *some* two-camp structure exists without labels, `polarization` measures the separation of camps you can name.
+`topica.scaling.polarization(positions, labels)` measures how far two known camps sit apart on the axis: the distance between the camps' centroids, with `labels` assigning each author to a camp (e.g. their party). It works on any model's `author_positions` (1-D, or Euclidean distance for a multi-dimensional fit), so calling it once per time period traces polarization over time, the way Rheault and Cochrane (2020) use the distance between party embeddings. Pass `normalize=True` for an effect-size form (divided by the pooled within-camp spread) that is comparable across corpora and model scales. Where `bimodality` asks whether *some* two-camp structure exists without labels, `polarization` measures the separation of camps you can name.
 
-`topica.split_half_reliability(fit, group)` refits the scale on two disjoint halves of each author's documents and correlates the two position vectors. A high value means the axis is a stable, reproducible trait of the text, not an artifact of one fit. You supply a one-line `fit` closure, so it is model-agnostic:
+`topica.scaling.split_half_reliability(fit, group)` refits the scale on two disjoint halves of each author's documents and correlates the two position vectors. A high value means the axis is a stable, reproducible trait of the text, not an artifact of one fit. You supply a one-line `fit` closure, so it is model-agnostic:
 
 ```python
 import topica
@@ -927,14 +927,14 @@ def fit(idx):                        # fit on a subset of unit (document) indice
     return m.author_names, m.author_positions[:, 0]
 
 m = topica.models.IdealPointTM(20, seed=1); m.fit(docs, group=author)
-topica.bimodality(m.author_positions)        # > 0.555 => two camps (polarized)
-topica.polarization(m.author_positions, party_of_author)  # gap between named camps
-topica.split_half_reliability(fit, author)   # how much real signal the axis carries
+topica.scaling.bimodality(m.author_positions)        # > 0.555 => two camps (polarized)
+topica.scaling.polarization(m.author_positions, party_of_author)  # gap between named camps
+topica.scaling.split_half_reliability(fit, author)   # how much real signal the axis carries
 ```
 
 We validated these against DW-NOMINATE on U.S. House press releases: split-half reliability tracks the external recovery across congresses (it ranks them correctly and approximates the magnitude), so it stands in for an external scale when none exists. By measurement theory the reliability also bounds how well the axis can correlate with *any* external score, so a low value is an early warning that the axis is too noisy to validate.
 
-For uncertainty on the positions themselves, `topica.position_intervals(fit, group)` returns model-agnostic **bootstrap** standard errors and confidence intervals for any of the four models — it resamples each author's documents and refits, so it reflects the real estimation variability (including the seed-to-seed instability a local analytic SE would miss). `Wordfish` additionally exposes an analytic `position_se` (the Hessian-based standard error, validated equal to R `quanteda`'s `se.theta` at correlation 1.00 in `parity/wordfish_r_compare.py`).
+For uncertainty on the positions themselves, `topica.scaling.position_intervals(fit, group)` returns model-agnostic **bootstrap** standard errors and confidence intervals for any of the four models — it resamples each author's documents and refits, so it reflects the real estimation variability (including the seed-to-seed instability a local analytic SE would miss). `Wordfish` additionally exposes an analytic `position_se` (the Hessian-based standard error, validated equal to R `quanteda`'s `se.theta` at correlation 1.00 in `parity/wordfish_r_compare.py`).
 
 ```python
 m = topica.models.Wordfish(); m.fit(docs, group=author, anchors={"left": -1.0, "right": 1.0})
@@ -944,7 +944,7 @@ def fit(idx):                                 # bootstrap intervals for any mode
     mm = topica.models.IdealPointTM(20, seed=1)
     mm.fit([docs[i] for i in idx], group=[author[i] for i in idx])
     return mm.author_names, mm.author_positions[:, 0]
-ci = topica.position_intervals(fit, author, n_boot=50)   # author -> (estimate, se, lo, hi)
+ci = topica.scaling.position_intervals(fit, author, n_boot=50)   # author -> (estimate, se, lo, hi)
 ```
 
 ## Short-text models

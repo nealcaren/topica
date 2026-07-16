@@ -11,8 +11,8 @@ without pandas.
 import topica
 
 df = topica.datasets.load_gadarian()
-corpus = topica.from_dataframe(
-    df, text_col="open.ended.response", stopwords=topica.ENGLISH_STOPWORDS
+corpus = topica.prep.from_dataframe(
+    df, text_col="open.ended.response", stopwords=topica.prep.ENGLISH_STOPWORDS
 )
 ```
 

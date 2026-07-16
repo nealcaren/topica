@@ -190,7 +190,7 @@ def dyn_model_ci():
 
 def test_time_prevalence_ci_shapes(dyn_model_ci):
     m, _, years = dyn_model_ci
-    result = topica.time_prevalence_ci(m, years)
+    result = topica.effects.time_prevalence_ci(m, years)
     T = len(m.time_labels)
     K = m.num_topics
     assert result["labels"] == m.time_labels
@@ -202,13 +202,13 @@ def test_time_prevalence_ci_shapes(dyn_model_ci):
 
 def test_time_prevalence_ci_ordering(dyn_model_ci):
     m, _, years = dyn_model_ci
-    result = topica.time_prevalence_ci(m, years)
+    result = topica.effects.time_prevalence_ci(m, years)
     assert result["labels"] == m.time_labels
 
 
 def test_time_prevalence_ci_bounds(dyn_model_ci):
     m, _, years = dyn_model_ci
-    result = topica.time_prevalence_ci(m, years)
+    result = topica.effects.time_prevalence_ci(m, years)
     # ci_low <= mean <= ci_high everywhere (elementwise, up to floating-point noise)
     assert np.all(result["ci_low"] <= result["mean"] + 1e-12)
     assert np.all(result["mean"] <= result["ci_high"] + 1e-12)
@@ -223,7 +223,7 @@ def test_time_prevalence_ci_requires_draws():
     m.fit(docs, timestamps=years, num_states=2, iters=200, keep_theta_draws=False)
     assert m.theta_draws is None
     with pytest.raises(ValueError, match="keep_theta_draws=True"):
-        topica.time_prevalence_ci(m, years)
+        topica.effects.time_prevalence_ci(m, years)
 
 
 def test_time_prevalence_ci_requires_dynamic_model():
@@ -233,14 +233,14 @@ def test_time_prevalence_ci_requires_dynamic_model():
     m.fit(docs, iters=100)
     assert m.time_labels == []
     with pytest.raises(ValueError, match="dynamic KeyATM"):
-        topica.time_prevalence_ci(m, [0] * len(docs))
+        topica.effects.time_prevalence_ci(m, [0] * len(docs))
 
 
 def test_time_prevalence_ci_wrong_length(dyn_model_ci):
     """Raises when timestamps length does not match number of documents."""
     m, _, years = dyn_model_ci
     with pytest.raises(ValueError, match="timestamps"):
-        topica.time_prevalence_ci(m, years[:-5])
+        topica.effects.time_prevalence_ci(m, years[:-5])
 
 
 def test_topics_over_time_dynamic_keyatm_has_ci(dyn_model_ci):

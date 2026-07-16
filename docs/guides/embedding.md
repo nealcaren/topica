@@ -13,14 +13,14 @@ document-vector matrix (and, for Top2Vec, a matching word-vector matrix) from
 wherever you like, a sentence-transformer, an API, or a local model such as
 ollama. Everything downstream is in the wheel.
 
-If you would rather not wire up an embedder yourself, `topica.llm_embed` produces
+If you would rather not wire up an embedder yourself, `topica.embed.llm_embed` produces
 the matrix through Simon Willison's [`llm`](https://llm.datasette.io/) library
 (the optional `topica[llm]` extra), which reaches OpenAI embeddings and local
 sentence-transformers via plugins:
 
 ```python
-doc_emb = topica.llm_embed(texts, model="text-embedding-3-small")          # API
-doc_emb = topica.llm_embed(texts, model="sentence-transformers/all-MiniLM-L6-v2")  # local
+doc_emb = topica.embed.llm_embed(texts, model="text-embedding-3-small")          # API
+doc_emb = topica.embed.llm_embed(texts, model="sentence-transformers/all-MiniLM-L6-v2")  # local
 ```
 
 Embeddings are costly, so cache them. Pass `cache=path` to embed a corpus once and
@@ -28,10 +28,10 @@ reuse it on later runs (it reloads when the file matches the same `texts`, and
 recomputes otherwise), or save and load any embedding matrix yourself:
 
 ```python
-doc_emb = topica.llm_embed(texts, model="text-embedding-3-small", cache="emb.npz")
+doc_emb = topica.embed.llm_embed(texts, model="text-embedding-3-small", cache="emb.npz")
 
-topica.save_embeddings("emb.npz", doc_emb, texts=texts, model="all-MiniLM-L6-v2")
-doc_emb = topica.load_embeddings("emb.npz")
+topica.embed.save_embeddings("emb.npz", doc_emb, texts=texts, model="all-MiniLM-L6-v2")
+doc_emb = topica.embed.load_embeddings("emb.npz")
 ```
 
 End to end, from raw text to a fitted model, with `llm_embed` doing the
@@ -50,12 +50,12 @@ texts = [
 ]
 
 # text -> (num_docs, E) vectors; the topica[llm] extra, sentence-transformers backend
-doc_emb = topica.llm_embed(texts, model="sentence-transformers/all-MiniLM-L6-v2")
+doc_emb = topica.embed.llm_embed(texts, model="sentence-transformers/all-MiniLM-L6-v2")
 
-docs = [topica.tokenize(t, stopwords=topica.ENGLISH_STOPWORDS) for t in texts]
+docs = [topica.tokenize(t, stopwords=topica.prep.ENGLISH_STOPWORDS) for t in texts]
 model = topica.models.BERTopic(min_cluster_size=2, seed=1)
 model.fit(docs, doc_emb)
-print(topica.report(model))
+print(topica.interpret.report(model))
 ```
 
 ## BERTopic
@@ -370,11 +370,11 @@ groups of topics you decide to combine, rebuilding the representation and
 renumbering topics. Both also gain `transform`/`fit_transform` for held-out
 documents, and the c-TF-IDF knobs `bm25=` and `reduce_frequent=` on BERTopic.
 
-For a quick read of any fitted model (not just these), `topica.topic_info(model,
+For a quick read of any fitted model (not just these), `topica.interpret.topic_info(model,
 texts)` returns per-topic size, prevalence, top words, and representative
-documents, with an outlier row when present; `topica.topics_over_time(model,
-timestamps)` and `topica.topics_per_class(model, groups)` summarize prevalence by
-time or group; and `topica.set_topic_labels(model, {...})` stores your own labels.
+documents, with an outlier row when present; `topica.effects.topics_over_time(model,
+timestamps)` and `topica.effects.topics_per_class(model, groups)` summarize prevalence by
+time or group; and `topica.interpret.set_topic_labels(model, {...})` stores your own labels.
 
 ## The shared surface
 
@@ -395,13 +395,13 @@ model = topica.models.BERTopic.load("topics.tt")   # reload, then transform() fo
 ## Richer topic words: n-grams
 
 The c-TF-IDF topic words are over the tokens you pass in, so bigrams are a
-preprocessing choice. `topica.add_ngrams` adds them (the mechanical analog of
+preprocessing choice. `topica.prep.add_ngrams` adds them (the mechanical analog of
 scikit-learn's `CountVectorizer(ngram_range=..., min_df=...)`), keeping every
 document so the rows stay aligned with the embeddings:
 
 ```python
-docs = [topica.tokenize(t, stopwords=topica.ENGLISH_STOPWORDS) for t in texts]
-docs = topica.add_ngrams(docs, ngram_range=(1, 2), min_df=5)   # unigrams + bigrams
+docs = [topica.tokenize(t, stopwords=topica.prep.ENGLISH_STOPWORDS) for t in texts]
+docs = topica.prep.add_ngrams(docs, ngram_range=(1, 2), min_df=5)   # unigrams + bigrams
 model.fit(docs, doc_emb)        # topic words can now read "machine_learning"
 ```
 

@@ -149,7 +149,7 @@ These were the candidate inconsistencies (#155). Each is now decided, so the
   deliberate carve-out from the flat-function rule: the suite is a coherent,
   growing family that shares one property the rest of the library does not —
   `llm-bounded` non-determinism — and the namespace signals that at the call site.
-  `topica.llm.backend` is the same constructor as the top-level `topica.llm_backend`
+  `topica.llm.backend` is the same constructor as the top-level `topica.interpret.llm_backend`
   (kept flat because it is also the bring-your-own-model adapter for `TopicGPT` and
   `label_topics`, not only an eval metric).
 

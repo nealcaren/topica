@@ -46,7 +46,7 @@ class TestSummary:
         docs = [["cat", "dog", "pet"]] * 20 + [["star", "moon", "sky"]] * 20
         m = topica.models.LDA(num_topics=2, seed=1)
         m.fit(docs, iters=200)
-        s = topica.summary(m, topn=3)
+        s = topica.interpret.summary(m, topn=3)
         assert "num_topics: 2" in s
         assert "vocab_size: 6" in s
         assert "topic 0:" in s and "topic 1:" in s
@@ -55,6 +55,6 @@ class TestSummary:
         docs = [["cat", "dog", "pet"]] * 20 + [["star", "moon", "sky"]] * 20
         m = topica.models.DTM(num_topics=2, seed=1)
         m.fit(docs, [0] * 20 + [1] * 20, iters=5)
-        s = topica.summary(m)  # DTM.top_words needs (topic, time) -> per-topic omitted
+        s = topica.interpret.summary(m)  # DTM.top_words needs (topic, time) -> per-topic omitted
         assert "num_times: 2" in s
         assert isinstance(s, str)

@@ -37,7 +37,7 @@ def _noisy_run(beta_true, rng, noise, permute=True):
 
 def _aligned_error(beta_true, mat):
     """Mean per-topic L1 distance after Hungarian alignment to the truth."""
-    pairs = topica.align_topics(beta_true, mat, metric="cosine")
+    pairs = topica.diagnostics.align_topics(beta_true, mat, metric="cosine")
     return float(np.mean([np.abs(beta_true[i] - mat[j]).sum() for i, j, _ in pairs]))
 
 
@@ -47,11 +47,11 @@ class TestClusterMethod:
     def test_identical_runs_recover_the_topics(self):
         rng = np.random.default_rng(0)
         beta = _sharp_topics([[0, 1], [2, 3], [4, 5]], 8, rng)
-        res = topica.ensemble([beta, beta.copy(), beta.copy()], topn=2, lambda_=1.0)
+        res = topica.ensemble.ensemble([beta, beta.copy(), beta.copy()], topn=2, lambda_=1.0)
         assert res.method == "cluster"
         assert res.topic_word.shape == beta.shape
         # Each consensus topic equals one input topic (order may differ).
-        for _, _, dist in topica.align_topics(beta, res.topic_word):
+        for _, _, dist in topica.diagnostics.align_topics(beta, res.topic_word):
             assert dist < 1e-9
         np.testing.assert_allclose(res.stability, 1.0)
         np.testing.assert_allclose(res.support, 1.0)
@@ -67,7 +67,7 @@ class TestClusterMethod:
         beta_true = _sharp_topics(blocks, V, rng, peak=0.6)
         runs = [_noisy_run(beta_true, rng, noise=0.04) for _ in range(15)]
 
-        res = topica.ensemble(runs, topn=6, lambda_=1.0)
+        res = topica.ensemble.ensemble(runs, topn=6, lambda_=1.0)
         ens_err = _aligned_error(beta_true, res.topic_word)
         run_errs = sorted(_aligned_error(beta_true, r) for r in runs)
         median_err = run_errs[len(run_errs) // 2]
@@ -88,7 +88,7 @@ class TestClusterMethod:
             wild[6], wild[r1], wild[r2] = 0.5, 0.2, 0.2
             wild /= wild.sum()
             runs.append(np.vstack([A, B, wild]))
-        res = topica.ensemble(runs, topn=3, lambda_=1.0)
+        res = topica.ensemble.ensemble(runs, topn=3, lambda_=1.0)
         assert int(res.reliable.sum()) == 2
         assert res.stability.min() < 0.5
         # The unstable topic is still high-support: every run fed it a topic.
@@ -97,7 +97,7 @@ class TestClusterMethod:
     def test_jaccard_distance_also_works(self):
         rng = np.random.default_rng(1)
         beta = _sharp_topics([[0, 1], [2, 3], [4, 5]], 8, rng)
-        res = topica.ensemble([beta, beta.copy()], distance="jaccard", topn=2, lambda_=1.0)
+        res = topica.ensemble.ensemble([beta, beta.copy()], distance="jaccard", topn=2, lambda_=1.0)
         assert res.reliable.all()
 
 
@@ -107,7 +107,7 @@ class TestAlignMethod:
     def test_identical_runs_reproduce_input(self):
         rng = np.random.default_rng(0)
         beta = _sharp_topics([[0, 1], [2, 3], [4, 5]], 8, rng)
-        res = topica.ensemble([beta, beta.copy()], method="align", topn=2)
+        res = topica.ensemble.ensemble([beta, beta.copy()], method="align", topn=2)
         assert res.method == "align"
         np.testing.assert_allclose(res.topic_word, beta, atol=1e-9)
         np.testing.assert_allclose(res.stability, 1.0)
@@ -118,13 +118,13 @@ class TestAlignMethod:
         rng = np.random.default_rng(1)
         beta = _sharp_topics([[0, 1], [2, 3], [4, 5]], 8, rng)
         shuffled = beta[[2, 0, 1]]  # same topics, different order
-        res = topica.ensemble([beta, shuffled], method="align", reference="first", topn=2)
+        res = topica.ensemble.ensemble([beta, shuffled], method="align", reference="first", topn=2)
         np.testing.assert_allclose(res.topic_word, beta, atol=1e-9)
 
     def test_weights_average_is_weighted(self):
         a = np.array([[0.9, 0.1], [0.1, 0.9]])
         b = np.array([[0.5, 0.5], [0.5, 0.5]])
-        res = topica.ensemble([a, b], method="align", reference="first", weights=[0.75, 0.25])
+        res = topica.ensemble.ensemble([a, b], method="align", reference="first", weights=[0.75, 0.25])
         expected = 0.75 * a + 0.25 * b
         expected /= expected.sum(axis=1, keepdims=True)
         np.testing.assert_allclose(res.topic_word, expected, atol=1e-9)
@@ -149,11 +149,11 @@ class TestStableMethod:
 
     def test_discovers_the_stable_topics(self):
         runs, protos = self._clean_runs()
-        res = topica.ensemble(runs, method="stable")
+        res = topica.ensemble.ensemble(runs, method="stable")
         assert res.method == "stable"
         # Four reproducible prototypes -> four stable topics, each recovered.
         assert res.topic_word.shape[0] == 4
-        for _, _, dist in topica.align_topics(protos, res.topic_word):
+        for _, _, dist in topica.diagnostics.align_topics(protos, res.topic_word):
             assert dist < 5e-3
         assert res.reliable.all()
         np.testing.assert_allclose(res.support, 1.0)
@@ -176,7 +176,7 @@ class TestStableMethod:
             b = np.clip(b, 1e-6, None)
             b /= b.sum(1, keepdims=True)
             runs.append(b)
-        res = topica.ensemble(runs, method="stable")
+        res = topica.ensemble.ensemble(runs, method="stable")
         assert res.topic_word.shape[0] == 3
 
     def test_no_stable_topic_warns_and_returns_empty(self):
@@ -189,14 +189,14 @@ class TestStableMethod:
             b /= b.sum(1, keepdims=True)
             runs.append(b)
         with pytest.warns(UserWarning, match="no stable topic"):
-            res = topica.ensemble(runs, method="stable", eps=0.05)
+            res = topica.ensemble.ensemble(runs, method="stable", eps=0.05)
         assert res.topic_word.shape == (0, 20)
         assert np.isnan(res.agreement)
 
     def test_bad_masking_rejected(self):
         runs, _ = self._clean_runs()
         with pytest.raises(ValueError, match="masking must be"):
-            topica.ensemble(runs, method="stable", masking="soft")
+            topica.ensemble.ensemble(runs, method="stable", masking="soft")
 
 
 class TestApiSurface:
@@ -207,13 +207,13 @@ class TestApiSurface:
         class _FakeSelect:
             models = runs
 
-        res = topica.ensemble(_FakeSelect(), lambda_=1.0)
+        res = topica.ensemble.ensemble(_FakeSelect(), lambda_=1.0)
         assert res.n_runs == 2
 
     def test_top_words_pairs_use_indices_without_vocab(self):
         rng = np.random.default_rng(0)
         beta = _sharp_topics([[0, 1], [5, 6]], 8, rng)
-        res = topica.ensemble([beta, beta.copy()], topn=2, lambda_=1.0)
+        res = topica.ensemble.ensemble([beta, beta.copy()], topn=2, lambda_=1.0)
         tw = res.top_words(2)  # list of [(term, prob), ...] per topic; terms are ints
         terms = {t for t, _ in tw[0]}
         assert terms == {0, 1} or terms == {5, 6}
@@ -222,7 +222,7 @@ class TestApiSurface:
     def test_repr_reports_method_and_reliability(self):
         rng = np.random.default_rng(0)
         beta = _sharp_topics([[0, 1], [2, 3]], 6, rng)
-        res = topica.ensemble([beta, beta.copy()], topn=2, lambda_=1.0)
+        res = topica.ensemble.ensemble([beta, beta.copy()], topn=2, lambda_=1.0)
         r = repr(res)
         assert "method='cluster'" in r
         assert "reliable=2/2" in r
@@ -231,46 +231,46 @@ class TestApiSurface:
         rng = np.random.default_rng(0)
         beta = _sharp_topics([[0, 1], [2, 3]], 6, rng)
         with pytest.warns(UserWarning, match="document-topic distance is"):
-            topica.ensemble([beta, beta.copy()], topn=2, lambda_=0.5)
+            topica.ensemble.ensemble([beta, beta.copy()], topn=2, lambda_=0.5)
 
 
 class TestErrors:
     def test_single_run_rejected(self):
         with pytest.raises(ValueError, match="at least two runs"):
-            topica.ensemble([np.eye(3)])
+            topica.ensemble.ensemble([np.eye(3)])
 
     def test_shape_mismatch_rejected(self):
         with pytest.raises(ValueError, match="same shape"):
-            topica.ensemble([np.ones((3, 5)), np.ones((3, 6))], lambda_=1.0)
+            topica.ensemble.ensemble([np.ones((3, 5)), np.ones((3, 6))], lambda_=1.0)
 
     def test_bad_method_rejected(self):
         b = np.ones((2, 4)) / 4
         with pytest.raises(ValueError, match="method must be"):
-            topica.ensemble([b, b], method="magic", lambda_=1.0)
+            topica.ensemble.ensemble([b, b], method="magic", lambda_=1.0)
 
     def test_bad_distance_rejected(self):
         b = np.ones((2, 4)) / 4
         with pytest.raises(ValueError, match="distance must be"):
-            topica.ensemble([b, b], distance="euclidean", lambda_=1.0)
+            topica.ensemble.ensemble([b, b], distance="euclidean", lambda_=1.0)
 
     def test_bad_lambda_rejected(self):
         b = np.ones((2, 4)) / 4
         with pytest.raises(ValueError, match="lambda_"):
-            topica.ensemble([b, b], lambda_=2.0)
+            topica.ensemble.ensemble([b, b], lambda_=2.0)
 
     def test_bad_reference_rejected(self):
         b = np.ones((2, 4)) / 4
         with pytest.raises(ValueError, match="reference"):
-            topica.ensemble([b, b], method="align", reference="best")
+            topica.ensemble.ensemble([b, b], method="align", reference="best")
         with pytest.raises(ValueError, match="out of range"):
-            topica.ensemble([b, b], method="align", reference=5)
+            topica.ensemble.ensemble([b, b], method="align", reference=5)
 
     def test_bad_weights_rejected(self):
         b = np.ones((2, 4)) / 4
         with pytest.raises(ValueError, match="length"):
-            topica.ensemble([b, b], method="align", weights=[1.0])
+            topica.ensemble.ensemble([b, b], method="align", weights=[1.0])
         with pytest.raises(ValueError, match="non-negative"):
-            topica.ensemble([b, b], method="align", weights=[-1.0, 2.0])
+            topica.ensemble.ensemble([b, b], method="align", weights=[-1.0, 2.0])
 
 
 class TestFittedModels:
@@ -293,7 +293,7 @@ class TestFittedModels:
 
     def test_doc_topic_averaged_for_same_docs(self):
         runs, docs = self._runs()
-        res = topica.ensemble(runs)  # default cluster, lambda_=0.5 uses theta
+        res = topica.ensemble.ensemble(runs)  # default cluster, lambda_=0.5 uses theta
         assert res.doc_topic is not None
         assert res.doc_topic.shape == (len(docs), 2)
         np.testing.assert_allclose(res.doc_topic.sum(axis=1), 1.0, atol=1e-6)
@@ -301,9 +301,9 @@ class TestFittedModels:
 
     def test_result_flows_into_coherence(self):
         runs, docs = self._runs()
-        res = topica.ensemble(runs)
+        res = topica.ensemble.ensemble(runs)
         # The ensemble duck-types as a model: the model-neutral coherence surface
         # accepts it directly.
-        cv = topica.coherence(res, docs, coherence_type="c_v", topn=5)
+        cv = topica.diagnostics.coherence(res, docs, coherence_type="c_v", topn=5)
         assert np.asarray(cv).shape == (2,)
         assert np.all(np.isfinite(cv))

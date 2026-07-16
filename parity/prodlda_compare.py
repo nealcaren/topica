@@ -175,7 +175,7 @@ def _train_reference(counts: np.ndarray, k: int, seed: int):
 def _coherence(topics, token_docs, measure):
     import topica
 
-    return float(np.mean(topica.coherence(topics, token_docs, coherence_type=measure, topn=TOP_N)))
+    return float(np.mean(topica.diagnostics.coherence(topics, token_docs, coherence_type=measure, topn=TOP_N)))
 
 
 def _diversity(topics):

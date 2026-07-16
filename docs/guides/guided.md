@@ -142,7 +142,7 @@ how hard they anchor (a seed gets `weight * 100` prior pseudocounts; raise it to
 hold topics closer to their semantic cluster, lower it to let the data lead).
 The whole fitted-model surface (`topic_word`, `doc_topic`, `top_words`,
 `coherence`, ...) is delegated to the underlying `SeededLDA`, and `model.seeds`
-holds the embedding-derived seed sets. `topica.embedding_seeds(...)` exposes just
+holds the embedding-derived seed sets. `topica.embed.embedding_seeds(...)` exposes just
 the clustering step if you want to inspect or edit the seeds before fitting.
 
 ## Which to use

@@ -111,10 +111,10 @@ class TestAlignCorpus:
         assert len(aligned) == 3
 
     def test_topica_top_level_export(self, fitted_stm_and_data):
-        """align_corpus is accessible as topica.align_corpus."""
+        """align_corpus is accessible as topica.prep.align_corpus."""
         model, _, _ = fitted_stm_and_data
         docs = [["alpha", "UNKNOWN"]]
-        result = topica.align_corpus(docs, model)
+        result = topica.prep.align_corpus(docs, model)
         assert result == [["alpha"]]
 
     def test_all_oov_docs_become_empty(self, fitted_stm_and_data):

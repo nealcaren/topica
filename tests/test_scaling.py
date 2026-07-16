@@ -9,35 +9,35 @@ def test_bimodality_separates_one_vs_two_modes():
     rng = np.random.default_rng(0)
     unimodal = rng.normal(0, 1, 400)
     bimodal = np.concatenate([rng.normal(-2, 0.4, 200), rng.normal(2, 0.4, 200)])
-    bc_uni = topica.bimodality(unimodal)
-    bc_bi = topica.bimodality(bimodal)
+    bc_uni = topica.scaling.bimodality(unimodal)
+    bc_bi = topica.scaling.bimodality(bimodal)
     assert bc_uni < 0.555 < bc_bi, f"uni={bc_uni:.3f} bi={bc_bi:.3f}"
     # accepts an (n, 1) column too (e.g. author_positions)
-    assert topica.bimodality(bimodal.reshape(-1, 1)) == pytest.approx(bc_bi)
+    assert topica.scaling.bimodality(bimodal.reshape(-1, 1)) == pytest.approx(bc_bi)
 
 
 def test_bimodality_needs_enough_points():
     with pytest.raises(ValueError):
-        topica.bimodality([0.1, 0.2, 0.3])
+        topica.scaling.bimodality([0.1, 0.2, 0.3])
 
 
 def test_polarization_centroid_distance():
     pos = np.array([-1.0, -0.9, -1.1, 1.0, 0.9, 1.1])
     lab = ["L", "L", "L", "R", "R", "R"]
     # raw = distance between camp means (centroids at -1 and +1)
-    assert topica.polarization(pos, lab) == pytest.approx(2.0, abs=1e-9)
+    assert topica.scaling.polarization(pos, lab) == pytest.approx(2.0, abs=1e-9)
     # accepts an (n, 1) column (e.g. author_positions)
-    assert topica.polarization(pos.reshape(-1, 1), lab) == pytest.approx(2.0, abs=1e-9)
+    assert topica.scaling.polarization(pos.reshape(-1, 1), lab) == pytest.approx(2.0, abs=1e-9)
     # rises as the camps move apart
-    near = topica.polarization([-0.2, -0.2, 0.2, 0.2], ["L", "L", "R", "R"])
-    far = topica.polarization([-2.0, -2.0, 2.0, 2.0], ["L", "L", "R", "R"])
+    near = topica.scaling.polarization([-0.2, -0.2, 0.2, 0.2], ["L", "L", "R", "R"])
+    far = topica.scaling.polarization([-2.0, -2.0, 2.0, 2.0], ["L", "L", "R", "R"])
     assert far > near
 
 
 def test_polarization_multidim_is_euclidean():
     pos = np.array([[-1.0, 0.0], [-1.0, 0.0], [2.0, 4.0], [2.0, 4.0]])
     lab = ["L", "L", "R", "R"]
-    assert topica.polarization(pos, lab) == pytest.approx(5.0, abs=1e-9)  # 3-4-5
+    assert topica.scaling.polarization(pos, lab) == pytest.approx(5.0, abs=1e-9)  # 3-4-5
 
 
 def test_polarization_normalize_is_scale_free():
@@ -45,11 +45,11 @@ def test_polarization_normalize_is_scale_free():
     # (effect-size) form unchanged.
     pos = np.array([-1.0, -0.8, 0.8, 1.0])
     lab = ["L", "L", "R", "R"]
-    raw1 = topica.polarization(pos, lab)
-    raw2 = topica.polarization(pos * 2, lab)
+    raw1 = topica.scaling.polarization(pos, lab)
+    raw2 = topica.scaling.polarization(pos * 2, lab)
     assert raw2 == pytest.approx(2 * raw1)
-    assert topica.polarization(pos, lab, normalize=True) == pytest.approx(
-        topica.polarization(pos * 2, lab, normalize=True)
+    assert topica.scaling.polarization(pos, lab, normalize=True) == pytest.approx(
+        topica.scaling.polarization(pos * 2, lab, normalize=True)
     )
 
 
@@ -57,7 +57,7 @@ def test_polarization_more_than_two_camps():
     pos = np.array([-2.0, -2.0, 0.0, 0.0, 2.0, 2.0])
     lab = ["A", "A", "B", "B", "C", "C"]
     # mean of pairwise centroid distances: |A-B|=2, |A-C|=4, |B-C|=2 -> 8/3
-    assert topica.polarization(pos, lab) == pytest.approx(8.0 / 3.0, abs=1e-9)
+    assert topica.scaling.polarization(pos, lab) == pytest.approx(8.0 / 3.0, abs=1e-9)
 
 
 def test_polarization_ci_propagates_position_se():
@@ -65,14 +65,14 @@ def test_polarization_ci_propagates_position_se():
     # bracketing the estimate, large SEs widen it toward (and past) zero.
     pos = np.array([-1.0, -0.9, -1.1, 1.0, 0.9, 1.1])
     lab = ["L", "L", "L", "R", "R", "R"]
-    point = topica.polarization(pos, lab)
+    point = topica.scaling.polarization(pos, lab)
 
-    tight = topica.polarization_ci(pos, lab, np.full(6, 0.02), n_sim=2000, seed=0)
+    tight = topica.scaling.polarization_ci(pos, lab, np.full(6, 0.02), n_sim=2000, seed=0)
     assert tight.estimate == pytest.approx(point, abs=1e-9)
     assert tight.lo <= point <= tight.hi
     assert tight.se > 0.0
 
-    wide = topica.polarization_ci(pos, lab, np.full(6, 1.0), n_sim=2000, seed=0)
+    wide = topica.scaling.polarization_ci(pos, lab, np.full(6, 1.0), n_sim=2000, seed=0)
     assert wide.se > tight.se
     assert wide.hi - wide.lo > tight.hi - tight.lo
 
@@ -95,18 +95,18 @@ def test_polarization_ci_matches_model_surface():
     m.fit(docs, group=group)
     camp_of = {n: n.split("_")[0] for n in m.author_names}
     labels = [camp_of[n] for n in m.author_names]
-    res = topica.polarization_ci(m.author_positions, labels, m.position_se, n_sim=500, seed=0)
+    res = topica.scaling.polarization_ci(m.author_positions, labels, m.position_se, n_sim=500, seed=0)
     assert res.estimate == pytest.approx(
-        topica.polarization(m.author_positions, labels), abs=1e-9
+        topica.scaling.polarization(m.author_positions, labels), abs=1e-9
     )
     assert res.lo <= res.estimate <= res.hi
 
 
 def test_polarization_errors():
     with pytest.raises(ValueError):
-        topica.polarization([0.1, 0.2, 0.3], ["L", "R"])  # length mismatch
+        topica.scaling.polarization([0.1, 0.2, 0.3], ["L", "R"])  # length mismatch
     with pytest.raises(ValueError):
-        topica.polarization([0.1, 0.2], ["L", "L"])  # one camp
+        topica.scaling.polarization([0.1, 0.2], ["L", "L"])  # one camp
 
 
 def test_split_half_reliability_mechanics():
@@ -123,7 +123,7 @@ def test_split_half_reliability_mechanics():
         pos = [trait[a] + rng.normal(0, 1e-3) for a in authors]
         return authors, np.array(pos)
 
-    r = topica.split_half_reliability(fit, group, seed=0)
+    r = topica.scaling.split_half_reliability(fit, group, seed=0)
     assert r > 0.99, f"reliability={r:.3f}"
 
 
@@ -136,7 +136,7 @@ def test_split_half_reliability_low_for_noise():
         authors = sorted({group[i] for i in idx})
         return authors, rng.normal(size=len(authors))
 
-    r = topica.split_half_reliability(fit, group, seed=0, repeats=3)
+    r = topica.scaling.split_half_reliability(fit, group, seed=0, repeats=3)
     assert r < 0.5, f"noise reliability={r:.3f}"
 
 
@@ -161,7 +161,7 @@ def test_position_intervals_mechanics():
         authors = sorted(acc)
         return authors, np.array([np.mean(acc[a]) for a in authors])
 
-    res = topica.position_intervals(fit, group, n_boot=60, seed=0)
+    res = topica.scaling.position_intervals(fit, group, n_boot=60, seed=0)
     assert set(res) == {f"a{a}" for a in range(20)}
     est = np.array([res[f"a{a}"].estimate for a in range(20)])
     tru = np.array([trait[a] for a in range(20)])
@@ -196,7 +196,7 @@ def test_position_intervals_with_wordfish():
                   anchors={"a0": -1.0, "a23": 1.0}, iters=80)
             return m.author_names, m.author_positions[:, 0]
 
-        res = topica.position_intervals(fit, group, n_boot=10, seed=0)
+        res = topica.scaling.position_intervals(fit, group, n_boot=10, seed=0)
         assert all(np.isfinite(pi.se) and pi.se >= 0 for pi in res.values())
     finally:
         topica.enable_experimental(False)
@@ -236,7 +236,7 @@ def test_split_half_reliability_with_idealpointlda():
             m.fit([docs[i] for i in idx], group=[group[i] for i in idx], iters=30)
             return m.author_names, m.author_positions[:, 0]
 
-        r = topica.split_half_reliability(fit, group, seed=0)
+        r = topica.scaling.split_half_reliability(fit, group, seed=0)
         assert r > 0.6, f"planted reliability too low: {r:.3f}"
     finally:
         topica.enable_experimental(False)

@@ -205,7 +205,7 @@ Or call the helper directly from Python:
 ```python
 import topica
 
-violations = topica.check_conformance(MyNewModel(num_topics=5))
+violations = topica.diagnostics.check_conformance(MyNewModel(num_topics=5))
 for v in violations:
     print(v)
 ```
@@ -222,7 +222,7 @@ open a pull request.
 3. Add it to `REGISTRY` in `python/topica/conformance.py` with a zero-arg
    factory lambda and the correct `model_family` string.
 4. Add the class to `_topica.pyi` to keep the stub in sync.
-5. Run `topica.check_conformance(MyModel())` to find any missing attributes.
+5. Run `topica.diagnostics.check_conformance(MyModel())` to find any missing attributes.
 6. For each missing attribute:
    - If it is a structural impossibility for this model, add it to `EXEMPT`
      with a clear reason.

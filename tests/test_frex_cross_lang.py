@@ -5,7 +5,7 @@ languages (issue #260).
 
 These tests verify the Python wrappers expose the Rust core faithfully:
 
-- **FREX**: ``topica.frex`` returns the Rust ``inspect_frex_scores`` exactly, and
+- **FREX**: ``topica.interpret.frex`` returns the Rust ``inspect_frex_scores`` exactly, and
   passing ``word_counts`` engages stm's James-Stein exclusivity shrinkage.
 - **score**: ``label_topics`` score is the Rust ``inspect_score_scores``.
 - **lift**: ``label_topics`` lift is stm's log-lift from ``inspect_lift_scores``
@@ -52,7 +52,7 @@ def test_frex_word_counts_enable_stm_shrinkage():
     beta, vocab = _continuous_beta(seed=2)
     rng = np.random.default_rng(2)
     wc = rng.integers(1, 500, beta.shape[1])
-    # With word_counts, topica.frex matches the shrinkage path of the core...
+    # With word_counts, topica.interpret.frex matches the shrinkage path of the core...
     rust_shrink = np.array(_topica.inspect_frex_scores(beta.tolist(), wc.tolist(), 0.5))
     py_shrink = _matrix_from_labels(
         val.frex(beta, vocab, w=0.5, n=beta.shape[1], word_counts=wc), *beta.shape)
@@ -119,7 +119,7 @@ def test_corpus_supplies_word_counts():
 def test_exclusivity_routes_through_core():
     beta, _ = _continuous_beta(seed=6)
     rust = np.array(_topica.inspect_exclusivity(beta.tolist(), 10, 0.7))
-    py = topica.exclusivity(beta, n=10, w=0.7)
+    py = topica.diagnostics.exclusivity(beta, n=10, w=0.7)
     np.testing.assert_allclose(py, rust, atol=1e-12, rtol=0)
     # stm's exclusivity is a FREX summary (~[0, n]), not a [0, 1] mean.
     assert np.all(py >= 0.0) and py.max() > 1.0
@@ -130,7 +130,7 @@ def test_semantic_coherence_routes_through_core():
     rng = np.random.default_rng(7)
     docs = [[f"w{i}" for i in rng.integers(0, 60, rng.integers(5, 20))]
             for _ in range(200)]
-    py = topica.semantic_coherence(beta, docs, vocab, n=10)
+    py = topica.diagnostics.semantic_coherence(beta, docs, vocab, n=10)
     vmap = {w: i for i, w in enumerate(vocab)}
     docs_ids = [[vmap[w] for w in d if w in vmap] for d in docs]
     rust = np.array(_topica.inspect_semantic_coherence(beta.tolist(), docs_ids, 10))
@@ -145,8 +145,8 @@ def test_semantic_coherence_reads_corpus_vocabulary():
     beta = rng.gamma(0.4, size=(3, corpus.num_words))
     beta /= beta.sum(axis=1, keepdims=True)
     # Passing the Corpus supplies both the documents and the vocabulary.
-    from_corpus = topica.semantic_coherence(beta, corpus, n=5)
-    from_lists = topica.semantic_coherence(beta, corpus.documents(),
+    from_corpus = topica.diagnostics.semantic_coherence(beta, corpus, n=5)
+    from_lists = topica.diagnostics.semantic_coherence(beta, corpus.documents(),
                                            corpus.vocabulary, n=5)
     np.testing.assert_allclose(from_corpus, from_lists, atol=1e-12)
 

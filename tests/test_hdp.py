@@ -178,6 +178,6 @@ class TestDiscoveryTrace:
         docs, _, _ = _planted_corpus()
         m = HDP(seed=1)
         m.fit(docs, iters=80, progress_interval=10)
-        ax = topica.plot_topic_discovery(m)
+        ax = topica.viz.plot_topic_discovery(m)
         assert ax.get_xlabel() == "Gibbs iteration"
         plt.close("all")

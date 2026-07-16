@@ -87,7 +87,7 @@ def main():
 
     D_gensim, stable_gensim = _gensim_stable(ttda, eps, min_samples, min_cores)
     D_topica = _asymmetric_distance(ttda, "mass", 0.95)
-    res = topica.ensemble(
+    res = topica.ensemble.ensemble(
         runs, method="stable", eps=eps, min_samples=min_samples,
         min_cores=min_cores, masking="mass", masking_threshold=0.95,
     )
@@ -99,7 +99,7 @@ def main():
     print(f"stable topic count: gensim={stable_gensim.shape[0]} topica={res.topic_word.shape[0]}")
     assert stable_gensim.shape[0] == res.topic_word.shape[0] == K, "stable topic count mismatch"
 
-    pairs = topica.align_topics(stable_gensim, res.topic_word, metric="cosine")
+    pairs = topica.diagnostics.align_topics(stable_gensim, res.topic_word, metric="cosine")
     t_err = max(d for _, _, d in pairs)
     print(f"stable topics: max aligned cosine distance = {t_err:.2e}")
     assert t_err < 1e-9, "stable topics disagree"

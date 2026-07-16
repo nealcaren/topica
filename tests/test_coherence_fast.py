@@ -22,11 +22,11 @@ def _fit():
 
 
 def _both_paths(model, ct, **kw):
-    fast = topica.coherence(model, DOCS, coherence_type=ct, **kw)
+    fast = topica.diagnostics.coherence(model, DOCS, coherence_type=ct, **kw)
     saved = ext.window_cooccurrence
     try:
         del ext.window_cooccurrence  # force the pure-Python fallback
-        slow = topica.coherence(model, DOCS, coherence_type=ct, **kw)
+        slow = topica.diagnostics.coherence(model, DOCS, coherence_type=ct, **kw)
     finally:
         ext.window_cooccurrence = saved
     return fast, slow

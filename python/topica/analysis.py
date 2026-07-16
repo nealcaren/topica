@@ -27,9 +27,19 @@ import warnings
 
 import numpy as np
 
-from . import validation as _diagnostics
-from . import effects as _effects
 from .keywords import _zeta as _fw_zeta
+
+# validation and effects import this module (topics_over_time / topics_per_class
+# live here), so they are imported lazily inside the functions that use them to
+# avoid a circular import at module load. See _diag() / _eff() below.
+def _diag():
+    from . import validation
+    return validation
+
+
+def _eff():
+    from . import effects
+    return effects
 
 
 # A custom-label registry keyed by ``id(model)``. PyO3 extension classes may not
@@ -146,7 +156,7 @@ def representative_docs(model, texts, *, topic=None, n=5):
     Each list is ordered by descending topic proportion.
     """
     def docs_for(t):
-        thoughts = _diagnostics.find_thoughts(model.doc_topic, texts, topic=t, n=n)
+        thoughts = _diag().find_thoughts(model.doc_topic, texts, topic=t, n=n)
         return [text for _, _, text in thoughts]
 
     if topic is not None:
@@ -257,7 +267,7 @@ def topics_per_class(model, groups, *, ci=0.95):
     ``groups`` is one label per document, and the result is a list of
     per-stratum prevalence records (mean and confidence interval per topic).
     """
-    return _effects.by_strata(model.doc_topic, groups, ci=ci)
+    return _eff().by_strata(model.doc_topic, groups, ci=ci)
 
 
 def contrastive_topics(model, texts, groups, *, prior=0.01, informative=False,
@@ -444,7 +454,7 @@ def plot_report(model, *, texts=None, timestamps=None, groups=None, n=8,
         ref = texts
         if ref is not None and len(ref) and isinstance(ref[0], str):
             ref = [t.split() for t in ref]
-        quality = _diagnostics.quality_frontier(
+        quality = _diag().quality_frontier(
             model, n=n, texts=ref,
             coherence_type=coherence_type if ref is not None else "u_mass",
         )
@@ -455,7 +465,7 @@ def plot_report(model, *, texts=None, timestamps=None, groups=None, n=8,
     corr = None
     if 2 <= K <= 40:
         try:
-            corr = np.asarray(_diagnostics.topic_correlation(model.doc_topic).cor)
+            corr = np.asarray(_diag().topic_correlation(model.doc_topic).cor)
             panels.append("correlation")
         except Exception as exc:
             _skip("correlation", exc)
