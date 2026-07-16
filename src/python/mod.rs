@@ -7719,14 +7719,21 @@ impl ECTM {
     /// ``rho_t = (tau + t)^(-kappa)``: larger `tau` down-weights early, noisier
     /// minibatches and `kappa` in (0.5, 1] sets the forgetting rate. `content_every`
     /// sets how many minibatches between content-deviation (κ) M-step solves under
-    /// SVI (0 = auto, ~10 solves per epoch). `keep_eta_cov` (default True) stores the
-    /// full per-document logistic-normal covariances; set it False to save memory.
-    /// `num_threads` sets the thread count (None = automatic).
+    /// SVI (0 = auto, ~10 solves per epoch). `seeds` (experimental) anchors a
+    /// topic's shared baseline vocabulary: a `{topic_index: [seed words]}` map
+    /// shifts the κT prior mean for those (topic, word) entries to `seed_strength`
+    /// (default 4.0), so a seeded topic keeps its identity and group differences
+    /// are more likely to stay within it than to spawn a parallel group-topic;
+    /// unknown words are skipped and `seeds=None` is bit-exact with no seeding.
+    /// `keep_eta_cov` (default True) stores the full per-document logistic-normal
+    /// covariances; set it False to save memory. `num_threads` sets the thread
+    /// count (None = automatic).
     #[pyo3(signature = (data, times, content, *, prevalence=None, prevalence_names=None,
                         content_names=None, period_names=None, iters=500, convergence_tol=1e-5,
                         content_prior_var=1.0, period_smooth=5.0, interaction_shrink=2.0,
                         inference="batch", batch_size=256, tau=64.0, kappa=0.7,
-                        content_every=0, keep_eta_cov=true, num_threads=None))]
+                        content_every=0, seeds=None, seed_strength=4.0,
+                        keep_eta_cov=true, num_threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         &mut self,
@@ -7748,6 +7755,8 @@ impl ECTM {
         tau: f64,
         kappa: f64,
         content_every: usize,
+        seeds: Option<std::collections::HashMap<usize, Vec<String>>>,
+        seed_strength: f64,
         keep_eta_cov: bool,
         num_threads: Option<usize>,
     ) -> PyResult<()> {
@@ -7891,6 +7900,35 @@ impl ECTM {
         let init_spectral = self.init_spectral;
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
 
+        // κT seed prior mean (k*V, zeros = no seeding): anchors a topic's shared
+        // baseline vocabulary toward the given seed words, resolved against the
+        // corpus vocabulary. The κ M-step's L2 defends the shift, so seeded topics
+        // keep their identity and group variation stays within them.
+        let seed_mean: Vec<f64> = {
+            let mut sm = vec![0.0f64; k * num_types];
+            if let Some(seeds) = seeds {
+                let word_id: std::collections::HashMap<&str, usize> = corpus
+                    .id_to_word
+                    .iter()
+                    .enumerate()
+                    .map(|(i, w)| (w.as_str(), i))
+                    .collect();
+                for (topic, words) in &seeds {
+                    if *topic >= k {
+                        return Err(PyValueError::new_err(format!(
+                            "seed topic {topic} out of range for num_topics {k}"
+                        )));
+                    }
+                    for w in words {
+                        if let Some(&wi) = word_id.get(w.as_str()) {
+                            sm[topic * num_types + wi] = seed_strength;
+                        }
+                    }
+                }
+            }
+            sm
+        };
+
         let (model, corpus) = py.allow_threads(move || {
             let prev_ref = prevalence_x.as_deref();
             let m = run_with_threads(num_threads, || {
@@ -7917,6 +7955,7 @@ impl ECTM {
                         keep_eta_cov,
                         diagonal,
                         init_spectral,
+                        &seed_mean,
                         &mut rng,
                     )
                 } else {
@@ -7939,6 +7978,7 @@ impl ECTM {
                         keep_eta_cov,
                         diagonal,
                         init_spectral,
+                        &seed_mean,
                         &mut rng,
                     )
                 }

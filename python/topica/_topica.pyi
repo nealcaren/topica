@@ -786,6 +786,8 @@ class ECTM:
         tau: float = 64.0,
         kappa: float = 0.7,
         content_every: int = 0,
+        seeds: Optional[dict[int, list[str]]] = None,
+        seed_strength: float = 4.0,
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
     ) -> None:
@@ -809,7 +811,14 @@ class ECTM:
         SVI mode. content_every sets how often (in minibatches) the expensive
         content-κ M-step is re-solved; the cheap μ/Σ/γ updates run every minibatch.
         content_every=0 (default) re-solves κ once per epoch; a small positive value
-        re-solves more often (better per-epoch progress, more cost per epoch)."""
+        re-solves more often (better per-epoch progress, more cost per epoch).
+
+        seeds (experimental) anchors a topic's shared baseline vocabulary: a
+        ``{topic_index: [seed words]}`` map shifts the κT prior mean for those
+        (topic, word) entries to seed_strength (default 4.0), so the seeded topic
+        keeps its identity and group differences are more likely to stay *within*
+        it than to spawn a parallel group-topic. Unseeded topics and seeds=None are
+        unchanged (bit-exact)."""
         ...
 
     @property

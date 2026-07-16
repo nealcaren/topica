@@ -365,3 +365,51 @@ def test_analysis_surface():
     assert topica.interpret.summary(m) is not None
     assert topica.diagnostics.topic_table(m) is not None
     assert m.coherence(5).shape == (2,)
+
+
+# --- Seeded content (experimental): anchor a topic's baseline vocabulary -----
+
+def test_seeds_none_is_bit_exact_with_baseline():
+    """seeds=None must not perturb the fit (the seed prior mean is all zeros)."""
+    base = _fit(seed=3)
+    seeded_none = _fit(seed=3, seeds=None)
+    assert np.allclose(np.asarray(base.topic_word),
+                       np.asarray(seeded_none.topic_word))
+
+
+def test_seeds_anchor_topic_baseline_vocabulary():
+    """Seeding a topic raises the seed words' probability in its baseline; more
+    strength anchors harder (a monotonic effect the L2 prior defends)."""
+    # A richer corpus than the 4-word fixture so the effect is above noise.
+    docs, groups, times = [], [], []
+    for i in range(120):
+        base = (["tax", "budget", "fiscal"] if i % 2 else ["war", "troops", "army"])
+        docs.append(base * 3)
+        groups.append("A" if i % 2 else "B")
+        times.append(2000 + i % 3)
+
+    def seed_mass(seeds=None, strength=4.0):
+        m = topica.models.ECTM(num_topics=3, seed=1)
+        m.fit(docs, times=times, content=groups, iters=100, seeds=seeds, seed_strength=strength)
+        vocab = m.vocabulary
+        sw = [vocab.index(w) for w in ("tax", "budget", "fiscal")]
+        # the topic where the seed words landed carries the most of their mass
+        beta = np.asarray(m.topic_word)
+        return beta[:, sw].sum(axis=1).max()
+
+    none = seed_mass(None)
+    strong = seed_mass({0: ["tax", "budget", "fiscal"]}, strength=8.0)
+    assert strong > none
+
+
+def test_seeds_reject_out_of_range_topic():
+    docs, groups, times = _corpus()
+    m = topica.models.ECTM(num_topics=2, seed=1)
+    with pytest.raises(Exception):
+        m.fit(docs, times=times, content=groups, iters=20, seeds={5: ["a"]})
+
+
+def test_seeds_ignore_unknown_words():
+    """Words outside the vocabulary are silently skipped (no crash)."""
+    m = _fit(seed=1, seeds={0: ["x", "notaword"]}, seed_strength=5.0)
+    assert np.asarray(m.topic_word).shape[0] == 2
