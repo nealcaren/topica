@@ -20,6 +20,7 @@ from . import prep as prep
 from . import design as design
 from . import embed as embed
 from . import diagnostics as diagnostics
+from . import content as content
 from . import select as select
 from . import interpret as interpret
 from . import effects as effects

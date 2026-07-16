@@ -62,6 +62,7 @@ from . import prep  # noqa: E402         corpus construction & text prep
 from . import design  # noqa: E402       covariate design matrices
 from . import embed  # noqa: E402        document-embedding helpers
 from . import diagnostics  # noqa: E402  quality / stability / held-out / MCMC convergence
+from . import content  # noqa: E402      content-covariate diagnostics (STM/STS/SAGE/ECTM)
 from . import select  # noqa: E402       choosing K / choosing a model
 from . import interpret  # noqa: E402    reading & labeling topics
 from . import effects  # noqa: E402      covariate / prevalence estimation
@@ -109,6 +110,7 @@ __all__ = [
     "design",
     "embed",
     "diagnostics",
+    "content",
     "select",
     "interpret",
     "effects",
