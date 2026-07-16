@@ -36,7 +36,7 @@ def main():
     period = (day.argsort().argsort() * 6 // len(day) + 1)
     period = [f"P{p}" for p in period]
 
-    model = topica.LDA(num_topics=8, seed=1)
+    model = topica.models.LDA(num_topics=8, seed=1)
     model.fit(docs, iters=800)
 
     fig = topica.plot_report(

@@ -34,7 +34,7 @@ def _planted(n_authors=40, n_words=60, docs_per=3, seed=0):
 
 def test_recovers_positions_and_discrimination():
     docs, group, theta, beta = _planted(seed=1)
-    m = topica.Wordfish(seed=1)
+    m = topica.models.Wordfish(seed=1)
     m.fit(docs, group=group, anchors={"a0": -1.0, "a39": 1.0}, iters=100)
 
     assert m.num_authors == 40
@@ -66,7 +66,7 @@ def test_position_se():
         for _ in range(reps):
             docs2.append(d)
             group2.append(g)
-    m = topica.Wordfish(seed=1)
+    m = topica.models.Wordfish(seed=1)
     m.fit(docs2, group=group2, anchors={"a0": -1.0, "a39": 1.0})
     se = m.position_se
     assert se.shape == (m.num_authors,)
@@ -79,7 +79,7 @@ def test_position_se():
 
 def test_anchors_orient_sign():
     docs, group, theta, _ = _planted(seed=2)
-    m = topica.Wordfish(seed=1)
+    m = topica.models.Wordfish(seed=1)
     m.fit(docs, group=group, anchors={"a0": -1.0, "a39": 1.0})
     pos = dict(zip(m.author_names, m.author_positions[:, 0]))
     assert pos["a0"] < pos["a39"], "anchors did not orient the axis"
@@ -87,7 +87,7 @@ def test_anchors_orient_sign():
 
 def test_discriminating_words():
     docs, group, _, _ = _planted(seed=3)
-    m = topica.Wordfish(seed=1)
+    m = topica.models.Wordfish(seed=1)
     m.fit(docs, group=group, anchors={"a0": -1.0, "a39": 1.0})
     pos, neg = m.discriminating_words(5)
     assert len(pos) == 5 and len(neg) == 5
@@ -97,20 +97,20 @@ def test_discriminating_words():
 
 def test_determinism():
     docs, group, _, _ = _planted(seed=4)
-    a = topica.Wordfish(seed=1)
+    a = topica.models.Wordfish(seed=1)
     a.fit(docs, group=group)
-    b = topica.Wordfish(seed=1)
+    b = topica.models.Wordfish(seed=1)
     b.fit(docs, group=group)
     assert np.array_equal(a.author_positions, b.author_positions)
 
 
 def test_save_load(tmp_path):
     docs, group, _, _ = _planted(seed=5)
-    m = topica.Wordfish(seed=1)
+    m = topica.models.Wordfish(seed=1)
     m.fit(docs, group=group, anchors={"a0": -1.0, "a39": 1.0})
     p = tmp_path / "wf.topica"
     m.save(str(p))
-    m2 = topica.Wordfish.load(str(p))
+    m2 = topica.models.Wordfish.load(str(p))
     assert np.array_equal(m.author_positions, m2.author_positions)
     assert m.author_names == m2.author_names
     assert m.vocabulary == m2.vocabulary
@@ -119,7 +119,7 @@ def test_save_load(tmp_path):
 def test_inf_prior_is_flat():
     # math.inf priors must be accepted (no regularization) and still fit.
     docs, group, theta, _ = _planted(seed=6)
-    m = topica.Wordfish(beta_prior_sd=math.inf, theta_prior_sd=math.inf, seed=1)
+    m = topica.models.Wordfish(beta_prior_sd=math.inf, theta_prior_sd=math.inf, seed=1)
     m.fit(docs, group=group, anchors={"a0": -1.0, "a39": 1.0})
     pos = dict(zip(m.author_names, m.author_positions[:, 0]))
     recovered = np.array([pos[f"a{a}"] for a in range(40)])
@@ -161,9 +161,9 @@ def _ideology_recovery(m, ideo):
 
 def test_control_covariate_rescues_axis():
     docs, group, control, ideo = _contaminated(seed=0)
-    plain = topica.Wordfish(min_count=1, seed=1)
+    plain = topica.models.Wordfish(min_count=1, seed=1)
     plain.fit(docs, group=group, iters=120)
-    ctrl = topica.Wordfish(min_count=1, seed=1)
+    ctrl = topica.models.Wordfish(min_count=1, seed=1)
     ctrl.fit(docs, group=group, control=control, iters=120)
     r_plain = _ideology_recovery(plain, ideo)
     r_ctrl = _ideology_recovery(ctrl, ideo)
@@ -179,18 +179,18 @@ def test_control_covariate_rescues_axis():
 def test_control_none_matches_plain():
     # control=None must give exactly the historical Wordfish fit.
     docs, group, _, _ = _planted(seed=2)
-    a = topica.Wordfish(seed=1); a.fit(docs, group=group, iters=60)
-    b = topica.Wordfish(seed=1); b.fit(docs, group=group, control=None, iters=60)
+    a = topica.models.Wordfish(seed=1); a.fit(docs, group=group, iters=60)
+    b = topica.models.Wordfish(seed=1); b.fit(docs, group=group, control=None, iters=60)
     assert np.array_equal(a.author_positions, b.author_positions)
 
 
 def test_control_save_load(tmp_path):
     docs, group, control, _ = _contaminated(seed=3)
-    m = topica.Wordfish(min_count=1, seed=1)
+    m = topica.models.Wordfish(min_count=1, seed=1)
     m.fit(docs, group=group, control=control, iters=40)
     p = tmp_path / "wfc.topica"
     m.save(str(p))
-    m2 = topica.Wordfish.load(str(p))
+    m2 = topica.models.Wordfish.load(str(p))
     assert np.array_equal(m.author_positions, m2.author_positions)
     assert np.array_equal(m.control_word_offsets, m2.control_word_offsets)
     assert m.control_names == m2.control_names
@@ -198,7 +198,7 @@ def test_control_save_load(tmp_path):
 
 def test_control_validation():
     docs, group, control, _ = _contaminated(seed=4)
-    m = topica.Wordfish(min_count=1, seed=1)
+    m = topica.models.Wordfish(min_count=1, seed=1)
     # wrong length
     with pytest.raises(Exception):
         m.fit(docs, group=group, control=control[:-5], iters=10)

@@ -22,7 +22,7 @@ def _docs(n=180):
 
 
 def _fit(docs, iters=300, **kw):
-    m = topica.SeededLDA(_SEEDS, seed=1, sampler="warp", **kw)
+    m = topica.models.SeededLDA(_SEEDS, seed=1, sampler="warp", **kw)
     m.fit(docs, iters=iters)
     return m
 
@@ -73,23 +73,23 @@ def test_seed_word_lands_on_its_topic():
 
 def test_aliases_and_bad_name():
     for name in ("warp", "warplda"):
-        m = topica.SeededLDA(_SEEDS, seed=1, sampler=name)
+        m = topica.models.SeededLDA(_SEEDS, seed=1, sampler=name)
         m.fit(_docs(60), iters=40)
         assert m.topic_word.shape[0] == 3
     with pytest.raises(ValueError):
-        topica.SeededLDA(_SEEDS, sampler="banana")
+        topica.models.SeededLDA(_SEEDS, sampler="banana")
 
 
 def test_doc_topic_prior_rejected_for_warp():
     docs = _docs(60)
     prior = np.full((len(docs), 3), 0.1)
-    m = topica.SeededLDA(_SEEDS, seed=1, sampler="warp")
+    m = topica.models.SeededLDA(_SEEDS, seed=1, sampler="warp")
     with pytest.raises(ValueError):
         m.fit(docs, iters=20, doc_topic_prior=prior)
 
 
 def _fit_cvb0(docs, iters=200, **kw):
-    m = topica.SeededLDA(_SEEDS, seed=1, sampler="cvb0", **kw)
+    m = topica.models.SeededLDA(_SEEDS, seed=1, sampler="cvb0", **kw)
     m.fit(docs, iters=iters)
     return m
 
@@ -112,6 +112,6 @@ def test_cvb0_deterministic_no_draws():
 def test_cvb0_rejects_doc_topic_prior():
     docs = _docs(60)
     prior = np.full((len(docs), 3), 0.1)
-    m = topica.SeededLDA(_SEEDS, seed=1, sampler="cvb0")
+    m = topica.models.SeededLDA(_SEEDS, seed=1, sampler="cvb0")
     with pytest.raises(ValueError):
         m.fit(docs, iters=20, doc_topic_prior=prior)

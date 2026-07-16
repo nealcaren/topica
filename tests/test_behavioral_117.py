@@ -42,65 +42,65 @@ N = len(DOCS)
 # ---------------------------------------------------------------------------
 
 def _lda():
-    m = topica.LDA(num_topics=3, seed=1)
+    m = topica.models.LDA(num_topics=3, seed=1)
     m.fit(DOCS, iters=150)
     return m
 
 
 def _dmr():
     X = np.ones((N, 1))
-    m = topica.DMR(num_topics=3, seed=1)
+    m = topica.models.DMR(num_topics=3, seed=1)
     m.fit(DOCS, X, feature_names=["x"], iters=80)
     return m
 
 
 def _sage():
     groups = ["g0", "g1"] * (N // 2)
-    m = topica.SAGE(num_topics=3, seed=1)
+    m = topica.models.SAGE(num_topics=3, seed=1)
     m.fit(DOCS, groups, iters=80)
     return m
 
 
 def _pa():
-    m = topica.PA(num_super=2, num_sub=3, seed=1)
+    m = topica.models.PA(num_super=2, num_sub=3, seed=1)
     m.fit(DOCS, iters=150)
     return m
 
 
 def _pt():
-    m = topica.PT(num_topics=3, num_pseudo=10, seed=1)
+    m = topica.models.PT(num_topics=3, num_pseudo=10, seed=1)
     m.fit(DOCS, iters=150)
     return m
 
 
 def _hdp():
-    m = topica.HDP(seed=1)
+    m = topica.models.HDP(seed=1)
     m.fit(DOCS, iters=150)
     return m
 
 
 def _labeled():
-    m = topica.LabeledLDA(seed=1)
+    m = topica.models.LabeledLDA(seed=1)
     m.fit(DOCS, [["t0", "t1"]] * N, iters=80)
     return m
 
 
 def _supervised():
     y = np.array([0.0, 1.0] * (N // 2))
-    m = topica.SupervisedLDA(num_topics=3, seed=1)
+    m = topica.models.SupervisedLDA(num_topics=3, seed=1)
     m.fit(DOCS, y, iters=80)
     return m
 
 
 def _keyatm():
-    m = topica.KeyATM({"animals": ["cat", "dog"], "space": ["star", "moon"]},
+    m = topica.models.KeyATM({"animals": ["cat", "dog"], "space": ["star", "moon"]},
                       num_topics=3, seed=1)
     m.fit(DOCS, iters=80)
     return m
 
 
 def _seeded():
-    m = topica.SeededLDA({"animals": ["cat", "dog"], "space": ["star", "moon"]},
+    m = topica.models.SeededLDA({"animals": ["cat", "dog"], "space": ["star", "moon"]},
                          residual=1, seed=1)
     m.fit(DOCS, iters=150)
     return m
@@ -108,26 +108,26 @@ def _seeded():
 
 def _stm():
     X = np.ones((N, 1))
-    m = topica.STM(num_topics=3, seed=1)
+    m = topica.models.STM(num_topics=3, seed=1)
     m.fit(DOCS, X, prevalence_names=["x"], iters=40)
     return m
 
 
 def _ctm():
-    m = topica.CTM(num_topics=3, seed=1)
+    m = topica.models.CTM(num_topics=3, seed=1)
     m.fit(DOCS, iters=40)
     return m
 
 
 def _sts():
     seed_vals = [0.0, 1.0] * (N // 2)
-    m = topica.STS(num_topics=3, seed=1)
+    m = topica.models.STS(num_topics=3, seed=1)
     m.fit(DOCS, sentiment_seed=seed_vals, iters=30)
     return m
 
 
 def _prodlda():
-    m = topica.ProdLDA(num_topics=3, seed=1)
+    m = topica.models.ProdLDA(num_topics=3, seed=1)
     m.fit(DOCS, iters=60)
     return m
 
@@ -193,13 +193,13 @@ def test_fit_save_load_transform(name, tmp_path):
 def test_multithreaded_fit_save_load_roundtrip(tmp_path):
     """save/load after a multithreaded (AD-LDA) fit — the parallelism +
     serialization interaction the paper claims, untested until now."""
-    m = topica.LDA(num_topics=3, seed=1)
+    m = topica.models.LDA(num_topics=3, seed=1)
     m.fit(DOCS, iters=150, num_threads=4)
     before = np.asarray(m.transform(HELD_OUT))
 
     path = str(tmp_path / "mt.tt")
     m.save(path)
-    loaded = topica.LDA.load(path)
+    loaded = topica.models.LDA.load(path)
 
     np.testing.assert_array_equal(
         np.asarray(m.topic_word), np.asarray(loaded.topic_word),
@@ -217,13 +217,13 @@ def test_sampler_backend_survives_load(sampler, tmp_path):
     save/load so the loaded model stays behaviorally identical (#102b). Each
     backend has its own doc-phase; if the flag were dropped on load, transform
     would fall back to the default sampler and diverge."""
-    m = topica.LDA(num_topics=3, seed=1, sampler=sampler)
+    m = topica.models.LDA(num_topics=3, seed=1, sampler=sampler)
     m.fit(DOCS, iters=150)
     before = np.asarray(m.transform(HELD_OUT))
 
     path = str(tmp_path / f"{sampler}.tt")
     m.save(path)
-    loaded = topica.LDA.load(path)
+    loaded = topica.models.LDA.load(path)
 
     np.testing.assert_array_equal(
         np.asarray(m.topic_word), np.asarray(loaded.topic_word),
@@ -239,7 +239,7 @@ def test_svi_honors_convergence_tol():
     """CTM's stochastic variational inference (inference="svi") must respect
     convergence_tol and early-stop, not run the full iters every time."""
     iters = 100
-    m = topica.CTM(num_topics=3, seed=1)
+    m = topica.models.CTM(num_topics=3, seed=1)
     m.fit(DOCS, iters=iters, inference="svi", convergence_tol=1e-2)
 
     assert m.converged is True, "loose convergence_tol should early-stop SVI"

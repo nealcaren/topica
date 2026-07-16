@@ -40,7 +40,7 @@ def _planted(n_authors=12, vocab=24, docs_per=6, seed=0):
 
 def test_shapes_and_getters():
     docs, group, _ = _planted(seed=1)
-    m = topica.TBIP(num_topics=3, seed=0, iters=200, batch_size=64)
+    m = topica.models.TBIP(num_topics=3, seed=0, iters=200, batch_size=64)
     m.fit(docs, group=group)
     assert m.num_topics == 3
     assert m.num_authors == 12
@@ -63,7 +63,7 @@ def test_position_se_is_variational_posterior_sd():
     # The ideal-point SE is the SD of the Gaussian variational posterior q(x_s):
     # aligned to ideal_points, finite and strictly positive.
     docs, group, _ = _planted(seed=2)
-    m = topica.TBIP(num_topics=3, seed=0, iters=200, batch_size=64)
+    m = topica.models.TBIP(num_topics=3, seed=0, iters=200, batch_size=64)
     m.fit(docs, group=group)
     se = m.position_se
     assert se.shape == m.ideal_points.shape == (12,)
@@ -72,7 +72,7 @@ def test_position_se_is_variational_posterior_sd():
 
 def test_recovers_positions():
     docs, group, x_true = _planted(seed=2, n_authors=15, docs_per=8)
-    m = topica.TBIP(num_topics=3, seed=0, iters=1500, batch_size=len(docs))
+    m = topica.models.TBIP(num_topics=3, seed=0, iters=1500, batch_size=len(docs))
     m.fit(docs, group=group)
     pos = dict(zip(m.author_names, m.ideal_points))
     recovered = np.array([pos[f"a{a}"] for a in range(15)])
@@ -82,9 +82,9 @@ def test_recovers_positions():
 
 def test_determinism():
     docs, group, _ = _planted(seed=3)
-    a = topica.TBIP(num_topics=3, seed=0, iters=150, batch_size=64)
+    a = topica.models.TBIP(num_topics=3, seed=0, iters=150, batch_size=64)
     a.fit(docs, group=group)
-    b = topica.TBIP(num_topics=3, seed=0, iters=150, batch_size=64)
+    b = topica.models.TBIP(num_topics=3, seed=0, iters=150, batch_size=64)
     b.fit(docs, group=group)
     assert np.array_equal(a.ideal_points, b.ideal_points)
     assert np.array_equal(a.topic_word, b.topic_word)
@@ -93,7 +93,7 @@ def test_determinism():
 def test_group_default_is_per_document():
     """With no group=, each document is its own author."""
     docs, _, _ = _planted(seed=4)
-    m = topica.TBIP(num_topics=3, seed=0, iters=100, batch_size=64)
+    m = topica.models.TBIP(num_topics=3, seed=0, iters=100, batch_size=64)
     m.fit(docs)
     assert m.num_authors == len(docs)
     assert m.ideal_points.shape == (len(docs),)
@@ -101,11 +101,11 @@ def test_group_default_is_per_document():
 
 def test_save_load(tmp_path):
     docs, group, _ = _planted(seed=5)
-    m = topica.TBIP(num_topics=3, seed=0, iters=150, batch_size=64)
+    m = topica.models.TBIP(num_topics=3, seed=0, iters=150, batch_size=64)
     m.fit(docs, group=group)
     p = tmp_path / "tbip.topica"
     m.save(str(p))
-    m2 = topica.TBIP.load(str(p))
+    m2 = topica.models.TBIP.load(str(p))
     assert np.array_equal(m.ideal_points, m2.ideal_points)
     assert np.array_equal(m.topic_word, m2.topic_word)
     assert np.array_equal(m.ideological_topics, m2.ideological_topics)

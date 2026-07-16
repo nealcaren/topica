@@ -141,13 +141,13 @@ class TestEvalHeldout:
         return topica.make_heldout(_planted(n_per=60, doc_len=20, seed=0), seed=0)
 
     def test_returns_heldoutresult_dataclass(self, heldout):
-        m = topica.LDA(2, seed=1)
+        m = topica.models.LDA(2, seed=1)
         m.fit(heldout.documents, iters=100)
         result = topica.eval_heldout(m, heldout)
         assert isinstance(result, HeldoutResult)
 
     def test_lda_finite_negative_loglik(self, heldout):
-        m = topica.LDA(2, seed=1)
+        m = topica.models.LDA(2, seed=1)
         m.fit(heldout.documents, iters=100)
         result = topica.eval_heldout(m, heldout)
         assert np.isfinite(result.mean_per_doc_loglik)
@@ -157,14 +157,14 @@ class TestEvalHeldout:
         D = len(heldout.documents)
         rng = np.random.default_rng(3)
         prevalence = rng.normal(size=(D, 2))
-        m = topica.STM(2, seed=1)
+        m = topica.models.STM(2, seed=1)
         m.fit(heldout.documents, prevalence, iters=20)
         result = topica.eval_heldout(m, heldout)
         assert np.isfinite(result.mean_per_doc_loglik)
         assert result.mean_per_doc_loglik < 0.0
 
     def test_ctm_finite_negative_loglik(self, heldout):
-        m = topica.CTM(2, seed=1)
+        m = topica.models.CTM(2, seed=1)
         m.fit(heldout.documents, iters=20)
         result = topica.eval_heldout(m, heldout)
         assert np.isfinite(result.mean_per_doc_loglik)
@@ -174,14 +174,14 @@ class TestEvalHeldout:
         D = len(heldout.documents)
         rng = np.random.default_rng(5)
         feats = rng.normal(size=(D, 2))
-        m = topica.DMR(2, seed=1)
+        m = topica.models.DMR(2, seed=1)
         m.fit(heldout.documents, feats, iters=100)
         result = topica.eval_heldout(m, heldout)
         assert np.isfinite(result.mean_per_doc_loglik)
         assert result.mean_per_doc_loglik < 0.0
 
     def test_shapes_and_counts_consistent(self, heldout):
-        m = topica.LDA(2, seed=1)
+        m = topica.models.LDA(2, seed=1)
         m.fit(heldout.documents, iters=100)
         result = topica.eval_heldout(m, heldout)
         assert result.n_docs == len(result.per_doc_loglik)
@@ -200,7 +200,7 @@ class TestEvalHeldout:
         rng = np.random.default_rng(0)
         D = len(heldout.documents)
         emb = rng.normal(size=(D, 8))
-        m = topica.BERTopic(min_cluster_size=5, seed=1)
+        m = topica.models.BERTopic(min_cluster_size=5, seed=1)
         m.fit(heldout.documents, emb)
         with pytest.raises(ValueError, match="generative|no held-out|class-based"):
             topica.eval_heldout(m, heldout)
@@ -209,13 +209,13 @@ class TestEvalHeldout:
         rng = np.random.default_rng(0)
         D = len(heldout.documents)
         emb = rng.normal(size=(D, 8))
-        m = topica.Top2Vec(min_cluster_size=5, seed=1)
+        m = topica.models.Top2Vec(min_cluster_size=5, seed=1)
         m.fit(heldout.documents, emb)
         with pytest.raises(ValueError, match="generative|no held-out|class-based"):
             topica.eval_heldout(m, heldout)
 
     def test_per_doc_loglik_all_negative(self, heldout):
-        m = topica.LDA(2, seed=1)
+        m = topica.models.LDA(2, seed=1)
         m.fit(heldout.documents, iters=100)
         result = topica.eval_heldout(m, heldout)
         assert np.all(result.per_doc_loglik < 0.0)
@@ -228,7 +228,7 @@ class TestEvalHeldout:
 def test_roundtrip_lda():
     docs = _planted(n_per=60, doc_len=20, seed=0)
     h = topica.make_heldout(docs, prop_docs=0.3, prop_words=0.5, seed=42)
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(h.documents, iters=150)
     result = topica.eval_heldout(m, h)
     assert isinstance(result, HeldoutResult)
@@ -242,7 +242,7 @@ def test_roundtrip_stm():
     h = topica.make_heldout(docs, prop_docs=0.4, prop_words=0.5, seed=7)
     rng = np.random.default_rng(7)
     prevalence = rng.normal(size=(len(h.documents), 2))
-    m = topica.STM(2, seed=1)
+    m = topica.models.STM(2, seed=1)
     m.fit(h.documents, prevalence, iters=20)
     result = topica.eval_heldout(m, h)
     assert isinstance(result, HeldoutResult)
@@ -252,7 +252,7 @@ def test_roundtrip_stm():
 def test_roundtrip_ctm():
     docs = _planted(n_per=60, doc_len=20, seed=2)
     h = topica.make_heldout(docs, prop_docs=0.4, prop_words=0.5, seed=13)
-    m = topica.CTM(2, seed=1)
+    m = topica.models.CTM(2, seed=1)
     m.fit(h.documents, iters=20)
     result = topica.eval_heldout(m, h)
     assert isinstance(result, HeldoutResult)
@@ -428,10 +428,10 @@ def test_better_fit_scores_higher_loglik():
     docs = _planted(n_per=80, doc_len=20, seed=0)
     h = topica.make_heldout(docs, prop_docs=0.5, prop_words=0.5, seed=0)
 
-    m_good = topica.LDA(2, seed=1)
+    m_good = topica.models.LDA(2, seed=1)
     m_good.fit(h.documents, iters=300)
 
-    m_bad = topica.LDA(1, seed=1)
+    m_bad = topica.models.LDA(1, seed=1)
     m_bad.fit(h.documents, iters=300)
 
     r_good = topica.eval_heldout(m_good, h)

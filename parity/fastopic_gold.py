@@ -116,7 +116,7 @@ def _topica_topic_word(token_docs, emb, seed):
     """Fit topica FASTopic; return (topic_word, vocabulary)."""
     import topica
 
-    tm = topica.FASTopic(num_topics=NUM_TOPICS, lr=LR, seed=seed)
+    tm = topica.models.FASTopic(num_topics=NUM_TOPICS, lr=LR, seed=seed)
     tm.fit_transform(token_docs, emb)
     return np.asarray(tm.topic_word, dtype=np.float64), [str(w) for w in tm.vocabulary]
 

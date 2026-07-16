@@ -95,7 +95,7 @@ def _make_bilingual_corpus(n_per_cell=N_PER_CELL, seed=CORPUS_SEED):
 
 
 def _fit_topica(docs, groups):
-    from topica import SAGE
+    from topica.models import SAGE
 
     model = SAGE(num_topics=NUM_TOPICS, seed=FIT_SEED,
                  optimize_interval=OPTIMIZE_INTERVAL, burn_in=BURN_IN)

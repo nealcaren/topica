@@ -22,7 +22,7 @@ def _planted(k=3, block=8, n=240, length=15, seed=0):
 
 
 def _model(num_topics=3, **kw):
-    return topica.ProdLDA(
+    return topica.models.ProdLDA(
         num_topics=num_topics, batch_size=60, lr=0.01, dropout=0.0, **kw
     )
 
@@ -91,36 +91,36 @@ def test_prodlda_determinism():
 
 def test_prodlda_validation():
     with pytest.raises(ValueError):
-        topica.ProdLDA(num_topics=1)  # need >= 2 topics
+        topica.models.ProdLDA(num_topics=1)  # need >= 2 topics
     with pytest.raises(ValueError):
-        topica.ProdLDA(num_topics=3, alpha=0.0)  # alpha must be > 0
+        topica.models.ProdLDA(num_topics=3, alpha=0.0)  # alpha must be > 0
     with pytest.raises(ValueError):
-        topica.ProdLDA(num_topics=3, dropout=1.0)  # dropout in [0, 1)
+        topica.models.ProdLDA(num_topics=3, dropout=1.0)  # dropout in [0, 1)
     with pytest.raises(RuntimeError):
-        topica.ProdLDA(num_topics=3).topic_word  # not fitted
+        topica.models.ProdLDA(num_topics=3).topic_word  # not fitted
 
 
 # --- VAE objective/prior flags (#174 contrastive, #176 prior) ----------------
 
 def test_prodlda_flags_accepted_and_exposed():
-    m = topica.ProdLDA(
+    m = topica.models.ProdLDA(
         num_topics=3, prior="dirichlet", contrastive=True,
         contrastive_weight=0.3, contrastive_temp=0.2,
     )
     assert m.prior == "dirichlet"
     assert m.contrastive is True
     # Laplace, no contrastive is the default.
-    d = topica.ProdLDA(num_topics=3)
+    d = topica.models.ProdLDA(num_topics=3)
     assert d.prior == "laplace" and d.contrastive is False
 
 
 def test_prodlda_flag_validation():
     with pytest.raises(ValueError):
-        topica.ProdLDA(num_topics=3, prior="gaussian")  # unknown prior
+        topica.models.ProdLDA(num_topics=3, prior="gaussian")  # unknown prior
     with pytest.raises(ValueError):
-        topica.ProdLDA(num_topics=3, contrastive=True, contrastive_weight=-1.0)
+        topica.models.ProdLDA(num_topics=3, contrastive=True, contrastive_weight=-1.0)
     with pytest.raises(ValueError):
-        topica.ProdLDA(num_topics=3, contrastive=True, contrastive_temp=0.0)
+        topica.models.ProdLDA(num_topics=3, contrastive=True, contrastive_temp=0.0)
 
 
 def test_prodlda_flags_change_results_but_stay_valid():
@@ -153,7 +153,7 @@ def test_prodlda_flags_save_load_roundtrip(tmp_path):
     m.fit(docs, iters=60)
     path = str(tmp_path / "prodlda_flags.bin")
     m.save(path)
-    loaded = topica.ProdLDA.load(path)
+    loaded = topica.models.ProdLDA.load(path)
     assert loaded.prior == "dirichlet"
     assert loaded.contrastive is True
     assert np.array_equal(loaded.topic_word, m.topic_word)
@@ -204,7 +204,7 @@ def test_prodlda_stick_breaking_save_load_roundtrip(tmp_path):
     m = _model(seed=2, prior="stick_breaking"); m.fit(docs, iters=60)
     path = str(tmp_path / "prodlda_sb.bin")
     m.save(path)
-    loaded = topica.ProdLDA.load(path)
+    loaded = topica.models.ProdLDA.load(path)
     assert loaded.prior == "stick_breaking"
     assert np.array_equal(loaded.topic_word, m.topic_word)
     assert np.array_equal(loaded.doc_topic, m.doc_topic)

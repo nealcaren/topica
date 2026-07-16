@@ -66,7 +66,7 @@ inter,     _  = topica.interaction(party_col, yr_basis, name="party_year")
 X = np.column_stack([party_col, yr_basis, inter])
 
 topica.enable_experimental()   # ECTM is experimental and gated; opt in first
-model = topica.ECTM(num_topics=18, seed=1)
+model = topica.models.ECTM(num_topics=18, seed=1)
 model.fit(docs, times=year, content=party,
           prevalence=X, prevalence_names=list(pn) + list(sn) + ["party_year"],
           iters=150, period_smooth=6.0, interaction_shrink=1.2)
@@ -198,7 +198,7 @@ of independent units is far smaller. `content_trajectory_ci` resamples whole
 ```python
 from topica.ectm import content_trajectory_ci
 def refit(d, g, p):
-    m = topica.ECTM(num_topics=18, seed=1)
+    m = topica.models.ECTM(num_topics=18, seed=1)
     m.fit(d, times=p, content=g, iters=90, period_smooth=6.0, interaction_shrink=1.2)
     return m
 anchor = [w for w, _ in model.top_words(20, topic=env)]
@@ -272,7 +272,7 @@ needed. For those, pass `inference="svi"` to switch to minibatch stochastic
 variational inference:
 
 ```python
-model = topica.ECTM(num_topics=18, seed=1)
+model = topica.models.ECTM(num_topics=18, seed=1)
 model.fit(docs, times=year, content=party, prevalence=X,
           iters=8,                 # epochs (passes over the corpus), not batch EM steps
           inference="svi", batch_size=2048, tau=64.0, kappa=0.7,

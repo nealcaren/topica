@@ -207,7 +207,7 @@ def _train_reference(counts_a, counts_b, trans_ab, seed):
 def _topica_topic_word(docs_a, docs_b, dictionary, vocab_a, vocab_b, seed):
     import topica
 
-    m = topica.InfoCTM(num_topics=K, seed=seed, hidden_size=HIDDEN, lr=0.01)
+    m = topica.models.InfoCTM(num_topics=K, seed=seed, hidden_size=HIDDEN, lr=0.01)
     m.fit(docs_a, docs_b, dictionary=dictionary, iters=ITERS, batch_size=64)
     t_a = np.asarray(m.topic_word(lang="a"), dtype=np.float64)
     t_b = np.asarray(m.topic_word(lang="b"), dtype=np.float64)

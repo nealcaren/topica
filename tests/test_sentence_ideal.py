@@ -43,14 +43,14 @@ def test_requires_experimental():
     topica.enable_experimental(False)
     try:
         with pytest.raises(Exception):
-            topica.IdealPointSentenceTM(num_topics=2)
+            topica.models.IdealPointSentenceTM(num_topics=2)
     finally:
         topica.enable_experimental(was)
 
 
 def test_recovers_positions():
     emb, group, theta = _planted(seed=1)
-    m = topica.IdealPointSentenceTM(num_topics=2, num_dims=1, seed=1)
+    m = topica.models.IdealPointSentenceTM(num_topics=2, num_dims=1, seed=1)
     m.fit(emb, group=group, anchors={"a0": -1.0, "a39": 1.0}, iters=80)
 
     assert m.num_authors == 40
@@ -63,7 +63,7 @@ def test_recovers_positions():
 
 def test_shapes_and_topics():
     emb, group, _ = _planted(seed=2)
-    m = topica.IdealPointSentenceTM(num_topics=2, seed=1)
+    m = topica.models.IdealPointSentenceTM(num_topics=2, seed=1)
     m.fit(emb, group=group, iters=50)
     assert m.doc_topic.shape == (emb.shape[0], 2)
     assert np.allclose(m.doc_topic.sum(axis=1), 1.0, atol=1e-6)
@@ -84,7 +84,7 @@ def test_position_se_is_well_shaped_and_shrinks_with_data():
     emb = np.concatenate([emb] + [emb[a0]] * 6, axis=0)
     group = list(group) + ["a0"] * (len(a0) * 6)
 
-    m = topica.IdealPointSentenceTM(num_topics=2, num_dims=1, seed=1)
+    m = topica.models.IdealPointSentenceTM(num_topics=2, num_dims=1, seed=1)
     m.fit(emb, group=group, iters=50)
     se = m.position_se
     assert se.shape == m.author_positions.shape == (m.num_authors, 1)
@@ -98,17 +98,17 @@ def test_position_se_is_well_shaped_and_shrinks_with_data():
 
 def test_position_se_survives_save_load(tmp_path):
     emb, group, _ = _planted(seed=7)
-    m = topica.IdealPointSentenceTM(num_topics=2, num_dims=1, seed=1)
+    m = topica.models.IdealPointSentenceTM(num_topics=2, num_dims=1, seed=1)
     m.fit(emb, group=group, iters=40)
     path = tmp_path / "s.topica"
     m.save(str(path))
-    m2 = topica.IdealPointSentenceTM.load(str(path))
+    m2 = topica.models.IdealPointSentenceTM.load(str(path))
     assert np.array_equal(m.position_se, m2.position_se)
 
 
 def test_anchors_orient_sign():
     emb, group, _ = _planted(seed=3)
-    m = topica.IdealPointSentenceTM(num_topics=2, seed=1)
+    m = topica.models.IdealPointSentenceTM(num_topics=2, seed=1)
     m.fit(emb, group=group, anchors={"a0": -1.0, "a39": 1.0})
     pos = dict(zip(m.author_names, m.author_positions[:, 0]))
     assert pos["a0"] < pos["a39"]
@@ -116,20 +116,20 @@ def test_anchors_orient_sign():
 
 def test_determinism():
     emb, group, _ = _planted(seed=4)
-    a = topica.IdealPointSentenceTM(num_topics=2, seed=1)
+    a = topica.models.IdealPointSentenceTM(num_topics=2, seed=1)
     a.fit(emb, group=group, iters=40)
-    b = topica.IdealPointSentenceTM(num_topics=2, seed=1)
+    b = topica.models.IdealPointSentenceTM(num_topics=2, seed=1)
     b.fit(emb, group=group, iters=40)
     assert np.array_equal(a.author_positions, b.author_positions)
 
 
 def test_save_load(tmp_path):
     emb, group, _ = _planted(seed=5)
-    m = topica.IdealPointSentenceTM(num_topics=2, seed=1)
+    m = topica.models.IdealPointSentenceTM(num_topics=2, seed=1)
     m.fit(emb, group=group, anchors={"a0": -1.0, "a39": 1.0})
     p = tmp_path / "sitm.topica"
     m.save(str(p))
-    m2 = topica.IdealPointSentenceTM.load(str(p))
+    m2 = topica.models.IdealPointSentenceTM.load(str(p))
     assert np.array_equal(m.author_positions, m2.author_positions)
     assert np.array_equal(m.topic_centroids, m2.topic_centroids)
     assert m.author_names == m2.author_names

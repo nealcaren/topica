@@ -19,7 +19,7 @@ corpus = topica.from_dataframe(
     min_doc_freq=2,                            # drop words in fewer than 2 documents
 )
 
-model = topica.LDA(num_topics=5, seed=42)
+model = topica.models.LDA(num_topics=5, seed=42)
 model.fit(corpus)                             # sensible defaults; no other arguments needed
 print(topica.summary(model))                  # top words per topic
 ```
@@ -83,7 +83,7 @@ A tiny self-contained corpus, for experiments:
 ```python
 animals = [["cat", "dog", "fish", "cat", "dog"]] * 15
 space   = [["planet", "star", "moon", "rocket", "planet"]] * 15
-model = topica.LDA(num_topics=2, seed=42)
+model = topica.models.LDA(num_topics=2, seed=42)
 model.fit(animals + space)
 for i, words in enumerate(model.top_words(5)):
     print(f"Topic {i}:", "  ".join(f"{w}({p:.2f})" for w, p in words))

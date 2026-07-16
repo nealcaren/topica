@@ -8,7 +8,7 @@ use super::*;
 use crate::tbip::{self, TbipConfig, TbipModel, TbipParams};
 use std::collections::{HashMap, HashSet};
 
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct TBIP {
     num_topics: usize,
     a_gamma: f64,

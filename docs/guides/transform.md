@@ -7,7 +7,7 @@ freshly collected texts.
 ```python
 import topica
 
-model = topica.LDA(num_topics=20, seed=42)
+model = topica.models.LDA(num_topics=20, seed=42)
 model.fit(train_docs, iters=1000)
 
 theta = model.transform(new_docs, seed=0)     # (len(new_docs), num_topics)

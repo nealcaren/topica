@@ -30,7 +30,7 @@ def _corpus(blocks, n_docs=300, doc_len=6, seed=0):
 def test_recovers_embedding_clusters():
     vocab, emb, blocks = _blocks()
     docs = _corpus(blocks)
-    m = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, top_m=5, seed=1)
+    m = topica.models.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, top_m=5, seed=1)
     m.fit(docs, iters=300)
     # Each recovered topic's top words come from a single embedding block.
     for t in range(3):
@@ -51,7 +51,7 @@ def test_seeds_disjoint_and_sized():
 
 def test_delegates_to_seeded_lda():
     vocab, emb, blocks = _blocks()
-    m = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=1)
+    m = topica.models.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=1)
     m.fit(_corpus(blocks), iters=100)
     assert m.num_topics == 3
     assert m.topic_word.shape[0] == 3
@@ -62,8 +62,8 @@ def test_delegates_to_seeded_lda():
 def test_deterministic():
     vocab, emb, blocks = _blocks()
     docs = _corpus(blocks)
-    a = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=7)
-    b = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=7)
+    a = topica.models.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=7)
+    b = topica.models.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=7)
     assert a.seeds == b.seeds
     a.fit(docs, iters=100)
     b.fit(docs, iters=100)
@@ -88,7 +88,7 @@ def test_data_overrides_misleading_seed():
         else:
             docs.append(list(rng.choice(blocks[1], 5)) + ["z"])
 
-    m = topica.EmbeddingLDA(num_topics=2, embeddings=emb, vocabulary=vocab, top_m=8, seed=1)
+    m = topica.models.EmbeddingLDA(num_topics=2, embeddings=emb, vocabulary=vocab, top_m=8, seed=1)
     # 'z' is seeded into whichever topic its embedding (block a) lands in.
     z_seed_topic = next(k for k, ws in m.seeds.items() if "z" in ws)
     m.fit(docs, iters=400)
@@ -123,7 +123,7 @@ def test_document_prior_separates_identical_bag_of_words():
         doc_emb.append(centers[d % 2] + rng.normal(size=e_dim) * 0.3)
     doc_emb = np.array(doc_emb)
 
-    m = topica.EmbeddingLDA(
+    m = topica.models.EmbeddingLDA(
         num_topics=2, embeddings=emb, vocabulary=vocab, top_m=8, doc_anchor=5.0, seed=1
     )
     m.fit(docs, doc_embeddings=doc_emb, iters=400)
@@ -140,7 +140,7 @@ def test_document_prior_separates_identical_bag_of_words():
 
 def test_document_prior_shape_and_inspection():
     vocab, emb, blocks = _blocks(n_blocks=3)
-    m = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=1)
+    m = topica.models.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=1)
     doc_emb = np.random.default_rng(0).normal(size=(10, emb.shape[1]))
     prior = m.document_topic_prior(doc_emb)
     assert prior.shape == (10, 3)
@@ -149,16 +149,16 @@ def test_document_prior_shape_and_inspection():
 
 def test_v1_mode_unchanged_without_doc_embeddings():
     vocab, emb, blocks = _blocks()
-    a = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=2)
+    a = topica.models.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=2)
     a.fit(_corpus(blocks), iters=100)  # no doc_embeddings -> V1 path
-    b = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=2)
+    b = topica.models.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=2)
     b.fit(_corpus(blocks), iters=100, doc_embeddings=None)
     assert np.array_equal(a.topic_word, b.topic_word)
 
 
 def test_doc_embeddings_dim_validation():
     vocab, emb, blocks = _blocks()
-    m = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=1)
+    m = topica.models.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=1)
     with pytest.raises(ValueError):
         m.document_topic_prior(np.zeros((5, emb.shape[1] + 1)))  # wrong E
 

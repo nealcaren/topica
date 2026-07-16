@@ -39,7 +39,7 @@ import time
 
 import numpy as np
 
-from topica import STM
+from topica.models import STM
 from topica.stm import spline
 
 # (num_docs, vocab, num_topics) — a small/moderate/large-vocab sweep.

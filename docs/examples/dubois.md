@@ -54,7 +54,7 @@ print("vocab", corpus.num_words)                  # 3423
 ## 3. LDA
 
 ```python
-lda = topica.LDA(num_topics=15, seed=1)
+lda = topica.models.LDA(num_topics=15, seed=1)
 lda.fit(corpus, iters=400, num_samples=4, sample_interval=25)
 for t in range(15):
     print(f"T{t:>2}: " + ", ".join(w.replace("_", " ") for w, _ in lda.top_words(8, topic=t)))
@@ -87,7 +87,7 @@ ordered time slices. `chain_variance=0.05` lets real trends show; the default
 ```python
 decades = sorted(by_decade)
 times = [decades.index(r["decade"]) for r in rows]
-dtm = topica.DTM(num_topics=8, chain_variance=0.05, seed=1)
+dtm = topica.models.DTM(num_topics=8, chain_variance=0.05, seed=1)
 dtm.fit(corpus, times, iters=20)
 
 vocab = list(dtm.vocabulary)
@@ -139,7 +139,7 @@ The Hierarchical Dirichlet Process infers the topic count rather than taking one
 It is a check on the `K = 15` chosen above.
 
 ```python
-hdp = topica.HDP(eta=0.3, seed=1)
+hdp = topica.models.HDP(eta=0.3, seed=1)
 hdp.fit(corpus, iters=150)
 print("HDP inferred K =", hdp.num_topics)          # 17
 ```
@@ -160,7 +160,7 @@ seeds = {
     "voting":    ["vote", "votes", "ballot", "suffrage", "franchise"],
     "africa":    ["africa", "african", "congo", "liberia", "empire"],
 }
-ka = topica.KeyATM(seeds, num_topics=8, seed=1)
+ka = topica.models.KeyATM(seeds, num_topics=8, seed=1)
 ka.fit(phrased_docs, iters=800)
 for t in range(4):
     print(f"{ka.topic_names[t]:10s}", [w for w, _ in ka.top_words(7, topic=t)])

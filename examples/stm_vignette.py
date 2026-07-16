@@ -23,7 +23,8 @@ from collections import Counter
 
 import numpy as np
 
-from topica import STM, tokenize, stm
+from topica.models import STM
+from topica import tokenize, stm
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 

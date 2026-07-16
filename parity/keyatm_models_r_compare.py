@@ -1,5 +1,5 @@
 """Cross-implementation validation for the keyATM *covariate* and *dynamic*
-models: topica.KeyATM vs the R `keyATM` package.
+models: topica.models.KeyATM vs the R `keyATM` package.
 
 The base model is covered in `keyatm_r_compare.py`. This extends the same
 statistical-equivalence approach to the two model variants, on the poliblog
@@ -139,7 +139,7 @@ def _read_theta(path):
 def run(verbose: bool = True) -> dict:
     if not r_keyatm_available():
         raise RuntimeError("Rscript with the 'keyATM' package is not available")
-    from topica import KeyATM
+    from topica.models import KeyATM
 
     docs, keywords, rating, time = load_with_covariates()
     num_keyword = len(keywords)

@@ -27,7 +27,7 @@ def _planted(k=3, block=8, e=3, seed=0):
 
 def test_etm_recovers_planted_blocks():
     docs, vocab, word_emb, truth = _planted()
-    m = topica.ETM(num_topics=3, seed=1)
+    m = topica.models.ETM(num_topics=3, seed=1)
     m.fit(docs, word_emb, vocab, iters=50)
 
     assert m.topic_word.shape == (3, len(vocab))
@@ -47,7 +47,7 @@ def test_etm_recovers_planted_blocks():
 
 def test_etm_top_words_all_topics_and_names():
     docs, vocab, word_emb, _ = _planted()
-    m = topica.ETM(num_topics=3, seed=1)
+    m = topica.models.ETM(num_topics=3, seed=1)
     m.fit(docs, word_emb, vocab, iters=20)
     allw = m.top_words(5)  # topic=None -> list per topic
     assert len(allw) == 3 and all(len(t) == 5 for t in allw)
@@ -58,21 +58,21 @@ def test_etm_top_words_all_topics_and_names():
 def test_etm_validation():
     docs, vocab, word_emb, _ = _planted()
     with pytest.raises(ValueError):
-        topica.ETM(num_topics=1)  # need >= 2 topics
+        topica.models.ETM(num_topics=1)  # need >= 2 topics
     with pytest.raises(ValueError):
-        topica.ETM(num_topics=3, inference="bogus")  # em or vae only
-    m = topica.ETM(num_topics=3, seed=1)
+        topica.models.ETM(num_topics=3, inference="bogus")  # em or vae only
+    m = topica.models.ETM(num_topics=3, seed=1)
     with pytest.raises(ValueError):
         m.fit(docs, word_emb[:-1], vocab)  # embeddings rows != vocab length
     with pytest.raises(RuntimeError):
-        topica.ETM(num_topics=3).topic_word  # not fitted
+        topica.models.ETM(num_topics=3).topic_word  # not fitted
 
 
 # --- VAE inference path -----------------------------------------------------
 
 
 def _vae(num_topics=3, **kw):
-    return topica.ETM(
+    return topica.models.ETM(
         num_topics=num_topics, inference="vae", hidden_size=64,
         batch_size=64, lr=0.01, **kw
     )
@@ -121,18 +121,18 @@ def test_etm_vae_determinism():
 # --- VAE objective/prior flags (#174 contrastive, #176 prior) ----------------
 
 def test_etm_vae_flags_accepted():
-    m = topica.ETM(num_topics=3, inference="vae", prior="dirichlet",
+    m = topica.models.ETM(num_topics=3, inference="vae", prior="dirichlet",
                    contrastive=True, contrastive_weight=0.3, contrastive_temp=0.2)
     assert m.inference == "vae"
 
 
 def test_etm_flag_validation():
     with pytest.raises(ValueError):
-        topica.ETM(num_topics=3, inference="vae", prior="gaussian")
+        topica.models.ETM(num_topics=3, inference="vae", prior="gaussian")
     with pytest.raises(ValueError):
-        topica.ETM(num_topics=3, inference="vae", contrastive=True, contrastive_weight=-1.0)
+        topica.models.ETM(num_topics=3, inference="vae", contrastive=True, contrastive_weight=-1.0)
     with pytest.raises(ValueError):
-        topica.ETM(num_topics=3, inference="vae", contrastive=True, contrastive_temp=0.0)
+        topica.models.ETM(num_topics=3, inference="vae", contrastive=True, contrastive_temp=0.0)
 
 
 def test_etm_vae_flags_change_results():
@@ -161,7 +161,7 @@ def test_etm_vae_flags_save_load_roundtrip(tmp_path):
     m.fit(docs, word_emb, vocab, iters=80)
     path = str(tmp_path / "etm_vae_flags.bin")
     m.save(path)
-    loaded = topica.ETM.load(path)
+    loaded = topica.models.ETM.load(path)
     assert np.array_equal(loaded.topic_word, m.topic_word)
     assert np.array_equal(loaded.doc_topic, m.doc_topic)
 
@@ -185,7 +185,7 @@ def test_etm_stick_breaking_save_load_roundtrip(tmp_path):
     m = _vae(seed=2, prior="stick_breaking"); m.fit(docs, word_emb, vocab, iters=80)
     path = str(tmp_path / "etm_sb.bin")
     m.save(path)
-    loaded = topica.ETM.load(path)
+    loaded = topica.models.ETM.load(path)
     # The stick-breaking map survives the round-trip (doc_topic matches exactly).
     assert np.array_equal(loaded.topic_word, m.topic_word)
     assert np.array_equal(loaded.doc_topic, m.doc_topic)

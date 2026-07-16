@@ -124,7 +124,7 @@ def r_stm_iters(docs, X, names) -> int:
 
 
 def topica_iters(docs, X, names) -> tuple[int, bool]:
-    from topica import STM
+    from topica.models import STM
     m = STM(num_topics=K, init="spectral", seed=1)
     m.fit(docs, X, prevalence_names=names, iters=EM_ITERS, convergence_tol=EM_TOL)
     return len(m.bound_history), bool(m.converged)

@@ -86,7 +86,7 @@ def design(group, cont, cfg):
 
 
 def time_topica(docs, x, names, num_threads):
-    from topica import STM
+    from topica.models import STM
     m = STM(num_topics=K, init="spectral", seed=1)
     t0 = time.perf_counter()
     m.fit(docs, x, prevalence_names=names, iters=MAX_EM_ITERS,

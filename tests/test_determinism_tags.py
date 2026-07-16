@@ -54,41 +54,41 @@ def _signature(model) -> np.ndarray:
 # difference is the seed.
 
 def _ctm(seed):
-    m = topica.CTM(num_topics=_K, seed=seed); m.fit(_DOCS, iters=_ITERS); return m
+    m = topica.models.CTM(num_topics=_K, seed=seed); m.fit(_DOCS, iters=_ITERS); return m
 
 def _nmf(seed):
-    m = topica.NMF(num_topics=_K, seed=seed); m.fit(_DOCS, iters=_ITERS); return m
+    m = topica.models.NMF(num_topics=_K, seed=seed); m.fit(_DOCS, iters=_ITERS); return m
 
 def _lsa(seed):
-    m = topica.LSA(num_topics=_K, seed=seed); m.fit(_DOCS); return m
+    m = topica.models.LSA(num_topics=_K, seed=seed); m.fit(_DOCS); return m
 
 def _stm(seed):
-    m = topica.STM(_K, seed=seed, init="spectral"); m.fit(_DOCS, _PREV, iters=_ITERS); return m
+    m = topica.models.STM(_K, seed=seed, init="spectral"); m.fit(_DOCS, _PREV, iters=_ITERS); return m
 
 def _dtm(seed):
     times = [int(_RNG.integers(0, 3)) for _ in range(len(_DOCS))]
     # times must be identical across calls -> derive deterministically
     times = [i % 3 for i in range(len(_DOCS))]
-    m = topica.DTM(num_topics=_K, seed=seed); m.fit(_DOCS, times, iters=10); return m
+    m = topica.models.DTM(num_topics=_K, seed=seed); m.fit(_DOCS, times, iters=10); return m
 
 def _etm(seed):
-    m = topica.ETM(num_topics=_K, seed=seed); m.fit(_DOCS, _WORD_EMB, _VOCAB, iters=_ITERS); return m
+    m = topica.models.ETM(num_topics=_K, seed=seed); m.fit(_DOCS, _WORD_EMB, _VOCAB, iters=_ITERS); return m
 
 def _fastopic(seed):
-    m = topica.FASTopic(num_topics=_K, seed=seed); m.fit(_DOCS, _DOC_EMB, iters=_ITERS); return m
+    m = topica.models.FASTopic(num_topics=_K, seed=seed); m.fit(_DOCS, _DOC_EMB, iters=_ITERS); return m
 
 def _prodlda(seed):
-    m = topica.ProdLDA(num_topics=_K, seed=seed); m.fit(_DOCS, iters=_ITERS); return m
+    m = topica.models.ProdLDA(num_topics=_K, seed=seed); m.fit(_DOCS, iters=_ITERS); return m
 
 def _combinedtm(seed):
-    m = topica.CombinedTM(num_topics=_K, seed=seed); m.fit(_DOCS, _DOC_EMB, iters=_ITERS); return m
+    m = topica.models.CombinedTM(num_topics=_K, seed=seed); m.fit(_DOCS, _DOC_EMB, iters=_ITERS); return m
 
 def _zeroshottm(seed):
-    m = topica.ZeroShotTM(num_topics=_K, seed=seed); m.fit(_DOCS, _DOC_EMB, iters=_ITERS); return m
+    m = topica.models.ZeroShotTM(num_topics=_K, seed=seed); m.fit(_DOCS, _DOC_EMB, iters=_ITERS); return m
 
 def _tensorlda(seed):
     topica.enable_experimental(True)
-    m = topica.TensorLDA(num_topics=_K, seed=seed); m.fit(_DOCS, iters=_ITERS); return m
+    m = topica.models.TensorLDA(num_topics=_K, seed=seed); m.fit(_DOCS, iters=_ITERS); return m
 
 
 BUILDERS = {

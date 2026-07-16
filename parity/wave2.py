@@ -54,7 +54,7 @@ def fit_hdp(iters=150):
     import topica
 
     docs, _ = tmi._planted_blocks(k=K, seed=0)
-    m = topica.HDP(seed=1, alpha=1.0, gamma=1.0)
+    m = topica.models.HDP(seed=1, alpha=1.0, gamma=1.0)
     m.fit(docs, iters=iters)
     return m
 
@@ -68,7 +68,7 @@ def fit_ectm(iters=60):
         docs, _, _, levels = tmi._covariate_corpus()
         groups = [f"g{l % 2}" for l in levels]
         times = [2000 + (i % 3) for i in range(len(docs))]
-        m = topica.ECTM(num_topics=K, seed=1, init="spectral")
+        m = topica.models.ECTM(num_topics=K, seed=1, init="spectral")
         m.fit(docs, times=times, content=groups, iters=iters,
               period_smooth=5.0, interaction_shrink=2.0)
         return m
@@ -82,7 +82,7 @@ def fit_detm(iters=40):
     docs, vocab = tmi._planted_blocks(k=K, block=6, n=240, length=20, seed=0)
     _, word_emb = tmi._planted_embeddings(k=K, block=6, seed=0)
     times = np.array([i % 4 for i in range(len(docs))])
-    m = topica.DETM(K, delta=0.005, hidden_size=32, lr=0.02, seed=42)
+    m = topica.models.DETM(K, delta=0.005, hidden_size=32, lr=0.02, seed=42)
     m.fit(docs, word_emb, vocab, times=times, iters=iters)
     return m
 
@@ -95,7 +95,7 @@ def fit_hlda(iters=300):
     docs = []
     for d in range(300):
         docs.append(shared + [blocks[d % K][i] for i in range(4)])
-    m = topica.HLDA(depth=2, seed=1)
+    m = topica.models.HLDA(depth=2, seed=1)
     m.fit(docs, iters=iters)
     return m
 
@@ -112,7 +112,7 @@ def fit_pa(iters=300):
         for blk in pair:
             doc += [blk[int(rng.integers(5))] for _ in range(6)]
         docs.append(doc)
-    m = topica.PA(num_super=2, num_sub=4, seed=1)
+    m = topica.models.PA(num_super=2, num_sub=4, seed=1)
     m.fit(docs, iters=iters)
     return m
 
@@ -122,7 +122,7 @@ def fit_etm(iters=80):
 
     docs, vocab = tmi._planted_blocks(k=K, block=8, n=240, length=12, seed=0)
     _, word_emb = tmi._planted_embeddings(k=K, block=8, seed=0)
-    m = topica.ETM(num_topics=K, seed=1)
+    m = topica.models.ETM(num_topics=K, seed=1)
     m.fit(docs, word_emb, vocab, iters=iters)
     return m
 
@@ -131,7 +131,7 @@ def fit_supervisedlda(iters=25):
     import topica
 
     docs, y = tmi._supervised_corpus()
-    m = topica.SupervisedLDA(num_topics=2, seed=7)
+    m = topica.models.SupervisedLDA(num_topics=2, seed=7)
     m.fit(docs, y, iters=iters, var_iters=15)
     return m, y
 
@@ -141,7 +141,7 @@ def fit_seededlda(iters=400):
 
     docs, vocab = tmi._planted_blocks(k=K, seed=0)
     seeds = tmi._block_keywords(vocab, k=K)
-    m = topica.SeededLDA(seeds, seed=1)
+    m = topica.models.SeededLDA(seeds, seed=1)
     m.fit(docs, iters=iters)
     return m
 
@@ -150,7 +150,7 @@ def fit_gsdmm(iters=60):
     import topica
 
     docs = tmi._short_corpus()
-    m = topica.GSDMM(num_topics=15, seed=1)
+    m = topica.models.GSDMM(num_topics=15, seed=1)
     m.fit(docs, iters=iters)
     return m
 
@@ -159,7 +159,7 @@ def fit_pt(iters=300):
     import topica
 
     docs = tmi._short_corpus()
-    m = topica.PT(num_topics=K, num_pseudo=10, seed=1)
+    m = topica.models.PT(num_topics=K, num_pseudo=10, seed=1)
     m.fit(docs, iters=iters)
     return m
 
@@ -182,7 +182,7 @@ def fit_embeddinglda(iters=300):
 
     docs, vocab = tmi._planted_blocks(k=K, block=8, n=300, seed=0)
     _, word_emb = tmi._planted_embeddings(k=K, block=8, seed=0)
-    m = topica.EmbeddingLDA(num_topics=K, embeddings=word_emb, vocabulary=vocab,
+    m = topica.models.EmbeddingLDA(num_topics=K, embeddings=word_emb, vocabulary=vocab,
                             top_m=5, seed=1)
     m.fit(docs, iters=iters)
     return m
@@ -192,7 +192,7 @@ def fit_tlda(iters=100):
     import topica
     topica.enable_experimental(True)
     docs, _ = tmi._planted_blocks(k=K, block=6, n=240, seed=0)
-    m = topica.TensorLDA(num_topics=K, alpha_0=1.0, seed=42)
+    m = topica.models.TensorLDA(num_topics=K, alpha_0=1.0, seed=42)
     m.fit(docs, iters=iters)
     return m
 

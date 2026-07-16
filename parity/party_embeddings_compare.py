@@ -76,7 +76,7 @@ def main():
     plant = np.array([plant_map[g] for g in labels])
 
     # topica
-    pe = topica.PartyEmbeddings(num_dims=2, vector_size=64, window=5, min_count=1,
+    pe = topica.models.PartyEmbeddings(num_dims=2, vector_size=64, window=5, min_count=1,
                                 negative=5, sample=1e-3, learning_rate=0.05, seed=0)
     pe.fit(docs, group=groups, iters=40)
     order = {n: i for i, n in enumerate(pe.author_names)}

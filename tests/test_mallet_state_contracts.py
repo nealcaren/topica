@@ -128,7 +128,7 @@ def test_load_state_preserves_mallet_token_assignments(mallet_state_fixture, tmp
     state = mallet_state_fixture["state"]
     alpha, beta, rows = _parse_state(state)
 
-    model = topica.LDA.load_state(str(state))
+    model = topica.models.LDA.load_state(str(state))
     reemitted = tmp_path / "reemitted.gz"
     model.save_state(str(reemitted))
     alpha2, beta2, rows2 = _parse_state(reemitted)
@@ -147,7 +147,7 @@ def test_load_state_preserves_mallet_token_assignments(mallet_state_fixture, tmp
 def test_load_state_topic_word_matches_mallet_state_formula(mallet_state_fixture) -> None:
     state = mallet_state_fixture["state"]
     _, beta, rows = _parse_state(state)
-    model = topica.LDA.load_state(str(state))
+    model = topica.models.LDA.load_state(str(state))
 
     vocab_by_id = [word for _, word in sorted({(typeindex, word) for _, _, _, typeindex, word, _ in rows})]
     assert model.vocabulary == vocab_by_id
@@ -166,7 +166,7 @@ def test_load_state_topic_word_matches_mallet_state_formula(mallet_state_fixture
 def test_load_state_diagnostics_overlap_mallet_xml(mallet_state_fixture) -> None:
     state = mallet_state_fixture["state"]
     diag_xml = mallet_state_fixture["diagnostics"]
-    model = topica.LDA.load_state(str(state))
+    model = topica.models.LDA.load_state(str(state))
     got = {int(row["topic"]): row for row in model.diagnostics(n=5)}
 
     root = ET.parse(diag_xml).getroot()

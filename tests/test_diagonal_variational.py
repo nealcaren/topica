@@ -58,7 +58,7 @@ def _recovers_blocks(model):
 
 class TestDiagonalConverges:
     def test_bound_converges(self):
-        m = topica.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
+        m = topica.models.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
         m.fit(DOCS, iters=40, convergence_tol=0)
         hist = np.asarray([b for (_, b) in m.fit_history])
         assert len(hist) >= 2
@@ -81,7 +81,7 @@ class TestDiagonalConverges:
         )
 
     def test_recovers_planted_topics(self):
-        m = topica.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
+        m = topica.models.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
         m.fit(DOCS, iters=40, convergence_tol=0)
         assert _recovers_blocks(m), "diagonal mode failed to recover planted topics"
 
@@ -92,7 +92,7 @@ class TestDiagonalConverges:
 
 class TestDiagonalCovariance:
     def test_eta_cov_diagonal(self):
-        m = topica.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
+        m = topica.models.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
         m.fit(DOCS, iters=10, convergence_tol=0, keep_eta_cov=True)
         cov = np.asarray(m.eta_cov, dtype=np.float64)  # (D, K-1, K-1)
         km1 = N_BLOCKS - 1
@@ -114,7 +114,7 @@ class TestDiagonalDownstream:
     def test_posterior_theta_samples(self):
         from topica.stm import posterior_theta_samples
 
-        m = topica.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
+        m = topica.models.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
         m.fit(DOCS, iters=10, convergence_tol=0, keep_eta_cov=True)
         draws = posterior_theta_samples(m, nsims=8, seed=0)
         d = m.doc_topic.shape[0]
@@ -122,7 +122,7 @@ class TestDiagonalDownstream:
         assert np.all(np.isfinite(draws))
 
     def test_keep_eta_cov_false_recompute(self):
-        m = topica.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
+        m = topica.models.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
         m.fit(DOCS, iters=10, convergence_tol=0, keep_eta_cov=False)
         # eta_cov getter should raise; _recompute_eta_cov regenerates it.
         with pytest.raises(RuntimeError, match="keep_eta_cov"):
@@ -135,9 +135,9 @@ class TestDiagonalDownstream:
         assert np.all(off == 0.0), "recomputed off-diagonal must be zero in diagonal mode"
 
     def test_keep_eta_cov_false_recompute_matches_stored(self):
-        m_keep = topica.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
+        m_keep = topica.models.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
         m_keep.fit(DOCS, iters=10, convergence_tol=0, keep_eta_cov=True)
-        m_drop = topica.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
+        m_drop = topica.models.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
         m_drop.fit(DOCS, iters=10, convergence_tol=0, keep_eta_cov=False)
         stored = np.asarray(m_keep.eta_cov, dtype=np.float64)
         recomp = np.asarray(m_drop._recompute_eta_cov(), dtype=np.float64)
@@ -150,19 +150,19 @@ class TestDiagonalDownstream:
 
 class TestDefaultAndDifference:
     def test_default_is_laplace(self):
-        m = topica.CTM(N_BLOCKS)
+        m = topica.models.CTM(N_BLOCKS)
         assert m.variational == "laplace"
         m.fit(DOCS, iters=5, convergence_tol=0)
         assert m.variational == "laplace"
 
     def test_invalid_variational_raises(self):
         with pytest.raises(ValueError, match="variational"):
-            topica.CTM(N_BLOCKS, variational="full")
+            topica.models.CTM(N_BLOCKS, variational="full")
 
     def test_diagonal_differs_from_laplace(self):
-        m_lap = topica.CTM(N_BLOCKS, variational="laplace", init="random", seed=1)
+        m_lap = topica.models.CTM(N_BLOCKS, variational="laplace", init="random", seed=1)
         m_lap.fit(DOCS, iters=10, convergence_tol=0, keep_eta_cov=True)
-        m_diag = topica.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
+        m_diag = topica.models.CTM(N_BLOCKS, variational="diagonal", init="random", seed=1)
         m_diag.fit(DOCS, iters=10, convergence_tol=0, keep_eta_cov=True)
 
         cov_lap = np.asarray(m_lap.eta_cov, dtype=np.float64)
@@ -180,7 +180,7 @@ class TestDefaultAndDifference:
         # STM in diagonal mode with a prevalence covariate.
         rng = np.random.default_rng(0)
         X = rng.normal(size=(len(DOCS), 1))
-        m = topica.STM(N_BLOCKS, variational="diagonal", init="random", seed=1)
+        m = topica.models.STM(N_BLOCKS, variational="diagonal", init="random", seed=1)
         m.fit(DOCS, prevalence=X, iters=8, convergence_tol=0, keep_eta_cov=True)
         assert m.variational == "diagonal"
         cov = np.asarray(m.eta_cov, dtype=np.float64)

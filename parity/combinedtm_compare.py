@@ -212,7 +212,7 @@ def _counts_matrix(token_docs, vocab):
 def _topica_fit(token_docs, embs, seed):
     import topica
 
-    tm = topica.CombinedTM(
+    tm = topica.models.CombinedTM(
         num_topics=NUM_TOPICS, alpha=ALPHA, hidden_size=HIDDEN, dropout=DROPOUT,
         batch_size=BATCH, lr=LR, seed=seed,
     )

@@ -8,44 +8,44 @@ This page covers the count-based models. The embedding-based models
 (`BERTopic`, `Top2Vec`, `ETM`, `FASTopic`) are on the
 [Embedding models](embedding.md) page.
 
-::: topica.LDA
+::: topica.models.LDA
 
-::: topica.DMR
+::: topica.models.DMR
 
-::: topica.GDMR
+::: topica.models.GDMR
 
-::: topica.NarrativeTM
+::: topica.models.NarrativeTM
 
-::: topica.LabeledLDA
+::: topica.models.LabeledLDA
 
-::: topica.SAGE
+::: topica.models.SAGE
 
-::: topica.CTM
+::: topica.models.CTM
 
-::: topica.STM
+::: topica.models.STM
 
-::: topica.ECTM
+::: topica.models.ECTM
 
-::: topica.STS
+::: topica.models.STS
 
-::: topica.ProdLDA
+::: topica.models.ProdLDA
 
-::: topica.HDP
+::: topica.models.HDP
 
-::: topica.DTM
+::: topica.models.DTM
 
-::: topica.SupervisedLDA
+::: topica.models.SupervisedLDA
 
-::: topica.PT
+::: topica.models.PT
 
-::: topica.GSDMM
+::: topica.models.GSDMM
 
-::: topica.SeededLDA
+::: topica.models.SeededLDA
 
-::: topica.KeyATM
+::: topica.models.KeyATM
 
-::: topica.PA
+::: topica.models.PA
 
-::: topica.HLDA
+::: topica.models.HLDA
 
 ::: topica.Corpus

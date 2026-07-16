@@ -34,7 +34,7 @@ X, names = topica.design_matrix("~ party + spline(year, df=3)", corpus.metadata)
 # Pick K at the coherence/exclusivity frontier (a knee, not a coherence max,
 # which would just return the smallest K), then fit at that K.
 scan = topica.search_k(corpus, [10, 20, 30], model="stm", prevalence=X, iters=200)
-model = topica.STM(num_topics=scan.best_k(), seed=1)
+model = topica.models.STM(num_topics=scan.best_k(), seed=1)
 model.fit(corpus, prevalence=X, prevalence_names=names)
 
 # Effects with method-of-composition uncertainty, as a tidy long table.
@@ -53,7 +53,7 @@ with hand-built blocks: `X, names = topica.one_hot(df["party"])` combined with
 import topica
 
 X, names = topica.one_hot(party)                      # design matrix + column names
-model = topica.STM(num_topics=20, seed=1)
+model = topica.models.STM(num_topics=20, seed=1)
 model.fit(docs, prevalence=X, prevalence_names=names)
 
 model.prevalence_effects        # learned γ
@@ -67,7 +67,7 @@ mechanism), so the same topic is phrased differently across, say, conservative
 and liberal sources:
 
 ```python
-model = topica.STM(num_topics=20, seed=1)
+model = topica.models.STM(num_topics=20, seed=1)
 model.fit(docs, prevalence=X, content=source, content_names=groups)
 
 model.topic_word_by_group        # per-group β
@@ -188,7 +188,7 @@ terms, or a wide feature matrix), add `gamma_prior="l1"` to `STM.fit` to
 penalize the prevalence coefficients:
 
 ```python
-model = topica.STM(num_topics=20, seed=1)
+model = topica.models.STM(num_topics=20, seed=1)
 model.fit(
     docs, prevalence=X, prevalence_names=names,
     gamma_prior="l1",     # elastic-net with full L1 (lasso)

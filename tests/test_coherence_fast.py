@@ -16,7 +16,7 @@ DOCS = (
 
 
 def _fit():
-    m = topica.LDA(num_topics=4, seed=1)
+    m = topica.models.LDA(num_topics=4, seed=1)
     m.fit(DOCS, iters=200)
     return m
 

@@ -24,7 +24,7 @@ def _two_topic_model(seed=1, n=80):
         v = A if a else B
         docs.append([v[int(rng.integers(len(v)))] for _ in range(10)])
         is_a.append(a)
-    m = topica.LDA(num_topics=2, seed=seed)
+    m = topica.models.LDA(num_topics=2, seed=seed)
     m.fit(docs, iters=400)
     return m, docs, np.array(is_a)
 

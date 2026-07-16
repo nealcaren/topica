@@ -65,7 +65,7 @@ def _worker(k: int, variant: str) -> None:
     mode = "diagonal" if variant.startswith("diagonal") else "laplace"
     keep = not variant.endswith("nokeep")
     t = time.perf_counter()
-    m = topica.STM(num_topics=k, seed=1, variational=mode)
+    m = topica.models.STM(num_topics=k, seed=1, variational=mode)
     m.fit(docs, prevalence=x, iters=ITERS, keep_eta_cov=keep)
     _ = m.topic_word  # touch the result
     print(f"FIT_TIME {time.perf_counter() - t:.4f}")

@@ -309,7 +309,7 @@ class TestLDAConvergenceInterface:
     """Detailed tests for the LDA reference convergence implementation."""
 
     def _fit(self, iters=100, convergence_tol=0.0, check_every=10, seed=42):
-        model = topica.LDA(2, seed=seed)
+        model = topica.models.LDA(2, seed=seed)
         model.fit(
             _TOY,
             iters=iters,
@@ -394,10 +394,10 @@ class TestLDAConvergenceInterface:
         """
         import numpy as np
 
-        m1 = topica.LDA(2, seed=7)
+        m1 = topica.models.LDA(2, seed=7)
         m1.fit(_TOY, iters=50)
 
-        m2 = topica.LDA(2, seed=7)
+        m2 = topica.models.LDA(2, seed=7)
         m2.fit(_TOY, iters=50, convergence_tol=0.0, check_every=10)
 
         np.testing.assert_array_equal(
@@ -407,7 +407,7 @@ class TestLDAConvergenceInterface:
 
     def test_check_every_zero_disables_trace(self):
         """check_every=0 disables trace recording entirely."""
-        model = topica.LDA(2, seed=42)
+        model = topica.models.LDA(2, seed=42)
         model.fit(_TOY, iters=50, check_every=0)
         assert model.fit_history == [], (
             "Expected empty fit_history when check_every=0"
@@ -418,7 +418,7 @@ class TestLDAConvergenceInterface:
         model = self._fit(iters=50)
         path = str(tmp_path / "lda_convergence.bin")
         model.save(path)
-        loaded = topica.LDA.load(path)
+        loaded = topica.models.LDA.load(path)
         assert loaded.fit_history == model.fit_history, (
             "fit_history does not match after save/load"
         )
@@ -429,7 +429,7 @@ class TestLDAConvergenceInterface:
         assert model.converged is True  # precondition
         path = str(tmp_path / "lda_converged.bin")
         model.save(path)
-        loaded = topica.LDA.load(path)
+        loaded = topica.models.LDA.load(path)
         assert loaded.converged is True
 
 
@@ -442,7 +442,7 @@ class TestKeyATMConvergence:
     """keyATM mirrors the LDA-family convergence contract on its Gibbs backends."""
 
     def _base(self, iters=400, convergence_tol=0.0, seed=42):
-        m = topica.KeyATM({"a": ["cat"]}, num_topics=2, seed=seed)
+        m = topica.models.KeyATM({"a": ["cat"]}, num_topics=2, seed=seed)
         m.fit(_TOY, iters=iters, convergence_tol=convergence_tol)
         return m
 
@@ -461,21 +461,21 @@ class TestKeyATMConvergence:
     def test_covariate_variant_early_stops(self):
         """The covariate (DMR-prior) keyATM honors convergence_tol."""
         import numpy as np
-        m = topica.KeyATM({"a": ["cat"]}, num_topics=2, seed=42)
+        m = topica.models.KeyATM({"a": ["cat"]}, num_topics=2, seed=42)
         cov = np.array([[1.0, 0.0]] * 15 + [[0.0, 1.0]] * 15)
         m.fit(_TOY, covariates=cov, iters=400, convergence_tol=1.0)
         assert m.converged is True
 
     def test_dynamic_variant_early_stops(self):
         """The dynamic (change-point HMM) keyATM honors convergence_tol."""
-        m = topica.KeyATM({"a": ["cat"]}, num_topics=2, seed=42)
+        m = topica.models.KeyATM({"a": ["cat"]}, num_topics=2, seed=42)
         ts = [0] * 15 + [1] * 15
         m.fit(_TOY, timestamps=ts, num_states=2, iters=400, convergence_tol=1.0)
         assert m.converged is True
 
     def test_cvb0_ignores_tol(self):
         """The CVB0 backend keeps no trace and never early-stops."""
-        m = topica.KeyATM({"a": ["cat"]}, num_topics=2, seed=42, sampler="cvb0")
+        m = topica.models.KeyATM({"a": ["cat"]}, num_topics=2, seed=42, sampler="cvb0")
         m.fit(_TOY, iters=50, convergence_tol=1.0)
         assert m.converged is False
 
@@ -483,7 +483,7 @@ class TestKeyATMConvergence:
         """Passing convergence_tol=0.0 must not change the default fit."""
         import numpy as np
         a = self._base(iters=200, convergence_tol=0.0, seed=7)
-        b = topica.KeyATM({"a": ["cat"]}, num_topics=2, seed=7)
+        b = topica.models.KeyATM({"a": ["cat"]}, num_topics=2, seed=7)
         b.fit(_TOY, iters=200)
         np.testing.assert_array_equal(a.topic_word, b.topic_word)
 
@@ -492,7 +492,7 @@ class TestKeyATMConvergence:
         assert m.converged is True  # precondition
         path = str(tmp_path / "keyatm_converged.bin")
         m.save(path)
-        loaded = topica.KeyATM.load(path)
+        loaded = topica.models.KeyATM.load(path)
         assert loaded.converged is True
 
 
@@ -509,21 +509,21 @@ class TestClusterModelConvergence:
         return np.random.default_rng(42).standard_normal((len(_TOY), 8))
 
     def test_bertopic_fit_history_empty(self):
-        model = topica.BERTopic(min_cluster_size=5)
+        model = topica.models.BERTopic(min_cluster_size=5)
         model.fit(_TOY, self._doc_embeddings())
         assert model.fit_history == []
 
     def test_top2vec_fit_history_empty(self):
-        model = topica.Top2Vec()
+        model = topica.models.Top2Vec()
         model.fit(_TOY, self._doc_embeddings())
         assert model.fit_history == []
 
     def test_bertopic_converged_none(self):
-        model = topica.BERTopic(min_cluster_size=5)
+        model = topica.models.BERTopic(min_cluster_size=5)
         model.fit(_TOY, self._doc_embeddings())
         assert model.converged is None
 
     def test_top2vec_converged_none(self):
-        model = topica.Top2Vec()
+        model = topica.models.Top2Vec()
         model.fit(_TOY, self._doc_embeddings())
         assert model.converged is None

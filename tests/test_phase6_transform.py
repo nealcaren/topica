@@ -49,7 +49,7 @@ def _rows_sum_to_one(arr, atol=1e-6):
 class TestKeyATMTransform:
     @pytest.fixture(scope="class")
     def model(self):
-        m = topica.KeyATM({"animals": ["cat", "dog"], "tech": ["code", "python"]},
+        m = topica.models.KeyATM({"animals": ["cat", "dog"], "tech": ["code", "python"]},
                           num_topics=2, seed=7)
         m.fit(DOCS, iters=50)
         return m
@@ -83,7 +83,7 @@ class TestKeyATMTransform:
 
     def test_eval_heldout_works(self, model):
         heldout = topica.make_heldout(DOCS, seed=1)
-        m2 = topica.KeyATM({"animals": ["cat", "dog"], "tech": ["code", "python"]},
+        m2 = topica.models.KeyATM({"animals": ["cat", "dog"], "tech": ["code", "python"]},
                            num_topics=2, seed=7)
         m2.fit(heldout.documents, iters=50)
         result = topica.eval_heldout(m2, heldout, seed=0)
@@ -97,7 +97,7 @@ class TestKeyATMTransform:
 class TestSeededLDATransform:
     @pytest.fixture(scope="class")
     def model(self):
-        m = topica.SeededLDA({"animals": ["cat", "dog"], "tech": ["code", "python"]},
+        m = topica.models.SeededLDA({"animals": ["cat", "dog"], "tech": ["code", "python"]},
                              seed=7)
         m.fit(DOCS, iters=50)
         return m
@@ -130,7 +130,7 @@ class TestSeededLDATransform:
 
     def test_eval_heldout_works(self, model):
         heldout = topica.make_heldout(DOCS, seed=1)
-        m2 = topica.SeededLDA({"animals": ["cat", "dog"], "tech": ["code", "python"]},
+        m2 = topica.models.SeededLDA({"animals": ["cat", "dog"], "tech": ["code", "python"]},
                                seed=7)
         m2.fit(heldout.documents, iters=50)
         result = topica.eval_heldout(m2, heldout, seed=0)
@@ -144,7 +144,7 @@ class TestSeededLDATransform:
 class TestSAGETransform:
     @pytest.fixture(scope="class")
     def model(self):
-        m = topica.SAGE(2, seed=7)
+        m = topica.models.SAGE(2, seed=7)
         groups = ["a", "b", "a", "b", "a", "b", "a", "b"]
         m.fit(DOCS, groups, iters=50)
         return m
@@ -179,7 +179,7 @@ class TestSAGETransform:
 class TestPATransform:
     @pytest.fixture(scope="class")
     def model(self):
-        m = topica.PA(num_super=2, num_sub=3, seed=7)
+        m = topica.models.PA(num_super=2, num_sub=3, seed=7)
         m.fit(DOCS, iters=50)
         return m
 
@@ -214,7 +214,7 @@ class TestPATransform:
 class TestPTTransform:
     @pytest.fixture(scope="class")
     def model(self):
-        m = topica.PT(num_topics=2, num_pseudo=4, seed=7)
+        m = topica.models.PT(num_topics=2, num_pseudo=4, seed=7)
         m.fit(DOCS, iters=50)
         return m
 

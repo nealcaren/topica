@@ -123,7 +123,7 @@ def _space_topic(phi, words):
 
 def _topica_fit(docs, cov, words):
     """Fit topica DMR; return (phi (K,W) aligned to words, feature_effects)."""
-    from topica import DMR
+    from topica.models import DMR
 
     model = DMR(num_topics=K, seed=1, optimize_interval=25, burn_in=50)
     model.fit(docs, np.array(cov, float)[:, None], feature_names=["is_space"],

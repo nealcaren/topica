@@ -41,19 +41,19 @@ class TestGate:
         topica.enable_experimental(False)
         try:
             with pytest.raises(RuntimeError, match="experimental"):
-                topica.AnchorLDA(5)
+                topica.models.AnchorLDA(5)
         finally:
             topica.enable_experimental(True)
 
     def test_constructs_when_enabled(self):
-        m = topica.AnchorLDA(5)
+        m = topica.models.AnchorLDA(5)
         assert m.num_topics == 5
 
 
 class TestFit:
     def test_shapes_and_attrs(self):
         docs, _, _ = _separable_corpus()
-        m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
+        m = topica.models.AnchorLDA(4, min_count=2, seed=0).fit(docs)
         v = len(m.vocabulary)
         assert np.asarray(m.topic_word).shape == (4, v)
         assert np.asarray(m.doc_topic).shape == (len(docs), 4)
@@ -61,7 +61,7 @@ class TestFit:
 
     def test_kl_default_is_iterative(self):
         docs, _, _ = _separable_corpus()
-        m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)  # recover="kl"
+        m = topica.models.AnchorLDA(4, min_count=2, seed=0).fit(docs)  # recover="kl"
         assert m.fit_history, "KL recovery should record an objective trace"
         assert isinstance(m.converged, bool)
         # The KL objective is non-increasing along the recorded trace.
@@ -70,19 +70,19 @@ class TestFit:
 
     def test_l2_is_noniterative(self):
         docs, _, _ = _separable_corpus()
-        m = topica.AnchorLDA(4, recover="l2", min_count=2, seed=0).fit(docs)
+        m = topica.models.AnchorLDA(4, recover="l2", min_count=2, seed=0).fit(docs)
         assert m.fit_history == []
         assert m.converged is None
 
     def test_bad_recover_raises(self):
         with pytest.raises(ValueError, match="recover must be"):
-            topica.AnchorLDA(4, recover="nope")
+            topica.models.AnchorLDA(4, recover="nope")
 
     def test_both_recoveries_recover_separable(self):
         # Both recovery methods should recover the planted separable topics.
         docs, _, anchors = _separable_corpus(k=4, seed=1)
         for rec in ("kl", "l2"):
-            m = topica.AnchorLDA(4, recover=rec, min_count=2, seed=0).fit(docs)
+            m = topica.models.AnchorLDA(4, recover=rec, min_count=2, seed=0).fit(docs)
             assert set(m.anchors) == set(anchors), rec
             for t in range(4):
                 blocks = {w.split("_")[0] for w, _ in m.top_words(8, topic=t)}
@@ -90,7 +90,7 @@ class TestFit:
 
     def test_topic_word_rows_are_distributions(self):
         docs, _, _ = _separable_corpus()
-        m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
+        m = topica.models.AnchorLDA(4, min_count=2, seed=0).fit(docs)
         rowsums = np.asarray(m.topic_word).sum(axis=1)
         assert np.allclose(rowsums, 1.0, atol=1e-6)
         assert (np.asarray(m.topic_word) >= 0).all()
@@ -99,7 +99,7 @@ class TestFit:
         # On a separable corpus each planted anchor word should be selected, and
         # each recovered topic should be dominated by one block's vocabulary.
         docs, truth, anchors = _separable_corpus(k=4, seed=1)
-        m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
+        m = topica.models.AnchorLDA(4, min_count=2, seed=0).fit(docs)
         # Every planted anchor is chosen as some topic's anchor.
         assert set(m.anchors) == set(anchors)
         # Each topic's top words come overwhelmingly from a single block.
@@ -110,54 +110,54 @@ class TestFit:
 
     def test_deterministic(self):
         docs, _, _ = _separable_corpus()
-        a = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
-        b = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
+        a = topica.models.AnchorLDA(4, min_count=2, seed=0).fit(docs)
+        b = topica.models.AnchorLDA(4, min_count=2, seed=0).fit(docs)
         assert np.array_equal(np.asarray(a.topic_word), np.asarray(b.topic_word))
         assert a.anchors == b.anchors
 
     def test_accepts_corpus_object(self):
         docs, _, _ = _separable_corpus()
         corpus = topica.Corpus.from_documents(docs)
-        m = topica.AnchorLDA(4, seed=0).fit(corpus)
+        m = topica.models.AnchorLDA(4, seed=0).fit(corpus)
         assert np.asarray(m.doc_topic).shape[1] == 4
 
     def test_too_few_vocab_raises(self):
         docs = [["a", "b"], ["b", "c"]]
         with pytest.raises(ValueError, match="num_topics"):
-            topica.AnchorLDA(10, min_count=1).fit(docs)
+            topica.models.AnchorLDA(10, min_count=1).fit(docs)
 
 
 class TestSurface:
     def test_conformance(self):
         docs, _, _ = _separable_corpus()
-        m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
+        m = topica.models.AnchorLDA(4, min_count=2, seed=0).fit(docs)
         assert topica.check_conformance(m) == []
 
     def test_coherence_returns_per_topic(self):
         docs, _, _ = _separable_corpus()
-        m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
+        m = topica.models.AnchorLDA(4, min_count=2, seed=0).fit(docs)
         cv = m.coherence(10)
         assert np.asarray(cv).shape == (4,)
 
     def test_topic_names_roundtrip(self):
         docs, _, _ = _separable_corpus()
-        m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
+        m = topica.models.AnchorLDA(4, min_count=2, seed=0).fit(docs)
         m.topic_names = ["a", "b", "c", "d"]
         assert m.topic_names == ["a", "b", "c", "d"]
         with pytest.raises(ValueError):
             m.topic_names = ["only", "three", "names"]
 
     def test_unfitted_access_raises(self):
-        m = topica.AnchorLDA(4)
+        m = topica.models.AnchorLDA(4)
         with pytest.raises(RuntimeError, match="not fitted"):
             _ = m.topic_word
 
     def test_save_load_roundtrip(self, tmp_path):
         docs, _, _ = _separable_corpus()
-        m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
+        m = topica.models.AnchorLDA(4, min_count=2, seed=0).fit(docs)
         p = os.path.join(tmp_path, "anchor")
         m.save(p)
-        loaded = topica.AnchorLDA.load(p)
+        loaded = topica.models.AnchorLDA.load(p)
         assert np.array_equal(np.asarray(m.topic_word), np.asarray(loaded.topic_word))
         assert m.anchors == loaded.anchors
         assert m.vocabulary == loaded.vocabulary
@@ -225,8 +225,8 @@ class TestHighKTheory:
         topica.enable_experimental(True)
         try:
             docs, true_anchors, k = _overlap_corpus(k=self.K, seed=0)
-            anchor = topica.AnchorLDA(k, seed=0).fit(docs)
-            lda = topica.LDA(num_topics=k, seed=0)
+            anchor = topica.models.AnchorLDA(k, seed=0).fit(docs)
+            lda = topica.models.LDA(num_topics=k, seed=0)
             lda.fit(docs, iters=100)
         finally:
             topica.enable_experimental(was)
@@ -251,8 +251,8 @@ class TestHighKTheory:
 
     def test_anchor_deterministic_at_high_k(self):
         docs, _, k = _overlap_corpus(k=self.K, seed=0)
-        a = topica.AnchorLDA(k, seed=0).fit(docs)
-        b = topica.AnchorLDA(k, seed=0).fit(docs)
+        a = topica.models.AnchorLDA(k, seed=0).fit(docs)
+        b = topica.models.AnchorLDA(k, seed=0).fit(docs)
         assert np.array_equal(np.asarray(a.topic_word), np.asarray(b.topic_word))
 
 
@@ -285,14 +285,14 @@ class TestTopWordRanking:
 
     def test_methods_return_pairs(self):
         docs, _, _ = _separable_corpus()
-        m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
+        m = topica.models.AnchorLDA(4, min_count=2, seed=0).fit(docs)
         for method in ("frex", "prob", "lift"):
             tw = m.top_words(5, topic=0, method=method)
             assert len(tw) == 5 and all(isinstance(w, str) for w, _ in tw)
 
     def test_bad_method_raises(self):
         docs, _, _ = _separable_corpus()
-        m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
+        m = topica.models.AnchorLDA(4, min_count=2, seed=0).fit(docs)
         with pytest.raises(ValueError, match="method must be"):
             m.top_words(5, topic=0, method="nope")
 
@@ -302,14 +302,14 @@ class TestTopWordRanking:
         # ranking does not. (frequency_temper<1 also fixes it, hence =1 here to
         # isolate the ranking effect.)
         docs, k = self._leaky_corpus(seed=0)
-        m = topica.AnchorLDA(k, frequency_temper=1.0, seed=0).fit(docs)
+        m = topica.models.AnchorLDA(k, frequency_temper=1.0, seed=0).fit(docs)
         assert self._led_by_common(m, "prob") >= 0.8
         assert self._led_by_common(m, "frex") <= 0.2
         assert self._led_by_common(m, "lift") <= 0.2
 
     def test_frex_is_default(self):
         docs, k = self._leaky_corpus(seed=0)
-        m = topica.AnchorLDA(k, seed=0).fit(docs)
+        m = topica.models.AnchorLDA(k, seed=0).fit(docs)
         default = [m.top_words(8, topic=t) for t in range(k)]
         frex = [m.top_words(8, topic=t, method="frex") for t in range(k)]
         assert default == frex
@@ -317,7 +317,7 @@ class TestTopWordRanking:
 
 class TestFrequencyTemper:
     def test_default_is_half(self):
-        m = topica.AnchorLDA(4)
+        m = topica.models.AnchorLDA(4)
         assert m.frequency_temper == 0.5
 
     def test_temper_reduces_frequent_word_leakage(self):
@@ -325,16 +325,16 @@ class TestFrequencyTemper:
         # from the topic-word matrix itself, seen via a plain probability ranking.
         docs, k = TestTopWordRanking._leaky_corpus(seed=0)
         led = lambda m: TestTopWordRanking._led_by_common(m, "prob")
-        exact = topica.AnchorLDA(k, frequency_temper=1.0, seed=0).fit(docs)
-        tempered = topica.AnchorLDA(k, frequency_temper=0.5, seed=0).fit(docs)
+        exact = topica.models.AnchorLDA(k, frequency_temper=1.0, seed=0).fit(docs)
+        tempered = topica.models.AnchorLDA(k, frequency_temper=0.5, seed=0).fit(docs)
         assert led(exact) >= 0.8
         assert led(tempered) <= 0.2
 
     def test_gamma_one_is_exact_bayes(self):
         # frequency_temper=1 reproduces the exact Bayes inversion beta ∝ p(t|w)·p(w).
         docs, _, _ = _separable_corpus()
-        a = topica.AnchorLDA(4, frequency_temper=1.0, min_count=2, seed=0).fit(docs)
-        b = topica.AnchorLDA(4, frequency_temper=0.5, min_count=2, seed=0).fit(docs)
+        a = topica.models.AnchorLDA(4, frequency_temper=1.0, min_count=2, seed=0).fit(docs)
+        b = topica.models.AnchorLDA(4, frequency_temper=0.5, min_count=2, seed=0).fit(docs)
         # Different exponents give different topic-word matrices.
         assert not np.allclose(np.asarray(a.topic_word), np.asarray(b.topic_word))
 
@@ -354,7 +354,7 @@ class TestKLStability:
 
     def test_no_nan_on_sparse_cooccurrence(self):
         docs = self._sparse_corpus()
-        m = topica.AnchorLDA(20, min_count=1, seed=0).fit(docs)  # recover="kl"
+        m = topica.models.AnchorLDA(20, min_count=1, seed=0).fit(docs)  # recover="kl"
         tw = np.asarray(m.topic_word)
         dt = np.asarray(m.doc_topic)
         assert np.isfinite(tw).all(), "topic_word has NaN/inf"
@@ -367,7 +367,7 @@ class TestKLStability:
 
 class TestAnchorDocFreq:
     def test_default_is_small_fraction(self):
-        assert topica.AnchorLDA(4).anchor_min_doc_freq == 0.01
+        assert topica.models.AnchorLDA(4).anchor_min_doc_freq == 0.01
 
     def test_restriction_excludes_rare_anchor_words(self):
         # A distinctive but very rare word (one document) should be eligible as an
@@ -376,8 +376,8 @@ class TestAnchorDocFreq:
         common = [f"w{j}" for j in range(40)]
         docs = [list(rng.choice(common, 15)) for _ in range(400)]
         docs[0] = docs[0] + ["rareanchor", "rareanchor"]   # appears in 1 doc
-        off = topica.AnchorLDA(5, min_count=1, anchor_min_doc_freq=0.0, seed=0).fit(docs)
-        on = topica.AnchorLDA(5, min_count=1, anchor_min_doc_freq=0.05, seed=0).fit(docs)
+        off = topica.models.AnchorLDA(5, min_count=1, anchor_min_doc_freq=0.0, seed=0).fit(docs)
+        on = topica.models.AnchorLDA(5, min_count=1, anchor_min_doc_freq=0.05, seed=0).fit(docs)
         assert "rareanchor" in off.anchors
         assert "rareanchor" not in on.anchors
 
@@ -385,6 +385,6 @@ class TestAnchorDocFreq:
         # An impossibly high floor leaves < num_topics candidates; the fit should
         # still succeed (restriction dropped) rather than fail.
         docs, _, _ = _separable_corpus()
-        m = topica.AnchorLDA(4, min_count=2, anchor_min_doc_freq=0.999, seed=0).fit(docs)
+        m = topica.models.AnchorLDA(4, min_count=2, anchor_min_doc_freq=0.999, seed=0).fit(docs)
         assert len(m.anchors) == 4
         assert np.isfinite(np.asarray(m.topic_word)).all()

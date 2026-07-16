@@ -23,7 +23,7 @@ def _short_corpus():
 class TestPT:
     def test_shapes_and_recovery(self):
         docs = _short_corpus()
-        m = topica.PT(num_topics=2, num_pseudo=10, seed=1)
+        m = topica.models.PT(num_topics=2, num_pseudo=10, seed=1)
         m.fit(docs, iters=300)
         assert m.topic_word.shape == (2, len(m.vocabulary))
         assert m.doc_topic.shape == (len(docs), 2)
@@ -36,22 +36,22 @@ class TestPT:
 
     def test_deterministic(self):
         docs = _short_corpus()
-        a = topica.PT(num_topics=2, num_pseudo=10, seed=3); a.fit(docs, iters=150)
-        b = topica.PT(num_topics=2, num_pseudo=10, seed=3); b.fit(docs, iters=150)
+        a = topica.models.PT(num_topics=2, num_pseudo=10, seed=3); a.fit(docs, iters=150)
+        b = topica.models.PT(num_topics=2, num_pseudo=10, seed=3); b.fit(docs, iters=150)
         assert np.array_equal(a.topic_word, b.topic_word)
 
     def test_save_load(self, tmp_path):
         docs = _short_corpus()
-        m = topica.PT(num_topics=2, num_pseudo=10, seed=1); m.fit(docs, iters=150)
+        m = topica.models.PT(num_topics=2, num_pseudo=10, seed=1); m.fit(docs, iters=150)
         p = str(tmp_path / "pt.tt"); m.save(p)
-        loaded = topica.PT.load(p)
+        loaded = topica.models.PT.load(p)
         assert np.array_equal(m.topic_word, loaded.topic_word)
 
     def test_bad_params(self):
         with pytest.raises(ValueError):
-            topica.PT(num_topics=1)
+            topica.models.PT(num_topics=1)
         with pytest.raises(ValueError):
-            topica.PT(num_topics=2, num_pseudo=0)
+            topica.models.PT(num_topics=2, num_pseudo=0)
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ def _grouped_corpus(seed=0):
 class TestPA:
     def test_shapes(self):
         docs = _grouped_corpus()
-        m = topica.PA(num_super=2, num_sub=4, seed=1)
+        m = topica.models.PA(num_super=2, num_sub=4, seed=1)
         m.fit(docs, iters=300)
         v = len(m.vocabulary)
         assert m.topic_word.shape == (4, v)
@@ -89,7 +89,7 @@ class TestPA:
 
     def test_subtopics_cover_blocks(self):
         docs = _grouped_corpus()
-        m = topica.PA(num_super=2, num_sub=4, seed=1)
+        m = topica.models.PA(num_super=2, num_sub=4, seed=1)
         m.fit(docs, iters=400)
         # All four planted vocabulary blocks appear among the sub-topics' top
         # words (blocks within a super-topic always co-occur here, so we check
@@ -102,7 +102,7 @@ class TestPA:
 
     def test_super_sub_well_formed(self):
         docs = _grouped_corpus()
-        m = topica.PA(num_super=2, num_sub=4, seed=1)
+        m = topica.models.PA(num_super=2, num_sub=4, seed=1)
         m.fit(docs, iters=300)
         # super_sub is a finite, non-negative (S, K) association matrix. (Clean
         # super-topic separation isn't guaranteed on small data — super-topics
@@ -114,9 +114,9 @@ class TestPA:
 
     def test_save_load(self, tmp_path):
         docs = _grouped_corpus()
-        m = topica.PA(num_super=2, num_sub=4, seed=1); m.fit(docs, iters=150)
+        m = topica.models.PA(num_super=2, num_sub=4, seed=1); m.fit(docs, iters=150)
         p = str(tmp_path / "pa.tt"); m.save(p)
-        loaded = topica.PA.load(p)
+        loaded = topica.models.PA.load(p)
         assert np.array_equal(m.topic_word, loaded.topic_word)
         assert np.array_equal(m.super_sub, loaded.super_sub)
 
@@ -136,7 +136,7 @@ def _hierarchical_corpus():
 class TestHLDA:
     def test_tree_structure(self):
         docs = _hierarchical_corpus()
-        m = topica.HLDA(depth=2, seed=1)
+        m = topica.models.HLDA(depth=2, seed=1)
         m.fit(docs, iters=300)
         assert m.num_nodes >= 2
         assert len(m.node_levels) == m.num_nodes
@@ -153,7 +153,7 @@ class TestHLDA:
 
     def test_root_captures_shared_words(self):
         docs = _hierarchical_corpus()
-        m = topica.HLDA(depth=2, seed=1)
+        m = topica.models.HLDA(depth=2, seed=1)
         m.fit(docs, iters=300)
         root = m.node_parents.index(-1)
         root_top = {w for w, _ in m.top_words(root, 3)}
@@ -162,20 +162,20 @@ class TestHLDA:
 
     def test_deterministic(self):
         docs = _hierarchical_corpus()
-        a = topica.HLDA(depth=2, seed=5); a.fit(docs, iters=150)
-        b = topica.HLDA(depth=2, seed=5); b.fit(docs, iters=150)
+        a = topica.models.HLDA(depth=2, seed=5); a.fit(docs, iters=150)
+        b = topica.models.HLDA(depth=2, seed=5); b.fit(docs, iters=150)
         assert a.num_nodes == b.num_nodes
         assert a.node_levels == b.node_levels
 
     def test_save_load(self, tmp_path):
         docs = _hierarchical_corpus()
-        m = topica.HLDA(depth=2, seed=1); m.fit(docs, iters=150)
+        m = topica.models.HLDA(depth=2, seed=1); m.fit(docs, iters=150)
         p = str(tmp_path / "hlda.tt"); m.save(p)
-        loaded = topica.HLDA.load(p)
+        loaded = topica.models.HLDA.load(p)
         assert m.num_nodes == loaded.num_nodes
         assert np.array_equal(m.topic_word, loaded.topic_word)
         assert m.doc_paths == loaded.doc_paths
 
     def test_bad_depth(self):
         with pytest.raises(ValueError):
-            topica.HLDA(depth=1)
+            topica.models.HLDA(depth=1)

@@ -60,7 +60,7 @@ for a in range(A):
 # anchors only fix the arbitrary sign/scale: name two authors known to sit at
 # opposite ends. Here we use the two with the most extreme planted positions.
 lo, hi = f"author_{int(np.argmin(x_true))}", f"author_{int(np.argmax(x_true))}"
-m = topica.IdealPointTM(num_topics=K, num_dims=1, seed=1)
+m = topica.models.IdealPointTM(num_topics=K, num_dims=1, seed=1)
 m.fit(docs, word_embeddings=rho, vocabulary=vocab, group=author, anchors={lo: -1.0, hi: 1.0}, iters=40)
 
 # --- 1. the scale: author positions ------------------------------------------
@@ -88,6 +88,6 @@ print(f"within topic {k}, words at the - end: {', '.join(wd for wd, _ in low)}")
 # --- 5. persistence -----------------------------------------------------------
 path = os.path.join(tempfile.mkdtemp(), "idealpoint.topica")
 m.save(path)
-reloaded = topica.IdealPointTM.load(path)
+reloaded = topica.models.IdealPointTM.load(path)
 print(f"\nsaved and reloaded; positions identical: "
       f"{np.array_equal(m.author_positions, reloaded.author_positions)}")

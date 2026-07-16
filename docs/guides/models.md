@@ -130,7 +130,7 @@ multi-threaded training.
 
 ```python
 import topica
-model = topica.LDA(num_topics=20, seed=42)
+model = topica.models.LDA(num_topics=20, seed=42)
 model.fit(docs, iters=1000)
 model.top_words(10)
 ```
@@ -170,11 +170,11 @@ selected with `sampler=`:
 
 ```python
 # Fine-grained, large-K model, fast: WarpLDA.
-model = topica.LDA(num_topics=1000, seed=1, sampler="warp")
+model = topica.models.LDA(num_topics=1000, seed=1, sampler="warp")
 model.fit(docs, iters=1000)
 
 # Highest-coherence topics, fit time not a constraint: CVB0.
-model = topica.LDA(num_topics=100, seed=1, sampler="cvb0")
+model = topica.models.LDA(num_topics=100, seed=1, sampler="cvb0")
 model.fit(docs, iters=300)
 ```
 
@@ -212,7 +212,7 @@ prefer STM or DMR for those.
 
 ```python
 topica.enable_experimental()
-m = topica.TensorLDA(num_topics=20, n_eigenvec=20, seed=42)
+m = topica.models.TensorLDA(num_topics=20, n_eigenvec=20, seed=42)
 m.fit(docs)
 print(m.top_words(10))
 ```
@@ -245,7 +245,7 @@ rather than fragmenting the topic.
 
 ```python
 topica.enable_experimental()              # ECTM is experimental and gated
-m = topica.ECTM(num_topics=10, seed=42)
+m = topica.models.ECTM(num_topics=10, seed=42)
 m.fit(docs, times=year, content=party,   # times → periods, content → groups
       period_smooth=5.0, interaction_shrink=2.0)
 
@@ -310,7 +310,7 @@ covariate predicts, but *how* — the tone and slant with which each topic is
 discussed.
 
 ```python
-m = topica.STS(num_topics=10, seed=1)
+m = topica.models.STS(num_topics=10, seed=1)
 m.fit(docs, sentiment_seed=rating, prevalence=X, prevalence_names=names)
 
 m.doc_topic          # topic prevalence θ
@@ -351,7 +351,7 @@ minibatch-sized. It is deterministic for a seed but keeps no per-iteration
 `bound` trace.
 
 ```python
-model = topica.CTM(num_topics=50, seed=1)
+model = topica.models.CTM(num_topics=50, seed=1)
 model.fit(big_corpus, iters=20, inference="svi", batch_size=512)
 ```
 
@@ -364,7 +364,7 @@ is dropped, so the precision of `topic_correlation` and the method-of-compositio
 standard errors is lower.
 
 ```python
-model = topica.CTM(num_topics=200, variational="diagonal", seed=1)
+model = topica.models.CTM(num_topics=200, variational="diagonal", seed=1)
 model.fit(corpus)
 ```
 
@@ -378,7 +378,7 @@ each, so you can tell a real effect from noise.
 ```python
 import numpy as np
 X, names = topica.one_hot(party)
-model = topica.DMR(num_topics=20, seed=1)
+model = topica.models.DMR(num_topics=20, seed=1)
 model.fit(docs, X, feature_names=names)
 z = model.feature_effects / model.feature_effect_se   # |z| > ~2 ⇒ notable
 ```
@@ -409,7 +409,7 @@ trace how each topic's prevalence varies smoothly along a continuous axis (year,
 citation impact, age).
 
 ```python
-model = topica.GDMR(num_topics=20, degrees=[3], seed=1)
+model = topica.models.GDMR(num_topics=20, degrees=[3], seed=1)
 model.fit(docs, year, metadata_names=["year"])   # features=/covariates=/metadata= all accepted
 curve = model.tdf_linspace(1990, 2020, num=31)   # (31, num_topics) prevalence surface
 ```
@@ -447,7 +447,7 @@ its topic-word estimates, `top_words`, and `coherence` behave exactly as GDMR's.
 
 ```python
 topica.enable_experimental()               # NarrativeTM is experimental and gated
-m = topica.NarrativeTM(num_topics=10, degree=3, segment_by="sentence", seed=42)
+m = topica.models.NarrativeTM(num_topics=10, degree=3, segment_by="sentence", seed=42)
 m.fit(docs, iters=1000)
 
 m.top_words(10)                            # topics, read like any GDMR/LDA fit
@@ -481,7 +481,7 @@ word's probability through time, and `word_drift(topic)` reports *which* words
 rose and fell most within a topic — what makes its vocabulary evolve.
 
 ```python
-dtm = topica.DTM(num_topics=10, chain_variance=0.05, seed=1)
+dtm = topica.models.DTM(num_topics=10, chain_variance=0.05, seed=1)
 dtm.fit(docs, times, iters=20)   # `times` = per-doc slice index
 
 drift = dtm.word_drift(topic=3)     # first vs last slice by default
@@ -495,7 +495,7 @@ A nonparametric model that **infers** the number of topics rather than taking
 `K` as input. Useful as a sanity check on the `K` you chose elsewhere.
 
 ```python
-hdp = topica.HDP(gamma=0.5, eta=0.3, seed=1)
+hdp = topica.models.HDP(gamma=0.5, eta=0.3, seed=1)
 hdp.fit(docs, iters=300)
 print(hdp.num_topics, "topics inferred")
 ```
@@ -522,7 +522,7 @@ words to a logistic-normal posterior over θ, trained by minibatch Adam on the
 ELBO. There is no PyTorch dependency; the network is hand-coded in the Rust core.
 
 ```python
-model = topica.ProdLDA(num_topics=20, seed=1)
+model = topica.models.ProdLDA(num_topics=20, seed=1)
 theta = model.fit_transform(docs)      # one encoder pass per document
 model.top_words(10)
 ```
@@ -569,7 +569,7 @@ and the defaults reproduce the standard model exactly.
   positive construction from CLNTM is a future refinement.
 
 ```python
-m = topica.ProdLDA(num_topics=20, prior="dirichlet",
+m = topica.models.ProdLDA(num_topics=20, prior="dirichlet",
                    contrastive=True, contrastive_weight=0.5, contrastive_temp=0.5)
 m.fit(docs)
 ```
@@ -590,7 +590,7 @@ is the dictionary-grounded alternative to the embedding-based `ZeroShotTM` path:
 needs a bilingual lexicon rather than a multilingual embedder.
 
 ```python
-m = topica.InfoCTM(num_topics=20, mi_weight=30.0, languages=("en", "zh"))
+m = topica.models.InfoCTM(num_topics=20, mi_weight=30.0, languages=("en", "zh"))
 m.fit(corpus_en, corpus_zh, dictionary=en_zh_pairs)   # (word_en, word_zh) pairs
 #       optionally: embeddings_en={word: vec}, embeddings_zh={word: vec}
 m.topic_word(lang="en"); m.top_words(10, lang="zh")   # aligned across languages
@@ -614,7 +614,7 @@ numerical match to a reference run is not expected.
 Non-negative matrix factorization ([Lee & Seung 2001](https://papers.nips.cc/paper/1861-algorithms-for-non-negative-matrix-factorization)) factors the document-term matrix `X` (D x V, non-negative) as `X ≈ W H` with both factors non-negative, then reads each row of `H` as a topic's word distribution and each row of `W` as a document's topic mixture (both normalized to sum to 1). It is the fast, deterministic baseline familiar from scikit-learn: no sampling and no priors, just multiplicative updates that descend a reconstruction loss.
 
 ```python
-m = topica.NMF(num_topics=20, seed=1)
+m = topica.models.NMF(num_topics=20, seed=1)
 theta = m.fit_transform(docs)
 m.top_words(10)
 ```
@@ -628,7 +628,7 @@ Validated against `sklearn.decomposition.NMF` in `parity/nmf_vs_sklearn.py`. On 
 Latent semantic analysis ([Deerwester et al. 1990](https://onlinelibrary.wiley.com/doi/10.1002/(SICI)1097-4571(199009)41:6%3C391::AID-ASI1%3E3.0.CO;2-9)), also called latent semantic indexing, takes a truncated SVD of the weighted document-term matrix `X` (D x V): `X ≈ U_k Σ_k V_kᵀ`. It is the original distributional-semantics method and the classic baseline behind scikit-learn's `TruncatedSVD`. There is no sampling and no prior, just a direct linear-algebra solve.
 
 ```python
-m = topica.LSA(num_topics=20, weighting="tfidf", seed=1)
+m = topica.models.LSA(num_topics=20, weighting="tfidf", seed=1)
 m.fit(docs)
 m.singular_values        # the energy of each component
 m.top_words(10)          # ranked by absolute loading
@@ -653,7 +653,7 @@ The anchor-words algorithm ([Arora et al. 2013](https://proceedings.mlr.press/v2
 
 ```python
 topica.enable_experimental()
-m = topica.AnchorLDA(num_topics=20, min_count=5, seed=0)
+m = topica.models.AnchorLDA(num_topics=20, min_count=5, seed=0)
 m.fit(docs)
 m.anchors                # the anchor word identifying each topic
 m.top_words(10)          # the recovered topic-word distributions
@@ -692,7 +692,7 @@ So two authors who discuss the same topic produce systematically different word 
 
 ```python
 topica.enable_experimental()
-m = topica.IdealPointTM(num_topics=30, num_dims=1, seed=0)
+m = topica.models.IdealPointTM(num_topics=30, num_dims=1, seed=0)
 m.fit(docs,                                   # counts: no embeddings needed
       group=speaker_id,                       # documents sharing a speaker share a position
       anchors={"Sanders": -1.0, "Cruz": 1.0}) # orient the sign of the axis
@@ -759,7 +759,7 @@ w2v = gensim.models.Word2Vec(docs, vector_size=100, window=5, min_count=5, sg=1,
 vocab = list(w2v.wv.index_to_key)
 embeddings = np.array([w2v.wv[w] for w in vocab])
 
-m = topica.IdealPointTM(num_topics=20, num_dims=1, seed=1)
+m = topica.models.IdealPointTM(num_topics=20, num_dims=1, seed=1)
 m.fit([[w for w in d if w in set(vocab)] for d in docs],
       word_embeddings=embeddings, vocabulary=vocab,
       group=author,                                   # one position per author
@@ -776,7 +776,7 @@ m.topic_discrimination               # (K,): which topics carry the cleavage
 k = int(np.argmax(m.topic_discrimination))
 pos, neg = m.position_shift(k, n=10)  # (positive-end words, negative-end words)
 
-m.save("ideal.topica"); m2 = topica.IdealPointTM.load("ideal.topica")
+m.save("ideal.topica"); m2 = topica.models.IdealPointTM.load("ideal.topica")
 ```
 
 `author_positions` are standardized (mean 0, unit variance per dimension). `anchors` only
@@ -814,7 +814,7 @@ likely path to both finer interpretation and more robustness.
 `Wordfish` ([Slapin and Proksch 2008](https://doi.org/10.1111/j.1540-5907.2008.00338.x)) is the standard text-scaling model and the word-frequency baseline in the [`IdealPointTM`](#idealpointtm) family: it places authors on a single latent axis from word counts alone, with no topics and no embeddings. It is here so you can measure what topics and embeddings actually add. The count of word `j` by author `i` is Poisson with `log rate = alpha_i + psi_j + beta_j * theta_i`, where `theta_i` is the author position, `beta_j` the word discrimination, `psi_j` its baseline log-rate, and `alpha_i` the author verbosity.
 
 ```python
-m = topica.Wordfish()
+m = topica.models.Wordfish()
 m.fit(docs, group=author,                      # pool documents into one position per author
       anchors={"Sanders": -1.0, "Cruz": 1.0})  # orient the sign of the axis
 m.author_positions          # (num_authors, 1): standardized positions
@@ -829,7 +829,7 @@ We fit by the standard Wordfish EM: alternate Newton updates of the per-word `(p
 Text scaling fails in a specific, well-documented way: when a corpus has a dominant axis of variation that is *not* the one you want (a chamber, a government/opposition split, an era, a language), the single latent position latches onto it and the ideological signal is lost. Wordfish accepts a `control` covariate to absorb exactly that. Pass a categorical label per document (constant within each author); each non-baseline level gets a per-word log-rate offset `delta[level, word]`, so systematic level-specific word usage is explained away instead of contaminating `theta`. The model becomes `log rate = alpha_i + psi_j + beta_j * theta_i + delta[level_i, j]`.
 
 ```python
-m = topica.Wordfish()
+m = topica.models.Wordfish()
 m.fit(docs, group=author, control=chamber,        # absorb the chamber's word usage
       anchors={"Sanders": -1.0, "Cruz": 1.0})
 m.control_names           # the level labels (row 0 is the held-out baseline)
@@ -851,7 +851,7 @@ As a scaling model Wordfish has no topics, so it cannot tell you what is being t
 ```python
 topica.enable_experimental()
 # embeddings: (N, D) sentence or document embeddings; group: author per row
-m = topica.IdealPointSentenceTM(num_topics=20, num_dims=1)
+m = topica.models.IdealPointSentenceTM(num_topics=20, num_dims=1)
 m.fit(embeddings, group=author, anchors={"left_author": -1.0, "right_author": 1.0})
 m.author_positions       # (num_authors, num_dims)
 m.doc_topic              # (N, num_topics): soft topic assignment per embedding
@@ -874,7 +874,7 @@ y_dv ~ Poisson( sum_k theta_dk * beta_kv * exp(x_{a_d} * eta_kv) )
 A positive `eta_kv` makes word `v` more likely as the author moves to the positive end of the scale; a near-zero `eta_kv` makes the word non-ideological. The position `x_s` is estimated from the text alone — no votes, no labels.
 
 ```python
-m = topica.TBIP(num_topics=15)
+m = topica.models.TBIP(num_topics=15)
 m.fit(docs, group=author)        # group: author label per document
 m.ideal_points                   # (num_authors,): author positions (posterior mean)
 m.author_names                   # aligned with ideal_points
@@ -890,7 +890,7 @@ Inference is the paper's mean-field variational inference (not the MAP shortcut)
 `PartyEmbeddings` ([Rheault and Cochrane 2020](https://doi.org/10.1017/pan.2019.26)) is the corpus-trained word-embedding member of the ideal-point family. Where the others either count words or read pretrained embeddings, this one *learns* its own embeddings from the corpus and places parties by where their learned vectors land. It trains a PV-DM (distributed-memory paragraph-vector) model: a shallow network that predicts each word from the mean of its context-word embeddings plus the document's metadata-tag embeddings, fit by negative sampling. The tags are political metadata, by default a party-period label (so each party gets a vector per parliament, and parties can move over time), with an optional second `control` tag (government status, region) that absorbs a confound without being placed. Because the tag vectors are trained in the same space as the word vectors, you can read a party's language directly off its neighbors.
 
 ```python
-m = topica.PartyEmbeddings(num_dims=2, vector_size=200, window=20, seed=1)
+m = topica.models.PartyEmbeddings(num_dims=2, vector_size=200, window=20, seed=1)
 m.fit(docs, group=party_period,                 # e.g. "D_114", "R_114"
       control=parliament,                        # optional confounder tag
       anchors={"D_114": -1.0, "R_114": 1.0})     # orient the axis
@@ -922,11 +922,11 @@ import topica
 topica.enable_experimental()
 
 def fit(idx):                        # fit on a subset of unit (document) indices
-    m = topica.IdealPointTM(20, seed=1)
+    m = topica.models.IdealPointTM(20, seed=1)
     m.fit([docs[i] for i in idx], group=[author[i] for i in idx])
     return m.author_names, m.author_positions[:, 0]
 
-m = topica.IdealPointTM(20, seed=1); m.fit(docs, group=author)
+m = topica.models.IdealPointTM(20, seed=1); m.fit(docs, group=author)
 topica.bimodality(m.author_positions)        # > 0.555 => two camps (polarized)
 topica.polarization(m.author_positions, party_of_author)  # gap between named camps
 topica.split_half_reliability(fit, author)   # how much real signal the axis carries
@@ -937,11 +937,11 @@ We validated these against DW-NOMINATE on U.S. House press releases: split-half 
 For uncertainty on the positions themselves, `topica.position_intervals(fit, group)` returns model-agnostic **bootstrap** standard errors and confidence intervals for any of the four models — it resamples each author's documents and refits, so it reflects the real estimation variability (including the seed-to-seed instability a local analytic SE would miss). `Wordfish` additionally exposes an analytic `position_se` (the Hessian-based standard error, validated equal to R `quanteda`'s `se.theta` at correlation 1.00 in `parity/wordfish_r_compare.py`).
 
 ```python
-m = topica.Wordfish(); m.fit(docs, group=author, anchors={"left": -1.0, "right": 1.0})
+m = topica.models.Wordfish(); m.fit(docs, group=author, anchors={"left": -1.0, "right": 1.0})
 m.position_se                                 # analytic SE per author (quanteda-equivalent)
 
 def fit(idx):                                 # bootstrap intervals for any model
-    mm = topica.IdealPointTM(20, seed=1)
+    mm = topica.models.IdealPointTM(20, seed=1)
     mm.fit([docs[i] for i in idx], group=[author[i] for i in idx])
     return mm.author_names, mm.author_positions[:, 0]
 ci = topica.position_intervals(fit, author, n_boot=50)   # author -> (estimate, se, lo, hi)
@@ -968,7 +968,7 @@ plus the residual `σ²` — so a prediction comes with a proper interval
 (`mean ± 1.96·std`) rather than a bare point.
 
 ```python
-m = topica.SupervisedLDA(num_topics=20, seed=1)
+m = topica.models.SupervisedLDA(num_topics=20, seed=1)
 m.fit(docs, y)
 z = m.coefficients / m.coefficient_se        # which topics matter
 mean, std = m.predict(new_docs, return_std=True)

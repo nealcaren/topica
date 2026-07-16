@@ -5,41 +5,9 @@ this module just re-exports its public surface so ``import topica`` works
 and editors/type-checkers see a stable namespace.
 """
 
+# The model classes live under ``topica.models`` (topica.models.LDA); the flat
+# top level carries only the corpus, tokenizer, and process-wide helpers.
 from ._topica import (
-    LDA,
-    DMR,
-    LabeledLDA,
-    SAGE,
-    CTM,
-    STM,
-    ECTM,
-    STS,
-    HDP,
-    DTM,
-    DETM,
-    SupervisedLDA,
-    PT,
-    GSDMM,
-    SeededLDA,
-    KeyATM,
-    Top2Vec,
-    BERTopic,
-    ETM,
-    IdealPointTM,
-    IdealPointSentenceTM,
-    TBIP,
-    TensorLDA,
-    Wordfish,
-    PartyEmbeddings,
-    ProdLDA,
-    InfoCTM,
-    FASTopic,
-    PA,
-    HLDA,
-    NMF,
-    LSA,
-    CombinedTM,
-    ZeroShotTM,
     Corpus,
     tokenize,
     project,
@@ -146,8 +114,6 @@ def summary(model, topn=8):
     return "\n".join(lines)
 
 
-from .gdmr import GDMR  # noqa: E402  (pure-Python Legendre-basis DMR wrapper)
-from .narrative import NarrativeTM  # noqa: E402  (pure-Python NarrativeTM wrapper)
 from . import stm  # noqa: E402  (stm imports names defined above)
 from .stm import align_corpus, spline, interaction, topic_correlation_ci, TopicCorrelationCI  # noqa: E402  (general covariate-design helpers)
 from . import keyatm  # noqa: E402  (keyATM-specific workflow helpers)
@@ -191,6 +157,7 @@ from .coherence import (  # noqa: E402
 # intrusion, select_k, backend, PROMPTS) -- it is an llm-bounded family, kept
 # distinct from the bit-exact diagnostics above. See topica/llm.py.
 from . import llm  # noqa: E402
+from . import models  # noqa: E402  (the model roster, namespaced: topica.models.<Name>)
 from . import mcmc  # noqa: E402  (single-chain MCMC diagnostics for the Gibbs models)
 from .mcmc import (  # noqa: E402
     mcmc_diagnostics,
@@ -265,10 +232,7 @@ from .labeling import (  # noqa: E402  LLM topic labeling as plumbing
     llm_backend,
     topic_label_prompts,
 )
-from .topicgpt import TopicGPT  # noqa: E402  (LLM-driven topic discovery)
-from .anchor import AnchorLDA  # noqa: E402  (experimental anchor-words estimator)
 from .embedding import (  # noqa: E402
-    EmbeddingLDA,
     embedding_seeds,
     llm_embed,
     save_embeddings,
@@ -283,48 +247,12 @@ from .scaling import bimodality, polarization, polarization_ci, split_half_relia
 from . import datasets  # noqa: E402  (bundled + fetch-on-demand example datasets)
 
 __all__ = [
+    "models",
     "list_models",
     "ModelInfo",
     "REGISTRY",
-    "LDA",
-    "DMR",
-    "GDMR",
-    "NarrativeTM",
-    "LabeledLDA",
-    "SAGE",
-    "CTM",
-    "STM",
-    "ECTM",
     "enable_experimental",
     "experimental_enabled",
-    "STS",
-    "HDP",
-    "DTM",
-    "DETM",
-    "SupervisedLDA",
-    "PT",
-    "GSDMM",
-    "SeededLDA",
-    "KeyATM",
-    "Top2Vec",
-    "BERTopic",
-    "ETM",
-    "IdealPointTM",
-    "IdealPointSentenceTM",
-    "TBIP",
-    "TensorLDA",
-    "Wordfish",
-    "PartyEmbeddings",
-    "ProdLDA",
-    "InfoCTM",
-    "FASTopic",
-    "PA",
-    "HLDA",
-    "NMF",
-    "LSA",
-    "AnchorLDA",
-    "CombinedTM",
-    "ZeroShotTM",
     "Corpus",
     "tokenize",
     "project",
@@ -390,7 +318,6 @@ __all__ = [
     "llm_topic_labels",
     "llm_backend",
     "topic_label_prompts",
-    "TopicGPT",
     "estimate_effect",
     "by_strata",
     "prevalence_ci",
@@ -408,7 +335,6 @@ __all__ = [
     "permutation_test",
     "PermutationResult",
     "time_prevalence_ci",
-    "EmbeddingLDA",
     "embedding_seeds",
     "llm_embed",
     "save_embeddings",

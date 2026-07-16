@@ -305,7 +305,7 @@ class EmbeddingLDA:
         beta: float = 0.01,
         seed: int = 42,
     ) -> None:
-        from . import SeededLDA
+        from ._topica import SeededLDA
 
         if len(vocabulary) != np.asarray(embeddings).shape[0]:
             raise ValueError("vocabulary length must match the number of embedding rows")
@@ -463,7 +463,7 @@ class EmbeddingKeyATM:
         seed: int = 42,
         **keyatm_kwargs,
     ) -> None:
-        from . import KeyATM
+        from ._topica import KeyATM
 
         if len(vocabulary) != np.asarray(embeddings).shape[0]:
             raise ValueError("vocabulary length must match the number of embedding rows")

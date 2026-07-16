@@ -58,7 +58,7 @@ and we confirm the substantive effects below survive `K ∈ {10, 20}`.
 
 ```python
 conservative = np.array([r["rating"] == "Conservative" for r in rows], float).reshape(-1, 1)
-model = topica.STM(num_topics=15, seed=1)
+model = topica.models.STM(num_topics=15, seed=1)
 model.fit(docs, conservative, prevalence_names=["conservative"], iters=25)
 
 labels = stm.label_topics(model.topic_word, model.vocabulary, n=6)
@@ -159,7 +159,7 @@ seeds = {
     "social":         ["abort", "gay", "marriag", "religi", "church"],
     "campaign":       ["poll", "vote", "campaign", "candid", "elect"],
 }
-ka = topica.KeyATM(seeds, num_topics=8, seed=1)
+ka = topica.models.KeyATM(seeds, num_topics=8, seed=1)
 ka.fit(docs, iters=800)
 for t in range(4):
     print(f"{ka.topic_names[t]:15s}", [w for w, _ in ka.top_words(7, topic=t)])

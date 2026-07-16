@@ -73,7 +73,7 @@ cat("ok\n")
 def run(verbose: bool = True) -> dict:
     if not r_stm_available():
         raise RuntimeError("Rscript with the 'stm' package is not available")
-    from topica import CTM
+    from topica.models import CTM
 
     docs = load_and_prep()
     with tempfile.TemporaryDirectory() as d:

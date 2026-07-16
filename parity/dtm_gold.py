@@ -134,7 +134,7 @@ def _fit_topica(docs, times):
     """Fit topica DTM; return a (K, T, V) topic-word array aligned to VOCAB."""
     import topica
 
-    m = topica.DTM(num_topics=NUM_TOPICS, chain_variance=CHAIN_VARIANCE,
+    m = topica.models.DTM(num_topics=NUM_TOPICS, chain_variance=CHAIN_VARIANCE,
                    seed=GENSIM_SEED)
     m.fit(docs, times, iters=TOPICA_ITERS)
     tv = list(m.vocabulary)

@@ -18,13 +18,13 @@ def _toy_docs(n=40, vocab=12, lo=8, hi=15, seed=0):
 
 def _fit_each(corpus, *, keep_draws):
     out = {}
-    m = topica.LDA(num_topics=4, seed=1)
+    m = topica.models.LDA(num_topics=4, seed=1)
     m.fit(corpus, iters=120, keep_theta_draws=keep_draws)
     out["LDA"] = m
-    m = topica.SeededLDA({"a": ["w0", "w1"], "b": ["w5", "w6"]}, residual=2, seed=1)
+    m = topica.models.SeededLDA({"a": ["w0", "w1"], "b": ["w5", "w6"]}, residual=2, seed=1)
     m.fit(corpus, iters=120, keep_theta_draws=keep_draws)
     out["SeededLDA"] = m
-    m = topica.KeyATM({"a": ["w0", "w1"], "b": ["w5", "w6"]}, num_topics=4, seed=1)
+    m = topica.models.KeyATM({"a": ["w0", "w1"], "b": ["w5", "w6"]}, num_topics=4, seed=1)
     m.fit(corpus, iters=120, keep_theta_draws=keep_draws)
     out["KeyATM"] = m
     return out
@@ -63,7 +63,7 @@ def test_corpus_takes_precedence_over_retained_lengths():
     # Passing corpus= still wins, so an alternate corpus can be used deliberately.
     docs = _toy_docs()
     corpus = topica.Corpus.from_documents(docs)
-    m = topica.LDA(num_topics=4, seed=1)
+    m = topica.models.LDA(num_topics=4, seed=1)
     m.fit(corpus, iters=120, keep_theta_draws=False)
 
     # A corpus with deliberately different (here, longer) documents changes the
@@ -82,7 +82,7 @@ def test_doc_lengths_dynamic_keyatm_in_caller_order():
     vocab = [f"w{i}" for i in range(12)]
     docs = [list(rng.choice(vocab, size=int(rng.integers(8, 16)))) for _ in range(30)]
     timestamps = list(rng.permutation(np.repeat(np.arange(6), 5)))
-    m = topica.KeyATM({"a": ["w0", "w1"]}, num_topics=3, seed=1)
+    m = topica.models.KeyATM({"a": ["w0", "w1"]}, num_topics=3, seed=1)
     m.fit(docs, iters=120, timestamps=timestamps, num_states=2, keep_theta_draws=False)
 
     lengths = np.asarray(m.doc_lengths)

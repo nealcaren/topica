@@ -113,7 +113,7 @@ scores = {}
 
 # ---- 1. LDA topic recovery -------------------------------------------------
 try:
-    m = topica.LDA(num_topics=K, seed=1)
+    m = topica.models.LDA(num_topics=K, seed=1)
     m.fit(docs_v, iters=800)
     bf = fit_beta_on_vocab(m)
     S, mp, mc = match_cosine(beta_true, bf)
@@ -125,7 +125,7 @@ except Exception as e:
 try:
     yr = doc_year.astype(float)
     X = np.column_stack([np.ones_like(yr), yr])
-    sm = topica.STM(num_topics=K, seed=1)
+    sm = topica.models.STM(num_topics=K, seed=1)
     sm.fit(docs_v, prevalence=X, prevalence_names=["intercept", "year"], iters=200)
     bf = fit_beta_on_vocab(sm)
     _, mp, _ = match_cosine(beta_true, bf)
@@ -138,7 +138,7 @@ except Exception as e:
 
 # ---- 3. IdealPointTM: recover author positions ----------------------------
 try:
-    ip = topica.IdealPointTM(num_topics=K, seed=1)
+    ip = topica.models.IdealPointTM(num_topics=K, seed=1)
     grp = [f"author_{int(a):02d}" for a in doc_author]   # strings; zero-pad -> sort==index
     ip.fit(docs_v, group=grp, iters=150)
     pos = np.asarray(ip.author_positions).ravel()
@@ -152,7 +152,7 @@ except Exception as e:
 
 # ---- 4. NarrativeTM: procedure is U-shaped over position ------------------
 try:
-    nt = topica.NarrativeTM(num_topics=K, segment_by="chunk", chunk_size=6, seed=1)
+    nt = topica.models.NarrativeTM(num_topics=K, segment_by="chunk", chunk_size=6, seed=1)
     nt.fit(docs_v, iters=400)
     bf = fit_beta_on_vocab(nt)
     _, mp, _ = match_cosine(beta_true, bf)
@@ -169,7 +169,7 @@ try:
     keep = [k for k, s in enumerate(short) if s]
     short = [short[k] for k in keep]
     labels = [THEMES.index(first_subst_label[k]) for k in keep]
-    g = topica.GSDMM(num_topics=K + 3, seed=1)
+    g = topica.models.GSDMM(num_topics=K + 3, seed=1)
     g.fit(short, iters=40)
     pred = np.asarray(g.doc_topic).argmax(1)
     ari = ARI(labels, pred) if ARI else float("nan")
@@ -180,7 +180,7 @@ except Exception as e:
 # ---- 6. SAGE content covariate: party-frame word separation ---------------
 try:
     par_lbl = [PARTIES[int(p)] for p in ak["doc_party"]]   # "Civic"/"Labor"
-    sg = topica.SAGE(num_topics=K, seed=1)
+    sg = topica.models.SAGE(num_topics=K, seed=1)
     sg.fit(docs_v, par_lbl, group_names=PARTIES, iters=300)
     tw = np.asarray(sg.topic_word)                        # (K, G, V_sage)
     mv = list(sg.vocabulary); mi = {w: k for k, w in enumerate(mv)}
@@ -214,7 +214,7 @@ try:
         feats[n, R + int(pp)] = 1.0
     feats = feats - feats.mean(0)     # center -> identifiable vs DMR's auto-intercept
     fnames = [f"region_{x}" for x in REGIONS] + [f"party_{x}" for x in PARTIES]
-    dm = topica.DMR(num_topics=K, seed=1)
+    dm = topica.models.DMR(num_topics=K, seed=1)
     dm.fit(docs_v, features=feats, feature_names=fnames, iters=400)
     bf = fit_beta_on_vocab(dm)
     _, mp, _ = match_cosine(beta_true, bf)
@@ -244,7 +244,7 @@ except Exception as e:
 # ---- 8. DTM: transit vocabulary drift (rail up, bus down) -----------------
 try:
     yr_idx = ak["doc_year"].astype(int).tolist()
-    dt = topica.DTM(num_topics=K, seed=1)
+    dt = topica.models.DTM(num_topics=K, seed=1)
     dt.fit(docs_v, yr_idx, iters=20)
     # DTM topic_word is per-slice; identify the transit topic by top-word overlap.
     transit_markers = set(TOPIC_CORE["transit"]) | {"bus", "rail", "bike", "parking",
@@ -282,7 +282,7 @@ try:
     docs_es = [[w for s in es[i] for w in toks_es(s)] for i in pair_ids]
     gloss = json.load(open(f"{HERE}/glossary.json"))
     dictionary = [(en, esw) for en, esw in gloss.items()]
-    ic = topica.InfoCTM(num_topics=K, seed=1, languages=("en", "es"),
+    ic = topica.models.InfoCTM(num_topics=K, seed=1, languages=("en", "es"),
                         hidden_size=64, lr=0.01)
     ic.fit(docs_en, docs_es, dictionary=dictionary, iters=250, batch_size=64)
     ta, tb = ic.top_words(10, lang="en"), ic.top_words(10, lang="es")

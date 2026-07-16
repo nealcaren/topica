@@ -14,7 +14,7 @@ metadata. Fit prevalence as a regression on your covariates:
 import topica
 
 X, names = topica.one_hot(party)                     # or build any design matrix
-model = topica.STM(num_topics=20, seed=1)
+model = topica.models.STM(num_topics=20, seed=1)
 model.fit(docs, prevalence=X, prevalence_names=names)
 ```
 
@@ -71,7 +71,7 @@ method-of-composition machinery:
 ```python
 import numpy as np, topica
 
-model = topica.LDA(num_topics=20, seed=1)
+model = topica.models.LDA(num_topics=20, seed=1)
 model.fit(docs, iters=1000)
 
 lengths = np.array([len(d) for d in docs])

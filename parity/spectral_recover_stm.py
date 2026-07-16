@@ -99,7 +99,7 @@ def main():
     # recover()), with no EM and no stm intermediates substituted. So this is an
     # end-to-end check, not just a recover() check — given the SAME stm-prepped
     # documents, topica's whole spectral start should equal stm's.
-    m = topica.CTM(num_topics=K, seed=1, init="spectral")
+    m = topica.models.CTM(num_topics=K, seed=1, init="spectral")
     m.fit(docs, iters=0)
     tb = np.asarray(m.topic_word)
     tvocab = list(m.vocabulary)

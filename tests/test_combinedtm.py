@@ -13,7 +13,7 @@ import pytest
 
 import topica
 
-MODELS = [topica.CombinedTM, topica.ZeroShotTM]
+MODELS = [topica.models.CombinedTM, topica.models.ZeroShotTM]
 MODEL_IDS = ["CombinedTM", "ZeroShotTM"]
 
 

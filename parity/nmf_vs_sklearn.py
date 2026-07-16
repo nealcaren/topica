@@ -93,7 +93,7 @@ def topica_fit(docs):
     import topica
 
     bl = BETA_LOSS
-    m = topica.NMF(K, beta_loss=bl, init="nndsvd", weighting="count", convergence_tol=0.0)
+    m = topica.models.NMF(K, beta_loss=bl, init="nndsvd", weighting="count", convergence_tol=0.0)
     m.fit(docs, iters=MAX_ITER)
     vocab = list(m.vocabulary)
     return np.asarray(m.topic_word), np.asarray(m.doc_topic), vocab

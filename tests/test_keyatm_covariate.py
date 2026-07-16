@@ -27,7 +27,7 @@ def _corpus(seed=0):
 @pytest.fixture(scope="module")
 def cov_model():
     docs, party = _corpus()
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m.fit(docs, covariates=party.reshape(-1, 1), feature_names=["is_D"], iters=600)
     return m, docs, party
 
@@ -63,7 +63,7 @@ def test_strong_effect_is_significant(cov_model):
 
 def test_feature_effect_se_base_model_raises():
     docs, _ = _corpus()
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m.fit(docs, iters=200)
     with pytest.raises(RuntimeError):
         _ = m.feature_effect_se
@@ -78,14 +78,14 @@ def test_theta_tracks_covariate(cov_model):
 
 def test_deterministic(cov_model):
     m, docs, party = cov_model
-    m2 = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m2 = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m2.fit(docs, covariates=party.reshape(-1, 1), feature_names=["is_D"], iters=600)
     assert np.allclose(m.feature_effects, m2.feature_effects)
 
 
 def test_base_model_has_no_feature_effects():
     docs, _ = _corpus()
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m.fit(docs, iters=200)
     assert m.feature_names == []
     with pytest.raises(RuntimeError):
@@ -94,7 +94,7 @@ def test_base_model_has_no_feature_effects():
 
 def test_covariate_row_count_validated():
     docs, party = _corpus()
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     with pytest.raises(ValueError):
         m.fit(docs, covariates=party[:-1].reshape(-1, 1), iters=10)
 
@@ -141,7 +141,7 @@ def test_high_dim_covariate_fit_is_healthy_and_recovers_effect():
     planted level->topic effect is recovered directionally."""
     k, levels = 8, 15
     docs, X, keywords, level_pref = _onehot_corpus(3000, k, levels, seed=1)
-    m = topica.KeyATM(keywords, num_topics=k, seed=1, num_threads=2)
+    m = topica.models.KeyATM(keywords, num_topics=k, seed=1, num_threads=2)
     m.fit(docs, covariates=X, iters=400)
 
     theta = m.doc_topic
@@ -174,7 +174,7 @@ def test_covariate_collapse_regression_at_scale():
         pytest.skip("slow scale test; set TOPICA_SLOW_TESTS=1 to run")
     k, levels = 31, 30
     docs, X, keywords, _ = _onehot_corpus(50000, k, levels, topic_alpha=0.7, seed=2)
-    m = topica.KeyATM(keywords, num_topics=k, seed=1, num_threads=8)
+    m = topica.models.KeyATM(keywords, num_topics=k, seed=1, num_threads=8)
     m.fit(docs, covariates=X, iters=500)
     eff = _effective_topics(m.doc_topic)
     assert eff > k * 0.4, f"covariate theta collapsed at scale: eff#topics={eff:.1f}/{k}"

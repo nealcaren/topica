@@ -96,7 +96,7 @@ def svd_flip(u, vt):
 def topica_fit(docs):
     import topica
 
-    m = topica.LSA(K, weighting=WEIGHTING, seed=TOPICA_SEED)
+    m = topica.models.LSA(K, weighting=WEIGHTING, seed=TOPICA_SEED)
     m.fit(docs)
     vocab = list(m.vocabulary)
     tw = np.asarray(m.topic_word)        # (K, V) signed right singular vectors

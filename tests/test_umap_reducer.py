@@ -29,7 +29,7 @@ def _manifold(seed=0, per=40, k=4):
 @pytest.mark.parametrize("model_cls", ["BERTopic", "Top2Vec"])
 def test_umap_reducer_runs_and_warns(model_cls):
     docs, emb = _manifold()
-    cls = getattr(topica, model_cls)
+    cls = getattr(topica.models, model_cls)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         m = cls(reducer="umap", min_cluster_size=15, n_neighbors=15, seed=1)
@@ -44,7 +44,7 @@ def test_pca_default_is_silent():
     docs, emb = _manifold()
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        m = topica.BERTopic(min_cluster_size=15, seed=1)  # reducer="pca" default
+        m = topica.models.BERTopic(min_cluster_size=15, seed=1)  # reducer="pca" default
         m.fit(docs, emb)
     assert not any("reproducible" in str(x.message) for x in w)
 
@@ -53,7 +53,7 @@ def test_transform_is_deterministic_even_with_umap_fit():
     docs, emb = _manifold()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        m = topica.Top2Vec(reducer="umap", min_cluster_size=15, seed=1)
+        m = topica.models.Top2Vec(reducer="umap", min_cluster_size=15, seed=1)
         m.fit(docs, emb)
     # the prediction phase never re-runs the reducer, so it is reproducible
     a = m.transform(docs[:6], emb[:6])
@@ -63,4 +63,4 @@ def test_transform_is_deterministic_even_with_umap_fit():
 
 def test_unknown_reducer_errors():
     with pytest.raises(ValueError, match="unknown reducer"):
-        topica.BERTopic(reducer="tsne")
+        topica.models.BERTopic(reducer="tsne")

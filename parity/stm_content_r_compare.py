@@ -86,7 +86,7 @@ def run(verbose: bool = True) -> dict:
     topic-separation for R and topica. Raises if R/stm is unavailable."""
     if not r_stm_available():
         raise RuntimeError("Rscript with the 'stm' package is not available")
-    from topica import STM
+    from topica.models import STM
 
     docs, groups = _make_corpus()
     with tempfile.TemporaryDirectory() as d:

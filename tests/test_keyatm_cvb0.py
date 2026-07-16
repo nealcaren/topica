@@ -30,7 +30,7 @@ def _corpus():
 
 def _fit(sampler="cvb0", seed=42, iters=150, **kw):
     docs, keywords = _corpus()
-    m = topica.KeyATM(keywords, num_topics=3, beta=0.1, beta_keyword=0.5, seed=seed,
+    m = topica.models.KeyATM(keywords, num_topics=3, beta=0.1, beta_keyword=0.5, seed=seed,
                       sampler=sampler, **kw)
     m.fit(docs, iters=iters)
     return m
@@ -81,14 +81,14 @@ def test_aliases_and_bad_name():
         m = _fit(sampler=name, iters=20)
         assert m.num_topics == 3
     with pytest.raises(ValueError):
-        topica.KeyATM({"A": ["w0"]}, num_topics=2, sampler="banana")
+        topica.models.KeyATM({"A": ["w0"]}, num_topics=2, sampler="banana")
 
 
 def test_cvb0_rejects_covariate_and_dynamic():
     docs, keywords = _corpus()
-    m = topica.KeyATM(keywords, num_topics=3, seed=1, sampler="cvb0")
+    m = topica.models.KeyATM(keywords, num_topics=3, seed=1, sampler="cvb0")
     with pytest.raises(ValueError):
         m.fit(docs, iters=10, covariates=np.ones((len(docs), 1)))
-    m2 = topica.KeyATM(keywords, num_topics=3, seed=1, sampler="cvb0")
+    m2 = topica.models.KeyATM(keywords, num_topics=3, seed=1, sampler="cvb0")
     with pytest.raises(ValueError):
         m2.fit(docs, iters=10, timestamps=list(range(len(docs))))

@@ -39,7 +39,7 @@ def _bilingual(n_a=120, n_b=108, blocks=K, per=4, length=12, seed=0):
 
 def _fit(seed=1, **kw):
     a, b, d = _bilingual()
-    m = topica.InfoCTM(num_topics=K, seed=seed, hidden_size=32, lr=0.01,
+    m = topica.models.InfoCTM(num_topics=K, seed=seed, hidden_size=32, lr=0.01,
                        languages=("en", "zh"), **kw)
     m.fit(a, b, dictionary=d, iters=120, batch_size=40)
     return m, (a, b, d)
@@ -122,9 +122,9 @@ def test_embeddings_optional_and_change_fit():
             for i in range(4):
                 out[f"{prefix}{blk}_{i}"] = center + rng.normal(0, 0.05, 8)
         return out
-    base = topica.InfoCTM(num_topics=K, seed=1, hidden_size=32, lr=0.01)
+    base = topica.models.InfoCTM(num_topics=K, seed=1, hidden_size=32, lr=0.01)
     base.fit(a, b, dictionary=d, iters=80, batch_size=40)
-    dens = topica.InfoCTM(num_topics=K, seed=1, hidden_size=32, lr=0.01)
+    dens = topica.models.InfoCTM(num_topics=K, seed=1, hidden_size=32, lr=0.01)
     dens.fit(a, b, dictionary=d, embeddings_a=emb("a"), embeddings_b=emb("b"),
              iters=80, batch_size=40)
     # The densified mask changes the alignment term, hence the fit.
@@ -138,11 +138,11 @@ def test_embeddings_optional_and_change_fit():
 
 def test_construction_validation():
     with pytest.raises(ValueError):
-        topica.InfoCTM(num_topics=1)
+        topica.models.InfoCTM(num_topics=1)
     with pytest.raises(ValueError):
-        topica.InfoCTM(num_topics=3, mi_temperature=0.0)
+        topica.models.InfoCTM(num_topics=3, mi_temperature=0.0)
     with pytest.raises(ValueError):
-        topica.InfoCTM(num_topics=3, dropout=1.0)
+        topica.models.InfoCTM(num_topics=3, dropout=1.0)
 
 
 def test_unknown_lang_raises():
@@ -152,7 +152,7 @@ def test_unknown_lang_raises():
 
 
 def test_unfitted_access_raises():
-    m = topica.InfoCTM(num_topics=3)
+    m = topica.models.InfoCTM(num_topics=3)
     with pytest.raises(RuntimeError):
         m.topic_word(lang="a")
 

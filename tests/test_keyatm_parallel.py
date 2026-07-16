@@ -34,16 +34,16 @@ def _econ_topic(model):
 def test_parallel_recovers_topics():
     docs = _corpus()
     for nt in (2, 4):
-        m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+        m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
         m.fit(docs, iters=300, num_threads=nt)
         assert _econ_topic(m) is not None, f"econ topic not recovered with {nt} threads"
 
 
 def test_parallel_deterministic():
     docs = _corpus()
-    m1 = topica.KeyATM(SEEDS, num_topics=2, seed=7)
+    m1 = topica.models.KeyATM(SEEDS, num_topics=2, seed=7)
     m1.fit(docs, iters=200, num_threads=4)
-    m2 = topica.KeyATM(SEEDS, num_topics=2, seed=7)
+    m2 = topica.models.KeyATM(SEEDS, num_topics=2, seed=7)
     m2.fit(docs, iters=200, num_threads=4)
     assert np.allclose(m1.topic_word, m2.topic_word)
     assert np.allclose(m1.doc_topic, m2.doc_topic)
@@ -52,7 +52,7 @@ def test_parallel_deterministic():
 def test_parallel_counts_stay_nonnegative():
     # The AD-LDA reconcile must not drive any topic-word probability negative.
     docs = _corpus(seed=2)
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m.fit(docs, iters=250, num_threads=8)
     phi = m.topic_word
     assert (phi >= 0).all()
@@ -66,9 +66,9 @@ def test_parallel_merge_higher_k_deterministic_and_valid():
     # (non-negative, row-normalized) topic-word matrix.
     docs = _corpus(seed=3, n=800)
     for nt in (4, 8):
-        a = topica.KeyATM(SEEDS, num_topics=24, seed=11)
+        a = topica.models.KeyATM(SEEDS, num_topics=24, seed=11)
         a.fit(docs, iters=120, num_threads=nt)
-        b = topica.KeyATM(SEEDS, num_topics=24, seed=11)
+        b = topica.models.KeyATM(SEEDS, num_topics=24, seed=11)
         b.fit(docs, iters=120, num_threads=nt)
         assert np.array_equal(a.topic_word, b.topic_word), (
             f"non-deterministic topic_word at num_threads={nt}"
@@ -88,7 +88,7 @@ def test_parallel_dynamic_recovers_change_point():
             light = A if heavy is B else B
             docs.append(rng.choice(heavy, 9).tolist() + rng.choice(light, 3).tolist())
             years.append(2000 + t)
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m.fit(docs, timestamps=years, num_states=2, iters=300, num_threads=4)
     si = m.topic_names.index("soc")
     tp = m.time_prevalence[:, si]

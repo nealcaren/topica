@@ -76,7 +76,7 @@ def _topica_fit(docs, doc_emb, word_emb, vocab):
     """Fit topica Top2Vec on the shared embeddings; return (labels, top_words)."""
     import topica
 
-    tv = topica.Top2Vec(n_components=5, min_cluster_size=MIN_CLUSTER, seed=1)
+    tv = topica.models.Top2Vec(n_components=5, min_cluster_size=MIN_CLUSTER, seed=1)
     tv.fit(docs, doc_emb, word_embeddings=word_emb, vocabulary=vocab)
     labels = np.array(tv.labels)
     words = [

@@ -27,7 +27,7 @@ claim of byte-for-byte upstream compatibility.
 import topica
 
 topica.enable_experimental()
-model = topica.TensorLDA(
+model = topica.models.TensorLDA(
     num_topics=10, n_eigenvec=10, theta=1.0, seed=42,
 )
 model.fit(docs)

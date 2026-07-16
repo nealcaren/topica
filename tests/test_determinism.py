@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from topica import LDA
+from topica.models import LDA
 
 
 # Toy corpus used for determinism tests (same as conftest but self-contained

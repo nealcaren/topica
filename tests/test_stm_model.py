@@ -5,7 +5,7 @@ topic recovery, covariate recovery (the headline STM property), determinism,
 input type parity (Corpus vs list[list[str]]), multiple covariates,
 top_words, and coherence.
 
-NOTE: This file tests the STM *model class* (topica.STM).
+NOTE: This file tests the STM *model class* (topica.models.STM).
       tests/test_stm.py tests the topica.stm *analysis toolkit*.
 """
 
@@ -15,7 +15,8 @@ import numpy as np
 import numpy.testing as npt
 import pytest
 
-from topica import STM, Corpus, stm
+from topica.models import STM
+from topica import Corpus, stm
 
 
 # ---------------------------------------------------------------------------

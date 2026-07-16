@@ -58,7 +58,7 @@ def _corpus():
 
 def _topica_phi(docs, k, vocab):
     """Fit topica LDA and return its topic-word matrix aligned to ``vocab``."""
-    from topica import LDA
+    from topica.models import LDA
 
     model = LDA(num_topics=k, seed=1, optimize_interval=0)
     model.fit(docs, iters=ITERS, num_samples=5, sample_interval=25)

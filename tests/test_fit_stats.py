@@ -9,7 +9,8 @@ import numpy as np
 import pytest
 from numpy.random import default_rng
 
-from topica import LDA, Corpus
+from topica.models import LDA
+from topica import Corpus
 
 # ---------------------------------------------------------------------------
 # Module-level fixtures / helpers

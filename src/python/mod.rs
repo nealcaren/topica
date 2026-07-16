@@ -761,7 +761,7 @@ pub(super) fn build_corpus_from_docs(
 /// :class:`Corpus` or a list of token lists. After fitting, the estimated
 /// distributions are available as :attr:`topic_word` (φ) and
 /// :attr:`doc_topic` (θ).
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct LDA {
     num_topics: usize,
     alpha_sum: Option<f64>,
@@ -3305,7 +3305,7 @@ fn build_time_index(
 /// of document features: ``α_{d,t} = exp(λ_t · x_d)``. After fitting, the
 /// learned weights are available as :attr:`feature_effects` — how each covariate
 /// shifts each topic's prevalence.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct DMR {
     num_topics: usize,
     beta: f64,
@@ -4322,7 +4322,7 @@ impl DMR {
 /// labels' topics. The number of topics is the number of distinct labels.
 ///
 /// Documents with an empty label set are treated as unconstrained (all topics).
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct LabeledLDA {
     alpha: f64,
     beta: f64,
@@ -4967,7 +4967,7 @@ fn parse_groups(obj: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
 /// document-level **group** covariate, so you can read how a topic is worded
 /// differently across groups. Construct, then :meth:`fit` on documents plus a
 /// per-document group label.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct SAGE {
     num_topics: usize,
     alpha: f64,
@@ -5794,7 +5794,7 @@ fn infer_theta_batch_per_doc(
 /// chooses the covariance approximation (``"laplace"`` full, or ``"diagonal"``
 /// for a faster mean-field one at high K), and ``fit(keep_eta_cov=False)`` trades
 /// stored covariance for far less memory at large K.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct CTM {
     num_topics: usize,
     sigma_shrink: f64,
@@ -6501,7 +6501,7 @@ impl CTM {
 /// chooses the covariance approximation (``"laplace"`` full, or ``"diagonal"``
 /// for a faster mean-field one at high K), and ``fit(keep_eta_cov=False)`` trades
 /// stored covariance for far less memory at large K.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct STM {
     num_topics: usize,
     sigma_shrink: f64,
@@ -7549,7 +7549,7 @@ impl STM {
 /// Relative κ-shift below which an SVI content model is treated as converged.
 const CONTENT_CONVERGED_TOL: f64 = 0.10;
 
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct ECTM {
     num_topics: usize,
     sigma_shrink: f64,
@@ -8631,7 +8631,7 @@ fn sts_beta_at(
 /// distribution, with both topic prevalence and sentiment-discourse driven by
 /// document covariates. Fit by Laplace variational EM (a faithful port of the
 /// authors' R ``sts`` package).
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct STS {
     num_topics: usize,
     seed: u64,
@@ -9421,7 +9421,7 @@ impl STS {
 /// concentration parameters `alpha` (document level) and `gamma` (corpus level)
 /// govern how readily new topics appear; by default both are resampled from the
 /// data (a faithful port of blei-lab/hdp), so you typically don't tune them.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct HDP {
     alpha: f64,
     gamma: f64,
@@ -9991,7 +9991,7 @@ impl HDP {
 /// port of Blei's C `dtm` / gensim's `LdaSeqModel`. After fitting, query a
 /// topic's word distribution at any slice with `topic_word(time)` and trace a
 /// word's trajectory with `word_evolution(topic, word)`.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct DTM {
     num_topics: usize,
     alpha: f64,
@@ -10424,7 +10424,7 @@ impl DTM {
 /// Fitting is supervised by the response, so topics are shaped to be predictive
 /// and the coefficients `η` report how each topic moves `y`. Fit by variational
 /// EM; `predict` returns ŷ for new documents.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct SupervisedLDA {
     num_topics: usize,
     alpha: f64,
@@ -11000,7 +11000,7 @@ impl SupervisedLDA {
 /// are aggregated into `num_pseudo` pseudo-documents that carry the topic
 /// distributions, so the topic structure is estimated from richer aggregated
 /// statistics than individual short documents would provide. Collapsed Gibbs.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct PT {
     num_topics: usize,
     num_pseudo: usize,
@@ -11383,7 +11383,7 @@ impl PT {
 /// the number of clusters; empty clusters die out during sampling, so the
 /// effective `num_topics` is inferred from the data (≤ K). Handles the sparsity
 /// of short documents far better than LDA.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct GSDMM {
     k_max: usize,
     alpha: f64,
@@ -11789,7 +11789,7 @@ fn seed_word_ids(
 /// Useful when theory tells you which themes to expect (Jagarlamudi et al. 2012;
 /// the seeding follows koheiw/seededlda — seed words get a `weight × 100`
 /// prior pseudocount in their topic).
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct SeededLDA {
     seed_names: Vec<String>,
     seed_words: Vec<Vec<String>>,
@@ -12418,7 +12418,7 @@ fn umap_notice(py: Python<'_>, use_umap: bool) -> PyResult<()> {
 ///
 /// No embedder of your own? `topica.llm_embed(texts, model=...)` builds the
 /// matrix (OpenAI, or offline `sentence-transformers`).
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct Top2Vec {
     n_components: usize,
     use_umap: bool,
@@ -12980,7 +12980,7 @@ impl Top2Vec {
 ///
 /// No embedder of your own? `topica.llm_embed(texts, model=...)` builds the
 /// matrix (OpenAI, or offline `sentence-transformers`).
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct BERTopic {
     n_components: usize,
     use_umap: bool,
@@ -13514,7 +13514,7 @@ impl BERTopic {
 ///
 /// No embedder of your own? `topica.llm_embed(vocabulary, model=...)` builds the
 /// word embeddings `rho` (OpenAI, or offline `sentence-transformers`).
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct ETM {
     num_topics: usize,
     inference: String,
@@ -14275,7 +14275,7 @@ impl ETM {
 ///
 /// No embedder of your own? ``topica.llm_embed(vocabulary, model=...)`` builds the
 /// word embeddings ``rho`` (OpenAI, or offline ``sentence-transformers``).
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct DETM {
     num_topics: usize,
     delta: f64,
@@ -14875,7 +14875,7 @@ impl DETM {
 /// Training follows the InfoCTM reference (Adam ``beta1=0.9``) at a constant learning
 /// rate; the reference's ``StepLR`` schedule is not applied, so an exact numerical
 /// match to a reference run is not expected (the model and objective are unchanged).
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct InfoCTM {
     num_topics: usize,
     mi_weight: f64,
@@ -15213,7 +15213,7 @@ impl InfoCTM {
 /// single forward pass. Batch normalization and high-momentum Adam guard against
 /// the component collapse that otherwise afflicts this model. Unlike ``ETM`` you
 /// bring no embeddings: ``beta`` is learned directly.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct ProdLDA {
     num_topics: usize,
     hidden_size: usize,
@@ -15867,7 +15867,7 @@ fn parse_doc_embeddings(data: &Bound<'_, PyAny>, num_docs: usize) -> PyResult<Ve
 macro_rules! ctm_embedding_model {
     ($name:ident, $tag:expr, $mode:expr, $repr:expr, $doc:expr) => {
         #[doc = $doc]
-        #[pyclass(module = "topica")]
+        #[pyclass(module = "topica.models")]
         pub struct $name {
             num_topics: usize,
             hidden_size: usize,
@@ -16373,7 +16373,7 @@ implementation is `contextualized-topic-models` (Bianchi et al., MIT)."
 ///
 /// No embedder of your own? `topica.llm_embed(texts, model=...)` builds the
 /// matrix (OpenAI, or offline `sentence-transformers`).
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct FASTopic {
     num_topics: usize,
     lr: f64,
@@ -16797,7 +16797,7 @@ impl FASTopic {
 /// from a distribution over only that topic's keywords or from the topic's full
 /// distribution. This anchors keyword topics to their keywords while still
 /// learning the rest of the vocabulary. Faithful to keyATM/keyATM.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct KeyATM {
     key_names: Vec<String>,
     keywords: Vec<Vec<String>>,
@@ -17882,7 +17882,7 @@ impl KeyATM {
 /// super-topics over `num_sub` shared sub-topics over words, capturing topic
 /// *correlations* — `super_sub` reports which sub-topics each super-topic groups
 /// together. Collapsed Gibbs over (super, sub) pairs.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct PA {
     num_super: usize,
     num_sub: usize,
@@ -18284,7 +18284,7 @@ impl PA {
 /// the shared (general) topic; deeper nodes are progressively more specific.
 /// Each document follows a root-to-leaf path. Inspect the tree with
 /// `topic_word`/`node_levels`/`node_parents`/`doc_paths`.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct HLDA {
     depth: usize,
     gamma: f64,

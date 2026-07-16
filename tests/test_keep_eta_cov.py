@@ -38,10 +38,10 @@ DOCS = _tiny_docs()
 class TestFitBitIdentical:
     def test_ctm_doc_topic_equal(self):
         """CTM fit with keep_eta_cov=False is bit-for-bit identical to True."""
-        m_keep = topica.CTM(3, init="random", seed=0)
+        m_keep = topica.models.CTM(3, init="random", seed=0)
         m_keep.fit(DOCS, iters=5, convergence_tol=0, keep_eta_cov=True)
 
-        m_drop = topica.CTM(3, init="random", seed=0)
+        m_drop = topica.models.CTM(3, init="random", seed=0)
         m_drop.fit(DOCS, iters=5, convergence_tol=0, keep_eta_cov=False)
 
         np.testing.assert_array_equal(
@@ -51,10 +51,10 @@ class TestFitBitIdentical:
         )
 
     def test_ctm_bound_equal(self):
-        m_keep = topica.CTM(3, init="random", seed=0)
+        m_keep = topica.models.CTM(3, init="random", seed=0)
         m_keep.fit(DOCS, iters=5, convergence_tol=0, keep_eta_cov=True)
 
-        m_drop = topica.CTM(3, init="random", seed=0)
+        m_drop = topica.models.CTM(3, init="random", seed=0)
         m_drop.fit(DOCS, iters=5, convergence_tol=0, keep_eta_cov=False)
 
         assert m_keep.bound == m_drop.bound, (
@@ -68,14 +68,14 @@ class TestFitBitIdentical:
 
 class TestEtaCovGetterRaises:
     def test_ctm_eta_cov_raises(self):
-        m = topica.CTM(3, init="random", seed=1)
+        m = topica.models.CTM(3, init="random", seed=1)
         m.fit(DOCS, iters=3, convergence_tol=0, keep_eta_cov=False)
         with pytest.raises(RuntimeError, match="keep_eta_cov"):
             _ = m.eta_cov
 
     def test_stm_eta_cov_raises(self):
         X = np.ones((len(DOCS), 1))
-        m = topica.STM(3, init="random", seed=1)
+        m = topica.models.STM(3, init="random", seed=1)
         m.fit(DOCS, prevalence=X, iters=3, convergence_tol=0, keep_eta_cov=False)
         with pytest.raises(RuntimeError, match="keep_eta_cov"):
             _ = m.eta_cov
@@ -88,10 +88,10 @@ class TestEtaCovGetterRaises:
 class TestRecomputeEtaCov:
     def test_ctm_recompute_equals_stored(self):
         """_recompute_eta_cov output must equal what keep_eta_cov=True stores."""
-        m_keep = topica.CTM(3, init="random", seed=2)
+        m_keep = topica.models.CTM(3, init="random", seed=2)
         m_keep.fit(DOCS, iters=5, convergence_tol=0, keep_eta_cov=True)
 
-        m_drop = topica.CTM(3, init="random", seed=2)
+        m_drop = topica.models.CTM(3, init="random", seed=2)
         m_drop.fit(DOCS, iters=5, convergence_tol=0, keep_eta_cov=False)
 
         stored = np.asarray(m_keep.eta_cov, dtype=np.float32)
@@ -104,7 +104,7 @@ class TestRecomputeEtaCov:
         )
 
     def test_ctm_recompute_shape(self):
-        m = topica.CTM(4, init="random", seed=3)
+        m = topica.models.CTM(4, init="random", seed=3)
         m.fit(DOCS, iters=3, convergence_tol=0, keep_eta_cov=False)
         cov = m._recompute_eta_cov()
         d = len(DOCS)
@@ -115,7 +115,7 @@ class TestRecomputeEtaCov:
 
     def test_stm_recompute_shape(self):
         X = np.ones((len(DOCS), 1))
-        m = topica.STM(3, init="random", seed=4)
+        m = topica.models.STM(3, init="random", seed=4)
         m.fit(DOCS, prevalence=X, iters=3, convergence_tol=0, keep_eta_cov=False)
         cov = m._recompute_eta_cov()
         d = len(DOCS)
@@ -134,7 +134,7 @@ class TestPosteriorThetaSamplesFallback:
         """posterior_theta_samples should not raise when keep_eta_cov=False."""
         from topica.stm import posterior_theta_samples
 
-        m = topica.CTM(3, init="random", seed=5)
+        m = topica.models.CTM(3, init="random", seed=5)
         m.fit(DOCS, iters=5, convergence_tol=0, keep_eta_cov=False)
 
         draws = posterior_theta_samples(m, nsims=10, seed=0)
@@ -154,10 +154,10 @@ class TestPosteriorThetaSamplesFallback:
         """Same seed should give equal draws whether eta_cov was kept or recomputed."""
         from topica.stm import posterior_theta_samples
 
-        m_keep = topica.CTM(3, init="random", seed=6)
+        m_keep = topica.models.CTM(3, init="random", seed=6)
         m_keep.fit(DOCS, iters=5, convergence_tol=0, keep_eta_cov=True)
 
-        m_drop = topica.CTM(3, init="random", seed=6)
+        m_drop = topica.models.CTM(3, init="random", seed=6)
         m_drop.fit(DOCS, iters=5, convergence_tol=0, keep_eta_cov=False)
 
         draws_keep = posterior_theta_samples(m_keep, nsims=20, seed=99)
@@ -187,9 +187,9 @@ def _toy_prevalence_corpus(n=120, seed=1):
 
 def test_num_threads_does_not_change_stm_results():
     docs, X = _toy_prevalence_corpus()
-    ref = topica.STM(num_topics=4, seed=7); ref.fit(docs, prevalence=X, iters=60)
+    ref = topica.models.STM(num_topics=4, seed=7); ref.fit(docs, prevalence=X, iters=60)
     for nt in (1, 2, 3):
-        m = topica.STM(num_topics=4, seed=7)
+        m = topica.models.STM(num_topics=4, seed=7)
         m.fit(docs, prevalence=X, iters=60, num_threads=nt)
         np.testing.assert_array_equal(m.topic_word, ref.topic_word)
         np.testing.assert_array_equal(np.asarray(m.eta_mean), np.asarray(ref.eta_mean))
@@ -197,6 +197,6 @@ def test_num_threads_does_not_change_stm_results():
 
 def test_num_threads_does_not_change_ctm_results():
     docs, _ = _toy_prevalence_corpus()
-    ref = topica.CTM(num_topics=4, seed=7); ref.fit(docs, iters=60)
-    m = topica.CTM(num_topics=4, seed=7); m.fit(docs, iters=60, num_threads=2)
+    ref = topica.models.CTM(num_topics=4, seed=7); ref.fit(docs, iters=60)
+    m = topica.models.CTM(num_topics=4, seed=7); m.fit(docs, iters=60, num_threads=2)
     np.testing.assert_array_equal(m.topic_word, ref.topic_word)

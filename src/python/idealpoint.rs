@@ -117,7 +117,7 @@ impl IpInner {
     }
 }
 
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct IdealPointTM {
     num_topics: usize,
     num_dims: usize,

@@ -81,7 +81,7 @@ cat("R_TIME", as.numeric(t["elapsed"]), "\n")
 
 def bench_stm() -> dict:
     docs, rating, day, _ = STM.load_and_prep()
-    from topica import STM as TopicaSTM
+    from topica.models import STM as TopicaSTM
     from topica.stm import spline
 
     spline_basis, _ = spline(day, df=10)
@@ -131,7 +131,7 @@ cat("R_TIME", as.numeric(t["elapsed"]), "\n")
 
 def bench_keyatm() -> dict:
     docs, keywords = KA.load_and_prep()
-    from topica import KeyATM
+    from topica.models import KeyATM
 
     num_kw = len(keywords)
     nreg = KEYATM_K - num_kw
@@ -169,7 +169,7 @@ def bench_lda() -> dict:
     optimization off and the same K / iterations (MALLET's import step, which
     topica does not need, is excluded from the timing)."""
     docs = STM.load_and_prep()[0]
-    from topica import LDA
+    from topica.models import LDA
 
     mallet = shutil.which("mallet")
     d = tempfile.mkdtemp()

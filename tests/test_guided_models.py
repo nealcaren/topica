@@ -30,7 +30,7 @@ class TestSeededLDA:
 
     def test_seeds_steer_topics(self):
         docs, blocks = _blocky_corpus()
-        m = topica.SeededLDA(self._seeds(blocks), residual=2, seed=1)
+        m = topica.models.SeededLDA(self._seeds(blocks), residual=2, seed=1)
         m.fit(docs, iters=500)
         assert m.num_topics == 5                       # 3 seeded + 2 residual
         assert m.topic_names[:3] == ["B0", "B2", "B4"]
@@ -41,7 +41,7 @@ class TestSeededLDA:
 
     def test_shapes(self):
         docs, blocks = _blocky_corpus()
-        m = topica.SeededLDA(self._seeds(blocks), residual=1, seed=1)
+        m = topica.models.SeededLDA(self._seeds(blocks), residual=1, seed=1)
         m.fit(docs, iters=200)
         assert m.topic_word.shape == (4, len(m.vocabulary))
         assert m.doc_topic.shape == (len(docs), 4)
@@ -50,19 +50,19 @@ class TestSeededLDA:
 
     def test_deterministic_and_save_load(self, tmp_path):
         docs, blocks = _blocky_corpus()
-        a = topica.SeededLDA(self._seeds(blocks), seed=1); a.fit(docs, iters=200)
-        b = topica.SeededLDA(self._seeds(blocks), seed=1); b.fit(docs, iters=200)
+        a = topica.models.SeededLDA(self._seeds(blocks), seed=1); a.fit(docs, iters=200)
+        b = topica.models.SeededLDA(self._seeds(blocks), seed=1); b.fit(docs, iters=200)
         assert np.array_equal(a.topic_word, b.topic_word)
         p = str(tmp_path / "s.tt"); a.save(p)
-        loaded = topica.SeededLDA.load(p)
+        loaded = topica.models.SeededLDA.load(p)
         assert np.array_equal(a.topic_word, loaded.topic_word)
         assert loaded.topic_names == a.topic_names
 
     def test_bad_params(self):
         with pytest.raises(ValueError):
-            topica.SeededLDA({})                            # no seeded topics
+            topica.models.SeededLDA({})                            # no seeded topics
         with pytest.raises(ValueError):
-            topica.SeededLDA({"a": ["x"]})                  # only 1 topic, no residual
+            topica.models.SeededLDA({"a": ["x"]})                  # only 1 topic, no residual
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ class TestKeyATM:
 
     def test_keywords_steer_topics(self):
         docs, blocks = _blocky_corpus()
-        m = topica.KeyATM(self._keywords(blocks), num_topics=5, seed=1)
+        m = topica.models.KeyATM(self._keywords(blocks), num_topics=5, seed=1)
         m.fit(docs, iters=500)
         assert m.num_topics == 5
         for t, name in enumerate(["B0", "B2", "B4"]):
@@ -84,7 +84,7 @@ class TestKeyATM:
 
     def test_keyword_rate(self):
         docs, blocks = _blocky_corpus()
-        m = topica.KeyATM(self._keywords(blocks), num_topics=5, seed=1)
+        m = topica.models.KeyATM(self._keywords(blocks), num_topics=5, seed=1)
         m.fit(docs, iters=500)
         rate = m.keyword_rate
         assert rate.shape == (5,)
@@ -94,22 +94,22 @@ class TestKeyATM:
 
     def test_defaults_to_keyword_topic_count(self):
         docs, blocks = _blocky_corpus()
-        m = topica.KeyATM(self._keywords(blocks), seed=1)   # num_topics omitted
+        m = topica.models.KeyATM(self._keywords(blocks), seed=1)   # num_topics omitted
         m.fit(docs, iters=200)
         assert m.num_topics == 3
 
     def test_shapes_and_save_load(self, tmp_path):
         docs, blocks = _blocky_corpus()
-        m = topica.KeyATM(self._keywords(blocks), num_topics=4, seed=1)
+        m = topica.models.KeyATM(self._keywords(blocks), num_topics=4, seed=1)
         m.fit(docs, iters=200)
         assert m.topic_word.shape == (4, len(m.vocabulary))
         np.testing.assert_allclose(m.topic_word.sum(axis=1), 1.0, atol=1e-9)
         p = str(tmp_path / "k.tt"); m.save(p)
-        loaded = topica.KeyATM.load(p)
+        loaded = topica.models.KeyATM.load(p)
         assert np.array_equal(m.topic_word, loaded.topic_word)
         assert np.array_equal(m.keyword_rate, loaded.keyword_rate)
 
     def test_bad_params(self):
         docs, blocks = _blocky_corpus()
         with pytest.raises(ValueError):
-            topica.KeyATM(self._keywords(blocks), num_topics=2)  # fewer than keyword topics
+            topica.models.KeyATM(self._keywords(blocks), num_topics=2)  # fewer than keyword topics

@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 import topica
-from topica import LDA
+from topica.models import LDA
 
 ALL_TYPES = ["u_mass", "c_uci", "c_npmi", "c_v"]
 

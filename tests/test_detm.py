@@ -39,7 +39,7 @@ def _planted_corpus(seed=0, k=3, block=6, t=4, d_per_t=20, length=30):
 def test_fit_shapes_and_distributions():
     docs, vocab, emb, times = _planted_corpus()
     k, t, v = 3, 4, len(vocab)
-    m = topica.DETM(k, delta=0.005, hidden_size=32, lr=0.02, seed=42)
+    m = topica.models.DETM(k, delta=0.005, hidden_size=32, lr=0.02, seed=42)
     m.fit(docs, emb, vocab, times=times, iters=30)
 
     tw = np.asarray(m.topic_word)
@@ -65,7 +65,7 @@ def test_fit_shapes_and_distributions():
 def test_topic_word_at_and_top_words_at():
     docs, vocab, emb, times = _planted_corpus()
     k = 3
-    m = topica.DETM(k, hidden_size=32, lr=0.02, seed=42)
+    m = topica.models.DETM(k, hidden_size=32, lr=0.02, seed=42)
     m.fit(docs, emb, vocab, times=times, iters=20)
 
     tw0 = np.asarray(m.topic_word_at(0))
@@ -86,9 +86,9 @@ def test_topic_word_at_and_top_words_at():
 def test_determinism_bit_for_bit():
     docs, vocab, emb, times = _planted_corpus(seed=1)
     k = 3
-    a = topica.DETM(k, hidden_size=16, lr=0.02, seed=7)
+    a = topica.models.DETM(k, hidden_size=16, lr=0.02, seed=7)
     a.fit(docs, emb, vocab, times=times, iters=25)
-    b = topica.DETM(k, hidden_size=16, lr=0.02, seed=7)
+    b = topica.models.DETM(k, hidden_size=16, lr=0.02, seed=7)
     b.fit(docs, emb, vocab, times=times, iters=25)
     np.testing.assert_array_equal(np.asarray(a.topic_word), np.asarray(b.topic_word))
     np.testing.assert_array_equal(np.asarray(a.doc_topic), np.asarray(b.doc_topic))
@@ -99,17 +99,17 @@ def test_determinism_bit_for_bit():
 def test_times_alias_timestamps():
     docs, vocab, emb, times = _planted_corpus()
     k = 3
-    a = topica.DETM(k, hidden_size=16, seed=42)
+    a = topica.models.DETM(k, hidden_size=16, seed=42)
     a.fit(docs, emb, vocab, times=times, iters=10)
-    b = topica.DETM(k, hidden_size=16, seed=42)
+    b = topica.models.DETM(k, hidden_size=16, seed=42)
     b.fit(docs, emb, vocab, timestamps=times, iters=10)
     np.testing.assert_array_equal(np.asarray(a.topic_word), np.asarray(b.topic_word))
     # passing both is an error
-    c = topica.DETM(k, seed=42)
+    c = topica.models.DETM(k, seed=42)
     with pytest.raises(Exception):
         c.fit(docs, emb, vocab, times=times, timestamps=times, iters=5)
     # passing neither is an error
-    d = topica.DETM(k, seed=42)
+    d = topica.models.DETM(k, seed=42)
     with pytest.raises(Exception):
         d.fit(docs, emb, vocab, iters=5)
 
@@ -121,7 +121,7 @@ def test_temporal_drift_recovered():
     # a tiny corpus, so we give it eta_hidden_size=32 / 2 layers and 300 epochs.
     docs, vocab, emb, times = _planted_corpus(seed=3, k=3, block=8, t=5, d_per_t=40)
     k, t = 3, 5
-    m = topica.DETM(k, delta=0.005, hidden_size=32, eta_hidden_size=32,
+    m = topica.models.DETM(k, delta=0.005, hidden_size=32, eta_hidden_size=32,
                     eta_nlayers=2, lr=0.02, seed=42)
     m.fit(docs, emb, vocab, times=times, iters=300)
     eta = np.asarray(m.eta)
@@ -137,11 +137,11 @@ def test_temporal_drift_recovered():
 def test_save_load_roundtrip(tmp_path):
     docs, vocab, emb, times = _planted_corpus()
     k = 3
-    m = topica.DETM(k, hidden_size=16, seed=42)
+    m = topica.models.DETM(k, hidden_size=16, seed=42)
     m.fit(docs, emb, vocab, times=times, iters=15)
     p = tmp_path / "detm.bin"
     m.save(str(p))
-    loaded = topica.DETM.load(str(p))
+    loaded = topica.models.DETM.load(str(p))
     np.testing.assert_array_equal(np.asarray(m.topic_word), np.asarray(loaded.topic_word))
     np.testing.assert_array_equal(np.asarray(m.beta_over_time), np.asarray(loaded.beta_over_time))
     np.testing.assert_array_equal(np.asarray(m.doc_topic), np.asarray(loaded.doc_topic))
@@ -170,7 +170,7 @@ def test_gold_standard_smoke_parity():
             toks += [vocab[int(w)]] * int(c)
         docs.append(toks)
 
-    m = topica.DETM(k, delta=float(d["delta"]), hidden_size=64, lr=0.01, seed=42)
+    m = topica.models.DETM(k, delta=float(d["delta"]), hidden_size=64, lr=0.01, seed=42)
     m.fit(docs, emb, vocab, times=times, iters=400)
 
     a_tw = np.asarray(m.topic_word)

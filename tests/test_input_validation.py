@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 import topica
-from topica import LDA
+from topica.models import LDA
 
 NAN = float("nan")
 INF = float("inf")
@@ -38,14 +38,14 @@ def test_lda_rejects_nonfinite_alpha_sum(bad):
 def test_other_constructors_reject_nan():
     # A representative float hyperparameter on each model family.
     cases = [
-        (topica.DMR, dict(num_topics=2, beta=NAN)),
-        (topica.DMR, dict(num_topics=2, prior_variance=NAN)),
-        (topica.LabeledLDA, dict(alpha=NAN)),
-        (topica.HDP, dict(beta=NAN)),
-        (topica.HDP, dict(alpha=NAN)),
-        (topica.DTM, dict(num_topics=2, chain_variance=NAN)),
-        (topica.SupervisedLDA, dict(num_topics=2, alpha=NAN)),
-        (topica.SAGE, dict(num_topics=2, prior_variance=NAN)),
+        (topica.models.DMR, dict(num_topics=2, beta=NAN)),
+        (topica.models.DMR, dict(num_topics=2, prior_variance=NAN)),
+        (topica.models.LabeledLDA, dict(alpha=NAN)),
+        (topica.models.HDP, dict(beta=NAN)),
+        (topica.models.HDP, dict(alpha=NAN)),
+        (topica.models.DTM, dict(num_topics=2, chain_variance=NAN)),
+        (topica.models.SupervisedLDA, dict(num_topics=2, alpha=NAN)),
+        (topica.models.SAGE, dict(num_topics=2, prior_variance=NAN)),
     ]
     for cls, kw in cases:
         with pytest.raises(ValueError):
@@ -136,21 +136,21 @@ def _inf_matrix(n, cols=2):
 
 
 def test_stm_prevalence_nan_raises():
-    m = topica.STM(num_topics=2, seed=42)
+    m = topica.models.STM(num_topics=2, seed=42)
     prev = _nan_matrix(N)
     with pytest.raises(ValueError, match="non-finite"):
         m.fit(BIGGER_DOCS, prevalence=prev, iters=5)
 
 
 def test_stm_prevalence_inf_raises():
-    m = topica.STM(num_topics=2, seed=42)
+    m = topica.models.STM(num_topics=2, seed=42)
     prev = _inf_matrix(N)
     with pytest.raises(ValueError, match="non-finite"):
         m.fit(BIGGER_DOCS, prevalence=prev, iters=5)
 
 
 def test_dmr_features_nan_raises():
-    m = topica.DMR(num_topics=2, seed=42)
+    m = topica.models.DMR(num_topics=2, seed=42)
     feats = _nan_matrix(N)
     with pytest.raises(ValueError, match="non-finite"):
         m.fit(BIGGER_DOCS, feats, iters=5)
@@ -158,7 +158,7 @@ def test_dmr_features_nan_raises():
 
 def test_keyatm_covariates_nan_raises():
     keywords = {"topic_a": ["a", "b"], "topic_b": ["c", "d"]}
-    m = topica.KeyATM(keywords, seed=42)
+    m = topica.models.KeyATM(keywords, seed=42)
     covs = _nan_matrix(N)
     with pytest.raises(ValueError, match="non-finite"):
         m.fit(BIGGER_DOCS, iters=5, covariates=covs)
@@ -169,7 +169,7 @@ def test_embedding_doc_embeddings_nan_raises():
     docs = BIGGER_DOCS
     emb = rng.standard_normal((N, 8))
     emb[2, 3] = float("nan")
-    m = topica.BERTopic(min_cluster_size=5, seed=1)
+    m = topica.models.BERTopic(min_cluster_size=5, seed=1)
     with pytest.raises(ValueError, match="non-finite"):
         m.fit(docs, emb)
 
@@ -178,12 +178,12 @@ def test_embedding_doc_embeddings_valid_passes():
     rng = np.random.default_rng(0)
     docs = [["a", "b", "c"], ["b", "c", "d"], ["a", "d", "e"]] * 20
     emb = rng.standard_normal((len(docs), 4))
-    m = topica.BERTopic(min_cluster_size=5, seed=1)
+    m = topica.models.BERTopic(min_cluster_size=5, seed=1)
     # Should not raise; cluster count may be 0 (just warns).
     m.fit(docs, emb)
 
 
-@pytest.mark.parametrize("ctor", [topica.BERTopic, topica.Top2Vec])
+@pytest.mark.parametrize("ctor", [topica.models.BERTopic, topica.models.Top2Vec])
 def test_embedding_min_cluster_size_over_corpus_no_panic(ctor):
     # issue #122: min_cluster_size larger than the corpus used to panic inside
     # petal-clustering's MST. It must now resolve to a clean num_topics=0.
@@ -201,18 +201,18 @@ def test_embedding_min_cluster_size_over_corpus_no_panic(ctor):
 # error. Negative iters is rejected by PyO3's usize conversion (OverflowError).
 
 def test_lda_iters_negative_raises():
-    m = topica.LDA(num_topics=2, seed=42)
+    m = topica.models.LDA(num_topics=2, seed=42)
     with pytest.raises((ValueError, OverflowError)):
         m.fit(DOCS, iters=-1)
 
 
 def test_lda_iters_zero_is_accepted():
-    m = topica.LDA(num_topics=2, seed=42)
+    m = topica.models.LDA(num_topics=2, seed=42)
     m.fit(DOCS, iters=0)  # initialize without sweeping; must not raise
     assert m.topic_word.shape[0] == 2
 
 
 def test_lda_iters_positive_works():
-    m = topica.LDA(num_topics=2, seed=42)
+    m = topica.models.LDA(num_topics=2, seed=42)
     m.fit(DOCS, iters=5)
     assert m.topic_word.shape[0] == 2

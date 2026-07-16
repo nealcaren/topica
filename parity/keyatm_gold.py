@@ -296,7 +296,7 @@ def regenerate() -> None:
 # topica fits (shared by regenerate + offline compare)
 # --------------------------------------------------------------------------- #
 def _fit_topica_base(docs, keywords, K, r_vocab):
-    from topica import KeyATM
+    from topica.models import KeyATM
 
     model = KeyATM(keywords, num_topics=K, seed=1)
     model.fit(docs, iters=ITERS)
@@ -304,7 +304,7 @@ def _fit_topica_base(docs, keywords, K, r_vocab):
 
 
 def _fit_topica_cov(docs, keywords, K, rating, r_vocab):
-    from topica import KeyATM
+    from topica.models import KeyATM
 
     model = KeyATM(keywords, num_topics=K, seed=1)
     model.fit(docs, iters=ITERS, covariates=rating.reshape(-1, 1),

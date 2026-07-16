@@ -180,7 +180,7 @@ def _train_reference(counts: np.ndarray, emb: np.ndarray, k: int, seed: int):
 def _topica_topic_word(token_docs, embs, vocab, seed):
     import topica
 
-    tm = topica.ZeroShotTM(
+    tm = topica.models.ZeroShotTM(
         num_topics=NUM_TOPICS, alpha=ALPHA, hidden_size=HIDDEN, dropout=DROPOUT,
         batch_size=BATCH, lr=LR, seed=seed,
     )

@@ -1,4 +1,4 @@
-"""Tests for topica.GDMR (generalized DMR / g-DMR, Lee & Song 2020).
+"""Tests for topica.models.GDMR (generalized DMR / g-DMR, Lee & Song 2020).
 
 Contract source: /private/tmp/gdmr_contract.md
 Public API only — no source inspection.
@@ -77,9 +77,9 @@ def _fit_gdmr(
     seed: int = 1,
     iters: int = 300,
     **kwargs,
-) -> "topica.GDMR":
+) -> "topica.models.GDMR":
     """Fit a GDMR with fast-but-reliable settings for synthetic corpora."""
-    model = topica.GDMR(
+    model = topica.models.GDMR(
         num_topics=num_topics,
         degrees=degrees,
         seed=seed,
@@ -97,7 +97,7 @@ def _fit_gdmr(
     return model
 
 
-def _identify_space_topic(model: "topica.GDMR") -> int:
+def _identify_space_topic(model: "topica.models.GDMR") -> int:
     """Return the topic index most aligned with space vocabulary."""
     vocab = model.vocabulary
     tw = model.topic_word
@@ -115,33 +115,33 @@ def _identify_space_topic(model: "topica.GDMR") -> int:
 
 class TestGDMRConstructor:
     def test_num_topics_before_fit(self):
-        m = topica.GDMR(num_topics=3, degrees=[2])
+        m = topica.models.GDMR(num_topics=3, degrees=[2])
         assert m.num_topics == 3
 
     def test_degrees_readable_before_fit(self):
-        m = topica.GDMR(num_topics=2, degrees=[1, 3])
+        m = topica.models.GDMR(num_topics=2, degrees=[1, 3])
         assert m.degrees == [1, 3]
 
     def test_num_topics_zero_raises(self):
         with pytest.raises((ValueError, Exception)):
-            topica.GDMR(num_topics=0, degrees=[1])
+            topica.models.GDMR(num_topics=0, degrees=[1])
 
     def test_beta_zero_raises(self):
         with pytest.raises((ValueError, Exception)):
-            topica.GDMR(num_topics=2, degrees=[1], beta=0.0)
+            topica.models.GDMR(num_topics=2, degrees=[1], beta=0.0)
 
     def test_beta_negative_raises(self):
         with pytest.raises((ValueError, Exception)):
-            topica.GDMR(num_topics=2, degrees=[1], beta=-0.01)
+            topica.models.GDMR(num_topics=2, degrees=[1], beta=-0.01)
 
     def test_default_hyperparams_readable(self):
-        m = topica.GDMR(num_topics=2, degrees=[2], sigma=1.0, sigma0=3.0, decay=0.0)
+        m = topica.models.GDMR(num_topics=2, degrees=[2], sigma=1.0, sigma0=3.0, decay=0.0)
         assert m.sigma == pytest.approx(1.0)
         assert m.sigma0 == pytest.approx(3.0)
         assert m.decay == pytest.approx(0.0)
 
     def test_nondefault_hyperparams_readable(self):
-        m = topica.GDMR(num_topics=2, degrees=[2], sigma=0.5, sigma0=2.0, decay=0.9)
+        m = topica.models.GDMR(num_topics=2, degrees=[2], sigma=0.5, sigma0=2.0, decay=0.9)
         assert m.sigma == pytest.approx(0.5)
         assert m.sigma0 == pytest.approx(2.0)
         assert m.decay == pytest.approx(0.9)
@@ -160,13 +160,13 @@ class TestGDMRFitValidation:
     def test_metadata_row_mismatch_raises(self):
         bad = np.ones((15, 1))  # 15 rows but 20 docs
         with pytest.raises((ValueError, Exception)):
-            m = topica.GDMR(num_topics=2, degrees=[1])
+            m = topica.models.GDMR(num_topics=2, degrees=[1])
             m.fit(self.docs, bad)
 
     def test_metadata_dim_mismatch_with_degrees_raises(self):
         # degrees has D=2 dims but metadata has D=1 column
         with pytest.raises((ValueError, Exception)):
-            m = topica.GDMR(num_topics=2, degrees=[1, 2])
+            m = topica.models.GDMR(num_topics=2, degrees=[1, 2])
             m.fit(self.docs, self.meta1)
 
     def test_metadata_nan_raises(self):
@@ -174,21 +174,21 @@ class TestGDMRFitValidation:
         bad = self.meta1.copy()
         bad[3, 0] = float("nan")
         with pytest.raises((ValueError, Exception)):
-            m = topica.GDMR(num_topics=2, degrees=[1])
+            m = topica.models.GDMR(num_topics=2, degrees=[1])
             m.fit(self.docs, bad)
 
     def test_metadata_inf_raises(self):
         bad = self.meta1.copy()
         bad[0, 0] = float("inf")
         with pytest.raises((ValueError, Exception)):
-            m = topica.GDMR(num_topics=2, degrees=[1])
+            m = topica.models.GDMR(num_topics=2, degrees=[1])
             m.fit(self.docs, bad)
 
     def test_metadata_neg_inf_raises(self):
         bad = self.meta1.copy()
         bad[0, 0] = float("-inf")
         with pytest.raises((ValueError, Exception)):
-            m = topica.GDMR(num_topics=2, degrees=[1])
+            m = topica.models.GDMR(num_topics=2, degrees=[1])
             m.fit(self.docs, bad)
 
     def test_1d_array_accepted_as_single_dim_metadata(self):
@@ -198,13 +198,13 @@ class TestGDMRFitValidation:
         as DMR's feature vector); squeezed to 2-D internally.
         """
         flat = np.linspace(0.0, 1.0, 20)
-        m = topica.GDMR(num_topics=2, degrees=[1], seed=1)
+        m = topica.models.GDMR(num_topics=2, degrees=[1], seed=1)
         # Should not raise
         m.fit(self.docs, flat, iters=50, num_samples=1, sample_interval=5)
 
     def test_list_of_lists_metadata_accepted(self):
         meta_list = [[float(i) / 20] for i in range(20)]
-        m = topica.GDMR(num_topics=2, degrees=[1], seed=1)
+        m = topica.models.GDMR(num_topics=2, degrees=[1], seed=1)
         m.fit(self.docs, meta_list, iters=50, num_samples=1, sample_interval=5)
         assert m.topic_word.shape[0] == 2
 
@@ -291,14 +291,14 @@ class TestGDMRFeatureEffectsShape2D:
 
     def test_feature_effects_shape_degrees_1_1(self):
         docs, meta = _make_2d_corpus(n=100, seed=0)
-        m = topica.GDMR(num_topics=2, degrees=[1, 1], seed=1)
+        m = topica.models.GDMR(num_topics=2, degrees=[1, 1], seed=1)
         m.fit(docs, meta, iters=150, num_samples=2, sample_interval=10)
         # num_basis = prod([1+1, 1+1]) = 4
         assert m.feature_effects.shape == (2, 4)
 
     def test_feature_effects_shape_degrees_2_1(self):
         docs, meta = _make_2d_corpus(n=100, seed=0)
-        m = topica.GDMR(num_topics=2, degrees=[2, 1], seed=1)
+        m = topica.models.GDMR(num_topics=2, degrees=[2, 1], seed=1)
         m.fit(docs, meta, iters=150, num_samples=2, sample_interval=10)
         # num_basis = prod([2+1, 1+1]) = 6
         assert m.feature_effects.shape == (2, 6)
@@ -346,7 +346,7 @@ class TestGDMRTdf:
 
     def test_tdf_2d_single_point_shape(self):
         docs, meta = _make_2d_corpus(n=100, seed=7)
-        m = topica.GDMR(num_topics=2, degrees=[1, 1], seed=1)
+        m = topica.models.GDMR(num_topics=2, degrees=[1, 1], seed=1)
         m.fit(docs, meta, iters=150, num_samples=2, sample_interval=10)
         # Single point for D=2
         result = m.tdf(np.array([0.3, 0.7]))
@@ -354,7 +354,7 @@ class TestGDMRTdf:
 
     def test_tdf_2d_batch_shape(self):
         docs, meta = _make_2d_corpus(n=100, seed=7)
-        m = topica.GDMR(num_topics=2, degrees=[1, 1], seed=1)
+        m = topica.models.GDMR(num_topics=2, degrees=[1, 1], seed=1)
         m.fit(docs, meta, iters=150, num_samples=2, sample_interval=10)
         pts = np.array([[0.2, 0.8], [0.5, 0.5], [0.7, 0.3]])
         result = m.tdf(pts)
@@ -418,7 +418,7 @@ class TestGDMRMonotonicRecovery:
     @pytest.fixture(scope="class")
     def recovery(self):
         docs, meta = _make_continuous_corpus(n=300, doc_length=12, seed=42)
-        model = topica.GDMR(
+        model = topica.models.GDMR(
             num_topics=2,
             degrees=[3],  # degree-3 Legendre: enough flexibility, not overfit
             seed=42,
@@ -466,7 +466,7 @@ class TestGDMRMonotonicRecovery:
 class TestGDMRMetadataRange:
     def test_inferred_range_covers_data(self):
         docs, meta = _make_continuous_corpus(n=100, seed=3)
-        m = topica.GDMR(num_topics=2, degrees=[1], seed=1)
+        m = topica.models.GDMR(num_topics=2, degrees=[1], seed=1)
         m.fit(docs, meta, iters=100, num_samples=2, sample_interval=10)
         lo, hi = m.metadata_range[0]
         data_lo, data_hi = float(meta.min()), float(meta.max())
@@ -476,7 +476,7 @@ class TestGDMRMetadataRange:
 
     def test_explicit_range_honored(self):
         docs, meta = _make_continuous_corpus(n=100, seed=3)
-        m = topica.GDMR(
+        m = topica.models.GDMR(
             num_topics=2,
             degrees=[1],
             metadata_range=[(0.0, 1.0)],
@@ -496,10 +496,10 @@ class TestGDMRSaveLoad:
         tmpdir = tmp_path_factory.mktemp("gdmr_save")
         path = tmpdir / "gdmr_model.pkl"
         docs, meta = _make_continuous_corpus(n=100, seed=5)
-        m = topica.GDMR(num_topics=2, degrees=[2], seed=1)
+        m = topica.models.GDMR(num_topics=2, degrees=[2], seed=1)
         m.fit(docs, meta, iters=200, num_samples=3, sample_interval=10)
         m.save(str(path))
-        m2 = topica.GDMR.load(str(path))
+        m2 = topica.models.GDMR.load(str(path))
         return m, m2
 
     def test_topic_word_identical_after_load(self, saved):
@@ -636,17 +636,17 @@ class TestGDMRCoherence:
 class TestGDMRDeterminism:
     def test_same_seed_same_topic_word(self):
         docs, meta = _make_continuous_corpus(n=80, seed=3)
-        m1 = topica.GDMR(num_topics=2, degrees=[1], seed=42)
+        m1 = topica.models.GDMR(num_topics=2, degrees=[1], seed=42)
         m1.fit(docs, meta, iters=150, num_samples=2, sample_interval=10)
-        m2 = topica.GDMR(num_topics=2, degrees=[1], seed=42)
+        m2 = topica.models.GDMR(num_topics=2, degrees=[1], seed=42)
         m2.fit(docs, meta, iters=150, num_samples=2, sample_interval=10)
         npt.assert_array_equal(m1.topic_word, m2.topic_word)
 
     def test_same_seed_same_feature_effects(self):
         docs, meta = _make_continuous_corpus(n=80, seed=3)
-        m1 = topica.GDMR(num_topics=2, degrees=[1], seed=42)
+        m1 = topica.models.GDMR(num_topics=2, degrees=[1], seed=42)
         m1.fit(docs, meta, iters=150, num_samples=2, sample_interval=10)
-        m2 = topica.GDMR(num_topics=2, degrees=[1], seed=42)
+        m2 = topica.models.GDMR(num_topics=2, degrees=[1], seed=42)
         m2.fit(docs, meta, iters=150, num_samples=2, sample_interval=10)
         npt.assert_array_equal(m1.feature_effects, m2.feature_effects)
 
@@ -676,7 +676,7 @@ class TestGDMRTopicNames:
 class TestGDMRDecayPrior:
     def test_decay_positive_still_fits(self):
         docs, meta = _make_continuous_corpus(n=100, seed=1)
-        m = topica.GDMR(num_topics=2, degrees=[2], seed=1, decay=0.5)
+        m = topica.models.GDMR(num_topics=2, degrees=[2], seed=1, decay=0.5)
         m.fit(docs, meta, iters=150, num_samples=2, sample_interval=10)
         # Shapes must still hold
         npt.assert_allclose(m.topic_word.sum(axis=1), 1.0, atol=1e-6)
@@ -685,7 +685,7 @@ class TestGDMRDecayPrior:
 
     def test_no_decay_still_fits(self):
         docs, meta = _make_continuous_corpus(n=100, seed=1)
-        m = topica.GDMR(num_topics=2, degrees=[2], seed=1, decay=0.0)
+        m = topica.models.GDMR(num_topics=2, degrees=[2], seed=1, decay=0.0)
         m.fit(docs, meta, iters=150, num_samples=2, sample_interval=10)
         npt.assert_allclose(m.topic_word.sum(axis=1), 1.0, atol=1e-6)
 
@@ -697,14 +697,14 @@ class TestGDMRDecayPrior:
 class TestGDMRConvergenceInterface:
     def test_fit_history_exists(self):
         docs, meta = _make_continuous_corpus(n=60, seed=0)
-        m = topica.GDMR(num_topics=2, degrees=[1], seed=1)
+        m = topica.models.GDMR(num_topics=2, degrees=[1], seed=1)
         m.fit(docs, meta, iters=100, num_samples=2, sample_interval=10)
         # fit_history should be accessible (list or array or dict per DMR)
         _ = m.fit_history  # should not raise
 
     def test_converged_attribute_exists(self):
         docs, meta = _make_continuous_corpus(n=60, seed=0)
-        m = topica.GDMR(num_topics=2, degrees=[1], seed=1)
+        m = topica.models.GDMR(num_topics=2, degrees=[1], seed=1)
         m.fit(docs, meta, iters=100, num_samples=2, sample_interval=10)
         _ = m.converged  # should not raise; value is bool or None
 
@@ -719,7 +719,7 @@ class TestGDMRCovariateAliases:
 
     def _fit(self, kw):
         docs, meta = _make_continuous_corpus(n=120, seed=3)
-        m = topica.GDMR(num_topics=2, degrees=[2], seed=7)
+        m = topica.models.GDMR(num_topics=2, degrees=[2], seed=7)
         m.fit(docs, iters=120, **{kw: meta})
         return m.topic_word
 
@@ -732,25 +732,25 @@ class TestGDMRCovariateAliases:
 
     def test_positional_binds_to_features(self):
         docs, meta = _make_continuous_corpus(n=120, seed=3)
-        m = topica.GDMR(num_topics=2, degrees=[2], seed=7)
+        m = topica.models.GDMR(num_topics=2, degrees=[2], seed=7)
         m.fit(docs, meta, iters=120)  # positional == features=
         npt.assert_allclose(m.topic_word, self._fit("features"))
 
     def test_two_spellings_raises(self):
         docs, meta = _make_continuous_corpus(n=60, seed=1)
-        m = topica.GDMR(num_topics=2, degrees=[2], seed=7)
+        m = topica.models.GDMR(num_topics=2, degrees=[2], seed=7)
         with pytest.raises(ValueError):
             m.fit(docs, features=meta, metadata=meta, iters=50)
 
     def test_missing_covariate_raises(self):
         docs, _ = _make_continuous_corpus(n=60, seed=1)
-        m = topica.GDMR(num_topics=2, degrees=[2], seed=7)
+        m = topica.models.GDMR(num_topics=2, degrees=[2], seed=7)
         with pytest.raises(ValueError):
             m.fit(docs, iters=50)
 
     def test_transform_alias_equivalent(self):
         docs, meta = _make_continuous_corpus(n=120, seed=3)
-        m = topica.GDMR(num_topics=2, degrees=[2], seed=7)
+        m = topica.models.GDMR(num_topics=2, degrees=[2], seed=7)
         m.fit(docs, meta, iters=120)
         new_docs, new_meta = _make_continuous_corpus(n=20, seed=99)
         t_features = m.transform(new_docs, features=new_meta, seed=0)
@@ -773,7 +773,7 @@ class TestGDMRNames:
             docs, meta = _make_continuous_corpus(n=120, seed=seed)
         else:
             docs, meta = _make_2d_corpus(n=140, seed=seed)
-        m = topica.GDMR(num_topics=2, degrees=degrees, seed=7)
+        m = topica.models.GDMR(num_topics=2, degrees=degrees, seed=7)
         m.fit(docs, meta, metadata_names=metadata_names, iters=120)
         return m
 
@@ -787,7 +787,7 @@ class TestGDMRNames:
 
     def test_metadata_names_length_must_match_dims(self):
         docs, meta = _make_continuous_corpus(n=60, seed=1)
-        m = topica.GDMR(num_topics=2, degrees=[2], seed=7)
+        m = topica.models.GDMR(num_topics=2, degrees=[2], seed=7)
         with pytest.raises(ValueError):
             m.fit(docs, meta, metadata_names=["a", "b"], iters=50)  # D=1, 2 names
 
@@ -814,6 +814,6 @@ class TestGDMRNames:
         m = self._fit([2], metadata_names=["year"])
         p = str(tmp_path / "g.gdmr")
         m.save(p)
-        loaded = topica.GDMR.load(p)
+        loaded = topica.models.GDMR.load(p)
         assert loaded.metadata_names == ["year"]
         assert loaded.feature_names == m.feature_names

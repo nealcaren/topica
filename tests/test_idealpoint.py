@@ -74,13 +74,13 @@ def _planted(n_authors=24, docs_per=10, length=40, seed=0):
 def test_gate_blocks_construction():
     topica.enable_experimental(False)
     with pytest.raises(Exception):
-        topica.IdealPointTM(K)
+        topica.models.IdealPointTM(K)
     topica.enable_experimental(True)  # restore for the rest (fixture also resets)
 
 
 def test_fitted_surface_is_well_shaped():
     docs, vocab, emb, group, _ = _planted(seed=1)
-    m = topica.IdealPointTM(K, num_dims=1, seed=1)
+    m = topica.models.IdealPointTM(K, num_dims=1, seed=1)
     m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, iters=25)
 
     assert m.topic_word.shape == (K, len(vocab))
@@ -109,7 +109,7 @@ def test_position_se_is_well_shaped_and_shrinks_with_data(representation):
     docs = docs + extra * 6
     group = group + ["author_0"] * (len(extra) * 6)
 
-    m = topica.IdealPointTM(K, num_dims=1, seed=1)
+    m = topica.models.IdealPointTM(K, num_dims=1, seed=1)
     kw = dict(word_embeddings=emb, vocabulary=vocab) if representation == "word2vec" else {}
     m.fit(docs, group=group, iters=25, **kw)
     assert m.representation == representation
@@ -129,12 +129,12 @@ def test_position_se_survives_save_load():
     # The SE is reconstructed from saved state (corpus + doc-topic proportions), so
     # it is identical after a round trip even though it is not itself persisted.
     docs, vocab, emb, group, _ = _planted(seed=5)
-    m = topica.IdealPointTM(K, num_dims=1, seed=1)
+    m = topica.models.IdealPointTM(K, num_dims=1, seed=1)
     m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, iters=20)
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "m.topica")
         m.save(path)
-        m2 = topica.IdealPointTM.load(path)
+        m2 = topica.models.IdealPointTM.load(path)
     assert np.array_equal(m.position_se, m2.position_se)
 
 
@@ -147,7 +147,7 @@ def test_recovers_positions():
     docs, vocab, emb, group, trait = _planted(seed=2)
     lo, hi = int(np.argmin(trait)), int(np.argmax(trait))
     anchors = {f"author_{lo}": -1.0, f"author_{hi}": 1.0}
-    m = topica.IdealPointTM(K, num_dims=1, seed=3)
+    m = topica.models.IdealPointTM(K, num_dims=1, seed=3)
     m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, anchors=anchors, iters=60)
 
     pos = m.author_positions[:, 0]
@@ -161,7 +161,7 @@ def test_recovers_positions():
 def test_anchors_orient_sign_deterministically():
     docs, vocab, emb, group, trait = _planted(seed=4)
     lo, hi = int(np.argmin(trait)), int(np.argmax(trait))
-    m = topica.IdealPointTM(K, num_dims=1, seed=5)
+    m = topica.models.IdealPointTM(K, num_dims=1, seed=5)
     m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group,
           anchors={f"author_{lo}": -1.0, f"author_{hi}": 1.0}, iters=40)
     names = m.author_names
@@ -174,7 +174,7 @@ def test_anchors_orient_sign_deterministically():
 def test_position_shift_reads_the_axis():
     docs, vocab, emb, group, trait = _planted(seed=6)
     lo, hi = int(np.argmin(trait)), int(np.argmax(trait))
-    m = topica.IdealPointTM(K, num_dims=1, seed=7)
+    m = topica.models.IdealPointTM(K, num_dims=1, seed=7)
     m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group,
           anchors={f"author_{lo}": -1.0, f"author_{hi}": 1.0}, iters=60)
     # read the most discriminating topic's within-topic contrast.
@@ -191,7 +191,7 @@ def test_position_shift_reads_the_axis():
 
 def test_loadings_and_weighting_surface():
     docs, vocab, emb, group, _ = _planted(seed=11)
-    m = topica.IdealPointTM(K, num_dims=1, seed=2)
+    m = topica.models.IdealPointTM(K, num_dims=1, seed=2)
     m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, iters=25)
     # loadings expose the per-topic discrimination directions.
     L = m.loadings
@@ -207,9 +207,9 @@ def test_loadings_and_weighting_surface():
 
 def test_reproducible_from_seed():
     docs, vocab, emb, group, _ = _planted(seed=8)
-    a = topica.IdealPointTM(K, seed=11)
+    a = topica.models.IdealPointTM(K, seed=11)
     a.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, iters=20)
-    b = topica.IdealPointTM(K, seed=11)
+    b = topica.models.IdealPointTM(K, seed=11)
     b.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, iters=20)
     assert np.array_equal(a.topic_word, b.topic_word)
     assert np.array_equal(a.author_positions, b.author_positions)
@@ -217,12 +217,12 @@ def test_reproducible_from_seed():
 
 def test_save_load_roundtrip():
     docs, vocab, emb, group, _ = _planted(seed=9)
-    m = topica.IdealPointTM(K, num_dims=1, seed=13)
+    m = topica.models.IdealPointTM(K, num_dims=1, seed=13)
     m.fit(docs, word_embeddings=emb, vocabulary=vocab, group=group, iters=20)
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "ip.topica")
         m.save(path)
-        m2 = topica.IdealPointTM.load(path)
+        m2 = topica.models.IdealPointTM.load(path)
     assert np.array_equal(m.topic_word, m2.topic_word)
     assert np.array_equal(m.author_positions, m2.author_positions)
     assert np.array_equal(m.topic_discrimination, m2.topic_discrimination)
@@ -232,7 +232,7 @@ def test_save_load_roundtrip():
 
 def test_ungrouped_defaults_to_per_document_authors():
     docs, vocab, emb, _, _ = _planted(n_authors=6, docs_per=4, seed=10)
-    m = topica.IdealPointTM(K, seed=1)
+    m = topica.models.IdealPointTM(K, seed=1)
     m.fit(docs, word_embeddings=emb, vocabulary=vocab, iters=12)  # no group
     assert m.num_authors == len(docs)
     assert m.author_positions.shape == (len(docs), 1)

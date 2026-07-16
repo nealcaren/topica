@@ -122,7 +122,7 @@ def _mallet_labeled(docs, labels, iters, seed):
 
 def _topica_phi(docs, labels, mal_labels, words):
     """Fit topica LabeledLDA; return phi (K,W) row-ordered to ``mal_labels``."""
-    from topica import LabeledLDA
+    from topica.models import LabeledLDA
 
     model = LabeledLDA(alpha=ALPHA, beta=BETA, seed=1)
     model.fit(docs, labels, iters=ITERS, num_samples=5, sample_interval=25)

@@ -82,7 +82,7 @@ def main():
     X = np.column_stack([party_col, yr_basis, inter])
     names = list(pn) + list(sn) + [f"party_year_{i}" for i in range(inter.shape[1])]
 
-    model = topica.ECTM(num_topics=18, seed=1)
+    model = topica.models.ECTM(num_topics=18, seed=1)
     model.fit(docs, times=year, content=party, prevalence=X, prevalence_names=names,
               iters=150, period_smooth=6.0, interaction_shrink=1.2)
     print(f"fitted: {model} | converged={model.converged}\n")

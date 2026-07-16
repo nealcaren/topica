@@ -36,7 +36,7 @@ docs = [tokenize(r["open.ended.response"], stopwords=stop, min_length=3) for r i
 treatment = np.array([float(r["treatment"]) for r in rows]).reshape(-1, 1)
 print("treated:", int(treatment.sum()), "control:", int((1 - treatment).sum()))
 
-model = topica.STM(num_topics=3, seed=1)
+model = topica.models.STM(num_topics=3, seed=1)
 model.fit(docs, treatment, prevalence_names=["treatment"], iters=40)
 ```
 

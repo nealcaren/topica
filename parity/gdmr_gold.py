@@ -146,7 +146,7 @@ def _tomotopy_space_word_dist(mdl, space_idx):
 def _fit_topica(docs, metadata):
     import topica
 
-    m = topica.GDMR(
+    m = topica.models.GDMR(
         num_topics=NUM_TOPICS, degrees=DEGREES, sigma=SIGMA, sigma0=SIGMA0,
         seed=SEED, optimize_interval=25, burn_in=BURN_IN,
     )

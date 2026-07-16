@@ -48,7 +48,7 @@ def sample_corpus():
 
 
 def fit_topica(docs, group):
-    m = topica.TBIP(K, iters=2500, batch_size=128, seed=42)
+    m = topica.models.TBIP(K, iters=2500, batch_size=128, seed=42)
     m.fit(docs, group=group)
     return {a: float(p) for a, p in zip(m.author_names, m.ideal_points)}
 
@@ -60,7 +60,7 @@ def main():
     if np.corrcoef(xt, x_true)[0, 1] < 0:
         xt = -xt
     r = abs(np.corrcoef(xt, x_true)[0, 1])
-    print(f"topica.TBIP recovers planted ideal points: Pearson |r| = {r:.3f}  (A={A})")
+    print(f"topica.models.TBIP recovers planted ideal points: Pearson |r| = {r:.3f}  (A={A})")
     ok = r > 0.85
     print("PASS" if ok else "FAIL", "(threshold 0.85)")
     sys.exit(0 if ok else 1)

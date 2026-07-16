@@ -20,12 +20,12 @@ def test_ectm_is_gated_without_optin():
     topica.enable_experimental(False)
     try:
         with pytest.raises(RuntimeError, match="experimental"):
-            topica.ECTM(num_topics=3)
+            topica.models.ECTM(num_topics=3)
         with pytest.raises(RuntimeError, match="experimental"):
-            topica.ECTM.load("does-not-exist.topica")
+            topica.models.ECTM.load("does-not-exist.topica")
     finally:
         topica.enable_experimental(True)
-    topica.ECTM(num_topics=3)  # opted back in: constructs fine
+    topica.models.ECTM(num_topics=3)  # opted back in: constructs fine
 
 
 def _corpus(reps=60, drift=True):
@@ -47,14 +47,14 @@ def _corpus(reps=60, drift=True):
 
 def _fit(seed=1, drift=True, init="spectral", **kw):
     docs, groups, times = _corpus(drift=drift)
-    m = topica.ECTM(num_topics=2, seed=seed, init=init)
+    m = topica.models.ECTM(num_topics=2, seed=seed, init=init)
     m.fit(docs, times=times, content=groups, iters=60,
           period_smooth=5.0, interaction_shrink=2.0, **kw)
     return m
 
 
 def _placebo_model(docs, groups, times):
-    m = topica.ECTM(num_topics=2, seed=1)
+    m = topica.models.ECTM(num_topics=2, seed=1)
     m.fit(docs, times=times, content=groups, iters=60)
     return m
 
@@ -99,7 +99,7 @@ def test_save_load_roundtrip(tmp_path):
     m = _fit()
     p = str(tmp_path / "m.tt")
     m.save(p)
-    loaded = topica.ECTM.load(p)
+    loaded = topica.models.ECTM.load(p)
     assert np.array_equal(m.topic_word, loaded.topic_word)
     assert loaded.periods == m.periods and loaded.groups == m.groups
     assert np.array_equal(m.content_word_dist("B", 2), loaded.content_word_dist("B", 2))
@@ -107,15 +107,15 @@ def test_save_load_roundtrip(tmp_path):
 
 def test_bad_params():
     with pytest.raises(ValueError):
-        topica.ECTM(num_topics=1)
+        topica.models.ECTM(num_topics=1)
     with pytest.raises(ValueError):
-        topica.ECTM(num_topics=2, sigma_shrink=2.0)
+        topica.models.ECTM(num_topics=2, sigma_shrink=2.0)
     docs, groups, times = _corpus(reps=4)
     with pytest.raises(ValueError):
-        topica.ECTM(num_topics=2).fit(docs, times=times, content=groups, interaction_shrink=0.0)
+        topica.models.ECTM(num_topics=2).fit(docs, times=times, content=groups, interaction_shrink=0.0)
     # times / content length mismatch
     with pytest.raises(ValueError):
-        topica.ECTM(num_topics=2).fit(docs, times=times[:-1], content=groups)
+        topica.models.ECTM(num_topics=2).fit(docs, times=times[:-1], content=groups)
 
 
 # --- Synthetic recovery scenarios (from ECTM.md) ---------------------------
@@ -169,7 +169,7 @@ def test_content_helpers_surface():
 
 def test_prevalence_helpers():
     docs, groups, times = _corpus(drift=True)
-    m = topica.ECTM(num_topics=2, seed=1)
+    m = topica.models.ECTM(num_topics=2, seed=1)
     m.fit(docs, times=times, content=groups, iters=40)
     from topica.ectm import prevalence_by_group, prevalence_contrast
     pv = prevalence_by_group(m, groups, times)
@@ -186,7 +186,7 @@ def test_prevalence_helpers():
 def test_content_contrast_se():
     from topica.ectm import content_contrast_se
     docs, groups, times = _corpus(drift=True)
-    m = topica.ECTM(num_topics=2, seed=1)
+    m = topica.models.ECTM(num_topics=2, seed=1)
     m.fit(docs, times=times, content=groups, iters=40)
     dl = [len(d) for d in docs]
     k = max(range(2), key=lambda k: m.content_word_dist("B", 2)[k, m.vocabulary.index("x")])
@@ -205,7 +205,7 @@ def test_content_trajectory_ci():
     docs, groups, times = _corpus(drift=True)
 
     def refit(d, g, p):
-        m = topica.ECTM(num_topics=2, seed=5)
+        m = topica.models.ECTM(num_topics=2, seed=5)
         m.fit(d, times=p, content=g, iters=30)
         return m
 
@@ -262,7 +262,7 @@ def _fit_svi(seed=1, drift=True, **kw):
     # to the batch fit; on real corpora the defaults (content_every=0, once per
     # epoch) recover at ~30 epochs (see the paper's batch-vs-SVI check).
     docs, groups, times = _corpus(drift=drift)
-    m = topica.ECTM(num_topics=2, seed=seed)
+    m = topica.models.ECTM(num_topics=2, seed=seed)
     m.fit(docs, times=times, content=groups, iters=150, inference="svi",
           batch_size=48, tau=4.0, kappa=0.6, content_every=1,
           period_smooth=5.0, interaction_shrink=2.0, **kw)
@@ -320,7 +320,7 @@ def test_svi_with_prevalence():
     """SVI threads a prevalence design through the blended ridge gamma."""
     docs, groups, times = _corpus(drift=True)
     party, _ = topica.one_hot(groups)
-    m = topica.ECTM(num_topics=2, seed=1)
+    m = topica.models.ECTM(num_topics=2, seed=1)
     m.fit(docs, times=times, content=groups, prevalence=party,
           iters=30, inference="svi", batch_size=48, tau=16.0, kappa=0.7)
     assert m.prevalence_effects.shape[1] == 1  # K-1
@@ -343,7 +343,7 @@ def test_svi_under_convergence_warns():
     docs, groups, times = _corpus(drift=True)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        m = topica.ECTM(num_topics=2, seed=1)
+        m = topica.models.ECTM(num_topics=2, seed=1)
         # content_every huge => only the end-of-fit flush solves kappa once
         m.fit(docs, times=times, content=groups, iters=1, inference="svi",
               batch_size=48, content_every=10**6)
@@ -355,7 +355,7 @@ def test_svi_save_load_roundtrip(tmp_path):
     m = _fit_svi()
     p = str(tmp_path / "svi.tt")
     m.save(p)
-    loaded = topica.ECTM.load(p)
+    loaded = topica.models.ECTM.load(p)
     assert np.array_equal(m.topic_word, loaded.topic_word)
     assert np.array_equal(m.content_word_dist("B", 2), loaded.content_word_dist("B", 2))
 

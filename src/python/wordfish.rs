@@ -7,7 +7,7 @@ use super::*;
 use crate::wordfish::{self, WordfishModel};
 use std::collections::HashMap;
 
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct Wordfish {
     beta_prior_sd: f64,
     theta_prior_sd: f64,

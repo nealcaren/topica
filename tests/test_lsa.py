@@ -24,14 +24,14 @@ def _planted(k=3, block=8, n=240, length=15, seed=0):
 
 
 def test_construction_defaults():
-    m = topica.LSA(3)
+    m = topica.models.LSA(3)
     assert m.num_topics == 3
     assert "LSA(num_topics=3" in repr(m)
 
 
 def test_fit_recovers_planted_blocks():
     docs, vocab = _planted()
-    m = topica.LSA(3)
+    m = topica.models.LSA(3)
     m.fit(docs)
 
     assert m.num_topics == 3
@@ -56,7 +56,7 @@ def test_fit_recovers_planted_blocks():
 
 def test_fitted_surface():
     docs, vocab = _planted()
-    m = topica.LSA(3)
+    m = topica.models.LSA(3)
     m.fit(docs)
 
     assert isinstance(m.topic_word, np.ndarray)
@@ -73,7 +73,7 @@ def test_fitted_surface():
 
 def test_singular_values():
     docs, _ = _planted()
-    m = topica.LSA(4)
+    m = topica.models.LSA(4)
     m.fit(docs)
     sv = m.singular_values
     assert sv.shape == (4,)
@@ -84,7 +84,7 @@ def test_singular_values():
 
 def test_top_words():
     docs, _ = _planted()
-    m = topica.LSA(3)
+    m = topica.models.LSA(3)
     m.fit(docs)
     allw = m.top_words(5)
     assert len(allw) == 3
@@ -101,12 +101,12 @@ def test_top_words():
 
 def test_save_load_roundtrip(tmp_path):
     docs, _ = _planted()
-    m = topica.LSA(3, weighting="count", seed=7)
+    m = topica.models.LSA(3, weighting="count", seed=7)
     m.fit(docs)
     path = str(tmp_path / "lsa.bin")
     m.save(path)
 
-    loaded = topica.LSA.load(path)
+    loaded = topica.models.LSA.load(path)
     assert loaded.num_topics == 3
     assert np.array_equal(loaded.topic_word, m.topic_word)
     assert np.array_equal(loaded.doc_topic, m.doc_topic)
@@ -117,7 +117,7 @@ def test_save_load_roundtrip(tmp_path):
 @pytest.mark.parametrize("weighting", ["tfidf", "count"])
 def test_weighting_values(weighting):
     docs, vocab = _planted()
-    m = topica.LSA(3, weighting=weighting)
+    m = topica.models.LSA(3, weighting=weighting)
     m.fit(docs)
     assert m.topic_word.shape == (3, len(set(vocab)))
     assert m.singular_values.shape == (3,)
@@ -126,9 +126,9 @@ def test_weighting_values(weighting):
 def test_determinism_same_seed():
     docs, _ = _planted()
     for weighting in ("tfidf", "count"):
-        a = topica.LSA(3, weighting=weighting, seed=11)
+        a = topica.models.LSA(3, weighting=weighting, seed=11)
         a.fit(docs)
-        b = topica.LSA(3, weighting=weighting, seed=11)
+        b = topica.models.LSA(3, weighting=weighting, seed=11)
         b.fit(docs)
         assert np.array_equal(a.topic_word, b.topic_word)
         assert np.array_equal(a.doc_topic, b.doc_topic)
@@ -137,16 +137,16 @@ def test_determinism_same_seed():
 
 def test_input_validation():
     with pytest.raises(Exception):
-        topica.LSA(1)  # K < 2
+        topica.models.LSA(1)  # K < 2
     with pytest.raises(Exception):
-        topica.LSA(3, weighting="nonsense")
+        topica.models.LSA(3, weighting="nonsense")
 
     # K > min(num_docs, vocab): vocabulary size 6 here.
     docs, _ = _planted(k=3, block=2)
-    m = topica.LSA(20)
+    m = topica.models.LSA(20)
     with pytest.raises(Exception):
         m.fit(docs)
 
-    empty = topica.LSA(3)
+    empty = topica.models.LSA(3)
     with pytest.raises(Exception):
         empty.fit([])

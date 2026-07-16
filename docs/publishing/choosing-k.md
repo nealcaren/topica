@@ -56,7 +56,7 @@ topics**. Count how many you can label, look at the per-topic
 coherence×exclusivity spread, and check held-out perplexity directly:
 
 ```python
-model = topica.STM(num_topics=20, seed=1)
+model = topica.models.STM(num_topics=20, seed=1)
 model.fit(docs, prevalence=X)
 
 table = topica.diagnostics(model, texts)          # one row per topic: coherence,
@@ -83,7 +83,7 @@ then score the withheld words:
 import topica
 
 h = topica.make_heldout(corpus, prop_docs=0.5, prop_words=0.5, seed=0)
-model = topica.STM(num_topics=20, seed=1)
+model = topica.models.STM(num_topics=20, seed=1)
 model.fit(h.documents, prevalence=X)
 
 result = topica.eval_heldout(model, h)
@@ -123,7 +123,7 @@ A nonparametric model is a useful sanity check on your choice: it *infers* a
 topic count rather than taking one.
 
 ```python
-hdp = topica.HDP(eta=0.3, seed=1)
+hdp = topica.models.HDP(eta=0.3, seed=1)
 hdp.fit(docs, iters=300)
 print("HDP suggests ~", hdp.num_topics, "topics")
 ```

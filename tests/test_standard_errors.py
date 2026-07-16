@@ -21,7 +21,7 @@ def _planted(seed=0, n=240):
         block = a if rng.random() < p0 else b
         docs.append(list(rng.choice(block, size=12)))
     corpus = topica.Corpus.from_documents(docs)
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(corpus, iters=250)
     return m, corpus, x
 
@@ -35,8 +35,8 @@ def test_corpus_doc_lengths_aligns_with_doc_topic():
 def test_model_family_detection():
     m, _, _ = _planted()
     assert topica.model_family(m) == "dirichlet"
-    assert topica.model_family(topica.STM(2)) == "logistic_normal"
-    assert topica.model_family(topica.BERTopic(min_cluster_size=5)) == "none"
+    assert topica.model_family(topica.models.STM(2)) == "logistic_normal"
+    assert topica.model_family(topica.models.BERTopic(min_cluster_size=5)) == "none"
 
 
 # Issue #21: model_family must classify the *whole* registry, not just the
@@ -46,28 +46,28 @@ def test_model_family_detection():
 # deliberate family land here as a failure.
 _FAMILY_REGISTRY = [
     # collapsed-Gibbs / Dirichlet doc-topic posterior
-    ("LDA", lambda: topica.LDA(2), "dirichlet"),
-    ("HDP", lambda: topica.HDP(), "dirichlet"),
-    ("KeyATM", lambda: topica.KeyATM({"a": ["x"]}, num_topics=2), "dirichlet"),
-    ("SeededLDA", lambda: topica.SeededLDA({"a": ["x"], "b": ["y"]}), "dirichlet"),
-    ("LabeledLDA", lambda: topica.LabeledLDA(), "dirichlet"),
-    ("SupervisedLDA", lambda: topica.SupervisedLDA(num_topics=2), "dirichlet"),
-    ("DMR", lambda: topica.DMR(2), "dirichlet"),
-    ("PA", lambda: topica.PA(num_super=2, num_sub=4), "dirichlet"),
-    ("PT", lambda: topica.PT(num_topics=2, num_pseudo=10), "dirichlet"),
-    ("SAGE", lambda: topica.SAGE(2), "dirichlet"),
+    ("LDA", lambda: topica.models.LDA(2), "dirichlet"),
+    ("HDP", lambda: topica.models.HDP(), "dirichlet"),
+    ("KeyATM", lambda: topica.models.KeyATM({"a": ["x"]}, num_topics=2), "dirichlet"),
+    ("SeededLDA", lambda: topica.models.SeededLDA({"a": ["x"], "b": ["y"]}), "dirichlet"),
+    ("LabeledLDA", lambda: topica.models.LabeledLDA(), "dirichlet"),
+    ("SupervisedLDA", lambda: topica.models.SupervisedLDA(num_topics=2), "dirichlet"),
+    ("DMR", lambda: topica.models.DMR(2), "dirichlet"),
+    ("PA", lambda: topica.models.PA(num_super=2, num_sub=4), "dirichlet"),
+    ("PT", lambda: topica.models.PT(num_topics=2, num_pseudo=10), "dirichlet"),
+    ("SAGE", lambda: topica.models.SAGE(2), "dirichlet"),
     # logistic-normal (variational eta posterior)
-    ("STM", lambda: topica.STM(2), "logistic_normal"),
-    ("CTM", lambda: topica.CTM(2), "logistic_normal"),
+    ("STM", lambda: topica.models.STM(2), "logistic_normal"),
+    ("CTM", lambda: topica.models.CTM(2), "logistic_normal"),
     # no theta posterior -> method='bootstrap'. GSDMM is a Dirichlet *mixture*
     # (one topic per document), so a Dirichlet theta draw would misstate its
     # uncertainty; it stays "none" deliberately, alongside the embedding models.
-    ("GSDMM", lambda: topica.GSDMM(num_topics=5), "none"),
-    ("BERTopic", lambda: topica.BERTopic(min_cluster_size=5), "none"),
-    ("Top2Vec", lambda: topica.Top2Vec(), "none"),
-    ("ETM", lambda: topica.ETM(2), "none"),
-    ("ProdLDA", lambda: topica.ProdLDA(2), "none"),
-    ("FASTopic", lambda: topica.FASTopic(2), "none"),
+    ("GSDMM", lambda: topica.models.GSDMM(num_topics=5), "none"),
+    ("BERTopic", lambda: topica.models.BERTopic(min_cluster_size=5), "none"),
+    ("Top2Vec", lambda: topica.models.Top2Vec(), "none"),
+    ("ETM", lambda: topica.models.ETM(2), "none"),
+    ("ProdLDA", lambda: topica.models.ProdLDA(2), "none"),
+    ("FASTopic", lambda: topica.models.FASTopic(2), "none"),
 ]
 
 
@@ -88,26 +88,26 @@ def _fit_for_composition():
     X = rng.normal(size=(len(docs), 1))
 
     models = {}
-    m = topica.LDA(3, seed=1); m.fit(corpus, iters=120); models["LDA"] = m
+    m = topica.models.LDA(3, seed=1); m.fit(corpus, iters=120); models["LDA"] = m
     # Explicit concentration so HDP instantiates >1 topic on this small random
     # corpus (the default 0.1/0.1 is tuned for real-scale corpora).
-    m = topica.HDP(seed=1, alpha=1.0, gamma=1.0); m.fit(corpus, iters=120); models["HDP"] = m
-    m = topica.KeyATM({"a": ["w0"], "b": ["w1"]}, num_topics=3)
+    m = topica.models.HDP(seed=1, alpha=1.0, gamma=1.0); m.fit(corpus, iters=120); models["HDP"] = m
+    m = topica.models.KeyATM({"a": ["w0"], "b": ["w1"]}, num_topics=3)
     m.fit(corpus, iters=120); models["KeyATM"] = m
-    m = topica.SeededLDA({"a": ["w0"], "b": ["w1"]}, residual=1)
+    m = topica.models.SeededLDA({"a": ["w0"], "b": ["w1"]}, residual=1)
     m.fit(corpus, iters=120); models["SeededLDA"] = m
-    m = topica.LabeledLDA(seed=1); m.fit(docs, [["x", "y"]] * len(docs), iters=120)
+    m = topica.models.LabeledLDA(seed=1); m.fit(docs, [["x", "y"]] * len(docs), iters=120)
     models["LabeledLDA"] = m
-    m = topica.SupervisedLDA(num_topics=3, seed=1); m.fit(docs, y, iters=8)
+    m = topica.models.SupervisedLDA(num_topics=3, seed=1); m.fit(docs, y, iters=8)
     models["SupervisedLDA"] = m
-    m = topica.DMR(num_topics=3, seed=1, optimize_interval=25, burn_in=20)
+    m = topica.models.DMR(num_topics=3, seed=1, optimize_interval=25, burn_in=20)
     m.fit(docs, X, feature_names=["x"], iters=120, num_samples=2, sample_interval=10)
     models["DMR"] = m
-    m = topica.PA(num_super=2, num_sub=4, seed=1); m.fit(corpus, iters=120)
+    m = topica.models.PA(num_super=2, num_sub=4, seed=1); m.fit(corpus, iters=120)
     models["PA"] = m
-    m = topica.PT(num_topics=3, num_pseudo=10, seed=1); m.fit(corpus, iters=120)
+    m = topica.models.PT(num_topics=3, num_pseudo=10, seed=1); m.fit(corpus, iters=120)
     models["PT"] = m
-    m = topica.SAGE(num_topics=3, seed=1, optimize_interval=25, burn_in=20)
+    m = topica.models.SAGE(num_topics=3, seed=1, optimize_interval=25, burn_in=20)
     m.fit(docs, ["g"] * len(docs), iters=120, num_samples=2, sample_interval=10)
     models["SAGE"] = m
     return corpus, models
@@ -139,7 +139,7 @@ def test_composition_effect_inflates_over_ols():
     # for a well-identified corpus like this one; see
     # test_real_draws_reflect_identifiability in test_theta_draws.py.)
     _, corpus, x = _planted()
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(corpus, iters=250, keep_theta_draws=False)
     X = x[:, None]
     ols = topica.estimate_effect(m.doc_topic, X, feature_names=["x"])
@@ -154,18 +154,18 @@ def test_composition_self_sufficient_for_gibbs_and_rejects_embedding():
     # A fitted LDA/keyATM/SeededLDA retains its own per-document lengths (issue
     # #32), so even with draws disabled the Dirichlet fallback needs no corpus=.
     _, corpus, _ = _planted()
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(corpus, iters=250, keep_theta_draws=False)
     prev = topica.standard_errors(m, of="prevalence", nsims=10)  # no corpus needed
     assert len(prev) == 2
 
     # HDP now retains doc_lengths, so it is also self-sufficient (phase 5).
-    hdp = topica.HDP(seed=1)
+    hdp = topica.models.HDP(seed=1)
     hdp.fit(corpus, iters=120)
     prev_hdp = topica.standard_errors(hdp, of="prevalence", nsims=5)
     assert len(prev_hdp) == hdp.num_topics
 
-    bert = topica.BERTopic(min_cluster_size=5)
+    bert = topica.models.BERTopic(min_cluster_size=5)
     with pytest.raises(ValueError, match="bootstrap"):
         topica.standard_errors(bert, corpus, of="prevalence", method="composition", nsims=10)
 
@@ -181,7 +181,7 @@ def test_topic_correlation_ci_well_shaped_and_coherent():
     # K x K, symmetric, unit diagonal, ci_low <= estimate <= ci_high in every cell,
     # and the estimate is the posterior mean of the draw correlations.
     _, corpus, _ = _planted()
-    m = topica.CTM(num_topics=3, seed=1)
+    m = topica.models.CTM(num_topics=3, seed=1)
     m.fit(corpus, iters=40)
     res = topica.topic_correlation_ci(m, nsims=150, ci=0.9, seed=0)
     K = m.num_topics
@@ -202,7 +202,7 @@ def test_topic_correlation_ci_well_shaped_and_coherent():
 
 def test_topic_correlation_ci_rejects_non_logistic_normal():
     _, corpus, _ = _planted()
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(corpus, iters=50)
     with pytest.raises(TypeError, match="logistic-normal"):
         topica.topic_correlation_ci(m)
@@ -254,7 +254,7 @@ def test_bootstrap_via_refit_hook():
     docs = corpus.documents()
 
     def refit(picks):
-        mm = topica.LDA(2, seed=int(picks[0]) + 1)
+        mm = topica.models.LDA(2, seed=int(picks[0]) + 1)
         mm.fit([docs[i] for i in picks], iters=150)
         return mm
 

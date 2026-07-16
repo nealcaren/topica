@@ -17,7 +17,7 @@ pip install topica
 import topica
 
 docs = [["cat", "dog", "fish"]] * 15 + [["planet", "star", "moon"]] * 15
-model = topica.LDA(num_topics=2, seed=42)
+model = topica.models.LDA(num_topics=2, seed=42)
 model.fit(docs, iters=1000)
 
 for i, words in enumerate(model.top_words(5)):
@@ -47,17 +47,17 @@ for i, words in enumerate(model.top_words(5)):
 
 | Model | What it's for |
 |-------|---------------|
-| [`LDA`](api/models.md#topica.LDA) | Classic topics via fast collapsed-Gibbs (SparseLDA) |
-| [`ProdLDA`](api/models.md#topica.ProdLDA) | Sharper, more coherent topics via a product-of-experts word model (amortized VAE) |
-| [`DMR`](api/models.md#topica.DMR) | Topics conditioned on document metadata |
-| [`LabeledLDA`](api/models.md#topica.LabeledLDA) | Supervised topics tied to document labels |
-| [`CTM`](api/models.md#topica.CTM) | Correlated topics (logistic-normal) |
-| [`STM`](api/models.md#topica.STM) | Structural Topic Model: prevalence **and** content covariates |
-| [`STS`](api/models.md#topica.STS) | Structural Topic and Sentiment-Discourse: covariate-driven topic sentiment on top of STM |
-| [`SAGE`](api/models.md#topica.SAGE) | The same topic worded differently across groups |
-| [`HDP`](api/models.md#topica.HDP) | Nonparametric LDA that *infers* the number of topics |
-| [`DTM`](api/models.md#topica.DTM) | Dynamic topics that evolve across time slices |
-| [`SupervisedLDA`](api/models.md#topica.SupervisedLDA) | Topics shaped to predict a per-document response |
+| [`LDA`](api/models.md#topica.models.LDA) | Classic topics via fast collapsed-Gibbs (SparseLDA) |
+| [`ProdLDA`](api/models.md#topica.models.ProdLDA) | Sharper, more coherent topics via a product-of-experts word model (amortized VAE) |
+| [`DMR`](api/models.md#topica.models.DMR) | Topics conditioned on document metadata |
+| [`LabeledLDA`](api/models.md#topica.models.LabeledLDA) | Supervised topics tied to document labels |
+| [`CTM`](api/models.md#topica.models.CTM) | Correlated topics (logistic-normal) |
+| [`STM`](api/models.md#topica.models.STM) | Structural Topic Model: prevalence **and** content covariates |
+| [`STS`](api/models.md#topica.models.STS) | Structural Topic and Sentiment-Discourse: covariate-driven topic sentiment on top of STM |
+| [`SAGE`](api/models.md#topica.models.SAGE) | The same topic worded differently across groups |
+| [`HDP`](api/models.md#topica.models.HDP) | Nonparametric LDA that *infers* the number of topics |
+| [`DTM`](api/models.md#topica.models.DTM) | Dynamic topics that evolve across time slices |
+| [`SupervisedLDA`](api/models.md#topica.models.SupervisedLDA) | Topics shaped to predict a per-document response |
 | [`PT`](guides/short-text.md) / [`GSDMM`](guides/short-text.md) | Short-text models for tweets, survey answers |
 | [`SeededLDA`](guides/guided.md) / [`KeyATM`](guides/guided.md) | Guided topics steered by seed words |
 | `PA` / `HLDA` | Topic hierarchies (Pachinko, nested-CRP) |

@@ -48,7 +48,7 @@ def test_gadarian_feeds_from_dataframe_and_fits():
         stopwords=topica.ENGLISH_STOPWORDS,
         min_doc_freq=2,
     )
-    model = topica.LDA(num_topics=4, seed=1)
+    model = topica.models.LDA(num_topics=4, seed=1)
     model.fit(corpus, iters=20)
     assert model.topic_word.shape[0] == 4
 

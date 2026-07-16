@@ -13,7 +13,8 @@ from collections import Counter
 import numpy as np
 import pytest
 
-from topica import STM, tokenize, stm
+from topica.models import STM
+from topica import tokenize, stm
 
 GADARIAN = os.path.join(os.path.dirname(__file__), "..", "examples", "gadarian.csv")
 STOPLIST = os.path.join(os.path.dirname(__file__), "..", "examples", "english-stoplist.txt")

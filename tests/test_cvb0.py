@@ -20,7 +20,7 @@ TWO_TOPIC_DOCS = [list(PETS)] * 40 + [list(SPACE)] * 40
 
 
 def _fit(docs, k=2, iters=200, **kw):
-    m = topica.LDA(k, seed=1, sampler="cvb0", optimize_interval=0, **kw)
+    m = topica.models.LDA(k, seed=1, sampler="cvb0", optimize_interval=0, **kw)
     m.fit(docs, iters=iters)
     return m
 
@@ -52,18 +52,18 @@ def test_no_theta_draws():
 
 
 def test_convergence_tol_early_stops():
-    m = topica.LDA(2, seed=1, sampler="cvb0", optimize_interval=0)
+    m = topica.models.LDA(2, seed=1, sampler="cvb0", optimize_interval=0)
     m.fit(TWO_TOPIC_DOCS, iters=1000, convergence_tol=1e-4, check_every=5)
     assert m.converged
 
 
 def test_aliases_and_bad_name():
     for name in ("cvb0", "cvb"):
-        m = topica.LDA(2, seed=1, sampler=name)
+        m = topica.models.LDA(2, seed=1, sampler=name)
         m.fit(TWO_TOPIC_DOCS, iters=30)
         assert m.topic_word.shape[0] == 2
     with pytest.raises(ValueError):
-        topica.LDA(2, sampler="banana")
+        topica.models.LDA(2, sampler="banana")
 
 
 def test_recovers_more_topics_at_larger_k():
@@ -89,5 +89,5 @@ def test_save_load_round_trip(tmp_path):
     m = _fit(TWO_TOPIC_DOCS)
     path = str(tmp_path / "cvb0.bin")
     m.save(path)
-    reloaded = topica.LDA.load(path)
+    reloaded = topica.models.LDA.load(path)
     npt.assert_allclose(m.topic_word, reloaded.topic_word)

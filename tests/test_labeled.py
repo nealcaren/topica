@@ -4,7 +4,8 @@ import numpy as np
 import numpy.testing as npt
 import pytest
 
-from topica import LabeledLDA, Corpus
+from topica.models import LabeledLDA
+from topica import Corpus
 
 
 # ---------------------------------------------------------------------------

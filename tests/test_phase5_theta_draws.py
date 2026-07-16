@@ -32,7 +32,7 @@ def _fit_dmr(corpus, *, keep_theta_draws=True, num_theta_draws=10):
     n = corpus.num_docs
     rng = np.random.default_rng(0)
     features = rng.standard_normal((n, 2)).tolist()
-    m = topica.DMR(num_topics=4, seed=1)
+    m = topica.models.DMR(num_topics=4, seed=1)
     m.fit(corpus, features, iters=120,
           keep_theta_draws=keep_theta_draws, num_theta_draws=num_theta_draws)
     return m
@@ -86,7 +86,7 @@ class TestDMR:
 def _fit_sage(corpus, *, keep_theta_draws=True, num_theta_draws=10):
     n = corpus.num_docs
     groups = ["a" if i < n // 2 else "b" for i in range(n)]
-    m = topica.SAGE(num_topics=4, seed=1)
+    m = topica.models.SAGE(num_topics=4, seed=1)
     m.fit(corpus, groups, iters=120,
           keep_theta_draws=keep_theta_draws, num_theta_draws=num_theta_draws)
     return m
@@ -134,7 +134,7 @@ class TestSAGE:
 def _fit_labeled(corpus, *, keep_theta_draws=True, num_theta_draws=10):
     n = corpus.num_docs
     labels = [["topic_a"] if i % 3 != 0 else ["topic_b"] for i in range(n)]
-    m = topica.LabeledLDA(alpha=0.1, beta=0.01, seed=1)
+    m = topica.models.LabeledLDA(alpha=0.1, beta=0.01, seed=1)
     m.fit(corpus, labels, iters=120,
           keep_theta_draws=keep_theta_draws, num_theta_draws=num_theta_draws)
     return m
@@ -180,7 +180,7 @@ class TestLabeledLDA:
 # ---------------------------------------------------------------------------
 
 def _fit_hdp(corpus, *, keep_theta_draws=True, num_theta_draws=10):
-    m = topica.HDP(seed=1)
+    m = topica.models.HDP(seed=1)
     m.fit(corpus, iters=80,
           keep_theta_draws=keep_theta_draws, num_theta_draws=num_theta_draws)
     return m
@@ -228,7 +228,7 @@ class TestHDP:
 # ---------------------------------------------------------------------------
 
 def _fit_pt(corpus, *, keep_theta_draws=True, num_theta_draws=10):
-    m = topica.PT(num_topics=4, num_pseudo=20, seed=1)
+    m = topica.models.PT(num_topics=4, num_pseudo=20, seed=1)
     m.fit(corpus, iters=200,
           keep_theta_draws=keep_theta_draws, num_theta_draws=num_theta_draws)
     return m
@@ -274,7 +274,7 @@ class TestPT:
 # ---------------------------------------------------------------------------
 
 def _fit_pa(corpus, *, keep_theta_draws=True, num_theta_draws=10):
-    m = topica.PA(num_super=2, num_sub=4, seed=1)
+    m = topica.models.PA(num_super=2, num_sub=4, seed=1)
     m.fit(corpus, iters=300,
           keep_theta_draws=keep_theta_draws, num_theta_draws=num_theta_draws)
     return m
@@ -323,7 +323,7 @@ def _fit_slda(corpus, *, keep_theta_draws=True, num_theta_draws=10):
     n = corpus.num_docs
     rng = np.random.default_rng(42)
     y = rng.standard_normal(n).tolist()
-    m = topica.SupervisedLDA(num_topics=4, seed=1)
+    m = topica.models.SupervisedLDA(num_topics=4, seed=1)
     m.fit(corpus, y, iters=15,
           keep_theta_draws=keep_theta_draws, num_theta_draws=num_theta_draws)
     return m

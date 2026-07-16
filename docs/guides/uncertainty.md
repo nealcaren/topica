@@ -113,7 +113,7 @@ resamples them alongside the documents and returns a fitted model:
 
 ```python
 def refit(doc_indices):
-    m = topica.BERTopic(min_cluster_size=15, seed=1)
+    m = topica.models.BERTopic(min_cluster_size=15, seed=1)
     m.fit([docs[i] for i in doc_indices], doc_emb[doc_indices])
     return m
 

@@ -50,7 +50,7 @@ def _pruned_setup():
             ["the", "dog", "ate", "the", "cat"], ["cat", "mat", "dog", "sat"]]
     texts = ["Text0", "DROPPED1", "Text2", "Text3"]
     corpus = topica.Corpus.from_documents(docs, min_doc_freq=2)  # drops doc 1
-    m = topica.LDA(num_topics=2, seed=42)
+    m = topica.models.LDA(num_topics=2, seed=42)
     m.fit(corpus, iters=100)
     return m, corpus, texts
 
@@ -89,7 +89,7 @@ def test_bootstrap_refit_hook_typeerror_is_not_swallowed():
     """A TypeError raised inside a 2-arg refit hook must propagate, not be
     misread as an arity mismatch and silently retried at the default seed."""
     _, corpus = _toy_corpus()
-    model = topica.LDA(num_topics=2, seed=1)
+    model = topica.models.LDA(num_topics=2, seed=1)
     model.fit(corpus, iters=80)
 
     def broken_refit(picks, seed):
@@ -104,7 +104,7 @@ def test_bootstrap_refit_hook_typeerror_is_not_swallowed():
 
 def test_quality_frontier_warns_when_coherence_type_needs_texts():
     _, corpus = _toy_corpus()
-    m = topica.LDA(num_topics=3, seed=1)
+    m = topica.models.LDA(num_topics=3, seed=1)
     m.fit(corpus, iters=80)
     with pytest.warns(UserWarning, match="needs texts"):
         validation.quality_frontier(m, coherence_type="c_v")  # no texts
@@ -116,7 +116,7 @@ def test_coherence_works_for_sage_via_marginal():
     """SAGE's top_words takes `topic` first and its topic_word is 3-D; coherence
     must still work by falling back to the group-marginal matrix."""
     docs, _ = _toy_corpus()
-    s = topica.SAGE(num_topics=3, seed=1, optimize_interval=25, burn_in=20)
+    s = topica.models.SAGE(num_topics=3, seed=1, optimize_interval=25, burn_in=20)
     s.fit(docs, ["g"] * len(docs), iters=80, num_samples=2, sample_interval=10)
     coh = topica.coherence(s, docs, coherence_type="u_mass")
     assert coh.shape == (3,) and np.all(np.isfinite(coh))
@@ -127,7 +127,7 @@ def test_coherence_rejects_dtm_with_clear_message():
     """DTM's topic_word is time-sliced; the static surface must say so, not coerce
     a bound method into an object array."""
     docs, _ = _toy_corpus()
-    dtm = topica.DTM(num_topics=2, seed=1)
+    dtm = topica.models.DTM(num_topics=2, seed=1)
     dtm.fit(docs, [0] * 20 + [1] * 20, iters=3)
     with pytest.raises(ValueError, match="time-sliced"):
         topica.coherence(dtm, docs)
@@ -135,9 +135,9 @@ def test_coherence_rejects_dtm_with_clear_message():
 
 def test_capability_no_doc_topic_models_are_not_soft_theta():
     docs, _ = _toy_corpus()
-    dtm = topica.DTM(num_topics=2, seed=1)
+    dtm = topica.models.DTM(num_topics=2, seed=1)
     dtm.fit(docs, [0] * 20 + [1] * 20, iters=3)
-    h = topica.HLDA(depth=2, seed=1)
+    h = topica.models.HLDA(depth=2, seed=1)
     h.fit(docs, iters=50)
     assert capabilities(dtm).soft_theta is False
     assert capabilities(h).soft_theta is False
@@ -148,7 +148,7 @@ def test_dmr_stub_matches_runtime():
     corrected stub now documents: fit(data, features, ...) and feature_effects."""
     docs, _ = _toy_corpus()
     X = np.random.default_rng(0).normal(size=(len(docs), 1))
-    m = topica.DMR(num_topics=3, seed=1, optimize_interval=25, burn_in=20)
+    m = topica.models.DMR(num_topics=3, seed=1, optimize_interval=25, burn_in=20)
     m.fit(docs, X, feature_names=["x"], iters=80, num_samples=2, sample_interval=10)
     assert np.asarray(m.feature_effects).shape[0] == 3
     assert not hasattr(m, "prevalence_effects")

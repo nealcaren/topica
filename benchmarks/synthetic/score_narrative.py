@@ -44,7 +44,7 @@ for tk, lab in sent_records:
             beta_true[THEMES.index(lab), vindex[w]] += 1
 beta_true /= beta_true.sum(1, keepdims=True)
 
-nt = topica.NarrativeTM(num_topics=K, segment_by="chunk", chunk_size=15, degree=5, seed=1)
+nt = topica.models.NarrativeTM(num_topics=K, segment_by="chunk", chunk_size=15, degree=5, seed=1)
 nt.fit(docs_v, iters=600)
 
 # align NarrativeTM topics to themes

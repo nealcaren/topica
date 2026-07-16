@@ -31,7 +31,7 @@ def test_spline_block_drives_a_non_stm_covariate_model():
     assert basis.shape == (len(docs), 3)
     assert len(names) == 3
 
-    m = topica.DMR(num_topics=2, seed=1)
+    m = topica.models.DMR(num_topics=2, seed=1)
     m.fit(docs, basis, feature_names=names, iters=40)
     assert m.num_topics == 2
     tw = np.asarray(m.topic_word)

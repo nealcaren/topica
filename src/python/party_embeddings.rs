@@ -9,7 +9,7 @@ use super::*;
 use crate::party_embeddings::{self, PartyEmbeddingsModel, PvdmConfig};
 use std::collections::HashMap;
 
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct PartyEmbeddings {
     num_dims: usize,
     vector_size: usize,

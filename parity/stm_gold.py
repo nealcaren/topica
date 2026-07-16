@@ -200,7 +200,7 @@ def regenerate() -> None:
 
 
 def _topica_cosine(docs, X, feat_names, r_vocab, r_spectral) -> float:
-    from topica import STM
+    from topica.models import STM
 
     model = STM(num_topics=K, init="spectral")
     model.fit(docs, X, prevalence_names=feat_names, iters=ITERS, convergence_tol=CONV_TOL)
@@ -231,7 +231,7 @@ def run(verbose: bool = True) -> dict:
     X = arrays["design"][:, 1:]  # drop the intercept column (topica re-adds it)
     feat_names = list(arrays["feat_names"])
 
-    from topica import STM
+    from topica.models import STM
 
     model = STM(num_topics=K, init="spectral")
     model.fit(docs, X, prevalence_names=feat_names, iters=ITERS, convergence_tol=CONV_TOL)

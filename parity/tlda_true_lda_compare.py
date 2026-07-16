@@ -49,7 +49,7 @@ def simulate(seed: int = 2026):
 
 def evaluate(rank: int, docs, beta, theta_true, weights_true) -> None:
     k = beta.shape[0]
-    model = topica.TensorLDA(
+    model = topica.models.TensorLDA(
         k, alpha_0=1.0, n_eigenvec=rank, n_iter_train=500,
         n_iter_test=50, learning_rate=0.01, batch_size=25, seed=2026,
     )

@@ -10,10 +10,10 @@ diagnostic, labeling, and reporting tools apply to them unchanged. See the
 generative models that factor topics through the embedding space. None require
 PyTorch: `fit` takes the vectors you pass in.
 
-::: topica.BERTopic
+::: topica.models.BERTopic
 
-::: topica.Top2Vec
+::: topica.models.Top2Vec
 
-::: topica.ETM
+::: topica.models.ETM
 
-::: topica.FASTopic
+::: topica.models.FASTopic

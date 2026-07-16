@@ -158,7 +158,7 @@ def run(verbose: bool = True) -> dict:
     if not r_stm_available():
         raise RuntimeError("Rscript with the 'stm' package is not available")
 
-    from topica import STM
+    from topica.models import STM
 
     docs, treatment, pid, _ = load_and_prep()
 

@@ -35,7 +35,7 @@ def _planted(n=84, seed=0):
 
 def _fit(**kw):
     docs, sent_seed, prev, truth = _planted()
-    m = topica.STS(num_topics=2, seed=1)
+    m = topica.models.STS(num_topics=2, seed=1)
     m.fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=kw.get("iters", 25))
     return m, docs, truth
 
@@ -79,8 +79,8 @@ class TestFit:
 
     def test_deterministic(self):
         docs, sent_seed, prev, _ = _planted()
-        m1 = topica.STS(num_topics=2, seed=7)
-        m2 = topica.STS(num_topics=2, seed=7)
+        m1 = topica.models.STS(num_topics=2, seed=7)
+        m2 = topica.models.STS(num_topics=2, seed=7)
         m1.fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=15)
         m2.fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=15)
         np.testing.assert_allclose(m1.topic_word, m2.topic_word)
@@ -97,7 +97,7 @@ class TestAnalysisSurface:
 
     def test_no_prevalence_still_fits(self):
         docs, sent_seed, _, _ = _planted()
-        m = topica.STS(num_topics=2, seed=1)
+        m = topica.models.STS(num_topics=2, seed=1)
         m.fit(docs, sentiment_seed=sent_seed, iters=15)  # no prevalence design
         assert m.doc_topic.shape == (len(docs), 2)
         assert m.sentiment.shape == (len(docs), 2)
@@ -106,13 +106,13 @@ class TestAnalysisSurface:
 class TestPersistenceAndTransform:
     def test_doc_names(self):
         docs, sent_seed, prev, _ = _planted()
-        m = topica.STS(num_topics=2, seed=1)
+        m = topica.models.STS(num_topics=2, seed=1)
         m.fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=15)
         assert m.doc_names == [f"doc_{i}" for i in range(len(docs))]
 
     def test_transform_shape_and_normalization(self):
         docs, sent_seed, prev, _ = _planted()
-        m = topica.STS(num_topics=2, seed=1)
+        m = topica.models.STS(num_topics=2, seed=1)
         m.fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=20)
         held = [A[:4], B[:4], ["???", "out-of-vocab"]]
         th = m.transform(held)
@@ -127,11 +127,11 @@ class TestPersistenceAndTransform:
 
     def test_save_load_round_trip(self, tmp_path):
         docs, sent_seed, prev, _ = _planted()
-        m = topica.STS(num_topics=2, seed=1)
+        m = topica.models.STS(num_topics=2, seed=1)
         m.fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=20)
         p = str(tmp_path / "model.sts")
         m.save(p)
-        m2 = topica.STS.load(p)
+        m2 = topica.models.STS.load(p)
         for attr in ("topic_word", "doc_topic", "sentiment", "eta_mean", "eta_cov"):
             np.testing.assert_array_equal(
                 np.asarray(getattr(m, attr)), np.asarray(getattr(m2, attr))
@@ -145,22 +145,22 @@ class TestPersistenceAndTransform:
 class TestErrors:
     def test_num_topics_too_small(self):
         with pytest.raises(ValueError):
-            topica.STS(num_topics=1)
+            topica.models.STS(num_topics=1)
 
     def test_seed_length_mismatch(self):
         docs, _, prev, _ = _planted()
-        m = topica.STS(num_topics=2)
+        m = topica.models.STS(num_topics=2)
         with pytest.raises(ValueError, match="sentiment_seed"):
             m.fit(docs, sentiment_seed=[0.0, 1.0], prevalence=prev)
 
     def test_effects_require_prevalence(self):
         docs, sent_seed, _, _ = _planted()
-        m = topica.STS(num_topics=2, seed=1)
+        m = topica.models.STS(num_topics=2, seed=1)
         m.fit(docs, sentiment_seed=sent_seed, iters=10)
         with pytest.raises(RuntimeError, match="prevalence"):
             _ = m.prevalence_effects
 
     def test_getters_require_fit(self):
-        m = topica.STS(num_topics=2)
+        m = topica.models.STS(num_topics=2)
         with pytest.raises(RuntimeError, match="not fitted"):
             _ = m.topic_word

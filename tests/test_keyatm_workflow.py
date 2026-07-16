@@ -45,7 +45,7 @@ def test_refine_keywords_drops_rare_and_empty_sets():
 
 def test_top_topics_shape_and_sorting():
     docs, _ = _corpus()
-    m = topica.KeyATM({"econ": A[:2], "war": B[:2]}, num_topics=4, seed=1)
+    m = topica.models.KeyATM({"econ": A[:2], "war": B[:2]}, num_topics=4, seed=1)
     m.fit(docs, iters=150)
     tt = keyatm.top_topics(m, n=2)
     assert len(tt) == len(docs)
@@ -64,7 +64,7 @@ def test_top_topics_from_raw_theta():
 
 def test_by_strata_recovers_group_structure():
     docs, strata = _corpus()
-    m = topica.KeyATM({"econ": A[:2], "war": B[:2]}, num_topics=4, seed=1)
+    m = topica.models.KeyATM({"econ": A[:2], "war": B[:2]}, num_topics=4, seed=1)
     m.fit(docs, iters=200)
     res = keyatm.by_strata(m, strata)
     levels = {s.stratum: s for s in res}

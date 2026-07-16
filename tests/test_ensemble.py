@@ -286,7 +286,7 @@ class TestFittedModels:
             docs.append([v[int(rng.integers(len(v)))] for _ in range(10)])
         runs = []
         for s in range(n):
-            m = topica.LDA(num_topics=2, seed=s + 1)
+            m = topica.models.LDA(num_topics=2, seed=s + 1)
             m.fit(docs, iters=300)
             runs.append(m)
         return runs, docs

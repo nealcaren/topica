@@ -168,7 +168,7 @@ def run(verbose: bool = True) -> dict:
     if not ok:
         raise RuntimeError(why)
 
-    from topica import STM, STS
+    from topica.models import STM, STS
 
     with tempfile.TemporaryDirectory() as d:
         env = {**os.environ, "STS_REPL_DIR": REPL_DIR}

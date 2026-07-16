@@ -88,19 +88,19 @@ anchors = {f"a{int(np.argmin(x_true)):03d}": -1.0, f"a{int(np.argmax(x_true)):03
 # --- fit the models -----------------------------------------------------------
 print("fitting the ideal-point models on the same planted corpus...\n")
 
-wf = topica.Wordfish()
+wf = topica.models.Wordfish()
 wf.fit(docs, group=author, anchors=anchors, iters=100)
 
 # IdealPointTM, count representation: no word_embeddings (the old IdealPointLDA).
-ipc = topica.IdealPointTM(num_topics=K, num_dims=1, seed=1)
+ipc = topica.models.IdealPointTM(num_topics=K, num_dims=1, seed=1)
 ipc.fit(docs, group=author, anchors=anchors, iters=40)
 
 # IdealPointTM, word-embedding representation: pass word_embeddings + vocabulary.
-ipe = topica.IdealPointTM(num_topics=K, num_dims=1, seed=1)
+ipe = topica.models.IdealPointTM(num_topics=K, num_dims=1, seed=1)
 ipe.fit(docs, word_embeddings=word_emb, vocabulary=vocab, group=author, anchors=anchors, iters=40)
 
 # IdealPointSentenceTM scales the per-document embeddings; group is the author per doc.
-sitm = topica.IdealPointSentenceTM(num_topics=K, num_dims=1, seed=1)
+sitm = topica.models.IdealPointSentenceTM(num_topics=K, num_dims=1, seed=1)
 sitm.fit(doc_emb, group=author, anchors=anchors, iters=80)
 
 positions = {}

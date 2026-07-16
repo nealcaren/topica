@@ -107,7 +107,7 @@ def _two_block_corpus(seed=0, soup=False):
 class TestFlagTopics:
     def test_fields_present(self):
         docs = _two_block_corpus()
-        m = topica.LDA(num_topics=6, seed=0)
+        m = topica.models.LDA(num_topics=6, seed=0)
         m.fit(docs, iters=200)
         rows = topica.flag_topics(m, docs)
         assert len(rows) == 6
@@ -117,7 +117,7 @@ class TestFlagTopics:
 
     def test_catches_stopword_soup(self):
         soup = _two_block_corpus(soup=True)
-        m = topica.LDA(num_topics=8, seed=0)
+        m = topica.models.LDA(num_topics=8, seed=0)
         m.fit(soup, iters=200)
         rows = topica.flag_topics(m, soup)
         soupy = [r for r in rows if "stopword-soup" in r["reasons"]]
@@ -125,7 +125,7 @@ class TestFlagTopics:
 
     def test_clean_corpus_has_no_stopword_flags(self):
         clean = _two_block_corpus(soup=False)
-        m = topica.LDA(num_topics=6, seed=0)
+        m = topica.models.LDA(num_topics=6, seed=0)
         m.fit(clean, iters=200)
         rows = topica.flag_topics(m, clean)
         assert not any("stopword-soup" in r["reasons"] for r in rows)
@@ -142,7 +142,7 @@ class TestDocumentResiduals:
         injected = [list(rng.choice(off, 14)) for _ in range(n_inject)]
         docs = clean + injected
         inject_idx = set(range(len(clean), len(docs)))
-        m = topica.LDA(num_topics=8, seed=0)
+        m = topica.models.LDA(num_topics=8, seed=0)
         m.fit(docs, iters=250)
         return m, docs, inject_idx
 
@@ -162,7 +162,7 @@ class TestDocumentResiduals:
         on = ["tax", "budget", "economy", "growth", "jobs", "market",
               "troops", "war", "policy", "treaty", "border", "summit"]
         clean = [list(rng.choice(on, 14)) for _ in range(120)]
-        m = topica.LDA(num_topics=6, seed=0)
+        m = topica.models.LDA(num_topics=6, seed=0)
         m.fit(clean, iters=200)
         base = {r["doc"]: r for r in topica.document_residuals(m, clean)}
         with_oov = [d + ["zzqq1", "zzqq2", "zzqq3"] for d in clean]

@@ -29,7 +29,7 @@ def _planted(seed=0, per=60, k=3, dim=12):
 @pytest.mark.parametrize("model_cls", ["BERTopic", "Top2Vec"])
 def test_save_load_round_trip(model_cls, tmp_path):
     docs, emb, vocab = _planted()
-    cls = getattr(topica, model_cls)
+    cls = getattr(topica.models, model_cls)
     m = cls(min_cluster_size=20, seed=1)
     if model_cls == "Top2Vec":
         word_emb = np.random.default_rng(1).normal(0, 1, (len(vocab), emb.shape[1]))
@@ -56,7 +56,7 @@ def test_save_load_round_trip(model_cls, tmp_path):
 
 def test_save_requires_fitted(tmp_path):
     with pytest.raises(Exception):
-        topica.BERTopic(min_cluster_size=5).save(str(tmp_path / "x.tt"))
+        topica.models.BERTopic(min_cluster_size=5).save(str(tmp_path / "x.tt"))
 
 
 def test_add_ngrams_basic():
@@ -92,7 +92,7 @@ def test_bigrams_flow_into_bertopic_topic_words():
     assert len(ng) == len(base)  # alignment with embeddings preserved
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        m = topica.BERTopic(min_cluster_size=20, seed=1)
+        m = topica.models.BERTopic(min_cluster_size=20, seed=1)
         m.fit(ng, np.array(emb))
     words = {w for t in range(m.num_topics) for w, _ in m.top_words(8, topic=t)}
     assert any("_" in w for w in words)

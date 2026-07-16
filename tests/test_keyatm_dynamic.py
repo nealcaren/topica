@@ -30,7 +30,7 @@ def _corpus(seed=0, n_years=12, change_at=6, per_year=40):
 @pytest.fixture(scope="module")
 def dyn_model():
     docs, years = _corpus()
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m.fit(docs, timestamps=years, num_states=2, iters=400)
     return m, docs, years
 
@@ -85,7 +85,7 @@ def test_doc_order_preserved_after_internal_sort():
     docs_sh = [docs[i] for i in order]
     years_sh = [years[i] for i in order]
 
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m.fit(docs_sh, timestamps=years_sh, num_states=2, iters=300)
     th = m.doc_topic
     assert th.shape == (len(docs), 2)
@@ -99,7 +99,7 @@ def test_doc_order_preserved_after_internal_sort():
 
 def test_deterministic(dyn_model):
     m, docs, years = dyn_model
-    m2 = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m2 = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m2.fit(docs, timestamps=years, num_states=2, iters=400)
     assert np.allclose(m.time_prevalence, m2.time_prevalence)
     assert m.time_state == m2.time_state
@@ -109,7 +109,7 @@ def test_deterministic(dyn_model):
 def test_string_timestamps_sorted():
     docs, years = _corpus(seed=1, n_years=4, change_at=2, per_year=30)
     labels = [f"era_{y}" for y in years]  # string timestamps
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m.fit(docs, timestamps=labels, num_states=2, iters=200)
     assert m.time_labels == ["era_2000", "era_2001", "era_2002", "era_2003"]
 
@@ -132,7 +132,7 @@ def test_noncontiguous_unsorted_timestamps_keep_theta_aligned():
         block.append(0 if is_econ else 1)
     block = np.array(block)
 
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m.fit(docs, timestamps=ts, num_states=2, iters=400)
 
     # The distinct values define the (contiguous) time order; labels are sorted.
@@ -150,7 +150,7 @@ def test_noncontiguous_unsorted_timestamps_keep_theta_aligned():
 
 def test_base_model_has_no_time_outputs():
     docs, _ = _corpus(seed=2, n_years=3, per_year=20)
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m.fit(docs, iters=100)
     assert m.time_state == []
     assert m.time_labels == []
@@ -163,14 +163,14 @@ def test_base_model_has_no_time_outputs():
 def test_timestamps_and_covariates_mutually_exclusive():
     docs, years = _corpus(seed=4, n_years=3, per_year=20)
     x = np.zeros((len(docs), 1))
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     with pytest.raises(ValueError):
         m.fit(docs, timestamps=years, covariates=x, iters=10)
 
 
 def test_num_states_validated():
     docs, years = _corpus(seed=5, n_years=3, per_year=20)
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     with pytest.raises(ValueError):
         m.fit(docs, timestamps=years, num_states=5, iters=10)  # only 3 timestamps
 
@@ -183,7 +183,7 @@ def test_num_states_validated():
 def dyn_model_ci():
     """Small dynamic KeyATM with theta_draws retained (the default)."""
     docs, years = _corpus(seed=7, n_years=6, change_at=3, per_year=30)
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=2)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=2)
     m.fit(docs, timestamps=years, num_states=2, iters=300, keep_theta_draws=True)
     return m, docs, years
 
@@ -219,7 +219,7 @@ def test_time_prevalence_ci_bounds(dyn_model_ci):
 def test_time_prevalence_ci_requires_draws():
     """Raises a clear error when theta_draws were not retained."""
     docs, years = _corpus(seed=8, n_years=4, change_at=2, per_year=20)
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=3)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=3)
     m.fit(docs, timestamps=years, num_states=2, iters=200, keep_theta_draws=False)
     assert m.theta_draws is None
     with pytest.raises(ValueError, match="keep_theta_draws=True"):
@@ -229,7 +229,7 @@ def test_time_prevalence_ci_requires_draws():
 def test_time_prevalence_ci_requires_dynamic_model():
     """Raises for a non-dynamic (base) KeyATM."""
     docs, _ = _corpus(seed=9, n_years=3, per_year=20)
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=4)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=4)
     m.fit(docs, iters=100)
     assert m.time_labels == []
     with pytest.raises(ValueError, match="dynamic KeyATM"):
@@ -266,7 +266,7 @@ def test_topics_over_time_non_dynamic_no_ci():
     rng = np.random.default_rng(0)
     docs = [list(rng.choice(["a", "b", "c", "d"], size=8)) for _ in range(60)]
     years = [2000 + i % 3 for i in range(60)]
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(docs, iters=100)
     panel = viz.topics_over_time(m, years)
     assert panel.has_ci is False

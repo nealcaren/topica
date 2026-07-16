@@ -14,7 +14,7 @@ use super::*;
 /// initialization and update detail. The topic-word matrix is each row of ``H``
 /// normalized to sum 1, and the document-topic matrix is each row of ``W``
 /// normalized to sum 1.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct NMF {
     num_topics: usize,
     beta_loss: nmf::BetaLoss,
@@ -382,7 +382,7 @@ impl NMF {
 /// not sum to 1). ``singular_values (K)`` is ``Sigma_k``. A deterministic
 /// ``svd_flip`` sign convention (largest-magnitude entry of each right singular
 /// vector made positive) matches scikit-learn's output.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct LSA {
     num_topics: usize,
     weighting_tfidf: bool,

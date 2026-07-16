@@ -84,7 +84,7 @@ def _topica_fit(docs, doc_emb):
     """Fit topica BERTopic on the shared embeddings; return (labels, top_words, num)."""
     import topica
 
-    bt = topica.BERTopic(n_components=5, min_cluster_size=MIN_CLUSTER, seed=42)
+    bt = topica.models.BERTopic(n_components=5, min_cluster_size=MIN_CLUSTER, seed=42)
     bt.fit(docs, doc_emb)
     labels = np.array(bt.labels)
     words = [
@@ -169,7 +169,7 @@ def regenerate() -> None:
             "date": datetime.date.today().isoformat(),
             "metric_kind": "clustering-agreement (ARI), NOT topic-word cosine",
             "topica_backend": (
-                "topica.BERTopic.fit needs NO CI-absent package (Rust PCA+HDBSCAN; "
+                "topica.models.BERTopic.fit needs NO CI-absent package (Rust PCA+HDBSCAN; "
                 "you supply doc_embeddings); the bertopic package needs umap+hdbscan+sklearn"
             ),
             "pass_bar": (

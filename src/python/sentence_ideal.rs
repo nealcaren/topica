@@ -7,7 +7,7 @@ use super::*;
 use crate::sentence_ideal::{self, SentenceIdealModel};
 use std::collections::HashMap;
 
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct IdealPointSentenceTM {
     num_topics: usize,
     num_dims: usize,

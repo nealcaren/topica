@@ -93,7 +93,7 @@ class TestSplitDocuments:
 @pytest.fixture(scope="module")
 def two_topic():
     docs = [["mob", "lynch", "south", "murder"]] * 40 + [["school", "child", "teach", "college"]] * 40
-    m = topica.LDA(num_topics=2, seed=1)
+    m = topica.models.LDA(num_topics=2, seed=1)
     m.fit(docs, iters=400)
     return m, docs
 

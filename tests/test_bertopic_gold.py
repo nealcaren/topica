@@ -15,7 +15,7 @@ design both implementations recover the truth perfectly (ARI 1.0).
 
 This runs in CI WITHOUT bertopic / umap / hdbscan / sklearn: the package's recovered
 labels and the exact synthetic embeddings are frozen in the committed gold, and
-topica.BERTopic.fit() needs none of them (Rust PCA+HDBSCAN; you supply the
+topica.models.BERTopic.fit() needs none of them (Rust PCA+HDBSCAN; you supply the
 embeddings). The no-heavy-import guard below proves the gold path imports none of
 the reference stack at test time.
 """
@@ -61,7 +61,7 @@ def test_bertopic_no_heavy_import_at_test_time():
     ``bertopic_gold.run()``. A subprocess (not a bare ``sys.modules`` check) is used
     because sibling parity tests import bertopic in the same pytest session; the point
     is that the GOLD PATH itself needs none of it — and crucially, neither does
-    topica.BERTopic.fit()."""
+    topica.models.BERTopic.fit()."""
     script = textwrap.dedent(
         f"""
         import sys

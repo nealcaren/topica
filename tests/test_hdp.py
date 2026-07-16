@@ -7,7 +7,8 @@ deterministic.
 import numpy as np
 import pytest
 
-from topica import HDP, Corpus
+from topica.models import HDP
+from topica import Corpus
 
 
 def _planted_corpus(n_blocks=5, words_per_block=6, n_docs=250):

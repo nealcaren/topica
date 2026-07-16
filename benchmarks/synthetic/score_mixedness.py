@@ -65,9 +65,9 @@ def theta_cos(model):
     return num / den
 
 models = {
-    "LDA": topica.LDA(num_topics=K, seed=1),
-    "CTM": topica.CTM(num_topics=K, seed=1),
-    "GSDMM": topica.GSDMM(num_topics=K, seed=1),
+    "LDA": topica.models.LDA(num_topics=K, seed=1),
+    "CTM": topica.models.CTM(num_topics=K, seed=1),
+    "GSDMM": topica.models.GSDMM(num_topics=K, seed=1),
 }
 models["LDA"].fit(docs_v, iters=800)
 models["CTM"].fit(docs_v, iters=200)

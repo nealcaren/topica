@@ -82,7 +82,7 @@ def _make_high_dim_corpus(n_docs: int = 300, n_covariates: int = 30, seed: int =
 def pooled_model():
     """Default-prior STM on the binary corpus."""
     docs, x = _make_binary_corpus()
-    m = topica.STM(num_topics=2, seed=1)
+    m = topica.models.STM(num_topics=2, seed=1)
     m.fit(docs, x, prevalence_names=["x"], iters=30, convergence_tol=0.0)
     return m
 
@@ -91,7 +91,7 @@ def pooled_model():
 def pooled_model_explicit():
     """Explicit gamma_prior='pooled' — must give bit-for-bit identical result."""
     docs, x = _make_binary_corpus()
-    m = topica.STM(num_topics=2, seed=1)
+    m = topica.models.STM(num_topics=2, seed=1)
     m.fit(docs, x, prevalence_names=["x"], iters=30, convergence_tol=0.0, gamma_prior="pooled")
     return m
 
@@ -100,7 +100,7 @@ def pooled_model_explicit():
 def l1_model_high_dim():
     """L1 prior STM on the high-dimensional one-hot design."""
     docs, x = _make_high_dim_corpus()
-    m = topica.STM(num_topics=2, seed=1)
+    m = topica.models.STM(num_topics=2, seed=1)
     m.fit(docs, x, iters=30, convergence_tol=0.0, gamma_prior="l1")
     return m
 
@@ -109,7 +109,7 @@ def l1_model_high_dim():
 def pooled_model_high_dim():
     """Pooled (ridge) STM on the same high-dimensional design (for sparsity comparison)."""
     docs, x = _make_high_dim_corpus()
-    m = topica.STM(num_topics=2, seed=1)
+    m = topica.models.STM(num_topics=2, seed=1)
     m.fit(docs, x, iters=30, convergence_tol=0.0, gamma_prior="pooled")
     return m
 
@@ -203,45 +203,45 @@ class TestGammaPriorValidation:
 
     def test_invalid_gamma_prior_raises(self):
         docs, x = self._base_docs_and_x()
-        m = topica.STM(num_topics=2, seed=1)
+        m = topica.models.STM(num_topics=2, seed=1)
         with pytest.raises(ValueError, match="gamma_prior"):
             m.fit(docs, x, iters=2, convergence_tol=0.0, gamma_prior="bayes")
 
     def test_gamma_enet_zero_raises(self):
         docs, x = self._base_docs_and_x()
-        m = topica.STM(num_topics=2, seed=1)
+        m = topica.models.STM(num_topics=2, seed=1)
         with pytest.raises(ValueError, match="gamma_enet"):
             m.fit(docs, x, iters=2, convergence_tol=0.0, gamma_prior="l1", gamma_enet=0.0)
 
     def test_gamma_enet_negative_raises(self):
         docs, x = self._base_docs_and_x()
-        m = topica.STM(num_topics=2, seed=1)
+        m = topica.models.STM(num_topics=2, seed=1)
         with pytest.raises(ValueError, match="gamma_enet"):
             m.fit(docs, x, iters=2, convergence_tol=0.0, gamma_prior="l1", gamma_enet=-0.5)
 
     def test_gamma_enet_above_one_raises(self):
         docs, x = self._base_docs_and_x()
-        m = topica.STM(num_topics=2, seed=1)
+        m = topica.models.STM(num_topics=2, seed=1)
         with pytest.raises(ValueError, match="gamma_enet"):
             m.fit(docs, x, iters=2, convergence_tol=0.0, gamma_prior="l1", gamma_enet=1.5)
 
     def test_gamma_enet_one_accepted(self):
         docs, x = self._base_docs_and_x()
-        m = topica.STM(num_topics=2, seed=1)
+        m = topica.models.STM(num_topics=2, seed=1)
         m.fit(docs, x, iters=2, convergence_tol=0.0, gamma_prior="l1", gamma_enet=1.0)
         # No exception raised; doc_topic is accessible.
         assert m.doc_topic.shape[0] > 0
 
     def test_gamma_enet_midrange_accepted(self):
         docs, x = self._base_docs_and_x()
-        m = topica.STM(num_topics=2, seed=1)
+        m = topica.models.STM(num_topics=2, seed=1)
         m.fit(docs, x, iters=2, convergence_tol=0.0, gamma_prior="l1", gamma_enet=0.5)
         assert m.doc_topic.shape[0] > 0
 
     def test_pooled_accepts_any_gamma_enet(self):
         """gamma_enet is ignored for pooled prior — any value is fine."""
         docs, x = self._base_docs_and_x()
-        m = topica.STM(num_topics=2, seed=1)
+        m = topica.models.STM(num_topics=2, seed=1)
         # gamma_enet=0 is only rejected for l1; pooled ignores it entirely.
         m.fit(docs, x, iters=2, convergence_tol=0.0, gamma_prior="pooled", gamma_enet=0.0)
         assert m.doc_topic.shape[0] > 0

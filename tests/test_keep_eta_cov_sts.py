@@ -39,10 +39,10 @@ SEED = [float(i % 2) for i in range(len(DOCS))]
 class TestFitBitIdentical:
     def test_sts_doc_topic_equal(self):
         """STS fit with keep_eta_cov=False is bit-for-bit identical to True."""
-        m_keep = topica.STS(3, init="random", seed=0)
+        m_keep = topica.models.STS(3, init="random", seed=0)
         m_keep.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=True)
 
-        m_drop = topica.STS(3, init="random", seed=0)
+        m_drop = topica.models.STS(3, init="random", seed=0)
         m_drop.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=False)
 
         np.testing.assert_array_equal(
@@ -53,10 +53,10 @@ class TestFitBitIdentical:
 
     def test_sts_topic_word_equal(self):
         """STS topic_word is bit-identical with and without keep_eta_cov."""
-        m_keep = topica.STS(3, init="random", seed=0)
+        m_keep = topica.models.STS(3, init="random", seed=0)
         m_keep.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=True)
 
-        m_drop = topica.STS(3, init="random", seed=0)
+        m_drop = topica.models.STS(3, init="random", seed=0)
         m_drop.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=False)
 
         np.testing.assert_array_equal(
@@ -67,10 +67,10 @@ class TestFitBitIdentical:
 
     def test_sts_eta_mean_equal(self):
         """STS eta_mean is bit-identical with and without keep_eta_cov."""
-        m_keep = topica.STS(3, init="random", seed=0)
+        m_keep = topica.models.STS(3, init="random", seed=0)
         m_keep.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=True)
 
-        m_drop = topica.STS(3, init="random", seed=0)
+        m_drop = topica.models.STS(3, init="random", seed=0)
         m_drop.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=False)
 
         np.testing.assert_array_equal(
@@ -81,10 +81,10 @@ class TestFitBitIdentical:
 
     def test_sts_bound_equal(self):
         """STS bound is identical with and without keep_eta_cov."""
-        m_keep = topica.STS(3, init="random", seed=0)
+        m_keep = topica.models.STS(3, init="random", seed=0)
         m_keep.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=True)
 
-        m_drop = topica.STS(3, init="random", seed=0)
+        m_drop = topica.models.STS(3, init="random", seed=0)
         m_drop.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=False)
 
         assert m_keep.bound == m_drop.bound, (
@@ -99,14 +99,14 @@ class TestFitBitIdentical:
 class TestEtaCovGetterRaises:
     def test_sts_eta_cov_raises(self):
         """STS.eta_cov raises RuntimeError with useful message when not kept."""
-        m = topica.STS(3, init="random", seed=1)
+        m = topica.models.STS(3, init="random", seed=1)
         m.fit(DOCS, SEED, iters=3, convergence_tol=0, keep_eta_cov=False)
         with pytest.raises(RuntimeError, match="keep_eta_cov"):
             _ = m.eta_cov
 
     def test_sts_eta_cov_available_when_kept(self):
         """STS.eta_cov does NOT raise when keep_eta_cov=True (default)."""
-        m = topica.STS(3, init="random", seed=1)
+        m = topica.models.STS(3, init="random", seed=1)
         m.fit(DOCS, SEED, iters=3, convergence_tol=0, keep_eta_cov=True)
         cov = m.eta_cov  # should not raise
         assert cov is not None
@@ -119,10 +119,10 @@ class TestEtaCovGetterRaises:
 class TestRecomputeEtaCov:
     def test_sts_recompute_equals_stored(self):
         """_recompute_eta_cov output must equal what keep_eta_cov=True stores."""
-        m_keep = topica.STS(3, init="random", seed=2)
+        m_keep = topica.models.STS(3, init="random", seed=2)
         m_keep.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=True)
 
-        m_drop = topica.STS(3, init="random", seed=2)
+        m_drop = topica.models.STS(3, init="random", seed=2)
         m_drop.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=False)
 
         stored = np.asarray(m_keep.eta_cov, dtype=np.float32)
@@ -137,7 +137,7 @@ class TestRecomputeEtaCov:
     def test_sts_recompute_shape(self):
         """_recompute_eta_cov returns the correct (D, 2K-1, 2K-1) shape."""
         k = 3
-        m = topica.STS(k, init="random", seed=3)
+        m = topica.models.STS(k, init="random", seed=3)
         m.fit(DOCS, SEED, iters=3, convergence_tol=0, keep_eta_cov=False)
         cov = m._recompute_eta_cov()
         d = len(DOCS)
@@ -148,7 +148,7 @@ class TestRecomputeEtaCov:
 
     def test_sts_recompute_is_positive_definite(self):
         """Each recomputed covariance should be (approximately) positive definite."""
-        m = topica.STS(3, init="random", seed=4)
+        m = topica.models.STS(3, init="random", seed=4)
         m.fit(DOCS, SEED, iters=3, convergence_tol=0, keep_eta_cov=False)
         cov = np.asarray(m._recompute_eta_cov(), dtype=np.float64)
         # Check eigenvalues are all positive for a sample of documents.
@@ -160,10 +160,10 @@ class TestRecomputeEtaCov:
 
     def test_sts_recompute_allclose_to_stored(self):
         """Recomputed eta_cov is within float32 rounding of stored (allclose)."""
-        m_keep = topica.STS(3, init="random", seed=5)
+        m_keep = topica.models.STS(3, init="random", seed=5)
         m_keep.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=True)
 
-        m_drop = topica.STS(3, init="random", seed=5)
+        m_drop = topica.models.STS(3, init="random", seed=5)
         m_drop.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=False)
 
         stored = np.asarray(m_keep.eta_cov, dtype=np.float64)
@@ -182,7 +182,7 @@ class TestRecomputeEtaCov:
 class TestStsWorkflowWithKeepFalse:
     def test_sts_doc_topic_valid(self):
         """STS with keep_eta_cov=False still produces valid topic proportions."""
-        m = topica.STS(3, init="random", seed=6)
+        m = topica.models.STS(3, init="random", seed=6)
         m.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=False)
         theta = np.asarray(m.doc_topic)
         np.testing.assert_allclose(
@@ -193,7 +193,7 @@ class TestStsWorkflowWithKeepFalse:
     def test_sts_sentiment_shape(self):
         """STS sentiment has shape (D, K) with keep_eta_cov=False."""
         k = 3
-        m = topica.STS(k, init="random", seed=7)
+        m = topica.models.STS(k, init="random", seed=7)
         m.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=False)
         sent = np.asarray(m.sentiment)
         assert sent.shape == (len(DOCS), k), (
@@ -202,7 +202,7 @@ class TestStsWorkflowWithKeepFalse:
 
     def test_sts_recompute_after_keep_false_eta_mean_unchanged(self):
         """_recompute_eta_cov must not alter eta_mean."""
-        m = topica.STS(3, init="random", seed=8)
+        m = topica.models.STS(3, init="random", seed=8)
         m.fit(DOCS, SEED, iters=5, convergence_tol=0, keep_eta_cov=False)
         mean_before = np.asarray(m.eta_mean).copy()
         _ = m._recompute_eta_cov()
@@ -214,7 +214,7 @@ class TestStsWorkflowWithKeepFalse:
 
     def test_sts_keep_false_default_true_gives_eta_cov(self):
         """Default keep_eta_cov=True still stores eta_cov (no regression)."""
-        m = topica.STS(3, init="random", seed=9)
+        m = topica.models.STS(3, init="random", seed=9)
         m.fit(DOCS, SEED, iters=3, convergence_tol=0)  # default keep_eta_cov=True
         # Should not raise
         cov = m.eta_cov

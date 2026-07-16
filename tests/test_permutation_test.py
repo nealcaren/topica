@@ -30,7 +30,7 @@ def _planted_corpus(n=120, seed=0):
         block = a if flag == 1.0 else b
         docs.append(list(rng.choice(block, size=16, replace=True)))
     corpus = topica.Corpus.from_documents(docs)
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(corpus, iters=200)
     return m, docs, covariate
 
@@ -180,7 +180,7 @@ def test_corpus_object_accepted():
         block = a if flag == 1.0 else b
         docs.append(list(rng.choice(block, size=10, replace=True)))
     corpus = topica.Corpus.from_documents(docs)
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(corpus, iters=100)
     # Should not raise.
     results = topica.permutation_test(m, corpus, cov, n_perm=3, seed=0, iters=30)
@@ -242,7 +242,7 @@ def _planted_corpus_dmr(n=80, seed=0):
         for flag in covariate
     ]
     corpus = topica.Corpus.from_documents(docs)
-    m = topica.DMR(2, seed=3)
+    m = topica.models.DMR(2, seed=3)
     m.fit(corpus, features=covariate[:, None], iters=200)
     return m, docs, covariate
 
@@ -263,13 +263,13 @@ def test_covariate_threaded_into_refit(monkeypatch):
     m, docs, cov = _planted_corpus_dmr(n=60, seed=7)
 
     fit_calls = []
-    original_fit = topica.DMR.fit
+    original_fit = topica.models.DMR.fit
 
     def recording_fit(self, data, **kwargs):
         fit_calls.append(dict(kwargs))
         return original_fit(self, data, **kwargs)
 
-    monkeypatch.setattr(topica.DMR, "fit", recording_fit)
+    monkeypatch.setattr(topica.models.DMR, "fit", recording_fit)
 
     n_perm = 3
     topica.permutation_test(m, docs, cov, n_perm=n_perm, seed=0, iters=40)

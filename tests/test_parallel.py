@@ -21,7 +21,7 @@ import numpy as np
 import numpy.testing as npt
 import pytest
 
-from topica import LDA
+from topica.models import LDA
 
 
 # ---------------------------------------------------------------------------

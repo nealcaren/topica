@@ -37,7 +37,7 @@ def _two_group_corpus(seed=0):
 
 
 def _fit(texts, k=2, seed=0, iters=300):
-    m = topica.LDA(num_topics=k, seed=seed)
+    m = topica.models.LDA(num_topics=k, seed=seed)
     m.fit(texts, iters=iters)
     return m
 
@@ -121,7 +121,7 @@ class TestContrastiveTopics:
         # Any model exposing doc_topic + vocabulary should work, not just LDA.
         texts, groups = _two_group_corpus()
         x = np.array([[1.0] if g == "A" else [0.0] for g in groups])
-        model = topica.DMR(num_topics=2, seed=0)
+        model = topica.models.DMR(num_topics=2, seed=0)
         model.fit(texts, x, iters=300)
         rows = topica.contrastive_topics(model, texts, groups, min_count=2)
         assert len(rows) == 2

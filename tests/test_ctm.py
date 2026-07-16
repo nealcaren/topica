@@ -13,7 +13,8 @@ import numpy as np
 import numpy.testing as npt
 import pytest
 
-from topica import CTM, Corpus
+from topica.models import CTM
+from topica import Corpus
 
 
 # ---------------------------------------------------------------------------

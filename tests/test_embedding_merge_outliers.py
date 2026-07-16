@@ -29,10 +29,10 @@ def _data(k=4, block=6, e=8, seed=0, with_noise=True):
 def test_merge_topics(kind):
     docs, vocab, word_emb, doc_emb = _data(with_noise=False)
     if kind == "bertopic":
-        m = topica.BERTopic(min_cluster_size=8, seed=1)
+        m = topica.models.BERTopic(min_cluster_size=8, seed=1)
         m.fit(docs, doc_emb)
     else:
-        m = topica.Top2Vec(min_cluster_size=8, seed=1)
+        m = topica.models.Top2Vec(min_cluster_size=8, seed=1)
         m.fit(docs, doc_emb, word_embeddings=word_emb, vocabulary=vocab)
     before = m.num_topics
     assert before >= 3
@@ -47,10 +47,10 @@ def test_merge_topics(kind):
 def test_reduce_outliers(kind):
     docs, vocab, word_emb, doc_emb = _data(with_noise=True)
     if kind == "bertopic":
-        m = topica.BERTopic(min_cluster_size=8, min_samples=4, seed=1)
+        m = topica.models.BERTopic(min_cluster_size=8, min_samples=4, seed=1)
         m.fit(docs, doc_emb)
     else:
-        m = topica.Top2Vec(min_cluster_size=8, min_samples=4, seed=1)
+        m = topica.models.Top2Vec(min_cluster_size=8, min_samples=4, seed=1)
         m.fit(docs, doc_emb, word_embeddings=word_emb, vocabulary=vocab)
     n_out = sum(1 for l in m.labels if l < 0)
     if n_out == 0:

@@ -44,7 +44,7 @@ def test_combined_filters():
 class TestSummary:
     def test_summary_has_topics_and_words(self):
         docs = [["cat", "dog", "pet"]] * 20 + [["star", "moon", "sky"]] * 20
-        m = topica.LDA(num_topics=2, seed=1)
+        m = topica.models.LDA(num_topics=2, seed=1)
         m.fit(docs, iters=200)
         s = topica.summary(m, topn=3)
         assert "num_topics: 2" in s
@@ -53,7 +53,7 @@ class TestSummary:
 
     def test_summary_graceful_for_dtm(self):
         docs = [["cat", "dog", "pet"]] * 20 + [["star", "moon", "sky"]] * 20
-        m = topica.DTM(num_topics=2, seed=1)
+        m = topica.models.DTM(num_topics=2, seed=1)
         m.fit(docs, [0] * 20 + [1] * 20, iters=5)
         s = topica.summary(m)  # DTM.top_words needs (topic, time) -> per-topic omitted
         assert "num_times: 2" in s

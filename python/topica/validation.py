@@ -928,7 +928,7 @@ def search_k(
     coherence_n : top-word count used for coherence and exclusivity.
     coherence_type : one of ``"u_mass"``, ``"c_uci"``, ``"c_npmi"``, ``"c_v"`` (default ``"u_mass"``).
     """
-    from . import LDA, STM  # local import to avoid a cycle at module load
+    from ._topica import LDA, STM  # local import to avoid a cycle at module load
 
     if model not in ("lda", "stm"):
         raise ValueError("model must be 'lda' or 'stm'")
@@ -1078,7 +1078,7 @@ def select_model(
     ``exclusivity``, and ``run_seeds`` arrays of length equal to the
     number of survivors (all ``runs`` when ``fraction`` is ``None``).
     """
-    from . import (  # local import to avoid a cycle
+    from ._topica import (  # local import to avoid a cycle
         LDA, STM, CombinedTM, ETM, FASTopic, ProdLDA, ZeroShotTM,
     )
 
@@ -2146,7 +2146,7 @@ def bootstrap_stability(
     dict with ``topic`` (indices), ``stability`` (per-topic mean Jaccard in
     ``[0, 1]``), ``mean`` (overall), and ``reference`` (the reference model).
     """
-    from . import LDA  # local import to avoid a cycle at module load
+    from ._topica import LDA  # local import to avoid a cycle at module load
 
     # Accept a Corpus, matching the docstring and the sibling functions
     # (perplexity, prepare_pyldavis): pull its token lists before resampling.

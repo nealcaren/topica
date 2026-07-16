@@ -49,7 +49,7 @@ def _topica_script(docs_path: str, k: int) -> str:
         "import topica\n"
         f"docs = json.load(open({docs_path!r}))['docs']\n"
         "t0 = time.perf_counter()\n"
-        f"topica.LDA(num_topics={k}, seed=1, optimize_interval=0,"
+        f"topica.models.LDA(num_topics={k}, seed=1, optimize_interval=0,"
         " num_threads=1).fit(docs, iters=" + str(ITERS) + ")\n"
         "print('FIT_TIME', time.perf_counter() - t0)\n"
     )

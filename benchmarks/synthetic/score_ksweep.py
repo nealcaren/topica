@@ -66,13 +66,13 @@ def score(model):
 print(f"true K = {K_TRUE}\n")
 print(f"  {'fitted K':<10}{'coverage':>10}{'redundancy':>12}")
 for kfit in [2, 3, 4, 5, 6, 8, 10, 12, 16]:
-    m = topica.LDA(num_topics=kfit, seed=1); m.fit(docs_v, iters=600)
+    m = topica.models.LDA(num_topics=kfit, seed=1); m.fit(docs_v, iters=600)
     cov, red = score(m)
     tag = "  <- true" if kfit == K_TRUE else ("  (too few)" if kfit < K_TRUE else "")
     print(f"  {kfit:<10}{cov:>10.3f}{red:>12.2f}{tag}")
 
 # HDP discovers K nonparametrically
-h = topica.HDP(seed=1); h.fit(docs_v, iters=150)
+h = topica.models.HDP(seed=1); h.fit(docs_v, iters=150)
 print(f"\n  HDP discovered K = {h.num_topics}  (true {K_TRUE})")
 print("\n  Read: coverage falls when K too small (true topics merge);")
 print("  redundancy rises when K too big (extra topics are nobody's best match).")

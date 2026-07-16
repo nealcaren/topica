@@ -24,7 +24,7 @@ TWO_TOPIC_DOCS = [list(PETS)] * 40 + [list(SPACE)] * 40
 def _fit(docs, k=2, iters=300, **kw):
     opts = dict(num_topics=k, seed=1, sampler="warp", optimize_interval=0)
     opts.update(kw)
-    m = topica.LDA(**opts)
+    m = topica.models.LDA(**opts)
     m.fit(docs, iters=iters, num_samples=5, sample_interval=10)
     return m
 
@@ -52,14 +52,14 @@ def test_deterministic_with_fixed_seed():
 
 def test_sampler_aliases_accepted():
     for name in ("warp", "warplda"):
-        m = topica.LDA(num_topics=2, sampler=name)
+        m = topica.models.LDA(num_topics=2, sampler=name)
         m.fit(TWO_TOPIC_DOCS, iters=50)
         assert m.topic_word.shape[0] == 2
 
 
 def test_unknown_sampler_rejected():
     with pytest.raises(ValueError):
-        topica.LDA(num_topics=2, sampler="banana")
+        topica.models.LDA(num_topics=2, sampler="banana")
 
 
 def test_recovers_more_topics_at_larger_k():
@@ -87,7 +87,7 @@ def test_save_load_and_transform_round_trip(tmp_path):
     m = _fit(TWO_TOPIC_DOCS)
     path = str(tmp_path / "warplda_roundtrip.tt")
     m.save(path)
-    reloaded = topica.LDA.load(path)
+    reloaded = topica.models.LDA.load(path)
     npt.assert_allclose(m.topic_word, reloaded.topic_word)
 
     theta = m.transform([list(PETS), list(SPACE)])

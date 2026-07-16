@@ -34,7 +34,7 @@ def main():
     docs, groups, quarters = load()
     print(f"{len(docs)} posts | groups={sorted(set(groups))} | periods={sorted(set(quarters))}")
 
-    model = topica.ECTM(num_topics=10, seed=42)
+    model = topica.models.ECTM(num_topics=10, seed=42)
     model.fit(
         docs,
         times=quarters,

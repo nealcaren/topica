@@ -12,7 +12,8 @@ import os
 import tempfile
 
 import topica
-from topica import LDA, Corpus
+from topica.models import LDA
+from topica import Corpus
 
 print(f"topica version: {topica.__version__}")
 print()

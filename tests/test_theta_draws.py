@@ -23,13 +23,13 @@ def _toy_docs(n=40, vocab=12, lo=8, hi=15, seed=0):
 # A fitted model of each instrumented Gibbs family on a shared toy corpus.
 def _fit_each(docs, *, keep=True, num_draws=25):
     out = {}
-    m = topica.LDA(num_topics=4, seed=1)
+    m = topica.models.LDA(num_topics=4, seed=1)
     m.fit(docs, iters=120, keep_theta_draws=keep, num_theta_draws=num_draws)
     out["LDA"] = m
-    m = topica.SeededLDA({"a": ["w0", "w1"], "b": ["w5", "w6"]}, residual=2, seed=1)
+    m = topica.models.SeededLDA({"a": ["w0", "w1"], "b": ["w5", "w6"]}, residual=2, seed=1)
     m.fit(docs, iters=120, keep_theta_draws=keep, num_theta_draws=num_draws)
     out["SeededLDA"] = m
-    m = topica.KeyATM({"a": ["w0", "w1"], "b": ["w5", "w6"]}, num_topics=4, seed=1)
+    m = topica.models.KeyATM({"a": ["w0", "w1"], "b": ["w5", "w6"]}, num_topics=4, seed=1)
     m.fit(docs, iters=120, keep_theta_draws=keep, num_theta_draws=num_draws)
     out["KeyATM"] = m
     return out
@@ -92,7 +92,7 @@ def test_real_draws_capture_cross_sweep_variance():
     rng = np.random.default_rng(2)
     vocab = [f"w{i}" for i in range(24)]
     docs = [list(rng.choice(vocab, size=int(rng.integers(160, 240)))) for _ in range(40)]
-    m = topica.LDA(num_topics=4, seed=2)
+    m = topica.models.LDA(num_topics=4, seed=2)
     m.fit(docs, iters=300, num_theta_draws=40)
 
     real = np.asarray(m.theta_draws, dtype=float)
@@ -115,7 +115,7 @@ def test_real_draws_reflect_identifiability():
     for _ in range(80):
         block = a if rng.random() < 0.5 else b
         docs.append(list(rng.choice(block, size=40)))
-    m = topica.LDA(num_topics=2, seed=1)
+    m = topica.models.LDA(num_topics=2, seed=1)
     m.fit(docs, iters=250, num_theta_draws=40)
 
     real = np.asarray(m.theta_draws, dtype=float)
@@ -128,7 +128,7 @@ def test_real_draws_reflect_identifiability():
 
 def test_num_theta_draws_bounds_count():
     docs = _toy_docs()
-    m = topica.LDA(num_topics=3, seed=1)
+    m = topica.models.LDA(num_topics=3, seed=1)
     m.fit(docs, iters=200, num_theta_draws=10)
     assert np.asarray(m.theta_draws).shape[0] == 10
 
@@ -140,7 +140,7 @@ def test_keyatm_dynamic_draws_match_doc_order():
     vocab = [f"w{i}" for i in range(12)]
     docs = [list(rng.choice(vocab, size=12)) for _ in range(30)]
     timestamps = list(rng.permutation(np.repeat(np.arange(6), 5)))
-    m = topica.KeyATM({"a": ["w0", "w1"]}, num_topics=3, seed=1)
+    m = topica.models.KeyATM({"a": ["w0", "w1"]}, num_topics=3, seed=1)
     m.fit(docs, iters=120, timestamps=timestamps, num_states=2)
 
     td = np.asarray(m.theta_draws, dtype=float)

@@ -63,7 +63,7 @@ def _make_docs_continuous(n=100, seed=1):
 @pytest.fixture(scope="module")
 def lda_model():
     docs, treat = _make_docs(n=100, seed=0)
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(docs, iters=200)
     return m, treat
 
@@ -72,7 +72,7 @@ def lda_model():
 def stm_model():
     docs, treat = _make_docs(n=100, seed=0)
     X = treat.reshape(-1, 1)
-    m = topica.STM(2, seed=1)
+    m = topica.models.STM(2, seed=1)
     m.fit(docs, X, prevalence_names=["treat"], iters=50)
     return m, treat
 
@@ -81,7 +81,7 @@ def stm_model():
 def stm_continuous_model():
     docs, x = _make_docs_continuous(n=100, seed=1)
     X = x.reshape(-1, 1)
-    m = topica.STM(2, seed=2)
+    m = topica.models.STM(2, seed=2)
     m.fit(docs, X, prevalence_names=["x"], iters=50)
     return m, x
 
@@ -91,7 +91,7 @@ def keyatm_cov_model():
     docs, treat = _make_docs(n=100, seed=0)
     keywords = {"economics": ECON[:3], "military": MIL[:3]}
     X = treat.reshape(-1, 1)
-    m = topica.KeyATM(keywords, num_topics=2, seed=1)
+    m = topica.models.KeyATM(keywords, num_topics=2, seed=1)
     m.fit(docs, covariates=X, feature_names=["treat"], iters=300)
     return m, treat
 
@@ -529,7 +529,7 @@ def _make_docs_party(n=120, seed=7):
 def lda_party_model():
     """LDA fitted on docs with a categorical 'party' covariate."""
     docs, parties, years = _make_docs_party(n=120, seed=7)
-    m = topica.LDA(2, seed=3)
+    m = topica.models.LDA(2, seed=3)
     m.fit(docs, iters=200)
     meta = pd.DataFrame({"party": parties, "year": years})
     return m, meta

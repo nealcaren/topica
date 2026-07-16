@@ -41,7 +41,7 @@ def _planted(n_groups=10, docs_per=60, doc_len=18, seed=0):
 
 def _fit(seed=0, **kw):
     docs, groups, planted = _planted(seed=seed)
-    m = topica.PartyEmbeddings(
+    m = topica.models.PartyEmbeddings(
         num_dims=2, vector_size=48, window=5, min_count=1, negative=5,
         sample=1e-3, learning_rate=0.05, seed=seed,
     )
@@ -67,7 +67,7 @@ def test_recovers_planted_ordering():
 
 def test_anchors_orient_sign():
     docs, groups, planted = _planted(seed=1)
-    m = topica.PartyEmbeddings(num_dims=1, vector_size=48, window=5, min_count=1,
+    m = topica.models.PartyEmbeddings(num_dims=1, vector_size=48, window=5, min_count=1,
                                negative=5, sample=1e-3, learning_rate=0.05, seed=1)
     # anchor the most-left group negative and the most-right group positive
     m.fit(docs, group=groups, anchors={"P00": -1.0, "P09": 1.0}, iters=40)
@@ -106,7 +106,7 @@ def test_distance_orders_polarization():
 def test_control_tag_runs():
     docs, groups, _ = _planted(seed=2)
     control = ["era_early" if i % 2 == 0 else "era_late" for i in range(len(docs))]
-    m = topica.PartyEmbeddings(num_dims=1, vector_size=32, window=5, min_count=1,
+    m = topica.models.PartyEmbeddings(num_dims=1, vector_size=32, window=5, min_count=1,
                                negative=5, sample=1e-3, learning_rate=0.05, seed=2)
     m.fit(docs, group=groups, control=control, iters=10)
     assert m.author_positions.shape == (m.num_authors, 1)
@@ -125,7 +125,7 @@ def test_save_load_roundtrip(tmp_path):
     m, _ = _fit(seed=5)
     p = str(tmp_path / "pe.tt")
     m.save(p)
-    loaded = topica.PartyEmbeddings.load(p)
+    loaded = topica.models.PartyEmbeddings.load(p)
     assert np.array_equal(m.author_positions, loaded.author_positions)
     assert np.array_equal(m.author_vectors, loaded.author_vectors)
     assert m.author_names == loaded.author_names
@@ -134,18 +134,18 @@ def test_save_load_roundtrip(tmp_path):
 
 def test_bad_params():
     with pytest.raises(ValueError):
-        topica.PartyEmbeddings(num_dims=0)
+        topica.models.PartyEmbeddings(num_dims=0)
     with pytest.raises(ValueError):
-        topica.PartyEmbeddings(vector_size=1)
+        topica.models.PartyEmbeddings(vector_size=1)
     with pytest.raises(ValueError):
-        topica.PartyEmbeddings(negative=0)
+        topica.models.PartyEmbeddings(negative=0)
     # group is required and must match num_docs
-    m = topica.PartyEmbeddings(vector_size=16, min_count=1)
+    m = topica.models.PartyEmbeddings(vector_size=16, min_count=1)
     with pytest.raises(Exception):
         m.fit([["a", "b"], ["c", "d"]], group=["x"])  # wrong length
 
 
 def test_unfitted_raises():
-    m = topica.PartyEmbeddings()
+    m = topica.models.PartyEmbeddings()
     with pytest.raises(Exception):
         _ = m.author_positions

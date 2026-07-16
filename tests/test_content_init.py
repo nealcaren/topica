@@ -27,7 +27,7 @@ def _group_content_corpus(seed=0):
 
 
 def _fit(seed, docs, groups):
-    m = topica.STM(num_topics=2, seed=seed)  # init defaults to spectral
+    m = topica.models.STM(num_topics=2, seed=seed)  # init defaults to spectral
     m.fit(docs, content=groups, iters=80)
     return m
 

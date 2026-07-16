@@ -77,10 +77,10 @@ def _ensure_compiled(java_name: str) -> bool:
 
 
 def labeled_parity(seed: int = 0, iters: int = 800, top_n: int = 6):
-    """Compare topica.LabeledLDA to Java MALLET's LabeledLDA on a shared
+    """Compare topica.models.LabeledLDA to Java MALLET's LabeledLDA on a shared
     multi-label corpus. Topics correspond to labels, so they align by name.
     Returns a dict with mean cosine and per-label detail."""
-    from topica import LabeledLDA
+    from topica.models import LabeledLDA
 
     if not _ensure_compiled("LabeledLDADriver"):
         raise RuntimeError("could not compile LabeledLDADriver")
@@ -233,7 +233,7 @@ def lda_parity(seed: int = 0, k: int | None = None, iters: int = 800, top_n: int
 
     Returns a dict with `mean_jaccard`, `mean_cosine`, and per-topic detail.
     """
-    from topica import LDA
+    from topica.models import LDA
 
     docs, planted_k = planted_corpus(seed=seed)
     k = planted_k if k is None else k
@@ -266,12 +266,12 @@ def lda_parity(seed: int = 0, k: int | None = None, iters: int = 800, top_n: int
 
 
 def dmr_parity(seed: int = 0, iters: int = 800, num_docs: int = 160):
-    """Compare topica.DMR to Java MALLET's DMRTopicModel. Because DMR fits
+    """Compare topica.models.DMR to Java MALLET's DMRTopicModel. Because DMR fits
     feature weights with L-BFGS (which differs between implementations), this is
     a *statistical* check: do the topics align, and does the covariate's effect
     agree in sign? Returns topic cosine and the (space - animal) covariate effect
     from each implementation."""
-    from topica import DMR
+    from topica.models import DMR
 
     if not _ensure_compiled("DMRDriver"):
         raise RuntimeError("could not compile DMRDriver")

@@ -314,7 +314,7 @@ def _bench_stm(
             "docs = d['docs']; feat = d['feat']\n"
             "X = np.array(d['X'])\n"
             f"t0 = time.perf_counter()\n"
-            f"topica.STM(num_topics={STM_K}, init='spectral').fit("
+            f"topica.models.STM(num_topics={STM_K}, init='spectral').fit("
             f"    docs, X, prevalence_names=feat,"
             f"    iters={STM_EM_ITERS}, convergence_tol=0.0)\n"
             "print('FIT_TIME', time.perf_counter()-t0)\n"
@@ -371,7 +371,7 @@ def _bench_keyatm(
             "import topica\n"
             "docs = d['docs']; kws = d['kws']\n"
             f"t0 = time.perf_counter()\n"
-            f"topica.KeyATM(kws, num_topics={KEYATM_K}, seed=1).fit("
+            f"topica.models.KeyATM(kws, num_topics={KEYATM_K}, seed=1).fit("
             f"    docs, iters={KEYATM_ITERS}, num_threads={threads})\n"
             "print('FIT_TIME', time.perf_counter()-t0)\n"
         )
@@ -452,7 +452,7 @@ def _bench_lda(
             "import topica\n"
             "docs = d['docs']\n"
             f"t0 = time.perf_counter()\n"
-            f"topica.LDA(num_topics={LDA_K}, seed=1, optimize_interval=0,"
+            f"topica.models.LDA(num_topics={LDA_K}, seed=1, optimize_interval=0,"
             f"           num_threads={threads}).fit(docs, iters={LDA_ITERS})\n"
             "print('FIT_TIME', time.perf_counter()-t0)\n"
         )
@@ -552,7 +552,7 @@ def _bench_bertopic(
             # reducer="umap" to match reference BERTopic's UMAP -> HDBSCAN stage.
             # topica defaults to PCA (a faster reducer); matching the reducer
             # isolates implementation speed rather than reducer choice.
-            "topica.BERTopic(reducer='umap').fit_transform(docs, emb)\n"
+            "topica.models.BERTopic(reducer='umap').fit_transform(docs, emb)\n"
             "print('FIT_TIME', time.perf_counter()-t0)\n"
         )
         stdout_t, topica_rss = peak_rss_mb([PYTHON, "-c", py_topica])
@@ -965,7 +965,7 @@ def bench_tomotopy_matrix(
                 f"data = json.load(open({docs_pkl!r}))\n"
                 "docs = data['docs']\n"
                 f"t0 = time.perf_counter()\n"
-                f"topica.LDA(num_topics={K}, seed=1, optimize_interval=0,"
+                f"topica.models.LDA(num_topics={K}, seed=1, optimize_interval=0,"
                 f" num_threads=1).fit(docs, iters={ITERS})\n"
                 "print('FIT_TIME', time.perf_counter() - t0)\n"
             )
@@ -1008,7 +1008,7 @@ def bench_tomotopy_matrix(
                 f"data = json.load(open({docs_pkl!r}))\n"
                 "docs = data['docs']\n"
                 f"t0 = time.perf_counter()\n"
-                f"topica.CTM(num_topics={K}).fit(docs, iters={ITERS}, convergence_tol=0.0)\n"
+                f"topica.models.CTM(num_topics={K}).fit(docs, iters={ITERS}, convergence_tol=0.0)\n"
                 "print('FIT_TIME', time.perf_counter() - t0)\n"
             )
             py_tomo = (
@@ -1052,7 +1052,7 @@ def bench_tomotopy_matrix(
                 "rating = np.array(data['rating'])\n"
                 "features = rating.reshape(-1, 1)\n"
                 f"t0 = time.perf_counter()\n"
-                f"topica.DMR(num_topics={K}, seed=1).fit("
+                f"topica.models.DMR(num_topics={K}, seed=1).fit("
                 f"docs, features, iters={ITERS})\n"
                 "print('FIT_TIME', time.perf_counter() - t0)\n"
             )
@@ -1093,7 +1093,7 @@ def bench_tomotopy_matrix(
                 f"data = json.load(open({docs_pkl!r}))\n"
                 "docs = data['docs']\n"
                 f"t0 = time.perf_counter()\n"
-                f"m = topica.HDP(seed=42)\n"
+                f"m = topica.models.HDP(seed=42)\n"
                 f"m.fit(docs, iters={ITERS})\n"
                 "elapsed = time.perf_counter() - t0\n"
                 "print('FIT_TIME', elapsed)\n"
@@ -1151,7 +1151,7 @@ def bench_tomotopy_matrix(
                 f"data = json.load(open({docs_pkl!r}))\n"
                 "docs = data['docs']\n"
                 f"t0 = time.perf_counter()\n"
-                f"topica.PA(num_super={PA_SUPER}, num_sub={PA_SUB}, seed=1)"
+                f"topica.models.PA(num_super={PA_SUPER}, num_sub={PA_SUB}, seed=1)"
                 f".fit(docs, iters={ITERS})\n"
                 "print('FIT_TIME', time.perf_counter() - t0)\n"
             )
@@ -1194,7 +1194,7 @@ def bench_tomotopy_matrix(
                 f"data = json.load(open({docs_pkl!r}))\n"
                 "docs = data['docs']\n"
                 f"t0 = time.perf_counter()\n"
-                f"topica.PT(num_topics={K}, num_pseudo={PT_PSEUDO}, seed=1)"
+                f"topica.models.PT(num_topics={K}, num_pseudo={PT_PSEUDO}, seed=1)"
                 f".fit(docs, iters={ITERS})\n"
                 "print('FIT_TIME', time.perf_counter() - t0)\n"
             )
@@ -1239,7 +1239,7 @@ def bench_tomotopy_matrix(
                 "docs = data['docs']\n"
                 "y = np.array(data['rating'])\n"
                 f"t0 = time.perf_counter()\n"
-                f"topica.SupervisedLDA(num_topics={K}, seed=1)"
+                f"topica.models.SupervisedLDA(num_topics={K}, seed=1)"
                 f".fit(docs, y, iters={ITERS})\n"
                 "print('FIT_TIME', time.perf_counter() - t0)\n"
             )
@@ -1295,7 +1295,7 @@ def bench_tomotopy_matrix(
                 f"doc_labels = json.load(open({labels_pkl!r}))\n"
                 "docs = data['docs']\n"
                 f"t0 = time.perf_counter()\n"
-                f"topica.LabeledLDA(seed=1).fit("
+                f"topica.models.LabeledLDA(seed=1).fit("
                 f"docs, doc_labels, iters={ITERS})\n"
                 "print('FIT_TIME', time.perf_counter() - t0)\n"
             )

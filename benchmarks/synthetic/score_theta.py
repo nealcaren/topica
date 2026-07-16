@@ -73,9 +73,9 @@ def theta_cos(model):
 p = np.clip(theta_true, 1e-12, None)
 k_eff = np.exp(-(p * np.log(p)).sum(1))
 
-lda = topica.LDA(num_topics=K, seed=1); lda.fit(docs_v, iters=800)
-gsd = topica.GSDMM(num_topics=K, seed=1); gsd.fit(docs_v, iters=60)
-ctm = topica.CTM(num_topics=K, seed=1); ctm.fit(docs_v, iters=200)
+lda = topica.models.LDA(num_topics=K, seed=1); lda.fit(docs_v, iters=800)
+gsd = topica.models.GSDMM(num_topics=K, seed=1); gsd.fit(docs_v, iters=60)
+ctm = topica.models.CTM(num_topics=K, seed=1); ctm.fit(docs_v, iters=200)
 
 cos = {"LDA (admixture)": theta_cos(lda), "CTM (admixture)": theta_cos(ctm),
        "GSDMM (mixture)": theta_cos(gsd)}

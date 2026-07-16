@@ -31,7 +31,7 @@ def test_weights_change_results():
     docs = _corpus()
     out = {}
     for w in ("information-theory", "inv-freq", "none"):
-        m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+        m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
         m.fit(docs, iters=200, weights=w)
         out[w] = m.topic_word
     # Information-theory weighting should not reproduce the unweighted fit.
@@ -43,9 +43,9 @@ def test_weighting_demotes_stopwords():
     docs = _corpus()
     # Stopwords dominate raw frequency, so unweighted topics surface them; the
     # default information-theory weighting should push them out of the top words.
-    m_none = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m_none = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m_none.fit(docs, iters=300, weights="none")
-    m_inf = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m_inf = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m_inf.fit(docs, iters=300, weights="information-theory")
 
     def stopword_rank(model):
@@ -57,25 +57,25 @@ def test_weighting_demotes_stopwords():
 
 def test_default_is_information_theory():
     docs = _corpus()
-    m_default = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m_default = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m_default.fit(docs, iters=150)
-    m_inf = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m_inf = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     m_inf.fit(docs, iters=150, weights="information-theory")
     assert np.allclose(m_default.topic_word, m_inf.topic_word)
 
 
 def test_invalid_weights_rejected():
     docs = _corpus(n=40)
-    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m = topica.models.KeyATM(SEEDS, num_topics=2, seed=1)
     with pytest.raises(ValueError):
         m.fit(docs, iters=10, weights="tfidf")
 
 
 def test_weighting_deterministic():
     docs = _corpus(n=120)
-    m1 = topica.KeyATM(SEEDS, num_topics=2, seed=3)
+    m1 = topica.models.KeyATM(SEEDS, num_topics=2, seed=3)
     m1.fit(docs, iters=150, weights="information-theory")
-    m2 = topica.KeyATM(SEEDS, num_topics=2, seed=3)
+    m2 = topica.models.KeyATM(SEEDS, num_topics=2, seed=3)
     m2.fit(docs, iters=150, weights="information-theory")
     assert np.allclose(m1.topic_word, m2.topic_word)
     assert np.allclose(m1.doc_topic, m2.doc_topic)

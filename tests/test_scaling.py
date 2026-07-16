@@ -91,7 +91,7 @@ def test_polarization_ci_matches_model_surface():
             for _ in range(8):
                 docs.append(list(rng.choice([f"w{i}" for i in range(20)], size=25, p=p)))
                 group.append(f"{camp}_{a}")
-    m = topica.IdealPointTM(3, num_dims=1, seed=1)
+    m = topica.models.IdealPointTM(3, num_dims=1, seed=1)
     m.fit(docs, group=group)
     camp_of = {n: n.split("_")[0] for n in m.author_names}
     labels = [camp_of[n] for n in m.author_names]
@@ -191,7 +191,7 @@ def test_position_intervals_with_wordfish():
                 group.append(f"a{a}")
 
         def fit(idx):
-            m = topica.Wordfish(seed=1)
+            m = topica.models.Wordfish(seed=1)
             m.fit([docs[i] for i in idx], group=[group[i] for i in idx],
                   anchors={"a0": -1.0, "a23": 1.0}, iters=80)
             return m.author_names, m.author_positions[:, 0]
@@ -232,7 +232,7 @@ def test_split_half_reliability_with_idealpointlda():
                 group.append(f"a{a}")
 
         def fit(idx):
-            m = topica.IdealPointTM(num_topics=2, num_dims=1, seed=1)
+            m = topica.models.IdealPointTM(num_topics=2, num_dims=1, seed=1)
             m.fit([docs[i] for i in idx], group=[group[i] for i in idx], iters=30)
             return m.author_names, m.author_positions[:, 0]
 

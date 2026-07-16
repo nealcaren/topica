@@ -23,7 +23,8 @@ from pathlib import Path
 
 import pytest
 
-from topica import LDA, Corpus
+from topica.models import LDA
+from topica import Corpus
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SAMPLE_DOCS = REPO_ROOT / "examples" / "sample-docs.txt"

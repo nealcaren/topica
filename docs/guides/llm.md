@@ -18,7 +18,7 @@ without topica taking an API dependency.
 import topica
 
 # Bring a model: a callable, or model="gpt-4o-mini" via the topica[llm] adapter.
-model = topica.TopicGPT(backend=my_callable, assignment="hard")
+model = topica.models.TopicGPT(backend=my_callable, assignment="hard")
 model.fit(docs)                       # docs: a Corpus, raw strings, or token lists
 
 model.num_topics                      # discovered count (a fitted attribute, like HDP)
@@ -80,11 +80,11 @@ Override one stage and keep the rest — a partial dict merges over the defaults
 
 ```python
 # Adapt just the generation stage to your domain (keep {taxonomy} and {document}):
-model = topica.TopicGPT(backend=my_callable,
+model = topica.models.TopicGPT(backend=my_callable,
                         prompts={"generation": my_generation_template})
 
 # Or, equivalently, the convenience method (chainable, before fit):
-model = topica.TopicGPT(backend=my_callable).with_prompt("generation", my_generation_template)
+model = topica.models.TopicGPT(backend=my_callable).with_prompt("generation", my_generation_template)
 ```
 
 A custom `generation`/`assignment` template must keep the `{taxonomy}` and

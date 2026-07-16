@@ -69,8 +69,8 @@ Also check that the *same* topics emerge across **random seeds**, aligning topic
 between fits and scoring their overlap:
 
 ```python
-a = topica.LDA(num_topics=20, seed=1); a.fit(docs, iters=800)
-b = topica.LDA(num_topics=20, seed=2); b.fit(docs, iters=800)
+a = topica.models.LDA(num_topics=20, seed=1); a.fit(docs, iters=800)
+b = topica.models.LDA(num_topics=20, seed=2); b.fit(docs, iters=800)
 pairs = topica.align_topics(a, b)                    # one-to-one matching (Hungarian)
 print("stability across seeds:", topica.topic_stability([a, b], topn=10))
 ```

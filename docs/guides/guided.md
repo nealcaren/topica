@@ -19,7 +19,7 @@ freely. Faithful to the `seededlda` package (Watanabe): a seed word gets a
 ```python
 import topica
 
-model = topica.SeededLDA(
+model = topica.models.SeededLDA(
     {"economy": ["jobs", "wages", "tax"],
      "immigration": ["border", "visa", "deport"]},
     residual=3,           # 3 extra unseeded topics
@@ -40,7 +40,7 @@ distribution over only that topic's keywords or from the topic's full
 distribution; the learned mix is the **keyword rate**.
 
 ```python
-model = topica.KeyATM(
+model = topica.models.KeyATM(
     {"economy": ["jobs", "wages", "tax"],
      "immigration": ["border", "visa", "deport"]},
     num_topics=10,        # 2 keyword topics + 8 regular topics
@@ -68,7 +68,7 @@ An intercept is prepended; the learned coefficients are in `feature_effects`.
 ```python
 import numpy as np
 is_dem = np.array([...]).reshape(-1, 1)          # one row per document
-model = topica.KeyATM(seeds, num_topics=2, seed=1)
+model = topica.models.KeyATM(seeds, num_topics=2, seed=1)
 model.fit(docs, covariates=is_dem, feature_names=["is_dem"], iters=1000)
 
 model.feature_names       # ['intercept', 'is_dem']
@@ -98,7 +98,7 @@ the keyATM Supreme Court application (Eshima, Imai & Sasaki 2024, Section 3.3),
 documents carry a year and the model recovers when each topic rises or falls.
 
 ```python
-model = topica.KeyATM(seeds, num_topics=14, seed=1)
+model = topica.models.KeyATM(seeds, num_topics=14, seed=1)
 model.fit(docs, timestamps=years, num_states=5, iters=3000)
 
 model.time_labels        # ['1946', '1947', ..., '2012']  (T distinct timestamps)
@@ -130,7 +130,7 @@ import topica
 vocab = sorted({w for d in docs for w in d})
 emb = SentenceTransformer("all-MiniLM-L6-v2").encode(vocab)
 
-model = topica.EmbeddingLDA(num_topics=10, embeddings=emb, vocabulary=vocab,
+model = topica.models.EmbeddingLDA(num_topics=10, embeddings=emb, vocabulary=vocab,
                             top_m=20, weight=1.0)
 model.fit(docs, iters=1000)
 for i, words in enumerate(model.top_words(8)):

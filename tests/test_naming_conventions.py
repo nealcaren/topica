@@ -23,8 +23,8 @@ import topica
 
 def _model_classes():
     out = []
-    for name in dir(topica):
-        obj = getattr(topica, name)
+    for name in dir(topica.models):
+        obj = getattr(topica.models, name)
         if isinstance(obj, type) and hasattr(obj, "fit") and hasattr(obj, "num_topics"):
             out.append((name, obj))
     return sorted(out)
@@ -138,7 +138,7 @@ def test_num_topics_is_first_positional(name, cls):
 def test_covariate_models_accept_covariates_alias(name):
     """Every covariate model accepts ``covariates=`` on fit, the canonical
     cross-model alias, whatever its native primary name is."""
-    cls = getattr(topica, name)
+    cls = getattr(topica.models, name)
     fit_names = {p.name for p in _fit_params(cls)}
     assert "covariates" in fit_names, (
         f"{name}.fit must accept a 'covariates=' alias for the document "
@@ -150,7 +150,7 @@ def test_covariate_models_accept_covariates_alias(name):
 def test_temporal_models_accept_times(name):
     """Every temporal model accepts a ``times`` argument (the canonical name);
     ``timestamps`` may remain as an alias but ``times`` must exist."""
-    cls = getattr(topica, name)
+    cls = getattr(topica.models, name)
     fit_names = {p.name for p in _fit_params(cls)}
     assert "times" in fit_names, (
         f"{name}.fit must accept 'times' (the canonical per-document time index)"
@@ -161,7 +161,7 @@ def test_known_drift_entries_are_real():
     """Guard the worklist: every KNOWN_DRIFT entry must still exist, so the map
     is cleaned up as drift is fixed rather than rotting."""
     for (mname, pname) in KNOWN_DRIFT:
-        cls = getattr(topica, mname, None)
+        cls = getattr(topica.models, mname, None)
         assert cls is not None, f"KNOWN_DRIFT names unknown model {mname!r}"
         present = pname in _all_param_names(cls)
         assert present, (

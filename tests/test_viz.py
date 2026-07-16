@@ -33,7 +33,7 @@ def covariate_lda():
                 ["b0", "b1", "b2", "b3", "b4"]
         docs.append(list(rng.choice(block, size=12)))
     corpus = topica.Corpus.from_documents(docs)
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(corpus, iters=300)
     return m, corpus, x, [" ".join(d) for d in docs]
 
@@ -45,7 +45,7 @@ def bertopic():
     emb = np.vstack([rng.normal([0, 0], 0.4, (40, 2)), rng.normal([6, 0], 0.4, (40, 2))])
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        m = topica.BERTopic(min_cluster_size=15, seed=1)
+        m = topica.models.BERTopic(min_cluster_size=15, seed=1)
         m.fit(docs, emb)
     return m
 
@@ -162,7 +162,7 @@ def lda_k4():
         docs.append(list(rng.choice(blocks[g], size=10)))
         group.append(["north", "south"][g % 2])
         year.append(2000 + int(rng.integers(0, 3)))
-    m = topica.LDA(4, seed=1)
+    m = topica.models.LDA(4, seed=1)
     m.fit(docs, iters=300)
     return m, group, year, docs
 
@@ -225,7 +225,7 @@ def test_topic_correlation_eta_uses_model_sigma():
     for _ in range(150):
         base = ["a", "a", "b", "c"] if rng.random() < 0.5 else ["x", "y", "y", "z"]
         docs.append(list(rng.choice(base, size=10)))
-    m = topica.CTM(3, seed=1)
+    m = topica.models.CTM(3, seed=1)
     m.fit(docs, iters=15)
     cov = m.topic_covariance
     assert cov.shape == (2, 2)                      # K-1, reference dropped
@@ -346,7 +346,7 @@ def sage_content():
             base = ["health", "health", "care"] if g == 0 else ["health", "health", "clinic"]
         docs.append(list(rng.choice(base, size=8)))
         groups.append(["north", "south"][g])
-    m = topica.SAGE(2, seed=1)
+    m = topica.models.SAGE(2, seed=1)
     m.fit(docs, groups, iters=300, num_samples=2)
     return m, [" ".join(d) for d in docs]
 
@@ -393,7 +393,7 @@ def test_interactive_browser(tmp_path):
     pytest.importorskip("plotly")
     rng = np.random.default_rng(0)
     docs = [["a", "b", "c"]] * 15 + [["x", "y", "z"]] * 15
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(docs, iters=100)
     fig = viz.term_topic_browser(m, n=5)
     html = fig.to_html(full_html=False)

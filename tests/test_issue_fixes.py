@@ -30,7 +30,7 @@ def test_prepare_pyldavis_accepts_corpus():
     # #11: prepare_pyldavis takes a Corpus (no manual re-tokenizing).
     docs = [["cat", "dog", "pet"]] * 10 + [["star", "moon", "sky"]] * 10
     c = topica.Corpus.from_documents(docs)
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(c, iters=100)
     out = topica.prepare_pyldavis(m, c)  # must not raise on a Corpus
     assert out is not None
@@ -42,7 +42,7 @@ def test_keyatm_warns_on_oov_keywords():
     c = topica.Corpus.from_documents(docs)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        topica.KeyATM({"Health": ["health", "zzznotaword"]}, num_topics=2, seed=1).fit(c, iters=20)
+        topica.models.KeyATM({"Health": ["health", "zzznotaword"]}, num_topics=2, seed=1).fit(c, iters=20)
     msgs = " ".join(str(x.message) for x in w)
     assert "zzznotaword" in msgs and "vocabulary" in msgs
 
@@ -55,7 +55,7 @@ def test_empty_clustering_warns_and_diagnostics_guard():
     emb = rng.normal(0, 1e-3, (30, 5))
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        m = topica.BERTopic(min_cluster_size=15, seed=1)
+        m = topica.models.BERTopic(min_cluster_size=15, seed=1)
         m.fit(docs, emb)
     if m.num_topics == 0:
         assert any("no clusters" in str(x.message) for x in w)
@@ -71,17 +71,17 @@ def test_citation_handle():
 @pytest.mark.parametrize(
     "make",
     [
-        lambda: topica.LDA(-3),
-        lambda: topica.DMR(-1),
-        lambda: topica.CTM(-2),
-        lambda: topica.STM(-2),
-        lambda: topica.GSDMM(-1),
-        lambda: topica.PA(-1, 3),
-        lambda: topica.PA(3, -1),
-        lambda: topica.PT(-2),
-        lambda: topica.PT(2, num_pseudo=-1),
-        lambda: topica.HLDA(depth=-1),
-        lambda: topica.KeyATM({"a": ["x"]}, num_topics=-5),
+        lambda: topica.models.LDA(-3),
+        lambda: topica.models.DMR(-1),
+        lambda: topica.models.CTM(-2),
+        lambda: topica.models.STM(-2),
+        lambda: topica.models.GSDMM(-1),
+        lambda: topica.models.PA(-1, 3),
+        lambda: topica.models.PA(3, -1),
+        lambda: topica.models.PT(-2),
+        lambda: topica.models.PT(2, num_pseudo=-1),
+        lambda: topica.models.HLDA(depth=-1),
+        lambda: topica.models.KeyATM({"a": ["x"]}, num_topics=-5),
     ],
 )
 def test_negative_count_is_value_error(make):
@@ -93,18 +93,18 @@ def test_negative_count_is_value_error(make):
 def test_zero_num_topics_still_guarded():
     # #13: the existing zero guard keeps working.
     with pytest.raises(ValueError, match="num_topics must be >= 1"):
-        topica.LDA(0)
+        topica.models.LDA(0)
 
 
 def test_flexible_first_arg_accepts_model_or_matrix():
     # #10: frex/relevance/label_topics/topic_correlation/find_thoughts accept a
     # fitted model (the failing convention) as well as the raw matrix.
     docs = [["cat", "dog", "pet", "vet"]] * 12 + [["star", "moon", "sky", "sun"]] * 12
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(docs, iters=150)
     texts = [" ".join(d) for d in docs]
 
-    # model-first (previously raised "float() argument ... not 'topica.LDA'")
+    # model-first (previously raised "float() argument ... not 'topica.models.LDA'")
     assert topica.topic_correlation(m).cor.shape == (2, 2)
     assert len(topica.find_thoughts(m, texts, topic=0)) == 3
     assert len(topica.frex(m)) == 2
@@ -213,7 +213,7 @@ def test_top2vec_centroid_default_and_kwarg():
     # and top_words defaults to the centroid view when word_embeddings are present,
     # giving Top2Vec a headline distinct from BERTopic's c-TF-IDF.
     docs, vocab, word_emb, doc_emb = _planted_embeddings()
-    tv = topica.Top2Vec(min_cluster_size=8, seed=1)
+    tv = topica.models.Top2Vec(min_cluster_size=8, seed=1)
     tv.fit(docs, doc_emb, word_embeddings=word_emb, vocabulary=vocab)
 
     neigh = [w for w, _ in tv.topic_neighbors(0, n=4)]  # previously raised
@@ -230,7 +230,7 @@ def test_top2vec_centroid_requires_word_vectors():
     # #8: without word_embeddings, top_words falls back to c-TF-IDF and an explicit
     # centroid request gives a clear error.
     docs, _, _, doc_emb = _planted_embeddings()
-    tv = topica.Top2Vec(min_cluster_size=8, seed=1)
+    tv = topica.models.Top2Vec(min_cluster_size=8, seed=1)
     tv.fit(docs, doc_emb)
     assert isinstance(tv.top_words(3, topic=0), list)  # c-TF-IDF default, no raise
     with pytest.raises(ValueError, match="word_embeddings"):
@@ -254,7 +254,7 @@ def test_swappable_clusterer_assigns_every_doc(model_cls, clusterer):
     # #7: KMeans / agglomerative assign every document (no -1 noise bucket) to a
     # fixed number of clusters, unlike HDBSCAN.
     docs, doc_emb = _three_blobs()
-    cls = getattr(topica, model_cls)
+    cls = getattr(topica.models, model_cls)
     m = cls(min_cluster_size=8, clusterer=clusterer, num_clusters=3, seed=1)
     m.fit(docs, doc_emb)
     assert m.num_topics == 3
@@ -264,18 +264,18 @@ def test_swappable_clusterer_assigns_every_doc(model_cls, clusterer):
 def test_clusterer_validation():
     # #7: clear errors for the new knobs.
     with pytest.raises(ValueError, match="needs num_clusters"):
-        topica.BERTopic(clusterer="kmeans")
+        topica.models.BERTopic(clusterer="kmeans")
     with pytest.raises(ValueError, match="unknown clusterer"):
-        topica.Top2Vec(clusterer="dbscan")
+        topica.models.Top2Vec(clusterer="dbscan")
     with pytest.raises(ValueError, match="num_clusters must be >= 1"):
-        topica.Top2Vec(clusterer="kmeans", num_clusters=-2)
+        topica.models.Top2Vec(clusterer="kmeans", num_clusters=-2)
 
 
 def test_report_is_callable():
     # #12: report(model) works as a one-call overview (alias for summary).
     assert callable(topica.report)
     docs = [["cat", "dog"], ["star", "moon"]] * 8
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(docs, iters=50)
     assert topica.report(m) == topica.summary(m)
     assert "num_topics" in topica.report(m)

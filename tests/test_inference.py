@@ -12,7 +12,8 @@ import numpy as np
 import numpy.testing as npt
 import pytest
 
-from topica import LDA, Corpus, tokenize
+from topica.models import LDA
+from topica import Corpus, tokenize
 
 
 # ---------------------------------------------------------------------------

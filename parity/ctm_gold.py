@@ -90,7 +90,7 @@ def _to_r_vocab(raw: np.ndarray, vocab: list[str], r_vocab: list[str]) -> np.nda
 
 
 def _topica_cosine(docs, r_vocab, r_spectral) -> float:
-    from topica import CTM
+    from topica.models import CTM
 
     model = CTM(num_topics=K, init="spectral")
     model.fit(docs, iters=ITERS)
@@ -174,7 +174,7 @@ def run(verbose: bool = True) -> dict:
 
     # Refit on the EXACT corpus frozen in the gold (offline; no R).
     docs = harness.lines_to_docs(str(arrays["corpus"]))
-    from topica import CTM
+    from topica.models import CTM
 
     model = CTM(num_topics=K, init="spectral")
     model.fit(docs, iters=ITERS)

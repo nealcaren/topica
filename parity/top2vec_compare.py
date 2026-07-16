@@ -96,7 +96,7 @@ def run(verbose: bool = True) -> dict:
     min_cluster = 15
 
     # topica: shared embeddings, randomized-PCA reducer.
-    tv = topica.Top2Vec(n_components=5, min_cluster_size=min_cluster, seed=1)
+    tv = topica.models.Top2Vec(n_components=5, min_cluster_size=min_cluster, seed=1)
     tv.fit(docs, doc_emb, word_embeddings=word_emb, vocabulary=vocab)
     tv_labels = np.array(tv.labels)
     # Compare the class-based TF-IDF words (what BERTopic also reports); Top2Vec's

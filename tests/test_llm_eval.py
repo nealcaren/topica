@@ -186,7 +186,7 @@ def test_call_must_be_callable_or_str():
 def test_accepts_fitted_model_surface():
     # llm_coherence reads top_words / topic_word like the other diagnostics.
     docs = [["water", "river", "lake"]] * 20 + [["senate", "vote", "law"]] * 20
-    m = topica.LDA(num_topics=2, seed=1)
+    m = topica.models.LDA(num_topics=2, seed=1)
     m.fit(docs, iters=200)
     out = llm_coherence(m, backend=lambda p: "2", n_words=5)
     assert out.shape == (2,) and np.allclose(out, 2.0)

@@ -5,7 +5,8 @@ variational posterior, and spline/interaction design helpers.
 import numpy as np
 import pytest
 
-from topica import STM, CTM, stm
+from topica.models import STM, CTM
+from topica import stm
 
 
 @pytest.fixture(scope="module")

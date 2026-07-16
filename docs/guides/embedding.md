@@ -53,7 +53,7 @@ texts = [
 doc_emb = topica.llm_embed(texts, model="sentence-transformers/all-MiniLM-L6-v2")
 
 docs = [topica.tokenize(t, stopwords=topica.ENGLISH_STOPWORDS) for t in texts]
-model = topica.BERTopic(min_cluster_size=2, seed=1)
+model = topica.models.BERTopic(min_cluster_size=2, seed=1)
 model.fit(docs, doc_emb)
 print(topica.report(model))
 ```
@@ -65,7 +65,7 @@ it needs only the document embeddings. The topic count is discovered by the
 clustering, not set in advance.
 
 ```python
-model = topica.BERTopic(min_cluster_size=15, seed=1)
+model = topica.models.BERTopic(min_cluster_size=15, seed=1)
 model.fit(docs, doc_emb)
 
 model.num_topics                       # discovered
@@ -79,7 +79,7 @@ Two BERTopic features carry over. `nr_topics` merges the most similar topics dow
 to a target count:
 
 ```python
-model = topica.BERTopic(min_cluster_size=15, nr_topics=10, seed=1)
+model = topica.models.BERTopic(min_cluster_size=15, nr_topics=10, seed=1)
 model.fit(docs, doc_emb)
 ```
 
@@ -102,7 +102,7 @@ document embeddings) to get those nearest-word topics.
 vocab = sorted({w for d in docs for w in d})
 word_emb = embed(vocab)                          # (len(vocab), E)
 
-model = topica.Top2Vec(min_cluster_size=15, seed=1)
+model = topica.models.Top2Vec(min_cluster_size=15, seed=1)
 model.fit(docs, doc_emb, word_embeddings=word_emb, vocabulary=vocab)
 
 model.top_words(8, topic=0)            # default: centroid view (nearest word vectors)
@@ -135,7 +135,7 @@ import topica
 vocab = sorted({w for d in docs for w in d})
 word_emb = embed(vocab)                          # (len(vocab), E)
 
-model = topica.ETM(num_topics=20, seed=1)
+model = topica.models.ETM(num_topics=20, seed=1)
 model.fit(docs, word_emb, vocab)
 
 model.topic_word                       # (num_topics, vocab) β
@@ -160,7 +160,7 @@ corpora, and maps a new document with a single encoder pass rather than a
 per-document optimization.
 
 ```python
-model = topica.ETM(num_topics=20, inference="vae",
+model = topica.models.ETM(num_topics=20, inference="vae",
                    hidden_size=800, batch_size=1000, lr=0.005, seed=1)
 model.fit(docs, word_emb, vocab, iters=150)
 model.transform(new_docs)              # fast: one encoder forward pass
@@ -191,7 +191,7 @@ bag-of-words reconstruction plus the two transport costs.
 ```python
 import topica
 
-model = topica.FASTopic(num_topics=20, seed=1)
+model = topica.models.FASTopic(num_topics=20, seed=1)
 theta = model.fit_transform(docs, doc_emb)   # (num_docs, num_topics)
 
 model.topic_word                       # (num_topics, vocab) beta
@@ -235,7 +235,7 @@ import topica
 
 doc_emb = embed(docs)                    # (num_docs, E), your encoder of choice
 
-model = topica.CombinedTM(num_topics=20, seed=1)
+model = topica.models.CombinedTM(num_topics=20, seed=1)
 model.fit(docs, doc_emb, iters=150)
 
 model.topic_word                         # (num_topics, vocab) softmax(beta_k)
@@ -272,7 +272,7 @@ The constructor and surface match CombinedTM.
 ```python
 import topica
 
-model = topica.ZeroShotTM(num_topics=20, seed=1)
+model = topica.models.ZeroShotTM(num_topics=20, seed=1)
 model.fit(docs, embed(docs), iters=150)
 model.topic_word
 model.doc_topic
@@ -307,7 +307,7 @@ index; the topic-word distribution at each slice is `softmax(alpha_k^(t) . rho)`
 with `alpha` following a Gaussian random walk over time.
 
 ```python
-model = topica.DETM(num_topics=20, seed=1)
+model = topica.models.DETM(num_topics=20, seed=1)
 model.fit(docs, word_embeddings, vocabulary, times=year_index, iters=120)
 
 model.topic_word                 # (K, V): time-averaged topics
@@ -347,7 +347,7 @@ somewhere. Two ways out:
   corpora.
 
   ```python
-  model = topica.BERTopic(clusterer="kmeans", num_clusters=20, seed=1)
+  model = topica.models.BERTopic(clusterer="kmeans", num_clusters=20, seed=1)
   model.fit(docs, doc_emb)
   assert -1 not in model.labels
   ```
@@ -389,7 +389,7 @@ UMAP discovery fit (the discovery is stochastic, the prediction is not):
 
 ```python
 model.save("topics.tt")
-model = topica.BERTopic.load("topics.tt")   # reload, then transform() forever
+model = topica.models.BERTopic.load("topics.tt")   # reload, then transform() forever
 ```
 
 ## Richer topic words: n-grams

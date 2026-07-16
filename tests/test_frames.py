@@ -70,7 +70,7 @@ def test_from_dataframe_explicit_columns_and_stm_payoff():
     assert list(c.metadata.columns) == ["party"]
     # The aligned metadata feeds an STM prevalence design with no manual hstack.
     X = c.metadata["party"].eq("D").astype(float).values.reshape(-1, 1)
-    model = topica.STM(num_topics=2, seed=1)
+    model = topica.models.STM(num_topics=2, seed=1)
     model.fit(c, X, prevalence_names=["is_D"], iters=10)
     assert model.doc_topic.shape == (3, 2)
 

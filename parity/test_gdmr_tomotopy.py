@@ -70,7 +70,7 @@ def _make_corpus(
 
 def _fit_topica(docs, metadata):
     """Fit topica GDMR; return the fitted model."""
-    m = topica.GDMR(
+    m = topica.models.GDMR(
         num_topics=NUM_TOPICS,
         degrees=DEGREES,
         sigma=SIGMA,

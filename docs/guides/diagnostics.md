@@ -303,7 +303,7 @@ iteration cap, and `None` for models with no iterative objective (BERTopic,
 Top2Vec).
 
 ```python
-model = topica.LDA(num_topics=20, seed=1)
+model = topica.models.LDA(num_topics=20, seed=1)
 model.fit(docs, iters=500)
 
 model.converged        # True / False / None
@@ -356,7 +356,7 @@ workflow expects, computed from traces the model already keeps: the
 log-likelihood history and the thinned `theta_draws`.
 
 ```python
-model = topica.LDA(num_topics=20, seed=1)
+model = topica.models.LDA(num_topics=20, seed=1)
 model.fit(docs, iters=2000, num_theta_draws=200)   # more retained draws -> finer ESS
 
 d = topica.mcmc_diagnostics(model)

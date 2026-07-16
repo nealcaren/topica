@@ -127,7 +127,7 @@ def _beta_at_mean_sentiment(sts) -> np.ndarray:
 
 def _fit_topica(docs, rating, r_vocab):
     """Fit topica STS + STM on the slim corpus; return their R-vocab-aligned betas."""
-    from topica import STM, STS
+    from topica.models import STM, STS
 
     X = rating.reshape(-1, 1)
     sts = STS(num_topics=K, init="spectral")

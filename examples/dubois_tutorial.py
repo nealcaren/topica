@@ -37,7 +37,8 @@ import tempfile
 import numpy as np
 
 import topica
-from topica import Corpus, DTM, HDP, LDA, STM, stm, tokenize
+from topica.models import DTM, HDP, LDA, STM
+from topica import Corpus, stm, tokenize
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(HERE, "dubois_crisis.csv")
@@ -306,7 +307,7 @@ def main():
         "voting":    ["vote", "votes", "ballot", "suffrage", "franchise"],
         "africa":    ["africa", "african", "congo", "liberia", "empire"],
     }
-    ka = topica.KeyATM(seeds, num_topics=8, seed=1)
+    ka = topica.models.KeyATM(seeds, num_topics=8, seed=1)
     ka.fit(phrased_docs, iters=800)         # ~1500+ iters for a real run
     print("Seeded topics (and how much each leans on its keywords):")
     for t in range(len(seeds)):

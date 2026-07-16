@@ -27,7 +27,7 @@ TWO_TOPIC_DOCS = [list(PETS)] * 40 + [list(SPACE)] * 40
 def _fit(sampler, docs, k=2, **kw):
     opts = dict(num_topics=k, seed=1, sampler=sampler, optimize_interval=0)
     opts.update(kw)
-    m = topica.LDA(**opts)
+    m = topica.models.LDA(**opts)
     m.fit(docs, iters=300, num_samples=5, sample_interval=10)
     return m
 
@@ -61,20 +61,20 @@ def test_deterministic_with_fixed_seed():
 def test_mh_steps_validation():
     # mh_steps must be >= 1 for the alias sampler.
     with pytest.raises(ValueError):
-        topica.LDA(num_topics=2, sampler="lightlda", mh_steps=0)
+        topica.models.LDA(num_topics=2, sampler="lightlda", mh_steps=0)
     # unknown sampler name is rejected.
     with pytest.raises(ValueError):
-        topica.LDA(num_topics=2, sampler="banana")
+        topica.models.LDA(num_topics=2, sampler="banana")
 
 
 def test_sampler_aliases_accepted():
     # Friendly aliases resolve to the same backend.
     for name in ["lightlda", "light", "alias"]:
-        m = topica.LDA(num_topics=2, sampler=name)
+        m = topica.models.LDA(num_topics=2, sampler=name)
         m.fit(TWO_TOPIC_DOCS, iters=50)
         assert m.topic_word.shape[0] == 2
     for name in ["sparse", "mallet"]:
-        topica.LDA(num_topics=2, sampler=name)
+        topica.models.LDA(num_topics=2, sampler=name)
 
 
 def test_save_load_and_transform_round_trip():
@@ -82,7 +82,7 @@ def test_save_load_and_transform_round_trip():
     path = os.path.join(tempfile.gettempdir(), "lightlda_roundtrip.tt")
     try:
         m.save(path)
-        reloaded = topica.LDA.load(path)
+        reloaded = topica.models.LDA.load(path)
         assert np.allclose(m.topic_word, reloaded.topic_word)
     finally:
         if os.path.exists(path):
@@ -106,7 +106,7 @@ def test_topic_quality_matches_sparse_on_real_corpus():
     corpus = Corpus.from_documents(docs, min_doc_freq=10, max_doc_fraction=0.5, rm_top=20)
 
     def mean_cv(sampler):
-        m = topica.LDA(num_topics=15, seed=1, sampler=sampler)
+        m = topica.models.LDA(num_topics=15, seed=1, sampler=sampler)
         m.fit(corpus, iters=400)
         return float(np.mean(topica.coherence(m, docs, coherence_type="c_v", topn=10)))
 

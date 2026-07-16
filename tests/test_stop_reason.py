@@ -20,7 +20,7 @@ def _corpus(seed=0):
 
 
 def test_stop_reason_max_iters_when_tol_disabled():
-    m = topica.LDA(num_topics=3, seed=1)
+    m = topica.models.LDA(num_topics=3, seed=1)
     m.fit(_corpus(), iters=40, convergence_tol=0.0)
     assert not m.converged
     msg = topica.stop_reason(m)
@@ -30,7 +30,7 @@ def test_stop_reason_max_iters_when_tol_disabled():
 
 
 def test_stop_reason_converged_when_tol_loose():
-    m = topica.LDA(num_topics=3, seed=1)
+    m = topica.models.LDA(num_topics=3, seed=1)
     # A very loose tolerance trips on the first recorded relative change.
     m.fit(_corpus(), iters=400, convergence_tol=10.0, check_every=10)
     assert m.converged
@@ -44,7 +44,7 @@ def test_stop_reason_variational_model():
     rng = np.random.default_rng(0)
     docs = _corpus(1)
     cov = rng.integers(0, 2, len(docs)).astype(float).reshape(-1, 1)
-    m = topica.STM(num_topics=3, seed=1)
+    m = topica.models.STM(num_topics=3, seed=1)
     m.fit(docs, cov, prevalence_names=["g"], iters=20, convergence_tol=0.0)
     msg = topica.stop_reason(m)
     assert "iteration cap" in msg or msg.startswith("converged")

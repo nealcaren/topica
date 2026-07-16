@@ -200,7 +200,7 @@ SEEDS = (0, 1, 2)
 def _topica_fit(token_docs, seed):
     import topica
 
-    tm = topica.ProdLDA(
+    tm = topica.models.ProdLDA(
         num_topics=NUM_TOPICS, alpha=ALPHA, hidden_size=HIDDEN, dropout=DROPOUT,
         batch_size=BATCH, lr=LR, seed=seed,
     )

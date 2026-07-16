@@ -14,7 +14,7 @@ Run it (e.g. in Colab):
 What maps cleanly:
   - CountVectorizer(ngram_range, min_df)      -> topica.add_ngrams(docs, ...)
   - MaximalMarginalRelevance(diversity)       -> topica.mmr(model, word_embeddings, ...)
-  - UMAP + HDBSCAN + class-based TF-IDF      -> topica.BERTopic(reducer="umap", ...)
+  - UMAP + HDBSCAN + class-based TF-IDF      -> topica.models.BERTopic(reducer="umap", ...)
   - get_topic_info()                          -> topica.diagnostics(model, texts)
   - get_topic(i)                              -> model.top_words(n, topic=i)
   - set_topic_labels(...)                     -> topica.set_topic_labels(model, ...)
@@ -63,7 +63,7 @@ def main():
     docs = topica.add_ngrams(docs, ngram_range=(1, 2), min_df=2)
 
     # --- Reduce (UMAP) + cluster (HDBSCAN) + represent (c-TF-IDF) ---------
-    topic_model = topica.BERTopic(
+    topic_model = topica.models.BERTopic(
         reducer="umap", n_neighbors=15, n_components=5,  # UMAP(n_neighbors=15, n_components=5)
         min_cluster_size=150,                            # HDBSCAN(min_cluster_size=150)
         seed=42,
@@ -111,7 +111,7 @@ def main():
     # --- Serialization: freeze the (stochastic UMAP) discovery fit -------
     # save -> load -> predict, so a good fit is reusable without refitting.
     topic_model.save("my_topica_model.tt")
-    loaded_model = topica.BERTopic.load("my_topica_model.tt")
+    loaded_model = topica.models.BERTopic.load("my_topica_model.tt")
 
     # --- Inference on new documents --------------------------------------
     new_theta = loaded_model.transform(docs[:100])

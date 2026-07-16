@@ -9,7 +9,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from topica import LDA, stm
+from topica.models import LDA
+from topica import stm
 
 
 # ---------------------------------------------------------------------------
@@ -604,11 +605,11 @@ def test_stm_beta_init_warm_start():
     rng = np.random.default_rng(0)
     docs, x = _make_synthetic_corpus(rng, n_per_class=60)
     X = x.reshape(-1, 1)
-    spec = topica.STM(num_topics=2, seed=1)
+    spec = topica.models.STM(num_topics=2, seed=1)
     spec.fit(docs, prevalence=X, iters=0)  # pure spectral-init topic-word
-    warm = topica.STM(num_topics=2, seed=1)
+    warm = topica.models.STM(num_topics=2, seed=1)
     warm.fit(docs, prevalence=X, iters=10, beta_init=spec.topic_word)
-    default = topica.STM(num_topics=2, seed=1)
+    default = topica.models.STM(num_topics=2, seed=1)
     default.fit(docs, prevalence=X, iters=10)
     np.testing.assert_allclose(warm.topic_word, default.topic_word, atol=1e-9)
 
@@ -620,7 +621,7 @@ def test_content_kappa_reconstructs_content_beta():
     rng = np.random.default_rng(0)
     docs, x = _make_synthetic_corpus(rng, n_per_class=60)
     groups = ["a" if xi == 1 else "b" for xi in x]
-    m = topica.STM(num_topics=2, seed=1)
+    m = topica.models.STM(num_topics=2, seed=1)
     m.fit(docs, content=groups, iters=40)
     ck = m.content_kappa
     K, V, G = m.num_topics, len(m.vocabulary), len(m.groups)
@@ -641,7 +642,7 @@ def test_content_kappa_requires_content():
     import topica
     rng = np.random.default_rng(0)
     docs, x = _make_synthetic_corpus(rng, n_per_class=40)
-    m = topica.STM(num_topics=2, seed=1)
+    m = topica.models.STM(num_topics=2, seed=1)
     m.fit(docs, prevalence=x.reshape(-1, 1), iters=20)  # prevalence, no content
     with pytest.raises(RuntimeError, match="without content"):
         _ = m.content_kappa
@@ -652,10 +653,10 @@ def test_content_kappa_save_load(tmp_path):
     rng = np.random.default_rng(0)
     docs, x = _make_synthetic_corpus(rng, n_per_class=50)
     groups = ["a" if xi == 1 else "b" for xi in x]
-    m = topica.STM(num_topics=2, seed=1)
+    m = topica.models.STM(num_topics=2, seed=1)
     m.fit(docs, content=groups, iters=30)
     p = str(tmp_path / "m.tt")
     m.save(p)
-    loaded = topica.STM.load(p)
+    loaded = topica.models.STM.load(p)
     for key in ("m", "kappa_topic", "kappa_cov", "kappa_interaction"):
         np.testing.assert_allclose(m.content_kappa[key], loaded.content_kappa[key])

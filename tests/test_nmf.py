@@ -23,14 +23,14 @@ def _planted(k=3, block=8, n=240, length=15, seed=0):
 
 
 def test_construction_defaults():
-    m = topica.NMF(3)
+    m = topica.models.NMF(3)
     assert m.num_topics == 3
     assert "NMF(num_topics=3" in repr(m)
 
 
 def test_fit_recovers_planted_blocks():
     docs, vocab, _ = _planted()
-    m = topica.NMF(3)
+    m = topica.models.NMF(3)
     m.fit(docs)
 
     assert m.num_topics == 3
@@ -55,7 +55,7 @@ def test_fit_recovers_planted_blocks():
 
 def test_four_method_surface():
     docs, vocab, _ = _planted()
-    m = topica.NMF(3)
+    m = topica.models.NMF(3)
     m.fit(docs)
 
     # topic_word, doc_topic, top_words, save/load are the contract; plus the
@@ -78,7 +78,7 @@ def test_four_method_surface():
 
 def test_top_words():
     docs, _, _ = _planted()
-    m = topica.NMF(3)
+    m = topica.models.NMF(3)
     m.fit(docs)
     allw = m.top_words(5)
     assert len(allw) == 3
@@ -92,12 +92,12 @@ def test_top_words():
 
 def test_save_load_roundtrip(tmp_path):
     docs, _, _ = _planted()
-    m = topica.NMF(3, beta_loss="kullback-leibler", init="random", seed=7)
+    m = topica.models.NMF(3, beta_loss="kullback-leibler", init="random", seed=7)
     m.fit(docs)
     path = str(tmp_path / "nmf.bin")
     m.save(path)
 
-    loaded = topica.NMF.load(path)
+    loaded = topica.models.NMF.load(path)
     assert loaded.num_topics == 3
     assert np.array_equal(loaded.topic_word, m.topic_word)
     assert np.array_equal(loaded.doc_topic, m.doc_topic)
@@ -108,7 +108,7 @@ def test_save_load_roundtrip(tmp_path):
 @pytest.mark.parametrize("beta_loss", ["frobenius", "kullback-leibler", "kl"])
 def test_beta_loss_values(beta_loss):
     docs, vocab, _ = _planted()
-    m = topica.NMF(3, beta_loss=beta_loss)
+    m = topica.models.NMF(3, beta_loss=beta_loss)
     m.fit(docs)
     assert m.topic_word.shape == (3, len(set(vocab)))
     assert np.allclose(m.topic_word.sum(axis=1), 1.0)
@@ -117,7 +117,7 @@ def test_beta_loss_values(beta_loss):
 @pytest.mark.parametrize("init", ["nndsvd", "random"])
 def test_init_values(init):
     docs, _, _ = _planted()
-    m = topica.NMF(3, init=init, seed=3)
+    m = topica.models.NMF(3, init=init, seed=3)
     m.fit(docs)
     assert np.allclose(m.doc_topic.sum(axis=1), 1.0)
 
@@ -125,16 +125,16 @@ def test_init_values(init):
 def test_determinism_same_seed():
     docs, _, _ = _planted()
     # NNDSVD init is seed-independent and deterministic.
-    a = topica.NMF(3, init="nndsvd")
+    a = topica.models.NMF(3, init="nndsvd")
     a.fit(docs)
-    b = topica.NMF(3, init="nndsvd")
+    b = topica.models.NMF(3, init="nndsvd")
     b.fit(docs)
     assert np.array_equal(a.topic_word, b.topic_word)
     assert np.array_equal(a.doc_topic, b.doc_topic)
     # Random init is reproducible from the seed.
-    c = topica.NMF(3, init="random", seed=11)
+    c = topica.models.NMF(3, init="random", seed=11)
     c.fit(docs)
-    d = topica.NMF(3, init="random", seed=11)
+    d = topica.models.NMF(3, init="random", seed=11)
     d.fit(docs)
     assert np.array_equal(c.topic_word, d.topic_word)
     assert np.array_equal(c.doc_topic, d.doc_topic)
@@ -142,7 +142,7 @@ def test_determinism_same_seed():
 
 def test_weighting_tfidf():
     docs, vocab, _ = _planted()
-    m = topica.NMF(3, weighting="tfidf")
+    m = topica.models.NMF(3, weighting="tfidf")
     m.fit(docs)
     assert m.topic_word.shape == (3, len(set(vocab)))
     assert np.allclose(m.topic_word.sum(axis=1), 1.0)
@@ -150,27 +150,27 @@ def test_weighting_tfidf():
 
 def test_input_validation():
     with pytest.raises(Exception):
-        topica.NMF(1)  # K < 2
+        topica.models.NMF(1)  # K < 2
     with pytest.raises(Exception):
-        topica.NMF(3, beta_loss="nonsense")
+        topica.models.NMF(3, beta_loss="nonsense")
     with pytest.raises(Exception):
-        topica.NMF(3, init="nonsense")
+        topica.models.NMF(3, init="nonsense")
     with pytest.raises(Exception):
-        topica.NMF(3, weighting="nonsense")
+        topica.models.NMF(3, weighting="nonsense")
 
     docs, _, _ = _planted(k=3, block=2)  # vocabulary size 6
-    m = topica.NMF(20)  # K > V
+    m = topica.models.NMF(20)  # K > V
     with pytest.raises(Exception):
         m.fit(docs)
 
-    empty = topica.NMF(3)
+    empty = topica.models.NMF(3)
     with pytest.raises(Exception):
         empty.fit([])
 
 
 def test_iters_override():
     docs, _, _ = _planted()
-    m = topica.NMF(3, convergence_tol=0.0)
+    m = topica.models.NMF(3, convergence_tol=0.0)
     m.fit(docs, iters=5)
     assert m.iters_run == 5
     assert len(m.error_history) == 6  # initial error + one per iteration

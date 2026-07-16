@@ -161,7 +161,7 @@ def run(verbose: bool = True) -> dict:
     if not r_keyatm_available():
         raise RuntimeError("Rscript with the 'keyATM' package is not available")
 
-    from topica import KeyATM
+    from topica.models import KeyATM
 
     docs, keywords = load_and_prep()
     num_keyword = len(keywords)

@@ -424,7 +424,7 @@ def _bootstrap_refits(model, docs, *, n_boot, topn, seed, model_factory, refit, 
     resample. `refit(picks)->fitted model` overrides the default
     factory+fit path (use it for embedding models, where embeddings must be
     resampled alongside the documents)."""
-    from . import LDA
+    from ._topica import LDA
 
     k = np.asarray(model.topic_word).shape[0]
     _, ref_sets = _top_word_strings(model, topn)

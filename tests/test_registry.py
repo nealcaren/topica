@@ -18,8 +18,8 @@ _DETERMINISM = {"bit-exact", "seed-reproducible", "llm-bounded"}
 
 def _exported_model_classes() -> set[str]:
     names = set()
-    for name in topica.__all__:
-        obj = getattr(topica, name)
+    for name in topica.models.__all__:
+        obj = getattr(topica.models, name)
         if (inspect.isclass(obj) and hasattr(obj, "fit")
                 and name not in _NON_MODEL_CLASSES):
             names.add(name)
@@ -41,7 +41,7 @@ def test_no_registry_entry_without_an_exported_model():
 def test_registry_name_matches_key_and_resolves():
     for key, info in REGISTRY.items():
         assert info.name == key
-        assert hasattr(topica, info.name), f"{info.name} not importable from topica"
+        assert hasattr(topica.models, info.name), f"{info.name} not importable from topica.models"
 
 
 def test_registry_fields_use_allowed_vocabularies():

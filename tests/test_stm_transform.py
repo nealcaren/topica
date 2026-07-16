@@ -18,7 +18,8 @@ import numpy.testing as npt
 import pytest
 
 import topica
-from topica import STM, stm
+from topica.models import STM
+from topica import stm
 
 
 # ---------------------------------------------------------------------------

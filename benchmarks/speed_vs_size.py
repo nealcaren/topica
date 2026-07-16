@@ -98,7 +98,7 @@ def _r_time(out: str) -> float:
 
 
 def bench_stm(docs, rating, day):
-    from topica import STM
+    from topica.models import STM
     from topica.stm import spline
 
     sb, _ = spline(day, df=10)
@@ -122,7 +122,7 @@ def bench_stm(docs, rating, day):
 
 
 def bench_keyatm(docs, vocab):
-    from topica import KeyATM
+    from topica.models import KeyATM
 
     kws = {n: [w for w in ws if w in vocab] for n, ws in KA.KEYWORD_SETS.items()}
     kws = {n: ws for n, ws in kws.items() if ws}
@@ -143,7 +143,7 @@ def bench_keyatm(docs, vocab):
 
 
 def bench_lda(docs):
-    from topica import LDA
+    from topica.models import LDA
 
     mallet = shutil.which("mallet")
     r = None

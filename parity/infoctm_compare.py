@@ -194,7 +194,7 @@ def run(verbose: bool = True) -> dict:
         trans[ia[wa], ib[wb]] = 1.0
 
     # topica
-    m = topica.InfoCTM(num_topics=K, seed=1, hidden_size=HIDDEN, lr=0.01)
+    m = topica.models.InfoCTM(num_topics=K, seed=1, hidden_size=HIDDEN, lr=0.01)
     m.fit(docs_a, docs_b, dictionary=dictionary, iters=ITERS, batch_size=64)
     t_a = m.topic_word(lang="a"); t_b = m.topic_word(lang="b")
     # align topica vocab order to vocab_a/vocab_b

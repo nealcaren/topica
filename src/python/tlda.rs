@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 /// Online Tensor LDA (TensorLDA) topic model.
 /// Gated behind `topica.enable_experimental()`.
-#[pyclass(module = "topica")]
+#[pyclass(module = "topica.models")]
 pub struct TensorLDA {
     num_topics: usize,
     alpha_0: f64,

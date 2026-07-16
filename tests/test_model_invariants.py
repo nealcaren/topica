@@ -119,35 +119,35 @@ def _theta_from_doc_paths(model):
 
 def _fit_lda(iters=200):
     docs, _ = _planted_blocks(seed=0)
-    m = topica.LDA(num_topics=K, seed=1)
+    m = topica.models.LDA(num_topics=K, seed=1)
     m.fit(docs, iters=iters, num_samples=2, sample_interval=5)
     return m.doc_topic, m.topic_word, K
 
 
 def _fit_ctm(iters=60):
     docs, _ = _planted_blocks(seed=0)
-    m = topica.CTM(num_topics=K, seed=1)
+    m = topica.models.CTM(num_topics=K, seed=1)
     m.fit(docs, iters=iters)
     return m.doc_topic, m.topic_word, K
 
 
 def _fit_prodlda(iters=150):
     docs, _ = _planted_blocks(seed=0)
-    m = topica.ProdLDA(num_topics=K, batch_size=64, lr=0.01, dropout=0.0, seed=1)
+    m = topica.models.ProdLDA(num_topics=K, batch_size=64, lr=0.01, dropout=0.0, seed=1)
     m.fit(docs, iters=iters)
     return m.doc_topic, m.topic_word, K
 
 
 def _fit_hdp(iters=150):
     docs, _ = _planted_blocks(k=K, seed=0)
-    m = topica.HDP(seed=1, alpha=1.0, gamma=1.0)
+    m = topica.models.HDP(seed=1, alpha=1.0, gamma=1.0)
     m.fit(docs, iters=iters)
     return m.doc_topic, m.topic_word, m.num_topics
 
 
 def _fit_nmf(iters=None):
     docs, _ = _planted_blocks(seed=0)
-    m = topica.NMF(K, seed=1)
+    m = topica.models.NMF(K, seed=1)
     m.fit(docs)
     return m.doc_topic, m.topic_word, K
 
@@ -157,7 +157,7 @@ def _fit_lsa(iters=None):
     # distribution by absolute loading per document so the health check is
     # meaningful (a collapse would still pile abs-loading onto one component).
     docs, _ = _planted_blocks(seed=0)
-    m = topica.LSA(K, seed=1)
+    m = topica.models.LSA(K, seed=1)
     m.fit(docs)
     dt = np.abs(np.asarray(m.doc_topic))
     dt = dt / dt.sum(axis=1, keepdims=True)
@@ -173,7 +173,7 @@ def _fit_anchorlda(iters=None):
     topica.enable_experimental(True)
     try:
         docs, _ = _planted_blocks(seed=0)
-        m = topica.AnchorLDA(K, min_count=2, seed=1)
+        m = topica.models.AnchorLDA(K, min_count=2, seed=1)
         m.fit(docs)
         return m.doc_topic, m.topic_word, K
     finally:
@@ -185,7 +185,7 @@ def _fit_tensorlda(iters=50):
     topica.enable_experimental(True)
     try:
         docs, _ = _planted_blocks(seed=0)
-        m = topica.TensorLDA(num_topics=K, alpha_0=1.0, seed=1)
+        m = topica.models.TensorLDA(num_topics=K, alpha_0=1.0, seed=1)
         m.fit(docs, iters=iters)
         return m.doc_topic, m.topic_word, K
     finally:
@@ -207,7 +207,7 @@ def _covariate_corpus(seed=0):
 
 def _fit_stm(iters=60):
     docs, _, X, _ = _covariate_corpus()
-    m = topica.STM(num_topics=K, seed=1)
+    m = topica.models.STM(num_topics=K, seed=1)
     m.fit(docs, prevalence=X, iters=iters)
     return m.doc_topic, m.topic_word, K
 
@@ -215,7 +215,7 @@ def _fit_stm(iters=60):
 def _fit_sts(iters=40):
     docs, _, X, levels = _covariate_corpus()
     sent_seed = [float(l % 3) for l in levels]  # 3-level sentiment seed
-    m = topica.STS(num_topics=K, seed=1)
+    m = topica.models.STS(num_topics=K, seed=1)
     m.fit(docs, sentiment_seed=sent_seed, prevalence=X, iters=iters)
     return m.doc_topic, m.topic_word, K
 
@@ -223,7 +223,7 @@ def _fit_sts(iters=40):
 def _fit_sage(iters=200):
     docs, _, _, levels = _covariate_corpus()
     groups = [f"g{l % 2}" for l in levels]  # 2 content groups
-    m = topica.SAGE(num_topics=K, seed=1, optimize_interval=25, burn_in=50)
+    m = topica.models.SAGE(num_topics=K, seed=1, optimize_interval=25, burn_in=50)
     m.fit(docs, groups, iters=iters, num_samples=2, sample_interval=10)
     # topic_word is (K, G, V); collapse to the marginal for the finite/simplex check
     return m.doc_topic, np.asarray(m.topic_word_marginal), K
@@ -237,7 +237,7 @@ def _fit_ectm(iters=60):
         docs, _, _, levels = _covariate_corpus()
         groups = [f"g{l % 2}" for l in levels]
         times = [2000 + (i % 3) for i in range(len(docs))]
-        m = topica.ECTM(num_topics=K, seed=1, init="spectral")
+        m = topica.models.ECTM(num_topics=K, seed=1, init="spectral")
         m.fit(docs, times=times, content=groups, iters=iters,
               period_smooth=5.0, interaction_shrink=2.0)
         return m.doc_topic, m.topic_word, K
@@ -247,7 +247,7 @@ def _fit_ectm(iters=60):
 
 def _fit_dmr(iters=300):
     docs, _, X, _ = _covariate_corpus()
-    m = topica.DMR(num_topics=K, seed=1, optimize_interval=25, burn_in=50)
+    m = topica.models.DMR(num_topics=K, seed=1, optimize_interval=25, burn_in=50)
     m.fit(docs, X, iters=iters, num_samples=2, sample_interval=10)
     return m.doc_topic, m.topic_word, K
 
@@ -257,7 +257,7 @@ def _fit_gdmr(iters=300):
     docs, vocab = _planted_blocks(k=K, seed=0)
     levels = np.array([int(doc[0].split("w")[0][1:]) for doc in docs], dtype=float)
     meta = (levels / (K - 1))[:, None]
-    m = topica.GDMR(num_topics=K, degrees=[3], seed=1, optimize_interval=25, burn_in=50)
+    m = topica.models.GDMR(num_topics=K, degrees=[3], seed=1, optimize_interval=25, burn_in=50)
     m.fit(docs, meta, iters=iters, num_samples=2, sample_interval=10)
     return m.doc_topic, m.topic_word, K
 
@@ -265,7 +265,7 @@ def _fit_gdmr(iters=300):
 def _fit_narrativetm(iters=300):
     docs, vocab = _planted_blocks(k=K, seed=0)
     topica.enable_experimental()
-    m = topica.NarrativeTM(num_topics=K, degree=3, seed=1, optimize_interval=25, burn_in=50)
+    m = topica.models.NarrativeTM(num_topics=K, degree=3, seed=1, optimize_interval=25, burn_in=50)
     m.fit(docs, iters=iters, num_samples=2, sample_interval=10)
     return m.doc_topic, m.topic_word, K
 
@@ -276,7 +276,7 @@ def _fit_narrativetm(iters=300):
 def _fit_keyatm(iters=400):
     docs, vocab = _planted_blocks(k=K, seed=0)
     seeds = _block_keywords(vocab, k=K)
-    m = topica.KeyATM(seeds, num_topics=K, seed=1)
+    m = topica.models.KeyATM(seeds, num_topics=K, seed=1)
     m.fit(docs, iters=iters)
     return m.doc_topic, m.topic_word, K
 
@@ -284,7 +284,7 @@ def _fit_keyatm(iters=400):
 def _fit_seededlda(iters=400):
     docs, vocab = _planted_blocks(k=K, seed=0)
     seeds = _block_keywords(vocab, k=K)
-    m = topica.SeededLDA(seeds, seed=1)  # 4 seeded topics
+    m = topica.models.SeededLDA(seeds, seed=1)  # 4 seeded topics
     m.fit(docs, iters=iters)
     return m.doc_topic, m.topic_word, m.num_topics
 
@@ -292,7 +292,7 @@ def _fit_seededlda(iters=400):
 def _fit_labeledlda(iters=300):
     docs, vocab = _planted_blocks(k=K, seed=0)
     labels = [[f"t{int(doc[0].split('w')[0][1:])}"] for doc in docs]
-    m = topica.LabeledLDA(alpha=0.1, seed=1)
+    m = topica.models.LabeledLDA(alpha=0.1, seed=1)
     m.fit(docs, labels, iters=iters, num_samples=2, sample_interval=10)
     return m.doc_topic, m.topic_word, m.num_topics
 
@@ -313,7 +313,7 @@ def _supervised_corpus(n=200, seed=0):
 
 def _fit_supervisedlda(iters=25):
     docs, y = _supervised_corpus()
-    m = topica.SupervisedLDA(num_topics=2, seed=7)
+    m = topica.models.SupervisedLDA(num_topics=2, seed=7)
     m.fit(docs, y, iters=iters, var_iters=15)
     return m.doc_topic, m.topic_word, 2
 
@@ -333,14 +333,14 @@ def _short_corpus(seed=0, n=300):
 
 def _fit_gsdmm(iters=60):
     docs = _short_corpus()
-    m = topica.GSDMM(num_topics=15, seed=1)
+    m = topica.models.GSDMM(num_topics=15, seed=1)
     m.fit(docs, iters=iters)
     return m.doc_topic, m.topic_word, m.num_topics
 
 
 def _fit_pt(iters=300):
     docs = _short_corpus()
-    m = topica.PT(num_topics=K, num_pseudo=10, seed=1)
+    m = topica.models.PT(num_topics=K, num_pseudo=10, seed=1)
     m.fit(docs, iters=iters)
     return m.doc_topic, m.topic_word, K
 
@@ -355,7 +355,7 @@ def _fit_dtm(iters=20):
     # up as one dominant column / low effective_topics, exactly as intended.
     docs, vocab = _planted_blocks(k=K, n=300, seed=0)
     times = [i % 3 for i in range(len(docs))]
-    m = topica.DTM(num_topics=K, chain_variance=0.5, seed=1)
+    m = topica.models.DTM(num_topics=K, chain_variance=0.5, seed=1)
     m.fit(docs, times, iters=iters)
     tw = np.asarray(m.topic_word(0))  # (K, V) slice-0 word distributions
     vocab_idx = {w: i for i, w in enumerate(m.vocabulary)}
@@ -374,7 +374,7 @@ def _fit_detm(iters=40):
     docs, vocab = _planted_blocks(k=K, block=6, n=240, length=20, seed=0)
     _, word_emb = _planted_embeddings(k=K, block=6, seed=0)
     times = np.array([i % 4 for i in range(len(docs))])
-    m = topica.DETM(K, delta=0.005, hidden_size=32, lr=0.02, seed=42)
+    m = topica.models.DETM(K, delta=0.005, hidden_size=32, lr=0.02, seed=42)
     m.fit(docs, word_emb, vocab, times=times, iters=iters)
     return np.asarray(m.doc_topic), np.asarray(m.topic_word), K
 
@@ -387,7 +387,7 @@ def _fit_hlda(iters=300):
     docs = []
     for d in range(300):
         docs.append(shared + [blocks[d % K][i] for i in range(4)])
-    m = topica.HLDA(depth=2, seed=1)
+    m = topica.models.HLDA(depth=2, seed=1)
     m.fit(docs, iters=iters)
     theta, n_nodes = _theta_from_doc_paths(m)
     return theta, m.topic_word, n_nodes
@@ -403,7 +403,7 @@ def _fit_pa(iters=300):
         for blk in pair:
             doc += [blk[int(rng.integers(5))] for _ in range(6)]
         docs.append(doc)
-    m = topica.PA(num_super=2, num_sub=4, seed=1)
+    m = topica.models.PA(num_super=2, num_sub=4, seed=1)
     m.fit(docs, iters=iters)
     return m.doc_topic, m.topic_word, m.num_sub
 
@@ -413,7 +413,7 @@ def _fit_pa(iters=300):
 def _fit_bertopic(iters=None):
     docs, vocab = _planted_blocks(k=K, block=8, n=300, seed=0)
     doc_emb = _doc_embeddings(docs, k=K, block=8, seed=0)
-    m = topica.BERTopic(min_cluster_size=15, seed=1)
+    m = topica.models.BERTopic(min_cluster_size=15, seed=1)
     m.fit(docs, doc_emb)
     if m.num_topics == 0:
         pytest.skip("BERTopic found no clusters at this min_cluster_size")
@@ -423,7 +423,7 @@ def _fit_bertopic(iters=None):
 def _fit_top2vec(iters=None):
     docs, vocab = _planted_blocks(k=K, block=8, n=300, seed=0)
     doc_emb = _doc_embeddings(docs, k=K, block=8, seed=0)
-    m = topica.Top2Vec(min_cluster_size=15, seed=1)
+    m = topica.models.Top2Vec(min_cluster_size=15, seed=1)
     m.fit(docs, doc_emb)
     if m.num_topics == 0:
         pytest.skip("Top2Vec found no clusters at this min_cluster_size")
@@ -433,7 +433,7 @@ def _fit_top2vec(iters=None):
 def _fit_etm(iters=80):
     docs, vocab = _planted_blocks(k=K, block=8, n=240, length=12, seed=0)
     _, word_emb = _planted_embeddings(k=K, block=8, seed=0)
-    m = topica.ETM(num_topics=K, seed=1)
+    m = topica.models.ETM(num_topics=K, seed=1)
     m.fit(docs, word_emb, vocab, iters=iters)
     return m.doc_topic, m.topic_word, K
 
@@ -448,7 +448,7 @@ def _fit_idealpoint(iters=40):
     try:
         docs, _ = _planted_blocks(k=K, block=8, n=240, length=12, seed=0)
         group = [f"a{i % 16}" for i in range(len(docs))]
-        m = topica.IdealPointTM(num_topics=K, num_dims=1, seed=1)
+        m = topica.models.IdealPointTM(num_topics=K, num_dims=1, seed=1)
         m.fit(docs, group=group, iters=iters)
         return m.doc_topic, m.topic_word, K
     finally:
@@ -461,7 +461,7 @@ def _fit_tbip(iters=600):
     # mean-field VI (reparameterized SVI).
     docs, _ = _planted_blocks(k=K, block=8, n=240, length=12, seed=0)
     group = [f"a{i % 16}" for i in range(len(docs))]
-    m = topica.TBIP(num_topics=K, seed=1, iters=iters, batch_size=len(docs))
+    m = topica.models.TBIP(num_topics=K, seed=1, iters=iters, batch_size=len(docs))
     m.fit(docs, group=group)
     return m.doc_topic, m.topic_word, K
 
@@ -476,7 +476,7 @@ def _fit_sentence_ideal(iters=60):
         docs, _ = _planted_blocks(k=K, block=8, n=240, length=12, seed=0)
         emb = _doc_embeddings(docs, k=K, block=8, seed=0)
         group = [f"a{i % 16}" for i in range(len(docs))]
-        m = topica.IdealPointSentenceTM(num_topics=K, num_dims=1, seed=1)
+        m = topica.models.IdealPointSentenceTM(num_topics=K, num_dims=1, seed=1)
         m.fit(emb, group=group, iters=iters)
         return m.doc_topic, None, K
     finally:
@@ -486,7 +486,7 @@ def _fit_sentence_ideal(iters=60):
 def _fit_fastopic(iters=200):
     docs, vocab = _planted_blocks(k=K, block=6, n=200, length=10, seed=0)
     doc_emb = _doc_embeddings(docs, k=K, block=6, seed=0)
-    m = topica.FASTopic(num_topics=K, lr=0.05, seed=1)
+    m = topica.models.FASTopic(num_topics=K, lr=0.05, seed=1)
     m.fit(docs, doc_emb, iters=iters)
     return m.doc_topic, m.topic_word, K
 
@@ -494,7 +494,7 @@ def _fit_fastopic(iters=200):
 def _fit_embeddinglda(iters=300):
     docs, vocab = _planted_blocks(k=K, block=8, n=300, seed=0)
     _, word_emb = _planted_embeddings(k=K, block=8, seed=0)
-    m = topica.EmbeddingLDA(num_topics=K, embeddings=word_emb, vocabulary=vocab,
+    m = topica.models.EmbeddingLDA(num_topics=K, embeddings=word_emb, vocabulary=vocab,
                             top_m=5, seed=1)
     m.fit(docs, iters=iters)
     return m.doc_topic, m.topic_word, K
@@ -509,11 +509,11 @@ def _fit_contextual(cls, iters=120):
 
 
 def _fit_combinedtm(iters=120):
-    return _fit_contextual(topica.CombinedTM, iters=iters)
+    return _fit_contextual(topica.models.CombinedTM, iters=iters)
 
 
 def _fit_zeroshottm(iters=120):
-    return _fit_contextual(topica.ZeroShotTM, iters=iters)
+    return _fit_contextual(topica.models.ZeroShotTM, iters=iters)
 
 
 def _fit_infoctm(iters=120):
@@ -528,7 +528,7 @@ def _fit_infoctm(iters=120):
     a, b = corpus("a", 160), corpus("b", 152)
     dictionary = [(f"a{blk}_{i}", f"b{blk}_{j}")
                   for blk in range(blocks) for i in range(per) for j in range(per)]
-    m = topica.InfoCTM(num_topics=K, seed=1, hidden_size=32, lr=0.01,
+    m = topica.models.InfoCTM(num_topics=K, seed=1, hidden_size=32, lr=0.01,
                        languages=("en", "zh"))
     m.fit(a, b, dictionary=dictionary, iters=iters, batch_size=40)
     # validate both languages; return language A for the headline check.

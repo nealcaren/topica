@@ -40,7 +40,7 @@ print(f"assembled {len(ids)} hier docs")
 # recover. Set HLDA_GAMMA to narrow the tree and trade A down for fewer nodes.
 _g = os.environ.get("HLDA_GAMMA")
 _kw = {"gamma": float(_g)} if _g else {}
-m = topica.HLDA(depth=3, seed=1, **_kw)
+m = topica.models.HLDA(depth=3, seed=1, **_kw)
 m.fit(docs_tok, iters=400)
 levels = np.asarray(m.node_levels)
 print(f"HLDA: {m.num_nodes} nodes, levels seen: {sorted(set(levels.tolist()))}", file=sys.stderr)

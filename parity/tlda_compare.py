@@ -49,7 +49,7 @@ def run_comparison():
     ref.fit(x)
 
     # Initialize and fit topica TensorLDA
-    m = topica.TensorLDA(3, alpha_0=1.0, n_iter_train=50, n_iter_test=30, learning_rate=0.01, seed=42)
+    m = topica.models.TensorLDA(3, alpha_0=1.0, n_iter_train=50, n_iter_test=30, learning_rate=0.01, seed=42)
     m.fit(docs)
 
     # Trigger unwhitening in the reference model

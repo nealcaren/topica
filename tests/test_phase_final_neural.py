@@ -77,15 +77,15 @@ def _accepts_kwarg(fn, name: str) -> bool:
 class TestETM:
     def _model(self, seed=1):
         docs, vocab, word_emb = _planted_etm()
-        m = topica.ETM(num_topics=3, seed=seed)
+        m = topica.models.ETM(num_topics=3, seed=seed)
         m.fit(docs, word_emb, vocab, iters=30)
         return m, docs, vocab, word_emb
 
     def test_iters_kwarg(self):
-        assert _accepts_kwarg(topica.ETM.fit, "iters")
+        assert _accepts_kwarg(topica.models.ETM.fit, "iters")
 
     def test_no_epochs_in_constructor(self):
-        sig = inspect.signature(topica.ETM.__init__)
+        sig = inspect.signature(topica.models.ETM.__init__)
         assert "epochs" not in sig.parameters
         assert "em_iters" not in sig.parameters
 
@@ -106,7 +106,7 @@ class TestETM:
             path = f.name
         try:
             m.save(path)
-            m2 = topica.ETM.load(path)
+            m2 = topica.models.ETM.load(path)
             assert np.allclose(m.topic_word, m2.topic_word, atol=1e-12)
             assert np.allclose(m.doc_topic, m2.doc_topic, atol=1e-12)
             assert m2.topic_names == m.topic_names
@@ -115,13 +115,13 @@ class TestETM:
 
     def test_save_load_vae(self):
         docs, vocab, word_emb = _planted_etm()
-        m = topica.ETM(num_topics=3, inference="vae", hidden_size=32, batch_size=32, seed=1)
+        m = topica.models.ETM(num_topics=3, inference="vae", hidden_size=32, batch_size=32, seed=1)
         m.fit(docs, word_emb, vocab, iters=10)
         with tempfile.NamedTemporaryFile(suffix=".topica", delete=False) as f:
             path = f.name
         try:
             m.save(path)
-            m2 = topica.ETM.load(path)
+            m2 = topica.models.ETM.load(path)
             assert np.allclose(m.topic_word, m2.topic_word, atol=1e-12)
             assert np.allclose(m.doc_topic, m2.doc_topic, atol=1e-12)
         finally:
@@ -135,15 +135,15 @@ class TestETM:
 class TestFASTopic:
     def _model(self, seed=1):
         docs, doc_emb, vocab = _planted_fastopic()
-        m = topica.FASTopic(num_topics=3, lr=0.05, seed=seed)
+        m = topica.models.FASTopic(num_topics=3, lr=0.05, seed=seed)
         m.fit(docs, doc_emb, iters=50)
         return m, docs, doc_emb, vocab
 
     def test_iters_kwarg(self):
-        assert _accepts_kwarg(topica.FASTopic.fit, "iters")
+        assert _accepts_kwarg(topica.models.FASTopic.fit, "iters")
 
     def test_no_epochs_in_constructor(self):
-        sig = inspect.signature(topica.FASTopic.__init__)
+        sig = inspect.signature(topica.models.FASTopic.__init__)
         assert "epochs" not in sig.parameters
 
     def test_coherence_returns_k_finite_floats(self):
@@ -163,7 +163,7 @@ class TestFASTopic:
             path = f.name
         try:
             m.save(path)
-            m2 = topica.FASTopic.load(path)
+            m2 = topica.models.FASTopic.load(path)
             assert np.allclose(m.topic_word, m2.topic_word, atol=1e-12)
             assert np.allclose(m.doc_topic, m2.doc_topic, atol=1e-12)
             assert m2.topic_names == m.topic_names
@@ -178,15 +178,15 @@ class TestFASTopic:
 class TestProdLDA:
     def _model(self, seed=1):
         docs, vocab = _planted_text()
-        m = topica.ProdLDA(num_topics=3, batch_size=30, lr=0.01, dropout=0.0, seed=seed)
+        m = topica.models.ProdLDA(num_topics=3, batch_size=30, lr=0.01, dropout=0.0, seed=seed)
         m.fit(docs, iters=50)
         return m, docs, vocab
 
     def test_iters_kwarg(self):
-        assert _accepts_kwarg(topica.ProdLDA.fit, "iters")
+        assert _accepts_kwarg(topica.models.ProdLDA.fit, "iters")
 
     def test_no_epochs_in_constructor(self):
-        sig = inspect.signature(topica.ProdLDA.__init__)
+        sig = inspect.signature(topica.models.ProdLDA.__init__)
         assert "epochs" not in sig.parameters
 
     def test_save_load_roundtrip(self):
@@ -195,7 +195,7 @@ class TestProdLDA:
             path = f.name
         try:
             m.save(path)
-            m2 = topica.ProdLDA.load(path)
+            m2 = topica.models.ProdLDA.load(path)
             assert np.allclose(m.topic_word, m2.topic_word, atol=1e-12)
             assert np.allclose(m.doc_topic, m2.doc_topic, atol=1e-12)
             assert m2.topic_names == m.topic_names
@@ -210,7 +210,7 @@ class TestProdLDA:
 class TestBERTopic:
     def _model(self, seed=1):
         docs, doc_emb, vocab = _planted_fastopic()
-        m = topica.BERTopic(min_cluster_size=5, seed=seed)
+        m = topica.models.BERTopic(min_cluster_size=5, seed=seed)
         m.fit(docs, doc_emb)
         return m, docs, doc_emb, vocab
 
@@ -231,7 +231,7 @@ class TestBERTopic:
 class TestTop2Vec:
     def _model(self, seed=1):
         docs, doc_emb, vocab = _planted_fastopic()
-        m = topica.Top2Vec(min_cluster_size=5, seed=seed)
+        m = topica.models.Top2Vec(min_cluster_size=5, seed=seed)
         m.fit(docs, doc_emb)
         return m, docs, doc_emb, vocab
 

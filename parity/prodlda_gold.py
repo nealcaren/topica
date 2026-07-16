@@ -208,7 +208,7 @@ def _train_reference(counts: np.ndarray, k: int, seed: int):
 def _topica_topics(token_docs, seed):
     import topica
 
-    tm = topica.ProdLDA(
+    tm = topica.models.ProdLDA(
         num_topics=NUM_TOPICS, alpha=ALPHA, hidden_size=HIDDEN, dropout=DROPOUT,
         batch_size=BATCH, lr=LR, seed=seed,
     )

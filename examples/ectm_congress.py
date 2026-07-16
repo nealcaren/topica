@@ -63,7 +63,7 @@ def main():
     print(f"{len(docs)} bills | House {chambers.count('House')} / Senate {chambers.count('Senate')} "
           f"| Congress {min(congress)}-{max(congress)}")
 
-    model = topica.ECTM(num_topics=15, seed=1)
+    model = topica.models.ECTM(num_topics=15, seed=1)
     model.fit(docs, times=congress, content=chambers, iters=120,
               period_smooth=8.0, interaction_shrink=2.0)
     print(f"fitted: {model} | converged={model.converged}\n")

@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 import topica
-from topica import LDA
+from topica.models import LDA
 
 
 def test_autocorrelation_of_iid_is_flat():
@@ -135,7 +135,7 @@ def test_mcmc_diagnostics_requires_theta_draws():
 def test_mcmc_diagnostics_warns_for_variational_model():
     docs = [["a", "b", "c"], ["d", "e", "f"]] * 20
     corpus = topica.Corpus.from_documents(docs)
-    model = topica.CTM(num_topics=2, seed=0)
+    model = topica.models.CTM(num_topics=2, seed=0)
     model.fit(corpus, iters=15)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")

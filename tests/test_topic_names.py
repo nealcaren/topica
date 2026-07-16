@@ -24,7 +24,7 @@ def _default_names(k: int) -> list[str]:
 
 
 def _fit_lda():
-    m = topica.LDA(2, seed=1)
+    m = topica.models.LDA(2, seed=1)
     m.fit(DOCS, iters=100)
     return m
 
@@ -32,20 +32,20 @@ def _fit_lda():
 def _fit_dmr():
     import numpy as np
     X = [[0.0]] * 30 + [[1.0]] * 30
-    m = topica.DMR(2, seed=1)
+    m = topica.models.DMR(2, seed=1)
     m.fit(DOCS, X)
     return m
 
 
 def _fit_sage():
     groups = ["a"] * 30 + ["b"] * 30
-    m = topica.SAGE(2, seed=1)
+    m = topica.models.SAGE(2, seed=1)
     m.fit(DOCS, groups)
     return m
 
 
 def _fit_ctm():
-    m = topica.CTM(2, seed=1)
+    m = topica.models.CTM(2, seed=1)
     m.fit(DOCS, iters=20)
     return m
 
@@ -53,69 +53,69 @@ def _fit_ctm():
 def _fit_stm():
     import numpy as np
     X = [[0.0]] * 30 + [[1.0]] * 30
-    m = topica.STM(2, seed=1)
+    m = topica.models.STM(2, seed=1)
     m.fit(DOCS, X, prevalence_names=["g"], iters=20)
     return m
 
 
 def _fit_hdp():
-    m = topica.HDP(seed=1)
+    m = topica.models.HDP(seed=1)
     m.fit(DOCS, iters=40)
     return m
 
 
 def _fit_dtm():
     times = [0] * 30 + [1] * 30
-    m = topica.DTM(2, seed=1)
+    m = topica.models.DTM(2, seed=1)
     m.fit(DOCS, times, iters=8)
     return m
 
 
 def _fit_slda():
     y = [0.0] * 30 + [1.0] * 30
-    m = topica.SupervisedLDA(2, seed=1)
+    m = topica.models.SupervisedLDA(2, seed=1)
     m.fit(DOCS, y, iters=10)
     return m
 
 
 def _fit_pt():
-    m = topica.PT(2, num_pseudo=10, seed=1)
+    m = topica.models.PT(2, num_pseudo=10, seed=1)
     m.fit(DOCS, iters=100)
     return m
 
 
 def _fit_gsdmm():
-    m = topica.GSDMM(5, seed=1)
+    m = topica.models.GSDMM(5, seed=1)
     m.fit(DOCS, iters=20)
     return m
 
 
 def _fit_pa():
-    m = topica.PA(2, 4, seed=1)
+    m = topica.models.PA(2, 4, seed=1)
     m.fit(DOCS, iters=100)
     return m
 
 
 def _fit_hlda():
-    m = topica.HLDA(depth=2, seed=1)
+    m = topica.models.HLDA(depth=2, seed=1)
     m.fit(DOCS, iters=50)
     return m
 
 
 def _fit_labeled_lda():
-    m = topica.LabeledLDA(seed=1)
+    m = topica.models.LabeledLDA(seed=1)
     m.fit(DOCS, [["x"]] * 60)
     return m
 
 
 def _fit_seeded_lda():
-    m = topica.SeededLDA({"animals": ["cat", "dog"], "space": ["star", "moon"]}, seed=1)
+    m = topica.models.SeededLDA({"animals": ["cat", "dog"], "space": ["star", "moon"]}, seed=1)
     m.fit(DOCS, iters=200)
     return m
 
 
 def _fit_keyatm():
-    m = topica.KeyATM({"animals": ["cat", "dog"], "space": ["star", "moon"]}, seed=1)
+    m = topica.models.KeyATM({"animals": ["cat", "dog"], "space": ["star", "moon"]}, seed=1)
     m.fit(DOCS, iters=200)
     return m
 
@@ -273,7 +273,7 @@ class TestGroup1SaveLoad:
         m.topic_names = ["animals", "space"]
         path = str(tmp_path / "lda.tt")
         m.save(path)
-        m2 = topica.LDA.load(path)
+        m2 = topica.models.LDA.load(path)
         assert m2.topic_names == ["animals", "space"]
 
     def test_pt(self, tmp_path):
@@ -281,7 +281,7 @@ class TestGroup1SaveLoad:
         m.topic_names = ["animals", "space"]
         path = str(tmp_path / "pt.tt")
         m.save(path)
-        m2 = topica.PT.load(path)
+        m2 = topica.models.PT.load(path)
         assert m2.topic_names == ["animals", "space"]
 
     def test_gsdmm(self, tmp_path):
@@ -291,7 +291,7 @@ class TestGroup1SaveLoad:
         m.topic_names = names
         path = str(tmp_path / "gsdmm.tt")
         m.save(path)
-        m2 = topica.GSDMM.load(path)
+        m2 = topica.models.GSDMM.load(path)
         assert m2.topic_names == names
 
     def test_pa(self, tmp_path):
@@ -300,7 +300,7 @@ class TestGroup1SaveLoad:
         m.topic_names = names
         path = str(tmp_path / "pa.tt")
         m.save(path)
-        m2 = topica.PA.load(path)
+        m2 = topica.models.PA.load(path)
         assert m2.topic_names == names
 
     def test_hlda(self, tmp_path):
@@ -309,7 +309,7 @@ class TestGroup1SaveLoad:
         m.topic_names = names
         path = str(tmp_path / "hlda.tt")
         m.save(path)
-        m2 = topica.HLDA.load(path)
+        m2 = topica.models.HLDA.load(path)
         assert m2.topic_names == names
 
 
@@ -358,5 +358,5 @@ class TestGroup2Setter:
         m.topic_names = names
         path = str(tmp_path / "slda.tt")
         m.save(path)
-        m2 = topica.SeededLDA.load(path)
+        m2 = topica.models.SeededLDA.load(path)
         assert m2.topic_names == names

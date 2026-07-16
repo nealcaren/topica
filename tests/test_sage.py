@@ -8,7 +8,8 @@ import numpy as np
 import numpy.testing as npt
 import pytest
 
-from topica import SAGE, Corpus
+from topica.models import SAGE
+from topica import Corpus
 
 
 # ---------------------------------------------------------------------------

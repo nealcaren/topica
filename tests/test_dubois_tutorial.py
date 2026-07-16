@@ -11,7 +11,8 @@ import os
 
 import pytest
 
-from topica import LDA, Corpus, tokenize
+from topica.models import LDA
+from topica import Corpus, tokenize
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)

@@ -34,14 +34,14 @@ def test_seededlda_roundtrip_num_topics_preserved(tmp_path):
     """num_topics must equal seed_topics + residual after a save/load cycle."""
     path = str(tmp_path / "seeded.tt")
     seed_words = {"animals": ["cat", "dog"], "space": ["star", "moon"]}
-    m = topica.SeededLDA(seed_words, residual=1, seed=1)
+    m = topica.models.SeededLDA(seed_words, residual=1, seed=1)
     m.fit(DOCS, iters=200)
 
     expected_k = m.num_topics
     assert expected_k == 3  # 2 seeded + 1 residual
 
     m.save(path)
-    loaded = topica.SeededLDA.load(path)
+    loaded = topica.models.SeededLDA.load(path)
 
     assert loaded.num_topics == expected_k, (
         f"num_topics dropped from {expected_k} to {loaded.num_topics} after load"
@@ -52,11 +52,11 @@ def test_seededlda_roundtrip_matrices_bit_identical(tmp_path):
     """topic_word and doc_topic must be bit-identical after a round-trip."""
     path = str(tmp_path / "seeded.tt")
     seed_words = {"politics": ["cat"], "nature": ["star", "moon"]}
-    m = topica.SeededLDA(seed_words, residual=2, seed=7)
+    m = topica.models.SeededLDA(seed_words, residual=2, seed=7)
     m.fit(DOCS, iters=200)
 
     m.save(path)
-    loaded = topica.SeededLDA.load(path)
+    loaded = topica.models.SeededLDA.load(path)
 
     np.testing.assert_array_equal(
         m.topic_word, loaded.topic_word,
@@ -72,11 +72,11 @@ def test_seededlda_transform_works_after_load(tmp_path):
     """transform() must not panic or error after loading a saved SeededLDA."""
     path = str(tmp_path / "seeded.tt")
     seed_words = {"animals": ["cat", "dog"], "space": ["star", "moon"]}
-    m = topica.SeededLDA(seed_words, residual=1, seed=2)
+    m = topica.models.SeededLDA(seed_words, residual=1, seed=2)
     m.fit(DOCS, iters=200)
 
     m.save(path)
-    loaded = topica.SeededLDA.load(path)
+    loaded = topica.models.SeededLDA.load(path)
 
     # This is the crash repro from issue #98: num_topics=0 made transform panic.
     new_docs = [["cat", "dog"], ["star", "moon"]]
@@ -97,12 +97,12 @@ def test_seededlda_topic_names_preserved(tmp_path):
     """The named seed topics must come back with their original names after load."""
     path = str(tmp_path / "seeded.tt")
     seed_words = {"animals": ["cat", "dog"], "space": ["star", "moon"]}
-    m = topica.SeededLDA(seed_words, residual=1, seed=3)
+    m = topica.models.SeededLDA(seed_words, residual=1, seed=3)
     m.fit(DOCS, iters=200)
 
     before = list(m.topic_names)
     m.save(path)
-    loaded = topica.SeededLDA.load(path)
+    loaded = topica.models.SeededLDA.load(path)
 
     assert list(loaded.topic_names) == before, (
         f"topic_names changed: {before!r} -> {list(loaded.topic_names)!r}"
@@ -116,14 +116,14 @@ def test_seededlda_topic_names_preserved(tmp_path):
 def test_lda_theta_draws_survive_roundtrip(tmp_path):
     """theta_draws must be present and identical after a save/load cycle."""
     path = str(tmp_path / "lda.tt")
-    m = topica.LDA(num_topics=2, seed=1)
+    m = topica.models.LDA(num_topics=2, seed=1)
     m.fit(DOCS, iters=200, keep_theta_draws=True, num_theta_draws=10)
 
     assert m.theta_draws is not None, "theta_draws should be populated after fit"
     before = np.asarray(m.theta_draws)
 
     m.save(path)
-    loaded = topica.LDA.load(path)
+    loaded = topica.models.LDA.load(path)
 
     assert loaded.theta_draws is not None, (
         "theta_draws is None after load — drops draws (issue #102b)"
@@ -138,12 +138,12 @@ def test_lda_theta_draws_survive_roundtrip(tmp_path):
 def test_lda_no_theta_draws_roundtrip(tmp_path):
     """When fit with keep_theta_draws=False, loaded model also has theta_draws=None."""
     path = str(tmp_path / "lda_nodraws.tt")
-    m = topica.LDA(num_topics=2, seed=1)
+    m = topica.models.LDA(num_topics=2, seed=1)
     m.fit(DOCS, iters=200, keep_theta_draws=False)
 
     assert m.theta_draws is None
     m.save(path)
-    loaded = topica.LDA.load(path)
+    loaded = topica.models.LDA.load(path)
     assert loaded.theta_draws is None
 
 
@@ -158,18 +158,18 @@ def test_garbage_file_raises_value_error(tmp_path):
         f.write(b"not a model file at all")
 
     with pytest.raises(ValueError, match="not a topica model file"):
-        topica.LDA.load(bad)
+        topica.models.LDA.load(bad)
 
 
 def test_wrong_model_tag_gives_clear_error(tmp_path):
     """Loading an LDA file as SeededLDA must name both models in the error message."""
     path = str(tmp_path / "lda.tt")
-    m = topica.LDA(num_topics=2, seed=1)
+    m = topica.models.LDA(num_topics=2, seed=1)
     m.fit(DOCS, iters=100)
     m.save(path)
 
     with pytest.raises(ValueError) as exc_info:
-        topica.SeededLDA.load(path)
+        topica.models.SeededLDA.load(path)
 
     msg = str(exc_info.value)
     assert "LDA" in msg, f"error should mention the file's model (LDA): {msg}"
@@ -179,12 +179,12 @@ def test_wrong_model_tag_gives_clear_error(tmp_path):
 def test_seededlda_file_cannot_load_as_lda(tmp_path):
     """SeededLDA file loaded as LDA must give a clear error naming both models."""
     path = str(tmp_path / "seeded.tt")
-    m = topica.SeededLDA({"a": ["cat"], "b": ["star"]}, seed=1)
+    m = topica.models.SeededLDA({"a": ["cat"], "b": ["star"]}, seed=1)
     m.fit(DOCS, iters=100)
     m.save(path)
 
     with pytest.raises(ValueError) as exc_info:
-        topica.LDA.load(path)
+        topica.models.LDA.load(path)
 
     msg = str(exc_info.value)
     assert "SeededLDA" in msg, f"error should mention SeededLDA: {msg}"
@@ -204,32 +204,32 @@ _TD_DOCS = [["a", "b", "c"], ["b", "c", "d"], ["a", "d", "e"],
 
 def _fit_dmr():
     X = np.ones((len(_TD_DOCS), 1))
-    m = topica.DMR(num_topics=3, seed=1)
+    m = topica.models.DMR(num_topics=3, seed=1)
     m.fit(_TD_DOCS, X, feature_names=["x"], iters=30)
     return m
 
 
 def _fit_labeled():
-    m = topica.LabeledLDA(seed=1)
+    m = topica.models.LabeledLDA(seed=1)
     m.fit(_TD_DOCS, [["t0", "t1"]] * len(_TD_DOCS), iters=30)
     return m
 
 
 def _fit_sage():
     groups = ["g0", "g1"] * (len(_TD_DOCS) // 2)
-    m = topica.SAGE(num_topics=3, seed=1)
+    m = topica.models.SAGE(num_topics=3, seed=1)
     m.fit(_TD_DOCS, groups, iters=30)
     return m
 
 
 def _fit_keyatm():
-    m = topica.KeyATM({"k0": ["a", "b"], "k1": ["c", "d"]}, seed=1)
+    m = topica.models.KeyATM({"k0": ["a", "b"], "k1": ["c", "d"]}, seed=1)
     m.fit(_TD_DOCS, iters=30)
     return m
 
 
 def _fit_seeded():
-    m = topica.SeededLDA({"k0": ["a", "b"], "k1": ["c", "d"]}, residual=1, seed=1)
+    m = topica.models.SeededLDA({"k0": ["a", "b"], "k1": ["c", "d"]}, residual=1, seed=1)
     m.fit(_TD_DOCS, iters=30)
     return m
 

@@ -23,7 +23,7 @@ import topica
 
 # `docs` are the tokenized opinions; `years` is the filing year of each opinion;
 # `seeds` maps each of the 14 topic labels to its keyword list.
-model = topica.KeyATM(seeds, num_topics=14, seed=2020)
+model = topica.models.KeyATM(seeds, num_topics=14, seed=2020)
 model.fit(docs, timestamps=years, num_states=5, iters=1000, num_threads=8)
 ```
 

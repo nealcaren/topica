@@ -26,7 +26,7 @@ def _corpus(n=80):
 
 def test_dirichlet_theta_samples_shape_and_determinism():
     docs, _ = _corpus()
-    m = topica.LDA(num_topics=2, seed=1)
+    m = topica.models.LDA(num_topics=2, seed=1)
     m.fit(docs, iters=150)
     lengths = np.array([len(d) for d in docs])
     a = topica.dirichlet_theta_samples(m.doc_topic, lengths, nsims=15, seed=0)
@@ -42,7 +42,7 @@ def test_dirichlet_theta_samples_shape_and_determinism():
 
 def test_estimate_effect_on_gibbs_draws_and_point():
     docs, x = _corpus()
-    m = topica.LDA(num_topics=2, seed=1)
+    m = topica.models.LDA(num_topics=2, seed=1)
     m.fit(docs, iters=200)
     lengths = np.array([len(d) for d in docs])
     draws = topica.dirichlet_theta_samples(m.doc_topic, lengths, nsims=20, seed=0)
@@ -63,7 +63,7 @@ def test_prevalence_ci_is_model_neutral():
     # binary covariate, off retained MCMC draws.
     docs, x = _corpus()
     groups = ["even" if xi[0] == 0 else "odd" for xi in x]
-    m = topica.LDA(num_topics=2, seed=1)
+    m = topica.models.LDA(num_topics=2, seed=1)
     m.fit(docs, iters=200, keep_theta_draws=True, num_theta_draws=20)
 
     out = topica.prevalence_ci(m, groups, ci=0.9)
@@ -85,7 +85,7 @@ def test_prevalence_ci_falls_back_without_retained_draws():
     # needs the corpus for document lengths.
     docs, x = _corpus()
     groups = [int(xi[0]) for xi in x]
-    m = topica.LDA(num_topics=2, seed=2)
+    m = topica.models.LDA(num_topics=2, seed=2)
     m.fit(docs, iters=150)  # keep_theta_draws defaults off here
     out = topica.prevalence_ci(m, groups, corpus=docs, nsims=15, seed=0)
     assert out["mean"].shape == (2, 2)
