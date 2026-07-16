@@ -97,6 +97,23 @@ and in the `topica.validation` module.
 
 ::: topica.cross_ensemble
 
+## MCMC convergence (`topica.mcmc`)
+
+Single-chain autocorrelation and effective sample size for the collapsed-Gibbs
+models, computed from the retained log-likelihood trace and `theta_draws`. See
+the [convergence section](../guides/diagnostics.md#has-the-chain-plateaued-or-mixed)
+of the diagnostics guide.
+
+::: topica.mcmc_diagnostics
+
+::: topica.McmcDiagnostics
+
+::: topica.effective_sample_size
+
+::: topica.integrated_autocorr_time
+
+::: topica.autocorrelation
+
 ## Held-out likelihood
 
 Build a within-corpus word-heldout set — the analogue of R `stm`'s

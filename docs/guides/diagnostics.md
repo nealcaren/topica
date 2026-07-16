@@ -346,6 +346,47 @@ they satisfy the contract without early-stop support. HDP and GSDMM record a
 their topic and cluster counts, so a log-likelihood plateau is not a convergence
 signal.
 
+### Has the chain plateaued, or mixed?
+
+For the collapsed-Gibbs samplers, `convergence_tol` watches the log-likelihood
+trace, and a flat trace means the sampler found a mode — not that the chain has
+*mixed*. A plateaued log-likelihood and a poorly-mixed chain look identical from
+the objective alone. `topica.mcmc` reports the MCMC-native diagnostics a Bayesian
+workflow expects, computed from traces the model already keeps: the
+log-likelihood history and the thinned `theta_draws`.
+
+```python
+model = topica.LDA(num_topics=20, seed=1)
+model.fit(docs, iters=2000, num_theta_draws=200)   # more retained draws -> finer ESS
+
+d = topica.mcmc_diagnostics(model)
+print(d.summary())
+# MCMC diagnostics for LDA (inference=gibbs)
+#   retained draws          : 200
+#   log-likelihood tau      : 3.10
+#   log-likelihood ESS      : 6.5
+#   theta ESS (min/median)  : 41.2 / 118.7 (of 200 draws)
+
+d.theta_ess          # (num_docs, num_topics) effective sample size per element
+d.loglik_autocorr    # autocorrelation of the log-likelihood trace
+```
+
+A low `theta ESS` relative to `retained draws` means the chain is autocorrelated
+— the draws carry less information than their count suggests, so run more sweeps
+or thin further. The `theta_draws` are already thinned, so raise
+`num_theta_draws` on `fit` for a finer estimate.
+
+The underlying estimators are also exposed directly for any trace you hold —
+`topica.autocorrelation`, `topica.integrated_autocorr_time` (Geyer's
+initial-positive-sequence `tau`), and `topica.effective_sample_size` (`N / tau`,
+for one chain or columnwise over a `(draws, params)` matrix).
+
+Multi-chain R-hat (Gelman-Rubin), which needs several seeds run and compared, is
+not yet exposed ([issue #269](https://github.com/nealcaren/topica/issues/269));
+these single-chain diagnostics are the cheap first cut. The variational models
+(STM, CTM, …) converge a bound and have no MCMC chain — `mcmc_diagnostics` warns
+if you point it at one.
+
 ## Visualization
 
 ```python
