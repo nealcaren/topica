@@ -191,6 +191,14 @@ from .coherence import (  # noqa: E402
 # intrusion, select_k, backend, PROMPTS) -- it is an llm-bounded family, kept
 # distinct from the bit-exact diagnostics above. See topica/llm.py.
 from . import llm  # noqa: E402
+from . import mcmc  # noqa: E402  (single-chain MCMC diagnostics for the Gibbs models)
+from .mcmc import (  # noqa: E402
+    mcmc_diagnostics,
+    effective_sample_size,
+    autocorrelation,
+    integrated_autocorr_time,
+    McmcDiagnostics,
+)
 from .registry import list_models, ModelInfo, REGISTRY  # noqa: E402  model taxonomy / discovery
 
 from .validation import (  # noqa: E402  general, model-agnostic post-hoc analyses
@@ -421,6 +429,12 @@ __all__ = [
     "position_intervals",
     "summary",
     "diagnostics",
+    "mcmc",
+    "mcmc_diagnostics",
+    "effective_sample_size",
+    "autocorrelation",
+    "integrated_autocorr_time",
+    "McmcDiagnostics",
     "perplexity",
     "make_heldout",
     "eval_heldout",

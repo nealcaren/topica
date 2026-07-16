@@ -33,6 +33,14 @@ from ._topica import (
 from . import stm as stm
 from . import keyatm as keyatm
 from . import effects as effects
+from . import mcmc as mcmc
+from .mcmc import (
+    mcmc_diagnostics as mcmc_diagnostics,
+    effective_sample_size as effective_sample_size,
+    autocorrelation as autocorrelation,
+    integrated_autocorr_time as integrated_autocorr_time,
+    McmcDiagnostics as McmcDiagnostics,
+)
 from .effects import (
     estimate_effect as estimate_effect,
     average_marginal_effects as average_marginal_effects,
