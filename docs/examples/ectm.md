@@ -315,7 +315,65 @@ an SVI fit reports whether its content model settled. Check `model.content_conve
 converged also emits a warning at fit time. If it reports `False`, raise `iters`
 (epochs) or lower `content_every` and refit.
 
-## 8. What to claim, and what not to
+## 8. Group discourse: within a topic, or its own topic?
+
+A content model can book a party's distinctive language two ways, and they look
+very different in the output. The Democratic and Republican wordings of the
+environment can land **within one topic** — a single environment topic whose
+`content_word_dist` cells differ by party — or **fragment into two topics**, a
+Democratic-environment topic and a Republican one that the prevalence model then
+sorts platforms across. Which one you get is not fixed; it is arbitrated by the
+content prior, and you can move it.
+
+Measure which is happening with `topica.content`:
+
+```python
+import topica
+
+pol = topica.content.topic_polarization(model)   # (K,) per-topic JSD across parties
+# high on a topic  -> the party difference lives INSIDE it (within-topic)
+# ECTM only: per-period trajectory of the divergence
+traj = [topica.content.topic_polarization(model, period=t)
+        for t in range(model.num_periods)]
+
+splits = topica.content.split_topics(model, party)   # fragmentation pairs
+# near-duplicate topics pulled apart by party prevalence = one discourse split
+```
+
+The main dial is **`content_prior_var`**, the L2 prior variance on the content
+deviations κ:
+
+```python
+model.fit(corpus, times=year, content=party, content_prior_var=2.0)
+```
+
+Raising it (default `1.0` → `2`–`4`) loosens the prior so the content model
+absorbs more of the party vocabulary within a topic; lowering it (→ `0.5`) shrinks
+κ toward the shared baseline, so a party difference is either suppressed or forced
+out into topic structure. In a controlled synthetic check the contested topic's
+within-party polarization rises smoothly from ~0.24 to ~0.75 across that range.
+`interaction_shrink` is the same dial for the party-by-year drift specifically.
+
+**Fragmentation is a design choice, not a prior.** If you are seeing spurious
+parallel party-topics, the usual cause is putting party in the `prevalence=`
+design as well as `content=`; that rewards the model for party-specific topics,
+and no `content_prior_var` setting will undo it. Keep party in the content model
+only unless you *want* party-specific topics.
+
+When you need to pin a topic's identity — so a stable theme cannot spin off a
+party-specific twin — seed its shared baseline vocabulary (experimental):
+
+```python
+model.fit(corpus, times=year, content=party,
+          seeds={0: ["environment", "climate", "conservation", "energy"]},
+          seed_strength=4.0)
+```
+
+`seeds` is a `{topic_index: [words]}` map (seed as many topics as you like); it
+shifts that topic's baseline κ toward the seed words so the topic keeps its
+meaning and party variation stays within it. `seeds=None` is unchanged.
+
+## 9. What to claim, and what not to
 
 The defensible findings are the **shapes**. The environment is a cleavage that
 opened inside the vocabulary: shared `conservation` language in 1948 giving way to
