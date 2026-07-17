@@ -800,3 +800,175 @@ def content_placebo(
         group_a=str(group_a),
         group_b=str(group_b),
     )
+
+
+# ---------------------------------------------------------------------------
+# Content-prior hyperparameter selection (issue #339)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ContentPriorSelection:
+    """Result of :func:`tune_content_prior`: the held-out-selected content-prior
+    hyperparameters plus the full scan.
+
+    Attributes
+    ----------
+    best : dict
+        The selected ``{"content_prior_var", "interaction_shrink",
+        "period_smooth"}``, ready to splat into :meth:`ECTM.fit`.
+    best_score : float
+        Held-out mean per-document log-likelihood at ``best`` (higher is better).
+    table : list[dict]
+        One row per grid point — the three hyperparameters plus ``heldout_loglik``
+        — sorted best first, ready for ``pandas.DataFrame``.
+    n_docs, n_tokens : int
+        Scored held-out documents and tokens (shared across grid points).
+    """
+
+    best: dict
+    best_score: float
+    table: list
+    n_docs: int
+    n_tokens: int
+
+
+def _ectm_heldout_loglik(model, heldout, times, content):
+    """Held-out word log-likelihood for a fitted ECTM, scored the ECTM-native way.
+
+    ``eval_heldout`` needs ``model.transform`` to infer a held-out document's
+    topic mixture, which ECTM does not expose. Instead we score each withheld
+    token under the document's *own* fitted mixture and its cell's content
+    surface: ``p(w) = sum_k θ_{d,k} · β_{k, g_d, t_d, w}``, where ``θ`` is the
+    mixture the fit inferred from the retained tokens. Returns
+    ``(mean_per_doc_loglik, n_tokens, n_docs)``."""
+    vocab = list(model.vocabulary)
+    vindex = {w: i for i, w in enumerate(vocab)}
+    theta = np.asarray(model.doc_topic, dtype=np.float64)
+    period_index = {str(p): t for t, p in enumerate(model.periods)}
+    beta_cache = {}
+
+    def _beta(g, plabel):
+        key = (str(g), plabel)
+        if key not in beta_cache:
+            beta_cache[key] = np.asarray(model.content_word_dist(g, period_index[plabel]))
+        return beta_cache[key]
+
+    total, n_tokens, n_docs = 0.0, 0, 0
+    for di, held in heldout.missing:
+        pw = theta[di] @ _beta(content[di], str(times[di]))
+        pw = np.clip(pw, 1e-12, None)
+        ll, c = 0.0, 0
+        for w in held:
+            j = vindex.get(w)
+            if j is not None:
+                ll += float(np.log(pw[j]))
+                c += 1
+        if c > 0:
+            total += ll
+            n_tokens += c
+            n_docs += 1
+    mean = total / n_docs if n_docs else float("nan")
+    return mean, n_tokens, n_docs
+
+
+def tune_content_prior(
+    fit,
+    docs,
+    times,
+    content,
+    *,
+    content_prior_var=(0.5, 1.0, 2.0),
+    interaction_shrink=(1.2, 1.5, 2.0),
+    period_smooth=(5.0,),
+    prop_docs: float = 0.5,
+    prop_words: float = 0.5,
+    seed: int = 0,
+):
+    """Select ECTM's content-prior hyperparameters by held-out predictive fit.
+
+    The content-prior knobs — the coefficient variance ``content_prior_var`` (σ²),
+    ``interaction_shrink`` and ``period_smooth`` — are otherwise set by hand, and
+    the reported divergence *magnitude* moves with them, inviting a
+    researcher-degrees-of-freedom criticism. This grid-searches them by a
+    within-corpus word-heldout log-likelihood (R stm's ``make.heldout`` /
+    ``eval.heldout`` design), so the fit is reproducible without hand-tuning.
+
+    Parameters
+    ----------
+    fit : callable(docs, times, content, *, content_prior_var, interaction_shrink,
+        period_smooth) -> fitted ECTM
+        Fits a model with your other settings fixed (a closure capturing
+        ``num_topics``, ``iters``, ``seed``, ``init``, ...). Called once per grid
+        point on the held-out *training* corpus.
+    docs, times, content : array-like (num_docs,)
+        The corpus and its per-document period/content labels.
+    content_prior_var, interaction_shrink, period_smooth : sequence of float
+        Candidate values for each hyperparameter; their Cartesian product is the
+        grid. Pass a single-element sequence to hold one fixed.
+    prop_docs, prop_words : float
+        Fraction of documents sampled and fraction of each sampled document's
+        tokens withheld (passed to :func:`~topica.diagnostics.make_heldout`).
+    seed : int
+        Seed for the held-out split.
+
+    Returns
+    -------
+    :class:`ContentPriorSelection`
+        ``best`` (the selected hyperparameters), ``best_score`` and the full
+        ``table``. Report the selected values alongside the fit; refit on the full
+        corpus with ``**selection.best``.
+
+    Notes
+    -----
+    ECTM exposes no ``transform``, so scoring uses an ECTM-native predictive
+    likelihood (:func:`_ectm_heldout_loglik`) rather than the generic
+    ``eval_heldout``. The held-out split is fixed across grid points, so scores are
+    comparable. This is the held-out arm of #339; an empirical-Bayes (type-II ML)
+    variant that maximizes the variational bound for the prior variances is a
+    natural follow-up.
+    """
+    from itertools import product
+
+    from .validation import make_heldout
+
+    docs = list(docs)
+    times = [str(t) for t in times]
+    content = [str(c) for c in content]
+    if not (len(times) == len(content) == len(docs)):
+        raise ValueError(
+            f"docs, times, content must have equal length; got "
+            f"{len(docs)}, {len(times)}, {len(content)}"
+        )
+
+    heldout = make_heldout(docs, prop_docs=prop_docs, prop_words=prop_words, seed=seed)
+
+    table = []
+    n_docs = n_tokens = 0
+    for cpv, ishrink, psmooth in product(content_prior_var, interaction_shrink, period_smooth):
+        m = fit(heldout.documents, times, content,
+                content_prior_var=cpv, interaction_shrink=ishrink, period_smooth=psmooth)
+        ll, ntok, ndoc = _ectm_heldout_loglik(m, heldout, times, content)
+        n_docs, n_tokens = ndoc, ntok
+        table.append({
+            "content_prior_var": float(cpv),
+            "interaction_shrink": float(ishrink),
+            "period_smooth": float(psmooth),
+            "heldout_loglik": float(ll),
+        })
+
+    table.sort(key=lambda r: r["heldout_loglik"], reverse=True)
+    if not table:
+        raise ValueError("the hyperparameter grid is empty")
+    top = table[0]
+    best = {
+        "content_prior_var": top["content_prior_var"],
+        "interaction_shrink": top["interaction_shrink"],
+        "period_smooth": top["period_smooth"],
+    }
+    return ContentPriorSelection(
+        best=best,
+        best_score=top["heldout_loglik"],
+        table=table,
+        n_docs=n_docs,
+        n_tokens=n_tokens,
+    )
