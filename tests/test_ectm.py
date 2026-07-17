@@ -417,3 +417,120 @@ def test_seeds_ignore_unknown_words():
     """Words outside the vocabulary are silently skipped (no crash)."""
     m = _fit(seed=1, seeds={0: ["x", "notaword"]}, seed_strength=5.0)
     assert np.asarray(m.topic_word).shape[0] == 2
+
+
+# ---------------------------------------------------------------------------
+# Debiased content divergence (issue #337)
+# ---------------------------------------------------------------------------
+
+_DEBIAS_VOCAB = [f"w{i}" for i in range(8)]
+_DEBIAS_BASE = np.array([0.25, 0.2, 0.15, 0.12, 0.1, 0.08, 0.06, 0.04])
+_DEBIAS_ALT = _DEBIAS_BASE[::-1].copy()
+
+
+def _sampled_corpus(n_per_cell, strength, doc_len=12, seed=0):
+    """Generative synthetic with real multinomial sampling noise (unlike the
+    degenerate ``_corpus`` where every doc in a cell is identical). Group A holds
+    ``_DEBIAS_BASE``; group B mixes toward ``_DEBIAS_ALT`` with weight growing
+    over periods, so the planted between-group TV is 0 in period 0 and grows."""
+    rng = np.random.default_rng(seed)
+    docs, groups, times = [], [], []
+    for per in range(3):
+        for g in ("A", "B"):
+            if g == "A":
+                p = _DEBIAS_BASE
+            else:
+                w = min(strength * per, 1.0)
+                p = (1 - w) * _DEBIAS_BASE + w * _DEBIAS_ALT
+            p = p / p.sum()
+            for _ in range(n_per_cell):
+                toks = rng.choice(len(_DEBIAS_VOCAB), size=doc_len, p=p)
+                docs.append([_DEBIAS_VOCAB[t] for t in toks])
+                groups.append(g)
+                times.append(2000 + per)
+    return docs, groups, times
+
+
+def _planted_tv(strength):
+    out = []
+    for per in range(3):
+        w = min(strength * per, 1.0)
+        pb = (1 - w) * _DEBIAS_BASE + w * _DEBIAS_ALT
+        pb = pb / pb.sum()
+        out.append(0.5 * np.abs(_DEBIAS_BASE / _DEBIAS_BASE.sum() - pb).sum())
+    return np.array(out)
+
+
+def _fit_sampled(docs, groups, times):
+    m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+    m.fit(docs, times=times, content=groups, iters=100,
+          period_smooth=2.0, interaction_shrink=1.5)
+    return m
+
+
+def test_content_divergence_debiased_removes_floor():
+    """Identical groups have zero true content divergence, but the raw plug-in
+    reports a positive finite-sample floor. The debiased estimator removes it."""
+    from topica.ectm import content_divergence_debiased
+
+    docs, groups, times = _sampled_corpus(160, strength=0.0, seed=3)
+    m = _fit_sampled(docs, groups, times)
+    raw = np.array([d for _, d in content_divergence(m, 0, "A", "B")])
+    deb = np.array([v for _, v, _ in content_divergence_debiased(
+        m, 0, "A", "B", docs=docs, groups=groups, periods=times, n_splits=8, seed=1)])
+    # raw carries a positive floor; debiased sits at ~0 and below the raw floor.
+    assert np.abs(deb).mean() < 0.02
+    assert np.abs(deb).mean() < raw.mean() + 1e-9
+
+
+def test_content_divergence_debiased_converges_to_planted_tv():
+    """With a genuine planted contrast, the debiased estimate tracks the known
+    TV and beats the raw plug-in's error; the raw floor overstates the null
+    period while understating nothing it needs to recover."""
+    from topica.ectm import content_divergence_debiased
+
+    truth = _planted_tv(0.5)
+    docs, groups, times = _sampled_corpus(200, strength=0.5, seed=7)
+    m = _fit_sampled(docs, groups, times)
+    raw = np.array([d for _, d in content_divergence(m, 0, "A", "B")])
+    deb = np.array([v for _, v, _ in content_divergence_debiased(
+        m, 0, "A", "B", docs=docs, groups=groups, periods=times, n_splits=8, seed=1)])
+    # debiased is closer to the planted truth than the raw plug-in on average,
+    assert np.mean(np.abs(deb - truth)) < np.mean(np.abs(raw - truth))
+    # recovers the null period (period 0) and the growing contrast (period 2).
+    assert abs(deb[0]) < 0.05
+    assert deb[2] > deb[0] + 0.25
+
+
+def test_content_divergence_debiased_jackknife_se():
+    """se_blocks>1 attaches a delete-block jackknife SE; it is finite and small
+    on a well-sampled corpus."""
+    from topica.ectm import content_divergence_debiased
+
+    docs, groups, times = _sampled_corpus(120, strength=0.5, seed=5)
+    m = _fit_sampled(docs, groups, times)
+    rows = content_divergence_debiased(
+        m, 0, "A", "B", docs=docs, groups=groups, periods=times,
+        n_splits=6, se_blocks=5, seed=1)
+    assert len(rows) == m.num_periods
+    for _, _, se in rows:
+        assert np.isfinite(se) and se >= 0.0
+
+
+def test_content_divergence_debiased_validates_inputs():
+    from topica.ectm import content_divergence_debiased
+
+    docs, groups, times = _sampled_corpus(20, strength=0.5, seed=1)
+    m = _fit_sampled(docs, groups, times)
+    # length mismatch
+    with pytest.raises(ValueError):
+        content_divergence_debiased(m, 0, "A", "B", docs=docs, groups=groups[:-1],
+                                    periods=times, n_splits=2)
+    # topic out of range
+    with pytest.raises(ValueError):
+        content_divergence_debiased(m, 9, "A", "B", docs=docs, groups=groups,
+                                    periods=times, n_splits=2)
+    # wrong document count vs the fitted model
+    with pytest.raises(ValueError):
+        content_divergence_debiased(m, 0, "A", "B", docs=docs[:10], groups=groups,
+                                    periods=times, n_splits=2)
