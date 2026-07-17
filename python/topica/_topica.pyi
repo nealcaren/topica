@@ -813,12 +813,13 @@ class ECTM:
         content_every=0 (default) re-solves κ once per epoch; a small positive value
         re-solves more often (better per-epoch progress, more cost per epoch).
 
-        seeds (experimental) anchors a topic's shared baseline vocabulary: a
-        ``{topic_index: [seed words]}`` map shifts the κT prior mean for those
-        (topic, word) entries to seed_strength (default 4.0), so the seeded topic
-        keeps its identity and group differences are more likely to stay *within*
-        it than to spawn a parallel group-topic. Unseeded topics and seeds=None are
-        unchanged (bit-exact)."""
+        seeds anchors a topic to a pre-specified vocabulary: a
+        ``{topic_index: [seed words]}`` map boosts those words' E-step
+        responsibility toward the seeded topic by ``exp(seed_strength)`` (default
+        4.0) and shifts their κT prior mean, so the seed words' tokens are assigned
+        to the seeded topic and their vocabulary consolidates onto it -- reading a
+        chosen issue's content surface off a known topic index. Seed as many topics
+        as you like; unknown words are skipped and seeds=None is bit-exact."""
         ...
 
     @property

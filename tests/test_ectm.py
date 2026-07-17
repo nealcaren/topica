@@ -377,29 +377,33 @@ def test_seeds_none_is_bit_exact_with_baseline():
                        np.asarray(seeded_none.topic_word))
 
 
-def test_seeds_anchor_topic_baseline_vocabulary():
-    """Seeding a topic raises the seed words' probability in its baseline; more
-    strength anchors harder (a monotonic effect the L2 prior defends)."""
-    # A richer corpus than the 4-word fixture so the effect is above noise.
+def test_seeds_consolidate_vocabulary_into_the_seeded_topic():
+    """The E-step seed boost forces the seed words' tokens onto the seeded topic,
+    so that topic owns almost all of the seed vocabulary's probability mass --
+    the anchoring that lets ECTM read a pre-specified issue off a known topic."""
+    # A corpus with three latent themes, so seeding must actively consolidate.
+    themes = [["tax", "budget", "fiscal"], ["war", "troops", "army"],
+              ["health", "clinic", "patient"]]
     docs, groups, times = [], [], []
-    for i in range(120):
-        base = (["tax", "budget", "fiscal"] if i % 2 else ["war", "troops", "army"])
-        docs.append(base * 3)
+    for i in range(180):
+        docs.append(themes[i % 3] * 3)
         groups.append("A" if i % 2 else "B")
         times.append(2000 + i % 3)
 
-    def seed_mass(seeds=None, strength=4.0):
-        m = topica.models.ECTM(num_topics=3, seed=1)
-        m.fit(docs, times=times, content=groups, iters=100, seeds=seeds, seed_strength=strength)
-        vocab = m.vocabulary
-        sw = [vocab.index(w) for w in ("tax", "budget", "fiscal")]
-        # the topic where the seed words landed carries the most of their mass
+    def seed_share(seeds):
+        m = topica.models.ECTM(num_topics=6, seed=1)
+        m.fit(docs, times=times, content=groups, iters=120, seeds=seeds, seed_strength=6.0)
         beta = np.asarray(m.topic_word)
-        return beta[:, sw].sum(axis=1).max()
+        sw = [m.vocabulary.index(w) for w in ("tax", "budget", "fiscal")]
+        best_share = (beta[:, sw].sum(axis=0) / beta[:, sw].sum()).max()   # unseeded
+        t0_share = beta[0][sw].sum() / beta[:, sw].sum()                    # seeded topic 0
+        return best_share, t0_share
 
-    none = seed_mass(None)
-    strong = seed_mass({0: ["tax", "budget", "fiscal"]}, strength=8.0)
-    assert strong > none
+    best_unseeded, _ = seed_share(None)
+    _, seeded_t0 = seed_share({0: ["tax", "budget", "fiscal"]})
+    # seeding consolidates the fiscal vocabulary onto topic 0
+    assert seeded_t0 > best_unseeded
+    assert seeded_t0 > 0.6
 
 
 def test_seeds_reject_out_of_range_topic():
