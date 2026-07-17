@@ -634,3 +634,60 @@ def test_content_trajectory_ci_bad_method():
         content_trajectory_ci(_fit_two_topic, docs, groups, times,
                               anchor_words=["alpha"], word="gamma",
                               contrast=("A", "B"), method="nope", n_boot=2)
+
+
+# ---------------------------------------------------------------------------
+# Content-prior hyperparameter selection (issue #339)
+# ---------------------------------------------------------------------------
+
+def _tune_fit(docs, times, content, *, content_prior_var, interaction_shrink, period_smooth):
+    m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+    m.fit(docs, times=times, content=content, iters=55,
+          content_prior_var=content_prior_var,
+          interaction_shrink=interaction_shrink, period_smooth=period_smooth)
+    return m
+
+
+def test_tune_content_prior_selects_and_reports():
+    """Grid-search returns a best combo drawn from the grid, a complete table
+    sorted best-first, and rejects a pathologically tight content prior."""
+    from topica.ectm import tune_content_prior
+
+    docs, groups, times = _two_topic_corpus(30, seed=1)
+    sel = tune_content_prior(
+        _tune_fit, docs, times, groups,
+        content_prior_var=(0.05, 1.0, 5.0), interaction_shrink=(1.5,),
+        period_smooth=(5.0,), seed=0)
+
+    assert len(sel.table) == 3  # 3 x 1 x 1 grid
+    scores = [r["heldout_loglik"] for r in sel.table]
+    assert scores == sorted(scores, reverse=True)  # sorted best-first
+    assert sel.best_score == scores[0]
+    assert sel.best["content_prior_var"] in (0.05, 1.0, 5.0)
+    assert sel.n_docs > 0 and sel.n_tokens > 0
+    # the tightest prior (0.05) should not win — it over-shrinks the content
+    assert sel.best["content_prior_var"] != 0.05
+
+
+def test_tune_content_prior_reproducible():
+    """A fixed held-out seed makes the selection reproducible (the #339 point:
+    no hand-tuning, same answer every run)."""
+    from topica.ectm import tune_content_prior
+
+    docs, groups, times = _two_topic_corpus(30, seed=2)
+    kw = dict(content_prior_var=(0.5, 2.0), interaction_shrink=(1.5,),
+              period_smooth=(5.0,), seed=0)
+    a = tune_content_prior(_tune_fit, docs, times, groups, **kw)
+    b = tune_content_prior(_tune_fit, docs, times, groups, **kw)
+    assert a.best == b.best
+    assert a.best_score == b.best_score
+
+
+def test_tune_content_prior_validates_inputs():
+    from topica.ectm import tune_content_prior
+
+    docs, groups, times = _two_topic_corpus(10, seed=0)
+    with pytest.raises(ValueError):
+        tune_content_prior(_tune_fit, docs, times[:-1], groups,
+                           content_prior_var=(1.0,), interaction_shrink=(1.5,),
+                           period_smooth=(5.0,))
