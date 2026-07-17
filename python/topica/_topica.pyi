@@ -789,6 +789,7 @@ class ECTM:
         content_prior_var: float = 1.0,
         period_smooth: float = 5.0,
         interaction_shrink: float = 2.0,
+        content_prior: str = "l2",
         inference: str = "batch",
         batch_size: int = 256,
         tau: float = 64.0,
@@ -809,6 +810,9 @@ class ECTM:
         content_prior_var); a first-order random walk across periods with precision
         period_smooth (larger = smoother / more pooling across adjacent periods);
         and an extra L2 factor interaction_shrink on the group-by-time term.
+        content_prior="l2" (default) uses that Gaussian ridge; content_prior="l1"
+        swaps in a sparsity-inducing Laplace prior (rate 1/content_prior_var,
+        solved by FISTA) for exclusive top-word lists and sharper Delta contrasts.
 
         inference="batch" (default) is full-batch variational EM. inference="svi"
         is minibatch stochastic VI for corpora too large to fit in batch: iters

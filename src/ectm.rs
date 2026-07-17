@@ -208,6 +208,7 @@ fn solve_and_blend_content(
     rw_kp: f64,
     rw_kgp: f64,
     shrink_kgp: f64,
+    content_l1: f64,
     rho: f64,
     inner_iters: usize,
     seed_mean: &[f64],
@@ -236,6 +237,7 @@ fn solve_and_blend_content(
         rw_kp,
         rw_kgp,
         shrink_kgp,
+        content_l1,
         inner_iters,
         seed_mean,
     );
@@ -263,6 +265,83 @@ fn solve_and_blend_content(
     (num.sqrt()) / (den.sqrt() + 1e-12)
 }
 
+/// Soft-thresholding operator `sign(z)·max(|z|-g, 0)` — the proximal map of the
+/// L1 penalty and the source of exact zeros under the sparse content prior.
+fn soft_threshold(z: f64, g: f64) -> f64 {
+    if z > g {
+        z - g
+    } else if z < -g {
+        z + g
+    } else {
+        0.0
+    }
+}
+
+/// Minimize `f(x) + lam·Σ_i |x_i − anchor_i|` by FISTA with backtracking line
+/// search (Beck & Teboulle 2009). `f_and_grad` supplies the smooth part's value
+/// and gradient (already in minimization form). The L1 term is non-smooth at its
+/// anchor, so plain L-BFGS cannot produce exact zeros; the proximal step
+/// (soft-thresholding around `anchor`) does. Only invoked for the L1 content
+/// prior (`lam > 0`); the L2 default keeps the original L-BFGS solve bit-exact.
+fn fista_l1<F>(x0: Vec<f64>, f_and_grad: F, lam: f64, anchor: &[f64], max_iter: usize) -> Vec<f64>
+where
+    F: Fn(&[f64]) -> (f64, Vec<f64>),
+{
+    let n = x0.len();
+    // Proximal-gradient step from `y` with inverse-Lipschitz step `t`.
+    let prox_step = |y: &[f64], g: &[f64], t: f64| -> Vec<f64> {
+        let thr = lam * t;
+        (0..n)
+            .map(|i| {
+                let a = anchor.get(i).copied().unwrap_or(0.0);
+                a + soft_threshold(y[i] - t * g[i] - a, thr)
+            })
+            .collect::<Vec<f64>>()
+    };
+    let mut x = x0.clone();
+    let mut y = x0;
+    let mut t_step = 1.0f64;
+    let mut theta = 1.0f64;
+    for _ in 0..max_iter {
+        let (fy, gy) = f_and_grad(&y);
+        // Backtracking: shrink the step until the quadratic upper bound holds.
+        let mut step = t_step * 2.0;
+        let x_new = loop {
+            let cand = prox_step(&y, &gy, step);
+            let (fc, _) = f_and_grad(&cand);
+            let mut dot = 0.0;
+            let mut sq = 0.0;
+            for i in 0..n {
+                let d = cand[i] - y[i];
+                dot += gy[i] * d;
+                sq += d * d;
+            }
+            if fc <= fy + dot + sq / (2.0 * step) + 1e-12 || step < 1e-12 {
+                break cand;
+            }
+            step *= 0.5;
+        };
+        t_step = step;
+        // Nesterov momentum.
+        let theta_next = (1.0 + (1.0 + 4.0 * theta * theta).sqrt()) / 2.0;
+        let beta = (theta - 1.0) / theta_next;
+        let mut num = 0.0;
+        let mut den = 0.0;
+        for i in 0..n {
+            let d = x_new[i] - x[i];
+            num += d * d;
+            den += x[i] * x[i];
+            y[i] = x_new[i] + beta * d;
+        }
+        x = x_new;
+        theta = theta_next;
+        if num.sqrt() / (den.sqrt() + 1e-12) < 1e-5 {
+            break;
+        }
+    }
+    x
+}
+
 /// MAP-update the content deviations κ from the variational expected
 /// (topic×group×period×word) counts, then rebuild per-cell β.
 ///
@@ -288,6 +367,7 @@ fn optimize_content(
     rw_kp: f64,
     rw_kgp: f64,
     shrink_kgp: f64,
+    content_l1: f64,
     max_iter: usize,
     seed_mean: &[f64],
 ) -> Vec<Vec<Vec<f64>>> {
@@ -317,9 +397,12 @@ fn optimize_content(
 
     let inv_var = 1.0 / sigma2;
 
-    let x = lbfgs_minimize(
-        x0,
-        |flat| {
+    // Smooth part of the negative log-posterior (to *minimize*): the
+    // multinomial-logit NLL, the L2 priors, and the random-walk penalties. Under
+    // the L1 (sparse Laplace) content prior the L2 stays as a small ridge for
+    // identifiability and conditioning while FISTA adds the non-smooth |κ| term.
+    let smooth = |flat: &[f64]| -> (f64, Vec<f64>) {
+        {
             let kt_i = |t: usize, w: usize| flat[t * v + w];
             let kkp_i = |t: usize, per: usize, w: usize| flat[off_kp + (t * p + per) * v + w];
             let kkg_i = |t: usize, grp: usize, w: usize| flat[off_kg + (t * g + grp) * v + w];
@@ -423,11 +506,22 @@ fn optimize_content(
             }
 
             (-value, grad.iter().map(|gv| -gv).collect())
-        },
-        max_iter,
-        7,
-        1e-4,
-    );
+        }
+    };
+
+    let x = if content_l1 > 0.0 {
+        // L1 (sparse Laplace) prior on the content deviations: κT is pulled
+        // toward `seed_mean` (0 except at seeded entries), every other block
+        // toward 0. Solved by FISTA so the deviations reach exact zeros — sparse,
+        // readable top-word lists and sharp per-cell Δ contrasts (SAGE-style).
+        let mut anchor = vec![0.0f64; n_t + n_kp + n_kg + n_kgp];
+        for (i, a) in anchor.iter_mut().enumerate().take(n_t) {
+            *a = seed_mean.get(i).copied().unwrap_or(0.0);
+        }
+        fista_l1(x0, smooth, content_l1, &anchor, max_iter.max(200))
+    } else {
+        lbfgs_minimize(x0, smooth, max_iter, 7, 1e-4)
+    };
 
     for t in 0..k {
         kt[t].copy_from_slice(&x[t * v..(t + 1) * v]);
@@ -471,6 +565,7 @@ pub fn fit_ectm<R: Rng>(
     rw_kp: f64,
     rw_kgp: f64,
     shrink_kgp: f64,
+    content_l1: f64,
     keep_nu: bool,
     diagonal: bool,
     init_spectral: bool,
@@ -703,6 +798,7 @@ pub fn fit_ectm<R: Rng>(
             rw_kp,
             rw_kgp,
             shrink_kgp,
+            content_l1,
             20,
             seed_mean,
         );
@@ -774,6 +870,7 @@ pub fn fit_ectm_svi<R: Rng>(
     rw_kp: f64,
     rw_kgp: f64,
     shrink_kgp: f64,
+    content_l1: f64,
     keep_nu: bool,
     diagonal: bool,
     init_spectral: bool,
@@ -1025,6 +1122,7 @@ pub fn fit_ectm_svi<R: Rng>(
                     rw_kp,
                     rw_kgp,
                     shrink_kgp,
+                    content_l1,
                     rho_k,
                     kiters,
                     seed_mean,
@@ -1064,6 +1162,7 @@ pub fn fit_ectm_svi<R: Rng>(
             rw_kp,
             rw_kgp,
             shrink_kgp,
+            content_l1,
             rho_k,
             kiters,
             seed_mean,
@@ -1271,6 +1370,7 @@ mod tests {
             5.0,
             5.0,
             2.0,
+            0.0,
             true,
             false,
             init_spectral,
@@ -1362,5 +1462,76 @@ mod tests {
         assert!(base.is_empty(), "check_conformance: {base:?}");
         let ln = crate::conformance::check_logistic_normal(&m);
         assert!(ln.is_empty(), "check_logistic_normal: {ln:?}");
+    }
+
+    // FISTA recovers the closed-form lasso solution of a separable quadratic:
+    // minimize 0.5‖x − target‖² + λ‖x‖₁ has solution soft_threshold(target, λ),
+    // with entries below λ driven to *exact* zero. This directly exercises the
+    // sparse-content solver independent of the ECTM likelihood.
+    #[test]
+    fn fista_l1_recovers_soft_threshold() {
+        let target = [3.0f64, -2.0, 0.5, -0.3, 0.05];
+        let lam = 1.0;
+        let f_and_grad = |x: &[f64]| {
+            let mut val = 0.0;
+            let mut grad = vec![0.0; x.len()];
+            for i in 0..x.len() {
+                let d = x[i] - target[i];
+                val += 0.5 * d * d;
+                grad[i] = d;
+            }
+            (val, grad)
+        };
+        let anchor = vec![0.0; target.len()];
+        let x = fista_l1(vec![0.0; target.len()], f_and_grad, lam, &anchor, 500);
+        let expected: Vec<f64> = target.iter().map(|&t| soft_threshold(t, lam)).collect();
+        for (xi, ei) in x.iter().zip(&expected) {
+            assert!((xi - ei).abs() < 1e-4, "got {x:?}, expected {expected:?}");
+        }
+        // entries with |target| <= lam are pinned to exact zero (sparsity).
+        assert_eq!(x[2], 0.0);
+        assert_eq!(x[3], 0.0);
+        assert_eq!(x[4], 0.0);
+    }
+
+    // The L1 content prior drives the between-group content deviations toward
+    // zero: with a strong penalty the group κ collapse, so the two groups' fitted
+    // word distributions coincide (no spurious wording contrast). The L2 default
+    // keeps a nonzero contrast. Verifies the flag reaches the estimator and the
+    // proximal solve sparsifies end-to-end.
+    #[test]
+    fn l1_content_prior_sparsifies_group_contrast() {
+        let (docs, groups, periods) = growing_contrast_corpus();
+        let fit = |content_l1: f64| {
+            let mut rng = ChaCha8Rng::seed_from_u64(1);
+            fit_ectm(
+                &docs, 2, 4, &groups, 2, &periods, 3, 60, 0.0, 0.0, None, 1.0, 5.0, 5.0, 2.0,
+                content_l1, true, false, true, &[], &mut rng,
+            )
+        };
+        // Total between-group L1 wording distance over cells.
+        let contrast = |m: &EctmModel| -> f64 {
+            let mut tot = 0.0;
+            for t in 0..m.num_periods {
+                let a = &m.content_beta[m.cell(0, t)];
+                let b = &m.content_beta[m.cell(1, t)];
+                for k in 0..m.num_topics {
+                    for w in 0..a[k].len() {
+                        tot += (a[k][w] - b[k][w]).abs();
+                    }
+                }
+            }
+            tot
+        };
+        // Sparsity increases monotonically with the penalty; a strong penalty
+        // collapses even this (deliberately strong) 4-word group signal.
+        let c_l2 = contrast(&fit(0.0));
+        let c_mid = contrast(&fit(50.0));
+        let c_strong = contrast(&fit(1000.0));
+        assert!(c_mid < c_l2, "L1 should reduce the contrast: L2={c_l2}, L1={c_mid}");
+        assert!(
+            c_strong < 0.25 * c_l2,
+            "strong L1 should largely collapse the group contrast: L2={c_l2}, strong={c_strong}"
+        );
     }
 }
