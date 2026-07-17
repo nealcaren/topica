@@ -534,3 +534,103 @@ def test_content_divergence_debiased_validates_inputs():
     with pytest.raises(ValueError):
         content_divergence_debiased(m, 0, "A", "B", docs=docs[:10], groups=groups,
                                     periods=times, n_splits=2)
+
+
+# ---------------------------------------------------------------------------
+# Parametric-bootstrap CIs for content trajectories (issue #340)
+# ---------------------------------------------------------------------------
+
+_T0_WORDS = ["alpha", "beta", "gamma", "delta"]
+_T1_WORDS = ["one", "two", "three", "four"]
+
+
+def _two_topic_doc(rng, topic, group, per, length=14):
+    """A document from one of two well-separated topics. Topic 0 carries a
+    group-by-time content drift: group A stays on {alpha,beta}; group B shifts
+    toward {gamma,delta} as periods advance. Topic 1 is shared across groups."""
+    if topic == 0:
+        if group == "A":
+            p = np.array([0.45, 0.45, 0.05, 0.05])
+        else:
+            w = min(0.3 * per, 1.0)
+            p = np.array([0.45, 0.45, 0.05, 0.05]) * (1 - w) + \
+                np.array([0.05, 0.05, 0.45, 0.45]) * w
+        p = p / p.sum()
+        return [_T0_WORDS[i] for i in rng.choice(4, length, p=p)]
+    return [_T1_WORDS[i] for i in rng.choice(4, length, p=[0.4, 0.3, 0.2, 0.1])]
+
+
+def _two_topic_corpus(reps, seed=0):
+    rng = np.random.default_rng(seed)
+    docs, groups, times = [], [], []
+    for _ in range(reps):
+        for per in range(3):
+            for g in ("A", "B"):
+                docs.append(_two_topic_doc(rng, 0, g, per)); groups.append(g); times.append(2000 + per)
+                docs.append(_two_topic_doc(rng, 1, g, per)); groups.append(g); times.append(2000 + per)
+    return docs, groups, times
+
+
+def _fit_two_topic(docs, groups, periods):
+    m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+    m.fit(docs, times=periods, content=groups, iters=70,
+          period_smooth=2.0, interaction_shrink=1.5)
+    return m
+
+
+def _drift_topic(m):
+    return 0 if set(w for w, _ in m.top_words(4, topic=0)) & set(_T0_WORDS) else 1
+
+
+def test_content_trajectory_ci_parametric_covers_dgp():
+    """The parametric bootstrap simulates from the fitted DGP, so its band is
+    centered on and covers the reference model's own content trajectory (the
+    well-defined target), and recovers the planted group-by-time drift."""
+    from topica.ectm import content_trajectory_ci
+
+    docs, groups, times = _two_topic_corpus(45, seed=1)
+    m = _fit_two_topic(docs, groups, times)
+    k = _drift_topic(m)
+    truth = [v for _, v in content_trajectory(m, k, "gamma", contrast=("A", "B"))]
+    anchor = [w for w, _ in m.top_words(4, topic=k)]
+    band = content_trajectory_ci(
+        _fit_two_topic, docs, groups, times, anchor_words=anchor,
+        word="gamma", contrast=("A", "B"), method="parametric", model=m,
+        n_boot=15, seed=3)
+
+    assert len(band) == m.num_periods
+    covered = 0
+    for (_, mean, lo, hi), tv in zip(band, truth):
+        assert lo <= mean <= hi
+        covered += lo <= tv <= hi
+    # band covers the DGP truth at (nearly) every period
+    assert covered >= len(truth) - 1
+    # recovers the drift: group B pulls "gamma" up over time, so A-B falls
+    assert band[-1][1] < band[0][1] - 0.1
+
+
+def test_content_trajectory_ci_parametric_fits_reference_when_model_none():
+    """method='parametric' with model=None obtains the reference DGP via refit."""
+    from topica.ectm import content_trajectory_ci
+
+    docs, groups, times = _two_topic_corpus(35, seed=2)
+    m = _fit_two_topic(docs, groups, times)
+    k = _drift_topic(m)
+    anchor = [w for w, _ in m.top_words(4, topic=k)]
+    band = content_trajectory_ci(
+        _fit_two_topic, docs, groups, times, anchor_words=anchor,
+        word="gamma", contrast=("A", "B"), method="parametric", model=None,
+        n_boot=10, seed=4)
+    assert len(band) == m.num_periods
+    for _, mean, lo, hi in band:
+        assert lo <= mean <= hi
+
+
+def test_content_trajectory_ci_bad_method():
+    from topica.ectm import content_trajectory_ci
+
+    docs, groups, times = _two_topic_corpus(10, seed=0)
+    with pytest.raises(ValueError):
+        content_trajectory_ci(_fit_two_topic, docs, groups, times,
+                              anchor_words=["alpha"], word="gamma",
+                              contrast=("A", "B"), method="nope", n_boot=2)
