@@ -29,7 +29,20 @@ __all__ = [
     "topic_polarization",
     "group_exclusivity",
     "split_topics",
+    "stratified_coherence",
+    "diagnostics",
 ]
+
+
+def _ref_corpus(texts):
+    """Normalize a coherence reference to ``list[list[str]]`` (Corpus, raw strings,
+    or token lists)."""
+    if hasattr(texts, "documents"):
+        return texts.documents()
+    texts = list(texts)
+    if texts and isinstance(texts[0], str):
+        return [t.split() for t in texts]
+    return [list(t) for t in texts]
 
 
 def group_topic_word(model, *, period=None):
@@ -197,3 +210,88 @@ def split_topics(model, content, *, cos_thresh=0.6, skew_thresh=0.65):
                     "groups": (labels[skew_grp[k]], labels[skew_grp[j]]),
                 })
     return out
+
+
+def stratified_coherence(model, texts, content, *, coherence_type="c_v", n=10,
+                         weights=None) -> np.ndarray:
+    """Group-stratified topic coherence for a content-covariate model.
+
+    Global coherence scores a topic's group-averaged words against the whole
+    corpus, which hides that a topic can be coherent for one group and gibberish
+    for another. This instead scores each group's *own* top words
+    (``TopWords(beta_{k,g})``) against that group's *own* subcorpus
+    (:math:`\\mathcal{D}_g`, the documents with ``content == g``), and averages
+    the per-group coherences weighted by group prevalence:
+
+    .. math:: \\text{Coherence}(k) = \\sum_g p(g)\\,
+              \\text{Coherence}(\\text{TopWords}(\\beta_{k,g}), \\mathcal{D}_g)
+
+    Parameters
+    ----------
+    texts : Corpus, list of strings, or list of token lists
+        The training corpus, aligned row-for-row with ``content``.
+    content : sequence
+        The per-document content-group labels passed to ``fit``.
+    coherence_type : one of ``"u_mass"``, ``"c_uci"``, ``"c_npmi"``, ``"c_v"``.
+    weights : array (num_groups,), optional
+        Group weights ``p(g)``. Defaults to each group's document share.
+
+    Returns
+    -------
+    numpy.ndarray, shape (num_topics,)
+    """
+    from .coherence import coherence as _coherence
+
+    beta, groups = group_topic_word(model)              # (K, G, V)
+    vocab = list(model.vocabulary)
+    toks = _ref_corpus(texts)
+    content = [str(c) for c in content]
+    if len(toks) != len(content):
+        raise ValueError(
+            f"texts has {len(toks)} documents but content has {len(content)} labels"
+        )
+    K, G, _ = beta.shape
+    result = np.zeros(K)
+    wsum = 0.0
+    for gi, g in enumerate(groups):
+        sub = [t for t, c in zip(toks, content) if c == str(g)]
+        if not sub:
+            continue
+        w = float(weights[gi]) if weights is not None else float(len(sub))
+        topics = [[vocab[i] for i in np.argsort(beta[k, gi])[::-1][:n]] for k in range(K)]
+        cg = np.asarray(_coherence(topics, sub, coherence_type=coherence_type, topn=n),
+                        dtype=float)
+        result += w * cg
+        wsum += w
+    if wsum == 0.0:
+        raise ValueError("no documents matched any content group label")
+    return result / wsum
+
+
+def diagnostics(model, texts=None, content=None, *, n=10, coherence_type="c_v"):
+    """One per-topic content-diagnostics table for a content-covariate model.
+
+    Consolidates the content metrics into a single row-per-topic table:
+    ``polarization`` (JSD across groups), ``group_exclusivity`` (worst-case group),
+    and -- when ``texts`` and ``content`` are supplied -- ``stratified_coherence``.
+    Returns a pandas ``DataFrame`` if pandas is available, else a list of row
+    dicts.
+    """
+    pol = topic_polarization(model)
+    gex = group_exclusivity(model, n=n, summary="min")
+    rows = []
+    strat = None
+    if texts is not None and content is not None:
+        strat = stratified_coherence(model, texts, content, n=n,
+                                     coherence_type=coherence_type)
+    for k in range(len(pol)):
+        row = {"topic": k, "polarization": float(pol[k]),
+               "group_exclusivity": float(gex[k])}
+        if strat is not None:
+            row["stratified_coherence"] = float(strat[k])
+        rows.append(row)
+    try:
+        import pandas as pd
+        return pd.DataFrame(rows).set_index("topic")
+    except ImportError:
+        return rows

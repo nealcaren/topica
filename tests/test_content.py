@@ -21,9 +21,10 @@ from topica import content
 class _StubContentModel:
     """Minimal STM/STS-shaped content model: exposes topic_word_by_group."""
 
-    def __init__(self, beta_kgv, groups):
+    def __init__(self, beta_kgv, groups, vocabulary=None):
         self._beta = np.asarray(beta_kgv, dtype=float)
         self.groups = list(groups)
+        self.vocabulary = vocabulary
 
     @property
     def topic_word_by_group(self):
@@ -149,3 +150,95 @@ def test_split_topics_returns_wellformed(ectm_model):
 def test_content_is_a_namespace():
     assert hasattr(topica, "content")
     assert topica.content.topic_polarization is content.topic_polarization
+
+
+# --------------------------------------------------------------------------- #
+# Stratified coherence (Phase 2) and the consolidated table (Phase 3).
+# --------------------------------------------------------------------------- #
+def _beta_row(vocab, top_words):
+    """A topic-word row that puts most mass on `top_words`, a little elsewhere."""
+    v = np.full(len(vocab), 0.01)
+    for w in top_words:
+        v[vocab.index(w)] = 1.0
+    return v / v.sum()
+
+
+# Group-A subcorpus: {a,b,c} always co-occur. Group-B subcorpus: {x,y,z} always
+# co-occur, while {a,b,c} appear but never together (present, so coherence is
+# defined; scattered, so it scores low).
+_DA = [["a", "b", "c"]] * 6
+_DB = [["x", "y", "z"]] * 4 + [["a", "q"], ["b", "q"], ["c", "q"]]
+
+
+def test_stratified_coherence_is_group_weighted_average():
+    vocab = ["a", "b", "c", "x", "y", "z", "q"]
+    beta = np.array([[_beta_row(vocab, ["a", "b", "c"]),
+                      _beta_row(vocab, ["x", "y", "z"])]])  # (K=1, G=2, V)
+    m = _StubContentModel(beta, ["A", "B"], vocabulary=vocab)
+    texts = _DA + _DB
+    grp = ["A"] * len(_DA) + ["B"] * len(_DB)
+    sc = content.stratified_coherence(m, texts, grp, coherence_type="u_mass", n=3)
+    assert sc.shape == (1,)
+    from topica.coherence import coherence as _coh
+    ca = _coh([["a", "b", "c"]], _DA, coherence_type="u_mass", topn=3)[0]
+    cb = _coh([["x", "y", "z"]], _DB, coherence_type="u_mass", topn=3)[0]
+    lo, hi = sorted((ca, cb))
+    assert lo - 1e-6 <= sc[0] <= hi + 1e-6
+
+
+def test_stratified_coherence_penalizes_an_incoherent_group():
+    vocab = ["a", "b", "c", "x", "y", "z", "q"]
+    # both fits: group A scores the co-occurring {a,b,c}. Group B scores either the
+    # co-occurring {x,y,z} (good) or the scattered {a,b,c} (bad) -- same subcorpus.
+    beta_good = np.array([[_beta_row(vocab, ["a", "b", "c"]),
+                           _beta_row(vocab, ["x", "y", "z"])]])
+    beta_bad = np.array([[_beta_row(vocab, ["a", "b", "c"]),
+                          _beta_row(vocab, ["a", "b", "c"])]])
+    texts = _DA + _DB
+    grp = ["A"] * len(_DA) + ["B"] * len(_DB)
+    good = content.stratified_coherence(_StubContentModel(beta_good, ["A", "B"], vocab),
+                                        texts, grp, coherence_type="u_mass", n=3)[0]
+    bad = content.stratified_coherence(_StubContentModel(beta_bad, ["A", "B"], vocab),
+                                       texts, grp, coherence_type="u_mass", n=3)[0]
+    assert bad < good
+
+
+def test_stratified_coherence_length_mismatch_raises():
+    vocab = ["a", "b", "c"]
+    m = _StubContentModel(np.array([[_beta_row(vocab, ["a"]), _beta_row(vocab, ["b"])]]),
+                          ["A", "B"], vocab)
+    with pytest.raises(ValueError, match="documents"):
+        content.stratified_coherence(m, [["a", "b"]], ["A", "B"], n=2)
+
+
+def test_content_diagnostics_table_columns():
+    vocab = ["a", "b", "c", "x", "y", "z"]
+    beta = np.array([[_beta_row(vocab, ["a", "b", "c"]), _beta_row(vocab, ["x", "y", "z"])],
+                     [_beta_row(vocab, ["a", "x", "b"]), _beta_row(vocab, ["a", "x", "c"])]])
+    m = _StubContentModel(beta, ["A", "B"], vocab)
+    # without texts/content: polarization + exclusivity only
+    tbl = content.diagnostics(m)
+    rows = tbl.to_dict("records") if hasattr(tbl, "to_dict") else tbl
+    assert {"polarization", "group_exclusivity"} <= set(rows[0])
+    assert "stratified_coherence" not in rows[0]
+    # with texts/content: gains stratified_coherence
+    texts = [["a", "b", "c"]] * 4 + [["x", "y", "z"]] * 4
+    grp = ["A"] * 4 + ["B"] * 4
+    tbl2 = content.diagnostics(m, texts=texts, content=grp, coherence_type="u_mass")
+    rows2 = tbl2.to_dict("records") if hasattr(tbl2, "to_dict") else tbl2
+    assert "stratified_coherence" in rows2[0]
+
+
+def test_search_k_stratified_reports_polarization():
+    import topica
+    docs = [["a", "b", "c"] if i % 2 else ["x", "y", "z"] for i in range(60)]
+    corpus = topica.Corpus.from_documents(docs)
+    grp = ["L" if i % 2 else "R" for i in range(60)]
+    res = topica.select.search_k(corpus, ks=[2, 3], model="stm", content=grp,
+                                 coherence_type="stratified_c_npmi", iters=40)
+    rows = res.rows if hasattr(res, "rows") else res
+    assert all("polarization" in r for r in rows)
+    assert all(r["coherence_metric"] == "stratified_c_npmi" for r in rows)
+    # stratified without content is rejected
+    with pytest.raises(ValueError, match="stratified"):
+        topica.select.search_k(corpus, ks=[2], model="stm", coherence_type="stratified_c_v")
