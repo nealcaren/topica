@@ -7841,8 +7841,14 @@ impl ECTM {
     /// precision `period_smooth` (larger ⇒ smoother, more pooling across adjacent
     /// periods); and an extra L2 factor `interaction_shrink` on the group×time
     /// term (larger ⇒ the changing contrast is pulled harder toward zero unless
-    /// the data demand it). EM runs until the relative change in the variational
-    /// bound drops below `convergence_tol` or `iters` iterations are reached.
+    /// the data demand it). `content_prior` selects the deviation prior:
+    /// ``"l2"`` (default) is the Gaussian ridge above; ``"l1"`` swaps in a
+    /// sparsity-inducing Laplace prior (solved by FISTA) that drives the κ to
+    /// exact zeros, for more exclusive top-word lists and sharper per-cell Δ
+    /// contrasts (SAGE-style). Under ``"l1"`` the penalty rate is `1/content_prior_var`,
+    /// so a tighter `content_prior_var` sparsifies harder. EM runs until the
+    /// relative change in the variational bound drops below `convergence_tol` or
+    /// `iters` iterations are reached.
     /// `prevalence_names`, `content_names`, and `period_names` are human-readable
     /// labels for the columns of the prevalence and content design matrices and for
     /// the time periods, surfaced in the effect outputs. `inference` selects the
@@ -7867,6 +7873,7 @@ impl ECTM {
     #[pyo3(signature = (data, times, content, *, prevalence=None, prevalence_names=None,
                         content_names=None, period_names=None, iters=500, convergence_tol=1e-5,
                         content_prior_var=1.0, period_smooth=5.0, interaction_shrink=2.0,
+                        content_prior="l2",
                         inference="batch", batch_size=256, tau=64.0, kappa=0.7,
                         content_every=0, seeds=None, seed_strength=4.0,
                         keep_eta_cov=true, num_threads=None))]
@@ -7886,6 +7893,7 @@ impl ECTM {
         content_prior_var: f64,
         period_smooth: f64,
         interaction_shrink: f64,
+        content_prior: &str,
         inference: &str,
         batch_size: usize,
         tau: f64,
@@ -7914,6 +7922,20 @@ impl ECTM {
         if interaction_shrink <= 0.0 {
             return Err(PyValueError::new_err("interaction_shrink must be > 0"));
         }
+        // Content-deviation prior: "l2" (default, Gaussian ridge) keeps the
+        // original solve bit-exact; "l1" adds a sparsity-inducing Laplace prior
+        // solved by FISTA, for exclusive top-word lists and sharp Δ contrasts
+        // (SAGE-style). The L1 rate is tied to the variance knob (1/σ²) so a
+        // tighter `content_prior_var` shrinks harder, matching the L2 semantics.
+        let content_l1 = match content_prior {
+            "l2" => 0.0,
+            "l1" => 1.0 / content_prior_var,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown content_prior {other:?}; expected \"l2\" or \"l1\""
+                )))
+            }
+        };
 
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -8088,6 +8110,7 @@ impl ECTM {
                         period_smooth,
                         period_smooth,
                         interaction_shrink,
+                        content_l1,
                         keep_eta_cov,
                         diagonal,
                         init_spectral,
@@ -8111,6 +8134,7 @@ impl ECTM {
                         period_smooth,
                         period_smooth,
                         interaction_shrink,
+                        content_l1,
                         keep_eta_cov,
                         diagonal,
                         init_spectral,

@@ -691,3 +691,74 @@ def test_tune_content_prior_validates_inputs():
         tune_content_prior(_tune_fit, docs, times[:-1], groups,
                            content_prior_var=(1.0,), interaction_shrink=(1.5,),
                            period_smooth=(5.0,))
+
+
+# ---------------------------------------------------------------------------
+# Sparse (L1 / Laplace) content prior (issue #338)
+# ---------------------------------------------------------------------------
+
+def _group_wording_activity(m):
+    """Total between-group L1 wording distance summed over topics and periods —
+    how much the two groups' fitted vocabularies differ overall."""
+    total = 0.0
+    for k in range(m.num_topics):
+        for t in range(m.num_periods):
+            a = np.asarray(m.content_word_dist("A", t))[k]
+            b = np.asarray(m.content_word_dist("B", t))[k]
+            total += np.abs(a - b).sum()
+    return total
+
+
+def test_content_prior_l1_runs_and_preserves_topics():
+    """The L1 content prior fits, and at a mild penalty still recovers the two
+    well-separated topics (sparsity should not destroy topic structure)."""
+    docs, groups, times = _two_topic_corpus(40, seed=1)
+    m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+    m.fit(docs, times=times, content=groups, iters=60,
+          content_prior="l1", content_prior_var=1.0,
+          interaction_shrink=1.5, period_smooth=2.0)
+    # each topic's top words come from one of the two disjoint vocabularies
+    for k in range(2):
+        top = set(w for w, _ in m.top_words(4, topic=k))
+        assert top <= set(_T0_WORDS) or top <= set(_T1_WORDS), top
+
+
+def test_content_prior_l1_sparsifies_group_contrast():
+    """A stronger L1 penalty (smaller content_prior_var ⇒ larger 1/σ² rate)
+    shrinks the total between-group wording relative to the L2 default."""
+    docs, groups, times = _two_topic_corpus(40, seed=1)
+
+    def fit(prior, cpv):
+        m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+        m.fit(docs, times=times, content=groups, iters=60,
+              content_prior=prior, content_prior_var=cpv,
+              interaction_shrink=1.5, period_smooth=2.0)
+        return m
+
+    a_l2 = _group_wording_activity(fit("l2", 1.0))
+    a_l1 = _group_wording_activity(fit("l1", 0.02))
+    assert a_l1 < a_l2
+
+
+def test_content_prior_l2_is_default_and_l1_differs():
+    """content_prior defaults to 'l2'; 'l1' changes the fitted content surface."""
+    docs, groups, times = _two_topic_corpus(30, seed=2)
+
+    def fit(**kw):
+        m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+        m.fit(docs, times=times, content=groups, iters=50,
+              interaction_shrink=1.5, period_smooth=2.0, **kw)
+        return m
+
+    default = _group_wording_activity(fit())
+    explicit_l2 = _group_wording_activity(fit(content_prior="l2"))
+    l1 = _group_wording_activity(fit(content_prior="l1", content_prior_var=0.05))
+    assert default == explicit_l2       # default is l2, bit-exact
+    assert l1 != default                # l1 changes the fit
+
+
+def test_content_prior_invalid_raises():
+    docs, groups, times = _two_topic_corpus(8, seed=0)
+    m = topica.models.ECTM(num_topics=2, seed=1)
+    with pytest.raises(Exception):
+        m.fit(docs, times=times, content=groups, iters=10, content_prior="bogus")
