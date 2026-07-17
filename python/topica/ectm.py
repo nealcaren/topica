@@ -263,6 +263,199 @@ def content_divergence(model, topic: int, group_a, group_b):
 
 
 # ---------------------------------------------------------------------------
+# Debiased content divergence (issue #337)
+# ---------------------------------------------------------------------------
+
+def _tv(p, q) -> float:
+    """Total-variation distance ``0.5 * sum_v |p_v - q_v|`` between two rows."""
+    return float(0.5 * np.abs(np.asarray(p) - np.asarray(q)).sum())
+
+
+def _doc_word_counts(docs, vocab):
+    """Dense ``(num_docs, V)`` word-count matrix over ``vocab`` (out-of-vocab
+    tokens dropped)."""
+    index = {w: i for i, w in enumerate(vocab)}
+    counts = np.zeros((len(docs), len(vocab)), dtype=np.float64)
+    for d, toks in enumerate(docs):
+        for w in toks:
+            j = index.get(w)
+            if j is not None:
+                counts[d, j] += 1.0
+    return counts
+
+
+def _theta_weighted_dist(counts, theta, topic, doc_idx, alpha=1e-6):
+    """The topic-``topic`` word distribution implied by a set of documents:
+    the θ-weighted word frequency ``sum_d θ_{d,topic} c_{d,·}`` normalized. This
+    is the *data-side* estimate of a (group, period) cell's topic vocabulary —
+    consistent for the true cell distribution and, unlike the model's smoothed
+    β surface, linear in the counts, so it debiases cleanly."""
+    if len(doc_idx) == 0:
+        return None
+    w = theta[doc_idx, topic][:, None] * counts[doc_idx]
+    total = w.sum(axis=0) + alpha
+    return total / total.sum()
+
+
+def content_divergence_debiased(
+    model,
+    topic: int,
+    group_a,
+    group_b,
+    *,
+    docs,
+    groups,
+    periods,
+    n_splits: int = 8,
+    se_blocks: int = 0,
+    seed: int = 0,
+):
+    """Finite-sample-debiased content divergence between two groups for ``topic``.
+
+    The raw plug-in :func:`content_divergence` reports ``TV(β̂_a, β̂_b)`` off the
+    fitted content surface, which carries a **finite-sample floor**: comparing two
+    *estimated* high-dimensional word distributions inflates the total-variation
+    distance above the true ``TV(β_a, β_b)`` even when the two groups are identical
+    (Gentzkow–Shapiro–Taddy 2019; Lupu 2017). That plug-in — and the
+    null-subtraction ``observed − mean(shuffled)`` — is a good screening score but
+    estimates no defined population quantity. This estimator differences the noise
+    out so the reported contrast targets one.
+
+    **Estimand and consistency.** For each ``(group, period)`` cell this reads the
+    topic's word distribution as the θ-weighted empirical word frequency (the fitted
+    ``model``'s ``doc_topic`` weights times the raw counts), which is *consistent*
+    for the cell's true topic-word distribution. Splitting the cell's documents into
+    disjoint halves gives two independent estimates that share the **single** fit's
+    topic orientation, so the divergence decomposes as
+
+        E[TV_cross-group] = signal + floor ,   E[TV_within-group] = floor ,
+
+    and the difference isolates the signal. As documents per cell grow the floor
+    (and the split's own variance) vanish and the estimate → ``TV(β_a, β_b)``. It
+    uses only ``model``, so unlike a cross-fit split-sample it never compares β
+    across independently-fit models (whose per-fit non-identifiability leaves a
+    *non-vanishing* floor that over-subtracts the signal).
+
+    Parameters
+    ----------
+    model : fitted :class:`~topica.ECTM`
+        The reference fit; supplies ``doc_topic`` (θ), ``vocabulary`` and ``periods``.
+    topic : int
+        Topic index.
+    group_a, group_b : str or int
+        The two content groups to contrast.
+    docs, groups, periods : array-like (num_docs,)
+        The documents and their per-document content/period labels — the same
+        corpus, ``content=`` and ``times=`` passed to :meth:`ECTM.fit`.
+    n_splits : int
+        Random half-splits to average over. More splits lower the estimator's own
+        Monte-Carlo variance. Averaging keeps the point estimate stable on thin cells.
+    se_blocks : int
+        If > 1, also return a **delete-block jackknife** standard error over
+        documents (partition docs into ``se_blocks`` blocks, recompute the whole
+        per-period estimate leaving each block out, take the jackknife SD). 0
+        (default) skips it and returns ``nan`` SEs; sampling confidence *bands* are
+        better obtained from :func:`content_trajectory_ci` (issue #340).
+    seed : int
+        Master RNG seed.
+
+    Returns
+    -------
+    list of (period_label, estimate, se)
+        Per-period debiased divergence, in period order. Note that raw and
+        null-subtracted TV do **not** converge to the population divergence as the
+        corpus grows; this estimator does.
+    """
+    docs = list(docs)
+    groups = [str(g) for g in groups]
+    periods = [_period_label(p) for p in periods]
+    n = len(docs)
+    if not (len(groups) == len(periods) == n):
+        raise ValueError(
+            f"docs, groups, periods must have equal length; got "
+            f"{n}, {len(groups)}, {len(periods)}"
+        )
+
+    vocab = list(model.vocabulary)
+    counts = _doc_word_counts(docs, vocab)
+    theta = np.asarray(model.doc_topic, dtype=np.float64)
+    if theta.shape[0] != n:
+        raise ValueError(
+            f"corpus has {n} documents but model.doc_topic has {theta.shape[0]} "
+            "rows; pass the same documents the model was fit on"
+        )
+    if topic < 0 or topic >= theta.shape[1]:
+        raise ValueError(f"topic {topic} out of range [0, {theta.shape[1]})")
+
+    plabels = [str(p) for p in model.periods]
+    ga, gb = str(group_a), str(group_b)
+
+    # cell (group, period) -> document indices
+    cells = {}
+    for i, (g, p) in enumerate(zip(groups, periods)):
+        cells.setdefault((g, p), []).append(i)
+
+    def _estimate(active_mask, rng):
+        """Debiased per-period vector over the documents flagged in ``active_mask``,
+        averaged over ``n_splits`` random cell-stratified half-splits."""
+        acc = np.zeros(len(plabels))
+        used = 0
+        for _ in range(n_splits):
+            row = np.full(len(plabels), np.nan)
+            ok = True
+            for t, pl in enumerate(plabels):
+                ia = [i for i in cells.get((ga, pl), []) if active_mask[i]]
+                ib = [i for i in cells.get((gb, pl), []) if active_mask[i]]
+                if len(ia) < 2 or len(ib) < 2:
+                    ok = False
+                    break
+                rng.shuffle(ia); rng.shuffle(ib)
+                a1, a2 = ia[: len(ia) // 2], ia[len(ia) // 2:]
+                b1, b2 = ib[: len(ib) // 2], ib[len(ib) // 2:]
+                pa1 = _theta_weighted_dist(counts, theta, topic, a1)
+                pa2 = _theta_weighted_dist(counts, theta, topic, a2)
+                pb1 = _theta_weighted_dist(counts, theta, topic, b1)
+                pb2 = _theta_weighted_dist(counts, theta, topic, b2)
+                between = 0.5 * (_tv(pa1, pb2) + _tv(pa2, pb1))
+                within = 0.5 * (_tv(pa1, pa2) + _tv(pb1, pb2))
+                row[t] = between - within
+            if ok:
+                acc += row
+                used += 1
+        if used == 0:
+            raise RuntimeError(
+                "every cell has fewer than 4 documents for one of the groups; "
+                "debiasing needs at least 2 documents per half per cell"
+            )
+        return acc / used
+
+    rng = np.random.default_rng(seed)
+    all_active = np.ones(n, dtype=bool)
+    est = _estimate(all_active, rng)
+
+    # Optional delete-block jackknife SE over documents.
+    se = np.full(len(plabels), np.nan)
+    if se_blocks and se_blocks > 1:
+        order = list(range(n))
+        np.random.default_rng(seed + 1).shuffle(order)
+        loo = []
+        for b in range(se_blocks):
+            drop = set(order[b::se_blocks])
+            mask = np.array([i not in drop for i in range(n)])
+            try:
+                loo.append(_estimate(mask, np.random.default_rng(seed + 100 + b)))
+            except RuntimeError:
+                continue
+        if len(loo) > 1:
+            loo = np.vstack(loo)
+            g = loo.shape[0]
+            # jackknife SD of the delete-block replicates
+            se = np.sqrt((g - 1) / g * np.sum((loo - loo.mean(axis=0)) ** 2, axis=0))
+
+    return [(pl, float(est[i]), float(se[i])) for i, pl in enumerate(plabels)]
+
+
+# ---------------------------------------------------------------------------
 # Content-divergence placebo (issue #230)
 # ---------------------------------------------------------------------------
 
