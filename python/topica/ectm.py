@@ -131,52 +131,135 @@ def content_contrast_se(model, topic, group_a, group_b, period, groups, periods,
     return [(vocab[i], float(contrast[i]), float(se[i])) for i in order]
 
 
+def _match_anchor_topic(m, anchor):
+    """Topic index in ``m`` whose top words overlap ``anchor`` most."""
+    best, best_ov = 0, -1
+    for k in range(m.num_topics):
+        ov = len(anchor & {w for w, _ in m.top_words(len(anchor), topic=k)})
+        if ov > best_ov:
+            best, best_ov = k, ov
+    return best
+
+
+def _simulate_from_ectm(model, docs, groups, periods, rng):
+    """Draw one synthetic corpus from the fitted ECTM's generative model, holding
+    each document's length, group and period fixed. For a document with topic
+    weights ``θ_d`` in cell ``(g_d, t_d)``, each of its ``len(doc)`` tokens draws a
+    topic ``k ~ θ_d`` then a word ``v ~ β_{k, g_d, t_d}``. Returns a list of token
+    lists aligned to ``docs`` (``groups``/``periods`` are unchanged)."""
+    vocab = list(model.vocabulary)
+    theta = np.asarray(model.doc_topic, dtype=np.float64)
+    k = theta.shape[1]
+    period_index = {str(p): t for t, p in enumerate(model.periods)}
+    # β cube per (group, period) label -> (K, V), fetched once.
+    beta_cache = {}
+
+    def _beta(g, plabel):
+        key = (str(g), plabel)
+        if key not in beta_cache:
+            beta_cache[key] = np.asarray(model.content_word_dist(g, period_index[plabel]))
+        return beta_cache[key]
+
+    sim = []
+    for d, doc in enumerate(docs):
+        length = len(doc)
+        if length == 0:
+            sim.append([])
+            continue
+        th = theta[d]
+        th = th / th.sum() if th.sum() > 0 else np.full(k, 1.0 / k)
+        beta = _beta(groups[d], str(periods[d]))
+        # tokens per topic, then words per topic — bag of words, order irrelevant.
+        z_counts = rng.multinomial(length, th)
+        wcount = np.zeros(len(vocab))
+        for kk in np.nonzero(z_counts)[0]:
+            row = beta[kk]
+            row = row / row.sum() if row.sum() > 0 else np.full(len(vocab), 1.0 / len(vocab))
+            wcount += rng.multinomial(int(z_counts[kk]), row)
+        toks = []
+        for j in np.nonzero(wcount)[0]:
+            toks.extend([vocab[j]] * int(wcount[j]))
+        sim.append(toks)
+    return sim
+
+
 def content_trajectory_ci(refit, docs, groups, periods, *, anchor_words, word, contrast,
+                          method="cluster", model=None,
                           clusters=None, n_boot=40, ci=0.95, seed=0):
-    """Cluster-bootstrap confidence band for a content trajectory.
+    """Confidence band for a content trajectory, by cluster or parametric bootstrap.
 
-    The content-side estimates are MAP point values; this resamples the data and
-    refits to put uncertainty on them. ``refit(docs, groups, periods)`` must return
-    a freshly fitted :class:`ECTM` with your settings (a closure capturing
-    ``num_topics``, ``iters``, the priors, etc.).
+    The content-side estimates are MAP point values; this resamples and refits to
+    put uncertainty on them. ``refit(docs, groups, periods)`` must return a freshly
+    fitted :class:`ECTM` with your settings (a closure capturing ``num_topics``,
+    ``iters``, the priors, etc.). Topics are not aligned across refits, so each
+    bootstrap's topic is matched to the reference by top-word overlap with
+    ``anchor_words`` (e.g. ``[w for w, _ in model.top_words(20, topic=k)]``).
+    Returns ``(period_label, mean, ci_low, ci_high)`` for the ``contrast``
+    trajectory of ``word`` (same ``contrast`` semantics as
+    :func:`content_trajectory`).
 
-    ``clusters`` is a per-document id (e.g. the source document a paragraph came
-    from, or a ``(party, year)`` platform key) that is resampled *with
-    replacement*; pass it whenever documents within a cluster are not independent,
-    so the band reflects the number of independent units rather than the number of
-    paragraphs. ``None`` resamples documents individually.
+    ``method`` selects the resampling design:
 
-    Topics are not aligned across refits, so each bootstrap's topic is matched to
-    the reference by top-word overlap with ``anchor_words`` (e.g.
-    ``[w for w, _ in model.top_words(20, topic=k)]``). Returns a list of
-    ``(period_label, mean, ci_low, ci_high)`` for the ``contrast`` trajectory of
-    ``word`` (same ``contrast`` semantics as :func:`content_trajectory`).
+    - ``"cluster"`` (default): nonparametric cluster bootstrap. ``clusters`` is a
+      per-document id (e.g. the source document a paragraph came from, or a
+      ``(party, year)`` platform key) resampled *with replacement*; pass it whenever
+      documents within a cluster are not independent, so the band reflects the
+      number of independent units rather than the number of paragraphs. ``None``
+      resamples documents individually. **Prefer this when there are many
+      independent clusters per cell.**
+    - ``"parametric"``: parametric bootstrap from the fitted generative model. Draw
+      ``n_boot`` synthetic corpora from the fit (each document keeps its length,
+      group and period; tokens are generated from ``θ̂`` and the per-cell ``β̂``),
+      refit each, and take quantiles. The target is well defined — the fitted DGP —
+      so coverage is checkable on synthetic ground truth. **Prefer this for thin,
+      one-observation-per-cell designs** (e.g. one manifesto per ``(party,
+      election)``), where the cluster bootstrap cannot preserve the design because
+      no resample can redraw whole clusters and keep every cell present; its
+      interval then conditions on retaining coverage and has no established nominal
+      coverage. Pass the fitted reference in ``model=`` to simulate from it, or
+      leave ``model=None`` to fit it once via ``refit``.
+
+    Parameters
+    ----------
+    model : fitted :class:`~topica.ECTM`, optional
+        The reference fit the parametric bootstrap simulates from. Ignored by the
+        cluster method. If ``None`` under ``method="parametric"``, it is obtained
+        once as ``refit(docs, groups, periods)``.
     """
+    if method not in ("cluster", "parametric"):
+        raise ValueError(f"method must be 'cluster' or 'parametric', got {method!r}")
+
     rng = np.random.default_rng(seed)
     docs = list(docs)
     groups = list(groups)
     periods = list(periods)
     n = len(docs)
-    clusters = list(range(n)) if clusters is None else list(clusters)
-    uniq = list(dict.fromkeys(clusters))
-    by_cluster = {}
-    for i, c in enumerate(clusters):
-        by_cluster.setdefault(c, []).append(i)
     anchor = set(anchor_words)
     lo_q, hi_q = (1 - ci) / 2 * 100, (1 + ci) / 2 * 100
     acc = {}  # period_label -> [values]
-    for _ in range(n_boot):
-        pick = rng.integers(0, len(uniq), len(uniq))
-        idx = [i for j in pick for i in by_cluster[uniq[j]]]
-        m = refit([docs[i] for i in idx], [groups[i] for i in idx], [periods[i] for i in idx])
-        # match the topic by top-word overlap with the anchor signature
-        best, best_ov = 0, -1
-        for k in range(m.num_topics):
-            ov = len(anchor & {w for w, _ in m.top_words(len(anchor), topic=k)})
-            if ov > best_ov:
-                best, best_ov = k, ov
-        for p, v in content_trajectory(m, best, word, contrast=contrast):
-            acc.setdefault(p, []).append(v)
+
+    if method == "cluster":
+        clusters = list(range(n)) if clusters is None else list(clusters)
+        uniq = list(dict.fromkeys(clusters))
+        by_cluster = {}
+        for i, c in enumerate(clusters):
+            by_cluster.setdefault(c, []).append(i)
+        for _ in range(n_boot):
+            pick = rng.integers(0, len(uniq), len(uniq))
+            idx = [i for j in pick for i in by_cluster[uniq[j]]]
+            m = refit([docs[i] for i in idx], [groups[i] for i in idx], [periods[i] for i in idx])
+            best = _match_anchor_topic(m, anchor)
+            for p, v in content_trajectory(m, best, word, contrast=contrast):
+                acc.setdefault(p, []).append(v)
+    else:  # parametric
+        ref = model if model is not None else refit(docs, groups, periods)
+        for _ in range(n_boot):
+            sim_docs = _simulate_from_ectm(ref, docs, groups, periods, rng)
+            m = refit(sim_docs, groups, periods)
+            best = _match_anchor_topic(m, anchor)
+            for p, v in content_trajectory(m, best, word, contrast=contrast):
+                acc.setdefault(p, []).append(v)
+
     out = []
     for p in sorted(acc, key=lambda s: _period_sort_key(s)):
         a = np.array(acc[p])
