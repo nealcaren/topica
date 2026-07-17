@@ -7719,11 +7719,13 @@ impl ECTM {
     /// ``rho_t = (tau + t)^(-kappa)``: larger `tau` down-weights early, noisier
     /// minibatches and `kappa` in (0.5, 1] sets the forgetting rate. `content_every`
     /// sets how many minibatches between content-deviation (κ) M-step solves under
-    /// SVI (0 = auto, ~10 solves per epoch). `seeds` (experimental) anchors a
-    /// topic's shared baseline vocabulary: a `{topic_index: [seed words]}` map
-    /// shifts the κT prior mean for those (topic, word) entries to `seed_strength`
-    /// (default 4.0), so a seeded topic keeps its identity and group differences
-    /// are more likely to stay within it than to spawn a parallel group-topic;
+    /// SVI (0 = auto, ~10 solves per epoch). `seeds` anchors a topic to a
+    /// pre-specified vocabulary: a `{topic_index: [seed words]}` map boosts those
+    /// words' E-step responsibility toward the seeded topic by `exp(seed_strength)`
+    /// (default 4.0) and shifts their κT prior mean, so the seed words' tokens are
+    /// assigned to the seeded topic and their vocabulary consolidates onto it --
+    /// turning ECTM into a targeted instrument for reading a chosen issue's
+    /// content surface off a known topic index. Seed as many topics as you like;
     /// unknown words are skipped and `seeds=None` is bit-exact with no seeding.
     /// `keep_eta_cov` (default True) stores the full per-document logistic-normal
     /// covariances; set it False to save memory. `num_threads` sets the thread

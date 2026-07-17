@@ -95,6 +95,42 @@ fn expeta(eta: &[f64]) -> Vec<f64> {
 }
 
 /// Build per-cell topic-word β (indexed `[cell][k][v]`) from the content
+/// Seed-anchor the E-step content β: for a seeded (topic, word) the per-cell word
+/// probability is inflated by `exp(seed_mean[topic*V+w])`, which directly raises
+/// that topic's responsibility for the seed word (SeededLDA-style), forcing seed
+/// tokens onto the seeded topic. Applied only to the β used for the E-step; the
+/// M-step counts that result then reinforce the anchor, and the reported content
+/// surface is rebuilt un-boosted from κ. Unseeded entries (and seed_mean all-zero)
+/// return β unchanged. `ctm_lhood_grad`/`ctm_hpb` are column-wise in β[t][w], so a
+/// non-row-normalized boost is safe.
+fn seed_boost_beta(
+    content_beta: &[Vec<Vec<f64>>],
+    seed_mean: &[f64],
+    v: usize,
+) -> Vec<Vec<Vec<f64>>> {
+    content_beta
+        .iter()
+        .map(|cell| {
+            cell.iter()
+                .enumerate()
+                .map(|(topic, row)| {
+                    row.iter()
+                        .enumerate()
+                        .map(|(w, &b)| {
+                            let s = seed_mean.get(topic * v + w).copied().unwrap_or(0.0);
+                            if s != 0.0 {
+                                b * s.exp()
+                            } else {
+                                b
+                            }
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// deviations: `β_{g,t,k,v} = softmax_v(m_v + κT_k + κKP_{k,t} + κKG_{k,g} + κKGP_{k,g,t})`.
 #[allow(clippy::too_many_arguments)]
 fn build_content_beta(
@@ -551,6 +587,15 @@ pub fn fit_ectm<R: Rng>(
         let chunk = (128 * 1024 * 1024 / (km1 * km1 * 8).max(1))
             .max(256)
             .min(d.max(1));
+        // Seed-anchored E-step: boost seed-word responsibilities toward their
+        // seeded topic (no-op when there are no seeds; preserves bit-exactness).
+        let has_seed = seed_mean.iter().any(|&x| x != 0.0);
+        let estep_beta = if has_seed {
+            Some(seed_boost_beta(&content_beta, seed_mean, num_types))
+        } else {
+            None
+        };
+        let beta_src: &[Vec<Vec<f64>>] = estep_beta.as_deref().unwrap_or(&content_beta);
         let mut total_bound = 0.0f64;
         let mut base = 0usize;
         while base < d {
@@ -560,7 +605,7 @@ pub fn fit_ectm<R: Rng>(
                     let di = base + local_di;
                     let mu_d = doc_mu(di, &gamma, &mu_shared);
                     let c = cell(groups[di], periods[di], p);
-                    let beta_doc: &[Vec<f64>] = &content_beta[c];
+                    let beta_doc: &[Vec<f64>] = &beta_src[c];
                     let opt = lbfgs_minimize(
                         lambda[di].clone(),
                         |eta| ctm_lhood_grad(eta, beta_doc, words, counts, &mu_d, &siginv),
@@ -872,10 +917,17 @@ pub fn fit_ectm_svi<R: Rng>(
             let mut sigma_ss = vec![0.0f64; km1 * km1];
             let mut lambda_sum = vec![0.0f64; km1];
             let mut etas: Vec<Vec<f64>> = Vec::with_capacity(chunk.len());
+            let has_seed = seed_mean.iter().any(|&x| x != 0.0);
+            let estep_beta = if has_seed {
+                Some(seed_boost_beta(&content_beta, seed_mean, num_types))
+            } else {
+                None
+            };
+            let beta_src: &[Vec<Vec<f64>>] = estep_beta.as_deref().unwrap_or(&content_beta);
             for &di in chunk {
                 let mu_d = doc_mu(di, &gamma, &mu_shared);
                 let c = cell(groups[di], periods[di], p);
-                let beta_doc: &[Vec<f64>] = &content_beta[c];
+                let beta_doc: &[Vec<f64>] = &beta_src[c];
                 let words = &sparse[di].0;
                 let counts = &sparse[di].1;
                 let opt = lbfgs_minimize(
@@ -1035,6 +1087,13 @@ pub fn fit_ectm_svi<R: Rng>(
         .max(256)
         .min(d.max(1));
     let mut total_bound = 0.0f64;
+    let has_seed = seed_mean.iter().any(|&x| x != 0.0);
+    let final_estep_beta = if has_seed {
+        Some(seed_boost_beta(&content_beta, seed_mean, num_types))
+    } else {
+        None
+    };
+    let beta_src: &[Vec<Vec<f64>>] = final_estep_beta.as_deref().unwrap_or(&content_beta);
     let mut base = 0usize;
     while base < d {
         let end = (base + chunk).min(d);
@@ -1043,7 +1102,7 @@ pub fn fit_ectm_svi<R: Rng>(
                 let di = base + local_di;
                 let mu_d = doc_mu(di, &gamma, &mu_shared);
                 let c = cell(groups[di], periods[di], p);
-                let beta_doc: &[Vec<f64>] = &content_beta[c];
+                let beta_doc: &[Vec<f64>] = &beta_src[c];
                 let opt = lbfgs_minimize(
                     lambda[di].clone(),
                     |eta| ctm_lhood_grad(eta, beta_doc, words, counts, &mu_d, &siginv),
