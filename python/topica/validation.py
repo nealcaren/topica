@@ -937,14 +937,24 @@ def search_k(
 
     valid_coh = ("u_mass", "c_uci", "c_npmi", "c_v")
     coherence_type = coherence_type.lower()
-    if coherence_type not in valid_coh:
-        raise ValueError(f"coherence_type must be one of {valid_coh}, got {coherence_type!r}")
+    # A "stratified_<type>" request (content models only) scores each group's own
+    # top words against its own subcorpus (topica.content.stratified_coherence).
+    stratified = coherence_type.startswith("stratified_")
+    base_ct = coherence_type[len("stratified_"):] if stratified else coherence_type
+    if base_ct not in valid_coh:
+        raise ValueError(
+            f"coherence_type must be one of {valid_coh} "
+            f"(optionally 'stratified_'-prefixed for content models), got {coherence_type!r}")
+    if stratified and (model != "stm" or content is None):
+        raise ValueError(
+            "stratified coherence needs model='stm' with a content covariate")
 
-    if model == "stm" and content is not None:
+    if model == "stm" and content is not None and not stratified:
         warnings.warn(
             "Exclusivity and coherence calculations on a model with content covariates "
             "are computed on the baseline/group-average topic-word distributions. "
-            "These metrics do not capture group-specific wording variations.",
+            "These metrics do not capture group-specific wording variations. Pass "
+            "coherence_type='stratified_c_v' (etc.) for group-stratified metrics.",
             UserWarning,
             stacklevel=2,
         )
@@ -959,7 +969,13 @@ def search_k(
             m.fit(docs, iters=iters, num_samples=num_samples,
                   sample_interval=sample_interval)
 
-        if coherence_type == "u_mass" and hasattr(m, "coherence"):
+        if stratified:
+            from .content import (stratified_coherence as _strat,
+                                  topic_polarization as _pol,
+                                  group_exclusivity as _gex)
+            coh_val = float(np.mean(_strat(m, docs, content, coherence_type=base_ct,
+                                          n=coherence_n)))
+        elif coherence_type == "u_mass" and hasattr(m, "coherence"):
             coh_val = float(np.mean(m.coherence(coherence_n)))
         else:
             from .coherence import coherence as external_coherence
@@ -967,15 +983,18 @@ def search_k(
             # Convert to list[list[str]]
             topics = [[w for w, _ in top_list] for top_list in m.top_words(coherence_n)]
             ref_docs = _ref_corpus(docs)
-            scores = external_coherence(topics, ref_docs, coherence_type=coherence_type, topn=coherence_n)
+            scores = external_coherence(topics, ref_docs, coherence_type=base_ct, topn=coherence_n)
             coh_val = float(np.mean(scores))
 
         row = {
             "k": k,
             "coherence": coh_val,
             "coherence_metric": coherence_type,
-            "exclusivity": _mean_exclusivity(m.topic_word, coherence_n),
+            "exclusivity": (float(np.mean(_gex(m, n=coherence_n))) if stratified
+                            else _mean_exclusivity(m.topic_word, coherence_n)),
         }
+        if stratified:
+            row["polarization"] = float(np.mean(_pol(m)))
         if held_out is not None:
             if isinstance(held_out, Heldout):
                 result = eval_heldout(m, held_out, seed=seed)
