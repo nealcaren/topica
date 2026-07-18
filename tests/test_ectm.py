@@ -636,6 +636,32 @@ def test_content_trajectory_ci_bad_method():
                               contrast=("A", "B"), method="nope", n_boot=2)
 
 
+def test_parametric_simulation_resamples_theta():
+    """The parametric bootstrap must redraw each document's topic mixture from the
+    fitted logistic-normal, not freeze it — freezing θ omits the document-level
+    variance and makes the band under-cover. Guards the coverage fix."""
+    from topica.ectm import _simulate_from_ectm, _theta_sampler
+
+    docs, groups, times = _two_topic_corpus(30, seed=1)
+    m = _fit_two_topic(docs, groups, times)
+
+    # the logistic-normal sampler is available and draws valid distributions
+    sampler = _theta_sampler(m, m.num_topics)
+    assert sampler is not None
+    th = sampler(np.random.default_rng(0))
+    assert th.shape == (m.num_topics,)
+    assert abs(th.sum() - 1.0) < 1e-9 and (th >= 0).all()
+
+    # two simulated corpora with different seeds differ (θ is resampled) ...
+    a = _simulate_from_ectm(m, docs, groups, times, np.random.default_rng(1))
+    b = _simulate_from_ectm(m, docs, groups, times, np.random.default_rng(2))
+    assert a != b
+    # ... and disabling resampling still yields a valid corpus (fallback path)
+    frozen = _simulate_from_ectm(m, docs, groups, times, np.random.default_rng(1),
+                                 resample_theta=False)
+    assert len(frozen) == len(docs)
+
+
 # ---------------------------------------------------------------------------
 # Content-prior hyperparameter selection (issue #339)
 # ---------------------------------------------------------------------------
