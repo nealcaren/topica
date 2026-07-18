@@ -740,6 +740,35 @@ def test_content_prior_l1_sparsifies_group_contrast():
     assert a_l1 < a_l2
 
 
+def test_content_prior_l1_sparsifies_contrast_not_baseline():
+    """The rework's key property: L1 sparsifies the group/interaction *contrasts*
+    (κG, κGP) but leaves the topic baseline κT on L2, so the topic vocabularies
+    stay as broad as under L2 (sparsifying κT would delete topic words and hurt
+    coherence). Guards against regressing to sparsifying every κ block."""
+    docs, groups, times = _two_topic_corpus(40, seed=1)
+
+    def fit(prior, cpv):
+        m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+        m.fit(docs, times=times, content=groups, iters=60,
+              content_prior=prior, content_prior_var=cpv,
+              interaction_shrink=1.5, period_smooth=2.0)
+        return m
+
+    def baseline_entropy(m):
+        tw = np.asarray(m.topic_word)
+        ent = 0.0
+        for k in range(m.num_topics):
+            p = tw[k] / tw[k].sum()
+            ent += float(-(p * np.log(p + 1e-12)).sum())
+        return ent
+
+    m_l2, m_l1 = fit("l2", 1.0), fit("l1", 0.05)
+    # topic baseline stays at least as broad under L1 (κT not sparsified) ...
+    assert baseline_entropy(m_l1) >= 0.98 * baseline_entropy(m_l2)
+    # ... while the between-group wording contrast is sparser.
+    assert _group_wording_activity(m_l1) < _group_wording_activity(m_l2)
+
+
 def test_content_prior_l2_is_default_and_l1_differs():
     """content_prior defaults to 'l2'; 'l1' changes the fitted content surface."""
     docs, groups, times = _two_topic_corpus(30, seed=2)
