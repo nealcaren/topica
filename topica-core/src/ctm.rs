@@ -461,10 +461,100 @@ fn build_content_beta(
     out
 }
 
+/// Soft-thresholding operator `sign(z)·max(|z|-g, 0)` — the proximal map of the
+/// L1 penalty and the source of exact zeros under the sparse content prior.
+fn soft_threshold(z: f64, g: f64) -> f64 {
+    if z > g {
+        z - g
+    } else if z < -g {
+        z + g
+    } else {
+        0.0
+    }
+}
+
+/// Minimize `f(x) + lam·Σ_{i:penalize} |x_i − anchor_i|` by FISTA with
+/// backtracking line search (Beck & Teboulle 2009). `f_and_grad` supplies the
+/// smooth part's value and gradient (already in minimization form). The L1 term
+/// is non-smooth at its anchor, so plain L-BFGS cannot produce exact zeros; the
+/// proximal step (soft-thresholding around `anchor`) does. `penalize[i]` gates
+/// which coordinates carry the L1 term — for the sparse content prior only the
+/// group and topic×group deviation blocks (κ_cov, κ_interaction) are sparsified;
+/// the topic baseline κ_topic keeps its L2 so topic vocabularies stay coherent.
+fn fista_l1<F>(
+    x0: Vec<f64>,
+    f_and_grad: F,
+    lam: f64,
+    anchor: &[f64],
+    penalize: &[bool],
+    max_iter: usize,
+) -> Vec<f64>
+where
+    F: Fn(&[f64]) -> (f64, Vec<f64>),
+{
+    let n = x0.len();
+    let prox_step = |y: &[f64], g: &[f64], t: f64| -> Vec<f64> {
+        (0..n)
+            .map(|i| {
+                let grad_step = y[i] - t * g[i];
+                if penalize.get(i).copied().unwrap_or(false) {
+                    let a = anchor.get(i).copied().unwrap_or(0.0);
+                    a + soft_threshold(grad_step - a, lam * t)
+                } else {
+                    grad_step
+                }
+            })
+            .collect::<Vec<f64>>()
+    };
+    let mut x = x0.clone();
+    let mut y = x0;
+    let mut t_step = 1.0f64;
+    let mut theta = 1.0f64;
+    for _ in 0..max_iter {
+        let (fy, gy) = f_and_grad(&y);
+        let mut step = t_step;
+        let x_new = loop {
+            let cand = prox_step(&y, &gy, step);
+            let (fc, _) = f_and_grad(&cand);
+            let mut dot = 0.0;
+            let mut sq = 0.0;
+            for i in 0..n {
+                let d = cand[i] - y[i];
+                dot += gy[i] * d;
+                sq += d * d;
+            }
+            if fc <= fy + dot + sq / (2.0 * step) + 1e-12 || step < 1e-12 {
+                break cand;
+            }
+            step *= 0.5;
+        };
+        t_step = step;
+        let theta_next = (1.0 + (1.0 + 4.0 * theta * theta).sqrt()) / 2.0;
+        let beta = (theta - 1.0) / theta_next;
+        let mut num = 0.0;
+        let mut den = 0.0;
+        for i in 0..n {
+            let d = x_new[i] - x[i];
+            num += d * d;
+            den += x[i] * x[i];
+            y[i] = x_new[i] + beta * d;
+        }
+        x = x_new;
+        theta = theta_next;
+        if num.sqrt() / (den.sqrt() + 1e-12) < 1e-4 {
+            break;
+        }
+    }
+    x
+}
+
 /// MAP-update the SAGE content deviations κ from soft (topic×group×word)
-/// expected counts via L-BFGS, then rebuild per-group β. `counts[k*G+g][v]` are
-/// the variational expected token counts; `prior_variance` is the Gaussian
-/// prior on κ.
+/// expected counts, then rebuild per-group β. `counts[k*G+g][v]` are the
+/// variational expected token counts; `prior_variance` is the Gaussian (L2)
+/// prior on κ. `content_l1 > 0` swaps the L-BFGS L2 solve for a FISTA solve with
+/// a sparse (Laplace/L1) prior of rate `content_l1` on the group and topic×group
+/// deviation blocks (κ_cov, κ_interaction), keeping the topic baseline κ_topic on
+/// L2; `content_l1 = 0` is the original L-BFGS solve, bit-exact.
 #[allow(clippy::too_many_arguments)]
 fn optimize_content(
     m: &[f64],
@@ -476,6 +566,8 @@ fn optimize_content(
     g: usize,
     v: usize,
     prior_variance: f64,
+    content_l1: f64,
+    rw_time: Option<(usize, usize, f64)>,
     max_iter: usize,
 ) -> Vec<Vec<Vec<f64>>> {
     let n_t = k * v;
@@ -494,9 +586,10 @@ fn optimize_content(
     }
     let inv_var = 1.0 / prior_variance;
 
-    let x = lbfgs_minimize(
-        x0,
-        |flat| {
+    // Smooth part of the objective (minimization form): negative log-likelihood
+    // + Gaussian L2 prior + the ordered-time random walk. Shared by the L2 solve
+    // (L-BFGS) and the L1 solve (FISTA), which adds a sparse κ prior via its prox.
+    let smooth = |flat: &[f64]| -> (f64, Vec<f64>) {
             let kt = |t: usize, w: usize| flat[t * v + w];
             let kc = |grp: usize, w: usize| flat[n_t + grp * v + w];
             let ki = |c: usize, w: usize| flat[n_t + n_c + c * v + w];
@@ -535,12 +628,64 @@ fn optimize_content(
                 value -= 0.5 * inv_var * xi * xi;
                 grad[i] -= inv_var * xi;
             }
+
+            // First-order random-walk penalty smoothing the content deviations of
+            // an ordered (time) covariate axis. With the caller's convention that
+            // the saturated group index decomposes as `grp = base*num_times + time`,
+            // each cell is tied to its time-predecessor within the same base group,
+            // on both the group main effect κ_cov and the topic×group interaction
+            // κ_i: `(rw/2) Σ (x_{·,t} - x_{·,t-1})²`. `rw = 1/τ²` is the RW
+            // precision. `None` (no ordered axis) leaves the solve bit-exact.
+            if let Some((num_base, num_times, rw)) = rw_time {
+                if num_times >= 2 && rw > 0.0 {
+                    for base in 0..num_base {
+                        for time in 1..num_times {
+                            let g2 = base * num_times + time;
+                            let g1 = base * num_times + (time - 1);
+                            for w in 0..v {
+                                let a = n_t + g2 * v + w;
+                                let b = n_t + g1 * v + w;
+                                let diff = flat[a] - flat[b];
+                                value -= 0.5 * rw * diff * diff;
+                                grad[a] -= rw * diff;
+                                grad[b] += rw * diff;
+                            }
+                            for topic in 0..k {
+                                let c2 = topic * g + g2;
+                                let c1 = topic * g + g1;
+                                for w in 0..v {
+                                    let a = n_t + n_c + c2 * v + w;
+                                    let b = n_t + n_c + c1 * v + w;
+                                    let diff = flat[a] - flat[b];
+                                    value -= 0.5 * rw * diff * diff;
+                                    grad[a] -= rw * diff;
+                                    grad[b] += rw * diff;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             (-value, grad.iter().map(|gv| -gv).collect())
-        },
-        max_iter,
-        7,
-        1e-4,
-    );
+    };
+
+    let x = if content_l1 > 0.0 {
+        // Sparse (L1) content prior: sparsify the group and topic×group deviation
+        // blocks (κ_cov, κ_interaction), keeping the topic baseline κ_topic on L2.
+        let total = n_t + n_c + k * g * v;
+        let mut penalize = vec![false; total];
+        for p in penalize.iter_mut().take(total).skip(n_t) {
+            *p = true;
+        }
+        let anchor = vec![0.0f64; total];
+        // FISTA is warm-started from the current κ each EM iteration, so a modest
+        // inner budget suffices; it also stops early on its own relative-change
+        // criterion. A large cap here made the content M-step dominate runtime.
+        fista_l1(x0, smooth, content_l1, &anchor, &penalize, max_iter.max(40))
+    } else {
+        lbfgs_minimize(x0, smooth, max_iter, 7, 1e-4)
+    };
 
     for t in 0..k {
         kappa_t[t].copy_from_slice(&x[t * v..(t + 1) * v]);
@@ -928,6 +1073,9 @@ pub fn fit_ctm<R: Rng>(
     sigma_shrink: f64,
     prevalence: Option<&[Vec<f64>]>,
     content: Option<(&[usize], usize)>,
+    content_time_rw: Option<(usize, usize, f64)>,
+    content_prior_var: f64,
+    content_l1: f64,
     init_spectral: bool,
     init_beta: Option<&[Vec<f64>]>,
     gamma_prior: GammaPrior,
@@ -941,6 +1089,17 @@ pub fn fit_ctm<R: Rng>(
     let nf = prevalence.map(|x| x[0].len());
     let groups = content.map(|(g, _)| g);
     let num_groups = content.map_or(1, |(_, ng)| ng);
+    if let Some((nb, nt, _)) = content_time_rw {
+        assert!(
+            content.is_some(),
+            "content_time_rw requires a content covariate"
+        );
+        assert_eq!(
+            nb * nt,
+            num_groups,
+            "content_time_rw: num_base*num_times must equal the saturated num_groups"
+        );
+    }
 
     let sparse: Vec<(Vec<usize>, Vec<f64>)> = docs.iter().map(|doc| doc_sparse(doc)).collect();
 
@@ -1215,7 +1374,9 @@ pub fn fit_ctm<R: Rng>(
                 k,
                 num_groups,
                 num_types,
-                1.0,
+                content_prior_var,
+                content_l1,
+                content_time_rw,
                 20,
             );
         } else {
@@ -1568,6 +1729,9 @@ mod tests {
                 0.0,
                 None,
                 None,
+                None,
+                1.0,
+                0.0,
                 false,
                 None,
                 GammaPrior::Pooled,
@@ -1717,6 +1881,9 @@ mod tests {
             0.0,
             None,
             None,
+            None,
+            1.0,
+            0.0,
             true,
             None,
             GammaPrior::Pooled,
@@ -1763,6 +1930,9 @@ mod tests {
             0.0,
             None,
             Some((&groups, 2)),
+            None,
+            1.0,
+            0.0,
             false,
             None,
             GammaPrior::Pooled,
@@ -1792,6 +1962,81 @@ mod tests {
     }
 
     #[test]
+    fn content_time_rw_smooths_adjacent_periods() {
+        // Ordered-time content: 2 base groups x 4 time periods = 8 saturated
+        // groups, index `base*T + time`. Each cell has only a few documents (thin
+        // cells), and word usage drifts across time. The RW penalty should pull
+        // adjacent-time content_beta cells together vs the unsmoothed fit, and the
+        // unsmoothed (None) fit must match the plain saturated-content solve.
+        let (nb, nt, v) = (2usize, 4usize, 6usize);
+        let g = nb * nt;
+        let build = || {
+            let mut rng = ChaCha8Rng::seed_from_u64(3);
+            let mut docs: Vec<Vec<u32>> = Vec::new();
+            let mut groups: Vec<usize> = Vec::new();
+            for base in 0..nb {
+                for time in 0..nt {
+                    let grp = base * nt + time;
+                    // A marker word whose weight ramps smoothly with time; base 1
+                    // ramps the opposite marker. Thin: 3 docs per cell.
+                    for _ in 0..3 {
+                        let mut doc = vec![0u32, 1u32];
+                        let hi = if base == 0 { 2u32 } else { 4u32 };
+                        for _ in 0..(1 + time) {
+                            doc.push(hi);
+                        }
+                        // a little noise so cells genuinely differ
+                        doc.push(rng.gen_range(0..v as u32));
+                        docs.push(doc);
+                        groups.push(grp);
+                    }
+                }
+            }
+            (docs, groups)
+        };
+        let (docs, groups) = build();
+        let fit = |rw: Option<(usize, usize, f64)>| {
+            let mut rng = ChaCha8Rng::seed_from_u64(11);
+            fit_ctm(
+                &docs, 2, v, 40, 0.0, 0.0, None, Some((&groups, g)), rw, 1.0, 0.0, false, None,
+                GammaPrior::Pooled, true, false, &mut rng,
+            )
+            .content_beta
+            .expect("content_beta present")
+        };
+        // Mean squared adjacent-time gap of content_beta within each base group.
+        let adj_gap = |cb: &Vec<Vec<Vec<f64>>>| -> f64 {
+            let mut acc = 0.0;
+            let mut n = 0.0;
+            for base in 0..nb {
+                for time in 1..nt {
+                    let g2 = base * nt + time;
+                    let g1 = base * nt + (time - 1);
+                    for topic in 0..2 {
+                        for w in 0..v {
+                            let d = cb[g2][topic][w] - cb[g1][topic][w];
+                            acc += d * d;
+                            n += 1.0;
+                        }
+                    }
+                }
+            }
+            acc / n
+        };
+        let plain = fit(None);
+        let smoothed = fit(Some((nb, nt, 50.0)));
+        // Determinism: the None path is identical across calls (no RW side effect).
+        let plain2 = fit(None);
+        assert_eq!(plain, plain2, "None path must be deterministic/bit-exact");
+        let gap_plain = adj_gap(&plain);
+        let gap_smooth = adj_gap(&smoothed);
+        assert!(
+            gap_smooth < 0.5 * gap_plain,
+            "RW smoothing should shrink adjacent-time gaps: plain={gap_plain:.3e} smoothed={gap_smooth:.3e}"
+        );
+    }
+
+    #[test]
     fn em_bound_increases_and_converges() {
         // Variational EM must ascend the bound; with a tolerance it should stop
         // before the iteration cap, and `em_tol = 0` must run every iteration.
@@ -1814,6 +2059,9 @@ mod tests {
             0.0,
             None,
             None,
+            None,
+            1.0,
+            0.0,
             true,
             None,
             GammaPrior::Pooled,
@@ -1845,6 +2093,9 @@ mod tests {
             0.0,
             None,
             None,
+            None,
+            1.0,
+            0.0,
             true,
             None,
             GammaPrior::Pooled,
@@ -1883,6 +2134,9 @@ mod tests {
             0.0,
             None,
             None,
+            None,
+            1.0,
+            0.0,
             true,
             None,
             GammaPrior::Pooled,

@@ -569,6 +569,10 @@ class STM:
         prevalence_names: list[str] | None = None,
         content: Sequence[str] | Sequence[int] | None = None,
         content_names: list[str] | None = None,
+        content_time: Sequence[str] | Sequence[int] | None = None,
+        content_smooth: float = 1.0,
+        content_prior_var: float = 0.5,
+        content_prior: str = "l2",
         iters: int = 500,
         convergence_tol: float = 1e-5,
         gamma_prior: str = "pooled",
@@ -635,6 +639,10 @@ class STM:
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
     def topic_correlation(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def num_base_groups(self) -> int: ...
+    @property
+    def num_time_periods(self) -> int: ...
     @property
     def eta_mean(self) -> numpy.typing.NDArray[numpy.float64]:
         """Variational posterior means lambda, shape (num_docs, num_topics-1).

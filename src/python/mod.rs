@@ -6025,6 +6025,9 @@ impl CTM {
                         shrink,
                         None,
                         None,
+                        None,
+                        1.0,
+                        0.0,
                         spectral,
                         init_beta.as_deref(),
                         ctm::GammaPrior::Pooled,
@@ -6523,6 +6526,12 @@ pub struct STM {
     content_beta: Option<Vec<Vec<Vec<f64>>>>, // G×K×V; None if no content
     content_kappa: Option<ctm::ContentKappa>, // SAGE κ decomposition; None if no content
     group_names: Vec<String>,
+    /// When an ordered-time content axis is used, the saturated `group_names` are
+    /// the cross `base@period`; `num_base_groups`×`num_time_periods` == G, with the
+    /// convention group index = base*num_time_periods + period. Both 0 when no
+    /// content, and `num_time_periods` is 0 for a plain (untimed) content model.
+    num_base_groups: usize,
+    num_time_periods: usize,
     mu: Vec<f64>,    // K-1 logistic-normal prior mean (covariate-free baseline)
     sigma: Vec<f64>, // (K-1)² logistic-normal prior covariance
     /// Sigma from the last E-step; may differ from sigma when the final M-step
@@ -6624,6 +6633,8 @@ impl STM {
             content_beta: None,
             content_kappa: None,
             group_names: Vec::new(),
+            num_base_groups: 0,
+            num_time_periods: 0,
             mu: Vec::new(),
             sigma: Vec::new(),
             sigma_estep: Vec::new(),
@@ -6676,7 +6687,9 @@ impl STM {
     /// bound falls below it (the criterion R `stm` uses). `beta_init` is an optional
     /// initial topic-word matrix to warm-start from.
     #[pyo3(signature = (data, prevalence=None, *, prevalence_names=None,
-                        content=None, content_names=None, iters=500, convergence_tol=1e-5,
+                        content=None, content_names=None, content_time=None, content_smooth=1.0,
+                        content_prior_var=0.5, content_prior="l2",
+                        iters=500, convergence_tol=1e-5,
                         gamma_prior="pooled", gamma_enet=1.0, beta_init=None, em_tol=None,
                         covariates=None, keep_eta_cov=true, num_threads=None))]
     #[allow(clippy::too_many_arguments)]
@@ -6688,6 +6701,10 @@ impl STM {
         prevalence_names: Option<Vec<String>>,
         content: Option<&Bound<'_, PyAny>>,
         content_names: Option<Vec<String>>,
+        content_time: Option<&Bound<'_, PyAny>>,
+        content_smooth: f64,
+        content_prior_var: f64,
+        content_prior: &str,
         iters: usize,
         convergence_tol: f64,
         gamma_prior: &str,
@@ -6749,7 +6766,7 @@ impl STM {
         if num_docs == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
-        if prevalence.is_none() && content.is_none() {
+        if prevalence.is_none() && content.is_none() && content_time.is_none() {
             return Err(PyValueError::new_err(
                 "STM needs prevalence and/or content covariates; use CTM for neither",
             ));
@@ -6799,42 +6816,118 @@ impl STM {
             );
         }
 
-        // --- Content groups (optional) ---
+        // --- Content groups (optional), with an optional ordered-time axis ---
+        // A `content_time` covariate crosses into the content design as a saturated
+        // group axis (index = base*num_periods + period) and is smoothed across its
+        // ordered periods by a first-order random walk (`content_smooth` = 1/τ²).
         let mut content_groups: Option<(Vec<usize>, usize)> = None;
         let mut group_vocab: Vec<String> = Vec::new();
-        if let Some(cont) = content {
-            let groups_str = parse_groups(cont)?;
-            if groups_str.len() != num_docs {
-                return Err(PyValueError::new_err(format!(
-                    "content has {} entries but corpus has {} documents",
-                    groups_str.len(),
-                    num_docs
-                )));
-            }
-            group_vocab = match content_names {
-                Some(n) => n,
-                None => {
-                    let mut set: HashSet<String> = groups_str.iter().cloned().collect();
-                    let mut v: Vec<String> = set.drain().collect();
-                    v.sort();
-                    v
+        let mut content_time_rw: Option<(usize, usize, f64)> = None;
+        let mut num_base_groups = 0usize;
+        let mut num_time_periods = 0usize;
+        if content.is_some() || content_time.is_some() {
+            // Base groups from `content`; a single "_all" base when only time is given.
+            let (base_idx, base_labels): (Vec<usize>, Vec<String>) = if let Some(cont) = content {
+                let groups_str = parse_groups(cont)?;
+                if groups_str.len() != num_docs {
+                    return Err(PyValueError::new_err(format!(
+                        "content has {} entries but corpus has {} documents",
+                        groups_str.len(),
+                        num_docs
+                    )));
                 }
-            };
-            let gindex: HashMap<&str, usize> = group_vocab
-                .iter()
-                .enumerate()
-                .map(|(i, g)| (g.as_str(), i))
-                .collect();
-            let idx: Vec<usize> = groups_str
-                .iter()
-                .map(|g| {
-                    gindex.get(g.as_str()).copied().ok_or_else(|| {
-                        PyValueError::new_err(format!("content group {:?} not in content_names", g))
+                let labels = match content_names {
+                    Some(n) => n,
+                    None => {
+                        let mut set: HashSet<String> = groups_str.iter().cloned().collect();
+                        let mut v: Vec<String> = set.drain().collect();
+                        v.sort();
+                        v
+                    }
+                };
+                let gindex: HashMap<&str, usize> = labels
+                    .iter()
+                    .enumerate()
+                    .map(|(i, g)| (g.as_str(), i))
+                    .collect();
+                let idx: Vec<usize> = groups_str
+                    .iter()
+                    .map(|g| {
+                        gindex.get(g.as_str()).copied().ok_or_else(|| {
+                            PyValueError::new_err(format!(
+                                "content group {:?} not in content_names",
+                                g
+                            ))
+                        })
                     })
-                })
-                .collect::<PyResult<_>>()?;
-            content_groups = Some((idx, group_vocab.len()));
+                    .collect::<PyResult<_>>()?;
+                (idx, labels)
+            } else {
+                (vec![0usize; num_docs], vec!["_all".to_string()])
+            };
+            let num_base = base_labels.len();
+
+            if let Some(ct) = content_time {
+                let times_str = parse_groups(ct)?;
+                if times_str.len() != num_docs {
+                    return Err(PyValueError::new_err(format!(
+                        "content_time has {} entries but corpus has {} documents",
+                        times_str.len(),
+                        num_docs
+                    )));
+                }
+                // Ordered periods: sorted unique labels (pass sortable labels, e.g.
+                // years or zero-padded strings, so the order is chronological).
+                let mut periods: Vec<String> =
+                    times_str.iter().cloned().collect::<HashSet<_>>().into_iter().collect();
+                periods.sort();
+                let pindex: HashMap<&str, usize> = periods
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| (p.as_str(), i))
+                    .collect();
+                let num_periods = periods.len();
+                let sat: Vec<usize> = base_idx
+                    .iter()
+                    .zip(times_str.iter())
+                    .map(|(b, t)| b * num_periods + pindex[t.as_str()])
+                    .collect();
+                let mut labels = Vec::with_capacity(num_base * num_periods);
+                for b in &base_labels {
+                    for p in &periods {
+                        labels.push(format!("{b}@{p}"));
+                    }
+                }
+                group_vocab = labels;
+                content_groups = Some((sat, num_base * num_periods));
+                content_time_rw = if content_smooth > 0.0 && num_periods >= 2 {
+                    Some((num_base, num_periods, content_smooth))
+                } else {
+                    None
+                };
+                num_base_groups = num_base;
+                num_time_periods = num_periods;
+            } else {
+                group_vocab = base_labels;
+                content_groups = Some((base_idx, num_base));
+                num_base_groups = num_base;
+                num_time_periods = 0;
+            }
         }
+
+        // Content-deviation prior: "l2" (default, Gaussian ridge on κ) or "l1"
+        // (sparse Laplace on the group/topic×group deviation blocks, SAGE-style;
+        // rate 1/content_prior_var). L1 recovers sparse content contrasts that an
+        // L2 prior cannot, at some extra fit time (FISTA vs L-BFGS).
+        let content_l1 = match content_prior {
+            "l2" => 0.0,
+            "l1" => 1.0 / content_prior_var,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "content_prior must be \"l2\" or \"l1\", got {other:?}"
+                )))
+            }
+        };
 
         let gprior = match gamma_prior {
             "pooled" => ctm::GammaPrior::Pooled,
@@ -6874,6 +6967,9 @@ impl STM {
                     shrink,
                     prev_ref,
                     cont_ref,
+                    content_time_rw,
+                    content_prior_var,
+                    content_l1,
                     spectral,
                     init_beta.as_deref(),
                     gprior,
@@ -6969,6 +7065,8 @@ impl STM {
         self.content_beta = model.content_beta;
         self.content_kappa = model.content_kappa;
         self.group_names = group_vocab;
+        self.num_base_groups = num_base_groups;
+        self.num_time_periods = num_time_periods;
         self.mu = model.mu.clone();
         self.sigma = model.sigma.clone();
         // E-step Σ snapshot: retained only when eta_cov was NOT kept.
@@ -7047,6 +7145,20 @@ impl STM {
     fn topic_correlation<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         Ok(self.corr.as_ref().unwrap().to_pyarray_bound(py))
+    }
+
+    /// Number of base content groups (the ``content=`` levels). 0 if no content.
+    #[getter]
+    fn num_base_groups(&self) -> usize {
+        self.num_base_groups
+    }
+
+    /// Number of ordered content-time periods (the ``content_time=`` levels), or 0
+    /// for a plain content model. When > 0, the saturated :attr:`groups` are the
+    /// cross ``base@period`` with index = base*num_time_periods + period.
+    #[getter]
+    fn num_time_periods(&self) -> usize {
+        self.num_time_periods
     }
 
     /// Per-document variational posterior means λ of η, shape
@@ -7511,6 +7623,11 @@ impl STM {
             sigma_estep: Vec::new(), // not persisted; falls back to sigma in _recompute_eta_cov
             beta_estep: None,        // not persisted; falls back to self.beta
             group_names: s.group_names,
+            // Ordered-time content metadata is not yet persisted in the save format;
+            // default to 0 on load (a plain content model). Persisting it is a
+            // save-format version bump handled separately.
+            num_base_groups: 0,
+            num_time_periods: 0,
             corpus: s.corpus,
             bound: s.bound,
             bound_history: s.bound_history,
