@@ -141,16 +141,59 @@ def _match_anchor_topic(m, anchor):
     return best
 
 
-def _simulate_from_ectm(model, docs, groups, periods, rng):
+def _theta_sampler(model, k):
+    """Return a callable ``() -> θ`` that draws a fresh topic-proportion vector
+    from the fitted logistic-normal, or ``None`` when the parameters to do so are
+    unavailable (then the caller falls back to the fitted per-document ``θ̂``).
+
+    A parametric bootstrap must regenerate the topic proportions, not freeze them:
+    holding ``θ̂`` fixed and resampling only tokens omits the document-level
+    topic-mixture variance, so the refits barely differ and the resulting band is
+    **too narrow** (empirically under-covers). We reconstruct the fitted marginal
+    ``η ~ N(μ̂, Σ̂)`` from the per-document logistic-normal parameters — ``μ̂`` the
+    mean of ``eta_mean`` and, by the law of total variance, ``Σ̂`` the between-doc
+    covariance of ``eta_mean`` plus the mean within-doc ``eta_cov`` — then draw
+    ``θ = softmax([η, 0])``."""
+    em = getattr(model, "eta_mean", None)
+    if em is None:
+        return None
+    em = np.asarray(em, dtype=np.float64)
+    if em.ndim != 2 or em.shape[0] < 2 or em.shape[1] != k - 1:
+        return None
+    mu = em.mean(axis=0)
+    between = np.cov(em, rowvar=False).reshape(k - 1, k - 1)
+    ec = getattr(model, "eta_cov", None)
+    within = np.asarray(ec, dtype=np.float64).mean(axis=0) if ec is not None else 0.0
+    cov = between + within + 1e-9 * np.eye(k - 1)
+    try:
+        chol = np.linalg.cholesky(cov)
+    except np.linalg.LinAlgError:
+        chol = np.diag(np.sqrt(np.clip(np.diag(cov), 0.0, None)))
+
+    def draw(rng):
+        eta = np.append(mu + chol @ rng.standard_normal(k - 1), 0.0)
+        z = np.exp(eta - eta.max())
+        return z / z.sum()
+
+    return draw
+
+
+def _simulate_from_ectm(model, docs, groups, periods, rng, resample_theta=True):
     """Draw one synthetic corpus from the fitted ECTM's generative model, holding
-    each document's length, group and period fixed. For a document with topic
-    weights ``θ_d`` in cell ``(g_d, t_d)``, each of its ``len(doc)`` tokens draws a
-    topic ``k ~ θ_d`` then a word ``v ~ β_{k, g_d, t_d}``. Returns a list of token
-    lists aligned to ``docs`` (``groups``/``periods`` are unchanged)."""
+    each document's length, group and period fixed. Each of a document's tokens
+    draws a topic ``k ~ θ_d`` then a word ``v ~ β_{k, g_d, t_d}``.
+
+    With ``resample_theta`` (default), each document's ``θ_d`` is redrawn from the
+    fitted logistic-normal (:func:`_theta_sampler`) so the bootstrap propagates
+    the document-level topic-mixture variance — without this the parametric band
+    under-covers. Falls back to the fitted ``θ̂`` when the logistic-normal
+    parameters are unavailable (e.g. ``keep_eta_cov=False``). Returns token lists
+    aligned to ``docs`` (``groups``/``periods`` unchanged)."""
     vocab = list(model.vocabulary)
     theta = np.asarray(model.doc_topic, dtype=np.float64)
     k = theta.shape[1]
     period_index = {str(p): t for t, p in enumerate(model.periods)}
+    sampler = _theta_sampler(model, k) if resample_theta else None
     # β cube per (group, period) label -> (K, V), fetched once.
     beta_cache = {}
 
@@ -166,8 +209,11 @@ def _simulate_from_ectm(model, docs, groups, periods, rng):
         if length == 0:
             sim.append([])
             continue
-        th = theta[d]
-        th = th / th.sum() if th.sum() > 0 else np.full(k, 1.0 / k)
+        if sampler is not None:
+            th = sampler(rng)
+        else:
+            th = theta[d]
+            th = th / th.sum() if th.sum() > 0 else np.full(k, 1.0 / k)
         beta = _beta(groups[d], str(periods[d]))
         # tokens per topic, then words per topic — bag of words, order irrelevant.
         z_counts = rng.multinomial(length, th)
@@ -209,9 +255,12 @@ def content_trajectory_ci(refit, docs, groups, periods, *, anchor_words, word, c
       independent clusters per cell.**
     - ``"parametric"``: parametric bootstrap from the fitted generative model. Draw
       ``n_boot`` synthetic corpora from the fit (each document keeps its length,
-      group and period; tokens are generated from ``θ̂`` and the per-cell ``β̂``),
-      refit each, and take quantiles. The target is well defined — the fitted DGP —
-      so coverage is checkable on synthetic ground truth. **Prefer this for thin,
+      group and period; its topic mixture is redrawn from the fitted
+      logistic-normal and tokens are generated from that and the per-cell ``β̂`` —
+      resampling ``θ`` rather than freezing it is what gives the band nominal
+      width), refit each, and take quantiles. The target is well defined — the
+      fitted DGP — so coverage is checkable on synthetic ground truth. **Prefer
+      this for thin,
       one-observation-per-cell designs** (e.g. one manifesto per ``(party,
       election)``), where the cluster bootstrap cannot preserve the design because
       no resample can redraw whole clusters and keep every cell present; its
