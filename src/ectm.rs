@@ -277,24 +277,40 @@ fn soft_threshold(z: f64, g: f64) -> f64 {
     }
 }
 
-/// Minimize `f(x) + lam·Σ_i |x_i − anchor_i|` by FISTA with backtracking line
-/// search (Beck & Teboulle 2009). `f_and_grad` supplies the smooth part's value
-/// and gradient (already in minimization form). The L1 term is non-smooth at its
-/// anchor, so plain L-BFGS cannot produce exact zeros; the proximal step
-/// (soft-thresholding around `anchor`) does. Only invoked for the L1 content
-/// prior (`lam > 0`); the L2 default keeps the original L-BFGS solve bit-exact.
-fn fista_l1<F>(x0: Vec<f64>, f_and_grad: F, lam: f64, anchor: &[f64], max_iter: usize) -> Vec<f64>
+/// Minimize `f(x) + lam·Σ_{i:penalize} |x_i − anchor_i|` by FISTA with
+/// backtracking line search (Beck & Teboulle 2009). `f_and_grad` supplies the
+/// smooth part's value and gradient (already in minimization form). The L1 term
+/// is non-smooth at its anchor, so plain L-BFGS cannot produce exact zeros; the
+/// proximal step (soft-thresholding around `anchor`) does. `penalize[i]` gates
+/// which coordinates carry the L1 term — for ECTM only the group and group×time
+/// contrast blocks (κG, κGP) are sparsified; the topic baseline κT and the
+/// topic×time drift κP keep their L2 so topic vocabularies stay coherent.
+/// Coordinates with `penalize[i] == false` take a plain gradient step (threshold
+/// 0). Only invoked for the L1 content prior (`lam > 0`); the L2 default keeps
+/// the original L-BFGS solve bit-exact.
+fn fista_l1<F>(
+    x0: Vec<f64>,
+    f_and_grad: F,
+    lam: f64,
+    anchor: &[f64],
+    penalize: &[bool],
+    max_iter: usize,
+) -> Vec<f64>
 where
     F: Fn(&[f64]) -> (f64, Vec<f64>),
 {
     let n = x0.len();
     // Proximal-gradient step from `y` with inverse-Lipschitz step `t`.
     let prox_step = |y: &[f64], g: &[f64], t: f64| -> Vec<f64> {
-        let thr = lam * t;
         (0..n)
             .map(|i| {
-                let a = anchor.get(i).copied().unwrap_or(0.0);
-                a + soft_threshold(y[i] - t * g[i] - a, thr)
+                let grad_step = y[i] - t * g[i];
+                if penalize.get(i).copied().unwrap_or(false) {
+                    let a = anchor.get(i).copied().unwrap_or(0.0);
+                    a + soft_threshold(grad_step - a, lam * t)
+                } else {
+                    grad_step
+                }
             })
             .collect::<Vec<f64>>()
     };
@@ -304,8 +320,9 @@ where
     let mut theta = 1.0f64;
     for _ in 0..max_iter {
         let (fy, gy) = f_and_grad(&y);
-        // Backtracking: shrink the step until the quadratic upper bound holds.
-        let mut step = t_step * 2.0;
+        // Backtracking: start from the last accepted step (reused, not doubled)
+        // and shrink until the quadratic upper bound holds.
+        let mut step = t_step;
         let x_new = loop {
             let cand = prox_step(&y, &gy, step);
             let (fc, _) = f_and_grad(&cand);
@@ -510,15 +527,20 @@ fn optimize_content(
     };
 
     let x = if content_l1 > 0.0 {
-        // L1 (sparse Laplace) prior on the content deviations: κT is pulled
-        // toward `seed_mean` (0 except at seeded entries), every other block
-        // toward 0. Solved by FISTA so the deviations reach exact zeros — sparse,
-        // readable top-word lists and sharp per-cell Δ contrasts (SAGE-style).
-        let mut anchor = vec![0.0f64; n_t + n_kp + n_kg + n_kgp];
-        for (i, a) in anchor.iter_mut().enumerate().take(n_t) {
-            *a = seed_mean.get(i).copied().unwrap_or(0.0);
+        // L1 (sparse Laplace) prior on the *contrast* deviations only: the group
+        // block κG (off_kg..off_kgp) and the group×time block κGP (off_kgp..end)
+        // are sparsified toward 0, giving a principled "this cell's wording
+        // differs on *these* words" story and sharper Δ contrasts (SAGE-style).
+        // The topic baseline κT and the topic×time drift κP keep their L2 so the
+        // topic vocabularies stay coherent — sparsifying κT deletes topic words
+        // and hurts coherence. Solved by FISTA (exact zeros; L-BFGS cannot).
+        let total = n_t + n_kp + n_kg + n_kgp;
+        let anchor = vec![0.0f64; total];
+        let mut penalize = vec![false; total];
+        for pflag in penalize.iter_mut().take(total).skip(off_kg) {
+            *pflag = true;
         }
-        fista_l1(x0, smooth, content_l1, &anchor, max_iter.max(200))
+        fista_l1(x0, smooth, content_l1, &anchor, &penalize, max_iter.max(60))
     } else {
         lbfgs_minimize(x0, smooth, max_iter, 7, 1e-4)
     };
@@ -1483,7 +1505,8 @@ mod tests {
             (val, grad)
         };
         let anchor = vec![0.0; target.len()];
-        let x = fista_l1(vec![0.0; target.len()], f_and_grad, lam, &anchor, 500);
+        let penalize = vec![true; target.len()];
+        let x = fista_l1(vec![0.0; target.len()], f_and_grad, lam, &anchor, &penalize, 500);
         let expected: Vec<f64> = target.iter().map(|&t| soft_threshold(t, lam)).collect();
         for (xi, ei) in x.iter().zip(&expected) {
             assert!((xi - ei).abs() < 1e-4, "got {x:?}, expected {expected:?}");

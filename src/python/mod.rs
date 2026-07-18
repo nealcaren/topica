@@ -7843,10 +7843,15 @@ impl ECTM {
     /// term (larger ⇒ the changing contrast is pulled harder toward zero unless
     /// the data demand it). `content_prior` selects the deviation prior:
     /// ``"l2"`` (default) is the Gaussian ridge above; ``"l1"`` swaps in a
-    /// sparsity-inducing Laplace prior (solved by FISTA) that drives the κ to
-    /// exact zeros, for more exclusive top-word lists and sharper per-cell Δ
-    /// contrasts (SAGE-style). Under ``"l1"`` the penalty rate is `1/content_prior_var`,
-    /// so a tighter `content_prior_var` sparsifies harder. EM runs until the
+    /// sparsity-inducing Laplace prior (solved by FISTA) on the **group and
+    /// group×time contrast blocks** (κG, κGP), driving them to exact zeros for a
+    /// sharper "this cell differs on *these* words" story and more exclusive
+    /// contrasts (SAGE-style). The topic baseline κT and topic×time drift κP keep
+    /// their L2, so topic vocabularies stay coherent (sparsifying κT deletes topic
+    /// words and hurts coherence). Under ``"l1"`` the penalty rate is
+    /// `1/content_prior_var`, so a tighter `content_prior_var` sparsifies harder;
+    /// prefer a mild penalty — on real corpora it lifts exclusivity at negligible
+    /// coherence cost, while a strong one trades coherence away. EM runs until the
     /// relative change in the variational bound drops below `convergence_tol` or
     /// `iters` iterations are reached.
     /// `prevalence_names`, `content_names`, and `period_names` are human-readable
