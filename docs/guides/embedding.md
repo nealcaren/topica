@@ -418,7 +418,11 @@ For statistically-selected phrases instead of every bigram, use
 - `n_components` is the dimensionality the embeddings are reduced to before
   clustering. The default reducer is a randomized PCA: fast, deterministic, and
   dependency-free, but it separates less sharply than UMAP and on closely spaced
-  themes can merge clusters a UMAP run would split.
+  themes can merge clusters a UMAP run would split. The reduced coordinates are
+  L2-normalized onto the unit sphere before clustering, so the Euclidean clusterer
+  measures cosine distance — the geometry sentence embeddings are trained for.
+  Without this the few highest-variance PCA directions dominate the metric and the
+  clusterer under-splits real embeddings into a couple of broad topics.
 - `reducer="umap"` switches to a faithful UMAP reducer (with `n_neighbors`), which
   separates real document embeddings much better than a linear projection and, on
   closely spaced themes, splits clusters PCA would merge. It ships in the wheel, so
