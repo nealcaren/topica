@@ -148,3 +148,131 @@ def test_mcmc_diagnostics_warn_false_is_silent(fitted_lda):
     with warnings.catch_warnings():
         warnings.simplefilter("error")  # any warning would fail the test
         topica.mcmc_diagnostics(fitted_lda, warn=False)
+
+
+# ---------------------------------------------------------------------------
+# Multi-chain diagnostics: R-hat (Gelman-Rubin) and cross-chain ESS.
+# ---------------------------------------------------------------------------
+
+
+def test_rhat_of_well_mixed_chains_is_near_one():
+    rng = np.random.default_rng(10)
+    chains = rng.standard_normal((4, 4000))
+    assert topica.rhat(chains) == pytest.approx(1.0, abs=0.01)
+
+
+def test_rhat_flags_chains_that_disagree():
+    rng = np.random.default_rng(11)
+    # four chains centered far apart never mixed to a common target
+    chains = rng.standard_normal((4, 4000)) + np.array([[0.0], [5.0], [10.0], [15.0]])
+    assert topica.rhat(chains) > 1.2
+
+
+def test_rhat_of_identical_constant_chains_is_one():
+    assert topica.rhat(np.ones((3, 200))) == pytest.approx(1.0)
+
+
+def test_rhat_split_detects_within_chain_drift():
+    # two chains, each a slow linear ramp: no between-chain spread but each half
+    # disagrees with the other, which split-R-hat is designed to catch.
+    ramp = np.linspace(0.0, 10.0, 2000)
+    chains = np.vstack([ramp, ramp])
+    assert topica.rhat(chains, split=True) > 1.1
+    # without splitting the drift is invisible (chain means are identical)
+    assert topica.rhat(chains, split=False) == pytest.approx(1.0, abs=0.05)
+
+
+def test_rhat_accepts_unequal_length_chains():
+    rng = np.random.default_rng(12)
+    a = rng.standard_normal(3000)
+    b = rng.standard_normal(2000)
+    r = topica.rhat([a, b])  # truncated to the shorter
+    assert r == pytest.approx(1.0, abs=0.03)
+
+
+def test_rhat_requires_two_chains():
+    with pytest.raises(ValueError, match="two chains"):
+        topica.rhat(np.zeros((1, 100)))
+
+
+def test_ndtri_matches_scipy_when_available():
+    scipy_stats = pytest.importorskip("scipy.stats")
+    from topica.mcmc import _ndtri
+
+    p = np.array([1e-4, 0.01, 0.2, 0.5, 0.8, 0.99, 0.9999])
+    assert np.allclose(_ndtri(p), scipy_stats.norm.ppf(p), atol=1e-6)
+
+
+@pytest.fixture(scope="module")
+def lda_chains():
+    rng = np.random.default_rng(0)
+    vocabs = [
+        ["cat", "dog", "pet", "fur", "paw"],
+        ["stock", "bond", "market", "trade", "bank"],
+        ["star", "planet", "orbit", "moon", "galaxy"],
+    ]
+    docs = []
+    for _ in range(120):
+        topic = rng.integers(0, 3)
+        docs.append(list(rng.choice(vocabs[topic], size=25)))
+    corpus = topica.Corpus.from_documents(docs)
+    chains = []
+    for seed in (1, 2, 3, 4):
+        model = LDA(num_topics=3, seed=seed)
+        model.fit(corpus, iters=400, num_theta_draws=80)
+        chains.append(model)
+    return chains
+
+
+def test_multichain_diagnostics_on_lda(lda_chains):
+    d = topica.multichain_diagnostics(lda_chains)
+    assert d.model == "LDA"
+    assert d.inference == "gibbs"
+    assert d.n_chains == 4
+    # log-likelihood R-hat is computed on the permutation-invariant trace
+    assert d.loglik_rhat is not None and d.loglik_rhat >= 1.0
+    assert d.loglik_ess is not None
+    # per-topic R-hat over the three aligned topics
+    assert d.topic_rhat.shape == (3,)
+    assert d.topic_ess.shape == (3,)
+    assert d.topic_alignment.shape == (3,)
+    # a clean three-topic corpus aligns its topics across seeds
+    assert d.topic_alignment.min() > 0.5
+    assert "LDA" in d.summary()
+    assert isinstance(d.converged, bool)
+
+
+def test_multichain_diagnostics_requires_two_chains(lda_chains):
+    with pytest.raises(ValueError, match="two chains"):
+        topica.multichain_diagnostics(lda_chains[:1])
+
+
+def test_multichain_diagnostics_without_theta_draws_warns():
+    docs = [["a", "b", "c"], ["d", "e", "f"]] * 20
+    corpus = topica.Corpus.from_documents(docs)
+    chains = []
+    for seed in (1, 2):
+        model = LDA(num_topics=2, seed=seed)
+        model.fit(corpus, iters=80, keep_theta_draws=False)
+        chains.append(model)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        d = topica.multichain_diagnostics(chains)
+    assert any("theta_draws" in str(w.message) for w in caught)
+    assert d.topic_rhat is None
+    # the log-likelihood R-hat still lands from the retained trace
+    assert d.loglik_rhat is not None
+
+
+def test_multichain_diagnostics_warns_for_variational_models():
+    docs = [["a", "b", "c"], ["d", "e", "f"]] * 20
+    corpus = topica.Corpus.from_documents(docs)
+    chains = []
+    for seed in (1, 2):
+        model = topica.CTM(num_topics=2, seed=seed)
+        model.fit(corpus, iters=15)
+        chains.append(model)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        topica.multichain_diagnostics(chains)
+    assert any("not Gibbs" in str(w.message) for w in caught)

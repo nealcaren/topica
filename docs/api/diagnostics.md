@@ -114,6 +114,17 @@ of the diagnostics guide.
 
 ::: topica.autocorrelation
 
+Multi-chain Gelman-Rubin R-hat and cross-chain ESS, from several fits of the same
+model at different seeds. See the
+[R-hat section](../guides/diagnostics.md#do-independent-chains-agree-r-hat) of the
+diagnostics guide.
+
+::: topica.multichain_diagnostics
+
+::: topica.MultiChainDiagnostics
+
+::: topica.rhat
+
 ## Held-out likelihood
 
 Build a within-corpus word-heldout set — the analogue of R `stm`'s
