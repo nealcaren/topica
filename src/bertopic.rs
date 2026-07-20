@@ -155,11 +155,22 @@ pub fn fit_bertopic(
 
     // (1) reduce, (2) cluster. HDBSCAN (default) leaves `-1` noise; KMeans /
     // agglomerative assign every document instead.
-    let reduced: Vec<Vec<f64>> = if emb_dim > n_components && n_components > 0 {
+    let did_reduce = emb_dim > n_components && n_components > 0;
+    let mut reduced: Vec<Vec<f64>> = if did_reduce {
         reduce::reduce(doc_embeddings, n_components, use_umap, n_neighbors, seed)
     } else {
         doc_embeddings.to_vec()
     };
+    // L2-normalize the PCA scores onto the unit sphere before Euclidean
+    // clustering so the metric tracks cosine, the geometry sentence embeddings
+    // are trained for; otherwise a few high-variance PCA directions dominate and
+    // HDBSCAN under-splits real embeddings. UMAP output is already
+    // cosine-structured, so skip it there. `use_umap` falls back to PCA when the
+    // `umap` feature is not compiled, so gate on what actually ran.
+    let did_pca = did_reduce && !(use_umap && reduce::umap_available());
+    if did_pca {
+        reduce::l2_normalize_rows(&mut reduced);
+    }
     let mut labels = cluster::cluster_points(
         &reduced,
         clusterer,
@@ -418,6 +429,88 @@ mod tests {
             );
         }
         (docs, emb, vocab_size)
+    }
+
+    // Clusters that differ by *direction* (each along its own axis) but carry a
+    // wide random *radial* magnitude, the geometry L2-normalization is meant to
+    // fix (issue #342). On the raw PCA scores the radial spread dominates the
+    // Euclidean metric, so a density clusterer mis-splits the rays (here it
+    // fragments them); normalizing onto the sphere collapses each ray to its
+    // direction and recovers the true clusters. The real sentence-embedding
+    // failure is the same cause with the opposite symptom (under-splitting a
+    // dense core), but a small deterministic synthetic reproduces the fragmenting
+    // form; either way raw clustering is wrong and normalization corrects it.
+    fn radial_rays(
+        n_clusters: usize,
+        per: usize,
+        seed: u64,
+    ) -> (Vec<Vec<u32>>, Vec<Vec<f64>>, usize) {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let dim = 16;
+        let block = 5;
+        let vocab_size = n_clusters * block;
+        let mut docs = Vec::new();
+        let mut emb = Vec::new();
+        for d in 0..(n_clusters * per) {
+            let c = d % n_clusters;
+            let toks: Vec<u32> = (0..8)
+                .map(|_| (c * block + rng.gen_range(0..block)) as u32)
+                .collect();
+            docs.push(toks);
+            // Direction = axis c; magnitude spread wide so the radial variance
+            // dominates the raw Euclidean metric.
+            let mag = 1.0 + rng.gen::<f64>() * 11.0;
+            let row: Vec<f64> = (0..dim)
+                .map(|t| {
+                    let dir = if t == c { mag } else { 0.0 };
+                    dir + (rng.gen::<f64>() - 0.5) * 0.3
+                })
+                .collect();
+            emb.push(row);
+        }
+        (docs, emb, vocab_size)
+    }
+
+    #[test]
+    fn l2_normalization_recovers_rays_that_raw_pca_misclusters() {
+        let (docs, emb, vocab) = radial_rays(4, 60, 7);
+        // Raw PCA scores: radial spread dominates the Euclidean metric, so
+        // HDBSCAN gets the cluster count wrong.
+        let raw = crate::reduce::pca(&emb, 5, 7);
+        let raw_k = topic_count(&crate::cluster::cluster_points(
+            &raw, "hdbscan", None, 15, 5, 7,
+        ));
+        assert_ne!(raw_k, 4, "raw PCA clustering should mis-count the 4 rays");
+        // L2-normalized: each point maps to its ray direction, cleanly separable
+        // into exactly the 4 true clusters.
+        let mut normed = crate::reduce::pca(&emb, 5, 7);
+        crate::reduce::l2_normalize_rows(&mut normed);
+        let norm_k = topic_count(&crate::cluster::cluster_points(
+            &normed, "hdbscan", None, 15, 5, 7,
+        ));
+        assert_eq!(
+            norm_k, 4,
+            "normalized clustering should recover exactly 4 rays, got {norm_k}"
+        );
+        // The shipped pipeline normalizes on the PCA path, so fit_bertopic itself
+        // recovers block-pure topics (each topic's top words from one planted block).
+        let m = fit_bertopic(
+            &docs, &emb, vocab, 5, false, 15, 15, 5, None, 4, 1, false, false, "hdbscan", None, 7,
+        );
+        assert_eq!(
+            m.num_topics, 4,
+            "fit_bertopic recovered {} topics",
+            m.num_topics
+        );
+        for t in 0..m.num_topics {
+            let blocks: std::collections::HashSet<usize> =
+                m.top_words(4, t).into_iter().map(|(w, _)| w / 5).collect();
+            assert_eq!(
+                blocks.len(),
+                1,
+                "topic {t} mixes planted blocks: {blocks:?}"
+            );
+        }
     }
 
     #[test]

@@ -185,11 +185,20 @@ pub fn fit_top2vec(
     };
 
     // (1) Reduce, unless the embeddings are already at or below the target dim.
-    let reduced: Vec<Vec<f64>> = if emb_dim > n_components && n_components > 0 {
+    let did_reduce = emb_dim > n_components && n_components > 0;
+    let mut reduced: Vec<Vec<f64>> = if did_reduce {
         reduce::reduce(doc_embeddings, n_components, use_umap, n_neighbors, seed)
     } else {
         doc_embeddings.to_vec()
     };
+    // L2-normalize the PCA scores onto the unit sphere before Euclidean
+    // clustering so the metric tracks cosine (see `fit_bertopic`); UMAP output is
+    // already cosine-structured, and `use_umap` silently falls back to PCA when
+    // the `umap` feature is absent, so gate on what actually ran.
+    let did_pca = did_reduce && !(use_umap && reduce::umap_available());
+    if did_pca {
+        reduce::l2_normalize_rows(&mut reduced);
+    }
 
     // (2) Cluster the reduced points. HDBSCAN (the default) leaves sparse points
     // as `-1` noise; KMeans / agglomerative assign every document instead.

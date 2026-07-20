@@ -252,6 +252,28 @@ pub fn project(
     }
 }
 
+/// L2-normalize each row in place, projecting the points onto the unit sphere.
+///
+/// The embedding heads cluster reduced coordinates with a Euclidean density
+/// clusterer, but sentence embeddings are trained for cosine similarity. On raw
+/// PCA scores a few high-variance directions dominate the Euclidean metric and
+/// HDBSCAN under-splits into a couple of broad clusters; normalizing onto the
+/// sphere makes squared Euclidean distance a monotone function of cosine
+/// distance (`||a-b||^2 = 2(1 - cos)` for unit vectors), so the clusterer sees
+/// the metric the encoder was trained for. A zero-norm row (all-zero
+/// coordinates) is left untouched rather than divided by zero.
+pub fn l2_normalize_rows(rows: &mut [Vec<f64>]) {
+    for row in rows.iter_mut() {
+        let norm: f64 = row.iter().map(|&v| v * v).sum::<f64>().sqrt();
+        if norm > 0.0 {
+            let inv = 1.0 / norm;
+            for v in row.iter_mut() {
+                *v *= inv;
+            }
+        }
+    }
+}
+
 /// Project `data` (`n_rows × n_features`, each row a sample) onto its top
 /// `n_components` principal components and return the scores (`n_rows ×
 /// n_components`).
@@ -713,6 +735,24 @@ mod tests {
         let s = pca(&small, 3, 0);
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].len(), 3);
+    }
+
+    #[test]
+    fn l2_normalize_rows_projects_onto_sphere() {
+        let mut rows = vec![
+            vec![3.0, 4.0],       // norm 5 -> (0.6, 0.8)
+            vec![0.0, 0.0],       // zero row stays put (no divide by zero)
+            vec![-2.0, 0.0, 0.0], // norm 2 -> (-1, 0, 0)
+        ];
+        l2_normalize_rows(&mut rows);
+        assert!((rows[0][0] - 0.6).abs() < 1e-12 && (rows[0][1] - 0.8).abs() < 1e-12);
+        assert_eq!(rows[1], vec![0.0, 0.0]);
+        assert!((rows[2][0] + 1.0).abs() < 1e-12);
+        // Every non-zero row now has unit norm.
+        for row in [&rows[0], &rows[2]] {
+            let n: f64 = row.iter().map(|&v| v * v).sum::<f64>().sqrt();
+            assert!((n - 1.0).abs() < 1e-12, "row norm {n}");
+        }
     }
 
     #[test]
