@@ -956,7 +956,7 @@ def tune_content_prior(
         grid. Pass a single-element sequence to hold one fixed.
     prop_docs, prop_words : float
         Fraction of documents sampled and fraction of each sampled document's
-        tokens withheld (passed to :func:`~topica.diagnostics.make_heldout`).
+        tokens withheld (passed to :func:`~topica.make_heldout`).
     seed : int
         Seed for the held-out split.
 

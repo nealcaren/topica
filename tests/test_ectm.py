@@ -462,7 +462,7 @@ def _planted_tv(strength):
 
 
 def _fit_sampled(docs, groups, times):
-    m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+    m = topica.ECTM(num_topics=2, seed=1, init="spectral")
     m.fit(docs, times=times, content=groups, iters=100,
           period_smooth=2.0, interaction_shrink=1.5)
     return m
@@ -572,7 +572,7 @@ def _two_topic_corpus(reps, seed=0):
 
 
 def _fit_two_topic(docs, groups, periods):
-    m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+    m = topica.ECTM(num_topics=2, seed=1, init="spectral")
     m.fit(docs, times=periods, content=groups, iters=70,
           period_smooth=2.0, interaction_shrink=1.5)
     return m
@@ -667,7 +667,7 @@ def test_parametric_simulation_resamples_theta():
 # ---------------------------------------------------------------------------
 
 def _tune_fit(docs, times, content, *, content_prior_var, interaction_shrink, period_smooth):
-    m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+    m = topica.ECTM(num_topics=2, seed=1, init="spectral")
     m.fit(docs, times=times, content=content, iters=55,
           content_prior_var=content_prior_var,
           interaction_shrink=interaction_shrink, period_smooth=period_smooth)
@@ -739,7 +739,7 @@ def test_content_prior_l1_runs_and_preserves_topics():
     """The L1 content prior fits, and at a mild penalty still recovers the two
     well-separated topics (sparsity should not destroy topic structure)."""
     docs, groups, times = _two_topic_corpus(40, seed=1)
-    m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+    m = topica.ECTM(num_topics=2, seed=1, init="spectral")
     m.fit(docs, times=times, content=groups, iters=60,
           content_prior="l1", content_prior_var=1.0,
           interaction_shrink=1.5, period_smooth=2.0)
@@ -755,7 +755,7 @@ def test_content_prior_l1_sparsifies_group_contrast():
     docs, groups, times = _two_topic_corpus(40, seed=1)
 
     def fit(prior, cpv):
-        m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+        m = topica.ECTM(num_topics=2, seed=1, init="spectral")
         m.fit(docs, times=times, content=groups, iters=60,
               content_prior=prior, content_prior_var=cpv,
               interaction_shrink=1.5, period_smooth=2.0)
@@ -774,7 +774,7 @@ def test_content_prior_l1_sparsifies_contrast_not_baseline():
     docs, groups, times = _two_topic_corpus(40, seed=1)
 
     def fit(prior, cpv):
-        m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+        m = topica.ECTM(num_topics=2, seed=1, init="spectral")
         m.fit(docs, times=times, content=groups, iters=60,
               content_prior=prior, content_prior_var=cpv,
               interaction_shrink=1.5, period_smooth=2.0)
@@ -800,7 +800,7 @@ def test_content_prior_l2_is_default_and_l1_differs():
     docs, groups, times = _two_topic_corpus(30, seed=2)
 
     def fit(**kw):
-        m = topica.models.ECTM(num_topics=2, seed=1, init="spectral")
+        m = topica.ECTM(num_topics=2, seed=1, init="spectral")
         m.fit(docs, times=times, content=groups, iters=50,
               interaction_shrink=1.5, period_smooth=2.0, **kw)
         return m
@@ -814,6 +814,6 @@ def test_content_prior_l2_is_default_and_l1_differs():
 
 def test_content_prior_invalid_raises():
     docs, groups, times = _two_topic_corpus(8, seed=0)
-    m = topica.models.ECTM(num_topics=2, seed=1)
+    m = topica.ECTM(num_topics=2, seed=1)
     with pytest.raises(Exception):
         m.fit(docs, times=times, content=groups, iters=10, content_prior="bogus")

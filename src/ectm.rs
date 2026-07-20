@@ -1506,7 +1506,14 @@ mod tests {
         };
         let anchor = vec![0.0; target.len()];
         let penalize = vec![true; target.len()];
-        let x = fista_l1(vec![0.0; target.len()], f_and_grad, lam, &anchor, &penalize, 500);
+        let x = fista_l1(
+            vec![0.0; target.len()],
+            f_and_grad,
+            lam,
+            &anchor,
+            &penalize,
+            500,
+        );
         let expected: Vec<f64> = target.iter().map(|&t| soft_threshold(t, lam)).collect();
         for (xi, ei) in x.iter().zip(&expected) {
             assert!((xi - ei).abs() < 1e-4, "got {x:?}, expected {expected:?}");
@@ -1528,8 +1535,27 @@ mod tests {
         let fit = |content_l1: f64| {
             let mut rng = ChaCha8Rng::seed_from_u64(1);
             fit_ectm(
-                &docs, 2, 4, &groups, 2, &periods, 3, 60, 0.0, 0.0, None, 1.0, 5.0, 5.0, 2.0,
-                content_l1, true, false, true, &[], &mut rng,
+                &docs,
+                2,
+                4,
+                &groups,
+                2,
+                &periods,
+                3,
+                60,
+                0.0,
+                0.0,
+                None,
+                1.0,
+                5.0,
+                5.0,
+                2.0,
+                content_l1,
+                true,
+                false,
+                true,
+                &[],
+                &mut rng,
             )
         };
         // Total between-group L1 wording distance over cells.
@@ -1551,7 +1577,10 @@ mod tests {
         let c_l2 = contrast(&fit(0.0));
         let c_mid = contrast(&fit(50.0));
         let c_strong = contrast(&fit(1000.0));
-        assert!(c_mid < c_l2, "L1 should reduce the contrast: L2={c_l2}, L1={c_mid}");
+        assert!(
+            c_mid < c_l2,
+            "L1 should reduce the contrast: L2={c_l2}, L1={c_mid}"
+        );
         assert!(
             c_strong < 0.25 * c_l2,
             "strong L1 should largely collapse the group contrast: L2={c_l2}, strong={c_strong}"
