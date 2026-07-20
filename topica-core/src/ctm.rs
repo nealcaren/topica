@@ -590,84 +590,84 @@ fn optimize_content(
     // + Gaussian L2 prior + the ordered-time random walk. Shared by the L2 solve
     // (L-BFGS) and the L1 solve (FISTA), which adds a sparse κ prior via its prox.
     let smooth = |flat: &[f64]| -> (f64, Vec<f64>) {
-            let kt = |t: usize, w: usize| flat[t * v + w];
-            let kc = |grp: usize, w: usize| flat[n_t + grp * v + w];
-            let ki = |c: usize, w: usize| flat[n_t + n_c + c * v + w];
-            let mut value = 0.0f64;
-            let mut grad = vec![0.0f64; flat.len()];
-            for topic in 0..k {
-                for grp in 0..g {
-                    let c = topic * g + grp;
-                    let nkg = totals[c];
-                    let mut max = f64::NEG_INFINITY;
-                    let mut eta = vec![0.0f64; v];
-                    for w in 0..v {
-                        let e = m[w] + kt(topic, w) + kc(grp, w) + ki(c, w);
-                        eta[w] = e;
-                        if e > max {
-                            max = e;
-                        }
-                    }
-                    let mut z = 0.0;
-                    for w in 0..v {
-                        z += (eta[w] - max).exp();
-                    }
-                    let log_z = max + z.ln();
-                    for w in 0..v {
-                        let n = counts[c][w];
-                        value += n * (eta[w] - log_z);
-                        let beta = (eta[w] - log_z).exp();
-                        let resid = n - nkg * beta;
-                        grad[topic * v + w] += resid;
-                        grad[n_t + grp * v + w] += resid;
-                        grad[n_t + n_c + c * v + w] += resid;
+        let kt = |t: usize, w: usize| flat[t * v + w];
+        let kc = |grp: usize, w: usize| flat[n_t + grp * v + w];
+        let ki = |c: usize, w: usize| flat[n_t + n_c + c * v + w];
+        let mut value = 0.0f64;
+        let mut grad = vec![0.0f64; flat.len()];
+        for topic in 0..k {
+            for grp in 0..g {
+                let c = topic * g + grp;
+                let nkg = totals[c];
+                let mut max = f64::NEG_INFINITY;
+                let mut eta = vec![0.0f64; v];
+                for w in 0..v {
+                    let e = m[w] + kt(topic, w) + kc(grp, w) + ki(c, w);
+                    eta[w] = e;
+                    if e > max {
+                        max = e;
                     }
                 }
+                let mut z = 0.0;
+                for w in 0..v {
+                    z += (eta[w] - max).exp();
+                }
+                let log_z = max + z.ln();
+                for w in 0..v {
+                    let n = counts[c][w];
+                    value += n * (eta[w] - log_z);
+                    let beta = (eta[w] - log_z).exp();
+                    let resid = n - nkg * beta;
+                    grad[topic * v + w] += resid;
+                    grad[n_t + grp * v + w] += resid;
+                    grad[n_t + n_c + c * v + w] += resid;
+                }
             }
-            for (i, &xi) in flat.iter().enumerate() {
-                value -= 0.5 * inv_var * xi * xi;
-                grad[i] -= inv_var * xi;
-            }
+        }
+        for (i, &xi) in flat.iter().enumerate() {
+            value -= 0.5 * inv_var * xi * xi;
+            grad[i] -= inv_var * xi;
+        }
 
-            // First-order random-walk penalty smoothing the content deviations of
-            // an ordered (time) covariate axis. With the caller's convention that
-            // the saturated group index decomposes as `grp = base*num_times + time`,
-            // each cell is tied to its time-predecessor within the same base group,
-            // on both the group main effect κ_cov and the topic×group interaction
-            // κ_i: `(rw/2) Σ (x_{·,t} - x_{·,t-1})²`. `rw = 1/τ²` is the RW
-            // precision. `None` (no ordered axis) leaves the solve bit-exact.
-            if let Some((num_base, num_times, rw)) = rw_time {
-                if num_times >= 2 && rw > 0.0 {
-                    for base in 0..num_base {
-                        for time in 1..num_times {
-                            let g2 = base * num_times + time;
-                            let g1 = base * num_times + (time - 1);
+        // First-order random-walk penalty smoothing the content deviations of
+        // an ordered (time) covariate axis. With the caller's convention that
+        // the saturated group index decomposes as `grp = base*num_times + time`,
+        // each cell is tied to its time-predecessor within the same base group,
+        // on both the group main effect κ_cov and the topic×group interaction
+        // κ_i: `(rw/2) Σ (x_{·,t} - x_{·,t-1})²`. `rw = 1/τ²` is the RW
+        // precision. `None` (no ordered axis) leaves the solve bit-exact.
+        if let Some((num_base, num_times, rw)) = rw_time {
+            if num_times >= 2 && rw > 0.0 {
+                for base in 0..num_base {
+                    for time in 1..num_times {
+                        let g2 = base * num_times + time;
+                        let g1 = base * num_times + (time - 1);
+                        for w in 0..v {
+                            let a = n_t + g2 * v + w;
+                            let b = n_t + g1 * v + w;
+                            let diff = flat[a] - flat[b];
+                            value -= 0.5 * rw * diff * diff;
+                            grad[a] -= rw * diff;
+                            grad[b] += rw * diff;
+                        }
+                        for topic in 0..k {
+                            let c2 = topic * g + g2;
+                            let c1 = topic * g + g1;
                             for w in 0..v {
-                                let a = n_t + g2 * v + w;
-                                let b = n_t + g1 * v + w;
+                                let a = n_t + n_c + c2 * v + w;
+                                let b = n_t + n_c + c1 * v + w;
                                 let diff = flat[a] - flat[b];
                                 value -= 0.5 * rw * diff * diff;
                                 grad[a] -= rw * diff;
                                 grad[b] += rw * diff;
                             }
-                            for topic in 0..k {
-                                let c2 = topic * g + g2;
-                                let c1 = topic * g + g1;
-                                for w in 0..v {
-                                    let a = n_t + n_c + c2 * v + w;
-                                    let b = n_t + n_c + c1 * v + w;
-                                    let diff = flat[a] - flat[b];
-                                    value -= 0.5 * rw * diff * diff;
-                                    grad[a] -= rw * diff;
-                                    grad[b] += rw * diff;
-                                }
-                            }
                         }
                     }
                 }
             }
+        }
 
-            (-value, grad.iter().map(|gv| -gv).collect())
+        (-value, grad.iter().map(|gv| -gv).collect())
     };
 
     let x = if content_l1 > 0.0 {
@@ -1998,8 +1998,23 @@ mod tests {
         let fit = |rw: Option<(usize, usize, f64)>| {
             let mut rng = ChaCha8Rng::seed_from_u64(11);
             fit_ctm(
-                &docs, 2, v, 40, 0.0, 0.0, None, Some((&groups, g)), rw, 1.0, 0.0, false, None,
-                GammaPrior::Pooled, true, false, &mut rng,
+                &docs,
+                2,
+                v,
+                40,
+                0.0,
+                0.0,
+                None,
+                Some((&groups, g)),
+                rw,
+                1.0,
+                0.0,
+                false,
+                None,
+                GammaPrior::Pooled,
+                true,
+                false,
+                &mut rng,
             )
             .content_beta
             .expect("content_beta present")

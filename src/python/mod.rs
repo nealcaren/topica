@@ -6682,7 +6682,20 @@ impl STM {
     /// lower-precision mean-field covariance).
     /// `prevalence_names` and `content_names` are human-readable labels for the
     /// columns of the prevalence and content design matrices, surfaced in the effect
-    /// outputs. `convergence_tol` is the relative-bound tolerance for EM early
+    /// outputs.
+    /// `content_time` is an optional ordered (time) content covariate, one period
+    /// index per document: its group-by-period deviations are tied by a first-order
+    /// random walk, the temporal generalization of `content`. `content_smooth`
+    /// controls that random-walk penalty strength (``1/tau^2``); larger values tie
+    /// adjacent periods more tightly. `content_prior` selects the prior on the
+    /// content (SAGE κ) deviation blocks: ``"l2"`` (default) is a Gaussian ridge that
+    /// keeps every `kappa_topic`, while ``"l1"`` puts a sparse Laplace prior (FISTA,
+    /// exact zeros) that recovers sparse content contrasts, matching R `stm`'s sparse
+    /// content model. `content_prior_var` is the L2 prior variance on those content
+    /// deviations (default ``0.5``); larger loosens regularization (more group-driven
+    /// contrast), smaller tightens it toward the shared baseline. The ``"l2"`` path
+    /// with `content_time=None` is bit-for-bit identical to the prior release.
+    /// `convergence_tol` is the relative-bound tolerance for EM early
     /// stopping — the run stops when the relative change in the variational evidence
     /// bound falls below it (the criterion R `stm` uses). `beta_init` is an optional
     /// initial topic-word matrix to warm-start from.
@@ -6878,8 +6891,12 @@ impl STM {
                 }
                 // Ordered periods: sorted unique labels (pass sortable labels, e.g.
                 // years or zero-padded strings, so the order is chronological).
-                let mut periods: Vec<String> =
-                    times_str.iter().cloned().collect::<HashSet<_>>().into_iter().collect();
+                let mut periods: Vec<String> = times_str
+                    .iter()
+                    .cloned()
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect();
                 periods.sort();
                 let pindex: HashMap<&str, usize> = periods
                     .iter()
