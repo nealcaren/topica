@@ -1,9 +1,9 @@
 """The optional UMAP reducer for the embedding models.
 
 UMAP is shipped in the wheel as an opt-in (`reducer="umap"`); PCA stays the
-deterministic default. The UMAP *discovery* fit is intentionally not asserted to
-be reproducible (the umap-rs optimizer's negative sampling is unseeded), but it
-must run, warn, and leave the transform / prediction phase deterministic.
+default. topica's in-house UMAP reducer is seeded, so the whole fit is
+reproducible for a fixed `seed` — it must run, NOT warn about non-determinism,
+and give identical results across runs.
 """
 
 import warnings
@@ -27,7 +27,7 @@ def _manifold(seed=0, per=40, k=4):
 
 
 @pytest.mark.parametrize("model_cls", ["BERTopic", "Top2Vec"])
-def test_umap_reducer_runs_and_warns(model_cls):
+def test_umap_reducer_runs_without_warning(model_cls):
     docs, emb = _manifold()
     cls = getattr(topica, model_cls)
     with warnings.catch_warnings(record=True) as w:
@@ -36,8 +36,23 @@ def test_umap_reducer_runs_and_warns(model_cls):
         m.fit(docs, emb)
     # discovers some topics on a clearly-clustered manifold
     assert m.num_topics >= 2
-    # the documented non-determinism is surfaced as a warning
-    assert any("not reproducible" in str(x.message) for x in w)
+    # the in-house UMAP is seeded, so no non-reproducibility warning is emitted
+    assert not any("not reproducible" in str(x.message) for x in w)
+
+
+@pytest.mark.parametrize("model_cls", ["BERTopic", "Top2Vec"])
+def test_umap_fit_is_reproducible(model_cls):
+    docs, emb = _manifold()
+    cls = getattr(topica, model_cls)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        a = cls(reducer="umap", min_cluster_size=15, n_neighbors=15, seed=1)
+        a.fit(docs, emb)
+        b = cls(reducer="umap", min_cluster_size=15, n_neighbors=15, seed=1)
+        b.fit(docs, emb)
+    # seeded reducer + deterministic clusterer => identical fits
+    assert a.num_topics == b.num_topics
+    assert list(a.labels) == list(b.labels)
 
 
 def test_pca_default_is_silent():

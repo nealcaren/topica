@@ -46,12 +46,12 @@ pub fn reduce(
     pca(data, n_components, seed)
 }
 
-/// Project `data` onto `n_components` with UMAP (the `umap-rs` crate). UMAP keeps
-/// local neighborhood structure that a linear projection flattens, so the density
-/// clusterer downstream separates nearby themes PCA would merge. We build the
-/// k-nearest-neighbor graph by brute force (parallel), seed a random initial
-/// layout, and run the crate's layout optimization. Returns `n_rows ×
-/// n_components`, deterministic for a fixed `seed`. Only built under `umap`.
+/// Project `data` onto `n_components` with UMAP. Delegates to the in-house,
+/// umap-learn-faithful reducer in `crate::umap` with the embedding models'
+/// reference-matching defaults: a cosine kNN metric, `min_dist = 0.0` (BERTopic's
+/// setting for tight clusters), `spread = 1.0`, auto epochs, and the standard
+/// negative sampling. Unlike the old umap-rs path this is fully reproducible for
+/// a fixed `seed`. Only built under `umap`.
 #[cfg(feature = "umap")]
 pub fn umap(
     data: &[Vec<f64>],
@@ -59,91 +59,18 @@ pub fn umap(
     n_neighbors: usize,
     seed: u64,
 ) -> Vec<Vec<f64>> {
-    use ndarray::Array2;
-    use rayon::prelude::*;
-    use umap_rs::{GraphParams, Umap, UmapConfig};
-
-    let n = data.len();
-    if n == 0 || n_components == 0 {
-        return vec![Vec::new(); n];
-    }
-    let dim = data[0].len();
-    // umap-rs expects each row to list real neighbors, NOT the point itself, so
-    // we can supply at most n-1 neighbors.
-    let k = n_neighbors.clamp(1, n.saturating_sub(1).max(1));
-
-    let data_f32: Vec<f32> = data
-        .iter()
-        .flat_map(|r| r.iter().map(|&v| v as f32))
-        .collect();
-    let data_arr = Array2::from_shape_vec((n, dim), data_f32).expect("data shape");
-
-    // Brute-force kNN graph, self excluded (umap-rs treats column 0 as a genuine
-    // neighbor and counts only non-zero distances when estimating local density).
-    let knn: Vec<(Vec<u32>, Vec<f32>)> = (0..n)
-        .into_par_iter()
-        .map(|i| {
-            let mut d: Vec<(f32, u32)> = (0..n)
-                .filter(|&j| j != i)
-                .map(|j| {
-                    let mut s = 0.0f32;
-                    for t in 0..dim {
-                        let diff = (data[i][t] - data[j][t]) as f32;
-                        s += diff * diff;
-                    }
-                    (s.sqrt(), j as u32)
-                })
-                .collect();
-            d.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-            d.truncate(k);
-            (
-                d.iter().map(|&(_, j)| j).collect(),
-                d.iter().map(|&(dd, _)| dd).collect(),
-            )
-        })
-        .collect();
-    let mut idx = Vec::with_capacity(n * k);
-    let mut dist = Vec::with_capacity(n * k);
-    for (ii, dd) in &knn {
-        idx.extend_from_slice(ii);
-        dist.extend_from_slice(dd);
-    }
-    let knn_indices = Array2::from_shape_vec((n, k), idx).expect("knn idx shape");
-    let knn_dists = Array2::from_shape_vec((n, k), dist).expect("knn dist shape");
-
-    // Random initial layout in a small range; the layout optimization expands it.
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let init_vec: Vec<f32> = (0..n * n_components)
-        .map(|_| rng.gen_range(-1.0f32..1.0))
-        .collect();
-    let init = Array2::from_shape_vec((n, n_components), init_vec).expect("init shape");
-
-    use umap_rs::{ManifoldParams, OptimizationParams};
-    let config = UmapConfig {
+    crate::umap::umap(
+        data,
         n_components,
-        graph: GraphParams {
-            n_neighbors: k,
-            ..Default::default()
-        },
-        manifold: ManifoldParams {
-            min_dist: 0.0,
-            ..Default::default()
-        },
-        optimization: OptimizationParams {
-            n_epochs: Some(500),
-            ..Default::default()
-        },
-    };
-    let fitted = Umap::new(config).fit(
-        data_arr.view(),
-        knn_indices.view(),
-        knn_dists.view(),
-        init.view(),
-    );
-    let emb = fitted.into_embedding();
-    (0..n)
-        .map(|i| (0..n_components).map(|c| emb[[i, c]] as f64).collect())
-        .collect()
+        n_neighbors,
+        0.0, // min_dist
+        1.0, // spread
+        0,   // n_epochs (0 => auto: 500 for <=10k rows)
+        5,   // negative_sample_rate
+        1.0, // repulsion_strength (gamma)
+        "cosine",
+        seed,
+    )
 }
 
 /// Whether the Barnes-Hut t-SNE reducer is compiled in (the `tsne` feature).

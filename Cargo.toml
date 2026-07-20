@@ -63,10 +63,8 @@ flate2 = { version = "1", optional = true }
 # matrix type (numpy 0.22 carries ndarray 0.16, so we bridge via raw f64 data).
 petal-clustering = { version = "0.13", optional = true }
 ndarray = { version = "0.17", optional = true }
-# Faithful UMAP reducer (wilsonzlin/umap-rs): pure Rust, BLAS-free, ndarray 0.17
-# (same version as petal-clustering). Behind the `umap` feature so the default
-# embedding build keeps the BLAS-free randomized-PCA reducer.
-umap-rs = { version = "0.4", optional = true }
+# UMAP is now implemented in-house (src/umap.rs), faithful to umap-learn and
+# fully seeded/reproducible; no external UMAP crate. Gated by the `umap` feature.
 # Barnes-Hut t-SNE (frjnn/bhtsne): pure Rust, rayon-parallel, BLAS-free. Behind
 # the `tsne` feature; the shipped wheel enables it so `viz.document_map` and
 # `topica.project` offer method="tsne". The fit is stochastic (bhtsne exposes no
@@ -88,7 +86,7 @@ embeddings = ["dep:petal-clustering", "dep:ndarray"]
 # Faithful UMAP reducer for the embedding models. PCA stays the default reducer;
 # UMAP's discovery fit is stochastic (the umap-rs optimizer's negative sampling is
 # unseeded), while the transform / prediction phase is deterministic regardless.
-umap = ["embeddings", "dep:umap-rs"]
+umap = ["embeddings"]
 # Barnes-Hut t-SNE projection (frjnn/bhtsne), exposed via `topica.project` and the
 # `viz.document_map` panel. Independent of the embedding models, so it stands alone.
 tsne = ["dep:bhtsne"]
