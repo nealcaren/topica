@@ -19,7 +19,7 @@ from topica import content
 # Pure-metric properties via a hand-built model stub (no fitting needed).
 # --------------------------------------------------------------------------- #
 class _StubContentModel:
-    """Minimal STM/STS-shaped content model: exposes topic_word_by_group."""
+    """Minimal STM-shaped content model: exposes topic_word_by_group."""
 
     def __init__(self, beta_kgv, groups, vocabulary=None):
         self._beta = np.asarray(beta_kgv, dtype=float)
@@ -103,6 +103,56 @@ def test_group_topic_word_reads_sage():
     assert np.allclose(beta.sum(axis=2), 1.0, atol=1e-6)
     pol = content.topic_polarization(m)
     assert pol.shape == (3,) and np.all((pol >= 0) & (pol <= 1))
+
+
+# --------------------------------------------------------------------------- #
+# STS: a continuous sentiment axis discretized into groups via topic_word_at().
+# --------------------------------------------------------------------------- #
+@pytest.fixture(scope="module")
+def sts_model():
+    rng = np.random.default_rng(0)
+    vocabs = [
+        ["cat", "dog", "pet", "fur", "paw"],
+        ["stock", "bond", "market", "trade", "bank"],
+        ["star", "planet", "orbit", "moon", "galaxy"],
+    ]
+    docs, sentiment = [], []
+    for i in range(90):
+        t = rng.integers(0, 3)
+        docs.append(list(rng.choice(vocabs[t], size=20)))
+        sentiment.append(float(rng.uniform(-1, 1)))
+    m = topica.STS(num_topics=3, seed=1)
+    m.fit(docs, sentiment_seed=sentiment, iters=40)
+    return m
+
+
+def test_group_topic_word_discretizes_sts_sentiment(sts_model):
+    beta, groups = content.group_topic_word(sts_model)
+    # continuous sentiment -> the three default sentiment-pole groups
+    assert beta.shape[:2] == (3, 3)
+    assert groups == ["negative", "neutral", "positive"]
+    assert np.allclose(beta.sum(axis=2), 1.0, atol=1e-6)
+
+
+def test_sts_polarization_and_exclusivity_in_range(sts_model):
+    pol = content.topic_polarization(sts_model)
+    gex = content.group_exclusivity(sts_model)
+    assert pol.shape == (3,) and np.all((pol >= 0) & (pol <= 1))
+    assert gex.shape == (3,) and np.all((gex >= 0) & (gex <= 1))
+
+
+def test_sts_accepts_custom_levels(sts_model):
+    # a dict names the groups; a bare sequence auto-labels them
+    beta, groups = content.group_topic_word(sts_model, levels={-0.5: "lo", 0.5: "hi"})
+    assert groups == ["lo", "hi"] and beta.shape[1] == 2
+    pol = content.topic_polarization(sts_model, levels=[-1.0, 0.0, 1.0])
+    assert pol.shape == (3,)
+
+
+def test_sts_diagnostics_table(sts_model):
+    tbl = content.diagnostics(sts_model)
+    cols = list(tbl.columns) if hasattr(tbl, "columns") else list(tbl[0])
+    assert "polarization" in cols and "group_exclusivity" in cols
 
 
 @pytest.fixture(scope="module")

@@ -12,12 +12,18 @@ each topic is worded by each group -- which the global topic-word average hides.
   the signature of a single discourse *fragmenting* into parallel group-topics
   instead of living within one topic.
 
-The models expose the tensor through different doors -- STM/STS via
+The models expose the tensor through different doors -- STM via
 ``topic_word_by_group``, SAGE via its 3-D ``topic_word``, ECTM via
 ``content_word_dist(group, period)`` -- and :func:`group_topic_word` normalizes
 them to one ``(K, G, V)`` array plus group labels. For ECTM the cells are
 averaged over periods by default; pass ``period=`` for a single period, which
 turns :func:`topic_polarization` into a per-period *trajectory* input.
+
+STS is the odd one out: its content axis is a *continuous* sentiment rather than
+discrete groups, so :func:`group_topic_word` discretizes it, stacking the
+topic-word distribution ``topic_word_at(level)`` at a few sentiment levels
+(default the poles ``-1``/``0``/``+1`` = negative/neutral/positive). Pass
+``levels=`` to choose your own.
 """
 
 from __future__ import annotations
@@ -33,6 +39,23 @@ __all__ = [
     "diagnostics",
 ]
 
+# STS has no discrete groups -- its content axis is a continuous sentiment. We
+# discretize it by evaluating topic_word_at() at these sentiment levels.
+_STS_DEFAULT_LEVELS = ((-1.0, "negative"), (0.0, "neutral"), (1.0, "positive"))
+
+
+def _sts_levels(levels):
+    """Normalize an STS ``levels`` argument to an ordered list of ``(value, label)``.
+
+    Accepts ``None`` (the default poles), a mapping ``{value: label}``, or a
+    sequence of numeric levels (auto-labeled ``s=<value>``).
+    """
+    if levels is None:
+        return list(_STS_DEFAULT_LEVELS)
+    if isinstance(levels, dict):
+        return [(float(v), str(lab)) for v, lab in levels.items()]
+    return [(float(v), f"s={float(v):+g}") for v in levels]
+
 
 def _ref_corpus(texts):
     """Normalize a coherence reference to ``list[list[str]]`` (Corpus, raw strings,
@@ -45,13 +68,23 @@ def _ref_corpus(texts):
     return [list(t) for t in texts]
 
 
-def group_topic_word(model, *, period=None):
+def group_topic_word(model, *, period=None, levels=None):
     """Normalize any content-covariate model to ``(beta_KGV, group_labels)``.
 
     ``beta_KGV`` is ``(num_topics, num_groups, num_words)`` with each row a
     probability distribution over words. Raises ``ValueError`` for a model with no
     group-specific topic-word structure (not a content-covariate model, or fit
     without a content covariate).
+
+    Parameters
+    ----------
+    period : int or str, optional
+        ECTM only: evaluate one period instead of the period average.
+    levels : mapping or sequence, optional
+        STS only: the sentiment levels to discretize its continuous content axis
+        into groups. A ``{value: label}`` mapping or a sequence of numeric levels;
+        defaults to the poles ``-1``/``0``/``+1`` (negative/neutral/positive).
+        Ignored by the discrete-group models.
     """
     # ECTM: (group, period) content cells.
     if hasattr(model, "content_word_dist") and hasattr(model, "num_periods"):
@@ -62,6 +95,13 @@ def group_topic_word(model, *, period=None):
             beta = sum(np.asarray(model.content_word_dist(g, t)) for t in periods) / len(list(periods))
             cells.append(beta)
         beta = np.stack(cells, axis=1)  # (K, G, V)
+    # STS: continuous sentiment axis -- discretize via topic_word_at(level).
+    elif hasattr(model, "topic_word_at") and not hasattr(model, "topic_word_by_group"):
+        items = _sts_levels(levels)
+        beta = np.stack(
+            [np.asarray(model.topic_word_at(val)) for val, _ in items], axis=1
+        )  # (K, G, V)
+        groups = [label for _, label in items]
     else:
         # STM / STS expose topic_word_by_group; SAGE exposes a 3-D topic_word.
         twbg = None
@@ -91,7 +131,7 @@ def _entropy(p, axis=-1):
     return -(p * np.log(p)).sum(axis=axis)
 
 
-def topic_polarization(model, *, weights=None, period=None) -> np.ndarray:
+def topic_polarization(model, *, weights=None, period=None, levels=None) -> np.ndarray:
     """Per-topic Jensen-Shannon divergence across groups, normalized to [0, 1].
 
     For each topic ``k``, ``JSD(beta_{k,1}, ..., beta_{k,G})`` -- the spread of its
@@ -105,12 +145,15 @@ def topic_polarization(model, *, weights=None, period=None) -> np.ndarray:
     period : int or str, optional
         ECTM only: evaluate at one period instead of the period average, so a
         loop over periods yields a polarization *trajectory* per topic.
+    levels : mapping or sequence, optional
+        STS only: sentiment levels to discretize into groups (see
+        :func:`group_topic_word`).
 
     Returns
     -------
     numpy.ndarray, shape (num_topics,)
     """
-    beta, groups = group_topic_word(model, period=period)  # (K, G, V)
+    beta, groups = group_topic_word(model, period=period, levels=levels)  # (K, G, V)
     G = beta.shape[1]
     if G < 2:
         raise ValueError("topic_polarization needs at least 2 content groups")
@@ -121,7 +164,7 @@ def topic_polarization(model, *, weights=None, period=None) -> np.ndarray:
     return (h_mix - h_avg) / np.log(G)
 
 
-def group_exclusivity(model, *, n=10, summary="min") -> np.ndarray:
+def group_exclusivity(model, *, n=10, summary="min", levels=None) -> np.ndarray:
     """Group-adjusted exclusivity per topic (a FREX-tensor summary), in [0, 1].
 
     Extends the usual exclusivity ``beta_{k,v} / sum_j beta_{j,v}`` to the group
@@ -131,11 +174,14 @@ def group_exclusivity(model, *, n=10, summary="min") -> np.ndarray:
     ``"mean"`` = average). High = the topic stays distinctive in every group's
     sub-vocabulary; low = at least one group's wording overlaps other topics.
 
+    ``levels`` (STS only) chooses the sentiment discretization (see
+    :func:`group_topic_word`).
+
     Returns
     -------
     numpy.ndarray, shape (num_topics,)
     """
-    beta, groups = group_topic_word(model)              # (K, G, V)
+    beta, groups = group_topic_word(model, levels=levels)  # (K, G, V)
     K, G, V = beta.shape
     denom = beta.sum(axis=(0, 1))                        # (V,)  sum over topics & groups
     excl = beta / np.clip(denom, 1e-12, None)           # (K, G, V) exclusivity per cell
