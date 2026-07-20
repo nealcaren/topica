@@ -80,6 +80,10 @@ pub mod reduce;
 pub mod represent;
 #[cfg(feature = "embeddings")]
 pub mod top2vec;
+// In-house faithful UMAP reducer (replaces the umap-rs crate). Behind the `umap`
+// feature, which no longer pulls an external dependency.
+#[cfg(feature = "umap")]
+pub mod umap;
 
 #[cfg(feature = "python")]
 mod python;

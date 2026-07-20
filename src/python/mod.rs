@@ -8450,16 +8450,22 @@ fn inspect_semantic_coherence(
 }
 
 /// Warn that a neighbor-preserving projection (UMAP / t-SNE) distorts global
-/// geometry and is not reproducible across runs, so PCA stays the reproducible default.
+/// geometry, so PCA stays the distance-faithful default. UMAP is seeded and
+/// reproducible; t-SNE is additionally not reproducible (its optimizer is
+/// unseeded), so only t-SNE carries the reproducibility caveat.
 fn warn_stochastic(py: Python<'_>, method: &str) -> PyResult<()> {
     let warnings = py.import_bound("warnings")?;
+    let repro = if method == "tsne" {
+        " and is not reproducible across runs"
+    } else {
+        ""
+    };
     warnings.call_method1(
         "warn",
         (format!(
             "method='{method}' preserves local neighborhoods but distorts global \
-             geometry (between-cluster distances and cluster sizes are not meaningful) \
-             and is not reproducible across runs. Use method='pca' for a deterministic, \
-             distance-faithful projection."
+             geometry (between-cluster distances and cluster sizes are not meaningful){repro}. \
+             Use method='pca' for a distance-faithful projection."
         ),),
     )?;
     Ok(())
@@ -8468,8 +8474,9 @@ fn warn_stochastic(py: Python<'_>, method: &str) -> PyResult<()> {
 /// Project a high-dimensional array to a low-dimensional layout (for plotting or
 /// clustering). `method` is "pca" (default, deterministic, distance-faithful),
 /// "umap", or "tsne"; the latter two preserve local neighborhoods but distort
-/// global geometry and are not reproducible (a warning is issued). `data` is a 2D
-/// float array or a list of float lists. Returns an `(n_rows, n_components)` array.
+/// global geometry (a warning is issued). PCA and UMAP are reproducible for a
+/// fixed `seed`; t-SNE is not (its optimizer is unseeded). `data` is a 2D float
+/// array or a list of float lists. Returns an `(n_rows, n_components)` array.
 ///
 /// `n_neighbors` is the local-neighborhood size for the UMAP graph; `perplexity`
 /// is t-SNE's effective neighborhood size; `seed` seeds the reducer (UMAP/PCA)
@@ -12373,11 +12380,11 @@ fn parse_clusterer(
     }
 }
 
-/// For `reducer='umap'`, warn that the topic-discovery fit is not reproducible
-/// (the transform / prediction phase is deterministic regardless), so the default
-/// `reducer='pca'` stays the reproducible choice. Also guards the case (not present
-/// in a standard wheel) where the `umap` feature was not compiled in.
-fn umap_notice(py: Python<'_>, use_umap: bool) -> PyResult<()> {
+/// Guard `reducer='umap'`: error out on the (non-wheel) build where the `umap`
+/// feature was not compiled in. The in-house UMAP reducer is seeded and fully
+/// reproducible for a fixed `seed`, so — unlike the old umap-rs path — there is
+/// no non-determinism to warn about.
+fn umap_notice(_py: Python<'_>, use_umap: bool) -> PyResult<()> {
     if !use_umap {
         return Ok(());
     }
@@ -12387,16 +12394,6 @@ fn umap_notice(py: Python<'_>, use_umap: bool) -> PyResult<()> {
              feature, or use reducer='pca' (the default)",
         ));
     }
-    let warnings = py.import_bound("warnings")?;
-    warnings.call_method1(
-        "warn",
-        (
-            "reducer='umap': the UMAP topic-discovery fit is not reproducible across runs \
-          (the Rust UMAP optimizer's negative sampling is unseeded). The transform / \
-          prediction phase is deterministic regardless. Use reducer='pca' (the default) \
-          for a reproducible fit.",
-        ),
-    )?;
     Ok(())
 }
 

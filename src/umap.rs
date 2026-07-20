@@ -1,0 +1,567 @@
+//! A faithful, dependency-free UMAP reducer (McInnes, Healy & Melville 2018).
+//!
+//! topica's embedding-clustering heads (BERTopic, Top2Vec) reduce document
+//! embeddings before a density clusterer. PCA (the default) is fast and
+//! deterministic; UMAP separates closely-spaced themes a linear projection
+//! merges. We used to delegate the UMAP path to the `umap-rs` crate, but its
+//! layout gradient diverges from the reference `umap-learn` (an extra
+//! `dist_squared` factor in the attractive/repulsive denominators), so it
+//! recovered noticeably worse cluster structure. This module reimplements UMAP
+//! to match `umap-learn` numerically, staying inside topica's constraints: pure
+//! Rust, BLAS-free, `Vec<Vec<f64>>`, and — because the negative sampling is
+//! seeded with `ChaCha8Rng` — a **fully reproducible** fit, unlike the crate.
+//!
+//! The pipeline mirrors `umap-learn`:
+//!   1. kNN graph (brute force) under a cosine or Euclidean metric.
+//!   2. `smooth_knn_dist`: per-point bandwidth `sigma` and local-connectivity
+//!      offset `rho` calibrating a fuzzy membership of cardinality `log2(k)`.
+//!   3. Fuzzy simplicial set: membership strengths, symmetrized by the fuzzy
+//!      union `P = A + Aᵀ − A ⊙ Aᵀ` (for `set_op_mix_ratio = 1`).
+//!   4. SGD layout: sample edges in proportion to their weight, pull endpoints
+//!      together, push uniformly-drawn negatives apart, with the `umap-learn`
+//!      gradient and the ±4 clip.
+
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
+use rayon::prelude::*;
+
+/// Fit the `(a, b)` of the low-dimensional membership curve
+/// `1 / (1 + a·x^(2b))` to an offset exponential decay defined by `spread` and
+/// `min_dist`, by gradient descent (the `umap-learn` `find_ab_params`).
+pub fn find_ab_params(spread: f64, min_dist: f64) -> (f64, f64) {
+    let n_points = 300usize;
+    let xv: Vec<f64> = (0..n_points)
+        .map(|i| (spread * 3.0) * (i as f64) / (n_points as f64 - 1.0))
+        .collect();
+    let yv: Vec<f64> = xv
+        .iter()
+        .map(|&x| {
+            if x < min_dist {
+                1.0
+            } else {
+                (-(x - min_dist) / spread).exp()
+            }
+        })
+        .collect();
+
+    let mut a = 1.5;
+    let mut b = 0.9;
+    let lr = 0.01;
+    for _ in 0..1000 {
+        let mut grad_a = 0.0;
+        let mut grad_b = 0.0;
+        let mut total_err = 0.0;
+        for i in 0..n_points {
+            let x = xv[i];
+            let x_2b = x.powf(2.0 * b);
+            let denom = 1.0 + a * x_2b;
+            let err = 1.0 / denom - yv[i];
+            total_err += err * err;
+            grad_a += 2.0 * err * (-x_2b / (denom * denom));
+            if x > 0.0 {
+                grad_b += 2.0 * err * (-2.0 * a * x_2b * x.ln() / (denom * denom));
+            }
+        }
+        a -= lr * grad_a / n_points as f64;
+        b -= lr * grad_b / n_points as f64;
+        a = a.clamp(0.001, 10.0);
+        b = b.clamp(0.001, 10.0);
+        if total_err / (n_points as f64) < 1e-7 {
+            break;
+        }
+    }
+    (a, b)
+}
+
+/// Brute-force k-nearest-neighbor graph. Returns, per point, the indices and
+/// distances of its `k` neighbors **including itself** at column 0 (distance 0),
+/// matching `umap-learn`'s convention. `metric` is `"cosine"` (default; rows are
+/// L2-normalized and distance is `1 − cos`) or `"euclidean"`.
+fn knn_graph(data: &[Vec<f64>], k: usize, metric: &str) -> (Vec<Vec<u32>>, Vec<Vec<f64>>) {
+    let n = data.len();
+    let cosine = metric != "euclidean";
+    // For cosine, precompute unit rows so the neighbor distance is 1 − dot.
+    let unit: Vec<Vec<f64>> = if cosine {
+        data.iter()
+            .map(|row| {
+                let norm: f64 = row.iter().map(|&v| v * v).sum::<f64>().sqrt();
+                if norm > 0.0 {
+                    row.iter().map(|&v| v / norm).collect()
+                } else {
+                    row.clone()
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let rows: Vec<(Vec<u32>, Vec<f64>)> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let mut d: Vec<(f64, u32)> = (0..n)
+                .filter(|&j| j != i)
+                .map(|j| {
+                    let dist = if cosine {
+                        let dot: f64 = unit[i].iter().zip(&unit[j]).map(|(&x, &y)| x * y).sum();
+                        (1.0 - dot).max(0.0)
+                    } else {
+                        data[i]
+                            .iter()
+                            .zip(&data[j])
+                            .map(|(&x, &y)| (x - y) * (x - y))
+                            .sum::<f64>()
+                            .sqrt()
+                    };
+                    (dist, j as u32)
+                })
+                .collect();
+            // k-1 real neighbors; column 0 is self. Full sort is negligible next
+            // to the O(n·dim) distance computation above.
+            d.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            let take = k.saturating_sub(1).min(d.len());
+            d.truncate(take);
+            let mut idx = Vec::with_capacity(k);
+            let mut dst = Vec::with_capacity(k);
+            idx.push(i as u32);
+            dst.push(0.0);
+            for (dd, jj) in d {
+                idx.push(jj);
+                dst.push(dd);
+            }
+            (idx, dst)
+        })
+        .collect();
+
+    let mut indices = Vec::with_capacity(n);
+    let mut dists = Vec::with_capacity(n);
+    for (idx, dst) in rows {
+        indices.push(idx);
+        dists.push(dst);
+    }
+    (indices, dists)
+}
+
+const SMOOTH_K_TOLERANCE: f64 = 1e-5;
+const MIN_K_DIST_SCALE: f64 = 1e-3;
+
+/// Per-point bandwidth `sigma` and local-connectivity offset `rho`. For each row
+/// we binary-search `sigma` so that `Σ_j exp(-(d_j − rho)/sigma)` over the real
+/// neighbors equals `log2(k)`; `rho` is the distance to the
+/// `local_connectivity`-th nearest non-zero neighbor. Faithful to `umap-learn`.
+fn smooth_knn_dist(
+    knn_dists: &[Vec<f64>],
+    k: usize,
+    local_connectivity: f64,
+    bandwidth: f64,
+) -> (Vec<f64>, Vec<f64>) {
+    let target = (k as f64).log2() * bandwidth;
+    let n_all: f64 = knn_dists.iter().flat_map(|r| r.iter()).copied().sum();
+    let count: usize = knn_dists.iter().map(|r| r.len()).sum();
+    let mean_distances = if count > 0 { n_all / count as f64 } else { 0.0 };
+
+    knn_dists
+        .par_iter()
+        .map(|ith| {
+            let non_zero: Vec<f64> = ith.iter().copied().filter(|&d| d > 0.0).collect();
+            let mut rho = 0.0;
+            if non_zero.len() >= local_connectivity.floor() as usize && !non_zero.is_empty() {
+                let index = local_connectivity.floor() as usize;
+                let interpolation = local_connectivity - local_connectivity.floor();
+                if index > 0 {
+                    rho = non_zero[index - 1];
+                    if interpolation > SMOOTH_K_TOLERANCE {
+                        rho += interpolation * (non_zero[index] - non_zero[index - 1]);
+                    }
+                } else {
+                    rho = interpolation * non_zero[0];
+                }
+            } else if !non_zero.is_empty() {
+                rho = non_zero.iter().copied().fold(0.0, f64::max);
+            }
+
+            // Binary search for sigma.
+            let mut lo = 0.0f64;
+            let mut hi = f64::INFINITY;
+            let mut mid = 1.0f64;
+            for _ in 0..64 {
+                let mut psum = 0.0;
+                for &d in ith.iter().skip(1) {
+                    let dd = d - rho;
+                    psum += if dd > 0.0 { (-(dd) / mid).exp() } else { 1.0 };
+                }
+                if (psum - target).abs() < SMOOTH_K_TOLERANCE {
+                    break;
+                }
+                if psum > target {
+                    hi = mid;
+                    mid = (lo + hi) / 2.0;
+                } else {
+                    lo = mid;
+                    if hi == f64::INFINITY {
+                        mid *= 2.0;
+                    } else {
+                        mid = (lo + hi) / 2.0;
+                    }
+                }
+            }
+            let mut sigma = mid;
+            // Minimum-distance scale floor.
+            if rho > 0.0 {
+                let mean_ith: f64 = ith.iter().sum::<f64>() / ith.len() as f64;
+                if sigma < MIN_K_DIST_SCALE * mean_ith {
+                    sigma = MIN_K_DIST_SCALE * mean_ith;
+                }
+            } else if sigma < MIN_K_DIST_SCALE * mean_distances {
+                sigma = MIN_K_DIST_SCALE * mean_distances;
+            }
+            (sigma, rho)
+        })
+        .unzip()
+}
+
+/// Membership strength of the directed edge `i → j`: `1` inside the local
+/// connectivity radius, else `exp(-(d − rho_i)/sigma_i)`.
+fn membership(d: f64, rho: f64, sigma: f64) -> f64 {
+    if d - rho <= 0.0 || sigma == 0.0 {
+        1.0
+    } else {
+        (-(d - rho) / sigma).exp()
+    }
+}
+
+/// Build the symmetric fuzzy simplicial set as a weighted edge list
+/// `(head, tail, weight)`. Directed memberships are combined by the probabilistic
+/// t-conorm `set_op * (A + Aᵀ) + (1 − 2·set_op)·(A ⊙ Aᵀ)`; for the default
+/// `set_op_mix_ratio = 1` this is `A + Aᵀ − A ⊙ Aᵀ`.
+fn fuzzy_simplicial_set(
+    knn_indices: &[Vec<u32>],
+    knn_dists: &[Vec<f64>],
+    sigmas: &[f64],
+    rhos: &[f64],
+    set_op_mix_ratio: f64,
+) -> Vec<(u32, u32, f64)> {
+    use std::collections::{HashMap, HashSet};
+    let n = knn_indices.len();
+    // Directed strengths keyed by (i, j), i != j. The map is used only for O(1)
+    // lookup of the reverse edge; iteration order below is deterministic.
+    let mut a: HashMap<(u32, u32), f64> = HashMap::new();
+    for i in 0..n {
+        for (col, &j) in knn_indices[i].iter().enumerate() {
+            if j as usize == i {
+                continue;
+            }
+            let v = membership(knn_dists[i][col], rhos[i], sigmas[i]);
+            if v != 0.0 {
+                a.insert((i as u32, j), v);
+            }
+        }
+    }
+    // Symmetrize by iterating points and their neighbors in a fixed order (not
+    // the HashMap's), so the emitted edge list — and thus the SGD update order —
+    // is reproducible.
+    let mut seen: HashSet<(u32, u32)> = HashSet::new();
+    let mut edges = Vec::with_capacity(a.len() * 2);
+    for i in 0..n {
+        let iu = i as u32;
+        for &j in knn_indices[i].iter() {
+            if j as usize == i {
+                continue;
+            }
+            let key = if iu < j { (iu, j) } else { (j, iu) };
+            if !seen.insert(key) {
+                continue;
+            }
+            let val = a.get(&(iu, j)).copied().unwrap_or(0.0);
+            let val_t = a.get(&(j, iu)).copied().unwrap_or(0.0);
+            let combined =
+                set_op_mix_ratio * (val + val_t) + (1.0 - 2.0 * set_op_mix_ratio) * (val * val_t);
+            if combined > 0.0 {
+                // Both directions carry the symmetric weight.
+                edges.push((iu, j, combined));
+                edges.push((j, iu, combined));
+            }
+        }
+    }
+    edges
+}
+
+/// `epochs_per_sample[e] = max_weight / weight[e]`; an edge of maximal weight is
+/// sampled every epoch, lighter edges proportionally less often.
+fn make_epochs_per_sample(weights: &[f64], n_epochs: usize) -> Vec<f64> {
+    let max_w = weights.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let max_w = if max_w <= 0.0 { 1.0 } else { max_w };
+    weights
+        .iter()
+        .map(|&w| {
+            let n_samples = n_epochs as f64 * (w / max_w);
+            if n_samples > 0.0 {
+                n_epochs as f64 / n_samples
+            } else {
+                -1.0
+            }
+        })
+        .collect()
+}
+
+#[inline]
+fn clip(v: f64) -> f64 {
+    v.clamp(-4.0, 4.0)
+}
+
+/// SGD layout optimization, faithful to `umap-learn`'s
+/// `optimize_layout_euclidean` (sequential, seeded negative sampling).
+#[allow(clippy::too_many_arguments)]
+fn optimize_layout(
+    embedding: &mut [f64],
+    n: usize,
+    dim: usize,
+    head: &[u32],
+    tail: &[u32],
+    epochs_per_sample: &[f64],
+    a: f64,
+    b: f64,
+    gamma: f64,
+    n_epochs: usize,
+    negative_sample_rate: usize,
+    seed: u64,
+) {
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let mut epoch_of_next_sample = epochs_per_sample.to_vec();
+    let epochs_per_negative_sample: Vec<f64> = epochs_per_sample
+        .iter()
+        .map(|&e| e / negative_sample_rate as f64)
+        .collect();
+    let mut epoch_of_next_negative_sample = epochs_per_negative_sample.clone();
+
+    for epoch in 0..n_epochs {
+        let alpha = 1.0 * (1.0 - epoch as f64 / n_epochs as f64);
+        for e in 0..epochs_per_sample.len() {
+            if epochs_per_sample[e] <= 0.0 || epoch_of_next_sample[e] > epoch as f64 {
+                continue;
+            }
+            let j = head[e] as usize;
+            let k = tail[e] as usize;
+            let (jb, kb) = (j * dim, k * dim);
+
+            let mut dist_sq = 0.0;
+            for d in 0..dim {
+                let diff = embedding[jb + d] - embedding[kb + d];
+                dist_sq += diff * diff;
+            }
+            let grad_coeff = if dist_sq > 0.0 {
+                let dpb = dist_sq.powf(b);
+                (-2.0 * a * b * dpb / dist_sq) / (a * dpb + 1.0)
+            } else {
+                0.0
+            };
+            for d in 0..dim {
+                let diff = embedding[jb + d] - embedding[kb + d];
+                let grad_d = clip(grad_coeff * diff) * alpha;
+                embedding[jb + d] += grad_d;
+                embedding[kb + d] -= grad_d;
+            }
+
+            epoch_of_next_sample[e] += epochs_per_sample[e];
+
+            let n_neg = ((epoch as f64 - epoch_of_next_negative_sample[e])
+                / epochs_per_negative_sample[e]) as usize;
+            for _ in 0..n_neg {
+                let k = rng.gen_range(0..n);
+                if k == j {
+                    continue;
+                }
+                let kb = k * dim;
+                let mut dist_sq = 0.0;
+                for d in 0..dim {
+                    let diff = embedding[jb + d] - embedding[kb + d];
+                    dist_sq += diff * diff;
+                }
+                let grad_coeff = if dist_sq > 0.0 {
+                    let dpb = dist_sq.powf(b);
+                    2.0 * gamma * b / ((0.001 + dist_sq) * (a * dpb + 1.0))
+                } else {
+                    0.0
+                };
+                if grad_coeff > 0.0 {
+                    for d in 0..dim {
+                        let diff = embedding[jb + d] - embedding[kb + d];
+                        embedding[jb + d] += clip(grad_coeff * diff) * alpha;
+                    }
+                }
+            }
+            epoch_of_next_negative_sample[e] += n_neg as f64 * epochs_per_negative_sample[e];
+        }
+    }
+}
+
+/// Reduce `data` (`n × features`) to `n_components` with UMAP. `n_neighbors` is
+/// the graph neighborhood; `min_dist`/`spread` shape the embedding; `n_epochs`
+/// the SGD length (0 ⇒ 500 for ≤10k rows, else 200); `negative_sample_rate` and
+/// `repulsion_strength` control the repulsive term; `metric` is `"cosine"`
+/// (default) or `"euclidean"`. Deterministic for a fixed `seed`.
+#[allow(clippy::too_many_arguments)]
+pub fn umap(
+    data: &[Vec<f64>],
+    n_components: usize,
+    n_neighbors: usize,
+    min_dist: f64,
+    spread: f64,
+    n_epochs: usize,
+    negative_sample_rate: usize,
+    repulsion_strength: f64,
+    metric: &str,
+    seed: u64,
+) -> Vec<Vec<f64>> {
+    let n = data.len();
+    if n == 0 || n_components == 0 {
+        return vec![Vec::new(); n];
+    }
+    if n <= n_components + 1 {
+        // Too few points for a meaningful graph; fall back to zeros of the right shape.
+        return vec![vec![0.0; n_components]; n];
+    }
+    let k = n_neighbors.clamp(2, n);
+    let n_epochs = if n_epochs > 0 {
+        n_epochs
+    } else if n <= 10_000 {
+        500
+    } else {
+        200
+    };
+
+    let (knn_indices, knn_dists) = knn_graph(data, k, metric);
+    let (sigmas, rhos) = smooth_knn_dist(&knn_dists, k, 1.0, 1.0);
+    let mut edges = fuzzy_simplicial_set(&knn_indices, &knn_dists, &sigmas, &rhos, 1.0);
+
+    // Prune edges whose weight is below max_weight / n_epochs (they would never
+    // be sampled), matching umap-learn's eliminate_zeros step.
+    let max_w = edges
+        .iter()
+        .map(|&(_, _, w)| w)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let cutoff = if max_w > 0.0 {
+        max_w / n_epochs as f64
+    } else {
+        0.0
+    };
+    edges.retain(|&(_, _, w)| w >= cutoff);
+    if edges.is_empty() {
+        return vec![vec![0.0; n_components]; n];
+    }
+
+    let (a, b) = find_ab_params(spread, min_dist);
+
+    // Random init in [-10, 10], seeded (umap-learn's random-init range).
+    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x9E37_79B9_7F4A_7C15);
+    let mut embedding = vec![0.0f64; n * n_components];
+    for v in embedding.iter_mut() {
+        *v = rng.gen_range(-10.0..10.0);
+    }
+
+    let head: Vec<u32> = edges.iter().map(|&(h, _, _)| h).collect();
+    let tail: Vec<u32> = edges.iter().map(|&(_, t, _)| t).collect();
+    let weights: Vec<f64> = edges.iter().map(|&(_, _, w)| w).collect();
+    let eps = make_epochs_per_sample(&weights, n_epochs);
+
+    optimize_layout(
+        &mut embedding,
+        n,
+        n_components,
+        &head,
+        &tail,
+        &eps,
+        a,
+        b,
+        repulsion_strength,
+        n_epochs,
+        negative_sample_rate,
+        seed,
+    );
+
+    (0..n)
+        .map(|i| embedding[i * n_components..(i + 1) * n_components].to_vec())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+
+    #[test]
+    fn ab_params_match_reference() {
+        // umap-learn's find_ab_params(1.0, 0.1) ~= (1.577, 0.895).
+        let (a, b) = find_ab_params(1.0, 0.1);
+        assert!((a - 1.577).abs() < 0.1, "a = {a}");
+        assert!((b - 0.895).abs() < 0.1, "b = {b}");
+    }
+
+    #[test]
+    fn deterministic_for_fixed_seed() {
+        let mut rng = ChaCha8Rng::seed_from_u64(3);
+        let data: Vec<Vec<f64>> = (0..60)
+            .map(|_| (0..8).map(|_| rng.gen::<f64>()).collect())
+            .collect();
+        let a = umap(&data, 2, 15, 0.1, 1.0, 200, 5, 1.0, "cosine", 7);
+        let b = umap(&data, 2, 15, 0.1, 1.0, 200, 5, 1.0, "cosine", 7);
+        assert_eq!(a, b, "UMAP must be reproducible for a fixed seed");
+    }
+
+    #[test]
+    fn separates_three_blobs() {
+        // Three well-separated Gaussian blobs in 10-D should keep each point
+        // nearest its own blob centroid in the 2-D layout.
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        let dim = 10;
+        let mut data = Vec::new();
+        let mut truth = Vec::new();
+        for c in 0..3 {
+            let mut center = vec![0.0; dim];
+            center[c] = 20.0;
+            for _ in 0..40 {
+                let row: Vec<f64> = (0..dim)
+                    .map(|t| center[t] + (rng.gen::<f64>() - 0.5) * 4.0)
+                    .collect();
+                data.push(row);
+                truth.push(c);
+            }
+        }
+        let emb = umap(&data, 2, 15, 0.1, 1.0, 500, 5, 1.0, "cosine", 1);
+        assert!(
+            emb.iter().all(|r| r.iter().all(|v| v.is_finite())),
+            "NaN in layout"
+        );
+        // Per-blob centroids.
+        let mut cents = [[0.0f64; 2]; 3];
+        let mut counts = [0.0f64; 3];
+        for (i, &c) in truth.iter().enumerate() {
+            cents[c][0] += emb[i][0];
+            cents[c][1] += emb[i][1];
+            counts[c] += 1.0;
+        }
+        for c in 0..3 {
+            cents[c][0] /= counts[c];
+            cents[c][1] /= counts[c];
+        }
+        let mut correct = 0;
+        for (i, &c) in truth.iter().enumerate() {
+            let nearest = (0..3)
+                .min_by(|&x, &y| {
+                    let dx = (emb[i][0] - cents[x][0]).powi(2) + (emb[i][1] - cents[x][1]).powi(2);
+                    let dy = (emb[i][0] - cents[y][0]).powi(2) + (emb[i][1] - cents[y][1]).powi(2);
+                    dx.partial_cmp(&dy).unwrap()
+                })
+                .unwrap();
+            if nearest == c {
+                correct += 1;
+            }
+        }
+        assert!(
+            correct as f64 / truth.len() as f64 > 0.9,
+            "UMAP did not separate the blobs: {correct}/{}",
+            truth.len()
+        );
+    }
+}

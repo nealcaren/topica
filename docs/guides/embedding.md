@@ -384,8 +384,8 @@ every other model: `topic_word` (`num_topics × vocab`), `doc_topic`
 `vocabulary`, and `labels`. The embedding-native additions are `topic_vectors`
 and `topic_neighbors` (Top2Vec) and `approximate_distribution` (BERTopic).
 
-They also `save`/`load` like every other model, which is the way to keep a good
-UMAP discovery fit (the discovery is stochastic, the prediction is not):
+They also `save`/`load` like every other model, so a fitted model reloads and
+`transform`s new documents without re-running the pipeline:
 
 ```python
 model.save("topics.tt")
@@ -423,30 +423,26 @@ For statistically-selected phrases instead of every bigram, use
   measures cosine distance — the geometry sentence embeddings are trained for.
   Without this the few highest-variance PCA directions dominate the metric and the
   clusterer under-splits real embeddings into a couple of broad topics.
-- `reducer="umap"` switches to a faithful UMAP reducer (with `n_neighbors`), which
-  separates real document embeddings much better than a linear projection and, on
-  closely spaced themes, splits clusters PCA would merge. It ships in the wheel, so
-  it is opt-in at runtime, not build time.
+- `reducer="umap"` switches to topica's in-house UMAP reducer (with `n_neighbors`),
+  which separates real document embeddings much better than a linear projection
+  and, on closely spaced themes, splits clusters PCA would merge. It is a faithful
+  reimplementation of `umap-learn` (fuzzy simplicial set, `a`/`b` membership curve,
+  and the reference SGD layout), validated to match `umap-learn`'s cluster quality
+  on real sentence embeddings. It ships in the wheel, so it is opt-in at runtime,
+  not build time — pure Rust, with no `umap-learn`/`numba` dependency.
 
-  **One caveat, by design.** The UMAP *discovery* fit is **not reproducible** across
-  runs: the underlying Rust UMAP optimizer's negative sampling is unseeded, so a
-  fixed `seed` does not pin the layout, and `reducer="umap"` emits a warning saying
-  so. This is the one place topica relaxes its determinism guarantee, and it follows
-  BERTopic's own fit-vs-predict split: the reducer runs only during topic
-  *discovery*, while the **prediction phase is deterministic** — `transform` assigns
-  new documents by cosine to the fitted topic vectors (Top2Vec) or by c-TF-IDF
-  (BERTopic) and never re-runs UMAP. So a fitted model maps documents
-  reproducibly even though the discovery that produced it was stochastic. For a
-  fully reproducible fit, keep the default `reducer="pca"`. If your aim is simply to
-  empty the `-1` noise bucket rather than to use UMAP specifically,
-  `clusterer="kmeans"` (above) is the deterministic route.
-- Results are reproducible for a fixed `seed`.
+  Unlike a typical UMAP, topica's is **fully reproducible**: the negative sampling
+  is seeded, so a fixed `seed` pins the layout and the whole `reducer="umap"` fit is
+  deterministic. There is no non-determinism caveat and no warning.
+- Results are reproducible for a fixed `seed`, under either reducer.
 
 !!! note "Faithful to the references"
     On a shared task with shared document embeddings, topica's `Top2Vec` and
     `BERTopic` recover comparable topic structure to the Python `BERTopic`
-    package. Because topica uses its own PCA/UMAP reducer and a different HDBSCAN
-    implementation, exact cluster assignments will differ from the `umap-learn` +
-    `hdbscan` reference; what matches is the kind of topics recovered. The payoff
-    is the dependency footprint: topica runs the pipeline in Rust with none of
-    `torch`, `umap-learn`, or `hdbscan` installed.
+    package. topica's in-house UMAP reducer matches `umap-learn`'s cluster quality
+    on real sentence embeddings (measured by adjusted Rand index against gold
+    labels); because topica uses a different HDBSCAN implementation, exact cluster
+    assignments still differ from the `umap-learn` + `hdbscan` reference, but the
+    recovered topics agree. The payoff is the dependency footprint: topica runs the
+    whole pipeline in Rust with none of `torch`, `umap-learn`, or `hdbscan`
+    installed.
