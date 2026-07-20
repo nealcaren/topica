@@ -381,11 +381,52 @@ The underlying estimators are also exposed directly for any trace you hold —
 initial-positive-sequence `tau`), and `topica.effective_sample_size` (`N / tau`,
 for one chain or columnwise over a `(draws, params)` matrix).
 
-Multi-chain R-hat (Gelman-Rubin), which needs several seeds run and compared, is
-not yet exposed ([issue #269](https://github.com/nealcaren/topica/issues/269));
-these single-chain diagnostics are the cheap first cut. The variational models
-(STM, CTM, …) converge a bound and have no MCMC chain — `mcmc_diagnostics` warns
-if you point it at one.
+The variational models (STM, CTM, …) converge a bound and have no MCMC chain —
+`mcmc_diagnostics` warns if you point it at one.
+
+### Do independent chains agree? (R-hat)
+
+A single chain can plateau, look well-mixed, and still have settled into a mode
+the sampler happened to reach from its seed. The Gelman-Rubin R-hat answers the
+question one chain cannot: fit the same model at several seeds and check whether
+the chains converged to a *common* distribution. R-hat compares the variance
+between chains to the variance within each — near 1 they agree, above ~1.01 they
+have not mixed.
+
+```python
+chains = []
+for seed in (1, 2, 3, 4):
+    m = topica.LDA(num_topics=20, seed=seed)
+    m.fit(docs, iters=2000, num_theta_draws=200)
+    chains.append(m)
+
+d = topica.multichain_diagnostics(chains)
+print(d.summary())
+# Multi-chain diagnostics for LDA (4 chains, inference=gibbs)
+#   log-likelihood R-hat    : 1.008 (ESS 640, n=1000)
+#   topic-prevalence R-hat  : max 1.021 / median 1.004 over 20 aligned topics
+#   topic alignment (Jaccard): min 0.71 (low -> that topic's R-hat is not comparable)
+#   -> chains mixed
+
+d.loglik_rhat        # R-hat of the log-likelihood trace (permutation-invariant)
+d.topic_rhat         # (num_topics,) per-topic R-hat of aligned topic prevalence
+d.topic_alignment    # (num_topics,) how well each topic matched across chains
+d.converged          # every reported R-hat <= 1.01
+```
+
+Two views are reported. The **log-likelihood R-hat** is the headline: the
+log-likelihood is permutation-invariant, so it compares chains directly with no
+alignment. The **per-topic R-hat** is finer but needs care — topic 3 in one chain
+need not be topic 3 in another, so `multichain_diagnostics` first aligns the
+topics across chains (a Hungarian match on the topic-word matrix, the same
+machinery [`align_topics`](../api/diagnostics.md#topica.align_topics) uses) and then compares each
+aligned topic's per-draw prevalence. Read `topic_rhat` next to `topic_alignment`:
+a topic with a low alignment Jaccard did not line up across chains, so its R-hat
+is comparing different topics and means nothing.
+
+The R-hat estimator itself — rank-normalized split-R-hat (Vehtari et al. 2021) —
+is exposed directly as `topica.rhat(chains)` for any set of chains you hold, in
+the same spirit as the single-chain primitives above.
 
 ## Visualization
 

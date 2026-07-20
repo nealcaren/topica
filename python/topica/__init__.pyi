@@ -41,6 +41,9 @@ from .mcmc import (
     autocorrelation as autocorrelation,
     integrated_autocorr_time as integrated_autocorr_time,
     McmcDiagnostics as McmcDiagnostics,
+    rhat as rhat,
+    multichain_diagnostics as multichain_diagnostics,
+    MultiChainDiagnostics as MultiChainDiagnostics,
 )
 from .effects import (
     estimate_effect as estimate_effect,

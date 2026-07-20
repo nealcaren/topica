@@ -199,6 +199,9 @@ from .mcmc import (  # noqa: E402
     autocorrelation,
     integrated_autocorr_time,
     McmcDiagnostics,
+    rhat,
+    multichain_diagnostics,
+    MultiChainDiagnostics,
 )
 from .registry import list_models, ModelInfo, REGISTRY  # noqa: E402  model taxonomy / discovery
 
@@ -437,6 +440,9 @@ __all__ = [
     "autocorrelation",
     "integrated_autocorr_time",
     "McmcDiagnostics",
+    "rhat",
+    "multichain_diagnostics",
+    "MultiChainDiagnostics",
     "perplexity",
     "make_heldout",
     "eval_heldout",
