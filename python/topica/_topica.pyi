@@ -569,6 +569,10 @@ class STM:
         prevalence_names: list[str] | None = None,
         content: Sequence[str] | Sequence[int] | None = None,
         content_names: list[str] | None = None,
+        content_time: Sequence[str] | Sequence[int] | None = None,
+        content_smooth: float = 1.0,
+        content_prior_var: float = 0.5,
+        content_prior: str = "l2",
         iters: int = 500,
         convergence_tol: float = 1e-5,
         gamma_prior: str = "pooled",
@@ -635,6 +639,10 @@ class STM:
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
     def topic_correlation(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def num_base_groups(self) -> int: ...
+    @property
+    def num_time_periods(self) -> int: ...
     @property
     def eta_mean(self) -> numpy.typing.NDArray[numpy.float64]:
         """Variational posterior means lambda, shape (num_docs, num_topics-1).
@@ -786,6 +794,8 @@ class ECTM:
         tau: float = 64.0,
         kappa: float = 0.7,
         content_every: int = 0,
+        seeds: Optional[dict[int, list[str]]] = None,
+        seed_strength: float = 4.0,
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
     ) -> None:
@@ -809,7 +819,15 @@ class ECTM:
         SVI mode. content_every sets how often (in minibatches) the expensive
         content-κ M-step is re-solved; the cheap μ/Σ/γ updates run every minibatch.
         content_every=0 (default) re-solves κ once per epoch; a small positive value
-        re-solves more often (better per-epoch progress, more cost per epoch)."""
+        re-solves more often (better per-epoch progress, more cost per epoch).
+
+        seeds anchors a topic to a pre-specified vocabulary: a
+        ``{topic_index: [seed words]}`` map boosts those words' E-step
+        responsibility toward the seeded topic by ``exp(seed_strength)`` (default
+        4.0) and shifts their κT prior mean, so the seed words' tokens are assigned
+        to the seeded topic and their vocabulary consolidates onto it -- reading a
+        chosen issue's content surface off a known topic index. Seed as many topics
+        as you like; unknown words are skipped and seeds=None is bit-exact."""
         ...
 
     @property

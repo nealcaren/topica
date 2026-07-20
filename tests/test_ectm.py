@@ -365,3 +365,55 @@ def test_analysis_surface():
     assert topica.summary(m) is not None
     assert topica.topic_table(m) is not None
     assert m.coherence(5).shape == (2,)
+
+
+# --- Seeded content (experimental): anchor a topic's baseline vocabulary -----
+
+def test_seeds_none_is_bit_exact_with_baseline():
+    """seeds=None must not perturb the fit (the seed prior mean is all zeros)."""
+    base = _fit(seed=3)
+    seeded_none = _fit(seed=3, seeds=None)
+    assert np.allclose(np.asarray(base.topic_word),
+                       np.asarray(seeded_none.topic_word))
+
+
+def test_seeds_consolidate_vocabulary_into_the_seeded_topic():
+    """The E-step seed boost forces the seed words' tokens onto the seeded topic,
+    so that topic owns almost all of the seed vocabulary's probability mass --
+    the anchoring that lets ECTM read a pre-specified issue off a known topic."""
+    # A corpus with three latent themes, so seeding must actively consolidate.
+    themes = [["tax", "budget", "fiscal"], ["war", "troops", "army"],
+              ["health", "clinic", "patient"]]
+    docs, groups, times = [], [], []
+    for i in range(180):
+        docs.append(themes[i % 3] * 3)
+        groups.append("A" if i % 2 else "B")
+        times.append(2000 + i % 3)
+
+    def seed_share(seeds):
+        m = topica.ECTM(num_topics=6, seed=1)
+        m.fit(docs, times=times, content=groups, iters=120, seeds=seeds, seed_strength=6.0)
+        beta = np.asarray(m.topic_word)
+        sw = [m.vocabulary.index(w) for w in ("tax", "budget", "fiscal")]
+        best_share = (beta[:, sw].sum(axis=0) / beta[:, sw].sum()).max()   # unseeded
+        t0_share = beta[0][sw].sum() / beta[:, sw].sum()                    # seeded topic 0
+        return best_share, t0_share
+
+    best_unseeded, _ = seed_share(None)
+    _, seeded_t0 = seed_share({0: ["tax", "budget", "fiscal"]})
+    # seeding consolidates the fiscal vocabulary onto topic 0
+    assert seeded_t0 > best_unseeded
+    assert seeded_t0 > 0.6
+
+
+def test_seeds_reject_out_of_range_topic():
+    docs, groups, times = _corpus()
+    m = topica.ECTM(num_topics=2, seed=1)
+    with pytest.raises(Exception):
+        m.fit(docs, times=times, content=groups, iters=20, seeds={5: ["a"]})
+
+
+def test_seeds_ignore_unknown_words():
+    """Words outside the vocabulary are silently skipped (no crash)."""
+    m = _fit(seed=1, seeds={0: ["x", "notaword"]}, seed_strength=5.0)
+    assert np.asarray(m.topic_word).shape[0] == 2

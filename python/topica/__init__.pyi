@@ -30,6 +30,7 @@ from ._topica import (
     DEFAULT_TOKEN_REGEX as DEFAULT_TOKEN_REGEX,
     __version__ as __version__,
 )
+from . import content as content
 from . import stm as stm
 from . import keyatm as keyatm
 from . import effects as effects
