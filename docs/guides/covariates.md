@@ -75,13 +75,15 @@ model.topic_word_by_group        # per-group β
 # model.word_contrast(topic, "liberal", "conservative")
 ```
 
-`topica.content` reads that per-group tensor for STM, STS, SAGE, and ECTM alike:
+`topica.content` reads that per-group tensor for STM, SAGE, and ECTM alike:
 `topic_polarization(model)` is the per-topic Jensen-Shannon divergence across
 groups (how differently the groups word a topic), `group_exclusivity(model)`
 checks a topic stays distinctive in every group's sub-vocabulary, and
 `split_topics(model, content)` flags near-duplicate topics pulled apart by group
 prevalence — the sign that one discourse has *fragmented* into parallel
-group-topics instead of living within a topic.
+group-topics instead of living within a topic. STS fits the same functions:
+its continuous sentiment axis is discretized into negative/neutral/positive
+groups (pass `levels=` to change the sentiment cut points).
 
 ```python
 import topica
