@@ -32,7 +32,7 @@ import pandas as pd
 
 import topica
 from topica.content import topic_polarization, split_topics
-from topica.models import ECTM
+from topica import ECTM
 
 CSV = "examples/gentrification_debates_temporal.csv"
 # planted developer housing drift markers (see verify_synthetic_ectm.py)
@@ -56,11 +56,11 @@ def housing_topic(model) -> int:
 def build_corpus():
     df = pd.read_csv(CSV)
     df["period"] = df["period"].astype(str)
-    corpus = topica.prep.from_dataframe(
+    corpus = topica.from_dataframe(
         df, text_col="text",
         metadata_cols=["neighborhood_status", "speaker_role", "period"],
-        stopwords=topica.prep.stopwords("en"))
-    X, feat = topica.design.one_hot(corpus.metadata["neighborhood_status"], drop_first=True)
+        stopwords=topica.stopwords("en"))
+    X, feat = topica.one_hot(corpus.metadata["neighborhood_status"], drop_first=True)
     content = list(corpus.metadata["speaker_role"])
     times = list(corpus.metadata["period"])
     return corpus, X, feat, content, times

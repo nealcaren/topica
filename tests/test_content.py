@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 import topica
-from topica.models import SAGE, ECTM
+from topica import SAGE, ECTM
 from topica import content
 
 
@@ -234,11 +234,11 @@ def test_search_k_stratified_reports_polarization():
     docs = [["a", "b", "c"] if i % 2 else ["x", "y", "z"] for i in range(60)]
     corpus = topica.Corpus.from_documents(docs)
     grp = ["L" if i % 2 else "R" for i in range(60)]
-    res = topica.select.search_k(corpus, ks=[2, 3], model="stm", content=grp,
+    res = topica.search_k(corpus, ks=[2, 3], model="stm", content=grp,
                                  coherence_type="stratified_c_npmi", iters=40)
     rows = res.rows if hasattr(res, "rows") else res
     assert all("polarization" in r for r in rows)
     assert all(r["coherence_metric"] == "stratified_c_npmi" for r in rows)
     # stratified without content is rejected
     with pytest.raises(ValueError, match="stratified"):
-        topica.select.search_k(corpus, ks=[2], model="stm", coherence_type="stratified_c_v")
+        topica.search_k(corpus, ks=[2], model="stm", coherence_type="stratified_c_v")

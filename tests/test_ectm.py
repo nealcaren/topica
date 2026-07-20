@@ -391,7 +391,7 @@ def test_seeds_consolidate_vocabulary_into_the_seeded_topic():
         times.append(2000 + i % 3)
 
     def seed_share(seeds):
-        m = topica.models.ECTM(num_topics=6, seed=1)
+        m = topica.ECTM(num_topics=6, seed=1)
         m.fit(docs, times=times, content=groups, iters=120, seeds=seeds, seed_strength=6.0)
         beta = np.asarray(m.topic_word)
         sw = [m.vocabulary.index(w) for w in ("tax", "budget", "fiscal")]
@@ -408,7 +408,7 @@ def test_seeds_consolidate_vocabulary_into_the_seeded_topic():
 
 def test_seeds_reject_out_of_range_topic():
     docs, groups, times = _corpus()
-    m = topica.models.ECTM(num_topics=2, seed=1)
+    m = topica.ECTM(num_topics=2, seed=1)
     with pytest.raises(Exception):
         m.fit(docs, times=times, content=groups, iters=20, seeds={5: ["a"]})
 

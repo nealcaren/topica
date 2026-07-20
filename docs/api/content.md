@@ -31,13 +31,13 @@ via `content_word_dist(group, period)` (period-averaged by default; pass
 
 ## Choosing K with group-stratified coherence
 
-`topica.select.search_k` accepts a `"stratified_<type>"` coherence metric for
+`topica.search_k` accepts a `"stratified_<type>"` coherence metric for
 content models (`model="stm"` with a `content` covariate): it scores each group's
 own top words against that group's subcorpus, and reports group-adjusted
 exclusivity and mean polarization alongside.
 
 ```python
-res = topica.select.search_k(
+res = topica.search_k(
     corpus, ks=[5, 10, 15], model="stm",
     prevalence=X, content=source,
     coherence_type="stratified_c_npmi",

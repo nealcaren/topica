@@ -25,7 +25,7 @@ from __future__ import annotations
 import numpy as np
 
 import topica
-from topica.models import ECTM
+from topica import ECTM
 from topica.content import topic_polarization, split_topics
 
 CORE = ["policy", "council", "meeting", "proposal", "vote", "budget"]
@@ -67,7 +67,7 @@ def fit(docs, groups, times, *, cpv, group_in_prevalence, K=6, seed=1):
     corpus = topica.Corpus.from_documents(docs)
     kwargs = {}
     if group_in_prevalence:
-        X, feat = topica.design.one_hot(groups, drop_first=True)
+        X, feat = topica.one_hot(groups, drop_first=True)
         kwargs = dict(prevalence=X, prevalence_names=feat)
     m = ECTM(num_topics=K, seed=seed)
     m.fit(corpus, times=times, content=groups, iters=200, content_prior_var=cpv, **kwargs)
