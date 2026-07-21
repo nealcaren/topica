@@ -340,7 +340,22 @@ unassigned as `-1`. On real sentence-transformer embeddings that bucket can be
 large, and for many social-science questions every document should land
 somewhere. Two ways out:
 
-- **Switch the clusterer.** Pass `clusterer="kmeans"`, `"gmm"`, or
+- **Switch to an auto-K graph clusterer.** Pass `clusterer="louvain"` or
+  `"leiden"` (no `num_clusters` needed). Both build a k-nearest-neighbor graph over
+  the reduced embeddings and optimize modularity, so — like HDBSCAN — they
+  *discover* the topic count, but unlike HDBSCAN they assign every document (no
+  `-1`). `"leiden"` adds a refinement phase (Traag, Waltman & van Eck 2019) that
+  guarantees every topic is internally connected. On fine-grained corpora these
+  recover a sensible number of topics where HDBSCAN over- or under-splits, and they
+  can beat k-means handed the true count.
+
+  ```python
+  model = topica.BERTopic(clusterer="leiden", seed=1)   # count discovered, no noise
+  model.fit(docs, doc_emb)
+  assert -1 not in model.labels
+  ```
+
+- **Switch to a fixed-K clusterer.** Pass `clusterer="kmeans"`, `"gmm"`, or
   `"agglomerative"` with `num_clusters=K` to BERTopic or Top2Vec. All three assign
   every document to one of `K` clusters, so there is no `-1` label (and the topic
   count is fixed, not discovered). KMeans scales; `"gmm"` is a diagonal-covariance
@@ -417,7 +432,8 @@ For statistically-selected phrases instead of every bigram, use
   gives more, finer ones. `min_samples` (default `min_cluster_size`) sets how
   aggressively sparse documents are called noise (label `-1`). These apply to the
   default `clusterer="hdbscan"`; `clusterer="kmeans"`/`"gmm"`/`"agglomerative"`
-  use `num_clusters` instead (see above).
+  use `num_clusters` instead, and `clusterer="louvain"`/`"leiden"` discover the
+  count on their own (see above).
 - `n_components` is the dimensionality the embeddings are reduced to before
   clustering. The default reducer is a randomized PCA: fast, deterministic, and
   dependency-free, but it separates less sharply than UMAP and on closely spaced

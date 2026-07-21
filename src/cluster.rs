@@ -10,6 +10,16 @@ use ndarray::Array2;
 use petal_clustering::{Fit, HDbscan};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use std::collections::HashMap;
+
+/// Default resolution (γ) for the `"louvain"` / `"leiden"` graph clusterers. 1.0
+/// is the standard modularity resolution; on the #352 benchmark it discovers a
+/// sensible topic count on both easy and fine-grained corpora. Exposing it as a
+/// Python kwarg (the main knob for steering the auto-discovered K) is the planned
+/// follow-up.
+const DEFAULT_RESOLUTION: f64 = 1.0;
+/// Default neighborhood size for the k-NN graph the graph clusterers build.
+const DEFAULT_KNN: usize = 15;
 
 /// Cluster `points` (row-major; each row is one embedding vector) with HDBSCAN.
 ///
@@ -70,7 +80,9 @@ pub fn hdbscan_labels(
 /// Dispatch to the requested clustering method. `clusterer` is `"hdbscan"`
 /// (default; uses `min_cluster_size`/`min_samples`), `"kmeans"`, `"gmm"`, or
 /// `"agglomerative"` (all three use `num_clusters`, falling back to
-/// `min_cluster_size` if it is `None`). Unknown names fall back to HDBSCAN.
+/// `min_cluster_size` if it is `None`), or the auto-K graph clusterers
+/// `"louvain"` / `"leiden"` (modularity on a k-NN graph; no `num_clusters`).
+/// Unknown names fall back to HDBSCAN.
 pub fn cluster_points(
     points: &[Vec<f64>],
     clusterer: &str,
@@ -83,6 +95,8 @@ pub fn cluster_points(
         "kmeans" => kmeans_labels(points, num_clusters.unwrap_or(min_cluster_size), seed),
         "gmm" => gmm_labels(points, num_clusters.unwrap_or(min_cluster_size), seed),
         "agglomerative" => agglomerative_labels(points, num_clusters.unwrap_or(min_cluster_size)),
+        "louvain" => graph_labels(points, DEFAULT_RESOLUTION, DEFAULT_KNN, seed, false),
+        "leiden" => graph_labels(points, DEFAULT_RESOLUTION, DEFAULT_KNN, seed, true),
         _ => hdbscan_labels(points, min_cluster_size, min_samples),
     }
 }
@@ -399,6 +413,428 @@ pub fn gmm_labels(points: &[Vec<f64>], k: usize, seed: u64) -> Vec<i64> {
     labels
 }
 
+// ===================================================================
+// Graph clustering: Louvain / Leiden modularity over a k-NN graph.
+//
+// Auto-K clusterers (like HDBSCAN, they discover the topic count rather than
+// taking `num_clusters`), but — unlike HDBSCAN — every document is assigned (no
+// `-1` noise bucket). `"louvain"` runs the classic local-moving + aggregation
+// modularity optimizer; `"leiden"` adds the refinement phase (Traag, Waltman &
+// van Eck 2019) that guarantees every returned community is internally connected,
+// the property Louvain can violate. Both are deterministic for a fixed `seed`
+// (the only randomness is the seeded node-visit order).
+// ===================================================================
+
+/// A weighted undirected graph in adjacency-list form, plus each node's self-loop
+/// weight (nonzero only after aggregation). `adj[i]` holds `(neighbor, weight)`
+/// pairs, sorted by neighbor for deterministic traversal.
+struct Graph {
+    adj: Vec<Vec<(usize, f64)>>,
+    self_loop: Vec<f64>,
+}
+
+impl Graph {
+    fn n(&self) -> usize {
+        self.adj.len()
+    }
+    /// Weighted degree k_i = Σ_j A_ij + 2·(self-loop) — self-loops count twice, as
+    /// in the standard modularity definition.
+    fn degrees(&self) -> Vec<f64> {
+        self.adj
+            .iter()
+            .enumerate()
+            .map(|(i, ns)| {
+                ns.iter().map(|&(_, w)| w).sum::<f64>() + 2.0 * self_loop_at(&self.self_loop, i)
+            })
+            .collect()
+    }
+}
+
+fn self_loop_at(sl: &[f64], i: usize) -> f64 {
+    sl.get(i).copied().unwrap_or(0.0)
+}
+
+/// Build a symmetric k-NN graph under Euclidean distance — the same metric
+/// `kmeans_labels` / `agglomerative_labels` use (the embedding pipeline
+/// L2-normalizes the reduced coordinates first, so Euclidean nearest-neighbors
+/// track cosine nearest-neighbors). Each node keeps its `knn_k` nearest others; an
+/// undirected edge exists if either endpoint kept the other (union symmetrization)
+/// and is unweighted (weight 1.0) — the classic, scale-free kNN graph for
+/// modularity clustering. O(n²·d), the same complexity class as
+/// `agglomerative_labels`. Neighbor lists are sorted for deterministic traversal.
+fn knn_graph(points: &[Vec<f64>], knn_k: usize) -> Graph {
+    let n = points.len();
+    let k = knn_k.min(n.saturating_sub(1)).max(1);
+
+    let mut edges: HashMap<(usize, usize), f64> = HashMap::new();
+    let mut dists: Vec<(usize, f64)> = Vec::with_capacity(n);
+    for i in 0..n {
+        dists.clear();
+        for j in 0..n {
+            if i == j {
+                continue;
+            }
+            dists.push((j, sqdist(&points[i], &points[j])));
+        }
+        // k nearest by distance asc; ties broken by ascending index for determinism.
+        dists.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.0.cmp(&b.0))
+        });
+        for &(j, _) in dists.iter().take(k) {
+            let key = if i < j { (i, j) } else { (j, i) };
+            edges.insert(key, 1.0);
+        }
+    }
+
+    let mut adj = vec![Vec::new(); n];
+    for (&(a, b), &w) in &edges {
+        adj[a].push((b, w));
+        adj[b].push((a, w));
+    }
+    for a in adj.iter_mut() {
+        a.sort_by_key(|&(x, _)| x);
+    }
+    Graph {
+        adj,
+        self_loop: vec![0.0; n],
+    }
+}
+
+/// A seeded Fisher-Yates permutation of `0..n` — the node-visit order for
+/// local-moving. Deterministic for a fixed `rng`.
+fn shuffled_order(n: usize, rng: &mut ChaCha8Rng) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..n).collect();
+    for i in (1..n).rev() {
+        let j = rng.gen_range(0..=i);
+        order.swap(i, j);
+    }
+    order
+}
+
+/// One Louvain local-moving pass: repeatedly move each node (in `order`) to the
+/// neighboring community that most increases modularity (resolution γ), until no
+/// node moves. `comm` starts as one community per node and is mutated in place.
+/// Returns whether any node changed community. Candidate communities are scanned
+/// in ascending id with a strict-improvement rule, so the outcome is deterministic
+/// given `order`.
+fn louvain_local_move(
+    g: &Graph,
+    degree: &[f64],
+    two_m: f64,
+    resolution: f64,
+    order: &[usize],
+    comm: &mut [usize],
+) -> bool {
+    let n = g.n();
+    let mut comm_tot = vec![0.0f64; n];
+    for i in 0..n {
+        comm_tot[comm[i]] += degree[i];
+    }
+    let mut moved_any = false;
+    let mut improved = true;
+    while improved {
+        improved = false;
+        for &i in order {
+            let ci = comm[i];
+            let ki = degree[i];
+            // Weight from i to each neighboring community.
+            let mut nbr_w: HashMap<usize, f64> = HashMap::new();
+            for &(j, w) in &g.adj[i] {
+                if j == i {
+                    continue;
+                }
+                *nbr_w.entry(comm[j]).or_insert(0.0) += w;
+            }
+            // Remove i from its community before scoring candidates.
+            comm_tot[ci] -= ki;
+            let w_to_ci = *nbr_w.get(&ci).unwrap_or(&0.0);
+            let mut best_c = ci;
+            let mut best_gain = w_to_ci - resolution * comm_tot[ci] * ki / two_m;
+            let mut cands: Vec<(usize, f64)> = nbr_w.into_iter().collect();
+            cands.sort_by_key(|&(c, _)| c);
+            for (c, w) in cands {
+                if c == ci {
+                    continue;
+                }
+                let gain = w - resolution * comm_tot[c] * ki / two_m;
+                if gain > best_gain + 1e-12 {
+                    best_gain = gain;
+                    best_c = c;
+                }
+            }
+            comm_tot[best_c] += ki;
+            if best_c != ci {
+                comm[i] = best_c;
+                improved = true;
+                moved_any = true;
+            }
+        }
+    }
+    moved_any
+}
+
+/// Aggregate `g` by the partition in `comm`: every community becomes one node,
+/// inter-community edge weights sum into new edges, and intra-community weights
+/// (plus old self-loops) become the new node's self-loop. `comm` is relabeled to a
+/// dense `0..K` and the contracted graph is returned.
+fn aggregate(g: &Graph, comm: &mut [usize]) -> Graph {
+    let n = g.n();
+    let mut ids: Vec<usize> = comm.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut remap = HashMap::new();
+    for (new, &old) in ids.iter().enumerate() {
+        remap.insert(old, new);
+    }
+    let k = ids.len();
+    for c in comm.iter_mut() {
+        *c = remap[c];
+    }
+
+    let mut new_self = vec![0.0f64; k];
+    for i in 0..n {
+        new_self[comm[i]] += self_loop_at(&g.self_loop, i);
+    }
+    let mut emap: HashMap<(usize, usize), f64> = HashMap::new();
+    for i in 0..n {
+        let ci = comm[i];
+        for &(j, w) in &g.adj[i] {
+            if j <= i {
+                continue; // count each undirected edge once
+            }
+            let cj = comm[j];
+            if ci == cj {
+                new_self[ci] += w;
+            } else {
+                let key = if ci < cj { (ci, cj) } else { (cj, ci) };
+                *emap.entry(key).or_insert(0.0) += w;
+            }
+        }
+    }
+    let mut adj = vec![Vec::new(); k];
+    for (&(a, b), &w) in &emap {
+        adj[a].push((b, w));
+        adj[b].push((a, w));
+    }
+    for a in adj.iter_mut() {
+        a.sort_by_key(|&(x, _)| x);
+    }
+    Graph {
+        adj,
+        self_loop: new_self,
+    }
+}
+
+/// Leiden refinement: split each community of `comm` into internally-connected
+/// sub-communities. Starting from singletons, each node greedily joins the
+/// best-modularity sub-community *within its own `comm` community* that it shares
+/// an edge with. Because a node only ever joins a community it is directly
+/// connected to, every returned sub-community is a connected subgraph — the
+/// guarantee Leiden adds over Louvain, whose communities can be internally
+/// disconnected. This is a deterministic reading (best positive gain, ties by
+/// ascending id) of Leiden's randomized merge step. Returns a refined label per
+/// node; refined ids are a subdivision of `comm`.
+fn refine_partition(
+    g: &Graph,
+    degree: &[f64],
+    two_m: f64,
+    resolution: f64,
+    comm: &[usize],
+    order: &[usize],
+) -> Vec<usize> {
+    let n = g.n();
+    let mut refined: Vec<usize> = (0..n).collect();
+    let mut ref_tot: Vec<f64> = degree.to_vec();
+    for &v in order {
+        let cv = comm[v];
+        let kv = degree[v];
+        // Edge weight from v to each refined sub-community inside v's own community.
+        let mut nbr_w: HashMap<usize, f64> = HashMap::new();
+        for &(u, w) in &g.adj[v] {
+            if u == v || comm[u] != cv {
+                continue;
+            }
+            *nbr_w.entry(refined[u]).or_insert(0.0) += w;
+        }
+        if nbr_w.is_empty() {
+            continue; // no same-community neighbor: v stays its own sub-community
+        }
+        ref_tot[refined[v]] -= kv;
+        let mut best_c = refined[v];
+        let mut best_gain = 0.0; // baseline: v alone in its current sub-community
+        let mut cands: Vec<(usize, f64)> = nbr_w.into_iter().collect();
+        cands.sort_by_key(|&(c, _)| c);
+        for (c, w) in cands {
+            let gain = w - resolution * ref_tot[c] * kv / two_m;
+            if gain > best_gain + 1e-12 {
+                best_gain = gain;
+                best_c = c;
+            }
+        }
+        ref_tot[best_c] += kv;
+        refined[v] = best_c;
+    }
+    refined
+}
+
+/// Aggregate `g` by the refined partition (Leiden style): every refined
+/// sub-community becomes one node, exactly as [`aggregate`], and additionally the
+/// new graph's *initial* community assignment is inherited from `comm` — so
+/// sub-communities that came from the same Louvain community start grouped, and
+/// the next local-moving pass can move whole refined communities between them.
+/// Returns `(contracted graph, old-node → new-node map, initial community per new
+/// node)`, both maps densified to `0..`.
+fn aggregate_refined(
+    g: &Graph,
+    refined: &[usize],
+    comm: &[usize],
+) -> (Graph, Vec<usize>, Vec<usize>) {
+    let n = g.n();
+    let mut ids: Vec<usize> = refined.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut remap = HashMap::new();
+    for (new, &old) in ids.iter().enumerate() {
+        remap.insert(old, new);
+    }
+    let k = ids.len();
+    let refined_dense: Vec<usize> = refined.iter().map(|c| remap[c]).collect();
+
+    let mut new_self = vec![0.0f64; k];
+    for i in 0..n {
+        new_self[refined_dense[i]] += self_loop_at(&g.self_loop, i);
+    }
+    let mut emap: HashMap<(usize, usize), f64> = HashMap::new();
+    for i in 0..n {
+        let ci = refined_dense[i];
+        for &(j, w) in &g.adj[i] {
+            if j <= i {
+                continue;
+            }
+            let cj = refined_dense[j];
+            if ci == cj {
+                new_self[ci] += w;
+            } else {
+                let key = if ci < cj { (ci, cj) } else { (cj, ci) };
+                *emap.entry(key).or_insert(0.0) += w;
+            }
+        }
+    }
+    let mut adj = vec![Vec::new(); k];
+    for (&(a, b), &w) in &emap {
+        adj[a].push((b, w));
+        adj[b].push((a, w));
+    }
+    for a in adj.iter_mut() {
+        a.sort_by_key(|&(x, _)| x);
+    }
+
+    // Each new node inherits the Louvain community of the nodes it contains.
+    let mut louvain_of = vec![0usize; k];
+    for i in 0..n {
+        louvain_of[refined_dense[i]] = comm[i];
+    }
+    let mut lids: Vec<usize> = louvain_of.clone();
+    lids.sort_unstable();
+    lids.dedup();
+    let mut lremap = HashMap::new();
+    for (new, &old) in lids.iter().enumerate() {
+        lremap.insert(old, new);
+    }
+    let new_init: Vec<usize> = louvain_of.iter().map(|c| lremap[c]).collect();
+
+    (
+        Graph {
+            adj,
+            self_loop: new_self,
+        },
+        refined_dense,
+        new_init,
+    )
+}
+
+/// Cluster `points` by modularity optimization over a k-NN graph. With
+/// `refine=false` this is Louvain (local-moving + aggregation); `refine=true`
+/// selects Leiden, which inserts a refinement phase before each aggregation so the
+/// contracted graph is built from connected sub-communities and the next level
+/// resumes from the Louvain partition (Traag, Waltman & van Eck 2019). Auto-K,
+/// assigns every point (no `-1`), deterministic for a fixed `seed`. Returns dense
+/// `0..K` labels.
+pub fn graph_labels(
+    points: &[Vec<f64>],
+    resolution: f64,
+    knn_k: usize,
+    seed: u64,
+    refine: bool,
+) -> Vec<i64> {
+    let n = points.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        return vec![0];
+    }
+
+    let mut g = knn_graph(points, knn_k);
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    // For each original node, the current super-node it belongs to.
+    let mut node_to_super: Vec<usize> = (0..n).collect();
+    // Initial community assignment for local-moving at the current level: singletons
+    // at level 0; for Leiden, the inherited Louvain partition at deeper levels.
+    let mut init_comm: Vec<usize> = (0..g.n()).collect();
+    // Reported labels: the Louvain community of each original node at the current
+    // (coarsest reached) level. Defaults to all-singletons for the no-edge case.
+    let mut labels: Vec<i64> = (0..n as i64).collect();
+
+    loop {
+        let m = g.n();
+        let degree = g.degrees();
+        let two_m: f64 = degree.iter().sum();
+        if two_m <= 0.0 {
+            break; // no edges left to merge
+        }
+        let mut comm = init_comm.clone();
+        let order = shuffled_order(m, &mut rng);
+        let moved = louvain_local_move(&g, &degree, two_m, resolution, &order, &mut comm);
+
+        // Read the current partition back to the original nodes before mutating.
+        for (o, lab) in labels.iter_mut().enumerate() {
+            *lab = comm[node_to_super[o]] as i64;
+        }
+        if !moved {
+            break; // converged at this level
+        }
+
+        if refine {
+            let rorder = shuffled_order(m, &mut rng);
+            let refined = refine_partition(&g, &degree, two_m, resolution, &comm, &rorder);
+            let (new_g, refined_dense, new_init) = aggregate_refined(&g, &refined, &comm);
+            for s in node_to_super.iter_mut() {
+                *s = refined_dense[*s];
+            }
+            if new_g.n() == m {
+                break; // no coarsening
+            }
+            g = new_g;
+            init_comm = new_init;
+        } else {
+            g = aggregate(&g, &mut comm); // densifies `comm` to 0..K
+            for s in node_to_super.iter_mut() {
+                *s = comm[*s];
+            }
+            if g.n() == m {
+                break; // no coarsening
+            }
+            init_comm = (0..g.n()).collect(); // Louvain re-singletons each level
+        }
+    }
+
+    densify(&mut labels);
+    labels
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,5 +1006,150 @@ mod tests {
             assert!(labels.contains(&id), "id {id} missing -> not dense");
         }
         assert_eq!(labels, gmm_labels(&pts, 5, 1), "same seed -> same labels");
+    }
+
+    // Three well-separated blobs in embedding space. The graph clusterer discovers
+    // the count on its own (auto-K, no num_clusters), assigns every point (no -1),
+    // and lands on three communities.
+    fn three_blobs() -> Vec<Vec<f64>> {
+        use rand::{Rng, SeedableRng};
+        use rand_chacha::ChaCha8Rng;
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        let centers = [[0.0, 0.0], [10.0, 0.0], [5.0, 9.0]];
+        let mut pts = Vec::new();
+        for c in centers {
+            for _ in 0..40 {
+                pts.push(vec![
+                    c[0] + rng.gen::<f64>() * 0.4,
+                    c[1] + rng.gen::<f64>() * 0.4,
+                ]);
+            }
+        }
+        pts
+    }
+
+    #[test]
+    fn louvain_separates_blobs_and_assigns_everything() {
+        let pts = three_blobs();
+        let labels = graph_labels(&pts, DEFAULT_RESOLUTION, DEFAULT_KNN, 0, false);
+        assert_eq!(labels.len(), 120);
+        // Auto-K, every point assigned (no -1 noise bucket).
+        assert!(labels.iter().all(|&l| l >= 0), "no point may be noise");
+        let k = (*labels.iter().max().unwrap() + 1) as usize;
+        assert!(
+            (3..=8).contains(&k),
+            "K should be near 3 blobs, got {k}: {labels:?}"
+        );
+        // Purity: no community may span two different blobs. (Plain Louvain can
+        // over-split a uniform ball into sub-communities — the resolution knob and
+        // the Leiden refinement phase address that — but it must never *merge*
+        // separated topics, which is the property that matters.)
+        let blobs = [&labels[..40], &labels[40..80], &labels[80..]];
+        for (bi, a) in blobs.iter().enumerate() {
+            for (bj, b) in blobs.iter().enumerate() {
+                if bi >= bj {
+                    continue;
+                }
+                for &la in a.iter() {
+                    assert!(
+                        !b.contains(&la),
+                        "community {la} spans two blobs: {labels:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn louvain_is_deterministic_and_dense() {
+        let pts = three_blobs();
+        let a = graph_labels(&pts, DEFAULT_RESOLUTION, DEFAULT_KNN, 7, false);
+        let b = graph_labels(&pts, DEFAULT_RESOLUTION, DEFAULT_KNN, 7, false);
+        assert_eq!(a, b, "same seed -> same labels");
+        // dense 0..=max
+        let max = *a.iter().max().unwrap();
+        for id in 0..=max {
+            assert!(a.contains(&id), "id {id} missing -> not dense");
+        }
+    }
+
+    #[test]
+    fn graph_labels_handles_trivial_inputs() {
+        for refine in [false, true] {
+            assert!(graph_labels(&[], DEFAULT_RESOLUTION, DEFAULT_KNN, 0, refine).is_empty());
+            assert_eq!(
+                graph_labels(
+                    &[vec![1.0, 2.0]],
+                    DEFAULT_RESOLUTION,
+                    DEFAULT_KNN,
+                    0,
+                    refine
+                ),
+                vec![0]
+            );
+        }
+    }
+
+    // Every community Leiden returns must be connected in the k-NN graph — the
+    // guarantee it adds over Louvain, whose communities can be internally
+    // disconnected. Verify by BFS within each community. Also checks purity (no
+    // community spans two blobs) and full assignment.
+    #[test]
+    fn leiden_communities_are_connected_and_pure() {
+        use std::collections::HashSet;
+        let pts = three_blobs();
+        let labels = graph_labels(&pts, DEFAULT_RESOLUTION, DEFAULT_KNN, 0, true);
+        assert_eq!(labels.len(), 120);
+        assert!(labels.iter().all(|&l| l >= 0), "no point may be noise");
+
+        // Purity: no community spans two different blobs.
+        let blobs = [&labels[..40], &labels[40..80], &labels[80..]];
+        for (bi, a) in blobs.iter().enumerate() {
+            for (bj, b) in blobs.iter().enumerate() {
+                if bi >= bj {
+                    continue;
+                }
+                for &la in a.iter() {
+                    assert!(
+                        !b.contains(&la),
+                        "community {la} spans two blobs: {labels:?}"
+                    );
+                }
+            }
+        }
+
+        // Connectivity: BFS within each community over the same k-NN graph the
+        // clusterer built.
+        let g = knn_graph(&pts, DEFAULT_KNN);
+        let k = (*labels.iter().max().unwrap() + 1) as usize;
+        for c in 0..k as i64 {
+            let members: Vec<usize> = (0..labels.len()).filter(|&i| labels[i] == c).collect();
+            if members.is_empty() {
+                continue;
+            }
+            let mut seen: HashSet<usize> = HashSet::new();
+            let mut stack = vec![members[0]];
+            seen.insert(members[0]);
+            while let Some(v) = stack.pop() {
+                for &(u, _) in &g.adj[v] {
+                    if labels[u] == c && seen.insert(u) {
+                        stack.push(u);
+                    }
+                }
+            }
+            assert_eq!(
+                seen.len(),
+                members.len(),
+                "community {c} is internally disconnected: {members:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn leiden_is_deterministic() {
+        let pts = three_blobs();
+        let a = graph_labels(&pts, DEFAULT_RESOLUTION, DEFAULT_KNN, 3, true);
+        let b = graph_labels(&pts, DEFAULT_RESOLUTION, DEFAULT_KNN, 3, true);
+        assert_eq!(a, b, "same seed -> same labels");
     }
 }

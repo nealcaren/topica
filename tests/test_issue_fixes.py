@@ -261,14 +261,35 @@ def test_swappable_clusterer_assigns_every_doc(model_cls, clusterer):
     assert -1 not in set(m.labels)  # no noise bucket
 
 
+@pytest.mark.parametrize("model_cls", ["BERTopic", "Top2Vec"])
+@pytest.mark.parametrize("clusterer", ["louvain", "leiden"])
+def test_graph_clusterer_auto_k_assigns_every_doc(model_cls, clusterer):
+    # #352: louvain / leiden are auto-K (like hdbscan, no num_clusters) but assign
+    # every document (no -1 noise bucket). On three separated blobs they recover
+    # the three topics without being told the count.
+    docs, doc_emb = _three_blobs()
+    cls = getattr(topica, model_cls)
+    m = cls(min_cluster_size=8, clusterer=clusterer, seed=1)  # no num_clusters
+    m.fit(docs, doc_emb)
+    assert m.num_topics == 3
+    assert -1 not in set(m.labels)  # graph clusterers assign everything
+    # deterministic for a fixed seed
+    m2 = cls(min_cluster_size=8, clusterer=clusterer, seed=1)
+    m2.fit(docs, doc_emb)
+    assert list(m.labels) == list(m2.labels)
+
+
 def test_clusterer_validation():
-    # #7: clear errors for the new knobs.
+    # #7/#352: clear errors for the new knobs.
     with pytest.raises(ValueError, match="needs num_clusters"):
         topica.BERTopic(clusterer="kmeans")
     with pytest.raises(ValueError, match="unknown clusterer"):
         topica.Top2Vec(clusterer="dbscan")
     with pytest.raises(ValueError, match="num_clusters must be >= 1"):
         topica.Top2Vec(clusterer="kmeans", num_clusters=-2)
+    # louvain / leiden are auto-K: they must NOT require num_clusters.
+    topica.BERTopic(clusterer="louvain")
+    topica.Top2Vec(clusterer="leiden")
 
 
 def test_report_is_callable():
