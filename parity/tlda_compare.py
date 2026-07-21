@@ -103,5 +103,77 @@ def run_comparison():
 
     print("SUCCESS: Parity checks passed completely!")
 
+
+def run_streaming_comparison():
+    """topica's streaming ``partial_fit`` vs the reference online ``partial_fit``.
+
+    Both build the whitening in one pass over the batches, then train the factors
+    over several passes -- never holding the whole count matrix. We check that the
+    two implementations recover the same topic-word distributions (aligned cosine).
+    """
+    if not HAS_REF:
+        print("Reference TLDA not available. Skipping streaming parity check.")
+        return
+
+    topica.enable_experimental(True)
+
+    rng = np.random.default_rng(0)
+    k, block, n_docs, length = 3, 8, 180, 40
+    vocab_size = k * block
+    x = np.zeros((n_docs, vocab_size))
+    for d in range(n_docs):
+        b = d % k
+        for _ in range(length):
+            x[d, b * block + rng.integers(0, block)] += 1
+
+    vocab = [f"word_{w}" for w in range(vocab_size)]
+    docs = []
+    for d in range(n_docs):
+        doc = []
+        for w in range(vocab_size):
+            doc.extend([f"word_{w}"] * int(x[d, w]))
+        docs.append(doc)
+
+    batch_idx = [list(range(i, min(i + 60, n_docs))) for i in range(0, n_docs, 60)]
+    n_iter_train = 40
+
+    ref = TLDA(
+        n_topic=k, alpha_0=1.0, n_iter_train=n_iter_train, n_iter_test=20,
+        learning_rate=0.01, pca_batch_size=60, third_order_cumulant_batch=10,
+        smoothing=0.01, theta=1.0, random_seed=42,
+    )
+    for _ in range(1 + n_iter_train):
+        for bi, idx in enumerate(batch_idx):
+            ref.partial_fit(x[idx], bi)
+    ref_beta = np.clip(np.asarray(ref.unwhitened_factors), 0, None)
+    ref_beta = (ref_beta / (ref_beta.sum(0, keepdims=True) + 1e-12)).T  # k x V
+
+    m = topica.TensorLDA(k, alpha_0=1.0, learning_rate=0.01, batch_size=10,
+                         pca_batch_size=60, seed=42)
+    for _ in range(1 + n_iter_train):
+        for bi, idx in enumerate(batch_idx):
+            m.partial_fit([docs[i] for i in idx], bi, vocabulary=vocab)
+    m.finalize()
+    top_beta = m.topic_word  # k x V
+
+    used = set()
+    print("Streaming topica-vs-ref aligned topic-word cosine:")
+    for i, tt in enumerate(top_beta):
+        best_j, best_cos = -1, -1.0
+        for j, rt in enumerate(ref_beta):
+            if j in used:
+                continue
+            cos = np.dot(tt, rt) / (np.linalg.norm(tt) * np.linalg.norm(rt) + 1e-12)
+            if cos > best_cos:
+                best_cos, best_j = cos, j
+        used.add(best_j)
+        print(f"  topica topic {i} -> ref topic {best_j}: cosine={best_cos:.6f}")
+        assert best_cos > 0.99, f"Streaming parity mismatch: cosine {best_cos:.6f}"
+
+    print("SUCCESS: Streaming parity check passed!")
+
+
 if __name__ == "__main__":
     run_comparison()
+    print()
+    run_streaming_comparison()

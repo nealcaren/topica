@@ -36,6 +36,49 @@ topic_words = model.topic_word
 raw_factors = model.unwhitened_raw
 ```
 
+## Streaming / online fit
+
+`fit` holds the whole count matrix in memory. The method's headline is that it
+does not have to: `partial_fit(batch, batch_index)` builds the model one batch at
+a time. The first time a `batch_index` is seen it updates the running mean and the
+incremental whitening (a faithful port of `sklearn.IncrementalPCA`); every later
+sighting whitens that batch with the current PCA and runs the third-order factor
+SGD. So the usual driver makes one pass over the batches to build the whitening,
+then several passes to train the factors, never materializing the full matrix.
+
+```python
+import topica
+
+topica.enable_experimental()
+model = topica.TensorLDA(num_topics=10, learning_rate=0.01, seed=42)
+
+vocab = build_vocab(stream)          # fix the vocabulary up front
+n_iter_train = 40
+for _ in range(1 + n_iter_train):    # pass 0 builds whitening; the rest train
+    for i, batch in enumerate(read_batches(stream)):   # each batch: list[list[str]]
+        model.partial_fit(batch, i, vocabulary=vocab)
+model.finalize()
+
+topic_words = model.topic_word       # topic_word / weights / top_words / transform
+doc_topics  = model.transform(some_docs)   # doc_topic is not retained for a stream
+```
+
+Fix the vocabulary once via `vocabulary=` (recommended for streaming) or let the
+first batch define it; out-of-vocabulary tokens in later batches are dropped.
+`pca_batch_size` bounds the incremental-PCA sub-batch (and so the internal
+Gram-matrix size) independently of how large a batch you pass. `finalize()`
+recovers the topic-word matrix and weights; it errors unless every batch was fed
+at least twice (one whitening pass, then at least one training pass). `doc_topic`
+is unavailable on a streamed model because the documents are not retained — call
+`transform(docs)` for the documents whose topics you want.
+
+Streaming reproduces the reference package's online `partial_fit` exactly: on a
+shared corpus the aligned topic-word cosine between topica's streaming fit and the
+reference's online fit is `> 0.9999`. Because the method-of-moments factorization
+is init-sensitive, both implementations recover the same topics — including the
+same partial recoveries on hard corpora. `parity/tlda_compare.py` runs the
+comparison when the reference package is available.
+
 ## Current evidence
 
 ### Upstream comparison

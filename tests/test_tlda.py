@@ -206,3 +206,137 @@ def test_tlda_unequal_prevalences():
     assert block_weights5[1] > block_weights5[2]
 
 
+# --------------------------------------------------------------------------- #
+# Streaming / online partial_fit (issue #255)
+# --------------------------------------------------------------------------- #
+def _stream_fit(k, vocab, batches, n_passes=41, **kw):
+    """One whitening pass + (n_passes-1) training passes over `batches`."""
+    m = topica.TensorLDA(k, **kw)
+    for _ in range(n_passes):
+        for i, b in enumerate(batches):
+            m.partial_fit(b, i, vocabulary=vocab)
+    m.finalize()
+    return m
+
+
+def test_partial_fit_recovers_and_conforms():
+    topica.enable_experimental(True)
+    # a well-separated corpus / seed where the method recovers all blocks
+    # (method-of-moments recovery is init-sensitive, so the corpus is pinned;
+    # cross-implementation parity is checked in parity/tlda_compare.py).
+    docs, vocab = _planted(k=3, block=8, n=150, length=30, seed=1)
+    batches = [docs[i:i + 50] for i in range(0, len(docs), 50)]
+    m = _stream_fit(3, vocab, batches, seed=42, learning_rate=0.01, batch_size=10)
+
+    assert m.topic_word.shape == (3, len(vocab))
+    assert np.allclose(m.topic_word.sum(axis=1), 1.0, atol=1e-5)
+    assert np.isclose(m.weights.sum(), 1.0, atol=1e-6)
+    assert np.all(m.weights >= 0)
+    # each topic concentrates on a distinct planted block
+    blocks = set()
+    for j in range(3):
+        top = int(np.argmax(m.topic_word[j]))
+        blocks.add(vocab[top].split("w")[0])  # "b{block}"
+    assert len(blocks) == 3
+
+
+def test_partial_fit_matches_batch_transform_surface():
+    topica.enable_experimental(True)
+    docs, vocab = _planted(k=3, block=8, n=120, length=20, seed=1)
+    batches = [docs[i:i + 40] for i in range(0, len(docs), 40)]
+    m = _stream_fit(3, vocab, batches, seed=7, learning_rate=0.01, batch_size=10)
+    # transform works off the streamed model; doc_topic and coherence do not.
+    dt = m.transform(docs[:10])
+    assert dt.shape == (10, 3)
+    assert np.allclose(dt.sum(axis=1), 1.0, atol=1e-5)
+    # doc_topic raises AttributeError so hasattr() dispatch guards return False.
+    with pytest.raises(AttributeError, match="streamed"):
+        _ = m.doc_topic
+    assert hasattr(m, "doc_topic") is False
+    # coherence needs the documents, which streaming does not retain.
+    with pytest.raises(RuntimeError, match="streamed"):
+        m.coherence(5)
+    assert m.top_words(3, topic=0)
+
+
+def test_partial_fit_determinism():
+    topica.enable_experimental(True)
+    docs, vocab = _planted(k=3, block=8, n=90, length=20, seed=3)
+    batches = [docs[i:i + 30] for i in range(0, len(docs), 30)]
+    a = _stream_fit(3, vocab, batches, seed=11, learning_rate=0.01, batch_size=10)
+    b = _stream_fit(3, vocab, batches, seed=11, learning_rate=0.01, batch_size=10)
+    assert np.array_equal(a.topic_word, b.topic_word)
+    assert np.array_equal(a.weights, b.weights)
+
+
+def test_partial_fit_infers_vocab_and_drops_oov():
+    topica.enable_experimental(True)
+    docs, vocab = _planted(k=3, block=8, n=90, length=20, seed=5)
+    batches = [docs[i:i + 30] for i in range(0, len(docs), 30)]
+    # No vocabulary= : inferred from the first batch. A later OOV token is dropped.
+    m = topica.TensorLDA(3, seed=5, learning_rate=0.01, batch_size=10)
+    for _ in range(21):
+        for i, b in enumerate(batches):
+            batch = b if i == 0 else [d + ["ZZZ_oov"] for d in b]
+            m.partial_fit(batch, i)
+    m.finalize()
+    assert m.topic_word.shape[0] == 3
+    assert "ZZZ_oov" not in m.vocabulary
+
+
+def test_partial_fit_error_paths():
+    topica.enable_experimental(True)
+    docs, vocab = _planted(k=3, block=8, n=60, length=15, seed=0)
+    batches = [docs[i:i + 30] for i in range(0, len(docs), 30)]
+
+    # finalize before any training pass errors (each batch seen only once)
+    m = topica.TensorLDA(3, seed=0)
+    for i, b in enumerate(batches):
+        m.partial_fit(b, i, vocabulary=vocab)
+    with pytest.raises(RuntimeError, match="at least twice"):
+        m.finalize()
+
+    # finalize with no batches at all errors
+    m2 = topica.TensorLDA(3, seed=0)
+    with pytest.raises(RuntimeError, match="call partial_fit"):
+        m2.finalize()
+
+    # empty batch errors
+    m3 = topica.TensorLDA(3, seed=0)
+    with pytest.raises(ValueError, match="empty batch"):
+        m3.partial_fit([], 0, vocabulary=vocab)
+
+    # partial_fit after a batch fit is rejected
+    m4 = topica.TensorLDA(3, seed=0)
+    m4.fit(docs)
+    with pytest.raises(RuntimeError, match="already finalized"):
+        m4.partial_fit(docs, 0, vocabulary=vocab)
+
+    # a vocabulary with duplicates is rejected
+    m5 = topica.TensorLDA(3, seed=0)
+    with pytest.raises(ValueError, match="duplicate"):
+        m5.partial_fit(batches[0], 0, vocabulary=vocab + [vocab[0]])
+
+
+def test_partial_fit_finalize_guards_readiness():
+    topica.enable_experimental(True)
+    docs, vocab = _planted(k=3, block=8, n=90, length=15, seed=2)
+    batches = [docs[i:i + 30] for i in range(0, len(docs), 30)]
+
+    # finalize errors unless EVERY batch had a training pass, not just one.
+    m = topica.TensorLDA(3, seed=2)
+    for i, b in enumerate(batches):        # whitening pass: all batches once
+        m.partial_fit(b, i, vocabulary=vocab)
+    m.partial_fit(batches[0], 0, vocabulary=vocab)  # train only batch 0
+    with pytest.raises(RuntimeError, match="at least twice"):
+        m.finalize()
+
+    # a stream with fewer documents than the whitening rank is rejected.
+    tiny = [docs[0], docs[1]]              # 2 docs, n_eigenvec defaults to K=3
+    m2 = topica.TensorLDA(3, seed=2)
+    for _ in range(3):
+        m2.partial_fit(tiny, 0, vocabulary=vocab)
+    with pytest.raises(RuntimeError, match="exceeds the 2 documents"):
+        m2.finalize()
+
+
