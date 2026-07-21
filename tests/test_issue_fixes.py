@@ -292,6 +292,53 @@ def test_clusterer_validation():
     topica.Top2Vec(clusterer="leiden")
 
 
+def _overlapping_blobs(k=8, per=40, dim=15, spread=1.6, seed=0):
+    rng = np.random.default_rng(seed)
+    centers = rng.normal(0, 2.0, (k, dim))
+    emb, docs = [], []
+    for c in range(k):
+        for _ in range(per):
+            emb.append(centers[c] + rng.normal(0, spread, dim))
+            docs.append([f"w{c}_{i}" for i in rng.integers(0, 6, 6)])
+    return docs, np.array(emb)
+
+
+@pytest.mark.parametrize("clusterer", ["louvain", "leiden"])
+def test_resolution_steers_topic_count(clusterer):
+    # #358: higher resolution -> more, smaller topics for the graph clusterers.
+    docs, emb = _overlapping_blobs()
+    lo = topica.BERTopic(clusterer=clusterer, resolution=0.5, min_cluster_size=5, seed=1)
+    lo.fit(docs, emb)
+    hi = topica.BERTopic(clusterer=clusterer, resolution=3.0, min_cluster_size=5, seed=1)
+    hi.fit(docs, emb)
+    assert hi.num_topics > lo.num_topics
+
+
+def test_knn_neighbors_steers_topic_count():
+    # #358: smaller knn_neighbors -> more, tighter communities. The effect is
+    # weaker than resolution, so use a fine-grained corpus where it bites.
+    docs, emb = _overlapping_blobs(k=20, per=40, dim=30, spread=1.4)
+    small = topica.Top2Vec(clusterer="leiden", knn_neighbors=5, min_cluster_size=5, seed=1)
+    small.fit(docs, emb)
+    large = topica.Top2Vec(clusterer="leiden", knn_neighbors=30, min_cluster_size=5, seed=1)
+    large.fit(docs, emb)
+    assert small.num_topics > large.num_topics
+
+
+def test_resolution_ignored_by_nongraph_and_validated():
+    # #358: resolution/knn_neighbors are accepted but ignored for non-graph
+    # clusterers, and invalid values error at construction.
+    docs, emb = _overlapping_blobs()
+    m = topica.BERTopic(
+        clusterer="kmeans", num_clusters=4, resolution=3.0, knn_neighbors=8, seed=1
+    )
+    m.fit(docs, emb)
+    assert m.num_topics == 4
+    for bad in (dict(resolution=0.0), dict(resolution=-1.0), dict(knn_neighbors=0)):
+        with pytest.raises(ValueError):
+            topica.BERTopic(clusterer="leiden", **bad)
+
+
 def test_report_is_callable():
     # #12: report(model) works as a one-call overview (alias for summary).
     assert callable(topica.report)

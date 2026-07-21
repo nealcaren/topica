@@ -355,6 +355,16 @@ somewhere. Two ways out:
   assert -1 not in model.labels
   ```
 
+  "Auto" does not mean unsteerable. `resolution` (default 1.0) trades off how many
+  topics they find — raise it for a fine-grained corpus, lower it for broad themes;
+  the secondary `knn_neighbors` (default 15) does the same more weakly (smaller =
+  more, tighter topics). Both are ignored by the other clusterers.
+
+  ```python
+  fine  = topica.BERTopic(clusterer="leiden", resolution=2.0, seed=1)   # more topics
+  broad = topica.BERTopic(clusterer="leiden", resolution=0.5, seed=1)   # fewer topics
+  ```
+
 - **Switch to a fixed-K clusterer.** Pass `clusterer="kmeans"`, `"gmm"`, or
   `"agglomerative"` with `num_clusters=K` to BERTopic or Top2Vec. All three assign
   every document to one of `K` clusters, so there is no `-1` label (and the topic

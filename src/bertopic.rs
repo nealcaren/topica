@@ -149,6 +149,8 @@ pub fn fit_bertopic(
     reduce_frequent: bool,
     clusterer: &str,
     num_clusters: Option<usize>,
+    resolution: f64,
+    knn_neighbors: usize,
     seed: u64,
 ) -> BertopicModel {
     let emb_dim = doc_embeddings.first().map_or(0, |r| r.len());
@@ -177,6 +179,8 @@ pub fn fit_bertopic(
         num_clusters,
         min_cluster_size,
         min_samples,
+        resolution,
+        knn_neighbors,
         seed,
     );
     let mut num_topics = topic_count(&labels);
@@ -478,7 +482,7 @@ mod tests {
         // HDBSCAN gets the cluster count wrong.
         let raw = crate::reduce::pca(&emb, 5, 7);
         let raw_k = topic_count(&crate::cluster::cluster_points(
-            &raw, "hdbscan", None, 15, 5, 7,
+            &raw, "hdbscan", None, 15, 5, 1.0, 15, 7,
         ));
         assert_ne!(raw_k, 4, "raw PCA clustering should mis-count the 4 rays");
         // L2-normalized: each point maps to its ray direction, cleanly separable
@@ -486,7 +490,7 @@ mod tests {
         let mut normed = crate::reduce::pca(&emb, 5, 7);
         crate::reduce::l2_normalize_rows(&mut normed);
         let norm_k = topic_count(&crate::cluster::cluster_points(
-            &normed, "hdbscan", None, 15, 5, 7,
+            &normed, "hdbscan", None, 15, 5, 1.0, 15, 7,
         ));
         assert_eq!(
             norm_k, 4,
@@ -495,7 +499,8 @@ mod tests {
         // The shipped pipeline normalizes on the PCA path, so fit_bertopic itself
         // recovers block-pure topics (each topic's top words from one planted block).
         let m = fit_bertopic(
-            &docs, &emb, vocab, 5, false, 15, 15, 5, None, 4, 1, false, false, "hdbscan", None, 7,
+            &docs, &emb, vocab, 5, false, 15, 15, 5, None, 4, 1, false, false, "hdbscan", None,
+            1.0, 15, 7,
         );
         assert_eq!(
             m.num_topics, 4,
@@ -517,7 +522,8 @@ mod tests {
     fn recovers_topics_via_ctfidf() {
         let (docs, emb, vocab) = planted(3, 40, 1);
         let m = fit_bertopic(
-            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None, 1,
+            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None,
+            1.0, 15, 1,
         );
         assert!(
             m.num_topics >= 3,
@@ -542,7 +548,8 @@ mod tests {
     fn nr_topics_reduces_to_target() {
         let (docs, emb, vocab) = planted(4, 40, 2);
         let full = fit_bertopic(
-            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None, 2,
+            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None,
+            1.0, 15, 2,
         );
         assert!(full.num_topics >= 3);
         let reduced = fit_bertopic(
@@ -561,6 +568,8 @@ mod tests {
             false,
             "hdbscan",
             None,
+            1.0,
+            15,
             2,
         );
         assert_eq!(reduced.num_topics, 2, "should reduce to 2 topics");
@@ -570,7 +579,8 @@ mod tests {
     fn approximate_distribution_favors_own_topic() {
         let (docs, emb, vocab) = planted(3, 40, 3);
         let m = fit_bertopic(
-            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None, 3,
+            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None,
+            1.0, 15, 3,
         );
         // A document made only of block-0 words should put its largest mass on the
         // topic whose top words are block 0.
@@ -589,7 +599,8 @@ mod tests {
     fn bertopic_conforms() {
         let (docs, emb, vocab) = planted(3, 40, 1);
         let m = fit_bertopic(
-            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None, 1,
+            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None,
+            1.0, 15, 1,
         );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
