@@ -2625,6 +2625,7 @@ class Top2Vec:
         num_clusters: int | None = None,
         resolution: float = 1.0,
         knn_neighbors: int = 15,
+        diagnostics: bool = True,
         seed: int = 42,
     ) -> None: ...
     def fit(
@@ -2718,6 +2719,7 @@ class BERTopic:
         num_clusters: int | None = None,
         resolution: float = 1.0,
         knn_neighbors: int = 15,
+        diagnostics: bool = True,
         seed: int = 42,
     ) -> None: ...
     def fit(

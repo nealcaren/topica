@@ -333,6 +333,22 @@ caveat: the per-time *prevalence* trajectory (`eta`) is weakly identified in DET
 either — so read the topic-word evolution (`beta_over_time`), which is stable, and
 do not over-interpret a single `eta` trajectory.
 
+## Post-fit diagnostics
+
+The reduce→cluster pipeline decides almost everything, and its failure modes are
+*silent*: a bad configuration still returns a model. BERTopic and Top2Vec run a
+cheap post-fit check and emit a one-time `warnings.warn` when the result looks
+degenerate — near-total **collapse** (1–2 topics on a sizeable corpus, usually
+unnormalized coordinates or too large a `min_cluster_size`), a very **high noise
+fraction** (most documents left unassigned), or gross **over-splitting** (far more
+topics than the corpus supports). Each message names a concrete fix. The
+thresholds are conservative; silence it with `diagnostics=False`:
+
+```python
+model = topica.BERTopic(seed=1)                    # warns if the fit is degenerate
+model = topica.BERTopic(diagnostics=False, seed=1) # silent
+```
+
 ## Avoiding the `-1` noise bucket
 
 HDBSCAN (the default) discovers the topic count but leaves sparse documents

@@ -12650,6 +12650,78 @@ fn parse_graph_params(resolution: f64, knn_neighbors: usize) -> PyResult<(f64, u
     Ok((resolution, knn_neighbors))
 }
 
+/// Post-fit sanity checks for the embedding-clustering pipeline (issue #356). The
+/// reduce→cluster pipeline decides almost everything and its failure modes are
+/// silent — the run completes and returns a model with no signal that the result
+/// is garbage. This emits a `warnings.warn` (never an error) for the common
+/// degenerate signatures, each naming a concrete fix. Thresholds are deliberately
+/// conservative to avoid false positives, and the whole check is opt-out via the
+/// `diagnostics=False` constructor flag. `num_topics == 0` is handled separately by
+/// the caller (a stronger "no clusters" warning), so it is skipped here.
+fn emit_cluster_diagnostics(
+    py: Python<'_>,
+    model_name: &str,
+    clusterer: &str,
+    num_topics: usize,
+    labels: &[i64],
+) -> PyResult<()> {
+    let n = labels.len();
+    if n == 0 || num_topics == 0 {
+        return Ok(());
+    }
+    // Auto-K clusterers discover the count; the fixed-K ones (kmeans/gmm/
+    // agglomerative) return exactly what the user asked for, so collapse and
+    // over-split are not meaningful signals there.
+    let auto_k = matches!(clusterer, "hdbscan" | "louvain" | "leiden");
+    let warn = |msg: String| -> PyResult<()> {
+        let warnings = py.import_bound("warnings")?;
+        warnings.call_method1("warn", (msg,))?;
+        Ok(())
+    };
+
+    // (1) Collapse: an auto-K run that finds only 1-2 topics on a non-trivial
+    // corpus almost always means the geometry is wrong (unnormalized coordinates)
+    // or min_cluster_size is too large.
+    if auto_k && num_topics <= 2 && n >= 200 {
+        warn(format!(
+            "{model_name}: clustering produced only {num_topics} topic(s) from {n} \
+             documents. This usually means the reduced coordinates were poorly \
+             separated (try reducer=\"umap\", or check embedding quality) or \
+             min_cluster_size is too large."
+        ))?;
+    }
+
+    // (2) High noise: only HDBSCAN produces a `-1` bucket; a large one means most
+    // documents went unassigned.
+    let noise = labels.iter().filter(|&&l| l < 0).count();
+    let noise_frac = noise as f64 / n as f64;
+    if noise_frac > 0.5 {
+        warn(format!(
+            "{model_name}: {pct}% of documents were left unassigned (-1 noise). \
+             Lower min_cluster_size/min_samples, or switch to a clusterer that \
+             assigns every document (clusterer=\"leiden\", or \"kmeans\"/\"gmm\" \
+             with num_clusters).",
+            pct = (noise_frac * 100.0).round() as i64
+        ))?;
+    }
+
+    // (3) Over-split: an auto-K run with far more topics than a corpus that size
+    // can support (HDBSCAN over-splits embedding data in particular).
+    if auto_k && n >= 200 && num_topics > 20 && (num_topics as f64) > (n as f64) / 10.0 {
+        let remedy = if clusterer == "hdbscan" {
+            "consider clusterer=\"kmeans\"/\"gmm\" with num_clusters, or \
+             clusterer=\"leiden\""
+        } else {
+            "lower `resolution` (or raise `knn_neighbors`)"
+        };
+        warn(format!(
+            "{model_name}: discovered {num_topics} topics from {n} documents, which \
+             may be an over-split; {remedy}."
+        ))?;
+    }
+    Ok(())
+}
+
 /// Guard `reducer='umap'`: error out on the (non-wheel) build where the `umap`
 /// feature was not compiled in. The in-house UMAP reducer is seeded and fully
 /// reproducible for a fixed `seed`, so — unlike the old umap-rs path — there is
@@ -12696,6 +12768,7 @@ pub struct Top2Vec {
     num_clusters: Option<usize>,
     resolution: f64,
     knn_neighbors: usize,
+    diagnostics: bool,
     seed: u64,
     fitted: bool,
     has_word_vectors: bool,
@@ -12750,11 +12823,15 @@ impl Top2Vec {
     /// neighborhood size for the reducer. `resolution` (default 1.0) and
     /// `knn_neighbors` (default 15) steer the ``"louvain"``/``"leiden"`` graph
     /// clusterers — higher `resolution` yields more, smaller topics; they are
-    /// ignored by the other clusterers. `seed` seeds the deterministic phases.
+    /// ignored by the other clusterers. `diagnostics` (default True) emits a
+    /// one-time warning after fitting if the clustering looks degenerate (near-total
+    /// collapse, a very high noise fraction, or gross over-splitting); pass False to
+    /// silence it. `seed` seeds the deterministic phases.
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
                         reducer="pca", n_neighbors=15, clusterer="hdbscan",
-                        num_clusters=None, resolution=1.0, knn_neighbors=15, seed=42))]
+                        num_clusters=None, resolution=1.0, knn_neighbors=15,
+                        diagnostics=true, seed=42))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         n_components: usize,
@@ -12766,6 +12843,7 @@ impl Top2Vec {
         num_clusters: Option<i64>,
         resolution: f64,
         knn_neighbors: usize,
+        diagnostics: bool,
         seed: u64,
     ) -> PyResult<Self> {
         if min_cluster_size < 2 {
@@ -12784,6 +12862,7 @@ impl Top2Vec {
             num_clusters,
             resolution,
             knn_neighbors,
+            diagnostics,
             seed,
             fitted: false,
             has_word_vectors: false,
@@ -12914,6 +12993,14 @@ impl Top2Vec {
                     "Top2Vec: clustering found no clusters (num_topics=0). Lower \
                  min_cluster_size, add data, or check the scale of your embeddings.",
                 ),
+            )?;
+        } else if self.diagnostics {
+            emit_cluster_diagnostics(
+                py,
+                "Top2Vec",
+                &self.clusterer,
+                model.num_topics,
+                &model.labels,
             )?;
         }
         let k = model.num_topics;
@@ -13230,6 +13317,9 @@ impl Top2Vec {
             // the defaults (it never re-clusters).
             resolution: 1.0,
             knn_neighbors: 15,
+            // Fit-time flag; a loaded model won't re-fit, so it just carries the
+            // default (diagnostics only fire during fit()).
+            diagnostics: true,
             seed: s.seed,
             fitted: s.fitted,
             has_word_vectors: s.has_word_vectors,
@@ -13286,6 +13376,7 @@ pub struct BERTopic {
     num_clusters: Option<usize>,
     resolution: f64,
     knn_neighbors: usize,
+    diagnostics: bool,
     seed: u64,
     fitted: bool,
     topic_names: Vec<String>,
@@ -13360,13 +13451,17 @@ impl BERTopic {
     /// `num_clusters` sets the target count for the last three (ignored by HDBSCAN
     /// and the auto-K clusterers). `resolution` (default 1.0) and `knn_neighbors`
     /// (default 15) steer the ``"louvain"``/``"leiden"`` clusterers — higher
-    /// `resolution` yields more, smaller topics; ignored by the others. `seed`
-    /// seeds the deterministic phases.
+    /// `resolution` yields more, smaller topics; ignored by the others.
+    /// `diagnostics` (default True) emits a one-time warning after fitting if the
+    /// clustering looks degenerate (near-total collapse, a very high noise
+    /// fraction, or gross over-splitting); pass False to silence it. `seed` seeds
+    /// the deterministic phases.
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
                         nr_topics=None, window=4, stride=1, reducer="pca", n_neighbors=15,
                         bm25=false, reduce_frequent=false, clusterer="hdbscan",
-                        num_clusters=None, resolution=1.0, knn_neighbors=15, seed=42))]
+                        num_clusters=None, resolution=1.0, knn_neighbors=15,
+                        diagnostics=true, seed=42))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         n_components: usize,
@@ -13383,6 +13478,7 @@ impl BERTopic {
         num_clusters: Option<i64>,
         resolution: f64,
         knn_neighbors: usize,
+        diagnostics: bool,
         seed: u64,
     ) -> PyResult<Self> {
         if min_cluster_size < 2 {
@@ -13406,6 +13502,7 @@ impl BERTopic {
             num_clusters,
             resolution,
             knn_neighbors,
+            diagnostics,
             seed,
             fitted: false,
             topic_names: Vec::new(),
@@ -13504,6 +13601,14 @@ impl BERTopic {
                     "BERTopic: clustering found no clusters (num_topics=0). Lower \
                  min_cluster_size, add data, or check the scale of your embeddings.",
                 ),
+            )?;
+        } else if self.diagnostics {
+            emit_cluster_diagnostics(
+                py,
+                "BERTopic",
+                &self.clusterer,
+                model.num_topics,
+                &model.labels,
             )?;
         }
         let k = model.num_topics;
@@ -13781,6 +13886,9 @@ impl BERTopic {
             // Fit-time knobs; a loaded model never re-clusters, so defaults suffice.
             resolution: 1.0,
             knn_neighbors: 15,
+            // Fit-time flag; diagnostics only fire during fit(), so a loaded model
+            // carries the default.
+            diagnostics: true,
             seed: s.seed,
             fitted: s.fitted,
             topic_names,
