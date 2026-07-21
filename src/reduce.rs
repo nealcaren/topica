@@ -860,7 +860,17 @@ mod tsne_tests {
         let data: Vec<Vec<f64>> = (0..20)
             .map(|_| (0..6).map(|_| rng.gen::<f64>()).collect())
             .collect();
-        let emb = project(&data, 2, "tsne", 15, 30.0, 0.5, 250, 0);
+        let emb = project(
+            &data,
+            2,
+            "tsne",
+            15,
+            &UmapParams::default(),
+            30.0,
+            0.5,
+            250,
+            0,
+        );
         assert_eq!(emb.len(), 20);
         assert!(emb
             .iter()
