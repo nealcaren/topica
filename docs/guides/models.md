@@ -70,6 +70,7 @@ generated from `python/topica/registry.py`.
 |---|---|---|---|---|
 | `GSDMM` | text | gibbs | seed-reproducible | Gibbs-sampling Dirichlet mixture: one topic per short document. |
 | `PT` | text | gibbs | seed-reproducible | Pseudo-document topic model: pool short texts into pseudo-documents. |
+| `BTM` | text | gibbs | seed-reproducible | Biterm topic model: learns topics from corpus-level word co-occurrence (biterms). |
 
 ### Dynamic & hierarchical
 

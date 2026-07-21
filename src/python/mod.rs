@@ -68,6 +68,7 @@ use crate::{
 mod arrays;
 mod error;
 // Model legs (one pyclass family per file; each does `use super::*`).
+mod btm;
 mod idealpoint;
 mod nmf_lsa;
 mod party_embeddings;
@@ -79,6 +80,7 @@ mod tbip;
 mod tlda;
 mod wordfish;
 use arrays::*;
+use btm::BTM;
 use error::*;
 use idealpoint::IdealPointTM;
 use nmf_lsa::{LSA, NMF};
@@ -18283,6 +18285,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SupervisedLDA>()?;
     m.add_class::<PT>()?;
     m.add_class::<GSDMM>()?;
+    m.add_class::<BTM>()?;
     m.add_class::<SeededLDA>()?;
     m.add_class::<KeyATM>()?;
     m.add_class::<Top2Vec>()?;

@@ -36,12 +36,40 @@ model = topica.PT(num_topics=20, num_pseudo=100, seed=1)
 model.fit(short_docs, iters=1000)
 ```
 
+## BTM — biterm co-occurrence
+
+The Biterm Topic Model (Yan, Guo, Lan & Cheng 2013) attacks short-text sparsity
+from the word side. Instead of estimating a topic mixture per document (too few
+words to pin down), it models the corpus as a bag of **biterms** — unordered word
+pairs co-occurring within a window — and learns one *global* topic distribution
+plus per-topic word distributions from those co-occurrences. Both words of a
+biterm are drawn from the same topic, so the topic-word distributions absorb the
+co-occurrence signal directly. Document topics are read back out afterward by
+summing each document's biterms (`p(z|d) = Σ_b p(z|b) p(b|d)`).
+
+```python
+model = topica.BTM(num_topics=20, seed=1)       # alpha defaults to 50/k
+model.fit(short_docs, iters=1000)
+
+model.topic_word           # per-topic word distributions
+model.theta                # the global topic distribution p(z)
+scores = model.transform(new_docs)   # document topics for held-out texts
+```
+
+`window` (default 15) sets how far apart two words may be to form a biterm;
+`background=True` reserves topic 0 for common words (the empirical word
+distribution), which can sharpen the remaining topics. Validated against the
+reference R `BTM` package (see the [validation record](../publishing/validation.md)).
+
 ## Which to use
 
 - **`GSDMM`** when each short text is plausibly about one thing (most tweets,
   most survey answers) and you want the model to find how many groups there are.
 - **`PT`** when texts may still blend a few topics and you want LDA-style mixed
   membership that holds up on short texts.
+- **`BTM`** when documents are very short and you want the topics driven by
+  corpus-wide word co-occurrence rather than any per-document mixture — the
+  standard choice for tweet-length text.
 
-Both feed the same [diagnostics](diagnostics.md) and
+All three feed the same [diagnostics](diagnostics.md) and
 [validation](../publishing/validation.md) as every other model.

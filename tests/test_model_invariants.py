@@ -329,6 +329,13 @@ def _fit_pt(iters=300):
     return m.doc_topic, m.topic_word, K
 
 
+def _fit_btm(iters=200):
+    docs = _short_corpus()
+    m = topica.BTM(num_topics=K, seed=1)
+    m.fit(docs, iters=iters)
+    return m.doc_topic, m.topic_word, K
+
+
 # ---- Dynamic & hierarchical -------------------------------------------------
 
 def _fit_dtm(iters=20):
@@ -540,6 +547,7 @@ FIT_ADAPTERS = {
     "LabeledLDA": _fit_labeledlda,
     "SupervisedLDA": _fit_supervisedlda,
     "GSDMM": _fit_gsdmm,
+    "BTM": _fit_btm,
     "PT": _fit_pt,
     "DTM": _fit_dtm,
     "DETM": _fit_detm,

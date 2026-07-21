@@ -55,7 +55,7 @@ def test_registry_fields_use_allowed_vocabularies():
 
 
 def test_list_models_filters():
-    assert {m.name for m in list_models(group="short-text")} == {"GSDMM", "PT"}
+    assert {m.name for m in list_models(group="short-text")} == {"GSDMM", "PT", "BTM"}
     emb = {m.name for m in list_models(brings="embeddings")}
     assert {"BERTopic", "Top2Vec", "ETM", "FASTopic"} <= emb
     assert all(m.inference == "variational" for m in list_models(inference="variational"))
