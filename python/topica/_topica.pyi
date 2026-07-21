@@ -2223,8 +2223,9 @@ class PolylingualLDA:
     shares one topic distribution theta; each topic carries a per-language word
     distribution phi^l, so topic k denotes the same theme in every language (aligned
     by construction). `alpha` is the per-topic document-topic prior (default 0.01),
-    `beta` the per-language topic-word prior; with `optimize_alpha` the asymmetric
-    alpha.m prior is re-estimated every `optimize_interval` Gibbs iterations."""
+    `beta` the topic-word prior applied to every language (default 0.01); with
+    `optimize_alpha` the asymmetric alpha.m prior is re-estimated every
+    `optimize_interval` Gibbs iterations after an `optimize_burn_in` warm-up."""
 
     def __init__(
         self,

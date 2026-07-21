@@ -139,10 +139,13 @@ fn extract_languages(
 #[pymethods]
 impl PolylingualLDA {
     /// Create an unfitted PLTM. `alpha` is the per-topic document-topic prior
-    /// (default `0.01`, the paper's `0.01·T` total with a uniform base measure),
-    /// `beta` the per-language topic-word prior (default `0.01`). With
-    /// `optimize_alpha=True` (default) the asymmetric αm prior is re-estimated
-    /// every `optimize_interval` Gibbs iterations, as in the paper.
+    /// (default `0.01`, the paper's `0.01·T` total with a uniform base measure).
+    /// `beta` is the topic-word prior (default `0.01`); it is applied to every
+    /// language (the paper's recommended βˡ = 0.01 for all languages). The Rust
+    /// core supports a distinct βˡ per language, but the binding exposes a single
+    /// shared value. With `optimize_alpha=True` (default) the asymmetric αm prior
+    /// is re-estimated every `optimize_interval` Gibbs iterations after an
+    /// `optimize_burn_in` warm-up, as in the reference implementation.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=None, beta=0.01, iters=1000,
                         optimize_alpha=true, optimize_interval=10,
