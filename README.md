@@ -102,6 +102,7 @@ thread count), or `llm-bounded`.
 |---|---|---|---|---|
 | `GSDMM` | text | gibbs | seed-reproducible | Gibbs-sampling Dirichlet mixture: one topic per short document. |
 | `PT` | text | gibbs | seed-reproducible | Pseudo-document topic model: pool short texts into pseudo-documents. |
+| `BTM` | text | gibbs | seed-reproducible | Biterm topic model: learns topics from corpus-level word co-occurrence (biterms). |
 
 ### Dynamic & hierarchical
 
@@ -213,6 +214,7 @@ As such, Topica stands on a generation of open topic-modeling research and code.
 - [**seededlda**](https://github.com/koheiw/seededlda) (Watanabe, 2023) — `SeededLDA`: the seeded-prior scheme
 - [**LightLDA**](https://github.com/microsoft/LightLDA) (Yuan et al., 2015) — `LDA`: the alias-table Metropolis-Hastings sampler
 - **GSDMM** (Yin & Wang, 2014) — `GSDMM`: the movie-group-process mixture for short text
+- [**BTM**](https://github.com/bnosac/BTM) (Yan, Guo, Lan & Cheng, 2013; R package by Jan Wijffels) — `BTM`: the biterm co-occurrence topic model for short text
 - [**ProdLDA / AVITM**](https://arxiv.org/abs/1703.01488) (Srivastava & Sutton, 2017) — `ProdLDA`: autoencoding variational inference and the product-of-experts word model
 - [**BERTopic**](https://github.com/MaartenGr/BERTopic) (Grootendorst, 2022) and [**Top2Vec**](https://github.com/ddangelov/Top2Vec) (Angelov, 2020) — `BERTopic`, `Top2Vec`: the embedding-clustering pipeline, class-based TF-IDF, and the `reduce → cluster → represent` design
 - [**ETM**](https://github.com/adjidieng/ETM) (Dieng, Ruiz & Blei, 2020) — `ETM`: the Embedded Topic Model (per-document variational EM and an amortized VAE)

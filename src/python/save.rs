@@ -52,6 +52,7 @@ pub(crate) const MODEL_TAG_SENTENCE_IDEAL: u8 = 34;
 pub(crate) const MODEL_TAG_TBIP: u8 = 35;
 pub(crate) const MODEL_TAG_PARTY_EMBEDDINGS: u8 = 36;
 pub(crate) const MODEL_TAG_TLDA: u8 = 37;
+pub(crate) const MODEL_TAG_BTM: u8 = 38;
 
 pub(crate) fn model_tag_name(tag: u8) -> &'static str {
     match tag {
@@ -90,6 +91,7 @@ pub(crate) fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_TBIP => "TBIP",
         MODEL_TAG_PARTY_EMBEDDINGS => "PartyEmbeddings",
         MODEL_TAG_TLDA => "TensorLDA",
+        MODEL_TAG_BTM => "BTM",
         _ => "unknown",
     }
 }

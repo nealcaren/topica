@@ -25,6 +25,7 @@ pub use topica_core::{corpus, ctm, cvb0, estimator, linalg, spectral, variationa
 // because `TopicModel` stays in `topica`).
 pub mod cvb0_ext;
 
+pub mod btm;
 #[doc(hidden)]
 pub mod cli; // argument helpers for the CLI binaries (not part of the public API)
 pub mod coherence;

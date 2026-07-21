@@ -137,6 +137,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("PT", "short-text", ("text",), "gibbs", "seed-reproducible", ("short-text",),
            "Pseudo-document topic model: pool short texts into pseudo-documents.",
            "guides/short-text.md"),
+        _m("BTM", "short-text", ("text",), "gibbs", "seed-reproducible", ("short-text",),
+           "Biterm topic model: learns topics from corpus-level word co-occurrence (biterms).",
+           "guides/short-text.md"),
         # ---- Dynamic & hierarchical ----------------------------------------
         _m("DTM", "dynamic-hierarchical", ("text", "times"), "variational", "seed-reproducible", ("temporal",),  # random seed default (gensim-style); init="spectral" is deterministic
            "Dynamic topic model: a fixed topic set whose word distributions drift across time slices.",

@@ -2156,6 +2156,67 @@ class GSDMM:
     def __repr__(self) -> str: ...
 
 
+class BTM:
+    """Biterm Topic Model (Yan, Guo, Lan & Cheng 2013): a word co-occurrence topic
+    model for short text. Rather than a per-document topic mixture (which short
+    texts are too sparse to estimate), BTM learns one global topic distribution and
+    per-topic word distributions from the corpus's biterms -- unordered word pairs
+    co-occurring within a window. `alpha` defaults to 50/num_topics."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha: float | None = None,
+        beta: float = 0.01,
+        iters: int = 1000,
+        window: int = 15,
+        background: bool = False,
+        seed: int = 42,
+    ) -> None: ...
+    def fit(
+        self, data: Corpus | Sequence[Sequence[str]], *, iters: int | None = None
+    ) -> None: ...
+    def transform(
+        self, data: Corpus | Sequence[Sequence[str]]
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Infer document-topic distributions for new documents (the sum_b scheme)."""
+        ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def theta(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Global topic distribution p(z) (num_topics,); sums to 1. BTM's
+        corpus-level topic prevalence, the counterpart to a per-document mixture."""
+        ...
+    @property
+    def num_biterms(self) -> int:
+        """Number of biterms extracted from the training corpus."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def model_family(self) -> str: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> "BTM": ...
+    def __repr__(self) -> str: ...
+
+
 class PA:
     """Pachinko Allocation Model (Li & McCallum 2006): a DAG of `num_super`
     super-topics over `num_sub` shared sub-topics over words, capturing topic

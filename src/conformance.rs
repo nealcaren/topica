@@ -261,6 +261,11 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         exempt: &[],
     },
     RegistryEntry {
+        name: "BTM",
+        family: ModelFamily::None_,
+        exempt: &[],
+    },
+    RegistryEntry {
         name: "BERTopic",
         family: ModelFamily::None_,
         exempt: &[],
@@ -313,7 +318,7 @@ mod registry_tests {
         // Estimator-backed Rust struct).
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            25,
+            26,
             "registry size drifted from the Python REGISTRY"
         );
     }
