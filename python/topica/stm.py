@@ -51,6 +51,7 @@ class TopicEffect:
     ci_high: np.ndarray
     r_squared: float
     vcov: np.ndarray = None  # full (p, p) coefficient covariance (Rubin-pooled)
+    varcomp: dict = None  # random-effect variance components (sd), when random= is set
 
     def as_dict(self) -> dict:
         return {
@@ -248,6 +249,158 @@ def _fit_one(y, X, *, link, groups, hat, XtX_inv, dof, weights=None):
     return beta, cov, r2
 
 
+def _parse_random_intercept(random):
+    """Parse an lme4-style random-effect spec into a grouping-factor name.
+
+    Accepts ``"(1 | group)"`` or ``"1 | group"``. Only a random *intercept*
+    (``1 | group``) is supported; a random slope (``x | group``) raises. Returns
+    the bare group-factor column name.
+    """
+    spec = random.strip()
+    if spec.startswith("(") and spec.endswith(")"):
+        spec = spec[1:-1].strip()
+    if "|" not in spec:
+        raise ValueError(
+            "random= must be an lme4-style bar, e.g. '(1 | group)'"
+        )
+    lhs, group = (s.strip() for s in spec.split("|", 1))
+    if lhs not in ("1", ""):
+        raise NotImplementedError(
+            "only random intercepts '(1 | group)' are supported; random slopes "
+            f"like '({lhs} | {group})' are not yet implemented"
+        )
+    if "|" in group or not group:
+        raise ValueError(
+            "random= supports a single grouping factor, e.g. '(1 | group)'"
+        )
+    return group
+
+
+def _golden_min(f, lo, hi, tol=1e-6, max_iter=200):
+    """Minimize a unimodal ``f`` on ``[lo, hi]`` by golden-section search.
+    Returns the minimizing x. Dependency-light (no scipy)."""
+    invphi = (np.sqrt(5.0) - 1.0) / 2.0
+    invphi2 = (3.0 - np.sqrt(5.0)) / 2.0
+    a, b = lo, hi
+    h = b - a
+    c = a + invphi2 * h
+    d = a + invphi * h
+    fc, fd = f(c), f(d)
+    for _ in range(max_iter):
+        if h < tol:
+            break
+        if fc < fd:
+            b, d, fd = d, c, fc
+            h = b - a
+            c = a + invphi2 * h
+            fc = f(c)
+        else:
+            a, c, fc = c, d, fd
+            h = b - a
+            d = a + invphi * h
+            fd = f(d)
+    return (a + b) / 2.0
+
+
+def _reml_random_intercept(y, X, groups):
+    """REML fit of ``y = Xβ + b_{group} + ε`` with a single random intercept.
+
+    ``groups`` is a length-n integer array of grouping-factor codes. Matches
+    ``lme4::lmer(y ~ X + (1 | group), REML=TRUE)`` for the fixed effects: the
+    variance ratio ``λ = σ²_group / σ²_resid`` is chosen by minimizing the
+    profiled REML deviance (a smooth 1-D problem, so golden-section search finds
+    the same optimum lme4 does), and the fixed-effect covariance is
+    ``σ̂²_resid · (XᵀV⁻¹X)⁻¹``. The random-intercept covariance ``V`` is
+    block-diagonal by group, so every GLS quantity has a closed form per group
+    (Sherman-Morrison), no n×n solve.
+
+    Returns ``dict(beta, vcov, var_group, var_resid)``. ``r²`` is left to the
+    caller (undefined for a mixed model, reported as NaN like faSTM/lme4).
+    """
+    n, p = X.shape
+    dof = max(n - p, 1)
+    XtX = X.T @ X
+    Xty = X.T @ y
+    # Per-group sufficient statistics: column sums of X, sum of y, and size.
+    codes = np.asarray(groups)
+    uniq = np.unique(codes)
+    gidx = [np.where(codes == g)[0] for g in uniq]
+    gstats = [(X[idx].sum(axis=0), float(y[idx].sum()), len(idx)) for idx in gidx]
+
+    def _fit_at(lam):
+        A = XtX.copy()
+        b = Xty.copy()
+        log_m = 0.0
+        for sx, sy, nj in gstats:
+            c = lam / (1.0 + lam * nj)
+            A -= c * np.outer(sx, sx)
+            b -= c * sx * sy
+            log_m += np.log1p(lam * nj)
+        a_inv = np.linalg.pinv(A)
+        beta = a_inv @ b
+        resid = y - X @ beta
+        r_m_r = 0.0
+        for idx, (_, _, nj) in zip(gidx, gstats):
+            rj = resid[idx]
+            c = lam / (1.0 + lam * nj)
+            s = float(rj.sum())
+            r_m_r += float(rj @ rj) - c * s * s
+        sigma2 = max(r_m_r / dof, 1e-300)
+        _, logdet_a = np.linalg.slogdet(A)
+        deviance = dof * np.log(sigma2) + log_m + logdet_a
+        return deviance, beta, a_inv, sigma2
+
+    def _dev(t):
+        return _fit_at(np.exp(t))[0]
+
+    # Search log λ over a wide bracket, then compare against the λ→0 (OLS)
+    # boundary — the singular fit lme4 allows when the group variance is ~0.
+    t_lo, t_hi = np.log(1e-8), np.log(1e8)
+    t_star = _golden_min(_dev, t_lo, t_hi)
+    dev_star, beta, a_inv, sigma2 = _fit_at(np.exp(t_star))
+    lam = float(np.exp(t_star))
+    dev0, beta0, a_inv0, sigma20 = _fit_at(0.0)
+    if dev0 <= dev_star:
+        lam, beta, a_inv, sigma2 = 0.0, beta0, a_inv0, sigma20
+    return {
+        "beta": beta,
+        "vcov": sigma2 * a_inv,
+        "var_group": lam * sigma2,
+        "var_resid": sigma2,
+    }
+
+
+def _pooled_random(theta, X, group_codes, topic_list):
+    """Per-topic random-intercept coefficients, Rubin-pooled across θ draws.
+
+    Mirrors :func:`_pooled_coefficients` (returns ``(beta, Sigma, r2=nan)`` per
+    topic) but fits ``_reml_random_intercept`` per draw, so the method-of-
+    composition standard errors carry both the mixed-model sampling error (the
+    within term) and the topic-estimation uncertainty (the between term).
+    """
+    pooled = theta.ndim == 3
+    p = X.shape[1]
+    out = []
+    for t in topic_list:
+        if pooled:
+            m = theta.shape[0]
+            betas = np.empty((m, p))
+            within = np.zeros((p, p))
+            for i in range(m):
+                fit = _reml_random_intercept(theta[i, :, t], X, group_codes)
+                betas[i] = fit["beta"]
+                within += fit["vcov"]
+            within /= m
+            beta = betas.mean(axis=0)
+            between = np.cov(betas, rowvar=False) if m > 1 else np.zeros((p, p))
+            Sigma = within + (1.0 + 1.0 / m) * np.atleast_2d(between)
+            out.append((beta, Sigma, float("nan")))
+        else:
+            fit = _reml_random_intercept(theta[:, t], X, group_codes)
+            out.append((fit["beta"], fit["vcov"], float("nan")))
+    return out
+
+
 def _pooled_coefficients(theta, X, *, link, groups, hat, XtX_inv, dof, topic_list,
                          weights=None):
     """Fit per-topic regressions and pool by Rubin's rules.
@@ -353,6 +506,7 @@ def estimate_effect(
     ci=0.95,
     cluster=None,
     weights=None,
+    random=None,
     link="identity",
     corpus=None,
     nsims=None,
@@ -385,6 +539,16 @@ def estimate_effect(
       survey-weighted corpus, or documents weighted by length) estimates the
       population-level effect. Composes with ``cluster`` (weighted cluster-robust
       SEs) and with ``link``. Matches faSTM's weighted ``estimateEffect``.
+    - ``random`` — an lme4-style random-intercept term ``"(1 | group)"`` (with
+      ``group`` a column of ``data``). Fits a mixed model — the fixed-effect design
+      plus a random intercept per group — by REML for each posterior draw, then
+      Rubin-pools the fixed effects, matching faSTM's ``estimateEffect(... ~ x +
+      (1 | group))``. Use it when documents are nested in units (state, outlet,
+      author) whose baseline topic level varies: the random intercept soaks up that
+      between-unit variation so the fixed-effect SEs are not understated. The
+      estimated group and residual standard deviations are attached as
+      ``TopicEffect.varcomp``. Only a random *intercept* is supported (not random
+      slopes), with ``link="identity"`` and no ``cluster``/``weights``.
 
     Specifying the design. Give the covariates one of two ways: a prebuilt design
     matrix as ``X`` (with ``feature_names``), or an R-style ``formula`` together
@@ -448,6 +612,20 @@ def estimate_effect(
         raise ValueError("provide X (a design matrix), or formula= with data=.")
     if isinstance(weights, str):
         raise ValueError("weights= as a column name requires formula= with data=.")
+
+    # Random-intercept spec: read the grouping factor from `data`.
+    group_raw = None
+    if random is not None:
+        if link != "identity":
+            raise ValueError("random= is only supported with link='identity'")
+        if cluster is not None or weights is not None:
+            raise ValueError("random= cannot be combined with cluster= or weights=")
+        group_name = _parse_random_intercept(random)
+        if data is None or group_name not in getattr(data, "columns", []):
+            raise ValueError(
+                f"random= needs data= with a '{group_name}' column"
+            )
+        group_raw = np.asarray(data[group_name])
 
     # Accept a fitted model as the first argument and draw theta internally: with
     # nsims, the family-appropriate posterior is sampled for method-of-composition
@@ -515,10 +693,28 @@ def estimate_effect(
         if t < 0 or t >= num_topics:
             raise ValueError(f"topic {t} out of range (num_topics={num_topics})")
 
-    pooled_results = _pooled_coefficients(
-        theta, X, link=link, groups=groups, hat=hat, XtX_inv=XtX_inv, dof=dof,
-        topic_list=topic_list, weights=weights,
-    )
+    varcomp_by_topic = None
+    if group_raw is not None:
+        if group_raw.shape[0] != n:
+            raise ValueError("random= group must have one label per document")
+        _, group_codes = np.unique(group_raw, return_inverse=True)
+        group_name = _parse_random_intercept(random)
+        pooled_results = _pooled_random(theta, X, group_codes, topic_list)
+        # Variance components: one REML fit per topic on the posterior-mean theta
+        # (faSTM reports VarCorr from a single stable refit, not the pooled draws).
+        theta_bar = theta.mean(axis=0) if theta.ndim == 3 else theta
+        varcomp_by_topic = {}
+        for t in topic_list:
+            fit = _reml_random_intercept(theta_bar[:, t], X, group_codes)
+            varcomp_by_topic[t] = {
+                group_name: float(np.sqrt(max(fit["var_group"], 0.0))),
+                "residual": float(np.sqrt(max(fit["var_resid"], 0.0))),
+            }
+    else:
+        pooled_results = _pooled_coefficients(
+            theta, X, link=link, groups=groups, hat=hat, XtX_inv=XtX_inv, dof=dof,
+            topic_list=topic_list, weights=weights,
+        )
 
     out: list[TopicEffect] = []
     for (beta, Sigma, r2), t in zip(pooled_results, topic_list):
@@ -536,6 +732,7 @@ def estimate_effect(
                 ci_high=beta + z_crit * se,
                 r_squared=r2,
                 vcov=Sigma,
+                varcomp=None if varcomp_by_topic is None else varcomp_by_topic[t],
             )
         )
     return out

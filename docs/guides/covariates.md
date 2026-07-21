@@ -127,6 +127,28 @@ Build non-linear and interaction terms with `topica.spline` and
 `topica.interaction`. Full detail and the journal-grade treatment are in the
 [Publishing](../publishing/effects.md) track.
 
+### Random intercepts for nested data
+
+When documents are nested in units — states, outlets, authors — whose baseline
+topic level varies, add an lme4-style random intercept with `random="(1 | group)"`
+(where `group` is a column of `data`). `estimate_effect` then fits a mixed model
+(the fixed-effect design plus a per-group random intercept) by REML for each
+posterior draw and Rubin-pools the fixed effects, so the between-unit variation is
+absorbed rather than inflating — or hiding in — the fixed-effect standard errors.
+The estimated group and residual standard deviations come back on
+`TopicEffect.varcomp`. This matches faSTM's `estimateEffect(1:K ~ x + (1 | group))`
+and reproduces `lme4::lmer`'s fixed effects exactly.
+
+```python
+effects = topica.estimate_effect(
+    draws, formula="~ party", data=meta, random="(1 | state)",
+)
+effects[0].varcomp   # {"state": sd_between, "residual": sd_within}
+```
+
+Only a random *intercept* is supported (not random slopes), with the identity link
+and without `cluster`/`weights`.
+
 ### Average marginal effects
 
 When the design has splines or interactions, no single coefficient is "the
