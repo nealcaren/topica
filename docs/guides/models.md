@@ -222,7 +222,11 @@ TensorLDA is a method-of-moments topic model: it whitens second-order count
 moments and fits a factorized third-order cumulant. It is most useful when you
 want a fast, count-based experimental alternative for large corpora. It is not
 the right default for covariate-effect or prevalence-measurement questions;
-prefer STM or DMR for those.
+prefer STM or DMR for those. Beyond the in-memory `fit`, it also supports a
+streaming `partial_fit(batch, batch_index)` / `finalize()` path (incremental
+whitening + per-batch factor SGD) that builds the model one batch at a time
+without holding the whole count matrix; see the
+[validation record](../replications/tlda.md#streaming-online-fit).
 
 ```python
 topica.enable_experimental()

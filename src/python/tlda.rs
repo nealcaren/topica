@@ -18,11 +18,18 @@ pub struct TensorLDA {
     smoothing: f64,
     theta: f64,
     n_eigenvec: Option<usize>,
+    pca_batch_size: usize,
     seed: u64,
     fitted: bool,
     topic_names: Vec<String>,
     model: Option<crate::tlda::TensorLdaModel>,
     corpus: Option<corpus::Corpus>,
+    /// Streaming state (set by `partial_fit`, consumed by `finalize`).
+    stream: Option<crate::tlda::TldaStream>,
+    /// word -> id map fixed on the first `partial_fit` call.
+    stream_index: Option<HashMap<String, u32>>,
+    /// vocabulary (id -> word) fixed on the first `partial_fit` call.
+    stream_vocab: Option<Vec<String>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -36,6 +43,8 @@ struct TensorLdaState {
     smoothing: f64,
     theta: f64,
     n_eigenvec: Option<usize>,
+    #[serde(default)]
+    pca_batch_size: Option<usize>,
     seed: u64,
     fitted: bool,
     topic_names: Vec<String>,
@@ -109,7 +118,8 @@ impl TensorLDA {
     #[new]
     #[pyo3(signature = (num_topics, *, alpha_0=1.0, n_iter_train=100, n_iter_test=30,
                         learning_rate=0.01, batch_size=10, smoothing=0.01,
-                        theta=1.0, n_eigenvec=None, seed=42))]
+                        theta=1.0, n_eigenvec=None, pca_batch_size=128, seed=42))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         num_topics: usize,
         alpha_0: f64,
@@ -120,6 +130,7 @@ impl TensorLDA {
         smoothing: f64,
         theta: f64,
         n_eigenvec: Option<usize>,
+        pca_batch_size: usize,
         seed: u64,
     ) -> PyResult<Self> {
         require_experimental("TensorLDA")?;
@@ -153,6 +164,9 @@ impl TensorLDA {
                 return Err(PyValueError::new_err("n_eigenvec must be >= num_topics"));
             }
         }
+        if pca_batch_size == 0 {
+            return Err(PyValueError::new_err("pca_batch_size must be > 0"));
+        }
         Ok(TensorLDA {
             num_topics,
             alpha_0,
@@ -163,11 +177,15 @@ impl TensorLDA {
             smoothing,
             theta,
             n_eigenvec,
+            pca_batch_size,
             seed,
             fitted: false,
             topic_names: Vec::new(),
             model: None,
             corpus: None,
+            stream: None,
+            stream_index: None,
+            stream_vocab: None,
         })
     }
 
@@ -255,6 +273,170 @@ impl TensorLDA {
         self.corpus = Some(corpus);
         self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
         self.fitted = true;
+        // A batch fit supersedes any half-built stream.
+        self.stream = None;
+        self.stream_index = None;
+        self.stream_vocab = None;
+        Ok(())
+    }
+
+    /// Update the model with a batch of documents (streaming / online fit).
+    ///
+    /// The FIRST time a `batch_index` is seen this updates the running mean and
+    /// the incremental whitening only; every LATER sighting whitens the batch
+    /// and runs the CP factor SGD. So the usual driver makes one pass over the
+    /// batches to build the whitening, then several passes to train the factors,
+    /// never holding the whole corpus in memory:
+    ///
+    /// ```python
+    /// m = topica.TensorLDA(num_topics=10, seed=0)
+    /// for _ in range(1 + n_iter_train):
+    ///     for i, batch in enumerate(batches):
+    ///         m.partial_fit(batch, i, vocabulary=vocab)
+    /// m.finalize()
+    /// ```
+    ///
+    /// Fix the vocabulary once with `vocabulary=` (recommended for streaming) or
+    /// let the first batch define it; out-of-vocabulary tokens in later batches
+    /// are dropped. Call `finalize()` when the stream is done.
+    #[pyo3(signature = (data, batch_index, *, vocabulary=None))]
+    fn partial_fit(
+        &mut self,
+        py: Python<'_>,
+        data: &Bound<'_, PyAny>,
+        batch_index: i64,
+        vocabulary: Option<Vec<String>>,
+    ) -> PyResult<()> {
+        if self.fitted {
+            return Err(PyRuntimeError::new_err(
+                "model is already finalized; construct a new TensorLDA to stream again",
+            ));
+        }
+        let str_docs: Vec<Vec<String>> = if let Ok(c) = data.extract::<Corpus>() {
+            c.inner
+                .docs
+                .iter()
+                .map(|doc| {
+                    doc.iter()
+                        .map(|&wid| c.inner.id_to_word[wid as usize].clone())
+                        .collect()
+                })
+                .collect()
+        } else {
+            data.extract::<Vec<Vec<String>>>().map_err(|_| {
+                PyValueError::new_err("partial_fit() expects a Corpus or a list of token lists")
+            })?
+        };
+        if str_docs.is_empty() {
+            return Err(PyValueError::new_err("partial_fit() got an empty batch"));
+        }
+
+        // Establish the fixed vocabulary + streaming state on the first call.
+        if self.stream.is_none() {
+            let vocab = if let Some(v) = vocabulary {
+                if v.is_empty() {
+                    return Err(PyValueError::new_err("vocabulary must be non-empty"));
+                }
+                v
+            } else {
+                let mut seen = std::collections::BTreeSet::new();
+                for doc in &str_docs {
+                    for w in doc {
+                        seen.insert(w.clone());
+                    }
+                }
+                seen.into_iter().collect::<Vec<String>>()
+            };
+            let vsize = vocab.len();
+            if vsize < self.num_topics {
+                return Err(PyValueError::new_err(
+                    "vocabulary must have at least num_topics words",
+                ));
+            }
+            let n_eigen = self.n_eigenvec.unwrap_or(self.num_topics);
+            if n_eigen > vsize {
+                return Err(PyValueError::new_err(format!(
+                    "whitening rank n_eigenvec={n_eigen} cannot exceed vocabulary size {vsize}",
+                )));
+            }
+            let index: HashMap<String, u32> = vocab
+                .iter()
+                .enumerate()
+                .map(|(i, w)| (w.clone(), i as u32))
+                .collect();
+            self.stream = Some(crate::tlda::TldaStream::new(
+                self.num_topics,
+                vsize,
+                self.n_eigenvec,
+                self.alpha_0,
+                self.theta,
+                self.learning_rate,
+                self.pca_batch_size,
+                self.batch_size,
+                self.smoothing,
+                self.seed,
+            ));
+            self.stream_index = Some(index);
+            self.stream_vocab = Some(vocab);
+        }
+
+        let v = self.stream_vocab.as_ref().unwrap().len();
+        let index = self.stream_index.as_ref().unwrap();
+        let n = str_docs.len();
+        let mut counts = vec![0.0; n * v];
+        for (i, doc) in str_docs.iter().enumerate() {
+            for w in doc {
+                if let Some(&id) = index.get(w) {
+                    counts[i * v + id as usize] += 1.0;
+                }
+            }
+        }
+        let stream = self.stream.as_mut().unwrap();
+        py.allow_threads(move || stream.partial_fit_batch(&counts, n, batch_index));
+        Ok(())
+    }
+
+    /// Recover the topic-word matrix and weights from the streamed batches and
+    /// mark the model fitted. Errors unless every batch was fed at least twice
+    /// (one whitening pass, then at least one training pass). After this,
+    /// `topic_word`, `weights`, `top_words`, and `transform` are available;
+    /// `doc_topic` is not (streaming does not retain the documents -- use
+    /// `transform` on the docs whose topics you want).
+    fn finalize(&mut self, py: Python<'_>) -> PyResult<()> {
+        let trained = match self.stream.as_ref() {
+            Some(s) => s.trained(),
+            None => {
+                return Err(PyRuntimeError::new_err(
+                    "no streamed batches; call partial_fit() before finalize()",
+                ))
+            }
+        };
+        if !trained {
+            return Err(PyRuntimeError::new_err(
+                "each batch must be seen at least twice: one pass to build the whitening, \
+                 then one or more passes to train the factors",
+            ));
+        }
+        let (n_iter_test, seed) = (self.n_iter_test, self.seed);
+        let stream = self.stream.as_ref().unwrap();
+        let model = py.allow_threads(move || stream.finalize(n_iter_test, seed));
+
+        let vocab = self.stream_vocab.take().unwrap();
+        let vsize = vocab.len();
+        let corpus = corpus::Corpus {
+            id_to_word: vocab,
+            docs: Vec::new(),
+            doc_names: Vec::new(),
+            doc_labels: Vec::new(),
+            doc_freqs: vec![0; vsize],
+            total_freqs: vec![0; vsize],
+        };
+        self.model = Some(model);
+        self.corpus = Some(corpus);
+        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
+        self.fitted = true;
+        self.stream = None;
+        self.stream_index = None;
         Ok(())
     }
 
@@ -308,10 +490,19 @@ impl TensorLDA {
         Ok(vecs_to_arr2(&self.fitted_model()?.topic_word).to_pyarray_bound(py))
     }
 
-    /// Document-topic matrix (num_docs, num_topics); rows sum to 1.
+    /// Document-topic matrix (num_docs, num_topics); rows sum to 1. Not available
+    /// for a model built by streaming `partial_fit` (the documents are not
+    /// retained) -- call `transform(docs)` on the documents whose topics you want.
     #[getter]
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        Ok(vecs_to_arr2(&self.fitted_model()?.doc_topic).to_pyarray_bound(py))
+        let m = self.fitted_model()?;
+        if m.doc_topic.is_empty() {
+            return Err(PyRuntimeError::new_err(
+                "doc_topic is unavailable for a streamed (partial_fit) model; \
+                 call transform(docs) to infer document topics",
+            ));
+        }
+        Ok(vecs_to_arr2(&m.doc_topic).to_pyarray_bound(py))
     }
 
     #[getter]
@@ -427,6 +618,7 @@ impl TensorLDA {
                 smoothing: self.smoothing,
                 theta: self.theta,
                 n_eigenvec: self.n_eigenvec,
+                pca_batch_size: Some(self.pca_batch_size),
                 seed: self.seed,
                 fitted: self.fitted,
                 topic_names: self.topic_names.clone(),
@@ -473,11 +665,15 @@ impl TensorLDA {
             smoothing: s.smoothing,
             theta: s.theta,
             n_eigenvec: s.n_eigenvec,
+            pca_batch_size: s.pca_batch_size.unwrap_or(128),
             seed: s.seed,
             fitted: s.fitted,
             topic_names: s.topic_names,
             model,
             corpus: s.corpus,
+            stream: None,
+            stream_index: None,
+            stream_vocab: None,
         })
     }
 }
