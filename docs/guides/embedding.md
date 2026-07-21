@@ -396,6 +396,20 @@ somewhere. Two ways out:
   assert -1 not in model.labels
   ```
 
+  With `clusterer="gmm"`, BERTopic's `doc_topic` is the GMM's **soft** membership
+  (the EM posterior responsibilities, rows summing to one), not the c-TF-IDF
+  approximate distribution — a genuine mixture `θ` for documents that span several
+  topics, where hard clustering assigns only one. The hard `labels` stay the row
+  argmax. (This applies to the base fit; combining `gmm` with `nr_topics` topic
+  reduction reverts `doc_topic` to the c-TF-IDF distribution.)
+
+  ```python
+  model = topica.BERTopic(clusterer="gmm", num_clusters=20, seed=1)
+  model.fit(docs, doc_emb)
+  theta  = model.doc_topic          # (D, 20) soft membership from GMM responsibilities
+  labels = theta.argmax(1)          # == model.labels
+  ```
+
 - **Use a fixed-K, every-document model.** `EmbeddingLDA`, `FASTopic`, and `ETM`
   are embedding-driven but give every document a full topic distribution `θ` with
   no noise bucket. In our testing `EmbeddingLDA` gave the best recovery when the

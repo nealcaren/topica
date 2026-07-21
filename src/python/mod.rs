@@ -13356,7 +13356,9 @@ impl Top2Vec {
 /// defined by class-based TF-IDF over their documents' words, so no word
 /// embeddings are needed. `nr_topics` merges the most similar topics down to a
 /// target count; `doc_topic` is the approximate distribution (a sliding window's
-/// c-TF-IDF compared to each topic). You bring the document embeddings.
+/// c-TF-IDF compared to each topic) — except with `clusterer="gmm"` (and no
+/// `nr_topics`), where it is the GMM's soft posterior membership. You bring the
+/// document embeddings.
 ///
 /// No embedder of your own? `topica.llm_embed(texts, model=...)` builds the
 /// matrix (OpenAI, or offline `sentence-transformers`).
