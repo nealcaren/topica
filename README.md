@@ -32,7 +32,7 @@ print(topica.summary(model))                  # top words per topic
 `from_dataframe` keeps your metadata aligned to the documents that survive pruning, so the same corpus feeds a structural topic model that relates topic prevalence to a covariate, with a well-calibrated hypothesis test:
 
 ```python
-prevalence = corpus.metadata[["treatment"]].to_numpy(float)
+prevalence = corpus.metadata[["treatment"]]   # a numeric DataFrame goes straight in
 
 stm = topica.STM(num_topics=5, seed=42)
 stm.fit(corpus, prevalence, prevalence_names=["treatment"])
