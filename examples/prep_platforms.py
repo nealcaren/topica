@@ -1,4 +1,4 @@
-"""Rebuild the U.S. party-platforms corpus for examples/ectm_platforms.py by
+"""Rebuild the U.S. party-platforms corpus for examples/stm_content_time_platforms.py by
 scraping the American Presidency Project (presidency.ucsb.edu).
 
 Writes examples/platforms_data/platforms.json.gz: a list of

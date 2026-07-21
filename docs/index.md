@@ -74,8 +74,9 @@ End-to-end analyses on real, redistributable corpora:
   vignette, reproduced.
 - [**Political blogs**](examples/poliblog.md): STM with ideology and time
   covariates.
-- [**Party platforms**](examples/ectm.md): how Democrats and Republicans word the
-  same topics, and how that contrast has shifted across 20 elections (ECTM).
+- [**Party platforms**](examples/content_time.md): how Democrats and Republicans
+  word the same topics, and how that contrast has shifted across 20 elections
+  (STM `content_time`).
 - [**LLM embeddings and labels**](examples/llm-topics.md): embedding-based topics
   with contextual document vectors and LLM-generated topic labels.
 

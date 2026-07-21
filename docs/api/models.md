@@ -24,8 +24,6 @@ This page covers the count-based models. The embedding-based models
 
 ::: topica.STM
 
-::: topica.ECTM
-
 ::: topica.STS
 
 ::: topica.ProdLDA

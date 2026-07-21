@@ -1,5 +1,5 @@
 //! Shared scaffolding for stochastic variational inference (SVI / minibatch EM)
-//! across the logistic-normal family (CTM/STM, ECTM, STS). The per-model fits own
+//! across the logistic-normal family (CTM/STM, STS). The per-model fits own
 //! their sufficient statistics and (non-conjugate) topic-word M-steps; this module
 //! owns only the two pieces that are identical everywhere: the Robbins-Monro
 //! learning-rate schedule and the deterministic per-epoch document shuffle. Both

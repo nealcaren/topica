@@ -229,22 +229,6 @@ def _fit_sage(iters=200):
     return m.doc_topic, np.asarray(m.topic_word_marginal), K
 
 
-def _fit_ectm(iters=60):
-    # ECTM is experimental and gated.
-    was = topica.experimental_enabled()
-    topica.enable_experimental(True)
-    try:
-        docs, _, _, levels = _covariate_corpus()
-        groups = [f"g{l % 2}" for l in levels]
-        times = [2000 + (i % 3) for i in range(len(docs))]
-        m = topica.ECTM(num_topics=K, seed=1, init="spectral")
-        m.fit(docs, times=times, content=groups, iters=iters,
-              period_smooth=5.0, interaction_shrink=2.0)
-        return m.doc_topic, m.topic_word, K
-    finally:
-        topica.enable_experimental(was)
-
-
 def _fit_dmr(iters=300):
     docs, _, X, _ = _covariate_corpus()
     m = topica.DMR(num_topics=K, seed=1, optimize_interval=25, burn_in=50)
@@ -548,7 +532,6 @@ FIT_ADAPTERS = {
     "STM": _fit_stm,
     "STS": _fit_sts,
     "SAGE": _fit_sage,
-    "ECTM": _fit_ectm,
     "DMR": _fit_dmr,
     "GDMR": _fit_gdmr,
     "NarrativeTM": _fit_narrativetm,

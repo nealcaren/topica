@@ -1,6 +1,6 @@
 # Content-covariate diagnostics
 
-Diagnostics for the content-covariate models (STM, STS, SAGE, ECTM), which learn
+Diagnostics for the content-covariate models (STM, STS, SAGE), which learn
 a *group-specific* topic-word tensor $\beta_{k,g,v}$ — how each topic is worded by
 each group. The global topic-word average hides that variation; these read it
 back out.
@@ -9,14 +9,16 @@ They answer a question that recurs with content models: does a group's
 distinctive language land **within** a topic (one topic, worded differently by
 group) or **fragment** into parallel, group-skewed topics? `topic_polarization`
 measures the first; `split_topics` detects the second. The main lever that moves
-a fit between the two is ECTM's `content_prior_var` (looser prior → more
-within-topic variation).
+a fit between the two is the STM content prior `content_prior_var` (looser prior →
+more within-topic variation).
 
 All read the group tensor through one adapter, so they work across model
-families — STM via `topic_word_by_group`, SAGE via its 3-D `topic_word`, ECTM
-via `content_word_dist(group, period)` (period-averaged by default; pass
-`period=` for a per-period trajectory). STS has a *continuous* sentiment axis
-rather than discrete groups, so the adapter discretizes it — evaluating
+families — STM via `topic_word_by_group`, SAGE via its 3-D `topic_word`. For an
+STM fit with an ordered `content_time` covariate the group axis is the
+base-by-period cross (labels `"base@period"`), which
+`content_trajectory` / `content_divergence` read over ordered time. STS has a
+*continuous* sentiment axis rather than discrete groups, so the adapter
+discretizes it — evaluating
 `topic_word_at(level)` at the sentiment poles `-1`/`0`/`+1`
 (negative/neutral/positive) by default; pass `levels=` to choose your own.
 

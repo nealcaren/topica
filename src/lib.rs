@@ -32,7 +32,6 @@ pub mod conformance;
 pub mod detm;
 pub mod dmr;
 pub mod dtm;
-pub mod ectm;
 pub mod etm;
 pub mod etm_vae;
 pub mod gsdmm;

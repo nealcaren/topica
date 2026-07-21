@@ -43,7 +43,7 @@ pub(crate) const MODEL_TAG_LSA: u8 = 23;
 pub(crate) const MODEL_TAG_COMBINEDTM: u8 = 24;
 pub(crate) const MODEL_TAG_ZEROSHOTTM: u8 = 25;
 pub(crate) const MODEL_TAG_DETM: u8 = 26;
-pub(crate) const MODEL_TAG_ECTM: u8 = 27;
+// 27 retired: ECTM removed (superseded by STM content_time); do not reuse.
 // 28-30 reserved for the parked experimental trio (HyperLDA/TopicRBM/DiffusionTM).
 pub(crate) const MODEL_TAG_IDEALPOINT: u8 = 31;
 pub(crate) const MODEL_TAG_WORDFISH: u8 = 32;
@@ -81,7 +81,6 @@ pub(crate) fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_COMBINEDTM => "CombinedTM",
         MODEL_TAG_ZEROSHOTTM => "ZeroShotTM",
         MODEL_TAG_DETM => "DETM",
-        MODEL_TAG_ECTM => "ECTM",
         // Tags 31 and 33 are both IdealPointTM: word-embedding and count
         // representations of the same model, merged into one pyclass.
         MODEL_TAG_IDEALPOINT => "IdealPointTM",
