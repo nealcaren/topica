@@ -98,6 +98,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("TensorLDA", "general-purpose", ("text",), "svd", "seed-reproducible", (),
            "Online Tensor LDA (Kangaslahti et al. 2026): deterministic method-of-moments topic modeling via second and third-order cumulants.",
            "guides/models.md#tensorlda", experimental=True),
+        _m("PolylingualLDA", "general-purpose", ("text",), "gibbs", "seed-reproducible", ("cross-lingual",),
+           "Polylingual topic model (Mimno et al. 2009): aligned topics across languages from document tuples that share one topic distribution.",
+           "guides/models.md#polylinguallda"),
         # ---- Covariates & structure ----------------------------------------
         _m("STM", "covariates", ("text", "metadata"), "variational", "bit-exact", (),
            "Structural topic model: relate topic prevalence and content to covariates.",

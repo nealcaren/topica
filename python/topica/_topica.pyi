@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional, Sequence, Union, overload
+from typing import Any, Iterable, Mapping, Optional, Sequence, Union, overload
 import numpy
 import numpy.typing
 
@@ -2214,6 +2214,89 @@ class BTM:
     def save(self, path: str) -> None: ...
     @staticmethod
     def load(path: str) -> "BTM": ...
+    def __repr__(self) -> str: ...
+
+
+class PolylingualLDA:
+    """Polylingual Topic Model (Mimno, Wallach, Naradowsky, Smith & McCallum 2009):
+    LDA for aligned document tuples across L languages. Every document in a tuple
+    shares one topic distribution theta; each topic carries a per-language word
+    distribution phi^l, so topic k denotes the same theme in every language (aligned
+    by construction). `alpha` is the per-topic document-topic prior (default 0.01),
+    `beta` the per-language topic-word prior; with `optimize_alpha` the asymmetric
+    alpha.m prior is re-estimated every `optimize_interval` Gibbs iterations."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha: float | None = None,
+        beta: float = 0.01,
+        iters: int = 1000,
+        optimize_alpha: bool = True,
+        optimize_interval: int = 10,
+        optimize_burn_in: int = 200,
+        seed: int = 42,
+    ) -> None: ...
+    def fit(
+        self,
+        data: Mapping[str, Corpus | Sequence[Sequence[str]]]
+        | Sequence[Corpus | Sequence[Sequence[str]]],
+        *,
+        iters: int | None = None,
+    ) -> None:
+        """Fit on aligned document tuples: a dict {language: docs} (preferred) or a
+        list of per-language corpora. Every language must have the same number of
+        tuples, aligned by index."""
+        ...
+    def transform(
+        self,
+        data: Mapping[str, Corpus | Sequence[Sequence[str]]]
+        | Sequence[Corpus | Sequence[Sequence[str]]],
+        *,
+        sweeps: int = 100,
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Infer tuple-topic distributions theta for new aligned tuples, holding the
+        fitted per-language phi fixed."""
+        ...
+    def topic_word(
+        self, lang: str | None = None
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-language topic-word matrix phi^l (num_topics, vocab_l); rows sum to 1.
+        `lang` selects the language by name or index (default: the first)."""
+        ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Tuple-topic matrix theta (num_tuples, num_topics); shared across languages."""
+        ...
+    @property
+    def alpha(self) -> numpy.typing.NDArray[numpy.float64]:
+        """The learned asymmetric document-topic prior alpha.m (num_topics)."""
+        ...
+    @property
+    def languages(self) -> list[str]:
+        """The languages, in the order supplied to fit."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def model_family(self) -> str: ...
+    def vocabulary(self, lang: str | None = None) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    def top_words(
+        self, n: int = 10, *, lang: str | None = None, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(
+        self, n: int = 10, *, lang: str | None = None
+    ) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> "PolylingualLDA": ...
     def __repr__(self) -> str: ...
 
 

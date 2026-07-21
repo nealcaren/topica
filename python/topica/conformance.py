@@ -94,6 +94,13 @@ REGISTRY: list[tuple[str, object, str]] = [
     # covers the single-language contract. Treat InfoCTM like DTM/HLDA: a
     # structurally different model outside the flat-K conformance surface.
     #
+    # PolylingualLDA (PLTM) is EXCLUDED for the same reason: it fits L aligned
+    # per-language corpora (fit({lang: docs})), exposes topic_word PER LANGUAGE
+    # (topic_word(lang=...)) rather than a single flat (K, V) surface, and shares
+    # one (D, K) doc_topic across languages. Its per-language outputs are
+    # validated in parity/pltm_compare.py; single-language LDA covers the flat
+    # contract.
+    #
     # EmbeddingLDA is EXCLUDED: it is a Python wrapper around SeededLDA (see
     # module-level note in python/topica/embedding.py). It delegates every
     # fitted-model getter to self._model via __getattr__, has no class-level

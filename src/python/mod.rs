@@ -72,6 +72,7 @@ mod btm;
 mod idealpoint;
 mod nmf_lsa;
 mod party_embeddings;
+mod pltm;
 #[path = "corpus.rs"]
 mod py_corpus;
 mod save;
@@ -82,6 +83,7 @@ mod wordfish;
 use arrays::*;
 use btm::BTM;
 use error::*;
+use pltm::PolylingualLDA;
 use idealpoint::IdealPointTM;
 use nmf_lsa::{LSA, NMF};
 use party_embeddings::PartyEmbeddings;
@@ -18286,6 +18288,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PT>()?;
     m.add_class::<GSDMM>()?;
     m.add_class::<BTM>()?;
+    m.add_class::<PolylingualLDA>()?;
     m.add_class::<SeededLDA>()?;
     m.add_class::<KeyATM>()?;
     m.add_class::<Top2Vec>()?;

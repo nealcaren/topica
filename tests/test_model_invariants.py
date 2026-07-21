@@ -527,6 +527,25 @@ def _fit_infoctm(iters=120):
     return m.doc_topic(lang="en"), m.topic_word(lang="en"), K
 
 
+def _fit_pltm(iters=400):
+    # Aligned multilingual tuples: language l has its own vocabulary; tuple d is
+    # topic d % K in every language, so a healthy fit spreads mass across K topics.
+    rng = np.random.default_rng(0)
+    langs = ("en", "fr", "de")
+    n, length = 200, 14
+    data = {
+        name: [
+            [f"{name}_b{d % K}w{int(rng.integers(8))}" for _ in range(length)]
+            for d in range(n)
+        ]
+        for name in langs
+    }
+    m = topica.PolylingualLDA(num_topics=K, iters=iters, seed=1)
+    m.fit(data)
+    assert_simplex(m.topic_word(lang="fr"), axis=1, model="PolylingualLDA(fr)")
+    return m.doc_topic, m.topic_word(lang="en"), K
+
+
 FIT_ADAPTERS = {
     "LDA": _fit_lda,
     "CTM": _fit_ctm,
@@ -548,6 +567,7 @@ FIT_ADAPTERS = {
     "SupervisedLDA": _fit_supervisedlda,
     "GSDMM": _fit_gsdmm,
     "BTM": _fit_btm,
+    "PolylingualLDA": _fit_pltm,
     "PT": _fit_pt,
     "DTM": _fit_dtm,
     "DETM": _fit_detm,

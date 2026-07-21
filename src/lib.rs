@@ -52,6 +52,7 @@ pub mod optimize;
 pub mod output;
 pub mod pa;
 pub mod party_embeddings;
+pub mod pltm;
 pub mod prodlda;
 pub mod pt;
 pub mod sage;

@@ -76,6 +76,7 @@ thread count), or `llm-bounded`.
 | `HDP` | text | gibbs | seed-reproducible | Hierarchical Dirichlet process: infers the number of topics from the data. |
 | `NMF` | text | matrix-factorization | bit-exact | Non-negative matrix factorization of the document-term matrix via multiplicative updates. |
 | `LSA` | text | svd | seed-reproducible | Latent semantic analysis: a truncated SVD of the weighted document-term matrix. |
+| `PolylingualLDA` | text | gibbs | seed-reproducible | Polylingual topic model (Mimno et al. 2009): aligned topics across languages from document tuples that share one topic distribution. |
 
 ### Covariates & structure
 
@@ -215,6 +216,7 @@ As such, Topica stands on a generation of open topic-modeling research and code.
 - [**LightLDA**](https://github.com/microsoft/LightLDA) (Yuan et al., 2015) — `LDA`: the alias-table Metropolis-Hastings sampler
 - **GSDMM** (Yin & Wang, 2014) — `GSDMM`: the movie-group-process mixture for short text
 - [**BTM**](https://github.com/bnosac/BTM) (Yan, Guo, Lan & Cheng, 2013; R package by Jan Wijffels) — `BTM`: the biterm co-occurrence topic model for short text
+- [**Polylingual Topic Models**](https://aclanthology.org/D09-1092/) (Mimno, Wallach, Naradowsky, Smith & McCallum, 2009) — `PolylingualLDA`: LDA over aligned document tuples that share one topic distribution, giving topics aligned across many languages; validated against MALLET's `PolylingualTopicModel` as a black-box oracle
 - [**ProdLDA / AVITM**](https://arxiv.org/abs/1703.01488) (Srivastava & Sutton, 2017) — `ProdLDA`: autoencoding variational inference and the product-of-experts word model
 - [**BERTopic**](https://github.com/MaartenGr/BERTopic) (Grootendorst, 2022) and [**Top2Vec**](https://github.com/ddangelov/Top2Vec) (Angelov, 2020) — `BERTopic`, `Top2Vec`: the embedding-clustering pipeline, class-based TF-IDF, and the `reduce → cluster → represent` design
 - [**ETM**](https://github.com/adjidieng/ETM) (Dieng, Ruiz & Blei, 2020) — `ETM`: the Embedded Topic Model (per-document variational EM and an amortized VAE)
