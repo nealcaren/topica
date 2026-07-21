@@ -2623,6 +2623,8 @@ class Top2Vec:
         n_neighbors: int = 15,
         clusterer: str = "hdbscan",
         num_clusters: int | None = None,
+        resolution: float = 1.0,
+        knn_neighbors: int = 15,
         seed: int = 42,
     ) -> None: ...
     def fit(
@@ -2714,6 +2716,8 @@ class BERTopic:
         reduce_frequent: bool = False,
         clusterer: str = "hdbscan",
         num_clusters: int | None = None,
+        resolution: float = 1.0,
+        knn_neighbors: int = 15,
         seed: int = 42,
     ) -> None: ...
     def fit(

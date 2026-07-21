@@ -12,15 +12,6 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
 
-/// Default resolution (γ) for the `"louvain"` / `"leiden"` graph clusterers. 1.0
-/// is the standard modularity resolution; on the #352 benchmark it discovers a
-/// sensible topic count on both easy and fine-grained corpora. Exposing it as a
-/// Python kwarg (the main knob for steering the auto-discovered K) is the planned
-/// follow-up.
-const DEFAULT_RESOLUTION: f64 = 1.0;
-/// Default neighborhood size for the k-NN graph the graph clusterers build.
-const DEFAULT_KNN: usize = 15;
-
 /// Cluster `points` (row-major; each row is one embedding vector) with HDBSCAN.
 ///
 /// Returns one label per point: cluster ids are a dense `0..n_clusters` range
@@ -81,22 +72,26 @@ pub fn hdbscan_labels(
 /// (default; uses `min_cluster_size`/`min_samples`), `"kmeans"`, `"gmm"`, or
 /// `"agglomerative"` (all three use `num_clusters`, falling back to
 /// `min_cluster_size` if it is `None`), or the auto-K graph clusterers
-/// `"louvain"` / `"leiden"` (modularity on a k-NN graph; no `num_clusters`).
-/// Unknown names fall back to HDBSCAN.
+/// `"louvain"` / `"leiden"` (modularity on a k-NN graph; steered by `resolution`
+/// and `knn_k`, no `num_clusters`). `resolution`/`knn_k` are ignored by the
+/// non-graph clusterers. Unknown names fall back to HDBSCAN.
+#[allow(clippy::too_many_arguments)]
 pub fn cluster_points(
     points: &[Vec<f64>],
     clusterer: &str,
     num_clusters: Option<usize>,
     min_cluster_size: usize,
     min_samples: usize,
+    resolution: f64,
+    knn_k: usize,
     seed: u64,
 ) -> Vec<i64> {
     match clusterer {
         "kmeans" => kmeans_labels(points, num_clusters.unwrap_or(min_cluster_size), seed),
         "gmm" => gmm_labels(points, num_clusters.unwrap_or(min_cluster_size), seed),
         "agglomerative" => agglomerative_labels(points, num_clusters.unwrap_or(min_cluster_size)),
-        "louvain" => graph_labels(points, DEFAULT_RESOLUTION, DEFAULT_KNN, seed, false),
-        "leiden" => graph_labels(points, DEFAULT_RESOLUTION, DEFAULT_KNN, seed, true),
+        "louvain" => graph_labels(points, resolution, knn_k, seed, false),
+        "leiden" => graph_labels(points, resolution, knn_k, seed, true),
         _ => hdbscan_labels(points, min_cluster_size, min_samples),
     }
 }
@@ -1031,7 +1026,7 @@ mod tests {
     #[test]
     fn louvain_separates_blobs_and_assigns_everything() {
         let pts = three_blobs();
-        let labels = graph_labels(&pts, DEFAULT_RESOLUTION, DEFAULT_KNN, 0, false);
+        let labels = graph_labels(&pts, 1.0, 15, 0, false);
         assert_eq!(labels.len(), 120);
         // Auto-K, every point assigned (no -1 noise bucket).
         assert!(labels.iter().all(|&l| l >= 0), "no point may be noise");
@@ -1063,8 +1058,8 @@ mod tests {
     #[test]
     fn louvain_is_deterministic_and_dense() {
         let pts = three_blobs();
-        let a = graph_labels(&pts, DEFAULT_RESOLUTION, DEFAULT_KNN, 7, false);
-        let b = graph_labels(&pts, DEFAULT_RESOLUTION, DEFAULT_KNN, 7, false);
+        let a = graph_labels(&pts, 1.0, 15, 7, false);
+        let b = graph_labels(&pts, 1.0, 15, 7, false);
         assert_eq!(a, b, "same seed -> same labels");
         // dense 0..=max
         let max = *a.iter().max().unwrap();
@@ -1076,17 +1071,8 @@ mod tests {
     #[test]
     fn graph_labels_handles_trivial_inputs() {
         for refine in [false, true] {
-            assert!(graph_labels(&[], DEFAULT_RESOLUTION, DEFAULT_KNN, 0, refine).is_empty());
-            assert_eq!(
-                graph_labels(
-                    &[vec![1.0, 2.0]],
-                    DEFAULT_RESOLUTION,
-                    DEFAULT_KNN,
-                    0,
-                    refine
-                ),
-                vec![0]
-            );
+            assert!(graph_labels(&[], 1.0, 15, 0, refine).is_empty());
+            assert_eq!(graph_labels(&[vec![1.0, 2.0]], 1.0, 15, 0, refine), vec![0]);
         }
     }
 
@@ -1098,7 +1084,7 @@ mod tests {
     fn leiden_communities_are_connected_and_pure() {
         use std::collections::HashSet;
         let pts = three_blobs();
-        let labels = graph_labels(&pts, DEFAULT_RESOLUTION, DEFAULT_KNN, 0, true);
+        let labels = graph_labels(&pts, 1.0, 15, 0, true);
         assert_eq!(labels.len(), 120);
         assert!(labels.iter().all(|&l| l >= 0), "no point may be noise");
 
@@ -1120,7 +1106,7 @@ mod tests {
 
         // Connectivity: BFS within each community over the same k-NN graph the
         // clusterer built.
-        let g = knn_graph(&pts, DEFAULT_KNN);
+        let g = knn_graph(&pts, 15);
         let k = (*labels.iter().max().unwrap() + 1) as usize;
         for c in 0..k as i64 {
             let members: Vec<usize> = (0..labels.len()).filter(|&i| labels[i] == c).collect();
@@ -1148,8 +1134,8 @@ mod tests {
     #[test]
     fn leiden_is_deterministic() {
         let pts = three_blobs();
-        let a = graph_labels(&pts, DEFAULT_RESOLUTION, DEFAULT_KNN, 3, true);
-        let b = graph_labels(&pts, DEFAULT_RESOLUTION, DEFAULT_KNN, 3, true);
+        let a = graph_labels(&pts, 1.0, 15, 3, true);
+        let b = graph_labels(&pts, 1.0, 15, 3, true);
         assert_eq!(a, b, "same seed -> same labels");
     }
 }

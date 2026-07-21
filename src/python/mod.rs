@@ -12633,6 +12633,23 @@ fn parse_clusterer(
     }
 }
 
+/// Validate the graph-clusterer knobs. `resolution` (γ) must be positive;
+/// `knn_neighbors` must be at least 1. These are used only by the ``"louvain"`` /
+/// ``"leiden"`` clusterers and ignored otherwise, but they are validated
+/// unconditionally so a bad value is a clear error at construction rather than a
+/// silent no-op.
+fn parse_graph_params(resolution: f64, knn_neighbors: usize) -> PyResult<(f64, usize)> {
+    if !resolution.is_finite() || resolution <= 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "resolution must be a positive finite number, got {resolution}"
+        )));
+    }
+    if knn_neighbors < 1 {
+        return Err(PyValueError::new_err("knn_neighbors must be >= 1"));
+    }
+    Ok((resolution, knn_neighbors))
+}
+
 /// Guard `reducer='umap'`: error out on the (non-wheel) build where the `umap`
 /// feature was not compiled in. The in-house UMAP reducer is seeded and fully
 /// reproducible for a fixed `seed`, so — unlike the old umap-rs path — there is
@@ -12677,6 +12694,8 @@ pub struct Top2Vec {
     min_samples: usize,
     clusterer: String,
     num_clusters: Option<usize>,
+    resolution: f64,
+    knn_neighbors: usize,
     seed: u64,
     fitted: bool,
     has_word_vectors: bool,
@@ -12728,11 +12747,15 @@ impl Top2Vec {
     ///
     /// `reducer` is the dimensionality-reduction method, ``"pca"`` (default,
     /// deterministic) or ``"umap"`` (stochastic); `n_neighbors` is the
-    /// neighborhood size for the reducer; `seed` seeds the deterministic phases.
+    /// neighborhood size for the reducer. `resolution` (default 1.0) and
+    /// `knn_neighbors` (default 15) steer the ``"louvain"``/``"leiden"`` graph
+    /// clusterers — higher `resolution` yields more, smaller topics; they are
+    /// ignored by the other clusterers. `seed` seeds the deterministic phases.
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
                         reducer="pca", n_neighbors=15, clusterer="hdbscan",
-                        num_clusters=None, seed=42))]
+                        num_clusters=None, resolution=1.0, knn_neighbors=15, seed=42))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         n_components: usize,
         min_cluster_size: usize,
@@ -12741,6 +12764,8 @@ impl Top2Vec {
         n_neighbors: usize,
         clusterer: &str,
         num_clusters: Option<i64>,
+        resolution: f64,
+        knn_neighbors: usize,
         seed: u64,
     ) -> PyResult<Self> {
         if min_cluster_size < 2 {
@@ -12748,6 +12773,7 @@ impl Top2Vec {
         }
         let use_umap = parse_reducer(reducer)?;
         let (clusterer, num_clusters) = parse_clusterer(clusterer, num_clusters)?;
+        let (resolution, knn_neighbors) = parse_graph_params(resolution, knn_neighbors)?;
         Ok(Top2Vec {
             n_components,
             use_umap,
@@ -12756,6 +12782,8 @@ impl Top2Vec {
             min_samples: min_samples.unwrap_or(min_cluster_size),
             clusterer,
             num_clusters,
+            resolution,
+            knn_neighbors,
             seed,
             fitted: false,
             has_word_vectors: false,
@@ -12859,6 +12887,7 @@ impl Top2Vec {
         );
         let clusterer = self.clusterer.clone();
         let num_clusters = self.num_clusters;
+        let (resolution, knn_neighbors) = (self.resolution, self.knn_neighbors);
         let model = py.allow_threads(move || {
             top2vec::fit_top2vec(
                 &corpus.docs,
@@ -12872,6 +12901,8 @@ impl Top2Vec {
                 ms,
                 &clusterer,
                 num_clusters,
+                resolution,
+                knn_neighbors,
                 seed,
             )
         });
@@ -13194,6 +13225,11 @@ impl Top2Vec {
             min_samples: s.min_samples,
             clusterer: s.clusterer,
             num_clusters: s.num_clusters,
+            // resolution/knn_neighbors are fit-time knobs; the fitted result is
+            // fully captured by the stored model, so a loaded model just carries
+            // the defaults (it never re-clusters).
+            resolution: 1.0,
+            knn_neighbors: 15,
             seed: s.seed,
             fitted: s.fitted,
             has_word_vectors: s.has_word_vectors,
@@ -13248,6 +13284,8 @@ pub struct BERTopic {
     reduce_frequent: bool,
     clusterer: String,
     num_clusters: Option<usize>,
+    resolution: f64,
+    knn_neighbors: usize,
     seed: u64,
     fitted: bool,
     topic_names: Vec<String>,
@@ -13320,12 +13358,15 @@ impl BERTopic {
     /// auto-K graph clusterers ``"louvain"`` / ``"leiden"``, ``"kmeans"``,
     /// ``"gmm"`` (diagonal-covariance Gaussian mixture), or ``"agglomerative"``;
     /// `num_clusters` sets the target count for the last three (ignored by HDBSCAN
-    /// and the auto-K clusterers). `seed` seeds the deterministic phases.
+    /// and the auto-K clusterers). `resolution` (default 1.0) and `knn_neighbors`
+    /// (default 15) steer the ``"louvain"``/``"leiden"`` clusterers — higher
+    /// `resolution` yields more, smaller topics; ignored by the others. `seed`
+    /// seeds the deterministic phases.
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
                         nr_topics=None, window=4, stride=1, reducer="pca", n_neighbors=15,
                         bm25=false, reduce_frequent=false, clusterer="hdbscan",
-                        num_clusters=None, seed=42))]
+                        num_clusters=None, resolution=1.0, knn_neighbors=15, seed=42))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         n_components: usize,
@@ -13340,6 +13381,8 @@ impl BERTopic {
         reduce_frequent: bool,
         clusterer: &str,
         num_clusters: Option<i64>,
+        resolution: f64,
+        knn_neighbors: usize,
         seed: u64,
     ) -> PyResult<Self> {
         if min_cluster_size < 2 {
@@ -13347,6 +13390,7 @@ impl BERTopic {
         }
         let use_umap = parse_reducer(reducer)?;
         let (clusterer, num_clusters) = parse_clusterer(clusterer, num_clusters)?;
+        let (resolution, knn_neighbors) = parse_graph_params(resolution, knn_neighbors)?;
         Ok(BERTopic {
             n_components,
             use_umap,
@@ -13360,6 +13404,8 @@ impl BERTopic {
             reduce_frequent,
             clusterer,
             num_clusters,
+            resolution,
+            knn_neighbors,
             seed,
             fitted: false,
             topic_names: Vec::new(),
@@ -13427,6 +13473,7 @@ impl BERTopic {
         );
         let clusterer = self.clusterer.clone();
         let num_clusters = self.num_clusters;
+        let (resolution, knn_neighbors) = (self.resolution, self.knn_neighbors);
         let model = py.allow_threads(move || {
             bertopic::fit_bertopic(
                 &corpus.docs,
@@ -13444,6 +13491,8 @@ impl BERTopic {
                 rf,
                 &clusterer,
                 num_clusters,
+                resolution,
+                knn_neighbors,
                 seed,
             )
         });
@@ -13729,6 +13778,9 @@ impl BERTopic {
             reduce_frequent: s.reduce_frequent,
             clusterer: s.clusterer,
             num_clusters: s.num_clusters,
+            // Fit-time knobs; a loaded model never re-clusters, so defaults suffice.
+            resolution: 1.0,
+            knn_neighbors: 15,
             seed: s.seed,
             fitted: s.fitted,
             topic_names,
