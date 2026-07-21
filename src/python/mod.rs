@@ -3193,9 +3193,18 @@ fn top_word_ids_phi(phi: &Array2<f64>, num_topics: usize, n: usize) -> Vec<Vec<u
         .collect()
 }
 
-/// Parse a feature matrix (a 2D numpy float array or a list of float lists)
-/// into `[num_docs][num_features]`.
+/// Parse a feature matrix into `[num_docs][num_features]`.
+///
+/// Accepts, in order of preference: an f64 numpy array (zero-copy fast path); a
+/// plain Python list of number lists; or anything else array-like that numpy can
+/// cast to float64 — a numpy int/bool/f32 array, a numeric pandas or Polars
+/// frame/Series, or a 1-D column (reshaped to `(n, 1)`). This means callers no
+/// longer have to pre-cast with `.to_numpy(float)`; a `corpus.metadata[[...]]`
+/// frame of integers goes straight in. A non-numeric column (strings, a pandas
+/// `Categorical`) cannot be cast and raises a directive error pointing at the
+/// design-matrix helpers instead of a cryptic numpy failure.
 fn parse_features(data: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<f64>>> {
+    // Fast path: already an f64 2-D array — no copy through numpy.
     if let Ok(arr) = data.extract::<PyReadonlyArray2<f64>>() {
         let a = arr.as_array();
         let (rows, cols) = (a.shape()[0], a.shape()[1]);
@@ -3203,9 +3212,74 @@ fn parse_features(data: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<f64>>> {
             .map(|i| (0..cols).map(|j| a[[i, j]]).collect())
             .collect());
     }
-    data.extract::<Vec<Vec<f64>>>().map_err(|_| {
-        PyValueError::new_err("features must be a 2D float array or a list of float lists")
-    })
+    // Plain Python list-of-lists of numbers (PyO3 coerces ints to f64).
+    if let Ok(v) = data.extract::<Vec<Vec<f64>>>() {
+        return Ok(v);
+    }
+    // Anything else array-like: coerce to float64 via numpy.
+    coerce_features_f64(data)
+}
+
+/// Coerce an arbitrary array-like to `[rows][cols]` f64 by routing it through
+/// `numpy.asarray(x, "float64")`. 1-D inputs (a single-covariate Series/array)
+/// become an `(n, 1)` column. A cast failure is turned into a directive error.
+fn coerce_features_f64(data: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<f64>>> {
+    let py = data.py();
+    let np = py.import_bound("numpy")?;
+    let arr = match np.call_method1("asarray", (data, "float64")) {
+        Ok(a) => a,
+        Err(_) => return Err(features_cast_error(data)),
+    };
+    let ndim: usize = arr.getattr("ndim")?.extract()?;
+    let arr2 = match ndim {
+        1 => arr.call_method1("reshape", ((-1_i64, 1_i64),))?,
+        2 => arr,
+        n => {
+            return Err(PyValueError::new_err(format!(
+                "features must be a 1-D or 2-D array; got a {n}-D array"
+            )))
+        }
+    };
+    let ro = arr2.extract::<PyReadonlyArray2<f64>>()?;
+    let a = ro.as_array();
+    let (rows, cols) = (a.shape()[0], a.shape()[1]);
+    Ok((0..rows)
+        .map(|i| (0..cols).map(|j| a[[i, j]]).collect())
+        .collect())
+}
+
+/// Build the error raised when an input cannot be cast to float64. When the
+/// input is a pandas DataFrame, the offending non-numeric columns are named.
+fn features_cast_error(data: &Bound<'_, PyAny>) -> PyErr {
+    if let Ok(cols) = non_numeric_pandas_columns(data) {
+        if !cols.is_empty() {
+            return PyValueError::new_err(format!(
+                "covariate column(s) {cols:?} are non-numeric and cannot be cast to \
+                 float. Encode categorical covariates first with \
+                 topica.design_matrix(formula, data) or topica.one_hot(...), then pass \
+                 the resulting numeric matrix."
+            ));
+        }
+    }
+    PyValueError::new_err(
+        "could not convert the input to a float64 matrix. Pass a numeric \
+         array/DataFrame (a 2-D matrix or a 1-D column); if these are categorical \
+         covariates, encode them first with topica.design_matrix / topica.one_hot.",
+    )
+}
+
+/// Names of the non-numeric columns of a pandas DataFrame, or an empty vector
+/// when `data` is not a pandas DataFrame (or has string-incompatible labels).
+fn non_numeric_pandas_columns(data: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
+    let py = data.py();
+    if !data.hasattr("select_dtypes").unwrap_or(false) {
+        return Ok(vec![]);
+    }
+    let kwargs = PyDict::new_bound(py);
+    kwargs.set_item("exclude", "number")?;
+    let sub = data.call_method("select_dtypes", (), Some(&kwargs))?;
+    let cols = sub.getattr("columns")?.call_method0("tolist")?;
+    Ok(cols.extract::<Vec<String>>().unwrap_or_default())
 }
 
 /// Parse the optional caller-supplied base topic-word init (K×V) for the warm-start

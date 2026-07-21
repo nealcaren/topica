@@ -95,6 +95,49 @@ class TopicEffect:
         )
 
 
+def _coerce_design(X, feature_names):
+    """Coerce a design-matrix argument to a float64 ``(n, p)`` array.
+
+    Accepts a numpy array (any numeric dtype), a numeric pandas/Polars
+    DataFrame or Series, or a list of number rows — so callers no longer have to
+    pre-cast with ``.to_numpy(float)``. A 1-D input becomes an ``(n, 1)`` column.
+    When ``feature_names`` is not given and the input is a DataFrame, the column
+    labels are used as feature names. A non-numeric column (strings, a pandas
+    ``Categorical``) raises a directive error pointing at
+    :func:`topica.design_matrix` / :func:`topica.one_hot` rather than surfacing a
+    cryptic numpy cast failure.
+
+    Returns ``(X_float64, names_or_None)``.
+    """
+    inferred = None
+    if hasattr(X, "select_dtypes"):  # pandas DataFrame
+        bad = [str(c) for c in X.select_dtypes(exclude="number").columns]
+        if bad:
+            raise ValueError(
+                f"covariate column(s) {bad} are non-numeric and cannot be cast to "
+                "float. Encode categorical covariates first with "
+                "topica.design_matrix(formula, data) or topica.one_hot(...), then "
+                "pass the resulting numeric matrix."
+            )
+        inferred = [str(c) for c in X.columns]
+    elif hasattr(X, "name") and hasattr(X, "to_numpy") and getattr(X, "ndim", None) == 1:
+        # pandas/Polars Series: a single named covariate column.
+        inferred = [str(X.name)] if X.name is not None else None
+
+    try:
+        arr = np.asarray(X, dtype=np.float64)
+    except (ValueError, TypeError) as e:
+        raise ValueError(
+            "could not convert the covariates to a float64 matrix; encode "
+            "categorical covariates with topica.design_matrix / topica.one_hot "
+            f"first (numpy: {e})"
+        ) from e
+    if arr.ndim == 1:
+        arr = arr[:, None]
+    names = list(feature_names) if feature_names is not None else inferred
+    return arr, names
+
+
 def _ols(y, X, hat, XtX_inv, dof, weights=None):
     """One (weighted) OLS fit. Returns (beta, cov, r2).
 
@@ -428,15 +471,12 @@ def estimate_effect(
     else:
         raise ValueError("doc_topic must be 2-D (num_docs, K) or 3-D (nsims, num_docs, K)")
 
-    X = np.asarray(X, dtype=np.float64)
-    if X.ndim == 1:
-        X = X[:, None]
+    X, names = _coerce_design(X, feature_names)
     if X.shape[0] != n:
         raise ValueError(f"X has {X.shape[0]} rows but doc_topic has {n} documents")
 
-    names = list(feature_names) if feature_names is not None else [
-        f"feature_{i}" for i in range(X.shape[1])
-    ]
+    if names is None:
+        names = [f"feature_{i}" for i in range(X.shape[1])]
     if len(names) != X.shape[1]:
         raise ValueError("feature_names length must match X columns")
     if add_intercept:
