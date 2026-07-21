@@ -10,6 +10,10 @@ use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
+/// Max-abs factor change below which the streaming factor SGD is treated as
+/// converged (the streaming analogue of the batch path's `tol = 1e-5`).
+const STREAM_CONVERGENCE_TOL: f64 = 1e-5;
+
 /// A fitted TensorLDA model.
 pub struct TensorLdaModel {
     pub num_topics: usize,
@@ -527,17 +531,22 @@ impl TldaStream {
             .components
             .as_ref()
             .expect("whitening not initialized: feed every batch once before training");
-        let lambdas = self.ipca.whitening_weights();
-        // projection[v x k] = componentsᵀ / sqrt(lambda)
+        // projection[v x k] = componentsᵀ / sqrt(lambda); hoist the per-component
+        // 1/sqrt(lambda) out of the per-document loop.
+        let inv: Vec<f64> = self
+            .ipca
+            .whitening_weights()
+            .iter()
+            .map(|l| 1.0 / l.sqrt())
+            .collect();
         let mut whit = vec![0.0; n * k];
         for i in 0..n {
             for kk in 0..k {
-                let inv = 1.0 / lambdas[kk].sqrt();
                 let mut acc = 0.0;
                 for j in 0..v {
                     acc += x_centered[i * v + j] * comps[kk * v + j];
                 }
-                whit[i * k + kk] = acc * inv;
+                whit[i * k + kk] = acc * inv[kk];
             }
         }
         whit
@@ -590,6 +599,10 @@ impl TldaStream {
                 }
             }
             let whit = self.whiten(&centered, n);
+            // Track the largest factor change across this batch's sub-batch
+            // updates, so fit_history carries a meaningful convergence trace (the
+            // streaming analogue of the batch path's per-epoch max-diff).
+            let prev_factors = self.factors.clone();
             for j in (0..n).step_by(self.third_batch_size) {
                 let b = (n - j).min(self.third_batch_size);
                 let y = &whit[j * self.n_eigen..(j + b) * self.n_eigen];
@@ -604,24 +617,49 @@ impl TldaStream {
                     self.learning_rate,
                 );
                 self.n_factor_updates += 1;
-                self.fit_history
-                    .push((self.n_factor_updates, self.learning_rate));
             }
+            let max_diff = self
+                .factors
+                .iter()
+                .zip(prev_factors.iter())
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0_f64, f64::max);
+            self.fit_history.push((self.n_factor_updates, max_diff));
             *self.seen_batches.get_mut(&batch_index).unwrap() += 1;
         }
     }
 
-    /// Whether at least one factor SGD update has run (every batch fed at least
-    /// twice). `finalize` errors otherwise.
+    /// Whether every streamed batch has had at least one factor SGD update (each
+    /// batch seen at least twice: one whitening pass, then one or more training
+    /// passes). `finalize` errors otherwise, so a model cannot be recovered from
+    /// factors trained on only a fraction of the corpus.
     pub fn trained(&self) -> bool {
-        self.n_factor_updates > 0
+        !self.seen_batches.is_empty() && self.seen_batches.values().all(|&c| c >= 1)
+    }
+
+    /// Number of documents seen during the whitening pass (first sightings). The
+    /// whitening rank cannot exceed this, so `finalize` rejects a stream too small
+    /// to support `n_eigen` components.
+    pub fn n_documents(&self) -> usize {
+        self.n_documents
+    }
+
+    /// The whitening rank (`n_eigenvec`), for the caller's readiness checks.
+    pub fn n_eigen(&self) -> usize {
+        self.n_eigen
+    }
+
+    /// Whether the last training pass moved the factors by less than the SGD
+    /// tolerance -- the streaming analogue of the batch path's convergence flag.
+    pub fn converged(&self) -> bool {
+        matches!(self.fit_history.last(), Some(&(_, diff)) if diff < STREAM_CONVERGENCE_TOL)
     }
 
     /// Recover the topic-word matrix and weights from the current whitening +
-    /// factors. Reuses the batch unwhitening with `u_proj = componentsᵀ` and
+    /// factors. Reuses the shared `recover_params` with `u_proj = componentsᵀ` and
     /// `lambda = whitening_weights`. `doc_topic` is left empty (streaming does not
     /// retain the documents; use `predict_doc_topics` / `transform` for that).
-    pub fn finalize(&self, n_iter_test: usize, seed: u64) -> TensorLdaModel {
+    pub fn finalize(&self) -> TensorLdaModel {
         let v = self.num_types;
         let k = self.num_topics;
         let n_eigen = self.n_eigen;
@@ -635,50 +673,17 @@ impl TldaStream {
                 u_scaled[w * n_eigen + ke] = comps[ke * v + w] * lambdas[ke].sqrt();
             }
         }
-        let mut factors_unwhitened = matmul(&u_scaled, &self.factors, v, n_eigen, k);
-        for w in 0..v {
-            for ki in 0..k {
-                factors_unwhitened[w * k + ki] += self.mean[w];
-                if factors_unwhitened[w * k + ki] < 0.0 {
-                    factors_unwhitened[w * k + ki] = 0.0;
-                }
-            }
-        }
-        let unwhitened_raw = factors_unwhitened.clone();
+        let (topic_word, unwhitened_raw, weights) = recover_params(
+            &u_scaled,
+            &self.factors,
+            &self.mean,
+            v,
+            n_eigen,
+            k,
+            self.smoothing,
+            self.alpha_0,
+        );
 
-        for x in factors_unwhitened.iter_mut() {
-            *x = *x * (1.0 - self.smoothing) + (self.smoothing / v as f64);
-        }
-        let mut topic_word = vec![vec![0.0; v]; k];
-        for ki in 0..k {
-            let mut col_sum = 0.0;
-            for w in 0..v {
-                col_sum += factors_unwhitened[w * k + ki];
-            }
-            let col_sum = col_sum.max(1e-12);
-            for w in 0..v {
-                topic_word[ki][w] = factors_unwhitened[w * k + ki] / col_sum;
-            }
-        }
-
-        let mut alpha = vec![0.0; k];
-        let mut alpha_sum = 0.0;
-        for j in 0..k {
-            let mut c2 = 0.0;
-            for w in 0..v {
-                let val = unwhitened_raw[w * k + j];
-                c2 += val * val;
-            }
-            alpha[j] = c2.max(1e-12);
-            alpha_sum += alpha[j];
-        }
-        let alpha_sum = alpha_sum.max(1e-12);
-        let weights: Vec<f64> = alpha
-            .iter()
-            .map(|a| (a / alpha_sum) * self.alpha_0)
-            .collect();
-
-        let _ = (n_iter_test, seed);
         TensorLdaModel {
             num_topics: k,
             num_types: v,
@@ -687,10 +692,72 @@ impl TldaStream {
             weights,
             alpha_0: self.alpha_0,
             fit_history: self.fit_history.clone(),
-            converged: self.trained(),
+            converged: self.converged(),
             unwhitened_raw,
         }
     }
+}
+
+/// Shared parameter recovery for both the batch and streaming paths: unwhiten
+/// the CP factors, add the mean, clamp to non-negative, smooth, column-normalize
+/// to a `K x V` topic-word simplex, and recover Dirichlet weights from the
+/// unwhitened column L2 norms. `u_scaled` is `V x n_eigen` (the whitening basis
+/// scaled by `sqrt(lambda)`), `factors` is `n_eigen x K`, `mean` length `V`.
+/// Returns `(topic_word, unwhitened_raw, weights)`.
+///
+/// The weight rule is invariant to orthogonal rotations / permutations of the
+/// SVD whitening basis: `alpha_j = ||column_j of unwhitened_raw||^2`, normalized
+/// to sum to `alpha_0`, so the weights track the topics' relative prevalence.
+fn recover_params(
+    u_scaled: &[f64],
+    factors: &[f64],
+    mean: &[f64],
+    v: usize,
+    n_eigen: usize,
+    k: usize,
+    smoothing: f64,
+    alpha_0: f64,
+) -> (Vec<Vec<f64>>, Vec<f64>, Vec<f64>) {
+    let mut factors_unwhitened = matmul(u_scaled, factors, v, n_eigen, k);
+    for w in 0..v {
+        for ki in 0..k {
+            factors_unwhitened[w * k + ki] += mean[w];
+            if factors_unwhitened[w * k + ki] < 0.0 {
+                factors_unwhitened[w * k + ki] = 0.0;
+            }
+        }
+    }
+    let unwhitened_raw = factors_unwhitened.clone();
+
+    for x in factors_unwhitened.iter_mut() {
+        *x = *x * (1.0 - smoothing) + (smoothing / v as f64);
+    }
+    let mut topic_word = vec![vec![0.0; v]; k];
+    for ki in 0..k {
+        let mut col_sum = 0.0;
+        for w in 0..v {
+            col_sum += factors_unwhitened[w * k + ki];
+        }
+        let col_sum = col_sum.max(1e-12);
+        for w in 0..v {
+            topic_word[ki][w] = factors_unwhitened[w * k + ki] / col_sum;
+        }
+    }
+
+    let mut alpha = vec![0.0; k];
+    let mut alpha_sum = 0.0;
+    for j in 0..k {
+        let mut c2 = 0.0;
+        for w in 0..v {
+            let val = unwhitened_raw[w * k + j];
+            c2 += val * val;
+        }
+        alpha[j] = c2.max(1e-12);
+        alpha_sum += alpha[j];
+    }
+    let alpha_sum = alpha_sum.max(1e-12);
+    let weights = alpha.iter().map(|a| (a / alpha_sum) * alpha_0).collect();
+    (topic_word, unwhitened_raw, weights)
 }
 
 /// Fit Online Tensor LDA on the given document-term counts.
@@ -812,7 +879,8 @@ pub fn fit_tlda(
         i += 1;
     }
 
-    // 3. Parameter recovery (unwhitening + normalization)
+    // 3. Parameter recovery (unwhitening + normalization), shared with the
+    // streaming path.
     let mut u_scaled = vec![0.0; v * n_eigen];
     for w_idx in 0..v {
         for k_idx in 0..n_eigen {
@@ -820,73 +888,9 @@ pub fn fit_tlda(
                 u_proj[w_idx * n_eigen + k_idx] * lambdas[k_idx].sqrt();
         }
     }
-    let mut factors_unwhitened = matmul(&u_scaled, &factors, v, n_eigen, num_topics);
-
-    for w_idx in 0..v {
-        for k_idx in 0..num_topics {
-            factors_unwhitened[w_idx * num_topics + k_idx] += mean[w_idx];
-            if factors_unwhitened[w_idx * num_topics + k_idx] < 0.0 {
-                factors_unwhitened[w_idx * num_topics + k_idx] = 0.0;
-            }
-        }
-    }
-
-    let unwhitened_raw = factors_unwhitened.clone();
-
-    for idx in 0..(v * num_topics) {
-        factors_unwhitened[idx] =
-            factors_unwhitened[idx] * (1.0 - smoothing) + (smoothing / v as f64);
-    }
-
-    let mut topic_word = vec![vec![0.0; v]; num_topics];
-    for k_idx in 0..num_topics {
-        let mut col_sum = 0.0;
-        for w_idx in 0..v {
-            col_sum += factors_unwhitened[w_idx * num_topics + k_idx];
-        }
-        if col_sum < 1e-12 {
-            col_sum = 1e-12;
-        }
-        for w_idx in 0..v {
-            topic_word[k_idx][w_idx] = factors_unwhitened[w_idx * num_topics + k_idx] / col_sum;
-        }
-    }
-
-    // Principled weight-recovery rule for an R x K factor matrix (R = n_eigen, K = num_topics).
-    //
-    // In the CP decomposition, the unwhitened factor matrix represents the topic components in the
-    // original (unwhitened) space. The L2 norm of each column of this unwhitened matrix `unwhitened_raw`
-    // is directly proportional to the square root of the topic's variance (prevalence) in the corpus.
-    //
-    // Specifically, for each topic j in 0..num_topics, we compute the L2 norm of its column in the
-    // unwhitened raw matrix:
-    //   N_j = \sqrt{ \sum_{w=0}^{v-1} unwhitened_raw[w * K + j]^2 }
-    //
-    // Since the topic prevalence is proportional to the variance of the topic loadings (N_j^2), the
-    // recovered Dirichlet parameter alpha_j is proportional to N_j^2:
-    //   alpha_j = N_j^2
-    //
-    // This recovery rule is strictly invariant to any orthogonal rotations or permutations of the SVD
-    // whitening basis, uses all R whitening dimensions, and yields exactly K weights that track the
-    // true topic prevalences.
-    let mut alpha = vec![0.0; num_topics];
-    let mut alpha_sum = 0.0;
-    for j in 0..num_topics {
-        let mut col_sum2 = 0.0;
-        for w in 0..v {
-            let val = unwhitened_raw[w * num_topics + j];
-            col_sum2 += val * val;
-        }
-        alpha[j] = col_sum2.max(1e-12);
-        alpha_sum += alpha[j];
-    }
-    if alpha_sum < 1e-12 {
-        alpha_sum = 1e-12;
-    }
-    let mut weights = vec![0.0; num_topics];
-    for idx in 0..num_topics {
-        weights[idx] = (alpha[idx] / alpha_sum) * alpha_0;
-    }
+    let (topic_word, unwhitened_raw, weights) = recover_params(
+        &u_scaled, &factors, &mean, v, n_eigen, num_topics, smoothing, alpha_0,
+    );
 
     // 4. Document-topic inference
     let doc_topic = predict_doc_topics(
@@ -996,7 +1000,7 @@ mod tests {
             }
         }
         assert!(stream.trained());
-        let m = stream.finalize(20, 42);
+        let m = stream.finalize();
         assert_eq!(m.topic_word.len(), k);
         assert_eq!(m.topic_word[0].len(), v);
         for row in &m.topic_word {
@@ -1026,7 +1030,7 @@ mod tests {
         for _ in 0..=40 {
             stream.partial_fit_batch(&x, docs.len(), 0);
         }
-        let m = stream.finalize(20, 42);
+        let m = stream.finalize();
         assert_eq!(m.topic_word.len(), k);
         for row in &m.topic_word {
             let s: f64 = row.iter().sum();
@@ -1049,7 +1053,7 @@ mod tests {
                 let c = counts_of(&docs, v);
                 s.partial_fit_batch(&c, docs.len(), 0);
             }
-            s.finalize(15, 999)
+            s.finalize()
         };
         let a = run();
         let b = run();

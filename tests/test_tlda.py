@@ -245,12 +245,17 @@ def test_partial_fit_matches_batch_transform_surface():
     docs, vocab = _planted(k=3, block=8, n=120, length=20, seed=1)
     batches = [docs[i:i + 40] for i in range(0, len(docs), 40)]
     m = _stream_fit(3, vocab, batches, seed=7, learning_rate=0.01, batch_size=10)
-    # transform works off the streamed model; doc_topic does not.
+    # transform works off the streamed model; doc_topic and coherence do not.
     dt = m.transform(docs[:10])
     assert dt.shape == (10, 3)
     assert np.allclose(dt.sum(axis=1), 1.0, atol=1e-5)
-    with pytest.raises(RuntimeError, match="streamed"):
+    # doc_topic raises AttributeError so hasattr() dispatch guards return False.
+    with pytest.raises(AttributeError, match="streamed"):
         _ = m.doc_topic
+    assert hasattr(m, "doc_topic") is False
+    # coherence needs the documents, which streaming does not retain.
+    with pytest.raises(RuntimeError, match="streamed"):
+        m.coherence(5)
     assert m.top_words(3, topic=0)
 
 
@@ -306,5 +311,32 @@ def test_partial_fit_error_paths():
     m4.fit(docs)
     with pytest.raises(RuntimeError, match="already finalized"):
         m4.partial_fit(docs, 0, vocabulary=vocab)
+
+    # a vocabulary with duplicates is rejected
+    m5 = topica.TensorLDA(3, seed=0)
+    with pytest.raises(ValueError, match="duplicate"):
+        m5.partial_fit(batches[0], 0, vocabulary=vocab + [vocab[0]])
+
+
+def test_partial_fit_finalize_guards_readiness():
+    topica.enable_experimental(True)
+    docs, vocab = _planted(k=3, block=8, n=90, length=15, seed=2)
+    batches = [docs[i:i + 30] for i in range(0, len(docs), 30)]
+
+    # finalize errors unless EVERY batch had a training pass, not just one.
+    m = topica.TensorLDA(3, seed=2)
+    for i, b in enumerate(batches):        # whitening pass: all batches once
+        m.partial_fit(b, i, vocabulary=vocab)
+    m.partial_fit(batches[0], 0, vocabulary=vocab)  # train only batch 0
+    with pytest.raises(RuntimeError, match="at least twice"):
+        m.finalize()
+
+    # a stream with fewer documents than the whitening rank is rejected.
+    tiny = [docs[0], docs[1]]              # 2 docs, n_eigenvec defaults to K=3
+    m2 = topica.TensorLDA(3, seed=2)
+    for _ in range(3):
+        m2.partial_fit(tiny, 0, vocabulary=vocab)
+    with pytest.raises(RuntimeError, match="exceeds the 2 documents"):
+        m2.finalize()
 
 

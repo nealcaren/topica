@@ -337,6 +337,15 @@ impl TensorLDA {
                 if v.is_empty() {
                     return Err(PyValueError::new_err("vocabulary must be non-empty"));
                 }
+                // Duplicate entries would inflate the vocab size while the
+                // word->id map collapses them, leaving dead count columns and
+                // letting the n_eigenvec rank check pass above the true rank.
+                let unique: std::collections::HashSet<&String> = v.iter().collect();
+                if unique.len() != v.len() {
+                    return Err(PyValueError::new_err(
+                        "vocabulary must not contain duplicate words",
+                    ));
+                }
                 v
             } else {
                 let mut seen = std::collections::BTreeSet::new();
@@ -403,23 +412,33 @@ impl TensorLDA {
     /// `doc_topic` is not (streaming does not retain the documents -- use
     /// `transform` on the docs whose topics you want).
     fn finalize(&mut self, py: Python<'_>) -> PyResult<()> {
-        let trained = match self.stream.as_ref() {
-            Some(s) => s.trained(),
+        let stream = match self.stream.as_ref() {
+            Some(s) => s,
             None => {
                 return Err(PyRuntimeError::new_err(
                     "no streamed batches; call partial_fit() before finalize()",
                 ))
             }
         };
-        if !trained {
+        if !stream.trained() {
             return Err(PyRuntimeError::new_err(
                 "each batch must be seen at least twice: one pass to build the whitening, \
                  then one or more passes to train the factors",
             ));
         }
-        let (n_iter_test, seed) = (self.n_iter_test, self.seed);
-        let stream = self.stream.as_ref().unwrap();
-        let model = py.allow_threads(move || stream.finalize(n_iter_test, seed));
+        // The whitening rank cannot exceed the number of documents seen during
+        // the whitening pass -- the streaming counterpart of the batch fit's
+        // `n_eigenvec <= min(num_docs, vocab)` guard. Below that, the small
+        // singular values are clamped and the whitening blows up.
+        if stream.n_documents() < stream.n_eigen() {
+            return Err(PyRuntimeError::new_err(format!(
+                "whitening rank n_eigenvec={} exceeds the {} documents streamed; \
+                 feed more documents or lower n_eigenvec/num_topics",
+                stream.n_eigen(),
+                stream.n_documents(),
+            )));
+        }
+        let model = py.allow_threads(move || stream.finalize());
 
         let vocab = self.stream_vocab.take().unwrap();
         let vsize = vocab.len();
@@ -497,7 +516,10 @@ impl TensorLDA {
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let m = self.fitted_model()?;
         if m.doc_topic.is_empty() {
-            return Err(PyRuntimeError::new_err(
+            // Raise AttributeError (not RuntimeError) so `hasattr(m, "doc_topic")`
+            // dispatch guards in topica.ensemble / effects / coherence return
+            // False for a streamed model instead of crashing.
+            return Err(pyo3::exceptions::PyAttributeError::new_err(
                 "doc_topic is unavailable for a streamed (partial_fit) model; \
                  call transform(docs) to infer document topics",
             ));
@@ -594,6 +616,15 @@ impl TensorLDA {
     /// Topic coherence (UMass).
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        self.fitted_model()?;
+        // UMass coherence reads document co-occurrences; a streamed model does not
+        // retain the documents, so it would silently return all-zeros. Refuse it.
+        if self.corpus.as_ref().is_some_and(|c| c.docs.is_empty()) {
+            return Err(PyRuntimeError::new_err(
+                "coherence is unavailable for a streamed (partial_fit) model; \
+                 it needs the training documents, which streaming does not retain",
+            ));
+        }
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word);
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
         Ok(
