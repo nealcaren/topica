@@ -6,6 +6,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Removed
+
+- **ECTM** (the Evolving Content Topic Model) is removed. Its one interpretive
+  payoff — how a group words a topic over ordered time — is delivered more
+  accurately, and with defensible inference, by the STM `content_time` path
+  (`STM.fit(..., content=, content_time=, content_prior="l1", content_smooth=)`)
+  plus the `topica.content.content_trajectory` / `content_divergence` readers with
+  a design-preserving document/cluster bootstrap. The `topica.ECTM` class, the
+  `topica.ectm` helper module, and the ECTM worked examples are gone; the party-
+  platforms example is re-pointed to `examples/stm_content_time_platforms.py`.
+  Save tag 27 is retired and will not be reused.
+
 ## [0.34.0] - 2026-07-13
 
 ### Changed

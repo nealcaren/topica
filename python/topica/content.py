@@ -1,4 +1,4 @@
-"""Diagnostics for content-covariate models (STM, STS, SAGE, ECTM).
+"""Diagnostics for content-covariate models (STM, STS, SAGE).
 
 These read a fitted model's *group-specific* topic-word tensor beta_{k,g,v} -- how
 each topic is worded by each group -- which the global topic-word average hides.
@@ -13,11 +13,11 @@ each topic is worded by each group -- which the global topic-word average hides.
   instead of living within one topic.
 
 The models expose the tensor through different doors -- STM via
-``topic_word_by_group``, SAGE via its 3-D ``topic_word``, ECTM via
-``content_word_dist(group, period)`` -- and :func:`group_topic_word` normalizes
-them to one ``(K, G, V)`` array plus group labels. For ECTM the cells are
-averaged over periods by default; pass ``period=`` for a single period, which
-turns :func:`topic_polarization` into a per-period *trajectory* input.
+``topic_word_by_group``, SAGE via its 3-D ``topic_word`` -- and
+:func:`group_topic_word` normalizes them to one ``(K, G, V)`` array plus group
+labels. For an STM fit with an ordered ``content_time`` covariate the group axis
+is the base-by-period cross (labels ``"base@period"``); :func:`content_trajectory`
+and :func:`content_divergence` read that surface over ordered time.
 
 STS is the odd one out: its content axis is a *continuous* sentiment rather than
 discrete groups, so :func:`group_topic_word` discretizes it, stacking the
@@ -74,7 +74,7 @@ def _ref_corpus(texts):
     return [list(t) for t in texts]
 
 
-def group_topic_word(model, *, period=None, levels=None):
+def group_topic_word(model, *, levels=None):
     """Normalize any content-covariate model to ``(beta_KGV, group_labels)``.
 
     ``beta_KGV`` is ``(num_topics, num_groups, num_words)`` with each row a
@@ -84,25 +84,14 @@ def group_topic_word(model, *, period=None, levels=None):
 
     Parameters
     ----------
-    period : int or str, optional
-        ECTM only: evaluate one period instead of the period average.
     levels : mapping or sequence, optional
         STS only: the sentiment levels to discretize its continuous content axis
         into groups. A ``{value: label}`` mapping or a sequence of numeric levels;
         defaults to the poles ``-1``/``0``/``+1`` (negative/neutral/positive).
         Ignored by the discrete-group models.
     """
-    # ECTM: (group, period) content cells.
-    if hasattr(model, "content_word_dist") and hasattr(model, "num_periods"):
-        groups = list(model.groups)
-        periods = range(model.num_periods) if period is None else [period]
-        cells = []
-        for g in range(len(groups)):
-            beta = sum(np.asarray(model.content_word_dist(g, t)) for t in periods) / len(list(periods))
-            cells.append(beta)
-        beta = np.stack(cells, axis=1)  # (K, G, V)
     # STS: continuous sentiment axis -- discretize via topic_word_at(level).
-    elif hasattr(model, "topic_word_at") and not hasattr(model, "topic_word_by_group"):
+    if hasattr(model, "topic_word_at") and not hasattr(model, "topic_word_by_group"):
         items = _sts_levels(levels)
         beta = np.stack(
             [np.asarray(model.topic_word_at(val)) for val, _ in items], axis=1
@@ -123,7 +112,7 @@ def group_topic_word(model, *, period=None, levels=None):
                 raise ValueError(
                     f"{type(model).__name__} has no group-specific topic-word "
                     "structure; content diagnostics need a content-covariate model "
-                    "(STM/STS/SAGE/ECTM) fit with a content covariate."
+                    "(STM/STS/SAGE) fit with a content covariate."
                 )
             beta = tw
         groups = list(getattr(model, "groups", range(beta.shape[1])))
@@ -137,7 +126,7 @@ def _entropy(p, axis=-1):
     return -(p * np.log(p)).sum(axis=axis)
 
 
-def topic_polarization(model, *, weights=None, period=None, levels=None) -> np.ndarray:
+def topic_polarization(model, *, weights=None, levels=None) -> np.ndarray:
     """Per-topic Jensen-Shannon divergence across groups, normalized to [0, 1].
 
     For each topic ``k``, ``JSD(beta_{k,1}, ..., beta_{k,G})`` -- the spread of its
@@ -148,9 +137,6 @@ def topic_polarization(model, *, weights=None, period=None, levels=None) -> np.n
     ----------
     weights : array (num_groups,), optional
         Group weights ``p(g)`` (e.g. group prevalence). Defaults to uniform.
-    period : int or str, optional
-        ECTM only: evaluate at one period instead of the period average, so a
-        loop over periods yields a polarization *trajectory* per topic.
     levels : mapping or sequence, optional
         STS only: sentiment levels to discretize into groups (see
         :func:`group_topic_word`).
@@ -159,7 +145,7 @@ def topic_polarization(model, *, weights=None, period=None, levels=None) -> np.n
     -------
     numpy.ndarray, shape (num_topics,)
     """
-    beta, groups = group_topic_word(model, period=period, levels=levels)  # (K, G, V)
+    beta, groups = group_topic_word(model, levels=levels)  # (K, G, V)
     G = beta.shape[1]
     if G < 2:
         raise ValueError("topic_polarization needs at least 2 content groups")
@@ -352,7 +338,7 @@ def diagnostics(model, texts=None, content=None, *, n=10, coherence_type="c_v"):
 # ===================================================================
 # STM content_time reading layer (issue #365): read "how a group words a
 # topic over ordered time" off the STM content surface fit with
-# `content_time=`, replacing ECTM's readers. Ports faSTM's
+# `content_time=`. Ports faSTM's
 # content_trajectory() / content_divergence() (R/content-trajectory.R).
 #
 # The STM content_time fit crosses base groups with ordered periods into
@@ -588,9 +574,9 @@ def content_trajectory(
 
     Reads the STM ``content_time`` surface (fit with ``STM.fit(..., content_time=)``)
     for the per-period, per-word contrast ``p(w | group1, period) - p(w | group2,
-    period)`` on the target topic. This is the ECTM ``content_trajectory`` /
-    ``content_contrast`` payoff, read off the smoothed STM surface instead of
-    independent ``(group, period)`` cells.
+    period)`` on the target topic -- how the between-group wording contrast moves
+    over ordered time, read off the smoothed STM surface rather than independent
+    ``(group, period)`` cells.
 
     Parameters
     ----------
@@ -654,7 +640,7 @@ def content_divergence(
 
     Reads the STM ``content_time`` surface for the per-period Hellinger (default) or
     total-variation (``measure="tv"``) distance between the two groups' topic-word
-    distributions. This is the ECTM ``content_divergence`` payoff, but pooled over
+    distributions -- the whole-distribution group distance per period, pooled over
     the vocabulary so the aggregate has a usable bootstrap CI where single-word
     contrasts do not. Parameters mirror :func:`content_trajectory`.
 

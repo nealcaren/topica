@@ -2,16 +2,16 @@
 
 Validated by defining properties on synthetic content models: identical group
 wordings give zero polarization, disjoint group vocabularies give ~1, the group
-tensor is recovered from every model family (SAGE 3-D topic_word, ECTM content
-cells), and the fragmentation detector fires on a planted split and stays quiet
-otherwise.
+tensor is recovered from every model family (SAGE 3-D topic_word, STS discretized
+sentiment), and the fragmentation detector fires on a planted split and stays
+quiet otherwise.
 """
 
 import numpy as np
 import pytest
 
 import topica
-from topica import SAGE, ECTM
+from topica import SAGE
 from topica import content
 
 
@@ -90,7 +90,7 @@ def test_group_exclusivity_in_unit_range_and_summaries():
 
 
 # --------------------------------------------------------------------------- #
-# Real fitted models: the adapter reaches SAGE and ECTM tensors.
+# Real fitted models: the adapter reaches the SAGE 3-D tensor.
 # --------------------------------------------------------------------------- #
 def test_group_topic_word_reads_sage():
     docs = [["tax", "cut", "budget", "fiscal"] if i % 2 else ["war", "peace", "troops", "army"]
@@ -156,40 +156,25 @@ def test_sts_diagnostics_table(sts_model):
 
 
 @pytest.fixture(scope="module")
-def ectm_model():
-    topica.enable_experimental()
-    rng = np.random.default_rng(0)
+def sage_group_model():
     # two groups word a shared "housing" topic differently; a control topic is shared.
-    docs, groups, times = [], [], []
+    rng = np.random.default_rng(0)
+    docs, groups = [], []
     for i in range(180):
         g = "dev" if i % 2 else "res"
-        period = ["t0", "t1", "t2"][i % 3]
         if i % 2:  # housing, group-specific wording
             base = ["upscale", "premium", "luxury"] if g == "dev" else ["eviction", "rent", "tenant"]
         else:
             base = ["park", "school", "road"]  # shared control
         docs.append(base * 3)
         groups.append(g)
-        times.append(period)
-    m = ECTM(num_topics=4, seed=1)
-    m.fit(topica.Corpus.from_documents(docs), times=times, content=groups, iters=120,
-          content_prior_var=2.0)
+    m = SAGE(num_topics=4, seed=1)
+    m.fit(topica.Corpus.from_documents(docs), groups)
     return m, groups
 
 
-def test_ectm_polarization_and_period_trajectory(ectm_model):
-    m, groups = ectm_model
-    pol = content.topic_polarization(m)
-    assert pol.shape == (m.num_topics,)
-    assert np.all((pol >= -1e-9) & (pol <= 1 + 1e-9))
-    # per-period trajectory: one value per period, each a valid JSD
-    traj = [content.topic_polarization(m, period=t) for t in range(m.num_periods)]
-    assert len(traj) == m.num_periods
-    assert all(v.shape == (m.num_topics,) for v in traj)
-
-
-def test_split_topics_returns_wellformed(ectm_model):
-    m, groups = ectm_model
+def test_split_topics_returns_wellformed(sage_group_model):
+    m, groups = sage_group_model
     pairs = content.split_topics(m, groups)
     assert isinstance(pairs, list)
     for p in pairs:

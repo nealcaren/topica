@@ -75,7 +75,7 @@ model.topic_word_by_group        # per-group β
 # model.word_contrast(topic, "liberal", "conservative")
 ```
 
-`topica.content` reads that per-group tensor for STM, SAGE, and ECTM alike:
+`topica.content` reads that per-group tensor for STM and SAGE alike:
 `topic_polarization(model)` is the per-topic Jensen-Shannon divergence across
 groups (how differently the groups word a topic), `group_exclusivity(model)`
 checks a topic stays distinctive in every group's sub-vocabulary, and
@@ -91,13 +91,15 @@ pol = topica.content.topic_polarization(model)   # (K,) in [0, 1]
 ```
 
 Whether a group difference lands **within** a topic or splits into separate
-topics is something you control. The `content_prior_var` (SAGE/ECTM) prior on the
+topics is something you control. The `content_prior_var` prior on the STM/SAGE
 group deviations is the dial: raise it and the content model absorbs more group
 vocabulary within a topic; lower it and the difference is suppressed toward the
 shared baseline. Fragmentation, by contrast, is mostly a *design* choice — putting
 the grouping variable in the **prevalence** design (not just content) rewards the
-model for spending whole topics on a group. The ECTM guide works this through
-end to end.
+model for spending whole topics on a group. For wording that evolves over ordered
+time, an STM `content_time` covariate crosses the group with the period and
+`topica.content.content_trajectory` / `content_divergence` read that surface;
+the party-platforms example works this through end to end.
 
 ## Estimating effects
 

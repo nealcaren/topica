@@ -596,7 +596,7 @@ pub fn fit_dtm<R: Rng>(
 
     // Seed each topic chain with a static topic-word distribution. With
     // `init_spectral` (the default) we use the deterministic anchor-word spectral
-    // init shared with STM/CTM/STS/ECTM: a random static-LDA seed leaves the DTM
+    // init shared with STM/CTM/STS: a random static-LDA seed leaves the DTM
     // bound multimodal (issue #216 family), so different seeds land in different
     // basins. `counts_init` normalizes the seed, so passing the spectral β
     // distributions directly is sufficient. Falls back to the random static-LDA

@@ -1,7 +1,7 @@
 """Shared scaffolding for the Wave 2 planted self-consistency golds (issue #271).
 
-Wave 2 covers the eleven models that have NO external reference implementation:
-HDP, ECTM, DETM, HLDA, PA, ETM, SupervisedLDA, SeededLDA, GSDMM, PT,
+Wave 2 covers the models that have NO external reference implementation:
+HDP, DETM, HLDA, PA, ETM, SupervisedLDA, SeededLDA, GSDMM, PT,
 EmbeddingLDA. For each, the committed gold is topica's OWN frozen output on a
 fixed-seed planted corpus (the SAGE template, ``parity/sage_gold.py``). There is
 nothing external to compare against, so the gold locks the exact result against
@@ -57,23 +57,6 @@ def fit_hdp(iters=150):
     m = topica.HDP(seed=1, alpha=1.0, gamma=1.0)
     m.fit(docs, iters=iters)
     return m
-
-
-def fit_ectm(iters=60):
-    import topica
-
-    was = topica.experimental_enabled()
-    topica.enable_experimental(True)
-    try:
-        docs, _, _, levels = tmi._covariate_corpus()
-        groups = [f"g{l % 2}" for l in levels]
-        times = [2000 + (i % 3) for i in range(len(docs))]
-        m = topica.ECTM(num_topics=K, seed=1, init="spectral")
-        m.fit(docs, times=times, content=groups, iters=iters,
-              period_smooth=5.0, interaction_shrink=2.0)
-        return m
-    finally:
-        topica.enable_experimental(was)
 
 
 def fit_detm(iters=40):

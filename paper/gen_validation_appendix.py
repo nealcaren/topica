@@ -1099,7 +1099,6 @@ OTHER_GROUPS = [
     ]),
     ("Hierarchical / experimental", [
         ("HLDA", "nested CRP (no poliblog ref.)", "synthetic", "structural (tree, paths)", r"\code{tests/}"),
-        ("ECTM", "experimental tier; own paper", r"planted group$\times$time", "content drift + placebo", r"\code{tests/test\_ectm.py}"),
     ]),
 ]
 

@@ -163,11 +163,6 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::LogisticNormal,
         exempt: &[],
     },
-    RegistryEntry {
-        name: "ECTM",
-        family: ModelFamily::LogisticNormal,
-        exempt: &[],
-    },
     // Collapsed-Gibbs / Dirichlet doc-topic posterior.
     RegistryEntry {
         name: "LDA",
@@ -318,7 +313,7 @@ mod registry_tests {
         // Estimator-backed Rust struct).
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            26,
+            25,
             "registry size drifted from the Python REGISTRY"
         );
     }

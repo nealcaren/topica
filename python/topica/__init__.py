@@ -12,7 +12,6 @@ from ._topica import (
     SAGE,
     CTM,
     STM,
-    ECTM,
     STS,
     HDP,
     DTM,
@@ -151,10 +150,9 @@ from .narrative import NarrativeTM  # noqa: E402  (pure-Python NarrativeTM wrapp
 from . import stm  # noqa: E402  (stm imports names defined above)
 from .stm import align_corpus, spline, interaction, topic_correlation_ci, TopicCorrelationCI  # noqa: E402  (general covariate-design helpers)
 from . import keyatm  # noqa: E402  (keyATM-specific workflow helpers)
-from . import ectm  # noqa: E402  (ECTM content-trajectory interpretation helpers)
 from . import effects  # noqa: E402  (model-neutral prevalence analysis)
 from . import validation  # noqa: E402  (post-hoc topic diagnostics surface)
-from . import content  # noqa: E402  (content-covariate diagnostics: STM/STS/SAGE/ECTM)
+from . import content  # noqa: E402  (content-covariate diagnostics: STM/STS/SAGE)
 from . import conformance  # noqa: E402  (estimator contract and registry)
 from .conformance import check_conformance  # noqa: E402
 from .effects import (  # noqa: E402  general, work on any model's theta
@@ -299,7 +297,6 @@ __all__ = [
     "SAGE",
     "CTM",
     "STM",
-    "ECTM",
     "enable_experimental",
     "experimental_enabled",
     "STS",
@@ -336,7 +333,6 @@ __all__ = [
     "one_hot",
     "content",
     "stm",
-    "ectm",
     "keyatm",
     "spline",
     "interaction",
