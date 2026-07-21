@@ -53,6 +53,27 @@ frontier = topica.quality_frontier(model, n=10)      # tidy: coherence, exclusiv
 NPMI is the normalized middle ground. The coherence×exclusivity scatter is the
 canonical STM quality plot: weak topics sit in the lower-left.
 
+## External validation: agreement with gold labels
+
+Coherence rates a topic's top words, not whether documents landed in the right
+topic — and for embedding-based cluster models the two can diverge (a model can
+keep tight, coherent top-words while the document partition drifts). If you have
+hand-coded labels for your documents, or even a labeled subset, score the recovery
+directly:
+
+```python
+pred   = model.labels                      # or model.doc_topic.argmax(1)
+scores = topica.agreement(pred, gold)      # {ari, nmi, homogeneity, completeness, v_measure, purity}
+
+# partially labeled corpus: score only the coded documents
+scores = topica.agreement(pred[mask], gold[mask])
+```
+
+ARI is adjusted for chance (0 = random, 1 = a perfect match up to relabeling). Use
+`noise="drop"` to exclude HDBSCAN's unassigned (`-1`) documents, or the default
+`noise="keep"` to score them honestly as their own bucket. This is the number that
+tracks recovery when coherence alone would reassure you a failed run "worked."
+
 ## Stability: answer the "fishing expedition" critique head-on
 
 A topic that dissolves when you perturb the corpus is not a finding. Refit on

@@ -27,6 +27,14 @@ and in the `topica.validation` module.
 
 ::: topica.quality_frontier
 
+## External validation
+
+When you have gold (or partially gold) labels for your documents, `agreement`
+scores how well the discovered topics recover them — the check that actually
+tracks recovery, where coherence can mislead.
+
+::: topica.agreement
+
 ## Interpretation
 
 ::: topica.label_topics
