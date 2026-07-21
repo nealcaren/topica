@@ -63,10 +63,7 @@ impl Estimator for PltmModel {
     /// The Estimator surface returns a single topic-word matrix; PLTM exposes the
     /// **first language's** φ here (the full per-language set is on the model).
     fn topic_word(&self) -> Vec<Vec<f64>> {
-        self.topic_word
-            .first()
-            .cloned()
-            .unwrap_or_default()
+        self.topic_word.first().cloned().unwrap_or_default()
     }
     fn doc_topic(&self) -> Vec<Vec<f64>> {
         self.doc_topic.clone()
@@ -103,7 +100,12 @@ fn mult_sample<R: Rng>(p: &[f64], rng: &mut R) -> usize {
 /// counts as the sufficient statistics (the tuple plays LDA's document role, its
 /// length being the total tokens across all languages). Mirrors
 /// `optimize::optimize_alpha` but reads the shared `n_dk` counts. Deterministic.
-fn optimize_alpha_step(alpha: &mut [f64], alpha_sum: &mut f64, n_dk: &[Vec<i64>], num_topics: usize) {
+fn optimize_alpha_step(
+    alpha: &mut [f64],
+    alpha_sum: &mut f64,
+    n_dk: &[Vec<i64>],
+    num_topics: usize,
+) {
     let max_len = n_dk
         .iter()
         .map(|row| row.iter().sum::<i64>() as usize)
@@ -202,7 +204,9 @@ pub fn infer_tuple<R: Rng>(
     if denom <= 0.0 {
         return vec![1.0 / k as f64; k];
     }
-    (0..k).map(|t| (n_dk[t] as f64 + alpha[t]) / denom).collect()
+    (0..k)
+        .map(|t| (n_dk[t] as f64 + alpha[t]) / denom)
+        .collect()
 }
 
 /// Fit PLTM on aligned per-language token documents. `docs[l][d]` is the
@@ -320,7 +324,9 @@ pub fn fit_pltm<R: Rng>(
         .map(|d| {
             let len: i64 = n_dk[d].iter().sum();
             let denom = len as f64 + alpha_sum;
-            (0..k).map(|t| (n_dk[d][t] as f64 + alpha[t]) / denom).collect()
+            (0..k)
+                .map(|t| (n_dk[d][t] as f64 + alpha[t]) / denom)
+                .collect()
         })
         .collect();
 
@@ -398,14 +404,20 @@ mod tests {
         // must agree.
         let peak_block = |l: usize, t: usize| -> usize {
             let row = &m.topic_word[l][t];
-            let top = (0..vocab[l]).max_by(|&a, &b| row[a].total_cmp(&row[b])).unwrap();
+            let top = (0..vocab[l])
+                .max_by(|&a, &b| row[a].total_cmp(&row[b]))
+                .unwrap();
             top / block
         };
         let mut covered = std::collections::HashSet::new();
         for t in 0..k {
             let b0 = peak_block(0, t);
             for l in 1..langs {
-                assert_eq!(peak_block(l, t), b0, "topic {t} misaligned across languages");
+                assert_eq!(
+                    peak_block(l, t),
+                    b0,
+                    "topic {t} misaligned across languages"
+                );
             }
             covered.insert(b0);
         }
@@ -440,7 +452,9 @@ mod tests {
         assert_eq!(m.topic_word.len(), 1);
         let mut covered = std::collections::HashSet::new();
         for row in &m.topic_word[0] {
-            let top = (0..vocab[0]).max_by(|&a, &b| row[a].total_cmp(&row[b])).unwrap();
+            let top = (0..vocab[0])
+                .max_by(|&a, &b| row[a].total_cmp(&row[b]))
+                .unwrap();
             covered.insert(top / block);
         }
         assert_eq!(covered.len(), k);

@@ -86,9 +86,7 @@ impl PolylingualLDA {
 /// `transform` argument. Accepts a dict `{lang: docs}` (preferred, keeps names
 /// and order) or a bare list `[docs, ...]` (auto-named `lang_0`, `lang_1`, ...).
 /// Each `docs` may be a `Corpus` or a `list[list[str]]`.
-fn extract_languages(
-    data: &Bound<'_, PyAny>,
-) -> PyResult<(Vec<String>, Vec<Vec<Vec<String>>>)> {
+fn extract_languages(data: &Bound<'_, PyAny>) -> PyResult<(Vec<String>, Vec<Vec<Vec<String>>>)> {
     let to_str_docs = |v: &Bound<'_, PyAny>| -> PyResult<Vec<Vec<String>>> {
         if let Ok(c) = v.extract::<Corpus>() {
             Ok(c.inner
@@ -113,9 +111,10 @@ fn extract_languages(
         let mut names = Vec::with_capacity(dict.len());
         let mut docs = Vec::with_capacity(dict.len());
         for (key, value) in dict.iter() {
-            names.push(key.extract::<String>().map_err(|_| {
-                PyValueError::new_err("language keys must be strings")
-            })?);
+            names.push(
+                key.extract::<String>()
+                    .map_err(|_| PyValueError::new_err("language keys must be strings"))?,
+            );
             docs.push(to_str_docs(&value)?);
         }
         if names.is_empty() {
@@ -197,7 +196,12 @@ impl PolylingualLDA {
     /// tuples `D`, aligned by index. A tuple absent in a language is an empty
     /// document `[]` at that index.
     #[pyo3(signature = (data, *, iters=None))]
-    fn fit(&mut self, py: Python<'_>, data: &Bound<'_, PyAny>, iters: Option<usize>) -> PyResult<()> {
+    fn fit(
+        &mut self,
+        py: Python<'_>,
+        data: &Bound<'_, PyAny>,
+        iters: Option<usize>,
+    ) -> PyResult<()> {
         let (languages, str_docs) = extract_languages(data)?;
 
         // Build one corpus per language (independent vocabularies), preserving
@@ -238,8 +242,7 @@ impl PolylingualLDA {
         }
 
         let vocab_sizes: Vec<usize> = corpora.iter().map(|c| c.num_types()).collect();
-        let docs_by_lang: Vec<Vec<Vec<u32>>> =
-            corpora.iter().map(|c| c.docs.clone()).collect();
+        let docs_by_lang: Vec<Vec<Vec<u32>>> = corpora.iter().map(|c| c.docs.clone()).collect();
         let iters = iters.unwrap_or(self.iters);
         let alpha_init = self.alpha.unwrap_or(0.01);
         let beta = vec![self.beta; languages.len()];
@@ -305,7 +308,11 @@ impl PolylingualLDA {
                 .collect();
             mapped.push(
                 docs.iter()
-                    .map(|doc| doc.iter().filter_map(|w| index.get(w.as_str()).copied()).collect())
+                    .map(|doc| {
+                        doc.iter()
+                            .filter_map(|w| index.get(w.as_str()).copied())
+                            .collect()
+                    })
                     .collect(),
             );
         }
@@ -326,7 +333,14 @@ impl PolylingualLDA {
                 .map(|d| {
                     let tuple: Vec<Vec<u32>> =
                         (0..mapped.len()).map(|l| mapped[l][d].clone()).collect();
-                    crate::pltm::infer_tuple(&tuple, &topic_word, &alpha, alpha_sum, sweeps, &mut rng)
+                    crate::pltm::infer_tuple(
+                        &tuple,
+                        &topic_word,
+                        &alpha,
+                        alpha_sum,
+                        sweeps,
+                        &mut rng,
+                    )
                 })
                 .collect()
         });
@@ -421,7 +435,14 @@ impl PolylingualLDA {
         let m = self.fitted_model()?;
         let li = self.lang_index(lang)?;
         let phi = vecs_to_arr2(&m.topic_word[li]);
-        topic_words_helper(py, &phi, &self.corpora[li].id_to_word, self.num_topics, n, topic)
+        topic_words_helper(
+            py,
+            &phi,
+            &self.corpora[li].id_to_word,
+            self.num_topics,
+            n,
+            topic,
+        )
     }
 
     /// Topic coherence (UMass) in a given language (default: the first).
