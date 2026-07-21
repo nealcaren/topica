@@ -177,6 +177,7 @@ pub fn fit_top2vec(
     num_clusters: Option<usize>,
     resolution: f64,
     knn_neighbors: usize,
+    umap_params: &reduce::UmapParams,
     seed: u64,
 ) -> Top2VecModel {
     let n_docs = doc_embeddings.len();
@@ -189,7 +190,14 @@ pub fn fit_top2vec(
     // (1) Reduce, unless the embeddings are already at or below the target dim.
     let did_reduce = emb_dim > n_components && n_components > 0;
     let mut reduced: Vec<Vec<f64>> = if did_reduce {
-        reduce::reduce(doc_embeddings, n_components, use_umap, n_neighbors, seed)
+        reduce::reduce(
+            doc_embeddings,
+            n_components,
+            use_umap,
+            n_neighbors,
+            umap_params,
+            seed,
+        )
     } else {
         doc_embeddings.to_vec()
     };
@@ -360,7 +368,21 @@ mod tests {
         }
 
         let m = fit_top2vec(
-            &docs, &doc_emb, &word_emb, 10, 5, false, 15, 5, 2, "hdbscan", None, 1.0, 15, 1,
+            &docs,
+            &doc_emb,
+            &word_emb,
+            10,
+            5,
+            false,
+            15,
+            5,
+            2,
+            "hdbscan",
+            None,
+            1.0,
+            15,
+            &crate::reduce::UmapParams::default(),
+            1,
         );
         assert!(
             m.num_topics >= 2,
@@ -396,7 +418,21 @@ mod tests {
         let docs: Vec<Vec<u32>> = (0..5).map(|_| vec![0u32]).collect();
         let word_emb = vec![vec![1.0, 0.0]];
         let m = fit_top2vec(
-            &docs, &doc_emb, &word_emb, 1, 2, false, 15, 5, 2, "hdbscan", None, 1.0, 15, 1,
+            &docs,
+            &doc_emb,
+            &word_emb,
+            1,
+            2,
+            false,
+            15,
+            5,
+            2,
+            "hdbscan",
+            None,
+            1.0,
+            15,
+            &crate::reduce::UmapParams::default(),
+            1,
         );
         assert_eq!(m.num_topics, 0);
         assert!(m.topic_vectors.is_empty());
@@ -432,7 +468,21 @@ mod tests {
             word_emb.push(jitter(&mut rng, c));
         }
         let m = fit_top2vec(
-            &docs, &doc_emb, &word_emb, 10, 5, false, 15, 5, 2, "hdbscan", None, 1.0, 15, 1,
+            &docs,
+            &doc_emb,
+            &word_emb,
+            10,
+            5,
+            false,
+            15,
+            5,
+            2,
+            "hdbscan",
+            None,
+            1.0,
+            15,
+            &crate::reduce::UmapParams::default(),
+            1,
         );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);

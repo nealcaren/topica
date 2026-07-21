@@ -151,6 +151,7 @@ pub fn fit_bertopic(
     num_clusters: Option<usize>,
     resolution: f64,
     knn_neighbors: usize,
+    umap_params: &reduce::UmapParams,
     seed: u64,
 ) -> BertopicModel {
     let emb_dim = doc_embeddings.first().map_or(0, |r| r.len());
@@ -159,7 +160,14 @@ pub fn fit_bertopic(
     // agglomerative assign every document instead.
     let did_reduce = emb_dim > n_components && n_components > 0;
     let mut reduced: Vec<Vec<f64>> = if did_reduce {
-        reduce::reduce(doc_embeddings, n_components, use_umap, n_neighbors, seed)
+        reduce::reduce(
+            doc_embeddings,
+            n_components,
+            use_umap,
+            n_neighbors,
+            umap_params,
+            seed,
+        )
     } else {
         doc_embeddings.to_vec()
     };
@@ -537,8 +545,25 @@ mod tests {
         // The shipped pipeline normalizes on the PCA path, so fit_bertopic itself
         // recovers block-pure topics (each topic's top words from one planted block).
         let m = fit_bertopic(
-            &docs, &emb, vocab, 5, false, 15, 15, 5, None, 4, 1, false, false, "hdbscan", None,
-            1.0, 15, 7,
+            &docs,
+            &emb,
+            vocab,
+            5,
+            false,
+            15,
+            15,
+            5,
+            None,
+            4,
+            1,
+            false,
+            false,
+            "hdbscan",
+            None,
+            1.0,
+            15,
+            &crate::reduce::UmapParams::default(),
+            7,
         );
         assert_eq!(
             m.num_topics, 4,
@@ -560,8 +585,25 @@ mod tests {
     fn recovers_topics_via_ctfidf() {
         let (docs, emb, vocab) = planted(3, 40, 1);
         let m = fit_bertopic(
-            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None,
-            1.0, 15, 1,
+            &docs,
+            &emb,
+            vocab,
+            5,
+            false,
+            15,
+            15,
+            2,
+            None,
+            4,
+            1,
+            false,
+            false,
+            "hdbscan",
+            None,
+            1.0,
+            15,
+            &crate::reduce::UmapParams::default(),
+            1,
         );
         assert!(
             m.num_topics >= 3,
@@ -586,8 +628,25 @@ mod tests {
     fn nr_topics_reduces_to_target() {
         let (docs, emb, vocab) = planted(4, 40, 2);
         let full = fit_bertopic(
-            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None,
-            1.0, 15, 2,
+            &docs,
+            &emb,
+            vocab,
+            5,
+            false,
+            15,
+            15,
+            2,
+            None,
+            4,
+            1,
+            false,
+            false,
+            "hdbscan",
+            None,
+            1.0,
+            15,
+            &crate::reduce::UmapParams::default(),
+            2,
         );
         assert!(full.num_topics >= 3);
         let reduced = fit_bertopic(
@@ -608,6 +667,7 @@ mod tests {
             None,
             1.0,
             15,
+            &crate::reduce::UmapParams::default(),
             2,
         );
         assert_eq!(reduced.num_topics, 2, "should reduce to 2 topics");
@@ -617,8 +677,25 @@ mod tests {
     fn approximate_distribution_favors_own_topic() {
         let (docs, emb, vocab) = planted(3, 40, 3);
         let m = fit_bertopic(
-            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None,
-            1.0, 15, 3,
+            &docs,
+            &emb,
+            vocab,
+            5,
+            false,
+            15,
+            15,
+            2,
+            None,
+            4,
+            1,
+            false,
+            false,
+            "hdbscan",
+            None,
+            1.0,
+            15,
+            &crate::reduce::UmapParams::default(),
+            3,
         );
         // A document made only of block-0 words should put its largest mass on the
         // topic whose top words are block 0.
@@ -637,8 +714,25 @@ mod tests {
     fn bertopic_conforms() {
         let (docs, emb, vocab) = planted(3, 40, 1);
         let m = fit_bertopic(
-            &docs, &emb, vocab, 5, false, 15, 15, 2, None, 4, 1, false, false, "hdbscan", None,
-            1.0, 15, 1,
+            &docs,
+            &emb,
+            vocab,
+            5,
+            false,
+            15,
+            15,
+            2,
+            None,
+            4,
+            1,
+            false,
+            false,
+            "hdbscan",
+            None,
+            1.0,
+            15,
+            &crate::reduce::UmapParams::default(),
+            1,
         );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);

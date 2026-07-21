@@ -25,8 +25,39 @@ pub fn umap_available() -> bool {
     cfg!(feature = "umap")
 }
 
+/// The UMAP layout hyperparameters (everything past `n_components`/`n_neighbors`),
+/// carried as one value so the reduce pipeline doesn't grow six positional
+/// arguments. `Default` is the reference configuration the embedding models used
+/// before these became tunable — `cosine` metric, `min_dist = 0.0` (BERTopic's
+/// setting for tight clusters), `spread = 1.0`, auto epochs (`n_epochs = 0` →
+/// 500 for ≤10k rows), and the standard negative sampling — so a caller that
+/// leaves it default gets exactly the previous behavior.
+#[derive(Clone, Debug)]
+pub struct UmapParams {
+    pub min_dist: f64,
+    pub spread: f64,
+    pub n_epochs: usize,
+    pub negative_sample_rate: usize,
+    pub repulsion_strength: f64,
+    pub metric: String,
+}
+
+impl Default for UmapParams {
+    fn default() -> Self {
+        Self {
+            min_dist: 0.0,
+            spread: 1.0,
+            n_epochs: 0,
+            negative_sample_rate: 5,
+            repulsion_strength: 1.0,
+            metric: "cosine".to_string(),
+        }
+    }
+}
+
 /// Reduce `data` to `n_components` with either UMAP (`use_umap`) or randomized
-/// PCA. The embedding heads call this so the reducer is a single switch. When the
+/// PCA. The embedding heads call this so the reducer is a single switch. `umap`
+/// carries UMAP's layout hyperparameters (ignored on the PCA path). When the
 /// `umap` feature is not compiled, this always uses PCA (callers that expose UMAP
 /// should reject the request earlier via `umap_available`).
 pub fn reduce(
@@ -34,41 +65,41 @@ pub fn reduce(
     n_components: usize,
     use_umap: bool,
     n_neighbors: usize,
+    umap_params: &UmapParams,
     seed: u64,
 ) -> Vec<Vec<f64>> {
     #[cfg(feature = "umap")]
     {
         if use_umap {
-            return umap(data, n_components, n_neighbors, seed);
+            return umap(data, n_components, n_neighbors, umap_params, seed);
         }
     }
-    let _ = (use_umap, n_neighbors);
+    let _ = (use_umap, n_neighbors, umap_params);
     pca(data, n_components, seed)
 }
 
-/// Project `data` onto `n_components` with UMAP. Delegates to the in-house,
-/// umap-learn-faithful reducer in `crate::umap` with the embedding models'
-/// reference-matching defaults: a cosine kNN metric, `min_dist = 0.0` (BERTopic's
-/// setting for tight clusters), `spread = 1.0`, auto epochs, and the standard
-/// negative sampling. Unlike the old umap-rs path this is fully reproducible for
-/// a fixed `seed`. Only built under `umap`.
+/// Project `data` onto `n_components` with UMAP, using the layout hyperparameters
+/// in `params` (see [`UmapParams`]). Delegates to the in-house,
+/// umap-learn-faithful reducer in `crate::umap`; unlike the old umap-rs path it is
+/// fully reproducible for a fixed `seed`. Only built under `umap`.
 #[cfg(feature = "umap")]
 pub fn umap(
     data: &[Vec<f64>],
     n_components: usize,
     n_neighbors: usize,
+    params: &UmapParams,
     seed: u64,
 ) -> Vec<Vec<f64>> {
     crate::umap::umap(
         data,
         n_components,
         n_neighbors,
-        0.0, // min_dist
-        1.0, // spread
-        0,   // n_epochs (0 => auto: 500 for <=10k rows)
-        5,   // negative_sample_rate
-        1.0, // repulsion_strength (gamma)
-        "cosine",
+        params.min_dist,
+        params.spread,
+        params.n_epochs,
+        params.negative_sample_rate,
+        params.repulsion_strength,
+        &params.metric,
         seed,
     )
 }
@@ -142,11 +173,13 @@ pub fn tsne(
 /// deterministic), `"umap"`, or `"tsne"`. UMAP and t-SNE fall back to PCA when their
 /// feature is not compiled in; callers that expose them should gate on
 /// `umap_available` / `tsne_available` first and surface a clear error instead.
+#[allow(clippy::too_many_arguments)]
 pub fn project(
     data: &[Vec<f64>],
     n_components: usize,
     method: &str,
     n_neighbors: usize,
+    umap_params: &UmapParams,
     perplexity: f64,
     theta: f64,
     epochs: usize,
@@ -156,11 +189,11 @@ pub fn project(
         "umap" => {
             #[cfg(feature = "umap")]
             {
-                umap(data, n_components, n_neighbors, seed)
+                umap(data, n_components, n_neighbors, umap_params, seed)
             }
             #[cfg(not(feature = "umap"))]
             {
-                let _ = n_neighbors;
+                let _ = (n_neighbors, umap_params);
                 pca(data, n_components, seed)
             }
         }
@@ -744,7 +777,7 @@ mod umap_tests {
                 truth.push(c);
             }
         }
-        let emb = umap(&data, 2, 10, 1);
+        let emb = umap(&data, 2, 10, &UmapParams::default(), 1);
         assert_eq!(emb.len(), data.len());
         assert_eq!(emb[0].len(), 2);
         assert!(
@@ -827,7 +860,17 @@ mod tsne_tests {
         let data: Vec<Vec<f64>> = (0..20)
             .map(|_| (0..6).map(|_| rng.gen::<f64>()).collect())
             .collect();
-        let emb = project(&data, 2, "tsne", 15, 30.0, 0.5, 250, 0);
+        let emb = project(
+            &data,
+            2,
+            "tsne",
+            15,
+            &UmapParams::default(),
+            30.0,
+            0.5,
+            250,
+            0,
+        );
         assert_eq!(emb.len(), 20);
         assert!(emb
             .iter()
