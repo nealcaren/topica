@@ -340,10 +340,13 @@ unassigned as `-1`. On real sentence-transformer embeddings that bucket can be
 large, and for many social-science questions every document should land
 somewhere. Two ways out:
 
-- **Switch the clusterer.** Pass `clusterer="kmeans"` or `"agglomerative"` with
-  `num_clusters=K` to BERTopic or Top2Vec. Both assign every document to one of
-  `K` clusters, so there is no `-1` label (and the topic count is fixed, not
-  discovered). KMeans scales; agglomerative (average linkage) suits moderate
+- **Switch the clusterer.** Pass `clusterer="kmeans"`, `"gmm"`, or
+  `"agglomerative"` with `num_clusters=K` to BERTopic or Top2Vec. All three assign
+  every document to one of `K` clusters, so there is no `-1` label (and the topic
+  count is fixed, not discovered). KMeans scales; `"gmm"` is a diagonal-covariance
+  Gaussian mixture that, unlike k-means, models each topic's spread — so
+  unequal-variance topics separate more cleanly, and it tends to match or beat
+  k-means on embedding clusters; agglomerative (average linkage) suits moderate
   corpora.
 
   ```python
@@ -413,8 +416,8 @@ For statistically-selected phrases instead of every bigram, use
 - `min_cluster_size` is the main dial: larger gives fewer, broader topics; smaller
   gives more, finer ones. `min_samples` (default `min_cluster_size`) sets how
   aggressively sparse documents are called noise (label `-1`). These apply to the
-  default `clusterer="hdbscan"`; `clusterer="kmeans"`/`"agglomerative"` use
-  `num_clusters` instead (see above).
+  default `clusterer="hdbscan"`; `clusterer="kmeans"`/`"gmm"`/`"agglomerative"`
+  use `num_clusters` instead (see above).
 - `n_components` is the dimensionality the embeddings are reduced to before
   clustering. The default reducer is a randomized PCA: fast, deterministic, and
   dependency-free, but it separates less sharply than UMAP and on closely spaced

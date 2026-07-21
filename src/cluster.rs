@@ -68,9 +68,9 @@ pub fn hdbscan_labels(
 }
 
 /// Dispatch to the requested clustering method. `clusterer` is `"hdbscan"`
-/// (default; uses `min_cluster_size`/`min_samples`), `"kmeans"`, or
-/// `"agglomerative"` (both use `num_clusters`, falling back to `min_cluster_size`
-/// if it is `None`). Unknown names fall back to HDBSCAN.
+/// (default; uses `min_cluster_size`/`min_samples`), `"kmeans"`, `"gmm"`, or
+/// `"agglomerative"` (all three use `num_clusters`, falling back to
+/// `min_cluster_size` if it is `None`). Unknown names fall back to HDBSCAN.
 pub fn cluster_points(
     points: &[Vec<f64>],
     clusterer: &str,
@@ -81,6 +81,7 @@ pub fn cluster_points(
 ) -> Vec<i64> {
     match clusterer {
         "kmeans" => kmeans_labels(points, num_clusters.unwrap_or(min_cluster_size), seed),
+        "gmm" => gmm_labels(points, num_clusters.unwrap_or(min_cluster_size), seed),
         "agglomerative" => agglomerative_labels(points, num_clusters.unwrap_or(min_cluster_size)),
         _ => hdbscan_labels(points, min_cluster_size, min_samples),
     }
@@ -104,21 +105,14 @@ fn densify(labels: &mut [i64]) {
     }
 }
 
-/// K-means (Lloyd) with k-means++ seeding. Every point is assigned to its nearest
-/// centroid, so there is no `-1` noise label — useful when every document must
-/// land in a topic. Deterministic for a fixed `seed`; `k` is clamped to `1..=n`,
-/// and empty clusters are dropped so the returned ids are a dense `0..m` range.
-pub fn kmeans_labels(points: &[Vec<f64>], k: usize, seed: u64) -> Vec<i64> {
+/// k-means++ seeding: pick `k` initial centers, each new one sampled with
+/// probability proportional to its squared distance from the nearest center
+/// already chosen. Deterministic for a fixed `rng`. May return fewer than `k`
+/// centers when the remaining points all coincide with a chosen center (the
+/// squared-distance mass collapses to zero); callers treat `centroids.len()` as
+/// the effective component count.
+fn kmeanspp_init(points: &[Vec<f64>], k: usize, rng: &mut ChaCha8Rng) -> Vec<Vec<f64>> {
     let n = points.len();
-    if n == 0 {
-        return Vec::new();
-    }
-    let dim = points[0].len();
-    let k = k.clamp(1, n);
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
-
-    // k-means++ seeding: each new center is sampled with probability proportional
-    // to its squared distance from the nearest existing center.
     let mut centroids: Vec<Vec<f64>> = Vec::with_capacity(k);
     centroids.push(points[rng.gen_range(0..n)].clone());
     let mut d2 = vec![f64::INFINITY; n];
@@ -146,6 +140,23 @@ pub fn kmeans_labels(points: &[Vec<f64>], k: usize, seed: u64) -> Vec<i64> {
         }
         centroids.push(points[chosen].clone());
     }
+    centroids
+}
+
+/// K-means (Lloyd) with k-means++ seeding. Every point is assigned to its nearest
+/// centroid, so there is no `-1` noise label — useful when every document must
+/// land in a topic. Deterministic for a fixed `seed`; `k` is clamped to `1..=n`,
+/// and empty clusters are dropped so the returned ids are a dense `0..m` range.
+pub fn kmeans_labels(points: &[Vec<f64>], k: usize, seed: u64) -> Vec<i64> {
+    let n = points.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let dim = points[0].len();
+    let k = k.clamp(1, n);
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+
+    let mut centroids = kmeanspp_init(points, k, &mut rng);
 
     // Lloyd iterations.
     let kc = centroids.len();
@@ -258,6 +269,136 @@ pub fn agglomerative_labels(points: &[Vec<f64>], k: usize) -> Vec<i64> {
     labels
 }
 
+/// Gaussian mixture (diagonal covariance) fit by EM with k-means++ initialization.
+///
+/// Like `kmeans_labels` this is a fixed-`k`, assign-everything clusterer (no `-1`
+/// noise bucket), so it needs `num_clusters`. Unlike k-means it models each
+/// component's per-dimension spread, which lets elongated or unequal-variance
+/// topics separate where k-means (equal, spherical clusters) would split them
+/// wrongly; the EM posterior is also a *soft* membership, collapsed here to the
+/// argmax component for the `Vec<i64>` interface. Deterministic for a fixed
+/// `seed`. `k` is clamped to `1..=n`, empty components are dropped so the ids form
+/// a dense `0..m` range, and a `reg_covar` floor (a tiny fraction of the mean
+/// feature variance) keeps a component's variance from collapsing to zero on
+/// coincident points — the singular-covariance failure GMM otherwise hits.
+pub fn gmm_labels(points: &[Vec<f64>], k: usize, seed: u64) -> Vec<i64> {
+    let n = points.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let dim = points[0].len();
+    let k = k.clamp(1, n);
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+
+    // Means from k-means++; the effective component count is whatever it returned
+    // (fewer than k only when points coincide).
+    let mut means = kmeanspp_init(points, k, &mut rng);
+    let kc = means.len();
+
+    // Global per-dimension variance seeds every component's variance and sets the
+    // regularization floor, so the model is scale-aware without a magic constant.
+    let mut gmean = vec![0.0f64; dim];
+    for p in points {
+        for d in 0..dim {
+            gmean[d] += p[d];
+        }
+    }
+    for g in gmean.iter_mut() {
+        *g /= n as f64;
+    }
+    let mut gvar = vec![0.0f64; dim];
+    for p in points {
+        for d in 0..dim {
+            let z = p[d] - gmean[d];
+            gvar[d] += z * z;
+        }
+    }
+    for g in gvar.iter_mut() {
+        *g /= n as f64;
+    }
+    let mean_var = (gvar.iter().sum::<f64>() / dim.max(1) as f64).max(1e-12);
+    let reg_covar = 1e-6 * mean_var;
+
+    let mut var: Vec<Vec<f64>> = (0..kc)
+        .map(|_| gvar.iter().map(|&v| v.max(reg_covar)).collect())
+        .collect();
+    let mut weights = vec![1.0 / kc as f64; kc];
+
+    let mut resp = vec![vec![0.0f64; kc]; n];
+    let ln_2pi = (2.0 * std::f64::consts::PI).ln();
+    let mut prev_ll = f64::NEG_INFINITY;
+    for _ in 0..100 {
+        // E-step: posterior responsibilities via log-sum-exp for numerical safety.
+        let mut ll = 0.0;
+        let mut logp = vec![0.0f64; kc];
+        for i in 0..n {
+            for c in 0..kc {
+                let mut lp = weights[c].max(1e-300).ln();
+                for d in 0..dim {
+                    let v = var[c][d];
+                    let z = points[i][d] - means[c][d];
+                    lp += -0.5 * (ln_2pi + v.ln() + z * z / v);
+                }
+                logp[c] = lp;
+            }
+            let m = logp.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let mut sum = 0.0;
+            for &lp in &logp {
+                sum += (lp - m).exp();
+            }
+            let lse = m + sum.ln();
+            ll += lse;
+            for c in 0..kc {
+                resp[i][c] = (logp[c] - lse).exp();
+            }
+        }
+
+        // M-step: closed-form weight/mean/variance updates from the responsibilities.
+        for c in 0..kc {
+            let nk: f64 = (0..n).map(|i| resp[i][c]).sum();
+            if nk <= 1e-12 {
+                weights[c] = 0.0; // component died; the ln(1e-300) floor keeps it dead
+                continue;
+            }
+            weights[c] = nk / n as f64;
+            for d in 0..dim {
+                let mu: f64 = (0..n).map(|i| resp[i][c] * points[i][d]).sum::<f64>() / nk;
+                means[c][d] = mu;
+            }
+            for d in 0..dim {
+                let s: f64 = (0..n)
+                    .map(|i| {
+                        let z = points[i][d] - means[c][d];
+                        resp[i][c] * z * z
+                    })
+                    .sum();
+                var[c][d] = (s / nk).max(reg_covar);
+            }
+        }
+
+        if (ll - prev_ll).abs() < 1e-6 * (1.0 + ll.abs()) {
+            break;
+        }
+        prev_ll = ll;
+    }
+
+    // Hard assignment: each point to its most-likely component.
+    let mut labels = vec![0i64; n];
+    for i in 0..n {
+        let mut best = 0usize;
+        let mut bestr = f64::NEG_INFINITY;
+        for c in 0..kc {
+            if resp[i][c] > bestr {
+                bestr = resp[i][c];
+                best = c;
+            }
+        }
+        labels[i] = best as i64;
+    }
+    densify(&mut labels);
+    labels
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,6 +442,7 @@ mod tests {
     fn empty_input_is_empty() {
         assert!(hdbscan_labels(&[], 4, 2).is_empty());
         assert!(kmeans_labels(&[], 4, 0).is_empty());
+        assert!(gmm_labels(&[], 4, 0).is_empty());
         assert!(agglomerative_labels(&[], 4).is_empty());
     }
 
@@ -365,5 +507,68 @@ mod tests {
         for id in 0..=max {
             assert!(labels.contains(&id), "id {id} missing -> not dense");
         }
+    }
+
+    // GMM (like kmeans/agglomerative) assigns every point and recovers the two
+    // well-separated blobs.
+    #[test]
+    fn gmm_assigns_everything_and_splits_blobs() {
+        let pts = two_blobs();
+        let labels = gmm_labels(&pts, 2, 0);
+        assert_eq!(labels.len(), 60);
+        assert!(labels.iter().all(|&l| l >= 0), "no point may be noise");
+        assert!(labels[..30].iter().all(|&l| l == labels[0]));
+        assert!(labels[30..].iter().all(|&l| l == labels[59]));
+        assert!(labels[0] != labels[59]);
+    }
+
+    // GMM separates two blobs with very different spreads where equal-variance
+    // k-means is prone to slicing the wide blob — the case diagonal covariances
+    // are meant to handle. Assert on each blob's majority label.
+    #[test]
+    fn gmm_handles_unequal_variance() {
+        use rand::{Rng, SeedableRng};
+        use rand_chacha::ChaCha8Rng;
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        let mut pts = Vec::new();
+        for _ in 0..60 {
+            // wide blob around the origin
+            pts.push(vec![
+                rng.gen::<f64>() * 4.0 - 2.0,
+                rng.gen::<f64>() * 4.0 - 2.0,
+            ]);
+        }
+        for _ in 0..60 {
+            // tight blob far away
+            pts.push(vec![
+                20.0 + rng.gen::<f64>() * 0.2,
+                20.0 + rng.gen::<f64>() * 0.2,
+            ]);
+        }
+        let labels = gmm_labels(&pts, 2, 0);
+        let majority = |slice: &[i64]| {
+            let mut counts = std::collections::HashMap::new();
+            for &l in slice {
+                *counts.entry(l).or_insert(0) += 1;
+            }
+            counts.into_iter().max_by_key(|&(_, c)| c).unwrap()
+        };
+        let (a, na) = majority(&labels[..60]);
+        let (b, nb) = majority(&labels[60..]);
+        assert!(a != b, "blobs share a label: {labels:?}");
+        assert!(na >= 55 && nb >= 55, "blobs too fragmented: {labels:?}");
+    }
+
+    // k larger than the structure stays within bounds and dense; determinism holds.
+    #[test]
+    fn gmm_clamps_densifies_and_is_deterministic() {
+        let pts = two_blobs();
+        let labels = gmm_labels(&pts, 5, 1);
+        let max = *labels.iter().max().unwrap();
+        assert!(max >= 0 && (max as usize) < 5);
+        for id in 0..=max {
+            assert!(labels.contains(&id), "id {id} missing -> not dense");
+        }
+        assert_eq!(labels, gmm_labels(&pts, 5, 1), "same seed -> same labels");
     }
 }

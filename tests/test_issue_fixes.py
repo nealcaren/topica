@@ -249,10 +249,10 @@ def _three_blobs(seed=0):
 
 
 @pytest.mark.parametrize("model_cls", ["BERTopic", "Top2Vec"])
-@pytest.mark.parametrize("clusterer", ["kmeans", "agglomerative"])
+@pytest.mark.parametrize("clusterer", ["kmeans", "gmm", "agglomerative"])
 def test_swappable_clusterer_assigns_every_doc(model_cls, clusterer):
-    # #7: KMeans / agglomerative assign every document (no -1 noise bucket) to a
-    # fixed number of clusters, unlike HDBSCAN.
+    # #7/#352: kmeans / gmm / agglomerative assign every document (no -1 noise
+    # bucket) to a fixed number of clusters, unlike HDBSCAN.
     docs, doc_emb = _three_blobs()
     cls = getattr(topica, model_cls)
     m = cls(min_cluster_size=8, clusterer=clusterer, num_clusters=3, seed=1)
