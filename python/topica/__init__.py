@@ -188,6 +188,7 @@ from .coherence import (  # noqa: E402
     word_intrusion,
     document_intrusion,
 )
+from .agreement import agreement  # noqa: E402  (external validation vs gold labels)
 # LLM-based evaluation is exposed as a namespace, topica.llm.* (coherence,
 # intrusion, select_k, backend, PROMPTS) -- it is an llm-bounded family, kept
 # distinct from the bit-exact diagnostics above. See topica/llm.py.
@@ -343,6 +344,7 @@ __all__ = [
     "TopicCorrelationCI",
     "phrases",
     "coherence",
+    "agreement",
     "coherence_ci",
     "CoherenceCI",
     "topic_diversity",
