@@ -44,6 +44,7 @@ generated from `python/topica/registry.py`.
 | `HDP` | text | gibbs | seed-reproducible | Hierarchical Dirichlet process: infers the number of topics from the data. |
 | `NMF` | text | matrix-factorization | bit-exact | Non-negative matrix factorization of the document-term matrix via multiplicative updates. |
 | `LSA` | text | svd | seed-reproducible | Latent semantic analysis: a truncated SVD of the weighted document-term matrix. |
+| `PolylingualLDA` | text | gibbs | seed-reproducible | Polylingual topic model (Mimno et al. 2009): aligned topics across languages from document tuples that share one topic distribution. |
 
 ### Covariates & structure
 
@@ -544,6 +545,59 @@ reproducing the paper: the optimizer follows the InfoCTM reference (Adam,
 learning rate, where the reference halves it every 125 epochs (a `StepLR` schedule).
 Both leave the model and objective unchanged but can shift the final fit, so an exact
 numerical match to a reference run is not expected.
+
+## PolylingualLDA
+
+`PolylingualLDA` (the Polylingual Topic Model, [Mimno, Wallach, Naradowsky, Smith &
+McCallum 2009](https://aclanthology.org/D09-1092/)) is the **count-based**
+cross-lingual model, LDA extended to aligned document *tuples*. A tuple is a set of
+documents that are loosely equivalent — parallel translations, or comparable articles
+such as linked Wikipedia pages — written in `L` languages. Every document in a tuple
+shares **one** tuple-level topic distribution θ; each topic carries a *per-language*
+word distribution φˡ. Because the topic index is shared, topic `k` denotes the same
+theme in every language: the topics are aligned by construction, with no post-hoc
+matching.
+
+```python
+m = topica.PolylingualLDA(num_topics=20)
+m.fit({                       # a dict {language: documents}, aligned by index
+    "en": docs_en,            # every language has the same number of tuples D;
+    "fr": docs_fr,            # tuple d is the same item in each language
+    "de": docs_de,
+})
+m.topic_word(lang="fr")       # (K, V_fr); topic k is the same theme as en's topic k
+m.top_words(10, lang="de")    # aligned across languages
+m.doc_topic                   # (D, K), shared across languages — one θ per tuple
+```
+
+Inference is collapsed Gibbs sampling. The conditional is standard LDA except the
+document-topic count is pooled across all languages in the tuple, which is what binds
+the languages onto a shared simplex. The asymmetric αm prior is re-estimated by a
+Minka fixed-point step every `optimize_interval` iterations after an
+`optimize_burn_in` warm-up (`optimize_alpha=True`, burn-in 200 by default, matching
+MALLET; optimizing from iteration zero over-sparsifies and can starve a topic into a
+merge); pass `optimize_alpha=False` for a fixed symmetric prior. A
+tuple absent in some language is an empty document at that index, so the model also
+handles *partly comparable* corpora — a small set of aligned "glue" tuples is enough
+to align topics across otherwise-separate per-language collections (paper §4.4).
+Determinism is `seed-reproducible`.
+
+**PolylingualLDA vs InfoCTM vs ZeroShotTM.** All three align topics across languages,
+but they need different inputs and scale differently. `PolylingualLDA` needs
+**document-aligned tuples** (which document corresponds to which) and no bilingual
+resources at all — the alignment signal is the tuple structure — and it takes any
+number of languages at once. `InfoCTM` needs a **bilingual dictionary** (not
+document alignment) and handles two languages. `ZeroShotTM` needs a **multilingual
+sentence embedder** and transfers zero-shot. Reach for `PolylingualLDA` when the
+corpus is naturally paired or comparable across languages (parliamentary proceedings,
+linked encyclopedia articles, multi-language editions) and you want plain count-based
+topics with per-language word distributions.
+
+Validated against MALLET's `cc.mallet.topics.PolylingualTopicModel` (the reference
+from the paper's authors) in `parity/pltm_compare.py`; because MALLET is
+weak-copyleft, the port is derived from the paper and MALLET is used only as a
+black-box oracle. The RNG differs, so parity is measured by aligned per-language
+topic-word cosine, not a bit-exact match.
 
 ## NMF
 

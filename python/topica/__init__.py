@@ -20,6 +20,7 @@ from ._topica import (
     PT,
     GSDMM,
     BTM,
+    PolylingualLDA,
     SeededLDA,
     KeyATM,
     Top2Vec,
@@ -148,6 +149,9 @@ def summary(model, topn=8):
 
 from .gdmr import GDMR  # noqa: E402  (pure-Python Legendre-basis DMR wrapper)
 from .narrative import NarrativeTM  # noqa: E402  (pure-Python NarrativeTM wrapper)
+
+# PLTM is the paper's acronym for the Polylingual Topic Model.
+PLTM = PolylingualLDA  # noqa: E402
 from . import stm  # noqa: E402  (stm imports names defined above)
 from .stm import align_corpus, spline, interaction, topic_correlation_ci, TopicCorrelationCI  # noqa: E402  (general covariate-design helpers)
 from . import keyatm  # noqa: E402  (keyATM-specific workflow helpers)
@@ -308,6 +312,7 @@ __all__ = [
     "PT",
     "GSDMM",
     "BTM",
+    "PolylingualLDA",
     "SeededLDA",
     "KeyATM",
     "Top2Vec",
