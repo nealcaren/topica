@@ -12602,16 +12602,16 @@ fn parse_reducer(reducer: &str) -> PyResult<bool> {
 }
 
 /// Validate the `clusterer` choice for the embedding models. `"hdbscan"` (the
-/// default) discovers the topic count and leaves a `-1` noise bucket; `"kmeans"`
-/// and `"agglomerative"` assign every document to `num_clusters` clusters, so they
-/// require `num_clusters >= 1`.
+/// default) discovers the topic count and leaves a `-1` noise bucket; `"kmeans"`,
+/// `"gmm"`, and `"agglomerative"` assign every document to `num_clusters` clusters,
+/// so they require `num_clusters >= 1`.
 fn parse_clusterer(
     clusterer: &str,
     num_clusters: Option<i64>,
 ) -> PyResult<(String, Option<usize>)> {
     match clusterer {
         "hdbscan" => Ok(("hdbscan".to_string(), None)),
-        "kmeans" | "agglomerative" => {
+        "kmeans" | "gmm" | "agglomerative" => {
             let k = num_clusters.ok_or_else(|| {
                 PyValueError::new_err(format!(
                     "clusterer={clusterer:?} needs num_clusters (the number of clusters to form)"
@@ -12625,7 +12625,7 @@ fn parse_clusterer(
             Ok((clusterer.to_string(), Some(k as usize)))
         }
         other => Err(PyValueError::new_err(format!(
-            "unknown clusterer {other:?}; expected 'hdbscan', 'kmeans', or 'agglomerative'"
+            "unknown clusterer {other:?}; expected 'hdbscan', 'kmeans', 'gmm', or 'agglomerative'"
         ))),
     }
 }
@@ -12715,9 +12715,11 @@ impl Top2Vec {
     /// Create an unfitted model. `n_components` is the reduced dimensionality
     /// before clustering. `clusterer` is `"hdbscan"` (default; discovers the topic
     /// count, leaves a `-1` noise bucket — `min_cluster_size`/`min_samples` are
-    /// its knobs), or `"kmeans"` / `"agglomerative"`, which assign every document
-    /// to `num_clusters` clusters (no noise). `min_samples` defaults to
-    /// `min_cluster_size`.
+    /// its knobs), or `"kmeans"` / `"gmm"` / `"agglomerative"`, which assign every
+    /// document to `num_clusters` clusters (no noise). `"gmm"` is a
+    /// diagonal-covariance Gaussian mixture: like k-means but it models each
+    /// topic's spread, so unequal-variance topics separate more cleanly.
+    /// `min_samples` defaults to `min_cluster_size`.
     ///
     /// `reducer` is the dimensionality-reduction method, ``"pca"`` (default,
     /// deterministic) or ``"umap"`` (stochastic); `n_neighbors` is the
@@ -13310,9 +13312,9 @@ impl BERTopic {
     /// `n_neighbors` its neighborhood size. `bm25` switches the c-TF-IDF term
     /// weighting to class-based BM25 and `reduce_frequent` dampens frequent terms
     /// by a square-root before IDF. `clusterer` is ``"hdbscan"`` (default),
-    /// ``"kmeans"`` or ``"agglomerative"``; `num_clusters` sets the target count
-    /// for the latter two (ignored by HDBSCAN). `seed` seeds the deterministic
-    /// phases.
+    /// ``"kmeans"``, ``"gmm"`` (diagonal-covariance Gaussian mixture), or
+    /// ``"agglomerative"``; `num_clusters` sets the target count for the last
+    /// three (ignored by HDBSCAN). `seed` seeds the deterministic phases.
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
                         nr_topics=None, window=4, stride=1, reducer="pca", n_neighbors=15,
