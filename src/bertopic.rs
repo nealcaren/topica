@@ -173,16 +173,30 @@ pub fn fit_bertopic(
     if did_pca {
         reduce::l2_normalize_rows(&mut reduced);
     }
-    let mut labels = cluster::cluster_points(
-        &reduced,
-        clusterer,
-        num_clusters,
-        min_cluster_size,
-        min_samples,
-        resolution,
-        knn_neighbors,
-        seed,
-    );
+    // For GMM (without topic reduction) we capture the EM posterior
+    // responsibilities as a soft doc-topic membership (issue #357). With
+    // `nr_topics`, the c-TF-IDF merge is a hard-label operation that soft
+    // responsibilities can't compose through while keeping `argmax == label`, so
+    // we use hard GMM labels there and fall back to the c-TF-IDF `doc_topic`, as
+    // every non-GMM clusterer does.
+    let gmm_soft_path = clusterer == "gmm" && nr_topics.is_none();
+    let (mut labels, gmm_soft) = if gmm_soft_path {
+        let (labels, soft) =
+            cluster::gmm_soft_labels(&reduced, num_clusters.unwrap_or(min_cluster_size), seed);
+        (labels, Some(soft))
+    } else {
+        let labels = cluster::cluster_points(
+            &reduced,
+            clusterer,
+            num_clusters,
+            min_cluster_size,
+            min_samples,
+            resolution,
+            knn_neighbors,
+            seed,
+        );
+        (labels, None)
+    };
     let mut num_topics = topic_count(&labels);
 
     // (3) optional topic reduction: merge the most c-TF-IDF-similar topics.
@@ -216,7 +230,13 @@ pub fn fit_bertopic(
             }
         }
     }
-    let doc_topic = approximate_distribution(docs, &ctfidf_raw, &idf, num_topics, window, stride);
+    // GMM contributes a calibrated soft membership (the EM responsibilities); every
+    // other clusterer uses the c-TF-IDF approximate distribution. `argmax` of the
+    // GMM `doc_topic` equals `labels`, so the hard and soft views agree.
+    let doc_topic = match gmm_soft {
+        Some(soft) => normalize_rows(soft),
+        None => approximate_distribution(docs, &ctfidf_raw, &idf, num_topics, window, stride),
+    };
 
     BertopicModel {
         num_topics,
@@ -296,6 +316,24 @@ fn merge_topic(labels: &mut [i64], drop: usize, keep: usize) {
             *l -= 1;
         }
     }
+}
+
+/// Row-normalize a matrix to sum to one per row (a zero row becomes uniform).
+fn normalize_rows(mut m: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
+    for row in m.iter_mut() {
+        let s: f64 = row.iter().sum();
+        if s > 0.0 {
+            for x in row.iter_mut() {
+                *x /= s;
+            }
+        } else if !row.is_empty() {
+            let u = 1.0 / row.len() as f64;
+            for x in row.iter_mut() {
+                *x = u;
+            }
+        }
+    }
+    m
 }
 
 /// The soft document-topic distribution. For each document we slide a `window` of

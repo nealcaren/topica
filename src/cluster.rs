@@ -278,22 +278,15 @@ pub fn agglomerative_labels(points: &[Vec<f64>], k: usize) -> Vec<i64> {
     labels
 }
 
-/// Gaussian mixture (diagonal covariance) fit by EM with k-means++ initialization.
-///
-/// Like `kmeans_labels` this is a fixed-`k`, assign-everything clusterer (no `-1`
-/// noise bucket), so it needs `num_clusters`. Unlike k-means it models each
-/// component's per-dimension spread, which lets elongated or unequal-variance
-/// topics separate where k-means (equal, spherical clusters) would split them
-/// wrongly; the EM posterior is also a *soft* membership, collapsed here to the
-/// argmax component for the `Vec<i64>` interface. Deterministic for a fixed
-/// `seed`. `k` is clamped to `1..=n`, empty components are dropped so the ids form
-/// a dense `0..m` range, and a `reg_covar` floor (a tiny fraction of the mean
-/// feature variance) keeps a component's variance from collapsing to zero on
-/// coincident points — the singular-covariance failure GMM otherwise hits.
-pub fn gmm_labels(points: &[Vec<f64>], k: usize, seed: u64) -> Vec<i64> {
+/// Run the diagonal-covariance GMM EM and return `(raw component label per point,
+/// posterior responsibilities)`. Labels are the argmax component in `0..kc` (not
+/// yet densified); `resp[i]` is the length-`kc` soft membership of point `i`. The
+/// public `gmm_labels` / `gmm_soft_labels` wrap this. See `gmm_labels` for the
+/// modeling notes (k-means++ init, log-sum-exp E-step, `reg_covar` floor).
+fn gmm_fit(points: &[Vec<f64>], k: usize, seed: u64) -> (Vec<i64>, Vec<Vec<f64>>) {
     let n = points.len();
     if n == 0 {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     let dim = points[0].len();
     let k = k.clamp(1, n);
@@ -391,7 +384,7 @@ pub fn gmm_labels(points: &[Vec<f64>], k: usize, seed: u64) -> Vec<i64> {
         prev_ll = ll;
     }
 
-    // Hard assignment: each point to its most-likely component.
+    // Hard assignment: each point to its most-likely component (raw ids in 0..kc).
     let mut labels = vec![0i64; n];
     for i in 0..n {
         let mut best = 0usize;
@@ -404,8 +397,70 @@ pub fn gmm_labels(points: &[Vec<f64>], k: usize, seed: u64) -> Vec<i64> {
         }
         labels[i] = best as i64;
     }
+    (labels, resp)
+}
+
+/// Gaussian mixture (diagonal covariance) fit by EM with k-means++ initialization.
+///
+/// Like `kmeans_labels` this is a fixed-`k`, assign-everything clusterer (no `-1`
+/// noise bucket), so it needs `num_clusters`. Unlike k-means it models each
+/// component's per-dimension spread, which lets elongated or unequal-variance
+/// topics separate where k-means (equal, spherical clusters) would split them
+/// wrongly; the EM posterior is also a *soft* membership, exposed by
+/// `gmm_soft_labels` and collapsed here to the argmax component for the `Vec<i64>`
+/// interface. Deterministic for a fixed `seed`. `k` is clamped to `1..=n`, empty
+/// components are dropped so the ids form a dense `0..m` range, and a `reg_covar`
+/// floor (a tiny fraction of the mean feature variance) keeps a component's
+/// variance from collapsing to zero on coincident points.
+pub fn gmm_labels(points: &[Vec<f64>], k: usize, seed: u64) -> Vec<i64> {
+    let (mut labels, _resp) = gmm_fit(points, k, seed);
     densify(&mut labels);
     labels
+}
+
+/// GMM clustering that also returns each document's *soft* membership — the EM
+/// posterior responsibilities as a `(n, num_topics)` matrix whose rows sum to one.
+/// This is the mixture representation hard clustering can't give: a document that
+/// sits between topics gets a blend instead of a single label. Returns
+/// `(labels, doc_topic)`, both over the same dense `0..num_topics` set (empty
+/// components dropped in lockstep, and each row renormalized over the surviving
+/// components). `doc_topic[i].argmax()` equals `labels[i]` — the surviving
+/// components always include every document's argmax.
+pub fn gmm_soft_labels(points: &[Vec<f64>], k: usize, seed: u64) -> (Vec<i64>, Vec<Vec<f64>>) {
+    let (raw, resp) = gmm_fit(points, k, seed);
+    if raw.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    // Kept components = those that are some document's argmax (matches `densify`).
+    let mut kept: Vec<usize> = raw.iter().map(|&l| l as usize).collect();
+    kept.sort_unstable();
+    kept.dedup();
+    let remap: HashMap<usize, usize> = kept
+        .iter()
+        .enumerate()
+        .map(|(new, &old)| (old, new))
+        .collect();
+    let k_final = kept.len();
+
+    let labels: Vec<i64> = raw.iter().map(|&l| remap[&(l as usize)] as i64).collect();
+    let doc_topic: Vec<Vec<f64>> = resp
+        .iter()
+        .map(|row| {
+            let mut r: Vec<f64> = kept.iter().map(|&c| row[c]).collect();
+            let s: f64 = r.iter().sum();
+            if s > 0.0 {
+                for x in r.iter_mut() {
+                    *x /= s;
+                }
+            } else {
+                for x in r.iter_mut() {
+                    *x = 1.0 / k_final as f64;
+                }
+            }
+            r
+        })
+        .collect();
+    (labels, doc_topic)
 }
 
 // ===================================================================
@@ -1001,6 +1056,37 @@ mod tests {
             assert!(labels.contains(&id), "id {id} missing -> not dense");
         }
         assert_eq!(labels, gmm_labels(&pts, 5, 1), "same seed -> same labels");
+    }
+
+    // gmm_soft_labels returns a (n, num_topics) soft membership whose rows sum to
+    // one, whose argmax equals the hard labels, and whose hard labels match
+    // gmm_labels exactly (same EM, same densify).
+    #[test]
+    fn gmm_soft_labels_are_normalized_and_consistent() {
+        let pts = two_blobs();
+        let (labels, soft) = gmm_soft_labels(&pts, 3, 1);
+        assert_eq!(
+            labels,
+            gmm_labels(&pts, 3, 1),
+            "hard labels must match gmm_labels"
+        );
+        let k = (*labels.iter().max().unwrap() + 1) as usize;
+        assert_eq!(soft.len(), pts.len());
+        for (i, row) in soft.iter().enumerate() {
+            assert_eq!(row.len(), k, "each row has one column per topic");
+            let s: f64 = row.iter().sum();
+            assert!((s - 1.0).abs() < 1e-9, "row {i} sums to {s}, not 1");
+            let argmax = row
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .unwrap()
+                .0;
+            assert_eq!(
+                argmax as i64, labels[i],
+                "soft argmax must equal hard label"
+            );
+        }
     }
 
     // Three well-separated blobs in embedding space. The graph clusterer discovers
