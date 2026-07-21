@@ -493,6 +493,17 @@ For statistically-selected phrases instead of every bigram, use
   Unlike a typical UMAP, topica's is **fully reproducible**: the negative sampling
   is seeded, so a fixed `seed` pins the layout and the whole `reducer="umap"` fit is
   deterministic. There is no non-determinism caveat and no warning.
+- The UMAP layout is tunable. Beyond `n_neighbors`, `reducer="umap"` accepts
+  `min_dist` (minimum spacing of points in the embedding; lower packs clusters
+  tighter — the default `0.0` matches BERTopic), `spread`, `n_epochs` (`0` = auto:
+  500 for ≤10k rows), `negative_sample_rate`, `repulsion_strength`, and `metric`
+  (`"cosine"` default, or `"euclidean"`). All default to `umap-learn`'s values, so
+  touching nothing reproduces the reference; they are ignored under `reducer="pca"`.
+  The same knobs are on `topica.project(method="umap", ...)`.
+
+  ```python
+  model = topica.BERTopic(reducer="umap", min_dist=0.1, n_neighbors=30, seed=1)
+  ```
 - Results are reproducible for a fixed `seed`, under either reducer.
 
 !!! note "Faithful to the references"

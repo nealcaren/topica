@@ -8730,9 +8730,16 @@ fn warn_stochastic(py: Python<'_>, method: &str) -> PyResult<()> {
 ///
 /// `n_neighbors` is the local-neighborhood size for the UMAP graph; `perplexity`
 /// is t-SNE's effective neighborhood size; `seed` seeds the reducer (UMAP/PCA)
-/// for reproducibility.
+/// for reproducibility. The remaining kwargs tune the UMAP layout (ignored by
+/// `pca`/`tsne`): `min_dist` (minimum spacing of points in the embedding),
+/// `spread` (its scale), `n_epochs` (0 = auto), `negative_sample_rate`,
+/// `repulsion_strength`, and `metric` (`"cosine"` or `"euclidean"`); the defaults
+/// match `umap-learn`.
 #[pyfunction]
-#[pyo3(signature = (data, n_components=2, *, method="pca", n_neighbors=15, perplexity=30.0, seed=0))]
+#[pyo3(signature = (data, n_components=2, *, method="pca", n_neighbors=15, perplexity=30.0,
+                    min_dist=0.0, spread=1.0, n_epochs=0, negative_sample_rate=5,
+                    repulsion_strength=1.0, metric="cosine", seed=0))]
+#[allow(clippy::too_many_arguments)]
 fn project<'py>(
     py: Python<'py>,
     data: &Bound<'py, PyAny>,
@@ -8740,9 +8747,23 @@ fn project<'py>(
     method: &str,
     n_neighbors: usize,
     perplexity: f64,
+    min_dist: f64,
+    spread: f64,
+    n_epochs: usize,
+    negative_sample_rate: usize,
+    repulsion_strength: f64,
+    metric: &str,
     seed: u64,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let rows = parse_features(data)?;
+    let umap_params = parse_umap_params(
+        min_dist,
+        spread,
+        n_epochs,
+        negative_sample_rate,
+        repulsion_strength,
+        metric,
+    )?;
     match method {
         "pca" => {}
         "umap" => {
@@ -8780,6 +8801,7 @@ fn project<'py>(
             n_components,
             &method,
             n_neighbors,
+            &umap_params,
             perplexity,
             0.5,
             1000,
@@ -12650,6 +12672,53 @@ fn parse_graph_params(resolution: f64, knn_neighbors: usize) -> PyResult<(f64, u
     Ok((resolution, knn_neighbors))
 }
 
+/// Validate the UMAP layout hyperparameters and pack them into a
+/// `reduce::UmapParams`. Only used when `reducer="umap"`; the defaults reproduce
+/// the previous hardcoded reference configuration, so a caller that leaves them
+/// alone gets identical layouts. Validated unconditionally so a bad value (a
+/// negative `min_dist`, an unknown `metric`) is a clear error at construction.
+#[allow(clippy::too_many_arguments)]
+fn parse_umap_params(
+    min_dist: f64,
+    spread: f64,
+    n_epochs: usize,
+    negative_sample_rate: usize,
+    repulsion_strength: f64,
+    metric: &str,
+) -> PyResult<crate::reduce::UmapParams> {
+    if !min_dist.is_finite() || min_dist < 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "min_dist must be a non-negative finite number, got {min_dist}"
+        )));
+    }
+    if !spread.is_finite() || spread <= 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "spread must be a positive finite number, got {spread}"
+        )));
+    }
+    if !repulsion_strength.is_finite() || repulsion_strength <= 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "repulsion_strength must be a positive finite number, got {repulsion_strength}"
+        )));
+    }
+    if negative_sample_rate < 1 {
+        return Err(PyValueError::new_err("negative_sample_rate must be >= 1"));
+    }
+    if metric != "cosine" && metric != "euclidean" {
+        return Err(PyValueError::new_err(format!(
+            "unknown metric {metric:?}; expected 'cosine' or 'euclidean'"
+        )));
+    }
+    Ok(crate::reduce::UmapParams {
+        min_dist,
+        spread,
+        n_epochs,
+        negative_sample_rate,
+        repulsion_strength,
+        metric: metric.to_string(),
+    })
+}
+
 /// Post-fit sanity checks for the embedding-clustering pipeline (issue #356). The
 /// reduce→cluster pipeline decides almost everything and its failure modes are
 /// silent — the run completes and returns a model with no signal that the result
@@ -12768,6 +12837,7 @@ pub struct Top2Vec {
     num_clusters: Option<usize>,
     resolution: f64,
     knn_neighbors: usize,
+    umap_params: crate::reduce::UmapParams,
     diagnostics: bool,
     seed: u64,
     fitted: bool,
@@ -12826,12 +12896,18 @@ impl Top2Vec {
     /// ignored by the other clusterers. `diagnostics` (default True) emits a
     /// one-time warning after fitting if the clustering looks degenerate (near-total
     /// collapse, a very high noise fraction, or gross over-splitting); pass False to
-    /// silence it. `seed` seeds the deterministic phases.
+    /// silence it. When `reducer="umap"`, `min_dist` / `spread` / `n_epochs`
+    /// (0 = auto) / `negative_sample_rate` / `repulsion_strength` / `metric`
+    /// (``"cosine"`` or ``"euclidean"``) tune the UMAP layout; the defaults match
+    /// `umap-learn`, and they are ignored under `reducer="pca"`. `seed` seeds the
+    /// deterministic phases.
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
                         reducer="pca", n_neighbors=15, clusterer="hdbscan",
                         num_clusters=None, resolution=1.0, knn_neighbors=15,
-                        diagnostics=true, seed=42))]
+                        diagnostics=true, min_dist=0.0, spread=1.0, n_epochs=0,
+                        negative_sample_rate=5, repulsion_strength=1.0, metric="cosine",
+                        seed=42))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         n_components: usize,
@@ -12844,6 +12920,12 @@ impl Top2Vec {
         resolution: f64,
         knn_neighbors: usize,
         diagnostics: bool,
+        min_dist: f64,
+        spread: f64,
+        n_epochs: usize,
+        negative_sample_rate: usize,
+        repulsion_strength: f64,
+        metric: &str,
         seed: u64,
     ) -> PyResult<Self> {
         if min_cluster_size < 2 {
@@ -12852,6 +12934,14 @@ impl Top2Vec {
         let use_umap = parse_reducer(reducer)?;
         let (clusterer, num_clusters) = parse_clusterer(clusterer, num_clusters)?;
         let (resolution, knn_neighbors) = parse_graph_params(resolution, knn_neighbors)?;
+        let umap_params = parse_umap_params(
+            min_dist,
+            spread,
+            n_epochs,
+            negative_sample_rate,
+            repulsion_strength,
+            metric,
+        )?;
         Ok(Top2Vec {
             n_components,
             use_umap,
@@ -12862,6 +12952,7 @@ impl Top2Vec {
             num_clusters,
             resolution,
             knn_neighbors,
+            umap_params,
             diagnostics,
             seed,
             fitted: false,
@@ -12967,6 +13058,7 @@ impl Top2Vec {
         let clusterer = self.clusterer.clone();
         let num_clusters = self.num_clusters;
         let (resolution, knn_neighbors) = (self.resolution, self.knn_neighbors);
+        let umap_params = self.umap_params.clone();
         let model = py.allow_threads(move || {
             top2vec::fit_top2vec(
                 &corpus.docs,
@@ -12982,6 +13074,7 @@ impl Top2Vec {
                 num_clusters,
                 resolution,
                 knn_neighbors,
+                &umap_params,
                 seed,
             )
         });
@@ -13312,11 +13405,12 @@ impl Top2Vec {
             min_samples: s.min_samples,
             clusterer: s.clusterer,
             num_clusters: s.num_clusters,
-            // resolution/knn_neighbors are fit-time knobs; the fitted result is
-            // fully captured by the stored model, so a loaded model just carries
-            // the defaults (it never re-clusters).
+            // resolution/knn_neighbors/umap_params are fit-time knobs; the fitted
+            // result is fully captured by the stored model, so a loaded model just
+            // carries the defaults (it never re-reduces or re-clusters).
             resolution: 1.0,
             knn_neighbors: 15,
+            umap_params: crate::reduce::UmapParams::default(),
             // Fit-time flag; a loaded model won't re-fit, so it just carries the
             // default (diagnostics only fire during fit()).
             diagnostics: true,
@@ -13378,6 +13472,7 @@ pub struct BERTopic {
     num_clusters: Option<usize>,
     resolution: f64,
     knn_neighbors: usize,
+    umap_params: crate::reduce::UmapParams,
     diagnostics: bool,
     seed: u64,
     fitted: bool,
@@ -13456,14 +13551,19 @@ impl BERTopic {
     /// `resolution` yields more, smaller topics; ignored by the others.
     /// `diagnostics` (default True) emits a one-time warning after fitting if the
     /// clustering looks degenerate (near-total collapse, a very high noise
-    /// fraction, or gross over-splitting); pass False to silence it. `seed` seeds
-    /// the deterministic phases.
+    /// fraction, or gross over-splitting); pass False to silence it. When
+    /// `reducer="umap"`, `min_dist` / `spread` / `n_epochs` (0 = auto) /
+    /// `negative_sample_rate` / `repulsion_strength` / `metric` (``"cosine"`` or
+    /// ``"euclidean"``) tune the UMAP layout (`umap-learn` defaults; ignored under
+    /// `reducer="pca"`). `seed` seeds the deterministic phases.
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
                         nr_topics=None, window=4, stride=1, reducer="pca", n_neighbors=15,
                         bm25=false, reduce_frequent=false, clusterer="hdbscan",
                         num_clusters=None, resolution=1.0, knn_neighbors=15,
-                        diagnostics=true, seed=42))]
+                        diagnostics=true, min_dist=0.0, spread=1.0, n_epochs=0,
+                        negative_sample_rate=5, repulsion_strength=1.0, metric="cosine",
+                        seed=42))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         n_components: usize,
@@ -13481,6 +13581,12 @@ impl BERTopic {
         resolution: f64,
         knn_neighbors: usize,
         diagnostics: bool,
+        min_dist: f64,
+        spread: f64,
+        n_epochs: usize,
+        negative_sample_rate: usize,
+        repulsion_strength: f64,
+        metric: &str,
         seed: u64,
     ) -> PyResult<Self> {
         if min_cluster_size < 2 {
@@ -13489,6 +13595,14 @@ impl BERTopic {
         let use_umap = parse_reducer(reducer)?;
         let (clusterer, num_clusters) = parse_clusterer(clusterer, num_clusters)?;
         let (resolution, knn_neighbors) = parse_graph_params(resolution, knn_neighbors)?;
+        let umap_params = parse_umap_params(
+            min_dist,
+            spread,
+            n_epochs,
+            negative_sample_rate,
+            repulsion_strength,
+            metric,
+        )?;
         Ok(BERTopic {
             n_components,
             use_umap,
@@ -13504,6 +13618,7 @@ impl BERTopic {
             num_clusters,
             resolution,
             knn_neighbors,
+            umap_params,
             diagnostics,
             seed,
             fitted: false,
@@ -13573,6 +13688,7 @@ impl BERTopic {
         let clusterer = self.clusterer.clone();
         let num_clusters = self.num_clusters;
         let (resolution, knn_neighbors) = (self.resolution, self.knn_neighbors);
+        let umap_params = self.umap_params.clone();
         let model = py.allow_threads(move || {
             bertopic::fit_bertopic(
                 &corpus.docs,
@@ -13592,6 +13708,7 @@ impl BERTopic {
                 num_clusters,
                 resolution,
                 knn_neighbors,
+                &umap_params,
                 seed,
             )
         });
@@ -13885,9 +14002,11 @@ impl BERTopic {
             reduce_frequent: s.reduce_frequent,
             clusterer: s.clusterer,
             num_clusters: s.num_clusters,
-            // Fit-time knobs; a loaded model never re-clusters, so defaults suffice.
+            // Fit-time knobs; a loaded model never re-reduces or re-clusters, so
+            // defaults suffice.
             resolution: 1.0,
             knn_neighbors: 15,
+            umap_params: crate::reduce::UmapParams::default(),
             // Fit-time flag; diagnostics only fire during fit(), so a loaded model
             // carries the default.
             diagnostics: true,

@@ -33,6 +33,12 @@ def project(
     method: str = "pca",
     n_neighbors: int = 15,
     perplexity: float = 30.0,
+    min_dist: float = 0.0,
+    spread: float = 1.0,
+    n_epochs: int = 0,
+    negative_sample_rate: int = 5,
+    repulsion_strength: float = 1.0,
+    metric: str = "cosine",
     seed: int = 0,
 ) -> numpy.typing.NDArray[numpy.float64]:
     """Project a high-dimensional array to `n_components` for plotting or clustering.
@@ -2626,6 +2632,12 @@ class Top2Vec:
         resolution: float = 1.0,
         knn_neighbors: int = 15,
         diagnostics: bool = True,
+        min_dist: float = 0.0,
+        spread: float = 1.0,
+        n_epochs: int = 0,
+        negative_sample_rate: int = 5,
+        repulsion_strength: float = 1.0,
+        metric: str = "cosine",
         seed: int = 42,
     ) -> None: ...
     def fit(
@@ -2720,6 +2732,12 @@ class BERTopic:
         resolution: float = 1.0,
         knn_neighbors: int = 15,
         diagnostics: bool = True,
+        min_dist: float = 0.0,
+        spread: float = 1.0,
+        n_epochs: int = 0,
+        negative_sample_rate: int = 5,
+        repulsion_strength: float = 1.0,
+        metric: str = "cosine",
         seed: int = 42,
     ) -> None: ...
     def fit(
