@@ -28,6 +28,8 @@ topic-word distribution ``topic_word_at(level)`` at a few sentiment levels
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 __all__ = [
@@ -37,6 +39,10 @@ __all__ = [
     "split_topics",
     "stratified_coherence",
     "diagnostics",
+    "content_trajectory",
+    "content_divergence",
+    "ContentTrajectory",
+    "ContentDivergence",
 ]
 
 # STS has no discrete groups -- its content axis is a continuous sentiment. We
@@ -341,3 +347,384 @@ def diagnostics(model, texts=None, content=None, *, n=10, coherence_type="c_v"):
         return pd.DataFrame(rows).set_index("topic")
     except ImportError:
         return rows
+
+
+# ===================================================================
+# STM content_time reading layer (issue #365): read "how a group words a
+# topic over ordered time" off the STM content surface fit with
+# `content_time=`, replacing ECTM's readers. Ports faSTM's
+# content_trajectory() / content_divergence() (R/content-trajectory.R).
+#
+# The STM content_time fit crosses base groups with ordered periods into
+# a saturated content axis whose group labels are "base@period" (index
+# base*num_time_periods + period). `group_topic_word` returns that whole
+# (K, G, V) surface; these readers decode the cross, pick the target
+# topic, and read the per-period between-group signal off it.
+# ===================================================================
+
+
+def _parse_content_time_groups(groups):
+    """Split ``"base@period"`` content-group labels into the base levels (in first
+    appearance order), the periods (ordered numerically when possible), and a
+    ``{(base, period): group_index}`` lookup. Raises if the model was not fit with a
+    ``content_time`` covariate (no ``@`` in the labels)."""
+    groups = [str(g) for g in groups]
+    if not any("@" in g for g in groups):
+        raise ValueError(
+            "model was not fit with a content_time covariate (no 'base@period' "
+            "content groups found). Fit STM with content_time= to read a trajectory."
+        )
+    parsed = [g.split("@", 1) for g in groups]
+    bases = list(dict.fromkeys(b for b, _ in parsed))
+    period_labels = list(dict.fromkeys(p for _, p in parsed))
+    try:
+        periods = sorted(period_labels, key=lambda p: float(p))
+    except ValueError:
+        periods = sorted(period_labels)
+    lookup = {(b, p): i for i, (b, p) in enumerate(parsed)}
+    return bases, periods, lookup
+
+
+def _resolve_content_topic(beta_KGV, vocab, topic, anchor_words):
+    """Target topic index: the one whose group-averaged top-20 words overlap
+    ``anchor_words`` most (so it can be tracked across bootstrap refits that number
+    topics differently), or an explicit ``topic``."""
+    if anchor_words is not None:
+        anchor = {str(w) for w in anchor_words}
+        avg = beta_KGV.mean(axis=1)  # (K, V)
+        overlaps = [
+            sum(vocab[i] in anchor for i in np.argsort(avg[k])[::-1][:20])
+            for k in range(avg.shape[0])
+        ]
+        return int(np.argmax(overlaps))
+    if topic is not None:
+        return int(topic)
+    raise ValueError("supply either `topic` or `anchor_words`")
+
+
+def _content_groups_default(bases, groups):
+    if groups is None:
+        if len(bases) < 2:
+            raise ValueError("need at least two base content groups to contrast")
+        return bases[0], bases[1]
+    if len(groups) != 2:
+        raise ValueError("`groups` must be a pair of base content-group labels")
+    return str(groups[0]), str(groups[1])
+
+
+def _traj_point(beta_KGV, vocab, words, g1, g2, k, periods, lookup):
+    """Per-word, per-period contrast p(w|g1,p) - p(w|g2,p) for topic k. Returns
+    (kept_words, estimate array of shape (n_words, n_periods))."""
+    widx = {w: i for i, w in enumerate(vocab)}
+    kept = [w for w in words if w in widx]
+    est = np.full((len(kept), len(periods)), np.nan)
+    for r, w in enumerate(kept):
+        wi = widx[w]
+        for c, p in enumerate(periods):
+            i1, i2 = lookup.get((g1, p)), lookup.get((g2, p))
+            if i1 is not None and i2 is not None:
+                est[r, c] = beta_KGV[k, i1, wi] - beta_KGV[k, i2, wi]
+    return kept, est
+
+
+def _div_point(beta_KGV, g1, g2, k, periods, lookup, measure):
+    """Per-period distributional distance between the two groups' topic-word rows."""
+    out = np.full(len(periods), np.nan)
+    for c, p in enumerate(periods):
+        i1, i2 = lookup.get((g1, p)), lookup.get((g2, p))
+        if i1 is None or i2 is None:
+            continue
+        pd_ = beta_KGV[k, i1]
+        pr = beta_KGV[k, i2]
+        pd_ = pd_ / pd_.sum()
+        pr = pr / pr.sum()
+        if measure == "hellinger":
+            out[c] = np.sqrt(0.5 * np.sum((np.sqrt(pd_) - np.sqrt(pr)) ** 2))
+        else:  # total variation
+            out[c] = 0.5 * np.sum(np.abs(pd_ - pr))
+    return out
+
+
+def _boot_indices(n, clusters, rng):
+    """One bootstrap resample of document indices. With ``clusters`` (a length-n
+    label per document) it is a cluster bootstrap: whole clusters are drawn with
+    replacement, matching faSTM's ``.boot_index``."""
+    if clusters is None:
+        return rng.integers(0, n, n)
+    clusters = np.asarray(clusters)
+    labels = list(dict.fromkeys(clusters.tolist()))
+    members = {lab: np.where(clusters == lab)[0] for lab in labels}
+    drawn = rng.integers(0, len(labels), len(labels))
+    return np.concatenate([members[labels[d]] for d in drawn])
+
+
+def _subset(seq, idx):
+    if seq is None:
+        return None
+    arr = np.asarray(seq)
+    return arr[idx] if arr.ndim == 1 else arr[idx, :]
+
+
+def _refit_stm(docs, idx, fit_kwargs):
+    """Refit an STM content_time model on the resampled documents. ``fit_kwargs``
+    carries the constructor + fit arguments (num_topics/seed/content/content_time/
+    prevalence/...); the per-document covariate arrays are subset to ``idx``."""
+    import topica
+
+    fk = dict(fit_kwargs)
+    docs_b = [docs[i] for i in idx]
+    model = topica.STM(
+        num_topics=int(fk["num_topics"]),
+        seed=int(fk.get("seed", 0)),
+        init=fk.get("init", "spectral"),
+    )
+    fit_args = dict(
+        content=_subset(fk.get("content"), idx),
+        content_names=fk.get("content_names"),
+        content_time=_subset(fk.get("content_time"), idx),
+        content_smooth=fk.get("content_smooth", 1.0),
+        content_prior=fk.get("content_prior", "l2"),
+        content_prior_var=fk.get("content_prior_var", 0.5),
+        iters=int(fk.get("iters", 500)),
+    )
+    prev = _subset(fk.get("prevalence"), idx)
+    if prev is not None:
+        fit_args["prevalence"] = prev
+        if fk.get("prevalence_names") is not None:
+            fit_args["prevalence_names"] = fk["prevalence_names"]
+    model.fit(docs_b, **{k: v for k, v in fit_args.items() if v is not None})
+    return model
+
+
+def _percentile_ci(stack, level):
+    """Percentile CIs down axis 0 of a stack of bootstrap replicates (which may
+    contain NaN where a period/word was absent in a replicate)."""
+    lo = (1.0 - level) / 2.0 * 100.0
+    hi = (1.0 + level) / 2.0 * 100.0
+    with np.errstate(invalid="ignore"):
+        low = np.nanpercentile(stack, lo, axis=0)
+        high = np.nanpercentile(stack, hi, axis=0)
+    return low, high
+
+
+@dataclass
+class ContentTrajectory:
+    """Per-word between-group wording contrast across ordered periods.
+
+    ``estimate`` is ``(n_words, n_periods)`` with ``estimate[i, j] =
+    p(word_i | groups[0], periods[j]) - p(word_i | groups[1], periods[j])`` for the
+    target ``topic``. ``ci_low`` / ``ci_high`` are the bootstrap percentile bands
+    (``None`` unless ``ci=True``).
+    """
+
+    words: list
+    periods: list
+    groups: tuple
+    topic: int
+    estimate: np.ndarray
+    ci_low: np.ndarray | None = None
+    ci_high: np.ndarray | None = None
+
+    def to_frame(self):
+        """Long tidy table: one row per (word, period)."""
+        import pandas as pd
+
+        rows = []
+        for i, w in enumerate(self.words):
+            for j, p in enumerate(self.periods):
+                row = {"word": w, "period": p, "estimate": float(self.estimate[i, j])}
+                if self.ci_low is not None:
+                    row["ci_low"] = float(self.ci_low[i, j])
+                    row["ci_high"] = float(self.ci_high[i, j])
+                rows.append(row)
+        return pd.DataFrame(rows)
+
+
+@dataclass
+class ContentDivergence:
+    """Per-period whole-vocabulary distance between two groups' wording of a topic.
+
+    ``divergence[j]`` is the Hellinger (or TV) distance between the two groups'
+    topic-word rows at ``periods[j]``. ``ci_low`` / ``ci_high`` are bootstrap bands.
+    """
+
+    periods: list
+    groups: tuple
+    topic: int
+    measure: str
+    divergence: np.ndarray
+    ci_low: np.ndarray | None = None
+    ci_high: np.ndarray | None = None
+
+    def to_frame(self):
+        import pandas as pd
+
+        rows = []
+        for j, p in enumerate(self.periods):
+            row = {"period": p, "divergence": float(self.divergence[j])}
+            if self.ci_low is not None:
+                row["ci_low"] = float(self.ci_low[j])
+                row["ci_high"] = float(self.ci_high[j])
+            rows.append(row)
+        return pd.DataFrame(rows)
+
+
+def content_trajectory(
+    model,
+    words,
+    *,
+    groups=None,
+    topic=None,
+    anchor_words=None,
+    ci=False,
+    corpus=None,
+    fit_kwargs=None,
+    cluster=None,
+    B=50,
+    level=0.95,
+    seed=0,
+):
+    """How two content groups word a topic differently, across ordered time.
+
+    Reads the STM ``content_time`` surface (fit with ``STM.fit(..., content_time=)``)
+    for the per-period, per-word contrast ``p(w | group1, period) - p(w | group2,
+    period)`` on the target topic. This is the ECTM ``content_trajectory`` /
+    ``content_contrast`` payoff, read off the smoothed STM surface instead of
+    independent ``(group, period)`` cells.
+
+    Parameters
+    ----------
+    model : fitted STM (content_time)
+        Fit with an ordered ``content_time=`` covariate.
+    words : sequence[str]
+        Words to trace (silently dropped if out of vocabulary).
+    groups : (str, str), optional
+        The two base content groups to contrast. Defaults to the first two.
+    topic : int, optional
+        Target topic. Give this or ``anchor_words``.
+    anchor_words : sequence[str], optional
+        Identify the target topic by top-word overlap. Required when ``ci=True`` so
+        the topic can be realigned across bootstrap refits.
+    ci : bool
+        Attach a design-preserving bootstrap CI (needs ``corpus`` + ``fit_kwargs``).
+    corpus, fit_kwargs, cluster, B, level, seed
+        Bootstrap controls. ``corpus`` is the documents (a Corpus or list of token
+        lists); ``fit_kwargs`` the STM refit arguments (``num_topics``, ``content``,
+        ``content_time``, ``content_prior``, ...); ``cluster`` a length-``num_docs``
+        label to resample whole clusters (e.g. speaker) instead of documents.
+
+    Returns
+    -------
+    ContentTrajectory
+    """
+    beta, glabels = group_topic_word(model)
+    vocab = list(model.vocabulary)
+    bases, periods, lookup = _parse_content_time_groups(glabels)
+    g1, g2 = _content_groups_default(bases, groups)
+    k = _resolve_content_topic(beta, vocab, topic, anchor_words)
+    kept, est = _traj_point(beta, vocab, list(words), g1, g2, k, periods, lookup)
+
+    low = high = None
+    if ci:
+        reps = _bootstrap(
+            corpus, fit_kwargs, cluster, B, seed, anchor_words,
+            lambda m: _traj_from_model(m, kept, (g1, g2), anchor_words, periods),
+            shape=est.shape,
+        )
+        low, high = _percentile_ci(reps, level)
+    return ContentTrajectory(kept, periods, (g1, g2), k, est, low, high)
+
+
+def content_divergence(
+    model,
+    *,
+    groups=None,
+    topic=None,
+    anchor_words=None,
+    measure="hellinger",
+    ci=False,
+    corpus=None,
+    fit_kwargs=None,
+    cluster=None,
+    B=50,
+    level=0.95,
+    seed=0,
+):
+    """Whole-vocabulary distance between two groups' wording of a topic, per period.
+
+    Reads the STM ``content_time`` surface for the per-period Hellinger (default) or
+    total-variation (``measure="tv"``) distance between the two groups' topic-word
+    distributions. This is the ECTM ``content_divergence`` payoff, but pooled over
+    the vocabulary so the aggregate has a usable bootstrap CI where single-word
+    contrasts do not. Parameters mirror :func:`content_trajectory`.
+
+    Returns
+    -------
+    ContentDivergence
+    """
+    if measure not in ("hellinger", "tv"):
+        raise ValueError("measure must be 'hellinger' or 'tv'")
+    beta, glabels = group_topic_word(model)
+    vocab = list(model.vocabulary)
+    bases, periods, lookup = _parse_content_time_groups(glabels)
+    g1, g2 = _content_groups_default(bases, groups)
+    k = _resolve_content_topic(beta, vocab, topic, anchor_words)
+    div = _div_point(beta, g1, g2, k, periods, lookup, measure)
+
+    low = high = None
+    if ci:
+        reps = _bootstrap(
+            corpus, fit_kwargs, cluster, B, seed, anchor_words,
+            lambda m: _div_from_model(m, (g1, g2), anchor_words, measure, periods),
+            shape=div.shape,
+        )
+        low, high = _percentile_ci(reps, level)
+    return ContentDivergence(periods, (g1, g2), k, measure, div, low, high)
+
+
+def _traj_from_model(model, words, groups, anchor_words, periods):
+    # Evaluate on the ORIGINAL periods (passed in), not the refit's own — a
+    # resample can drop a period, and every replicate must line up column-for-column
+    # (missing cells become NaN via the lookup).
+    beta, glabels = group_topic_word(model)
+    vocab = list(model.vocabulary)
+    _, _, lookup = _parse_content_time_groups(glabels)
+    k = _resolve_content_topic(beta, vocab, None, anchor_words)
+    _, est = _traj_point(beta, vocab, words, groups[0], groups[1], k, periods, lookup)
+    return est
+
+
+def _div_from_model(model, groups, anchor_words, measure, periods):
+    beta, glabels = group_topic_word(model)
+    vocab = list(model.vocabulary)
+    _, _, lookup = _parse_content_time_groups(glabels)
+    k = _resolve_content_topic(beta, vocab, None, anchor_words)
+    return _div_point(beta, groups[0], groups[1], k, periods, lookup, measure)
+
+
+def _bootstrap(corpus, fit_kwargs, cluster, B, seed, anchor_words, read_fn, shape):
+    """Design-preserving bootstrap: resample documents (or clusters), refit the STM
+    content_time model, realign the topic by ``anchor_words``, and collect the
+    reader statistic. Returns a ``(B_ok, *shape)`` stack of replicates."""
+    if anchor_words is None:
+        raise ValueError(
+            "anchor_words is required when ci=True (to realign the topic across "
+            "bootstrap refits)."
+        )
+    if corpus is None or fit_kwargs is None:
+        raise ValueError("ci=True needs corpus= (the documents) and fit_kwargs= "
+                         "(the STM refit arguments).")
+    docs = corpus.documents() if hasattr(corpus, "documents") else [list(d) for d in corpus]
+    n = len(docs)
+    rng = np.random.default_rng(seed)
+    reps = []
+    for _ in range(int(B)):
+        idx = _boot_indices(n, cluster, rng)
+        try:
+            m = _refit_stm(docs, idx, fit_kwargs)
+            reps.append(read_fn(m))
+        except Exception:
+            continue  # a degenerate resample (e.g. a period drops out) is skipped
+    if not reps:
+        return np.full((1,) + tuple(shape), np.nan)
+    return np.stack(reps, axis=0)

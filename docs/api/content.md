@@ -32,6 +32,35 @@ rather than discrete groups, so the adapter discretizes it — evaluating
 
 ::: topica.content.group_topic_word
 
+## Wording over ordered time (STM `content_time`)
+
+Fit STM with an ordered `content_time=` covariate and these readers trace **how
+two groups word a topic across time**: the per-period, per-word contrast
+`p(w | g1) - p(w | g2)`, and the per-period whole-vocabulary distance between the
+groups. Both take `ci=True` for a **design-preserving bootstrap** that resamples
+documents (or whole `cluster=`s), refits, realigns the topic by `anchor_words`, and
+returns percentile bands — intervals widen where the random walk is least
+constrained (the first and last period).
+
+```python
+from topica import content
+
+stm = topica.STM(num_topics=20, seed=1)
+stm.fit(docs, content=party, content_time=year, content_prior="l1")
+
+tr = content.content_trajectory(stm, ["tax", "climate"],
+                                groups=("Democrat", "Republican"), anchor_words=econ)
+tr.to_frame()                       # word, period, estimate
+
+dv = content.content_divergence(stm, groups=("Democrat", "Republican"),
+                                anchor_words=econ, measure="hellinger",
+                                ci=True, corpus=docs, fit_kwargs=fk)  # + bootstrap CI
+```
+
+::: topica.content.content_trajectory
+
+::: topica.content.content_divergence
+
 ## Choosing K with group-stratified coherence
 
 `topica.search_k` accepts a `"stratified_<type>"` coherence metric for
