@@ -96,7 +96,10 @@ fn mult_sample<R: Rng>(p: &[f64], rng: &mut R) -> usize {
 }
 
 /// `sum_b` document-topic inference: `p(z|d) = Σ_b p(z|b) p(b|d)` with `p(b|d)`
-/// uniform over the document's biterms. Matches `Infer::doc_infer_sum_b`.
+/// uniform over the document's biterms. Matches `Infer::doc_infer_sum_b`, with two
+/// deliberate refinements: biterms are formed with the model's `window` (the
+/// reference hardcodes 15 at inference — identical for the default) and an empty
+/// document returns a uniform simplex rather than the reference's `0/0` NaN.
 pub fn infer_doc(
     doc: &[u32],
     theta: &[f64],

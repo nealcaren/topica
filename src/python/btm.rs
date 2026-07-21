@@ -205,6 +205,10 @@ impl BTM {
     }
 
     /// Infer document-topic distributions for new documents (the `sum_b` scheme).
+    /// Out-of-vocabulary tokens are dropped before biterms are formed (the
+    /// reference keeps them as window fillers and drops only the biterms that
+    /// contain them); documents left with no in-vocabulary words return a uniform
+    /// simplex.
     fn transform<'py>(
         &self,
         py: Python<'py>,
