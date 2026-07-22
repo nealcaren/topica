@@ -56,15 +56,20 @@ def test_minimal_default_leaks_no_content(fitted):
         assert token not in js
     for leaked in ("description", "vocab_size", "doc_length_summary", "fingerprint"):
         assert f'"{leaked}"' not in js
-    # A design matrix is fingerprinted, not embedded: no raw value strings.
-    assert "0.5" not in js and "0.2" not in js
+    # A design matrix is fingerprinted, not embedded: the prevalence entry is a
+    # fingerprint dict (spec/algo/digest/columns/…), never the raw values.
+    prev = rec.inputs["prevalence"]
+    assert prev["spec"] == FINGERPRINT_SPEC and prev["digest"]
+    assert set(prev) <= {"spec", "algo", "digest", "keyed", "kind", "n_rows", "columns"}
 
 
 def test_no_raw_document_ids_or_metadata(fitted):
     corpus, model = fitted
     rec = record_fit(model, corpus, iters=50)
-    js = rec.to_json()
-    assert "metadata" not in js.lower() or '"metadata"' not in js
+    # V1 records no metadata values, document IDs, or paths at any privacy level.
+    assert "metadata" not in rec.corpus
+    for block in (rec.corpus, rec.model, rec.inputs):
+        assert "path" not in block and "doc_names" not in block
 
 
 def test_aggregate_opts_in_description_but_still_no_tokens(fitted):
