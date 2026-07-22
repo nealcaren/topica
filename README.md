@@ -87,7 +87,7 @@ thread count), or `llm-bounded`.
 | `SAGE` | text, metadata | gibbs | seed-reproducible | Sparse additive generative model: the same topic worded differently across groups. |
 | `DMR` | text, metadata | gibbs | seed-reproducible | Dirichlet-multinomial regression: a document-metadata prior on topic proportions. |
 | `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
-| `Scholar` | text, metadata | vae | seed-reproducible | SCHOLAR (Card et al. 2018): a ProdLDA VAE whose topic-prevalence prior is shifted by document covariates (neural STM prevalence). |
+| `Scholar` | text, metadata, labels | vae | seed-reproducible | SCHOLAR (Card et al. 2018): a ProdLDA VAE with covariate-shifted topic-prevalence prior and an optional supervised label head (neural STM prevalence + sLDA). |
 
 ### Guided & supervised
 
@@ -221,7 +221,7 @@ As such, Topica stands on a generation of open topic-modeling research and code.
 - [**Polylingual Topic Models**](https://aclanthology.org/D09-1092/) (Mimno, Wallach, Naradowsky, Smith & McCallum, 2009) — `PolylingualLDA`: LDA over aligned document tuples that share one topic distribution, giving topics aligned across many languages; validated against MALLET's `PolylingualTopicModel` as a black-box oracle
 - [**DiscLDA**](https://papers.nips.cc/paper/2008/hash/7b13b2203029ed80337f27127a9f1d28-Abstract.html) (Lacoste-Julien, Sha & Jordan, 2008) — `DiscLDA`: discriminative LDA with per-class and shared topic blocks; the fixed block-transform variant, validated against the paper's 20 Newsgroups feature-classification result (no reference implementation exists, so it is paper-derived)
 - [**ProdLDA / AVITM**](https://arxiv.org/abs/1703.01488) (Srivastava & Sutton, 2017) — `ProdLDA`: autoencoding variational inference and the product-of-experts word model
-- [**SCHOLAR**](https://aclanthology.org/P18-1189/) (Card, Tan & Smith, 2018; reference [dallascard/scholar](https://github.com/dallascard/scholar), Apache-2.0) — `Scholar`: covariates in a ProdLDA VAE via a covariate-dependent topic-prevalence prior (the neural analog of STM/DMR prevalence); the prior-covariate path, on topica's ProdLDA backbone, validated against the reference as a numerical oracle
+- [**SCHOLAR**](https://aclanthology.org/P18-1189/) (Card, Tan & Smith, 2018; reference [dallascard/scholar](https://github.com/dallascard/scholar), Apache-2.0) — `Scholar`: metadata in a ProdLDA VAE — a covariate-dependent topic-prevalence prior (the neural analog of STM/DMR prevalence) and an optional supervised label head (neural sLDA), on topica's ProdLDA backbone, validated against the reference as a numerical oracle
 - [**BERTopic**](https://github.com/MaartenGr/BERTopic) (Grootendorst, 2022) and [**Top2Vec**](https://github.com/ddangelov/Top2Vec) (Angelov, 2020) — `BERTopic`, `Top2Vec`: the embedding-clustering pipeline, class-based TF-IDF, and the `reduce → cluster → represent` design
 - [**ETM**](https://github.com/adjidieng/ETM) (Dieng, Ruiz & Blei, 2020) — `ETM`: the Embedded Topic Model (per-document variational EM and an amortized VAE)
 - [**DETM**](https://github.com/adjidieng/DETM) (Dieng, Ruiz & Blei, 2019) — `DETM`: the Dynamic Embedded Topic Model (structured amortized variational inference with a hand-coded LSTM)

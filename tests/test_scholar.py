@@ -164,11 +164,84 @@ def test_l2_prior_reg_shrinks_effects():
     assert np.abs(b.covariate_effects).max() < np.abs(a.covariate_effects).max()
 
 
-def test_missing_covariates_raises():
+def _label_corpus(n_per_class=50, k=3, dlen=30, seed=0, block_frac=0.9):
+    """K classes, each drawing mostly from its own word block; the class is
+    predictable from the words (so predictable from the topics)."""
+    rng = np.random.default_rng(seed)
+    blocks = [[f"w{g}_{i}" for i in range(4)] for g in range(k)]
+    docs, y = [], []
+    for g in range(k):
+        for _ in range(n_per_class):
+            doc = [
+                (blocks[g] if rng.random() < block_frac else blocks[int(rng.integers(k))])[
+                    int(rng.integers(4))
+                ]
+                for _ in range(dlen)
+            ]
+            docs.append(doc)
+            y.append(f"class{g}")
+    return docs, y
+
+
+def test_labels_only_predicts():
+    docs, y = _label_corpus(k=3, seed=0)
+    m = topica.Scholar(3, seed=1)
+    m.fit(docs, labels=y, iters=400)
+    assert m.classes == ["class0", "class1", "class2"]
+    proba = m.predict_proba(docs)
+    assert proba.shape == (len(docs), 3)
+    np.testing.assert_allclose(proba.sum(axis=1), 1.0, atol=1e-6)
+    pred = m.predict(docs)
+    acc = np.mean([p == t for p, t in zip(pred, y)])
+    assert acc > 0.8, f"label accuracy {acc}"
+
+
+def test_covariates_and_labels_compose():
+    docs, y = _label_corpus(k=3, seed=1)
+    X = np.eye(3)[[int(t[-1]) for t in y]]
+    m = topica.Scholar(3, seed=2)
+    m.fit(docs, covariates=X, labels=y, iters=400)
+    assert m.covariate_effects.shape == (3, 3)
+    assert m.classes == ["class0", "class1", "class2"]
+    # predict needs the same covariates
+    acc = np.mean([p == t for p, t in zip(m.predict(docs, X), y)])
+    assert acc > 0.8
+
+
+def test_predict_requires_labels():
+    docs, X = _corpus()
+    m = topica.Scholar(2, seed=1)
+    m.fit(docs, covariates=X, iters=40)
+    with pytest.raises(ValueError):
+        m.predict(docs, X)  # fit without labels
+    with pytest.raises(ValueError):
+        m.predict_proba(docs, X)
+
+
+def test_labels_save_load_roundtrip(tmp_path):
+    docs, y = _label_corpus(k=3, seed=2)
+    m = topica.Scholar(3, seed=1)
+    m.fit(docs, labels=y, iters=120)
+    p = tmp_path / "scholar_lab.topica"
+    m.save(str(p))
+    m2 = topica.Scholar.load(str(p))
+    assert m2.classes == m.classes
+    assert np.array_equal(m.predict_proba(docs), m2.predict_proba(docs))
+
+
+def test_single_class_labels_raises():
+    docs, _ = _label_corpus(k=3, seed=0)
+    y = ["only"] * len(docs)
+    m = topica.Scholar(3, seed=1)
+    with pytest.raises(ValueError):
+        m.fit(docs, labels=y, iters=10)
+
+
+def test_missing_covariates_and_labels_raises():
     docs, _ = _corpus()
     m = topica.Scholar(2, seed=1)
     with pytest.raises(ValueError):
-        m.fit(docs, iters=10)  # no covariates anywhere
+        m.fit(docs, iters=10)  # neither covariates nor labels
 
 
 def test_covariate_row_mismatch_raises():
