@@ -255,7 +255,10 @@ impl DiscLDA {
 
     /// The class-marginalized discriminative representation Σ_c p(c|w)·θ_c for new
     /// documents (num_docs, num_topics) -- the feature vector for a downstream
-    /// classifier or visualization.
+    /// classifier or visualization. Cost is O(num_classes · infer_sweeps) per
+    /// document (one restricted-Gibbs inference per class), single-threaded; for
+    /// many-class corpora inference can dominate fitting -- lower `infer_sweeps` if
+    /// it is too slow.
     fn transform<'py>(
         &self,
         py: Python<'py>,
@@ -275,7 +278,9 @@ impl DiscLDA {
         Ok(vecs_to_arr2(&rep).to_pyarray_bound(py))
     }
 
-    /// Predict the class label of each document (MAP under p(class|words)).
+    /// Predict the class label of each document (MAP under p(class|words)). A
+    /// document with no in-vocabulary tokens has a uniform posterior and resolves to
+    /// the first class.
     fn predict(&self, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
         let m = self.fitted_model()?;
         let mapped = map_to_vocab(self.corpus.as_ref().unwrap(), data)?;

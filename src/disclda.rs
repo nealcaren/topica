@@ -204,6 +204,14 @@ pub fn fit_disclda<R: Rng>(
 /// restricted to class `c`'s block and the shared block) with φ fixed, plus the
 /// document's log-likelihood under that class. Runs `sweeps` restricted Gibbs passes.
 /// Returns `(theta_over_L, loglik)`.
+///
+/// The log-likelihood is a plug-in `Σ_w log Σ_l θ̂_l φ_{l,w}` at the posterior-mean
+/// θ̂, not the fully marginalized evidence. This is unbiased *across classes* only
+/// because every class's allowed set has the same size (`k_class + k_shared`), so no
+/// class gets a capacity advantage in the `predict`/`predict_proba` comparison — do
+/// not make `k_class` vary by class without revisiting this.
+/// An empty document (no in-vocab tokens) yields loglik 0 for every class, so
+/// `predict` returns a uniform posterior (its argmax is class 0).
 pub fn infer_doc_class<R: Rng>(
     doc: &[u32],
     c: usize,

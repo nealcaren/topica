@@ -1,17 +1,23 @@
 """Parity/validation for DiscLDA against the paper's 20 Newsgroups result.
 
 DiscLDA (Lacoste-Julien, Sha & Jordan, NIPS 2008) has no canonical reference
-implementation, so we validate against the paper's headline empirical claim
-(their Table 2, §4.2): topic-proportion features from DiscLDA feed a linear
-classifier *better* than features from an unsupervised LDA of matched dimension.
-The paper reports, on 20 Newsgroups, ~20% error for DiscLDA features vs ~25% for
-LDA features (multiclass), and 17% vs 20% on the hard alt.atheism / talk.religion
-binary pair.
+implementation, so we validate against the paper's empirical claim: topic-proportion
+features from DiscLDA feed a linear classifier *better* than features from an
+unsupervised LDA of matched dimension.
 
-Here we fit both models on the same tokenized 20NG training split, extract
-per-document topic features, train a linear SVM on each, and assert DiscLDA's
-held-out accuracy is at least LDA's (with a small margin). Skips cleanly when
-scikit-learn or the 20NG download is unavailable.
+We reproduce the *ordering* the paper reports, not its exact error figures. The
+figure that matches the variant implemented here (the **fixed** block transform,
+paper §4.1) is the §4.2 first experiment: on the full 20-way task, LDA features give
+25% SVM error and fixed-transform DiscLDA features give 20%. The frequently-quoted
+17% vs 20% (their Table 2) is the harder alt.atheism / talk.religion binary pair with
+the **learned** transform (§4.2 second experiment), which topica does not yet
+implement — so on that pair we expect the same *direction* (DiscLDA above LDA) but a
+larger absolute error than 17%.
+
+Here we fit both models on the same tokenized 20NG training split (the binary pair,
+which runs fast), extract per-document topic features, train a linear SVM on each, and
+assert DiscLDA's held-out accuracy is at least LDA's. Skips cleanly when scikit-learn
+or the 20NG download is unavailable.
 """
 import numpy as np
 
@@ -99,7 +105,8 @@ def test_disclda_beats_lda_features_on_20ng():
     print(f"DiscLDA features + SVM : acc={acc_d:.3f} (err={1-acc_d:.3f})")
     print(f"LDA features + SVM     : acc={acc_l:.3f} (err={1-acc_l:.3f})")
     print(f"DiscLDA direct classify: acc={acc_direct:.3f} (err={1-acc_direct:.3f})")
-    print(f"paper: DiscLDA ~17% err vs LDA ~20% err on this pair")
+    print("paper (learned-T, this pair): DiscLDA 17% vs LDA 20% err; fixed-T here "
+          "reproduces the ordering, not the absolute figure")
 
     assert acc_d >= acc_l + MARGIN, (
         f"DiscLDA features ({acc_d:.3f}) should be at least as good as LDA "
