@@ -85,8 +85,8 @@ Column meanings:
 |---|---|---|---|---|---|
 | `DTM` | `src/dtm.rs` | `src/python/mod.rs` | variational Kalman over time slices | default | `parity/dtm_gold.py` |
 | `DETM` | `src/detm.rs` | `src/python/mod.rs` | embedding VAE + LSTM q(eta) (etm_vae.rs) | default | `parity/detm_gold.py` |
-| `HLDA` | `src/hlda.rs` | `src/python/mod.rs` | nested-CRP collapsed Gibbs | default | `parity/hlda_gold.py` |
-| `PA` | `src/pa.rs` | `src/python/mod.rs` | collapsed Gibbs over a topic DAG | default | `parity/pa_gold.py` |
+| `HLDA` | `src/hlda.rs` | `src/python/hierarchical.rs` | nested-CRP collapsed Gibbs | default | `parity/hlda_gold.py` |
+| `PA` | `src/pa.rs` | `src/python/hierarchical.rs` | collapsed Gibbs over a topic DAG | default | `parity/pa_gold.py` |
 
 ### Embedding-based
 
