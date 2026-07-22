@@ -55,6 +55,7 @@ generated from `python/topica/registry.py`.
 | `SAGE` | text, metadata | gibbs | seed-reproducible | Sparse additive generative model: the same topic worded differently across groups. |
 | `DMR` | text, metadata | gibbs | seed-reproducible | Dirichlet-multinomial regression: a document-metadata prior on topic proportions. |
 | `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
+| `Scholar` | text, metadata | vae | seed-reproducible | SCHOLAR (Card et al. 2018): a ProdLDA VAE whose topic-prevalence prior is shifted by document covariates (neural STM prevalence). |
 
 ### Guided & supervised
 
@@ -359,6 +360,48 @@ evaluate the fitted surface. `metadata_names` labels the continuous dimensions;
 aligned with `feature_effects`. Because a continuous covariate's per-degree
 coefficients are rarely interpretable on their own, read the surface with `tdf`
 rather than the individual basis coefficients.
+
+## Scholar
+
+SCHOLAR ([Card, Tan & Smith 2018](https://aclanthology.org/P18-1189/)) brings
+covariates to the *neural* topic models. `STM`, `DMR`, and `SAGE` relate topic
+prevalence and content to document metadata in the count world; Scholar does the
+prevalence part in a [`ProdLDA`](#prodlda) VAE. A `Linear(n_covariates, K)` layer
+turns each document's covariates into a shift of its topic-prior mean,
+`μ₀ = W·covariates`, and the KL then pulls the document's posterior toward that
+covariate-dependent mean. A covariate that co-occurs with a topic raises that
+topic's prevalence, and the fitted weights `W` read directly as a
+covariate-by-topic prevalence-effect matrix (`covariate_effects`). This is the
+neural analog of STM/DMR prevalence covariates, estimated *inside* the fit rather
+than post-hoc on a fixed `θ`.
+
+```python
+model = topica.Scholar(num_topics=20, covariate_names=["year", "outlet"], seed=1)
+model.fit(docs, covariates=X)          # X is (num_docs, n_covariates), numeric
+model.covariate_effects                # (n_covariates, num_topics) prevalence effects
+theta = model.transform(new_docs, new_X)   # covariates enter the encoder too
+```
+
+The covariates enter in two places, following the reference implementation
+([dallascard/scholar](https://github.com/dallascard/scholar), Apache-2.0): they set
+the prior mean (above), and they are concatenated to the encoder input so the
+posterior can track the shifted prior. `l2_prior_reg` puts an L2 penalty on `W` to
+shrink weak effects. Scholar builds on topica's existing ProdLDA backbone — the
+encoder, reparameterization, product-of-experts decoder, batch normalization, and
+Adam are shared with `ProdLDA` — so it is a mechanism-faithful port on that
+backbone rather than a bit-for-bit clone of the reference's single-layer encoder.
+The prior covariate path is logistic-normal (`prior="laplace"`), since a
+prior-*mean* shift is only defined for the Gaussian latent. The new covariate-weight
+gradient is hand-coded and checked against finite differences in the Rust tests.
+Because the encoder is topica's two-layer AVITM network, larger topic counts need
+somewhat more epochs than the reference's single-layer encoder to fully separate the
+topics; if `covariate_effects` looks muddy, raise `iters` before reading it.
+Topic-covariate (content) deviations and supervised labels — Scholar's two other
+metadata roles — are planned follow-ups.
+
+`topica`'s [`estimate_effect`](covariates.md) still works on any model's `θ`
+post-hoc; Scholar's added value is putting the covariates *into* the fit, which
+better identifies the topics and exposes `covariate_effects` as a first-class output.
 
 ## NarrativeTM
 

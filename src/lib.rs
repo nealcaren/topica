@@ -59,6 +59,7 @@ pub mod pt;
 pub mod sage;
 pub mod sampler;
 pub mod saveformat;
+pub mod scholar;
 pub mod seeded;
 pub mod sentence_ideal;
 pub mod slda;
