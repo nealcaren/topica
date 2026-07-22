@@ -31,6 +31,7 @@
 //! every gradient is checked against finite differences in the unit tests.
 
 use rand::Rng;
+use rayon::prelude::*;
 
 /// Kaiming-uniform initialization matching PyTorch's `nn.Linear` default:
 /// entries uniform on `[-1/sqrt(fan_in), 1/sqrt(fan_in)]`.
@@ -862,8 +863,11 @@ pub(crate) fn batch_forward(
     let (k, v) = (w.k, w.v);
     let n = batch.xns.len();
 
-    // Encoder up to the pre-BN heads.
+    // Encoder up to the pre-BN heads. Per-document and independent, so parallel over
+    // the batch; `collect` preserves document order, so the result is identical
+    // regardless of thread count.
     let doc: Vec<DocCache> = (0..n)
+        .into_par_iter()
         .map(|i| w.encode_raw(batch.xns[i], batch.embs[i], &batch.masks2[i]))
         .collect();
     let mu_raw: Vec<Vec<f64>> = doc.iter().map(|d| d.mu_raw.clone()).collect();
@@ -877,158 +881,212 @@ pub(crate) fn batch_forward(
     let stick = opts.prior == Prior::StickBreaking;
     let contrastive = opts.contrastive;
 
-    // Reparameterize and decode.
-    let mut theta = vec![vec![0.0; k]; n];
-    let mut theta_do = vec![vec![0.0; k]; n];
-    let mut logit_raw = vec![vec![0.0; v]; n];
-    // Dirichlet scratch.
-    let mut d_kw = vec![vec![0.0; k]; n];
-    let mut d_lam = vec![vec![0.0; k]; n];
-    let mut d_ln_l = vec![vec![0.0; k]; n];
-    let mut d_g = vec![vec![0.0; k]; n];
-    let mut d_s = vec![0.0; n];
-    // Stick-breaking scratch (eta breaks).
-    let mut sb_eta = vec![vec![0.0; k]; n];
-    // Contrastive positive-view scratch.
-    let mut theta_pos = vec![vec![0.0; k]; n];
-    let mut g_pos = vec![vec![0.0; k]; n];
-    let mut s_pos = vec![0.0; n];
+    // Reparameterize and decode. Per-document and independent (each document reads
+    // only shared, immutable state: `mu`/`lv`, the batch noise/masks, `w.beta`, and
+    // the content deviation). Compute in parallel over the batch, collecting one
+    // `FwdDoc` per document in order, then unpack into the per-field scratch buffers
+    // the downstream/backward code expects. `collect` preserves document order, so
+    // the fit is identical regardless of thread count.
+    struct FwdDoc {
+        th: Vec<f64>,
+        theta_do: Vec<f64>,
+        logit_raw: Vec<f64>,
+        d_kw: Vec<f64>,
+        d_lam: Vec<f64>,
+        d_ln_l: Vec<f64>,
+        d_g: Vec<f64>,
+        d_s: f64,
+        sb_eta: Vec<f64>,
+        theta_pos: Vec<f64>,
+        g_pos: Vec<f64>,
+        s_pos: f64,
+    }
+    let fwd: Vec<FwdDoc> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let mut d_kw = vec![0.0; k];
+            let mut d_lam = vec![0.0; k];
+            let mut d_ln_l = vec![0.0; k];
+            let mut d_g = vec![0.0; k];
+            let mut d_s = 0.0;
+            let mut sb_eta = vec![0.0; k];
+            let mut theta_pos = vec![0.0; k];
+            let mut g_pos = vec![0.0; k];
+            let mut s_pos = 0.0;
 
-    for i in 0..n {
-        let th: Vec<f64> = if dirichlet {
-            // Weibull reparameterization: u = Phi(eps), L = -ln(1-u), constant in params.
-            let mut s = 0.0;
-            for t in 0..k {
-                let u = normal_cdf(batch.eps[i][t]).clamp(1e-6, 1.0 - 1e-6);
-                let ln_l = (-(1.0 - u).ln()).ln();
-                let (kw, lam, g) = weibull_weight(mu[i][t], lv[i][t], ln_l);
-                d_kw[i][t] = kw;
-                d_lam[i][t] = lam;
-                d_ln_l[i][t] = ln_l;
-                d_g[i][t] = g;
-                s += g;
-            }
-            d_s[i] = s;
-            (0..k).map(|t| d_g[i][t] / s).collect()
-        } else {
-            // Gaussian latent (shared by laplace and stick-breaking).
-            let mut z = vec![0.0; k];
-            for t in 0..k {
-                z[t] = mu[i][t] + (0.5 * lv[i][t]).exp() * batch.eps[i][t];
-            }
-            if stick {
-                let (eta, th) = stick_break(&z);
-                sb_eta[i] = eta;
-                th
-            } else {
-                softmax(&z)
-            }
-        };
-        for t in 0..k {
-            theta_do[i][t] = th[t] * batch.masks_t[i][t];
-        }
-        theta[i] = th;
-
-        // Positive view for the contrastive term: same reparameterization without the
-        // noise. Laplace -> softmax(mu); Dirichlet -> normalized Weibull at the median
-        // (u = 0.5, so L = ln 2). Both are deterministic and smooth in the params.
-        if contrastive {
-            if dirichlet {
-                let ln_l = (-(0.5f64).ln()).ln(); // u = 0.5
+            let th: Vec<f64> = if dirichlet {
                 let mut s = 0.0;
                 for t in 0..k {
-                    let (_, _, g) = weibull_weight(mu[i][t], lv[i][t], ln_l);
-                    g_pos[i][t] = g;
+                    let u = normal_cdf(batch.eps[i][t]).clamp(1e-6, 1.0 - 1e-6);
+                    let ln_l = (-(1.0 - u).ln()).ln();
+                    let (kw, lam, g) = weibull_weight(mu[i][t], lv[i][t], ln_l);
+                    d_kw[t] = kw;
+                    d_lam[t] = lam;
+                    d_ln_l[t] = ln_l;
+                    d_g[t] = g;
                     s += g;
                 }
-                s_pos[i] = s;
-                for t in 0..k {
-                    theta_pos[i][t] = g_pos[i][t] / s;
-                }
-            } else if stick {
-                // No-noise stick-breaking on z = mu.
-                let (_eta_pos, th_pos) = stick_break(&mu[i]);
-                theta_pos[i] = th_pos;
+                d_s = s;
+                (0..k).map(|t| d_g[t] / s).collect()
             } else {
-                theta_pos[i] = softmax(&mu[i]);
-            }
-        }
-
-        // logit_raw = theta_do . beta  (product of experts, beta unnormalized).
-        let row = &mut logit_raw[i];
-        for t in 0..k {
-            let w_t = theta_do[i][t];
-            if w_t != 0.0 {
-                let base = t * v;
-                for j in 0..v {
-                    row[j] += w_t * w.beta[base + j];
-                }
-            }
-        }
-        // SCHOLAR content deviation: per-covariate word shifts (+ optional
-        // topic-covariate interactions on theta_do).
-        if let Some(ct) = content {
-            let tc_i = &ct.tc[i];
-            for (cc, &tcv) in tc_i.iter().enumerate().take(ct.c) {
-                if tcv != 0.0 {
-                    let base = cc * v;
-                    for j in 0..v {
-                        row[j] += ct.beta_c[base + j] * tcv;
-                    }
-                }
-            }
-            if let Some(bci) = ct.beta_ci {
+                let mut z = vec![0.0; k];
                 for t in 0..k {
-                    let w_t = theta_do[i][t];
-                    if w_t == 0.0 {
-                        continue;
+                    z[t] = mu[i][t] + (0.5 * lv[i][t]).exp() * batch.eps[i][t];
+                }
+                if stick {
+                    let (eta, th) = stick_break(&z);
+                    sb_eta = eta;
+                    th
+                } else {
+                    softmax(&z)
+                }
+            };
+            let theta_do: Vec<f64> = (0..k).map(|t| th[t] * batch.masks_t[i][t]).collect();
+
+            if contrastive {
+                if dirichlet {
+                    let ln_l = (-(0.5f64).ln()).ln();
+                    let mut s = 0.0;
+                    for t in 0..k {
+                        let (_, _, g) = weibull_weight(mu[i][t], lv[i][t], ln_l);
+                        g_pos[t] = g;
+                        s += g;
                     }
-                    for (cc, &tcv) in tc_i.iter().enumerate().take(ct.c) {
-                        if tcv == 0.0 {
+                    s_pos = s;
+                    for t in 0..k {
+                        theta_pos[t] = g_pos[t] / s;
+                    }
+                } else if stick {
+                    let (_eta_pos, th_pos) = stick_break(&mu[i]);
+                    theta_pos = th_pos;
+                } else {
+                    theta_pos = softmax(&mu[i]);
+                }
+            }
+
+            // logit_raw = theta_do . beta (product of experts, beta unnormalized).
+            let mut logit_raw = vec![0.0; v];
+            for t in 0..k {
+                let w_t = theta_do[t];
+                if w_t != 0.0 {
+                    let base = t * v;
+                    for j in 0..v {
+                        logit_raw[j] += w_t * w.beta[base + j];
+                    }
+                }
+            }
+            // SCHOLAR content deviation.
+            if let Some(ct) = content {
+                let tc_i = &ct.tc[i];
+                for (cc, &tcv) in tc_i.iter().enumerate().take(ct.c) {
+                    if tcv != 0.0 {
+                        let base = cc * v;
+                        for j in 0..v {
+                            logit_raw[j] += ct.beta_c[base + j] * tcv;
+                        }
+                    }
+                }
+                if let Some(bci) = ct.beta_ci {
+                    for t in 0..k {
+                        let w_t = theta_do[t];
+                        if w_t == 0.0 {
                             continue;
                         }
-                        let coef = w_t * tcv;
-                        let base = (t * ct.c + cc) * v;
-                        for j in 0..v {
-                            row[j] += bci[base + j] * coef;
+                        for (cc, &tcv) in tc_i.iter().enumerate().take(ct.c) {
+                            if tcv == 0.0 {
+                                continue;
+                            }
+                            let coef = w_t * tcv;
+                            let base = (t * ct.c + cc) * v;
+                            for j in 0..v {
+                                logit_raw[j] += bci[base + j] * coef;
+                            }
                         }
                     }
                 }
             }
-        }
+
+            FwdDoc {
+                th,
+                theta_do,
+                logit_raw,
+                d_kw,
+                d_lam,
+                d_ln_l,
+                d_g,
+                d_s,
+                sb_eta,
+                theta_pos,
+                g_pos,
+                s_pos,
+            }
+        })
+        .collect();
+
+    // Unpack the per-document results into the field-major buffers.
+    let mut theta = vec![Vec::new(); n];
+    let mut theta_do = vec![Vec::new(); n];
+    let mut logit_raw = vec![Vec::new(); n];
+    let mut d_kw = vec![Vec::new(); n];
+    let mut d_lam = vec![Vec::new(); n];
+    let mut d_ln_l = vec![Vec::new(); n];
+    let mut d_g = vec![Vec::new(); n];
+    let mut d_s = vec![0.0; n];
+    let mut sb_eta = vec![Vec::new(); n];
+    let mut theta_pos = vec![Vec::new(); n];
+    let mut g_pos = vec![Vec::new(); n];
+    let mut s_pos = vec![0.0; n];
+    for (i, fd) in fwd.into_iter().enumerate() {
+        theta[i] = fd.th;
+        theta_do[i] = fd.theta_do;
+        logit_raw[i] = fd.logit_raw;
+        d_kw[i] = fd.d_kw;
+        d_lam[i] = fd.d_lam;
+        d_ln_l[i] = fd.d_ln_l;
+        d_g[i] = fd.d_g;
+        d_s[i] = fd.d_s;
+        sb_eta[i] = fd.sb_eta;
+        theta_pos[i] = fd.theta_pos;
+        g_pos[i] = fd.g_pos;
+        s_pos[i] = fd.s_pos;
     }
     let (logit, c_dec, mean_dec, var_dec) = bn_dec.forward_train(&logit_raw);
 
-    // Reconstruction (softmax over the vocabulary) and KL.
-    let mut recon = vec![vec![0.0; v]; n];
+    // Reconstruction (softmax over the vocabulary) and KL. Per document and
+    // independent: compute `(recon_i, loss_i)` in parallel, collect in order, then sum
+    // the per-document losses in ascending document order so the total is identical
+    // regardless of thread count.
+    let per_doc: Vec<(Vec<f64>, f64)> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let r = softmax(&logit[i]);
+            let mut li = 0.0;
+            for &(word, c) in batch.counts[i] {
+                li -= c * (r[word] + 1e-10).ln();
+            }
+            if dirichlet {
+                for t in 0..k {
+                    li += weibull_gamma_kl(d_kw[i][t], d_lam[i][t], alpha[t]);
+                }
+            } else {
+                let pm_i = batch.prior_mus.map(|p| p[i].as_slice()).unwrap_or(prior_mu);
+                let mut kl = 0.0;
+                for t in 0..k {
+                    let s0 = lv[i][t].exp();
+                    let dm = pm_i[t] - mu[i][t];
+                    kl += s0 / prior_var[t] + dm * dm / prior_var[t] - 1.0 + prior_var[t].ln()
+                        - lv[i][t];
+                }
+                li += 0.5 * kl;
+            }
+            (r, li)
+        })
+        .collect();
+    let mut recon = vec![Vec::new(); n];
     let mut loss = 0.0;
-    for i in 0..n {
-        let r = softmax(&logit[i]);
-        for &(word, c) in batch.counts[i] {
-            loss -= c * (r[word] + 1e-10).ln();
-        }
+    for (i, (r, li)) in per_doc.into_iter().enumerate() {
         recon[i] = r;
-        if dirichlet {
-            // KL( Weibull(kw, lam) || Gamma(alpha, 1) ), summed over topics
-            // (Zhang et al. 2018). A Dirichlet(alpha) prior on theta factorizes into
-            // independent Gamma(alpha_t, 1) priors on the unnormalized weights.
-            for t in 0..k {
-                loss += weibull_gamma_kl(d_kw[i][t], d_lam[i][t], alpha[t]);
-            }
-        } else {
-            // KL( N(mu, e^lv) || N(mu0, var1) ), diagonal (eq. 7, first line). The
-            // prior mean is per-document when `prior_mus` is set (SCHOLAR), else the
-            // shared `prior_mu`; the prior variance is always shared.
-            let pm_i = batch.prior_mus.map(|p| p[i].as_slice()).unwrap_or(prior_mu);
-            let mut kl = 0.0;
-            for t in 0..k {
-                let s0 = lv[i][t].exp();
-                let dm = pm_i[t] - mu[i][t];
-                kl +=
-                    s0 / prior_var[t] + dm * dm / prior_var[t] - 1.0 + prior_var[t].ln() - lv[i][t];
-            }
-            loss += 0.5 * kl;
-        }
+        loss += li;
     }
 
     // Contrastive InfoNCE term on the sampled topic vectors (anchor) vs the
@@ -1159,40 +1217,68 @@ pub(crate) fn batch_backward(
             None => (None, None),
         };
 
-    // logit_raw = theta_do . beta  (+ SCHOLAR content deviation).
-    let mut dtheta_do = vec![vec![0.0; k]; n];
+    // dtheta_do = dlogit_raw . beta^T (+ content interaction on theta_do). This is
+    // per-document and independent, so it is computed in parallel over the batch and
+    // collected in document order. The gradient REDUCTIONS into `g.beta` and the
+    // content grads are then done in a serial loop in ascending document order, so the
+    // accumulation order is fixed and the result is identical regardless of thread
+    // count. (Only the reductions are serial; the O(N*K*V) `dtheta_do` compute — one
+    // of the two dense decoder matmuls in the backward — is parallelized.)
+    let dtheta_do: Vec<Vec<f64>> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let mut dt = vec![0.0; k];
+            for t in 0..k {
+                let base = t * v;
+                let mut acc = 0.0;
+                for j in 0..v {
+                    acc += dlogit_raw[i][j] * w.beta[base + j];
+                }
+                if let Some(cf) = content_fwd {
+                    if let Some(bci) = cf.beta_ci {
+                        let tc_i = &cf.tc[i];
+                        for (cc, &tcv) in tc_i.iter().enumerate().take(cf.c) {
+                            if tcv == 0.0 {
+                                continue;
+                            }
+                            let cbase = (t * cf.c + cc) * v;
+                            for j in 0..v {
+                                acc += dlogit_raw[i][j] * bci[cbase + j] * tcv;
+                            }
+                        }
+                    }
+                }
+                dt[t] = acc;
+            }
+            dt
+        })
+        .collect();
+
+    // g.beta (+ content grads): serial reduction in fixed document order.
     for i in 0..n {
         for t in 0..k {
             let base = t * v;
-            let mut acc = 0.0;
+            let td = c.theta_do[i][t];
             for j in 0..v {
-                let dl = dlogit_raw[i][j];
-                acc += dl * w.beta[base + j];
-                g.beta[base + j] += c.theta_do[i][t] * dl;
+                g.beta[base + j] += td * dlogit_raw[i][j];
             }
-            // Content interaction beta_ci[t,c]*theta_do[i][t]*tc[i][c]: adds to both
-            // dtheta_do (through theta_do) and the beta_ci gradient.
-            if let (Some(cf), Some(cg)) = (content_fwd, content_grad.as_deref_mut()) {
-                if let (Some(bci), Some(gci)) = (cf.beta_ci, cg.beta_ci.as_deref_mut()) {
-                    let tc_i = &cf.tc[i];
+        }
+        if let (Some(cf), Some(cg)) = (content_fwd, content_grad.as_deref_mut()) {
+            let tc_i = &cf.tc[i];
+            if let Some(gci) = cg.beta_ci.as_deref_mut() {
+                for t in 0..k {
+                    let td = c.theta_do[i][t];
                     for (cc, &tcv) in tc_i.iter().enumerate().take(cf.c) {
                         if tcv == 0.0 {
                             continue;
                         }
                         let cbase = (t * cf.c + cc) * v;
                         for j in 0..v {
-                            let dl = dlogit_raw[i][j];
-                            acc += dl * bci[cbase + j] * tcv;
-                            gci[cbase + j] += c.theta_do[i][t] * tcv * dl;
+                            gci[cbase + j] += td * tcv * dlogit_raw[i][j];
                         }
                     }
                 }
             }
-            dtheta_do[i][t] = acc;
-        }
-        // Content main deviation beta_c[c]*tc[i][c]: gradient independent of the topic.
-        if let (Some(cf), Some(cg)) = (content_fwd, content_grad.as_deref_mut()) {
-            let tc_i = &cf.tc[i];
             for (cc, &tcv) in tc_i.iter().enumerate().take(cf.c) {
                 if tcv == 0.0 {
                     continue;
