@@ -12,6 +12,7 @@ import pytest
 import topica
 from topica.manifest import (
     BUILTIN_DIAGNOSTICS,
+    BUNDLE_VERSION,
     FINGERPRINT_SPEC,
     SCHEMA,
     SCHEMA_VERSION,
@@ -238,6 +239,124 @@ def test_manifest_is_valid_json(fitted):
     corpus, model = fitted
     d = json.loads(record_fit(model, corpus, iters=50).to_json())
     assert d["schema"] == SCHEMA and d["fingerprint_spec"] == FINGERPRINT_SPEC
+
+
+# -- content-addressed bundle (V2) -----------------------------------------
+
+
+def test_bundle_layout_is_content_addressed(tmp_path, fitted):
+    import json
+    import zipfile
+
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50)
+    p = tmp_path / "a.zip"
+    rec.bundle(str(p), model=model)
+    with zipfile.ZipFile(p) as zf:
+        names = zf.namelist()
+        assert "manifest.json" in names
+        art = [n for n in names if n.startswith("artifacts/")]
+        assert len(art) == 1
+        d = json.loads(zf.read("manifest.json"))
+        assert d["bundle"]["version"] == BUNDLE_VERSION
+        ref = d["model"]["artifact"]
+        # The artifact's file name is its digest.
+        assert ref["path"] == f"artifacts/{ref['digest']}.tt"
+
+
+def test_load_bundle_round_trips_and_verifies(tmp_path, fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, content_fingerprint=True, iters=50)
+    p = tmp_path / "a.zip"
+    rec.bundle(str(p), model=model, corpus=corpus, include_corpus=True)
+    back = AnalysisManifest.load_bundle(str(p))
+    assert back.model["class"] == "LDA"
+    assert back.verify(corpus, model).ok
+
+
+def test_bundle_detects_tampering(tmp_path, fitted):
+    import zipfile
+
+    corpus, model = fitted
+    p = tmp_path / "a.zip"
+    record_fit(model, corpus, iters=50).bundle(str(p), model=model)
+    # Rewrite the zip with one artifact byte flipped.
+    with zipfile.ZipFile(p) as zf:
+        data = {n: zf.read(n) for n in zf.namelist()}
+    art = next(n for n in data if n.startswith("artifacts/"))
+    data[art] = data[art][:-1] + bytes([data[art][-1] ^ 1])
+    tampered = tmp_path / "tampered.zip"
+    with zipfile.ZipFile(tampered, "w") as zf:
+        for n, b in data.items():
+            zf.writestr(n, b)
+    with pytest.raises(ValueError, match="digest mismatch"):
+        AnalysisManifest.load_bundle(str(tampered))
+
+
+def test_bundle_corpus_is_opt_in_and_flagged_sensitive(tmp_path, fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50)
+    default = tmp_path / "default.zip"
+    rec.bundle(str(default), model=model)
+    assert AnalysisManifest.load_bundle(str(default)).corpus.get("artifact") is None
+    withc = tmp_path / "withc.zip"
+    rec.bundle(str(withc), model=model, corpus=corpus, include_corpus=True)
+    loaded = AnalysisManifest.load_bundle(str(withc))
+    assert loaded.corpus["artifact"]["sensitive"] is True
+
+
+def test_bundle_requires_the_object(tmp_path, fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50)
+    with pytest.raises(ValueError, match="requires the model="):
+        rec.bundle(str(tmp_path / "x.zip"))  # include_model default True, no model=
+
+
+def test_extract_bundle_reloads_artifacts(tmp_path, fitted):
+    corpus, model = fitted
+    p = tmp_path / "a.zip"
+    record_fit(model, corpus, iters=50).bundle(
+        str(p), model=model, corpus=corpus, include_corpus=True)
+    dest = tmp_path / "out"
+    dest.mkdir()
+    paths = AnalysisManifest.extract_bundle(str(p), str(dest))
+    reloaded = topica.LDA.load(paths["model"])
+    assert np.array_equal(reloaded.topic_word, model.topic_word)
+    assert topica.Corpus.load(paths["corpus"]).num_docs == corpus.num_docs
+
+
+def test_bundle_file_digest_distinct_from_content_fingerprint(tmp_path, fitted):
+    import json
+    import zipfile
+
+    corpus, model = fitted
+    rec = record_fit(model, corpus, content_fingerprint=True, iters=50)
+    p = tmp_path / "a.zip"
+    rec.bundle(str(p), model=model, corpus=corpus, include_corpus=True)
+    with zipfile.ZipFile(p) as zf:
+        d = json.loads(zf.read("manifest.json"))
+    # The saved-file digest and the content fingerprint are different notions.
+    assert d["corpus"]["artifact"]["digest"] != d["corpus"]["fingerprint"]["digest"]
+
+
+def test_unknown_bundle_version_rejected(tmp_path, fitted):
+    import json
+    import zipfile
+
+    corpus, model = fitted
+    p = tmp_path / "a.zip"
+    record_fit(model, corpus, iters=50).bundle(str(p), model=model)
+    with zipfile.ZipFile(p) as zf:
+        data = {n: zf.read(n) for n in zf.namelist()}
+    d = json.loads(data["manifest.json"])
+    d["bundle"]["version"] = 999
+    data["manifest.json"] = json.dumps(d).encode("utf-8")
+    future = tmp_path / "future.zip"
+    with zipfile.ZipFile(future, "w") as zf:
+        for n, b in data.items():
+            zf.writestr(n, b)
+    with pytest.raises(ValueError, match="bundle version"):
+        AnalysisManifest.load_bundle(str(future))
 
 
 # -- built-in diagnostic capture (V2) --------------------------------------
