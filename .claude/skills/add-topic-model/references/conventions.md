@@ -57,11 +57,16 @@ compare `topic_word`/`doc_topic` with `numpy.array_equal` (exact, not `allclose`
 
 ## Build and test gates (run after every change)
 
+The `just` runner wraps the rebuild + venv handshake (`just build`, `just test`,
+`just docs`, or `just pre-pr` for all gates). The raw commands, if `just` is
+unavailable:
+
 ```bash
 # Build the extension into the dev venv (note: .venv-dev, and VIRTUAL_ENV must be set).
 VIRTUAL_ENV="$PWD/.venv-dev" .venv-dev/bin/maturin develop --release --features python
 
-cargo test --lib                                                  # Rust unit tests
+cargo test --workspace --lib                                      # Rust unit tests (core + topica-core)
+cargo test --workspace --lib --features embeddings,umap,tsne      # feature-gated tests (embedding models)
 VIRTUAL_ENV="$PWD/.venv-dev" .venv-dev/bin/python -m pytest tests/ -q
 VIRTUAL_ENV="$PWD/.venv-dev" .venv-dev/bin/mkdocs build --strict   # docs must build clean
 ```
@@ -72,6 +77,10 @@ least one Rust `#[test]` in `src/<model>.rs`. Write scratch/benchmark files to
 `/private/tmp`, never into the repo or `/tmp`.
 
 ## File layout
+
+`just new-model <ModelName>` (or `python scripts/new_model.py --name <ModelName>`)
+scaffolds the first three files below from templates; the rest are shared files you
+wire the model into (see the checklist it prints).
 
 - `src/<model>.rs` — one file per model; the fit/inference loop and its unit tests.
   (The CTM/STM/SAGE structural-variational cluster and shared numeric kernels live

@@ -80,7 +80,15 @@ deterministic.
 
 Follow `references/conventions.md` closely. In short:
 
-1. Add `src/<model>.rs` with the fit/inference loop. Preserve topica's
+0. **Scaffold the touchpoints first.** Run `just new-model <ModelName>` (or
+   `python scripts/new_model.py --name <ModelName>`) to generate `src/<model>.rs`,
+   `src/python/<model>.rs`, and `tests/test_<model>.py` from templates, each
+   stamped with a `SCAFFOLD(<ModelName>)` marker, plus a printed checklist of the
+   wiring steps. It wires nothing in (an un-finished model stays inert), and
+   `tests/test_scaffold_guard.py` fails once the model is registered if any
+   `SCAFFOLD` marker survives — so you can't ship a half-filled placeholder. Fill
+   in the templates below; the steps that follow are that checklist in prose.
+1. Implement `src/<model>.rs` with the fit/inference loop. Preserve topica's
    **bit-for-bit determinism**: a fixed seed (and thread count, for samplers) must
    reproduce exactly; parallel reductions must sum in a fixed (document) order.
 2. Wire the PyO3 binding in `src/python/` (a directory module, not a single file):
@@ -91,10 +99,16 @@ Follow `references/conventions.md` closely. In short:
    `fit(docs, …)`, then `topic_word`, `doc_topic`, `top_words(n)`, `save`/`load`.
 3. Apply the naming contract: canonical argument names, reference-package aliases
    where helpful, `iters` for the iteration count, `seed=`, no deprecation cycles.
-4. Build and gate after every change:
+4. Build and gate after every change. The `just` runner wraps the release rebuild
+   and the `VIRTUAL_ENV`/`.venv-dev` handshake:
+   ```bash
+   just build          # maturin develop --release --features python
+   just test           # cargo test (core + feature-gated) + pytest
+   ```
+   The raw commands still work if `just` is unavailable:
    ```bash
    VIRTUAL_ENV="$PWD/.venv-dev" .venv-dev/bin/maturin develop --release --features python
-   cargo test --lib
+   cargo test --workspace --lib                                   # add --features embeddings,umap,tsne for an embedding model
    VIRTUAL_ENV="$PWD/.venv-dev" .venv-dev/bin/python -m pytest tests/ -q
    ```
    Add a Rust unit test and a `tests/test_<model>.py`. The new model must pass
@@ -153,14 +167,18 @@ Read `references/pr-and-docs.md` for the checklist. In short:
 2. Open a **PR** from the feature branch (squash-merge, delete branch on merge, per
    `CLAUDE.md`). The PR body summarizes the method, the parity result, and both
    agents' verdicts.
-3. **Update the docs as part of the same PR.** The README/docs roster *tables* are
-   **registry-generated** (`scripts/gen_model_tables.py`, enforced by
-   `test_registry.py`) — register the model there and regenerate; do NOT hand-edit a
-   table row (it fights the generator). Your hand-written work is the per-model prose
-   section (in `docs/guides/models.md`), a validation/replication note where the
-   existing models keep theirs, and the README acknowledgement. (Updating the paper
-   is out of scope — that is the maintainer's, not a contributor's, job.)
-4. Confirm all gates green (`cargo test --lib`, `pytest`, `mkdocs build --strict`)
+3. **Update the docs as part of the same PR.** Both generated tables come from the
+   registry (`python/topica/registry.py`), enforced by `test_registry.py`: add a
+   `ModelInfo` to `REGISTRY` (drives the README/docs roster) **and** an `ImplInfo`
+   to `IMPL` (drives the contributor `docs/contributing/model-map.md` — source
+   file, binding, feature, parity tests; its paths are existence-checked in CI).
+   Then run `scripts/gen_model_tables.py` (or `just gen-tables`) to regenerate both;
+   do NOT hand-edit a generated table (it fights the generator). Your hand-written
+   work is the per-model prose section (in `docs/guides/models.md`), a
+   validation/replication note where the existing models keep theirs, and the
+   README acknowledgement. (Updating the paper is out of scope — that is the
+   maintainer's, not a contributor's, job.)
+4. Confirm all gates green (`just test`, `mkdocs build --strict`)
    before requesting merge.
 
 ## Bundled references
