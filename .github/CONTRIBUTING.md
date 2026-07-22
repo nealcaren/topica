@@ -17,6 +17,29 @@ maturin develop --release --features python
 Always build with `--release`: the debug build is much slower for the Gibbs and
 EM loops.
 
+## Development loop
+
+The mixed Rust/PyO3 workflow (release-mode rebuilds, the `VIRTUAL_ENV`/`.venv-dev`
+handshake maturin needs, feature-gated tests) is wrapped in a
+[`just`](https://just.systems) command runner so you do not have to reconstruct
+the commands. Install it (`cargo install just`, `brew install just`, or your
+package manager), then:
+
+```bash
+just                 # list every recipe
+just build           # (re)build the extension into the dev venv (--release)
+just lint            # cargo fmt --check + clippy -D warnings (the CI lint gate)
+just test            # Rust core + feature-gated Rust + Python tests
+just docs            # mkdocs build --strict
+just pre-pr          # build + lint + test + docs + preflight — run before a PR
+```
+
+`just --list` shows the rest (`fmt`, `clippy`, `test-rust`, `test-rust-features`,
+`test-py`, `preflight`). The recipes assume a POSIX shell and a dev venv with
+binaries under `bin/` (macOS / Linux); the raw commands each recipe runs are
+below and in the `justfile`, so Windows contributors (or anyone without `just`)
+can run them directly.
+
 ## Tests
 
 ```bash
