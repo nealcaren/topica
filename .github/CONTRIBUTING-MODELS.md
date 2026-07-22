@@ -21,7 +21,15 @@ with a thin Python layer on top.
 
 ```
 src/<model>.rs        pure-Rust algorithm (sampler/EM), no Python types. Unit-testable.
-src/python.rs         the PyO3 bindings: one #[pyclass] per model, plus free functions.
+src/python/mod.rs     the PyO3 binding hub: many #[pyclass]es plus free functions, and
+                      the single #[pymodule] registration fn (`m.add_class::<...>()`) at
+                      the bottom. Large models are extracted into their own module:
+src/python/<model>.rs a per-model binding module (btm.rs, disclda.rs, scholar.rs, ...).
+                      Defines `pub struct <Model>`; mod.rs pulls it in with
+                      `use <model>::<Model>;` and registers it in the #[pymodule] fn.
+src/python/{arrays,error,py_corpus,save}.rs   shared binding helpers.
+topica-core/          vendorable crate holding the shared CTM/STM variational math.
+                      The root crate re-exports it; touch it for CTM/STM-family changes.
 src/model.rs          shared TopicModel state used by the MALLET-family samplers.
 src/{sampler,optimize,coherence,corpus,linalg,spectral,reduce,represent}.rs
                       shared machinery (Gibbs sweep, hyperparameter optimization,
@@ -36,9 +44,12 @@ tests/                pytest. parity/ statistical checks vs R/MALLET. docs/ mkdo
 ```
 
 The split that matters: **algorithms live in `src/<model>.rs` and know nothing
-about Python; `src/python.rs` is the only place that touches PyO3.** Keep that
-boundary. The algorithm crate is where your unit tests and finite-difference
-checks run; the binding is plumbing.
+about Python; the `src/python/` modules are the only place that touches PyO3.**
+Keep that boundary. The algorithm crate is where your unit tests and
+finite-difference checks run; the binding is plumbing. Small models add their
+`#[pyclass]` directly in `src/python/mod.rs`; larger ones get their own
+`src/python/<model>.rs` module (see the extraction pattern above) that mod.rs
+declares with `mod <model>;` and registers in the `#[pymodule]` fn.
 
 ## Invariants you must not break
 
@@ -194,7 +205,8 @@ Example shape: add a `min_cluster_weight` knob, or a new `weights=` mode.
    pure-Rust function takes and uses it. Add or extend a `#[cfg(test)]` unit test
    that exercises the new behavior (planted data where the parameter changes the
    recovered result in a predictable direction).
-2. **Binding.** In `src/python.rs`, add the argument to the relevant
+2. **Binding.** In the model's binding (`src/python/mod.rs`, or its
+   `src/python/<model>.rs` module if extracted), add the argument to the relevant
    `#[pyo3(signature = (...))]`. It must be **keyword-only** (after the `*`) with
    a default that preserves current behavior. Validate it in the body and raise
    `PyValueError` on bad input, matching the existing messages. Pass it into the
@@ -261,7 +273,7 @@ and needs no rebuild.
 
 ## Part B: adding a new model
 
-Use `GSDMM` (`src/gsdmm.rs` + the `GSDMM` block in `src/python.rs`) as the
+Use `GSDMM` (`src/gsdmm.rs` + the `GSDMM` block in `src/python/mod.rs`) as the
 reference template. It is small, self-contained, and exercises the whole
 contract. Work in this order.
 
@@ -336,7 +348,11 @@ Tier-0 method is structurally undefined (a time-sliced or tree model has no flat
 `doc_topic`), return an empty value and record the exemption in that row — do not
 fake a value.
 
-### B2. The PyO3 binding in `src/python.rs`
+### B2. The PyO3 binding in `src/python/`
+
+Add the binding in `src/python/mod.rs` next to the other model blocks, or, for a
+larger model, in its own `src/python/<model>.rs` module (declared with
+`mod <model>;` in mod.rs and pulled in with `use <model>::<Model>;`).
 
 Add a `#[pyclass(module = "topica")]` struct holding the hyperparameters, a
 `fitted: bool`, the fitted state (`phi`/`theta` as `Option<Array2<f64>>`), and
@@ -482,7 +498,9 @@ falls back to the bootstrap.
 
 ### B4. Register the class
 
-In the `#[pymodule]` function at the bottom of `src/python.rs`:
+In the `#[pymodule]` function at the bottom of `src/python/mod.rs` (if you put
+the binding in its own module, also add `mod <model>;` and `use <model>::<Model>;`
+near the top of mod.rs first):
 
 ```rust
 m.add_class::<MyModel>()?;
@@ -532,7 +550,7 @@ the topics on a real corpus.
 
 - [ ] Algorithm in `src/<model>.rs` with `#[cfg(test)]` recovery + determinism tests; `mod` added to `src/lib.rs`.
 - [ ] `Estimator` (and the family trait, where it applies) implemented on the fitted struct, a `*_conforms` test added, and a `RUST_ESTIMATORS` row in `src/conformance.rs`.
-- [ ] `#[pyclass]` binding in `src/python.rs` exposing the four required analysis-surface attributes plus `top_words`, `coherence`, `save`/`load`, `__repr__`.
+- [ ] `#[pyclass]` binding in `src/python/` (mod.rs or a per-model `src/python/<model>.rs` module) exposing the four required analysis-surface attributes plus `top_words`, `coherence`, `save`/`load`, `__repr__`.
 - [ ] Keyword-only new params with behavior-preserving defaults; clear `PyValueError`/`RuntimeError` messages; GIL released during fit; RNG seeded from `self.seed`.
 - [ ] Registered in `#[pymodule]`; re-exported in `__init__.py` (+ `__all__`); `.pyi` stub updated to match.
 - [ ] `tests/test_<model>.py` passes; `parity/` check added where a reference exists.

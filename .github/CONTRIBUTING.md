@@ -20,10 +20,17 @@ EM loops.
 ## Tests
 
 ```bash
-cargo test --lib                 # Rust unit tests
+cargo test --workspace --lib                              # Rust unit tests
+cargo test --workspace --lib --features embeddings,umap,tsne  # feature-gated tests
 python -m pytest tests/ -q       # Python tests
 mkdocs build --strict            # docs must build clean
 ```
+
+The second command exercises the Rust tests behind the `embeddings`/`umap`/`tsne`
+`#[cfg(feature = ...)]` gates, which a plain `cargo test` skips. CI runs both
+(issue #383). It does not use `--all-features`, because that also enables
+`python`, and pyo3's extension-module mode does not link libpython into a
+standalone test binary.
 
 The `parity/` directory holds cross-implementation checks against R (`stm`,
 `keyATM`) and Java MALLET. They skip cleanly when Rscript or the package is not
@@ -32,9 +39,11 @@ installed, so they are optional locally but run when the tooling is present.
 ## Conventions
 
 - The house import is `import topica`, with no alias.
-- One Rust file per model under `src/` (`keyatm.rs`, `stm.rs`, …); `python.rs`
-  holds the PyO3 bindings. Keep the `python/topica/_topica.pyi` type stub in sync
-  when you change a binding's signature.
+- One Rust file per model under `src/` (`keyatm.rs`, `stm.rs`, …); the PyO3
+  bindings live under `src/python/` — most in the `src/python/mod.rs` hub, larger
+  models in their own `src/python/<model>.rs` module. Keep the
+  `python/topica/_topica.pyi` type stub in sync when you change a binding's
+  signature.
 - New gradients or samplers should ship with a test that checks them (finite
   differences for gradients, planted-data recovery for samplers), and where a
   reference implementation exists, a statistical-parity check under `parity/`.

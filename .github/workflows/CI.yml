@@ -48,8 +48,8 @@ jobs:
           test "$tag" = "$cargo_version"
 
   # Rust hygiene gate, run once (OS-independent): the whole workspace must be
-  # rustfmt-clean and clippy-clean (-D warnings, all features so python.rs is
-  # linted too). Catches drift without relying on reviewer discipline.
+  # rustfmt-clean and clippy-clean (-D warnings, all features so the src/python/
+  # bindings are linted too). Catches drift without relying on reviewer discipline.
   lint:
     name: lint (fmt + clippy)
     runs-on: ubuntu-latest
@@ -110,6 +110,16 @@ jobs:
       # in CONTRIBUTING.md, so it gates PRs here too.
       - name: cargo test
         run: cargo test --workspace --lib
+
+      # Feature-gated Rust tests (issue #383). The bare run above does not compile
+      # the `embeddings`/`umap`/`tsne` code, so tests behind those `#[cfg(feature
+      # = ...)]` gates never run. Enable them explicitly. NOT `--all-features`:
+      # that would also turn on `python`, and pyo3's extension-module mode does
+      # not link libpython into a standalone test binary (see above). This set
+      # covers every feature gate except `python`, which has no unit-testable
+      # code. Also in CONTRIBUTING.md as `cargo test --features embeddings,umap,tsne`.
+      - name: cargo test (feature-gated models)
+        run: cargo test --workspace --lib --features embeddings,umap,tsne
 
       - name: Build extension and run tests
         shell: bash

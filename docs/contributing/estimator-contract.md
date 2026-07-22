@@ -216,8 +216,9 @@ open a pull request.
 
 ## Adding a new estimator
 
-1. Implement the model in `src/<name>.rs` with PyO3 bindings in `src/python.rs`
-   (or in pure Python in `python/topica/`).
+1. Implement the model in `src/<name>.rs` with PyO3 bindings under `src/python/`
+   (in the `src/python/mod.rs` hub, or a per-model `src/python/<name>.rs` module),
+   or in pure Python in `python/topica/`.
 2. Export it from `python/topica/__init__.py`.
 3. Add it to `REGISTRY` in `python/topica/conformance.py` with a zero-arg
    factory lambda and the correct `model_family` string.
