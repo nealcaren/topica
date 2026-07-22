@@ -133,6 +133,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("SupervisedLDA", "guided", ("text", "labels"), "gibbs", "seed-reproducible", (),
            "Supervised LDA: topics shaped to predict a per-document real-valued response.",
            "guides/models.md#supervisedlda"),
+        _m("DiscLDA", "guided", ("text", "labels"), "gibbs", "seed-reproducible", (),
+           "Discriminative LDA (Lacoste-Julien et al. 2008): topics split into per-class and shared blocks; reads how classes talk differently.",
+           "guides/models.md#disclda"),
         # ---- Short text -----------------------------------------------------
         _m("GSDMM", "short-text", ("text",), "gibbs", "seed-reproducible", ("short-text",),
            "Gibbs-sampling Dirichlet mixture: one topic per short document.",

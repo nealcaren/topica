@@ -31,6 +31,7 @@ pub mod cli; // argument helpers for the CLI binaries (not part of the public AP
 pub mod coherence;
 pub mod conformance;
 pub mod detm;
+pub mod disclda;
 pub mod dmr;
 pub mod dtm;
 pub mod etm;

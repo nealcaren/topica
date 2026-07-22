@@ -96,6 +96,7 @@ thread count), or `llm-bounded`.
 | `SeededLDA` | text, seeds | gibbs | seed-reproducible | Seeded LDA: steer named topics toward supplied seed words. |
 | `LabeledLDA` | text, labels | gibbs | seed-reproducible | Labeled LDA: each document label is a topic; tokens are restricted to its labels. |
 | `SupervisedLDA` | text, labels | gibbs | seed-reproducible | Supervised LDA: topics shaped to predict a per-document real-valued response. |
+| `DiscLDA` | text, labels | gibbs | seed-reproducible | Discriminative LDA (Lacoste-Julien et al. 2008): topics split into per-class and shared blocks; reads how classes talk differently. |
 
 ### Short text
 
@@ -217,6 +218,7 @@ As such, Topica stands on a generation of open topic-modeling research and code.
 - **GSDMM** (Yin & Wang, 2014) — `GSDMM`: the movie-group-process mixture for short text
 - [**BTM**](https://github.com/bnosac/BTM) (Yan, Guo, Lan & Cheng, 2013; R package by Jan Wijffels) — `BTM`: the biterm co-occurrence topic model for short text
 - [**Polylingual Topic Models**](https://aclanthology.org/D09-1092/) (Mimno, Wallach, Naradowsky, Smith & McCallum, 2009) — `PolylingualLDA`: LDA over aligned document tuples that share one topic distribution, giving topics aligned across many languages; validated against MALLET's `PolylingualTopicModel` as a black-box oracle
+- [**DiscLDA**](https://papers.nips.cc/paper/2008/hash/7b13b2203029ed80337f27127a9f1d28-Abstract.html) (Lacoste-Julien, Sha & Jordan, 2008) — `DiscLDA`: discriminative LDA with per-class and shared topic blocks; the fixed block-transform variant, validated against the paper's 20 Newsgroups feature-classification result (no reference implementation exists, so it is paper-derived)
 - [**ProdLDA / AVITM**](https://arxiv.org/abs/1703.01488) (Srivastava & Sutton, 2017) — `ProdLDA`: autoencoding variational inference and the product-of-experts word model
 - [**BERTopic**](https://github.com/MaartenGr/BERTopic) (Grootendorst, 2022) and [**Top2Vec**](https://github.com/ddangelov/Top2Vec) (Angelov, 2020) — `BERTopic`, `Top2Vec`: the embedding-clustering pipeline, class-based TF-IDF, and the `reduce → cluster → represent` design
 - [**ETM**](https://github.com/adjidieng/ETM) (Dieng, Ruiz & Blei, 2020) — `ETM`: the Embedded Topic Model (per-document variational EM and an amortized VAE)

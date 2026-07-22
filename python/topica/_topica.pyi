@@ -2301,6 +2301,86 @@ class PolylingualLDA:
     def __repr__(self) -> str: ...
 
 
+class DiscLDA:
+    """DiscLDA (Lacoste-Julien, Sha & Jordan 2008): a discriminative topic model.
+    The actual topics partition into `k_class` topics specific to each class (one
+    block per class) plus `k_shared` shared topics; a document of a given class uses
+    only its class block and the shared block. Reads how classes talk differently
+    (`class_topics`) vs their common ground (`shared_topics`), and gives a
+    class-carrying document representation (`transform`/`predict`). Fixed
+    block-transform variant (paper section 4.1)."""
+
+    def __init__(
+        self,
+        k_class: int,
+        k_shared: int,
+        *,
+        alpha: float | None = None,
+        beta: float = 0.01,
+        iters: int = 1000,
+        infer_sweeps: int = 100,
+        seed: int = 42,
+    ) -> None: ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        y: Sequence[str] | Sequence[int],
+        *,
+        iters: int | None = None,
+    ) -> None:
+        """Fit on documents with one class label `y` per document (str or int)."""
+        ...
+    def transform(
+        self, data: Corpus | Sequence[Sequence[str]]
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Class-marginalized discriminative representation (num_docs, num_topics)."""
+        ...
+    def predict(self, data: Corpus | Sequence[Sequence[str]]) -> list[str]:
+        """MAP class label per document."""
+        ...
+    def predict_proba(
+        self, data: Corpus | Sequence[Sequence[str]]
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Class posteriors (num_docs, num_classes), columns in `classes` order."""
+        ...
+    @property
+    def classes(self) -> list[str]: ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    def class_topic_ids(self, label: str) -> list[int]: ...
+    def shared_topic_ids(self) -> list[int]: ...
+    def class_topics(
+        self, label: str, n: int = 10
+    ) -> list[list[tuple[str, float]]]: ...
+    def shared_topics(self, n: int = 10) -> list[list[tuple[str, float]]]: ...
+    @property
+    def model_family(self) -> str: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def converged(self) -> bool | None: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> "DiscLDA": ...
+    def __repr__(self) -> str: ...
+
+
 class PA:
     """Pachinko Allocation Model (Li & McCallum 2006): a DAG of `num_super`
     super-topics over `num_sub` shared sub-topics over words, capturing topic

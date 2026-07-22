@@ -54,6 +54,7 @@ pub(crate) const MODEL_TAG_PARTY_EMBEDDINGS: u8 = 36;
 pub(crate) const MODEL_TAG_TLDA: u8 = 37;
 pub(crate) const MODEL_TAG_BTM: u8 = 38;
 pub(crate) const MODEL_TAG_PLTM: u8 = 39;
+pub(crate) const MODEL_TAG_DISCLDA: u8 = 40;
 
 pub(crate) fn model_tag_name(tag: u8) -> &'static str {
     match tag {
@@ -94,6 +95,7 @@ pub(crate) fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_TLDA => "TensorLDA",
         MODEL_TAG_BTM => "BTM",
         MODEL_TAG_PLTM => "PolylingualLDA",
+        MODEL_TAG_DISCLDA => "DiscLDA",
         _ => "unknown",
     }
 }

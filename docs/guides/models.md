@@ -64,6 +64,7 @@ generated from `python/topica/registry.py`.
 | `SeededLDA` | text, seeds | gibbs | seed-reproducible | Seeded LDA: steer named topics toward supplied seed words. |
 | `LabeledLDA` | text, labels | gibbs | seed-reproducible | Labeled LDA: each document label is a topic; tokens are restricted to its labels. |
 | `SupervisedLDA` | text, labels | gibbs | seed-reproducible | Supervised LDA: topics shaped to predict a per-document real-valued response. |
+| `DiscLDA` | text, labels | gibbs | seed-reproducible | Discriminative LDA (Lacoste-Julien et al. 2008): topics split into per-class and shared blocks; reads how classes talk differently. |
 
 ### Short text
 
@@ -968,6 +969,48 @@ mean, std = m.predict(new_docs, return_std=True)
 
 Supervised: each label is a topic, and a document's tokens are restricted to its
 labels. Empty labels fall back to unconstrained LDA.
+
+## DiscLDA
+
+`DiscLDA` ([Lacoste-Julien, Sha & Jordan 2008](https://papers.nips.cc/paper/2008/hash/7b13b2203029ed80337f27127a9f1d28-Abstract.html))
+is a **discriminative** topic model: given a document-level class label, it learns a
+topic space that separates what each class talks about *distinctively* from the
+*common ground*. The actual topics partition into `k_class` topics **specific to each
+class** (one block per class) and `k_shared` topics **shared by all classes**; a
+document of class `c` places topic mass only on its own class block and the shared
+block. So for "how do the parties talk differently," DiscLDA hands you the
+Republican-specific topics, the Democrat-specific topics, and the shared topics
+directly, rather than making you fit unsupervised topics and hunt for the ones that
+split.
+
+```python
+m = topica.DiscLDA(k_class=8, k_shared=12)     # L = num_classes*8 + 12 topics
+m.fit(docs, y=party)                            # one class label per document
+m.class_topics("R"); m.class_topics("D")        # each party's distinctive topics
+m.shared_topics()                               # the common-ground topics
+m.transform(new_docs)                           # class-carrying document features
+m.predict(new_docs)                             # DiscLDA as a classifier
+```
+
+This is the **fixed block-transform** variant (paper §4.1): with the transform frozen
+to the shared/class-specific block structure, DiscLDA is LDA with a per-document topic
+restriction (structurally like `LabeledLDA`, but restricting to `class-block ∪
+shared-block` rather than a document's own labels), fit by collapsed Gibbs. The
+class-marginalized representation `transform` returns — Σ_c p(c|w)·θ_c — is the
+supervised, discriminative feature vector the paper uses for classification. Where
+`SupervisedLDA` regresses a real-valued response off *all* topics and `LabeledLDA`
+restricts tokens to a document's own labels, DiscLDA is the one that builds the
+class-specific-vs-shared split and a discriminative representation. Determinism is
+`seed-reproducible`.
+
+DiscLDA has no canonical reference implementation, so it is validated against the
+paper's 20 Newsgroups result (`parity/disclda_20ng.py`): DiscLDA's topic-proportion
+features feed a linear classifier better than unsupervised-LDA features of matched
+dimension. On the paper's hard `alt.atheism` / `talk.religion.misc` pair, topica
+reproduces that ordering (DiscLDA features clearly above LDA features). The learned
+transform (paper §4.2, the full discriminative training of `T`) is a planned
+follow-up; the fixed-transform model already delivers the shared/class-specific
+structure and the discriminative-feature win.
 
 ## SAGE
 

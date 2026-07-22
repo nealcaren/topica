@@ -281,6 +281,16 @@ def _fit_labeledlda(iters=300):
     return m.doc_topic, m.topic_word, m.num_topics
 
 
+def _fit_disclda(iters=300):
+    # Class label = the planted block; each class gets a class-specific topic plus a
+    # shared block, so a healthy fit spreads mass across the class+shared topics.
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    y = [f"c{int(doc[0].split('w')[0][1:])}" for doc in docs]  # "b3w5" -> "c3"
+    m = topica.DiscLDA(k_class=1, k_shared=2, alpha=0.1, iters=iters, seed=1)
+    m.fit(docs, y)
+    return m.doc_topic, m.topic_word, m.num_topics
+
+
 def _supervised_corpus(n=200, seed=0):
     """Mixed two-block docs with a response driven by block-0 prevalence."""
     rng = np.random.default_rng(seed)
@@ -565,6 +575,7 @@ FIT_ADAPTERS = {
     "SeededLDA": _fit_seededlda,
     "LabeledLDA": _fit_labeledlda,
     "SupervisedLDA": _fit_supervisedlda,
+    "DiscLDA": _fit_disclda,
     "GSDMM": _fit_gsdmm,
     "BTM": _fit_btm,
     "PolylingualLDA": _fit_pltm,

@@ -73,6 +73,8 @@ CTOR_FIRST_EXCEPT = {
     "KeyATM": "keyword dict is the leading required input",
     "SeededLDA": "seed-word dict is the leading required input",
     "PA": "two-level model: num_super, num_sub",
+    "DiscLDA": "structured topic count: num_classes*k_class + k_shared, "
+    "num_classes known only at fit",
 }
 
 # Models that take a document covariate design matrix. Each must accept a
