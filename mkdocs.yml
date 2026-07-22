@@ -122,6 +122,7 @@ nav:
       - Models: api/models.md
       - Embedding models: api/embedding.md
       - Diagnostics: api/diagnostics.md
+      - Analysis manifest: api/manifest.md
       - Content-covariate diagnostics: api/content.md
       - Visualization: api/viz.md
       - STM toolkit: api/stm.md

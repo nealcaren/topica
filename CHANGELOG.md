@@ -6,6 +6,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **Analysis manifest** (`topica.record_fit`, `topica.AnalysisManifest`): a
+  portable, privacy-aware JSON record of one fit. It captures the model settings,
+  environment, fit arguments, researcher decisions, and canonical fingerprints of
+  the corpus, design matrix, and model outputs, then `verify(corpus, model)`
+  reports per field whether the fit's identity and replay conditions still hold
+  (`exact` / `input_changed` / `artifact_changed` / `environment_changed` /
+  `unverifiable`), never a single pass/fail. Privacy-by-default: `privacy="minimal"`
+  records only coarse corpus counts, with an aggregate description and a sensitive
+  content fingerprint as explicit opt-ins. The manifest composes with
+  `Corpus.save` / `model.save` rather than replacing them.
+
 ### Removed
 
 - **ECTM** (the Evolving Content Topic Model) is removed. Its one interpretive

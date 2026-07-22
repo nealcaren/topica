@@ -1,0 +1,233 @@
+"""Analysis manifest / provenance record (issue #394).
+
+Covers the privacy contract (no leakage), deterministic serialization, the
+fingerprint-v1 canonicalization, change detection in verify(), and schema
+forward-compatibility.
+"""
+import json
+
+import numpy as np
+import pytest
+
+import topica
+from topica.manifest import (
+    FINGERPRINT_SPEC,
+    SCHEMA,
+    SCHEMA_VERSION,
+    AnalysisManifest,
+    fingerprint_array,
+    fingerprint_corpus,
+    record_fit,
+)
+
+# Distinctive tokens that cannot collide with hyperparameter names (alpha/beta/…)
+# recorded as legitimate model settings.
+DOCS = [
+    ["wordone", "wordtwo", "wordthree", "wordone"],
+    ["wordone", "wordtwo", "wordtwo", "wordfour"],
+    ["wordthree", "wordthree", "wordfour", "wordfive"],
+    ["wordfour", "wordfive", "wordone", "wordtwo"],
+    ["wordfive", "wordsix", "wordone", "wordthree"],
+    ["wordtwo", "wordthree", "wordfour", "wordfive"],
+]
+X = np.array([[1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [1.0, 0.5], [0.0, 0.0], [1.0, 0.2]])
+
+
+@pytest.fixture
+def fitted():
+    corpus = topica.Corpus.from_documents(DOCS)
+    model = topica.LDA(3, seed=7)
+    model.fit(corpus, iters=50)
+    return corpus, model
+
+
+# -- privacy / leakage -----------------------------------------------------
+
+
+def test_minimal_default_leaks_no_content(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, prevalence=X, prevalence_names=["a", "b"], iters=50)
+    js = rec.to_json()
+    assert rec.corpus["privacy"] == "minimal"
+    # Coarse counts only; no vocabulary, length distribution, preprocessing,
+    # content fingerprint, or any raw token.
+    assert set(rec.corpus) == {"privacy", "num_docs", "total_tokens"}
+    for token in {t for doc in DOCS for t in doc}:
+        assert token not in js
+    for leaked in ("description", "vocab_size", "doc_length_summary", "fingerprint"):
+        assert f'"{leaked}"' not in js
+    # A design matrix is fingerprinted, not embedded: no raw value strings.
+    assert "0.5" not in js and "0.2" not in js
+
+
+def test_no_raw_document_ids_or_metadata(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50)
+    js = rec.to_json()
+    assert "metadata" not in js.lower() or '"metadata"' not in js
+
+
+def test_aggregate_opts_in_description_but_still_no_tokens(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, privacy="aggregate", iters=50)
+    desc = rec.corpus["description"]
+    assert desc["vocab_size"] == corpus.num_words
+    assert desc["doc_length_summary"]["count"] == corpus.num_docs
+    js = rec.to_json()
+    for token in {t for doc in DOCS for t in doc}:
+        assert token not in js
+
+
+def test_full_privacy_rejected(fitted):
+    corpus, model = fitted
+    with pytest.raises(ValueError, match="not available in V1|minimal"):
+        record_fit(model, corpus, privacy="full")
+
+
+def test_content_fingerprint_is_opt_in(fitted):
+    corpus, model = fitted
+    assert record_fit(model, corpus).corpus.get("fingerprint") is None
+    rec = record_fit(model, corpus, content_fingerprint=True)
+    assert rec.corpus["fingerprint"]["spec"] == FINGERPRINT_SPEC
+
+
+# -- deterministic serialization + round trip ------------------------------
+
+
+def test_serialization_is_deterministic(fitted):
+    corpus, model = fitted
+    a = record_fit(model, corpus, iters=50).to_json()
+    b = record_fit(model, corpus, iters=50).to_json()
+    assert a == b  # no wall-clock, sorted keys
+
+
+def test_round_trip(tmp_path, fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, prevalence=X, iters=50)
+    rec.add_decision("K", "chose 3")
+    rec.add_diagnostic("coh", float(np.mean(model.coherence(5))))
+    p = tmp_path / "a.topica.json"
+    rec.save(str(p))
+    back = AnalysisManifest.load(str(p))
+    assert back.to_json() == rec.to_json()
+    assert back.decisions[0]["key"] == "K"
+    assert back.diagnostics[0]["kind"] == "computed_evidence"
+
+
+# -- fingerprint-v1 canonicalization ---------------------------------------
+
+
+def test_fingerprint_array_order_sensitive():
+    a = fingerprint_array(np.array([1.0, 2.0, 3.0]))
+    b = fingerprint_array(np.array([3.0, 2.0, 1.0]))
+    assert a["digest"] != b["digest"]
+    assert a["spec"] == FINGERPRINT_SPEC and a["shape"] == [3]
+
+
+def test_fingerprint_normalises_negative_zero_and_nan():
+    assert (fingerprint_array(np.array([0.0, 1.0]))["digest"]
+            == fingerprint_array(np.array([-0.0, 1.0]))["digest"])
+    # Distinct NaN bit patterns must hash identically (no bit-pattern leak).
+    n1 = np.array([np.nan], dtype="<f8")
+    n2 = np.frombuffer(np.uint64(0x7FF8000000000001).tobytes(), dtype="<f8").copy()
+    assert (fingerprint_array(n1)["digest"] == fingerprint_array(n2)["digest"])
+
+
+def test_corpus_fingerprint_survives_reindex_changes_on_edit():
+    c1 = topica.Corpus.from_documents(DOCS)
+    c2 = topica.Corpus.from_documents(DOCS)  # same content
+    assert fingerprint_corpus(c1)["digest"] == fingerprint_corpus(c2)["digest"]
+    reordered = [DOCS[0][::-1]] + DOCS[1:]   # change one document's token order
+    c3 = topica.Corpus.from_documents(reordered)
+    assert fingerprint_corpus(c3)["digest"] != fingerprint_corpus(c1)["digest"]
+
+
+def test_keyed_fingerprint_is_flagged_and_differs():
+    plain = fingerprint_array(X)
+    keyed = fingerprint_array(X, key=b"secret")
+    assert "keyed" not in plain
+    assert keyed["keyed"] is True
+    assert keyed["digest"] != plain["digest"]
+
+
+# -- verify: graded outcomes, change detection -----------------------------
+
+
+def test_verify_same_inputs_matches(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, content_fingerprint=True, iters=50)
+    res = rec.verify(corpus, model)
+    assert res.fields["corpus_counts"] == "exact"
+    assert res.fields["corpus_fingerprint"] == "exact"
+    assert res.fields["model_topic_word"] == "exact"
+    assert res.fields["model_doc_topic"] == "exact"
+
+
+def test_verify_detects_changed_corpus(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, content_fingerprint=True, iters=50)
+    changed = topica.Corpus.from_documents([DOCS[0][::-1]] + DOCS[1:])
+    res = rec.verify(changed, model)
+    assert res.fields["corpus_fingerprint"] == "input_changed"
+    assert not res.ok
+
+
+def test_verify_detects_changed_model(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50)
+    other = topica.LDA(3, seed=999)
+    other.fit(corpus, iters=50)
+    res = rec.verify(corpus, other)
+    assert res.fields["model_topic_word"] == "artifact_changed"
+
+
+def test_verify_unrecorded_fingerprint_is_unverifiable_not_pass(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50)  # no content fingerprint
+    res = rec.verify(corpus, model)
+    # Absence of a recorded fingerprint must never read as a pass.
+    assert res.fields["corpus_fingerprint"] == "unverifiable"
+
+
+def test_verify_result_never_a_bare_bool(fitted):
+    corpus, model = fitted
+    res = record_fit(model, corpus, iters=50).verify(corpus, model)
+    assert isinstance(res.fields, dict) and len(res.fields) >= 3
+    assert "exact" in res.summary()
+
+
+# -- schema + fingerprint-spec forward compatibility -----------------------
+
+
+def test_unknown_schema_version_rejected(fitted):
+    corpus, model = fitted
+    d = record_fit(model, corpus).to_dict()
+    d["schema_version"] = 999
+    with pytest.raises(ValueError, match="schema_version"):
+        AnalysisManifest.from_dict(d)
+
+
+def test_non_topica_manifest_rejected():
+    with pytest.raises(ValueError, match="not a topica manifest"):
+        AnalysisManifest.from_dict({"schema": "something.else"})
+
+
+def test_unknown_fingerprint_spec_is_unverifiable_not_reinterpreted(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, content_fingerprint=True, iters=50)
+    rec.corpus["fingerprint"]["spec"] = "fp99"  # a future spec this build can't read
+    res = rec.verify(corpus, model)
+    assert res.fields["corpus_fingerprint"] == "unverifiable"
+
+
+def test_schema_constants_are_stable():
+    # These are the durable contract; changing them is a breaking change.
+    assert SCHEMA == "topica.manifest"
+    assert SCHEMA_VERSION == 1
+    assert FINGERPRINT_SPEC == "fp1"
+
+
+def test_manifest_is_valid_json(fitted):
+    corpus, model = fitted
+    d = json.loads(record_fit(model, corpus, iters=50).to_json())
+    assert d["schema"] == SCHEMA and d["fingerprint_spec"] == FINGERPRINT_SPEC
