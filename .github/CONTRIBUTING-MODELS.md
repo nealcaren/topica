@@ -51,6 +51,12 @@ finite-difference checks run; the binding is plumbing. Small models add their
 `src/python/<model>.rs` module (see the extraction pattern above) that mod.rs
 declares with `mod <model>;` and registers in the `#[pymodule]` fn.
 
+For an existing model, the generated [model implementation
+map](../docs/contributing/model-map.md) lists — per model — its algorithm file,
+binding module, shared machinery, required Cargo feature, and parity tests, so
+you can find every surface a change touches without searching the tree. It is
+generated from `python/topica/registry.py` (edit `IMPL` there, not the table).
+
 ## Invariants you must not break
 
 1. **`API_FROZEN.md` is the contract for existing surface.** Never rename or

@@ -75,6 +75,11 @@ build:
 docs:
     {{py}} -m mkdocs build --strict
 
+# Regenerate the model roster (README + docs) and the contributor model map from
+# python/topica/registry.py.
+gen-tables:
+    {{py}} scripts/gen_model_tables.py
+
 # --- Aggregate gates -------------------------------------------------------
 
 # fmt + clippy + model-table + .pyi stub sync; also wired as the pre-push hook.
