@@ -359,7 +359,7 @@ mod tests {
         // k_class=1 per class, k_shared=2
         let m = fit_disclda(&docs, &labels, nc, 1, 2, v, 0.1, 0.01, 300, &mut rng);
 
-        assert_eq!(m.num_topics, nc * 1 + 2);
+        assert_eq!(m.num_topics, nc + 2); // k_class=1 per class + k_shared=2
         for row in &m.topic_word {
             assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
         }
