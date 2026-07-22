@@ -3124,17 +3124,23 @@ class Scholar:
         *,
         covariates: object | None = None,
         covariate_names: list[str] | None = None,
+        content: object | None = None,
+        content_names: list[str] | None = None,
+        interactions: bool = False,
         alpha: float = 1.0,
         hidden_size: int = 100,
         dropout: float = 0.2,
         batch_size: int = 200,
         lr: float = 0.002,
         l2_prior_reg: float = 0.0,
+        l1_content_reg: float = 0.0,
         convergence_tol: float = 0.0,
         seed: int = 42,
     ) -> None:
-        """``covariates`` (a (num_docs, n_covars) numeric matrix) may be given here or
-        at fit(). ``l2_prior_reg`` is the L2 penalty on the covariate weights."""
+        """``covariates`` (prevalence) and ``content`` (topic-covariate) numeric
+        matrices may be given here or at fit(). ``interactions`` adds topic-covariate
+        interaction deviations; ``l2_prior_reg``/``l1_content_reg`` regularize the
+        covariate/content weights."""
         ...
     def fit(
         self,
@@ -3142,12 +3148,13 @@ class Scholar:
         *,
         covariates: object | None = None,
         labels: object | None = None,
+        content: object | None = None,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
     ) -> None:
-        """Fit on a Corpus or list of token lists with prior ``covariates`` and/or
-        supervised ``labels`` (one per document, str or int). At least one of
-        covariates or labels must be given. `iters` sets the number of epochs."""
+        """Fit on a Corpus or list of token lists with prior ``covariates``, supervised
+        ``labels`` (str/int, one per document), and/or topic-covariate ``content``. At
+        least one of covariates, labels, or content must be given."""
         ...
     @property
     def num_topics(self) -> int: ...
@@ -3161,6 +3168,12 @@ class Scholar:
         ...
     @property
     def covariate_names(self) -> list[str]: ...
+    @property
+    def content_effects(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Content (topic-covariate) word deviations, shape (n_content, vocab)."""
+        ...
+    @property
+    def content_names(self) -> list[str]: ...
     @property
     def classes(self) -> list[str]:
         """Sorted class labels (predict_proba column order); empty if fit without labels."""
@@ -3190,16 +3203,25 @@ class Scholar:
     ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
     def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
     def transform(
-        self, data: Corpus | Sequence[Sequence[str]], covariates: object | None = None
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        covariates: object | None = None,
+        content: object | None = None,
     ) -> numpy.typing.NDArray[numpy.float64]: ...
     def predict_proba(
-        self, data: Corpus | Sequence[Sequence[str]], covariates: object | None = None
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        covariates: object | None = None,
+        content: object | None = None,
     ) -> numpy.typing.NDArray[numpy.float64]:
         """Class probabilities (num_docs, n_classes), columns in `classes` order.
         Requires a label-trained model."""
         ...
     def predict(
-        self, data: Corpus | Sequence[Sequence[str]], covariates: object | None = None
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        covariates: object | None = None,
+        content: object | None = None,
     ) -> list[str]:
         """Predicted class label per document. Requires a label-trained model."""
         ...

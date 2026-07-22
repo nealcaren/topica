@@ -118,7 +118,7 @@ REGISTRY: dict[str, ModelInfo] = {
            "Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates.",
            "guides/models.md#gdmr"),
         _m("Scholar", "covariates", ("text", "metadata", "labels"), "vae", "seed-reproducible", (),
-           "SCHOLAR (Card et al. 2018): a ProdLDA VAE with covariate-shifted topic-prevalence prior and an optional supervised label head (neural STM prevalence + sLDA).",
+           "SCHOLAR (Card et al. 2018): a ProdLDA VAE with a covariate-shifted prevalence prior, an optional supervised label head, and optional content (topic-covariate) word deviations — neural STM prevalence + sLDA + SAGE.",
            "guides/models.md#scholar"),
         _m("NarrativeTM", "covariates", ("text",), "gibbs", "seed-reproducible", ("temporal",),
            "Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text.",

@@ -521,14 +521,14 @@ fn elbo_step<R: Rng>(
         prior_mus: None,
     };
     let (loss, cache, stats) = batch_forward(
-        &s.w, &s.bn_mu, &s.bn_lv, &s.bn_dec, prior_mu, prior_var, alpha_vec, opts, &batch,
+        &s.w, &s.bn_mu, &s.bn_lv, &s.bn_dec, prior_mu, prior_var, alpha_vec, opts, &batch, None,
     );
     s.bn_mu.update_running(&stats[0].0, &stats[0].1);
     s.bn_lv.update_running(&stats[1].0, &stats[1].1);
     s.bn_dec.update_running(&stats[2].0, &stats[2].1);
     let mut g = Grad::zeros(&s.w);
     batch_backward(
-        &s.w, prior_mu, prior_var, alpha_vec, opts, &batch, &cache, &mut g, None, None,
+        &s.w, prior_mu, prior_var, alpha_vec, opts, &batch, &cache, &mut g, None, None, None,
     );
     g.scale(1.0 / n as f64);
     (loss / n as f64, g)

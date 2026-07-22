@@ -55,7 +55,7 @@ generated from `python/topica/registry.py`.
 | `SAGE` | text, metadata | gibbs | seed-reproducible | Sparse additive generative model: the same topic worded differently across groups. |
 | `DMR` | text, metadata | gibbs | seed-reproducible | Dirichlet-multinomial regression: a document-metadata prior on topic proportions. |
 | `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
-| `Scholar` | text, metadata, labels | vae | seed-reproducible | SCHOLAR (Card et al. 2018): a ProdLDA VAE with covariate-shifted topic-prevalence prior and an optional supervised label head (neural STM prevalence + sLDA). |
+| `Scholar` | text, metadata, labels | vae | seed-reproducible | SCHOLAR (Card et al. 2018): a ProdLDA VAE with a covariate-shifted prevalence prior, an optional supervised label head, and optional content (topic-covariate) word deviations — neural STM prevalence + sLDA + SAGE. |
 
 ### Guided & supervised
 
@@ -427,12 +427,36 @@ dominates the label loss that its encoder does not learn to copy the label — s
 effect is backbone- and regime-dependent, not a flaw in the reference. The label
 supervision that shapes the topics, the classifier loss, is unchanged either way.
 
-Topic-covariate (content) deviations — SCHOLAR's third metadata role, the neural
-analog of SAGE — are a planned follow-up.
+### Content (topic covariates)
+
+Pass `content=` (a numeric matrix) to add SCHOLAR's third metadata role: content
+covariates that change *how* topics are worded across groups, the neural analog of
+[`SAGE`](#sage). Each content covariate gets a per-word deviation added to the
+decoder logits (`content_effects`, shape `(n_content, vocab)`); with
+`interactions=True` the model also learns topic×covariate deviations. `l1_content_reg`
+applies a fixed-strength L2 (ridge) penalty that shrinks the deviations. This is a
+simplification of the reference, which reweights the penalty per weight each epoch to
+approximate an L1 (sparsity-inducing) prior; topica's fixed ridge shrinks but does not
+sparsify. Both default to `0.0` (unpenalized additive deviations). The base
+per-word background lives in the shared ProdLDA decoder (its batchnorm shift), not a
+separate content bias term.
+
+```python
+m = topica.Scholar(num_topics=20, content_names=["outlet"], seed=1)
+m.fit(docs, content=G)                 # G is (num_docs, n_content), numeric
+m.content_effects                      # (n_content, vocab): per-covariate word shifts
+```
+
+Unlike labels, a content covariate is observed at prediction, so it enters the
+encoder alongside the prevalence covariates (no train/test inconsistency) and also
+drives the decoder deviations. All three roles compose:
+`m.fit(docs, covariates=X, labels=y, content=G)` fits the prevalence prior, the
+supervised head, and the content deviations together.
 
 `topica`'s [`estimate_effect`](covariates.md) still works on any model's `θ`
-post-hoc; Scholar's added value is putting the covariates *into* the fit, which
-better identifies the topics and exposes `covariate_effects` as a first-class output.
+post-hoc; Scholar's added value is putting the metadata *into* the fit, which better
+identifies the topics and exposes `covariate_effects` / `content_effects` as
+first-class outputs.
 
 ## NarrativeTM
 
