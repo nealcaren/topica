@@ -101,6 +101,13 @@ REGISTRY: list[tuple[str, object, str]] = [
     # validated in parity/pltm_compare.py; single-language LDA covers the flat
     # contract.
     #
+    # DiscLDA is EXCLUDED (like BTM/GSDMM's trace-less Gibbs): it runs a fixed
+    # number of restricted-Gibbs sweeps with no convergence trace (fit_history [],
+    # converged None) and needs a per-document class label (fit(docs, y=...)), so
+    # it does not fit the no-arg-factory convergence-interface harness. It is a
+    # well-behaved flat-K model, validated in tests/test_disclda.py and
+    # parity/disclda_20ng.py.
+    #
     # EmbeddingLDA is EXCLUDED: it is a Python wrapper around SeededLDA (see
     # module-level note in python/topica/embedding.py). It delegates every
     # fitted-model getter to self._model via __getattr__, has no class-level
