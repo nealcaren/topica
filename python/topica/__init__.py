@@ -162,6 +162,8 @@ from . import validation  # noqa: E402  (post-hoc topic diagnostics surface)
 from . import content  # noqa: E402  (content-covariate diagnostics: STM/STS/SAGE)
 from . import conformance  # noqa: E402  (estimator contract and registry)
 from .conformance import check_conformance  # noqa: E402
+from . import manifest  # noqa: E402  (analysis manifest / provenance record)
+from .manifest import AnalysisManifest, record_fit  # noqa: E402
 from .effects import (  # noqa: E402  general, work on any model's theta
     estimate_effect,
     by_strata,
@@ -461,6 +463,8 @@ __all__ = [
     "keywords",
     "conformance",
     "check_conformance",
+    "AnalysisManifest",
+    "record_fit",
     "preprocess",
     "learn_phrases",
     "apply_phrases",

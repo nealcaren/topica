@@ -97,6 +97,13 @@ model.save("model.tt")                                    # full state, reloadab
 - **Share the model.** `model.save(path)` writes the complete fitted state;
   `Model.load(path)` brings it back, so reviewers can reproduce every number
   without refitting.
+- **Record the analysis, not just the model.** `topica.record_fit(model, corpus,
+  ...)` writes an [analysis manifest](../api/manifest.md): a small, privacy-aware
+  JSON record of the fit's inputs, settings, environment, and your interpretive
+  decisions, plus fingerprints that let `record.verify(corpus, model)` report
+  later whether the same corpus and model still reproduce it. It records
+  fingerprints and coarse counts, not raw text, and defaults to the most private
+  setting.
 
 !!! success "You're done"
     A corpus you can defend, a `K` you can justify, topics you've validated,
