@@ -5,7 +5,16 @@ import inspect
 import pytest
 
 import topica
-from topica.registry import GROUPS, REGISTRY, ModelInfo, list_models, markdown_table
+from topica.registry import (
+    GROUPS,
+    IMPL,
+    REGISTRY,
+    ModelInfo,
+    impl_markdown_table,
+    list_models,
+    markdown_table,
+    validate_impl,
+)
 
 # Exported classes that are NOT topic models (so not in the registry).
 _NON_MODEL_CLASSES = {"Heldout", "HeldoutResult", "Corpus", "ModelInfo"}
@@ -68,6 +77,45 @@ def test_markdown_table_renders_all_models():
     table = markdown_table(by_group=True)
     for name in REGISTRY:
         assert f"`{name}`" in table
+
+
+def test_impl_map_covers_registry_and_paths_exist():
+    # The contributor implementation map (#381): IMPL must cover exactly the
+    # registry, and every source/binding/validation path it names and every Cargo
+    # feature it names must exist. validate_impl() returns a list of problems.
+    problems = validate_impl()
+    assert not problems, "IMPL problems:\n  " + "\n  ".join(problems)
+
+
+def test_impl_map_covers_registry_one_to_one():
+    assert set(IMPL) == set(REGISTRY), (
+        f"IMPL vs REGISTRY differ: "
+        f"only in IMPL={sorted(set(IMPL) - set(REGISTRY))}, "
+        f"only in REGISTRY={sorted(set(REGISTRY) - set(IMPL))}"
+    )
+
+
+def test_impl_markdown_table_renders_all_models():
+    table = impl_markdown_table(by_group=True)
+    for name in REGISTRY:
+        assert f"`{name}`" in table
+
+
+def test_model_map_page_in_sync_with_registry():
+    # The generated block in docs/contributing/model-map.md must match the IMPL
+    # render; regenerate with scripts/gen_model_tables.py if this fails.
+    import pathlib
+
+    BEGIN = ("<!-- BEGIN MODEL MAP (generated from topica.registry IMPL; "
+             "edit registry.py, not this block) -->")
+    END = "<!-- END MODEL MAP -->"
+    expected = f"{BEGIN}\n\n{impl_markdown_table(by_group=True)}\n{END}"
+    root = pathlib.Path(__file__).resolve().parent.parent
+    text = (root / "docs/contributing/model-map.md").read_text(encoding="utf-8")
+    i, j = text.find(BEGIN), text.find(END)
+    assert i != -1 and j != -1, "model-map.md marker comments missing"
+    assert text[i:j + len(END)] == expected, (
+        "docs/contributing/model-map.md is stale; run scripts/gen_model_tables.py")
 
 
 def test_readme_and_docs_roster_in_sync_with_registry():
