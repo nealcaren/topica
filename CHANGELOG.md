@@ -8,6 +8,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **Built-in diagnostic capture** for the manifest:
+  `record_fit(..., diagnostics=["coherence", "exclusivity"])` computes those
+  topic-quality metrics and records each as computed evidence (mean over topics),
+  or `value=None` with a note when the metric is not defined for the model.
 - **Manifest comparison**: `AnalysisManifest.compare(other)` diffs two manifests
   directly (no corpus or model needed) and returns a `ManifestDiff` reporting per
   field `same` / `changed` / `only_in_a` / `only_in_b` / `incomparable` — so you
