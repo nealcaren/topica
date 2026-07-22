@@ -91,6 +91,12 @@ fn map_to_vocab(corpus: &corpus::Corpus, data: &Bound<'_, PyAny>) -> PyResult<Ve
 
 #[pymethods]
 impl BTM {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted BTM model. `alpha` defaults to `50 / num_topics`
     /// (the reference default), `beta` to `0.01`, `window` to 15.
     #[new]

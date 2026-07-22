@@ -114,6 +114,12 @@ fn map_heldout(corpus: &corpus::Corpus, data: &Bound<'_, PyAny>) -> PyResult<Vec
 
 #[pymethods]
 impl TensorLDA {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted TensorLDA model.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha_0=1.0, n_iter_train=100, n_iter_test=30,

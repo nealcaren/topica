@@ -102,6 +102,12 @@ fn standardize_columns(rows: &mut [Vec<f64>]) {
 
 #[pymethods]
 impl PartyEmbeddings {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted PartyEmbeddings model. `num_dims` is the number of
     /// placement dimensions returned in `author_positions` (the leading principal
     /// components of the party vectors; the first is the left-right scale).

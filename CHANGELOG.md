@@ -8,6 +8,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`model.seed` and `Corpus.preprocessing` getters** (#399): every model now
+  exposes the `seed` it was constructed with, and a `Corpus` exposes the
+  vocabulary-filtering parameters Topica applied — `min_doc_freq`,
+  `max_doc_fraction`, `min_cf`, `rm_top` — as a dict (`None` for a corpus loaded
+  from disk, where they are not persisted). The analysis manifest now records both
+  the seed and the preprocessing, which it previously could not read back.
+
 - **Content-addressed analysis bundle**: `AnalysisManifest.bundle(path, model=,
   corpus=)` packages the manifest and the saved artifacts into one `.zip` — each
   artifact file is named by its BLAKE2b digest. `bundle` refuses to package a

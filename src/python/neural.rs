@@ -194,6 +194,12 @@ impl ETM {
 
 #[pymethods]
 impl ETM {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `inference` selects the engine: `"em"` (default)
     /// is per-document variational EM, accurate but not minibatched; `"vae"` is the
     /// reference's amortized autoencoder, which scales to large corpora and maps new
@@ -847,6 +853,12 @@ impl DETM {
 
 #[pymethods]
 impl DETM {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. ``delta`` is the random-walk standard-deviation
     /// knob on the topic-embedding and topic-prior trajectories (smaller = smoother
     /// drift; reference default 0.005). ``hidden_size`` is the document encoder
@@ -1442,6 +1454,12 @@ impl InfoCTM {
 
 #[pymethods]
 impl InfoCTM {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `mi_weight` scales the alignment term (reference
     /// 30-50); `mi_temperature` is the InfoNCE temperature (0.2); `pos_threshold`
     /// is the cosine cutoff for the embedding-densified positive mask (0.4, used
@@ -1866,6 +1884,12 @@ impl ProdLDA {
 
 #[pymethods]
 impl ProdLDA {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `alpha` is the symmetric Dirichlet prior
     /// concentration (reference 1.0); `hidden_size` is the encoder width (reference
     /// 100); `dropout` is the dropout rate on the hidden layer and on `theta`;
@@ -2410,6 +2434,12 @@ macro_rules! ctm_embedding_model {
 
         #[pymethods]
         impl $name {
+            /// The random seed the model was constructed with.
+            #[getter]
+            fn seed(&self) -> u64 {
+                self.seed
+            }
+
             /// Create an unfitted model. `alpha` is the symmetric Dirichlet prior
             /// concentration (reference 1.0); `hidden_size` is the encoder width
             /// (reference 100); `dropout` is the dropout rate on the hidden layer

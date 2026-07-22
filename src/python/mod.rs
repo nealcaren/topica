@@ -857,6 +857,12 @@ impl LDA {
 
 #[pymethods]
 impl LDA {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model.
     ///
     /// `alpha_sum` is the total document-topic Dirichlet mass (default:
@@ -3364,6 +3370,12 @@ impl DMR {
 
 #[pymethods]
 impl DMR {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted DMR model. `prior_variance` is the Gaussian prior
     /// variance σ² on the feature weights λ (smaller = stronger shrinkage);
     /// `lbfgs_iters` caps the L-BFGS steps per optimization round.
@@ -4374,6 +4386,12 @@ impl LabeledLDA {
 
 #[pymethods]
 impl LabeledLDA {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `alpha` is the (symmetric) per-topic prior
     /// over a document's allowed topics.
     /// `beta` is the topic-word Dirichlet smoothing; `seed` seeds the Gibbs RNG.
@@ -5037,6 +5055,12 @@ impl SAGE {
 
 #[pymethods]
 impl SAGE {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `alpha` is the symmetric document-topic prior;
     /// `prior_variance` is the Gaussian prior on the κ content deviations.
     /// `num_topics` is the number of topics K; `seed` seeds the Gibbs RNG. The κ
@@ -5854,6 +5878,12 @@ impl CTM {
 
 #[pymethods]
 impl CTM {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `sigma_shrink` ∈ [0,1] shrinks the topic
     /// covariance toward its diagonal each M-step (stabilizes Σ). `init` is
     /// ``"spectral"`` (default; deterministic anchor-word init, matching STM's
@@ -6594,6 +6624,12 @@ impl STM {
 
 #[pymethods]
 impl STM {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `sigma_shrink` ∈ [0,1] shrinks Σ toward its
     /// diagonal each M-step. `init` is ``"spectral"`` (default; deterministic
     /// anchor-word init, matching STM's default — `seed` is then irrelevant for
@@ -8016,6 +8052,12 @@ impl STS {
 
 #[pymethods]
 impl STS {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `init` is ``"spectral"`` (default; deterministic
     /// anchor-word β init) or ``"random"`` (seeded).
     /// `num_topics` is the number of topics K; `seed` seeds the RNG.
@@ -8797,6 +8839,12 @@ impl HDP {
 
 #[pymethods]
 impl HDP {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `alpha`/`gamma` are the document- and
     /// corpus-level DP concentrations; `eta` is the topic-word Dirichlet (base
     /// measure). `gamma` is the dominant lever on the inferred topic count:
@@ -9360,6 +9408,12 @@ impl DTM {
 
 #[pymethods]
 impl DTM {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `chain_variance` controls how much a topic may
     /// drift between adjacent slices (larger = freer to change; gensim's default
     /// is 0.005). `obs_variance` is the observation noise; `alpha` the Dirichlet
@@ -9797,6 +9851,12 @@ impl SupervisedLDA {
 
 #[pymethods]
 impl SupervisedLDA {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `alpha` is the symmetric Dirichlet
     /// concentration on document-topic proportions.
     /// `num_topics` is the number of topics K; `seed` seeds the RNG.
@@ -10370,6 +10430,12 @@ impl PT {
 
 #[pymethods]
 impl PT {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `num_pseudo` is the number of pseudo-documents
     /// short texts are aggregated into (more = finer, fewer = more aggregation).
     /// `num_topics` is the number of topics K; `alpha` is the document-topic
@@ -10751,6 +10817,12 @@ impl GSDMM {
 
 #[pymethods]
 impl GSDMM {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `num_topics` is the *maximum* number of clusters
     /// `K`; the number actually used (non-empty after fitting) is reported by the
     /// `num_topics` getter and is usually smaller. `alpha` controls the pull
@@ -11169,6 +11241,12 @@ impl SeededLDA {
 
 #[pymethods]
 impl SeededLDA {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `seed_words` is ``{topic_name: [words]}``;
     /// `residual` adds that many extra unseeded topics. `weight` (default 0.01,
     /// matching the seededlda package) scales the seed prior. `alpha` is the
@@ -11915,6 +11993,12 @@ impl FASTopic {
 
 #[pymethods]
 impl FASTopic {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `lr` drives the full-batch Adam optimizer;
     /// `dt_alpha`/`tw_alpha` are the inverse entropic regularizations for the
     /// doc-topic and topic-word transport (reference defaults 3.0 and 2.0);
@@ -12351,6 +12435,12 @@ impl KeyATM {
 
 #[pymethods]
 impl KeyATM {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `keywords` is ``{topic_name: [words]}`` (the
     /// keyword topics, in order). `num_topics` (default = number of keyword
     /// topics) may be larger to add regular, no-keyword topics. `alpha` is the

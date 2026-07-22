@@ -137,6 +137,12 @@ fn extract_languages(data: &Bound<'_, PyAny>) -> PyResult<(Vec<String>, Vec<Vec<
 
 #[pymethods]
 impl PolylingualLDA {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted PLTM. `alpha` is the per-topic document-topic prior
     /// (default `0.01`, the paper's `0.01·T` total with a uniform base measure).
     /// `beta` is the topic-word prior (default `0.01`); it is applied to every

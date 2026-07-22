@@ -246,6 +246,12 @@ impl Scholar {
 
 #[pymethods]
 impl Scholar {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted SCHOLAR. `covariates` (a `(num_docs, n_covars)` numeric
     /// matrix — numpy array, list of lists, or a numeric pandas/Polars frame) may be
     /// given here or at :meth:`fit`. `covariate_names` labels the covariate columns.

@@ -111,6 +111,12 @@ def window_cooccurrence(
 class Corpus:
     """A preprocessed token corpus for LDA training."""
 
+    @property
+    def preprocessing(self) -> dict | None:
+        """The vocabulary-filtering parameters Topica applied when this corpus
+        was built (min_doc_freq/max_doc_fraction/min_cf/rm_top), or None after load."""
+        ...
+
     @staticmethod
     def from_documents(
         documents: list[list[str]],
@@ -226,6 +232,11 @@ class DMR:
     features: alpha_{d,t} = exp(lambda_t . x_d). After fitting, the learned
     weights are in `feature_effects`.
     """
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -400,6 +411,11 @@ class CTM:
     correlate (unlike LDA's Dirichlet). Fit by variational EM (STM's Laplace
     E-step)."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         num_topics: int,
@@ -550,6 +566,11 @@ class STM:
     """Structural Topic Model (Roberts, Stewart & Tingley): the correlated-topic
     core (CTM) plus prevalence covariates — the prior topic mean is a regression
     on document covariates (mu_d = X_d gamma)."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -759,6 +780,11 @@ class STS:
     modulates the topic-word distribution, with both prevalence and sentiment
     driven by document covariates. Fit by Laplace variational EM."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         num_topics: int,
@@ -898,6 +924,11 @@ class HDP:
     2006): the nonparametric LDA that *infers* the number of topics rather than
     fixing K. Fit by the direct-assignment Gibbs sampler (Chinese Restaurant
     Franchise). The inferred topic count is read from `num_topics` after fit."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -1045,6 +1076,11 @@ class DTM:
     gensim's LdaSeqModel). Query a topic's distribution at a slice with
     topic_word(time) and a word's trajectory with word_evolution(topic, word)."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         num_topics: int,
@@ -1141,6 +1177,11 @@ class DETM:
     supply the word embeddings rho like ETM. The headline output is the time-varying
     topic-word tensor beta_over_time (num_times, num_topics, vocab); topic_word is its
     mean over time."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -1271,6 +1312,11 @@ class SupervisedLDA:
     real-valued response y_d ~ N(eta^T zbar_d, sigma^2) regressed on its topic
     usage. Topics are shaped to predict the response; `coefficients` (eta) report
     how each topic moves y. Fit by variational EM; `predict` scores new docs."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(self, num_topics: int, *, alpha: float = 0.1, seed: int = 42) -> None:
         """num_topics >= 2. alpha is the Dirichlet concentration on doc-topic
@@ -1409,6 +1455,11 @@ class SAGE:
     """Content-covariate topic model (SAGE / the STM content model). Topics are
     shared but each topic's word distribution varies by a document-level group
     covariate, so you can read how a topic is worded differently across groups."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -1556,6 +1607,11 @@ class LabeledLDA:
     """Labeled LDA (Ramage et al. 2009): supervised topics constrained to each
     document's label set. The number of topics equals the number of labels."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self, *, alpha: float = 0.1, beta: float = 0.01, seed: int = 42,
         sampler: str = "sparse",
@@ -1691,6 +1747,11 @@ class LabeledLDA:
 
 class LDA:
     """Sparse LDA topic model (MALLET's algorithm) implemented in Rust."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -1997,6 +2058,11 @@ class PT:
     documents into `num_pseudo` pseudo-documents so LDA-style mixed membership is
     estimable on short, sparse texts. Fit by collapsed Gibbs."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         num_topics: int,
@@ -2087,6 +2153,11 @@ class GSDMM:
     an upper bound K (`num_topics`); empty clusters die out, so the effective
     number of topics is read from `num_topics` after fit."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         num_topics: int,
@@ -2163,6 +2234,11 @@ class BTM:
     per-topic word distributions from the corpus's biterms -- unordered word pairs
     co-occurring within a window. `alpha` defaults to 50/num_topics."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         num_topics: int,
@@ -2226,6 +2302,11 @@ class PolylingualLDA:
     `beta` the topic-word prior applied to every language (default 0.01); with
     `optimize_alpha` the asymmetric alpha.m prior is re-estimated every
     `optimize_interval` Gibbs iterations after an `optimize_burn_in` warm-up."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -2310,6 +2391,11 @@ class DiscLDA:
     class-carrying document representation (`transform`/`predict`). Fixed
     block-transform variant (paper section 4.1)."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         k_class: int,
@@ -2385,6 +2471,11 @@ class PA:
     """Pachinko Allocation Model (Li & McCallum 2006): a DAG of `num_super`
     super-topics over `num_sub` shared sub-topics over words, capturing topic
     correlations. `super_sub` reports which sub-topics each super-topic groups."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -2486,6 +2577,11 @@ class HLDA:
     the nested Chinese Restaurant Process. Each document follows a root-to-leaf
     path; general words sit near the root, specific words near the leaves."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         *,
@@ -2552,6 +2648,11 @@ class SeededLDA:
     vocabulary and any `residual` unseeded topics are still learned. Seeding
     follows the seededlda package (seed words get a `weight * 100` prior
     pseudocount in their topic, plus seeded initialization)."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -2666,6 +2767,11 @@ class Top2Vec:
     bring the embeddings; the topic count is discovered, not set. No embedder of
     your own? ``topica.llm_embed(texts, model=...)`` builds the matrix."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         *,
@@ -2760,6 +2866,11 @@ class BERTopic:
     to a target; `doc_topic` is the approximate distribution. You bring the
     document embeddings; the topic count is discovered (before any reduction).
     No embedder of your own? ``topica.llm_embed(texts, model=...)`` builds it."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -2858,6 +2969,11 @@ class ETM:
     autoencoder, which scales to large corpora and maps new documents with a single
     encoder pass. Neither uses PyTorch. No embedder of your own?
     ``topica.llm_embed(vocabulary, model=...)`` builds the word embeddings rho."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -2964,6 +3080,11 @@ class InfoCTM:
     bilingual ``dictionary`` (optionally densified by per-language ``embeddings``).
     After fitting, topic ``k`` denotes the same theme in both languages."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         num_topics: int,
@@ -3026,6 +3147,11 @@ class ProdLDA:
     minibatch Adam on the ELBO; batch normalization and high-momentum Adam guard
     against component collapse. Unlike ETM you bring no embeddings: beta is learned
     directly. New documents transform with a single encoder forward pass."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -3117,6 +3243,11 @@ class Scholar:
     is the fitted covariate-by-topic prevalence matrix. Covariates also enter the
     encoder. Built on topica's ProdLDA backbone. Reference implementation:
     dallascard/scholar (Apache-2.0)."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -3239,6 +3370,11 @@ class CombinedTM:
     (num_docs, E) array, aligned to the documents. Reference implementation:
     contextualized-topic-models (Bianchi et al., MIT)."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         num_topics: int,
@@ -3334,6 +3470,11 @@ class ZeroShotTM:
     another. Bring the embeddings at fit() as a (num_docs, E) array, aligned to the
     documents. Reference implementation: contextualized-topic-models (Bianchi et
     al., MIT)."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -3434,6 +3575,11 @@ class NMF:
     is each row of H normalized to sum 1; the document-topic matrix is each row of
     W normalized to sum 1."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         num_topics: int,
@@ -3506,6 +3652,11 @@ class LSA:
     coordinates; rows do not sum to 1). singular_values (K) is Sigma_k. A
     deterministic svd_flip sign convention matches scikit-learn's output."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         num_topics: int,
@@ -3569,6 +3720,11 @@ class TensorLDA:
     """Online Tensor LDA (TensorLDA) topic model (Kangaslahti et al. 2026).
     Method-of-moments topic modeling using second and third-order cumulants.
     Gated behind `topica.enable_experimental()`."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -3638,6 +3794,11 @@ class FASTopic:
     transport costs. Held-out documents are mapped by a distance-softmax over the
     fitted topic embeddings, so `transform` needs only their embeddings. No
     embedder of your own? ``topica.llm_embed(texts, model=...)`` builds it."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -3726,6 +3887,11 @@ class KeyATM:
     a distribution over only that topic's keywords or from its full distribution,
     anchoring keyword topics to their keywords. `num_topics` may exceed the number
     of keyword topics to add regular, no-keyword topics."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -3994,6 +4160,11 @@ class IdealPointTM:
     pass them and it is factored through word embeddings, as in ETM. Both are the
     same model. Gated behind topica.enable_experimental()."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         num_topics: int,
@@ -4126,6 +4297,11 @@ class Wordfish:
     companion to IdealPointTM. The fit is deterministic. Validated against R
     quanteda's textmodel_wordfish (parity/wordfish_r_compare.py)."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         *,
@@ -4197,6 +4373,11 @@ class IdealPointSentenceTM:
     (e ~ N(mu_k + x_a . V_k, sigma^2)); ||V_k|| is the topic's discrimination. The
     sentence-embedding sibling of IdealPointTM, fit by EM. Gated behind
     topica.enable_experimental()."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,
@@ -4273,6 +4454,11 @@ class TBIP:
     from unlabeled text. Validated by planted-position recovery and a PyTorch
     reference (parity/tbip_parity.py)."""
 
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
     def __init__(
         self,
         num_topics: int,
@@ -4348,6 +4534,11 @@ class PartyEmbeddings:
     Implemented from Mikolov et al. (2013) and Le & Mikolov (2014); validated by
     planted-position recovery and correlation against the gensim reference
     (parity/party_embeddings_compare.py)."""
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
 
     def __init__(
         self,

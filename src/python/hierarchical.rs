@@ -88,6 +88,12 @@ impl PA {
 
 #[pymethods]
 impl PA {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model with `num_super` super-topics and `num_sub`
     /// sub-topics (the sub-topics are the word-level topics).
     /// `alpha` is the symmetric Dirichlet prior on each document's distribution
@@ -487,6 +493,12 @@ impl HLDA {
 
 #[pymethods]
 impl HLDA {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `depth` is the (fixed) tree depth; `gamma` is
     /// the nested-CRP concentration (larger => more child topics); `beta` the
     /// topic-word Dirichlet; `alpha` the per-document level distribution.

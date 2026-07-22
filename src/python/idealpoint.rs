@@ -326,6 +326,12 @@ impl IdealPointTM {
 
 #[pymethods]
 impl IdealPointTM {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `num_topics` is K (>= 2); `num_dims` is the
     /// dimensionality d of the latent ideal point (default 1). `prior_variance` is
     /// the Gaussian prior on the topic profiles (weak by default, as ETM);

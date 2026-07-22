@@ -55,6 +55,12 @@ impl IdealPointSentenceTM {
 
 #[pymethods]
 impl IdealPointSentenceTM {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `num_topics` is K (>= 2); `num_dims` the latent
     /// ideal-point dimensionality (default 1). `x_prior_variance` is the Gaussian
     /// prior on the positions (1.0 matches the unit-variance standardization).

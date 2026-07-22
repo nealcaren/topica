@@ -67,6 +67,12 @@ impl TBIP {
 
 #[pymethods]
 impl TBIP {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `num_topics` is K (>= 2). `a_gamma`/`b_gamma` are
     /// the sparse-Gamma prior hyperparameters on theta and beta (default 0.3 each,
     /// as in the paper). `iters` is the number of SVI steps; `batch_size` the
