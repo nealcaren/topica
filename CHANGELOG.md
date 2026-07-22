@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **Analysis card rendering** for the manifest: `AnalysisManifest.render(path)`
+  writes a self-contained HTML card and `.to_markdown()` returns a Markdown
+  version (Quarto/notebook). The card renders only what the manifest recorded, so
+  it cannot over-claim: decisions are shown as researcher-authored, diagnostics as
+  computed evidence, fingerprints as verifiable identity, and a supplied
+  `VerifyResult` renders as a colour-coded per-field table (never a single badge).
 - **Analysis manifest** (`topica.record_fit`, `topica.AnalysisManifest`): a
   portable, privacy-aware JSON record of one fit. It captures the model settings,
   environment, fit arguments, researcher decisions, and canonical fingerprints of

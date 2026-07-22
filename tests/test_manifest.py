@@ -236,3 +236,69 @@ def test_manifest_is_valid_json(fitted):
     corpus, model = fitted
     d = json.loads(record_fit(model, corpus, iters=50).to_json())
     assert d["schema"] == SCHEMA and d["fingerprint_spec"] == FINGERPRINT_SPEC
+
+
+# -- rendering: the analysis card (V2) -------------------------------------
+
+
+def test_render_html_is_self_contained(tmp_path, fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50)
+    html = rec.render()
+    assert html.startswith("<!doctype html>") and html.rstrip().endswith("</html>")
+    # No external resources (CSP-free, offline).
+    head = html.split("</style>")[0]
+    assert "http://" not in head and "https://" not in head and "src=" not in html
+    p = tmp_path / "card.html"
+    rec.render(str(p))
+    assert p.read_text(encoding="utf-8") == html
+
+
+def test_render_escapes_user_text(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50)
+    rec.add_decision("x", "<script>alert(1)</script>")
+    html = rec.render()
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_render_is_privacy_aware(fitted):
+    corpus, model = fitted
+    minimal = record_fit(model, corpus, iters=50).render()
+    assert "content fingerprint" not in minimal
+    assert "vocabulary size" not in minimal
+    rich = record_fit(model, corpus, privacy="aggregate",
+                      content_fingerprint=True, iters=50).render()
+    assert "content fingerprint" in rich and "vocabulary size" in rich
+
+
+def test_render_labels_decisions_as_authored(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50)
+    rec.add_decision("K", "chose 3")
+    html = rec.render()
+    assert "Researcher decisions" in html
+    assert "recorded, not verified" in html  # never presented as tool-vouched
+
+
+def test_render_includes_graded_verification(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, content_fingerprint=True, iters=50)
+    other = topica.LDA(3, seed=999)
+    other.fit(corpus, iters=50)
+    ver = rec.verify(corpus, other)
+    html = rec.render(verification=ver)
+    assert "Verification" in html
+    # The graded statuses appear, not a single badge.
+    assert "artifact changed" in html and "exact" in html
+
+
+def test_to_markdown_has_sections_and_verification(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50)
+    rec.add_decision("K", "chose 3")
+    md = rec.to_markdown(verification=rec.verify(corpus, model))
+    for section in ("# Analysis card", "## Fit", "## Corpus", "## Researcher decisions",
+                    "## Verification"):
+        assert section in md
