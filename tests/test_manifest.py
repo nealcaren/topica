@@ -274,23 +274,54 @@ def test_load_bundle_round_trips_and_verifies(tmp_path, fitted):
     assert back.verify(corpus, model).ok
 
 
-def test_bundle_detects_tampering(tmp_path, fitted):
+def test_bundle_detects_corrupt_artifact(tmp_path, fitted):
     import zipfile
 
     corpus, model = fitted
     p = tmp_path / "a.zip"
     record_fit(model, corpus, iters=50).bundle(str(p), model=model)
-    # Rewrite the zip with one artifact byte flipped.
+    # Rewrite the zip with one artifact byte flipped (leaving the manifest ref).
     with zipfile.ZipFile(p) as zf:
         data = {n: zf.read(n) for n in zf.namelist()}
     art = next(n for n in data if n.startswith("artifacts/"))
     data[art] = data[art][:-1] + bytes([data[art][-1] ^ 1])
-    tampered = tmp_path / "tampered.zip"
-    with zipfile.ZipFile(tampered, "w") as zf:
+    corrupt = tmp_path / "corrupt.zip"
+    with zipfile.ZipFile(corrupt, "w") as zf:
         for n, b in data.items():
             zf.writestr(n, b)
-    with pytest.raises(ValueError, match="digest mismatch"):
-        AnalysisManifest.load_bundle(str(tampered))
+    with pytest.raises(ValueError, match="integrity check failed"):
+        AnalysisManifest.load_bundle(str(corrupt))
+
+
+def test_bundle_rejects_a_model_that_does_not_match(tmp_path, fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50)
+    wrong = topica.LDA(4, seed=123)  # a different fit
+    wrong.fit(corpus, iters=50)
+    with pytest.raises(ValueError, match="does not match this manifest"):
+        rec.bundle(str(tmp_path / "x.zip"), model=wrong)
+
+
+def test_extract_bundle_validates_version(tmp_path, fitted):
+    import json
+    import zipfile
+
+    corpus, model = fitted
+    p = tmp_path / "a.zip"
+    record_fit(model, corpus, iters=50).bundle(str(p), model=model)
+    with zipfile.ZipFile(p) as zf:
+        data = {n: zf.read(n) for n in zf.namelist()}
+    d = json.loads(data["manifest.json"])
+    d["bundle"]["version"] = 999
+    data["manifest.json"] = json.dumps(d).encode("utf-8")
+    future = tmp_path / "future.zip"
+    with zipfile.ZipFile(future, "w") as zf:
+        for n, b in data.items():
+            zf.writestr(n, b)
+    dest = tmp_path / "out"
+    dest.mkdir()
+    with pytest.raises(ValueError, match="bundle version"):
+        AnalysisManifest.extract_bundle(str(future), str(dest))
 
 
 def test_bundle_corpus_is_opt_in_and_flagged_sensitive(tmp_path, fitted):

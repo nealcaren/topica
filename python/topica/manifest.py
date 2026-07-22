@@ -489,7 +489,14 @@ class AnalysisManifest:
 
         Each artifact's file name is its BLAKE2b digest, and the manifest's
         ``model`` / ``corpus`` blocks gain an ``artifact`` reference, so
-        :meth:`load_bundle` can prove nothing was corrupted or swapped.
+        :meth:`load_bundle` can detect a corrupt bundle or one whose artifacts no
+        longer match the manifest. This is **integrity / content-addressing**, not
+        authenticity: it does not detect a fully rewritten bundle (artifact +
+        digest + reference all changed together) — that needs a signature (#404).
+
+        Before writing, the supplied ``model`` / ``corpus`` are checked against
+        this manifest's recorded fingerprints; a mismatch (the wrong fit) raises,
+        so a bundle's artifacts always match the analysis it documents.
 
         ``include_corpus`` is opt-in and **sensitive**: a bundled corpus embeds
         the raw tokens (a hash is not anonymisation). Pass the fitted ``model`` /
@@ -500,6 +507,17 @@ class AnalysisManifest:
         """
         import copy
         import zipfile
+
+        # Bind the artifacts to this manifest: refuse to bundle a model/corpus
+        # whose recorded fingerprints do not match (catches passing the wrong fit).
+        check = self.verify(corpus if include_corpus else None,
+                            model if include_model else None)
+        mismatched = sorted(k for k, v in check.fields.items()
+                            if v in ("input_changed", "artifact_changed"))
+        if mismatched:
+            raise ValueError(
+                f"the supplied model/corpus does not match this manifest "
+                f"(mismatched: {mismatched}); bundle the fit the manifest records")
 
         d = copy.deepcopy(self.to_dict())
         d["bundle"] = {"version": BUNDLE_VERSION, "hash_algorithm": HASH_ALGORITHM}
@@ -516,22 +534,18 @@ class AnalysisManifest:
 
     @classmethod
     def load_bundle(cls, path: str) -> "AnalysisManifest":
-        """Load a bundle written by :meth:`bundle`, verifying artifact integrity.
+        """Load a bundle written by :meth:`bundle`, checking artifact integrity.
 
         Recomputes each bundled artifact's digest and checks it against both the
-        content-addressed file name and the manifest reference; a mismatch (a
-        corrupt or tampered bundle) raises ``ValueError``. Returns the manifest;
-        use :meth:`extract_bundle` to recover the artifacts for reloading.
+        content-addressed file name and the manifest reference; a corrupt bundle
+        (or one whose artifacts no longer match the manifest) raises ``ValueError``.
+        This is an integrity check, not authenticity -- see :meth:`bundle`. Returns
+        the manifest; use :meth:`extract_bundle` to recover the artifacts.
         """
         import zipfile
 
         with zipfile.ZipFile(path) as zf:
-            d = json.loads(zf.read("manifest.json").decode("utf-8"))
-            version = d.get("bundle", {}).get("version")
-            if version != BUNDLE_VERSION:
-                raise ValueError(
-                    f"unsupported bundle version {version!r} "
-                    f"(this build reads {BUNDLE_VERSION})")
+            d = _read_bundle_manifest(zf)
             for role in ("model", "corpus"):
                 art = d.get(role, {}).get("artifact")
                 if art:
@@ -540,17 +554,18 @@ class AnalysisManifest:
 
     @staticmethod
     def extract_bundle(path: str, dest_dir: str) -> dict:
-        """Extract a bundle's artifacts to ``dest_dir`` (verifying integrity).
+        """Extract a bundle's artifacts to ``dest_dir`` (checking integrity).
 
         Returns ``{"model": <path or None>, "corpus": <path or None>}``; reload
         each with the matching class, e.g. ``topica.LDA.load(paths["model"])``.
+        Validates the bundle version and artifact digests, like :meth:`load_bundle`.
         """
         import zipfile
         from pathlib import Path
 
         out = {"model": None, "corpus": None}
         with zipfile.ZipFile(path) as zf:
-            d = json.loads(zf.read("manifest.json").decode("utf-8"))
+            d = _read_bundle_manifest(zf)
             for role in ("model", "corpus"):
                 art = d.get(role, {}).get("artifact")
                 if not art:
@@ -620,11 +635,25 @@ def _add_artifact(zf, obj, role: str) -> dict:
 
 
 def _verify_artifact(data: bytes, art: dict) -> None:
+    if art.get("algo") != HASH_ALGORITHM:
+        raise ValueError(f"unsupported artifact hash algorithm {art.get('algo')!r}")
     digest = _hash_bytes(data)
-    if digest != art.get("digest") or not art.get("path", "").endswith(f"{digest}.tt"):
+    # Content-addressed: the path must be exactly artifacts/<digest>.tt, and the
+    # reference digest must agree with the recomputed one.
+    if digest != art.get("digest") or art.get("path") != f"artifacts/{digest}.tt":
         raise ValueError(
-            f"bundle artifact digest mismatch for {art.get('path')!r} "
-            f"(corrupt or tampered bundle)")
+            f"bundle artifact integrity check failed for {art.get('path')!r} "
+            f"(corrupt bundle, or artifacts do not match the manifest)")
+
+
+def _read_bundle_manifest(zf) -> dict:
+    """Read + validate the bundle's manifest.json (shared by load/extract)."""
+    d = json.loads(zf.read("manifest.json").decode("utf-8"))
+    version = d.get("bundle", {}).get("version")
+    if version != BUNDLE_VERSION:
+        raise ValueError(
+            f"unsupported bundle version {version!r} (this build reads {BUNDLE_VERSION})")
+    return d
 
 
 def _cmp_fp(a: dict | None, b: dict | None) -> str:

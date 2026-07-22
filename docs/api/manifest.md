@@ -80,11 +80,16 @@ record.bundle("analysis.zip", model=model)                 # manifest + model
 record.bundle("analysis.zip", model=model, corpus=corpus, include_corpus=True)
 ```
 
-`AnalysisManifest.load_bundle(path)` reloads the manifest and **verifies every
-artifact's bytes** against its content-addressed name and the manifest reference,
-raising on a corrupt or tampered bundle. `AnalysisManifest.extract_bundle(path,
-dest)` writes the artifacts out so you can reload them (`topica.LDA.load(...)`).
-Bundling the corpus is opt-in and **sensitive** — it embeds the raw tokens.
+`bundle` refuses to package a model or corpus whose fingerprints do not match the
+manifest (guarding against bundling the wrong fit). `AnalysisManifest.load_bundle(path)`
+reloads the manifest and **checks every artifact's bytes** against its
+content-addressed name and the manifest reference, raising on a corrupt bundle or
+artifacts that no longer match. This is an integrity / content-addressing check,
+not authenticity — detecting a *fully rewritten* bundle (artifact, digest, and
+reference all changed together) needs a signature, which is tracked separately.
+`AnalysisManifest.extract_bundle(path, dest)` writes the artifacts out so you can
+reload them (`topica.LDA.load(...)`). Bundling the corpus is opt-in and
+**sensitive** — it embeds the raw tokens.
 
 ## The analysis card
 

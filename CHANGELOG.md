@@ -9,12 +9,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 ### Added
 
 - **Content-addressed analysis bundle**: `AnalysisManifest.bundle(path, model=,
-  corpus=)` packages the manifest and the saved artifacts into one self-verifying
-  `.zip` — each artifact file is named by its BLAKE2b digest, and
-  `AnalysisManifest.load_bundle` verifies every artifact against its name and the
-  manifest reference (raising on a corrupt or tampered bundle).
-  `extract_bundle(path, dest)` recovers the artifacts for reloading. Bundling the
-  corpus is opt-in and sensitive (it embeds raw tokens).
+  corpus=)` packages the manifest and the saved artifacts into one `.zip` — each
+  artifact file is named by its BLAKE2b digest. `bundle` refuses to package a
+  model/corpus whose fingerprints do not match the manifest (the wrong fit), and
+  `AnalysisManifest.load_bundle` checks every artifact against its content-addressed
+  name and the manifest reference, raising on a corrupt bundle or artifacts that no
+  longer match. This is an integrity/content-addressing guarantee, not authenticity
+  (detecting a fully rewritten bundle needs a signature). `extract_bundle(path,
+  dest)` recovers the artifacts for reloading. Bundling the corpus is opt-in and
+  sensitive (it embeds raw tokens).
 - **Built-in diagnostic capture** for the manifest:
   `record_fit(..., diagnostics=["coherence", "exclusivity"])` computes those
   topic-quality metrics and records each as computed evidence (mean over topics),
