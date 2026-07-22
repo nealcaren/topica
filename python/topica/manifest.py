@@ -230,6 +230,35 @@ class VerifyResult:
 
 
 @dataclass
+class ManifestDiff:
+    """The outcome of :meth:`AnalysisManifest.compare`, per field.
+
+    Compares two manifests directly (no corpus or model needed), so it answers
+    "did these two runs differ, and where?". ``fields`` maps each field to
+    ``same``, ``changed``, ``only_in_a`` / ``only_in_b`` (recorded in one but not
+    the other), or ``incomparable`` (e.g. fingerprints from different specs, or a
+    keyed digest). ``same`` is a convenience for "every field same"; the summary
+    always shows the breakdown.
+    """
+
+    fields: dict[str, str]
+
+    @property
+    def same(self) -> bool:
+        return all(v == "same" for v in self.fields.values())
+
+    def summary(self) -> str:
+        width = max((len(k) for k in self.fields), default=0)
+        lines = [f"compare: {'identical' if self.same else 'differences found'}"]
+        for name, status in self.fields.items():
+            lines.append(f"  {name.ljust(width)}  {status}")
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return f"ManifestDiff(same={self.same}, fields={self.fields})"
+
+
+@dataclass
 class AnalysisManifest:
     """A versioned, privacy-aware record of one fit. See the module docstring."""
 
@@ -390,6 +419,37 @@ class AnalysisManifest:
                 out[f"model_{name}"] = "artifact_changed"
         return out
 
+    # -- comparison (V2): two manifests, no corpus/model needed ------------
+
+    def compare(self, other: "AnalysisManifest") -> ManifestDiff:
+        """Compare this manifest with ``other`` field by field.
+
+        Uses only what each manifest recorded (fingerprints, counts, settings),
+        so it needs neither corpus nor model. Answers "did these two runs use the
+        same corpus / model / inputs, or did something change, and what?".
+        """
+        f: dict[str, str] = {}
+        f["environment"] = _cmp_value(self.environment, other.environment)
+        f["model_class"] = _cmp_value(self.model.get("class"), other.model.get("class"))
+        f["num_topics"] = _cmp_value(self.model.get("num_topics"), other.model.get("num_topics"))
+        f["model_settings"] = _cmp_value(self.model.get("settings"), other.model.get("settings"))
+        f["fit_settings"] = _cmp_value(self.model.get("fit_settings"), other.model.get("fit_settings"))
+
+        a_out = self.model.get("output_fingerprints", {})
+        b_out = other.model.get("output_fingerprints", {})
+        for name in sorted(set(a_out) | set(b_out)):
+            f[f"model_{name}"] = _cmp_fp(a_out.get(name), b_out.get(name))
+
+        f["corpus_counts"] = _cmp_value(
+            (self.corpus.get("num_docs"), self.corpus.get("total_tokens")),
+            (other.corpus.get("num_docs"), other.corpus.get("total_tokens")))
+        f["corpus_fingerprint"] = _cmp_fp(
+            self.corpus.get("fingerprint"), other.corpus.get("fingerprint"))
+
+        for name in sorted(set(self.inputs) | set(other.inputs)):
+            f[f"input_{name}"] = _cmp_fp(self.inputs.get(name), other.inputs.get(name))
+        return ManifestDiff(f)
+
     # -- rendering (V2): a human-facing "analysis card" ---------------------
 
     def render(self, path: str | None = None, *, title: str | None = None,
@@ -419,6 +479,36 @@ class AnalysisManifest:
                 f"privacy={self.corpus.get('privacy')!r}, "
                 f"decisions={len(self.decisions)}, "
                 f"diagnostics={len(self.diagnostics)})")
+
+
+# --------------------------------------------------------------------------
+# comparison helpers
+# --------------------------------------------------------------------------
+
+
+def _cmp_value(a, b) -> str:
+    a_has, b_has = a is not None, b is not None
+    if not a_has and not b_has:
+        return "same"
+    if a_has and not b_has:
+        return "only_in_a"
+    if b_has and not a_has:
+        return "only_in_b"
+    return "same" if a == b else "changed"
+
+
+def _cmp_fp(a: dict | None, b: dict | None) -> str:
+    if a is None and b is None:
+        return "same"
+    if a is None:
+        return "only_in_b"
+    if b is None:
+        return "only_in_a"
+    # Different fingerprint specs, or a keyed digest, cannot be compared for
+    # equality of content -- do not guess.
+    if a.get("spec") != b.get("spec") or a.get("keyed") or b.get("keyed"):
+        return "incomparable"
+    return "same" if a.get("digest") == b.get("digest") else "changed"
 
 
 # --------------------------------------------------------------------------

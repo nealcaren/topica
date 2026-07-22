@@ -46,6 +46,20 @@ class says it may still replay), or `unverifiable` (nothing recorded to check
 against, a bounded component, or a fingerprint from a spec this build does not
 recognise).
 
+## Comparing two fits
+
+`a.compare(b)` diffs two manifests directly, with no corpus or model needed, and
+reports per field `same` / `changed` / `only_in_a` / `only_in_b` / `incomparable`.
+It answers "did these two runs use the same corpus, model, and inputs, or did
+something change, and what?" — for example, whether a collaborator changed the
+corpus or only the seed.
+
+```python
+a = topica.AnalysisManifest.load("run-a.json")
+b = topica.AnalysisManifest.load("run-b.json")
+print(a.compare(b).summary())
+```
+
 ## The analysis card
 
 `record.render(path)` writes a self-contained HTML **analysis card**, and
@@ -66,6 +80,8 @@ record.render("analysis-card.html", verification=record.verify(corpus, model))
 ::: topica.manifest.AnalysisManifest
 
 ::: topica.manifest.VerifyResult
+
+::: topica.manifest.ManifestDiff
 
 ::: topica.manifest.fingerprint_corpus
 
