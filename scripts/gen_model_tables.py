@@ -18,30 +18,50 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "python"))
 
-from topica.registry import markdown_table  # noqa: E402
+from topica.registry import impl_markdown_table, markdown_table  # noqa: E402
 
 BEGIN = "<!-- BEGIN MODEL TABLE (generated from topica.registry; edit registry.py, not this block) -->"
 END = "<!-- END MODEL TABLE -->"
 TARGETS = [ROOT / "README.md", ROOT / "docs" / "guides" / "models.md"]
+
+# The contributor implementation map (issue #381): the same registry, rendered
+# with the source/binding/feature/validation columns instead of the user-facing
+# taxonomy. Injected into its own docs page with its own marker pair.
+MAP_BEGIN = "<!-- BEGIN MODEL MAP (generated from topica.registry IMPL; edit registry.py, not this block) -->"
+MAP_END = "<!-- END MODEL MAP -->"
+MAP_TARGET = ROOT / "docs" / "contributing" / "model-map.md"
 
 
 def _rendered_block() -> str:
     return f"{BEGIN}\n\n{markdown_table(by_group=True)}\n{END}"
 
 
-def inject(text: str) -> str:
-    i, j = text.find(BEGIN), text.find(END)
+def _rendered_map_block() -> str:
+    return f"{MAP_BEGIN}\n\n{impl_markdown_table(by_group=True)}\n{MAP_END}"
+
+
+def _inject(text: str, begin: str, end: str, block: str) -> str:
+    i, j = text.find(begin), text.find(end)
     if i == -1 or j == -1:
         raise SystemExit("marker comments not found in target")
-    return text[:i] + _rendered_block() + text[j + len(END):]
+    return text[:i] + block + text[j + len(end):]
+
+
+def inject(text: str) -> str:
+    return _inject(text, BEGIN, END, _rendered_block())
+
+
+def inject_map(text: str) -> str:
+    return _inject(text, MAP_BEGIN, MAP_END, _rendered_map_block())
 
 
 def main() -> None:
     check = "--check" in sys.argv
     stale = []
-    for path in TARGETS:
+    jobs = [(path, inject) for path in TARGETS] + [(MAP_TARGET, inject_map)]
+    for path, injector in jobs:
         old = path.read_text(encoding="utf-8")
-        new = inject(old)
+        new = injector(old)
         if old != new:
             stale.append(path.name)
             if not check:
@@ -49,7 +69,8 @@ def main() -> None:
     if check and stale:
         print(f"stale (run scripts/gen_model_tables.py): {stale}")
         raise SystemExit(1)
-    print("up to date" if check else f"wrote {[t.name for t in TARGETS]}")
+    names = [t.name for t, _ in jobs]
+    print("up to date" if check else f"wrote {names}")
 
 
 if __name__ == "__main__":

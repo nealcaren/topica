@@ -211,6 +211,93 @@ REGISTRY: dict[str, ModelInfo] = {
 }
 
 
+@dataclass(frozen=True)
+class ImplInfo:
+    """Where a model lives in the source tree and how it is validated (#381).
+
+    The companion to :class:`ModelInfo`: that one is the user-facing taxonomy,
+    this one is the contributor's map from a model name to the files a change
+    touches. Keyed by the same model name, so a model cannot appear in one and
+    not the other (``tests/test_registry.py`` asserts ``IMPL`` and ``REGISTRY``
+    cover exactly the same set). Every path is checked to exist and every Cargo
+    feature checked to be real by the same test, so this map cannot silently rot
+    into a stale inventory.
+
+    Attributes
+    ----------
+    source : the core algorithm file — a Rust ``src/*.rs`` / ``topica-core/``
+        file, or a ``python/topica/*.py`` module for the pure-Python models.
+    binding : the PyO3 binding location (``src/python/mod.rs`` or an extracted
+        ``src/python/<model>.rs`` module); ``""`` for pure-Python models with no
+        binding of their own.
+    core : the shared machinery / family the model builds on (free text).
+    feature : the Cargo feature required beyond the default build (``""`` builds
+        with a plain ``cargo build``; ``"embeddings"`` for the clustering models).
+    validation : reference-parity / gold / test artifacts, as comma-separated
+        repo-relative paths. Every registered model is additionally covered by
+        the conformance suite (``tests/test_conformance.py``).
+    """
+
+    source: str
+    binding: str
+    core: str
+    feature: str
+    validation: str
+
+
+def _i(source: str, binding: str, core: str, feature: str, validation: str) -> ImplInfo:
+    return ImplInfo(source, binding, core, feature, validation)
+
+
+# name -> where it lives + how it is validated. Curated, but path- and
+# feature-validated in CI (tests/test_registry.py), and required to cover exactly
+# the same models as REGISTRY. Add a model here when you add it to REGISTRY.
+IMPL: dict[str, ImplInfo] = {
+    "LDA": _i("src/model.rs", "src/python/mod.rs", "SparseLDA collapsed Gibbs (model.rs, sampler.rs)", "", "parity/lda_gold.py, parity/mallet_parity.py"),
+    "CTM": _i("topica-core/src/ctm.rs", "src/python/mod.rs", "CTM/STM variational core (topica-core)", "", "parity/ctm_gold.py, parity/ctm_r_compare.py"),
+    "ProdLDA": _i("src/prodlda.rs", "src/python/mod.rs", "hand-coded batched VAE (prodlda.rs)", "", "parity/prodlda_gold.py, parity/prodlda_compare.py"),
+    "HDP": _i("src/hdp.rs", "src/python/mod.rs", "collapsed Gibbs (model.rs, sampler.rs)", "", "parity/hdp_gold.py"),
+    "NMF": _i("src/nmf.rs", "src/python/nmf_lsa.rs", "multiplicative-update matrix factorization", "", "parity/nmf_vs_sklearn.py"),
+    "LSA": _i("src/lsa.rs", "src/python/nmf_lsa.rs", "truncated SVD (linalg)", "", "parity/lsa_vs_sklearn.py"),
+    "AnchorLDA": _i("python/topica/anchor.py", "", "spectral anchor-word recovery (Python over Rust primitives)", "", "tests/test_anchor.py"),
+    "TensorLDA": _i("src/tlda.rs", "src/python/tlda.rs", "method-of-moments cumulants (linalg, spectral)", "", "parity/tlda_gold.py, parity/tlda_compare.py"),
+    "PolylingualLDA": _i("src/pltm.rs", "src/python/pltm.rs", "collapsed Gibbs (model.rs, sampler.rs)", "", "parity/pltm_compare.py"),
+    "STM": _i("src/sts.rs", "src/python/mod.rs", "CTM/STM variational core (topica-core)", "", "parity/stm_gold.py, parity/stm_r_compare.py"),
+    "STS": _i("src/sts.rs", "src/python/mod.rs", "CTM/STM variational core (topica-core)", "", "parity/sts_gold.py, parity/sts_r_compare.py"),
+    "SAGE": _i("src/sage.rs", "src/python/mod.rs", "collapsed Gibbs + SAGE deviations", "", "parity/sage_gold.py"),
+    "DMR": _i("src/dmr.rs", "src/python/mod.rs", "collapsed Gibbs + DMR prior (optimize.rs)", "", "parity/dmr_gold.py"),
+    "GDMR": _i("src/dmr.rs", "src/python/mod.rs", "collapsed Gibbs + DMR prior (optimize.rs)", "", "parity/gdmr_gold.py, parity/test_gdmr_tomotopy.py"),
+    "Scholar": _i("src/scholar.rs", "src/python/scholar.rs", "ProdLDA VAE + covariate prior (prodlda.rs)", "", "tests/test_scholar.py"),
+    "NarrativeTM": _i("python/topica/narrative.py", "", "intra-document trajectory over Gibbs core (Python)", "", "tests/test_content_trajectory.py"),
+    "KeyATM": _i("src/keyatm.rs", "src/python/mod.rs", "collapsed Gibbs + keyword index", "", "parity/keyatm_gold.py, parity/keyatm_r_compare.py"),
+    "SeededLDA": _i("src/seeded.rs", "src/python/mod.rs", "collapsed Gibbs (model.rs, sampler.rs)", "", "parity/seededlda_gold.py"),
+    "LabeledLDA": _i("src/labeled.rs", "src/python/mod.rs", "collapsed Gibbs (model.rs, sampler.rs)", "", "parity/labeledlda_gold.py"),
+    "SupervisedLDA": _i("src/slda.rs", "src/python/mod.rs", "collapsed Gibbs + response head", "", "parity/supervisedlda_gold.py"),
+    "DiscLDA": _i("src/disclda.rs", "src/python/disclda.rs", "collapsed Gibbs + class transform", "", "parity/disclda_20ng.py, tests/test_disclda.py"),
+    "GSDMM": _i("src/gsdmm.rs", "src/python/mod.rs", "collapsed Gibbs mixture (one topic/doc)", "", "parity/gsdmm_gold.py"),
+    "PT": _i("src/pt.rs", "src/python/mod.rs", "collapsed Gibbs over pseudo-documents", "", "parity/pt_gold.py"),
+    "BTM": _i("src/btm.rs", "src/python/btm.rs", "collapsed Gibbs over biterms", "", "parity/btm_compare.py, tests/test_btm.py"),
+    "DTM": _i("src/dtm.rs", "src/python/mod.rs", "variational Kalman over time slices", "", "parity/dtm_gold.py"),
+    "DETM": _i("src/detm.rs", "src/python/mod.rs", "embedding VAE + LSTM q(eta) (etm_vae.rs)", "", "parity/detm_gold.py"),
+    "HLDA": _i("src/hlda.rs", "src/python/mod.rs", "nested-CRP collapsed Gibbs", "", "parity/hlda_gold.py"),
+    "PA": _i("src/pa.rs", "src/python/mod.rs", "collapsed Gibbs over a topic DAG", "", "parity/pa_gold.py"),
+    "BERTopic": _i("src/bertopic.rs", "src/python/mod.rs", "embedding clustering (cluster.rs, reduce.rs, represent.rs)", "embeddings", "parity/bertopic_gold.py"),
+    "Top2Vec": _i("src/top2vec.rs", "src/python/mod.rs", "embedding clustering (cluster.rs, reduce.rs)", "embeddings", "parity/top2vec_gold.py, parity/top2vec_compare.py"),
+    "ETM": _i("src/etm.rs", "src/python/mod.rs", "variational EM over word embeddings (ctm.rs)", "", "parity/etm_gold.py"),
+    "IdealPointTM": _i("src/idealpoint.rs", "src/python/idealpoint.rs", "variational EM + ideal-point head", "", "tests/test_idealpoint.py, tests/test_idealpoint_counts.py"),
+    "Wordfish": _i("src/wordfish.rs", "src/python/wordfish.rs", "Poisson-scaling EM", "", "parity/wordfish_r_compare.py, tests/test_wordfish.py"),
+    "IdealPointSentenceTM": _i("src/sentence_ideal.rs", "src/python/sentence_ideal.rs", "Gaussian-cluster EM over embeddings", "", "tests/test_sentence_ideal.py"),
+    "TBIP": _i("src/tbip.rs", "src/python/tbip.rs", "Poisson-factorization mean-field SVI", "", "parity/tbip_parity.py, tests/test_tbip.py"),
+    "PartyEmbeddings": _i("src/party_embeddings.rs", "src/python/party_embeddings.rs", "PV-DM paragraph vectors (negative sampling)", "", "parity/party_embeddings_compare.py, tests/test_party_embeddings.py"),
+    "FASTopic": _i("src/fastopic.rs", "src/python/mod.rs", "reverse-mode Sinkhorn optimal transport", "", "parity/fastopic_gold.py, parity/fastopic_compare.py"),
+    "EmbeddingLDA": _i("python/topica/embedding.py", "", "seeded Gibbs + embedding NN expansion (Python)", "", "parity/embeddinglda_gold.py, tests/test_embedding_lda.py"),
+    "CombinedTM": _i("src/prodlda.rs", "src/python/mod.rs", "contextualized ProdLDA VAE (prodlda.rs)", "", "parity/combinedtm_gold.py, parity/combinedtm_compare.py"),
+    "ZeroShotTM": _i("src/prodlda.rs", "src/python/mod.rs", "contextualized ProdLDA VAE (prodlda.rs)", "", "parity/zeroshot_gold.py, parity/zeroshot_compare.py"),
+    "InfoCTM": _i("src/infoctm.rs", "src/python/mod.rs", "two ProdLDA VAEs + TAMI alignment (prodlda.rs)", "", "parity/infoctm_gold.py, parity/infoctm_compare.py"),
+    "TopicGPT": _i("python/topica/llm.py", "", "LLM prompting pipeline (Python)", "", "tests/test_topicgpt.py"),
+}
+
+
 def list_models(
     *,
     group: str | None = None,
@@ -311,3 +398,79 @@ def markdown_table(by_group: bool = True) -> str:
                 f"{m.determinism} | {m.summary} |"
             )
     return "\n".join(lines)
+
+
+def impl_markdown_table(by_group: bool = True) -> str:
+    """Render the implementation map (:data:`IMPL`) as a Markdown table.
+
+    One row per model: where its algorithm lives, where its PyO3 binding lives,
+    the shared machinery it builds on, the Cargo feature it needs, and where its
+    reference-parity / gold tests live. Grouped by purpose to match the roster.
+    Used to (re)generate ``docs/contributing/model-map.md`` so the map cannot
+    drift from the source tree.
+    """
+    header = ("| Model | Source | Binding | Core / family | Feature | Validation |",
+              "|---|---|---|---|---|---|")
+
+    def _cell_paths(csv: str) -> str:
+        return ", ".join(f"`{p.strip()}`" for p in csv.split(","))
+
+    def _rows(models: list[ModelInfo]) -> list[str]:
+        rows = list(header)
+        for m in models:
+            im = IMPL[m.name]
+            binding = f"`{im.binding}`" if im.binding else "— _(Python)_"
+            feature = f"`{im.feature}`" if im.feature else "default"
+            rows.append(
+                f"| `{m.name}` | `{im.source}` | {binding} | {im.core} | "
+                f"{feature} | {_cell_paths(im.validation)} |"
+            )
+        return rows
+
+    lines: list[str] = []
+    if by_group:
+        for key, label in GROUPS.items():
+            models = [m for m in REGISTRY.values() if m.group == key]
+            if not models:
+                continue
+            lines.append(f"### {label}\n")
+            lines += _rows(models)
+            lines.append("")
+    else:
+        lines += _rows(list(REGISTRY.values()))
+    return "\n".join(lines).rstrip()
+
+
+def validate_impl() -> list[str]:
+    """Return a list of problems with :data:`IMPL` (empty when it is sound).
+
+    Checks that (1) IMPL covers exactly the registry, (2) every ``source`` /
+    ``binding`` / ``validation`` path exists, and (3) every ``feature`` is a real
+    Cargo feature. The anti-staleness guard the contributor map depends on;
+    ``tests/test_registry.py`` fails on any returned problem.
+    """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent.parent
+    problems: list[str] = []
+
+    missing = set(REGISTRY) - set(IMPL)
+    extra = set(IMPL) - set(REGISTRY)
+    if missing:
+        problems.append(f"IMPL is missing models: {sorted(missing)}")
+    if extra:
+        problems.append(f"IMPL has non-registry models: {sorted(extra)}")
+
+    cargo = (root / "Cargo.toml").read_text(encoding="utf-8")
+    features = set(re.findall(r"^([\w-]+)\s*=\s*\[", cargo, re.M))
+
+    for name, im in IMPL.items():
+        paths = [im.source] + ([im.binding] if im.binding else [])
+        paths += [p.strip() for p in im.validation.split(",")]
+        for p in paths:
+            if not (root / p).exists():
+                problems.append(f"{name}: path does not exist: {p}")
+        if im.feature and im.feature not in features:
+            problems.append(f"{name}: unknown Cargo feature {im.feature!r}")
+    return problems
