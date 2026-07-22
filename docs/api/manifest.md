@@ -46,6 +46,15 @@ class says it may still replay), or `unverifiable` (nothing recorded to check
 against, a bounded component, or a fingerprint from a spec this build does not
 recognise).
 
+## Recording evidence
+
+`record_fit(..., diagnostics=["coherence", "exclusivity"])` computes those
+built-in topic-quality metrics and records each as *computed evidence* (its mean
+over topics), or `value=None` with a note when a metric is not defined for the
+model. You can also attach your own with `record.add_diagnostic(name, value)` and
+interpretive notes with `record.add_decision(key, note)`; both are stored as
+visibly researcher-authored, never as tool-verified conclusions.
+
 ## Comparing two fits
 
 `a.compare(b)` diffs two manifests directly, with no corpus or model needed, and

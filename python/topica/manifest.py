@@ -519,6 +519,7 @@ def _cmp_fp(a: dict | None, b: dict | None) -> str:
 def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
                privacy: str = "minimal", content_fingerprint: bool = False,
                fingerprint_key: bytes | None = None, thread_count: int | None = None,
+               diagnostics=None, diagnostics_n: int = 10,
                **fit_settings) -> AnalysisManifest:
     """Record a fitted ``model`` on ``corpus`` as an :class:`AnalysisManifest`.
 
@@ -533,6 +534,11 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
         anonymisation.
     fingerprint_key : optional key for keyed/salted fingerprints (private
         verification only; keyed digests are marked non-portable).
+    diagnostics : optional list of built-in diagnostics to compute and record as
+        evidence: any of :data:`BUILTIN_DIAGNOSTICS` (``"coherence"``,
+        ``"exclusivity"``). Each is recorded as computed evidence (its mean over
+        topics), or ``value=None`` with a note if it is not defined for this model.
+    diagnostics_n : the top-N words each diagnostic uses (default 10).
     fit_settings : the fit arguments you passed (``iters=``, …), recorded as
         provenance. Only JSON-serialisable values are kept; others are dropped
         with a note.
@@ -541,6 +547,10 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
         raise ValueError(
             f"privacy must be 'minimal' or 'aggregate' (got {privacy!r}); "
             f"'full' (raw values) is intentionally not available in V1")
+    for name in diagnostics or ():
+        if name not in BUILTIN_DIAGNOSTICS:
+            raise ValueError(
+                f"unknown diagnostic {name!r}; choose from {sorted(BUILTIN_DIAGNOSTICS)}")
 
     import topica
 
@@ -570,13 +580,42 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
             **fingerprint_design(prevalence, prevalence_names, key=fingerprint_key),
         }
 
-    return AnalysisManifest(
+    manifest = AnalysisManifest(
         topica_version=getattr(topica, "__version__", None),
         environment=_environment(thread_count),
         model=model_block,
         corpus=corpus_block,
         inputs=inputs,
     )
+    for name in diagnostics or ():
+        manifest.diagnostics.append(_capture_diagnostic(name, model, corpus, diagnostics_n))
+    return manifest
+
+
+# Built-in diagnostics record_fit can compute from the model alone (mean over
+# topics). Both are the classic STM-style topic-quality metrics.
+BUILTIN_DIAGNOSTICS = ("coherence", "exclusivity")
+
+
+def _capture_diagnostic(name: str, model, corpus, n: int) -> dict[str, Any]:
+    import numpy as _np
+    import topica
+
+    entry = {"name": name, "kind": "computed_evidence", "params": {"n": n}}
+    try:
+        if name == "coherence":
+            value = float(_np.mean(model.coherence(n)))
+        elif name == "exclusivity":
+            value = float(_np.mean(topica.exclusivity(model, n=n)))
+        else:  # pragma: no cover - guarded by BUILTIN_DIAGNOSTICS
+            raise KeyError(name)
+        entry["value"] = value
+    except Exception as exc:
+        # Honestly record the attempt and why it could not be computed rather
+        # than silently dropping it (e.g. coherence on a cluster/neural model).
+        entry["value"] = None
+        entry["note"] = f"unavailable for this model: {type(exc).__name__}"
+    return entry
 
 
 def _capture_settings(model, cls: str) -> dict[str, Any]:

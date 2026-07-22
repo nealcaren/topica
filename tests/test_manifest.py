@@ -11,6 +11,7 @@ import pytest
 
 import topica
 from topica.manifest import (
+    BUILTIN_DIAGNOSTICS,
     FINGERPRINT_SPEC,
     SCHEMA,
     SCHEMA_VERSION,
@@ -237,6 +238,58 @@ def test_manifest_is_valid_json(fitted):
     corpus, model = fitted
     d = json.loads(record_fit(model, corpus, iters=50).to_json())
     assert d["schema"] == SCHEMA and d["fingerprint_spec"] == FINGERPRINT_SPEC
+
+
+# -- built-in diagnostic capture (V2) --------------------------------------
+
+
+def test_record_fit_captures_builtin_diagnostics(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, diagnostics=["coherence", "exclusivity"],
+                     diagnostics_n=5, iters=50)
+    names = {d["name"]: d for d in rec.diagnostics}
+    assert set(names) == {"coherence", "exclusivity"}
+    for d in rec.diagnostics:
+        assert d["kind"] == "computed_evidence"
+        assert d["params"] == {"n": 5}
+        assert isinstance(d["value"], float)
+
+
+def test_unknown_diagnostic_rejected(fitted):
+    corpus, model = fitted
+    with pytest.raises(ValueError, match="unknown diagnostic"):
+        record_fit(model, corpus, diagnostics=["not_a_diagnostic"])
+
+
+def test_builtin_diagnostics_is_stable():
+    assert BUILTIN_DIAGNOSTICS == ("coherence", "exclusivity")
+
+
+def test_diagnostic_unavailable_is_recorded_not_dropped(fitted):
+    corpus, model = fitted
+
+    class _NoCoherence:
+        # A stand-in whose coherence() raises, like a cluster/neural model.
+        num_topics = 3
+        topic_word = model.topic_word
+        doc_topic = model.doc_topic
+
+        def coherence(self, n):
+            raise NotImplementedError("no coherence for this model")
+
+    rec = record_fit(_NoCoherence(), corpus, diagnostics=["coherence"], iters=50)
+    entry = rec.diagnostics[0]
+    assert entry["name"] == "coherence"
+    assert entry["value"] is None
+    assert "unavailable for this model" in entry["note"]
+
+
+def test_manual_add_diagnostic_still_works(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50)
+    rec.add_diagnostic("custom", 0.42)
+    assert rec.diagnostics[-1] == {"name": "custom", "value": 0.42,
+                                   "kind": "computed_evidence"}
 
 
 # -- comparison: two manifests (V2) ----------------------------------------
