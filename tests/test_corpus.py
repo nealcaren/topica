@@ -247,3 +247,25 @@ class TestRepr:
         docs = [["cat"]]
         c = Corpus.from_documents(docs)
         assert "Corpus" in repr(c)
+
+
+# ---------------------------------------------------------------------------
+# preprocessing parameters (issue #399)
+# ---------------------------------------------------------------------------
+
+class TestPreprocessingGetter:
+    def test_records_the_params_applied(self):
+        c = Corpus.from_documents(
+            [["a", "b", "c"], ["b", "c", "d"]],
+            min_doc_freq=1, max_doc_fraction=1.0, min_cf=0, rm_top=2)
+        assert c.preprocessing == {
+            "min_doc_freq": 1, "max_doc_fraction": 1.0, "min_cf": 0, "rm_top": 2}
+
+    def test_none_after_load(self, tmp_path):
+        c = Corpus.from_documents([["a", "b"], ["b", "c", "a"]])
+        assert c.preprocessing is not None
+        p = tmp_path / "c.tt"
+        c.save(str(p))
+        # The save format does not carry the params, so a loaded corpus is honest
+        # about not knowing them.
+        assert Corpus.load(str(p)).preprocessing is None

@@ -826,15 +826,12 @@ def _length_summary(lengths: np.ndarray) -> dict[str, Any]:
 
 
 def _preprocessing(corpus) -> dict[str, Any]:
-    # Only parameters Topica itself applied and can observe. Preprocessing done
-    # outside Topica is not visible here (a fingerprint proves identity, not
-    # provenance).
-    out: dict[str, Any] = {}
-    for name in ("min_doc_freq", "max_doc_fraction", "min_cf", "rm_top"):
-        val = getattr(corpus, name, None)
-        if val is not None:
-            out[name] = _jsonable(val)
-    return out
+    # Only the parameters Topica itself applied and recorded on the corpus
+    # (min_doc_freq/max_doc_fraction/min_cf/rm_top); None for a corpus loaded from
+    # disk. Preprocessing done outside Topica is not visible here (a fingerprint
+    # proves identity, not provenance).
+    prep = getattr(corpus, "preprocessing", None)
+    return {k: _jsonable(v) for k, v in prep.items()} if prep else {}
 
 
 # --------------------------------------------------------------------------

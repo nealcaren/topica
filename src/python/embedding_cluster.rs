@@ -96,6 +96,12 @@ impl Top2Vec {
 
 #[pymethods]
 impl Top2Vec {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `n_components` is the reduced dimensionality
     /// before clustering. `clusterer` is `"hdbscan"` (default; discovers the topic
     /// count, leaves a `-1` noise bucket — `min_cluster_size`/`min_samples` are
@@ -751,6 +757,12 @@ impl BERTopic {
 
 #[pymethods]
 impl BERTopic {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `nr_topics` (optional) reduces the discovered
     /// topics to that many by merging the most c-TF-IDF-similar; `window`/`stride`
     /// parameterize the soft `doc_topic` distribution.

@@ -66,6 +66,24 @@ def test_minimal_default_leaks_no_content(fitted):
     assert set(prev) <= {"spec", "algo", "digest", "keyed", "kind", "n_rows", "columns"}
 
 
+def test_captures_seed_and_preprocessing(fitted):
+    # #399: models now expose `seed` and corpora expose `preprocessing`, so the
+    # manifest records both (they were previously null / empty).
+    corpus = topica.Corpus.from_documents(DOCS, min_doc_freq=1, rm_top=1)
+    model = topica.LDA(3, seed=99)
+    model.fit(corpus, iters=50)
+    rec = record_fit(model, corpus, privacy="aggregate", iters=50)
+    assert rec.model["seed"] == 99
+    assert rec.corpus["description"]["preprocessing"] == {
+        "min_doc_freq": 1, "max_doc_fraction": 1.0, "min_cf": 0, "rm_top": 1}
+
+
+def test_models_expose_seed(fitted):
+    for m in (topica.LDA(3, seed=11), topica.NMF(3, seed=11), topica.CTM(3, seed=11),
+              topica.CombinedTM(3, seed=11)):
+        assert m.seed == 11
+
+
 def test_no_raw_document_ids_or_metadata(fitted):
     corpus, model = fitted
     rec = record_fit(model, corpus, iters=50)

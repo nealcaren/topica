@@ -115,6 +115,12 @@ fn map_to_vocab(corpus: &corpus::Corpus, data: &Bound<'_, PyAny>) -> PyResult<Ve
 
 #[pymethods]
 impl DiscLDA {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted DiscLDA. `k_class` is the number of class-specific topics
     /// per class, `k_shared` the number of shared topics; the total topic count is
     /// `num_classes * k_class + k_shared`, with `num_classes` taken from the labels

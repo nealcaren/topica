@@ -91,6 +91,12 @@ impl NMF {
 
 #[pymethods]
 impl NMF {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `num_topics` is K (2 <= K <= vocabulary size).
     /// `beta_loss` is `"frobenius"` (default) or `"kullback-leibler"` (alias
     /// `"kl"`). `init` is `"nndsvd"` (default, deterministic SVD-based init) or
@@ -418,6 +424,12 @@ impl LSA {
 
 #[pymethods]
 impl LSA {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted model. `num_topics` is K (2 <= K <= min(num_docs,
     /// vocabulary size)). `weighting` is `"tfidf"` (default, classic LSI) or
     /// `"count"` (raw term counts). `seed` seeds the randomized-SVD sketch.

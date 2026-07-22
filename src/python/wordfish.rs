@@ -60,6 +60,12 @@ impl Wordfish {
 
 #[pymethods]
 impl Wordfish {
+    /// The random seed the model was constructed with.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Create an unfitted Wordfish model. `beta_prior_sd` / `theta_prior_sd` are the
     /// standard deviations of the weak Gaussian priors regularizing the word
     /// discriminations and the positions (pass `inf` for none); `min_count` drops

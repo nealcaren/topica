@@ -9,10 +9,22 @@ use std::path::Path;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use super::build_corpus_from_docs;
 use super::error::io_err;
 use crate::corpus::{self, InputFormat, LoadOptions};
+
+/// The vocabulary-filtering parameters Topica applied when building a corpus.
+/// Recorded so a fitted corpus can report how it was preprocessed (issue #399).
+/// `None` on a corpus loaded from disk, where the parameters were not persisted.
+#[derive(Clone)]
+pub(crate) struct PrepInfo {
+    pub min_doc_freq: u32,
+    pub max_doc_fraction: f64,
+    pub min_cf: u32,
+    pub rm_top: usize,
+}
 
 /// A preprocessed, integer-encoded document collection.
 ///
@@ -29,6 +41,8 @@ pub struct Corpus {
     // Optional per-document metadata (e.g. a pandas DataFrame), already filtered
     // to the surviving rows. Round-tripped as a plain Python object.
     metadata: Option<PyObject>,
+    // The preprocessing parameters Topica applied, when known (None after load).
+    preprocessing: Option<PrepInfo>,
 }
 
 // Manual Clone: PyObject needs the GIL to bump its refcount, so it can't derive.
@@ -38,6 +52,7 @@ impl Clone for Corpus {
             inner: self.inner.clone(),
             kept_indices: self.kept_indices.clone(),
             metadata: self.metadata.as_ref().map(|m| m.clone_ref(py)),
+            preprocessing: self.preprocessing.clone(),
         })
     }
 }
@@ -89,6 +104,12 @@ impl Corpus {
             inner,
             kept_indices,
             metadata: None,
+            preprocessing: Some(PrepInfo {
+                min_doc_freq,
+                max_doc_fraction,
+                min_cf,
+                rm_top,
+            }),
         })
     }
 
@@ -146,6 +167,12 @@ impl Corpus {
             inner,
             kept_indices,
             metadata: None,
+            preprocessing: Some(PrepInfo {
+                min_doc_freq,
+                max_doc_fraction,
+                min_cf: 0,
+                rm_top: 0,
+            }),
         })
     }
 
@@ -159,6 +186,8 @@ impl Corpus {
             inner,
             kept_indices,
             metadata: None,
+            // Not persisted in the corpus save format; unknown after load.
+            preprocessing: None,
         })
     }
 
@@ -244,6 +273,24 @@ impl Corpus {
     #[setter]
     fn set_metadata(&mut self, value: Option<PyObject>) {
         self.metadata = value;
+    }
+
+    /// The vocabulary-filtering parameters Topica applied when this corpus was
+    /// built (``min_doc_freq``, ``max_doc_fraction``, ``min_cf``, ``rm_top``), as
+    /// a dict. ``None`` for a corpus loaded from disk, where they are not stored.
+    #[getter]
+    fn preprocessing<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        match &self.preprocessing {
+            None => Ok(None),
+            Some(p) => {
+                let d = PyDict::new_bound(py);
+                d.set_item("min_doc_freq", p.min_doc_freq)?;
+                d.set_item("max_doc_fraction", p.max_doc_fraction)?;
+                d.set_item("min_cf", p.min_cf)?;
+                d.set_item("rm_top", p.rm_top)?;
+                Ok(Some(d))
+            }
+        }
     }
 
     #[getter]
