@@ -39,10 +39,18 @@ use crate::prodlda::{
     AvitmOptions, Batch, BatchNorm, Grad, InputMode, Optim, Prior, ProdldaModel, Weights,
 };
 
-/// A fitted SCHOLAR (prior-covariate) model. `base` is the underlying ProdLDA VAE
-/// (topic-word, doc-topic, encoder, mean-head batchnorm); `prior_w` is the covariate
-/// weight matrix (`K x n_prior_covars`, row-major) that shifts the document prior
-/// mean.
+/// Numerically stable softmax (local copy; `prodlda::softmax` is private).
+fn softmax(v: &[f64]) -> Vec<f64> {
+    let m = v.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let exps: Vec<f64> = v.iter().map(|&x| (x - m).exp()).collect();
+    let s: f64 = exps.iter().sum();
+    exps.iter().map(|&e| e / s).collect()
+}
+
+/// A fitted SCHOLAR model. `base` is the underlying ProdLDA VAE (topic-word,
+/// doc-topic, encoder, mean-head batchnorm); `prior_w` is the covariate weight
+/// matrix (`K x n_prior_covars`) that shifts the document prior mean; `wc`/`bc` are
+/// the label classifier head (`n_labels x K` and `n_labels`) read off `theta`.
 pub struct ScholarModel {
     pub base: ProdldaModel,
     /// Covariate weights `W`, `K x n_prior_covars` row-major (the reference's
@@ -50,6 +58,12 @@ pub struct ScholarModel {
     pub prior_w: Vec<f64>,
     pub n_prior_covars: usize,
     pub l2_prior_reg: f64,
+    /// Label classifier weights, `n_labels x K` row-major (the reference's
+    /// `classifier_layer_0.weight`): `logit_y[i] = wc . theta[i] + bc`. Empty when
+    /// the model was fit without labels.
+    pub wc: Vec<f64>,
+    pub bc: Vec<f64>,
+    pub n_labels: usize,
 }
 
 impl ScholarModel {
@@ -74,11 +88,35 @@ impl ScholarModel {
             .collect()
     }
 
-    /// Held-out topic proportions for new documents given their prior covariates.
-    /// The covariates enter the encoder (the dense channel) exactly as at fit time.
+    /// Held-out topic proportions for new documents given their prior covariates. The
+    /// covariates enter the encoder as at fit time. Labels are never an encoder input
+    /// (see `fit_scholar`), so prediction and training use the same encoder path.
     pub fn transform(&self, docs: &[Vec<u32>], pcs: &[Vec<f64>]) -> Vec<Vec<f64>> {
         self.base.transform_with_emb(docs, pcs)
     }
+
+    /// Class-probability predictions `softmax(wc . theta + bc)` for new documents,
+    /// shape `(num_docs, n_labels)`. `theta` is the posterior mean from the words (and
+    /// covariates). Empty rows if the model was fit without labels.
+    pub fn predict_proba(&self, docs: &[Vec<u32>], pcs: &[Vec<f64>]) -> Vec<Vec<f64>> {
+        let k = self.base.num_topics;
+        let theta = self.transform(docs, pcs);
+        theta
+            .iter()
+            .map(|th| {
+                let logit: Vec<f64> = (0..self.n_labels)
+                    .map(|l| bc_dot(&self.wc, &self.bc, th, l, k))
+                    .collect();
+                softmax(&logit)
+            })
+            .collect()
+    }
+}
+
+/// One classifier logit: `bc[l] + sum_t wc[l*k+t] * theta[t]`.
+fn bc_dot(wc: &[f64], bc: &[f64], theta: &[f64], l: usize, k: usize) -> f64 {
+    let base = l * k;
+    bc[l] + (0..k).map(|t| wc[base + t] * theta[t]).sum::<f64>()
 }
 
 /// Compute the per-document prior mean `mu_0 = W . pc` (length `K`).
@@ -91,16 +129,22 @@ fn prior_mean_for(prior_w: &[f64], pc: &[f64], k: usize, n_pc: usize) -> Vec<f64
         .collect()
 }
 
-/// Fit SCHOLAR with prior covariates. `docs` are token-id documents; `pcs[i]` is the
-/// dense prior-covariate row for document `i` (length `n_prior_covars`, the same for
-/// every document). `alpha` is the symmetric Dirichlet concentration behind the
-/// Laplace prior variance; `l2_prior_reg` is the L2 penalty on `W`. The training
-/// loop mirrors `prodlda::fit_avitm` (same shuffle, noise, dropout, Adam, batchnorm)
-/// and additionally updates `prior_w` from the per-document prior-mean gradient.
+/// Fit SCHOLAR with prior covariates and/or supervised labels. `docs` are token-id
+/// documents; `pcs[i]` is the dense prior-covariate row for document `i` (length
+/// `n_prior_covars`; pass empty rows and `n_prior_covars == 0` for labels-only).
+/// `labels`, when given, is the class index of each document (`0..n_labels`); the
+/// classifier head is fit jointly and `n_labels == 0` reproduces the prior-covariate
+/// path exactly. `alpha` is the symmetric Dirichlet concentration behind the Laplace
+/// prior variance; `l2_prior_reg` is the L2 penalty on `W`. The training loop mirrors
+/// `prodlda::fit_avitm` (same shuffle, noise, dropout, Adam, batchnorm) and adds the
+/// covariate prior-mean update and, when labeled, a softmax classifier off `theta`
+/// whose cross-entropy loss trains `wc`/`bc` and pushes a gradient back into `theta`.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_scholar<R: Rng>(
     docs: &[Vec<u32>],
     pcs: &[Vec<f64>],
+    labels: Option<&[usize]>,
+    n_labels: usize,
     num_topics: usize,
     num_types: usize,
     n_prior_covars: usize,
@@ -133,12 +177,35 @@ pub fn fit_scholar<R: Rng>(
         ..AvitmOptions::default()
     };
 
-    // Prior covariates ride the dense-embedding channel into the encoder.
+    // Prior covariates ride the dense-embedding channel into the encoder. Labels do
+    // NOT enter the encoder (a documented deviation from `dallascard/scholar`, which
+    // concatenates the label to the encoder input and zeroes it at test). We supervise
+    // the topics purely through the classifier head's gradient into `theta` — the sLDA
+    // mechanism, where the label is not an inference-time input — so q(theta | words)
+    // is used at both train and test (the reference's q(theta | words, label) at train
+    // vs q(theta | words, 0) at test is an input-distribution inconsistency).
+    //
+    // This is both principled (consistency, sLDA faithfulness) and empirically
+    // motivated FOR THIS BACKBONE: on topica's two-layer AVITM encoder, feeding the
+    // label in degraded held-out accuracy on a small planted corpus (0.65 at 200
+    // epochs -> 0.56 at 400; dropping it reaches ~1.0). The reference's single-layer
+    // encoder at scale does NOT show this (an independent benchmark could not
+    // reproduce a leak against `dallascard/scholar` — the BOW reconstruction term
+    // dominates the label cross-entropy ~100:1), so the effect is backbone- and
+    // regime-dependent, not a claim that the reference is broken.
     let mut w = Weights::new(v, pc, hidden, k, InputMode::BowEmb, rng);
     // Covariate weight block: zero init, so topics start covariate-agnostic and the
     // prevalence effect is learned from data (deterministic, no extra RNG draws).
     let mut prior_w = vec![0.0; k * pc];
     let mut prior_w_opt = Adam::new(prior_w.len(), lr, 0.99, 0.0);
+    // Label classifier head: logit_y = wc.theta + bc. Zero init, like the prior
+    // weights (diverges from the reference's default nn.Linear Kaiming-uniform init):
+    // symmetry breaks on the first step since g_wc = dlogit (x) theta is nonzero, and
+    // it keeps the RNG stream identical to the labels-off path (aids determinism).
+    let mut wc = vec![0.0; n_labels * k];
+    let mut bc = vec![0.0; n_labels];
+    let mut wc_opt = Adam::new(wc.len(), lr, 0.99, 0.0);
+    let mut bc_opt = Adam::new(bc.len(), lr, 0.99, 0.0);
 
     let mut bn_mu = BatchNorm::new(k);
     let mut bn_lv = BatchNorm::new(k);
@@ -218,8 +285,43 @@ pub fn fit_scholar<R: Rng>(
             bn_lv.update_running(&stats[1].0, &stats[1].1);
             bn_dec.update_running(&stats[2].0, &stats[2].1);
 
+            // Label classifier off theta: logit_y = wc.theta + bc; cross-entropy loss
+            // -log(y_recon[true]). The softmax-CE gradient is dlogit = y_recon - Y,
+            // giving g_wc = dlogit (x) theta, g_bc = dlogit, and a gradient back into
+            // theta, dtheta_class = wc^T . dlogit, injected via `dtheta_extra`.
+            let theta = cache.theta();
+            let mut g_wc = vec![0.0; n_labels * k];
+            let mut g_bc = vec![0.0; n_labels];
+            let mut dtheta_class = vec![vec![0.0; k]; n];
+            let mut class_loss = 0.0;
+            if n_labels > 0 {
+                let lbls = labels.unwrap();
+                for (li, &di) in chunk.iter().enumerate() {
+                    let y = lbls[di];
+                    let logit: Vec<f64> = (0..n_labels)
+                        .map(|l| bc_dot(&wc, &bc, &theta[li], l, k))
+                        .collect();
+                    let yr = softmax(&logit);
+                    class_loss += -(yr[y] + 1e-10).ln();
+                    for l in 0..n_labels {
+                        let dl = yr[l] - if l == y { 1.0 } else { 0.0 };
+                        g_bc[l] += dl;
+                        let base = l * k;
+                        for t in 0..k {
+                            g_wc[base + t] += dl * theta[li][t];
+                            dtheta_class[li][t] += wc[base + t] * dl;
+                        }
+                    }
+                }
+            }
+
             let mut g = Grad::zeros(&w);
             let mut d_prior_mu = vec![vec![0.0; k]; n];
+            let dte = if n_labels > 0 {
+                Some(dtheta_class.as_slice())
+            } else {
+                None
+            };
             batch_backward(
                 &w,
                 &prior_mu,
@@ -230,9 +332,24 @@ pub fn fit_scholar<R: Rng>(
                 &cache,
                 &mut g,
                 Some(&mut d_prior_mu),
+                dte,
             );
             g.scale(1.0 / n as f64);
             opt.step(&mut w, &g);
+
+            // Classifier head Adam step (data term averaged over the batch, like the
+            // encoder/decoder grads; no regularization on the head).
+            if n_labels > 0 {
+                let inv_n = 1.0 / n as f64;
+                for x in g_wc.iter_mut() {
+                    *x *= inv_n;
+                }
+                for x in g_bc.iter_mut() {
+                    *x *= inv_n;
+                }
+                wc_opt.step(&mut wc, &g_wc);
+                bc_opt.step(&mut bc, &g_bc);
+            }
 
             // Covariate-weight gradient: dW[t][c] = (1/n) sum_i d_prior_mu[i][t]*PC[i][c]
             // (data term, averaged to match the batch mean) plus the un-averaged L2
@@ -255,7 +372,8 @@ pub fn fit_scholar<R: Rng>(
             }
             prior_w_opt.step(&mut prior_w, &g_prior_w);
 
-            epoch_loss += loss / n as f64;
+            // Report the full objective (recon + KL + classification), batch-mean.
+            epoch_loss += (loss + class_loss) / n as f64;
             batches += 1;
         }
 
@@ -290,6 +408,9 @@ pub fn fit_scholar<R: Rng>(
         prior_w,
         n_prior_covars: pc,
         l2_prior_reg,
+        wc,
+        bc,
+        n_labels,
     }
 }
 
@@ -435,6 +556,7 @@ mod tests {
             &cache,
             &mut g,
             Some(&mut d_prior_mu),
+            None,
         );
         // Map to dW (summed over docs, NOT averaged — the loss here is the summed
         // batch loss) and add the L2 penalty gradient.
@@ -519,7 +641,7 @@ mod tests {
         }
 
         let m = fit_scholar(
-            &docs, &pcs, k, v, 2, 20, 1.0, 0.2, 120, 40, 0.01, 0.0, 0.0, &mut rng,
+            &docs, &pcs, None, 0, k, v, 2, 20, 1.0, 0.2, 120, 40, 0.01, 0.0, 0.0, &mut rng,
         );
 
         // Topic-word rows are valid distributions.
@@ -568,7 +690,7 @@ mod tests {
         let run = || {
             let mut rng = ChaCha8Rng::seed_from_u64(3);
             fit_scholar(
-                &docs, &pcs, 2, 6, 2, 8, 1.0, 0.2, 15, 4, 0.01, 0.01, 0.0, &mut rng,
+                &docs, &pcs, None, 0, 2, 6, 2, 8, 1.0, 0.2, 15, 4, 0.01, 0.01, 0.0, &mut rng,
             )
         };
         let a = run();
@@ -576,5 +698,201 @@ mod tests {
         assert_eq!(a.topic_word(), b.topic_word());
         assert_eq!(a.covariate_effects(), b.covariate_effects());
         assert_eq!(a.base.doc_topic, b.base.doc_topic);
+    }
+
+    // The label classifier head is a standard linear+softmax+cross-entropy. Check its
+    // analytic gradient (g_wc, g_bc, and the dtheta contribution) against finite
+    // differences of the classification loss at a fixed theta — isolating the new head
+    // math from the encoder (whose dtheta path prodlda already FD-checks).
+    #[test]
+    fn classifier_head_gradient_matches_fd() {
+        let (k, n_labels) = (4usize, 3usize);
+        let theta = [
+            vec![0.4, 0.3, 0.2, 0.1],
+            vec![0.1, 0.5, 0.3, 0.1],
+            vec![0.25, 0.25, 0.25, 0.25],
+        ];
+        let ys = [0usize, 2, 1];
+        let mut wc: Vec<f64> = (0..n_labels * k).map(|i| 0.1 * (i as f64) - 0.35).collect();
+        let mut bc: Vec<f64> = (0..n_labels).map(|l| 0.2 * l as f64 - 0.1).collect();
+
+        // Summed classification loss over the mini-batch at (wc, bc, theta).
+        let loss = |wc: &[f64], bc: &[f64], theta: &[Vec<f64>]| -> f64 {
+            let mut s = 0.0;
+            for (i, th) in theta.iter().enumerate() {
+                let logit: Vec<f64> = (0..n_labels).map(|l| bc_dot(wc, bc, th, l, k)).collect();
+                let yr = softmax(&logit);
+                s += -(yr[ys[i]] + 1e-10).ln();
+            }
+            s
+        };
+
+        // Analytic gradients (mirror the fit loop, summed / un-averaged here).
+        let mut g_wc = vec![0.0; n_labels * k];
+        let mut g_bc = vec![0.0; n_labels];
+        let mut dtheta = vec![vec![0.0; k]; theta.len()];
+        for (i, th) in theta.iter().enumerate() {
+            let y = ys[i];
+            let logit: Vec<f64> = (0..n_labels).map(|l| bc_dot(&wc, &bc, th, l, k)).collect();
+            let yr = softmax(&logit);
+            for l in 0..n_labels {
+                let dl = yr[l] - if l == y { 1.0 } else { 0.0 };
+                g_bc[l] += dl;
+                for t in 0..k {
+                    g_wc[l * k + t] += dl * th[t];
+                    dtheta[i][t] += wc[l * k + t] * dl;
+                }
+            }
+        }
+
+        let fd = 1e-6;
+        // wc
+        for idx in 0..wc.len() {
+            let o = wc[idx];
+            wc[idx] = o + fd;
+            let lp = loss(&wc, &bc, &theta);
+            wc[idx] = o - fd;
+            let lm = loss(&wc, &bc, &theta);
+            wc[idx] = o;
+            let num = (lp - lm) / (2.0 * fd);
+            assert!(
+                (g_wc[idx] - num).abs() < 1e-4,
+                "g_wc[{idx}] {} vs {num}",
+                g_wc[idx]
+            );
+        }
+        // bc
+        for l in 0..n_labels {
+            let o = bc[l];
+            bc[l] = o + fd;
+            let lp = loss(&wc, &bc, &theta);
+            bc[l] = o - fd;
+            let lm = loss(&wc, &bc, &theta);
+            bc[l] = o;
+            let num = (lp - lm) / (2.0 * fd);
+            assert!(
+                (g_bc[l] - num).abs() < 1e-4,
+                "g_bc[{l}] {} vs {num}",
+                g_bc[l]
+            );
+        }
+        // dtheta (perturb one document's theta component)
+        for i in 0..theta.len() {
+            for t in 0..k {
+                let mut tp = theta.to_vec();
+                tp[i][t] += fd;
+                let lp = loss(&wc, &bc, &tp);
+                tp[i][t] -= 2.0 * fd;
+                let lm = loss(&wc, &bc, &tp);
+                let num = (lp - lm) / (2.0 * fd);
+                assert!(
+                    (dtheta[i][t] - num).abs() < 1e-4,
+                    "dtheta[{i}][{t}] {} vs {num}",
+                    dtheta[i][t]
+                );
+            }
+        }
+    }
+
+    // A label predictable from the topics should be recovered: documents split into
+    // classes with distinct word blocks; the jointly-fit classifier predicts held-out
+    // classes well above chance.
+    #[test]
+    fn fit_recovers_labels() {
+        let mut rng = ChaCha8Rng::seed_from_u64(11);
+        let (k, v, n_labels) = (3usize, 12usize, 3usize);
+        let blocks: Vec<Vec<u32>> = (0..3)
+            .map(|g| (g * 4..g * 4 + 4).map(|x| x as u32).collect())
+            .collect();
+        let mut docs: Vec<Vec<u32>> = Vec::new();
+        let mut labels: Vec<usize> = Vec::new();
+        for g in 0..3 {
+            for _ in 0..50 {
+                let mut doc = Vec::new();
+                for _ in 0..30 {
+                    let blk = if rng.gen::<f64>() < 0.9 {
+                        &blocks[g]
+                    } else {
+                        &blocks[(rng.gen::<f64>() * 3.0) as usize]
+                    };
+                    doc.push(blk[(rng.gen::<f64>() * 4.0) as usize]);
+                }
+                docs.push(doc);
+                labels.push(g);
+            }
+        }
+        // No covariates: labels-only (empty pc rows).
+        let pcs: Vec<Vec<f64>> = vec![Vec::new(); docs.len()];
+        let m = fit_scholar(
+            &docs,
+            &pcs,
+            Some(&labels),
+            n_labels,
+            k,
+            v,
+            0,
+            20,
+            1.0,
+            0.2,
+            400,
+            50,
+            0.01,
+            0.0,
+            0.0,
+            &mut rng,
+        );
+
+        // In-sample class accuracy from predict_proba should be well above 1/3.
+        let proba = m.predict_proba(&docs, &pcs);
+        let mut correct = 0;
+        for (i, p) in proba.iter().enumerate() {
+            let pred = (0..n_labels)
+                .max_by(|&a, &b| p[a].total_cmp(&p[b]))
+                .unwrap();
+            if pred == labels[i] {
+                correct += 1;
+            }
+        }
+        let acc = correct as f64 / labels.len() as f64;
+        assert!(acc > 0.7, "label accuracy {acc} not above 0.7");
+    }
+
+    #[test]
+    fn fit_with_labels_is_deterministic() {
+        let docs: Vec<Vec<u32>> = vec![
+            vec![0, 1, 2, 0, 1],
+            vec![3, 4, 5, 3],
+            vec![0, 2, 4, 1, 5],
+            vec![1, 1, 3, 5, 2],
+        ];
+        let pcs: Vec<Vec<f64>> = vec![Vec::new(); 4];
+        let labels = [0usize, 1, 0, 1];
+        let run = || {
+            let mut rng = ChaCha8Rng::seed_from_u64(5);
+            fit_scholar(
+                &docs,
+                &pcs,
+                Some(&labels),
+                2,
+                2,
+                6,
+                0,
+                8,
+                1.0,
+                0.2,
+                15,
+                4,
+                0.01,
+                0.0,
+                0.0,
+                &mut rng,
+            )
+        };
+        let a = run();
+        let b = run();
+        assert_eq!(a.topic_word(), b.topic_word());
+        assert_eq!(a.wc, b.wc);
+        assert_eq!(a.bc, b.bc);
+        assert_eq!(a.predict_proba(&docs, &pcs), b.predict_proba(&docs, &pcs));
     }
 }

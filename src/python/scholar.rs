@@ -6,12 +6,26 @@ use pyo3::types::PyType;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
-/// SCHOLAR with prior (prevalence) covariates: a ProdLDA/AVITM VAE whose
-/// document-topic prior mean is shifted by document metadata, `mu_0 = W . covariates`.
-/// A covariate that co-occurs with a topic raises that topic's prevalence — the
-/// neural analog of STM/DMR prevalence covariates, learned jointly with the topics
-/// (not post-hoc). `covariate_effects` reads as a covariate-by-topic prevalence
-/// matrix. Built on topica's ProdLDA backbone; the covariates also enter the encoder.
+/// Extract per-document class labels (str or int) as strings, one per document.
+fn extract_labels(y: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
+    if let Ok(v) = y.extract::<Vec<String>>() {
+        return Ok(v);
+    }
+    if let Ok(v) = y.extract::<Vec<i64>>() {
+        return Ok(v.into_iter().map(|i| i.to_string()).collect());
+    }
+    Err(PyValueError::new_err(
+        "labels must be a sequence of class labels (str or int), one per document",
+    ))
+}
+
+/// SCHOLAR (Card, Tan & Smith 2018): a ProdLDA/AVITM VAE with document metadata.
+/// Prior (prevalence) covariates shift the document-topic prior mean,
+/// `mu_0 = W . covariates`, so a covariate that co-occurs with a topic raises that
+/// topic's prevalence (the neural analog of STM/DMR prevalence; `covariate_effects`
+/// is the covariate-by-topic matrix). Supervised `labels` add a softmax classifier
+/// off `theta` trained jointly, shaping the topics to be predictive (neural sLDA;
+/// `predict`/`predict_proba`/`classes`). Built on topica's ProdLDA backbone.
 #[pyclass(module = "topica")]
 pub struct Scholar {
     num_topics: usize,
@@ -26,6 +40,9 @@ pub struct Scholar {
     // Covariates optionally supplied at construction (else at fit).
     covariates: Option<Vec<Vec<f64>>>,
     covariate_names: Option<Vec<String>>,
+    // Sorted unique class labels (empty when fit without labels), the order of
+    // `predict_proba` columns and `classes`.
+    classes: Vec<String>,
     fitted: bool,
     topic_names: Vec<String>,
     model: Option<crate::scholar::ScholarModel>,
@@ -44,6 +61,8 @@ struct ScholarState {
     convergence_tol: f64,
     seed: u64,
     covariate_names: Vec<String>,
+    #[serde(default)]
+    classes: Vec<String>,
     fitted: bool,
     topic_names: Vec<String>,
     corpus: Option<corpus::Corpus>,
@@ -55,6 +74,13 @@ struct ScholarState {
     converged: Option<bool>,
     epochs_run: Option<usize>,
     prior_w: Option<Vec<f64>>,
+    // Label classifier head (empty when fit without labels).
+    #[serde(default)]
+    wc: Option<Vec<f64>>,
+    #[serde(default)]
+    bc: Option<Vec<f64>>,
+    #[serde(default)]
+    n_labels: Option<usize>,
     // Base VAE weights.
     w_v: Option<usize>,
     w_e: Option<usize>,
@@ -116,6 +142,27 @@ impl Scholar {
             return Err(PyValueError::new_err(
                 "all covariate rows must have the same number of columns",
             ));
+        }
+        Ok(pcs)
+    }
+
+    /// Resolve covariates for a prediction call: empty rows when the model was fit
+    /// without covariates, else the parsed matrix validated to the fitted width.
+    fn pred_covariates(
+        &self,
+        covariates: Option<&Bound<'_, PyAny>>,
+        num_docs: usize,
+    ) -> PyResult<Vec<Vec<f64>>> {
+        let n_pc = self.model.as_ref().map(|m| m.n_prior_covars).unwrap_or(0);
+        if n_pc == 0 {
+            return Ok(vec![Vec::new(); num_docs]);
+        }
+        let pcs = self.resolve_covariates(covariates, num_docs)?;
+        if pcs[0].len() != n_pc {
+            return Err(PyValueError::new_err(format!(
+                "covariates has {} columns but the model was fit with {n_pc}",
+                pcs[0].len()
+            )));
         }
         Ok(pcs)
     }
@@ -189,6 +236,7 @@ impl Scholar {
             seed,
             covariates,
             covariate_names,
+            classes: Vec::new(),
             fitted: false,
             topic_names: Vec::new(),
             model: None,
@@ -196,15 +244,17 @@ impl Scholar {
         })
     }
 
-    /// Fit on `data` (a Corpus or list of token lists) with prior `covariates`
-    /// (one row per document). `iters` sets the number of epochs (default 200).
+    /// Fit on `data` (a Corpus or list of token lists) with prior `covariates` and/or
+    /// supervised `labels` (one per document, str or int). At least one of covariates
+    /// or labels must be given. `iters` sets the number of epochs (default 200);
     /// `convergence_tol` overrides the constructor value for this run.
-    #[pyo3(signature = (data, *, covariates=None, iters=None, convergence_tol=None))]
+    #[pyo3(signature = (data, *, covariates=None, labels=None, iters=None, convergence_tol=None))]
     fn fit(
         &mut self,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         covariates: Option<&Bound<'_, PyAny>>,
+        labels: Option<&Bound<'_, PyAny>>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
     ) -> PyResult<()> {
@@ -229,15 +279,57 @@ impl Scholar {
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
-        let pcs = self.resolve_covariates(covariates, corpus.docs.len())?;
+        let num_docs = corpus.docs.len();
+
+        // Labels (optional): map to sorted-unique class indices.
+        let (label_idx, classes) = match labels {
+            Some(y) => {
+                let labels_str = extract_labels(y)?;
+                if labels_str.len() != num_docs {
+                    return Err(PyValueError::new_err(format!(
+                        "labels has {} entries but there are {num_docs} documents",
+                        labels_str.len()
+                    )));
+                }
+                let mut classes: Vec<String> = labels_str.clone();
+                classes.sort();
+                classes.dedup();
+                if classes.len() < 2 {
+                    return Err(PyValueError::new_err("need at least 2 distinct labels"));
+                }
+                let cindex: std::collections::HashMap<&str, usize> = classes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| (c.as_str(), i))
+                    .collect();
+                let idx: Vec<usize> = labels_str.iter().map(|l| cindex[l.as_str()]).collect();
+                (Some(idx), classes)
+            }
+            None => (None, Vec::new()),
+        };
+        let n_labels = classes.len();
+
+        // Covariates (optional): empty rows when absent, but require at least one of
+        // covariates / labels so the model has some metadata to condition on.
+        let has_covars = covariates.is_some() || self.covariates.is_some();
+        if !has_covars && label_idx.is_none() {
+            return Err(PyValueError::new_err(
+                "Scholar needs covariates and/or labels: pass covariates= and/or labels=",
+            ));
+        }
+        let pcs = if has_covars {
+            self.resolve_covariates(covariates, num_docs)?
+        } else {
+            vec![Vec::new(); num_docs]
+        };
         let n_prior_covars = pcs[0].len();
+
         let num_types = corpus.num_types();
         if num_types < self.num_topics {
             return Err(PyValueError::new_err(
                 "vocabulary must have at least num_topics words",
             ));
         }
-        // Default names if none were supplied and the width now differs.
         let names = match &self.covariate_names {
             Some(n) if n.len() == n_prior_covars => n.clone(),
             _ => (0..n_prior_covars)
@@ -261,6 +353,8 @@ impl Scholar {
             let m = crate::scholar::fit_scholar(
                 &corpus.docs,
                 &pcs,
+                label_idx.as_deref(),
+                n_labels,
                 k,
                 num_types,
                 n_prior_covars,
@@ -279,6 +373,7 @@ impl Scholar {
         self.model = Some(model);
         self.corpus = Some(corpus);
         self.covariate_names = Some(names);
+        self.classes = classes;
         self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
         self.fitted = true;
         Ok(())
@@ -314,6 +409,14 @@ impl Scholar {
     fn covariate_names(&self) -> PyResult<Vec<String>> {
         self.fitted_model()?;
         Ok(self.covariate_names.clone().unwrap_or_default())
+    }
+
+    /// The class labels (sorted), in the order of `predict_proba` columns. Empty if
+    /// the model was fit without labels.
+    #[getter]
+    fn classes(&self) -> PyResult<Vec<String>> {
+        self.fitted_model()?;
+        Ok(self.classes.clone())
     }
 
     /// The ELBO (negative training loss) at the final epoch.
@@ -420,24 +523,68 @@ impl Scholar {
 
     /// Held-out topic proportions for new documents. `covariates` (one row per
     /// document) enter the encoder exactly as at fit time and must have the same
-    /// number of columns. Returns `(num_docs, num_topics)`.
+    /// number of columns; pass `None` when the model was fit without covariates.
+    /// Returns `(num_docs, num_topics)`.
+    #[pyo3(signature = (data, covariates=None))]
     fn transform<'py>(
         &self,
         py: Python<'py>,
         data: &Bound<'py, PyAny>,
-        covariates: &Bound<'py, PyAny>,
+        covariates: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let m = self.fitted_model()?;
         let docs = docs_to_ids(data, &self.corpus.as_ref().unwrap().id_to_word)?;
-        let pcs = self.resolve_covariates(Some(covariates), docs.len())?;
-        if pcs[0].len() != m.n_prior_covars {
-            return Err(PyValueError::new_err(format!(
-                "covariates has {} columns but the model was fit with {}",
-                pcs[0].len(),
-                m.n_prior_covars
-            )));
-        }
+        let pcs = self.pred_covariates(covariates, docs.len())?;
         Ok(vecs_to_arr2(&m.transform(&docs, &pcs)).to_pyarray_bound(py))
+    }
+
+    /// Class-probability predictions `softmax(wc . theta + bc)` for new documents,
+    /// shape `(num_docs, n_classes)`, columns in `classes` order. Requires a
+    /// label-trained model. `covariates` as in `transform`.
+    #[pyo3(signature = (data, covariates=None))]
+    fn predict_proba<'py>(
+        &self,
+        py: Python<'py>,
+        data: &Bound<'py, PyAny>,
+        covariates: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let m = self.fitted_model()?;
+        if m.n_labels == 0 {
+            return Err(PyValueError::new_err(
+                "model was fit without labels; predict_proba is unavailable",
+            ));
+        }
+        let docs = docs_to_ids(data, &self.corpus.as_ref().unwrap().id_to_word)?;
+        let pcs = self.pred_covariates(covariates, docs.len())?;
+        Ok(vecs_to_arr2(&m.predict_proba(&docs, &pcs)).to_pyarray_bound(py))
+    }
+
+    /// Predicted class label per document (argmax of `predict_proba`), as strings in
+    /// `classes` space. Requires a label-trained model.
+    #[pyo3(signature = (data, covariates=None))]
+    fn predict(
+        &self,
+        py: Python<'_>,
+        data: &Bound<'_, PyAny>,
+        covariates: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Vec<String>> {
+        let m = self.fitted_model()?;
+        if m.n_labels == 0 {
+            return Err(PyValueError::new_err(
+                "model was fit without labels; predict is unavailable",
+            ));
+        }
+        let docs = docs_to_ids(data, &self.corpus.as_ref().unwrap().id_to_word)?;
+        let pcs = self.pred_covariates(covariates, docs.len())?;
+        let _ = py;
+        let proba = m.predict_proba(&docs, &pcs);
+        Ok(proba
+            .iter()
+            .map(|p| {
+                let best = (0..p.len()).max_by(|&a, &b| p[a].total_cmp(&p[b])).unwrap();
+                self.classes[best].clone()
+            })
+            .collect())
     }
 
     fn __repr__(&self) -> String {
@@ -475,6 +622,7 @@ impl Scholar {
                 convergence_tol: self.convergence_tol,
                 seed: self.seed,
                 covariate_names: self.covariate_names.clone().unwrap_or_default(),
+                classes: self.classes.clone(),
                 fitted: self.fitted,
                 topic_names: self.topic_names.clone(),
                 corpus: self.corpus.clone(),
@@ -485,6 +633,9 @@ impl Scholar {
                 converged: Some(m.base.converged),
                 epochs_run: Some(m.base.epochs_run),
                 prior_w: Some(m.prior_w.clone()),
+                wc: Some(m.wc.clone()),
+                bc: Some(m.bc.clone()),
+                n_labels: Some(m.n_labels),
                 w_v: Some(m.base.weights.v),
                 w_e: Some(m.base.weights.e),
                 w_hidden: Some(m.base.weights.hidden),
@@ -551,6 +702,9 @@ impl Scholar {
                 prior_w: s.prior_w.unwrap_or_default(),
                 n_prior_covars: s.n_prior_covars.unwrap_or(0),
                 l2_prior_reg: s.l2_prior_reg,
+                wc: s.wc.unwrap_or_default(),
+                bc: s.bc.unwrap_or_default(),
+                n_labels: s.n_labels.unwrap_or(0),
             })
         } else {
             None
@@ -571,6 +725,7 @@ impl Scholar {
             } else {
                 Some(s.covariate_names)
             },
+            classes: s.classes,
             fitted: s.fitted,
             topic_names: s.topic_names,
             model,

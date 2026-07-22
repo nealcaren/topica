@@ -55,7 +55,7 @@ generated from `python/topica/registry.py`.
 | `SAGE` | text, metadata | gibbs | seed-reproducible | Sparse additive generative model: the same topic worded differently across groups. |
 | `DMR` | text, metadata | gibbs | seed-reproducible | Dirichlet-multinomial regression: a document-metadata prior on topic proportions. |
 | `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
-| `Scholar` | text, metadata | vae | seed-reproducible | SCHOLAR (Card et al. 2018): a ProdLDA VAE whose topic-prevalence prior is shifted by document covariates (neural STM prevalence). |
+| `Scholar` | text, metadata, labels | vae | seed-reproducible | SCHOLAR (Card et al. 2018): a ProdLDA VAE with covariate-shifted topic-prevalence prior and an optional supervised label head (neural STM prevalence + sLDA). |
 
 ### Guided & supervised
 
@@ -396,8 +396,39 @@ gradient is hand-coded and checked against finite differences in the Rust tests.
 Because the encoder is topica's two-layer AVITM network, larger topic counts need
 somewhat more epochs than the reference's single-layer encoder to fully separate the
 topics; if `covariate_effects` looks muddy, raise `iters` before reading it.
-Topic-covariate (content) deviations and supervised labels — Scholar's two other
-metadata roles — are planned follow-ups.
+
+### Supervised labels
+
+Pass `labels=` (one class per document, str or int) to add SCHOLAR's supervised head
+— a softmax classifier off `theta` whose cross-entropy loss is trained jointly and
+pushes a gradient back into the topics, so the topics become predictive of the label.
+This is the neural analog of supervised LDA (sLDA). After fitting, `classes` lists
+the label space and `predict` / `predict_proba` classify new documents.
+
+```python
+m = topica.Scholar(num_topics=20, seed=1)
+m.fit(docs, labels=y)                 # covariates optional; labels-only is fine
+m.predict(new_docs)                   # or m.predict_proba(new_docs) -> (n_docs, n_classes)
+```
+
+Covariates and labels compose: `m.fit(docs, covariates=X, labels=y)` fits the
+prevalence prior and the supervised head together. One deliberate deviation from
+`dallascard/scholar`: the reference also concatenates the label onto the *encoder*
+input (and zeroes it at test), so its inference network is `q(θ | words, label)` at
+train time but `q(θ | words, 0)` at prediction. topica supervises the topics only
+through the classifier head's gradient — the sLDA mechanism, where the label is not
+an inference-time input — so `q(θ | words)` is used at both train and test. This is
+both principled (it removes the train/test input-distribution mismatch) and, for this
+backbone, empirical: on topica's two-layer AVITM encoder, feeding the label in
+degraded held-out label accuracy on a small planted corpus (it fell as training went
+on), while supervising only through the classifier head reached full accuracy. The
+reference's single-layer encoder at scale does not show this — reconstruction so
+dominates the label loss that its encoder does not learn to copy the label — so the
+effect is backbone- and regime-dependent, not a flaw in the reference. The label
+supervision that shapes the topics, the classifier loss, is unchanged either way.
+
+Topic-covariate (content) deviations — SCHOLAR's third metadata role, the neural
+analog of SAGE — are a planned follow-up.
 
 `topica`'s [`estimate_effect`](covariates.md) still works on any model's `θ`
 post-hoc; Scholar's added value is putting the covariates *into* the fit, which

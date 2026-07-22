@@ -597,6 +597,16 @@ pub(crate) struct BatchCache {
     contrast: Option<ContrastCache>,
 }
 
+impl BatchCache {
+    /// The sampled topic vectors `theta` (N x K), before the decoder dropout mask.
+    /// Exposed so a coupled head (SCHOLAR's label classifier) can read the same
+    /// `theta` it is defined to classify from and push its gradient back through
+    /// `batch_backward`'s `dtheta_extra`.
+    pub(crate) fn theta(&self) -> &[Vec<f64>] {
+        &self.theta
+    }
+}
+
 /// Per-(doc, topic) stick-breaking quantities: the `eta = sigmoid(z)` breaks for the
 /// Gaussian stick-breaking prior. `theta` lives in `BatchCache.theta`.
 struct SbCache {
@@ -1044,6 +1054,10 @@ fn weibull_reparam_backward(
 /// covariate-weight gradient `dW = sum_i d_prior_mu[i] (x) PC[i]`; ProdLDA/InfoCTM
 /// pass `None` and the block is skipped. Only meaningful on the Gaussian
 /// (laplace/stick-breaking) path — the Dirichlet KL has no prior mean.
+/// `dtheta_extra`, when `Some` (N x K), is added into the per-document gradient
+/// w.r.t. `theta` before the reparameterization backward. SCHOLAR's label
+/// classifier uses it to inject its `dL/dtheta` (the classifier reads `c.theta()`);
+/// ProdLDA/InfoCTM pass `None`.
 pub(crate) fn batch_backward(
     w: &Weights,
     prior_mu: &[f64],
@@ -1054,6 +1068,7 @@ pub(crate) fn batch_backward(
     c: &BatchCache,
     g: &mut Grad,
     mut d_prior_mu: Option<&mut [Vec<f64>]>,
+    dtheta_extra: Option<&[Vec<f64>]>,
 ) {
     let (h, k, v) = (w.hidden, w.k, w.v);
     let n = batch.xns.len();
@@ -1124,6 +1139,11 @@ pub(crate) fn batch_backward(
             dtheta[t] = dtheta_do[i][t] * batch.masks_t[i][t];
             if let Some(dz) = &dz_contrast {
                 dtheta[t] += dz[i][t];
+            }
+            // A coupled head's gradient w.r.t. theta (SCHOLAR's label classifier,
+            // which reads the un-dropout `theta` in `c.theta()`). None for ProdLDA.
+            if let Some(dte) = dtheta_extra {
+                dtheta[t] += dte[i][t];
             }
         }
 
@@ -1605,7 +1625,7 @@ pub fn fit_avitm<R: Rng>(
 
             let mut g = Grad::zeros(&w);
             batch_backward(
-                &w, &prior_mu, &prior_var, &alpha_vec, &opts, &batch, &cache, &mut g, None,
+                &w, &prior_mu, &prior_var, &alpha_vec, &opts, &batch, &cache, &mut g, None, None,
             );
             g.scale(1.0 / n as f64);
             opt.step(&mut w, &g);
@@ -1761,7 +1781,7 @@ mod tests {
         );
         let mut g = Grad::zeros(&w0);
         batch_backward(
-            &w0, &prior_mu, &prior_var, &alpha, &opts, &batch, &cache, &mut g, None,
+            &w0, &prior_mu, &prior_var, &alpha, &opts, &batch, &cache, &mut g, None, None,
         );
 
         let fd = 1e-6;

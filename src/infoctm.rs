@@ -528,7 +528,7 @@ fn elbo_step<R: Rng>(
     s.bn_dec.update_running(&stats[2].0, &stats[2].1);
     let mut g = Grad::zeros(&s.w);
     batch_backward(
-        &s.w, prior_mu, prior_var, alpha_vec, opts, &batch, &cache, &mut g, None,
+        &s.w, prior_mu, prior_var, alpha_vec, opts, &batch, &cache, &mut g, None, None,
     );
     g.scale(1.0 / n as f64);
     (loss / n as f64, g)

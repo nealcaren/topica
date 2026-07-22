@@ -3141,11 +3141,13 @@ class Scholar:
         data: Corpus | Sequence[Sequence[str]],
         *,
         covariates: object | None = None,
+        labels: object | None = None,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
     ) -> None:
-        """Fit on a Corpus or list of token lists with prior ``covariates`` (one row
-        per document). `iters` sets the number of epochs."""
+        """Fit on a Corpus or list of token lists with prior ``covariates`` and/or
+        supervised ``labels`` (one per document, str or int). At least one of
+        covariates or labels must be given. `iters` sets the number of epochs."""
         ...
     @property
     def num_topics(self) -> int: ...
@@ -3159,6 +3161,10 @@ class Scholar:
         ...
     @property
     def covariate_names(self) -> list[str]: ...
+    @property
+    def classes(self) -> list[str]:
+        """Sorted class labels (predict_proba column order); empty if fit without labels."""
+        ...
     @property
     def model_family(self) -> str: ...
     @property
@@ -3184,8 +3190,19 @@ class Scholar:
     ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
     def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
     def transform(
-        self, data: Corpus | Sequence[Sequence[str]], covariates: object
+        self, data: Corpus | Sequence[Sequence[str]], covariates: object | None = None
     ) -> numpy.typing.NDArray[numpy.float64]: ...
+    def predict_proba(
+        self, data: Corpus | Sequence[Sequence[str]], covariates: object | None = None
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Class probabilities (num_docs, n_classes), columns in `classes` order.
+        Requires a label-trained model."""
+        ...
+    def predict(
+        self, data: Corpus | Sequence[Sequence[str]], covariates: object | None = None
+    ) -> list[str]:
+        """Predicted class label per document. Requires a label-trained model."""
+        ...
     def save(self, path: str) -> None: ...
     @staticmethod
     def load(path: str) -> Scholar: ...
