@@ -3108,6 +3108,90 @@ class ProdLDA:
     def __repr__(self) -> str: ...
 
 
+class Scholar:
+    """SCHOLAR (Card, Tan & Smith 2018) with prior (prevalence) covariates. A
+    ProdLDA/AVITM VAE whose document-topic prior mean is shifted by document
+    metadata, ``mu_0 = W . covariates``: a covariate that co-occurs with a topic
+    raises that topic's prevalence, the neural analog of STM/DMR prevalence
+    covariates, learned jointly with the topics (not post-hoc). ``covariate_effects``
+    is the fitted covariate-by-topic prevalence matrix. Covariates also enter the
+    encoder. Built on topica's ProdLDA backbone. Reference implementation:
+    dallascard/scholar (Apache-2.0)."""
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        covariates: object | None = None,
+        covariate_names: list[str] | None = None,
+        alpha: float = 1.0,
+        hidden_size: int = 100,
+        dropout: float = 0.2,
+        batch_size: int = 200,
+        lr: float = 0.002,
+        l2_prior_reg: float = 0.0,
+        convergence_tol: float = 0.0,
+        seed: int = 42,
+    ) -> None:
+        """``covariates`` (a (num_docs, n_covars) numeric matrix) may be given here or
+        at fit(). ``l2_prior_reg`` is the L2 penalty on the covariate weights."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        *,
+        covariates: object | None = None,
+        iters: int | None = None,
+        convergence_tol: Optional[float] = None,
+    ) -> None:
+        """Fit on a Corpus or list of token lists with prior ``covariates`` (one row
+        per document). `iters` sets the number of epochs."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def covariate_effects(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Covariate-by-topic prevalence effects, shape (n_covars, num_topics)."""
+        ...
+    @property
+    def covariate_names(self) -> list[str]: ...
+    @property
+    def model_family(self) -> str: ...
+    @property
+    def bound(self) -> float: ...
+    @property
+    def bound_history(self) -> list[float]: ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def epochs_run(self) -> int: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def transform(
+        self, data: Corpus | Sequence[Sequence[str]], covariates: object
+    ) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> Scholar: ...
+    def __repr__(self) -> str: ...
+
+
 class CombinedTM:
     """CombinedTM (Bianchi, Terragni & Hovy 2021), a contextualized topic model.
     ProdLDA whose encoder reads the normalized bag of words concatenated with a

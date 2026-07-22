@@ -236,6 +236,13 @@ def _fit_dmr(iters=300):
     return m.doc_topic, m.topic_word, K
 
 
+def _fit_scholar(iters=150):
+    docs, _, X, _ = _covariate_corpus()
+    m = topica.Scholar(num_topics=K, seed=1)
+    m.fit(docs, covariates=X, iters=iters)
+    return m.doc_topic, m.topic_word, K
+
+
 def _fit_gdmr(iters=300):
     # GDMR wants a continuous covariate; use the block index scaled to [0,1].
     docs, vocab = _planted_blocks(k=K, seed=0)
@@ -570,6 +577,7 @@ FIT_ADAPTERS = {
     "SAGE": _fit_sage,
     "DMR": _fit_dmr,
     "GDMR": _fit_gdmr,
+    "Scholar": _fit_scholar,
     "NarrativeTM": _fit_narrativetm,
     "KeyATM": _fit_keyatm,
     "SeededLDA": _fit_seededlda,

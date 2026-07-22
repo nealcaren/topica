@@ -564,6 +564,13 @@ pub(crate) struct Batch<'a> {
     pub(crate) eps: &'a [Vec<f64>],
     pub(crate) masks2: &'a [Vec<f64>],
     pub(crate) masks_t: &'a [Vec<f64>],
+    /// Per-document prior mean `mu_0[i]` (length `K`) for the Gaussian KL. `None`
+    /// means every document shares the `prior_mu` slice passed to
+    /// `batch_forward`/`batch_backward` — the ProdLDA/InfoCTM path, byte-identical.
+    /// `Some` is SCHOLAR's covariate-dependent prior mean `mu_0[i] = W . PC[i]`
+    /// (`src/scholar.rs`), which shifts topic prevalence by document metadata. Only
+    /// the mean varies; the prior variance stays the shared Laplace `prior_var`.
+    pub(crate) prior_mus: Option<&'a [Vec<f64>]>,
 }
 
 /// Caches retained from the batch forward for the backward pass.
@@ -936,11 +943,14 @@ pub(crate) fn batch_forward(
                 loss += weibull_gamma_kl(d_kw[i][t], d_lam[i][t], alpha[t]);
             }
         } else {
-            // KL( N(mu, e^lv) || N(mu1, var1) ), diagonal (eq. 7, first line).
+            // KL( N(mu, e^lv) || N(mu0, var1) ), diagonal (eq. 7, first line). The
+            // prior mean is per-document when `prior_mus` is set (SCHOLAR), else the
+            // shared `prior_mu`; the prior variance is always shared.
+            let pm_i = batch.prior_mus.map(|p| p[i].as_slice()).unwrap_or(prior_mu);
             let mut kl = 0.0;
             for t in 0..k {
                 let s0 = lv[i][t].exp();
-                let dm = prior_mu[t] - mu[i][t];
+                let dm = pm_i[t] - mu[i][t];
                 kl +=
                     s0 / prior_var[t] + dm * dm / prior_var[t] - 1.0 + prior_var[t].ln() - lv[i][t];
             }
@@ -1028,6 +1038,12 @@ fn weibull_reparam_backward(
 
 /// Backward pass over the batch, accumulating into `g`. Returns gradients for the
 /// summed loss (the caller scales by 1/N).
+/// `d_prior_mu`, when `Some`, is filled with the gradient of the batch loss w.r.t.
+/// the per-document prior mean, `d_prior_mu[i][t] = (mu0[i][t] - mu_post[i][t]) /
+/// prior_var[t]` (the Gaussian-KL derivative). SCHOLAR uses it to map back to the
+/// covariate-weight gradient `dW = sum_i d_prior_mu[i] (x) PC[i]`; ProdLDA/InfoCTM
+/// pass `None` and the block is skipped. Only meaningful on the Gaussian
+/// (laplace/stick-breaking) path — the Dirichlet KL has no prior mean.
 pub(crate) fn batch_backward(
     w: &Weights,
     prior_mu: &[f64],
@@ -1037,6 +1053,7 @@ pub(crate) fn batch_backward(
     batch: &Batch,
     c: &BatchCache,
     g: &mut Grad,
+    mut d_prior_mu: Option<&mut [Vec<f64>]>,
 ) {
     let (h, k, v) = (w.hidden, w.k, w.v);
     let n = batch.xns.len();
@@ -1142,13 +1159,19 @@ pub(crate) fn batch_backward(
                 (0..k).map(|t| c.theta[i][t] * (dtheta[t] - dot)).collect()
             };
             // z = mu + exp(lv/2) * eps.
+            let pm_i = batch.prior_mus.map(|p| p[i].as_slice()).unwrap_or(prior_mu);
             for t in 0..k {
                 let s = (0.5 * c.lv[i][t]).exp();
                 dmu[i][t] += dz[t];
                 dlv[i][t] += dz[t] * batch.eps[i][t] * 0.5 * s;
                 // KL gradients (post-BN mu, lv).
-                dmu[i][t] += (c.mu[i][t] - prior_mu[t]) / prior_var[t];
+                let kl_dmu = (c.mu[i][t] - pm_i[t]) / prior_var[t];
+                dmu[i][t] += kl_dmu;
                 dlv[i][t] += 0.5 * (c.lv[i][t].exp() / prior_var[t] - 1.0);
+                // Gradient w.r.t. the prior mean (opposite sign): d loss / d mu0.
+                if let Some(dpm) = d_prior_mu.as_deref_mut() {
+                    dpm[i][t] = -kl_dmu;
+                }
             }
         }
 
@@ -1262,8 +1285,10 @@ pub(crate) fn batch_backward(
 }
 
 /// Elementwise Adam with configurable `beta1` (ProdLDA uses 0.99) and coupled L2
-/// weight decay, matching torch's `Adam`.
-struct Adam {
+/// weight decay, matching torch's `Adam`. Exposed `pub(crate)` so a coupled model
+/// (`scholar`) can drive its own extra parameter block (the covariate weights) with
+/// the same optimizer the shared blocks use.
+pub(crate) struct Adam {
     m: Vec<f64>,
     v: Vec<f64>,
     t: u64,
@@ -1273,7 +1298,7 @@ struct Adam {
 }
 
 impl Adam {
-    fn new(len: usize, lr: f64, b1: f64, wd: f64) -> Self {
+    pub(crate) fn new(len: usize, lr: f64, b1: f64, wd: f64) -> Self {
         Adam {
             m: vec![0.0; len],
             v: vec![0.0; len],
@@ -1283,7 +1308,7 @@ impl Adam {
             wd,
         }
     }
-    fn step(&mut self, p: &mut [f64], grad: &[f64]) {
+    pub(crate) fn step(&mut self, p: &mut [f64], grad: &[f64]) {
         const B2: f64 = 0.999;
         const EPS: f64 = 1e-8;
         self.t += 1;
@@ -1568,6 +1593,7 @@ pub fn fit_avitm<R: Rng>(
                 eps: &eps,
                 masks2: &masks2,
                 masks_t: &masks_t,
+                prior_mus: None,
             };
 
             let (loss, cache, stats) = batch_forward(
@@ -1579,7 +1605,7 @@ pub fn fit_avitm<R: Rng>(
 
             let mut g = Grad::zeros(&w);
             batch_backward(
-                &w, &prior_mu, &prior_var, &alpha_vec, &opts, &batch, &cache, &mut g,
+                &w, &prior_mu, &prior_var, &alpha_vec, &opts, &batch, &cache, &mut g, None,
             );
             g.scale(1.0 / n as f64);
             opt.step(&mut w, &g);
@@ -1723,6 +1749,7 @@ mod tests {
             eps: &eps,
             masks2: &masks2,
             masks_t: &masks_t,
+            prior_mus: None,
         };
 
         // Analytic gradients.
@@ -1734,7 +1761,7 @@ mod tests {
         );
         let mut g = Grad::zeros(&w0);
         batch_backward(
-            &w0, &prior_mu, &prior_var, &alpha, &opts, &batch, &cache, &mut g,
+            &w0, &prior_mu, &prior_var, &alpha, &opts, &batch, &cache, &mut g, None,
         );
 
         let fd = 1e-6;

@@ -77,6 +77,7 @@ mod pltm;
 #[path = "corpus.rs"]
 mod py_corpus;
 mod save;
+mod scholar;
 mod sentence_ideal;
 mod tbip;
 mod tlda;
@@ -91,6 +92,7 @@ use party_embeddings::PartyEmbeddings;
 use pltm::PolylingualLDA;
 use py_corpus::Corpus;
 use save::*;
+use scholar::Scholar;
 use sentence_ideal::IdealPointSentenceTM;
 use tbip::TBIP;
 use tlda::TensorLDA;
@@ -18292,6 +18294,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BTM>()?;
     m.add_class::<PolylingualLDA>()?;
     m.add_class::<DiscLDA>()?;
+    m.add_class::<Scholar>()?;
     m.add_class::<SeededLDA>()?;
     m.add_class::<KeyATM>()?;
     m.add_class::<Top2Vec>()?;
