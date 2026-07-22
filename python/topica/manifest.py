@@ -13,9 +13,11 @@ them by path + digest rather than embedding them.
     later = topica.AnalysisManifest.load("analysis.topica.json")
     print(later.verify(corpus, model).summary())
 
-V1 scope (narrow on purpose): the manifest, the fingerprint-v1 contract below,
-``record_fit`` for the count-based and structural models, and ``verify`` with a
-textual report. No HTML rendering, no generic diagnostic auto-capture.
+Scope: the manifest, the fingerprint-v1 contract below, ``record_fit`` for the
+count-based and structural models, ``verify`` with a textual report, and (V2) an
+HTML / Markdown *analysis card* via :meth:`AnalysisManifest.render` /
+:meth:`~AnalysisManifest.to_markdown`. Generic diagnostic auto-capture and
+manifest comparison remain future work.
 
 Fingerprint-v1 contract ("fp1")
 -------------------------------
@@ -51,6 +53,7 @@ import json
 import platform
 import struct
 from dataclasses import dataclass, field
+from html import escape as _esc
 from typing import Any
 
 import numpy as np
@@ -387,6 +390,30 @@ class AnalysisManifest:
                 out[f"model_{name}"] = "artifact_changed"
         return out
 
+    # -- rendering (V2): a human-facing "analysis card" ---------------------
+
+    def render(self, path: str | None = None, *, title: str | None = None,
+               verification: "VerifyResult | None" = None) -> str:
+        """Render the manifest as a self-contained HTML *analysis card*.
+
+        Returns the HTML string, and writes it to ``path`` if given. The card
+        shows only what the manifest actually recorded, so it cannot over-claim:
+        researcher decisions are labelled as authored (not tool-verified),
+        diagnostics as computed evidence, and fingerprints as verifiable identity
+        rather than content. Pass a :class:`VerifyResult` (from :meth:`verify`) to
+        include the graded verification table.
+        """
+        doc = _render_html(self, title=title, verification=verification)
+        if path is not None:
+            from pathlib import Path
+
+            Path(path).write_text(doc, encoding="utf-8")
+        return doc
+
+    def to_markdown(self, *, verification: "VerifyResult | None" = None) -> str:
+        """Render the manifest as a Markdown analysis card (Quarto/notebook)."""
+        return _render_markdown(self, verification=verification)
+
     def __repr__(self) -> str:
         return (f"AnalysisManifest(model={self.model.get('class')!r}, "
                 f"privacy={self.corpus.get('privacy')!r}, "
@@ -561,3 +588,214 @@ def _jsonable(value: Any, _allow_containers: bool = True):
     if _allow_containers and isinstance(value, dict):
         return {str(k): _jsonable(v) for k, v in value.items()}
     return _UNSERIALISABLE if not _allow_containers else str(value)
+
+
+# --------------------------------------------------------------------------
+# Rendering: the analysis card (V2)
+# --------------------------------------------------------------------------
+
+# Status -> (label, background colour). The verification table is colour-coded so
+# the exact/changed/unverifiable distinction reads at a glance and is never
+# collapsed into a single badge.
+_STATUS_STYLE = {
+    "exact": ("exact", "#e6f4ea", "#137333"),
+    "input_changed": ("input changed", "#fce8e6", "#c5221f"),
+    "artifact_changed": ("artifact changed", "#fce8e6", "#c5221f"),
+    "environment_changed": ("environment changed", "#fef7e0", "#b06000"),
+    "unverifiable": ("unverifiable", "#f1f3f4", "#5f6368"),
+}
+
+
+def _short(fp: dict | None) -> str:
+    if not fp or "digest" not in fp:
+        return "—"
+    d = fp["digest"]
+    keyed = " (keyed)" if fp.get("keyed") else ""
+    return f"{d[:12]}…{keyed}"
+
+
+def _kv_rows(pairs) -> str:
+    out = []
+    for k, v in pairs:
+        if v is None or v == {} or v == []:
+            continue
+        out.append(
+            f"<tr><th>{_esc(str(k))}</th><td>{_esc(str(v))}</td></tr>")
+    return "".join(out)
+
+
+def _render_html(m: "AnalysisManifest", *, title, verification) -> str:
+    model = m.model
+    corpus = m.corpus
+    title = title or f"Analysis card — {model.get('class', 'model')}"
+    parts: list[str] = []
+
+    # Header.
+    sub = f"K = {model.get('num_topics')} · topica {m.topica_version}"
+    if m.created:
+        sub += f" · {m.created}"
+    parts.append(f"<h1>{_esc(title)}</h1><p class='sub'>{_esc(sub)}</p>")
+    parts.append("<p class='note'>Generated from a topica analysis manifest. "
+                 "It shows only what the fit recorded: fingerprints and settings, "
+                 "not raw text.</p>")
+
+    # Fit.
+    fit_rows = _kv_rows([
+        ("model", model.get("class")),
+        ("topics (K)", model.get("num_topics")),
+        ("determinism", model.get("determinism")),
+        ("seed", model.get("seed")),
+    ])
+    fit_rows += _kv_rows(model.get("settings", {}).items())
+    fit_rows += _kv_rows(model.get("fit_settings", {}).items())
+    parts.append(f"<h2>Fit</h2><table>{fit_rows}</table>")
+
+    # Corpus (privacy-aware: only what is recorded).
+    c_rows = _kv_rows([
+        ("privacy", corpus.get("privacy")),
+        ("documents", corpus.get("num_docs")),
+        ("total tokens", corpus.get("total_tokens")),
+    ])
+    desc = corpus.get("description")
+    if desc:
+        c_rows += _kv_rows([("vocabulary size", desc.get("vocab_size"))])
+        length = desc.get("doc_length_summary", {})
+        if length:
+            c_rows += _kv_rows([("doc length (min/median/max)",
+                                 f"{length.get('min')} / {length.get('median')} / {length.get('max')}")])
+        c_rows += _kv_rows(desc.get("preprocessing", {}).items())
+    if corpus.get("fingerprint"):
+        c_rows += (f"<tr><th>content fingerprint</th><td class='fp'>"
+                   f"{_esc(_short(corpus['fingerprint']))}</td></tr>")
+    parts.append(f"<h2>Corpus</h2><table>{c_rows}</table>")
+
+    # Inputs (design matrices etc.) as fingerprints.
+    if m.inputs:
+        rows = []
+        for name, info in m.inputs.items():
+            cols = ", ".join(info.get("columns", [])) if isinstance(info, dict) else ""
+            rows.append(f"<tr><th>{_esc(name)}</th><td class='fp'>{_esc(_short(info))}</td>"
+                        f"<td>{_esc(cols)}</td></tr>")
+        parts.append("<h2>Inputs</h2><table>" + "".join(rows) + "</table>")
+
+    # Model output fingerprints.
+    ofp = model.get("output_fingerprints", {})
+    if ofp:
+        rows = []
+        for name, fp in ofp.items():
+            shape = "×".join(str(s) for s in fp.get("shape", []))
+            rows.append(f"<tr><th>{_esc(name)}</th><td class='fp'>{_esc(_short(fp))}</td>"
+                        f"<td>{_esc(shape)}</td></tr>")
+        parts.append("<h2>Model outputs</h2>"
+                     "<p class='note'>Fingerprints of the fitted matrices; "
+                     "verifiable identity, not the values.</p>"
+                     "<table>" + "".join(rows) + "</table>")
+
+    # Researcher decisions -- prominent, and clearly authored not verified.
+    if m.decisions:
+        items = []
+        for d in m.decisions:
+            who = f" — {_esc(str(d['author']))}" if d.get("author") else ""
+            items.append(f"<li><b>{_esc(str(d.get('key','')))}</b>: "
+                         f"{_esc(str(d.get('note','')))}{who}</li>")
+        parts.append("<h2>Researcher decisions</h2>"
+                     "<p class='note'>Authored by the researcher; recorded, not "
+                     "verified by topica.</p><ul>" + "".join(items) + "</ul>")
+
+    # Diagnostics -- computed evidence.
+    if m.diagnostics:
+        rows = _kv_rows([(d.get("name"), d.get("value")) for d in m.diagnostics])
+        parts.append("<h2>Computed evidence</h2>"
+                     "<p class='note'>Diagnostics recorded as evidence, not as "
+                     "substantive conclusions.</p><table>" + rows + "</table>")
+
+    # Verification (only if supplied).
+    if verification is not None:
+        rows = []
+        for fname, status in verification.fields.items():
+            label, bg, fg = _STATUS_STYLE.get(status, (status, "#f1f3f4", "#5f6368"))
+            rows.append(
+                f"<tr><th>{_esc(fname)}</th>"
+                f"<td><span class='pill' style='background:{bg};color:{fg}'>"
+                f"{_esc(label)}</span></td></tr>")
+        parts.append("<h2>Verification</h2>"
+                     "<p class='note'>Re-derived from a supplied corpus and model. "
+                     "Each field is graded on its own.</p>"
+                     "<table>" + "".join(rows) + "</table>")
+
+    # Environment.
+    parts.append("<h2>Environment</h2><table>"
+                 + _kv_rows(m.environment.items()) + "</table>")
+
+    parts.append(f"<p class='foot'>manifest schema {m.schema_version} · "
+                 f"fingerprints {FINGERPRINT_SPEC} ({HASH_ALGORITHM})</p>")
+
+    style = (
+        "body{font-family:system-ui,-apple-system,sans-serif;max-width:820px;"
+        "margin:2rem auto;padding:0 1rem;color:#202124;line-height:1.5;}"
+        "h1{margin-bottom:0;}h2{margin-top:1.8rem;border-bottom:1px solid #eee;"
+        "padding-bottom:.2rem;}.sub{color:#5f6368;margin-top:.2rem;}"
+        ".note{color:#5f6368;font-size:.9em;}"
+        "table{border-collapse:collapse;width:100%;}"
+        "th{text-align:left;padding:.25rem .6rem .25rem 0;color:#5f6368;"
+        "font-weight:500;vertical-align:top;white-space:nowrap;}"
+        "td{padding:.25rem 0;}.fp{font-family:ui-monospace,Menlo,monospace;}"
+        ".pill{padding:.1rem .5rem;border-radius:1rem;font-size:.85em;}"
+        ".foot{margin-top:2rem;color:#9aa0a6;font-size:.8em;}"
+    )
+    return (f"<!doctype html><html><head><meta charset='utf-8'>"
+            f"<title>{_esc(title)}</title><style>{style}</style></head>"
+            f"<body>{''.join(parts)}</body></html>")
+
+
+def _render_markdown(m: "AnalysisManifest", *, verification) -> str:
+    model = m.model
+    corpus = m.corpus
+    L = [f"# Analysis card — {model.get('class', 'model')}",
+         "",
+         f"K = {model.get('num_topics')} · topica {m.topica_version}"
+         + (f" · {m.created}" if m.created else ""),
+         "",
+         "_Generated from a topica analysis manifest: fingerprints and settings, "
+         "not raw text._", ""]
+
+    L += ["## Fit", ""]
+    for k, v in [("model", model.get("class")), ("topics (K)", model.get("num_topics")),
+                 ("determinism", model.get("determinism")), ("seed", model.get("seed"))]:
+        if v is not None:
+            L.append(f"- **{k}**: {v}")
+    for k, v in {**model.get("settings", {}), **model.get("fit_settings", {})}.items():
+        L.append(f"- {k}: {v}")
+
+    L += ["", "## Corpus", "",
+          f"- privacy: {corpus.get('privacy')}",
+          f"- documents: {corpus.get('num_docs')}",
+          f"- total tokens: {corpus.get('total_tokens')}"]
+    if corpus.get("fingerprint"):
+        L.append(f"- content fingerprint: `{_short(corpus['fingerprint'])}`")
+
+    ofp = model.get("output_fingerprints", {})
+    if ofp:
+        L += ["", "## Model outputs", ""]
+        for name, fp in ofp.items():
+            L.append(f"- {name}: `{_short(fp)}` ({'×'.join(str(s) for s in fp.get('shape', []))})")
+
+    if m.decisions:
+        L += ["", "## Researcher decisions", "",
+              "_Authored by the researcher; recorded, not verified._", ""]
+        for d in m.decisions:
+            L.append(f"- **{d.get('key','')}**: {d.get('note','')}")
+
+    if m.diagnostics:
+        L += ["", "## Computed evidence", ""]
+        for d in m.diagnostics:
+            L.append(f"- {d.get('name')}: {d.get('value')}")
+
+    if verification is not None:
+        L += ["", "## Verification", ""]
+        for fname, status in verification.fields.items():
+            L.append(f"- {fname}: **{status}**")
+
+    L += ["", f"_manifest schema {m.schema_version} · fingerprints "
+          f"{FINGERPRINT_SPEC} ({HASH_ALGORITHM})_"]
+    return "\n".join(L)

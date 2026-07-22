@@ -46,6 +46,19 @@ class says it may still replay), or `unverifiable` (nothing recorded to check
 against, a bounded component, or a fingerprint from a spec this build does not
 recognise).
 
+## The analysis card
+
+`record.render(path)` writes a self-contained HTML **analysis card**, and
+`record.to_markdown()` returns a Markdown version for a notebook or Quarto. The
+card shows only what the manifest recorded, so it cannot over-claim: researcher
+decisions are labelled as authored (not tool-verified), diagnostics as computed
+evidence, and fingerprints as verifiable identity rather than content. Pass a
+`VerifyResult` to include the graded verification table.
+
+```python
+record.render("analysis-card.html", verification=record.verify(corpus, model))
+```
+
 ## Reference
 
 ::: topica.record_fit
