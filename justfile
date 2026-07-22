@@ -75,10 +75,18 @@ build:
 docs:
     {{py}} -m mkdocs build --strict
 
-# Regenerate the model roster (README + docs) and the contributor model map from
-# python/topica/registry.py.
+# Renders python/topica/registry.py into the README roster and the model map.
+#
+# Regenerate the model roster + contributor model map.
 gen-tables:
     {{py}} scripts/gen_model_tables.py
+
+# Writes src/<snake>.rs, the binding, and a pytest skeleton; wires nothing in and
+# prints the checklist. Usage: `just new-model MyModel`.
+#
+# Scaffold the standard touchpoints for a new model.
+new-model name:
+    {{py}} scripts/new_model.py --name {{name}}
 
 # --- Aggregate gates -------------------------------------------------------
 

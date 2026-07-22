@@ -24,8 +24,8 @@ Open a tracking issue with `gh issue create` that states:
     reviewer verdicts and how any blockers were resolved.
   - **Conventions**: confirm `tests/test_naming_conventions.py` passes and note any
     reference-package aliases added.
-  - **Gates**: `cargo test --lib`, `pytest tests/ -q`, `mkdocs build --strict` all
-    green.
+  - **Gates**: `just test` (Rust core + feature-gated + pytest) and
+    `mkdocs build --strict` all green.
   - End the PR body with the repo's standard generated-with trailer if the repo uses
     one (check recent merged PRs).
 - Merge with `gh pr merge <n> --squash --delete-branch`, then sync and prune local
@@ -37,10 +37,14 @@ Open a tracking issue with `gh issue create` that states:
 
 These ship WITH the model, not in a follow-up:
 
-1. **README model table.** Add a row for the new model in the appropriate section
-   (count-based, structural/covariate, embedding-based, …), matching the existing
-   rows' one-line description style. If the model is validated against a named
-   reference, note it the way the other validated models do.
+1. **Registry entry (drives the generated tables).** Do NOT hand-edit the README
+   or docs roster tables — they are generated from `python/topica/registry.py`
+   (enforced by `test_registry.py`). Add a `ModelInfo` to `REGISTRY` (group,
+   brings, inference, determinism, one-line summary) AND an `ImplInfo` to `IMPL`
+   (source file, binding, shared machinery, Cargo feature, parity tests — its
+   paths are existence-checked in CI), then run `scripts/gen_model_tables.py` (or
+   `just gen-tables`) to regenerate the README roster and the contributor model
+   map (`docs/contributing/model-map.md`).
 2. **README acknowledgements.** If you read a permissively-licensed reference to
    match details, credit it in the acknowledgements list alongside the existing
    references.
@@ -62,9 +66,11 @@ User-facing prose follows the project's academic register: no em dashes, agent-l
 
 ## Final check before requesting merge
 
-- `cargo test --lib` — green (includes the new model's Rust test).
-- `pytest tests/ -q` — green (includes `tests/test_<model>.py` and the conventions
-  test).
+- `cargo test --workspace --lib` — green (includes the new model's Rust test; add
+  `--features embeddings,umap,tsne` for an embedding model).
+- `pytest tests/ -q` — green (includes `tests/test_<model>.py`, the conventions
+  test, and — once the model is registered — the scaffold-guard check that no
+  `SCAFFOLD` marker remains).
 - `mkdocs build --strict` — clean (the docs edits build).
 - The parity check under `parity/` passes when the reference is present and skips
   cleanly when it is not.

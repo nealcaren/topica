@@ -86,7 +86,7 @@ Prompt template (fill the `<…>` slots):
 >    realistic-density inputs — a toy or all-sparse matrix can hide the gap (NMF was
 >    ~1.3x on sparse text but ~1.6x on near-dense X). If the bar is missed, a
 >    perf-optimization iteration is a normal, expected sub-phase — flag it, don't ship.
-> 5. **Gates.** Run `cargo test --lib` and `pytest tests/ -q`; report pass/fail.
+> 5. **Gates.** Run `cargo test --workspace --lib` and `pytest tests/ -q`; report pass/fail.
 >
 > Deliverable (your final message, a raw report): the parity table with the noise
 > floor, the determinism result, the speed table, gate results, and a clear verdict

@@ -283,6 +283,30 @@ Use `GSDMM` (`src/gsdmm.rs` + the `GSDMM` block in `src/python/mod.rs`) as the
 reference template. It is small, self-contained, and exercises the whole
 contract. Work in this order.
 
+### Scaffold the touchpoints first
+
+To avoid missing one of the coordinated edits below, generate the standard files
+from a template:
+
+```bash
+just new-model MyModel          # or: python scripts/new_model.py --name MyModel
+```
+
+This writes `src/<snake>.rs` (algorithm + `Estimator` trait + `#[cfg(test)]`
+stubs), `src/python/<snake>.rs` (the binding, following the GSDMM/BTM shape), and
+`tests/test_<snake>.py` (a pytest skeleton), each stamped with a
+`SCAFFOLD(<Name>)` marker, and prints the wiring checklist filled in for your
+model. It deliberately **wires nothing** into the shared files (`lib.rs`,
+`src/python/mod.rs`, `__init__.py`, the registry, …), so an un-finished model is
+inert — not compiled, not exported, not registered, and so unable to ship or
+fake-pass conformance. Work through B0–B8 to implement and wire it in. The
+generated files compile as-is (`fit` is a `todo!()`), so build early and often.
+
+`tests/test_scaffold_guard.py` is the backstop: once your model is in the
+registry, it fails if any `SCAFFOLD(<Name>)` marker still remains in its files, so
+you cannot land a half-finished placeholder. Search for leftovers with
+`grep -rn 'SCAFFOLD(MyModel)' src tests`.
+
 ### B0. Decide the family and what you can reuse
 
 - **Count-based (Gibbs or variational EM)** over a `Corpus`: lean on
