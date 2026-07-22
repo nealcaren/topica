@@ -15,6 +15,7 @@ from topica.manifest import (
     SCHEMA,
     SCHEMA_VERSION,
     AnalysisManifest,
+    ManifestDiff,
     fingerprint_array,
     fingerprint_corpus,
     record_fit,
@@ -236,6 +237,73 @@ def test_manifest_is_valid_json(fitted):
     corpus, model = fitted
     d = json.loads(record_fit(model, corpus, iters=50).to_json())
     assert d["schema"] == SCHEMA and d["fingerprint_spec"] == FINGERPRINT_SPEC
+
+
+# -- comparison: two manifests (V2) ----------------------------------------
+
+
+def test_compare_identical_runs(fitted):
+    corpus, model = fitted
+    a = record_fit(model, corpus, prevalence=X, content_fingerprint=True, iters=50)
+    b = record_fit(model, corpus, prevalence=X, content_fingerprint=True, iters=50)
+    diff = a.compare(b)
+    assert isinstance(diff, ManifestDiff)
+    assert diff.same
+    assert all(v == "same" for v in diff.fields.values())
+
+
+def test_compare_localizes_a_changed_model(fitted):
+    corpus, model = fitted
+    a = record_fit(model, corpus, iters=50)
+    other = topica.LDA(4, seed=7)   # different K
+    other.fit(corpus, iters=50)
+    b = record_fit(other, corpus, iters=50)
+    diff = a.compare(b)
+    assert not diff.same
+    assert diff.fields["num_topics"] == "changed"
+    assert diff.fields["model_topic_word"] == "changed"
+    assert diff.fields["corpus_counts"] == "same"     # same corpus
+
+
+def test_compare_localizes_a_changed_input(fitted):
+    corpus, model = fitted
+    a = record_fit(model, corpus, prevalence=X, iters=50)
+    b = record_fit(model, corpus, prevalence=X * 2 + 1, iters=50)  # different design matrix
+    diff = a.compare(b)
+    assert diff.fields["input_prevalence"] == "changed"
+    assert diff.fields["model_topic_word"] == "same"
+
+
+def test_compare_only_in_one(fitted):
+    corpus, model = fitted
+    with_fp = record_fit(model, corpus, content_fingerprint=True, iters=50)
+    without = record_fit(model, corpus, iters=50)
+    assert with_fp.compare(without).fields["corpus_fingerprint"] == "only_in_a"
+    assert without.compare(with_fp).fields["corpus_fingerprint"] == "only_in_b"
+
+
+def test_compare_incomparable_across_specs(fitted):
+    corpus, model = fitted
+    a = record_fit(model, corpus, content_fingerprint=True, iters=50)
+    b = record_fit(model, corpus, content_fingerprint=True, iters=50)
+    b.corpus["fingerprint"]["spec"] = "fp99"   # a future spec
+    assert a.compare(b).fields["corpus_fingerprint"] == "incomparable"
+
+
+def test_compare_survives_round_trip(tmp_path, fitted):
+    corpus, model = fitted
+    a = record_fit(model, corpus, prevalence=X, content_fingerprint=True, iters=50)
+    p = tmp_path / "a.json"
+    a.save(str(p))
+    reloaded = AnalysisManifest.load(str(p))
+    assert a.compare(reloaded).same
+
+
+def test_compare_summary_is_not_a_bare_bool(fitted):
+    corpus, model = fitted
+    a = record_fit(model, corpus, iters=50)
+    diff = a.compare(a)
+    assert isinstance(diff.fields, dict) and "same" in diff.summary()
 
 
 # -- rendering: the analysis card (V2) -------------------------------------

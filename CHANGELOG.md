@@ -8,6 +8,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **Manifest comparison**: `AnalysisManifest.compare(other)` diffs two manifests
+  directly (no corpus or model needed) and returns a `ManifestDiff` reporting per
+  field `same` / `changed` / `only_in_a` / `only_in_b` / `incomparable` — so you
+  can see whether two runs used the same corpus, model, and inputs, or what
+  changed between them.
 - **Analysis card rendering** for the manifest: `AnalysisManifest.render(path)`
   writes a self-contained HTML card and `.to_markdown()` returns a Markdown
   version (Quarto/notebook). The card renders only what the manifest recorded, so
