@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Pre-push hook: run the preflight gate (fmt + clippy + generated-file checks)
+# so a push cannot land a red CI-lint. Enabled via `core.hooksPath = .githooks`.
+# Bypass in a pinch with:  git push --no-verify
+exec "$(git rev-parse --show-toplevel)/scripts/preflight.sh"
