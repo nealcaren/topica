@@ -92,8 +92,8 @@ Column meanings:
 
 | Model | Source | Binding | Core / family | Feature | Validation |
 |---|---|---|---|---|---|
-| `BERTopic` | `src/bertopic.rs` | `src/python/mod.rs` | embedding clustering (cluster.rs, reduce.rs, represent.rs) | `embeddings` | `parity/bertopic_gold.py` |
-| `Top2Vec` | `src/top2vec.rs` | `src/python/mod.rs` | embedding clustering (cluster.rs, reduce.rs) | `embeddings` | `parity/top2vec_gold.py`, `parity/top2vec_compare.py` |
+| `BERTopic` | `src/bertopic.rs` | `src/python/embedding_cluster.rs` | embedding clustering (cluster.rs, reduce.rs, represent.rs) | `embeddings` | `parity/bertopic_gold.py` |
+| `Top2Vec` | `src/top2vec.rs` | `src/python/embedding_cluster.rs` | embedding clustering (cluster.rs, reduce.rs) | `embeddings` | `parity/top2vec_gold.py`, `parity/top2vec_compare.py` |
 | `ETM` | `src/etm.rs` | `src/python/mod.rs` | variational EM over word embeddings (ctm.rs) | default | `parity/etm_gold.py` |
 | `IdealPointTM` | `src/idealpoint.rs` | `src/python/idealpoint.rs` | variational EM + ideal-point head | default | `tests/test_idealpoint.py`, `tests/test_idealpoint_counts.py` |
 | `IdealPointSentenceTM` | `src/sentence_ideal.rs` | `src/python/sentence_ideal.rs` | Gaussian-cluster EM over embeddings | default | `tests/test_sentence_ideal.py` |
