@@ -62,6 +62,7 @@ SCHEMA = "topica.manifest"
 SCHEMA_VERSION = 1
 FINGERPRINT_SPEC = "fp1"
 HASH_ALGORITHM = "blake2b-256"
+BUNDLE_VERSION = 1
 _DIGEST_SIZE = 32
 _CANONICAL_NAN = 0x7FF8000000000000
 
@@ -474,6 +475,108 @@ class AnalysisManifest:
         """Render the manifest as a Markdown analysis card (Quarto/notebook)."""
         return _render_markdown(self, verification=verification)
 
+    # -- content-addressed bundle (V2) ------------------------------------
+
+    def bundle(self, path: str, *, model=None, corpus=None,
+               include_model: bool = True, include_corpus: bool = False) -> str:
+        """Write a self-contained, content-addressed bundle (a ``.zip``).
+
+        The bundle packages this manifest with the saved artifacts as one
+        shareable, self-verifying unit::
+
+            manifest.json            this manifest, plus artifact references
+            artifacts/<digest>.tt    model.save() / corpus.save(), named by hash
+
+        Each artifact's file name is its BLAKE2b digest, and the manifest's
+        ``model`` / ``corpus`` blocks gain an ``artifact`` reference, so
+        :meth:`load_bundle` can detect a corrupt bundle or one whose artifacts no
+        longer match the manifest. This is **integrity / content-addressing**, not
+        authenticity: it does not detect a fully rewritten bundle (artifact +
+        digest + reference all changed together) — that needs a signature (#404).
+
+        Before writing, the supplied ``model`` / ``corpus`` are checked against
+        this manifest's recorded fingerprints; a mismatch (the wrong fit) raises,
+        so a bundle's artifacts always match the analysis it documents.
+
+        ``include_corpus`` is opt-in and **sensitive**: a bundled corpus embeds
+        the raw tokens (a hash is not anonymisation). Pass the fitted ``model`` /
+        ``corpus`` objects to bundle them (the manifest itself holds only
+        fingerprints, not the objects). The *file* digest here proves "this exact
+        saved file"; it is distinct from the corpus *content* fingerprint, which
+        proves corpus identity across save-format versions.
+        """
+        import copy
+        import zipfile
+
+        # Bind the artifacts to this manifest: refuse to bundle a model/corpus
+        # whose recorded fingerprints do not match (catches passing the wrong fit).
+        check = self.verify(corpus if include_corpus else None,
+                            model if include_model else None)
+        mismatched = sorted(k for k, v in check.fields.items()
+                            if v in ("input_changed", "artifact_changed"))
+        if mismatched:
+            raise ValueError(
+                f"the supplied model/corpus does not match this manifest "
+                f"(mismatched: {mismatched}); bundle the fit the manifest records")
+
+        d = copy.deepcopy(self.to_dict())
+        d["bundle"] = {"version": BUNDLE_VERSION, "hash_algorithm": HASH_ALGORITHM}
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+            if include_model:
+                d["model"]["artifact"] = _add_artifact(zf, model, "model")
+            if include_corpus:
+                ref = _add_artifact(zf, corpus, "corpus")
+                ref["sensitive"] = True
+                d["corpus"]["artifact"] = ref
+            zf.writestr("manifest.json",
+                        json.dumps(d, indent=2, sort_keys=True, ensure_ascii=False))
+        return path
+
+    @classmethod
+    def load_bundle(cls, path: str) -> "AnalysisManifest":
+        """Load a bundle written by :meth:`bundle`, checking artifact integrity.
+
+        Recomputes each bundled artifact's digest and checks it against both the
+        content-addressed file name and the manifest reference; a corrupt bundle
+        (or one whose artifacts no longer match the manifest) raises ``ValueError``.
+        This is an integrity check, not authenticity -- see :meth:`bundle`. Returns
+        the manifest; use :meth:`extract_bundle` to recover the artifacts.
+        """
+        import zipfile
+
+        with zipfile.ZipFile(path) as zf:
+            d = _read_bundle_manifest(zf)
+            for role in ("model", "corpus"):
+                art = d.get(role, {}).get("artifact")
+                if art:
+                    _verify_artifact(zf.read(art["path"]), art)
+        return cls.from_dict(d)
+
+    @staticmethod
+    def extract_bundle(path: str, dest_dir: str) -> dict:
+        """Extract a bundle's artifacts to ``dest_dir`` (checking integrity).
+
+        Returns ``{"model": <path or None>, "corpus": <path or None>}``; reload
+        each with the matching class, e.g. ``topica.LDA.load(paths["model"])``.
+        Validates the bundle version and artifact digests, like :meth:`load_bundle`.
+        """
+        import zipfile
+        from pathlib import Path
+
+        out = {"model": None, "corpus": None}
+        with zipfile.ZipFile(path) as zf:
+            d = _read_bundle_manifest(zf)
+            for role in ("model", "corpus"):
+                art = d.get(role, {}).get("artifact")
+                if not art:
+                    continue
+                data = zf.read(art["path"])
+                _verify_artifact(data, art)
+                target = Path(dest_dir) / f"{role}.tt"
+                target.write_bytes(data)
+                out[role] = str(target)
+        return out
+
     def __repr__(self) -> str:
         return (f"AnalysisManifest(model={self.model.get('class')!r}, "
                 f"privacy={self.corpus.get('privacy')!r}, "
@@ -495,6 +598,62 @@ def _cmp_value(a, b) -> str:
     if b_has and not a_has:
         return "only_in_b"
     return "same" if a == b else "changed"
+
+
+def _hash_bytes(data: bytes) -> str:
+    """BLAKE2b-256 of raw bytes -- the file digest used for bundle artifacts.
+
+    Distinct from the fingerprint-v1 encoding (which is length-prefixed and
+    domain-tagged for structured inputs); a saved artifact is just its bytes.
+    """
+    return hashlib.blake2b(data, digest_size=_DIGEST_SIZE).hexdigest()
+
+
+def _save_to_bytes(obj, role: str) -> bytes:
+    import os
+    import tempfile
+
+    if obj is None:
+        raise ValueError(f"include_{role}=True requires the {role}= object to bundle it")
+    fd, tmp = tempfile.mkstemp(suffix=".tt")
+    os.close(fd)
+    try:
+        obj.save(tmp)
+        with open(tmp, "rb") as fh:
+            return fh.read()
+    finally:
+        os.unlink(tmp)
+
+
+def _add_artifact(zf, obj, role: str) -> dict:
+    data = _save_to_bytes(obj, role)
+    digest = _hash_bytes(data)
+    arc = f"artifacts/{digest}.tt"
+    if arc not in zf.namelist():  # dedupe if model and corpus somehow coincide
+        zf.writestr(arc, data)
+    return {"path": arc, "digest": digest, "algo": HASH_ALGORITHM}
+
+
+def _verify_artifact(data: bytes, art: dict) -> None:
+    if art.get("algo") != HASH_ALGORITHM:
+        raise ValueError(f"unsupported artifact hash algorithm {art.get('algo')!r}")
+    digest = _hash_bytes(data)
+    # Content-addressed: the path must be exactly artifacts/<digest>.tt, and the
+    # reference digest must agree with the recomputed one.
+    if digest != art.get("digest") or art.get("path") != f"artifacts/{digest}.tt":
+        raise ValueError(
+            f"bundle artifact integrity check failed for {art.get('path')!r} "
+            f"(corrupt bundle, or artifacts do not match the manifest)")
+
+
+def _read_bundle_manifest(zf) -> dict:
+    """Read + validate the bundle's manifest.json (shared by load/extract)."""
+    d = json.loads(zf.read("manifest.json").decode("utf-8"))
+    version = d.get("bundle", {}).get("version")
+    if version != BUNDLE_VERSION:
+        raise ValueError(
+            f"unsupported bundle version {version!r} (this build reads {BUNDLE_VERSION})")
+    return d
 
 
 def _cmp_fp(a: dict | None, b: dict | None) -> str:

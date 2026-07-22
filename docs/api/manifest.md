@@ -69,6 +69,28 @@ b = topica.AnalysisManifest.load("run-b.json")
 print(a.compare(b).summary())
 ```
 
+## Bundling the analysis
+
+`record.bundle(path, model=model, corpus=corpus)` writes a self-contained,
+**content-addressed** `.zip`: the manifest plus the saved artifacts, each file
+named by its own hash, as one shareable, self-verifying unit.
+
+```python
+record.bundle("analysis.zip", model=model)                 # manifest + model
+record.bundle("analysis.zip", model=model, corpus=corpus, include_corpus=True)
+```
+
+`bundle` refuses to package a model or corpus whose fingerprints do not match the
+manifest (guarding against bundling the wrong fit). `AnalysisManifest.load_bundle(path)`
+reloads the manifest and **checks every artifact's bytes** against its
+content-addressed name and the manifest reference, raising on a corrupt bundle or
+artifacts that no longer match. This is an integrity / content-addressing check,
+not authenticity — detecting a *fully rewritten* bundle (artifact, digest, and
+reference all changed together) needs a signature, which is tracked separately.
+`AnalysisManifest.extract_bundle(path, dest)` writes the artifacts out so you can
+reload them (`topica.LDA.load(...)`). Bundling the corpus is opt-in and
+**sensitive** — it embeds the raw tokens.
+
 ## The analysis card
 
 `record.render(path)` writes a self-contained HTML **analysis card**, and
