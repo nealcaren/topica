@@ -241,7 +241,83 @@ def test_missing_covariates_and_labels_raises():
     docs, _ = _corpus()
     m = topica.Scholar(2, seed=1)
     with pytest.raises(ValueError):
-        m.fit(docs, iters=10)  # neither covariates nor labels
+        m.fit(docs, iters=10)  # neither covariates, labels, nor content
+
+
+def _content_corpus(n_per_group=60, dlen=25, seed=0, marker="wMARK", marker_frac=0.35):
+    """Two content groups; group 1 heavily over-uses a marker word regardless of topic.
+    beta_c for group 1 should place its largest deviation on the marker."""
+    rng = np.random.default_rng(seed)
+    docs, TC = [], []
+    for g in range(2):
+        for _ in range(n_per_group):
+            doc = []
+            for _ in range(dlen):
+                if g == 1 and rng.random() < marker_frac:
+                    doc.append(marker)
+                elif rng.random() < 0.5:
+                    doc.append(f"a{int(rng.integers(4))}")
+                else:
+                    doc.append(f"b{int(rng.integers(4))}")
+            docs.append(doc)
+            TC.append([1.0, 0.0] if g == 0 else [0.0, 1.0])
+    return docs, np.array(TC), marker
+
+
+def test_content_recovers_word_deviation():
+    docs, TC, marker = _content_corpus(seed=0)
+    m = topica.Scholar(2, content_names=["g0", "g1"], seed=1)
+    m.fit(docs, content=TC, iters=200)
+    assert m.content_names == ["g0", "g1"]
+    eff = m.content_effects
+    assert eff.shape[0] == 2
+    mi = list(m.vocabulary).index(marker)
+    # Group-1 marker deviation exceeds group 0, and is the top group-1 deviation.
+    assert eff[1][mi] > eff[0][mi]
+    assert int(eff[1].argmax()) == mi
+
+
+def test_content_transform_and_interactions():
+    docs, TC, _ = _content_corpus(seed=1)
+    m = topica.Scholar(2, interactions=True, seed=2)
+    m.fit(docs, content=TC, iters=60)
+    th = m.transform(docs[:5], content=TC[:5])
+    assert th.shape == (5, 2)
+    np.testing.assert_allclose(th.sum(axis=1), 1.0, atol=1e-6)
+
+
+def test_all_three_roles_compose():
+    docs, TC, _ = _content_corpus(seed=2)
+    y = ["c" + str(int(t[1])) for t in TC]
+    m = topica.Scholar(2, seed=3)
+    m.fit(docs, covariates=TC, labels=y, content=TC, iters=200)
+    assert m.covariate_effects.shape == (2, 2)
+    assert m.content_effects.shape[0] == 2
+    assert m.classes == ["c0", "c1"]
+    acc = np.mean([a == b for a, b in zip(m.predict(docs, covariates=TC, content=TC), y)])
+    assert acc > 0.8
+
+
+def test_content_save_load_roundtrip(tmp_path):
+    docs, TC, _ = _content_corpus(seed=3)
+    m = topica.Scholar(2, interactions=True, seed=1)
+    m.fit(docs, content=TC, iters=80)
+    p = tmp_path / "scholar_content.topica"
+    m.save(str(p))
+    m2 = topica.Scholar.load(str(p))
+    assert np.array_equal(m.content_effects, m2.content_effects)
+    assert np.array_equal(m.transform(docs[:4], content=TC[:4]),
+                          m2.transform(docs[:4], content=TC[:4]))
+
+
+def test_content_determinism():
+    docs, TC, _ = _content_corpus(seed=0)
+    a = topica.Scholar(2, seed=7)
+    a.fit(docs, content=TC, iters=60)
+    b = topica.Scholar(2, seed=7)
+    b.fit(docs, content=TC, iters=60)
+    assert np.array_equal(a.content_effects, b.content_effects)
+    assert np.array_equal(a.topic_word, b.topic_word)
 
 
 def test_covariate_row_mismatch_raises():

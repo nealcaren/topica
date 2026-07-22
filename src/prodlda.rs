@@ -342,6 +342,14 @@ pub(crate) struct Grad {
 }
 
 impl Grad {
+    /// The `w_mu` encoder-head gradient block. Exposed `pub(crate)` so `scholar`'s
+    /// content-interaction FD test can confirm the interaction's gradient into `theta`
+    /// reaches the encoder.
+    #[cfg(test)]
+    pub(crate) fn w_mu(&self) -> &[f64] {
+        &self.w_mu
+    }
+
     pub(crate) fn zeros(w: &Weights) -> Self {
         Grad {
             w1: vec![0.0; w.w1.len()],
@@ -571,6 +579,29 @@ pub(crate) struct Batch<'a> {
     /// (`src/scholar.rs`), which shifts topic prevalence by document metadata. Only
     /// the mean varies; the prior variance stays the shared Laplace `prior_var`.
     pub(crate) prior_mus: Option<&'a [Vec<f64>]>,
+}
+
+/// SCHOLAR content (topic-covariate) decoder deviation (`src/scholar.rs`). The
+/// unnormalized decoder logit gains `sum_c beta_c[c]*TC[i][c]` (per-covariate word
+/// shifts, the SAGE mechanism) and, when `beta_ci` is set, the topic-covariate
+/// interaction `sum_{t,c} beta_ci[t,c]*theta_do[i][t]*TC[i][c]`. `None` on the shared
+/// `batch_forward`/`batch_backward` leaves the decoder untouched (ProdLDA/InfoCTM and
+/// the covariate/label Scholar paths stay byte-identical).
+pub(crate) struct ContentFwd<'a> {
+    /// Topic-covariate rows, batch order, `n x c`.
+    pub(crate) tc: &'a [Vec<f64>],
+    /// Per-covariate word deviations `beta_c`, `c x V` row-major.
+    pub(crate) beta_c: &'a [f64],
+    /// Topic-covariate interaction weights `beta_ci`, `(K*c) x V` row-major, or `None`.
+    pub(crate) beta_ci: Option<&'a [f64]>,
+    /// Number of topic covariates `c`.
+    pub(crate) c: usize,
+}
+
+/// Gradient accumulators for the content deviation, mirroring [`ContentFwd`].
+pub(crate) struct ContentGrad {
+    pub(crate) beta_c: Vec<f64>,
+    pub(crate) beta_ci: Option<Vec<f64>>,
 }
 
 /// Caches retained from the batch forward for the backward pass.
@@ -826,6 +857,7 @@ pub(crate) fn batch_forward(
     alpha: &[f64],
     opts: &AvitmOptions,
     batch: &Batch,
+    content: Option<&ContentFwd>,
 ) -> (f64, BatchCache, [(Vec<f64>, Vec<f64>); 3]) {
     let (k, v) = (w.k, w.v);
     let n = batch.xns.len();
@@ -930,6 +962,37 @@ pub(crate) fn batch_forward(
                 let base = t * v;
                 for j in 0..v {
                     row[j] += w_t * w.beta[base + j];
+                }
+            }
+        }
+        // SCHOLAR content deviation: per-covariate word shifts (+ optional
+        // topic-covariate interactions on theta_do).
+        if let Some(ct) = content {
+            let tc_i = &ct.tc[i];
+            for (cc, &tcv) in tc_i.iter().enumerate().take(ct.c) {
+                if tcv != 0.0 {
+                    let base = cc * v;
+                    for j in 0..v {
+                        row[j] += ct.beta_c[base + j] * tcv;
+                    }
+                }
+            }
+            if let Some(bci) = ct.beta_ci {
+                for t in 0..k {
+                    let w_t = theta_do[i][t];
+                    if w_t == 0.0 {
+                        continue;
+                    }
+                    for (cc, &tcv) in tc_i.iter().enumerate().take(ct.c) {
+                        if tcv == 0.0 {
+                            continue;
+                        }
+                        let coef = w_t * tcv;
+                        let base = (t * ct.c + cc) * v;
+                        for j in 0..v {
+                            row[j] += bci[base + j] * coef;
+                        }
+                    }
                 }
             }
         }
@@ -1069,6 +1132,7 @@ pub(crate) fn batch_backward(
     g: &mut Grad,
     mut d_prior_mu: Option<&mut [Vec<f64>]>,
     dtheta_extra: Option<&[Vec<f64>]>,
+    content: Option<(&ContentFwd, &mut ContentGrad)>,
 ) {
     let (h, k, v) = (w.hidden, w.k, w.v);
     let n = batch.xns.len();
@@ -1089,7 +1153,13 @@ pub(crate) fn batch_backward(
     }
     let dlogit_raw = BatchNorm::backward(&dlogit, &c.bn_dec);
 
-    // logit_raw = theta_do . beta.
+    let (content_fwd, mut content_grad): (Option<&ContentFwd>, Option<&mut ContentGrad>) =
+        match content {
+            Some((f, g)) => (Some(f), Some(g)),
+            None => (None, None),
+        };
+
+    // logit_raw = theta_do . beta  (+ SCHOLAR content deviation).
     let mut dtheta_do = vec![vec![0.0; k]; n];
     for i in 0..n {
         for t in 0..k {
@@ -1100,7 +1170,38 @@ pub(crate) fn batch_backward(
                 acc += dl * w.beta[base + j];
                 g.beta[base + j] += c.theta_do[i][t] * dl;
             }
+            // Content interaction beta_ci[t,c]*theta_do[i][t]*tc[i][c]: adds to both
+            // dtheta_do (through theta_do) and the beta_ci gradient.
+            if let (Some(cf), Some(cg)) = (content_fwd, content_grad.as_deref_mut()) {
+                if let (Some(bci), Some(gci)) = (cf.beta_ci, cg.beta_ci.as_deref_mut()) {
+                    let tc_i = &cf.tc[i];
+                    for (cc, &tcv) in tc_i.iter().enumerate().take(cf.c) {
+                        if tcv == 0.0 {
+                            continue;
+                        }
+                        let cbase = (t * cf.c + cc) * v;
+                        for j in 0..v {
+                            let dl = dlogit_raw[i][j];
+                            acc += dl * bci[cbase + j] * tcv;
+                            gci[cbase + j] += c.theta_do[i][t] * tcv * dl;
+                        }
+                    }
+                }
+            }
             dtheta_do[i][t] = acc;
+        }
+        // Content main deviation beta_c[c]*tc[i][c]: gradient independent of the topic.
+        if let (Some(cf), Some(cg)) = (content_fwd, content_grad.as_deref_mut()) {
+            let tc_i = &cf.tc[i];
+            for (cc, &tcv) in tc_i.iter().enumerate().take(cf.c) {
+                if tcv == 0.0 {
+                    continue;
+                }
+                let cbase = cc * v;
+                for j in 0..v {
+                    cg.beta_c[cbase + j] += dlogit_raw[i][j] * tcv;
+                }
+            }
         }
     }
 
@@ -1617,7 +1718,7 @@ pub fn fit_avitm<R: Rng>(
             };
 
             let (loss, cache, stats) = batch_forward(
-                &w, &bn_mu, &bn_lv, &bn_dec, &prior_mu, &prior_var, &alpha_vec, &opts, &batch,
+                &w, &bn_mu, &bn_lv, &bn_dec, &prior_mu, &prior_var, &alpha_vec, &opts, &batch, None,
             );
             bn_mu.update_running(&stats[0].0, &stats[0].1);
             bn_lv.update_running(&stats[1].0, &stats[1].1);
@@ -1626,6 +1727,7 @@ pub fn fit_avitm<R: Rng>(
             let mut g = Grad::zeros(&w);
             batch_backward(
                 &w, &prior_mu, &prior_var, &alpha_vec, &opts, &batch, &cache, &mut g, None, None,
+                None,
             );
             g.scale(1.0 / n as f64);
             opt.step(&mut w, &g);
@@ -1715,7 +1817,7 @@ mod tests {
         let bn_lv = BatchNorm::new(w.k);
         let bn_dec = BatchNorm::new(w.v);
         batch_forward(
-            w, &bn_mu, &bn_lv, &bn_dec, prior_mu, prior_var, alpha, opts, batch,
+            w, &bn_mu, &bn_lv, &bn_dec, prior_mu, prior_var, alpha, opts, batch, None,
         )
         .0
     }
@@ -1777,11 +1879,11 @@ mod tests {
         let bn_lv = BatchNorm::new(k);
         let bn_dec = BatchNorm::new(v);
         let (_, cache, _) = batch_forward(
-            &w0, &bn_mu, &bn_lv, &bn_dec, &prior_mu, &prior_var, &alpha, &opts, &batch,
+            &w0, &bn_mu, &bn_lv, &bn_dec, &prior_mu, &prior_var, &alpha, &opts, &batch, None,
         );
         let mut g = Grad::zeros(&w0);
         batch_backward(
-            &w0, &prior_mu, &prior_var, &alpha, &opts, &batch, &cache, &mut g, None, None,
+            &w0, &prior_mu, &prior_var, &alpha, &opts, &batch, &cache, &mut g, None, None, None,
         );
 
         let fd = 1e-6;

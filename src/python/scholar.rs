@@ -19,13 +19,15 @@ fn extract_labels(y: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
     ))
 }
 
-/// SCHOLAR (Card, Tan & Smith 2018): a ProdLDA/AVITM VAE with document metadata.
-/// Prior (prevalence) covariates shift the document-topic prior mean,
-/// `mu_0 = W . covariates`, so a covariate that co-occurs with a topic raises that
-/// topic's prevalence (the neural analog of STM/DMR prevalence; `covariate_effects`
-/// is the covariate-by-topic matrix). Supervised `labels` add a softmax classifier
-/// off `theta` trained jointly, shaping the topics to be predictive (neural sLDA;
-/// `predict`/`predict_proba`/`classes`). Built on topica's ProdLDA backbone.
+/// SCHOLAR (Card, Tan & Smith 2018): a ProdLDA/AVITM VAE with document metadata in
+/// three roles. Prior (prevalence) `covariates` shift the topic-prior mean, so a
+/// covariate that co-occurs with a topic raises its prevalence (neural STM/DMR
+/// prevalence; `covariate_effects`). Supervised `labels` add a softmax classifier off
+/// `theta`, shaping the topics to be predictive (neural sLDA;
+/// `predict`/`predict_proba`/`classes`). Content (topic-covariate) `content` adds
+/// per-covariate word deviations to the decoder, so the same topic is worded
+/// differently across groups (neural SAGE; `content_effects`). All three compose.
+/// Built on topica's ProdLDA backbone.
 #[pyclass(module = "topica")]
 pub struct Scholar {
     num_topics: usize,
@@ -37,9 +39,14 @@ pub struct Scholar {
     l2_prior_reg: f64,
     convergence_tol: f64,
     seed: u64,
+    l1_content_reg: f64,
+    interactions: bool,
     // Covariates optionally supplied at construction (else at fit).
     covariates: Option<Vec<Vec<f64>>>,
     covariate_names: Option<Vec<String>>,
+    // Content (topic-covariate) covariates optionally supplied at construction.
+    content: Option<Vec<Vec<f64>>>,
+    content_names: Option<Vec<String>>,
     // Sorted unique class labels (empty when fit without labels), the order of
     // `predict_proba` columns and `classes`.
     classes: Vec<String>,
@@ -62,6 +69,12 @@ struct ScholarState {
     seed: u64,
     covariate_names: Vec<String>,
     #[serde(default)]
+    content_names: Vec<String>,
+    #[serde(default)]
+    l1_content_reg: f64,
+    #[serde(default)]
+    interactions: bool,
+    #[serde(default)]
     classes: Vec<String>,
     fitted: bool,
     topic_names: Vec<String>,
@@ -81,6 +94,13 @@ struct ScholarState {
     bc: Option<Vec<f64>>,
     #[serde(default)]
     n_labels: Option<usize>,
+    // Content decoder deviations (empty when fit without content covariates).
+    #[serde(default)]
+    beta_c: Option<Vec<f64>>,
+    #[serde(default)]
+    beta_ci: Option<Vec<f64>>,
+    #[serde(default)]
+    n_topic_covars: Option<usize>,
     // Base VAE weights.
     w_v: Option<usize>,
     w_e: Option<usize>,
@@ -166,6 +186,62 @@ impl Scholar {
         }
         Ok(pcs)
     }
+
+    /// Resolve the content (topic-covariate) matrix for this call: prefer the one
+    /// passed here, else the one given at construction; validate row count and width.
+    fn resolve_content(
+        &self,
+        provided: Option<&Bound<'_, PyAny>>,
+        num_docs: usize,
+    ) -> PyResult<Vec<Vec<f64>>> {
+        let tcs = match provided {
+            Some(obj) => parse_features(obj)?,
+            None => self.content.clone().ok_or_else(|| {
+                PyValueError::new_err(
+                    "content is required: pass content= to Scholar(...) or to fit()",
+                )
+            })?,
+        };
+        if tcs.len() != num_docs {
+            return Err(PyValueError::new_err(format!(
+                "content has {} rows but there are {num_docs} documents",
+                tcs.len()
+            )));
+        }
+        if tcs.is_empty() || tcs[0].is_empty() {
+            return Err(PyValueError::new_err(
+                "content must have at least one column",
+            ));
+        }
+        let width = tcs[0].len();
+        if tcs.iter().any(|r| r.len() != width) {
+            return Err(PyValueError::new_err(
+                "all content rows must have the same number of columns",
+            ));
+        }
+        Ok(tcs)
+    }
+
+    /// Resolve content for a prediction call: empty rows when the model was fit
+    /// without content, else the parsed matrix validated to the fitted width.
+    fn pred_content(
+        &self,
+        content: Option<&Bound<'_, PyAny>>,
+        num_docs: usize,
+    ) -> PyResult<Vec<Vec<f64>>> {
+        let n_tc = self.model.as_ref().map(|m| m.n_topic_covars).unwrap_or(0);
+        if n_tc == 0 {
+            return Ok(vec![Vec::new(); num_docs]);
+        }
+        let tcs = self.resolve_content(content, num_docs)?;
+        if tcs[0].len() != n_tc {
+            return Err(PyValueError::new_err(format!(
+                "content has {} columns but the model was fit with {n_tc}",
+                tcs[0].len()
+            )));
+        }
+        Ok(tcs)
+    }
 }
 
 #[pymethods]
@@ -180,20 +256,25 @@ impl Scholar {
     /// `convergence_tol > 0` stops early on the relative epoch-ELBO change. Pass
     /// `iters` to :meth:`fit` for the number of epochs.
     #[new]
-    #[pyo3(signature = (num_topics, *, covariates=None, covariate_names=None, alpha=1.0,
-                        hidden_size=100, dropout=0.2, batch_size=200, lr=0.002,
-                        l2_prior_reg=0.0, convergence_tol=0.0, seed=42))]
+    #[pyo3(signature = (num_topics, *, covariates=None, covariate_names=None, content=None,
+                        content_names=None, interactions=false, alpha=1.0, hidden_size=100,
+                        dropout=0.2, batch_size=200, lr=0.002, l2_prior_reg=0.0,
+                        l1_content_reg=0.0, convergence_tol=0.0, seed=42))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         covariates: Option<&Bound<'_, PyAny>>,
         covariate_names: Option<Vec<String>>,
+        content: Option<&Bound<'_, PyAny>>,
+        content_names: Option<Vec<String>>,
+        interactions: bool,
         alpha: f64,
         hidden_size: usize,
         dropout: f64,
         batch_size: usize,
         lr: f64,
         l2_prior_reg: f64,
+        l1_content_reg: f64,
         convergence_tol: f64,
         seed: u64,
     ) -> PyResult<Self> {
@@ -211,6 +292,11 @@ impl Scholar {
                 "l2_prior_reg must be >= 0 and finite",
             ));
         }
+        if !(l1_content_reg >= 0.0 && l1_content_reg.is_finite()) {
+            return Err(PyValueError::new_err(
+                "l1_content_reg must be >= 0 and finite",
+            ));
+        }
         let covariates = match covariates {
             Some(obj) => Some(parse_features(obj)?),
             None => None,
@@ -224,6 +310,19 @@ impl Scholar {
                 )));
             }
         }
+        let content = match content {
+            Some(obj) => Some(parse_features(obj)?),
+            None => None,
+        };
+        if let (Some(tcs), Some(names)) = (&content, &content_names) {
+            if !tcs.is_empty() && names.len() != tcs[0].len() {
+                return Err(PyValueError::new_err(format!(
+                    "content_names has length {} but content has {} columns",
+                    names.len(),
+                    tcs[0].len()
+                )));
+            }
+        }
         Ok(Scholar {
             num_topics,
             hidden_size,
@@ -232,10 +331,14 @@ impl Scholar {
             batch_size,
             lr,
             l2_prior_reg,
+            l1_content_reg,
+            interactions,
             convergence_tol,
             seed,
             covariates,
             covariate_names,
+            content,
+            content_names,
             classes: Vec::new(),
             fitted: false,
             topic_names: Vec::new(),
@@ -244,17 +347,21 @@ impl Scholar {
         })
     }
 
-    /// Fit on `data` (a Corpus or list of token lists) with prior `covariates` and/or
-    /// supervised `labels` (one per document, str or int). At least one of covariates
-    /// or labels must be given. `iters` sets the number of epochs (default 200);
+    /// Fit on `data` (a Corpus or list of token lists) with prior `covariates`,
+    /// supervised `labels` (str/int, one per document), and/or topic-covariate
+    /// `content` (a numeric matrix). At least one of covariates, labels, or content
+    /// must be given. `iters` sets the number of epochs (default 200);
     /// `convergence_tol` overrides the constructor value for this run.
-    #[pyo3(signature = (data, *, covariates=None, labels=None, iters=None, convergence_tol=None))]
+    #[pyo3(signature = (data, *, covariates=None, labels=None, content=None, iters=None,
+                        convergence_tol=None))]
+    #[allow(clippy::too_many_arguments)]
     fn fit(
         &mut self,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         covariates: Option<&Bound<'_, PyAny>>,
         labels: Option<&Bound<'_, PyAny>>,
+        content: Option<&Bound<'_, PyAny>>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
     ) -> PyResult<()> {
@@ -309,12 +416,14 @@ impl Scholar {
         };
         let n_labels = classes.len();
 
-        // Covariates (optional): empty rows when absent, but require at least one of
-        // covariates / labels so the model has some metadata to condition on.
+        // Covariates / content (optional): empty rows when absent. Require at least
+        // one of covariates / labels / content so the model has metadata to condition on.
         let has_covars = covariates.is_some() || self.covariates.is_some();
-        if !has_covars && label_idx.is_none() {
+        let has_content = content.is_some() || self.content.is_some();
+        if !has_covars && label_idx.is_none() && !has_content {
             return Err(PyValueError::new_err(
-                "Scholar needs covariates and/or labels: pass covariates= and/or labels=",
+                "Scholar needs covariates, labels, and/or content: pass covariates=, labels=, \
+                 and/or content=",
             ));
         }
         let pcs = if has_covars {
@@ -323,6 +432,12 @@ impl Scholar {
             vec![Vec::new(); num_docs]
         };
         let n_prior_covars = pcs[0].len();
+        let tcs = if has_content {
+            self.resolve_content(content, num_docs)?
+        } else {
+            vec![Vec::new(); num_docs]
+        };
+        let n_topic_covars = tcs[0].len();
 
         let num_types = corpus.num_types();
         if num_types < self.num_topics {
@@ -336,9 +451,16 @@ impl Scholar {
                 .map(|c| format!("covariate_{c}"))
                 .collect(),
         };
+        let content_names = match &self.content_names {
+            Some(n) if n.len() == n_topic_covars => n.clone(),
+            _ => (0..n_topic_covars)
+                .map(|c| format!("content_{c}"))
+                .collect(),
+        };
         let tol = convergence_tol.unwrap_or(self.convergence_tol);
         let ep = iters.unwrap_or(200);
-        let (k, h, a, dp, bs, lr, l2) = (
+        let interactions = self.interactions && n_topic_covars > 0;
+        let (k, h, a, dp, bs, lr, l2, l1c) = (
             self.num_topics,
             self.hidden_size,
             self.alpha,
@@ -346,6 +468,7 @@ impl Scholar {
             self.batch_size,
             self.lr,
             self.l2_prior_reg,
+            self.l1_content_reg,
         );
         let seed = self.seed;
         let (model, corpus) = py.allow_threads(move || {
@@ -355,6 +478,10 @@ impl Scholar {
                 &pcs,
                 label_idx.as_deref(),
                 n_labels,
+                &tcs,
+                n_topic_covars,
+                interactions,
+                l1c,
                 k,
                 num_types,
                 n_prior_covars,
@@ -373,6 +500,7 @@ impl Scholar {
         self.model = Some(model);
         self.corpus = Some(corpus);
         self.covariate_names = Some(names);
+        self.content_names = Some(content_names);
         self.classes = classes;
         self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
         self.fitted = true;
@@ -409,6 +537,22 @@ impl Scholar {
     fn covariate_names(&self) -> PyResult<Vec<String>> {
         self.fitted_model()?;
         Ok(self.covariate_names.clone().unwrap_or_default())
+    }
+
+    /// Content (topic-covariate) word deviations `(n_content, vocab)`. Entry
+    /// ``[c][j]`` is how much content covariate `c` shifts the unnormalized log-word
+    /// weight of word `j` — the SAGE "same topic, worded differently across groups"
+    /// deviations. Empty if fit without content covariates.
+    #[getter]
+    fn content_effects<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        Ok(vecs_to_arr2(&self.fitted_model()?.content_effects()).to_pyarray_bound(py))
+    }
+
+    /// The content covariate column names, in the order of `content_effects` rows.
+    #[getter]
+    fn content_names(&self) -> PyResult<Vec<String>> {
+        self.fitted_model()?;
+        Ok(self.content_names.clone().unwrap_or_default())
     }
 
     /// The class labels (sorted), in the order of `predict_proba` columns. Empty if
@@ -521,32 +665,35 @@ impl Scholar {
         )
     }
 
-    /// Held-out topic proportions for new documents. `covariates` (one row per
-    /// document) enter the encoder exactly as at fit time and must have the same
-    /// number of columns; pass `None` when the model was fit without covariates.
+    /// Held-out topic proportions for new documents. `covariates` and `content` (one
+    /// row per document) enter the encoder exactly as at fit time and must have the
+    /// same number of columns; pass `None` for either the model was not fit with.
     /// Returns `(num_docs, num_topics)`.
-    #[pyo3(signature = (data, covariates=None))]
+    #[pyo3(signature = (data, covariates=None, content=None))]
     fn transform<'py>(
         &self,
         py: Python<'py>,
         data: &Bound<'py, PyAny>,
         covariates: Option<&Bound<'py, PyAny>>,
+        content: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let m = self.fitted_model()?;
         let docs = docs_to_ids(data, &self.corpus.as_ref().unwrap().id_to_word)?;
         let pcs = self.pred_covariates(covariates, docs.len())?;
-        Ok(vecs_to_arr2(&m.transform(&docs, &pcs)).to_pyarray_bound(py))
+        let tcs = self.pred_content(content, docs.len())?;
+        Ok(vecs_to_arr2(&m.transform(&docs, &pcs, &tcs)).to_pyarray_bound(py))
     }
 
     /// Class-probability predictions `softmax(wc . theta + bc)` for new documents,
     /// shape `(num_docs, n_classes)`, columns in `classes` order. Requires a
-    /// label-trained model. `covariates` as in `transform`.
-    #[pyo3(signature = (data, covariates=None))]
+    /// label-trained model. `covariates`/`content` as in `transform`.
+    #[pyo3(signature = (data, covariates=None, content=None))]
     fn predict_proba<'py>(
         &self,
         py: Python<'py>,
         data: &Bound<'py, PyAny>,
         covariates: Option<&Bound<'py, PyAny>>,
+        content: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let m = self.fitted_model()?;
         if m.n_labels == 0 {
@@ -556,17 +703,19 @@ impl Scholar {
         }
         let docs = docs_to_ids(data, &self.corpus.as_ref().unwrap().id_to_word)?;
         let pcs = self.pred_covariates(covariates, docs.len())?;
-        Ok(vecs_to_arr2(&m.predict_proba(&docs, &pcs)).to_pyarray_bound(py))
+        let tcs = self.pred_content(content, docs.len())?;
+        Ok(vecs_to_arr2(&m.predict_proba(&docs, &pcs, &tcs)).to_pyarray_bound(py))
     }
 
     /// Predicted class label per document (argmax of `predict_proba`), as strings in
     /// `classes` space. Requires a label-trained model.
-    #[pyo3(signature = (data, covariates=None))]
+    #[pyo3(signature = (data, covariates=None, content=None))]
     fn predict(
         &self,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         covariates: Option<&Bound<'_, PyAny>>,
+        content: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Vec<String>> {
         let m = self.fitted_model()?;
         if m.n_labels == 0 {
@@ -576,8 +725,9 @@ impl Scholar {
         }
         let docs = docs_to_ids(data, &self.corpus.as_ref().unwrap().id_to_word)?;
         let pcs = self.pred_covariates(covariates, docs.len())?;
+        let tcs = self.pred_content(content, docs.len())?;
         let _ = py;
-        let proba = m.predict_proba(&docs, &pcs);
+        let proba = m.predict_proba(&docs, &pcs, &tcs);
         Ok(proba
             .iter()
             .map(|p| {
@@ -622,6 +772,9 @@ impl Scholar {
                 convergence_tol: self.convergence_tol,
                 seed: self.seed,
                 covariate_names: self.covariate_names.clone().unwrap_or_default(),
+                content_names: self.content_names.clone().unwrap_or_default(),
+                l1_content_reg: self.l1_content_reg,
+                interactions: self.interactions,
                 classes: self.classes.clone(),
                 fitted: self.fitted,
                 topic_names: self.topic_names.clone(),
@@ -636,6 +789,9 @@ impl Scholar {
                 wc: Some(m.wc.clone()),
                 bc: Some(m.bc.clone()),
                 n_labels: Some(m.n_labels),
+                beta_c: Some(m.beta_c.clone()),
+                beta_ci: m.beta_ci.clone(),
+                n_topic_covars: Some(m.n_topic_covars),
                 w_v: Some(m.base.weights.v),
                 w_e: Some(m.base.weights.e),
                 w_hidden: Some(m.base.weights.hidden),
@@ -705,6 +861,10 @@ impl Scholar {
                 wc: s.wc.unwrap_or_default(),
                 bc: s.bc.unwrap_or_default(),
                 n_labels: s.n_labels.unwrap_or(0),
+                beta_c: s.beta_c.unwrap_or_default(),
+                beta_ci: s.beta_ci,
+                n_topic_covars: s.n_topic_covars.unwrap_or(0),
+                interactions: s.interactions,
             })
         } else {
             None
@@ -717,6 +877,8 @@ impl Scholar {
             batch_size: s.batch_size,
             lr: s.lr,
             l2_prior_reg: s.l2_prior_reg,
+            l1_content_reg: s.l1_content_reg,
+            interactions: s.interactions,
             convergence_tol: s.convergence_tol,
             seed: s.seed,
             covariates: None,
@@ -724,6 +886,12 @@ impl Scholar {
                 None
             } else {
                 Some(s.covariate_names)
+            },
+            content: None,
+            content_names: if s.content_names.is_empty() {
+                None
+            } else {
+                Some(s.content_names)
             },
             classes: s.classes,
             fitted: s.fitted,

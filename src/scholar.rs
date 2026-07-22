@@ -1,42 +1,40 @@
 //! SCHOLAR (Card, Tan & Smith, "Neural Models for Documents with Metadata",
-//! ACL 2018; reference `dallascard/scholar`, Apache-2.0) — the prior-covariate
-//! ("prevalence") path.
+//! ACL 2018; reference `dallascard/scholar`, Apache-2.0).
 //!
-//! SCHOLAR extends a ProdLDA/AVITM VAE with document metadata in three roles. This
-//! module implements the first: **prior covariates** `PC`, which shift the
-//! document-topic *prior mean* by `mu_0[i] = W . PC[i]`. The KL then pulls each
-//! document's posterior toward that covariate-dependent mean, so a covariate that
-//! co-occurs with a topic raises that topic's prevalence — the neural analog of
-//! STM/DMR prevalence covariates. `W` (the fitted `covariate_effects`) reads as a
-//! covariate-by-topic prevalence-effect matrix. The reference flags this "upstream"
-//! prior as future work in the paper (footnote 4) but implements it in code.
+//! SCHOLAR extends a ProdLDA/AVITM VAE with document metadata in three roles, all
+//! implemented here on topica's existing ProdLDA VAE (`crate::prodlda`) — the encoder,
+//! reparameterization, decoder, batchnorm, Adam, and reconstruction loss are reused
+//! through the shared `batch_forward`/`batch_backward`, each role threaded in through
+//! a gated, no-op-when-unused hook so ProdLDA/InfoCTM stay byte-identical:
 //!
-//! We build directly on topica's existing ProdLDA VAE (`crate::prodlda`) rather than
-//! re-deriving a VAE: the encoder, reparameterization, decoder, batchnorm, Adam, and
-//! reconstruction loss are reused verbatim through the shared `batch_forward` /
-//! `batch_backward`. The prior covariates enter in two faithful places:
-//!   1. **Encoder input.** The reference concatenates `PC` to the encoder input; we
-//!      route `PC` through the existing dense-embedding channel (`InputMode::BowEmb`
-//!      with `emb_dim = n_prior_covars`), which is exactly "extra dense columns on
-//!      the first encoder layer" — no encoder change.
-//!   2. **Prior mean.** A new weight block `prior_w` (`K x n_prior_covars`, the
-//!      reference's `Linear(n_prior_covars, K, bias=False)`) sets the per-document
-//!      prior mean, threaded into the shared Gaussian KL via `Batch::prior_mus`. Its
-//!      gradient comes back through the `batch_backward` `d_prior_mu` out-param and
-//!      maps to `dW = sum_i d_prior_mu[i] (x) PC[i]` (plus the L2 prior penalty).
+//!   1. **Prior covariates** `PC` (prevalence) — a weight block `prior_w`
+//!      (`K x n_prior_covars`, the reference's `Linear(n_prior_covars, K, bias=False)`)
+//!      sets a per-document prior *mean* `mu_0 = W . PC`, so a covariate that co-occurs
+//!      with a topic raises its prevalence (neural STM/DMR prevalence; the fitted `W`
+//!      is `covariate_effects`). Threaded via `Batch::prior_mus` and the
+//!      `batch_backward` `d_prior_mu` out-param. `PC` also enters the encoder.
+//!   2. **Labels** `Y` (supervised) — a softmax classifier head `wc`/`bc` off `theta`
+//!      whose cross-entropy loss shapes the topics to be predictive (neural sLDA).
+//!      Its gradient into `theta` is injected via `batch_backward`'s `dtheta_extra`.
+//!      Unlike the reference, labels do NOT enter the encoder (see `fit_scholar`).
+//!   3. **Content / topic covariates** `TC` — per-covariate word deviations `beta_c`
+//!      (and optional topic-covariate interactions `beta_ci`) added to the decoder
+//!      logits, so the same topic is worded differently across groups (neural SAGE;
+//!      the fitted `beta_c` is `content_effects`). Threaded via the shared
+//!      `ContentFwd`/`ContentGrad` hook. `TC` also enters the encoder.
 //!
-//! Because topica's ProdLDA is the two-layer AVITM encoder (Srivastava & Sutton
-//! 2017) rather than the reference's single embedding layer, this is a
-//! mechanism-faithful port on topica's backbone, not a bit-for-bit clone of
-//! `dallascard/scholar` — the same design choice topica's `ProdLDA` already makes.
-//! The prior covariate path is Gaussian (logistic-normal) only: a prior-*mean* shift
-//! is only defined for the `Prior::Laplace` latent, so Scholar fixes that prior.
+//! Because topica's ProdLDA is the two-layer AVITM encoder (Srivastava & Sutton 2017)
+//! rather than the reference's single embedding layer, this is a mechanism-faithful
+//! port on topica's backbone, not a bit-for-bit clone of `dallascard/scholar` — the
+//! same design choice topica's `ProdLDA` already makes. The prior is Gaussian
+//! (logistic-normal) only: a prior-*mean* shift is only defined for `Prior::Laplace`.
 
 use rand::Rng;
 
 use crate::prodlda::{
     batch_backward, batch_forward, laplace_prior, normalized_bow, randn, raw_bow, Adam,
-    AvitmOptions, Batch, BatchNorm, Grad, InputMode, Optim, Prior, ProdldaModel, Weights,
+    AvitmOptions, Batch, BatchNorm, ContentFwd, ContentGrad, Grad, InputMode, Optim, Prior,
+    ProdldaModel, Weights,
 };
 
 /// Numerically stable softmax (local copy; `prodlda::softmax` is private).
@@ -64,6 +62,14 @@ pub struct ScholarModel {
     pub wc: Vec<f64>,
     pub bc: Vec<f64>,
     pub n_labels: usize,
+    /// Content (topic-covariate) decoder deviations `beta_c`, `n_topic_covars x V`
+    /// row-major (the reference's `beta_c_layer.weight.T`): per-covariate word shifts.
+    pub beta_c: Vec<f64>,
+    /// Optional topic-covariate interaction weights `beta_ci`, `(K*n_topic_covars) x V`
+    /// row-major; `None` unless the model was fit with `interactions`.
+    pub beta_ci: Option<Vec<f64>>,
+    pub n_topic_covars: usize,
+    pub interactions: bool,
 }
 
 impl ScholarModel {
@@ -88,19 +94,57 @@ impl ScholarModel {
             .collect()
     }
 
-    /// Held-out topic proportions for new documents given their prior covariates. The
-    /// covariates enter the encoder as at fit time. Labels are never an encoder input
-    /// (see `fit_scholar`), so prediction and training use the same encoder path.
-    pub fn transform(&self, docs: &[Vec<u32>], pcs: &[Vec<f64>]) -> Vec<Vec<f64>> {
-        self.base.transform_with_emb(docs, pcs)
+    /// The per-covariate word-deviation matrix `(n_topic_covars, V)` (`beta_c`).
+    /// Entry `[c][j]` is how much topic covariate `c` shifts the unnormalized log-word
+    /// weight of word `j` — the SAGE "same topic, worded differently across groups"
+    /// deviations. Empty when fit without content covariates.
+    pub fn content_effects(&self) -> Vec<Vec<f64>> {
+        let (tc, v) = (self.n_topic_covars, self.base.num_types);
+        (0..tc)
+            .map(|c| self.beta_c[c * v..(c + 1) * v].to_vec())
+            .collect()
+    }
+
+    /// Build encoder features `[pc ; tc]` for new documents (both covariate blocks
+    /// enter the encoder; labels never do). `tcs` may be empty when the model has no
+    /// content covariates.
+    fn encoder_feats(&self, pcs: &[Vec<f64>], tcs: &[Vec<f64>]) -> Vec<Vec<f64>> {
+        pcs.iter()
+            .enumerate()
+            .map(|(i, pc)| {
+                let mut f = pc.clone();
+                if self.n_topic_covars > 0 {
+                    f.extend_from_slice(&tcs[i]);
+                }
+                f
+            })
+            .collect()
+    }
+
+    /// Held-out topic proportions for new documents given their prior covariates and
+    /// topic covariates. Both enter the encoder as at fit time; labels are never an
+    /// encoder input (see `fit_scholar`), so prediction and training use the same path.
+    pub fn transform(
+        &self,
+        docs: &[Vec<u32>],
+        pcs: &[Vec<f64>],
+        tcs: &[Vec<f64>],
+    ) -> Vec<Vec<f64>> {
+        let feats = self.encoder_feats(pcs, tcs);
+        self.base.transform_with_emb(docs, &feats)
     }
 
     /// Class-probability predictions `softmax(wc . theta + bc)` for new documents,
     /// shape `(num_docs, n_labels)`. `theta` is the posterior mean from the words (and
     /// covariates). Empty rows if the model was fit without labels.
-    pub fn predict_proba(&self, docs: &[Vec<u32>], pcs: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    pub fn predict_proba(
+        &self,
+        docs: &[Vec<u32>],
+        pcs: &[Vec<f64>],
+        tcs: &[Vec<f64>],
+    ) -> Vec<Vec<f64>> {
         let k = self.base.num_topics;
-        let theta = self.transform(docs, pcs);
+        let theta = self.transform(docs, pcs, tcs);
         theta
             .iter()
             .map(|th| {
@@ -145,6 +189,10 @@ pub fn fit_scholar<R: Rng>(
     pcs: &[Vec<f64>],
     labels: Option<&[usize]>,
     n_labels: usize,
+    tcs: &[Vec<f64>],
+    n_topic_covars: usize,
+    interactions: bool,
+    l1_content_reg: f64,
     num_topics: usize,
     num_types: usize,
     n_prior_covars: usize,
@@ -158,8 +206,21 @@ pub fn fit_scholar<R: Rng>(
     em_tol: f64,
     rng: &mut R,
 ) -> ScholarModel {
-    let (k, v, pc) = (num_topics, num_types, n_prior_covars);
+    let (k, v, pc, tc) = (num_topics, num_types, n_prior_covars, n_topic_covars);
     let d = docs.len();
+    // Encoder input concatenates prior covariates and topic covariates (both are
+    // always observed, at train and test — no leak). Labels stay out of the encoder.
+    // With tc == 0 and pc unchanged this is the prevalence/label path unchanged.
+    let feats: Vec<Vec<f64>> = (0..d)
+        .map(|i| {
+            let mut f = pcs[i].clone();
+            if tc > 0 {
+                f.extend_from_slice(&tcs[i]);
+            }
+            f
+        })
+        .collect();
+    let emb_dim = pc + tc;
     let xn: Vec<Vec<(usize, f64)>> = docs.iter().map(|doc| normalized_bow(doc)).collect();
     let bows: Vec<Vec<(usize, f64)>> = docs.iter().map(|doc| raw_bow(doc)).collect();
     let totals: Vec<f64> = bows
@@ -193,11 +254,21 @@ pub fn fit_scholar<R: Rng>(
     // reproduce a leak against `dallascard/scholar` — the BOW reconstruction term
     // dominates the label cross-entropy ~100:1), so the effect is backbone- and
     // regime-dependent, not a claim that the reference is broken.
-    let mut w = Weights::new(v, pc, hidden, k, InputMode::BowEmb, rng);
+    let mut w = Weights::new(v, emb_dim, hidden, k, InputMode::BowEmb, rng);
     // Covariate weight block: zero init, so topics start covariate-agnostic and the
     // prevalence effect is learned from data (deterministic, no extra RNG draws).
     let mut prior_w = vec![0.0; k * pc];
     let mut prior_w_opt = Adam::new(prior_w.len(), lr, 0.99, 0.0);
+    // Content (topic-covariate) decoder deviations: beta_c (C x V) per-covariate word
+    // shifts, and optional beta_ci ((K*C) x V) topic-covariate interactions. Zero init.
+    let mut beta_c = vec![0.0; tc * v];
+    let mut beta_c_opt = Adam::new(beta_c.len(), lr, 0.99, 0.0);
+    let mut beta_ci = if interactions && tc > 0 {
+        vec![0.0; k * tc * v]
+    } else {
+        Vec::new()
+    };
+    let mut beta_ci_opt = Adam::new(beta_ci.len(), lr, 0.99, 0.0);
     // Label classifier head: logit_y = wc.theta + bc. Zero init, like the prior
     // weights (diverges from the reference's default nn.Linear Kaiming-uniform init):
     // symmetry breaks on the first step since g_wc = dlogit (x) theta is nonzero, and
@@ -269,7 +340,7 @@ pub fn fit_scholar<R: Rng>(
 
             let batch = Batch {
                 xns: chunk.iter().map(|&di| xn[di].as_slice()).collect(),
-                embs: chunk.iter().map(|&di| pcs[di].as_slice()).collect(),
+                embs: chunk.iter().map(|&di| feats[di].as_slice()).collect(),
                 counts: chunk.iter().map(|&di| bows[di].as_slice()).collect(),
                 totals: chunk.iter().map(|&di| totals[di]).collect(),
                 eps: &eps,
@@ -278,8 +349,30 @@ pub fn fit_scholar<R: Rng>(
                 prior_mus: Some(&prior_mus),
             };
 
+            // Content (topic-covariate) decoder deviation for this batch.
+            let tc_batch: Vec<Vec<f64>> = if tc > 0 {
+                chunk.iter().map(|&di| tcs[di].clone()).collect()
+            } else {
+                Vec::new()
+            };
+            let content_fwd = (tc > 0).then(|| ContentFwd {
+                tc: &tc_batch,
+                beta_c: &beta_c,
+                beta_ci: if interactions { Some(&beta_ci) } else { None },
+                c: tc,
+            });
+
             let (loss, cache, stats) = batch_forward(
-                &w, &bn_mu, &bn_lv, &bn_dec, &prior_mu, &prior_var, &alpha_vec, &opts, &batch,
+                &w,
+                &bn_mu,
+                &bn_lv,
+                &bn_dec,
+                &prior_mu,
+                &prior_var,
+                &alpha_vec,
+                &opts,
+                &batch,
+                content_fwd.as_ref(),
             );
             bn_mu.update_running(&stats[0].0, &stats[0].1);
             bn_lv.update_running(&stats[1].0, &stats[1].1);
@@ -322,6 +415,14 @@ pub fn fit_scholar<R: Rng>(
             } else {
                 None
             };
+            let mut content_grad = ContentGrad {
+                beta_c: vec![0.0; tc * v],
+                beta_ci: if interactions && tc > 0 {
+                    Some(vec![0.0; k * tc * v])
+                } else {
+                    None
+                },
+            };
             batch_backward(
                 &w,
                 &prior_mu,
@@ -333,9 +434,30 @@ pub fn fit_scholar<R: Rng>(
                 &mut g,
                 Some(&mut d_prior_mu),
                 dte,
+                content_fwd.as_ref().map(|cf| (cf, &mut content_grad)),
             );
             g.scale(1.0 / n as f64);
             opt.step(&mut w, &g);
+
+            // Content deviation Adam step: data term batch-mean + a fixed-strength
+            // ridge penalty (l1_content_reg; the reference's adaptive-strength L1
+            // reweighting is simplified to a fixed strength here), un-averaged.
+            if tc > 0 {
+                let inv_n = 1.0 / n as f64;
+                for idx in 0..content_grad.beta_c.len() {
+                    content_grad.beta_c[idx] =
+                        content_grad.beta_c[idx] * inv_n + 2.0 * l1_content_reg * beta_c[idx];
+                }
+                beta_c_opt.step(&mut beta_c, &content_grad.beta_c);
+                if interactions {
+                    if let Some(gci) = content_grad.beta_ci.as_mut() {
+                        for idx in 0..gci.len() {
+                            gci[idx] = gci[idx] * inv_n + 2.0 * l1_content_reg * beta_ci[idx];
+                        }
+                        beta_ci_opt.step(&mut beta_ci, gci);
+                    }
+                }
+            }
 
             // Classifier head Adam step (data term averaged over the batch, like the
             // encoder/decoder grads; no regularization on the head).
@@ -401,7 +523,7 @@ pub fn fit_scholar<R: Rng>(
         bn_mu,
         prior: Prior::Laplace,
     };
-    let doc_topic = base.transform_with_emb(docs, pcs);
+    let doc_topic = base.transform_with_emb(docs, &feats);
     let base = ProdldaModel { doc_topic, ..base };
     ScholarModel {
         base,
@@ -411,6 +533,14 @@ pub fn fit_scholar<R: Rng>(
         wc,
         bc,
         n_labels,
+        beta_c,
+        beta_ci: if interactions && tc > 0 {
+            Some(beta_ci)
+        } else {
+            None
+        },
+        n_topic_covars: tc,
+        interactions: interactions && tc > 0,
     }
 }
 
@@ -419,6 +549,9 @@ mod tests {
     use super::*;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
+
+    /// No topic covariates (the prevalence/label-only fit paths).
+    const NO_TC: &[Vec<f64>] = &[];
 
     // Recompute the summed batch loss (including the L2 prior penalty on W) for a
     // given (weights, prior_w), at fixed noise and all-ones dropout. This is the
@@ -447,7 +580,7 @@ mod tests {
         // The shared prior_mu slice is unused when prior_mus is Some; pass zeros.
         let prior_mu = vec![0.0; k];
         let (loss, _, _) = batch_forward(
-            w, &bn_mu, &bn_lv, &bn_dec, &prior_mu, prior_var, alpha, opts, &batch,
+            w, &bn_mu, &bn_lv, &bn_dec, &prior_mu, prior_var, alpha, opts, &batch, None,
         );
         let reg: f64 = prior_w.iter().map(|&x| x * x).sum();
         loss + l2 * reg
@@ -542,7 +675,7 @@ mod tests {
         let bn_dec = BatchNorm::new(v);
         let prior_mu0 = vec![0.0; k];
         let (_, cache, _) = batch_forward(
-            &w, &bn_mu, &bn_lv, &bn_dec, &prior_mu0, &prior_var, &alpha, &opts, &batch,
+            &w, &bn_mu, &bn_lv, &bn_dec, &prior_mu0, &prior_var, &alpha, &opts, &batch, None,
         );
         let mut g = Grad::zeros(&w);
         let mut d_prior_mu = vec![vec![0.0; k]; n];
@@ -556,6 +689,7 @@ mod tests {
             &cache,
             &mut g,
             Some(&mut d_prior_mu),
+            None,
             None,
         );
         // Map to dW (summed over docs, NOT averaged — the loss here is the summed
@@ -641,7 +775,8 @@ mod tests {
         }
 
         let m = fit_scholar(
-            &docs, &pcs, None, 0, k, v, 2, 20, 1.0, 0.2, 120, 40, 0.01, 0.0, 0.0, &mut rng,
+            &docs, &pcs, None, 0, NO_TC, 0, false, 0.0, k, v, 2, 20, 1.0, 0.2, 120, 40, 0.01, 0.0,
+            0.0, &mut rng,
         );
 
         // Topic-word rows are valid distributions.
@@ -690,7 +825,8 @@ mod tests {
         let run = || {
             let mut rng = ChaCha8Rng::seed_from_u64(3);
             fit_scholar(
-                &docs, &pcs, None, 0, 2, 6, 2, 8, 1.0, 0.2, 15, 4, 0.01, 0.01, 0.0, &mut rng,
+                &docs, &pcs, None, 0, NO_TC, 0, false, 0.0, 2, 6, 2, 8, 1.0, 0.2, 15, 4, 0.01,
+                0.01, 0.0, &mut rng,
             )
         };
         let a = run();
@@ -828,6 +964,10 @@ mod tests {
             &pcs,
             Some(&labels),
             n_labels,
+            NO_TC,
+            0,
+            false,
+            0.0,
             k,
             v,
             0,
@@ -843,7 +983,7 @@ mod tests {
         );
 
         // In-sample class accuracy from predict_proba should be well above 1/3.
-        let proba = m.predict_proba(&docs, &pcs);
+        let proba = m.predict_proba(&docs, &pcs, NO_TC);
         let mut correct = 0;
         for (i, p) in proba.iter().enumerate() {
             let pred = (0..n_labels)
@@ -874,6 +1014,10 @@ mod tests {
                 &pcs,
                 Some(&labels),
                 2,
+                NO_TC,
+                0,
+                false,
+                0.0,
                 2,
                 6,
                 0,
@@ -893,6 +1037,260 @@ mod tests {
         assert_eq!(a.topic_word(), b.topic_word());
         assert_eq!(a.wc, b.wc);
         assert_eq!(a.bc, b.bc);
-        assert_eq!(a.predict_proba(&docs, &pcs), b.predict_proba(&docs, &pcs));
+        assert_eq!(
+            a.predict_proba(&docs, &pcs, NO_TC),
+            b.predict_proba(&docs, &pcs, NO_TC)
+        );
+    }
+
+    // FD check of the content-deviation gradients. beta_c and beta_ci are decoder-only,
+    // and the interaction beta_ci*(theta_do (x) TC) makes the loss depend on theta, so
+    // the encoder head w_mu also gets a content contribution — check all three against
+    // the content-active batch loss.
+    #[test]
+    fn content_gradient_matches_fd() {
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        let (v, hidden, k, tc) = (7usize, 5usize, 4usize, 2usize);
+        // TC rides the encoder (emb_dim = tc here, pc = 0) and drives decoder deviations.
+        let mut w0 = Weights::new(v, tc, hidden, k, InputMode::BowEmb, &mut rng);
+        let alpha = vec![1.0; k];
+        let (prior_mu, prior_var) = laplace_prior(&alpha);
+        let opts = AvitmOptions {
+            prior: Prior::Laplace,
+            ..AvitmOptions::default()
+        };
+        let docs: Vec<Vec<u32>> = vec![
+            vec![0, 0, 2, 3, 6],
+            vec![1, 4, 4, 5],
+            vec![2, 2, 3, 5, 6, 0],
+        ];
+        let n = docs.len();
+        let tcs: Vec<Vec<f64>> = (0..n)
+            .map(|i| {
+                (0..tc)
+                    .map(|c| 0.5 * (i as f64 + 1.0) - 0.3 * c as f64)
+                    .collect()
+            })
+            .collect();
+        let xns: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| normalized_bow(d)).collect();
+        let bows: Vec<Vec<(usize, f64)>> = docs.iter().map(|d| raw_bow(d)).collect();
+        let totals: Vec<f64> = bows
+            .iter()
+            .map(|b| b.iter().map(|&(_, c)| c).sum())
+            .collect();
+        let eps: Vec<Vec<f64>> = (0..n)
+            .map(|i| {
+                (0..k)
+                    .map(|t| 0.1 * (i as f64 + 1.0) - 0.05 * t as f64)
+                    .collect()
+            })
+            .collect();
+        let masks2 = vec![vec![1.0; hidden]; n];
+        let masks_t = vec![vec![1.0; k]; n];
+
+        let mut beta_c: Vec<f64> = (0..tc * v).map(|i| 0.13 * (i as f64 % 4.0) - 0.2).collect();
+        let mut beta_ci: Vec<f64> = (0..k * tc * v)
+            .map(|i| 0.07 * (i as f64 % 5.0) - 0.15)
+            .collect();
+
+        let build_batch = || Batch {
+            xns: xns.iter().map(|x| x.as_slice()).collect(),
+            embs: tcs.iter().map(|x| x.as_slice()).collect(),
+            counts: bows.iter().map(|b| b.as_slice()).collect(),
+            totals: totals.clone(),
+            eps: &eps,
+            masks2: &masks2,
+            masks_t: &masks_t,
+            prior_mus: None,
+        };
+        let loss = |w: &Weights, beta_c: &[f64], beta_ci: &[f64]| -> f64 {
+            let bn_mu = BatchNorm::new(k);
+            let bn_lv = BatchNorm::new(k);
+            let bn_dec = BatchNorm::new(v);
+            let cf = ContentFwd {
+                tc: &tcs,
+                beta_c,
+                beta_ci: Some(beta_ci),
+                c: tc,
+            };
+            batch_forward(
+                w,
+                &bn_mu,
+                &bn_lv,
+                &bn_dec,
+                &prior_mu,
+                &prior_var,
+                &alpha,
+                &opts,
+                &build_batch(),
+                Some(&cf),
+            )
+            .0
+        };
+
+        // Analytic gradients.
+        let bn_mu = BatchNorm::new(k);
+        let bn_lv = BatchNorm::new(k);
+        let bn_dec = BatchNorm::new(v);
+        let cf = ContentFwd {
+            tc: &tcs,
+            beta_c: &beta_c,
+            beta_ci: Some(&beta_ci),
+            c: tc,
+        };
+        let (_, cache, _) = batch_forward(
+            &w0,
+            &bn_mu,
+            &bn_lv,
+            &bn_dec,
+            &prior_mu,
+            &prior_var,
+            &alpha,
+            &opts,
+            &build_batch(),
+            Some(&cf),
+        );
+        let mut g = Grad::zeros(&w0);
+        let mut cg = ContentGrad {
+            beta_c: vec![0.0; tc * v],
+            beta_ci: Some(vec![0.0; k * tc * v]),
+        };
+        batch_backward(
+            &w0,
+            &prior_mu,
+            &prior_var,
+            &alpha,
+            &opts,
+            &build_batch(),
+            &cache,
+            &mut g,
+            None,
+            None,
+            Some((&cf, &mut cg)),
+        );
+
+        let fd = 1e-6;
+        let check = |name: &str, analytic: f64, num: f64| {
+            assert!(
+                (analytic - num).abs() < 1e-4,
+                "{name}: analytic {analytic} vs numeric {num}"
+            );
+        };
+        for idx in 0..beta_c.len() {
+            let o = beta_c[idx];
+            beta_c[idx] = o + fd;
+            let lp = loss(&w0, &beta_c, &beta_ci);
+            beta_c[idx] = o - fd;
+            let lm = loss(&w0, &beta_c, &beta_ci);
+            beta_c[idx] = o;
+            check("beta_c", cg.beta_c[idx], (lp - lm) / (2.0 * fd));
+        }
+        let gci = cg.beta_ci.as_ref().unwrap();
+        for idx in 0..beta_ci.len() {
+            let o = beta_ci[idx];
+            beta_ci[idx] = o + fd;
+            let lp = loss(&w0, &beta_c, &beta_ci);
+            beta_ci[idx] = o - fd;
+            let lm = loss(&w0, &beta_c, &beta_ci);
+            beta_ci[idx] = o;
+            check("beta_ci", gci[idx], (lp - lm) / (2.0 * fd));
+        }
+        // Encoder head w_mu, with content active: confirms the interaction dtheta path.
+        for idx in 0..w0.w_mu.len() {
+            let o = w0.w_mu[idx];
+            w0.w_mu[idx] = o + fd;
+            let lp = loss(&w0, &beta_c, &beta_ci);
+            w0.w_mu[idx] = o - fd;
+            let lm = loss(&w0, &beta_c, &beta_ci);
+            w0.w_mu[idx] = o;
+            check("w_mu(content)", g.w_mu()[idx], (lp - lm) / (2.0 * fd));
+        }
+    }
+
+    // A content covariate that pushes specific words up/down should be recovered:
+    // documents in group 1 over-use a marker word regardless of topic; beta_c for that
+    // covariate should place its largest positive deviation on the marker word.
+    #[test]
+    fn fit_recovers_content() {
+        let mut rng = ChaCha8Rng::seed_from_u64(9);
+        let (k, v) = (2usize, 10usize);
+        let marker = 9u32; // group-1 marker word
+        let mut docs: Vec<Vec<u32>> = Vec::new();
+        let mut tcs: Vec<Vec<f64>> = Vec::new();
+        for g in 0..2 {
+            for _ in 0..60 {
+                let mut doc = Vec::new();
+                for _ in 0..25 {
+                    // Base content from two topic blocks (words 0-3 / 4-7), plus in group
+                    // 1 a heavy dose of the marker word 9 (word 8 unused base).
+                    if g == 1 && rng.gen::<f64>() < 0.35 {
+                        doc.push(marker);
+                    } else if rng.gen::<f64>() < 0.5 {
+                        doc.push((rng.gen::<f64>() * 4.0) as u32);
+                    } else {
+                        doc.push(4 + (rng.gen::<f64>() * 4.0) as u32);
+                    }
+                }
+                docs.push(doc);
+                tcs.push(if g == 0 {
+                    vec![1.0, 0.0]
+                } else {
+                    vec![0.0, 1.0]
+                });
+            }
+        }
+        let pcs: Vec<Vec<f64>> = vec![Vec::new(); docs.len()];
+        let m = fit_scholar(
+            &docs, &pcs, None, 0, &tcs, 2, false, 0.0, k, v, 0, 20, 1.0, 0.2, 200, 40, 0.01, 0.0,
+            0.0, &mut rng,
+        );
+        let eff = m.content_effects();
+        assert_eq!(eff.len(), 2);
+        assert_eq!(eff[0].len(), v);
+        // Covariate 1 (group 1) should deviate the marker word up relative to covariate 0.
+        assert!(
+            eff[1][marker as usize] > eff[0][marker as usize],
+            "content deviation not recovered: covar1 marker {} !> covar0 marker {}",
+            eff[1][marker as usize],
+            eff[0][marker as usize]
+        );
+        // And the marker is the covariate-1 word with (near) the largest deviation.
+        let argmax = (0..v)
+            .max_by(|&a, &b| eff[1][a].total_cmp(&eff[1][b]))
+            .unwrap();
+        assert_eq!(
+            argmax, marker as usize,
+            "marker word not the top content deviation"
+        );
+    }
+
+    #[test]
+    fn fit_with_interactions_is_deterministic() {
+        let docs: Vec<Vec<u32>> = vec![
+            vec![0, 1, 2, 0, 1],
+            vec![3, 4, 5, 3],
+            vec![0, 2, 4, 1, 5],
+            vec![1, 1, 3, 5, 2],
+        ];
+        let pcs: Vec<Vec<f64>> = vec![Vec::new(); 4];
+        let tcs: Vec<Vec<f64>> = vec![
+            vec![1.0, 0.0],
+            vec![0.0, 1.0],
+            vec![1.0, 0.0],
+            vec![0.0, 1.0],
+        ];
+        let run = || {
+            let mut rng = ChaCha8Rng::seed_from_u64(5);
+            fit_scholar(
+                &docs, &pcs, None, 0, &tcs, 2, true, 0.0, 2, 6, 0, 8, 1.0, 0.2, 15, 4, 0.01, 0.0,
+                0.0, &mut rng,
+            )
+        };
+        let a = run();
+        let b = run();
+        assert_eq!(a.topic_word(), b.topic_word());
+        assert_eq!(a.content_effects(), b.content_effects());
+        assert_eq!(a.beta_ci, b.beta_ci);
+        assert!(a.interactions && a.beta_ci.is_some());
     }
 }
