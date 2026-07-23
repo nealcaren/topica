@@ -1888,8 +1888,11 @@ struct ProdldaState {
     bn_running_mean: Option<Vec<f64>>,
     bn_running_var: Option<Vec<f64>>,
     // BN log-variance running stats, needed only by the Dirichlet-prior transform
-    // (#428). Absent in models saved before this, so the Dirichlet transform of an
-    // older save falls back to softmax(mu).
+    // (#428). NOTE: `ProdldaState` is positional bincode, so `#[serde(default)]`
+    // does not actually run for an old save — appending these fields makes a
+    // pre-#428 save fail to load (EOF), and it must be refit (holistic fix #443).
+    // The in-memory `bn_lv: None` fallback to softmax(mu) still applies to a model
+    // constructed without the log-variance head (e.g. the Laplace-only wrappers).
     #[serde(default)]
     bn_lv_running_mean: Option<Vec<f64>>,
     #[serde(default)]
@@ -2257,8 +2260,10 @@ impl ProdLDA {
     }
 
     /// Held-out topic proportions for new documents: one encoder forward pass each
-    /// (`theta = softmax(mu)`, running batchnorm statistics, no sampling). Tokens
-    /// outside the vocabulary are dropped. Returns `(num_docs, num_topics)`.
+    /// (running batchnorm statistics, no sampling), mapped to the simplex with the
+    /// training prior's map — `softmax(mu)` for laplace, the normalized Weibull
+    /// median for `dirichlet`, stick-breaking for `stick_breaking`. Tokens outside
+    /// the vocabulary are dropped. Returns `(num_docs, num_topics)`.
     fn transform<'py>(
         &self,
         py: Python<'py>,
@@ -2473,8 +2478,9 @@ struct CtmEmbState {
     w_beta: Option<Vec<f64>>,
     bn_running_mean: Option<Vec<f64>>,
     bn_running_var: Option<Vec<f64>>,
-    // BN log-variance running stats for the Dirichlet-prior transform (#428);
-    // absent in older saves, which fall back to softmax(mu).
+    // BN log-variance running stats for the Dirichlet-prior transform (#428).
+    // Positional bincode, so `#[serde(default)]` is inert: a pre-#428 save fails to
+    // load (EOF) and must be refit (holistic fix #443), rather than falling back.
     #[serde(default)]
     bn_lv_running_mean: Option<Vec<f64>>,
     #[serde(default)]

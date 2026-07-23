@@ -1552,9 +1552,11 @@ pub struct ProdldaModel {
     pub weights: Weights,
     pub bn_mu: BatchNorm,
     /// The log-variance-head batchnorm. Only the `Prior::Dirichlet` transform reads
-    /// it (to reproduce the Weibull posterior median it trains under); `None` for
-    /// models loaded from a save written before it was persisted, in which case the
-    /// Dirichlet transform falls back to `softmax(mu)`.
+    /// it, to form the normalized Weibull *median* θ (a deterministic point estimate;
+    /// training reconstruction itself uses Weibull *samples*, and the contrastive
+    /// positive view uses this same median). `None` for a model constructed without
+    /// it (the Laplace-only wrappers) or loaded from a pre-#428 save, in which case
+    /// the Dirichlet transform falls back to `softmax(mu)`.
     pub bn_lv: Option<BatchNorm>,
     /// The prior the model was fit under, so `transform` applies the matching
     /// noise-free simplex map (softmax for laplace, the Weibull median for
@@ -1573,8 +1575,10 @@ impl ProdldaModel {
             .collect()
     }
 
-    /// Topic proportions for new documents: one encoder forward pass each,
-    /// `theta = softmax(BN_eval(mu))` (no sampling, running batchnorm statistics).
+    /// Topic proportions for new documents: one encoder forward pass each, no
+    /// sampling, using the running batchnorm statistics. The simplex map matches the
+    /// training prior — `softmax(BN_eval(mu))` for laplace, stick-breaking for
+    /// `StickBreaking`, and the normalized Weibull median for `Dirichlet`.
     /// For bow-only ProdLDA the embedding argument is unused; pass an empty slice.
     pub fn transform(&self, docs: &[Vec<u32>]) -> Vec<Vec<f64>> {
         let empty: Vec<Vec<f64>> = vec![Vec::new(); docs.len()];
