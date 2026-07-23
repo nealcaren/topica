@@ -96,12 +96,27 @@ CRAN arithmetic, checked by Rust unit tests. The reference initialization is a
 documented statistically-equivalent substitute for STM's spectral `eta` /
 `invsigma`, not a byte-identical STM port.
 
+### End-to-end vs the R `sts` package
+
+[`parity/sts_r_package_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/sts_r_package_compare.py)
+fits the **live R `sts` package** and topica's STS (`reference="cran"`) on the
+same poliblog corpus — the one that ships with `stm` (`data(poliblog5k)`), so the
+comparison needs no external data — and reports the aligned topic-word cosine at
+mean sentiment. Because the two use independent initializations, this is a
+statistical check (same topics up to alignment), like the STM/CTM R parity, not a
+bit-identical one. A companion script,
+[`parity/sts_r_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/sts_r_compare.py),
+compares instead against the authors' *frozen* published fit and needs the
+replication package on disk. Both skip cleanly when Rscript or the R packages are
+unavailable.
+
 ## Scope and honest limits
 
-A full end-to-end comparison against the R `sts` package requires the authors'
-replication data (the Poliblogs corpus), so it is not a portable CI gate. What is
-validated and committed is the κ-solver kernel (against glmnet) and the exact
-aggregation and damping arithmetic (Rust unit tests). Treat the `reference`
-profiles as R-aligned configurations whose numerical kernel is validated, not as
-a claim of byte-for-byte reproduction of a specific R `sts` fit on a specific
-corpus.
+What is validated and committed is: the κ-solver kernel (against R glmnet), the
+exact aggregation and damping arithmetic (Rust unit tests), and an end-to-end
+topic-recovery comparison against the live R `sts` package on the shipped
+poliblog corpus. The `reference` profiles are R-aligned configurations whose
+numerical kernel is validated and whose topics track R `sts`; they are not a
+claim of byte-for-byte reproduction of a specific R fit, since the two engines
+initialize independently and the reference init is a documented
+statistically-equivalent substitute for STM's spectral `eta` / `invsigma`.
