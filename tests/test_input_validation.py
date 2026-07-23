@@ -52,6 +52,16 @@ def test_other_constructors_reject_nan():
             cls(**kw)
 
 
+@pytest.mark.parametrize("bad", [NAN, INF, -0.01, 1.5])
+def test_seededlda_rejects_bad_weight(bad):
+    # #456: an unvalidated `weight` silently corrupted the seed prior — a negative
+    # weight gives negative topic-word probabilities and NaN/inf gives non-finite
+    # ones; the seededlda package restricts it to [0, 1].
+    seeds = {"sports": ["ball", "goal"], "politics": ["vote", "law"]}
+    with pytest.raises(ValueError, match="weight"):
+        topica.SeededLDA(seeds, weight=bad)
+
+
 def test_valid_hyperparameters_still_construct_and_fit():
     m = LDA(num_topics=2, beta=0.01, alpha_sum=1.0, seed=42)
     m.fit(DOCS, iters=20)
