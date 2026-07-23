@@ -292,6 +292,10 @@ impl Wordfish {
                         })?;
                     pairs.push((i, target));
                 }
+                // Sort by author index so the orientation sign-check sums the
+                // anchors in a fixed order regardless of the input dict's hash
+                // iteration order — Wordfish is bit-exact, keep it so (#411).
+                pairs.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
                 pairs
             }
         };
