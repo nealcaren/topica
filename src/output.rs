@@ -8,7 +8,20 @@ use crate::model::TopicModel;
 const HALF_LOG_TWO_PI: f64 = 0.9189385332046727;
 
 /// Stirling-series approximation of log Gamma, matching MALLET's Dirichlet.logGammaStirling.
-fn log_gamma(mut z: f64) -> f64 {
+///
+/// Kept separate from [`crate::mathfun::log_gamma`] on purpose: the `z < 2.0`
+/// shift threshold reproduces MALLET exactly, and every argument the model
+/// log-likelihood passes here is >= the smallest hyperparameter (~0.01), so the
+/// tiny-argument path never runs in practice. It is guarded anyway: without the
+/// lift, a `z` below ~1e-16 would make the shift `z += 1.0` round to 1.0 and the
+/// reverse pass evaluate `ln(0.0) = -inf`, returning +inf. The lift keeps every
+/// normal-range result bit-identical to the previous version (so MALLET parity is
+/// unchanged) and only makes the degenerate tail finite.
+fn log_gamma(z: f64) -> f64 {
+    if z < 1e-10 {
+        return log_gamma(z + 1.0) - z.ln();
+    }
+    let mut z = z;
     let mut shift = 0i32;
     while z < 2.0 {
         z += 1.0;
@@ -222,4 +235,55 @@ pub fn write_doc_topic_matrix(theta: &[Vec<f64>], corpus: &Corpus, path: &Path) 
         writeln!(writer)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{log_gamma, HALF_LOG_TWO_PI};
+
+    /// The exact pre-fix MALLET-matched algorithm, for bit-parity checks.
+    fn legacy(mut z: f64) -> f64 {
+        let mut shift = 0i32;
+        while z < 2.0 {
+            z += 1.0;
+            shift += 1;
+        }
+        let mut result = HALF_LOG_TWO_PI + (z - 0.5) * z.ln() - z + 1.0 / (12.0 * z)
+            - 1.0 / (360.0 * z * z * z)
+            + 1.0 / (1260.0 * z * z * z * z * z);
+        while shift > 0 {
+            shift -= 1;
+            z -= 1.0;
+            result -= z.ln();
+        }
+        result
+    }
+
+    #[test]
+    fn log_gamma_bit_identical_to_legacy_on_normal_args() {
+        // The guard must not shift MALLET log-likelihood: every normal-range
+        // argument (the model LL only ever passes values >= the smallest
+        // hyperparameter) must be bit-for-bit equal to the pre-fix algorithm.
+        let mut z = 1e-9f64;
+        while z < 200.0 {
+            assert_eq!(
+                log_gamma(z).to_bits(),
+                legacy(z).to_bits(),
+                "log_gamma diverged from the MALLET-matched legacy value at z = {z}"
+            );
+            z += 0.0009;
+        }
+    }
+
+    #[test]
+    fn log_gamma_finite_for_tiny_argument() {
+        // Regression: the pre-fix code returned +inf here (ln(0) on the reverse
+        // pass). Never reached by real hyperparameters, but must not be +inf.
+        for &e in &[-20.0f64, -40.0, -80.0, -300.0] {
+            let z = e.exp();
+            let got = log_gamma(z);
+            assert!(got.is_finite(), "log_gamma({z}) not finite: {got}");
+            assert!((got - (-z.ln())).abs() < 1e-3, "log_gamma({z}) = {got}");
+        }
+    }
 }
