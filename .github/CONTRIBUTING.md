@@ -77,7 +77,7 @@ installed, so they are optional locally but run when the tooling is present.
 For the step-by-step version of either task, including the analysis-surface
 contract a new model must satisfy and the testing and validation expectations,
 see the implementer's playbook in
-[`CONTRIBUTING-MODELS.md`](CONTRIBUTING-MODELS.md).
+[`CONTRIBUTING-MODELS.md`](/.github/CONTRIBUTING-MODELS.md).
 
 ## Pull requests
 
