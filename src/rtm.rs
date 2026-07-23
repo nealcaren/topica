@@ -719,7 +719,7 @@ mod tests {
             link,
             rho: None,
             negative_ratio: 1.0,
-            ridge: 0.0,
+            ridge: 1.0,
             em_iters: 40,
             e_sweeps: 3,
             e_inner: 5,
