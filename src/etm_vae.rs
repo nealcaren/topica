@@ -680,22 +680,26 @@ pub fn fit_etm_vae<R: Rng>(
             // Contrastive InfoNCE gradients (anchor and positive views), scaled by
             // the contrastive weight. Empty when the flag is off or the batch is < 2.
             let (dz_c, dz_pos) = if opts.contrastive && bsz >= 2 {
+                // `info_nce_loss`/`info_nce_backward` return a batch MEAN, but the
+                // per-document recon+KL below are SUMMED and the whole batch loss +
+                // gradient is divided by `bsz` before the Adam step. Scaling the
+                // contrastive term only by `contrastive_weight` therefore left the
+                // effective weight at `contrastive_weight / bsz` (~1/1000 at the
+                // default batch size), so the advertised weight barely acted. Fold
+                // in `bsz` here so it survives the shared `1/bsz` scale as the
+                // intended `contrastive_weight * mean(InfoNCE)`.
+                let cw = opts.contrastive_weight * bsz as f64;
                 let (mut dz, dzp) = info_nce_backward(&thetas, &thetas_pos, opts.contrastive_temp);
                 for row in &mut dz {
                     for x in row.iter_mut() {
-                        *x *= opts.contrastive_weight;
+                        *x *= cw;
                     }
                 }
                 let dzp: Vec<Vec<f64>> = dzp
                     .into_iter()
-                    .map(|row| {
-                        row.into_iter()
-                            .map(|x| x * opts.contrastive_weight)
-                            .collect()
-                    })
+                    .map(|row| row.into_iter().map(|x| x * cw).collect())
                     .collect();
-                batch_loss += opts.contrastive_weight
-                    * info_nce_loss(&thetas, &thetas_pos, opts.contrastive_temp);
+                batch_loss += cw * info_nce_loss(&thetas, &thetas_pos, opts.contrastive_temp);
                 (Some(dz), Some(dzp))
             } else {
                 (None, None)
@@ -1004,6 +1008,59 @@ mod tests {
     fn vae_gradients_match_fd() {
         // Default options reproduce the original Gaussian-softmax / N(0,I) path.
         etm_fd_check(AvitmOptions::default());
+    }
+
+    /// The contrastive InfoNCE term must actually move the fit at its face-value
+    /// weight. It is computed as a batch MEAN, added to the SUMMED per-document
+    /// recon+KL, and the whole batch loss/gradient is divided by the batch size
+    /// before the Adam step — so scaling it by `contrastive_weight` alone left the
+    /// effective weight at `contrastive_weight / batch_size` and it barely acted.
+    /// With the batch-size correction, a real weight visibly changes `topic_word`
+    /// relative to a non-contrastive fit. Measured L1 on this fixture (batch of 6):
+    /// ~0.037 with the fix, ~0.008 without it — so the 0.02 bar fails the pre-fix
+    /// code and clears the corrected code with margin.
+    #[test]
+    fn contrastive_term_influences_the_fit() {
+        let (v, hidden, k, e) = (6usize, 4usize, 3usize, 2usize);
+        let docs: Vec<Vec<u32>> = vec![
+            vec![0, 0, 1, 2],
+            vec![3, 3, 4, 5],
+            vec![0, 1, 1, 2],
+            vec![3, 4, 5, 5],
+            vec![0, 0, 2, 2],
+            vec![3, 3, 5, 5],
+        ];
+        let mut r = ChaCha8Rng::seed_from_u64(7);
+        let rho: Vec<Vec<f64>> = (0..v)
+            .map(|_| (0..e).map(|_| r.gen::<f64>() * 2.0 - 1.0).collect())
+            .collect();
+        let off = AvitmOptions::default();
+        let on = AvitmOptions {
+            contrastive: true,
+            contrastive_weight: 20.0,
+            contrastive_temp: 0.5,
+            ..AvitmOptions::default()
+        };
+        // Identical fit RNG seed for both runs, so any difference is the contrastive term.
+        let mut ra = ChaCha8Rng::seed_from_u64(11);
+        let m_off = fit_etm_vae(
+            &docs, k, v, &rho, hidden, 60, 8, 0.02, 0.0, 0.0, off, &mut ra,
+        );
+        let mut rb = ChaCha8Rng::seed_from_u64(11);
+        let m_on = fit_etm_vae(
+            &docs, k, v, &rho, hidden, 60, 8, 0.02, 0.0, 0.0, on, &mut rb,
+        );
+        let (a, b) = (m_off.topic_word(), m_on.topic_word());
+        let l1: f64 = a
+            .iter()
+            .zip(&b)
+            .map(|(x, y)| x.iter().zip(y).map(|(p, q)| (p - q).abs()).sum::<f64>())
+            .sum();
+        assert!(
+            l1 > 0.02,
+            "contrastive term barely influenced the fit (topic_word L1 = {l1}); \
+             effective weight is likely still diluted by the batch size"
+        );
     }
 
     #[test]
