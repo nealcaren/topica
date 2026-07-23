@@ -388,3 +388,13 @@ class TestAnchorDocFreq:
         m = topica.AnchorLDA(4, min_count=2, anchor_min_doc_freq=0.999, seed=0).fit(docs)
         assert len(m.anchors) == 4
         assert np.isfinite(np.asarray(m.topic_word)).all()
+
+
+def test_no_cooccurrence_evidence_raises():
+    # Every document has a single token, so no document has >= 2 in-vocab tokens
+    # and the co-occurrence estimator Q has no evidence. Previously this hit a
+    # divide-by-zero in _build_q and returned an all-NaN (but fitted-looking)
+    # model; it must raise a clear ValueError instead (#449).
+    docs = [[f"w{i % 4}"] for i in range(40)]
+    with pytest.raises(ValueError, match="co-occurrence"):
+        topica.AnchorLDA(2, seed=0).fit(docs)
