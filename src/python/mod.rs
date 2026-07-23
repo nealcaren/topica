@@ -4537,8 +4537,9 @@ impl LabeledLDA {
 
     /// Fit the model. `data` is a :class:`Corpus` or `list[list[str]]`;
     /// `labels` is a list (one per document) of label lists. The topic set is
-    /// the union of all labels (or `label_names`, which also fixes topic order).
-    /// An empty label list leaves that document unconstrained.
+    /// the union of all labels (or `label_names`, which also fixes topic order
+    /// and must contain every non-empty observed label exactly once). An empty
+    /// label list leaves that document unconstrained.
     ///
     /// `convergence_tol` (default 0.0, disabled) enables early stopping based
     /// on the relative change in log-likelihood every `check_every` sweeps.
@@ -4606,7 +4607,18 @@ impl LabeledLDA {
 
         // Topic vocabulary: provided order, or the sorted union of all labels.
         let label_vocab: Vec<String> = match label_names {
-            Some(n) => n,
+            Some(n) => {
+                let mut seen = HashSet::new();
+                for name in &n {
+                    if !seen.insert(name.as_str()) {
+                        return Err(PyValueError::new_err(format!(
+                            "label_names contains duplicate label {:?}",
+                            name
+                        )));
+                    }
+                }
+                n
+            }
             None => {
                 let mut set: HashSet<String> = HashSet::new();
                 for ls in &labels {
@@ -4631,13 +4643,24 @@ impl LabeledLDA {
             .map(|(i, l)| (l.as_str(), i))
             .collect();
 
+        // With an explicit vocabulary, silently dropping an unknown observed
+        // label would turn that document into an unconstrained one below.
+        // Reject it instead: every non-empty observed label must name a topic.
+        for (doc_idx, ls) in labels.iter().enumerate() {
+            for label in ls {
+                if !index.contains_key(label.as_str()) {
+                    return Err(PyValueError::new_err(format!(
+                        "labels[{doc_idx}] contains {:?}, which is absent from label_names",
+                        label
+                    )));
+                }
+            }
+        }
+
         let allowed: Vec<Vec<usize>> = labels
             .iter()
             .map(|ls| {
-                let mut v: Vec<usize> = ls
-                    .iter()
-                    .filter_map(|l| index.get(l.as_str()).copied())
-                    .collect();
+                let mut v: Vec<usize> = ls.iter().map(|l| index[l.as_str()]).collect();
                 v.sort_unstable();
                 v.dedup();
                 v

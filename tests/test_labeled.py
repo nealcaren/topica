@@ -138,6 +138,16 @@ class TestLabeledLDAFitValidation:
             model = LabeledLDA()
             model.fit(self.docs, self.labels, label_names=[])
 
+    def test_unknown_label_with_explicit_names_raises(self):
+        """Do not silently turn an unrecognized label into an unconstrained doc."""
+        labels = [["sports"]] * 9 + [["unknown"]]
+        with pytest.raises(ValueError, match="absent from label_names"):
+            LabeledLDA().fit(self.docs, labels, label_names=["sports", "politics"])
+
+    def test_duplicate_label_names_raises(self):
+        with pytest.raises(ValueError, match="duplicate"):
+            LabeledLDA().fit(self.docs, self.labels, label_names=["sports", "sports"])
+
 
 # ---------------------------------------------------------------------------
 # Supervised recovery: shapes, constraint, and word recovery

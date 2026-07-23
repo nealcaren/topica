@@ -1740,8 +1740,9 @@ class LabeledLDA:
         check_every: int = 10,
     ) -> "LabeledLDA":
         """Fit the model. labels is one label-list per document; the topic set is
-        the union of all labels (or label_names, which fixes topic order). An
-        empty label list leaves that document unconstrained (all topics)."""
+        the union of all labels (or label_names, which fixes topic order and must
+        contain every non-empty observed label exactly once). An empty label list
+        leaves that document unconstrained (all topics)."""
         ...
 
     @property
