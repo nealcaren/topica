@@ -25,22 +25,24 @@ use crate::sampler::sample_doc;
 /// asymptotic series so the result (and, importantly for the optimizer, its
 /// numerical derivative) is accurate to ~1e-10. This is a local copy used only
 /// by the DMR objective; LDA's MALLET-matched log Γ lives in `output.rs`.
-fn log_gamma(mut z: f64) -> f64 {
+fn log_gamma(z: f64) -> f64 {
     const HALF_LOG_TWO_PI: f64 = 0.918_938_533_204_672_7;
-    let mut shift = 0i32;
-    while z < 10.0 {
-        z += 1.0;
-        shift += 1;
+    // Shift the argument up to x >= 10 for the asymptotic series, accumulating the
+    // recurrence correction -Σ ln(z + k) from the ORIGINAL arguments as we go.
+    // Reconstructing that correction by decrementing the shifted value instead
+    // silently loses a tiny z (z + 1.0 rounds to exactly 1.0 for z below ~1e-16),
+    // and the reverse pass then evaluates ln(0.0) = -inf, so the function returned
+    // +inf — poisoning the DMR objective/gradient with NaN when α = exp(λ·x) is
+    // small. Computing ln(z) directly on the real argument keeps it finite.
+    let mut x = z;
+    let mut correction = 0.0f64;
+    while x < 10.0 {
+        correction -= x.ln();
+        x += 1.0;
     }
-    let mut result = HALF_LOG_TWO_PI + (z - 0.5) * z.ln() - z + 1.0 / (12.0 * z)
-        - 1.0 / (360.0 * z * z * z)
-        + 1.0 / (1260.0 * z * z * z * z * z);
-    while shift > 0 {
-        shift -= 1;
-        z -= 1.0;
-        result -= z.ln();
-    }
-    result
+    HALF_LOG_TWO_PI + (x - 0.5) * x.ln() - x + 1.0 / (12.0 * x) - 1.0 / (360.0 * x * x * x)
+        + 1.0 / (1260.0 * x * x * x * x * x)
+        + correction
 }
 
 /// Per-document, per-topic prior `α_{d,t} = exp(λ_t · x_d + s_{d,t})`.
@@ -608,5 +610,45 @@ mod tests {
             "expected positive covariate effect on topic 1, got {}",
             effect_topic1
         );
+    }
+
+    #[test]
+    fn log_gamma_matches_known_values() {
+        // ln Γ at integers/half-integers and a couple of interior points.
+        // Γ(1)=Γ(2)=1 -> 0; Γ(0.5)=√π -> ln√π; Γ(5)=24; Γ(10)=9! = 362880.
+        let cases = [
+            (1.0, 0.0),
+            (2.0, 0.0),
+            (0.5, (std::f64::consts::PI).sqrt().ln()),
+            (3.0, 2.0f64.ln()),                    // Γ(3)=2
+            (5.0, 24.0f64.ln()),                   // Γ(5)=24
+            (10.0, 362_880.0f64.ln()),             // Γ(10)=9!
+            (0.1, 9.513_507_698_668_732_f64.ln()), // Γ(0.1)≈9.5135 -> ln Γ(0.1)
+        ];
+        for (z, expected) in cases {
+            let got = log_gamma(z);
+            assert!(
+                (got - expected).abs() < 1e-9,
+                "log_gamma({z}) = {got}, expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn log_gamma_finite_for_tiny_argument() {
+        // Regression: α = exp(λ·x) can be far below 1 (e.g. exp(-40) ≈ 4.25e-18).
+        // The old shift-then-decrement reconstruction rounded z + 1.0 to 1.0 and
+        // then hit ln(0) = -inf on the reverse pass, returning +inf. For small z,
+        // Γ(z) ≈ 1/z so ln Γ(z) ≈ -ln z.
+        for &e in &[-20.0f64, -40.0, -80.0] {
+            let z = e.exp();
+            let got = log_gamma(z);
+            assert!(got.is_finite(), "log_gamma({z}) not finite: {got}");
+            let approx = -z.ln(); // leading term of ln Γ for small z
+            assert!(
+                (got - approx).abs() < 1e-3,
+                "log_gamma({z}) = {got}, expected ≈ {approx}"
+            );
+        }
     }
 }
