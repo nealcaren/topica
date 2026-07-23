@@ -271,6 +271,8 @@ struct CtmState {
     topic_names: Vec<String>,
     #[serde(default = "default_variational")]
     variational: String,
+    #[serde(default)]
+    initialization: Option<String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StmState {
@@ -305,6 +307,8 @@ struct StmState {
     variational: String,
     #[serde(default)]
     content_kappa: Option<ctm::ContentKappa>,
+    #[serde(default)]
+    initialization: Option<String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StsState {
@@ -332,6 +336,8 @@ struct StsState {
     converged: bool,
     #[serde(default)]
     topic_names: Vec<String>,
+    #[serde(default)]
+    initialization: Option<String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct HdpState {
@@ -368,6 +374,8 @@ struct DtmState {
     topic_names: Vec<String>,
     #[serde(default = "default_false")]
     init_spectral: bool,
+    #[serde(default)]
+    initialization: Option<String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SldaState {
@@ -5931,6 +5939,8 @@ pub struct CTM {
     variational: String,
 
     fitted: bool,
+    // The initialization route the fit took (#410); None until fitted.
+    initialization: Option<String>,
     topic_names: Vec<String>,
     beta: Option<Array2<f64>>,     // (num_topics, num_words)
     theta: Option<Array2<f64>>,    // (num_docs, num_topics)
@@ -6033,6 +6043,7 @@ impl CTM {
             init_spectral,
             variational: variational.to_string(),
             fitted: false,
+            initialization: None,
             topic_names: Vec::new(),
             beta: None,
             theta: None,
@@ -6254,6 +6265,7 @@ impl CTM {
         };
 
         slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.initialization = Some(model.initialization.clone());
         slf.beta = Some(beta);
         slf.theta = Some(theta);
         slf.corr = Some(corr);
@@ -6311,6 +6323,15 @@ impl CTM {
     #[getter]
     fn variational(&self) -> String {
         self.variational.clone()
+    }
+
+    /// The initialization route the fit actually took (issue #410): ``"spectral"``,
+    /// ``"random-fallback"`` (spectral requested but recovery fell back to a seeded
+    /// random init), or ``"random"``. ``None`` before the model is fitted, and after
+    /// loading a model saved before this was recorded.
+    #[getter]
+    fn initialization(&self) -> Option<String> {
+        self.initialization.clone()
     }
 
     /// Uniform convergence trace: ``(iteration, bound)`` pairs, one per EM
@@ -6432,6 +6453,8 @@ impl CTM {
             em_iters_run: 0,
             // Recompute ν in the same mode the fit used (laplace/diagonal).
             diagonal: self.variational == "diagonal",
+            // Unused by recompute_nu; carry the recorded route if present.
+            initialization: self.initialization.clone().unwrap_or_default(),
         };
         let nu = py.allow_threads(|| ctm::recompute_nu(&model_stub, &sparse));
         let mut out = Array3::<f32>::zeros((d, km1, km1));
@@ -6594,6 +6617,7 @@ impl CTM {
                 converged: self.converged,
                 topic_names: self.topic_names.clone(),
                 variational: self.variational.clone(),
+                initialization: self.initialization.clone(),
             },
         )
     }
@@ -6616,6 +6640,7 @@ impl CTM {
             init_spectral: s.init_spectral,
             variational: s.variational,
             fitted: s.fitted,
+            initialization: s.initialization,
             topic_names,
             beta: arr2_back(s.beta)?,
             theta: arr2_back(s.theta)?,
@@ -6667,6 +6692,8 @@ pub struct STM {
     variational: String,
 
     fitted: bool,
+    // The initialization route the fit took (#410); None until fitted.
+    initialization: Option<String>,
     topic_names: Vec<String>,
     beta: Option<Array2<f64>>,
     theta: Option<Array2<f64>>,
@@ -6760,8 +6787,12 @@ impl STM {
     /// Create an unfitted model. `sigma_shrink` ∈ [0,1] shrinks Σ toward its
     /// diagonal each M-step. `init` is ``"spectral"`` (default; deterministic
     /// anchor-word init, matching STM's default — `seed` is then irrelevant for
-    /// β init) or ``"random"`` (seeded). Spectral init applies to the
-    /// topic-word β; with a content model the per-group β is always random.
+    /// β init) or ``"random"`` (seeded). Spectral init applies to the base
+    /// topic-word β with or without a content covariate: the content (SAGE)
+    /// deviations κ are then derived deterministically from that base β, so a
+    /// content fit under spectral init is seed-independent too. Spectral can fall
+    /// back to a seeded random init for a degenerate corpus; ``initialization``
+    /// records which route ran.
     /// `variational` selects the per-document variational-covariance mode:
     /// ``"laplace"`` (default; full posterior covariance ν = H⁻¹) or
     /// ``"diagonal"`` (mean-field ν = diag(1/H_ii), which skips the per-document
@@ -6800,6 +6831,7 @@ impl STM {
             init_spectral,
             variational: variational.to_string(),
             fitted: false,
+            initialization: None,
             topic_names: Vec::new(),
             beta: None,
             theta: None,
@@ -7247,6 +7279,7 @@ impl STM {
         };
 
         slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.initialization = Some(model.initialization.clone());
         slf.beta = Some(beta);
         slf.theta = Some(theta);
         slf.corr = Some(corr);
@@ -7312,6 +7345,15 @@ impl STM {
     #[getter]
     fn variational(&self) -> String {
         self.variational.clone()
+    }
+
+    /// The initialization route the fit actually took (issue #410): ``"spectral"``,
+    /// ``"random-fallback"`` (spectral requested but recovery fell back to a seeded
+    /// random init), or ``"random"``. ``None`` before the model is fitted, and after
+    /// loading a model saved before this was recorded.
+    #[getter]
+    fn initialization(&self) -> Option<String> {
+        self.initialization.clone()
     }
 
     /// Uniform convergence trace: ``(iteration, bound)`` pairs, one per EM
@@ -7444,6 +7486,8 @@ impl STM {
             em_iters_run: 0,
             // Recompute ν in the same mode the fit used (laplace/diagonal).
             diagonal: self.variational == "diagonal",
+            // Unused by recompute_nu; carry the recorded route if present.
+            initialization: self.initialization.clone().unwrap_or_default(),
         };
         let nu = py.allow_threads(|| ctm::recompute_nu(&model_stub, &sparse));
         let mut out = Array3::<f32>::zeros((d, km1, km1));
@@ -7781,6 +7825,7 @@ impl STM {
                 topic_names: self.topic_names.clone(),
                 variational: self.variational.clone(),
                 content_kappa: self.content_kappa.clone(),
+                initialization: self.initialization.clone(),
             },
         )
     }
@@ -7803,6 +7848,7 @@ impl STM {
             init_spectral: s.init_spectral,
             variational: s.variational,
             fitted: s.fitted,
+            initialization: s.initialization,
             topic_names,
             beta: arr2_back(s.beta)?,
             theta: arr2_back(s.theta)?,
@@ -8138,6 +8184,8 @@ pub struct STS {
     init_spectral: bool,
 
     fitted: bool,
+    // The initialization route the fit took (#410); None until fitted.
+    initialization: Option<String>,
     topic_names: Vec<String>,
     beta: Option<Array2<f64>>,      // K×V baseline topic-word (α^(s)=0)
     theta: Option<Array2<f64>>,     // D×K prevalence
@@ -8226,6 +8274,7 @@ impl STS {
             seed,
             init_spectral,
             fitted: false,
+            initialization: None,
             topic_names: Vec::new(),
             beta: None,
             theta: None,
@@ -8503,6 +8552,7 @@ impl STS {
         slf.bound = model.bound_history.last().copied().unwrap_or(f64::NAN);
         slf.bound_history = model.bound_history;
         slf.converged = model.converged;
+        slf.initialization = Some(model.initialization.clone());
         slf.fitted = true;
         Ok(slf.into())
     }
@@ -8551,6 +8601,13 @@ impl STS {
     fn sentiment<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         Ok(self.sentiment.as_ref().unwrap().to_pyarray_bound(py))
+    }
+
+    /// The initialization route the fit actually took (issue #410): ``"spectral"``,
+    /// ``"random-fallback"``, or ``"random"``. ``None`` before fit / for old saves.
+    #[getter]
+    fn initialization(&self) -> Option<String> {
+        self.initialization.clone()
     }
 
     /// Prevalence regression coefficients Γ^(p), shape ``(num_features,
@@ -8687,6 +8744,8 @@ impl STS {
             bound_history: Vec::new(),
             converged: false,
             em_iters_run: 0,
+            // Unused by recompute_nu_sts; carry the recorded route if present.
+            initialization: self.initialization.clone().unwrap_or_default(),
         };
 
         let nu = py.allow_threads(|| sts::recompute_nu_sts(&model_stub, &sparse));
@@ -8819,6 +8878,7 @@ impl STS {
                 bound_history: self.bound_history.clone(),
                 converged: self.converged,
                 topic_names: self.topic_names.clone(),
+                initialization: self.initialization.clone(),
             },
         )
     }
@@ -8839,6 +8899,7 @@ impl STS {
             seed: s.seed,
             init_spectral: s.init_spectral,
             fitted: s.fitted,
+            initialization: s.initialization,
             topic_names,
             beta: arr2_back(s.beta)?,
             theta: arr2_back(s.theta)?,
@@ -9546,6 +9607,8 @@ pub struct DTM {
     init_spectral: bool,
 
     fitted: bool,
+    // The initialization route the fit took (#410); None until fitted.
+    initialization: Option<String>,
     topic_names: Vec<String>,
     num_times: usize,
     bound: f64,
@@ -9637,6 +9700,7 @@ impl DTM {
             seed,
             init_spectral,
             fitted: false,
+            initialization: None,
             topic_names: Vec::new(),
             num_times: 0,
             bound: 0.0,
@@ -9731,6 +9795,7 @@ impl DTM {
         slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
         slf.bound = model.bound;
         slf.topic_words = Some(tw);
+        slf.initialization = Some(model.initialization.clone());
         slf.corpus = Some(corpus);
         slf.fitted = true;
         Ok(slf.into())
@@ -9879,6 +9944,14 @@ impl DTM {
         Ok(self.num_times)
     }
 
+    /// The initialization route the fit actually took (issue #410): ``"spectral"``,
+    /// ``"random-fallback"`` (spectral fell back to the seeded static-LDA init), or
+    /// ``"random"``. ``None`` before fit / for old saves.
+    #[getter]
+    fn initialization(&self) -> Option<String> {
+        self.initialization.clone()
+    }
+
     /// The final variational bound (ELBO) reached during fitting.
     #[getter]
     fn bound(&self) -> PyResult<f64> {
@@ -9946,6 +10019,7 @@ impl DTM {
                 corpus: self.corpus.clone(),
                 topic_names: self.topic_names.clone(),
                 init_spectral: self.init_spectral,
+                initialization: self.initialization.clone(),
             },
         )
     }
@@ -9967,6 +10041,7 @@ impl DTM {
             seed: s.seed,
             init_spectral: s.init_spectral,
             fitted: s.fitted,
+            initialization: s.initialization,
             topic_names,
             num_times: s.num_times,
             bound: s.bound,

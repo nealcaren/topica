@@ -417,6 +417,12 @@ class CTM:
     correlate (unlike LDA's Dirichlet). Fit by variational EM (STM's Laplace
     E-step)."""
     @property
+    def initialization(self) -> str | None:
+        """The initialization route the fit took (#410): 'spectral',
+        'random-fallback', 'random', or 'provided'; None before fit."""
+        ...
+
+    @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,
         keyword-named to match ``__init__`` (issue #400)."""
@@ -578,6 +584,12 @@ class STM:
     """Structural Topic Model (Roberts, Stewart & Tingley): the correlated-topic
     core (CTM) plus prevalence covariates — the prior topic mean is a regression
     on document covariates (mu_d = X_d gamma)."""
+    @property
+    def initialization(self) -> str | None:
+        """The initialization route the fit took (#410): 'spectral',
+        'random-fallback', 'random', or 'provided'; None before fit."""
+        ...
+
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,
@@ -797,6 +809,12 @@ class STS:
     plus a per-document, per-topic continuous sentiment-discourse latent that
     modulates the topic-word distribution, with both prevalence and sentiment
     driven by document covariates. Fit by Laplace variational EM."""
+    @property
+    def initialization(self) -> str | None:
+        """The initialization route the fit took (#410): 'spectral',
+        'random-fallback', 'random', or 'provided'; None before fit."""
+        ...
+
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,
@@ -1105,6 +1123,12 @@ class DTM:
     Fit variationally with Kalman smoothing (a port of Blei's C dtm /
     gensim's LdaSeqModel). Query a topic's distribution at a slice with
     topic_word(time) and a word's trajectory with word_evolution(topic, word)."""
+    @property
+    def initialization(self) -> str | None:
+        """The initialization route the fit took (#410): 'spectral',
+        'random-fallback', 'random', or 'provided'; None before fit."""
+        ...
+
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,
