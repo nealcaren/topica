@@ -3557,6 +3557,11 @@ impl DMR {
     /// heuristic on the log-likelihood trace, not a guarantee the Gibbs chain has
     /// mixed. `check_every` is how often, in sweeps, the log-likelihood is recorded
     /// and the `convergence_tol` test is applied.
+    /// `offset` is an optional fixed `(num_docs, num_topics)` term added inside the
+    /// exponent of the per-document prior, `α_{d,t} = exp(λ_t · x_d + offset[d,t])`.
+    /// A constant offset shifts the baseline Dirichlet concentration (e.g. GDMR
+    /// passes `log(alpha)` to center the intercept prior at `log(alpha)`); `None`
+    /// (default) leaves the prior unshifted.
     #[pyo3(signature = (data, features=None, *, feature_names=None, iters=1000,
                         num_samples=5, sample_interval=25, progress=None, progress_interval=50,
                         keep_theta_draws=true, num_theta_draws=25,
