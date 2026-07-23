@@ -232,6 +232,12 @@ class DMR:
     features: alpha_{d,t} = exp(lambda_t . x_d). After fitting, the learned
     weights are in `feature_effects`.
     """
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -410,6 +416,12 @@ class CTM:
     Topics drawn from a logistic-normal prior with full covariance, so they can
     correlate (unlike LDA's Dirichlet). Fit by variational EM (STM's Laplace
     E-step)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -566,6 +578,12 @@ class STM:
     """Structural Topic Model (Roberts, Stewart & Tingley): the correlated-topic
     core (CTM) plus prevalence covariates — the prior topic mean is a regression
     on document covariates (mu_d = X_d gamma)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -779,6 +797,12 @@ class STS:
     plus a per-document, per-topic continuous sentiment-discourse latent that
     modulates the topic-word distribution, with both prevalence and sentiment
     driven by document covariates. Fit by Laplace variational EM."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -924,6 +948,12 @@ class HDP:
     2006): the nonparametric LDA that *infers* the number of topics rather than
     fixing K. Fit by the direct-assignment Gibbs sampler (Chinese Restaurant
     Franchise). The inferred topic count is read from `num_topics` after fit."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -1075,6 +1105,12 @@ class DTM:
     Fit variationally with Kalman smoothing (a port of Blei's C dtm /
     gensim's LdaSeqModel). Query a topic's distribution at a slice with
     topic_word(time) and a word's trajectory with word_evolution(topic, word)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -1177,6 +1213,12 @@ class DETM:
     supply the word embeddings rho like ETM. The headline output is the time-varying
     topic-word tensor beta_over_time (num_times, num_topics, vocab); topic_word is its
     mean over time."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -1312,6 +1354,12 @@ class SupervisedLDA:
     real-valued response y_d ~ N(eta^T zbar_d, sigma^2) regressed on its topic
     usage. Topics are shaped to predict the response; `coefficients` (eta) report
     how each topic moves y. Fit by variational EM; `predict` scores new docs."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -1455,6 +1503,12 @@ class SAGE:
     """Content-covariate topic model (SAGE / the STM content model). Topics are
     shared but each topic's word distribution varies by a document-level group
     covariate, so you can read how a topic is worded differently across groups."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -1606,6 +1660,12 @@ class SAGE:
 class LabeledLDA:
     """Labeled LDA (Ramage et al. 2009): supervised topics constrained to each
     document's label set. The number of topics equals the number of labels."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -1747,6 +1807,12 @@ class LabeledLDA:
 
 class LDA:
     """Sparse LDA topic model (MALLET's algorithm) implemented in Rust."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -2057,6 +2123,12 @@ class PT:
     """Pseudo-document Topic model (Zuo et al. 2016) for short texts: aggregates
     documents into `num_pseudo` pseudo-documents so LDA-style mixed membership is
     estimable on short, sparse texts. Fit by collapsed Gibbs."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -2152,6 +2224,12 @@ class GSDMM:
     (Yin & Wang 2014): a one-topic-per-document mixture for short texts. You set
     an upper bound K (`num_topics`); empty clusters die out, so the effective
     number of topics is read from `num_topics` after fit."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -2233,6 +2311,12 @@ class BTM:
     texts are too sparse to estimate), BTM learns one global topic distribution and
     per-topic word distributions from the corpus's biterms -- unordered word pairs
     co-occurring within a window. `alpha` defaults to 50/num_topics."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -2302,6 +2386,12 @@ class PolylingualLDA:
     `beta` the topic-word prior applied to every language (default 0.01); with
     `optimize_alpha` the asymmetric alpha.m prior is re-estimated every
     `optimize_interval` Gibbs iterations after an `optimize_burn_in` warm-up."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -2390,6 +2480,12 @@ class DiscLDA:
     (`class_topics`) vs their common ground (`shared_topics`), and gives a
     class-carrying document representation (`transform`/`predict`). Fixed
     block-transform variant (paper section 4.1)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -2471,6 +2567,12 @@ class PA:
     """Pachinko Allocation Model (Li & McCallum 2006): a DAG of `num_super`
     super-topics over `num_sub` shared sub-topics over words, capturing topic
     correlations. `super_sub` reports which sub-topics each super-topic groups."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -2576,6 +2678,12 @@ class HLDA:
     """Hierarchical LDA (Blei et al.): topics arranged in a `depth`-level tree via
     the nested Chinese Restaurant Process. Each document follows a root-to-leaf
     path; general words sit near the root, specific words near the leaves."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -2648,6 +2756,12 @@ class SeededLDA:
     vocabulary and any `residual` unseeded topics are still learned. Seeding
     follows the seededlda package (seed words get a `weight * 100` prior
     pseudocount in their topic, plus seeded initialization)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -2766,6 +2880,12 @@ class Top2Vec:
     documents' embeddings and its words are the nearest vocabulary terms. You
     bring the embeddings; the topic count is discovered, not set. No embedder of
     your own? ``topica.llm_embed(texts, model=...)`` builds the matrix."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -2866,6 +2986,12 @@ class BERTopic:
     to a target; `doc_topic` is the approximate distribution. You bring the
     document embeddings; the topic count is discovered (before any reduction).
     No embedder of your own? ``topica.llm_embed(texts, model=...)`` builds it."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -2969,6 +3095,12 @@ class ETM:
     autoencoder, which scales to large corpora and maps new documents with a single
     encoder pass. Neither uses PyTorch. No embedder of your own?
     ``topica.llm_embed(vocabulary, model=...)`` builds the word embeddings rho."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -3079,6 +3211,12 @@ class InfoCTM:
     term (a masked cross-lingual InfoNCE over topic-word columns) seeded by a
     bilingual ``dictionary`` (optionally densified by per-language ``embeddings``).
     After fitting, topic ``k`` denotes the same theme in both languages."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -3147,6 +3285,12 @@ class ProdLDA:
     minibatch Adam on the ELBO; batch normalization and high-momentum Adam guard
     against component collapse. Unlike ETM you bring no embeddings: beta is learned
     directly. New documents transform with a single encoder forward pass."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -3243,6 +3387,12 @@ class Scholar:
     is the fitted covariate-by-topic prevalence matrix. Covariates also enter the
     encoder. Built on topica's ProdLDA backbone. Reference implementation:
     dallascard/scholar (Apache-2.0)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -3369,6 +3519,12 @@ class CombinedTM:
     reconstructs the bag of words. Bring the embeddings at fit() as a
     (num_docs, E) array, aligned to the documents. Reference implementation:
     contextualized-topic-models (Bianchi et al., MIT)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -3470,6 +3626,12 @@ class ZeroShotTM:
     another. Bring the embeddings at fit() as a (num_docs, E) array, aligned to the
     documents. Reference implementation: contextualized-topic-models (Bianchi et
     al., MIT)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -3574,6 +3736,12 @@ class NMF:
     scikit-learn's sklearn.decomposition.NMF (BSD-3-Clause). The topic-word matrix
     is each row of H normalized to sum 1; the document-topic matrix is each row of
     W normalized to sum 1."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -3651,6 +3819,12 @@ class LSA:
     absolute value). doc_topic (D x K) is U_k Sigma_k (signed document
     coordinates; rows do not sum to 1). singular_values (K) is Sigma_k. A
     deterministic svd_flip sign convention matches scikit-learn's output."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -3720,6 +3894,12 @@ class TensorLDA:
     """Online Tensor LDA (TensorLDA) topic model (Kangaslahti et al. 2026).
     Method-of-moments topic modeling using second and third-order cumulants.
     Gated behind `topica.enable_experimental()`."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -3794,6 +3974,12 @@ class FASTopic:
     transport costs. Held-out documents are mapped by a distance-softmax over the
     fitted topic embeddings, so `transform` needs only their embeddings. No
     embedder of your own? ``topica.llm_embed(texts, model=...)`` builds it."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -3887,6 +4073,12 @@ class KeyATM:
     a distribution over only that topic's keywords or from its full distribution,
     anchoring keyword topics to their keywords. `num_topics` may exceed the number
     of keyword topics to add regular, no-keyword topics."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -4159,6 +4351,12 @@ class IdealPointTM:
     is parameterized directly over the vocabulary (counts; "Wordfish with topics");
     pass them and it is factored through word embeddings, as in ETM. Both are the
     same model. Gated behind topica.enable_experimental()."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -4296,6 +4494,12 @@ class Wordfish:
     latent position, beta_j the word's discrimination. The word-frequency baseline
     companion to IdealPointTM. The fit is deterministic. Validated against R
     quanteda's textmodel_wordfish (parity/wordfish_r_compare.py)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -4373,6 +4577,12 @@ class IdealPointSentenceTM:
     (e ~ N(mu_k + x_a . V_k, sigma^2)); ||V_k|| is the topic's discrimination. The
     sentence-embedding sibling of IdealPointTM, fit by EM. Gated behind
     topica.enable_experimental()."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -4453,6 +4663,12 @@ class TBIP:
     single-sample SVI, Adam, document minibatching). Recovers ideological scales
     from unlabeled text. Validated by planted-position recovery and a PyTorch
     reference (parity/tbip_parity.py)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:
@@ -4534,6 +4750,12 @@ class PartyEmbeddings:
     Implemented from Mikolov et al. (2013) and Le & Mikolov (2014); validated by
     planted-position recovery and correlation against the gensim reference
     (parity/party_embeddings_compare.py)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
 
     @property
     def seed(self) -> int:

@@ -16,6 +16,8 @@
 //! coherence helpers, save/load, the experimental gate).
 
 use super::*;
+use pyo3::types::PyDict;
+
 use crate::idealpoint::{self, IdealPointModel};
 use crate::idealpoint_lda::{self, IdealPointLdaModel};
 use std::collections::{HashMap, HashSet};
@@ -330,6 +332,25 @@ impl IdealPointTM {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). Values are the effective ones actually
+    /// in force (e.g. ``min_count`` after the ``.max(1)`` floor).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("num_dims", self.num_dims)?;
+        d.set_item("convergence_tol", self.convergence_tol)?;
+        d.set_item("sigma_shrink", self.sigma_shrink)?;
+        d.set_item("prior_variance", self.prior_variance)?;
+        d.set_item("w_prior_variance", self.w_prior_variance)?;
+        d.set_item("x_prior_variance", self.x_prior_variance)?;
+        d.set_item("max_inner", self.max_inner)?;
+        d.set_item("min_count", self.min_count)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     /// Create an unfitted model. `num_topics` is K (>= 2); `num_dims` is the

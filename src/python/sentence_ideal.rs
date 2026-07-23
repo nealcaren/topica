@@ -4,6 +4,8 @@
 //! Experimental, gated. `use super::*` pulls in the shared bindings.
 
 use super::*;
+use pyo3::types::PyDict;
+
 use crate::sentence_ideal::{self, SentenceIdealModel};
 use std::collections::HashMap;
 
@@ -59,6 +61,19 @@ impl IdealPointSentenceTM {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("num_dims", self.num_dims)?;
+        d.set_item("convergence_tol", self.convergence_tol)?;
+        d.set_item("x_prior_variance", self.x_prior_variance)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     /// Create an unfitted model. `num_topics` is K (>= 2); `num_dims` the latent

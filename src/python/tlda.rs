@@ -2,6 +2,7 @@
 
 use super::*;
 use numpy::{PyArray1, PyArray2};
+use pyo3::types::PyDict;
 use pyo3::types::PyType;
 use std::collections::HashMap;
 
@@ -118,6 +119,26 @@ impl TensorLDA {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). ``n_eigenvec`` is ``None`` when left
+    /// unset (defaults to ``num_topics`` at fit).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("alpha_0", self.alpha_0)?;
+        d.set_item("n_iter_train", self.n_iter_train)?;
+        d.set_item("n_iter_test", self.n_iter_test)?;
+        d.set_item("learning_rate", self.learning_rate)?;
+        d.set_item("batch_size", self.batch_size)?;
+        d.set_item("smoothing", self.smoothing)?;
+        d.set_item("theta", self.theta)?;
+        d.set_item("n_eigenvec", self.n_eigenvec)?;
+        d.set_item("pca_batch_size", self.pca_batch_size)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     /// Create an unfitted TensorLDA model.

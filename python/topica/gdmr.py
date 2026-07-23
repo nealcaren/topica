@@ -632,6 +632,29 @@ class GDMR:
     # ------------------------------------------------------------------
 
     @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict, keyword-named
+        to match ``__init__`` (issue #400)."""
+        return {
+            "num_topics": self._num_topics,
+            "degrees": list(self._degrees),
+            "beta": self._beta,
+            "optimize_interval": self._optimize_interval,
+            "burn_in": self._burn_in,
+            "seed": self._seed,
+            "sigma": self._sigma,
+            "sigma0": self._sigma0,
+            "decay": self._decay,
+            "metadata_range": (
+                [list(t) for t in self._metadata_range]
+                if self._metadata_range is not None
+                else None
+            ),
+            "lbfgs_iters": self._lbfgs_iters,
+            "sampler": self._sampler,
+        }
+
+    @property
     def topic_word(self) -> np.ndarray:
         """Topic-word matrix phi, shape ``(num_topics, num_words)``, rows sum to 1."""
         self._require_fitted()

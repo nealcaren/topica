@@ -9,6 +9,7 @@
 
 use super::*;
 use numpy::{PyArray1, PyArray2};
+use pyo3::types::PyDict;
 
 /// Guard `reducer='umap'`: error out on the (non-wheel) build where the `umap`
 /// feature was not compiled in. The in-house UMAP reducer is seeded and fully
@@ -100,6 +101,37 @@ impl Top2Vec {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). Internal flags are reported under
+    /// their public names (``reducer``, ``metric``); values are the effective
+    /// ones actually in force (e.g. ``min_samples`` after its
+    /// ``min_cluster_size`` default).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("n_components", self.n_components)?;
+        d.set_item("min_cluster_size", self.min_cluster_size)?;
+        d.set_item("min_samples", self.min_samples)?;
+        d.set_item("reducer", if self.use_umap { "umap" } else { "pca" })?;
+        d.set_item("n_neighbors", self.n_neighbors)?;
+        d.set_item("clusterer", self.clusterer.as_str())?;
+        d.set_item("num_clusters", self.num_clusters)?;
+        d.set_item("resolution", self.resolution)?;
+        d.set_item("knn_neighbors", self.knn_neighbors)?;
+        d.set_item("diagnostics", self.diagnostics)?;
+        d.set_item("min_dist", self.umap_params.min_dist)?;
+        d.set_item("spread", self.umap_params.spread)?;
+        d.set_item("n_epochs", self.umap_params.n_epochs)?;
+        d.set_item(
+            "negative_sample_rate",
+            self.umap_params.negative_sample_rate,
+        )?;
+        d.set_item("repulsion_strength", self.umap_params.repulsion_strength)?;
+        d.set_item("metric", self.umap_params.metric.as_str())?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     /// Create an unfitted model. `n_components` is the reduced dimensionality
@@ -761,6 +793,42 @@ impl BERTopic {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). Internal flags are reported under
+    /// their public names (``reducer``, ``metric``); values are the effective
+    /// ones actually in force (e.g. ``window``/``stride`` after their ``.max(1)``
+    /// floor, ``min_samples`` after its ``min_cluster_size`` default).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("n_components", self.n_components)?;
+        d.set_item("min_cluster_size", self.min_cluster_size)?;
+        d.set_item("min_samples", self.min_samples)?;
+        d.set_item("nr_topics", self.nr_topics)?;
+        d.set_item("window", self.window)?;
+        d.set_item("stride", self.stride)?;
+        d.set_item("reducer", if self.use_umap { "umap" } else { "pca" })?;
+        d.set_item("n_neighbors", self.n_neighbors)?;
+        d.set_item("bm25", self.bm25)?;
+        d.set_item("reduce_frequent", self.reduce_frequent)?;
+        d.set_item("clusterer", self.clusterer.as_str())?;
+        d.set_item("num_clusters", self.num_clusters)?;
+        d.set_item("resolution", self.resolution)?;
+        d.set_item("knn_neighbors", self.knn_neighbors)?;
+        d.set_item("diagnostics", self.diagnostics)?;
+        d.set_item("min_dist", self.umap_params.min_dist)?;
+        d.set_item("spread", self.umap_params.spread)?;
+        d.set_item("n_epochs", self.umap_params.n_epochs)?;
+        d.set_item(
+            "negative_sample_rate",
+            self.umap_params.negative_sample_rate,
+        )?;
+        d.set_item("repulsion_strength", self.umap_params.repulsion_strength)?;
+        d.set_item("metric", self.umap_params.metric.as_str())?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     /// Create an unfitted model. `nr_topics` (optional) reduces the discovered

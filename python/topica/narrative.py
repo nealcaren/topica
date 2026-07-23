@@ -71,6 +71,25 @@ class NarrativeTM:
         return self._num_topics
 
     @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict, keyword-named
+        to match ``__init__`` (issue #400)."""
+        return {
+            "num_topics": self._num_topics,
+            "degree": self._degree,
+            "segment_by": self._segment_by,
+            "chunk_size": self._chunk_size,
+            "beta": self._beta,
+            "optimize_interval": self._optimize_interval,
+            "burn_in": self._burn_in,
+            "seed": self._seed,
+            "decay": self._decay,
+            "sigma": self._sigma,
+            "sigma0": self._sigma0,
+            "sampler": self._sampler,
+        }
+
+    @property
     def vocabulary(self) -> list[str]:
         if not self._fitted:
             raise RuntimeError("Model is not fitted")

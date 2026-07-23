@@ -6,6 +6,8 @@
 //! bindings (Corpus, arrays, save/load).
 
 use super::*;
+use pyo3::types::PyDict;
+
 use crate::party_embeddings::{self, PartyEmbeddingsModel, PvdmConfig};
 use std::collections::HashMap;
 
@@ -106,6 +108,23 @@ impl PartyEmbeddings {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). Values are the effective ones actually
+    /// in force (e.g. ``min_count`` after the ``.max(1)`` floor).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_dims", self.num_dims)?;
+        d.set_item("vector_size", self.vector_size)?;
+        d.set_item("window", self.window)?;
+        d.set_item("min_count", self.min_count)?;
+        d.set_item("negative", self.negative)?;
+        d.set_item("sample", self.sample)?;
+        d.set_item("learning_rate", self.learning_rate)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     /// Create an unfitted PartyEmbeddings model. `num_dims` is the number of

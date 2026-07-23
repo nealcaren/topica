@@ -1365,6 +1365,43 @@ impl LDA {
         Ok(())
     }
 
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). Internal flags are reported under
+    /// their public names (``sampler``, ``init``); values are the effective ones
+    /// actually in force (e.g. ``num_threads`` after the ``.max(1)`` floor).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("alpha_sum", self.alpha_sum)?;
+        d.set_item("beta", self.beta)?;
+        d.set_item("optimize_interval", self.optimize_interval)?;
+        d.set_item("burn_in", self.burn_in)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item("num_threads", self.num_threads)?;
+        let sampler = if self.light {
+            "lightlda"
+        } else if self.warp {
+            "warp"
+        } else if self.cvb0 {
+            "cvb0"
+        } else {
+            "sparse"
+        };
+        d.set_item("sampler", sampler)?;
+        d.set_item("mh_steps", self.mh_steps)?;
+        d.set_item("use_symmetric_alpha", self.use_symmetric_alpha)?;
+        d.set_item(
+            "init",
+            if self.init_spectral {
+                "spectral"
+            } else {
+                "random"
+            },
+        )?;
+        Ok(d)
+    }
+
     /// Topic-word probability matrix φ, shape ``(num_topics, num_words)``.
     #[getter]
     fn topic_word<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
@@ -3370,6 +3407,29 @@ impl DMR {
 
 #[pymethods]
 impl DMR {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("beta", self.beta)?;
+        d.set_item("optimize_interval", self.optimize_interval)?;
+        d.set_item("burn_in", self.burn_in)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item("prior_variance", self.prior_variance)?;
+        d.set_item("lbfgs_iters", self.lbfgs_iters)?;
+        let sampler = if self.warp {
+            "warp"
+        } else if self.cvb0 {
+            "cvb0"
+        } else {
+            "sparse"
+        };
+        d.set_item("sampler", sampler)?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {
@@ -4386,6 +4446,18 @@ impl LabeledLDA {
 
 #[pymethods]
 impl LabeledLDA {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("beta", self.beta)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item("sampler", if self.cvb0 { "cvb0" } else { "sparse" })?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {
@@ -5055,6 +5127,21 @@ impl SAGE {
 
 #[pymethods]
 impl SAGE {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("prior_variance", self.prior_variance)?;
+        d.set_item("optimize_interval", self.optimize_interval)?;
+        d.set_item("burn_in", self.burn_in)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item("lbfgs_iters", self.lbfgs_iters)?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {
@@ -5878,6 +5965,26 @@ impl CTM {
 
 #[pymethods]
 impl CTM {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("sigma_shrink", self.sigma_shrink)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item(
+            "init",
+            if self.init_spectral {
+                "spectral"
+            } else {
+                "random"
+            },
+        )?;
+        d.set_item("variational", self.variational.as_str())?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {
@@ -6624,6 +6731,26 @@ impl STM {
 
 #[pymethods]
 impl STM {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("sigma_shrink", self.sigma_shrink)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item(
+            "init",
+            if self.init_spectral {
+                "spectral"
+            } else {
+                "random"
+            },
+        )?;
+        d.set_item("variational", self.variational.as_str())?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {
@@ -8052,6 +8179,24 @@ impl STS {
 
 #[pymethods]
 impl STS {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item(
+            "init",
+            if self.init_spectral {
+                "spectral"
+            } else {
+                "random"
+            },
+        )?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {
@@ -8839,6 +8984,21 @@ impl HDP {
 
 #[pymethods]
 impl HDP {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). ``eta`` is a deprecated alias for
+    /// ``beta``, folded at construction, so it always reports ``None`` here.
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("gamma", self.gamma)?;
+        d.set_item("beta", self.eta)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item("resample_conc", self.resample_conc)?;
+        d.set_item("eta", None::<f64>)?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {
@@ -9408,6 +9568,27 @@ impl DTM {
 
 #[pymethods]
 impl DTM {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("chain_variance", self.chain_variance)?;
+        d.set_item("obs_variance", self.obs_variance)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item(
+            "init",
+            if self.init_spectral {
+                "spectral"
+            } else {
+                "random"
+            },
+        )?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {
@@ -9851,6 +10032,17 @@ impl SupervisedLDA {
 
 #[pymethods]
 impl SupervisedLDA {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {
@@ -10430,6 +10622,19 @@ impl PT {
 
 #[pymethods]
 impl PT {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("num_pseudo", self.num_pseudo)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("beta", self.beta)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {
@@ -10817,6 +11022,18 @@ impl GSDMM {
 
 #[pymethods]
 impl GSDMM {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). ``num_topics`` is the max-cluster cap.
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.k_max)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("beta", self.beta)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {
@@ -11241,6 +11458,28 @@ impl SeededLDA {
 
 #[pymethods]
 impl SeededLDA {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). The ``seed_words`` guidance is data,
+    /// not a hyperparameter, so it is not reported here.
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("residual", self.residual)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("beta", self.beta)?;
+        d.set_item("weight", self.weight)?;
+        d.set_item("seed", self.seed)?;
+        let sampler = if self.warp {
+            "warp"
+        } else if self.cvb0 {
+            "cvb0"
+        } else {
+            "sparse"
+        };
+        d.set_item("sampler", sampler)?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {
@@ -11993,6 +12232,25 @@ impl FASTopic {
 
 #[pymethods]
 impl FASTopic {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). ``em_tol`` is a deprecated alias for
+    /// ``convergence_tol``, folded at construction, so it reports ``None`` here.
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("lr", self.lr)?;
+        d.set_item("dt_alpha", self.dt_alpha)?;
+        d.set_item("tw_alpha", self.tw_alpha)?;
+        d.set_item("theta_temp", self.theta_temp)?;
+        d.set_item("convergence_tol", self.em_tol)?;
+        d.set_item("sinkhorn_iters", self.sinkhorn_iters)?;
+        d.set_item("sinkhorn_tol", self.sinkhorn_tol)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item("em_tol", None::<f64>)?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {
@@ -12435,6 +12693,26 @@ impl KeyATM {
 
 #[pymethods]
 impl KeyATM {
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). The ``keywords`` guidance is data,
+    /// not a hyperparameter, so it is not reported here; ``num_topics`` and
+    /// ``alpha`` are the effective values resolved at construction.
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("beta", self.beta)?;
+        d.set_item("beta_keyword", self.beta_keyword)?;
+        d.set_item("gamma1", self.gamma1)?;
+        d.set_item("gamma2", self.gamma2)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item("estimate_alpha", self.estimate_alpha)?;
+        d.set_item("sampler", if self.cvb0 { "cvb0" } else { "sparse" })?;
+        d.set_item("num_threads", self.num_threads)?;
+        Ok(d)
+    }
+
     /// The random seed the model was constructed with.
     #[getter]
     fn seed(&self) -> u64 {

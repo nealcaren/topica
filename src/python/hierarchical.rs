@@ -6,6 +6,7 @@
 
 use super::*;
 use numpy::{PyArray1, PyArray2};
+use pyo3::types::PyDict;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
@@ -92,6 +93,19 @@ impl PA {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_super", self.num_super)?;
+        d.set_item("num_sub", self.num_sub)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("beta", self.beta)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     /// Create an unfitted model with `num_super` super-topics and `num_sub`
@@ -497,6 +511,23 @@ impl HLDA {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). ``beta`` is the effective topic-word
+    /// Dirichlet in force (the internal ``eta`` field, after resolving the
+    /// deprecated ``eta=`` alias); ``eta`` is the deprecated alias and is not
+    /// retained, so it always reports ``None``.
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("depth", self.depth)?;
+        d.set_item("gamma", self.gamma)?;
+        d.set_item("beta", self.eta)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item("eta", None::<f64>)?;
+        Ok(d)
     }
 
     /// Create an unfitted model. `depth` is the (fixed) tree depth; `gamma` is

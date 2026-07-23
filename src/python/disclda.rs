@@ -2,6 +2,7 @@
 
 use super::*;
 use numpy::{PyArray1, PyArray2};
+use pyo3::types::PyDict;
 use pyo3::types::PyType;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -119,6 +120,22 @@ impl DiscLDA {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). ``alpha`` is ``None`` when left at its
+    /// ``0.1`` default (resolved only at fit).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("k_class", self.k_class)?;
+        d.set_item("k_shared", self.k_shared)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("beta", self.beta)?;
+        d.set_item("iters", self.iters)?;
+        d.set_item("infer_sweeps", self.infer_sweeps)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     /// Create an unfitted DiscLDA. `k_class` is the number of class-specific topics
