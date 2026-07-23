@@ -2505,7 +2505,10 @@ mod tests {
                 groups.push(1);
             }
         }
-        let mut model = fit_ctm(
+        // Ground truth: keep_nu=true stores the per-group E-step ν. (The snapshot is
+        // now captured only when keep_nu=false, so a single fit cannot both store ν
+        // and carry the snapshot — use two same-seed fits, which are bit-identical.)
+        let m_keep = fit_ctm(
             &docs,
             2,
             4,
@@ -2524,7 +2527,35 @@ mod tests {
             false,
             &mut rng,
         );
+        let stored = m_keep.nu.clone(); // per-group E-step ν (keep_nu = true)
+        assert_eq!(stored.len(), docs.len(), "nu stored per doc");
+
+        // Recompute source: keep_nu=false captures content_beta_estep.
+        let mut rng2 = ChaCha8Rng::seed_from_u64(1);
+        let mut model = fit_ctm(
+            &docs,
+            2,
+            4,
+            30,
+            0.0,
+            0.0,
+            None,
+            Some((&groups, 2)),
+            None,
+            1.0,
+            0.0,
+            false,
+            None,
+            GammaPrior::Pooled,
+            false,
+            false,
+            &mut rng2,
+        );
         assert!(model.content_beta.is_some(), "content_beta present");
+        assert!(
+            model.content_beta_estep.is_some(),
+            "content_beta_estep captured for keep_nu=false"
+        );
         assert_eq!(
             model.groups.as_ref().map(|g| g.len()),
             Some(120),
@@ -2532,8 +2563,6 @@ mod tests {
         );
 
         let sparse: Vec<(Vec<usize>, Vec<f64>)> = docs.iter().map(|d| doc_sparse(d)).collect();
-        let stored = model.nu.clone(); // per-group E-step ν (keep_nu = true)
-        assert_eq!(stored.len(), docs.len(), "nu stored per doc");
 
         let mean_l1 = |a: &[Vec<f64>], b: &[Vec<f64>]| -> f64 {
             a.iter()
@@ -2584,8 +2613,10 @@ mod tests {
             }
         }
         // em_iters = 1: exactly one E-step (against the initial content β) then one
-        // M-step that overwrites content_beta. keep_nu = true stores the E-step ν.
-        let mut model = fit_ctm(
+        // M-step that overwrites content_beta. The snapshot is captured only when
+        // keep_nu=false, so use two same-seed (bit-identical) fits: keep_nu=true for
+        // the stored E-step ν, keep_nu=false for the content_beta_estep snapshot.
+        let m_keep = fit_ctm(
             &docs,
             2,
             4,
@@ -2604,9 +2635,30 @@ mod tests {
             false,
             &mut rng,
         );
+        let stored = m_keep.nu.clone();
+        let mut rng2 = ChaCha8Rng::seed_from_u64(7);
+        let mut model = fit_ctm(
+            &docs,
+            2,
+            4,
+            1,
+            0.0,
+            0.0,
+            None,
+            Some((&groups, 2)),
+            None,
+            1.0,
+            0.0,
+            false,
+            None,
+            GammaPrior::Pooled,
+            false,
+            false,
+            &mut rng2,
+        );
         assert!(
             model.content_beta_estep.is_some(),
-            "content_beta_estep captured for a fresh content fit"
+            "content_beta_estep captured for a keep_nu=false content fit"
         );
         // The final M-step must actually have moved content_beta, or the test would
         // pass trivially even against the buggy post-M-step path.
@@ -2629,7 +2681,6 @@ mod tests {
         );
 
         let sparse: Vec<(Vec<usize>, Vec<f64>)> = docs.iter().map(|d| doc_sparse(d)).collect();
-        let stored = model.nu.clone();
         let recomputed = recompute_nu(&model, &sparse);
         let err: f64 = stored
             .iter()
