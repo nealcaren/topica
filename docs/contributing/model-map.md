@@ -60,6 +60,7 @@ Column meanings:
 | `GDMR` | `src/dmr.rs` | `src/python/mod.rs` | collapsed Gibbs + DMR prior (optimize.rs) | default | `parity/gdmr_gold.py`, `parity/test_gdmr_tomotopy.py` |
 | `Scholar` | `src/scholar.rs` | `src/python/scholar.rs` | ProdLDA VAE + covariate prior (prodlda.rs) | default | `tests/test_scholar.py` |
 | `NarrativeTM` | `python/topica/narrative.py` | — _(Python)_ | intra-document trajectory over Gibbs core (Python) | default | `tests/test_content_trajectory.py` |
+| `RTM` | `src/rtm.rs` | `src/python/rtm.rs` | variational EM + link head (optimize.rs digamma) | default | `parity/rtm_compare.py`, `parity/rtm_reference.py`, `tests/test_rtm.py` |
 
 ### Guided & supervised
 

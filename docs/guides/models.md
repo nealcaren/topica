@@ -56,6 +56,7 @@ generated from `python/topica/registry.py`.
 | `DMR` | text, metadata | gibbs | seed-reproducible | Dirichlet-multinomial regression: a document-metadata prior on topic proportions. |
 | `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
 | `Scholar` | text, metadata, labels | vae | seed-reproducible | SCHOLAR (Card et al. 2018): a ProdLDA VAE with a covariate-shifted prevalence prior, an optional supervised label head, and optional content (topic-covariate) word deviations — neural STM prevalence + sLDA + SAGE. |
+| `RTM` | text, links | variational | seed-reproducible | Relational topic model (Chang & Blei 2010): jointly models document text and a link graph (citations, hyperlinks, adjacency); predicts links from words and words from links. |
 
 ### Guided & supervised
 
@@ -1109,6 +1110,51 @@ reproduces that ordering (DiscLDA features clearly above LDA features). The lear
 transform (paper §4.2, the full discriminative training of `T`) is a planned
 follow-up; the fixed-transform model already delivers the shared/class-specific
 structure and the discriminative-feature win.
+
+## RTM
+
+`RTM` ([Chang & Blei 2010](https://www.jstor.org/stable/27801582), the *relational
+topic model*) is for corpora that come with a **graph**: papers with a citation
+network, web pages with hyperlinks, bills with co-sponsorship, states with
+geographic adjacency. Every other model in the roster treats documents as
+exchangeable and ignores the links; RTM fits the topics and the link structure
+*jointly*, so the same topics that explain the words also explain who connects to
+whom. That coupling is the point — it lets the model predict a document's links
+from its words alone, and it sharpens the topics toward distinctions that the
+network cares about.
+
+```python
+edges = [(0, 3), (0, 7), (3, 7), ...]          # undirected (i, j) document pairs
+m = topica.RTM(num_topics=20, link="logistic") # or link="exponential"
+m.fit(docs, edges)
+m.predict_link(0, 3)                            # plug-in link probability
+m.suggest_links(new_doc, top_n=10)             # rank citations for an unseen doc
+m.eta, m.nu                                     # how topic co-occurrence drives links
+m.phi_bar                                       # mean topic assignments (the link quantity)
+```
+
+RTM is LDA plus a link head: for each observed pair of documents a binary link is
+drawn from a function of the two documents' mean topic-assignment vectors
+`z̄_d = (1/N_d) Σ_n z_{d,n}`. The link coupling is to `z̄` (not to the Dirichlet mean
+`θ`), following supervised LDA — that is what ties links and words to the *same*
+topics, and it is why `m.phi_bar` (the quantity the link function reads) is exposed
+separately from `m.doc_topic`. We fit by variational EM (paper §3), modelling only
+the **observed** links, so cost scales with the number of links, not with `D²`.
+Two link functions ship: `logistic` (default, `σ(ηᵀ(z̄_d ∘ z̄_{d'}) + ν)`, a bounded
+concave regression) and `exponential` (`exp(ηᵀ(z̄_d ∘ z̄_{d'}) + ν)`, with a
+closed-form M-step). Positive-only links make the link estimate a one-class problem,
+so both paths use the paper's `ρ` regularization (`negative_ratio` pseudo-negative
+links placed at the expected topic co-occurrence under the prior). Links are treated
+as **undirected** (the paper symmetrizes; directed RTM is a planned follow-up).
+Determinism is `seed-reproducible` (a serial, seeded E-step).
+
+The R `lda` package's `rtm.em` is a *collapsed Gibbs* sampler, not the paper's
+variational EM, so it can only be a directional baseline. RTM is therefore validated
+against a standalone NumPy implementation of the paper's variational equations
+(`parity/rtm_reference.py`, itself finite-difference-checked on the link gradients
+and the ρ term): topica's Rust core reproduces it to aligned topic-word cosine ≈ 1
+on a fixed corpus (`parity/rtm_compare.py`), and the fitted model separates linked
+from unlinked document pairs in link probability.
 
 ## SAGE
 

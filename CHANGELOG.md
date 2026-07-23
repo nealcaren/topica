@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`RTM`, the relational topic model** ([Chang & Blei 2010](https://www.jstor.org/stable/27801582))
+  (#414): joint model of document text and a link graph (citations, hyperlinks,
+  co-sponsorship, adjacency). `fit(docs, links=edges)` on undirected document
+  pairs; `predict_link`, `suggest_links` (link prediction from words for unseen
+  documents), `eta`/`nu`/`phi_bar`. Variational EM with `logistic` (default) or
+  `exponential` link functions and the paper's ρ regularization. Validated against
+  a standalone NumPy implementation of the paper's variational equations
+  (`parity/rtm_reference.py`); the R `lda` `rtm.em` is collapsed Gibbs, so it is a
+  directional baseline only.
+
 - **`model.seed` and `Corpus.preprocessing` getters** (#399): every model now
   exposes the `seed` it was constructed with, and a `Corpus` exposes the
   vocabulary-filtering parameters Topica applied — `min_doc_freq`,

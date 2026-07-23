@@ -227,6 +227,13 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::None_,
         exempt: &[],
     },
+    // RTM: LDA doc-topic is a valid simplex, but the link head is a logistic/
+    // exponential regression, not a theta posterior, so no Dirichlet/LN family.
+    RegistryEntry {
+        name: "RTM",
+        family: ModelFamily::None_,
+        exempt: &[],
+    },
     // Matrix factorization — signed latent coordinates, no theta posterior.
     RegistryEntry {
         name: "NMF",
