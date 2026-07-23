@@ -1149,7 +1149,11 @@ path also accepts an optional L2 penalty on the coefficients (`ridge=`, default
 `0.0`, i.e. paper-faithful — set it above zero only if the link coefficients need
 extra shrinkage under separation). Links are treated
 as **undirected** (the paper symmetrizes; directed RTM is a planned follow-up).
-Determinism is `seed-reproducible` (a serial, seeded E-step).
+Determinism is `seed-reproducible` (a serial, seeded E-step). On large graphs the
+`exponential` link is markedly faster — its link M-step is a closed form and the
+fit converges in a handful of EM iterations, where `logistic` runs an iterative
+gradient M-step each round; the two recover the same structure, so prefer
+`exponential` when the network is large.
 
 The R `lda` package's `rtm.em` is a *collapsed Gibbs* sampler, not the paper's
 variational EM, so it can only be a directional baseline. RTM is therefore validated
