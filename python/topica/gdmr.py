@@ -8,13 +8,23 @@ metadata domain.
 
 We implement GDMR as a Python wrapper around the compiled ``topica.DMR`` engine.
 The Legendre basis is constructed in NumPy and passed to DMR as its feature
-matrix; the decay prior is realized via column scaling (the "scaling trick"), which
-maps a heterogeneous per-column Gaussian prior onto the uniform-prior DMR without
-any changes to the Rust core.
+matrix; the heterogeneous per-column Gaussian prior is realized via column scaling
+(the "scaling trick"), matching tomotopy's ``GDMRModel`` prior (``sigma0`` on the
+constant term, ``sigma`` on the non-constant terms, per-dimension ``decay``)
+without any changes to the Rust core.
 
-Reference
----------
-Lee, M., & Song, M. (2020). Gibbs sampling for G-DMR. (tomotopy GDMRModel.)
+References
+----------
+Lee, M., & Song, M. (2020). Incorporating citation impact into analysis of
+research trends. *Scientometrics* 124, 1191-1224.
+Reference implementations (both by the paper's first author, ``bab2min``):
+tomotopy ``GDMRModel`` and the ``bab2min/g-dmr`` experiment repo.
+
+Note: the constant term's prior is centered at ``log(alpha)`` in both reference
+implementations; topica's inner DMR currently uses a zero-mean prior on the
+intercept (implicit ``alpha = 1``). That intercept-mean difference is tracked
+separately (issue #426); the ``sigma``/``sigma0`` roles and the per-dimension
+decay implemented here match the references.
 """
 
 from __future__ import annotations
@@ -114,6 +124,12 @@ def _basis_order(degrees: list[int]) -> np.ndarray:
     return np.array([sum(idx) for idx in _iproduct(*degree_ranges)], dtype=np.float64)
 
 
+def _basis_multi_indices(degrees: list[int]) -> list[tuple[int, ...]]:
+    """Per-dimension Legendre degree tuple ``(p_0, .., p_{D-1})`` for each basis
+    column, in the same column order as the design matrix and feature names."""
+    return list(_iproduct(*[range(deg + 1) for deg in degrees]))
+
+
 def _basis_feature_names(degrees: list[int], metadata_names: list[str]) -> list[str]:
     """Readable label for each basis column, aligned with ``feature_effects``.
 
@@ -132,29 +148,34 @@ def _basis_feature_names(degrees: list[int], metadata_names: list[str]) -> list[
 
 def _column_scales(degrees: list[int], sigma: float, sigma0: float,
                    decay: float) -> np.ndarray:
-    """Compute the column scaling factors c_j = sqrt(v_j / v0).
+    """Column scaling factors ``c_j = sqrt(v_j / v0)`` that reparameterize the
+    uniform DMR prior ``N(0, v0)`` into GDMR's heterogeneous prior, matching
+    tomotopy's ``GDMRModel`` (Lee & Song; ``bab2min`` is the paper author).
 
-    The base variance is v0 = sigma0**2 (the uniform-prior DMR will use
-    ``prior_variance=v0``).  Each basis column's true target variance is:
+    With ``v0 = sigma0**2`` (the DMR ``prior_variance``), each column's target
+    prior variance is:
 
-    - Order 0: sigma**2
-    - Order s >= 1: sigma0**2 if decay == 0, else sigma0**2 * decay**s
+    - constant (order-0) term: ``sigma0**2``            -> ``c = 1``
+    - a non-constant term with per-dimension Legendre degrees ``(p_0..p_{D-1})``:
+      ``sigma**2 / prod_d (p_d + 1)**(2*decay)``         ->
+      ``c = (sigma / sigma0) / prod_d (p_d + 1)**decay``
 
-    The scaling maps this onto the uniform prior:
-        true prior N(0, v_j)  =>  DMR prior N(0, v0) on b_j = lambda_j / c_j
-
-    So c_j = sqrt(v_j / v0).
+    So ``sigma0`` is the std of the *constant* term and ``sigma`` the std of the
+    *non-constant* terms (tomotopy's roles), and any ``decay > 0`` shrinks
+    higher-order terms per dimension. ``decay == 0`` gives a uniform ``sigma``
+    over every non-constant term — the original paper's decay-free prior.
     """
-    orders = _basis_order(degrees)
     v0 = sigma0 ** 2
-    scales = np.empty(len(orders), dtype=np.float64)
-    for j, s in enumerate(orders):
-        if s == 0:
-            v_j = sigma ** 2
-        elif decay <= 0.0:
-            v_j = v0
+    indices = _basis_multi_indices(degrees)
+    scales = np.empty(len(indices), dtype=np.float64)
+    for j, idx in enumerate(indices):
+        if sum(idx) == 0:
+            v_j = sigma0 ** 2
         else:
-            v_j = v0 * (decay ** s)
+            denom = 1.0
+            for p in idx:
+                denom *= float(p + 1) ** (2.0 * decay)
+            v_j = sigma ** 2 / denom
         scales[j] = np.sqrt(v_j / v0)
     return scales
 
@@ -220,12 +241,18 @@ class GDMR:
     seed:
         RNG seed.
     sigma:
-        Prior std on the order-0 (intercept) basis term.
+        Prior std on the **non-constant** (order >= 1) basis terms, matching
+        tomotopy's ``GDMRModel.sigma``.
     sigma0:
-        Prior std on order >= 1 basis terms when ``decay == 0``.
+        Prior std on the **constant** (order-0 / intercept) term, matching
+        tomotopy's ``GDMRModel.sigma0``.
     decay:
-        Positive values shrink higher-order basis terms: variance for order-s
-        term is ``sigma0**2 * decay**s``.  Set to 0.0 to disable.
+        Per-dimension shrinkage of higher-order terms (tomotopy
+        ``GDMRModel.decay``): a non-constant term with per-dimension Legendre
+        degrees ``(p_0..p_{D-1})`` has prior variance
+        ``sigma**2 / prod_d (p_d + 1)**(2*decay)``.  Any ``decay > 0`` shrinks;
+        ``decay == 0`` gives a uniform ``sigma`` over all non-constant terms (the
+        original paper's decay-free prior).
     metadata_range:
         Per-dimension ``(lo, hi)`` bounds for the [-1, 1] mapping.  If None,
         we infer from the training data at fit time.
@@ -284,8 +311,6 @@ class GDMR:
         # names of the D continuous metadata dimensions; set at fit
         self._metadata_names: list[str] | None = None
 
-        # column scales are computed once metadata_range is known (at fit)
-        self._col_scales: np.ndarray | None = None
         # the inner DMR engine
         self._dmr: DMR | None = None
         self._fitted = False
@@ -404,54 +429,15 @@ class GDMR:
         # DMR will prepend its own intercept, so we pass only the order >= 1 columns.
         non_intercept_basis = full_basis[:, 1:]  # (num_docs, num_basis - 1)
 
-        # Column scales for ALL basis columns (including the order-0 term).
-        all_col_scales = _column_scales(self._degrees, self._sigma, self._sigma0, self._decay)
-        # Store for recovery later: same ordering as full_basis columns.
-        self._col_scales = all_col_scales
-
-        # For DMR, column 0 will be its own intercept (maps to our order-0 Legendre
-        # column); columns 1..num_basis-1 are the non-intercept Legendre columns.
-        # Scale the non-intercept columns now.
-        # Scale for the DMR intercept column comes from all_col_scales[0].
-        # We realize scale[0] via prior_variance adjustment: the DMR intercept has
-        # prior N(0, prior_variance=v0) uniformly. To give it variance v_0 = sigma**2
-        # while giving order>=1 columns variance v0 = sigma0**2, we need separate
-        # treatment for the intercept.
-        #
-        # Easier approach: fold the intercept scaling into the data.
-        # DMR prepends a column of ones to the feature matrix. That column will receive
-        # the uniform DMR prior. To make it effectively have prior variance sigma**2
-        # instead of sigma0**2, we can replace that ones-column with ones*c_0
-        # (where c_0 = sigma/sigma0). But DMR always prepends ones — we cannot
-        # override that column from outside.
-        #
-        # Resolution: set prior_variance = sigma**2 (the intercept scale), and for the
-        # non-intercept columns scale by c_j = sqrt(v_j / sigma**2). This makes the
-        # intercept column correct and all other columns correct relative to sigma**2.
-        #
-        # per-column target variances:
-        #   order 0  (intercept): sigma^2
-        #   order s>=1: sigma0^2 * decay^s  (or sigma0^2 when decay=0)
-        # DMR prior: N(0, prior_variance) uniformly — we set prior_variance = sigma^2.
-        # So column-scale for column j (order s_j) is:
-        #   c_j = sqrt(v_j / sigma^2)
-        #   => order 0: c_0 = 1  (no scaling needed on the DMR intercept column)
-        #   => order s>0: c_j = sigma0/sigma * sqrt(decay^s)  (or sigma0/sigma when decay=0)
-
-        v_intercept = self._sigma ** 2  # prior_variance to pass to DMR
-        # Recompute non-intercept column scales relative to v_intercept
-        orders = _basis_order(self._degrees)
-        v0_ref = v_intercept  # reference variance = sigma^2
-        v0_order1 = self._sigma0 ** 2
-        non_intercept_scales = np.empty(len(orders) - 1, dtype=np.float64)
-        for j, s in enumerate(orders[1:]):  # orders[1:] are orders of non-intercept cols
-            if self._decay <= 0.0:
-                v_j = v0_order1
-            else:
-                v_j = v0_order1 * (self._decay ** s)
-            non_intercept_scales[j] = np.sqrt(v_j / v0_ref)
-
-        # Apply scaling to feature columns
+        # Reparameterize the heterogeneous GDMR prior onto the uniform-prior DMR by
+        # column scaling (tomotopy's roles: sigma0 = constant-term std, sigma =
+        # non-constant std, per-dimension decay). We choose the DMR prior_variance
+        # to be the constant term's variance sigma0**2, so the DMR intercept column
+        # already carries the correct prior (c_0 == 1) and only the non-intercept
+        # columns are rescaled by c_j.
+        col_scales = _column_scales(self._degrees, self._sigma, self._sigma0, self._decay)
+        prior_variance = self._sigma0 ** 2
+        non_intercept_scales = col_scales[1:]
         scaled_features = non_intercept_basis * non_intercept_scales[np.newaxis, :]
 
         # Readable basis-term labels (intercept first); the inner DMR prepends its
@@ -465,7 +451,7 @@ class GDMR:
             optimize_interval=self._optimize_interval,
             burn_in=self._burn_in,
             seed=self._seed,
-            prior_variance=v_intercept,
+            prior_variance=prior_variance,
             lbfgs_iters=self._lbfgs_iters,
             sampler=self._sampler,
         )
@@ -482,12 +468,9 @@ class GDMR:
             check_every=check_every,
         )
 
-        # Store scales for coefficient recovery (intercept + non-intercept)
-        # full_lambda_j (true) = dmr_lambda_j * c_j
-        # DMR column 0 (intercept): c = 1 (since prior_variance = sigma^2 and we set
-        # that to match order-0)
-        # DMR columns 1..N: c = non_intercept_scales[j-1]
-        self._recover_scales = np.concatenate([[1.0], non_intercept_scales])
+        # Recover true coefficients as lambda_j = dmr_lambda_j * c_j. c_0 == 1 by
+        # construction (prior_variance == the constant term's variance sigma0**2).
+        self._recover_scales = col_scales
         self._fitted = True
 
     # ------------------------------------------------------------------
@@ -552,9 +535,14 @@ class GDMR:
         basis, single_point = self._build_basis_for_eval(metadata)
         fe = self._get_true_feature_effects()  # (K, num_basis)
         logalpha = basis @ fe.T  # (P, K)
-        alpha = np.exp(logalpha)
         if normalize:
-            alpha = alpha / alpha.sum(axis=1, keepdims=True)
+            # Stable softmax over topics: subtract the per-row max before exp so an
+            # extreme predictor cannot overflow to inf/inf (matches tomotopy's TDF).
+            shifted = logalpha - logalpha.max(axis=1, keepdims=True)
+            exp = np.exp(shifted)
+            alpha = exp / exp.sum(axis=1, keepdims=True)
+        else:
+            alpha = np.exp(logalpha)
         if single_point:
             return alpha[0]
         return alpha
@@ -668,11 +656,14 @@ class GDMR:
 
     @property
     def alpha(self) -> np.ndarray:
-        """Baseline topic prevalence at the basis origin, shape ``(num_topics,)``.
+        """Intercept baseline topic prevalence, shape ``(num_topics,)``.
 
-        Equals ``exp(lambda_intercept)``, the per-topic prior when all
-        Legendre basis columns are zero (i.e., at the metadata-range midpoint
-        mapped to Legendre 0).
+        Equals ``exp(lambda_intercept)`` — the per-topic prior with every
+        non-constant Legendre column set to zero. This is a *formal* baseline, not
+        the TDF at the metadata midpoint: at the midpoint (mapped to Legendre
+        ``t = 0``) the even-degree columns are non-zero (``P_2(0) = -1/2``,
+        ``P_4(0) = 3/8``, ...), so for any degree >= 2 the midpoint TDF differs from
+        this intercept-only value. Use :meth:`tdf` at the midpoint for the latter.
         """
         self._require_fitted()
         fe = self._get_true_feature_effects()
@@ -922,6 +913,8 @@ class GDMR:
         p = Path(path)
         dmr_path = str(p) + "._inner_dmr"
         self._dmr.save(dmr_path)
+        # The sidecar is resolved relative to the wrapper file at load time (from
+        # the load path, not this stored one), so moving the pair together works.
         state = {
             "version": 1,
             "num_topics": self._num_topics,
@@ -938,9 +931,7 @@ class GDMR:
             "lbfgs_iters": self._lbfgs_iters,
             "sampler": self._sampler,
             "recover_scales": self._recover_scales,
-            "col_scales": self._col_scales,
             "fitted": self._fitted,
-            "dmr_path": dmr_path,
         }
         with open(path, "wb") as f:
             pickle.dump(state, f)
@@ -974,9 +965,11 @@ class GDMR:
             lbfgs_iters=state["lbfgs_iters"],
             sampler=state["sampler"],
         )
-        m._dmr = DMR.load(state["dmr_path"])
+        # Resolve the sidecar next to the wrapper file we are loading, so a moved
+        # (wrapper + sidecar) pair loads from the new location rather than the
+        # absolute path recorded at save time.
+        m._dmr = DMR.load(str(Path(path)) + "._inner_dmr")
         m._recover_scales = state["recover_scales"]
-        m._col_scales = state["col_scales"]
         m._metadata_names = state.get("metadata_names")
         m._fitted = state["fitted"]
         return m

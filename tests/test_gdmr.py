@@ -817,3 +817,87 @@ class TestGDMRNames:
         loaded = topica.GDMR.load(p)
         assert loaded.metadata_names == ["year"]
         assert loaded.feature_names == m.feature_names
+
+
+# ---------------------------------------------------------------------------
+# #426: prior faithful to tomotopy GDMRModel (sigma/sigma0 roles + per-dim decay)
+# ---------------------------------------------------------------------------
+from topica.gdmr import _column_scales, _basis_multi_indices
+
+
+class TestGdmrTomotopyPrior:
+    def test_column_scales_match_tomotopy_prior(self):
+        # tomotopy: constant term std = sigma0, non-constant std = sigma, and a
+        # non-constant term with per-dim degrees (p_0..) has variance
+        # sigma**2 / prod_d (p_d+1)**(2*decay). With v0 = sigma0**2 the scale is
+        # c = (sigma/sigma0) / prod_d (p_d+1)**decay; the intercept is exactly 1.
+        sigma, sigma0, decay = 1.5, 3.0, 0.7
+        degrees = [2, 1]
+        scales = _column_scales(degrees, sigma, sigma0, decay)
+        idxs = _basis_multi_indices(degrees)
+        assert len(scales) == len(idxs) == (2 + 1) * (1 + 1)
+        for c, idx in zip(scales, idxs):
+            if sum(idx) == 0:
+                assert c == pytest.approx(1.0)  # intercept -> sigma0/sigma0
+            else:
+                denom = 1.0
+                for p in idx:
+                    denom *= (p + 1) ** decay
+                assert c == pytest.approx((sigma / sigma0) / denom)
+
+    def test_decay_zero_is_uniform_sigma_over_sigma0(self):
+        # decay = 0 -> the paper's decay-free prior: every non-constant column
+        # shares std sigma, so c = sigma/sigma0; the intercept stays 1.
+        sigma, sigma0 = 2.0, 5.0
+        scales = _column_scales([2, 1], sigma, sigma0, 0.0)
+        idxs = _basis_multi_indices([2, 1])
+        for c, idx in zip(scales, idxs):
+            expected = 1.0 if sum(idx) == 0 else sigma / sigma0
+            assert c == pytest.approx(expected)
+
+    def test_any_positive_decay_shrinks_every_higher_order_term(self):
+        # Every non-constant column's variance must shrink as decay grows (both
+        # references only ever shrink; topica's old decay**(sum order) grew for
+        # decay > 1 and was a no-op at decay = 1).
+        degrees = [2, 2]
+        idxs = _basis_multi_indices(degrees)
+        s0 = _column_scales(degrees, 1.0, 1.0, 0.0)
+        s_small = _column_scales(degrees, 1.0, 1.0, 0.3)
+        s_big = _column_scales(degrees, 1.0, 1.0, 1.0)
+        for j, idx in enumerate(idxs):
+            if sum(idx) == 0:
+                continue
+            assert s_small[j] < s0[j]           # decay>0 shrinks vs no decay
+            assert s_big[j] < s_small[j]        # more decay shrinks more
+
+    def test_tdf_is_stable_for_extreme_predictors(self):
+        # A degenerate near-constant corpus can push logalpha to large magnitudes;
+        # the softmax must stay finite and sum to 1 (row-max subtraction, #426 #4).
+        rng = np.random.default_rng(0)
+        docs = [["w0", "w0", "w1"] for _ in range(40)]
+        meta = np.linspace(0.0, 1.0, 40)[:, None]
+        m = topica.GDMR(num_topics=2, degrees=[2], seed=1, burn_in=10)
+        m.fit(docs, meta, iters=40, num_samples=1, sample_interval=5)
+        grid = np.linspace(0.0, 1.0, 50)[:, None]
+        tdf = m.tdf(grid, normalize=True)
+        assert np.all(np.isfinite(tdf))
+        npt.assert_allclose(tdf.sum(axis=1), 1.0, atol=1e-9)
+
+    def test_save_load_finds_sidecar_after_moving_the_pair(self, tmp_path):
+        # #426 minor: the inner-DMR sidecar is resolved relative to the wrapper file
+        # at load time, so moving (wrapper + sidecar) together to a new directory
+        # still loads, rather than chasing the absolute path recorded at save time.
+        import shutil
+        docs = [["w0", "w1", "w2"] for _ in range(30)]
+        meta = np.linspace(0.0, 1.0, 30)[:, None]
+        m = topica.GDMR(num_topics=2, degrees=[2], seed=1, burn_in=10)
+        m.fit(docs, meta, iters=30, num_samples=1, sample_interval=5)
+        d1 = tmp_path / "a"
+        d1.mkdir()
+        m.save(str(d1 / "g.gdmr"))
+        d2 = tmp_path / "b"
+        d2.mkdir()
+        shutil.move(str(d1 / "g.gdmr"), str(d2 / "g.gdmr"))
+        shutil.move(str(d1 / "g.gdmr._inner_dmr"), str(d2 / "g.gdmr._inner_dmr"))
+        loaded = topica.GDMR.load(str(d2 / "g.gdmr"))  # must find the moved sidecar
+        npt.assert_allclose(loaded.feature_effects, m.feature_effects)

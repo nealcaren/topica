@@ -8,6 +8,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Changed
 
+- **GDMR prior is now faithful to tomotopy's `GDMRModel`** (#426), a breaking
+  change to what `sigma`, `sigma0`, and `decay` mean. Previously `sigma` was the
+  std on the intercept and `sigma0` on the higher-order terms — the *opposite* of
+  tomotopy (and the paper's own `bab2min/g-dmr` code), where `sigma0` is the
+  constant-term std and `sigma` the non-constant std. The decay also used an
+  invented `decay^(total order)` form (a no-op at `decay=1`, and *growing*
+  higher-order variance for `decay>1`); it now uses tomotopy's per-dimension
+  `variance = sigma**2 / prod_d (p_d+1)**(2*decay)`, so any `decay>0` shrinks and
+  `decay=0` recovers the paper's decay-free prior. Existing `sigma`/`sigma0`/`decay`
+  configurations now produce different (correct) fits; a `decay>0`, `sigma!=sigma0`
+  tomotopy parity leg was added to the gold. The `log(alpha)` intercept prior mean
+  (both references center the constant term at `log(alpha)`; topica's inner DMR is
+  zero-mean) remains a separate follow-up. Also: `tdf()` now uses a stable softmax,
+  and the `alpha` property / `sigma`/`sigma0`/`decay` docstrings were corrected.
+
 - **SAGE now uses its defining sparse prior by default** (#422). The κ content
   deviations were previously fit under a fixed Gaussian ridge, which is not
   canonical SAGE (Eisenstein, Ahmed & Xing 2011) — the model is *defined* by a
