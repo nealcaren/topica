@@ -521,6 +521,8 @@ pub fn fit_scholar<R: Rng>(
         epochs_run,
         weights: w,
         bn_mu,
+        // Laplace transform is softmax(mu) and never reads bn_lv (#428).
+        bn_lv: None,
         prior: Prior::Laplace,
     };
     let doc_topic = base.transform_with_emb(docs, &feats);

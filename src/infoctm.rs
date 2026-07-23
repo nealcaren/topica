@@ -563,6 +563,8 @@ fn finish(
         epochs_run,
         weights: s.w,
         bn_mu: s.bn_mu,
+        // Laplace transform is softmax(mu) and never reads bn_lv (#428).
+        bn_lv: None,
         prior: Prior::Laplace,
     };
     let empty: Vec<Vec<f64>> = vec![Vec::new(); docs.len()];

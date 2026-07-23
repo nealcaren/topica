@@ -1887,6 +1887,16 @@ struct ProdldaState {
     // BN mu running stats
     bn_running_mean: Option<Vec<f64>>,
     bn_running_var: Option<Vec<f64>>,
+    // BN log-variance running stats, needed only by the Dirichlet-prior transform
+    // (#428). NOTE: `ProdldaState` is positional bincode, so `#[serde(default)]`
+    // does not actually run for an old save — appending these fields makes a
+    // pre-#428 save fail to load (EOF), and it must be refit (holistic fix #443).
+    // The in-memory `bn_lv: None` fallback to softmax(mu) still applies to a model
+    // constructed without the log-variance head (e.g. the Laplace-only wrappers).
+    #[serde(default)]
+    bn_lv_running_mean: Option<Vec<f64>>,
+    #[serde(default)]
+    bn_lv_running_var: Option<Vec<f64>>,
 }
 
 /// Validate the VAE-model flags (#174, #176) and build the [`prodlda::AvitmOptions`]
@@ -2250,8 +2260,10 @@ impl ProdLDA {
     }
 
     /// Held-out topic proportions for new documents: one encoder forward pass each
-    /// (`theta = softmax(mu)`, running batchnorm statistics, no sampling). Tokens
-    /// outside the vocabulary are dropped. Returns `(num_docs, num_topics)`.
+    /// (running batchnorm statistics, no sampling), mapped to the simplex with the
+    /// training prior's map — `softmax(mu)` for laplace, the normalized Weibull
+    /// median for `dirichlet`, stick-breaking for `stick_breaking`. Tokens outside
+    /// the vocabulary are dropped. Returns `(num_docs, num_topics)`.
     fn transform<'py>(
         &self,
         py: Python<'py>,
@@ -2314,6 +2326,8 @@ impl ProdLDA {
                 w_beta: Some(m.weights.beta.clone()),
                 bn_running_mean: Some(m.bn_mu.running_mean.clone()),
                 bn_running_var: Some(m.bn_mu.running_var.clone()),
+                bn_lv_running_mean: m.bn_lv.as_ref().map(|b| b.running_mean.clone()),
+                bn_lv_running_var: m.bn_lv.as_ref().map(|b| b.running_var.clone()),
             },
         )
     }
@@ -2353,6 +2367,14 @@ impl ProdLDA {
                     running_mean: s.bn_running_mean.unwrap_or_else(|| vec![0.0; k]),
                     running_var: s.bn_running_var.unwrap_or_else(|| vec![1.0; k]),
                     momentum: 0.1,
+                },
+                bn_lv: match (s.bn_lv_running_mean, s.bn_lv_running_var) {
+                    (Some(mean), Some(var)) => Some(prodlda::BatchNorm {
+                        running_mean: mean,
+                        running_var: var,
+                        momentum: 0.1,
+                    }),
+                    _ => None,
                 },
                 prior: prior_from_str(&s.prior),
             })
@@ -2456,6 +2478,13 @@ struct CtmEmbState {
     w_beta: Option<Vec<f64>>,
     bn_running_mean: Option<Vec<f64>>,
     bn_running_var: Option<Vec<f64>>,
+    // BN log-variance running stats for the Dirichlet-prior transform (#428).
+    // Positional bincode, so `#[serde(default)]` is inert: a pre-#428 save fails to
+    // load (EOF) and must be refit (holistic fix #443), rather than falling back.
+    #[serde(default)]
+    bn_lv_running_mean: Option<Vec<f64>>,
+    #[serde(default)]
+    bn_lv_running_var: Option<Vec<f64>>,
 }
 
 fn mode_to_u8(m: prodlda::InputMode) -> u8 {
@@ -2894,6 +2923,8 @@ macro_rules! ctm_embedding_model {
                         w_beta: Some(m.weights.beta.clone()),
                         bn_running_mean: Some(m.bn_mu.running_mean.clone()),
                         bn_running_var: Some(m.bn_mu.running_var.clone()),
+                        bn_lv_running_mean: m.bn_lv.as_ref().map(|b| b.running_mean.clone()),
+                        bn_lv_running_var: m.bn_lv.as_ref().map(|b| b.running_var.clone()),
                     },
                 )
             }
@@ -2935,6 +2966,14 @@ macro_rules! ctm_embedding_model {
                             running_mean: s.bn_running_mean.unwrap_or_else(|| vec![0.0; k]),
                             running_var: s.bn_running_var.unwrap_or_else(|| vec![1.0; k]),
                             momentum: 0.1,
+                        },
+                        bn_lv: match (s.bn_lv_running_mean, s.bn_lv_running_var) {
+                            (Some(mean), Some(var)) => Some(prodlda::BatchNorm {
+                                running_mean: mean,
+                                running_var: var,
+                                momentum: 0.1,
+                            }),
+                            _ => None,
                         },
                         prior: prior_from_str(&s.prior),
                     })
