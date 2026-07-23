@@ -1589,12 +1589,16 @@ pub fn fit_ctm_svi<R: Rng>(
                     for eta in &etas {
                         cross += (eta[i] - mu_shared[i]) * (eta[j] - mu_shared[j]);
                     }
-                    let shat = (sigma_ss[i * km1 + j] + cross) / bsz;
-                    let mut newv = (1.0 - rho) * sigma[i * km1 + j] + rho * shat;
+                    let mut shat = (sigma_ss[i * km1 + j] + cross) / bsz;
+                    // Shrink the minibatch TARGET, then take the Robbins-Monro step.
+                    // Multiplying the blended value instead applied the shrink on
+                    // every minibatch regardless of ρ, so off-diagonals contracted
+                    // by (1-shrink) per step and collapsed to ~0 (a spurious
+                    // diagonal Σ) rather than shrinking gently as ρ → 0.
                     if sigma_shrink > 0.0 && i != j {
-                        newv *= 1.0 - sigma_shrink;
+                        shat *= 1.0 - sigma_shrink;
                     }
-                    sigma[i * km1 + j] = newv;
+                    sigma[i * km1 + j] = (1.0 - rho) * sigma[i * km1 + j] + rho * shat;
                 }
             }
         }
@@ -1854,6 +1858,60 @@ mod tests {
                 assert!((x - y).abs() < 1e-12);
             }
         }
+    }
+
+    /// #421: SVI Σ shrinkage must scale with the Robbins-Monro step, not be applied
+    /// on every minibatch. Multiplying the blended value by (1-shrink) each step
+    /// collapsed the off-diagonals toward 0 (a spurious diagonal Σ) regardless of ρ.
+    #[test]
+    fn svi_shrinkage_scales_with_step_not_per_minibatch() {
+        // Topics A and B co-occur, so Σ has a large positive off-diagonal.
+        let corr_docs = || {
+            let mut rng = ChaCha8Rng::seed_from_u64(1);
+            let mut docs: Vec<Vec<u32>> = Vec::new();
+            for _ in 0..300 {
+                if rng.gen::<f64>() < 0.7 {
+                    docs.push(vec![0, 1, 2, 3, 4, 5, 0, 1, 3, 4]);
+                } else {
+                    docs.push(vec![6, 7, 8, 6, 7, 8, 6, 7, 8, 6]);
+                }
+            }
+            docs
+        };
+        let max_offdiag = |m: &CtmModel| -> f64 {
+            let km1 = m.num_topics - 1;
+            let mut w = 0.0f64;
+            for i in 0..km1 {
+                for j in 0..km1 {
+                    if i != j {
+                        w = w.max(m.sigma[i * km1 + j].abs());
+                    }
+                }
+            }
+            w
+        };
+        let fit = |shrink: f64| {
+            let docs = corr_docs();
+            let mut rng = ChaCha8Rng::seed_from_u64(2);
+            fit_ctm_svi(
+                &docs, 3, 9, 40, 16, 64.0, 0.7, shrink, false, false, false, &mut rng,
+            )
+        };
+        let off0 = max_offdiag(&fit(0.0));
+        assert!(
+            off0 > 1.0,
+            "correlated topics should give a large off-diagonal, got {off0}"
+        );
+        let off3 = max_offdiag(&fit(0.3));
+        // Shrinkage should reduce the off-diagonal, but must NOT collapse it to ~0.
+        assert!(
+            off3 < off0,
+            "shrinkage should reduce the off-diagonal ({off3} vs {off0})"
+        );
+        assert!(
+            off3 > 0.05,
+            "shrinkage collapsed the off-diagonal to ~0 (the per-minibatch bug): {off3}"
+        );
     }
 
     #[test]
