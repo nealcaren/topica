@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Changed
+
+- **SAGE now uses its defining sparse prior by default** (#422). The κ content
+  deviations were previously fit under a fixed Gaussian ridge, which is not
+  canonical SAGE (Eisenstein, Ahmed & Xing 2011) — the model is *defined* by a
+  sparsity-inducing prior. `SAGE(prior=...)` now selects `"laplace"` (default,
+  canonical sparse SAGE, fit by adaptive reweighting), `"gaussian"` (the previous
+  dense ridge / STM-style content model), or `"jeffreys"` (more aggressive sparse).
+  New `content_kappa` getter exposes the fitted deviations. **This is a behaviour
+  change:** a default SAGE fit now produces sparse content deviations, and held-out
+  `transform`/`doc_topic` differ slightly from before; the fitted topic structure
+  is unaffected. Pass `prior="gaussian"` to reproduce the pre-0.5 behaviour exactly.
+  Old save files load as `prior="gaussian"` (how they were actually fit).
+
 ### Fixed
 
 - **SAGE correctness (#422):** the opt-in `convergence_tol` early stop tripped at

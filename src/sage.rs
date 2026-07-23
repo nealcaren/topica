@@ -11,12 +11,54 @@
 //! where `m_v` is the (fixed) background log word-frequency, `κᵀ` is the topic
 //! deviation, `κᶜ` the group deviation, and `κᴵ` the topic×group interaction.
 //! A token in a group-`g` document samples its topic using that group's `β`.
-//! The κ are MAP-estimated (Gaussian/L2 prior) from the topic×group×word counts
-//! between sampling sweeps, via the same L-BFGS used for DMR.
+//! The κ are MAP-estimated from the topic×group×word counts between sampling
+//! sweeps, under a [`SagePrior`]: the canonical **sparse** Laplace/Jeffreys prior
+//! (fit by adaptive reweighting, driving most deviations to ~0 — this is what
+//! makes it SAGE rather than a ridge content model) or a dense `Gaussian` ridge.
+//! Both reuse the L-BFGS from DMR.
 
 use rand::Rng;
 
 use crate::variational::lbfgs_minimize;
+
+/// The prior on the κ content deviations. Canonical SAGE (Eisenstein, Ahmed &
+/// Xing, ICML 2011) is *defined* by a sparsity-inducing prior; `Gaussian` is the
+/// non-sparse ridge variant (the STM content-model style).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SagePrior {
+    /// L2 ridge with a fixed global variance. Dense κ; the pre-#422 behaviour.
+    Gaussian,
+    /// Laplace (double-exponential) prior — the canonical sparse SAGE default.
+    /// Fit by adaptive reweighting: the per-coefficient precision is `1/(b·|κ|)`,
+    /// which drives most κ toward zero.
+    Laplace,
+    /// Normal-Jeffreys prior (improper `p(τ) ∝ 1/τ`). More aggressive than
+    /// Laplace: precision `1/κ²`. Guarded by a floor; can over-sparsify.
+    Jeffreys,
+}
+
+impl SagePrior {
+    pub fn parse(s: &str) -> Result<SagePrior, String> {
+        match s {
+            "laplace" | "sparse" => Ok(SagePrior::Laplace),
+            "gaussian" | "ridge" | "normal" => Ok(SagePrior::Gaussian),
+            "jeffreys" => Ok(SagePrior::Jeffreys),
+            other => Err(format!(
+                "prior must be 'laplace', 'gaussian', or 'jeffreys', got '{other}'"
+            )),
+        }
+    }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SagePrior::Gaussian => "gaussian",
+            SagePrior::Laplace => "laplace",
+            SagePrior::Jeffreys => "jeffreys",
+        }
+    }
+    pub fn is_sparse(&self) -> bool {
+        !matches!(self, SagePrior::Gaussian)
+    }
+}
 
 /// SAGE model state. Counts are dense over (topic, group, word).
 pub struct SageModel {
@@ -25,6 +67,7 @@ pub struct SageModel {
     pub num_types: usize,
     pub alpha: Vec<f64>,
     pub prior_variance: f64,
+    pub prior: SagePrior,
 
     pub m: Vec<f64>,            // background log-freq, len V
     pub kappa_t: Vec<Vec<f64>>, // [K][V]
@@ -44,6 +87,7 @@ impl SageModel {
         num_types: usize,
         alpha: f64,
         prior_variance: f64,
+        prior: SagePrior,
     ) -> Self {
         let kg = num_topics * num_groups;
         SageModel {
@@ -52,6 +96,7 @@ impl SageModel {
             num_types,
             alpha: vec![alpha; num_topics],
             prior_variance,
+            prior,
             m: vec![0.0; num_types],
             kappa_t: vec![vec![0.0; num_types]; num_topics],
             kappa_c: vec![vec![0.0; num_types]; num_groups],
@@ -187,96 +232,169 @@ pub fn run_sweep_sage<R: Rng>(
     }
 }
 
-/// MAP-estimate the κ deviations (Gaussian prior) from the current counts, then
-/// refresh the cached β. One L-BFGS run. Returns `false` if the optimizer produced
-/// a non-finite result, in which case κ (and β) are left unchanged rather than
-/// corrupted — the caller surfaces this to the user (issue #422).
+/// Outer adaptive-reweighting iterations for the sparse priors.
+const SPARSE_OUTER_ITERS: usize = 4;
+/// Scale-aware floor on |κ| (Laplace) / κ² (Jeffreys) so the reweighted precision
+/// cannot blow up to +inf as a coefficient approaches zero. Caps Laplace precision
+/// at `1/(b·FLOOR)` and Jeffreys at `1/FLOOR²`.
+const KAPPA_FLOOR: f64 = 1e-3;
+
+/// Per-coefficient precision `w_i = 1/τ_i` for the weighted-ridge κ step, from the
+/// current κ. Gaussian is the fixed global `1/σ²`; the sparse priors reweight from
+/// the coefficient magnitude (the scale-mixture E[1/τ|κ] update), which shrinks
+/// small coefficients ever harder — this is what induces sparsity.
+fn reweight_precision(x: &[f64], prior: SagePrior, prior_variance: f64, w: &mut [f64]) {
+    match prior {
+        SagePrior::Gaussian => {
+            let iv = 1.0 / prior_variance;
+            for wi in w.iter_mut() {
+                *wi = iv;
+            }
+        }
+        // Laplace scale-mixture: E[1/τ | κ] = 1/(b·|κ|), floored.
+        SagePrior::Laplace => {
+            let b = prior_variance;
+            for (i, wi) in w.iter_mut().enumerate() {
+                *wi = 1.0 / (b * x[i].abs().max(KAPPA_FLOOR));
+            }
+        }
+        // Normal-Jeffreys: E[1/τ | κ] = 1/κ², floored (scale-free).
+        SagePrior::Jeffreys => {
+            let floor_sq = KAPPA_FLOOR * KAPPA_FLOOR;
+            for (i, wi) in w.iter_mut().enumerate() {
+                *wi = 1.0 / (x[i] * x[i]).max(floor_sq);
+            }
+        }
+    }
+}
+
+/// MAP-estimate the κ deviations from the current counts under the model's prior,
+/// then refresh the cached β. For `Gaussian` this is one L-BFGS run with a fixed
+/// ridge; for the sparse priors (`Laplace`/`Jeffreys`) it is an adaptive-reweighting
+/// loop (paper: the compound-Gamma / scale-mixture EM) — a weighted-ridge L-BFGS
+/// solve alternated with a per-coefficient precision update, warm-started from the
+/// incoming κ so the first precision is never taken from an all-zero κ. Returns
+/// `false` if any solve produced a non-finite result, in which case κ (and β) are
+/// left unchanged rather than corrupted (issue #422).
 #[must_use]
 pub fn optimize_kappa(model: &mut SageModel, max_iter: usize) -> bool {
     let k_n = model.num_topics;
     let g_n = model.num_groups;
     let v_n = model.num_types;
-    let sigma2 = model.prior_variance;
 
     // Pack κ into a flat vector: [κT (K*V) | κC (G*V) | κI (K*G*V)].
     let n_t = k_n * v_n;
     let n_c = g_n * v_n;
-    let n_i = k_n * g_n * v_n;
-    let mut x0 = Vec::with_capacity(n_t + n_c + n_i);
+    let dim = n_t + n_c + k_n * g_n * v_n;
+    let mut x = Vec::with_capacity(dim);
     for k in 0..k_n {
-        x0.extend_from_slice(&model.kappa_t[k]);
+        x.extend_from_slice(&model.kappa_t[k]);
     }
     for g in 0..g_n {
-        x0.extend_from_slice(&model.kappa_c[g]);
+        x.extend_from_slice(&model.kappa_c[g]);
     }
     for c in 0..(k_n * g_n) {
-        x0.extend_from_slice(&model.kappa_i[c]);
+        x.extend_from_slice(&model.kappa_i[c]);
     }
 
-    let m = &model.m;
-    let counts = &model.counts;
-    let totals = &model.totals;
-    let inv_var = 1.0 / sigma2;
+    let prior = model.prior;
+    let prior_variance = model.prior_variance;
 
-    let x = lbfgs_minimize(
-        x0,
-        |flat| {
-            let kt = |k: usize, v: usize| flat[k * v_n + v];
-            let kc = |g: usize, v: usize| flat[n_t + g * v_n + v];
-            let ki = |c: usize, v: usize| flat[n_t + n_c + c * v_n + v];
+    // Compute κ in a scope that borrows the read-only model fields, so the mutable
+    // unpack below is free of the LL closure's borrow.
+    let (x, ok) = {
+        let m = &model.m;
+        let counts = &model.counts;
+        let totals = &model.totals;
 
-            let mut value = 0.0f64;
-            let mut grad = vec![0.0f64; flat.len()];
+        // The multinomial log-likelihood value/gradient, penalized by a
+        // per-coefficient ridge `w` (the only per-prior difference).
+        let solve = |x0: Vec<f64>, w: &[f64]| -> Vec<f64> {
+            lbfgs_minimize(
+                x0,
+                |flat| {
+                    let kt = |k: usize, v: usize| flat[k * v_n + v];
+                    let kc = |g: usize, v: usize| flat[n_t + g * v_n + v];
+                    let ki = |c: usize, v: usize| flat[n_t + n_c + c * v_n + v];
 
-            for k in 0..k_n {
-                for g in 0..g_n {
-                    let c = k * g_n + g;
-                    let nkg = totals[c] as f64;
-                    // β_{k,g,·} and log Z.
-                    let mut max = f64::NEG_INFINITY;
-                    let mut eta = vec![0.0f64; v_n];
-                    for v in 0..v_n {
-                        let e = m[v] + kt(k, v) + kc(g, v) + ki(c, v);
-                        eta[v] = e;
-                        if e > max {
-                            max = e;
+                    let mut value = 0.0f64;
+                    let mut grad = vec![0.0f64; flat.len()];
+
+                    for k in 0..k_n {
+                        for g in 0..g_n {
+                            let c = k * g_n + g;
+                            let nkg = totals[c] as f64;
+                            let mut max = f64::NEG_INFINITY;
+                            let mut eta = vec![0.0f64; v_n];
+                            for v in 0..v_n {
+                                let e = m[v] + kt(k, v) + kc(g, v) + ki(c, v);
+                                eta[v] = e;
+                                if e > max {
+                                    max = e;
+                                }
+                            }
+                            let mut z = 0.0;
+                            for v in 0..v_n {
+                                z += (eta[v] - max).exp();
+                            }
+                            let log_z = max + z.ln();
+                            for v in 0..v_n {
+                                let n = counts[c][v] as f64;
+                                value += n * (eta[v] - log_z);
+                                let beta = (eta[v] - log_z).exp();
+                                let resid = n - nkg * beta; // ∂LL/∂η_{k,g,v}
+                                grad[k * v_n + v] += resid; // κT
+                                grad[n_t + g * v_n + v] += resid; // κC
+                                grad[n_t + n_c + c * v_n + v] += resid; // κI
+                            }
                         }
                     }
-                    let mut z = 0.0;
-                    for v in 0..v_n {
-                        z += (eta[v] - max).exp();
+
+                    // Per-coefficient ridge penalty: -½ Σ w_i κ_i².
+                    for (i, &xi) in flat.iter().enumerate() {
+                        value -= 0.5 * w[i] * xi * xi;
+                        grad[i] -= w[i] * xi;
                     }
-                    let log_z = max + z.ln();
-                    for v in 0..v_n {
-                        let n = counts[c][v] as f64;
-                        value += n * (eta[v] - log_z);
-                        let beta = (eta[v] - log_z).exp();
-                        let resid = n - nkg * beta; // ∂LL/∂η_{k,g,v}
-                        grad[k * v_n + v] += resid; // κT
-                        grad[n_t + g * v_n + v] += resid; // κC
-                        grad[n_t + n_c + c * v_n + v] += resid; // κI
-                    }
+
+                    (-value, grad.iter().map(|gv| -gv).collect())
+                },
+                max_iter,
+                7,
+                1e-4,
+            )
+        };
+
+        let mut w = vec![0.0; dim];
+        if prior.is_sparse() {
+            // Warm-start the precision from the incoming κ; if κ is all-zero (the
+            // first update of a fresh fit), start from the uniform Gaussian ridge so
+            // the first solve is a plain ridge and yields a non-zero κ to reweight
+            // from — never derive 1/|κ| from κ = 0.
+            if x.iter().all(|&v| v == 0.0) {
+                let iv = 1.0 / prior_variance;
+                w.iter_mut().for_each(|wi| *wi = iv);
+            } else {
+                reweight_precision(&x, prior, prior_variance, &mut w);
+            }
+            let mut ok = true;
+            for _ in 0..SPARSE_OUTER_ITERS {
+                x = solve(x, &w);
+                if x.iter().any(|v| !v.is_finite()) {
+                    ok = false;
+                    break;
                 }
+                reweight_precision(&x, prior, prior_variance, &mut w);
             }
+            (x, ok)
+        } else {
+            reweight_precision(&x, prior, prior_variance, &mut w); // uniform 1/σ²
+            x = solve(x, &w);
+            let ok = x.iter().all(|v| v.is_finite());
+            (x, ok)
+        }
+    };
 
-            // Gaussian prior.
-            for (i, &xi) in flat.iter().enumerate() {
-                value -= 0.5 * inv_var * xi * xi;
-                grad[i] -= inv_var * xi;
-            }
-
-            // Minimize the negative.
-            (-value, grad.iter().map(|gv| -gv).collect())
-        },
-        max_iter,
-        7,
-        1e-4,
-    );
-
-    // Guard against a non-finite solve (line-search collapse, degenerate counts):
-    // leave κ and β untouched rather than propagate NaN/inf into the topic-word
-    // distributions.
-    if x.iter().any(|v| !v.is_finite()) {
+    if !ok {
         return false;
     }
 
@@ -392,7 +510,7 @@ mod tests {
             }
         }
 
-        let mut model = SageModel::new(1, 2, 4, 0.1, 1.0);
+        let mut model = SageModel::new(1, 2, 4, 0.1, 1.0, SagePrior::Gaussian);
         model.set_background(&docs);
         model.initialize(&docs, &groups, &mut rng);
         for iter in 1..=200 {
@@ -409,6 +527,75 @@ mod tests {
         let g1_cd = model.beta[g1][2] + model.beta[g1][3];
         assert!(g0_ab > 0.8, "group 0 mass on its words = {}", g0_ab);
         assert!(g1_cd > 0.8, "group 1 mass on its words = {}", g1_cd);
+    }
+
+    /// Fit the same corpus under each prior. Words 0-3 are group-discriminative
+    /// ({0,1} favour group 0, {2,3} favour group 1); words 4,5 are shared
+    /// background (identical rate in both groups), so a faithful SAGE prior should
+    /// drive their group deviations κ_c toward zero. The sparse priors must (a)
+    /// still recover the discrimination and (b) shrink the non-discriminative κ_c
+    /// harder than the Gaussian ridge.
+    fn fit_prior(prior: SagePrior) -> SageModel {
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let mut docs = Vec::new();
+        let mut groups = Vec::new();
+        for i in 0..160 {
+            let g = i % 2;
+            // 4 discriminative tokens (group-specific) + 2 shared background tokens.
+            let mut doc = if g == 0 {
+                vec![0u32, 1, 0, 1]
+            } else {
+                vec![2u32, 3, 2, 3]
+            };
+            doc.push(4);
+            doc.push(5);
+            docs.push(doc);
+            groups.push(g);
+        }
+        let mut model = SageModel::new(1, 2, 6, 0.1, 1.0, prior);
+        model.set_background(&docs);
+        model.initialize(&docs, &groups, &mut rng);
+        for iter in 1..=200 {
+            run_sweep_sage(&mut model, &docs, &groups, &mut rng);
+            if iter > 50 && iter % 25 == 0 {
+                assert!(optimize_kappa(&mut model, 20));
+            }
+        }
+        model
+    }
+
+    #[test]
+    fn sparse_prior_shrinks_background_deviations_and_recovers() {
+        let gaussian = fit_prior(SagePrior::Gaussian);
+        let laplace = fit_prior(SagePrior::Laplace);
+
+        // (a) recovery under the sparse prior: group 0 still favours {0,1}.
+        let g0 = laplace.cell(0, 0);
+        let g1 = laplace.cell(0, 1);
+        assert!(
+            laplace.beta[g0][0] + laplace.beta[g0][1] > laplace.beta[g1][0] + laplace.beta[g1][1],
+            "Laplace did not recover the group discrimination"
+        );
+
+        // (b) the shared-background group deviations (words 4,5) are shrunk harder
+        // by Laplace than by the Gaussian ridge.
+        let bg_l1 = |m: &SageModel| -> f64 {
+            (0..m.num_groups)
+                .map(|g| m.kappa_c[g][4].abs() + m.kappa_c[g][5].abs())
+                .sum()
+        };
+        let (l_bg, g_bg) = (bg_l1(&laplace), bg_l1(&gaussian));
+        assert!(
+            l_bg < g_bg,
+            "Laplace background |κ_c| ({l_bg:.4}) not smaller than Gaussian ({g_bg:.4})"
+        );
+        // and overall the sparse fit has a smaller total κ_c L1 (sparser).
+        let total_l1 =
+            |m: &SageModel| -> f64 { m.kappa_c.iter().flatten().map(|x| x.abs()).sum::<f64>() };
+        assert!(
+            total_l1(&laplace) < total_l1(&gaussian),
+            "Laplace total |κ_c| not smaller than Gaussian"
+        );
     }
 
     #[test]
@@ -428,7 +615,7 @@ mod tests {
                 groups.push(1usize);
             }
         }
-        let mut model = SageModel::new(1, 2, 4, 0.1, 1.0);
+        let mut model = SageModel::new(1, 2, 4, 0.1, 1.0, SagePrior::Gaussian);
         model.set_background(&docs);
         model.initialize(&docs, &groups, &mut rng);
         for _ in 0..30 {
@@ -464,7 +651,7 @@ mod tests {
                 groups.push(1usize);
             }
         }
-        let mut model = SageModel::new(1, 2, 4, 0.1, 1.0);
+        let mut model = SageModel::new(1, 2, 4, 0.1, 1.0, SagePrior::Gaussian);
         model.set_background(&docs);
         model.initialize(&docs, &groups, &mut rng);
         for iter in 1..=200 {

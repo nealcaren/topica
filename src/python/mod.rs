@@ -210,6 +210,10 @@ struct SageState {
     num_topics: usize,
     alpha: f64,
     prior_variance: f64,
+    // Models saved before #422 had only the Gaussian ridge; default old files to it
+    // rather than inheriting the new sparse default.
+    #[serde(default = "default_gaussian_prior")]
+    prior: String,
     optimize_interval: usize,
     burn_in: usize,
     seed: u64,
@@ -217,6 +221,13 @@ struct SageState {
     fitted: bool,
     num_groups: usize,
     beta: Vec<Vec<f64>>,
+    // Content deviations, retained for `content_kappa`; absent in pre-#422 saves.
+    #[serde(default)]
+    kappa_t: Vec<Vec<f64>>,
+    #[serde(default)]
+    kappa_c: Vec<Vec<f64>>,
+    #[serde(default)]
+    kappa_i: Vec<Vec<f64>>,
     theta: Option<Arr2>,
     group_names: Vec<String>,
     corpus: Option<corpus::Corpus>,
@@ -234,6 +245,12 @@ struct SageState {
 /// existed: NaN signals "unknown", distinct from a real bound of 0.
 fn nan() -> f64 {
     f64::NAN
+}
+/// serde default for a SAGE model saved before the sparse prior existed (#422):
+/// those were fit with the Gaussian ridge, so describe them as such rather than
+/// letting them inherit the new `laplace` default.
+fn default_gaussian_prior() -> String {
+    "gaussian".to_string()
 }
 /// serde default for the variational-covariance mode on models saved before the
 /// `variational` field existed: "laplace" (the original full-covariance E-step).
@@ -5087,6 +5104,7 @@ pub struct SAGE {
     num_topics: usize,
     alpha: f64,
     prior_variance: f64,
+    prior: sage::SagePrior,
     optimize_interval: usize,
     burn_in: usize,
     seed: u64,
@@ -5096,6 +5114,11 @@ pub struct SAGE {
     topic_names: Vec<String>,
     num_groups: usize,
     beta: Vec<Vec<f64>>, // [K*G][V]
+    // Fitted content deviations, retained for `content_kappa`: κT [K][V], κC [G][V],
+    // κI [K*G][V]. Empty until fit.
+    kappa_t: Vec<Vec<f64>>,
+    kappa_c: Vec<Vec<f64>>,
+    kappa_i: Vec<Vec<f64>>,
     theta: Option<Array2<f64>>,
     group_names: Vec<String>,
     corpus: Option<corpus::Corpus>,
@@ -5144,11 +5167,38 @@ impl SAGE {
         let d = PyDict::new_bound(py);
         d.set_item("num_topics", self.num_topics)?;
         d.set_item("alpha", self.alpha)?;
+        d.set_item("prior", self.prior.as_str())?;
         d.set_item("prior_variance", self.prior_variance)?;
         d.set_item("optimize_interval", self.optimize_interval)?;
         d.set_item("burn_in", self.burn_in)?;
         d.set_item("seed", self.seed)?;
         d.set_item("lbfgs_iters", self.lbfgs_iters)?;
+        Ok(d)
+    }
+
+    /// The prior on the κ content deviations (`"laplace"`, `"gaussian"`, or
+    /// `"jeffreys"`).
+    #[getter]
+    fn prior(&self) -> &str {
+        self.prior.as_str()
+    }
+
+    /// The fitted content deviations κ, as a dict of numpy arrays: `"topic"`
+    /// (K×V), `"group"` (G×V), and `"interaction"` (K·G×V, row index `k*G + g`).
+    /// `log β_{k,g,v} = m_v + κ_topic[k,v] + κ_group[g,v] + κ_interaction[k·G+g, v]`
+    /// up to the softmax normalizer. Under a sparse `prior` most entries are ~0;
+    /// the nonzero ones are the words each topic/group up- or down-weights relative
+    /// to the background `m`.
+    #[getter]
+    fn content_kappa<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        self.require_fitted()?;
+        let d = PyDict::new_bound(py);
+        d.set_item("topic", vecs_to_arr2(&self.kappa_t).to_pyarray_bound(py))?;
+        d.set_item("group", vecs_to_arr2(&self.kappa_c).to_pyarray_bound(py))?;
+        d.set_item(
+            "interaction",
+            vecs_to_arr2(&self.kappa_i).to_pyarray_bound(py),
+        )?;
         Ok(d)
     }
 
@@ -5158,17 +5208,24 @@ impl SAGE {
         self.seed
     }
 
-    /// Create an unfitted model. `alpha` is the symmetric document-topic prior;
-    /// `prior_variance` is the Gaussian prior on the κ content deviations.
-    /// `num_topics` is the number of topics K; `seed` seeds the Gibbs RNG. The κ
-    /// content deviations are re-estimated by L-BFGS every `optimize_interval`
-    /// sweeps once past `burn_in`, `lbfgs_iters` steps per update.
+    /// Create an unfitted model. `alpha` is the symmetric document-topic prior.
+    /// `prior` is the prior on the κ content deviations: `"laplace"` (default) is
+    /// canonical sparse SAGE (most deviations driven to ~0), `"gaussian"` is the
+    /// dense L2-ridge content model (the STM-style variant, and the pre-#422
+    /// behaviour), and `"jeffreys"` is a more aggressive sparse prior.
+    /// `prior_variance` scales the penalty (the Gaussian variance / the sparse
+    /// base scale). `num_topics` is the number of topics K; `seed` seeds the Gibbs
+    /// RNG. The κ deviations are re-estimated every `optimize_interval` sweeps once
+    /// past `burn_in`, `lbfgs_iters` L-BFGS steps per update (per reweighting round
+    /// for the sparse priors).
     #[new]
-    #[pyo3(signature = (num_topics, *, alpha=0.1, prior_variance=1.0,
+    #[pyo3(signature = (num_topics, *, alpha=0.1, prior="laplace", prior_variance=1.0,
                         optimize_interval=50, burn_in=200, seed=42, lbfgs_iters=20))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         alpha: f64,
+        prior: &str,
         prior_variance: f64,
         optimize_interval: usize,
         burn_in: usize,
@@ -5178,6 +5235,7 @@ impl SAGE {
         if num_topics == 0 {
             return Err(PyValueError::new_err("num_topics must be >= 1"));
         }
+        let prior = sage::SagePrior::parse(prior).map_err(PyValueError::new_err)?;
         if !finite_pos(prior_variance) {
             return Err(PyValueError::new_err("prior_variance must be > 0"));
         }
@@ -5191,6 +5249,7 @@ impl SAGE {
             num_topics,
             alpha,
             prior_variance,
+            prior,
             optimize_interval,
             burn_in,
             seed,
@@ -5199,6 +5258,9 @@ impl SAGE {
             topic_names: Vec::new(),
             num_groups: 0,
             beta: Vec::new(),
+            kappa_t: Vec::new(),
+            kappa_c: Vec::new(),
+            kappa_i: Vec::new(),
             theta: None,
             group_names: Vec::new(),
             corpus: None,
@@ -5338,7 +5400,8 @@ impl SAGE {
         let alpha_sum = alpha * k as f64;
         let total_tokens = corpus.total_tokens().max(1) as f64;
 
-        let mut model = sage::SageModel::new(k, group_n, num_types, alpha, slf.prior_variance);
+        let mut model =
+            sage::SageModel::new(k, group_n, num_types, alpha, slf.prior_variance, slf.prior);
         model.set_background(&corpus.docs);
         let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         model.initialize(&corpus.docs, &groups_idx, &mut rng);
@@ -5350,114 +5413,127 @@ impl SAGE {
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
-        let (beta, acc_theta, theta_draw_buf, ll_history, converged_flag, kappa_ok, corpus) = py
-            .allow_threads(move || {
-                let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
-                let mut ll_history: Vec<(usize, f64)> = Vec::new();
-                let mut converged_flag = false;
+        let (
+            beta,
+            kappa_t,
+            kappa_c,
+            kappa_i,
+            acc_theta,
+            theta_draw_buf,
+            ll_history,
+            converged_flag,
+            kappa_ok,
+            corpus,
+        ) = py.allow_threads(move || {
+            let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
+            let mut ll_history: Vec<(usize, f64)> = Vec::new();
+            let mut converged_flag = false;
 
-                // Inline LL for SAGE: sum_c sum_v n_cv * ln(beta_cv).
-                let compute_ll = |model: &sage::SageModel| -> f64 {
-                    let mut ll = 0.0f64;
-                    for c in 0..(k * group_n) {
-                        for v in 0..num_types {
-                            let n = model.counts[c][v] as f64;
-                            if n > 0.0 {
-                                ll += n * model.beta[c][v].max(1e-300).ln();
-                            }
-                        }
-                    }
-                    ll
-                };
-
-                // Early stopping is only meaningful once κ has been updated: with κ=0
-                // every cell's β is the shared background softmax, so the word-emission
-                // LL is a corpus constant independent of the topic assignments and would
-                // trip any convergence_tol immediately (issue #422). Gate the test on
-                // completed κ updates, and require two trace points recorded after the
-                // first one before comparing.
-                let mut kappa_updates = 0usize;
-                let mut post_kappa_traces = 0usize;
-                let mut kappa_ok = true;
-                'outer: for iter in 1..=iters {
-                    sage::run_sweep_sage(&mut model, &corpus.docs, &groups_idx, &mut rng);
-                    if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
-                        if sage::optimize_kappa(&mut model, lbfgs_iters) {
-                            kappa_updates += 1;
-                        } else {
-                            kappa_ok = false;
-                        }
-                    }
-                    if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
-                        let counts = doc_topic_counts(&model.doc_topics, k);
-                        let snap: Vec<Vec<f32>> = (0..num_docs)
-                            .map(|d| {
-                                let denom = corpus.docs[d].len() as f64 + alpha_sum;
-                                (0..k)
-                                    .map(|t| ((counts[d][t] as f64 + alpha) / denom) as f32)
-                                    .collect()
-                            })
-                            .collect();
-                        push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
-                    }
-                    if let Some(cb) = &progress {
-                        if progress_interval > 0 && iter % progress_interval == 0 {
-                            let llpt = compute_ll(&model) / total_tokens;
-                            Python::with_gil(|py| {
-                                let _ = cb.call1(py, (iter, llpt));
-                            });
-                        }
-                    }
-                    // Trace recording and optional convergence check (never alters RNG).
-                    if check_every > 0 && iter % check_every == 0 {
-                        let ll = compute_ll(&model);
-                        ll_history.push((iter, ll));
-                        if convergence_tol > 0.0 && kappa_updates >= 1 {
-                            post_kappa_traces += 1;
-                            if post_kappa_traces >= 2 {
-                                let prev = ll_history[ll_history.len() - 2].1;
-                                let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
-                                if rel < convergence_tol {
-                                    converged_flag = true;
-                                    break 'outer;
-                                }
-                            }
+            // Inline LL for SAGE: sum_c sum_v n_cv * ln(beta_cv).
+            let compute_ll = |model: &sage::SageModel| -> f64 {
+                let mut ll = 0.0f64;
+                for c in 0..(k * group_n) {
+                    for v in 0..num_types {
+                        let n = model.counts[c][v] as f64;
+                        if n > 0.0 {
+                            ll += n * model.beta[c][v].max(1e-300).ln();
                         }
                     }
                 }
-                if !sage::optimize_kappa(&mut model, lbfgs_iters) {
-                    kappa_ok = false; // final β refresh
-                }
+                ll
+            };
 
-                let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
-                for _ in 0..num_samples {
-                    for _ in 0..sample_interval {
-                        sage::run_sweep_sage(&mut model, &corpus.docs, &groups_idx, &mut rng);
+            // Early stopping is only meaningful once κ has been updated: with κ=0
+            // every cell's β is the shared background softmax, so the word-emission
+            // LL is a corpus constant independent of the topic assignments and would
+            // trip any convergence_tol immediately (issue #422). Gate the test on
+            // completed κ updates, and require two trace points recorded after the
+            // first one before comparing.
+            let mut kappa_updates = 0usize;
+            let mut post_kappa_traces = 0usize;
+            let mut kappa_ok = true;
+            'outer: for iter in 1..=iters {
+                sage::run_sweep_sage(&mut model, &corpus.docs, &groups_idx, &mut rng);
+                if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
+                    if sage::optimize_kappa(&mut model, lbfgs_iters) {
+                        kappa_updates += 1;
+                    } else {
+                        kappa_ok = false;
                     }
+                }
+                if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
                     let counts = doc_topic_counts(&model.doc_topics, k);
-                    for d in 0..num_docs {
-                        let denom = corpus.docs[d].len() as f64 + alpha_sum;
-                        for t in 0..k {
-                            acc_theta[d][t] += (counts[d][t] as f64 + alpha) / denom;
+                    let snap: Vec<Vec<f32>> = (0..num_docs)
+                        .map(|d| {
+                            let denom = corpus.docs[d].len() as f64 + alpha_sum;
+                            (0..k)
+                                .map(|t| ((counts[d][t] as f64 + alpha) / denom) as f32)
+                                .collect()
+                        })
+                        .collect();
+                    push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
+                }
+                if let Some(cb) = &progress {
+                    if progress_interval > 0 && iter % progress_interval == 0 {
+                        let llpt = compute_ll(&model) / total_tokens;
+                        Python::with_gil(|py| {
+                            let _ = cb.call1(py, (iter, llpt));
+                        });
+                    }
+                }
+                // Trace recording and optional convergence check (never alters RNG).
+                if check_every > 0 && iter % check_every == 0 {
+                    let ll = compute_ll(&model);
+                    ll_history.push((iter, ll));
+                    if convergence_tol > 0.0 && kappa_updates >= 1 {
+                        post_kappa_traces += 1;
+                        if post_kappa_traces >= 2 {
+                            let prev = ll_history[ll_history.len() - 2].1;
+                            let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
+                            if rel < convergence_tol {
+                                converged_flag = true;
+                                break 'outer;
+                            }
                         }
                     }
                 }
-                let n = num_samples.max(1) as f64;
-                for row in acc_theta.iter_mut() {
-                    for v in row.iter_mut() {
-                        *v /= n;
+            }
+            if !sage::optimize_kappa(&mut model, lbfgs_iters) {
+                kappa_ok = false; // final β refresh
+            }
+
+            let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
+            for _ in 0..num_samples {
+                for _ in 0..sample_interval {
+                    sage::run_sweep_sage(&mut model, &corpus.docs, &groups_idx, &mut rng);
+                }
+                let counts = doc_topic_counts(&model.doc_topics, k);
+                for d in 0..num_docs {
+                    let denom = corpus.docs[d].len() as f64 + alpha_sum;
+                    for t in 0..k {
+                        acc_theta[d][t] += (counts[d][t] as f64 + alpha) / denom;
                     }
                 }
-                (
-                    model.beta.clone(),
-                    acc_theta,
-                    theta_draw_buf,
-                    ll_history,
-                    converged_flag,
-                    kappa_ok,
-                    corpus,
-                )
-            });
+            }
+            let n = num_samples.max(1) as f64;
+            for row in acc_theta.iter_mut() {
+                for v in row.iter_mut() {
+                    *v /= n;
+                }
+            }
+            (
+                model.beta.clone(),
+                model.kappa_t.clone(),
+                model.kappa_c.clone(),
+                model.kappa_i.clone(),
+                acc_theta,
+                theta_draw_buf,
+                ll_history,
+                converged_flag,
+                kappa_ok,
+                corpus,
+            )
+        });
 
         if !kappa_ok {
             let warnings = py.import_bound("warnings")?;
@@ -5483,6 +5559,9 @@ impl SAGE {
         slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
         slf.num_groups = group_n;
         slf.beta = beta;
+        slf.kappa_t = kappa_t;
+        slf.kappa_c = kappa_c;
+        slf.kappa_i = kappa_i;
         slf.theta = Some(theta);
         slf.group_names = group_vocab;
         slf.corpus = Some(corpus);
@@ -5733,6 +5812,7 @@ impl SAGE {
                 num_topics: self.num_topics,
                 alpha: self.alpha,
                 prior_variance: self.prior_variance,
+                prior: self.prior.as_str().to_string(),
                 optimize_interval: self.optimize_interval,
                 burn_in: self.burn_in,
                 seed: self.seed,
@@ -5740,6 +5820,9 @@ impl SAGE {
                 fitted: self.fitted,
                 num_groups: self.num_groups,
                 beta: self.beta.clone(),
+                kappa_t: self.kappa_t.clone(),
+                kappa_c: self.kappa_c.clone(),
+                kappa_i: self.kappa_i.clone(),
                 theta: arr2_opt(&self.theta),
                 group_names: self.group_names.clone(),
                 corpus: self.corpus.clone(),
@@ -5760,10 +5843,12 @@ impl SAGE {
         } else {
             s.topic_names
         };
+        let prior = sage::SagePrior::parse(&s.prior).map_err(PyValueError::new_err)?;
         Ok(SAGE {
             num_topics: s.num_topics,
             alpha: s.alpha,
             prior_variance: s.prior_variance,
+            prior,
             optimize_interval: s.optimize_interval,
             burn_in: s.burn_in,
             seed: s.seed,
@@ -5772,6 +5857,9 @@ impl SAGE {
             num_groups: s.num_groups,
             topic_names,
             beta: s.beta,
+            kappa_t: s.kappa_t,
+            kappa_c: s.kappa_c,
+            kappa_i: s.kappa_i,
             theta: arr2_back(s.theta)?,
             group_names: s.group_names,
             corpus: s.corpus,

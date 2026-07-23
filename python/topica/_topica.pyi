@@ -1544,12 +1544,24 @@ class SAGE:
         num_topics: int,
         *,
         alpha: float = 0.1,
+        prior: str = "laplace",
         prior_variance: float = 1.0,
         optimize_interval: int = 50,
         burn_in: int = 200,
         seed: int = 42,
         lbfgs_iters: int = 20,
     ) -> None: ...
+    @property
+    def prior(self) -> str:
+        """The prior on the κ content deviations (``"laplace"``, ``"gaussian"``,
+        or ``"jeffreys"``)."""
+        ...
+    @property
+    def content_kappa(self) -> dict:
+        """The fitted content deviations κ as a dict of numpy arrays: ``"topic"``
+        (K×V), ``"group"`` (G×V), and ``"interaction"`` (K·G×V). Under a sparse
+        ``prior`` most entries are ~0."""
+        ...
 
     def fit(
         self,

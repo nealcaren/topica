@@ -1169,9 +1169,32 @@ from unlinked document pairs in link probability.
 
 ## SAGE
 
-Content-covariate topics via an additive log-linear model: the *same* topic is
-worded differently across groups. `word_contrast(topic, a, b)` shows the words
-that most distinguish two groups' phrasing.
+Content-covariate topics via an additive log-linear model
+([Eisenstein, Ahmed & Xing 2011](https://icml.cc/2011/papers/534_icmlpaper.pdf)):
+the *same* topic is worded differently across groups. The log topic-word weight is
+a background `m` plus **sparse deviations** `κ` (topic, group, and topic×group), so
+each group's phrasing is read as a short list of words it up- or down-weights.
+`word_contrast(topic, a, b)` shows the words that most distinguish two groups'
+phrasing; `content_kappa` exposes the fitted deviations directly.
+
+The sparsity is the point, and it is controlled by `prior=`:
+
+- `prior="laplace"` (**default**) is canonical sparse SAGE — a Laplace prior on `κ`,
+  fit by adaptive reweighting, that drives most deviations to ~0.
+- `prior="gaussian"` is the dense L2-ridge content model (the STM-style variant).
+- `prior="jeffreys"` is a more aggressive sparse prior.
+
+The κ are re-estimated by L-BFGS between Gibbs sweeps. The prior is faithful to the
+paper's sparsity mechanism; note that topica infers the topic assignments by
+collapsed Gibbs and re-estimates κ periodically by MAP, where the ICML derivation
+uses variational expected counts — the model is SAGE, but the inference is not a
+literal reproduction.
+
+> **0.5 note:** the default prior changed from the earlier Gaussian ridge to the
+> sparse Laplace prior. This is a deliberate correctness fix (#422) — the old
+> default was not SAGE's defining sparse prior. Pass `prior="gaussian"` to recover
+> the previous behaviour exactly. Held-out `transform`/`doc_topic` will differ
+> slightly; the fitted topic structure is unaffected.
 
 ## Hierarchy models
 
