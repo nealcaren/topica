@@ -334,9 +334,13 @@ class DMR:
     def feature_effect_se(self) -> numpy.typing.NDArray[numpy.float64] | None:
         """Standard error of each feature weight lambda, shape (num_topics,
         num_features), from the observed information of the penalized
-        Dirichlet-multinomial likelihood at the fit. Aligned to feature_effects; an
-        effect more than ~2 SEs from zero is the usual significance cue. None for
-        models saved before this was added."""
+        Dirichlet-multinomial likelihood evaluated at the counts lambda was last
+        optimized against. Aligned to feature_effects; an effect more than ~2 SEs
+        from zero is the usual significance cue. None when lambda was never
+        optimized to a stationary point (e.g. optimize_interval=0, burn_in>=iters,
+        lbfgs_iters=0, or L-BFGS did not converge), since the observed information
+        is only a valid covariance at an optimum; also None for models saved before
+        this was added."""
         ...
 
     @property

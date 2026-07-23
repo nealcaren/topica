@@ -7,13 +7,26 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
 /// Minimize `f` (value + gradient) with limited-memory BFGS and a backtracking
 /// Armijo line search. Compact by design: DMR re-optimizes frequently between
 /// sampling sweeps, so a short history and iteration budget suffice.
-pub fn lbfgs_minimize<F>(
+pub fn lbfgs_minimize<F>(x0: Vec<f64>, f: F, max_iter: usize, history: usize, tol: f64) -> Vec<f64>
+where
+    F: FnMut(&[f64]) -> (f64, Vec<f64>),
+{
+    lbfgs_minimize_status(x0, f, max_iter, history, tol).0
+}
+
+/// As [`lbfgs_minimize`], but also reports whether the run reached a stationary
+/// point on its own criterion (gradient below `tol`, or a relative function change
+/// below `tol`) rather than exhausting `max_iter`. Callers that build asymptotic
+/// standard errors from the result need this: the observed-information inverse is
+/// only a valid covariance at an optimum, so a run that hit `max_iter` (or was
+/// given `max_iter == 0`) must not be treated as converged.
+pub fn lbfgs_minimize_status<F>(
     x0: Vec<f64>,
     mut f: F,
     max_iter: usize,
     history: usize,
     tol: f64,
-) -> Vec<f64>
+) -> (Vec<f64>, bool)
 where
     F: FnMut(&[f64]) -> (f64, Vec<f64>),
 {
@@ -24,9 +37,11 @@ where
     let mut s_list: Vec<Vec<f64>> = Vec::new();
     let mut y_list: Vec<Vec<f64>> = Vec::new();
     let mut rho_list: Vec<f64> = Vec::new();
+    let mut converged = false;
 
     for _ in 0..max_iter {
         if g.iter().map(|v| v * v).sum::<f64>().sqrt() < tol {
+            converged = true;
             break;
         }
 
@@ -103,13 +118,14 @@ where
             y_list.push(y);
         }
 
-        let converged = (fx - fx_new).abs() < tol * (1.0 + fx.abs());
+        let fx_converged = (fx - fx_new).abs() < tol * (1.0 + fx.abs());
         x = x_new;
         fx = fx_new;
         g = g_new;
-        if converged {
+        if fx_converged {
+            converged = true;
             break;
         }
     }
-    x
+    (x, converged)
 }
