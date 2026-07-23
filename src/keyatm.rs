@@ -212,8 +212,10 @@ pub struct KeyAtmModel {
     /// information of the penalized Dirichlet-multinomial in the standardized fit
     /// space mapped back by the standardization Jacobian (issue #316). Entries
     /// whose standardized `λ` sat at the ±[`LAMBDA_BOUND`] clamp are `NaN` (the
-    /// unconstrained asymptotic SE is invalid at the bound). `None` for the base
-    /// and dynamic models. A fit-time artifact, not persisted across save/load.
+    /// unconstrained asymptotic SE is invalid at the bound). `None` for the base and
+    /// dynamic models, and for a covariate fit where `λ` was never optimized to a
+    /// stationary point (`opt_interval=0`, `burn_in>=iters`, `lbfgs_iters=0`, or
+    /// non-convergence). A fit-time artifact, not persisted across save/load.
     #[serde(default)]
     pub lambda_se: Option<Vec<Vec<f64>>>,
 }
@@ -1778,6 +1780,12 @@ pub fn fit_keyatm_cov<R: Rng>(
     }
     let mut nkw_t = build_nkw_t(&model.nkw, num_types, num_topics);
 
+    // Counts from the last *converged* λ optimization; the SE is computed from
+    // exactly these so it is the observed information at the optimum for the
+    // returned λ, not at counts that drifted through the later sampling sweeps
+    // (#418, the same cross-model issue fixed for DMR in #419).
+    let mut se_counts: Option<Vec<Vec<f64>>> = None;
+
     for it in 0..iters {
         run_sweep(
             &mut model,
@@ -1790,9 +1798,7 @@ pub fn fit_keyatm_cov<R: Rng>(
             rng,
         );
         if opt_interval > 0 && it + 1 > burn_in && (it + 1 - burn_in).is_multiple_of(opt_interval) {
-            // keyATM-cov shares DMR's "periodic optimize, SE from final counts"
-            // pattern; wiring this convergence flag into its λ-SE guard is #418.
-            let _converged = crate::dmr::optimize_lambda(
+            let converged = crate::dmr::optimize_lambda(
                 &mut lambda,
                 &features_std,
                 &model.ndk,
@@ -1802,6 +1808,13 @@ pub fn fit_keyatm_cov<R: Rng>(
                 lbfgs_iters,
                 offset,
             );
+            // Snapshot the counts this optimization ran against (before the next
+            // sweep mutates them); only a converged run yields a valid SE optimum.
+            se_counts = if converged {
+                Some(model.ndk.clone())
+            } else {
+                None
+            };
             // Bound λ to ±LAMBDA_BOUND in the standardized space (R keyATM's
             // slice bounds), so a runaway coefficient cannot blow up α (#270).
             for lk in lambda.iter_mut() {
@@ -1828,21 +1841,26 @@ pub fn fit_keyatm_cov<R: Rng>(
         }
     }
 
-    // Standard errors of λ (issue #316): computed in the standardized fit space
-    // at the final counts, then mapped to the original scale by the same
-    // standardization Jacobian used for λ below. Done before the λ mapback so the
-    // bound check sees the standardized coefficients that were actually clamped.
-    let lambda_se = covariate_lambda_se(
-        &lambda,
-        &features_std,
-        &model.ndk,
-        num_topics,
-        num_features,
-        prior_variance,
-        &feat_mean,
-        &feat_sd,
-        offset,
-    );
+    // Standard errors of λ (issue #316): computed in the standardized fit space at
+    // the counts of the last converged optimization (#418), then mapped to the
+    // original scale by the same standardization Jacobian used for λ below. Done
+    // before the λ mapback so the bound check sees the standardized coefficients
+    // that were actually clamped. `None` when λ was never optimized to a stationary
+    // point (opt_interval=0, burn_in>=iters, lbfgs_iters=0, or non-convergence),
+    // since the observed information is only a valid covariance at an optimum.
+    let lambda_se = se_counts.as_ref().map(|ndk| {
+        covariate_lambda_se(
+            &lambda,
+            &features_std,
+            ndk,
+            num_topics,
+            num_features,
+            prior_variance,
+            &feat_mean,
+            &feat_sd,
+            offset,
+        )
+    });
 
     // Map λ from the standardized space back to the original covariate scale, so
     // that exp(features · λ_orig) == exp(features_std · λ_std): for f ≥ 1,
@@ -1864,7 +1882,7 @@ pub fn fit_keyatm_cov<R: Rng>(
     model.lambda = Some(lambda_orig);
     model.features = Some(features.to_vec());
     model.prior_offset = offset.map(|o| o.to_vec());
-    model.lambda_se = Some(lambda_se);
+    model.lambda_se = lambda_se;
     model.theta_draws = theta_draw_buf;
     model
 }

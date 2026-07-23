@@ -13815,14 +13815,24 @@ impl KeyATM {
     /// (issue #316). A coefficient is notable when ``|feature_effects| /
     /// feature_effect_se`` exceeds ~2. Entries are ``NaN`` where the standardized
     /// λ hit the ±5 bound (the constrained estimate has no valid asymptotic SE).
-    /// Raises if the model was fit without covariates.
+    /// ``None`` when λ was never optimized to a stationary point (#418). Raises if
+    /// the model was fit without covariates.
     #[getter]
-    fn feature_effect_se<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    fn feature_effect_se<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Option<Bound<'py, PyArray2<f64>>>> {
         self.require_fitted()?;
-        self.feature_effect_se
+        // A covariate model always has `feature_effects`; if it lacks the SE, λ was
+        // never optimized to a stationary point (#418) -> None. A model fit without
+        // covariates has neither -> raise.
+        if self.feature_effects.is_none() {
+            return Err(PyRuntimeError::new_err("model was fit without covariates"));
+        }
+        Ok(self
+            .feature_effect_se
             .as_ref()
-            .map(|e| e.to_pyarray_bound(py))
-            .ok_or_else(|| PyRuntimeError::new_err("model was fit without covariates"))
+            .map(|e| e.to_pyarray_bound(py)))
     }
 
     /// Covariate model: names aligned with `feature_effects` columns
