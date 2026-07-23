@@ -6,6 +6,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Fixed
+
+- **SAGE correctness (#422):** the opt-in `convergence_tol` early stop tripped at
+  iter 20 (before any content-deviation `κ` was learned), because with `κ=0` the
+  monitored word log-likelihood is a corpus constant; it is now gated on a completed
+  `κ` update. Added input validation (`alpha > 0`, `lbfgs_iters >= 1`,
+  `num_samples >= 1`, finite non-negative `convergence_tol`, no duplicate
+  `group_names`), a guard that skips (and warns on) a non-finite `κ` optimization
+  step instead of corrupting the topics, and corrected the early-stop docstring
+  (the monitored quantity is the word-emission log-likelihood, not a full collapsed
+  model-fit likelihood). Default fitted output is unchanged. The faithfulness fix
+  (SAGE's sparse prior vs. the current Gaussian ridge) is tracked separately.
+
 ### Added
 
 - **`RTM`, the relational topic model** ([Chang & Blei 2010](https://www.jstor.org/stable/27801582))

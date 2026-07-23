@@ -188,8 +188,11 @@ pub fn run_sweep_sage<R: Rng>(
 }
 
 /// MAP-estimate the κ deviations (Gaussian prior) from the current counts, then
-/// refresh the cached β. One L-BFGS run.
-pub fn optimize_kappa(model: &mut SageModel, max_iter: usize) {
+/// refresh the cached β. One L-BFGS run. Returns `false` if the optimizer produced
+/// a non-finite result, in which case κ (and β) are left unchanged rather than
+/// corrupted — the caller surfaces this to the user (issue #422).
+#[must_use]
+pub fn optimize_kappa(model: &mut SageModel, max_iter: usize) -> bool {
     let k_n = model.num_topics;
     let g_n = model.num_groups;
     let v_n = model.num_types;
@@ -270,6 +273,13 @@ pub fn optimize_kappa(model: &mut SageModel, max_iter: usize) {
         1e-4,
     );
 
+    // Guard against a non-finite solve (line-search collapse, degenerate counts):
+    // leave κ and β untouched rather than propagate NaN/inf into the topic-word
+    // distributions.
+    if x.iter().any(|v| !v.is_finite()) {
+        return false;
+    }
+
     // Unpack.
     for k in 0..k_n {
         model.kappa_t[k].copy_from_slice(&x[k * v_n..(k + 1) * v_n]);
@@ -284,6 +294,7 @@ pub fn optimize_kappa(model: &mut SageModel, max_iter: usize) {
     }
 
     model.recompute_beta();
+    true
 }
 
 use crate::estimator::{DirichletModel, Estimator, ModelFamily};
@@ -387,7 +398,7 @@ mod tests {
         for iter in 1..=200 {
             run_sweep_sage(&mut model, &docs, &groups, &mut rng);
             if iter > 50 && iter % 25 == 0 {
-                optimize_kappa(&mut model, 20);
+                assert!(optimize_kappa(&mut model, 20));
             }
         }
 
@@ -398,6 +409,45 @@ mod tests {
         let g1_cd = model.beta[g1][2] + model.beta[g1][3];
         assert!(g0_ab > 0.8, "group 0 mass on its words = {}", g0_ab);
         assert!(g1_cd > 0.8, "group 1 mass on its words = {}", g1_cd);
+    }
+
+    #[test]
+    fn optimize_kappa_rolls_back_on_non_finite() {
+        // A degenerate (effectively zero) prior variance overflows inv_var to +inf,
+        // so the L-BFGS solve returns non-finite. optimize_kappa must return false
+        // and leave κ and β byte-for-byte unchanged (issue #422).
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let mut docs = Vec::new();
+        let mut groups = Vec::new();
+        for i in 0..40 {
+            if i % 2 == 0 {
+                docs.push(vec![0u32, 1, 0, 1]);
+                groups.push(0usize);
+            } else {
+                docs.push(vec![2u32, 3, 2, 3]);
+                groups.push(1usize);
+            }
+        }
+        let mut model = SageModel::new(1, 2, 4, 0.1, 1.0);
+        model.set_background(&docs);
+        model.initialize(&docs, &groups, &mut rng);
+        for _ in 0..30 {
+            run_sweep_sage(&mut model, &docs, &groups, &mut rng);
+        }
+        assert!(optimize_kappa(&mut model, 20)); // a healthy update first
+
+        let kappa_t_before = model.kappa_t.clone();
+        let kappa_i_before = model.kappa_i.clone();
+        let beta_before = model.beta.clone();
+
+        model.prior_variance = 5e-324; // smallest subnormal -> 1/var = +inf
+        assert!(
+            !optimize_kappa(&mut model, 20),
+            "expected a non-finite failure"
+        );
+        assert_eq!(model.kappa_t, kappa_t_before, "κT mutated on failure");
+        assert_eq!(model.kappa_i, kappa_i_before, "κI mutated on failure");
+        assert_eq!(model.beta, beta_before, "β mutated on failure");
     }
 
     #[test]
@@ -420,7 +470,7 @@ mod tests {
         for iter in 1..=200 {
             run_sweep_sage(&mut model, &docs, &groups, &mut rng);
             if iter > 50 && iter % 25 == 0 {
-                optimize_kappa(&mut model, 20);
+                assert!(optimize_kappa(&mut model, 20));
             }
         }
         let base = crate::conformance::check_conformance(&model);

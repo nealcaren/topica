@@ -5181,6 +5181,12 @@ impl SAGE {
         if !finite_pos(prior_variance) {
             return Err(PyValueError::new_err("prior_variance must be > 0"));
         }
+        if !finite_pos(alpha) {
+            return Err(PyValueError::new_err("alpha must be > 0 and finite"));
+        }
+        if lbfgs_iters == 0 {
+            return Err(PyValueError::new_err("lbfgs_iters must be >= 1"));
+        }
         Ok(SAGE {
             num_topics,
             alpha,
@@ -5219,7 +5225,10 @@ impl SAGE {
     /// `convergence_tol` (default 0.0, disabled) enables opt-in early stopping: the
     /// run stops once the relative change in the recorded log-likelihood between the
     /// last two trace points, |ΔLL| / |LL|, falls below it, setting `converged`. The
-    /// monitored quantity is the collapsed model-fit log-likelihood; the comparison
+    /// monitored quantity is the word-emission log-likelihood under the current topic
+    /// assignments (Σ n·log β), not a full collapsed model-fit likelihood. It is a
+    /// corpus constant until the first κ update, so the early-stop test is only applied
+    /// after κ has been re-estimated (issue #422). The comparison
     /// window is the trace cadence (`check_every` / `progress_interval`), so a coarser
     /// cadence compares more widely spaced sweeps. This is a pragmatic early-stop
     /// heuristic on the log-likelihood trace, not a guarantee the Gibbs chain has
@@ -5268,6 +5277,17 @@ impl SAGE {
         if num_docs == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
+        if num_samples == 0 {
+            return Err(PyValueError::new_err(
+                "num_samples must be >= 1 (it is the number of posterior snapshots \
+                 averaged into doc_topic; 0 leaves doc_topic undefined)",
+            ));
+        }
+        if !convergence_tol.is_finite() || convergence_tol < 0.0 {
+            return Err(PyValueError::new_err(
+                "convergence_tol must be finite and >= 0 (0 disables early stopping)",
+            ));
+        }
 
         let groups_str = parse_groups(groups)?;
         if groups_str.len() != num_docs {
@@ -5279,7 +5299,17 @@ impl SAGE {
         }
 
         let group_vocab: Vec<String> = match group_names {
-            Some(n) => n,
+            Some(n) => {
+                // Duplicates would train one group (HashMap last-wins) but resolve to
+                // another at lookup (`.position` first-wins), so reject them outright.
+                let mut seen = HashSet::new();
+                if let Some(dup) = n.iter().find(|g| !seen.insert(g.as_str())) {
+                    return Err(PyValueError::new_err(format!(
+                        "group_names contains a duplicate: {dup:?}"
+                    )));
+                }
+                n
+            }
             None => {
                 let mut set: HashSet<String> = groups_str.iter().cloned().collect();
                 let mut v: Vec<String> = set.drain().collect();
@@ -5320,7 +5350,7 @@ impl SAGE {
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
-        let (beta, acc_theta, theta_draw_buf, ll_history, converged_flag, corpus) = py
+        let (beta, acc_theta, theta_draw_buf, ll_history, converged_flag, kappa_ok, corpus) = py
             .allow_threads(move || {
                 let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
                 let mut ll_history: Vec<(usize, f64)> = Vec::new();
@@ -5340,10 +5370,23 @@ impl SAGE {
                     ll
                 };
 
+                // Early stopping is only meaningful once κ has been updated: with κ=0
+                // every cell's β is the shared background softmax, so the word-emission
+                // LL is a corpus constant independent of the topic assignments and would
+                // trip any convergence_tol immediately (issue #422). Gate the test on
+                // completed κ updates, and require two trace points recorded after the
+                // first one before comparing.
+                let mut kappa_updates = 0usize;
+                let mut post_kappa_traces = 0usize;
+                let mut kappa_ok = true;
                 'outer: for iter in 1..=iters {
                     sage::run_sweep_sage(&mut model, &corpus.docs, &groups_idx, &mut rng);
                     if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
-                        sage::optimize_kappa(&mut model, lbfgs_iters);
+                        if sage::optimize_kappa(&mut model, lbfgs_iters) {
+                            kappa_updates += 1;
+                        } else {
+                            kappa_ok = false;
+                        }
                     }
                     if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
                         let counts = doc_topic_counts(&model.doc_topics, k);
@@ -5369,17 +5412,22 @@ impl SAGE {
                     if check_every > 0 && iter % check_every == 0 {
                         let ll = compute_ll(&model);
                         ll_history.push((iter, ll));
-                        if convergence_tol > 0.0 && ll_history.len() >= 2 {
-                            let prev = ll_history[ll_history.len() - 2].1;
-                            let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
-                            if rel < convergence_tol {
-                                converged_flag = true;
-                                break 'outer;
+                        if convergence_tol > 0.0 && kappa_updates >= 1 {
+                            post_kappa_traces += 1;
+                            if post_kappa_traces >= 2 {
+                                let prev = ll_history[ll_history.len() - 2].1;
+                                let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
+                                if rel < convergence_tol {
+                                    converged_flag = true;
+                                    break 'outer;
+                                }
                             }
                         }
                     }
                 }
-                sage::optimize_kappa(&mut model, lbfgs_iters); // final β refresh
+                if !sage::optimize_kappa(&mut model, lbfgs_iters) {
+                    kappa_ok = false; // final β refresh
+                }
 
                 let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
                 for _ in 0..num_samples {
@@ -5406,9 +5454,23 @@ impl SAGE {
                     theta_draw_buf,
                     ll_history,
                     converged_flag,
+                    kappa_ok,
                     corpus,
                 )
             });
+
+        if !kappa_ok {
+            let warnings = py.import_bound("warnings")?;
+            warnings.call_method1(
+                "warn",
+                (
+                    "SAGE: a κ (content-deviation) optimization step returned a non-finite \
+                  result and was skipped; the affected topics keep their previous \
+                  content deviations. Check for empty topic-group cells or use a less \
+                  extreme prior_variance.",
+                ),
+            )?;
+        }
 
         let mut theta = Array2::<f64>::zeros((num_docs, k));
         for (d, row) in acc_theta.iter().enumerate() {
