@@ -46,6 +46,13 @@ class says it may still replay), or `unverifiable` (nothing recorded to check
 against, a bounded component, or a fingerprint from a spec this build does not
 recognise).
 
+The determinism the manifest records is **config-aware** (issue #401), not the
+coarse per-class registry tag: a `cvb0` sampler or an `init="random"` fit is
+recorded as `seed-reproducible` even when the model class is nominally `bit-exact`,
+and `determinism_detail` carries the machine-readable `replay_requires` (the `seed`,
+plus `num_threads` for the collapsed-Gibbs approximate parallel sampler) and any
+caveats. Compute it directly for any model with `topica.effective_determinism`.
+
 ## Recording evidence
 
 `record_fit(..., diagnostics=["coherence", "exclusivity"])` computes those
@@ -107,6 +114,8 @@ record.render("analysis-card.html", verification=record.verify(corpus, model))
 ## Reference
 
 ::: topica.record_fit
+
+::: topica.effective_determinism
 
 ::: topica.manifest.AnalysisManifest
 

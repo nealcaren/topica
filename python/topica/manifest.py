@@ -706,15 +706,28 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
     import topica
 
     cls = type(model).__name__
+    settings, settings_coverage = _capture_settings(model)
+
+    # Config-aware determinism (issue #401): the effective class for THIS instance's
+    # configuration, refining the coarse per-class registry tag. `determinism` stays a
+    # string (back-compatible with verify/compare/render); `determinism_detail` carries
+    # the registry class, machine-readable replay conditions, and human-readable caveats.
     determinism = None
+    determinism_detail = None
     reg = getattr(topica, "registry", None)
     if reg is not None and cls in reg.REGISTRY:
-        determinism = reg.REGISTRY[cls].determinism
+        det = reg.effective_determinism(model, fit_settings=fit_settings)
+        determinism = det["effective"]
+        determinism_detail = {
+            "registry_class": det["registry_class"],
+            "replay_requires": det["replay_requires"],
+            "notes": det["notes"],
+        }
 
-    settings, settings_coverage = _capture_settings(model)
     model_block: dict[str, Any] = {
         "class": cls,
         "determinism": determinism,
+        "determinism_detail": determinism_detail,
         "num_topics": getattr(model, "num_topics", None),
         "seed": getattr(model, "seed", None),  # most models do not expose it -> None
         "settings": settings,

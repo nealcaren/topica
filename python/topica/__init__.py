@@ -211,7 +211,7 @@ from .mcmc import (  # noqa: E402
     multichain_diagnostics,
     MultiChainDiagnostics,
 )
-from .registry import list_models, ModelInfo, REGISTRY  # noqa: E402  model taxonomy / discovery
+from .registry import list_models, ModelInfo, REGISTRY, effective_determinism  # noqa: E402  model taxonomy / discovery
 
 from .validation import (  # noqa: E402  general, model-agnostic post-hoc analyses
     diagnostics,
@@ -298,6 +298,7 @@ __all__ = [
     "list_models",
     "ModelInfo",
     "REGISTRY",
+    "effective_determinism",
     "LDA",
     "DMR",
     "GDMR",
