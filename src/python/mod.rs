@@ -11948,6 +11948,15 @@ impl SeededLDA {
         if !finite_pos(alpha) || !finite_pos(beta) {
             return Err(PyValueError::new_err("alpha and beta must be > 0"));
         }
+        // `weight` scales the seed pseudocount; an unvalidated value silently
+        // corrupted the fit — a negative weight yields negative topic-word
+        // probabilities and NaN/inf yield non-finite ones. The seededlda package
+        // restricts it to [0, 1], which topica claims to match (#456).
+        if !weight.is_finite() || !(0.0..=1.0).contains(&weight) {
+            return Err(PyValueError::new_err(
+                "weight must be finite and in [0, 1] (as in the seededlda package)",
+            ));
+        }
         if names.len() + residual < 2 {
             return Err(PyValueError::new_err(
                 "need at least 2 topics (seeded + residual)",
