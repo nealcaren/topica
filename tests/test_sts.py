@@ -164,3 +164,72 @@ class TestErrors:
         m = topica.STS(num_topics=2)
         with pytest.raises(RuntimeError, match="not fitted"):
             _ = m.topic_word
+
+
+def _sep(m, truth):
+    tw = m.topic_word
+    a_topic = 0 if int(np.argmax(tw[0])) < len(A) else 1
+    dom = np.asarray(m.doc_topic).argmax(1)
+    expected = np.where(truth == 0, a_topic, 1 - a_topic)
+    return float((dom == expected).mean())
+
+
+class TestKappaEstimationAndReference:
+    """The κ estimators ("ridge"/"lasso"/"adjusted") and the reference-fidelity
+    profiles ("paper"/"cran"), added for #454."""
+
+    @pytest.mark.parametrize("mode", ["ridge", "lasso", "adjusted"])
+    def test_each_estimator_fits_and_separates(self, mode):
+        docs, sent_seed, prev, truth = _planted()
+        m = topica.STS(num_topics=2, seed=1)
+        m.fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=25, kappa_estimation=mode)
+        assert np.isfinite(m.topic_word).all()
+        assert _sep(m, truth) > 0.9
+
+    @pytest.mark.parametrize("ref", ["paper", "cran"])
+    def test_reference_profiles_fit_finite_and_separate(self, ref):
+        docs, sent_seed, prev, truth = _planted()
+        m = topica.STS(num_topics=2, seed=1)
+        m.fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=25, reference=ref)
+        assert np.isfinite(m.topic_word).all()
+        assert np.isfinite(m.sentiment).all()
+        assert _sep(m, truth) > 0.9
+
+    def test_cran_profile_changes_the_fit(self):
+        # The reference profile must actually alter the solution vs the topica-native
+        # default (adjusted aggregation + damping + reference init).
+        docs, sent_seed, prev, _ = _planted()
+        base = topica.STS(num_topics=2, seed=1)
+        base.fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=20)  # ridge, none
+        cran = topica.STS(num_topics=2, seed=1)
+        cran.fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=20, reference="cran")
+        assert not np.allclose(base.topic_word, cran.topic_word)
+
+    def test_reference_profile_is_deterministic(self):
+        docs, sent_seed, prev, _ = _planted()
+        m1 = topica.STS(num_topics=2, seed=1)
+        m2 = topica.STS(num_topics=2, seed=1)
+        m1.fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=15, reference="cran")
+        m2.fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=15, reference="cran")
+        assert np.allclose(m1.topic_word, m2.topic_word)
+
+    def test_bad_estimator_value_raises(self):
+        docs, sent_seed, prev, _ = _planted()
+        with pytest.raises(ValueError, match="kappa_estimation must be"):
+            topica.STS(2).fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=2,
+                              kappa_estimation="bogus")
+
+    def test_bad_reference_value_raises(self):
+        docs, sent_seed, prev, _ = _planted()
+        with pytest.raises(ValueError, match="reference must be"):
+            topica.STS(2).fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=2,
+                              reference="bogus")
+
+    @pytest.mark.parametrize(
+        "ref,bad_kappa", [("cran", "lasso"), ("paper", "adjusted")]
+    )
+    def test_conflicting_estimator_and_profile_raises(self, ref, bad_kappa):
+        docs, sent_seed, prev, _ = _planted()
+        with pytest.raises(ValueError, match="estimator"):
+            topica.STS(2).fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=2,
+                              reference=ref, kappa_estimation=bad_kappa)

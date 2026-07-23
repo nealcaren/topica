@@ -860,6 +860,7 @@ class STS:
         em_tol: Optional[float] = None,
         covariates: Optional[numpy.typing.NDArray[numpy.float64]] = None,
         keep_eta_cov: bool = True,
+        reference: str = "none",
     ) -> "STS":
         """Fit. sentiment_seed (required, one value per document) defines the
         aggregation groups for the topic-word (kappa) Poisson M-step and seeds the
@@ -870,10 +871,17 @@ class STS:
 
         EM stops once the relative change in the variational bound falls below
         convergence_tol or after iters iterations. kappa_estimation chooses the
-        topic-word estimator: "ridge" (default, fast; kappa_ridge sets the ridge)
-        or "lasso" (an L1 Poisson path with AIC-selected penalty, matching the
-        reference R sts exactly at higher cost). Both give the same topics on
-        well-conditioned corpora.
+        topic-word estimator: "ridge" (default, fast, topica-native; kappa_ridge
+        sets the ridge), "lasso" (an L1 Poisson path with AIC-selected penalty),
+        or "adjusted" (the CRAN sts public default: the same L1/AIC solve with a
+        phi-mass-weighted sentiment aggregation).
+
+        reference selects a reference-fidelity profile: "none" (default, honors
+        kappa_estimation), "paper" (Chen & Mankad 2024: STM-derived spectral-eta /
+        sentiment-prior-variance-20 init, the "lasso" estimator, no kappa damping),
+        or "cran" (CRAN sts: same init, the "adjusted" estimator, reference
+        half-step kappa damping). A reference profile forces its own estimator, so
+        pairing it with a conflicting kappa_estimation raises.
 
         keep_eta_cov=False skips storing the per-document variational covariance
         (nu), saving O(N*(2K-1)^2) memory. The fit is bit-identical. Use
