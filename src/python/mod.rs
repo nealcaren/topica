@@ -266,6 +266,14 @@ fn default_variational() -> String {
 fn default_false() -> bool {
     false
 }
+/// Serde default for `concentration_max`. NOTE: `HdpState` is positional bincode,
+/// so `#[serde(default)]` never actually runs for an old save — the field was
+/// inserted mid-struct, so a pre-#433 save fails to load (misaligned fields / EOF)
+/// and must be refit. The holistic save-format fix is tracked in #443. This
+/// default only applies if a future self-describing format is adopted.
+fn default_concentration_max() -> f64 {
+    hdp::DEFAULT_CONCENTRATION_MAX
+}
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CtmState {
     num_topics: usize,
@@ -368,6 +376,8 @@ struct HdpState {
     eta: f64,
     seed: u64,
     resample_conc: bool,
+    #[serde(default = "default_concentration_max")]
+    concentration_max: f64,
     fitted: bool,
     num_topics: usize,
     learned_alpha: f64,
@@ -9272,6 +9282,7 @@ pub struct HDP {
     eta: f64,
     seed: u64,
     resample_conc: bool,
+    concentration_max: f64,
 
     fitted: bool,
     num_topics: usize,
@@ -9315,6 +9326,7 @@ impl HDP {
         d.set_item("beta", self.eta)?;
         d.set_item("seed", self.seed)?;
         d.set_item("resample_conc", self.resample_conc)?;
+        d.set_item("concentration_max", self.concentration_max)?;
         d.set_item("eta", None::<f64>)?;
         Ok(d)
     }
@@ -9337,12 +9349,20 @@ impl HDP {
     /// adapt the concentrations to the data, but the corpus-level update is a
     /// positive-feedback loop, more topics raise gamma, which creates more
     /// topics, that ran the topic count away to the hundreds on real corpora
-    /// (issue #68). The resampled concentrations are now capped to keep that
-    /// bounded, but fixed concentrations remain the recommended default; set
-    /// `gamma` to choose the granularity directly.
+    /// (issue #68). The resampled concentrations are capped at `concentration_max`
+    /// to keep that bounded, but fixed concentrations remain the recommended
+    /// default; set `gamma` to choose the granularity directly.
+    ///
+    /// `concentration_max` (default 2.0) is the upper bound applied to the
+    /// resampled `alpha`/`gamma` when `resample_conc=True`. It is a divergence
+    /// backstop, not a statistical prior: a posterior with mass above it is pinned
+    /// at the cap, biasing the concentrations (and K) downward. Corpora that
+    /// legitimately support larger concentrations should raise it; it has no
+    /// effect when `resample_conc=False`.
     /// `beta` is the topic-word Dirichlet smoothing; `seed` seeds the Gibbs RNG.
     #[new]
-    #[pyo3(signature = (*, alpha=0.1, gamma=0.1, beta=0.01, seed=42, resample_conc=false, eta=None))]
+    #[pyo3(signature = (*, alpha=0.1, gamma=0.1, beta=0.01, seed=42, resample_conc=false,
+                        concentration_max=2.0, eta=None))]
     fn new(
         py: Python<'_>,
         alpha: f64,
@@ -9350,6 +9370,7 @@ impl HDP {
         beta: f64,
         seed: u64,
         resample_conc: bool,
+        concentration_max: f64,
         eta: Option<f64>,
     ) -> PyResult<Self> {
         let beta = if let Some(old_val) = eta {
@@ -9376,12 +9397,19 @@ impl HDP {
         if !finite_pos(beta) {
             return Err(PyValueError::new_err("beta must be > 0"));
         }
+        if !concentration_max.is_finite() || concentration_max <= 1e-3 {
+            return Err(PyValueError::new_err(
+                "concentration_max must be finite and > 1e-3 (it is the upper clamp \
+                 for the resampled concentrations, whose lower floor is 1e-3)",
+            ));
+        }
         Ok(HDP {
             alpha,
             gamma,
             eta: beta,
             seed,
             resample_conc,
+            concentration_max,
             fitted: false,
             num_topics: 0,
             topic_names: Vec::new(),
@@ -9459,6 +9487,7 @@ impl HDP {
         let num_docs = corpus.num_docs();
         let num_types = corpus.num_types();
         let (alpha, gamma, eta, conc) = (slf.alpha, slf.gamma, slf.eta, slf.resample_conc);
+        let concentration_max = slf.concentration_max;
         let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         // 0 = auto: ~50 evenly spaced trace points across the run.
         let ll_interval = if progress_interval == 0 {
@@ -9480,6 +9509,7 @@ impl HDP {
                 eta,
                 iters,
                 conc,
+                concentration_max,
                 ll_interval,
                 &mut rng,
             );
@@ -9790,6 +9820,7 @@ impl HDP {
                 eta: self.eta,
                 seed: self.seed,
                 resample_conc: self.resample_conc,
+                concentration_max: self.concentration_max,
                 fitted: self.fitted,
                 num_topics: self.num_topics,
                 learned_alpha: self.learned_alpha,
@@ -9818,6 +9849,7 @@ impl HDP {
             eta: s.eta,
             seed: s.seed,
             resample_conc: s.resample_conc,
+            concentration_max: s.concentration_max,
             fitted: s.fitted,
             num_topics: s.num_topics,
             topic_names,

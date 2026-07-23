@@ -36,6 +36,9 @@ pub struct HdpModel {
     pub beta_u: f64,        // leftover stick mass (the "new topic" weight)
     pub z: Vec<Vec<usize>>, // per-document token topic assignments
     pub njk: Vec<Vec<u32>>, // num_docs × K document-topic counts
+    /// Divergence backstop for resampled concentrations (see
+    /// [`DEFAULT_CONCENTRATION_MAX`]); only consulted when `resample_conc = true`.
+    pub concentration_max: f64,
     /// Discovery + convergence trace, one entry per recorded sweep:
     /// `(iteration, num_active_topics, per-token log-likelihood, alpha, gamma)`.
     /// The topic count and the (resampled) concentrations show the
@@ -171,6 +174,14 @@ fn sample_tables<R: Rng>(n: u32, theta: f64, rng: &mut R) -> u32 {
 
 fn sample_index<R: Rng>(probs: &[f64], rng: &mut R) -> usize {
     let total: f64 = probs.iter().sum();
+    // A nonfinite or nonpositive total means the weights were corrupted
+    // upstream; without this guard the loop below falls through to the last
+    // index (the fresh-topic option), silently masking the corruption. Checked
+    // only in debug builds to keep the per-token hot path free of branches.
+    debug_assert!(
+        total.is_finite() && total > 0.0,
+        "sample_index: weights must sum to a finite positive total, got {total}"
+    );
     let mut r = rng.gen::<f64>() * total;
     for (i, &p) in probs.iter().enumerate() {
         r -= p;
@@ -185,15 +196,18 @@ fn sample_index<R: Rng>(probs: &[f64], rng: &mut R) -> usize {
 // Sampler
 // ---------------------------------------------------------------------------
 
-/// Upper bound on a resampled DP concentration. The Escobar-West update for γ
-/// draws from `Gamma(a + K, b - log η)`, whose mean grows linearly with the
+/// Default upper bound on a resampled DP concentration. The Escobar-West update
+/// for γ draws from `Gamma(a + K, b - log η)`, whose mean grows linearly with the
 /// topic count K; once K is large the rate term cannot pull γ back down, so γ
 /// and K reinforce each other without bound (issue #68: K ran to 774 with γ at
-/// 102). Healthy fits keep both concentrations in roughly `[0.05, 1.5]`, so this
-/// cap leaves normal adaptation untouched while preventing the runaway. It only
-/// matters when `resample_conc = true`; the default fits with fixed
-/// concentrations and never reaches it.
-const CONCENTRATION_MAX: f64 = 2.0;
+/// 102). This cap is a *divergence backstop* for the opt-in `resample_conc = true`
+/// path, not a statistical prior: any posterior with appreciable mass above it
+/// gets a spurious atom at the cap, biasing the concentrations (and hence K)
+/// downward. The conservative default matches the value chosen for #68; corpora
+/// that legitimately support larger concentrations can raise it via
+/// `HdpModel::concentration_max` (exposed as `concentration_max` on the Python
+/// constructor). The default fits with fixed concentrations and never reach it.
+pub(crate) const DEFAULT_CONCENTRATION_MAX: f64 = 2.0;
 
 impl HdpModel {
     /// Drop any topic with no tokens, returning its stick mass to β_u and
@@ -277,7 +291,8 @@ impl HdpModel {
         } else {
             a + k - 1.0
         };
-        self.gamma = (sample_gamma(shape, rng) / (b - eta.ln())).clamp(1e-3, CONCENTRATION_MAX);
+        self.gamma =
+            (sample_gamma(shape, rng) / (b - eta.ln())).clamp(1e-3, self.concentration_max);
     }
 
     /// Resample the document-level concentration α0 given per-document word
@@ -308,7 +323,7 @@ impl HdpModel {
             let shape = a + total_tables as f64 - sum_s;
             let rate = b - sum_log_w;
             if shape > 0.0 && rate > 0.0 {
-                self.alpha = (sample_gamma(shape, rng) / rate).clamp(1e-3, CONCENTRATION_MAX);
+                self.alpha = (sample_gamma(shape, rng) / rate).clamp(1e-3, self.concentration_max);
             }
         }
     }
@@ -388,9 +403,34 @@ pub fn fit_hdp<R: Rng>(
     eta: f64,
     iters: usize,
     resample_conc: bool,
+    concentration_max: f64,
     report_interval: usize,
     rng: &mut R,
 ) -> HdpModel {
+    // Guard the numeric preconditions the sampler relies on. The Python
+    // constructor already validates its hyperparameters, but direct Rust callers
+    // can otherwise trigger NaNs, division-by-zero, or out-of-range indexing.
+    assert!(num_types > 0, "fit_hdp: vocabulary size must be positive");
+    assert!(
+        alpha.is_finite() && alpha > 0.0,
+        "fit_hdp: alpha must be finite and positive, got {alpha}"
+    );
+    assert!(
+        gamma.is_finite() && gamma > 0.0,
+        "fit_hdp: gamma must be finite and positive, got {gamma}"
+    );
+    assert!(
+        eta.is_finite() && eta > 0.0,
+        "fit_hdp: eta must be finite and positive, got {eta}"
+    );
+    assert!(
+        concentration_max.is_finite() && concentration_max > 1e-3,
+        "fit_hdp: concentration_max must be finite and > 1e-3, got {concentration_max}"
+    );
+    debug_assert!(
+        docs.iter().flatten().all(|&w| (w as usize) < num_types),
+        "fit_hdp: a token id is out of range for num_types={num_types}"
+    );
     let mut model = HdpModel {
         num_types,
         eta,
@@ -402,6 +442,7 @@ pub fn fit_hdp<R: Rng>(
         beta_u: 1.0, // entire stick is initially "unused"
         z: docs.iter().map(|d| vec![0usize; d.len()]).collect(),
         njk: vec![Vec::new(); docs.len()],
+        concentration_max,
         trace: Vec::new(),
     };
 
@@ -504,7 +545,18 @@ mod tests {
             let doc: Vec<u32> = (0..12).map(|i| blk[(i + d) % blk.len()]).collect();
             docs.push(doc);
         }
-        let model = fit_hdp(&docs, v, 1.0, 1.0, 0.01, 100, true, 0, &mut rng);
+        let model = fit_hdp(
+            &docs,
+            v,
+            1.0,
+            1.0,
+            0.01,
+            100,
+            true,
+            DEFAULT_CONCENTRATION_MAX,
+            0,
+            &mut rng,
+        );
         let k = model.num_topics();
         // Auto-K is approximate and HDP tends to slightly over-segment; the firm
         // requirement is that it recovers a sane count, not the exact 5.
@@ -542,8 +594,30 @@ mod tests {
             .collect();
         let mut r1 = ChaCha8Rng::seed_from_u64(7);
         let mut r2 = ChaCha8Rng::seed_from_u64(7);
-        let m1 = fit_hdp(&docs, 10, 1.0, 1.0, 0.1, 20, true, 0, &mut r1);
-        let m2 = fit_hdp(&docs, 10, 1.0, 1.0, 0.1, 20, true, 0, &mut r2);
+        let m1 = fit_hdp(
+            &docs,
+            10,
+            1.0,
+            1.0,
+            0.1,
+            20,
+            true,
+            DEFAULT_CONCENTRATION_MAX,
+            0,
+            &mut r1,
+        );
+        let m2 = fit_hdp(
+            &docs,
+            10,
+            1.0,
+            1.0,
+            0.1,
+            20,
+            true,
+            DEFAULT_CONCENTRATION_MAX,
+            0,
+            &mut r2,
+        );
         assert_eq!(m1.num_topics(), m2.num_topics());
         assert_eq!(m1.nk, m2.nk);
     }
@@ -557,7 +631,18 @@ mod tests {
         let docs: Vec<Vec<u32>> = (0..250)
             .map(|d| (0..12).map(|i| blocks[d % 5][(i + d) % 6]).collect())
             .collect();
-        let model = fit_hdp(&docs, 30, 1.0, 1.0, 0.01, 120, true, 10, &mut rng);
+        let model = fit_hdp(
+            &docs,
+            30,
+            1.0,
+            1.0,
+            0.01,
+            120,
+            true,
+            DEFAULT_CONCENTRATION_MAX,
+            10,
+            &mut rng,
+        );
 
         let trace = &model.trace;
         // iters=120, interval=10 -> sweeps 10,20,...,120.
@@ -574,16 +659,11 @@ mod tests {
         assert!(trace.last().unwrap().2 > trace.first().unwrap().2);
     }
 
-    #[test]
-    fn concentration_resampling_is_capped() {
-        // Issue #68: with many topics, the Escobar-West gamma update draws from
-        // Gamma(a+K, .) whose mean grows with K, so gamma (and K) ran away to the
-        // hundreds. Drive the resamplers from a large-K state and confirm both
-        // concentrations stay bounded by CONCENTRATION_MAX.
+    // A large-K state whose Escobar-West posterior for γ sits well above 2.0.
+    fn large_k_state(concentration_max: f64) -> HdpModel {
         let k = 300usize;
         let v = 50usize;
-        let mut rng = ChaCha8Rng::seed_from_u64(0);
-        let mut model = HdpModel {
+        HdpModel {
             num_types: v,
             eta: 0.01,
             alpha: 1.0,
@@ -594,23 +674,67 @@ mod tests {
             beta_u: 1.0 / (k as f64 + 1.0),
             z: Vec::new(),
             njk: vec![(0..k).map(|t| (t % 3 + 1) as u32).collect(); 200],
+            concentration_max,
             trace: Vec::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn concentration_resampling_is_capped() {
+        // Issue #68: with many topics, the Escobar-West gamma update draws from
+        // Gamma(a+K, .) whose mean grows with K, so gamma (and K) ran away to the
+        // hundreds. Drive the resamplers from a large-K state and confirm both
+        // concentrations stay bounded by the configured cap.
+        let cap = DEFAULT_CONCENTRATION_MAX;
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        let mut model = large_k_state(cap);
         for _ in 0..50 {
             let (m_total, t_j) = model.resample_beta(&mut rng);
             model.resample_gamma(m_total, &mut rng);
             model.resample_alpha(&t_j, &mut rng);
-            assert!(
-                model.gamma <= CONCENTRATION_MAX + 1e-9,
-                "gamma {} > cap",
-                model.gamma
-            );
-            assert!(
-                model.alpha <= CONCENTRATION_MAX + 1e-9,
-                "alpha {} > cap",
-                model.alpha
-            );
+            assert!(model.gamma <= cap + 1e-9, "gamma {} > cap", model.gamma);
+            assert!(model.alpha <= cap + 1e-9, "alpha {} > cap", model.alpha);
         }
+    }
+
+    #[test]
+    fn raising_the_cap_removes_the_spurious_atom_at_two() {
+        // #433: at the old hard cap of 2.0 the same large-K posterior pins γ at
+        // exactly 2.0 (a spurious atom that biases K downward). With a generous
+        // cap the resampled γ is free to sit above 2.0, and the default cap does
+        // in fact clamp it — so the two paths are demonstrably different.
+        let mut rng_lo = ChaCha8Rng::seed_from_u64(0);
+        let mut lo = large_k_state(DEFAULT_CONCENTRATION_MAX); // 2.0
+        let mut rng_hi = ChaCha8Rng::seed_from_u64(0);
+        let mut hi = large_k_state(1.0e6);
+        let mut hi_gamma_exceeded_two = false;
+        let mut hi_alpha_exceeded_two = false;
+        for _ in 0..50 {
+            let (m_lo, t_lo) = lo.resample_beta(&mut rng_lo);
+            lo.resample_gamma(m_lo, &mut rng_lo);
+            lo.resample_alpha(&t_lo, &mut rng_lo);
+            // The cap binds BOTH concentrations, not just gamma.
+            assert!(lo.gamma <= DEFAULT_CONCENTRATION_MAX + 1e-9);
+            assert!(lo.alpha <= DEFAULT_CONCENTRATION_MAX + 1e-9);
+
+            let (m_hi, t_hi) = hi.resample_beta(&mut rng_hi);
+            hi.resample_gamma(m_hi, &mut rng_hi);
+            hi.resample_alpha(&t_hi, &mut rng_hi);
+            if hi.gamma > DEFAULT_CONCENTRATION_MAX + 1e-6 {
+                hi_gamma_exceeded_two = true;
+            }
+            if hi.alpha > DEFAULT_CONCENTRATION_MAX + 1e-6 {
+                hi_alpha_exceeded_two = true;
+            }
+        }
+        assert!(
+            hi_gamma_exceeded_two,
+            "with a raised cap the large-K posterior should let gamma exceed 2.0"
+        );
+        assert!(
+            hi_alpha_exceeded_two,
+            "with a raised cap the second-level posterior should let alpha exceed 2.0"
+        );
     }
 
     #[test]
@@ -619,7 +743,18 @@ mod tests {
             .map(|d| (0..8).map(|i| ((i + d) % 10) as u32).collect())
             .collect();
         let mut rng = ChaCha8Rng::seed_from_u64(7);
-        let m = fit_hdp(&docs, 10, 1.0, 1.0, 0.1, 20, true, 0, &mut rng);
+        let m = fit_hdp(
+            &docs,
+            10,
+            1.0,
+            1.0,
+            0.1,
+            20,
+            true,
+            DEFAULT_CONCENTRATION_MAX,
+            0,
+            &mut rng,
+        );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
         let dir = crate::conformance::check_dirichlet(&m);

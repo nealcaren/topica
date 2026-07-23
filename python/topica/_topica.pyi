@@ -994,15 +994,23 @@ class HDP:
         beta: float = 0.01,
         seed: int = 42,
         resample_conc: bool = False,
+        concentration_max: float = 2.0,
         eta: Optional[float] = None,
     ) -> None:
         """alpha/gamma are the document- and corpus-level DP concentrations.
         gamma is the dominant lever on the inferred topic count (0.1 is
         conservative; raise it for more topics). resample_conc defaults to False
         (fixed concentrations -> a stable topic count); set it True to adapt the
-        concentrations to the data, which is now capped to avoid the runaway
-        topic count it used to cause (issue #68). beta is the topic-word Dirichlet
-        (base measure). alpha, gamma, beta must be > 0.
+        concentrations to the data, which is capped at concentration_max to avoid
+        the runaway topic count it used to cause (issue #68). beta is the
+        topic-word Dirichlet (base measure). alpha, gamma, beta must be > 0.
+
+        concentration_max (default 2.0) bounds the resampled alpha/gamma when
+        resample_conc=True. It is a divergence backstop, not a statistical prior:
+        a posterior with mass above it is pinned at the cap, biasing the
+        concentrations (and the topic count) downward, so raise it for corpora
+        that legitimately support larger concentrations. No effect when
+        resample_conc=False. Must be finite and > 1e-3.
 
         eta is a deprecated alias for beta."""
         ...
