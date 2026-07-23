@@ -298,6 +298,136 @@ IMPL: dict[str, ImplInfo] = {
 }
 
 
+# The collapsed-Gibbs family (AD-LDA approximate parallel sampler): its
+# seed-reproducibility is conditional on the thread count when num_threads>1. The
+# cvb0 path within these models is exempt (deterministic sweeps, thread-independent).
+_GIBBS_FAMILY = frozenset(
+    name for name, info in REGISTRY.items() if info.inference == "gibbs"
+)
+
+
+def effective_determinism(model, *, fit_settings: dict | None = None) -> dict:
+    """The determinism class this *instance* actually has, given its configuration
+    (issue #401), refining the per-class :attr:`ModelInfo.determinism` tag.
+
+    Determinism is often per-configuration, not per-class: the same model can be
+    ``bit-exact`` under one setting and ``seed-reproducible`` under another. This
+    reads the model's :attr:`~topica` ``settings`` (constructor config, issue #400)
+    and the ``fit_settings`` you record, and returns::
+
+        {"effective": "seed-reproducible",     # the config-aware class
+         "registry_class": "bit-exact",        # the coarse per-class tag
+         "replay_requires": {"seed": 42},      # machine-readable replay conditions
+         "notes": ["..."]}                     # human-readable caveats
+
+    ``replay_requires`` carries the conditions an exact replay needs — always the
+    ``seed`` for a seed-reproducible fit, plus ``num_threads`` for the collapsed-Gibbs
+    approximate parallel sampler. ``bit-exact`` fits carry no replay requirements.
+
+    Scope (minimal, honest): claims the configuration determines are made exactly.
+    Where the deciding factor is a *runtime* outcome the config cannot know — did a
+    spectral initialization succeed or silently fall back to a seeded random one? did
+    anchor selection hit its degenerate-basis fallback? — this keeps the common-case
+    class and records the caveat in ``notes`` rather than over- or under-claiming.
+    Recording the actual initialization route in the fitted model (so those cases
+    become exact) is tracked as follow-up work.
+
+    Parameters
+    ----------
+    model : a topica model (fitted or not; reads its construction config).
+    fit_settings : the keyword arguments passed to ``fit`` (e.g. ``num_threads``,
+        ``inference``), which can override the constructor. Optional.
+    """
+    cls = type(model).__name__
+    info = REGISTRY.get(cls)
+    base = info.determinism if info is not None else None
+    settings = getattr(model, "settings", None) or {}
+    fit_settings = fit_settings or {}
+    notes: list[str] = []
+
+    if base == "llm-bounded":
+        return {
+            "effective": "llm-bounded",
+            "registry_class": base,
+            "replay_requires": {},
+            "notes": [
+                "output depends on an external model; stable at temperature 0, "
+                "not bit-reproducible"
+            ],
+        }
+
+    effective = base
+    sampler = settings.get("sampler")
+    init = settings.get("init")
+    inference = fit_settings.get("inference")
+    is_cvb0 = sampler == "cvb0"
+
+    if is_cvb0:
+        # cvb0 seeds only the initial responsibilities, then is deterministic;
+        # it never uses the thread count. Downgrade from any Gibbs base.
+        effective = "seed-reproducible"
+        notes.append(
+            "cvb0 seeds only the initial responsibilities, then runs a deterministic, "
+            "thread-independent sweep"
+        )
+    elif cls == "NMF":
+        if init == "random":
+            effective = "seed-reproducible"
+            notes.append(
+                "init='random' draws both factors from the seeded RNG; bit-exact "
+                "only with init='nndsvd'"
+            )
+    elif cls in ("CTM", "STM", "STS"):
+        if inference == "svi":
+            effective = "seed-reproducible"
+            notes.append(
+                "inference='svi' shuffles documents with the seeded RNG each epoch"
+            )
+        elif init == "random":
+            effective = "seed-reproducible"
+            notes.append(
+                "init='random' seeds the initialization; bit-exact only with "
+                "init='spectral'"
+            )
+        else:  # init == "spectral", batch inference
+            notes.append(
+                "bit-exact assumes spectral recovery succeeded; a degenerate corpus "
+                "falls back to a seeded random init (not recorded here)"
+            )
+    elif cls == "DTM" and init == "spectral":
+        notes.append(
+            "init='spectral' is deterministic when spectral recovery succeeds; a "
+            "degenerate corpus falls back to a seeded static-LDA init"
+        )
+    elif cls == "AnchorLDA":
+        notes.append(
+            "bit-exact assumes anchor selection did not hit its seeded degenerate-basis "
+            "fallback; not bit-identical across BLAS/LAPACK backends"
+        )
+
+    replay: dict = {}
+    if effective == "seed-reproducible":
+        replay["seed"] = settings.get("seed")
+        # Only the collapsed-Gibbs approximate parallel sampler is thread-conditional;
+        # the cvb0 path and the variational E-steps preserve serial reduction order.
+        if cls in _GIBBS_FAMILY and not is_cvb0:
+            threads = fit_settings.get("num_threads", settings.get("num_threads", 1))
+            threads = 1 if threads in (None, 0) else threads
+            replay["num_threads"] = threads
+            if threads > 1:
+                notes.append(
+                    f"num_threads={threads} uses the approximate parallel sampler; "
+                    f"replay requires the same thread count"
+                )
+
+    return {
+        "effective": effective,
+        "registry_class": base,
+        "replay_requires": replay,
+        "notes": notes,
+    }
+
+
 def list_models(
     *,
     group: str | None = None,
