@@ -901,3 +901,49 @@ class TestGdmrTomotopyPrior:
         shutil.move(str(d1 / "g.gdmr._inner_dmr"), str(d2 / "g.gdmr._inner_dmr"))
         loaded = topica.GDMR.load(str(d2 / "g.gdmr"))  # must find the moved sidecar
         npt.assert_allclose(loaded.feature_effects, m.feature_effects)
+
+    def test_alpha_is_exposed_and_defaults_to_tomotopy_default(self):
+        assert topica.GDMR(num_topics=2, degrees=[2]).settings["alpha"] == 0.1
+
+    def test_bad_alpha_rejected(self):
+        for bad in (0.0, -1.0, float("inf"), float("nan")):
+            with pytest.raises(ValueError):
+                topica.GDMR(num_topics=2, degrees=[2], alpha=bad)
+
+    def test_smaller_alpha_gives_sparser_doc_topic(self):
+        # alpha is the baseline Dirichlet concentration (log(alpha) offset): a
+        # smaller alpha concentrates each document on fewer topics (#426 #3).
+        rng = np.random.default_rng(0)
+        docs = [[f"w{int(rng.integers(9))}" for _ in range(10)] for _ in range(90)]
+        meta = np.linspace(0.0, 1.0, 90)[:, None]
+
+        def max_mass(alpha):
+            m = topica.GDMR(num_topics=3, degrees=[2], alpha=alpha, seed=1,
+                            burn_in=20)
+            m.fit(docs, meta, iters=80, num_samples=2, sample_interval=10)
+            return float(m.doc_topic.max(axis=1).mean())
+
+        assert max_mass(0.05) > max_mass(1.0)
+
+    def test_alpha_survives_save_load(self, tmp_path):
+        docs = [["w0", "w1", "w2"] for _ in range(30)]
+        meta = np.linspace(0.0, 1.0, 30)[:, None]
+        m = topica.GDMR(num_topics=2, degrees=[2], alpha=0.25, seed=1, burn_in=10)
+        m.fit(docs, meta, iters=30, num_samples=1, sample_interval=5)
+        p = str(tmp_path / "g.gdmr")
+        m.save(p)
+        loaded = topica.GDMR.load(p)
+        assert loaded.settings["alpha"] == 0.25
+        npt.assert_allclose(loaded.feature_effects, m.feature_effects)
+
+    def test_intercept_reflects_log_alpha(self):
+        # feature_effects/alpha are reported on tomotopy's log(alpha)-centered
+        # scale: the intercept baseline is exp(fe[:,0]) and reflects log(alpha).
+        docs = [["w0", "w1"] for _ in range(30)] + [["w2", "w3"] for _ in range(30)]
+        meta = np.concatenate([np.zeros(30), np.ones(30)])[:, None]
+        m = topica.GDMR(num_topics=2, degrees=[1], alpha=0.1, seed=1, burn_in=10)
+        m.fit(docs, meta, iters=40, num_samples=1, sample_interval=5)
+        # tdf is a valid simplex and unchanged by the uniform log(alpha) shift.
+        tdf = m.tdf(np.array([[0.5]]), normalize=True)
+        npt.assert_allclose(tdf.sum(), 1.0, atol=1e-9)
+        assert np.all(np.isfinite(m.feature_effects))

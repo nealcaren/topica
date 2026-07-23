@@ -253,6 +253,13 @@ class GDMR:
         ``sigma**2 / prod_d (p_d + 1)**(2*decay)``.  Any ``decay > 0`` shrinks;
         ``decay == 0`` gives a uniform ``sigma`` over all non-constant terms (the
         original paper's decay-free prior).
+    alpha:
+        Baseline Dirichlet concentration (tomotopy ``GDMRModel.alpha``, default
+        0.1).  Applied as a constant ``log(alpha)`` offset in the DMR predictor, so
+        it sets the baseline topic concentration (smaller ``alpha`` -> sparser
+        per-document topic mixtures) and centers the intercept prior at
+        ``log(alpha)``, matching both reference implementations.  ``alpha = 1``
+        reproduces a zero-mean intercept prior (topica's pre-#426 behavior).
     metadata_range:
         Per-dimension ``(lo, hi)`` bounds for the [-1, 1] mapping.  If None,
         we infer from the training data at fit time.
@@ -275,6 +282,7 @@ class GDMR:
         sigma: float = 1.0,
         sigma0: float = 3.0,
         decay: float = 0.0,
+        alpha: float = 0.1,
         metadata_range: list[tuple[float, float]] | None = None,
         lbfgs_iters: int = 20,
         sampler: str = "sparse",
@@ -293,6 +301,8 @@ class GDMR:
             raise ValueError("sigma0 must be > 0")
         if decay < 0:
             raise ValueError("decay must be >= 0")
+        if alpha <= 0 or not np.isfinite(alpha):
+            raise ValueError("alpha must be finite and > 0")
 
         self._num_topics = num_topics
         self._degrees = list(degrees)
@@ -303,6 +313,7 @@ class GDMR:
         self._sigma = sigma
         self._sigma0 = sigma0
         self._decay = decay
+        self._alpha = alpha
         self._metadata_range: list[tuple[float, float]] | None = (
             [tuple(r) for r in metadata_range] if metadata_range is not None else None
         )
@@ -456,6 +467,15 @@ class GDMR:
             sampler=self._sampler,
         )
 
+        # Center the intercept (constant-term) prior at log(alpha) by adding a
+        # constant offset to the DMR predictor, matching tomotopy's GDMRModel (and
+        # the paper's g-dmr): alpha_{d,t} = exp(lambda_t . x_d + log(alpha)). This
+        # sets the baseline Dirichlet concentration (alpha=0.1 => sparser theta) and
+        # shifts the intercept prior mean; the DMR prior on the fitted coefficients
+        # stays zero-mean, so the effective intercept is centered at log(alpha).
+        num_docs = scaled_features.shape[0]
+        offset = np.full((num_docs, self._num_topics), np.log(self._alpha),
+                         dtype=np.float64)
         self._dmr.fit(
             data,
             scaled_features,
@@ -466,6 +486,7 @@ class GDMR:
             keep_theta_draws=keep_theta_draws,
             convergence_tol=convergence_tol,
             check_every=check_every,
+            offset=offset,
         )
 
         # Recover true coefficients as lambda_j = dmr_lambda_j * c_j. c_0 == 1 by
@@ -482,12 +503,20 @@ class GDMR:
             raise RuntimeError("model is not fitted yet; call fit() first")
 
     def _get_true_feature_effects(self) -> np.ndarray:
-        """Return true lambda (num_topics, num_basis) after undoing column scaling."""
-        # DMR feature_effects has shape (num_topics, num_basis)
-        # where column 0 is the DMR-prepended intercept, columns 1.. are our
-        # non-intercept Legendre columns.
+        """Return true lambda (num_topics, num_basis) after undoing column scaling.
+
+        Column 0 is the constant term. The inner DMR fits it under a zero-mean
+        prior with a fixed ``log(alpha)`` offset applied to the predictor, so the
+        effective constant coefficient is ``dmr_lambda_0 + log(alpha)`` — that
+        offset is folded back in here, so ``feature_effects`` and ``tdf`` are on
+        tomotopy's ``log(alpha)``-centered scale. (A uniform shift of the constant
+        across topics leaves the normalized ``tdf`` unchanged; it matters for the
+        reported coefficients and the ``alpha`` baseline.)
+        """
         dmr_fe = self._dmr.feature_effects  # (num_topics, num_basis)
-        return dmr_fe * self._recover_scales[np.newaxis, :]
+        fe = dmr_fe * self._recover_scales[np.newaxis, :]
+        fe[:, 0] = fe[:, 0] + np.log(self._alpha)
+        return fe
 
     def _build_basis_for_eval(self, metadata: np.ndarray) -> np.ndarray:
         """Build Legendre basis for evaluation, shape (P, num_basis)."""
@@ -633,6 +662,7 @@ class GDMR:
             "sigma": self._sigma,
             "sigma0": self._sigma0,
             "decay": self._decay,
+            "alpha": self._alpha,
             "metadata_range": (
                 [list(t) for t in self._metadata_range]
                 if self._metadata_range is not None
@@ -926,6 +956,7 @@ class GDMR:
             "sigma": self._sigma,
             "sigma0": self._sigma0,
             "decay": self._decay,
+            "alpha": self._alpha,
             "metadata_range": self._metadata_range,
             "metadata_names": self._metadata_names,
             "lbfgs_iters": self._lbfgs_iters,
@@ -961,6 +992,7 @@ class GDMR:
             sigma=state["sigma"],
             sigma0=state["sigma0"],
             decay=state["decay"],
+            alpha=state.get("alpha", 1.0),
             metadata_range=state["metadata_range"],
             lbfgs_iters=state["lbfgs_iters"],
             sampler=state["sampler"],

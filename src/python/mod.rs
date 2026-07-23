@@ -3560,7 +3560,8 @@ impl DMR {
     #[pyo3(signature = (data, features=None, *, feature_names=None, iters=1000,
                         num_samples=5, sample_interval=25, progress=None, progress_interval=50,
                         keep_theta_draws=true, num_theta_draws=25,
-                        convergence_tol=0.0_f64, check_every=10_usize, covariates=None))]
+                        convergence_tol=0.0_f64, check_every=10_usize, covariates=None,
+                        offset=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -3578,6 +3579,7 @@ impl DMR {
         convergence_tol: f64,
         check_every: usize,
         covariates: Option<&Bound<'_, PyAny>>,
+        offset: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<Self>> {
         // covariates= is a no-deprecation alias for features=
         let features: &Bound<'_, PyAny> = match (features, covariates) {
@@ -3662,6 +3664,24 @@ impl DMR {
         let num_docs = corpus.num_docs();
         let total_tokens = corpus.total_tokens().max(1) as f64;
 
+        // Optional fixed per-(doc, topic) offset added inside the exponent:
+        // α_{d,t} = exp(λ_t·x_d + offset[d][t]). A constant offset shifts the
+        // baseline concentration (e.g. GDMR passes log(alpha) to center the
+        // intercept prior at log(alpha), matching tomotopy's GDMRModel).
+        let offset: Option<Vec<Vec<f64>>> = match offset {
+            None => None,
+            Some(o) => {
+                let raw = parse_features(o)?;
+                if raw.len() != num_docs || raw.iter().any(|r| r.len() != k) {
+                    return Err(PyValueError::new_err(format!(
+                        "offset must have shape (num_docs={num_docs}, num_topics={k})"
+                    )));
+                }
+                check_all_finite_2d("offset", &raw)?;
+                Some(raw)
+            }
+        };
+
         // λ starts at zero -> α ≡ 1 (symmetric) before optimization kicks in.
         let mut lambda = vec![vec![0.0f64; nf]; k];
         let mut model = TopicModel::new(k, k as f64, slf.beta, num_types);
@@ -3701,7 +3721,7 @@ impl DMR {
                 // λ, not at counts that drifted afterwards (#419).
                 let mut se_counts: Option<Vec<Vec<f64>>> = None;
                 for iter in 1..=iters {
-                    let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, None);
+                    let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
                     cv.set_doc_alpha(doc_alpha);
                     cv.sweep();
                     if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
@@ -3714,7 +3734,7 @@ impl DMR {
                             nf,
                             prior_variance,
                             lbfgs_iters,
-                            None,
+                            offset.as_deref(),
                         );
                         se_counts = if converged { Some(dtc) } else { None };
                     }
@@ -3724,7 +3744,15 @@ impl DMR {
                 cv.phi_into(&mut acc_phi);
                 cv.theta_into(&mut acc_theta);
                 let se = se_counts.as_ref().and_then(|dtc| {
-                    dmr::dmr_lambda_se_checked(&lambda, &feats, dtc, k, nf, prior_variance, None)
+                    dmr::dmr_lambda_se_checked(
+                        &lambda,
+                        &feats,
+                        dtc,
+                        k,
+                        nf,
+                        prior_variance,
+                        offset.as_deref(),
+                    )
                 });
                 let model = cv.to_topic_model(&corpus);
                 (
@@ -3752,7 +3780,7 @@ impl DMR {
                 let mut se_counts: Option<Vec<Vec<f64>>> = None;
 
                 for iter in 1..=iters {
-                    let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, None);
+                    let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
                     ws.set_doc_alpha(doc_alpha);
                     ws.sweep(&corpus, &mut rng);
 
@@ -3766,13 +3794,14 @@ impl DMR {
                             nf,
                             prior_variance,
                             lbfgs_iters,
-                            None,
+                            offset.as_deref(),
                         );
                         se_counts = if converged { Some(dtc) } else { None };
                     }
 
                     if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
-                        let doc_alpha_snap = dmr::compute_doc_alpha(&lambda, &feats, None);
+                        let doc_alpha_snap =
+                            dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
                         let snap: Vec<Vec<f32>> = ws
                             .doc_topics()
                             .iter()
@@ -3802,7 +3831,7 @@ impl DMR {
                                 k,
                                 nf,
                                 prior_variance,
-                                None,
+                                offset.as_deref(),
                             );
                             let llpt = ll / total_tokens;
                             Python::with_gil(|py| {
@@ -3813,7 +3842,7 @@ impl DMR {
                 }
 
                 // Sampling phase: λ (and thus α per doc) fixed.
-                let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, None);
+                let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
                 ws.set_doc_alpha(doc_alpha.clone());
                 let mut acc_phi = vec![vec![0.0f64; k]; num_types];
                 let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
@@ -3843,7 +3872,15 @@ impl DMR {
                     }
                 }
                 let se = se_counts.as_ref().and_then(|dtc| {
-                    dmr::dmr_lambda_se_checked(&lambda, &feats, dtc, k, nf, prior_variance, None)
+                    dmr::dmr_lambda_se_checked(
+                        &lambda,
+                        &feats,
+                        dtc,
+                        k,
+                        nf,
+                        prior_variance,
+                        offset.as_deref(),
+                    )
                 });
                 let model = ws.to_topic_model();
                 (
@@ -3869,7 +3906,7 @@ impl DMR {
                 let mut se_counts: Option<Vec<Vec<f64>>> = None;
 
                 'outer: for iter in 1..=iters {
-                    let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, None);
+                    let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
                     dmr::run_sweep_dmr(
                         &mut model.type_topic_counts,
                         &mut model.tokens_per_topic,
@@ -3894,14 +3931,15 @@ impl DMR {
                             nf,
                             prior_variance,
                             lbfgs_iters,
-                            None,
+                            offset.as_deref(),
                         );
                         se_counts = if converged { Some(dtc) } else { None };
                     }
 
                     // Snapshot θ = (n_dk + α_dk) / (N_d + Σα_d) every thin sweeps.
                     if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
-                        let doc_alpha_snap = dmr::compute_doc_alpha(&lambda, &feats, None);
+                        let doc_alpha_snap =
+                            dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
                         let snap: Vec<Vec<f32>> = model
                             .doc_topics
                             .iter()
@@ -3931,7 +3969,7 @@ impl DMR {
                                 k,
                                 nf,
                                 prior_variance,
-                                None,
+                                offset.as_deref(),
                             );
                             let llpt = ll / total_tokens;
                             Python::with_gil(|py| {
@@ -3956,7 +3994,7 @@ impl DMR {
                 }
 
                 // Sampling phase: λ is now fixed, so α per doc is fixed too.
-                let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, None);
+                let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
                 let mut acc_phi = vec![vec![0.0f64; k]; num_types];
                 let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
 
@@ -4001,7 +4039,15 @@ impl DMR {
                 }
 
                 let se = se_counts.as_ref().and_then(|dtc| {
-                    dmr::dmr_lambda_se_checked(&lambda, &feats, dtc, k, nf, prior_variance, None)
+                    dmr::dmr_lambda_se_checked(
+                        &lambda,
+                        &feats,
+                        dtc,
+                        k,
+                        nf,
+                        prior_variance,
+                        offset.as_deref(),
+                    )
                 });
                 (
                     acc_phi,
