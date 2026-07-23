@@ -17,8 +17,7 @@ use rand::Rng;
 
 use crate::estimator::{Estimator, ModelFamily};
 use crate::linalg::{
-    cholesky, cholesky_jitter, half_logdet, make_diagonally_dominant, spd_inverse,
-    spd_inverse_from_chol, spd_inverse_jitter,
+    cholesky, cholesky_jitter, half_logdet, make_diagonally_dominant, spd_inverse_from_chol,
 };
 use crate::variational::LogisticNormalModel;
 use crate::variational::{doc_sparse, fit_gamma_vb, lbfgs_minimize};
@@ -1232,15 +1231,9 @@ pub fn fit_ctm<R: Rng>(
         em_iters_run = em + 1;
         sigma_estep = sigma.clone(); // capture sigma before E-step
         beta_estep = beta.clone(); // capture beta before E-step
-        let siginv = spd_inverse(&sigma, km1).unwrap_or_else(|| {
-            let mut s = sigma.clone();
-            make_diagonally_dominant(&mut s, km1);
-            spd_inverse_jitter(&s, km1)
-        });
-        let entropy = match cholesky(&sigma, km1) {
-            Some(l) => half_logdet(&l, km1),
-            None => 0.0,
-        };
+                                   // Inverse and log-det from a single factor so the bound's quadratic and
+                                   // entropy terms stay consistent even when Σ needs a PD repair.
+        let (siginv, entropy) = crate::linalg::spd_inverse_and_half_logdet(&sigma, km1);
 
         let mut beta_ss = vec![vec![1e-8f64; num_types]; k];
         // Content: soft expected counts per (topic×group, word).
@@ -1534,15 +1527,9 @@ pub fn fit_ctm_svi<R: Rng>(
             t_step += 1;
             let rho = crate::variational::svi::rho(tau, kappa, t_step);
 
-            let siginv = spd_inverse(&sigma, km1).unwrap_or_else(|| {
-                let mut s = sigma.clone();
-                make_diagonally_dominant(&mut s, km1);
-                spd_inverse_jitter(&s, km1)
-            });
-            let entropy = match cholesky(&sigma, km1) {
-                Some(l) => half_logdet(&l, km1),
-                None => 0.0,
-            };
+            // Inverse and log-det from a single factor so the bound's quadratic and
+            // entropy terms stay consistent even when Σ needs a PD repair.
+            let (siginv, entropy) = crate::linalg::spd_inverse_and_half_logdet(&sigma, km1);
 
             let mut beta_ss = vec![vec![1e-8f64; num_types]; k];
             let mut sigma_ss = vec![0.0f64; km1 * km1];
@@ -1615,15 +1602,9 @@ pub fn fit_ctm_svi<R: Rng>(
 
     // Final full E-step with the converged globals to give every document a
     // λ/ν (the θ posterior) and the corpus bound.
-    let siginv = spd_inverse(&sigma, km1).unwrap_or_else(|| {
-        let mut s = sigma.clone();
-        make_diagonally_dominant(&mut s, km1);
-        spd_inverse_jitter(&s, km1)
-    });
-    let entropy = match cholesky(&sigma, km1) {
-        Some(l) => half_logdet(&l, km1),
-        None => 0.0,
-    };
+    // Inverse and log-det from a single factor so the bound's quadratic and
+    // entropy terms stay consistent even when Σ needs a PD repair.
+    let (siginv, entropy) = crate::linalg::spd_inverse_and_half_logdet(&sigma, km1);
     let mut total_bound = 0.0f64;
     for di in 0..d {
         let words = &sparse[di].0;
@@ -1689,15 +1670,9 @@ pub fn recompute_nu(model: &CtmModel, sparse: &[(Vec<usize>, Vec<f64>)]) -> Vec<
     // Use sigma_estep (the sigma that was used in the last E-step) rather than
     // model.sigma (which was updated by the final M-step and may differ).
     let sig = &model.sigma_estep;
-    let siginv = crate::linalg::spd_inverse(sig, km1).unwrap_or_else(|| {
-        let mut s = sig.clone();
-        crate::linalg::make_diagonally_dominant(&mut s, km1);
-        crate::linalg::spd_inverse_jitter(&s, km1)
-    });
-    let entropy = match crate::linalg::cholesky(sig, km1) {
-        Some(l) => crate::linalg::half_logdet(&l, km1),
-        None => 0.0,
-    };
+    // Inverse and log-det from a single factor (consistent even after a PD
+    // repair); ν itself does not depend on the log-det here.
+    let (siginv, entropy) = crate::linalg::spd_inverse_and_half_logdet(sig, km1);
     (0..d)
         .into_par_iter()
         .map(|di| {

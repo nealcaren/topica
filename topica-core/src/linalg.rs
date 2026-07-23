@@ -113,6 +113,27 @@ pub fn spd_inverse_jitter(a: &[f64], n: usize) -> Vec<f64> {
     spd_inverse_from_chol(&cholesky_jitter(a, n), n)
 }
 
+/// Inverse and half-log-determinant of a symmetric `n×n` matrix `a`, both derived
+/// from a **single** Cholesky factor so they stay mutually consistent.
+///
+/// If `a` is not positive-definite, it is repaired (diagonal dominance + jitter)
+/// and *both* outputs come from the repaired factor. Computing the two separately
+/// — invert a repaired `a` but take the log-det from a Cholesky of the original
+/// `a`, dropping it to 0 when that Cholesky fails — leaves the log-det
+/// inconsistent with the inverse, which corrupts any objective/bound that uses
+/// both (e.g. the CTM/STM ELBO's quadratic-prior and entropy terms).
+pub fn spd_inverse_and_half_logdet(a: &[f64], n: usize) -> (Vec<f64>, f64) {
+    match cholesky(a, n) {
+        Some(l) => (spd_inverse_from_chol(&l, n), half_logdet(&l, n)),
+        None => {
+            let mut s = a.to_vec();
+            make_diagonally_dominant(&mut s, n);
+            let l = cholesky_jitter(&s, n);
+            (spd_inverse_from_chol(&l, n), half_logdet(&l, n))
+        }
+    }
+}
+
 /// Force a symmetric matrix to be positive definite by diagonal dominance
 /// (STM's fallback when the Hessian is indefinite): if a diagonal entry is
 /// smaller than the sum of the magnitudes of its off-diagonal entries, raise it.
@@ -516,5 +537,47 @@ mod tests {
                 assert!((dot - expect).abs() < 1e-9, "V orthogonality failed");
             }
         }
+    }
+
+    #[test]
+    fn inverse_and_half_logdet_pd_matches_separate() {
+        // Diagonal PD matrix: helper must match spd_inverse + half_logdet(cholesky).
+        let a = vec![2.0, 0.0, 0.0, 3.0];
+        let (inv, logdet) = spd_inverse_and_half_logdet(&a, 2);
+        let inv_ref = spd_inverse(&a, 2).unwrap();
+        let logdet_ref = half_logdet(&cholesky(&a, 2).unwrap(), 2);
+        for (x, y) in inv.iter().zip(&inv_ref) {
+            assert!((x - y).abs() < 1e-12);
+        }
+        assert!((logdet - logdet_ref).abs() < 1e-12);
+        // Sanity: 0.5·ln(det) = 0.5·ln(6).
+        assert!((logdet - 0.5 * 6.0f64.ln()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn inverse_and_half_logdet_nonpd_returns_consistent_nonzero_logdet() {
+        // Indefinite symmetric matrix (eigenvalues 3, -1): Cholesky fails, so the
+        // separate-computation path used at the call sites returned log-det = 0
+        // while still inverting a repaired matrix. The helper must instead return a
+        // FINITE, NON-ZERO log-det consistent with the (repaired) inverse it returns.
+        let a = vec![1.0, 2.0, 2.0, 1.0];
+        assert!(cholesky(&a, 2).is_none(), "fixture must be non-PD");
+        let (inv, logdet) = spd_inverse_and_half_logdet(&a, 2);
+        assert!(logdet.is_finite(), "log-det not finite: {logdet}");
+        assert!(
+            logdet.abs() > 1e-9,
+            "log-det collapsed to ~0 (the bug): {logdet}"
+        );
+        for v in &inv {
+            assert!(v.is_finite(), "inverse has non-finite entry");
+        }
+        // Consistency: inv = S^{-1} for the repaired PD S, so det(inv) = 1/det(S)
+        // and logdet = 0.5·ln(det S) = -0.5·ln(det inv).
+        let det_inv = inv[0] * inv[3] - inv[1] * inv[2];
+        assert!(det_inv > 0.0, "repaired inverse must be PD");
+        assert!(
+            (logdet + 0.5 * det_inv.ln()).abs() < 1e-9,
+            "log-det {logdet} inconsistent with the returned inverse (det_inv {det_inv})"
+        );
     }
 }
