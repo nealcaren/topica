@@ -2344,7 +2344,10 @@ mod tests {
     #[test]
     fn infer_theta_empty_doc_returns_prior_mode() {
         // K = 4 topics -> μ has length K-1 = 3. Reference topic (index 3) has η = 0.
-        let mu = vec![1.0, -0.5, 0.0];
+        // All four logits (μ plus the appended reference 0) are DISTINCT, so a bug
+        // that misplaced the reference topic would change the expected vector and
+        // fail this test — [.., 0.0] with a zero in μ would not catch that swap.
+        let mu = vec![1.0, -0.5, 0.7];
         let k = mu.len() + 1;
         // beta/siginv are unused on the empty-doc path, but must be shaped validly.
         let beta = vec![vec![0.25; 3]; k]; // K×V, arbitrary
@@ -2352,8 +2355,8 @@ mod tests {
 
         let theta = infer_theta(&beta, &mu, &siginv, &[], &[]);
 
-        // Expected: softmax([1.0, -0.5, 0.0, 0.0]).
-        let logits = [1.0, -0.5, 0.0, 0.0];
+        // Expected: softmax([1.0, -0.5, 0.7, 0.0]).
+        let logits = [1.0, -0.5, 0.7, 0.0];
         let m = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let exps: Vec<f64> = logits.iter().map(|&x| (x - m).exp()).collect();
         let s: f64 = exps.iter().sum();
@@ -2373,6 +2376,30 @@ mod tests {
         assert!(
             (theta[0] - uniform).abs() > 1e-6,
             "θ collapsed to the uniform vector — prior mean μ was ignored"
+        );
+    }
+
+    /// A large prevalence predictor must not overflow the empty-doc softmax: the
+    /// max-shift keeps every exponent <= 0, so θ stays finite and normalized and
+    /// concentrates on the dominant topic.
+    #[test]
+    fn infer_theta_empty_doc_large_mu_is_finite() {
+        let mu = vec![800.0, -800.0, 0.0]; // exp(800) would overflow without the shift
+        let k = mu.len() + 1;
+        let beta = vec![vec![0.25; 3]; k];
+        let siginv = vec![0.0; mu.len() * mu.len()];
+
+        let theta = infer_theta(&beta, &mu, &siginv, &[], &[]);
+
+        assert!(
+            theta.iter().all(|x| x.is_finite()),
+            "θ has non-finite entries: {theta:?}"
+        );
+        let sum: f64 = theta.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-12, "θ must sum to 1, got {sum}");
+        assert!(
+            theta[0] > 0.999,
+            "θ should concentrate on the dominant topic, got {theta:?}"
         );
     }
 }
