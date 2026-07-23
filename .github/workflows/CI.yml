@@ -1,6 +1,8 @@
 # CI for topica — a PyO3/maturin package producing abi3 wheels.
 #
 # Jobs:
+#   lint        — rustfmt + clippy, once on Linux
+#   rust-test   — cargo test (the platform-independent Rust core), once on Linux
 #   test        — build in dev mode & run pytest on Linux, macOS, Windows
 #   build-wheels — produce abi3 wheels for all target platforms
 #   sdist       — produce a source distribution
@@ -22,6 +24,13 @@ on:
 # Minimal permissions by default; individual jobs override as needed.
 permissions:
   contents: read
+
+# Cancel a branch's in-flight run when a new commit is pushed to it, so a fixup
+# does not leave the superseded run competing for runners (which inflates queue
+# times). Never cancel on `main`: every landed commit gets a full verification.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # ---------------------------------------------------------------------------
 # Job: test
@@ -66,6 +75,33 @@ jobs:
       - name: cargo clippy -D warnings
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+  # Rust unit tests, run once on Linux. The pure-Rust core (samplers, EM,
+  # saveformat) is platform-independent, so there is no value in recompiling and
+  # re-running it on macOS and Windows — those platforms earn their keep on the
+  # Python/IO layer (e.g. the Windows cp1252 text bug), which the pytest matrix
+  # below still exercises on all three. Splitting these out drops the OS matrix
+  # from three debug compiles to zero.
+  rust-test:
+    name: rust tests (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+      # `--workspace` so the extracted `topica-core` member is tested too, not
+      # just the root crate. No `python` feature: pyo3's extension-module mode
+      # does not link libpython into a standalone test binary.
+      - name: cargo test
+        run: cargo test --workspace --lib
+      # Feature-gated Rust tests (issue #383): the bare run does not compile the
+      # embeddings/umap/tsne code, so those `#[cfg(feature = ...)]` tests never
+      # run. Enable them explicitly (not `--all-features`, which would turn on
+      # `python`).
+      - name: cargo test (feature-gated models)
+        run: cargo test --workspace --lib --features embeddings,umap,tsne
+
   test:
     name: test / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -101,26 +137,10 @@ jobs:
       # build, and the suite is dominated by model fits, so an optimized build
       # turns a ~20-minute debug run into a few minutes. The extra compile time is
       # repaid many times over (and cached by rust-cache above).
-      # Rust unit tests. Run without the `python` feature: pyo3's
-      # extension-module mode does not link libpython into a standalone test
-      # binary, so the bindings crate cannot be unit-tested that way. `--workspace`
-      # so the extracted `topica-core` member is tested too, not just the root
-      # crate (otherwise the core can regress while CI stays green). Covers the
-      # core/model/saveformat tests. Cheap and cached; part of the test contract
-      # in CONTRIBUTING.md, so it gates PRs here too.
-      - name: cargo test
-        run: cargo test --workspace --lib
-
-      # Feature-gated Rust tests (issue #383). The bare run above does not compile
-      # the `embeddings`/`umap`/`tsne` code, so tests behind those `#[cfg(feature
-      # = ...)]` gates never run. Enable them explicitly. NOT `--all-features`:
-      # that would also turn on `python`, and pyo3's extension-module mode does
-      # not link libpython into a standalone test binary (see above). This set
-      # covers every feature gate except `python`, which has no unit-testable
-      # code. Also in CONTRIBUTING.md as `cargo test --features embeddings,umap,tsne`.
-      - name: cargo test (feature-gated models)
-        run: cargo test --workspace --lib --features embeddings,umap,tsne
-
+      #
+      # The pure-Rust `cargo test` unit tests run once in the `rust-test` job
+      # above (Linux only); this matrix job's job is the Python/binding surface on
+      # all three platforms.
       - name: Build extension and run tests
         shell: bash
         run: |
