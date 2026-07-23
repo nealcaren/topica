@@ -1790,7 +1790,9 @@ pub fn fit_keyatm_cov<R: Rng>(
             rng,
         );
         if opt_interval > 0 && it + 1 > burn_in && (it + 1 - burn_in).is_multiple_of(opt_interval) {
-            crate::dmr::optimize_lambda(
+            // keyATM-cov shares DMR's "periodic optimize, SE from final counts"
+            // pattern; wiring this convergence flag into its λ-SE guard is #418.
+            let _converged = crate::dmr::optimize_lambda(
                 &mut lambda,
                 &features_std,
                 &model.ndk,

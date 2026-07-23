@@ -21,6 +21,21 @@ use rand::Rng;
 use crate::optimize::digamma;
 use crate::sampler::sample_doc;
 
+/// Clamp on the linear predictor `λ_t · x_d + s_{d,t}` before exponentiation.
+/// Standalone DMR deliberately does not standardize covariates, so a large-scale
+/// covariate or coefficient can drive the predictor to `+inf` (or `-inf`),
+/// yielding non-finite α and NaNs through digamma/trigamma (#419). `exp(500)`
+/// (~1.4e217) is astronomically larger than any meaningful α yet leaves ample
+/// headroom below `f64::MAX` even summed over many topics, so this bites only
+/// pathological inputs and never a realistic fit.
+const PREDICTOR_CLAMP: f64 = 500.0;
+
+/// `exp` of the DMR linear predictor with the [`PREDICTOR_CLAMP`] guard.
+#[inline]
+fn predictor_exp(dot: f64, off: f64) -> f64 {
+    (dot + off).clamp(-PREDICTOR_CLAMP, PREDICTOR_CLAMP).exp()
+}
+
 /// Per-document, per-topic prior `α_{d,t} = exp(λ_t · x_d + s_{d,t})`.
 ///
 /// `lambda` is `[num_topics][num_features]`, `features` is
@@ -42,7 +57,7 @@ pub fn compute_doc_alpha(
                 .map(|(t, lt)| {
                     let dot: f64 = lt.iter().zip(x).map(|(l, xi)| l * xi).sum();
                     let off = offset.map_or(0.0, |o| o[d][t]);
-                    (dot + off).exp()
+                    predictor_exp(dot, off)
                 })
                 .collect()
         })
@@ -143,7 +158,7 @@ pub fn dmr_objective_and_gradient(
         for t in 0..num_topics {
             let dot: f64 = lambda[t].iter().zip(x).map(|(l, xi)| l * xi).sum();
             let off = offset.map_or(0.0, |o| o[d][t]);
-            let a = (dot + off).exp();
+            let a = predictor_exp(dot, off);
             alpha[t] = a;
             alpha_sum += a;
         }
@@ -267,7 +282,7 @@ pub fn dmr_lambda_cov(
         for tt in 0..t {
             let dot: f64 = lambda[tt].iter().zip(x).map(|(l, xi)| l * xi).sum();
             let off = offset.map_or(0.0, |o| o[d][tt]);
-            a[tt] = (dot + off).exp();
+            a[tt] = predictor_exp(dot, off);
             alpha_sum += a[tt];
         }
         let counts = &doc_topic_counts[d];
@@ -318,10 +333,17 @@ pub fn dmr_lambda_cov(
 }
 
 use crate::mathfun::log_gamma;
-use crate::variational::lbfgs_minimize;
+use crate::variational::lbfgs_minimize_status;
 
 /// Optimize `lambda` in place to maximize the penalized DMR likelihood for the
 /// current topic counts (one L-BFGS run, used periodically during sampling).
+///
+/// Returns whether L-BFGS reached a stationary point on its own criterion, rather
+/// than exhausting its iteration budget. The caller uses this to decide whether the
+/// observed-information standard errors are valid — an SE is only a covariance at an
+/// optimum, so a run that hit `max_iter` (or was given `max_iter == 0`) reports
+/// `false` and no SE is emitted (#419).
+#[must_use]
 pub fn optimize_lambda(
     lambda: &mut [Vec<f64>],
     features: &[Vec<f64>],
@@ -331,13 +353,13 @@ pub fn optimize_lambda(
     prior_variance: f64,
     max_iter: usize,
     offset: Option<&[Vec<f64>]>,
-) {
+) -> bool {
     let mut x0 = Vec::with_capacity(num_topics * num_features);
     for lt in lambda.iter() {
         x0.extend_from_slice(lt);
     }
 
-    let x = lbfgs_minimize(
+    let (x, converged) = lbfgs_minimize_status(
         x0,
         |flat| {
             let mut lam = vec![vec![0.0f64; num_features]; num_topics];
@@ -368,6 +390,53 @@ pub fn optimize_lambda(
     for t in 0..num_topics {
         lambda[t].copy_from_slice(&x[t * num_features..(t + 1) * num_features]);
     }
+    converged
+}
+
+/// Guarded standard errors for the DMR weights: [`dmr_lambda_se`] evaluated at the
+/// exact counts `lambda` was last optimized against, returning `None` when the
+/// observed information is not a valid covariance at the returned `lambda`. The
+/// caller must pass the `doc_topic_counts` snapshot from the last *converged*
+/// [`optimize_lambda`]; this adds finiteness guards on the objective, gradient, and
+/// the resulting SE matrix (the last catching a non-SPD information that the
+/// diagonal-dominance fallback could not repair). See #419: previously the SE was
+/// computed from the post-sampling counts, which have drifted away from the counts
+/// `lambda` was fit to, so it was not `J^{-1}` at the optimum for the returned
+/// `lambda`.
+pub fn dmr_lambda_se_checked(
+    lambda: &[Vec<f64>],
+    features: &[Vec<f64>],
+    doc_topic_counts: &[Vec<f64>],
+    num_topics: usize,
+    num_features: usize,
+    prior_variance: f64,
+    offset: Option<&[Vec<f64>]>,
+) -> Option<Vec<Vec<f64>>> {
+    let (value, grad) = dmr_objective_and_gradient(
+        lambda,
+        features,
+        doc_topic_counts,
+        num_topics,
+        num_features,
+        prior_variance,
+        offset,
+    );
+    if !value.is_finite() || grad.iter().flatten().any(|g| !g.is_finite()) {
+        return None;
+    }
+    let se = dmr_lambda_se(
+        lambda,
+        features,
+        doc_topic_counts,
+        num_topics,
+        num_features,
+        prior_variance,
+        offset,
+    );
+    if se.iter().flatten().any(|v| !v.is_finite()) {
+        return None;
+    }
+    Some(se)
 }
 
 #[cfg(test)]
@@ -569,7 +638,7 @@ mod tests {
             }
         }
         let mut lambda = vec![vec![0.0f64; num_features]; num_topics];
-        optimize_lambda(
+        let converged = optimize_lambda(
             &mut lambda,
             &features,
             &counts,
@@ -579,6 +648,7 @@ mod tests {
             100,
             None,
         );
+        assert!(converged, "L-BFGS should reach a stationary point here");
 
         // The covariate weight should push topic 1 up and topic 0 down.
         let effect_topic1 = lambda[1][1] - lambda[0][1];
@@ -586,6 +656,55 @@ mod tests {
             effect_topic1 > 0.5,
             "expected positive covariate effect on topic 1, got {}",
             effect_topic1
+        );
+    }
+
+    // #419: optimize_lambda reports non-convergence when it cannot take a real step
+    // (max_iter = 0), which the SE guard uses to withhold an invalid covariance.
+    #[test]
+    fn optimize_lambda_reports_nonconvergence_when_it_cannot_step() {
+        let features = vec![vec![1.0, 1.0], vec![1.0, -1.0], vec![1.0, 0.5]];
+        let counts = vec![vec![5.0, 1.0], vec![1.0, 5.0], vec![3.0, 3.0]];
+        let mut lambda = vec![vec![0.0f64; 2]; 2];
+        let converged = optimize_lambda(&mut lambda, &features, &counts, 2, 2, 100.0, 0, None);
+        assert!(
+            !converged,
+            "max_iter=0 leaves lambda un-optimized, so it must not report convergence"
+        );
+    }
+
+    // #419: dmr_lambda_se_checked returns Some finite SEs at a real optimum and None
+    // when the objective/gradient are non-finite (e.g. corrupted counts).
+    #[test]
+    fn dmr_lambda_se_checked_guards_the_covariance() {
+        let features = vec![
+            vec![1.0, 1.0],
+            vec![1.0, -1.0],
+            vec![1.0, 0.5],
+            vec![1.0, -0.5],
+        ];
+        let counts = vec![
+            vec![8.0, 2.0],
+            vec![2.0, 8.0],
+            vec![6.0, 4.0],
+            vec![4.0, 6.0],
+        ];
+        let mut lambda = vec![vec![0.0f64; 2]; 2];
+        let converged = optimize_lambda(&mut lambda, &features, &counts, 2, 2, 100.0, 200, None);
+        assert!(converged);
+        let se = dmr_lambda_se_checked(&lambda, &features, &counts, 2, 2, 100.0, None);
+        let se = se.expect("SE should be available at a converged optimum");
+        assert!(se.iter().flatten().all(|v| v.is_finite() && *v > 0.0));
+
+        // A non-finite count makes the objective non-finite -> no SE.
+        let bad_counts = vec![
+            vec![f64::NAN, 2.0],
+            vec![2.0, 8.0],
+            vec![6.0, 4.0],
+            vec![4.0, 6.0],
+        ];
+        assert!(
+            dmr_lambda_se_checked(&lambda, &features, &bad_counts, 2, 2, 100.0, None).is_none()
         );
     }
 

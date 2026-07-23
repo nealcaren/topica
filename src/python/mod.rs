@@ -3696,36 +3696,36 @@ impl DMR {
             py.allow_threads(move || {
                 let alpha0 = vec![1.0f64; k];
                 let mut cv = cvb0::Cvb0::new(&corpus, k, &alpha0, beta, &mut rng);
+                // Counts from the last *converged* λ optimization; the SE is computed
+                // from exactly these so it is J^{-1} at the optimum for the returned
+                // λ, not at counts that drifted afterwards (#419).
+                let mut se_counts: Option<Vec<Vec<f64>>> = None;
                 for iter in 1..=iters {
                     let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, None);
                     cv.set_doc_alpha(doc_alpha);
                     cv.sweep();
                     if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
-                        dmr::optimize_lambda(
+                        let dtc: Vec<Vec<f64>> = cv.doc_topic_expected().to_vec();
+                        let converged = dmr::optimize_lambda(
                             &mut lambda,
                             &feats,
-                            cv.doc_topic_expected(),
+                            &dtc,
                             k,
                             nf,
                             prior_variance,
                             lbfgs_iters,
                             None,
                         );
+                        se_counts = if converged { Some(dtc) } else { None };
                     }
                 }
                 let mut acc_phi = vec![vec![0.0f64; k]; num_types];
                 let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
                 cv.phi_into(&mut acc_phi);
                 cv.theta_into(&mut acc_theta);
-                let se = dmr::dmr_lambda_se(
-                    &lambda,
-                    &feats,
-                    cv.doc_topic_expected(),
-                    k,
-                    nf,
-                    prior_variance,
-                    None,
-                );
+                let se = se_counts.as_ref().and_then(|dtc| {
+                    dmr::dmr_lambda_se_checked(&lambda, &feats, dtc, k, nf, prior_variance, None)
+                });
                 let model = cv.to_topic_model(&corpus);
                 (
                     acc_phi,
@@ -3747,6 +3747,9 @@ impl DMR {
             py.allow_threads(move || {
                 let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
                 let mut ws = warplda::WarpLda::new(&corpus, k, &vec![1.0f64; k], beta, &mut rng);
+                // See the sparse/CVB0 paths: SE is computed from the last converged
+                // optimization's counts, not the drifted post-sampling counts (#419).
+                let mut se_counts: Option<Vec<Vec<f64>>> = None;
 
                 for iter in 1..=iters {
                     let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, None);
@@ -3755,7 +3758,7 @@ impl DMR {
 
                     if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
                         let dtc = doc_topic_counts(ws.doc_topics(), k);
-                        dmr::optimize_lambda(
+                        let converged = dmr::optimize_lambda(
                             &mut lambda,
                             &feats,
                             &dtc,
@@ -3765,6 +3768,7 @@ impl DMR {
                             lbfgs_iters,
                             None,
                         );
+                        se_counts = if converged { Some(dtc) } else { None };
                     }
 
                     if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
@@ -3838,15 +3842,9 @@ impl DMR {
                         *v /= n;
                     }
                 }
-                let se = dmr::dmr_lambda_se(
-                    &lambda,
-                    &feats,
-                    &doc_topic_counts(ws.doc_topics(), k),
-                    k,
-                    nf,
-                    prior_variance,
-                    None,
-                );
+                let se = se_counts.as_ref().and_then(|dtc| {
+                    dmr::dmr_lambda_se_checked(&lambda, &feats, dtc, k, nf, prior_variance, None)
+                });
                 let model = ws.to_topic_model();
                 (
                     acc_phi,
@@ -3866,6 +3864,9 @@ impl DMR {
                 let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
                 let mut ll_history: Vec<(usize, f64)> = Vec::new();
                 let mut converged_flag = false;
+                // See the CVB0 path: SE from the last converged optimization's counts,
+                // not the drifted post-sampling counts (#419).
+                let mut se_counts: Option<Vec<Vec<f64>>> = None;
 
                 'outer: for iter in 1..=iters {
                     let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, None);
@@ -3885,7 +3886,7 @@ impl DMR {
 
                     if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
                         let dtc = doc_topic_counts(&model.doc_topics, k);
-                        dmr::optimize_lambda(
+                        let converged = dmr::optimize_lambda(
                             &mut lambda,
                             &feats,
                             &dtc,
@@ -3895,6 +3896,7 @@ impl DMR {
                             lbfgs_iters,
                             None,
                         );
+                        se_counts = if converged { Some(dtc) } else { None };
                     }
 
                     // Snapshot θ = (n_dk + α_dk) / (N_d + Σα_d) every thin sweeps.
@@ -3998,15 +4000,9 @@ impl DMR {
                     }
                 }
 
-                let se = dmr::dmr_lambda_se(
-                    &lambda,
-                    &feats,
-                    &doc_topic_counts(&model.doc_topics, k),
-                    k,
-                    nf,
-                    prior_variance,
-                    None,
-                );
+                let se = se_counts.as_ref().and_then(|dtc| {
+                    dmr::dmr_lambda_se_checked(&lambda, &feats, dtc, k, nf, prior_variance, None)
+                });
                 (
                     acc_phi,
                     acc_theta,
@@ -4040,19 +4036,26 @@ impl DMR {
                 fe[[t, f]] = val;
             }
         }
-        let mut fe_se = Array2::<f64>::zeros((k, nf));
-        for (t, row) in feat_eff_se.iter().enumerate() {
-            for (f, &val) in row.iter().enumerate() {
-                fe_se[[t, f]] = val;
+        // feature_effect_se is None when λ was never optimized (e.g.
+        // optimize_interval=0, burn_in>=iters, lbfgs_iters=0) or the last
+        // optimization did not reach a stationary point — the observed information
+        // is only a valid covariance at an optimum (#419).
+        let fe_se = feat_eff_se.map(|rows| {
+            let mut m = Array2::<f64>::zeros((k, nf));
+            for (t, row) in rows.iter().enumerate() {
+                for (f, &val) in row.iter().enumerate() {
+                    m[[t, f]] = val;
+                }
             }
-        }
+            m
+        });
 
         slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
         slf.phi = Some(phi);
         slf.theta = Some(theta);
         slf.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, k, None);
         slf.feature_effects = Some(fe);
-        slf.feature_effect_se = Some(fe_se);
+        slf.feature_effect_se = fe_se;
         slf.feature_names = names;
         slf.log_likelihood_history = ll_history;
         slf.converged = converged_flag;
