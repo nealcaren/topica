@@ -303,7 +303,10 @@ impl PolylingualLDA {
 
     /// Infer tuple-topic distributions θ (num_tuples, num_topics) for new aligned
     /// tuples, holding the fitted per-language φ fixed. `data` has the same shape
-    /// as `fit`; out-of-vocabulary tokens are dropped per language.
+    /// as `fit`; out-of-vocabulary tokens are dropped per language. A dict is
+    /// matched to the fitted languages **by name** (insertion order does not
+    /// matter), and its keys must be exactly the fitted language names — a missing
+    /// or unknown name raises `ValueError`. A bare list is matched positionally.
     #[pyo3(signature = (data, *, sweeps=100))]
     fn transform<'py>(
         &self,
@@ -320,6 +323,36 @@ impl PolylingualLDA {
                 self.languages.len()
             )));
         }
+        // For dict input the key IS the language identity, so map each tuple slot
+        // by fitted language name, not by insertion order — otherwise a dict given
+        // in a different order than `fit` would silently score each language
+        // against another language's vocabulary (#450). A bare list has no names
+        // (auto-labeled `lang_0..`), so it stays positional, as documented.
+        let (names, str_docs) = if data.downcast::<PyDict>().is_ok() {
+            for n in &names {
+                if !self.languages.contains(n) {
+                    return Err(PyValueError::new_err(format!(
+                        "transform got unknown language {n:?}; the model was fit on {:?}",
+                        self.languages
+                    )));
+                }
+            }
+            let mut ordered_names = Vec::with_capacity(self.languages.len());
+            let mut ordered_docs = Vec::with_capacity(self.languages.len());
+            for fitted in &self.languages {
+                let idx = names.iter().position(|x| x == fitted).ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "transform is missing language {fitted:?}; the model was fit on {:?}",
+                        self.languages
+                    ))
+                })?;
+                ordered_names.push(names[idx].clone());
+                ordered_docs.push(str_docs[idx].clone());
+            }
+            (ordered_names, ordered_docs)
+        } else {
+            (names, str_docs)
+        };
         // Map each language's new documents onto its training vocabulary.
         let mut mapped: Vec<Vec<Vec<u32>>> = Vec::with_capacity(self.languages.len());
         for (li, docs) in str_docs.iter().enumerate() {
