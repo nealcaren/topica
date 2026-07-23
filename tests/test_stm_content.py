@@ -485,3 +485,66 @@ class TestSTMContentDeterminism:
         assert np.array_equal(m1.doc_topic, m2.doc_topic), (
             "Same seed must produce identical doc_topic"
         )
+
+
+# ---------------------------------------------------------------------------
+# keep_eta_cov=False recompute for a CONTENT model (#442): _recompute_eta_cov
+# must rebuild each document's ν against its own group's β and reproduce the
+# stored (keep_eta_cov=True) ν. A fresh fit retains content_beta_estep (the
+# group β active during the last E-step), so the match is exact, not just close.
+# ---------------------------------------------------------------------------
+
+class TestSTMContentRecomputeEtaCov:
+    @staticmethod
+    def _fit_pair(variational, iters):
+        # Few iters: the final content M-step still moves the per-group β well
+        # away from the E-step β, so a recompute against the post-M-step
+        # content_beta (the pre-snapshot behavior) would be materially wrong.
+        docs, groups = _make_bilingual_corpus(n_per_cell=30, seed=42)
+        keep = STM(num_topics=2, seed=1, variational=variational)
+        keep.fit(docs, content=groups, iters=iters, keep_eta_cov=True)
+        drop = STM(num_topics=2, seed=1, variational=variational)
+        drop.fit(docs, content=groups, iters=iters, keep_eta_cov=False)
+        return keep, drop
+
+    @pytest.mark.parametrize("variational", ["laplace", "diagonal"])
+    def test_recompute_matches_stored_content(self, variational):
+        keep, drop = self._fit_pair(variational, iters=4)
+        # The recompute path must actually be a content model.
+        assert keep.groups == ["de", "en"]
+        stored = np.asarray(keep.eta_cov, dtype=np.float64)
+        # keep_eta_cov=False makes the getter raise; recompute regenerates ν.
+        with pytest.raises(RuntimeError, match="keep_eta_cov"):
+            _ = drop.eta_cov
+        recomp = np.asarray(drop._recompute_eta_cov(), dtype=np.float64)
+        assert recomp.shape == stored.shape
+        # Exact reproduction (f32 storage precision): the E-step group-β snapshot
+        # rode through to the Python object, so ctm_hpb at the stored λ returns
+        # the same ν. A group-averaged or post-M-step β would blow past this.
+        npt.assert_allclose(recomp, stored, rtol=0, atol=1e-5)
+
+    def test_refit_does_not_reuse_a_stale_content_snapshot(self):
+        # #442: the E-step β snapshot was assigned only under `if !keep_eta_cov` and
+        # never cleared, so a keep_eta_cov=False -> True refit on the SAME object
+        # left the first fit's group β in place, and _recompute_eta_cov then used it
+        # instead of the current fit's β. Swapping the group labels on the refit
+        # exposes it: the stale snapshot points at the wrong groups.
+        docs, groups = _make_bilingual_corpus(n_per_cell=30, seed=42)
+        swapped = ["en" if g == "de" else "de" for g in groups]
+
+        # Same instance: fit keep_eta_cov=False (original labels), then refit
+        # keep_eta_cov=True with SWAPPED labels (which clears the snapshot).
+        reused = STM(num_topics=2, seed=1)
+        reused.fit(docs, content=groups, iters=4, keep_eta_cov=False)
+        reused.fit(docs, content=swapped, iters=4, keep_eta_cov=True)
+
+        # A fresh object with only the final (swapped, keep_eta_cov=True) fit is the
+        # correct reference — same seed/data/labels, so an identical model state.
+        fresh = STM(num_topics=2, seed=1)
+        fresh.fit(docs, content=swapped, iters=4, keep_eta_cov=True)
+
+        a = np.asarray(reused._recompute_eta_cov(), dtype=np.float64)
+        b = np.asarray(fresh._recompute_eta_cov(), dtype=np.float64)
+        # Identical under the fix (both use the current fit's β); under the bug the
+        # reused instance recomputes against the stale first-fit β and diverges.
+        npt.assert_allclose(a, b, rtol=0, atol=1e-5)

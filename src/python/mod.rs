@@ -339,6 +339,15 @@ struct StmState {
     content_kappa: Option<ctm::ContentKappa>,
     #[serde(default)]
     initialization: Option<String>,
+    /// Per-document group index for a content model (empty otherwise); lets a
+    /// loaded model recompute ν per group. The payload is positional bincode, so
+    /// this trailing field cannot migrate saves written before it existed —
+    /// `#[serde(default)]` is inert there and such a load fails at EOF (the
+    /// save-format-versioning gap tracked by #443). It applies to models saved
+    /// from this version on; empty for a non-content model, which recompute_nu
+    /// handles via the shared `beta_estep` path regardless.
+    #[serde(default)]
+    groups: Vec<usize>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StsState {
@@ -6542,9 +6551,13 @@ impl CTM {
         slf.eta_cov = stored_eta_cov;
         slf.mu = model.mu.clone();
         slf.sigma = model.sigma.clone();
-        // Retain the E-step snapshots only when eta_cov was NOT kept, so the
-        // default path carries no extra state (recompute uses the stored eta_cov).
-        if !keep_eta_cov {
+        // Retain the E-step snapshots only when eta_cov was NOT kept, and clear
+        // them otherwise. Assigned UNCONDITIONALLY so a keep_eta_cov=False -> True
+        // refit on the same object never reuses a stale snapshot (#442).
+        if keep_eta_cov {
+            slf.sigma_estep = Vec::new();
+            slf.beta_estep = None;
+        } else {
             slf.sigma_estep = model.sigma_estep.clone();
             slf.beta_estep = Some(beta_estep_arr);
         }
@@ -6716,6 +6729,7 @@ impl CTM {
             content_beta: None,
             content_kappa: None,
             num_groups: 1,
+            groups: None,
             bound: f64::NAN,
             bound_history: Vec::new(),
             converged: false,
@@ -6724,6 +6738,8 @@ impl CTM {
             diagonal: self.variational == "diagonal",
             // Unused by recompute_nu; carry the recorded route if present.
             initialization: self.initialization.clone().unwrap_or_default(),
+            // Not persisted; recompute_nu falls back to content_beta on load.
+            content_beta_estep: None,
         };
         let nu = py.allow_threads(|| ctm::recompute_nu(&model_stub, &sparse));
         let mut out = Array3::<f32>::zeros((d, km1, km1));
@@ -6973,6 +6989,9 @@ pub struct STM {
     feature_names: Vec<String>,
     content_beta: Option<Vec<Vec<Vec<f64>>>>, // G×K×V; None if no content
     content_kappa: Option<ctm::ContentKappa>, // SAGE κ decomposition; None if no content
+    // Per-document group index (empty if no content); lets `_recompute_eta_cov`
+    // rebuild each document's ν against its own group's β instead of the average.
+    groups: Vec<usize>,
     group_names: Vec<String>,
     /// When an ordered-time content axis is used, the saturated `group_names` are
     /// the cross `base@period`; `num_base_groups`×`num_time_periods` == G, with the
@@ -6988,6 +7007,12 @@ pub struct STM {
     /// Topic-word matrix β (K×V) used in the last E-step (before the final
     /// M-step updated `beta`). Used by `_recompute_eta_cov` to reproduce ν.
     beta_estep: Option<Array2<f64>>,
+    /// Per-group topic-word β (G×K×V) active during the last E-step, the content
+    /// analogue of `beta_estep`. `Some` only for a fresh content fit with
+    /// `keep_eta_cov=False`; lets `_recompute_eta_cov` reproduce a content model's
+    /// ν exactly. Not persisted (like `beta_estep`), so a loaded content model has
+    /// `None` and recompute falls back to the post-M-step `content_beta`.
+    content_beta_estep: Option<Vec<Vec<Vec<f64>>>>,
     corpus: Option<corpus::Corpus>,
     bound: f64,              // final variational bound (ELBO)
     bound_history: Vec<f64>, // bound after each EM iteration
@@ -7111,6 +7136,7 @@ impl STM {
             feature_names: Vec::new(),
             content_beta: None,
             content_kappa: None,
+            groups: Vec::new(),
             group_names: Vec::new(),
             num_base_groups: 0,
             num_time_periods: 0,
@@ -7118,6 +7144,7 @@ impl STM {
             sigma: Vec::new(),
             sigma_estep: Vec::new(),
             beta_estep: None,
+            content_beta_estep: None,
             corpus: None,
             bound: f64::NAN,
             bound_history: Vec::new(),
@@ -7554,22 +7581,29 @@ impl STM {
         slf.corr = Some(corr);
         slf.eta_mean = Some(eta_mean_arr);
         slf.eta_cov = stored_eta_cov;
-        // E-step β snapshot: retained only when eta_cov was NOT kept (see below).
-        if !keep_eta_cov {
+        // E-step snapshots for on-demand ν recomputation (Σ, β, and the per-group
+        // content analogue): kept only when eta_cov was NOT stored, and cleared
+        // otherwise — assigned UNCONDITIONALLY so a keep_eta_cov=False -> True refit
+        // on the same object never reuses a stale snapshot from the earlier fit
+        // (#442). The content analogue is None for a non-content fit.
+        if keep_eta_cov {
+            slf.sigma_estep = Vec::new();
+            slf.beta_estep = None;
+            slf.content_beta_estep = None;
+        } else {
+            slf.sigma_estep = model.sigma_estep.clone();
             slf.beta_estep = Some(beta_estep_arr);
+            slf.content_beta_estep = model.content_beta_estep.clone();
         }
         slf.feature_names = feat_names;
         slf.content_beta = model.content_beta;
         slf.content_kappa = model.content_kappa;
+        slf.groups = model.groups.clone().unwrap_or_default();
         slf.group_names = group_vocab;
         slf.num_base_groups = num_base_groups;
         slf.num_time_periods = num_time_periods;
         slf.mu = model.mu.clone();
         slf.sigma = model.sigma.clone();
-        // E-step Σ snapshot: retained only when eta_cov was NOT kept.
-        if !keep_eta_cov {
-            slf.sigma_estep = model.sigma_estep.clone();
-        }
         slf.corpus = Some(corpus);
         slf.bound = model.bound;
         slf.bound_history = model.bound_history.clone();
@@ -7746,9 +7780,24 @@ impl STM {
             lambda: lambda_v,
             nu: Vec::new(),
             gamma: None,
-            content_beta: None,
-            content_kappa: None,
-            num_groups: 1,
+            // Content model: rebuild each document's ν against its own group's β.
+            // A fresh fit carries `content_beta_estep` (the group β active during
+            // the last E-step) and reproduces the stored ν exactly, matching how
+            // `beta_estep` reproduces it for the shared path. A loaded model has
+            // `content_beta_estep = None` (not persisted) and falls back to the
+            // post-M-step `content_beta` — off by one content update, far smaller
+            // than the group-vs-average error this replaces. A non-content model
+            // has `content_beta = None` and takes the shared `beta_estep` path.
+            // (Saves predating the `groups` field cannot load at all — see the
+            // StmState note and #443 — so there is no old-save fallback here.)
+            content_beta: self.content_beta.clone(),
+            content_kappa: self.content_kappa.clone(),
+            num_groups: self.content_beta.as_ref().map_or(1, |cb| cb.len()),
+            groups: if self.content_beta.is_some() && !self.groups.is_empty() {
+                Some(self.groups.clone())
+            } else {
+                None
+            },
             bound: f64::NAN,
             bound_history: Vec::new(),
             converged: false,
@@ -7757,6 +7806,9 @@ impl STM {
             diagonal: self.variational == "diagonal",
             // Unused by recompute_nu; carry the recorded route if present.
             initialization: self.initialization.clone().unwrap_or_default(),
+            // The E-step per-group β snapshot (Some on a fresh content fit; None
+            // on load, where recompute_nu falls back to content_beta).
+            content_beta_estep: self.content_beta_estep.clone(),
         };
         let nu = py.allow_threads(|| ctm::recompute_nu(&model_stub, &sparse));
         let mut out = Array3::<f32>::zeros((d, km1, km1));
@@ -8095,6 +8147,7 @@ impl STM {
                 variational: self.variational.clone(),
                 content_kappa: self.content_kappa.clone(),
                 initialization: self.initialization.clone(),
+                groups: self.groups.clone(),
             },
         )
     }
@@ -8128,10 +8181,12 @@ impl STM {
             feature_names: s.feature_names,
             content_beta: s.content_beta,
             content_kappa: s.content_kappa,
+            groups: s.groups,
             mu: s.mu,
             sigma: s.sigma,
             sigma_estep: Vec::new(), // not persisted; falls back to sigma in _recompute_eta_cov
             beta_estep: None,        // not persisted; falls back to self.beta
+            content_beta_estep: None, // not persisted; falls back to content_beta
             group_names: s.group_names,
             // Ordered-time content metadata is not yet persisted in the save format;
             // default to 0 on load (a plain content model). Persisting it is a

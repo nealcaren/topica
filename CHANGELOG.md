@@ -44,6 +44,28 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Fixed
 
+- **STM content-model ν recompute (#442):** for a content (covariate-word) STM,
+  `_recompute_eta_cov` rebuilt every document's variational covariance ν against
+  the group-averaged β instead of the document's own group β, so the recomputed ν
+  (used for method-of-composition uncertainty when `keep_eta_cov=False`) did not
+  match the fit's. It now rebuilds ν against each document's group β. A fresh fit
+  (`keep_eta_cov=False`) carries a new `content_beta_estep` snapshot — the group β
+  active during the final E-step, the content analogue of `beta_estep`, retained on
+  both the core `CtmModel` and the Python `STM` object — and reproduces the stored
+  ν exactly, in Laplace or diagonal mode. A model reloaded from disk does not carry
+  the snapshot (like `beta_estep`/`sigma_estep`) and falls back to the persisted
+  per-group `content_beta`: off by the final content M-step, still far closer than
+  the group average. `keep_eta_cov=True` stores the per-group E-step ν directly and
+  was never affected. Fit output (topics, θ, stored ν) is unchanged for every
+  model, content or not.
+  - **Save-format break (all STM models):** the per-document group index is now a
+    persisted `StmState` field, appended to the positional bincode payload. Because
+    that payload is not self-describing, `#[serde(default)]` does not migrate older
+    saves — **any** STM model (content, prevalence-only, or plain) written by an
+    earlier version now fails to load, surfacing as an invalid-file/EOF error rather
+    than a clean version mismatch (the save-format-versioning fix is #443). Refit to
+    load under this version.
+
 - **SAGE correctness (#422):** the opt-in `convergence_tol` early stop tripped at
   iter 20 (before any content-deviation `κ` was learned), because with `κ=0` the
   monitored word log-likelihood is a corpus constant; it is now gated on a completed
