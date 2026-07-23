@@ -73,6 +73,15 @@ def _build_q(counts):
     averaged over documents with at least two tokens (Arora et al. 2013)."""
     n = counts.sum(axis=1)
     keep = n >= 2
+    # The co-occurrence estimator averages over documents with >= 2 in-vocab
+    # tokens; with none, `qbar /= keep.sum()` divides by zero and returns an
+    # all-NaN Q (and a fitted-looking but all-NaN model). Fail clearly instead (#449).
+    if not keep.any():
+        raise ValueError(
+            "AnchorLDA needs word co-occurrence evidence, but no document has at "
+            "least 2 in-vocabulary tokens after preprocessing. Supply longer "
+            "documents or relax the vocabulary filter (min_df / max_df)."
+        )
     h = counts[keep]
     nk = n[keep]
     w = 1.0 / (nk * (nk - 1))
