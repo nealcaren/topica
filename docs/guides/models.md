@@ -1144,7 +1144,10 @@ Two link functions ship: `logistic` (default, `σ(ηᵀ(z̄_d ∘ z̄_{d'}) + ν
 concave regression) and `exponential` (`exp(ηᵀ(z̄_d ∘ z̄_{d'}) + ν)`, with a
 closed-form M-step). Positive-only links make the link estimate a one-class problem,
 so both paths use the paper's `ρ` regularization (`negative_ratio` pseudo-negative
-links placed at the expected topic co-occurrence under the prior). Links are treated
+links placed at the expected topic co-occurrence under the prior). The logistic
+path also accepts an optional L2 penalty on the coefficients (`ridge=`, default
+`0.0`, i.e. paper-faithful — set it above zero only if the link coefficients need
+extra shrinkage under separation). Links are treated
 as **undirected** (the paper symmetrizes; directed RTM is a planned follow-up).
 Determinism is `seed-reproducible` (a serial, seeded E-step).
 

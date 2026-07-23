@@ -2616,7 +2616,7 @@ class RTM:
         alpha: float | None = None,
         rho: float | None = None,
         negative_ratio: float = 1.0,
-        ridge: float = 1.0,
+        ridge: float = 0.0,
         seed: int = 42,
     ) -> None: ...
     def fit(

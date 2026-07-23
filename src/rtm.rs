@@ -451,7 +451,7 @@ pub fn fit_rtm<R: Rng>(
         }
 
         let obj = objective(
-            &bags, &phi_store, &phi_bar, &gamma, &log_beta, &eta, nu, &obs_links, p.link,
+            &bags, &phi_store, &phi_bar, &gamma, &log_beta, &alpha, &eta, nu, &obs_links, p.link,
         );
         history.push((it, obj));
         if (obj - prev_obj).abs() < p.convergence_tol * prev_obj.abs().max(1.0) && it > 0 {
@@ -486,8 +486,34 @@ pub fn fit_rtm<R: Rng>(
     }
 }
 
-/// Variational objective = word + z + link expected log-likelihood (paper §3.2).
-/// Rises monotonically across EM iterations; used as the convergence criterion.
+/// `log Γ(z)` (Lanczos-free Stirling with recurrence), for the Dirichlet terms of
+/// the variational bound.
+fn lgamma(mut z: f64) -> f64 {
+    const HALF_LOG_TWO_PI: f64 = 0.918_938_533_204_672_7;
+    let mut shift = 0i32;
+    while z < 10.0 {
+        z += 1.0;
+        shift += 1;
+    }
+    let mut result = HALF_LOG_TWO_PI + (z - 0.5) * z.ln() - z + 1.0 / (12.0 * z)
+        - 1.0 / (360.0 * z * z * z)
+        + 1.0 / (1260.0 * z * z * z * z * z);
+    while shift > 0 {
+        shift -= 1;
+        z -= 1.0;
+        result -= z.ln();
+    }
+    result
+}
+
+/// The variational objective (evidence lower bound, paper §3.2): the word,
+/// topic-assignment, Dirichlet-`θ`, and link expected log-likelihood terms plus
+/// the `q` entropy. Used as the convergence criterion. It generally increases
+/// across EM but is not guaranteed strictly monotone, for two reasons: the
+/// logistic link contributes the first-order (Braun-McAuliffe) bound the M-step
+/// assumes rather than the exact expectation, and the link M-step maximizes a
+/// `ρ`-regularized objective, not this bound. The topic and link estimates do not
+/// depend on it.
 #[allow(clippy::too_many_arguments)]
 fn objective(
     bags: &[Vec<(usize, f64)>],
@@ -495,12 +521,16 @@ fn objective(
     phi_bar: &[Vec<f64>],
     gamma: &[Vec<f64>],
     log_beta: &[Vec<f64>],
+    alpha: &[f64],
     eta: &[f64],
     nu: f64,
     obs_links: &[(usize, usize)],
     link: Link,
 ) -> f64 {
     let k = eta.len();
+    let alpha_sum: f64 = alpha.iter().sum();
+    let lg_alpha_sum = lgamma(alpha_sum);
+    let sum_lg_alpha: f64 = alpha.iter().map(|&a| lgamma(a)).sum();
     let mut acc = 0.0;
     for di in 0..bags.len() {
         let bag = &bags[di];
@@ -514,9 +544,14 @@ fn objective(
         for (i, &(word, c)) in bag.iter().enumerate() {
             for kk in 0..k {
                 let p = phi[i][kk];
-                acc += c * p * log_beta[kk][word]; // word LL
-                acc += c * p * (elogtheta[kk] - (p + 1e-300).ln()); // z prior + entropy
+                acc += c * p * log_beta[kk][word]; // E[log p(w|z,β)]
+                acc += c * p * (elogtheta[kk] - (p + 1e-300).ln()); // E[log p(z|θ)] + H(q(z))
             }
+        }
+        // Dirichlet θ terms: E[log p(θ|α)] − E[log q(θ|γ)].
+        acc += lg_alpha_sum - sum_lg_alpha - lgamma(gsum);
+        for kk in 0..k {
+            acc += (alpha[kk] - gamma[di][kk]) * elogtheta[kk] + lgamma(gamma[di][kk]);
         }
     }
     for &(i, j) in obs_links {
@@ -684,7 +719,7 @@ mod tests {
             link,
             rho: None,
             negative_ratio: 1.0,
-            ridge: 1.0,
+            ridge: 0.0,
             em_iters: 40,
             e_sweeps: 3,
             e_inner: 5,

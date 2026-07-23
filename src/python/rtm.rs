@@ -118,7 +118,7 @@ fn doc_to_ids(corpus: &corpus::Corpus, doc: &Bound<'_, PyAny>) -> PyResult<Vec<u
 impl RTM {
     #[new]
     #[pyo3(signature = (num_topics, *, link="logistic", alpha=None, rho=None,
-                        negative_ratio=1.0, ridge=1.0, seed=42))]
+                        negative_ratio=1.0, ridge=0.0, seed=42))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
