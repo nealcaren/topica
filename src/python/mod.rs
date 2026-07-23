@@ -1284,11 +1284,12 @@ impl LDA {
                 // observe a consistent global state.
                 let mut iter = 0usize;
                 while iter < iters {
+                    let prev = iter;
                     let batch = (iters - iter).min(step);
                     do_sweep(&mut model, &mut rng, batch);
                     iter += batch;
 
-                    if draw_thin > 0 && iter.is_multiple_of(draw_thin) {
+                    if draw_thin > 0 && crossed_multiple(prev, iter, draw_thin) {
                         push_capped(
                             &mut theta_draw_buf,
                             theta_snapshot_f32(&model, &corpus),
@@ -1298,7 +1299,7 @@ impl LDA {
 
                     if optimize_interval > 0
                         && iter > burn_in
-                        && iter.is_multiple_of(optimize_interval)
+                        && crossed_multiple(prev, iter, optimize_interval)
                     {
                         if use_symmetric_alpha {
                             optimize::optimize_alpha_symmetric(&mut model, &corpus);
@@ -1309,15 +1310,17 @@ impl LDA {
                     }
 
                     // Trace recording and optional convergence check (never alters RNG).
-                    if convergence_tol > 0.0 && check_every > 0 && iter.is_multiple_of(check_every)
+                    if convergence_tol > 0.0
+                        && check_every > 0
+                        && crossed_multiple(prev, iter, check_every)
                     {
                         let ll = output::model_log_likelihood(&model, &corpus);
                         ll_history.push((iter, ll));
                         // Relative change criterion: compare the current ll to the
                         // one recorded one window back (window = check_every sweeps).
                         if ll_history.len() >= 2 {
-                            let prev = ll_history[ll_history.len() - 2].1;
-                            let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
+                            let prev_ll = ll_history[ll_history.len() - 2].1;
+                            let rel = (ll - prev_ll).abs() / (prev_ll.abs() + 1e-12);
                             if rel < convergence_tol {
                                 converged = true;
                                 break;
@@ -1325,7 +1328,7 @@ impl LDA {
                         }
                     } else if convergence_tol == 0.0
                         && check_every > 0
-                        && iter.is_multiple_of(check_every)
+                        && crossed_multiple(prev, iter, check_every)
                     {
                         // When tol is disabled, still record the trace so fit_history
                         // is non-empty, but never break early.
@@ -1334,7 +1337,8 @@ impl LDA {
                     }
 
                     if let Some(cb) = &progress {
-                        if progress_interval > 0 && iter.is_multiple_of(progress_interval) {
+                        if progress_interval > 0 && crossed_multiple(prev, iter, progress_interval)
+                        {
                             let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
                             Python::with_gil(|py| {
                                 let _ = cb.call1(py, (iter, ll));
@@ -2362,6 +2366,19 @@ fn theta_draw_thin(iters: usize, cap: usize) -> usize {
         return 0;
     }
     (iters / (2 * cap)).max(1)
+}
+
+/// True when the half-open window `(prev, cur]` of logical iterations contains at
+/// least one positive multiple of `interval`. In the exact per-sweep path
+/// `cur == prev + 1`, so this reduces exactly to `cur % interval == 0`; in turbo
+/// mode a window spans `merge_every` sweeps, and this fires once for any scheduled
+/// bookkeeping point inside it (at the window's reconciled boundary). Using it in
+/// place of `iter.is_multiple_of(interval)` stops θ-draws, α/β optimization,
+/// convergence checks, and progress callbacks from being skipped when the merge
+/// stride does not divide the interval.
+#[inline]
+fn crossed_multiple(prev: usize, cur: usize, interval: usize) -> bool {
+    interval > 0 && cur / interval > prev / interval
 }
 
 /// One normalized θ snapshot (D×K) as f32 from a `TopicModel`'s current counts.

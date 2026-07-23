@@ -2,6 +2,26 @@ use crate::corpus::Corpus;
 use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 use rand::Rng;
 
+/// Largest per-`(word, topic)` count representable in the packed `u32` entry
+/// when `topic_bits` low bits are reserved for the topic index. The count lives
+/// in the high `32 - topic_bits` bits, so a count of `2^(32 - topic_bits)` (or
+/// more) shifts into or past bit 32 and silently corrupts the entry. `initialize`
+/// refuses any corpus whose most frequent word could reach that many tokens in a
+/// single topic.
+#[inline]
+pub fn max_packable_count(topic_bits: u32) -> u32 {
+    match topic_bits {
+        // K == 1: the topic index needs no bits, so the entire 32-bit width holds
+        // the count. `1u32 << 32` is an out-of-range shift (it would wrap to 1 and
+        // wrongly yield a ceiling of 0, rejecting every K=1 fit), so special-case it.
+        0 => u32::MAX,
+        // Degenerate: no bits left for the count. Cannot happen for real K, but
+        // keep the arithmetic well-defined rather than shifting by 32.
+        b if b >= 32 => 0,
+        b => (1u32 << (32 - b)) - 1,
+    }
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct TopicModel {
     pub num_topics: usize,
@@ -65,6 +85,23 @@ impl TopicModel {
             for &word_id in doc {
                 type_totals[word_id as usize] += 1;
             }
+        }
+
+        // Fail fast before any packing if the most frequent word could exceed the
+        // packed-count ceiling. A word with `n` total tokens can, in the worst
+        // case, land all `n` in one topic, so `n` is a safe upper bound on any
+        // single (word, topic) count. Overflowing the ceiling would silently
+        // corrupt entries mid-sampling; refuse the run here with a clear message.
+        let ceiling = max_packable_count(self.topic_bits) as usize;
+        if let Some(&worst) = type_totals.iter().max() {
+            assert!(
+                worst <= ceiling,
+                "topica: a word occurs {worst} times, but the packed (count, topic) \
+                 table for num_topics={} can represent at most {ceiling} occurrences \
+                 of a single word in one topic (32-bit packing). Reduce num_topics or \
+                 split the corpus.",
+                self.num_topics
+            );
         }
 
         // Allocate type_topic_counts: size = min(num_topics, type_total) per word.
@@ -405,5 +442,98 @@ mod tests {
         assert!(base.is_empty(), "check_conformance: {:?}", base);
         let dir = crate::conformance::check_dirichlet(&m);
         assert!(dir.is_empty(), "check_dirichlet: {:?}", dir);
+    }
+
+    #[test]
+    fn max_packable_count_matches_the_high_bit_width() {
+        // Count occupies the high (32 - topic_bits) bits.
+        assert_eq!(max_packable_count(0), u32::MAX); // K=1: full 32-bit count width
+        assert_eq!(max_packable_count(1), (1u32 << 31) - 1);
+        assert_eq!(max_packable_count(10), (1u32 << 22) - 1); // K up to 1024
+        assert_eq!(max_packable_count(16), 65_535); // K up to 65536
+        assert_eq!(max_packable_count(30), 3);
+        assert_eq!(max_packable_count(32), 0); // degenerate, well-defined
+    }
+
+    // A word appearing more times than the packed count can hold must be rejected
+    // at initialize, before any packing can silently corrupt an entry. We force a
+    // tiny ceiling with topic_bits=30 (=> max 3) while keeping num_topics small so
+    // the allocations stay trivial; this is the same overflow path a real
+    // high-K + very-frequent-word corpus would hit.
+    #[test]
+    #[should_panic(expected = "can represent at most")]
+    fn initialize_rejects_a_word_that_would_overflow_the_packed_count() {
+        let mut m = TopicModel {
+            num_topics: 4,
+            num_types: 1,
+            topic_mask: (1u32 << 30) - 1,
+            topic_bits: 30, // ceiling = 3
+            alpha: vec![0.25; 4],
+            alpha_sum: 1.0,
+            beta: 0.01,
+            beta_sum: 0.01,
+            type_topic_counts: Vec::new(),
+            tokens_per_topic: vec![0; 4],
+            doc_topics: Vec::new(),
+        };
+        // One word type occurring 4 times (> ceiling of 3), all in one document.
+        let corpus = Corpus {
+            id_to_word: vec!["w0".to_string()],
+            docs: vec![vec![0u32, 0, 0, 0]],
+            doc_names: vec!["d0".to_string()],
+            doc_labels: vec![String::new()],
+            doc_freqs: vec![0u32; 1],
+            total_freqs: vec![0u32; 1],
+        };
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        m.initialize(&corpus, &mut rng);
+    }
+
+    // The exact per-sweep bound (a word occurring exactly `ceiling` times) is
+    // accepted: incrementing a count up to `ceiling` never overflows.
+    #[test]
+    fn initialize_accepts_a_word_at_exactly_the_ceiling() {
+        let mut m = TopicModel {
+            num_topics: 4,
+            num_types: 1,
+            topic_mask: (1u32 << 30) - 1,
+            topic_bits: 30, // ceiling = 3
+            alpha: vec![0.25; 4],
+            alpha_sum: 1.0,
+            beta: 0.01,
+            beta_sum: 0.01,
+            type_topic_counts: Vec::new(),
+            tokens_per_topic: vec![0; 4],
+            doc_topics: Vec::new(),
+        };
+        let corpus = Corpus {
+            id_to_word: vec!["w0".to_string()],
+            docs: vec![vec![0u32, 0, 0]], // 3 == ceiling
+            doc_names: vec!["d0".to_string()],
+            doc_labels: vec![String::new()],
+            doc_freqs: vec![0u32; 1],
+            total_freqs: vec![0u32; 1],
+        };
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        m.initialize(&corpus, &mut rng); // must not panic
+    }
+
+    // Regression for the K=1 panic (#447): num_topics=1 => topic_bits=0 => the count
+    // uses the full 32-bit width, so the ceiling is u32::MAX and a frequent word must
+    // be accepted rather than rejected by the overflow guard.
+    #[test]
+    fn initialize_accepts_a_frequent_word_when_k_is_one() {
+        let mut m = TopicModel::new(1, 1.0, 0.01, 1);
+        assert_eq!(m.topic_bits, 0);
+        let corpus = Corpus {
+            id_to_word: vec!["w0".to_string()],
+            docs: vec![vec![0u32; 49]], // 49 occurrences, as in the CI-failing fits
+            doc_names: vec!["d0".to_string()],
+            doc_labels: vec![String::new()],
+            doc_freqs: vec![0u32; 1],
+            total_freqs: vec![0u32; 1],
+        };
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        m.initialize(&corpus, &mut rng); // must not panic
     }
 }
