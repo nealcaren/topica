@@ -101,6 +101,16 @@ impl BatchNorm {
     /// caller can fold them into the running statistics.
     fn forward_train(&self, x: &[Vec<f64>]) -> (Vec<Vec<f64>>, BnCache, Vec<f64>, Vec<f64>) {
         let n = x.len();
+        // Bessel's correction for the running variance is undefined for a single
+        // sample, so a batch of one has no well-defined running-stat update. Every
+        // caller already skips batches smaller than two (chunks(batch_size.max(2))
+        // + an `if n < 2 { continue }` guard); enforce that invariant loudly here
+        // rather than silently decaying the running variance toward zero (#436).
+        assert!(
+            n >= 2,
+            "BatchNorm::forward_train requires a batch of >= 2 documents; \
+             callers must skip smaller batches"
+        );
         let f = if n > 0 { x[0].len() } else { 0 };
         let mut mean = vec![0.0; f];
         for row in x {
@@ -137,13 +147,9 @@ impl BatchNorm {
         // normalization reads the running variance. Returning the biased var here
         // left the running variance systematically too small (× (n-1)/n), so a
         // topica-trained model normalized held-out documents differently from the
-        // reference at inference. (n ≥ 2 here: the training loop skips smaller
-        // batches; guard n == 1 anyway.)
-        let bessel = if n > 1 {
-            n as f64 / (n as f64 - 1.0)
-        } else {
-            1.0
-        };
+        // reference at inference. n >= 2 is guaranteed by the assert above, so the
+        // Bessel factor cannot divide by zero.
+        let bessel = n as f64 / (n as f64 - 1.0);
         let running_var: Vec<f64> = var.iter().map(|&v| v * bessel).collect();
         (out, BnCache { xhat, inv_std }, mean, running_var)
     }
@@ -2542,5 +2548,15 @@ mod tests {
             "running_var = {}, expected 1.1",
             bn.running_var[0]
         );
+    }
+
+    /// A singleton batch has no defined Bessel-corrected variance, so
+    /// `forward_train` must reject it loudly rather than silently decay the running
+    /// variance toward zero (#436). Every real caller already skips n < 2.
+    #[test]
+    #[should_panic(expected = "requires a batch of >= 2")]
+    fn batchnorm_forward_train_rejects_singleton_batch() {
+        let bn = BatchNorm::new(1);
+        let _ = bn.forward_train(&[vec![2.0]]);
     }
 }
