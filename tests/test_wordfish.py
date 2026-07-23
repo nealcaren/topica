@@ -104,6 +104,19 @@ def test_determinism():
     assert np.array_equal(a.author_positions, b.author_positions)
 
 
+def test_determinism_with_multiple_anchors():
+    # Anchors arrive as a dict (a HashMap on the Rust side); the orientation must
+    # be a deterministic function of the corpus + anchors regardless of the dict's
+    # iteration order (#411 — anchor pairs are sorted before the sign check).
+    docs, group, _, _ = _planted(seed=4)
+    anchors = {"a0": -1.0, "a10": -0.5, "a20": 0.5, "a39": 1.0}
+    a = topica.Wordfish(seed=1)
+    a.fit(docs, group=group, anchors=anchors)
+    b = topica.Wordfish(seed=1)
+    b.fit(docs, group=group, anchors=dict(reversed(list(anchors.items()))))
+    assert np.array_equal(a.author_positions, b.author_positions)
+
+
 def test_save_load(tmp_path):
     docs, group, _, _ = _planted(seed=5)
     m = topica.Wordfish(seed=1)

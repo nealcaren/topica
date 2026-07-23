@@ -15,7 +15,7 @@
 use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Above this vocabulary size the dense V×V co-occurrence is replaced by a
 /// random projection to `PROJ_DIM` columns (Johnson-Lindenstrauss), turning the
@@ -286,7 +286,13 @@ fn cooccurrence_projected(
             continue;
         }
         used_docs += 1;
-        let mut wc: HashMap<usize, f64> = HashMap::new();
+        // BTreeMap (sorted-key iteration), not HashMap: the `s[j]` accumulation
+        // below sums c·R[w] across the document's words into a shared vector, so a
+        // nondeterministic (hash-randomized) iteration order would vary the
+        // floating-point summation order and break bit-reproducibility of the
+        // spectral init for vocabularies large enough to take this projected path
+        // (issue #411). Sorted order fixes the summation order.
+        let mut wc: BTreeMap<usize, f64> = BTreeMap::new();
         for &w in doc {
             *wc.entry(w as usize).or_insert(0.0) += 1.0;
         }
@@ -401,6 +407,36 @@ mod tests {
             "too few blocks separated: {:?}",
             covered
         );
+    }
+
+    #[test]
+    fn projected_path_is_bit_deterministic_large_vocab() {
+        // #411: the projected co-occurrence path accumulates the per-document S_d
+        // vector over the document's words; iterating an unsorted HashMap made the
+        // floating-point summation order depend on the per-run hash seed. The fix
+        // (a sorted BTreeMap) makes the projected path a deterministic function of
+        // the corpus by construction. This asserts within-process reproducibility
+        // (two inits on the same large-vocab corpus are bit-identical); it is a
+        // smoke test rather than a proof, since whether an unordered sum actually
+        // diverges in its low bits is data-dependent. V = 4000 > PROJ_THRESHOLD
+        // forces the projected path.
+        let nb = 10usize;
+        let bs = 400usize;
+        let v = nb * bs;
+        let blocks: Vec<Vec<u32>> = (0..nb)
+            .map(|b| (b * bs..b * bs + bs).map(|w| w as u32).collect())
+            .collect();
+        let mut docs = Vec::new();
+        for i in 0..(nb * 200) {
+            let blk = &blocks[i % nb];
+            // Longer, mixed-vocabulary docs so many distinct words land in one S_d
+            // sum — this is where an unordered iteration order used to bite.
+            let doc: Vec<u32> = (0..25).map(|j| blk[(i * 13 + j * 41) % bs]).collect();
+            docs.push(doc);
+        }
+        let a = spectral_init(&docs, nb, v).expect("projected spectral init");
+        let b = spectral_init(&docs, nb, v).expect("projected spectral init");
+        assert_eq!(a, b, "projected spectral init is not bit-reproducible");
     }
 
     #[test]
