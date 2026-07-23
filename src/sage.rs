@@ -396,21 +396,41 @@ pub fn optimize_kappa(model: &mut SageModel, max_iter: usize) -> bool {
             } else {
                 reweight_precision(&x, prior, prior_variance, &mut w);
             }
-            let mut ok = true;
+            // A non-finite precision (e.g. a subnormal `prior_variance` whose inverse
+            // overflows) makes the penalized objective ill-posed. Since L-BFGS now
+            // keeps the last finite point rather than propagating a NaN, detect the
+            // degeneracy here and roll back (#419 / #422); a mid-loop non-finite
+            // reweight is still caught by the next solve's finiteness check.
+            let mut ok = w.iter().all(|v| v.is_finite());
             for _ in 0..SPARSE_OUTER_ITERS {
+                if !ok {
+                    break;
+                }
                 x = solve(x, &w);
                 if x.iter().any(|v| !v.is_finite()) {
                     ok = false;
                     break;
                 }
                 reweight_precision(&x, prior, prior_variance, &mut w);
+                // A non-finite reweighted precision means the next solve is degenerate
+                // (e.g. a subnormal `prior_variance` whose inverse overflows). L-BFGS
+                // now keeps the last finite point instead of returning NaN, so detect
+                // it here and roll back rather than accept a spuriously "finite" κ.
+                if w.iter().any(|v| !v.is_finite()) {
+                    ok = false;
+                    break;
+                }
             }
             (x, ok)
         } else {
             reweight_precision(&x, prior, prior_variance, &mut w); // uniform 1/σ²
-            x = solve(x, &w);
-            let ok = x.iter().all(|v| v.is_finite());
-            (x, ok)
+            if w.iter().any(|v| !v.is_finite()) {
+                (x, false) // degenerate precision -> leave κ unchanged
+            } else {
+                x = solve(x, &w);
+                let ok = x.iter().all(|v| v.is_finite());
+                (x, ok)
+            }
         }
     };
 

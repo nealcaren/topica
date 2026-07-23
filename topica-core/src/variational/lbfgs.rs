@@ -90,6 +90,7 @@ where
         // always runs the body at least once, so no initial value is needed.
         let mut fx_new: f64;
         let mut g_new: Vec<f64>;
+        let accepted: bool;
         loop {
             for j in 0..n {
                 x_new[j] = x[j] + step * d[j];
@@ -97,10 +98,26 @@ where
             let r = f(&x_new);
             fx_new = r.0;
             g_new = r.1;
-            if fx_new <= fx + 1e-4 * step * dg || step < 1e-12 {
+            // A non-finite trial never satisfies Armijo (NaN comparisons are false),
+            // so the shrink loop would otherwise fall through and lock it in.
+            if fx_new.is_finite() && fx_new <= fx + 1e-4 * step * dg {
+                accepted = true;
+                break;
+            }
+            if step < 1e-12 {
+                // Give up shrinking. Accept the exhausted step only if it is at least
+                // finite (a negligible move that preserves the prior behaviour);
+                // reject a non-finite trial outright (#419).
+                accepted = fx_new.is_finite();
                 break;
             }
             step *= 0.5;
+        }
+        if !accepted {
+            // No finite decrease found: stop rather than corrupting x/g with a
+            // non-finite trial. `converged` stays false, so a caller that gates
+            // standard errors on convergence correctly withholds them.
+            break;
         }
 
         // Curvature update (skip if it would break positive-definiteness).
@@ -128,4 +145,43 @@ where
         }
     }
     (x, converged)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression: finite problems still converge exactly as before.
+    #[test]
+    fn minimizes_a_quadratic() {
+        // f(x) = (x0-3)^2 + (x1+2)^2, min at (3, -2).
+        let f = |x: &[f64]| -> (f64, Vec<f64>) {
+            let (a, b) = (x[0] - 3.0, x[1] + 2.0);
+            (a * a + b * b, vec![2.0 * a, 2.0 * b])
+        };
+        let (x, converged) = lbfgs_minimize_status(vec![0.0, 0.0], f, 100, 7, 1e-10);
+        assert!(converged);
+        assert!(
+            (x[0] - 3.0).abs() < 1e-4 && (x[1] + 2.0).abs() < 1e-4,
+            "{x:?}"
+        );
+    }
+
+    // #419: a line search whose every trial is non-finite must not lock the
+    // non-finite point into x. f(x0) = x0 for x0 >= 0 (the gradient pushes x0
+    // negative), NaN for x0 < 0, so every trial step lands in the NaN region.
+    #[test]
+    fn rejects_a_nonfinite_trial_and_keeps_the_last_finite_point() {
+        let f = |x: &[f64]| -> (f64, Vec<f64>) {
+            if x[0] >= 0.0 {
+                (x[0], vec![1.0])
+            } else {
+                (f64::NAN, vec![f64::NAN])
+            }
+        };
+        let (x, converged) = lbfgs_minimize_status(vec![0.0], f, 50, 7, 1e-6);
+        assert!(x.iter().all(|v| v.is_finite()), "x must stay finite: {x:?}");
+        assert!(!converged, "a failed line search is not convergence");
+        assert_eq!(x, vec![0.0], "must keep the last finite point");
+    }
 }
