@@ -325,7 +325,7 @@ mod registry_tests {
         // Estimator-backed Rust struct).
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            26,
+            27,
             "registry size drifted from the Python REGISTRY"
         );
     }
