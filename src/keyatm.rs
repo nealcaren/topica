@@ -2011,6 +2011,7 @@ fn dyn_sample_alpha_state<R: Rng>(
         let slice_ =
             store_loglik - 2.0 * (1.0 - previous_p).ln() + rng.gen::<f64>().max(1e-300).ln();
 
+        let mut accepted = false;
         for _ in 0..MAX_SHRINK_TIME {
             let new_p = start + (end - start) * rng.gen::<f64>();
             alpha[k] = new_p / (1.0 - new_p); // expandp
@@ -2020,15 +2021,27 @@ fn dyn_sample_alpha_state<R: Rng>(
             let new_likelihood = new_loglik - 2.0 * (1.0 - new_p).ln();
 
             if slice_ < new_likelihood {
+                accepted = true;
                 break;
             } else if previous_p < new_p {
                 end = new_p;
             } else if new_p < previous_p {
                 start = new_p;
             } else {
-                alpha[k] = keep;
+                // The shrink interval has collapsed onto the current point; stop
+                // and restore below (falling through to the `!accepted` guard).
                 break;
             }
+        }
+        // A slice step that never lands inside the slice — every one of the
+        // MAX_SHRINK_TIME proposals rejected, or the interval collapsing onto the
+        // current point — must return the current value, not the last rejected
+        // proposal (#418). Only the accept branch keeps the drawn value; every
+        // other exit restores `keep`, preserving the slice-sampler invariant.
+        // (The RNG draw count is unchanged, so a fit that never hit fall-through
+        // stays bit-identical.)
+        if !accepted {
+            alpha[k] = keep;
         }
     }
 }
@@ -3195,5 +3208,47 @@ mod tests {
         let t_b = f(4, 9);
         assert_eq!(t_a.topic_word_all(), t_b.topic_word_all());
         assert_eq!(t_a.doc_topic(), t_b.doc_topic());
+    }
+
+    /// #418: a slice step that never accepts must return the current value, not
+    /// the last rejected proposal. `dyn_sample_alpha_state` backs both the base
+    /// (single-state) and dynamic keyATM α samplers, so this invariant protects
+    /// the default `estimate_alpha=true` path too. A non-finite likelihood (here a
+    /// NaN in `doc_len`) makes `slice_ < new_likelihood` false for every proposal,
+    /// forcing the shrink loop to exhaust `MAX_SHRINK_TIME` without accepting —
+    /// exactly the fall-through the fix guards. Every α entry must be restored to
+    /// its pre-call value; before the fix each was left at a rejected draw.
+    #[test]
+    fn dyn_alpha_slice_restores_current_value_when_no_proposal_is_accepted() {
+        let num_keyword_topics = 1; // topic count is taken from `alpha.len()` (3)
+                                    // Two documents; a NaN weighted length forces a NaN log-likelihood for
+                                    // every candidate α, so no proposal can land inside the slice.
+        let ndk: Vec<Vec<f64>> = vec![vec![2.0, 1.0, 3.0], vec![1.0, 4.0, 1.0]];
+        let doc_len = vec![f64::NAN, 6.0];
+        let min_v = shrinkp(1e-9);
+        let max_v = shrinkp(100.0);
+        let initial = vec![0.7f64, 1.3, 0.4];
+        let mut alpha = initial.clone();
+        let mut rng = ChaCha8Rng::seed_from_u64(12345);
+        dyn_sample_alpha_state(
+            &mut alpha,
+            num_keyword_topics,
+            0,
+            1,
+            &ndk,
+            &doc_len,
+            1.0,
+            1.0,
+            2.0,
+            1.0,
+            min_v,
+            max_v,
+            1,
+            &mut rng,
+        );
+        assert_eq!(
+            alpha, initial,
+            "a fully-rejected slice step must leave α at its current value, not a rejected proposal"
+        );
     }
 }

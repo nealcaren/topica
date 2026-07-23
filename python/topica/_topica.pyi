@@ -4354,11 +4354,14 @@ class KeyATM:
         turbo_alpha_stride (default 1, exact) is an opt-in approximate speedup
         for the base model's asymmetric-alpha slice sampler, the dominant
         non-sweep cost on large corpora. With a stride s > 1 the slice sampler
-        evaluates its Dirichlet-multinomial data term over every s-th document and
-        scales that sum up by s, an unbiased estimate of the full term that touches
-        ~1/s of the documents. It changes the estimated alpha (and therefore the
-        fit), so it is off by default; it applies to the base model only (it errors
-        with covariates or timestamps) and only when estimate_alpha is True."""
+        evaluates its Dirichlet-multinomial data term over every s-th document
+        (fixed stride in corpus order) and scales that sum up by s. This is not
+        unbiased: the slice sampler then targets the subsampled posterior rather
+        than the full-data one, and because the subset is deterministic the bias
+        also depends on document order. It changes the estimated alpha (and
+        therefore the fit), so it is off by default; use stride=1 for the exact
+        alpha. It applies to the base model only (it errors with covariates or
+        timestamps) and only when estimate_alpha is True."""
         ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...

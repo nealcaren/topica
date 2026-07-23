@@ -13282,10 +13282,13 @@ impl KeyATM {
     /// opt-in early stopping: the run stops once the relative change in the recorded
     /// model-fit log-likelihood between the last two trace points falls below it,
     /// setting `converged` (ignored by the CVB0 backend, which keeps no trace).
-    /// `turbo_alpha_stride` (default 1, exact) subsamples the base model's α
-    /// slice-sampler data term over every s-th document and scales it up by s, an
-    /// unbiased estimate that touches ~1/s of the documents; it changes the
-    /// estimated α (base model only, `estimate_alpha=True`).
+    /// `turbo_alpha_stride` (default 1, exact) is an approximate speed knob for
+    /// the base model's α slice-sampler: it evaluates the data term over every
+    /// s-th document (fixed stride in corpus order) and scales it up by s, cutting
+    /// the dominant lgamma cost to ~1/s. It is **not** unbiased — the slice sampler
+    /// then targets the subsampled posterior rather than the full-data one, and
+    /// because the stride subset is deterministic the bias also depends on document
+    /// order. Use `stride=1` for the exact α (base model only, `estimate_alpha=True`).
     #[pyo3(signature = (data, *, iters=1500, covariates=None, feature_names=None,
                         times=None, timestamps=None, num_states=5, weights="information-theory",
                         num_threads=None, optimize_interval=50, burn_in=200, prior_variance=1.0,
