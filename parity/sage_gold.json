@@ -3,7 +3,7 @@
   "corpus": "synthetic bilingual 2-topic x 2-group, disjoint per-group vocab, 200 docs (from tests/test_sage.py)",
   "corpus_seed": 42,
   "cosine_bar": 0.99,
-  "date": "2026-06-22",
+  "date": "2026-07-23",
   "fit_seed": 1,
   "groups": [
     "de",
