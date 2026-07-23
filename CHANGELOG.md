@@ -18,10 +18,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   `variance = sigma**2 / prod_d (p_d+1)**(2*decay)`, so any `decay>0` shrinks and
   `decay=0` recovers the paper's decay-free prior. Existing `sigma`/`sigma0`/`decay`
   configurations now produce different (correct) fits; a `decay>0`, `sigma!=sigma0`
-  tomotopy parity leg was added to the gold. The `log(alpha)` intercept prior mean
-  (both references center the constant term at `log(alpha)`; topica's inner DMR is
-  zero-mean) remains a separate follow-up. Also: `tdf()` now uses a stable softmax,
-  and the `alpha` property / `sigma`/`sigma0`/`decay` docstrings were corrected.
+  tomotopy parity leg was added to the gold. GDMR also gained an `alpha` parameter
+  (default 0.1, tomotopy's default) that centers the constant-term prior at
+  `log(alpha)` and sets the baseline Dirichlet concentration (smaller `alpha` ->
+  sparser per-document topic mixtures), matching both reference implementations;
+  `alpha=1` reproduces the previous zero-mean intercept. This is realized through a
+  new optional `offset` argument on `DMR.fit` (a fixed `(num_docs, num_topics)`
+  term added inside the exponent). Also: `tdf()` now uses a stable softmax, and the
+  `alpha` property / `sigma`/`sigma0`/`decay` docstrings were corrected.
 
 - **SAGE now uses its defining sparse prior by default** (#422). The κ content
   deviations were previously fit under a fixed Gaussian ridge, which is not

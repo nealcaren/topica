@@ -286,14 +286,18 @@ class DMR:
         convergence_tol: float = 0.0,
         check_every: int = 10,
         covariates: Optional[numpy.typing.NDArray[numpy.float64]] = None,
+        offset: Optional[numpy.typing.NDArray[numpy.float64]] = None,
     ) -> "DMR":
         """Fit by collapsed Gibbs with the per-document Dirichlet prior
-        alpha_{d,t} = exp(lambda_t . x_d). `features` (or `covariates`, a
-        symmetric alias) is required: an (num_docs, F) covariate matrix (no
-        intercept column — one is prepended), with feature_names naming the F
-        columns. The L-BFGS optimization of lambda runs every optimize_interval
-        sweeps after burn_in; topic-word phi is averaged over num_samples samples
-        taken every sample_interval sweeps."""
+        alpha_{d,t} = exp(lambda_t . x_d + offset[d, t]). `features` (or
+        `covariates`, a symmetric alias) is required: an (num_docs, F) covariate
+        matrix (no intercept column — one is prepended), with feature_names naming
+        the F columns. `offset` is an optional fixed (num_docs, num_topics) term
+        added inside the exponent (e.g. a constant log(alpha) to set the baseline
+        concentration); it shifts the predictor but is not itself estimated. The
+        L-BFGS optimization of lambda runs every optimize_interval sweeps after
+        burn_in; topic-word phi is averaged over num_samples samples taken every
+        sample_interval sweeps."""
         ...
 
     @property
