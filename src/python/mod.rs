@@ -6473,9 +6473,13 @@ impl CTM {
         slf.eta_cov = stored_eta_cov;
         slf.mu = model.mu.clone();
         slf.sigma = model.sigma.clone();
-        // Retain the E-step snapshots only when eta_cov was NOT kept, so the
-        // default path carries no extra state (recompute uses the stored eta_cov).
-        if !keep_eta_cov {
+        // Retain the E-step snapshots only when eta_cov was NOT kept, and clear
+        // them otherwise. Assigned UNCONDITIONALLY so a keep_eta_cov=False -> True
+        // refit on the same object never reuses a stale snapshot (#442).
+        if keep_eta_cov {
+            slf.sigma_estep = Vec::new();
+            slf.beta_estep = None;
+        } else {
             slf.sigma_estep = model.sigma_estep.clone();
             slf.beta_estep = Some(beta_estep_arr);
         }
@@ -7499,10 +7503,17 @@ impl STM {
         slf.corr = Some(corr);
         slf.eta_mean = Some(eta_mean_arr);
         slf.eta_cov = stored_eta_cov;
-        // E-step β snapshot: retained only when eta_cov was NOT kept (see below).
-        // The per-group content analogue rides along so a content model's ν
-        // recomputes exactly (model.content_beta_estep is None for non-content).
-        if !keep_eta_cov {
+        // E-step snapshots for on-demand ν recomputation (Σ, β, and the per-group
+        // content analogue): kept only when eta_cov was NOT stored, and cleared
+        // otherwise — assigned UNCONDITIONALLY so a keep_eta_cov=False -> True refit
+        // on the same object never reuses a stale snapshot from the earlier fit
+        // (#442). The content analogue is None for a non-content fit.
+        if keep_eta_cov {
+            slf.sigma_estep = Vec::new();
+            slf.beta_estep = None;
+            slf.content_beta_estep = None;
+        } else {
+            slf.sigma_estep = model.sigma_estep.clone();
             slf.beta_estep = Some(beta_estep_arr);
             slf.content_beta_estep = model.content_beta_estep.clone();
         }
@@ -7515,10 +7526,6 @@ impl STM {
         slf.num_time_periods = num_time_periods;
         slf.mu = model.mu.clone();
         slf.sigma = model.sigma.clone();
-        // E-step Σ snapshot: retained only when eta_cov was NOT kept.
-        if !keep_eta_cov {
-            slf.sigma_estep = model.sigma_estep.clone();
-        }
         slf.corpus = Some(corpus);
         slf.bound = model.bound;
         slf.bound_history = model.bound_history.clone();

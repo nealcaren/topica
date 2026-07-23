@@ -1241,17 +1241,26 @@ pub fn fit_ctm<R: Rng>(
     let mut sigma_estep = sigma.clone();
     let mut beta_estep = beta.clone();
     // Content analogue of `beta_estep`: the per-group β the E-step ran against,
-    // captured before the final M-step's `optimize_content` overwrites it. Empty
-    // for a non-content fit (never stored on the model in that case).
-    let mut content_beta_estep = content_beta.clone();
+    // captured before the final M-step's `optimize_content` overwrites it. Only
+    // needed to recompute ν on demand, so we take the G×K×V snapshot solely for a
+    // content fit that did NOT keep ν (keep_nu=false); otherwise it stays empty and
+    // the copy is skipped every EM iteration.
+    let capture_content_beta = content.is_some() && !keep_nu;
+    let mut content_beta_estep = if capture_content_beta {
+        content_beta.clone()
+    } else {
+        Vec::new()
+    };
 
     for em in 0..em_iters {
         em_iters_run = em + 1;
         sigma_estep = sigma.clone(); // capture sigma before E-step
         beta_estep = beta.clone(); // capture beta before E-step
-        content_beta_estep = content_beta.clone(); // capture group β before E-step
-                                                   // Inverse and log-det from a single factor so the bound's quadratic
-                                                   // and entropy terms stay consistent even when Σ needs a PD repair.
+        if capture_content_beta {
+            content_beta_estep = content_beta.clone(); // capture group β before E-step
+        }
+        // Inverse and log-det from a single factor so the bound's quadratic
+        // and entropy terms stay consistent even when Σ needs a PD repair.
         let (siginv, entropy) = crate::linalg::spd_inverse_and_half_logdet(&sigma, km1);
 
         let mut beta_ss = vec![vec![1e-8f64; num_types]; k];
@@ -1467,7 +1476,8 @@ pub fn fit_ctm<R: Rng>(
         em_iters_run,
         diagonal,
         initialization: init_route.to_string(),
-        content_beta_estep: if content.is_some() {
+        // Only captured for a keep_nu=false content fit (see `capture_content_beta`).
+        content_beta_estep: if capture_content_beta {
             Some(content_beta_estep)
         } else {
             None

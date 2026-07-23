@@ -522,3 +522,29 @@ class TestSTMContentRecomputeEtaCov:
         # rode through to the Python object, so ctm_hpb at the stored λ returns
         # the same ν. A group-averaged or post-M-step β would blow past this.
         npt.assert_allclose(recomp, stored, rtol=0, atol=1e-5)
+
+    def test_refit_does_not_reuse_a_stale_content_snapshot(self):
+        # #442: the E-step β snapshot was assigned only under `if !keep_eta_cov` and
+        # never cleared, so a keep_eta_cov=False -> True refit on the SAME object
+        # left the first fit's group β in place, and _recompute_eta_cov then used it
+        # instead of the current fit's β. Swapping the group labels on the refit
+        # exposes it: the stale snapshot points at the wrong groups.
+        docs, groups = _make_bilingual_corpus(n_per_cell=30, seed=42)
+        swapped = ["en" if g == "de" else "de" for g in groups]
+
+        # Same instance: fit keep_eta_cov=False (original labels), then refit
+        # keep_eta_cov=True with SWAPPED labels (which clears the snapshot).
+        reused = STM(num_topics=2, seed=1)
+        reused.fit(docs, content=groups, iters=4, keep_eta_cov=False)
+        reused.fit(docs, content=swapped, iters=4, keep_eta_cov=True)
+
+        # A fresh object with only the final (swapped, keep_eta_cov=True) fit is the
+        # correct reference — same seed/data/labels, so an identical model state.
+        fresh = STM(num_topics=2, seed=1)
+        fresh.fit(docs, content=swapped, iters=4, keep_eta_cov=True)
+
+        a = np.asarray(reused._recompute_eta_cov(), dtype=np.float64)
+        b = np.asarray(fresh._recompute_eta_cov(), dtype=np.float64)
+        # Identical under the fix (both use the current fit's β); under the bug the
+        # reused instance recomputes against the stale first-fit β and diverges.
+        npt.assert_allclose(a, b, rtol=0, atol=1e-5)
