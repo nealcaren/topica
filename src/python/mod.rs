@@ -266,8 +266,11 @@ fn default_variational() -> String {
 fn default_false() -> bool {
     false
 }
-/// Concentration cap for HDP models saved before `concentration_max` was
-/// configurable (issue #433): they were all fit at the hard-coded 2.0.
+/// Serde default for `concentration_max`. NOTE: `HdpState` is positional bincode,
+/// so `#[serde(default)]` never actually runs for an old save — the field was
+/// inserted mid-struct, so a pre-#433 save fails to load (misaligned fields / EOF)
+/// and must be refit. The holistic save-format fix is tracked in #443. This
+/// default only applies if a future self-describing format is adopted.
 fn default_concentration_max() -> f64 {
     hdp::DEFAULT_CONCENTRATION_MAX
 }
@@ -9255,7 +9258,7 @@ impl HDP {
     /// `beta` is the topic-word Dirichlet smoothing; `seed` seeds the Gibbs RNG.
     #[new]
     #[pyo3(signature = (*, alpha=0.1, gamma=0.1, beta=0.01, seed=42, resample_conc=false,
-                        concentration_max=hdp::DEFAULT_CONCENTRATION_MAX, eta=None))]
+                        concentration_max=2.0, eta=None))]
     fn new(
         py: Python<'_>,
         alpha: f64,

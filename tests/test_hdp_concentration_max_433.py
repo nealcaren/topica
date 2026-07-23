@@ -45,3 +45,23 @@ def test_invalid_concentration_max_is_rejected():
     for bad in (0.0, 1e-4, float("nan"), float("inf"), -5.0):
         with pytest.raises(ValueError):
             topica.HDP(concentration_max=bad)
+
+
+def test_runtime_signature_default_matches_the_stub():
+    # The pyo3 signature must render a literal 2.0 (not Ellipsis from a Rust const
+    # expression), so introspection/docs agree with _topica.pyi's `= 2.0`.
+    import inspect
+
+    default = inspect.signature(topica.HDP).parameters["concentration_max"].default
+    assert default == 2.0, repr(default)
+
+
+def test_cap_bounds_alpha_not_only_gamma():
+    # The document-level alpha is also clamped by the cap. (That a raised cap lets
+    # alpha exceed 2.0 needs a state whose second-level posterior wants alpha > 2,
+    # which this blocky corpus does not produce — that direction is covered by the
+    # controlled Rust test `raising_the_cap_removes_the_spurious_atom_at_two`.)
+    # Here we just confirm alpha never breaches the default cap.
+    capped = topica.HDP(resample_conc=True, concentration_max=2.0, seed=2)
+    capped.fit(_corpus(), iters=60)
+    assert max(a for _, a, _ in capped.concentration_history) <= 2.0 + 1e-9

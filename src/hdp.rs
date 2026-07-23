@@ -357,11 +357,7 @@ impl HdpModel {
             // Instantiate a new topic; break a Beta(1, γ) piece off β_u.
             let b = sample_beta_dist(1.0, self.gamma, rng);
             let new_beta = b * self.beta_u;
-            // Subtract the mass actually broken off rather than rescaling by
-            // `1 - b`; when b ≈ 1 (small γ) the `1 - b` form cancels to exactly 0
-            // and stalls further topic births, whereas this keeps β_u consistent
-            // with the mass handed out.
-            self.beta_u -= new_beta;
+            self.beta_u *= 1.0 - b;
             self.beta.push(new_beta);
             self.nkw.push(vec![0u32; v]);
             self.nk.push(0);
@@ -711,23 +707,33 @@ mod tests {
         let mut lo = large_k_state(DEFAULT_CONCENTRATION_MAX); // 2.0
         let mut rng_hi = ChaCha8Rng::seed_from_u64(0);
         let mut hi = large_k_state(1.0e6);
-        let mut hi_exceeded_two = false;
+        let mut hi_gamma_exceeded_two = false;
+        let mut hi_alpha_exceeded_two = false;
         for _ in 0..50 {
             let (m_lo, t_lo) = lo.resample_beta(&mut rng_lo);
             lo.resample_gamma(m_lo, &mut rng_lo);
             lo.resample_alpha(&t_lo, &mut rng_lo);
+            // The cap binds BOTH concentrations, not just gamma.
             assert!(lo.gamma <= DEFAULT_CONCENTRATION_MAX + 1e-9);
+            assert!(lo.alpha <= DEFAULT_CONCENTRATION_MAX + 1e-9);
 
             let (m_hi, t_hi) = hi.resample_beta(&mut rng_hi);
             hi.resample_gamma(m_hi, &mut rng_hi);
             hi.resample_alpha(&t_hi, &mut rng_hi);
             if hi.gamma > DEFAULT_CONCENTRATION_MAX + 1e-6 {
-                hi_exceeded_two = true;
+                hi_gamma_exceeded_two = true;
+            }
+            if hi.alpha > DEFAULT_CONCENTRATION_MAX + 1e-6 {
+                hi_alpha_exceeded_two = true;
             }
         }
         assert!(
-            hi_exceeded_two,
+            hi_gamma_exceeded_two,
             "with a raised cap the large-K posterior should let gamma exceed 2.0"
+        );
+        assert!(
+            hi_alpha_exceeded_two,
+            "with a raised cap the second-level posterior should let alpha exceed 2.0"
         );
     }
 
