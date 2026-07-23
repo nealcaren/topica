@@ -79,6 +79,7 @@ mod party_embeddings;
 mod pltm;
 #[path = "corpus.rs"]
 mod py_corpus;
+mod rtm;
 mod save;
 mod scholar;
 mod sentence_ideal;
@@ -97,6 +98,7 @@ use nmf_lsa::{LSA, NMF};
 use party_embeddings::PartyEmbeddings;
 use pltm::PolylingualLDA;
 use py_corpus::Corpus;
+use rtm::RTM;
 use save::*;
 use scholar::Scholar;
 use sentence_ideal::IdealPointSentenceTM;
@@ -13886,6 +13888,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PolylingualLDA>()?;
     m.add_class::<DiscLDA>()?;
     m.add_class::<Scholar>()?;
+    m.add_class::<RTM>()?;
     m.add_class::<SeededLDA>()?;
     m.add_class::<KeyATM>()?;
     m.add_class::<Top2Vec>()?;

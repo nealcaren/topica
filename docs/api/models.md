@@ -14,6 +14,8 @@ This page covers the count-based models. The embedding-based models
 
 ::: topica.GDMR
 
+::: topica.RTM
+
 ::: topica.NarrativeTM
 
 ::: topica.LabeledLDA

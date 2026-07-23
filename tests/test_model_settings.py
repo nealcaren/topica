@@ -68,6 +68,7 @@ _FACTORIES: dict[str, object] = {
     "Top2Vec": lambda: topica.Top2Vec(),
     "PolylingualLDA": lambda: topica.PolylingualLDA(2),
     "Scholar": lambda: topica.Scholar(2),
+    "RTM": lambda: topica.RTM(2),
     "TensorLDA": lambda: topica.TensorLDA(2),
     "TBIP": lambda: topica.TBIP(2),
     "IdealPointTM": lambda: topica.IdealPointTM(2),

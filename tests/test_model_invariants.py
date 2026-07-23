@@ -298,6 +298,22 @@ def _fit_disclda(iters=300):
     return m.doc_topic, m.topic_word, m.num_topics
 
 
+def _fit_rtm(iters=40):
+    # Links dense within a planted block, sparse across, so a healthy fit spreads
+    # doc-topic mass across the K blocks (as the words already imply).
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    rng = np.random.default_rng(0)
+    edges = []
+    for i in range(len(docs)):
+        for j in range(i + 1, min(i + 12, len(docs))):
+            p = 0.5 if (i % K) == (j % K) else 0.02
+            if rng.random() < p:
+                edges.append((i, j))
+    m = topica.RTM(K, alpha=0.5, seed=1)
+    m.fit(docs, edges, iters=iters)
+    return m.doc_topic, m.topic_word, m.num_topics
+
+
 def _supervised_corpus(n=200, seed=0):
     """Mixed two-block docs with a response driven by block-0 prevalence."""
     rng = np.random.default_rng(seed)
@@ -584,6 +600,7 @@ FIT_ADAPTERS = {
     "LabeledLDA": _fit_labeledlda,
     "SupervisedLDA": _fit_supervisedlda,
     "DiscLDA": _fit_disclda,
+    "RTM": _fit_rtm,
     "GSDMM": _fit_gsdmm,
     "BTM": _fit_btm,
     "PolylingualLDA": _fit_pltm,

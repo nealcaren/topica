@@ -56,6 +56,7 @@ pub mod party_embeddings;
 pub mod pltm;
 pub mod prodlda;
 pub mod pt;
+pub mod rtm;
 pub mod sage;
 pub mod sampler;
 pub mod saveformat;

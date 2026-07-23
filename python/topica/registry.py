@@ -24,7 +24,8 @@ class ModelInfo:
     name : the exported class name (``"LDA"`` resolves as ``topica.LDA``).
     group : the purpose group (one of :data:`GROUPS`).
     brings : what the user supplies beyond raw text — any of ``"text"``,
-        ``"embeddings"``, ``"metadata"``, ``"seeds"``, ``"labels"``, ``"times"``.
+        ``"embeddings"``, ``"metadata"``, ``"seeds"``, ``"labels"``, ``"times"``,
+        ``"links"`` (a document graph).
     inference : the inference engine — ``"gibbs"``, ``"variational"``, ``"vae"``,
         ``"optimal-transport"``, ``"clustering"``, ``"neural-embedding"``
         (word2vec/doc2vec-style SGD) (more as models are added).
@@ -123,6 +124,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("NarrativeTM", "covariates", ("text",), "gibbs", "seed-reproducible", ("temporal",),
            "Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text.",
            "guides/models.md#narrativetm", experimental=True),
+        _m("RTM", "covariates", ("text", "links"), "variational", "seed-reproducible", ("network",),
+           "Relational topic model (Chang & Blei 2010): jointly models document text and a link graph (citations, hyperlinks, adjacency); predicts links from words and words from links.",
+           "guides/models.md#rtm"),
         # ---- Guided & supervised -------------------------------------------
         _m("KeyATM", "guided", ("text", "seeds"), "gibbs", "seed-reproducible", (),
            "Keyword-assisted topics: anchor named topics with a few seed words each.",
@@ -268,6 +272,7 @@ IMPL: dict[str, ImplInfo] = {
     "DMR": _i("src/dmr.rs", "src/python/mod.rs", "collapsed Gibbs + DMR prior (optimize.rs)", "", "parity/dmr_gold.py"),
     "GDMR": _i("src/dmr.rs", "src/python/mod.rs", "collapsed Gibbs + DMR prior (optimize.rs)", "", "parity/gdmr_gold.py, parity/test_gdmr_tomotopy.py"),
     "Scholar": _i("src/scholar.rs", "src/python/scholar.rs", "ProdLDA VAE + covariate prior (prodlda.rs)", "", "tests/test_scholar.py"),
+    "RTM": _i("src/rtm.rs", "src/python/rtm.rs", "variational EM + link head (optimize.rs digamma)", "", "parity/rtm_compare.py, parity/rtm_reference.py, tests/test_rtm.py"),
     "NarrativeTM": _i("python/topica/narrative.py", "", "intra-document trajectory over Gibbs core (Python)", "", "tests/test_content_trajectory.py"),
     "KeyATM": _i("src/keyatm.rs", "src/python/mod.rs", "collapsed Gibbs + keyword index", "", "parity/keyatm_gold.py, parity/keyatm_r_compare.py"),
     "SeededLDA": _i("src/seeded.rs", "src/python/mod.rs", "collapsed Gibbs (model.rs, sampler.rs)", "", "parity/seededlda_gold.py"),

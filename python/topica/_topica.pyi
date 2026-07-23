@@ -2587,6 +2587,101 @@ class DiscLDA:
     def __repr__(self) -> str: ...
 
 
+class RTM:
+    """RTM: the Relational Topic Model (Chang & Blei, "Hierarchical Relational
+    Models for Document Networks", AOAS 2010). LDA plus a link model: for each
+    observed pair of documents a binary link is drawn from a function of the two
+    documents' mean topic assignments, so the same topics explain both words and
+    links. Fit with ``fit(docs, links=edges)`` on a document graph (citations,
+    hyperlinks, co-sponsorship, adjacency); predict links from words for unseen
+    documents with ``suggest_links``. Undirected links; ``link="logistic"``
+    (default) or ``"exponential"``."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400). ``alpha``/``rho`` are
+        ``None`` when left to resolve at fit."""
+        ...
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        link: str = "logistic",
+        alpha: float | None = None,
+        rho: float | None = None,
+        negative_ratio: float = 1.0,
+        ridge: float = 0.0,
+        seed: int = 42,
+    ) -> None: ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        links: Sequence[tuple[int, int]],
+        *,
+        iters: int = 50,
+        e_sweeps: int = 3,
+        e_inner: int = 5,
+    ) -> "RTM":
+        """Fit RTM on a document graph. ``links`` is a sequence of undirected
+        ``(i, j)`` document-index pairs (only observed links are modelled)."""
+        ...
+    def predict_link(self, i: int, j: int) -> float:
+        """Plug-in link probability between two training documents."""
+        ...
+    def suggest_links(
+        self,
+        doc: Sequence[str],
+        *,
+        top_n: int = 20,
+        exclude: Sequence[int] | None = None,
+        infer_iters: int = 50,
+    ) -> list[tuple[int, float]]:
+        """Rank training documents as link candidates for a new document, from its
+        words alone. Returns ``(doc_index, probability)`` pairs, highest first."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def phi_bar(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Mean topic-assignment vectors (D, K) — the quantity the link function
+        reads. Distinct from ``doc_topic`` (the normalized Dirichlet mean)."""
+        ...
+    @property
+    def eta(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Link-function coefficients (length K)."""
+        ...
+    @property
+    def nu(self) -> float:
+        """Link-function intercept."""
+        ...
+    @property
+    def link(self) -> str: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @classmethod
+    def load(cls, path: str) -> "RTM": ...
+    def __repr__(self) -> str: ...
+
+
 class PA:
     """Pachinko Allocation Model (Li & McCallum 2006): a DAG of `num_super`
     super-topics over `num_sub` shared sub-topics over words, capturing topic
