@@ -819,9 +819,20 @@ pub fn infer_theta(
     counts: &[f64],
 ) -> Vec<f64> {
     let km1 = mu.len();
-    let k = km1 + 1;
     if words.is_empty() {
-        return vec![1.0 / k as f64; k];
+        // With no observed tokens the variational objective reduces to the prior
+        // term, whose mode is η = μ, so θ = softmax([μ, 0]) (the reference topic
+        // K-1 has η = 0). Returning the uniform vector would ignore the document's
+        // prior mean — wrong for prevalence models where μ = Xγ varies per document.
+        let mut logits = mu.to_vec();
+        logits.push(0.0);
+        let m = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let mut e: Vec<f64> = logits.iter().map(|&x| (x - m).exp()).collect();
+        let s: f64 = e.iter().sum();
+        for v in &mut e {
+            *v /= s;
+        }
+        return e;
     }
     let opt = lbfgs_minimize(
         vec![0.0; km1],
@@ -2325,5 +2336,43 @@ mod tests {
                 "active covariate {j} has wrong sign in enet solution"
             );
         }
+    }
+
+    /// An empty (or all-OOV) document has no likelihood term, so its inferred θ
+    /// must be the prior mode `softmax([μ, 0])`, not a uniform vector. This
+    /// matters for prevalence models where μ = Xγ varies per document.
+    #[test]
+    fn infer_theta_empty_doc_returns_prior_mode() {
+        // K = 4 topics -> μ has length K-1 = 3. Reference topic (index 3) has η = 0.
+        let mu = vec![1.0, -0.5, 0.0];
+        let k = mu.len() + 1;
+        // beta/siginv are unused on the empty-doc path, but must be shaped validly.
+        let beta = vec![vec![0.25; 3]; k]; // K×V, arbitrary
+        let siginv = vec![0.0; mu.len() * mu.len()];
+
+        let theta = infer_theta(&beta, &mu, &siginv, &[], &[]);
+
+        // Expected: softmax([1.0, -0.5, 0.0, 0.0]).
+        let logits = [1.0, -0.5, 0.0, 0.0];
+        let m = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let exps: Vec<f64> = logits.iter().map(|&x| (x - m).exp()).collect();
+        let s: f64 = exps.iter().sum();
+        let expected: Vec<f64> = exps.iter().map(|&x| x / s).collect();
+
+        assert_eq!(theta.len(), k);
+        let sum: f64 = theta.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-12, "θ must sum to 1, got {sum}");
+        for (t, (&got, &exp)) in theta.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (got - exp).abs() < 1e-12,
+                "topic {t}: θ = {got}, expected prior-mode {exp}"
+            );
+        }
+        // Regression: it must NOT be the old uniform fallback.
+        let uniform = 1.0 / k as f64;
+        assert!(
+            (theta[0] - uniform).abs() > 1e-6,
+            "θ collapsed to the uniform vector — prior mean μ was ignored"
+        );
     }
 }
