@@ -412,6 +412,45 @@ mod tests {
     }
 
     #[test]
+    fn optimize_kappa_rolls_back_on_non_finite() {
+        // A degenerate (effectively zero) prior variance overflows inv_var to +inf,
+        // so the L-BFGS solve returns non-finite. optimize_kappa must return false
+        // and leave κ and β byte-for-byte unchanged (issue #422).
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let mut docs = Vec::new();
+        let mut groups = Vec::new();
+        for i in 0..40 {
+            if i % 2 == 0 {
+                docs.push(vec![0u32, 1, 0, 1]);
+                groups.push(0usize);
+            } else {
+                docs.push(vec![2u32, 3, 2, 3]);
+                groups.push(1usize);
+            }
+        }
+        let mut model = SageModel::new(1, 2, 4, 0.1, 1.0);
+        model.set_background(&docs);
+        model.initialize(&docs, &groups, &mut rng);
+        for _ in 0..30 {
+            run_sweep_sage(&mut model, &docs, &groups, &mut rng);
+        }
+        assert!(optimize_kappa(&mut model, 20)); // a healthy update first
+
+        let kappa_t_before = model.kappa_t.clone();
+        let kappa_i_before = model.kappa_i.clone();
+        let beta_before = model.beta.clone();
+
+        model.prior_variance = 5e-324; // smallest subnormal -> 1/var = +inf
+        assert!(
+            !optimize_kappa(&mut model, 20),
+            "expected a non-finite failure"
+        );
+        assert_eq!(model.kappa_t, kappa_t_before, "κT mutated on failure");
+        assert_eq!(model.kappa_i, kappa_i_before, "κI mutated on failure");
+        assert_eq!(model.beta, beta_before, "β mutated on failure");
+    }
+
+    #[test]
     fn sage_conforms() {
         let mut rng = ChaCha8Rng::seed_from_u64(1);
         let mut docs = Vec::new();

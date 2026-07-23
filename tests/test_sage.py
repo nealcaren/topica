@@ -616,6 +616,17 @@ class TestSageConvergenceFix:
         if m.converged:
             assert m.fit_history[-1][0] > 200  # never the old iter-20 stop
 
+    def test_earliest_stop_is_the_second_post_kappa_trace(self):
+        """Misaligned update/trace cadences lock the off-by-one: with the first
+        kappa update at iter 49 (optimize_interval=7 past burn_in=45, NOT a trace
+        iteration) and traces at 50, 60, ..., the earliest legitimate stop is the
+        second post-kappa trace (iter 60), never a pre-kappa point (40/50)."""
+        docs, grp = _group_corpus()
+        m = SAGE(2, seed=1, burn_in=45, optimize_interval=7).fit(
+            docs, grp, iters=400, convergence_tol=0.5, check_every=10)
+        assert m.converged
+        assert m.fit_history[-1][0] == 60  # exactly the first valid comparison
+
     def test_early_stop_still_fires_after_kappa(self):
         docs, grp = _group_corpus()
         m = SAGE(2, seed=1, burn_in=40, optimize_interval=10).fit(
@@ -624,10 +635,30 @@ class TestSageConvergenceFix:
         assert m.fit_history[-1][0] > 50  # after the first kappa update (iter 50)
 
 
+class TestSageNonFiniteGuard:
+    """A non-finite kappa optimization step must not corrupt the topics (#422)."""
+
+    def test_extreme_prior_variance_warns_and_stays_finite(self):
+        import warnings
+        docs, grp = _group_corpus()
+        # 5e-324 (smallest subnormal) -> inv_var overflows -> non-finite L-BFGS result
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            m = SAGE(2, seed=1, prior_variance=5e-324).fit(
+                docs, grp, iters=300, convergence_tol=1e-3, check_every=10)
+        msgs = [str(x.message) for x in caught if "non-finite" in str(x.message)]
+        assert len(msgs) == 1                       # warned once, aggregated
+        assert np.isfinite(m.topic_word).all()      # topics not corrupted
+        assert np.isfinite(m.doc_topic).all()
+        np.testing.assert_allclose(m.doc_topic.sum(axis=1), 1.0, atol=1e-9)
+        assert not m.converged                      # early stop impossible (LL constant)
+
+
 class TestSageValidation:
     """Input validation added in issue #422."""
 
     @pytest.mark.parametrize("kwargs", [{"alpha": 0.0}, {"alpha": -1.0},
+                                        {"alpha": float("nan")}, {"alpha": float("inf")},
                                         {"lbfgs_iters": 0}])
     def test_bad_constructor_args(self, kwargs):
         with pytest.raises(ValueError):
@@ -638,12 +669,15 @@ class TestSageValidation:
         with pytest.raises(ValueError):
             SAGE(2).fit(docs, grp, iters=50, num_samples=0)
 
-    def test_negative_convergence_tol_rejected(self):
+    @pytest.mark.parametrize("tol", [-1.0, float("nan"), float("inf")])
+    def test_bad_convergence_tol_rejected(self, tol):
         docs, grp = _group_corpus()
         with pytest.raises(ValueError):
-            SAGE(2).fit(docs, grp, iters=20, convergence_tol=-1.0)
+            SAGE(2).fit(docs, grp, iters=20, convergence_tol=tol)
 
     def test_duplicate_group_names_rejected(self):
+        # Both real groups (g0, g1) are present, so only the duplicate check can
+        # raise — the pre-#422 code would train g0 twice without error.
         docs, grp = _group_corpus()
-        with pytest.raises(ValueError):
-            SAGE(2).fit(docs, grp, group_names=["g0", "g0"], iters=20)
+        with pytest.raises(ValueError, match="duplicate"):
+            SAGE(2).fit(docs, grp, group_names=["g0", "g1", "g0"], iters=20)

@@ -5466,8 +5466,8 @@ impl SAGE {
                 (
                     "SAGE: a κ (content-deviation) optimization step returned a non-finite \
                   result and was skipped; the affected topics keep their previous \
-                  content deviations. Check for empty topic-group cells or reduce the \
-                  learning aggressiveness (e.g. raise prior_variance).",
+                  content deviations. Check for empty topic-group cells or use a less \
+                  extreme prior_variance.",
                 ),
             )?;
         }
