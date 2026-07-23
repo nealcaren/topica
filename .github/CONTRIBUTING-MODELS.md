@@ -217,10 +217,13 @@ Example shape: add a `min_cluster_weight` knob, or a new `weights=` mode.
    a default that preserves current behavior. Validate it in the body and raise
    `PyValueError` on bad input, matching the existing messages. Pass it into the
    algorithm call inside `py.allow_threads(...)`.
+   `fit` returns `self` (the estimator contract is `-> Self`, #402): the receiver
+   is `mut slf: PyRefMut<'_, Self>`, the return type is `PyResult<Py<Self>>`, and
+   every success path ends `Ok(slf.into())` (refer to fields as `slf.`).
    ```rust
    #[pyo3(signature = (data, *, iters=30, report_interval=0, new_knob=1.0))]
-   fn fit(&mut self, py: Python<'_>, data: &Bound<'_, PyAny>,
-          iters: usize, report_interval: usize, new_knob: f64) -> PyResult<()> {
+   fn fit(mut slf: PyRefMut<'_, Self>, py: Python<'_>, data: &Bound<'_, PyAny>,
+          iters: usize, report_interval: usize, new_knob: f64) -> PyResult<Py<Self>> {
        if new_knob <= 0.0 {
            return Err(PyValueError::new_err("new_knob must be > 0"));
        }
@@ -230,15 +233,23 @@ Example shape: add a `min_cluster_weight` knob, or a new `weights=` mode.
            (m, corpus)
        });
        // ...
+       Ok(slf.into())
    }
    ```
 3. **Stub.** Add the parameter (with the same default) to the method in
    `python/topica/_topica.pyi`.
-4. **Docstring.** Update the binding's `///` doc and the stub docstring. State
+4. **`settings` (constructor options only).** If the new option is a
+   **constructor** hyperparameter (added to `new`), surface it in the model's
+   `settings` getter under its public keyword name — `tests/test_model_settings.py`
+   derives the expected keys from the constructor signature and fails until it
+   appears (add a genuinely data/guidance-only arg to that test's `_DATA_ARGS`
+   instead). A **fit-time** option like `new_knob` needs nothing here; it is
+   recorded via the manifest's `fit_settings`.
+5. **Docstring.** Update the binding's `///` doc and the stub docstring. State
    what the parameter does and its default behavior.
-5. **Test.** Add a pytest in `tests/` that sets the parameter and asserts the
+6. **Test.** Add a pytest in `tests/` that sets the parameter and asserts the
    user-visible effect (and that the default path is unchanged).
-6. **Changelog.** Add an `### Added` (new capability) or `### Changed` line to
+7. **Changelog.** Add an `### Added` (new capability) or `### Changed` line to
    the `[Unreleased]` section of `CHANGELOG.md`, referencing the issue number.
 
 ### A2. A new getter, attribute, or method on a model
@@ -420,8 +431,10 @@ impl MyModel {
                      fitted: false, phi: None, theta: None, corpus: None })
     }
 
+    // `fit` returns self so calls chain (#402): `PyRefMut` receiver, `Py<Self>`
+    // return, `Ok(slf.into())` on success (fields via `slf.`).
     #[pyo3(signature = (data, *, iters=1000))]
-    fn fit(&mut self, py: Python<'_>, data: &Bound<'_, PyAny>, iters: usize) -> PyResult<()> {
+    fn fit(mut slf: PyRefMut<'_, Self>, py: Python<'_>, data: &Bound<'_, PyAny>, iters: usize) -> PyResult<Py<Self>> {
         // Accept a Corpus OR a list[list[str]] (no frequency filtering for raw lists).
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -435,19 +448,19 @@ impl MyModel {
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let (phi, theta, corpus) = py.allow_threads(move || {
             let state = mymodel::fit(&corpus.docs, /* ... */, iters, &mut rng);
             (state.phi, state.theta, corpus)
         });
-        self.phi = Some(phi);
-        self.theta = Some(theta);
-        self.corpus = Some(corpus);
-        self.fitted = true;
-        Ok(())
+        slf.phi = Some(phi);
+        slf.theta = Some(theta);
+        slf.corpus = Some(corpus);
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
-    // --- The analysis-surface contract (see B3). All four are required. ---
+    // --- The analysis-surface contract (see B3). All four getters are required. ---
     #[getter] fn topic_word<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?; Ok(self.phi.as_ref().unwrap().to_pyarray_bound(py))
     }
@@ -457,6 +470,14 @@ impl MyModel {
     #[getter] fn num_topics(&self) -> usize { self.num_topics }
     #[getter] fn vocabulary(&self) -> PyResult<Vec<String>> {
         self.require_fitted()?; Ok(self.corpus.as_ref().unwrap().id_to_word.clone())
+    }
+    // Constructor-config introspection (#400): every hyperparameter, keyed by its
+    // `__init__` name, JSON-serialisable. `use pyo3::types::PyDict;` at the top.
+    #[getter] fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?; /* ... every hyperparameter ... */
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     // --- Conventional extras every model provides ---
@@ -503,6 +524,7 @@ your model for free:
 | `doc_topic`   | `ndarray (D, K)`        | yes      | theta, rows sum to 1 |
 | `num_topics`  | `int`                   | yes      | K (effective K for discovery models) |
 | `vocabulary`  | `list[str]` length V    | yes      | column order of `topic_word` |
+| `settings`    | `dict` (JSON-able)      | yes      | constructor config, keyed by `__init__` name (#400); `tests/test_model_settings.py` enforces it |
 | `labels`      | `ndarray (D,) int64`    | optional | hard assignment, `-1` = noise (cluster models) |
 | `topic_names` | `list[str]`             | optional | defaults derived if absent |
 | `doc_names`   | `list[str]`             | optional | for representative-document output |

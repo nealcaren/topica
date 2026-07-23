@@ -150,6 +150,7 @@ RUST_BINDING = r'''//! Python bindings for __NAME__.
 
 use super::*;
 use numpy::{PyArray1, PyArray2};
+use pyo3::types::PyDict; // for the `settings` getter (not re-exported by `use super::*`)
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
@@ -193,8 +194,11 @@ impl __NAME__ {
         })
     }
 
+    // `fit` returns `self` so calls chain (estimator contract `-> Self`, #402):
+    // take `slf: PyRefMut<'_, Self>` instead of `&mut self`, refer to fields via
+    // `slf.`, and return `Ok(slf.into())` on every success path.
     #[pyo3(signature = (data, *, iters=1000))]
-    fn fit(&mut self, py: Python<'_>, data: &Bound<'_, PyAny>, iters: usize) -> PyResult<()> {
+    fn fit(mut slf: PyRefMut<'_, Self>, py: Python<'_>, data: &Bound<'_, PyAny>, iters: usize) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -206,16 +210,32 @@ impl __NAME__ {
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
-        let num_topics = self.num_topics;
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        let num_topics = slf.num_topics;
+        let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let (model, corpus) = py.allow_threads(move || {
             let model = crate::__SNAKE__::fit(&corpus, num_topics, iters, &mut rng);
             (model, corpus)
         });
-        self.model = Some(model);
-        self.corpus = Some(corpus);
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.corpus = Some(corpus);
+        slf.fitted = true;
+        Ok(slf.into())
+    }
+
+    // Uniform constructor-config introspection (#400): return `__init__`'s
+    // settings as a JSON-serialisable dict, keyword-named to match the
+    // constructor, with effective values (not internal flags). `tests/
+    // test_model_settings.py` derives the expected keys from the constructor
+    // signature and will fail until every hyperparameter appears here (add a
+    // factory for __NAME__ there too). Add each hyperparameter field you added
+    // to `new` above.
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        // SCAFFOLD(__NAME__): add every constructor hyperparameter (not data args).
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     // --- Required analysis surface (B3) ---
@@ -336,20 +356,33 @@ the build and the registry). Implement it, then complete these steps — this is
 
   BINDING
   [ ] Implement src/python/{snake}.rs (hyperparameters, fit, save/load).
+  [ ] `fit` returns self (#402): receiver is `mut slf: PyRefMut<'_, Self>`, return
+      type `PyResult<Py<Self>>`, and every success path ends `Ok(slf.into())`. The
+      scaffold already does this — keep it when you flesh out the body.
+  [ ] `settings` getter (#400): return every constructor hyperparameter as a
+      JSON-serialisable dict keyed by the `__init__` name (effective values, not
+      internal flags). The scaffold stubs it — extend it for each field you add.
   [ ] In src/python/mod.rs: add `mod {snake};`, `use {snake}::{name};`, and
       `m.add_class::<{name}>()?;` in the #[pymodule] fn.
 
   PYTHON SURFACE
   [ ] python/topica/__init__.py: add {name} to the _topica import block and __all__.
-  [ ] python/topica/_topica.pyi: add `class {name}` matching the binding exactly.
-  [ ] python/topica/registry.py: add a ModelInfo to REGISTRY AND an ImplInfo to
-      IMPL (source/binding/core/feature/validation), then run
+  [ ] python/topica/_topica.pyi: add `class {name}` matching the binding exactly —
+      including `settings` as a `@property` and `fit(...) -> "{name}"` (returns self,
+      NOT `-> None`). tests/test_stub_sync.py and test_fit_returns_self.py check these.
+  [ ] python/topica/registry.py: add a ModelInfo to REGISTRY (its `determinism` tag
+      is the per-class default; topica.effective_determinism refines it per-config —
+      add a rule branch there only if determinism is config-conditional) AND an
+      ImplInfo to IMPL (source/binding/core/feature/validation), then run
       `python scripts/gen_model_tables.py` to regenerate the roster + model map.
   [ ] python/topica/conformance.py: add {name} to REGISTRY there if it needs a
       non-default factory.
 
   TESTS + DOCS
   [ ] tests/test_{snake}.py: remove the module-level skip and implement the tests.
+  [ ] tests/test_model_settings.py: add a `{name}` factory to `_FACTORIES` (and any
+      data-only constructor args to `_DATA_ARGS`) — the settings coverage test fails
+      until every registered model is covered.
   [ ] parity/{snake}_compare.py if a reference implementation exists.
   [ ] docs/guides/models.md + docs/api/models.md prose; CHANGELOG.md `### Added` line.
 

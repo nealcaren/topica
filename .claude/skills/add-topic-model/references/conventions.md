@@ -15,6 +15,9 @@ coherence, reporting, ensemble) works uniformly:
 - `topic_word` — the (K, V) topic-word matrix (φ).
 - `doc_topic` — the (D, K) document-topic matrix (θ).
 - `top_words(n)` — the top-n words per topic.
+- `settings` — the constructor config as a JSON-serialisable dict, keyed by the
+  `__init__` argument names (`tests/test_model_settings.py` derives the expected
+  keys from the constructor signature and fails until every hyperparameter is here).
 - `save(path)` / `load(path)` — round-trippable persistence.
 
 Add model-specific outputs as named attributes (e.g. `feature_effects`,
