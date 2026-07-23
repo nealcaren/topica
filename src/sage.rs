@@ -188,8 +188,11 @@ pub fn run_sweep_sage<R: Rng>(
 }
 
 /// MAP-estimate the κ deviations (Gaussian prior) from the current counts, then
-/// refresh the cached β. One L-BFGS run.
-pub fn optimize_kappa(model: &mut SageModel, max_iter: usize) {
+/// refresh the cached β. One L-BFGS run. Returns `false` if the optimizer produced
+/// a non-finite result, in which case κ (and β) are left unchanged rather than
+/// corrupted — the caller surfaces this to the user (issue #422).
+#[must_use]
+pub fn optimize_kappa(model: &mut SageModel, max_iter: usize) -> bool {
     let k_n = model.num_topics;
     let g_n = model.num_groups;
     let v_n = model.num_types;
@@ -270,6 +273,13 @@ pub fn optimize_kappa(model: &mut SageModel, max_iter: usize) {
         1e-4,
     );
 
+    // Guard against a non-finite solve (line-search collapse, degenerate counts):
+    // leave κ and β untouched rather than propagate NaN/inf into the topic-word
+    // distributions.
+    if x.iter().any(|v| !v.is_finite()) {
+        return false;
+    }
+
     // Unpack.
     for k in 0..k_n {
         model.kappa_t[k].copy_from_slice(&x[k * v_n..(k + 1) * v_n]);
@@ -284,6 +294,7 @@ pub fn optimize_kappa(model: &mut SageModel, max_iter: usize) {
     }
 
     model.recompute_beta();
+    true
 }
 
 use crate::estimator::{DirichletModel, Estimator, ModelFamily};
@@ -387,7 +398,7 @@ mod tests {
         for iter in 1..=200 {
             run_sweep_sage(&mut model, &docs, &groups, &mut rng);
             if iter > 50 && iter % 25 == 0 {
-                optimize_kappa(&mut model, 20);
+                assert!(optimize_kappa(&mut model, 20));
             }
         }
 
@@ -420,7 +431,7 @@ mod tests {
         for iter in 1..=200 {
             run_sweep_sage(&mut model, &docs, &groups, &mut rng);
             if iter > 50 && iter % 25 == 0 {
-                optimize_kappa(&mut model, 20);
+                assert!(optimize_kappa(&mut model, 20));
             }
         }
         let base = crate::conformance::check_conformance(&model);

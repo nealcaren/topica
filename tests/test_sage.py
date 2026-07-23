@@ -586,3 +586,64 @@ class TestSAGETopWordsCanonicalSignature:
         words = {w for w, _ in result}
         # Must be German words (fully disjoint vocabulary)
         assert words <= _DE_VOCAB
+
+
+# ---------------------------------------------------------------------------
+# Issue #422 correctness fixes
+# ---------------------------------------------------------------------------
+def _group_corpus(seed=0, n=60):
+    rng = np.random.default_rng(seed)
+    A = "cat dog pet vet paw".split()
+    B = "star moon sky sun orbit".split()
+    docs, grp = [], []
+    for i in range(n):
+        base = A if i % 2 == 0 else B
+        docs.append(list(rng.choice(base, size=12)) + list(rng.choice(A + B, size=2)))
+        grp.append("g0" if i < n // 2 else "g1")
+    return docs, grp
+
+
+class TestSageConvergenceFix:
+    """convergence_tol must not trip before any kappa is learned (issue #422):
+    with kappa=0 the word LL is a corpus constant, so the old code stopped at
+    iter 20, before burn_in."""
+
+    def test_no_false_stop_before_kappa(self):
+        docs, grp = _group_corpus()
+        # burn_in=200 -> first kappa update at iter 250; must not stop before then
+        m = SAGE(2, seed=1).fit(docs, grp, iters=300,
+                                convergence_tol=1e-4, check_every=10)
+        if m.converged:
+            assert m.fit_history[-1][0] > 200  # never the old iter-20 stop
+
+    def test_early_stop_still_fires_after_kappa(self):
+        docs, grp = _group_corpus()
+        m = SAGE(2, seed=1, burn_in=40, optimize_interval=10).fit(
+            docs, grp, iters=2000, convergence_tol=1e-3, check_every=10)
+        assert m.converged
+        assert m.fit_history[-1][0] > 50  # after the first kappa update (iter 50)
+
+
+class TestSageValidation:
+    """Input validation added in issue #422."""
+
+    @pytest.mark.parametrize("kwargs", [{"alpha": 0.0}, {"alpha": -1.0},
+                                        {"lbfgs_iters": 0}])
+    def test_bad_constructor_args(self, kwargs):
+        with pytest.raises(ValueError):
+            SAGE(2, **kwargs)
+
+    def test_num_samples_zero_rejected(self):
+        docs, grp = _group_corpus()
+        with pytest.raises(ValueError):
+            SAGE(2).fit(docs, grp, iters=50, num_samples=0)
+
+    def test_negative_convergence_tol_rejected(self):
+        docs, grp = _group_corpus()
+        with pytest.raises(ValueError):
+            SAGE(2).fit(docs, grp, iters=20, convergence_tol=-1.0)
+
+    def test_duplicate_group_names_rejected(self):
+        docs, grp = _group_corpus()
+        with pytest.raises(ValueError):
+            SAGE(2).fit(docs, grp, group_names=["g0", "g0"], iters=20)
