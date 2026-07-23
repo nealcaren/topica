@@ -141,3 +141,43 @@ def test_unknown_lang_raises():
     m, _ = _fit()
     with pytest.raises(ValueError):
         m.topic_word(lang="es")
+
+
+# --------------------------------------------------------------------------- #
+# #450: dict transform must map by language NAME, not insertion order.
+# --------------------------------------------------------------------------- #
+
+def _disjoint():
+    """Two languages with completely disjoint vocabularies, so mapping one
+    against the other's vocab drops every token (the #450 mismap symptom)."""
+    en = [["e0", "e0", "e1"], ["e2", "e2", "e3"]] * 20
+    fr = [["f0", "f0", "f1"], ["f2", "f2", "f3"]] * 20
+    return en, fr
+
+
+def test_transform_dict_matched_by_name_not_insertion_order():
+    en, fr = _disjoint()
+    m = topica.PolylingualLDA(2, iters=100, seed=1)
+    m.fit({"en": en, "fr": fr})
+    correct = m.transform({"en": en, "fr": fr})
+    reversed_order = m.transform({"fr": fr, "en": en})
+    # Matched by name -> insertion order must not change the result. Pre-#450 the
+    # reversed dict scored each language against the other's vocab (near-uniform).
+    assert np.allclose(correct, reversed_order), np.abs(correct - reversed_order).max()
+
+
+def test_transform_unknown_language_raises():
+    en, fr = _disjoint()
+    m = topica.PolylingualLDA(2, iters=100, seed=1)
+    m.fit({"en": en, "fr": fr})
+    # Same count (2), but "de" is not a fitted language.
+    with pytest.raises(ValueError, match="unknown language"):
+        m.transform({"en": en, "de": fr})
+
+
+def test_transform_list_input_stays_positional():
+    en, fr = _disjoint()
+    m = topica.PolylingualLDA(2, iters=100, seed=1)
+    m.fit([en, fr])  # auto-named lang_0, lang_1 -> positional
+    theta = m.transform([en, fr])
+    assert theta.shape == (40, 2)
