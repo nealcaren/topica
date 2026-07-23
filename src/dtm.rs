@@ -26,26 +26,6 @@ use rayon::prelude::*;
 const INIT_VARIANCE_CONST: f64 = 1000.0;
 const OBS_NORM_CUTOFF: f64 = 2.0;
 
-/// Stirling-series log Γ (accurate to ~1e-10 for the small positive arguments
-/// the bound needs); shifts the argument up to z ≥ 10 for accuracy.
-fn lgamma(mut z: f64) -> f64 {
-    const HALF_LOG_TWO_PI: f64 = 0.918_938_533_204_672_7;
-    let mut shift = 0i32;
-    while z < 10.0 {
-        z += 1.0;
-        shift += 1;
-    }
-    let mut result = HALF_LOG_TWO_PI + (z - 0.5) * z.ln() - z + 1.0 / (12.0 * z)
-        - 1.0 / (360.0 * z * z * z)
-        + 1.0 / (1260.0 * z * z * z * z * z);
-    while shift > 0 {
-        shift -= 1;
-        z -= 1.0;
-        result -= z.ln();
-    }
-    result
-}
-
 fn log_add(a: f64, b: f64) -> f64 {
     if a > b {
         a + (1.0 + (b - a).exp()).ln()
@@ -706,6 +686,7 @@ pub fn fit_dtm<R: Rng>(
 }
 
 use crate::estimator::{Estimator, ModelFamily};
+use crate::mathfun::log_gamma as lgamma;
 
 impl Estimator for DtmModel {
     fn num_topics(&self) -> usize {

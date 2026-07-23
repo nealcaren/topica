@@ -19,29 +19,8 @@
 //!     i.e. the real doc inherits its pseudo-doc's topic distribution.
 
 use crate::estimator::{DirichletModel, Estimator, ModelFamily};
+use crate::mathfun::log_gamma;
 use rand::Rng;
-
-// ---------------------------------------------------------------------------
-// Log-Gamma helper (Stirling series shifted to z ≥ 10, matching dmr.rs)
-// ---------------------------------------------------------------------------
-
-fn log_gamma(mut z: f64) -> f64 {
-    const HALF_LOG_TWO_PI: f64 = 0.918_938_533_204_672_7;
-    let mut shift = 0i32;
-    while z < 10.0 {
-        z += 1.0;
-        shift += 1;
-    }
-    let mut result = HALF_LOG_TWO_PI + (z - 0.5) * z.ln() - z + 1.0 / (12.0 * z)
-        - 1.0 / (360.0 * z * z * z)
-        + 1.0 / (1260.0 * z * z * z * z * z);
-    while shift > 0 {
-        shift -= 1;
-        z -= 1.0;
-        result -= z.ln();
-    }
-    result
-}
 
 // ---------------------------------------------------------------------------
 // Model struct

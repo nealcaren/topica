@@ -43,27 +43,6 @@
 
 use rand::Rng;
 
-/// Stirling-series log Γ. Shifts the argument to z ≥ 10 before applying the
-/// asymptotic series (a local copy in the style of `dmr.rs`/`dtm.rs`), used for
-/// the Dirichlet-multinomial path marginal likelihoods.
-fn log_gamma(mut z: f64) -> f64 {
-    const HALF_LOG_TWO_PI: f64 = 0.918_938_533_204_672_7;
-    let mut shift = 0i32;
-    while z < 10.0 {
-        z += 1.0;
-        shift += 1;
-    }
-    let mut result = HALF_LOG_TWO_PI + (z - 0.5) * z.ln() - z + 1.0 / (12.0 * z)
-        - 1.0 / (360.0 * z * z * z)
-        + 1.0 / (1260.0 * z * z * z * z * z);
-    while shift > 0 {
-        shift -= 1;
-        z -= 1.0;
-        result -= z.ln();
-    }
-    result
-}
-
 /// Sample an index proportional to weights given in **log** space (Gumbel-max via
 /// a single uniform after log-sum-exp normalization), using only `rng`.
 fn sample_log_index<R: Rng>(log_w: &[f64], rng: &mut R) -> usize {
@@ -617,6 +596,7 @@ pub fn fit_hlda<R: Rng>(
 }
 
 use crate::estimator::{Estimator, ModelFamily};
+use crate::mathfun::log_gamma;
 
 impl Estimator for HldaModel {
     fn num_topics(&self) -> usize {

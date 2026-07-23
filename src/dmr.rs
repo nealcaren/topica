@@ -21,30 +21,6 @@ use rand::Rng;
 use crate::optimize::digamma;
 use crate::sampler::sample_doc;
 
-/// Stirling-series log Γ. Shifts the argument to z ≥ 10 before applying the
-/// asymptotic series so the result (and, importantly for the optimizer, its
-/// numerical derivative) is accurate to ~1e-10. This is a local copy used only
-/// by the DMR objective; LDA's MALLET-matched log Γ lives in `output.rs`.
-fn log_gamma(z: f64) -> f64 {
-    const HALF_LOG_TWO_PI: f64 = 0.918_938_533_204_672_7;
-    // Shift the argument up to x >= 10 for the asymptotic series, accumulating the
-    // recurrence correction -Σ ln(z + k) from the ORIGINAL arguments as we go.
-    // Reconstructing that correction by decrementing the shifted value instead
-    // silently loses a tiny z (z + 1.0 rounds to exactly 1.0 for z below ~1e-16),
-    // and the reverse pass then evaluates ln(0.0) = -inf, so the function returned
-    // +inf — poisoning the DMR objective/gradient with NaN when α = exp(λ·x) is
-    // small. Computing ln(z) directly on the real argument keeps it finite.
-    let mut x = z;
-    let mut correction = 0.0f64;
-    while x < 10.0 {
-        correction -= x.ln();
-        x += 1.0;
-    }
-    HALF_LOG_TWO_PI + (x - 0.5) * x.ln() - x + 1.0 / (12.0 * x) - 1.0 / (360.0 * x * x * x)
-        + 1.0 / (1260.0 * x * x * x * x * x)
-        + correction
-}
-
 /// Per-document, per-topic prior `α_{d,t} = exp(λ_t · x_d + s_{d,t})`.
 ///
 /// `lambda` is `[num_topics][num_features]`, `features` is
@@ -341,6 +317,7 @@ pub fn dmr_lambda_cov(
     })
 }
 
+use crate::mathfun::log_gamma;
 use crate::variational::lbfgs_minimize;
 
 /// Optimize `lambda` in place to maximize the penalized DMR likelihood for the
