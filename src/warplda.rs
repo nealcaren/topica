@@ -157,9 +157,16 @@ impl WarpLda {
         let mut beta_sum_k = vec![self.beta * v as f64; k];
         let mut inv_seeds: Vec<Vec<u32>> = vec![Vec::new(); v];
         for (t, ws) in seeds.iter().enumerate().take(k) {
-            beta_sum_k[t] += ws.len() as f64 * seed_weight;
+            // Count each DISTINCT, in-vocabulary seed word once. `beta_at` adds the
+            // seed weight per (topic, word) via a membership test, so the per-topic
+            // normalizer `beta_sum_k[t]` must equal Σ_w beta_at(t, w) = V·β +
+            // (#distinct valid seeds)·seed_weight. Adding `ws.len()` verbatim
+            // over-counted out-of-vocabulary and duplicate seed words, inflating the
+            // denominator and under-normalizing the seeded topic's φ.
+            let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
             for &w in ws {
-                if w < v {
+                if w < v && seen.insert(w) {
+                    beta_sum_k[t] += seed_weight;
                     inv_seeds[w].push(t as u32);
                 }
             }
@@ -810,6 +817,30 @@ mod tests {
                 warp * 1e3,
                 sparse * 1e3,
                 warp / sparse
+            );
+        }
+    }
+
+    /// #430: `set_seeds` must keep the per-topic normalizer consistent with the
+    /// per-word betas: Σ_w beta_at(t, w) == beta_sum_at(t). Duplicate and
+    /// out-of-vocabulary seed words previously inflated `beta_sum_k` (it added
+    /// `ws.len()` verbatim) while `beta_at` counts each distinct in-vocab seed once.
+    #[test]
+    fn set_seeds_normalizer_matches_per_word_betas() {
+        let (corpus, _) = planted(2, 3, 20); // V = 6, ids 0..5
+        let k = 2;
+        let mut rng = Pcg64Mcg::seed_from_u64(0);
+        let mut w = WarpLda::new(&corpus, k, &vec![0.1; k], 0.05, &mut rng);
+        // Topic 0: a duplicate (0 twice) and an OOV id (99); topic 1: a duplicate.
+        let seeds = vec![vec![0usize, 1, 0, 99], vec![2usize, 2, 3]];
+        w.set_seeds(&seeds, 7.0);
+        let v = corpus.num_types();
+        for t in 0..k {
+            let summed: f64 = (0..v).map(|word| w.beta_at(t, word)).sum();
+            let norm = w.beta_sum_at(t);
+            assert!(
+                (summed - norm).abs() < 1e-9,
+                "topic {t}: Σ_w beta_at = {summed} != beta_sum_at = {norm}"
             );
         }
     }
