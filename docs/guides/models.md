@@ -1145,9 +1145,13 @@ concave regression) and `exponential` (`exp(ηᵀ(z̄_d ∘ z̄_{d'}) + ν)`, wi
 closed-form M-step). Positive-only links make the link estimate a one-class problem,
 so both paths use the paper's `ρ` regularization (`negative_ratio` pseudo-negative
 links placed at the expected topic co-occurrence under the prior). The logistic
-path also accepts an optional L2 penalty on the coefficients (`ridge=`, default
-`0.0`, i.e. paper-faithful — set it above zero only if the link coefficients need
-extra shrinkage under separation). Links are treated
+path also applies the paper's ℓ2 ridge on the link coefficients (`ridge=`, default
+`1.0`; App B recommends the ℓ2 regularizer "in lieu of or in conjunction with" the
+`ρ` term). The ridge is not optional in practice: `ρ`'s pseudo-negatives all sit at
+the single point `π̄_α`, so they cannot constrain coefficient directions orthogonal
+to it, and with `ridge=0` the logistic coefficients diverge under separable link
+structure (topic recovery survives, but `predict_link` degenerates to 0/1). The
+exponential link is bounded and needs no ridge. Links are treated
 as **undirected** (the paper symmetrizes; directed RTM is a planned follow-up).
 Determinism is `seed-reproducible` (a serial, seeded E-step). On large graphs the
 `exponential` link is markedly faster — its link M-step is a closed form and the

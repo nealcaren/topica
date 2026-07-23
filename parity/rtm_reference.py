@@ -165,7 +165,7 @@ def _fit_eta_exponential(pi_sum, num_links, pi_alpha, rho):
 # --------------------------------------------------------------------------- #
 class RTMReference:
     def __init__(self, num_topics, vocab_size, *, link="logistic", alpha=None,
-                 rho=None, negative_ratio=1.0, ridge=0.0, seed=0):
+                 rho=None, negative_ratio=1.0, ridge=1.0, seed=0):
         if link not in ("logistic", "exponential"):
             raise ValueError("link must be 'logistic' or 'exponential'")
         self.K = int(num_topics)
