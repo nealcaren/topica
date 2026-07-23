@@ -71,7 +71,15 @@ impl Alias {
             }
         }
 
-        while let (Some(s), Some(&l)) = (small.pop(), large.last()) {
+        // Guard on BOTH worklists being non-empty before popping. Testing
+        // `small.pop()` inside the `while let` would consume a `small` index even
+        // when `large` is already empty (reachable when floating-point rounding
+        // pushes every scaled weight just under 1.0, e.g. the symmetric prior
+        // `[0.1, 0.1, 0.1]`), and that popped index would never be finalized —
+        // leaving `prob = 0` / `alias = 0` and a corrupted proposal PMF.
+        while !small.is_empty() && !large.is_empty() {
+            let s = small.pop().unwrap();
+            let l = *large.last().unwrap();
             prob[s] = scaled[s];
             alias[s] = l as u32;
             // Move the borrowed mass off the large bucket.
@@ -81,7 +89,7 @@ impl Alias {
                 small.push(l);
             }
         }
-        // Anything left over is (numerically) a full bucket.
+        // Anything left over in either worklist is (numerically) a full bucket.
         for &l in &large {
             prob[l] = 1.0;
         }
@@ -374,5 +382,76 @@ impl crate::mh::MhSampler for LightLda {
     }
     fn to_topic_model(&self) -> TopicModel {
         LightLda::to_topic_model(self)
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::Alias;
+
+    /// Reconstruct the categorical PMF a built `Alias` actually samples from:
+    /// `Pr(j) = (1/n) * sum_i [ prob_i * 1(i == j) + (1 - prob_i) * 1(alias_i == j) ]`.
+    fn implied_pmf(a: &Alias) -> Vec<f64> {
+        let n = a.prob.len();
+        let mut pmf = vec![0.0f64; n];
+        for i in 0..n {
+            let p = a.prob[i];
+            pmf[i] += p / n as f64;
+            pmf[a.alias[i] as usize] += (1.0 - p) / n as f64;
+        }
+        pmf
+    }
+
+    fn assert_pmf_matches(weights: &[f64]) {
+        let a = Alias::build(weights);
+        let pmf = implied_pmf(&a);
+        let sum: f64 = weights.iter().sum();
+        for (j, &w) in weights.iter().enumerate() {
+            let expected = w / sum;
+            assert!(
+                (pmf[j] - expected).abs() < 1e-12,
+                "weights {weights:?}: bucket {j} implied {} != expected {expected}",
+                pmf[j],
+            );
+        }
+        // A valid table's implied PMF is a distribution.
+        let total: f64 = pmf.iter().sum();
+        assert!((total - 1.0).abs() < 1e-12, "implied PMF sums to {total}");
+    }
+
+    #[test]
+    fn build_equal_weights_is_uniform() {
+        // Regression: `[0.1, 0.1, 0.1]` scales to three buckets just below 1.0
+        // (sum == 0.30000000000000004), so `large` starts empty. The old
+        // `while let (Some(s), Some(&l)) = (small.pop(), large.last())` discarded
+        // one bucket, yielding ~[2/3, 1/3, 0] instead of uniform.
+        assert_pmf_matches(&[0.1, 0.1, 0.1]);
+        // A few more equal-weight sizes that also round every scaled weight < 1.0.
+        assert_pmf_matches(&[0.1; 5]);
+        assert_pmf_matches(&[0.1; 7]);
+        assert_pmf_matches(&[1.0 / 3.0; 3]);
+    }
+
+    #[test]
+    fn build_skewed_and_zero_mixed() {
+        assert_pmf_matches(&[0.0, 1.0, 0.0]);
+        assert_pmf_matches(&[1e-300, 1.0, 1e-300]);
+        assert_pmf_matches(&[0.7, 0.2, 0.1]);
+        assert_pmf_matches(&[10.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn build_single_and_degenerate() {
+        // Single nonzero weight: the whole mass sits on one bucket.
+        assert_pmf_matches(&[5.0]);
+        // All-zero falls back to a uniform table (documented degenerate case).
+        let a = Alias::build(&[0.0, 0.0, 0.0]);
+        let pmf = implied_pmf(&a);
+        for &p in &pmf {
+            assert!(
+                (p - 1.0 / 3.0).abs() < 1e-12,
+                "all-zero fallback not uniform"
+            );
+        }
     }
 }
