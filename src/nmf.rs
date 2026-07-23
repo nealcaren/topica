@@ -520,6 +520,10 @@ pub(crate) fn randomized_svd_seeded(x: &SpMat, k: usize, seed: u64) -> (Mat, Vec
 /// NNDSVD initialization with the "a" zero-fill (Boutsidis & Gallopoulos). Builds
 /// `W (d x k)` and `H (k x v)` from the signed singular vectors, then fills exact
 /// zeros with `mean(X)`.
+/// NNDSVDa initialization. Precondition: `k <= min(x.rows, x.cols)`; above that
+/// the truncated SVD returns fewer than `k` triplets and the loops below index
+/// out of bounds. The `NMF` binding enforces this for `init="nndsvd"` (#448);
+/// direct Rust callers must respect it too.
 fn nndsvd_init(x: &SpMat, k: usize) -> (Mat, Mat) {
     let (d, v) = (x.rows, x.cols);
     let (u, s, vt) = randomized_svd(x, k);
