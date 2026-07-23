@@ -1,17 +1,23 @@
-"""Parity comparison script for topica's TensorLDA vs the reference Python TLDA package.
+"""Parity comparison for topica's TensorLDA vs upstream TensorLy TLDA.
+
+The upstream reference (https://github.com/tensorly/tlda) is not a topica
+dependency. Point ``TOPICA_TLDA_REF`` at a checkout to run the comparison;
+without it the script reports that the reference is unavailable and exits 0, so
+it is safe to schedule as a CI / integration job. See ``parity/tlda_ref.py`` and
+``docs/replications/tlda.md`` for the one-time setup.
 """
 
+import os
 import sys
-sys.path.append("/Users/nealcaren/.gemini/antigravity/brain/d6ed7e63-64cd-4bfd-bf91-4edae64b50f4/scratch")
 
-import numpy as np
-import topica
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-try:
-    from tlda_wrapper import TLDA
-    HAS_REF = True
-except ImportError:
-    HAS_REF = False
+import numpy as np  # noqa: E402
+import topica  # noqa: E402
+from tlda_ref import load_reference_tlda  # noqa: E402
+
+TLDA = load_reference_tlda()
+HAS_REF = TLDA is not None
 
 def run_comparison():
     if not HAS_REF:
@@ -174,6 +180,12 @@ def run_streaming_comparison():
 
 
 if __name__ == "__main__":
+    if not HAS_REF:
+        print(
+            "Reference TensorLy TLDA not found. Set TOPICA_TLDA_REF to a checkout "
+            "of https://github.com/tensorly/tlda to run this comparison. Skipping."
+        )
+        sys.exit(0)
     run_comparison()
     print()
     run_streaming_comparison()

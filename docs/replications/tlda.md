@@ -79,6 +79,24 @@ is init-sensitive, both implementations recover the same topics — including th
 same partial recoveries on hard corpora. `parity/tlda_compare.py` runs the
 comparison when the reference package is available.
 
+## Running the upstream comparison
+
+The reference ([TensorLy TLDA](https://github.com/tensorly/tlda)) is not on PyPI
+and is not a topica dependency, so the parity script locates it at run time and
+skips cleanly when it is absent. Obtain it once and point `TOPICA_TLDA_REF` at
+the checkout:
+
+```bash
+git clone https://github.com/tensorly/tlda /path/to/tlda
+export TOPICA_TLDA_REF=/path/to/tlda
+python parity/tlda_compare.py     # runs the square-rank comparison; exits 0 if the ref is absent
+```
+
+`parity/tlda_ref.py` centralizes this lookup. Because the script exits 0 when
+`TOPICA_TLDA_REF` is unset, it is safe to wire into CI or a scheduled integration
+job: the job is a no-op wherever the reference is not installed, and a real
+comparison wherever it is. No machine-specific path is baked into the repository.
+
 ## Current evidence
 
 ### Upstream comparison
@@ -99,8 +117,18 @@ is a small CPU benchmark, not a GPU comparison or a general performance claim.
 [`parity/tlda_true_lda_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/tlda_true_lda_compare.py)
 samples documents from an ordinary LDA generative process with known unequal
 Dirichlet topic weights, then reports aligned topic-word cosine, weight rank
-correlation, and document-topic recovery. It is intentionally a report rather
-than a pass/fail gate: current results establish a baseline for improvement.
+correlation, and document-topic recovery.
+
+The square-rank *topic-recovery* piece of that simulation is now an explicit,
+CI-runnable acceptance gate in
+[`tests/test_tlda_recovery.py`](https://github.com/nealcaren/topica/blob/main/tests/test_tlda_recovery.py):
+at `n_eigenvec = num_topics` it asserts a mean aligned topic-word cosine floor
+(0.50) and a per-topic floor (0.35), guarding against regression. Prevalence
+calibration is deliberately kept as a *separate, ungated* question — the test
+computes the planted-weight and document-topic diagnostics but does not assert on
+them, because the `weights` are not yet a validated prevalence estimator. The
+rectangular `n_eigenvec > num_topics` case is exercised as a Topica extension,
+not an upstream-parity claim.
 
 On its fixed simulation (2,500 documents, 100 tokens each, four topics), the
 current implementation obtains mean aligned topic-word cosine 0.529 at
@@ -126,10 +154,12 @@ for substantive covariate effects.
 
 Priorities before removing the experimental gate are:
 
-1. Improve and validate recovery on the known-truth LDA simulator across corpus
-   size, topic separation, and unequal prevalences.
-2. Make the upstream comparison portable and automated for its valid square-rank
-   configuration.
+1. Raise the known-truth topic-recovery acceptance floor (now enforced at square
+   rank in `tests/test_tlda_recovery.py`) across corpus size, topic separation,
+   and unequal prevalences.
+2. Broaden the now-portable upstream comparison (`parity/tlda_compare.py`,
+   located via `TOPICA_TLDA_REF`) beyond the small UCI example and wire it into a
+   scheduled integration job.
 3. Derive and validate a calibrated prevalence estimator, potentially separate
    from the tensor factorization's raw component norms.
 4. Add robustness results for overlapping vocabularies and covariate-structured
