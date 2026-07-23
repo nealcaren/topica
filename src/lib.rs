@@ -46,6 +46,7 @@ pub mod keyatm;
 pub mod labeled;
 pub mod lightlda;
 pub mod lsa;
+pub mod mathfun;
 pub mod mh;
 pub mod model;
 pub mod nmf;

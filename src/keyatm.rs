@@ -53,6 +53,7 @@
 //! ```
 
 use crate::estimator::{DirichletModel, Estimator, ModelFamily};
+use crate::mathfun::log_gamma as lgamma;
 use rand::Rng;
 
 // ---------------------------------------------------------------------------
@@ -572,27 +573,6 @@ fn sample_index<R: Rng>(weights: &[f64], rng: &mut R) -> usize {
 // ---------------------------------------------------------------------------
 // Numeric helpers for the dynamic (HMM) sampler
 // ---------------------------------------------------------------------------
-
-/// Stirling-series log Γ; shifts the argument up to z ≥ 10 for accuracy (same
-/// approximation `dtm.rs` uses, adequate for the small positive α and counts
-/// the Dirichlet-multinomial marginal needs).
-fn lgamma(mut z: f64) -> f64 {
-    const HALF_LOG_TWO_PI: f64 = 0.918_938_533_204_672_7;
-    let mut shift = 0i32;
-    while z < 10.0 {
-        z += 1.0;
-        shift += 1;
-    }
-    let mut result = HALF_LOG_TWO_PI + (z - 0.5) * z.ln() - z + 1.0 / (12.0 * z)
-        - 1.0 / (360.0 * z * z * z)
-        + 1.0 / (1260.0 * z * z * z * z * z);
-    while shift > 0 {
-        shift -= 1;
-        z -= 1.0;
-        result -= z.ln();
-    }
-    result
-}
 
 /// Log density of Gamma(shape `a`, scale `b`), matching keyATM's `gammapdfln`:
 /// `-a·ln(b) - lnΓ(a) + (a-1)·ln(x) - x/b`.
