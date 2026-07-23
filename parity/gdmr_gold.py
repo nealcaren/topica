@@ -57,6 +57,10 @@ DEGREES = [2]   # 1-D metadata, Legendre degree 2
 ITERS = 500
 SIGMA = 1.0
 SIGMA0 = 3.0
+# decay > 0 exercises the per-dimension higher-order shrinkage (#426): with sigma
+# != sigma0 AND decay > 0 this parity distinguishes the corrected prior from the
+# old sigma/sigma0-swapped, geometric-decay one, which a decay=0 config could not.
+DECAY = 0.5
 BURN_IN = 100
 
 # tdf evaluation grid (verbatim from the live script).
@@ -101,7 +105,7 @@ def _fit_tomotopy(docs, metadata, seed):
 
     mdl = tp.GDMRModel(
         tw=tp.TermWeight.ONE, k=NUM_TOPICS, degrees=DEGREES,
-        sigma=SIGMA, sigma0=SIGMA0, seed=seed, min_cf=0, min_df=0,
+        sigma=SIGMA, sigma0=SIGMA0, decay=DECAY, seed=seed, min_cf=0, min_df=0,
     )
     for doc, x in zip(docs, metadata[:, 0].tolist()):
         mdl.add_doc(doc, numeric_metadata=[float(x)])
@@ -148,7 +152,7 @@ def _fit_topica(docs, metadata):
 
     m = topica.GDMR(
         num_topics=NUM_TOPICS, degrees=DEGREES, sigma=SIGMA, sigma0=SIGMA0,
-        seed=SEED, optimize_interval=25, burn_in=BURN_IN,
+        decay=DECAY, seed=SEED, optimize_interval=25, burn_in=BURN_IN,
     )
     m.fit(docs, metadata, iters=ITERS, num_samples=5, sample_interval=20)
     return m

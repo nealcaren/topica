@@ -248,7 +248,12 @@ def _fit_gdmr(iters=300):
     docs, vocab = _planted_blocks(k=K, seed=0)
     levels = np.array([int(doc[0].split("w")[0][1:]) for doc in docs], dtype=float)
     meta = (levels / (K - 1))[:, None]
-    m = topica.GDMR(num_topics=K, degrees=[3], seed=1, optimize_interval=25, burn_in=50)
+    # sigma0 is the (tomotopy-faithful) prior std on the intercept/baseline; the
+    # default 3.0 is a weak baseline prior that this tiny synthetic corpus cannot
+    # constrain (one topic runs away), so use a tighter intercept here. On real
+    # continuous-metadata corpora the likelihood dominates and the default is fine.
+    m = topica.GDMR(num_topics=K, degrees=[3], sigma0=1.0, seed=1,
+                    optimize_interval=25, burn_in=50)
     m.fit(docs, meta, iters=iters, num_samples=2, sample_interval=10)
     return m.doc_topic, m.topic_word, K
 
