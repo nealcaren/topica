@@ -66,14 +66,6 @@ BUNDLE_VERSION = 1
 _DIGEST_SIZE = 32
 _CANONICAL_NAN = 0x7FF8000000000000
 
-# Model settings captured by the per-model adapters (allowlist, not
-# serialize-everything). Everything else is omitted and marked as such.
-_SETTINGS_ALLOWLIST: dict[str, tuple[str, ...]] = {
-    "LDA": ("num_topics", "alpha", "beta"),
-    "STM": ("num_topics", "beta", "sigma_prior"),
-}
-
-
 # --------------------------------------------------------------------------
 # Fingerprint-v1 primitives
 # --------------------------------------------------------------------------
@@ -719,13 +711,14 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
     if reg is not None and cls in reg.REGISTRY:
         determinism = reg.REGISTRY[cls].determinism
 
+    settings, settings_coverage = _capture_settings(model)
     model_block: dict[str, Any] = {
         "class": cls,
         "determinism": determinism,
         "num_topics": getattr(model, "num_topics", None),
         "seed": getattr(model, "seed", None),  # most models do not expose it -> None
-        "settings": _capture_settings(model, cls),
-        "settings_coverage": f"adapter:{cls}" if cls in _SETTINGS_ALLOWLIST else "generic",
+        "settings": settings,
+        "settings_coverage": settings_coverage,
         "fit_settings": _allowlist_kwargs(fit_settings),
         "output_fingerprints": _output_fingerprints(model),
     }
@@ -777,13 +770,15 @@ def _capture_diagnostic(name: str, model, corpus, n: int) -> dict[str, Any]:
     return entry
 
 
-def _capture_settings(model, cls: str) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for name in _SETTINGS_ALLOWLIST.get(cls, ()):
-        val = getattr(model, name, None)
-        if val is not None:
-            out[name] = _jsonable(val)
-    return out
+def _capture_settings(model) -> tuple[dict[str, Any], str]:
+    """The model's constructor configuration via its uniform ``settings`` surface
+    (issue #400), plus a coverage tag. ``full`` when the model reports ``settings``;
+    ``none`` for the rare model that does not (recorded honestly rather than faked).
+    """
+    settings = getattr(model, "settings", None)
+    if not isinstance(settings, dict):
+        return {}, "none"
+    return {k: _jsonable(v) for k, v in settings.items()}, "full"
 
 
 def _output_fingerprints(model) -> dict[str, Any]:

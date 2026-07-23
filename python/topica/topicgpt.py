@@ -489,6 +489,22 @@ class TopicGPT:
         self._cache: dict[str, str] = {}
         self._call_count: int = 0
 
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict, keyword-named
+        to match ``__init__`` (issue #400). The ``backend`` callable is data, not a
+        hyperparameter, so it is not reported; ``model`` records the named backend."""
+        return {
+            "model": self._model_name,
+            "hierarchical": self.hierarchical,
+            "assignment": self.assignment,
+            "sample": self.sample,
+            "max_topics": self.max_topics,
+            "temperature": self.temperature,
+            "seed": self.seed,
+            "prompts": dict(self.prompts),
+        }
+
     # -- custom prompts ----------------------------------------------------
 
     def with_prompt(self, stage: str, template: str) -> "TopicGPT":

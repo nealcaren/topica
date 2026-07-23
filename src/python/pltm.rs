@@ -143,6 +143,23 @@ impl PolylingualLDA {
         self.seed
     }
 
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). ``alpha`` is ``None`` when left unset
+    /// (the core resolves it to the 0.01 default at fit time).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("beta", self.beta)?;
+        d.set_item("iters", self.iters)?;
+        d.set_item("optimize_alpha", self.optimize_alpha)?;
+        d.set_item("optimize_interval", self.optimize_interval)?;
+        d.set_item("optimize_burn_in", self.optimize_burn_in)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
+    }
+
     /// Create an unfitted PLTM. `alpha` is the per-topic document-topic prior
     /// (default `0.01`, the paper's `0.01·T` total with a uniform base measure).
     /// `beta` is the topic-word prior (default `0.01`); it is applied to every

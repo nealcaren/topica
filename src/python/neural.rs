@@ -10,6 +10,7 @@
 
 use super::*;
 use numpy::{PyArray1, PyArray2};
+use pyo3::types::PyDict;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
@@ -198,6 +199,32 @@ impl ETM {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). `inference`/`prior` are reported under
+    /// their public strings; `convergence_tol` is the effective tolerance in force
+    /// (the deprecated `em_tol` alias is folded into it and reported as ``None``).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("inference", self.inference.as_str())?;
+        d.set_item("convergence_tol", self.em_tol)?;
+        d.set_item("sigma_shrink", self.sigma_shrink)?;
+        d.set_item("prior_variance", self.prior_variance)?;
+        d.set_item("max_inner", self.max_inner)?;
+        d.set_item("hidden_size", self.hidden_size)?;
+        d.set_item("batch_size", self.batch_size)?;
+        d.set_item("lr", self.lr)?;
+        d.set_item("wdecay", self.wdecay)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item("prior", self.prior.as_str())?;
+        d.set_item("contrastive", self.contrastive)?;
+        d.set_item("contrastive_weight", self.contrastive_weight)?;
+        d.set_item("contrastive_temp", self.contrastive_temp)?;
+        d.set_item("em_tol", None::<f64>)?;
+        Ok(d)
     }
 
     /// Create an unfitted model. `inference` selects the engine: `"em"` (default)
@@ -859,6 +886,25 @@ impl DETM {
         self.seed
     }
 
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). ``grad_clip`` is ``None`` when unset.
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("delta", self.delta)?;
+        d.set_item("hidden_size", self.hidden_size)?;
+        d.set_item("eta_hidden_size", self.eta_hidden_size)?;
+        d.set_item("eta_nlayers", self.eta_nlayers)?;
+        d.set_item("batch_size", self.batch_size)?;
+        d.set_item("lr", self.lr)?;
+        d.set_item("wdecay", self.wdecay)?;
+        d.set_item("grad_clip", self.grad_clip)?;
+        d.set_item("convergence_tol", self.convergence_tol)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
+    }
+
     /// Create an unfitted model. ``delta`` is the random-walk standard-deviation
     /// knob on the topic-embedding and topic-prior trajectories (smaller = smoother
     /// drift; reference default 0.005). ``hidden_size`` is the document encoder
@@ -1460,6 +1506,25 @@ impl InfoCTM {
         self.seed
     }
 
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). `convergence_tol` is the effective
+    /// tolerance in force; `languages` is the normalized ``(a, b)`` pair.
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("mi_weight", self.mi_weight)?;
+        d.set_item("mi_temperature", self.mi_temperature)?;
+        d.set_item("pos_threshold", self.pos_threshold)?;
+        d.set_item("hidden_size", self.hidden_size)?;
+        d.set_item("dropout", self.dropout)?;
+        d.set_item("lr", self.lr)?;
+        d.set_item("convergence_tol", self.em_tol)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item("languages", self.languages.clone())?;
+        Ok(d)
+    }
+
     /// Create an unfitted model. `mi_weight` scales the alignment term (reference
     /// 30-50); `mi_temperature` is the InfoNCE temperature (0.2); `pos_threshold`
     /// is the cosine cutoff for the embedding-densified positive mask (0.4, used
@@ -1888,6 +1953,29 @@ impl ProdLDA {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). `prior` is reported as its public
+    /// string; `convergence_tol` is the effective tolerance in force (the
+    /// deprecated `em_tol` alias is folded into it and reported as ``None``).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("hidden_size", self.hidden_size)?;
+        d.set_item("dropout", self.dropout)?;
+        d.set_item("batch_size", self.batch_size)?;
+        d.set_item("lr", self.lr)?;
+        d.set_item("convergence_tol", self.em_tol)?;
+        d.set_item("seed", self.seed)?;
+        d.set_item("prior", self.prior.as_str())?;
+        d.set_item("contrastive", self.contrastive)?;
+        d.set_item("contrastive_weight", self.contrastive_weight)?;
+        d.set_item("contrastive_temp", self.contrastive_temp)?;
+        d.set_item("em_tol", None::<f64>)?;
+        Ok(d)
     }
 
     /// Create an unfitted model. `alpha` is the symmetric Dirichlet prior
@@ -2438,6 +2526,27 @@ macro_rules! ctm_embedding_model {
             #[getter]
             fn seed(&self) -> u64 {
                 self.seed
+            }
+
+            /// The constructor configuration as a JSON-serialisable dict,
+            /// keyword-named to match ``__init__`` (issue #400). `prior` is
+            /// reported as its public string.
+            #[getter]
+            fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+                let d = PyDict::new_bound(py);
+                d.set_item("num_topics", self.num_topics)?;
+                d.set_item("alpha", self.alpha)?;
+                d.set_item("hidden_size", self.hidden_size)?;
+                d.set_item("dropout", self.dropout)?;
+                d.set_item("batch_size", self.batch_size)?;
+                d.set_item("lr", self.lr)?;
+                d.set_item("convergence_tol", self.convergence_tol)?;
+                d.set_item("seed", self.seed)?;
+                d.set_item("prior", self.prior.as_str())?;
+                d.set_item("contrastive", self.contrastive)?;
+                d.set_item("contrastive_weight", self.contrastive_weight)?;
+                d.set_item("contrastive_temp", self.contrastive_temp)?;
+                Ok(d)
             }
 
             /// Create an unfitted model. `alpha` is the symmetric Dirichlet prior

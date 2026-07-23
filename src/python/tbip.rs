@@ -5,6 +5,8 @@
 //! pulls in the shared bindings.
 
 use super::*;
+use pyo3::types::PyDict;
+
 use crate::tbip::{self, TbipConfig, TbipModel, TbipParams};
 use std::collections::{HashMap, HashSet};
 
@@ -71,6 +73,23 @@ impl TBIP {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). Values are the effective ones actually
+    /// in force (e.g. ``batch_size``/``min_count`` after the ``.max(1)`` floor).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("a_gamma", self.a_gamma)?;
+        d.set_item("b_gamma", self.b_gamma)?;
+        d.set_item("iters", self.iters)?;
+        d.set_item("batch_size", self.batch_size)?;
+        d.set_item("learning_rate", self.learning_rate)?;
+        d.set_item("min_count", self.min_count)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     /// Create an unfitted model. `num_topics` is K (>= 2). `a_gamma`/`b_gamma` are

@@ -2,6 +2,7 @@
 
 use super::*;
 use numpy::{PyArray1, PyArray2};
+use pyo3::types::PyDict;
 use pyo3::types::PyType;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -95,6 +96,22 @@ impl BTM {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). ``alpha`` is ``None`` when left at its
+    /// ``50 / num_topics`` default (resolved only at fit).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("beta", self.beta)?;
+        d.set_item("iters", self.iters)?;
+        d.set_item("window", self.window)?;
+        d.set_item("background", self.background)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     /// Create an unfitted BTM model. `alpha` defaults to `50 / num_topics`

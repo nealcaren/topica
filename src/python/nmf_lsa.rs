@@ -3,6 +3,7 @@
 //! bindings helpers (Corpus, build_corpus_from_docs, save/load, array adapters, …).
 
 use super::*;
+use pyo3::types::PyDict;
 
 /// NMF, non-negative matrix factorization for topic modeling (Lee & Seung 2001;
 /// Boutsidis & Gallopoulos 2008). We factor the non-negative document-term matrix
@@ -95,6 +96,34 @@ impl NMF {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). Enum-ish params are reported under
+    /// their public strings (``beta_loss``, ``init``, ``weighting``).
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        let beta_loss = match self.beta_loss {
+            nmf::BetaLoss::Frobenius => "frobenius",
+            nmf::BetaLoss::KullbackLeibler => "kullback-leibler",
+        };
+        d.set_item("beta_loss", beta_loss)?;
+        let init = match self.init {
+            nmf::Init::Nndsvd => "nndsvd",
+            nmf::Init::Random => "random",
+        };
+        d.set_item("init", init)?;
+        let weighting = if self.weighting_tfidf {
+            "tfidf"
+        } else {
+            "count"
+        };
+        d.set_item("weighting", weighting)?;
+        d.set_item("convergence_tol", self.convergence_tol)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     /// Create an unfitted model. `num_topics` is K (2 <= K <= vocabulary size).
@@ -428,6 +457,23 @@ impl LSA {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). ``weighting`` is reported under its
+    /// public string.
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        let weighting = if self.weighting_tfidf {
+            "tfidf"
+        } else {
+            "count"
+        };
+        d.set_item("weighting", weighting)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     /// Create an unfitted model. `num_topics` is K (2 <= K <= min(num_docs,

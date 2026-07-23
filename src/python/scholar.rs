@@ -2,7 +2,7 @@
 
 use super::*;
 use numpy::{PyArray1, PyArray2};
-use pyo3::types::PyType;
+use pyo3::types::{PyDict, PyType};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
@@ -250,6 +250,29 @@ impl Scholar {
     #[getter]
     fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// The constructor configuration as a JSON-serialisable dict, keyword-named
+    /// to match ``__init__`` (issue #400). The numeric data arrays ``covariates``
+    /// and ``content`` are excluded; the config-name lists ``covariate_names`` and
+    /// ``content_names`` (a list of strings, or ``None`` when unset) are kept.
+    #[getter]
+    fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new_bound(py);
+        d.set_item("num_topics", self.num_topics)?;
+        d.set_item("covariate_names", self.covariate_names.clone())?;
+        d.set_item("content_names", self.content_names.clone())?;
+        d.set_item("interactions", self.interactions)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("hidden_size", self.hidden_size)?;
+        d.set_item("dropout", self.dropout)?;
+        d.set_item("batch_size", self.batch_size)?;
+        d.set_item("lr", self.lr)?;
+        d.set_item("l2_prior_reg", self.l2_prior_reg)?;
+        d.set_item("l1_content_reg", self.l1_content_reg)?;
+        d.set_item("convergence_tol", self.convergence_tol)?;
+        d.set_item("seed", self.seed)?;
+        Ok(d)
     }
 
     /// Create an unfitted SCHOLAR. `covariates` (a `(num_docs, n_covars)` numeric

@@ -329,6 +329,22 @@ class EmbeddingLDA:
             self.seeds, alpha=alpha, beta=beta, weight=weight, seed=seed
         )
 
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict, keyword-named
+        to match ``__init__`` (issue #400). The ``embeddings``/``vocabulary`` inputs
+        are data, not hyperparameters, so they are not reported here."""
+        sub = self._model.settings
+        return {
+            "num_topics": self.num_topics,
+            "top_m": self.top_m,
+            "weight": sub["weight"],
+            "doc_anchor": self.doc_anchor,
+            "alpha": self.alpha,
+            "beta": sub["beta"],
+            "seed": sub["seed"],
+        }
+
     def document_topic_prior(self, doc_embeddings) -> np.ndarray:
         """The per-document Dirichlet prior ``α_{d,k}`` implied by document
         embeddings: ``alpha + doc_anchor * max(cos(doc_d, centroid_k), 0)``,

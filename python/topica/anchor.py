@@ -267,6 +267,22 @@ class AnchorLDA:
         self._converged = None
         self._word_counts = None
 
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict, keyword-named
+        to match ``__init__`` (issue #400)."""
+        return {
+            "num_topics": self._k,
+            "recover": self.recover,
+            "min_count": self.min_count,
+            "seed": self.seed,
+            "eta": self.eta,
+            "convergence_tol": self.convergence_tol,
+            "frex_w": self.frex_w,
+            "frequency_temper": self.frequency_temper,
+            "anchor_min_doc_freq": self.anchor_min_doc_freq,
+        }
+
     # -- fitting ------------------------------------------------------------
     def fit(self, data, *, iters=None, min_count=None):
         """Recover topics from ``data`` (a :class:`~topica.Corpus` or a list of

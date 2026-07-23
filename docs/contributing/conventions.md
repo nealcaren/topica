@@ -42,6 +42,15 @@ being `GDMR`) matches by construction rather than by memory.
 3. The Gibbs-sampler family shares a fixed keyword block, in this order:
    `iters, num_samples, sample_interval, progress, progress_interval,
    keep_theta_draws, num_theta_draws, convergence_tol, check_every`.
+4. **Every model exposes `model.settings`** — its constructor configuration as a
+   JSON-serialisable dict, keyword-named to match `__init__` (issue #400). It
+   reports the *effective* values in force (e.g. `num_threads` after its `max(1)`
+   floor; `sampler`/`init` as the canonical public string, not an internal flag),
+   and omits data/guidance inputs (`keywords`, `seed_words`, covariate arrays,
+   embeddings, LLM backends). `tests/test_model_settings.py` derives the expected
+   keys from each constructor signature, so a new parameter that is not surfaced in
+   `settings` fails the suite — there is no second inventory to maintain. The
+   analysis manifest (`record_fit`) reads this surface directly.
 
 ## Threads and stopping rules
 
