@@ -69,7 +69,7 @@ Column meanings:
 | `KeyATM` | `src/keyatm.rs` | `src/python/mod.rs` | collapsed Gibbs + keyword index | default | `parity/keyatm_gold.py`, `parity/keyatm_r_compare.py` |
 | `SeededLDA` | `src/seeded.rs` | `src/python/mod.rs` | collapsed Gibbs (model.rs, sampler.rs) | default | `parity/seededlda_gold.py` |
 | `LabeledLDA` | `src/labeled.rs` | `src/python/mod.rs` | collapsed Gibbs (model.rs, sampler.rs) | default | `parity/labeledlda_gold.py` |
-| `SupervisedLDA` | `src/slda.rs` | `src/python/mod.rs` | collapsed Gibbs + response head | default | `parity/supervisedlda_gold.py` |
+| `SupervisedLDA` | `src/slda.rs` | `src/python/mod.rs` | variational EM + Gaussian response head | default | `parity/supervisedlda_gold.py` |
 | `DiscLDA` | `src/disclda.rs` | `src/python/disclda.rs` | collapsed Gibbs + class transform | default | `parity/disclda_20ng.py`, `tests/test_disclda.py` |
 
 ### Short text
