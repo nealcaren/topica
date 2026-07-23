@@ -178,3 +178,37 @@ def test_covariate_collapse_regression_at_scale():
     m.fit(docs, covariates=X, iters=500)
     eff = _effective_topics(m.doc_topic)
     assert eff > k * 0.4, f"covariate theta collapsed at scale: eff#topics={eff:.1f}/{k}"
+
+
+# --- #418: covariate SE at the optimum, not drifted counts -------------------
+def test_feature_effect_se_is_invariant_to_trailing_sweeps():
+    # optimize_interval=100, burn_in=100 -> the last lambda optimization is at
+    # iter 200 for both runs; the second just does 30 more (non-optimizing) sweeps
+    # that drift the counts. lambda and its SE, taken from the iter-200 counts, must
+    # match. Pre-#418 the SE was read from the drifted final counts and would not.
+    docs, party = _corpus(seed=1)
+    cov = party.reshape(-1, 1)
+
+    def fit(iters):
+        m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+        m.fit(docs, covariates=cov, feature_names=["is_D"], iters=iters,
+              optimize_interval=100, burn_in=100)
+        return m
+
+    a, b = fit(200), fit(230)
+    assert a.feature_effect_se is not None and b.feature_effect_se is not None
+    np.testing.assert_allclose(a.feature_effect_se, b.feature_effect_se, atol=1e-10)
+    np.testing.assert_allclose(a.feature_effects, b.feature_effects, atol=1e-10)
+    # Witness that the invariance is non-trivial: the extra sweeps genuinely drift
+    # the state, so the old code (SE from final counts) would have differed.
+    assert not np.allclose(a.doc_topic, b.doc_topic)
+
+
+def test_feature_effect_se_is_none_without_optimization():
+    # No optimize step ever runs (optimize_interval past iters), so an observed-
+    # information SE would be meaningless: it must be None, not fabricated.
+    docs, party = _corpus(seed=2)
+    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m.fit(docs, covariates=party.reshape(-1, 1), feature_names=["is_D"],
+          iters=150, optimize_interval=10000, burn_in=50)
+    assert m.feature_effect_se is None
