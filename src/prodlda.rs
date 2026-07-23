@@ -692,6 +692,10 @@ pub(crate) const WEIBULL_FLOOR: f64 = 1e-4;
 /// coefficient of variation, so the reparameterized topic vector is too noisy to
 /// train; flooring the shape at 1 keeps the variational posterior concentrated
 /// enough to learn (a standard WHAI-style choice) while staying strictly positive.
+/// This is deliberately a family restriction, not just a numerical floor: it caps
+/// how sparse the posterior can be, so a `Dirichlet(alpha)` prior with `alpha < 1`
+/// is approximated by a shape-1 (exponential) posterior rather than a matching
+/// sub-1 shape. Loosen it only alongside re-validating stability (#428, finding 3).
 pub(crate) const WEIBULL_SHAPE_FLOOR: f64 = 1.0;
 
 /// Map a post-BN head pair `(a, b)` to a Weibull `(shape, scale)` and, given the
@@ -703,6 +707,25 @@ pub(crate) fn weibull_weight(a: f64, b: f64, ln_l: f64) -> (f64, f64, f64) {
     let lam = softplus(b) + WEIBULL_FLOOR;
     let g = lam * (ln_l / kw).exp(); // lam * L^(1/kw) = lam * exp(ln_l / kw)
     (kw, lam, g)
+}
+
+/// The normalized Weibull weights at the posterior median (`u = 0.5`, so
+/// `L = ln 2`): the deterministic θ point estimate the `Prior::Dirichlet` forward
+/// trains and (for the contrastive view) evaluates under. `mu`/`lv` are the
+/// post-batchnorm encoder heads. Kept identical to the training median so
+/// `transform` reports the same estimate the model was optimized against.
+pub(crate) fn weibull_median_theta(mu: &[f64], lv: &[f64]) -> Vec<f64> {
+    let k = mu.len();
+    let ln_l = (-(0.5f64).ln()).ln(); // u = 0.5  =>  L = ln 2
+    let g: Vec<f64> = (0..k)
+        .map(|t| weibull_weight(mu[t], lv[t], ln_l).2)
+        .collect();
+    let s: f64 = g.iter().sum();
+    if s > 0.0 {
+        g.iter().map(|x| x / s).collect()
+    } else {
+        vec![1.0 / k as f64; k]
+    }
 }
 
 /// Analytic KL( Weibull(kw, lam) || Gamma(alpha, rate=1) ), the per-topic term of
@@ -1039,6 +1062,14 @@ pub(crate) fn batch_forward(
             // KL( N(mu, e^lv) || N(mu0, var1) ), diagonal (eq. 7, first line). The
             // prior mean is per-document when `prior_mus` is set (SCHOLAR), else the
             // shared `prior_mu`; the prior variance is always shared.
+            //
+            // All K Gaussian coordinates are regularized. For the stick-breaking
+            // prior only the first K-1 breaks affect theta (the last stick is the
+            // remainder), so the K-th coordinate is a free, regularized-but-unused
+            // latent: a valid ELBO for the K-dimensional augmented model, but a
+            // deliberate deviation from Miao et al.'s K-1 Gaussian projection.
+            // Summing K-1 for stick-breaking would change the objective and needs
+            // re-validation (#428, finding 4); left as-is.
             let pm_i = batch.prior_mus.map(|p| p[i].as_slice()).unwrap_or(prior_mu);
             let mut kl = 0.0;
             for t in 0..k {
@@ -1520,9 +1551,14 @@ pub struct ProdldaModel {
     pub epochs_run: usize,
     pub weights: Weights,
     pub bn_mu: BatchNorm,
+    /// The log-variance-head batchnorm. Only the `Prior::Dirichlet` transform reads
+    /// it (to reproduce the Weibull posterior median it trains under); `None` for
+    /// models loaded from a save written before it was persisted, in which case the
+    /// Dirichlet transform falls back to `softmax(mu)`.
+    pub bn_lv: Option<BatchNorm>,
     /// The prior the model was fit under, so `transform` applies the matching
-    /// noise-free simplex map (softmax for laplace/dirichlet, stick-breaking for
-    /// `Prior::StickBreaking`).
+    /// noise-free simplex map (softmax for laplace, the Weibull median for
+    /// dirichlet, stick-breaking for `Prior::StickBreaking`).
     pub prior: Prior,
 }
 
@@ -1556,14 +1592,22 @@ impl ProdldaModel {
                 let no_drop = vec![1.0; self.weights.hidden];
                 let dc = self.weights.encode_raw(&xn, emb, &no_drop);
                 let mu = self.bn_mu.forward_eval_row(&dc.mu_raw);
-                // Noise-free point estimate under the model's prior. Laplace and
-                // Dirichlet both use softmax(mu) as the cheap point estimate (the
-                // shipped behavior); stick-breaking uses its own simplex map so the
-                // proportions stay consistent with the decoder it was trained on.
-                if self.prior == Prior::StickBreaking {
-                    stick_break(&mu).1
-                } else {
-                    softmax(&mu)
+                // Noise-free point estimate under the model's prior, matching the
+                // map the decoder was trained with: softmax(mu) for laplace,
+                // stick-breaking for StickBreaking, and the normalized Weibull
+                // median for Dirichlet (#428). The Dirichlet median needs the
+                // log-variance head; if it was not persisted (an older save) fall
+                // back to softmax(mu), the previous shipped behavior.
+                match self.prior {
+                    Prior::StickBreaking => stick_break(&mu).1,
+                    Prior::Dirichlet => match &self.bn_lv {
+                        Some(bn_lv) => {
+                            let lv = bn_lv.forward_eval_row(&dc.lv_raw);
+                            weibull_median_theta(&mu, &lv)
+                        }
+                        None => softmax(&mu),
+                    },
+                    _ => softmax(&mu),
                 }
             })
             .collect()
@@ -1778,6 +1822,7 @@ pub fn fit_avitm<R: Rng>(
         epochs_run,
         weights: w,
         bn_mu,
+        bn_lv: Some(bn_lv),
         prior: opts.prior,
     };
     let doc_topic = model.transform_with_emb(docs, embs);
@@ -2446,6 +2491,98 @@ mod tests {
             k,
             "dirichlet: topics did not cover all blocks"
         );
+    }
+
+    // #428 finding 2: a Dirichlet-prior model must transform via the normalized
+    // Weibull median it trains under, not softmax(mu). Fit a small Dirichlet model,
+    // then check transform == the median recomputed from the eval-time heads and
+    // that the median genuinely differs from softmax(mu) (the old / laplace path).
+    #[test]
+    fn dirichlet_transform_uses_the_weibull_median_not_softmax_mu() {
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let (k, block) = (3usize, 8usize);
+        let v = k * block;
+        let docs: Vec<Vec<u32>> = (0..120)
+            .map(|d| {
+                let b = d % k;
+                (0..15)
+                    .map(|_| (b * block + (rng.gen::<f64>() * block as f64) as usize) as u32)
+                    .collect()
+            })
+            .collect();
+        let opts = AvitmOptions {
+            prior: Prior::Dirichlet,
+            ..AvitmOptions::default()
+        };
+        let m = fit_avitm(
+            &docs,
+            &vec![Vec::new(); docs.len()],
+            InputMode::BowOnly,
+            k,
+            v,
+            0,
+            32,
+            0.5,
+            0.0,
+            200,
+            40,
+            0.005,
+            0.0,
+            opts,
+            &mut rng,
+        );
+        assert!(
+            m.bn_lv.is_some(),
+            "fit must retain bn_lv for the Dirichlet transform"
+        );
+
+        let test_docs = &docs[..5];
+        let empty = vec![Vec::new(); test_docs.len()];
+        let got = m.transform_with_emb(test_docs, &empty);
+
+        let no_drop = vec![1.0; m.weights.hidden];
+        let bn_lv = m.bn_lv.as_ref().unwrap();
+        let mut saw_difference = false;
+        for (d, row) in test_docs.iter().zip(&got) {
+            let xn = normalized_bow(d);
+            let dc = m.weights.encode_raw(&xn, &[], &no_drop);
+            let mu = m.bn_mu.forward_eval_row(&dc.mu_raw);
+            let lv = bn_lv.forward_eval_row(&dc.lv_raw);
+            let median = weibull_median_theta(&mu, &lv);
+            let softmax_mu = softmax(&mu);
+            // transform reproduces the training median exactly...
+            for t in 0..k {
+                assert!(
+                    (row[t] - median[t]).abs() < 1e-12,
+                    "transform did not match the Weibull median"
+                );
+            }
+            // ...and the median is a genuinely different point estimate than
+            // softmax(mu), the pre-#428 (and laplace) behavior.
+            let l1: f64 = (0..k).map(|t| (median[t] - softmax_mu[t]).abs()).sum();
+            if l1 > 1e-6 {
+                saw_difference = true;
+            }
+        }
+        assert!(
+            saw_difference,
+            "median and softmax(mu) coincided on every test doc; the fix is unobservable here"
+        );
+
+        // A model without bn_lv (an older save) falls back to softmax(mu).
+        let m_old = ProdldaModel { bn_lv: None, ..m };
+        let fallback = m_old.transform_with_emb(test_docs, &empty);
+        for (d, row) in test_docs.iter().zip(&fallback) {
+            let xn = normalized_bow(d);
+            let dc = m_old.weights.encode_raw(&xn, &[], &no_drop);
+            let sm = softmax(&m_old.bn_mu.forward_eval_row(&dc.mu_raw));
+            for t in 0..k {
+                assert!(
+                    (row[t] - sm[t]).abs() < 1e-12,
+                    "bn_lv=None Dirichlet transform did not fall back to softmax(mu)"
+                );
+            }
+        }
     }
 
     #[test]

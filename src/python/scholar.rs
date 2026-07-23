@@ -880,6 +880,8 @@ impl Scholar {
                 epochs_run: s.epochs_run.unwrap_or(0),
                 weights,
                 bn_mu,
+                // SCHOLAR uses the Laplace transform (softmax(mu)); bn_lv is unused.
+                bn_lv: None,
                 prior: prodlda::Prior::Laplace,
             };
             Some(crate::scholar::ScholarModel {
