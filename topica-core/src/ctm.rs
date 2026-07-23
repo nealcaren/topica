@@ -404,6 +404,11 @@ pub struct CtmModel {
     /// were supplied. See [`ContentKappa`].
     pub content_kappa: Option<ContentKappa>,
     pub num_groups: usize,
+    /// Per-document group index (length D), `Some` alongside `content_beta` when
+    /// content covariates were supplied. `recompute_nu` needs it to rebuild each
+    /// document's ν with its own group's topic-word distribution rather than the
+    /// group-averaged `beta`.
+    pub groups: Option<Vec<usize>>,
     /// Corpus approximate evidence bound (ELBO) at the final E-step — the same
     /// quantity R `stm` reports as its convergence bound.
     pub bound: f64,
@@ -1441,6 +1446,7 @@ pub fn fit_ctm<R: Rng>(
         content_beta: content_out,
         content_kappa: content_kappa_out,
         num_groups,
+        groups: groups.map(|g| g.to_vec()),
         bound: bound_history.last().copied().unwrap_or(f64::NAN),
         bound_history,
         converged,
@@ -1649,6 +1655,7 @@ pub fn fit_ctm_svi<R: Rng>(
         content_beta: None,
         content_kappa: None,
         num_groups: 1,
+        groups: None,
         bound: total_bound,
         bound_history: vec![total_bound],
         converged: true,
@@ -1681,13 +1688,23 @@ pub fn recompute_nu(model: &CtmModel, sparse: &[(Vec<usize>, Vec<f64>)]) -> Vec<
         .into_par_iter()
         .map(|di| {
             let (words, counts) = &sparse[di];
-            // Use beta_estep (the beta that was active during the last E-step)
-            // rather than model.beta (which was updated by the final M-step). The
-            // prior mean does not enter the Hessian, so model.mu is used for all
-            // documents (ν is independent of μ).
+            // For a content model the E-step ran each document against its own
+            // group's topic-word distribution, so ν must be rebuilt the same way:
+            // pick `content_beta[groups[di]]`, not the group-averaged `beta_estep`.
+            // (`content_beta` is the final M-step value; the ν it yields differs
+            // from the stored one only by that last content update — far smaller
+            // than the group-vs-average error this replaces, and well below the
+            // Monte-Carlo noise of the composition draws that consume ν.)
+            // Otherwise use `beta_estep` (the beta active during the last E-step;
+            // model.beta was updated by the final M-step). The prior mean does not
+            // enter the Hessian, so model.mu is used for all documents.
+            let beta_doc: &[Vec<f64>] = match (&model.content_beta, &model.groups) {
+                (Some(cbeta), Some(groups)) => &cbeta[groups[di]],
+                _ => &model.beta_estep,
+            };
             let res = ctm_hpb(
                 &model.lambda[di],
-                &model.beta_estep,
+                beta_doc,
                 words,
                 counts,
                 &model.mu,
@@ -2433,6 +2450,81 @@ mod tests {
         assert!(
             theta[0] > 0.999,
             "θ should concentrate on the dominant topic, got {theta:?}"
+        );
+    }
+
+    /// `recompute_nu` must rebuild each document's ν against its own group's β for
+    /// a content model — using the group-averaged β (the pre-fix behavior) gives a
+    /// materially different ν when groups word the topics differently.
+    #[test]
+    fn recompute_nu_uses_per_group_beta_for_content() {
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let mut docs: Vec<Vec<u32>> = Vec::new();
+        let mut groups: Vec<usize> = Vec::new();
+        for i in 0..120 {
+            if i % 2 == 0 {
+                docs.push(vec![0, 1, 0, 1, 0, 1]);
+                groups.push(0);
+            } else {
+                docs.push(vec![2, 3, 2, 3, 2, 3]);
+                groups.push(1);
+            }
+        }
+        let mut model = fit_ctm(
+            &docs,
+            2,
+            4,
+            30,
+            0.0,
+            0.0,
+            None,
+            Some((&groups, 2)),
+            None,
+            1.0,
+            0.0,
+            false,
+            None,
+            GammaPrior::Pooled,
+            true,
+            false,
+            &mut rng,
+        );
+        assert!(model.content_beta.is_some(), "content_beta present");
+        assert_eq!(
+            model.groups.as_ref().map(|g| g.len()),
+            Some(120),
+            "groups stored"
+        );
+
+        let sparse: Vec<(Vec<usize>, Vec<f64>)> = docs.iter().map(|d| doc_sparse(d)).collect();
+        let stored = model.nu.clone(); // per-group E-step ν (keep_nu = true)
+        assert_eq!(stored.len(), docs.len(), "nu stored per doc");
+
+        let mean_l1 = |a: &[Vec<f64>], b: &[Vec<f64>]| -> f64 {
+            a.iter()
+                .zip(b)
+                .map(|(x, y)| x.iter().zip(y).map(|(p, q)| (p - q).abs()).sum::<f64>())
+                .sum::<f64>()
+                / a.len() as f64
+        };
+
+        // Per-group reconstruction matches the stored ν closely (differs only by
+        // the final content-β M-step).
+        let recomputed = recompute_nu(&model, &sparse);
+        let err_fixed = mean_l1(&stored, &recomputed);
+
+        // The pre-fix path used the group-averaged β for every document.
+        model.groups = None;
+        let shared_nu = recompute_nu(&model, &sparse);
+        let err_shared = mean_l1(&stored, &shared_nu);
+
+        assert!(
+            err_fixed < 1e-2,
+            "per-group recompute far from stored ν: {err_fixed}"
+        );
+        assert!(
+            err_shared > 20.0 * err_fixed,
+            "group-averaged recompute ({err_shared}) should be far worse than per-group ({err_fixed})"
         );
     }
 }

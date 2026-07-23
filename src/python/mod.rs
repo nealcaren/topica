@@ -331,6 +331,11 @@ struct StmState {
     content_kappa: Option<ctm::ContentKappa>,
     #[serde(default)]
     initialization: Option<String>,
+    /// Per-document group index for a content model (empty otherwise); lets a
+    /// loaded model recompute ν per group. Old saves lack it and fall back to the
+    /// group-averaged beta (refit to recompute exactly).
+    #[serde(default)]
+    groups: Vec<usize>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StsState {
@@ -6638,6 +6643,7 @@ impl CTM {
             content_beta: None,
             content_kappa: None,
             num_groups: 1,
+            groups: None,
             bound: f64::NAN,
             bound_history: Vec::new(),
             converged: false,
@@ -6895,6 +6901,9 @@ pub struct STM {
     feature_names: Vec<String>,
     content_beta: Option<Vec<Vec<Vec<f64>>>>, // G×K×V; None if no content
     content_kappa: Option<ctm::ContentKappa>, // SAGE κ decomposition; None if no content
+    // Per-document group index (empty if no content); lets `_recompute_eta_cov`
+    // rebuild each document's ν against its own group's β instead of the average.
+    groups: Vec<usize>,
     group_names: Vec<String>,
     /// When an ordered-time content axis is used, the saturated `group_names` are
     /// the cross `base@period`; `num_base_groups`×`num_time_periods` == G, with the
@@ -7033,6 +7042,7 @@ impl STM {
             feature_names: Vec::new(),
             content_beta: None,
             content_kappa: None,
+            groups: Vec::new(),
             group_names: Vec::new(),
             num_base_groups: 0,
             num_time_periods: 0,
@@ -7483,6 +7493,7 @@ impl STM {
         slf.feature_names = feat_names;
         slf.content_beta = model.content_beta;
         slf.content_kappa = model.content_kappa;
+        slf.groups = model.groups.clone().unwrap_or_default();
         slf.group_names = group_vocab;
         slf.num_base_groups = num_base_groups;
         slf.num_time_periods = num_time_periods;
@@ -7668,9 +7679,17 @@ impl STM {
             lambda: lambda_v,
             nu: Vec::new(),
             gamma: None,
-            content_beta: None,
-            content_kappa: None,
-            num_groups: 1,
+            // Content model: rebuild each document's ν against its own group's β
+            // (falls back to the averaged beta_estep when groups weren't persisted,
+            // e.g. a model saved before this was tracked).
+            content_beta: self.content_beta.clone(),
+            content_kappa: self.content_kappa.clone(),
+            num_groups: self.content_beta.as_ref().map_or(1, |cb| cb.len()),
+            groups: if self.content_beta.is_some() && !self.groups.is_empty() {
+                Some(self.groups.clone())
+            } else {
+                None
+            },
             bound: f64::NAN,
             bound_history: Vec::new(),
             converged: false,
@@ -8017,6 +8036,7 @@ impl STM {
                 variational: self.variational.clone(),
                 content_kappa: self.content_kappa.clone(),
                 initialization: self.initialization.clone(),
+                groups: self.groups.clone(),
             },
         )
     }
@@ -8050,6 +8070,7 @@ impl STM {
             feature_names: s.feature_names,
             content_beta: s.content_beta,
             content_kappa: s.content_kappa,
+            groups: s.groups,
             mu: s.mu,
             sigma: s.sigma,
             sigma_estep: Vec::new(), // not persisted; falls back to sigma in _recompute_eta_cov
