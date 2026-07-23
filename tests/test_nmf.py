@@ -174,3 +174,35 @@ def test_iters_override():
     m.fit(docs, iters=5)
     assert m.iters_run == 5
     assert len(m.error_history) == 6  # initial error + one per iteration
+
+
+# --------------------------------------------------------------------------- #
+# #448: NNDSVD rank boundary must raise ValueError, never panic.
+# --------------------------------------------------------------------------- #
+
+def test_nndsvd_above_rank_raises_valueerror():
+    """K > min(num_docs, num_words) with NNDSVD must be a clean ValueError.
+
+    Repro from #448: 2 docs, vocab {a,b,c} (V=3), K=3 -> min(D,V)=2 < 3, which
+    previously reached an out-of-bounds access in nndsvd_init and panicked.
+    """
+    docs = [["a", "b"], ["a", "c"]]  # D=2, V=3 -> min=2
+    with pytest.raises(ValueError, match="min\\(num_documents, num_words\\)"):
+        topica.NMF(3).fit(docs)  # init defaults to nndsvd
+
+
+def test_random_init_allowed_above_nndsvd_rank():
+    """The rank guard is init-specific: random init has no such limit."""
+    docs = [["a", "b"], ["a", "c"]]  # min(D,V)=2
+    m = topica.NMF(3, init="random", seed=1)
+    m.fit(docs, iters=5)  # must not raise
+    assert m.topic_word.shape[0] == 3
+
+
+def test_nndsvd_at_exactly_the_rank_is_accepted():
+    """K == min(num_docs, num_words) is within range and must fit."""
+    # 3 docs, vocab {a,b,c} -> min(D,V)=3; K=3 is the boundary.
+    docs = [["a", "b", "c"], ["a", "a", "b"], ["b", "c", "c"]]
+    m = topica.NMF(3, init="nndsvd")
+    m.fit(docs, iters=5)  # must not raise/panic
+    assert m.topic_word.shape[0] == 3

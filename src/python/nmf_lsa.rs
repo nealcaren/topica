@@ -12,7 +12,10 @@ use pyo3::types::PyDict;
 /// the squared Frobenius loss (default) and the generalized Kullback-Leibler
 /// divergence. The reference implementation is scikit-learn's
 /// ``sklearn.decomposition.NMF`` (BSD-3-Clause); we read it to match the
-/// initialization and update detail. The topic-word matrix is each row of ``H``
+/// initialization and the multiplicative-update formulas. The update order and
+/// the convergence-check cadence differ from sklearn (see the notes in
+/// ``nmf.rs``), so the guarantee is eventual close agreement of the fitted
+/// factors, not iteration-for-iteration parity. The topic-word matrix is each row of ``H``
 /// normalized to sum 1, and the document-topic matrix is each row of ``W``
 /// normalized to sum 1.
 #[pyclass(module = "topica")]
@@ -129,7 +132,10 @@ impl NMF {
     /// Create an unfitted model. `num_topics` is K (2 <= K <= vocabulary size).
     /// `beta_loss` is `"frobenius"` (default) or `"kullback-leibler"` (alias
     /// `"kl"`). `init` is `"nndsvd"` (default, deterministic SVD-based init) or
-    /// `"random"` (seeded by `seed`). `weighting` is `"count"` (default, raw term
+    /// `"random"` (seeded by `seed`). The `"nndsvd"` init fills exact-zero entries
+    /// of the SVD factors with the data mean (scikit-learn's NNDSVDa variant), so
+    /// the initial factors are dense; it requires `num_topics <= min(num_documents,
+    /// num_words)` (use `"random"` above that rank). `weighting` is `"count"` (default, raw term
     /// counts) or `"tfidf"`. `convergence_tol` stops early on the relative
     /// reconstruction-error decrease. `seed` affects only `init="random"`.
     #[new]
@@ -198,6 +204,25 @@ impl NMF {
             return Err(PyValueError::new_err(
                 "vocabulary must have at least num_topics words",
             ));
+        }
+        // NNDSVD-family init needs `num_topics` leading singular triplets, which
+        // only exist up to rank min(num_documents, num_words). Above that,
+        // `nndsvd_init` would index past the truncated SVD and panic. Reject it
+        // here with a clear error (matching sklearn, which raises ValueError for
+        // NNDSVD above min(n_samples, n_features)); `init="random"` has no such
+        // rank limit, so this guard is init-specific (#448).
+        if matches!(slf.init, nmf::Init::Nndsvd) {
+            let max_rank = corpus.num_docs().min(num_types);
+            if slf.num_topics > max_rank {
+                return Err(PyValueError::new_err(format!(
+                    "init=\"nndsvd\" requires num_topics <= min(num_documents, num_words) \
+                     = {max_rank} (got num_topics={} with {} documents and {} words). \
+                     Reduce num_topics, or use init=\"random\", which supports a larger rank.",
+                    slf.num_topics,
+                    corpus.num_docs(),
+                    num_types,
+                )));
+            }
         }
         let it = iters.unwrap_or(200);
         let (k, bl, ini, tfidf, seed) = (
