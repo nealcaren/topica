@@ -131,7 +131,21 @@ impl BatchNorm {
                 out[i][j] = h;
             }
         }
-        (out, BnCache { xhat, inv_std }, mean, var)
+        // The in-batch normalization above uses the biased variance (÷ n), but the
+        // running statistic must track the UNBIASED (Bessel-corrected, ÷ (n-1))
+        // variance — that is what PyTorch/Pyro BatchNorm accumulates, and eval-time
+        // normalization reads the running variance. Returning the biased var here
+        // left the running variance systematically too small (× (n-1)/n), so a
+        // topica-trained model normalized held-out documents differently from the
+        // reference at inference. (n ≥ 2 here: the training loop skips smaller
+        // batches; guard n == 1 anyway.)
+        let bessel = if n > 1 {
+            n as f64 / (n as f64 - 1.0)
+        } else {
+            1.0
+        };
+        let running_var: Vec<f64> = var.iter().map(|&v| v * bessel).collect();
+        (out, BnCache { xhat, inv_std }, mean, running_var)
     }
 
     /// Fold a batch's statistics into the running estimates.
@@ -2492,6 +2506,41 @@ mod tests {
             covered.len(),
             k,
             "stick-breaking: topics did not cover all blocks"
+        );
+    }
+
+    /// BatchNorm must normalize the batch with the biased variance but track the
+    /// running variance with Bessel's correction (unbiased), matching PyTorch.
+    #[test]
+    fn batchnorm_running_var_is_unbiased() {
+        // x = [[0], [2]]: mean = 1, biased var = 1, unbiased var = 2.
+        let mut bn = BatchNorm::new(1);
+        assert!((bn.running_var[0] - 1.0).abs() < 1e-12);
+        assert!((bn.momentum - 0.1).abs() < 1e-12);
+
+        let x = vec![vec![0.0], vec![2.0]];
+        let (out, cache, mean, var) = bn.forward_train(&x);
+
+        assert!((mean[0] - 1.0).abs() < 1e-12, "mean = {}", mean[0]);
+        // The stat returned for the running update is the UNBIASED variance (2.0),
+        // not the biased 1.0.
+        assert!(
+            (var[0] - 2.0).abs() < 1e-12,
+            "returned running var = {}",
+            var[0]
+        );
+        // In-batch normalization still uses the biased variance (1.0).
+        let inv_std_biased = 1.0 / (1.0 + BN_EPS).sqrt();
+        assert!((cache.inv_std[0] - inv_std_biased).abs() < 1e-12);
+        assert!((out[0][0] + inv_std_biased).abs() < 1e-9); // (0-1)*inv_std
+        assert!((out[1][0] - inv_std_biased).abs() < 1e-9); // (2-1)*inv_std
+
+        bn.update_running(&mean, &var);
+        // running_var = (1 - 0.1) * 1.0 + 0.1 * 2.0 = 1.1 (would be 1.0 with biased var).
+        assert!(
+            (bn.running_var[0] - 1.1).abs() < 1e-12,
+            "running_var = {}, expected 1.1",
+            bn.running_var[0]
         );
     }
 }
