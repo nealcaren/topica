@@ -10,12 +10,15 @@ use rand::Rng;
 /// single topic.
 #[inline]
 pub fn max_packable_count(topic_bits: u32) -> u32 {
-    if topic_bits >= 32 {
+    match topic_bits {
+        // K == 1: the topic index needs no bits, so the entire 32-bit width holds
+        // the count. `1u32 << 32` is an out-of-range shift (it would wrap to 1 and
+        // wrongly yield a ceiling of 0, rejecting every K=1 fit), so special-case it.
+        0 => u32::MAX,
         // Degenerate: no bits left for the count. Cannot happen for real K, but
         // keep the arithmetic well-defined rather than shifting by 32.
-        0
-    } else {
-        (1u32 << (32 - topic_bits)) - 1
+        b if b >= 32 => 0,
+        b => (1u32 << (32 - b)) - 1,
     }
 }
 
@@ -444,6 +447,7 @@ mod tests {
     #[test]
     fn max_packable_count_matches_the_high_bit_width() {
         // Count occupies the high (32 - topic_bits) bits.
+        assert_eq!(max_packable_count(0), u32::MAX); // K=1: full 32-bit count width
         assert_eq!(max_packable_count(1), (1u32 << 31) - 1);
         assert_eq!(max_packable_count(10), (1u32 << 22) - 1); // K up to 1024
         assert_eq!(max_packable_count(16), 65_535); // K up to 65536
@@ -505,6 +509,25 @@ mod tests {
         let corpus = Corpus {
             id_to_word: vec!["w0".to_string()],
             docs: vec![vec![0u32, 0, 0]], // 3 == ceiling
+            doc_names: vec!["d0".to_string()],
+            doc_labels: vec![String::new()],
+            doc_freqs: vec![0u32; 1],
+            total_freqs: vec![0u32; 1],
+        };
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        m.initialize(&corpus, &mut rng); // must not panic
+    }
+
+    // Regression for the K=1 panic (#447): num_topics=1 => topic_bits=0 => the count
+    // uses the full 32-bit width, so the ceiling is u32::MAX and a frequent word must
+    // be accepted rather than rejected by the overflow guard.
+    #[test]
+    fn initialize_accepts_a_frequent_word_when_k_is_one() {
+        let mut m = TopicModel::new(1, 1.0, 0.01, 1);
+        assert_eq!(m.topic_bits, 0);
+        let corpus = Corpus {
+            id_to_word: vec!["w0".to_string()],
+            docs: vec![vec![0u32; 49]], // 49 occurrences, as in the CI-failing fits
             doc_names: vec!["d0".to_string()],
             doc_labels: vec![String::new()],
             doc_freqs: vec![0u32; 1],
