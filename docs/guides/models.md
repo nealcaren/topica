@@ -1193,8 +1193,10 @@ literal reproduction.
 > **0.5 note:** the default prior changed from the earlier Gaussian ridge to the
 > sparse Laplace prior. This is a deliberate correctness fix (#422) — the old
 > default was not SAGE's defining sparse prior. Pass `prior="gaussian"` to recover
-> the previous behaviour exactly. Held-out `transform`/`doc_topic` will differ
-> slightly; the fitted topic structure is unaffected.
+> the previous behaviour exactly. The sparse deviations change `β`, so a default
+> fit's topic-word distributions and held-out `transform`/`doc_topic` differ from
+> before (strong group structure is still recovered). A SAGE model saved before
+> this change must be re-fit; the older on-disk layout is not migrated.
 
 ## Hierarchy models
 

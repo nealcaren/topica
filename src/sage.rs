@@ -234,6 +234,9 @@ pub fn run_sweep_sage<R: Rng>(
 
 /// Outer adaptive-reweighting iterations for the sparse priors.
 const SPARSE_OUTER_ITERS: usize = 4;
+/// Fixed neutral precision for the first (κ = 0) sparse solve, independent of
+/// `prior_variance` so Jeffreys stays scale-free.
+const SPARSE_INIT_PRECISION: f64 = 1.0;
 /// Scale-aware floor on |κ| (Laplace) / κ² (Jeffreys) so the reweighted precision
 /// cannot blow up to +inf as a coefficient approaches zero. Caps Laplace precision
 /// at `1/(b·FLOOR)` and Jeffreys at `1/FLOOR²`.
@@ -367,12 +370,14 @@ pub fn optimize_kappa(model: &mut SageModel, max_iter: usize) -> bool {
         let mut w = vec![0.0; dim];
         if prior.is_sparse() {
             // Warm-start the precision from the incoming κ; if κ is all-zero (the
-            // first update of a fresh fit), start from the uniform Gaussian ridge so
-            // the first solve is a plain ridge and yields a non-zero κ to reweight
-            // from — never derive 1/|κ| from κ = 0.
+            // first update of a fresh fit), seed a plain neutral ridge so the first
+            // solve yields a non-zero κ to reweight from — never derive 1/|κ| from
+            // κ = 0. This seed is deliberately a FIXED precision, independent of
+            // `prior_variance`, so Jeffreys stays scale-free (its reweight `1/κ²`
+            // never sees `prior_variance`) and Laplace's scale enters only through
+            // its own `1/(b|κ|)` reweight, not the throwaway init.
             if x.iter().all(|&v| v == 0.0) {
-                let iv = 1.0 / prior_variance;
-                w.iter_mut().for_each(|wi| *wi = iv);
+                w.iter_mut().for_each(|wi| *wi = SPARSE_INIT_PRECISION);
             } else {
                 reweight_precision(&x, prior, prior_variance, &mut w);
             }
@@ -536,6 +541,10 @@ mod tests {
     /// still recover the discrimination and (b) shrink the non-discriminative κ_c
     /// harder than the Gaussian ridge.
     fn fit_prior(prior: SagePrior) -> SageModel {
+        fit_prior_pv(prior, 1.0)
+    }
+
+    fn fit_prior_pv(prior: SagePrior, prior_variance: f64) -> SageModel {
         let mut rng = ChaCha8Rng::seed_from_u64(1);
         let mut docs = Vec::new();
         let mut groups = Vec::new();
@@ -552,7 +561,7 @@ mod tests {
             docs.push(doc);
             groups.push(g);
         }
-        let mut model = SageModel::new(1, 2, 6, 0.1, 1.0, prior);
+        let mut model = SageModel::new(1, 2, 6, 0.1, prior_variance, prior);
         model.set_background(&docs);
         model.initialize(&docs, &groups, &mut rng);
         for iter in 1..=200 {
@@ -562,6 +571,24 @@ mod tests {
             }
         }
         model
+    }
+
+    #[test]
+    fn jeffreys_is_scale_free_in_prior_variance() {
+        // The Normal-Jeffreys prior is scale-free, so prior_variance must not affect
+        // the fit (its reweight is 1/κ² and its warm-start is a fixed precision).
+        let a = fit_prior_pv(SagePrior::Jeffreys, 1e-3);
+        let b = fit_prior_pv(SagePrior::Jeffreys, 1e3);
+        for g in 0..a.num_groups {
+            for v in 0..a.num_types {
+                assert!(
+                    (a.kappa_c[g][v] - b.kappa_c[g][v]).abs() < 1e-9,
+                    "Jeffreys κ_c depends on prior_variance at (g={g}, v={v}): {} vs {}",
+                    a.kappa_c[g][v],
+                    b.kappa_c[g][v]
+                );
+            }
+        }
     }
 
     #[test]

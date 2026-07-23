@@ -687,17 +687,20 @@ class TestSageValidation:
 # Sparse prior (issue #422 part 2)
 # ---------------------------------------------------------------------------
 def _shared_corpus(seed=0, n=80):
-    """Group-discriminative words + a few shared background words, so a sparse
-    prior can zero the background deviations."""
+    """Genuinely group-discriminative: group g0 draws from A, g1 from B (the
+    vocabulary is tied to the GROUP, not to document parity), plus a few shared
+    background words common to both groups — so a sparse prior can drive the
+    background deviations to ~0 while keeping the discriminative ones."""
     rng = np.random.default_rng(seed)
     A = "cat dog pet vet paw".split()
     B = "star moon sky sun orbit".split()
     shared = "the a of".split()
     docs, grp = [], []
     for i in range(n):
-        base = A if i % 2 == 0 else B
+        g0 = i < n // 2
+        base = A if g0 else B
         docs.append(list(rng.choice(base, size=10)) + list(rng.choice(shared, size=3)))
-        grp.append("g0" if i < n // 2 else "g1")
+        grp.append("g0" if g0 else "g1")
     return docs, grp
 
 
@@ -718,20 +721,26 @@ class TestSageSparsePrior:
         V = len(m.vocabulary)
         assert ck["topic"].shape == (2, V)
         assert ck["group"].shape == (m.num_groups, V)
+        assert ck["interaction"].shape == (2 * m.num_groups, V)
         assert m.prior == prior
         # a valid fit under every prior: doc_topic rows sum to 1
         npt.assert_allclose(m.doc_topic.sum(axis=1), 1.0, atol=1e-9)
 
-    def test_laplace_is_sparser_than_gaussian(self):
+    def test_laplace_shrinks_background_harder(self):
+        # Sparsity shows on the NON-discriminative (shared-background) words: their
+        # group deviation should be ~0. Total L1 is the wrong measure — Laplace
+        # correctly lets the true group signals grow (that is what L1 vs L2 does),
+        # so it must be measured on the background words specifically (as the Rust
+        # test does).
         docs, grp = _shared_corpus()
         lap = SAGE(2, prior="laplace", seed=1).fit(docs, grp, iters=300)
         gau = SAGE(2, prior="gaussian", seed=1).fit(docs, grp, iters=300)
-        lap_l1 = np.abs(lap.content_kappa["group"]).sum()
-        gau_l1 = np.abs(gau.content_kappa["group"]).sum()
-        assert lap_l1 < gau_l1, f"laplace L1 {lap_l1:.3f} !< gaussian {gau_l1:.3f}"
-        # more near-zero coefficients under the sparse prior
-        nz = lambda m: (np.abs(m.content_kappa["group"]) < 0.05).mean()
-        assert nz(lap) > nz(gau)
+        shared = {"the", "a", "of"}
+        bg = [i for i, w in enumerate(lap.vocabulary) if w in shared]
+        assert bg, "background words not in vocabulary"
+        lap_bg = np.abs(lap.content_kappa["group"][:, bg]).sum()
+        gau_bg = np.abs(gau.content_kappa["group"][:, bg]).sum()
+        assert lap_bg < gau_bg, f"laplace bg |κ| {lap_bg:.3f} !< gaussian {gau_bg:.3f}"
 
     def test_save_load_preserves_prior_and_kappa(self, tmp_path):
         docs, grp = _shared_corpus()
@@ -746,3 +755,12 @@ class TestSageSparsePrior:
     def test_content_kappa_requires_fit(self):
         with pytest.raises(RuntimeError):
             _ = SAGE(2).content_kappa
+
+    def test_jeffreys_is_scale_free(self):
+        # The Normal-Jeffreys prior is scale-free: prior_variance must not change it.
+        docs, grp = _shared_corpus()
+        a = SAGE(2, prior="jeffreys", prior_variance=1e-3, seed=1).fit(docs, grp, iters=200)
+        b = SAGE(2, prior="jeffreys", prior_variance=1e3, seed=1).fit(docs, grp, iters=200)
+        np.testing.assert_allclose(
+            a.content_kappa["group"], b.content_kappa["group"], atol=1e-9
+        )

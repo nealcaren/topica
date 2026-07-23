@@ -210,10 +210,6 @@ struct SageState {
     num_topics: usize,
     alpha: f64,
     prior_variance: f64,
-    // Models saved before #422 had only the Gaussian ridge; default old files to it
-    // rather than inheriting the new sparse default.
-    #[serde(default = "default_gaussian_prior")]
-    prior: String,
     optimize_interval: usize,
     burn_in: usize,
     seed: u64,
@@ -221,13 +217,6 @@ struct SageState {
     fitted: bool,
     num_groups: usize,
     beta: Vec<Vec<f64>>,
-    // Content deviations, retained for `content_kappa`; absent in pre-#422 saves.
-    #[serde(default)]
-    kappa_t: Vec<Vec<f64>>,
-    #[serde(default)]
-    kappa_c: Vec<Vec<f64>>,
-    #[serde(default)]
-    kappa_i: Vec<Vec<f64>>,
     theta: Option<Arr2>,
     group_names: Vec<String>,
     corpus: Option<corpus::Corpus>,
@@ -240,15 +229,29 @@ struct SageState {
     // Thinned MCMC theta draws (num_draws, num_docs, num_topics), f32.
     #[serde(default)]
     theta_draws: Option<Arr3f32>,
+    // The κ content-deviation prior (#422). Appended at the end so the positional
+    // bincode layout of the fields above is unchanged. The `#[serde(default)]`
+    // here does NOT migrate genuinely older files — bincode is positional and not
+    // self-describing, so a file written before these fields cannot be loaded (as
+    // with any topica save-format schema change); it is the correct default value
+    // for round-trips within this version.
+    #[serde(default = "default_gaussian_prior")]
+    prior: String,
+    #[serde(default)]
+    kappa_t: Vec<Vec<f64>>,
+    #[serde(default)]
+    kappa_c: Vec<Vec<f64>>,
+    #[serde(default)]
+    kappa_i: Vec<Vec<f64>>,
 }
 /// serde default for the bound of a model saved before convergence tracking
 /// existed: NaN signals "unknown", distinct from a real bound of 0.
 fn nan() -> f64 {
     f64::NAN
 }
-/// serde default for a SAGE model saved before the sparse prior existed (#422):
-/// those were fit with the Gaussian ridge, so describe them as such rather than
-/// letting them inherit the new `laplace` default.
+/// serde default value for `SageState::prior` — the pre-sparse behaviour was the
+/// Gaussian ridge, so that is the correct default value. (This does not itself
+/// migrate old files; see the note on the field.)
 fn default_gaussian_prior() -> String {
     "gaussian".to_string()
 }
