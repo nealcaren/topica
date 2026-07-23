@@ -135,3 +135,26 @@ def test_single_class_raises():
     m = topica.DiscLDA(1, 2, iters=10)
     with pytest.raises(ValueError):
         m.fit(docs, ["A"] * len(docs))
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
+def test_non_finite_hyperparams_rejected(bad):
+    # #460: `<= 0.0` is false for NaN/+inf, so they slipped past the guard and
+    # produced NaN topic-word / doc-topic / predict_proba. Now rejected.
+    with pytest.raises(ValueError, match="finite"):
+        topica.DiscLDA(2, 2, alpha=bad)
+    with pytest.raises(ValueError, match="finite"):
+        topica.DiscLDA(2, 2, beta=bad)
+
+
+def test_zero_infer_sweeps_rejected():
+    with pytest.raises(ValueError, match="infer_sweeps"):
+        topica.DiscLDA(2, 2, infer_sweeps=0)
+
+
+def test_fit_iters_zero_rejected():
+    # The constructor rejects iters == 0; a per-fit override must too (#460).
+    docs, y = _corpus()
+    m = topica.DiscLDA(2, 2, iters=10)
+    with pytest.raises(ValueError, match="iters"):
+        m.fit(docs, y, iters=0)
