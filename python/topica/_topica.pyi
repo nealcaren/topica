@@ -1440,10 +1440,12 @@ class SupervisedLDA:
         """Predict y-hat for new documents. Out-of-vocabulary words are ignored.
 
         With return_std=False (default) returns a 1-D array of predictions. With
-        return_std=True returns (mean, std), where std is the posterior-predictive
-        standard deviation — the document's topic uncertainty propagated through the
-        regression plus the residual variance sigma^2. A 95% interval is
-        mean +/- 1.96 * std."""
+        return_std=True returns (mean, std), where std propagates the new document's
+        variational topic uncertainty through the regression plus the residual
+        variance sigma^2. This is a conditional predictive spread (it holds the
+        fitted beta, eta, sigma^2 fixed and uses the mean-field Cov(zbar)), not a
+        full Bayesian posterior-predictive interval; mean +/- 1.96 * std is a
+        Gaussian approximation under those conditions."""
         ...
 
     @property
@@ -1472,9 +1474,12 @@ class SupervisedLDA:
     def coefficient_se(self) -> numpy.typing.NDArray[numpy.float64] | None:
         """Standard error of each regression coefficient eta, shape (num_topics,),
         from the OLS covariance sigma^2 * M^-1 where M = sum_d E[zbar zbar^T] is the
-        normal-equations matrix the fit solves for eta. Aligned to coefficients;
-        |eta| > ~2*SE is the usual significance cue. None for models saved before
-        this was added."""
+        normal-equations matrix the fit solves for eta. This is a conditional
+        approximation — it treats the fitted topics, beta, and the variational
+        moments as fixed, so it does not propagate topic/beta uncertainty. Read
+        |eta| > ~2*SE as an informal importance cue under those assumptions, not a
+        calibrated significance test. Aligned to coefficients. None for models saved
+        before this was added."""
         ...
     @property
     def sigma2(self) -> float:

@@ -65,7 +65,7 @@ generated from `python/topica/registry.py`.
 | `KeyATM` | text, seeds | gibbs | seed-reproducible | Keyword-assisted topics: anchor named topics with a few seed words each. |
 | `SeededLDA` | text, seeds | gibbs | seed-reproducible | Seeded LDA: steer named topics toward supplied seed words. |
 | `LabeledLDA` | text, labels | gibbs | seed-reproducible | Labeled LDA: each document label is a topic; tokens are restricted to its labels. |
-| `SupervisedLDA` | text, labels | gibbs | seed-reproducible | Supervised LDA: topics shaped to predict a per-document real-valued response. |
+| `SupervisedLDA` | text, labels | variational | seed-reproducible | Supervised LDA: topics shaped to predict a per-document real-valued response. |
 | `DiscLDA` | text, labels | gibbs | seed-reproducible | Discriminative LDA (Lacoste-Julien et al. 2008): topics split into per-class and shared blocks; reads how classes talk differently. |
 
 ### Short text
@@ -1048,14 +1048,17 @@ Topics shaped to predict a per-document real-valued response (Blei & McAuliffe).
 `coefficients` give each topic's pull on the outcome, and `predict` scores new
 documents.
 
-Both come with uncertainty. `coefficient_se` is the standard error of each
-regression coefficient, from the OLS covariance `σ²M⁻¹` of the same normal
-equations the fit solves (`|coef| > ~2·SE` is the significance cue), so you can
-say which topics reliably move the outcome. `predict(docs, return_std=True)`
-returns `(mean, std)`, where `std` is the posterior-predictive standard
-deviation — the document's topic uncertainty propagated through the regression
-plus the residual `σ²` — so a prediction comes with a proper interval
-(`mean ± 1.96·std`) rather than a bare point.
+Both come with uncertainty, reported as *conditional* variational
+approximations. `coefficient_se` is the standard error of each regression
+coefficient from the OLS covariance `σ²M⁻¹` of the same normal equations the fit
+solves. It conditions on the fitted topics, `β`, and the variational moments, so
+it does not propagate topic or `β` uncertainty; read `|coef| > ~2·SE` as an
+informal cue for which topics move the outcome, not a calibrated significance
+test. `predict(docs, return_std=True)` returns `(mean, std)`, where `std`
+propagates the new document's variational topic uncertainty through the
+regression plus the residual `σ²`. This is a conditional predictive spread (the
+fitted `β`, `η`, `σ²` held fixed), not a full Bayesian posterior-predictive
+interval; `mean ± 1.96·std` is a Gaussian approximation under those conditions.
 
 ```python
 m = topica.SupervisedLDA(num_topics=20, seed=1)

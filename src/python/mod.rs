@@ -10455,19 +10455,20 @@ impl SupervisedLDA {
     ///
     /// `iters` is the number of variational-EM iterations; `var_iters` is the
     /// number of variational E-step iterations per document.
-    /// `keep_theta_draws` (default True) retains `num_theta_draws` thinned MCMC θ
-    /// snapshots in `theta_draws`, the cross-sweep posterior samples
-    /// `composition_theta` prefers over the Dirichlet approximation; set it False to
-    /// save memory.
+    /// `keep_theta_draws` (default True) retains `num_theta_draws` θ samples in
+    /// `theta_draws`. For SupervisedLDA these are independent draws from each
+    /// document's fitted variational Dirichlet(γ_d) — the mean-field posterior
+    /// approximation — not MCMC/cross-sweep snapshots; `composition_theta` can use
+    /// them in place of the plug-in Dirichlet mean. Set False to save memory.
     /// `convergence_tol` (default 0.0, disabled) enables opt-in early stopping: the
-    /// run stops once the relative change in the recorded log-likelihood between the
-    /// last two trace points, |ΔLL| / |LL|, falls below it, setting `converged`. The
-    /// monitored quantity is the collapsed model-fit log-likelihood; the comparison
-    /// window is the trace cadence (`check_every` / `progress_interval`), so a coarser
-    /// cadence compares more widely spaced sweeps. This is a pragmatic early-stop
-    /// heuristic on the log-likelihood trace, not a guarantee the Gibbs chain has
-    /// mixed. `check_every` is how often, in sweeps, the log-likelihood is recorded
-    /// and the `convergence_tol` test is applied.
+    /// run stops once the relative change in the recorded variational objective
+    /// between the last two trace points, |ΔL| / |L|, falls below it, setting
+    /// `converged`. The monitored quantity is the variational-EM log-likelihood
+    /// bound; the comparison window is the trace cadence (`check_every`), so a
+    /// coarser cadence compares more widely spaced iterations. This is a pragmatic
+    /// early-stop heuristic on the bound trace, not a convergence guarantee.
+    /// `check_every` is how often, in EM iterations, the bound is recorded and the
+    /// `convergence_tol` test is applied.
     #[pyo3(signature = (data, y, *, iters=25, var_iters=15,
                         keep_theta_draws=true, num_theta_draws=25,
                         convergence_tol=0.0_f64, check_every=1_usize))]
@@ -10509,6 +10510,15 @@ impl SupervisedLDA {
                 "y has length {} but there are {} documents",
                 y.len(),
                 corpus.num_docs()
+            )));
+        }
+        // A non-finite response poisons the Gaussian response coupling in the
+        // E-step and the η/σ² normal equations in the M-step, silently producing
+        // NaN topics, θ, and coefficients (#458). Reject it before fitting.
+        if let Some(pos) = y.iter().position(|v| !v.is_finite()) {
+            return Err(PyValueError::new_err(format!(
+                "y must contain only finite values; y[{pos}] is {}",
+                y[pos]
             )));
         }
 
@@ -10597,10 +10607,14 @@ impl SupervisedLDA {
     /// :class:`Corpus`). Out-of-vocabulary words are ignored.
     ///
     /// With `return_std=False` (default) returns a 1-D array of predictions. With
-    /// `return_std=True` returns `(mean, std)`, where `std` is the posterior-
-    /// predictive standard deviation: the document's topic uncertainty propagated
-    /// through the regression, `ηᵀ Cov(z̄) η`, plus the residual variance σ². A
-    /// 95% predictive interval is `mean ± 1.96 * std`.
+    /// `return_std=True` returns `(mean, std)`, where `std` propagates the new
+    /// document's variational topic uncertainty through the regression,
+    /// `ηᵀ Cov(z̄) η`, plus the residual variance σ². This is a *conditional*
+    /// predictive spread — it holds the fitted β, η, and σ² fixed and uses the
+    /// mean-field Cov(z̄), so it is not a full Bayesian posterior-predictive
+    /// interval (it does not propagate uncertainty in the learned topics or
+    /// coefficients). `mean ± 1.96·std` is a Gaussian approximation under those
+    /// conditions.
     /// `var_iters` is the number of variational E-step iterations per new document.
     #[pyo3(signature = (data, *, var_iters=20, return_std=false))]
     fn predict<'py>(
@@ -10697,9 +10711,11 @@ impl SupervisedLDA {
         Ok(Array1::from(vec![self.alpha; self.num_topics]).to_pyarray_bound(py))
     }
 
-    /// Thinned θ draws, shape ``(num_draws, num_docs, num_topics)``, dtype
-    /// ``float32``. ``None`` when fit with ``keep_theta_draws=False``. Each draw
-    /// samples from the variational posterior Dirichlet(γ_d).
+    /// Variational θ draws, shape ``(num_draws, num_docs, num_topics)``, dtype
+    /// ``float32``. ``None`` when fit with ``keep_theta_draws=False``. These are
+    /// independent samples from each document's fitted variational Dirichlet(γ_d)
+    /// (the mean-field posterior approximation), taken after fitting — not thinned
+    /// MCMC or cross-sweep snapshots.
     #[getter]
     fn theta_draws<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray3<f32>>> {
         self.theta_draws.as_ref().map(|a| a.to_pyarray_bound(py))
@@ -10726,9 +10742,12 @@ impl SupervisedLDA {
 
     /// Standard error of each regression coefficient η, shape ``(num_topics,)``,
     /// from the OLS-style covariance σ²M⁻¹ where M = Σ_d E[z̄ z̄ᵀ] is the
-    /// normal-equations matrix the fit solves for η. Aligned to ``coefficients``;
-    /// |η| > ~2·SE is the usual significance cue. ``None`` for models saved before
-    /// this was added.
+    /// normal-equations matrix the fit solves for η. This is a *conditional*
+    /// approximation: it treats the fitted topics, β, and the variational moments
+    /// E[z̄ z̄ᵀ] as fixed and known, so it does not propagate uncertainty in the
+    /// learned topics or β. Read `|η| > ~2·SE` as an informal ordering/importance
+    /// cue under those assumptions, not a calibrated significance test. Aligned to
+    /// ``coefficients``. ``None`` for models saved before this was added.
     #[getter]
     fn coefficient_se<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray1<f64>>>> {
         self.require_fitted()?;

@@ -149,6 +149,16 @@ class TestApi:
         with pytest.raises(ValueError):
             SupervisedLDA(num_topics=2).fit(docs, y[:-1])
 
+    @pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+    def test_non_finite_y_raises(self, bad):
+        # #458: a non-finite response used to fit and silently produce NaN topics,
+        # theta, and coefficients. It must be rejected before fitting.
+        docs, y = _supervised_corpus(n=40)
+        y = list(y)
+        y[3] = float(bad)
+        with pytest.raises(ValueError, match="finite"):
+            SupervisedLDA(num_topics=2).fit(docs, y)
+
     def test_unfitted_raises(self):
         m = SupervisedLDA(num_topics=2)
         with pytest.raises(RuntimeError):
