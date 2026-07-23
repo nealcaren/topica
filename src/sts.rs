@@ -362,6 +362,11 @@ pub struct StsModel {
     pub bound_history: Vec<f64>,
     pub converged: bool,
     pub em_iters_run: usize,
+    /// The initialization route the fit actually took (issue #410): `"spectral"`,
+    /// `"random-fallback"` (spectral requested but recovery returned `None`), or
+    /// `"random"`. Lets the determinism report distinguish an exact spectral fit
+    /// from a seeded random fallback.
+    pub initialization: String,
 }
 
 impl StsModel {
@@ -820,23 +825,10 @@ pub fn fit_sts<R: Rng>(
     let mv: Vec<f64> = (0..v).map(|i| (freq[i] / total).ln()).collect();
 
     // β init (anchor-word spectral, else random), then κ_t = ln β − m so that at
-    // α^(s)=0 the topics start at β; κ_s fixed proportional to κ_t.
-    let beta = if init_spectral {
-        crate::spectral::spectral_init(docs, k, v).unwrap_or_else(|| {
-            let mut b = vec![vec![0.0f64; v]; k];
-            for row in b.iter_mut() {
-                let mut s = 0.0;
-                for x in row.iter_mut() {
-                    *x = 1.0 + rng.gen::<f64>();
-                    s += *x;
-                }
-                for x in row.iter_mut() {
-                    *x /= s;
-                }
-            }
-            b
-        })
-    } else {
+    // α^(s)=0 the topics start at β; κ_s fixed proportional to κ_t. `init_route`
+    // records which path actually ran (issue #410): spectral can fall back to the
+    // seeded random init when recovery returns None.
+    let random_beta = |rng: &mut R| -> Vec<Vec<f64>> {
         let mut b = vec![vec![0.0f64; v]; k];
         for row in b.iter_mut() {
             let mut s = 0.0;
@@ -849,6 +841,14 @@ pub fn fit_sts<R: Rng>(
             }
         }
         b
+    };
+    let (beta, init_route): (Vec<Vec<f64>>, &'static str) = if init_spectral {
+        match crate::spectral::spectral_init(docs, k, v) {
+            Some(b) => (b, "spectral"),
+            None => (random_beta(rng), "random-fallback"),
+        }
+    } else {
+        (random_beta(rng), "random")
     };
     // Aggregation groups for the κ M-step: the distinct levels of the sentiment
     // seed. Without a seed, a single group leaves κ_s unidentified and the model
@@ -1114,6 +1114,7 @@ pub fn fit_sts<R: Rng>(
         bound_history,
         converged,
         em_iters_run,
+        initialization: init_route.to_string(),
     }
 }
 

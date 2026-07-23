@@ -105,6 +105,7 @@ def _find_anchors(q, k, seed, candidates=None):
     norms = np.where(candidates, norms, -1.0)
     anchors = [int(np.argmax(norms))]
     basis = [q[anchors[0]] / np.linalg.norm(q[anchors[0]])]
+    fallback_used = False  # set when the seeded degenerate-basis fallback fires (#410)
     for _ in range(k - 1):
         bmat = np.array(basis)
         resid = q - (q @ bmat.T) @ bmat
@@ -116,12 +117,14 @@ def _find_anchors(q, k, seed, candidates=None):
         nb = np.linalg.norm(b)
         if nb < 1e-12:
             pool = [i for i in range(v) if candidates[i] and i not in anchors]
-            nxt = int(rng.choice(pool)) if pool else nxt
+            if pool:
+                nxt = int(rng.choice(pool))  # seeded random pick -> seed-dependent
+                fallback_used = True
             b = resid[nxt]
             nb = np.linalg.norm(b)
         anchors.append(nxt)
         basis.append(b / nb if nb > 1e-12 else b)
-    return anchors
+    return anchors, fallback_used
 
 
 def _recover_l2(q, anchors):
@@ -256,6 +259,7 @@ class AnchorLDA:
         self.frequency_temper = float(frequency_temper)
         self.anchor_min_doc_freq = float(anchor_min_doc_freq)
         self._fitted = False
+        self._anchor_fallback_used = None  # set by fit (#410); None until fitted
         self._topic_word = None
         self._doc_topic = None
         self._vocab = None
@@ -283,6 +287,14 @@ class AnchorLDA:
             "anchor_min_doc_freq": self.anchor_min_doc_freq,
         }
 
+    @property
+    def anchor_fallback_used(self) -> bool | None:
+        """Whether anchor selection hit its seeded degenerate-basis fallback during
+        fit (issue #410). ``None`` before fit. When ``True`` the recovered topics are
+        seed-dependent (a random anchor was drawn); when ``False`` selection was
+        deterministic. Read by :func:`topica.effective_determinism`."""
+        return self._anchor_fallback_used
+
     # -- fitting ------------------------------------------------------------
     def fit(self, data, *, iters=None, min_count=None):
         """Recover topics from ``data`` (a :class:`~topica.Corpus` or a list of
@@ -309,7 +321,9 @@ class AnchorLDA:
         thresh = (self.anchor_min_doc_freq * n_docs
                   if self.anchor_min_doc_freq < 1.0 else self.anchor_min_doc_freq)
         candidates = doc_freq >= max(1.0, thresh) if thresh > 0 else None
-        anchors = _find_anchors(q, self._k, self.seed, candidates)
+        anchors, self._anchor_fallback_used = _find_anchors(
+            q, self._k, self.seed, candidates
+        )
         if self.recover == "kl":
             n_iters = 200 if iters is None else int(iters)
             c, self._fit_history, self._converged = _recover_kl(

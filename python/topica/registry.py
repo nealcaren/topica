@@ -327,10 +327,12 @@ def effective_determinism(model, *, fit_settings: dict | None = None) -> dict:
     Scope (minimal, honest): claims the configuration determines are made exactly.
     Where the deciding factor is a *runtime* outcome the config cannot know — did a
     spectral initialization succeed or silently fall back to a seeded random one? did
-    anchor selection hit its degenerate-basis fallback? — this keeps the common-case
-    class and records the caveat in ``notes`` rather than over- or under-claiming.
-    Recording the actual initialization route in the fitted model (so those cases
-    become exact) is tracked as follow-up work.
+    anchor selection hit its degenerate-basis fallback? — the report reads the route
+    the fit actually took, recorded on the fitted model (``model.initialization`` for
+    STM/CTM/STS/DTM, ``model.anchor_fallback_used`` for AnchorLDA, issue #410), and
+    makes the exact call. For an *unfitted* model, or one saved before that route was
+    recorded, it falls back to the common-case class plus a caveat in ``notes`` rather
+    than over- or under-claiming.
 
     Parameters
     ----------
@@ -361,6 +363,10 @@ def effective_determinism(model, *, fit_settings: dict | None = None) -> dict:
     init = settings.get("init")
     inference = fit_settings.get("inference")
     is_cvb0 = sampler == "cvb0"
+    # The initialization route the fit actually took, recorded on the fitted model
+    # (issue #410). `None` before fit or for a model saved before it was recorded —
+    # then we fall back to the config-only caveat below.
+    route = getattr(model, "initialization", None)
 
     if is_cvb0:
         # cvb0 seeds only the initial responsibilities, then is deterministic;
@@ -383,27 +389,49 @@ def effective_determinism(model, *, fit_settings: dict | None = None) -> dict:
             notes.append(
                 "inference='svi' shuffles documents with the seeded RNG each epoch"
             )
+        elif route is not None:
+            # The fit recorded which init actually ran (#410) — an exact claim.
+            if route in ("random", "random-fallback"):
+                effective = "seed-reproducible"
+                notes.append(
+                    "init ran as 'random-fallback' (spectral recovery returned None)"
+                    if route == "random-fallback"
+                    else "init='random' seeds the initialization"
+                )
+            # "spectral"/"provided" -> keep the bit-exact base, no caveat needed.
         elif init == "random":
             effective = "seed-reproducible"
             notes.append(
                 "init='random' seeds the initialization; bit-exact only with "
                 "init='spectral'"
             )
-        else:  # init == "spectral", batch inference
+        else:  # init == "spectral", batch, unfitted or old save (route unknown)
             notes.append(
-                "bit-exact assumes spectral recovery succeeded; a degenerate corpus "
-                "falls back to a seeded random init (not recorded here)"
+                "bit-exact assumes spectral recovery succeeded; fit the model (or "
+                "re-save it) so the actual init route is recorded"
             )
-    elif cls == "DTM" and init == "spectral":
-        notes.append(
-            "init='spectral' is deterministic when spectral recovery succeeds; a "
-            "degenerate corpus falls back to a seeded static-LDA init"
-        )
+    elif cls == "DTM":
+        # DTM stays seed-reproducible either way (its post-init variational fit is
+        # not established as bit-exact); the recorded route just sharpens the note.
+        if route == "random-fallback":
+            notes.append("init requested spectral but fell back to a seeded static-LDA init")
+        elif route == "spectral":
+            notes.append("spectral init succeeded (deterministic); the fit remains seed-reproducible")
+        elif init == "spectral":
+            notes.append(
+                "init='spectral' is deterministic when spectral recovery succeeds; a "
+                "degenerate corpus falls back to a seeded static-LDA init"
+            )
     elif cls == "AnchorLDA":
-        notes.append(
-            "bit-exact assumes anchor selection did not hit its seeded degenerate-basis "
-            "fallback; not bit-identical across BLAS/LAPACK backends"
-        )
+        fallback = getattr(model, "anchor_fallback_used", None)
+        if fallback:
+            effective = "seed-reproducible"
+            notes.append("anchor selection hit its seeded degenerate-basis fallback")
+        else:
+            notes.append(
+                "not bit-identical across BLAS/LAPACK backends"
+                + ("" if fallback is False else "; assumes anchor selection did not hit its seeded fallback")
+            )
 
     replay: dict = {}
     if effective == "seed-reproducible":

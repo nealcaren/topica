@@ -500,6 +500,10 @@ pub struct DtmModel {
     pub alpha: f64,
     chains: Vec<Sslm>,
     pub bound: f64,
+    /// The initialization route the fit actually took (issue #410): `"spectral"`,
+    /// `"random-fallback"` (spectral requested but recovery returned `None`, so the
+    /// seeded static-LDA init ran), or `"random"` (`init="random"`).
+    pub initialization: String,
 }
 
 impl DtmModel {
@@ -602,7 +606,7 @@ pub fn fit_dtm<R: Rng>(
     // distributions directly is sufficient. Falls back to the random static-LDA
     // seed when the spectral solve is unavailable (e.g. K > vocab) or when the
     // caller asks for it (init="random", which matches gensim's LdaModel seed).
-    let seed: Vec<Vec<f64>> = match init_spectral
+    let (seed, init_route): (Vec<Vec<f64>>, &'static str) = match init_spectral
         .then(|| crate::spectral::spectral_init(docs, k, v))
         .flatten()
     {
@@ -614,9 +618,16 @@ pub fn fit_dtm<R: Rng>(
                     s[w][kk] = bw;
                 }
             }
-            s
+            (s, "spectral")
         }
-        None => init_suffstats(docs, v, k, 50, rng),
+        None => (
+            init_suffstats(docs, v, k, 50, rng),
+            if init_spectral {
+                "random-fallback"
+            } else {
+                "random"
+            },
+        ),
     };
     let mut chains: Vec<Sslm> = (0..k)
         .map(|kk| {
@@ -690,6 +701,7 @@ pub fn fit_dtm<R: Rng>(
         alpha,
         chains,
         bound,
+        initialization: init_route.to_string(),
     }
 }
 

@@ -423,6 +423,13 @@ pub struct CtmModel {
     /// default of `false` for old saves) lives on the `CtmState`/`StmState`
     /// structs in `python.rs`.
     pub diagonal: bool,
+    /// The initialization route the fit actually took (issue #410): one of
+    /// `"spectral"` (anchor-word init succeeded), `"random-fallback"` (spectral
+    /// was requested but recovery returned `None`, so a seeded random init ran),
+    /// `"random"` (`init="random"`), or `"provided"` (a caller-supplied `init_beta`).
+    /// Lets the config-aware determinism report distinguish a genuinely bit-exact
+    /// spectral fit from a seeded random fallback.
+    pub initialization: String,
 }
 
 /// Build per-group topic-word β (G×K×V) from the SAGE content deviations:
@@ -1128,12 +1135,13 @@ pub fn fit_ctm<R: Rng>(
     // A caller-supplied `init_beta` (K×V) overrides spectral/random init — the
     // warm-start hook that lets an STM-compatible front end inject an externally
     // computed base β (e.g. R `stm`'s exact spectral β) and reproduce that fit.
-    let mut beta = match init_beta {
-        Some(b) => b.iter().map(|row| row.to_vec()).collect(),
-        None if init_spectral => {
-            crate::spectral::spectral_init(docs, k, num_types).unwrap_or_else(|| random_beta(rng))
-        }
-        None => random_beta(rng),
+    let (mut beta, init_route): (Vec<Vec<f64>>, &'static str) = match init_beta {
+        Some(b) => (b.iter().map(|row| row.to_vec()).collect(), "provided"),
+        None if init_spectral => match crate::spectral::spectral_init(docs, k, num_types) {
+            Some(b) => (b, "spectral"),
+            None => (random_beta(rng), "random-fallback"),
+        },
+        None => (random_beta(rng), "random"),
     };
 
     // Content covariate state: background m_v and SAGE deviations κ; per-group β.
@@ -1434,6 +1442,7 @@ pub fn fit_ctm<R: Rng>(
         converged,
         em_iters_run,
         diagonal,
+        initialization: init_route.to_string(),
     }
 }
 
@@ -1482,10 +1491,13 @@ pub fn fit_ctm_svi<R: Rng>(
         }
         b
     };
-    let mut beta = if init_spectral {
-        crate::spectral::spectral_init(docs, k, num_types).unwrap_or_else(|| random_beta(rng))
+    let (mut beta, init_route): (Vec<Vec<f64>>, &'static str) = if init_spectral {
+        match crate::spectral::spectral_init(docs, k, num_types) {
+            Some(b) => (b, "spectral"),
+            None => (random_beta(rng), "random-fallback"),
+        }
     } else {
-        random_beta(rng)
+        (random_beta(rng), "random")
     };
 
     let mut mu_shared = vec![0.0f64; km1];
@@ -1646,6 +1658,7 @@ pub fn fit_ctm_svi<R: Rng>(
         converged: true,
         em_iters_run: epochs,
         diagonal,
+        initialization: init_route.to_string(),
     }
 }
 
