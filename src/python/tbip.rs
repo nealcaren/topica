@@ -148,14 +148,14 @@ impl TBIP {
     #[pyo3(signature = (data, *, group=None, iters=None, batch_size=None,
                         learning_rate=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         group: Option<Vec<String>>,
         iters: Option<usize>,
         batch_size: Option<usize>,
         learning_rate: Option<f64>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let (docs_str, doc_names): (Vec<Vec<String>>, Vec<String>) =
             if let Ok(c) = data.extract::<Corpus>() {
                 let strings = c
@@ -214,12 +214,12 @@ impl TBIP {
         }
         let mut vocab_pairs: Vec<(&str, usize)> = freq
             .iter()
-            .filter(|&(_, &c)| c >= self.min_count)
+            .filter(|&(_, &c)| c >= slf.min_count)
             .map(|(&w, &c)| (w, c))
             .collect();
         vocab_pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
         let vocabulary: Vec<String> = vocab_pairs.iter().map(|&(w, _)| w.to_string()).collect();
-        if vocabulary.len() < self.num_topics {
+        if vocabulary.len() < slf.num_topics {
             return Err(PyValueError::new_err(
                 "vocabulary must have at least num_topics words after min_count pruning",
             ));
@@ -265,13 +265,13 @@ impl TBIP {
         };
 
         let cfg = TbipConfig {
-            a_gamma: self.a_gamma,
-            b_gamma: self.b_gamma,
-            iters: iters.unwrap_or(self.iters),
-            batch_size: batch_size.unwrap_or(self.batch_size).max(1),
-            learning_rate: learning_rate.unwrap_or(self.learning_rate),
+            a_gamma: slf.a_gamma,
+            b_gamma: slf.b_gamma,
+            iters: iters.unwrap_or(slf.iters),
+            batch_size: batch_size.unwrap_or(slf.batch_size).max(1),
+            learning_rate: learning_rate.unwrap_or(slf.learning_rate),
         };
-        let (k, seed) = (self.num_topics, self.seed);
+        let (k, seed) = (slf.num_topics, slf.seed);
         let model = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             tbip::fit_tbip(
@@ -285,13 +285,13 @@ impl TBIP {
             )
         });
 
-        self.model = Some(model);
-        self.corpus = Some(coherence_corpus);
-        self.id_to_word = vocabulary;
-        self.author_names = author_names;
-        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.corpus = Some(coherence_corpus);
+        slf.id_to_word = vocabulary;
+        slf.author_names = author_names;
+        slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]

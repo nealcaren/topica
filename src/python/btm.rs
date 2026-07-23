@@ -166,11 +166,11 @@ impl BTM {
     /// Fit the model on a corpus or list of token lists.
     #[pyo3(signature = (data, *, iters=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: Option<usize>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -190,19 +190,19 @@ impl BTM {
             .0
         };
         let num_types = corpus.num_types();
-        if num_types < self.num_topics {
+        if num_types < slf.num_topics {
             return Err(PyValueError::new_err(
                 "vocabulary must have at least num_topics words",
             ));
         }
-        let iters = iters.unwrap_or(self.iters);
-        let alpha = self.alpha.unwrap_or(50.0 / self.num_topics as f64);
+        let iters = iters.unwrap_or(slf.iters);
+        let alpha = slf.alpha.unwrap_or(50.0 / slf.num_topics as f64);
         let (k, beta, window, background, seed) = (
-            self.num_topics,
-            self.beta,
-            self.window,
-            self.background,
-            self.seed,
+            slf.num_topics,
+            slf.beta,
+            slf.window,
+            slf.background,
+            slf.seed,
         );
 
         let (model, corpus) = py.allow_threads(move || {
@@ -220,11 +220,11 @@ impl BTM {
             );
             (m, corpus)
         });
-        self.model = Some(model);
-        self.corpus = Some(corpus);
-        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.corpus = Some(corpus);
+        slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Infer document-topic distributions for new documents (the `sum_b` scheme).

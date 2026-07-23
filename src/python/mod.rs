@@ -1006,7 +1006,7 @@ impl LDA {
                         turbo_merge_every=1_usize))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: usize,
@@ -1020,7 +1020,7 @@ impl LDA {
         check_every: usize,
         num_threads: Option<usize>,
         turbo_merge_every: usize,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         // Accept either a Corpus or a list[list[str]].
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -1037,10 +1037,10 @@ impl LDA {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
 
-        let num_topics = self.num_topics;
+        let num_topics = slf.num_topics;
         let num_types = corpus.num_types();
         let num_docs = corpus.num_docs();
-        let alpha_sum = self.alpha_sum.unwrap_or(num_topics as f64);
+        let alpha_sum = slf.alpha_sum.unwrap_or(num_topics as f64);
         let total_tokens = corpus.total_tokens().max(1) as f64;
 
         // When check_every=0 the caller explicitly disabled trace recording.
@@ -1062,11 +1062,11 @@ impl LDA {
         let draw_thin = theta_draw_thin(iters, draw_cap);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, num_topics)?;
 
-        let mut model = TopicModel::new(num_topics, alpha_sum, self.beta, num_types);
-        let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
+        let mut model = TopicModel::new(num_topics, alpha_sum, slf.beta, num_types);
+        let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         // Spectral anchor-word init is opt-in; it falls back to the random draw
         // when the corpus is too small for anchor recovery (spectral_init -> None).
-        if self.init_spectral {
+        if slf.init_spectral {
             match spectral::spectral_init(&corpus.docs, num_topics, num_types) {
                 Some(beta) => model.initialize_spectral(&corpus, &beta, &mut rng),
                 None => model.initialize(&corpus, &mut rng),
@@ -1075,10 +1075,10 @@ impl LDA {
             model.initialize(&corpus, &mut rng);
         }
 
-        let optimize_interval = self.optimize_interval;
-        let burn_in = self.burn_in;
+        let optimize_interval = slf.optimize_interval;
+        let burn_in = slf.burn_in;
         // num_threads from fit() overrides the constructor default for this run.
-        let num_threads = num_threads.unwrap_or(self.num_threads).max(1);
+        let num_threads = num_threads.unwrap_or(slf.num_threads).max(1);
         // turbo_merge_every (default 1): in the approximate-parallel (num_threads
         // > 1) path, defer the per-sweep count-table reconciliation, merging once
         // every this-many sweeps instead. 1 keeps the exact per-sweep path
@@ -1088,13 +1088,13 @@ impl LDA {
             return Err(PyValueError::new_err("turbo_merge_every must be >= 1"));
         }
         let merge_every = turbo_merge_every.max(1);
-        let seed_base = self.seed;
-        let light = self.light;
-        let warp = self.warp;
-        let cvb0_flag = self.cvb0;
-        let mh_steps = self.mh_steps;
-        let beta = self.beta;
-        let use_symmetric_alpha = self.use_symmetric_alpha;
+        let seed_base = slf.seed;
+        let light = slf.light;
+        let warp = slf.warp;
+        let cvb0_flag = slf.cvb0;
+        let mh_steps = slf.mh_steps;
+        let beta = slf.beta;
+        let use_symmetric_alpha = slf.use_symmetric_alpha;
 
         // CVB0 path: deterministic collapsed-variational inference. No MCMC, so
         // no θ-draws; convergence_tol early-stops on the mean |Δγ| per sweep.
@@ -1132,12 +1132,12 @@ impl LDA {
                     let model = cv.to_topic_model(&corpus);
                     (acc_phi, acc_theta, ll_history, converged, model, corpus)
                 });
-            self.theta_draws = None;
-            self.finalize_fit(
+            slf.theta_draws = None;
+            slf.finalize_fit(
                 num_topics, num_types, num_docs, acc_phi, acc_theta, model, corpus, ll_history,
                 converged,
             );
-            return Ok(());
+            return Ok(slf.into());
         }
 
         // Metropolis-Hastings backends (WarpLDA, LightLDA): each owns its dense
@@ -1196,8 +1196,8 @@ impl LDA {
                     )
                 }
             });
-            self.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, num_topics, None);
-            self.finalize_fit(
+            slf.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, num_topics, None);
+            slf.finalize_fit(
                 num_topics,
                 num_types,
                 num_docs,
@@ -1208,7 +1208,7 @@ impl LDA {
                 Vec::new(),
                 false,
             );
-            return Ok(());
+            return Ok(slf.into());
         }
 
         // Heavy loop runs with the GIL released; the progress callback briefly
@@ -1357,12 +1357,12 @@ impl LDA {
                 )
             });
         let (model, corpus) = model;
-        self.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, num_topics, None);
-        self.finalize_fit(
+        slf.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, num_topics, None);
+        slf.finalize_fit(
             num_topics, num_types, num_docs, acc_phi, acc_theta, model, corpus, ll_history,
             converged,
         );
-        Ok(())
+        Ok(slf.into())
     }
 
     /// The constructor configuration as a JSON-serialisable dict, keyword-named
@@ -3533,7 +3533,7 @@ impl DMR {
                         convergence_tol=0.0_f64, check_every=10_usize, covariates=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         features: Option<&Bound<'_, PyAny>>,
@@ -3548,7 +3548,7 @@ impl DMR {
         convergence_tol: f64,
         check_every: usize,
         covariates: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         // covariates= is a no-deprecation alias for features=
         let features: &Bound<'_, PyAny> = match (features, covariates) {
             (Some(_), Some(_)) => {
@@ -3627,28 +3627,28 @@ impl DMR {
             feature_names.unwrap_or_else(|| (0..f_in).map(|i| format!("feature_{}", i)).collect()),
         );
 
-        let k = self.num_topics;
+        let k = slf.num_topics;
         let num_types = corpus.num_types();
         let num_docs = corpus.num_docs();
         let total_tokens = corpus.total_tokens().max(1) as f64;
 
         // λ starts at zero -> α ≡ 1 (symmetric) before optimization kicks in.
         let mut lambda = vec![vec![0.0f64; nf]; k];
-        let mut model = TopicModel::new(k, k as f64, self.beta, num_types);
-        let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
+        let mut model = TopicModel::new(k, k as f64, slf.beta, num_types);
+        let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         // The sparse path initializes `model` inside its branch below; the warp
         // path builds its own WarpLda state, so the shared init is deferred.
 
-        let optimize_interval = self.optimize_interval;
-        let burn_in = self.burn_in;
-        let prior_variance = self.prior_variance;
-        let lbfgs_iters = self.lbfgs_iters;
+        let optimize_interval = slf.optimize_interval;
+        let burn_in = slf.burn_in;
+        let prior_variance = slf.prior_variance;
+        let lbfgs_iters = slf.lbfgs_iters;
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
-        let beta = self.beta;
-        let warp = self.warp;
-        let cvb0_flag = self.cvb0;
+        let beta = slf.beta;
+        let warp = slf.warp;
+        let cvb0_flag = slf.cvb0;
         let (
             acc_phi,
             acc_theta,
@@ -4017,18 +4017,18 @@ impl DMR {
             }
         }
 
-        self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
-        self.phi = Some(phi);
-        self.theta = Some(theta);
-        self.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, k, None);
-        self.feature_effects = Some(fe);
-        self.feature_effect_se = Some(fe_se);
-        self.feature_names = names;
-        self.log_likelihood_history = ll_history;
-        self.converged = converged_flag;
-        self.corpus = Some(corpus);
-        self.fitted = true;
-        Ok(())
+        slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.phi = Some(phi);
+        slf.theta = Some(theta);
+        slf.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, k, None);
+        slf.feature_effects = Some(fe);
+        slf.feature_effect_se = Some(fe_se);
+        slf.feature_names = names;
+        slf.log_likelihood_history = ll_history;
+        slf.converged = converged_flag;
+        slf.corpus = Some(corpus);
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Topic-word matrix φ, shape ``(num_topics, num_words)``.
@@ -4529,7 +4529,7 @@ impl LabeledLDA {
                         convergence_tol=0.0_f64, check_every=10_usize))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         labels: Vec<Vec<String>>,
@@ -4543,7 +4543,7 @@ impl LabeledLDA {
         num_theta_draws: usize,
         convergence_tol: f64,
         check_every: usize,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -4616,9 +4616,9 @@ impl LabeledLDA {
 
         let num_types = corpus.num_types();
         let total_tokens = corpus.total_tokens().max(1) as f64;
-        let alpha_sum = self.alpha * k as f64;
-        let mut model = TopicModel::new(k, alpha_sum, self.beta, num_types);
-        let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
+        let alpha_sum = slf.alpha * k as f64;
+        let mut model = TopicModel::new(k, alpha_sum, slf.beta, num_types);
+        let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         labeled::initialize_labeled(&mut model, &corpus.docs, &allowed, &mut rng);
 
         let check_every_labeled = if check_every == 0 {
@@ -4631,12 +4631,12 @@ impl LabeledLDA {
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
-        if self.cvb0 {
+        if slf.cvb0 {
             // CVB0 LabeledLDA: deterministic; the per-document label set masks the
             // responsibilities (γ is zero off the allowed topics — free in CVB0,
             // unlike a sampler's proposal rejection). No MCMC, so no θ-draws.
-            let beta = self.beta;
-            let alpha = self.alpha;
+            let beta = slf.beta;
+            let alpha = slf.alpha;
             let (acc_phi, acc_theta, model, corpus) = py.allow_threads(move || {
                 let alpha0 = vec![alpha; k];
                 let mut cv = cvb0::Cvb0::new(&corpus, k, &alpha0, beta, &mut rng);
@@ -4659,17 +4659,17 @@ impl LabeledLDA {
                 }
             }
             let theta = vecs_to_arr2(&acc_theta);
-            self.num_topics = k;
-            self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
-            self.label_vocab = label_vocab;
-            self.phi = Some(phi);
-            self.theta = Some(theta);
-            self.theta_draws = None;
-            self.corpus = Some(corpus);
-            self.log_likelihood_history = Vec::new();
-            self.converged = false;
-            self.fitted = true;
-            return Ok(());
+            slf.num_topics = k;
+            slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+            slf.label_vocab = label_vocab;
+            slf.phi = Some(phi);
+            slf.theta = Some(theta);
+            slf.theta_draws = None;
+            slf.corpus = Some(corpus);
+            slf.log_likelihood_history = Vec::new();
+            slf.converged = false;
+            slf.fitted = true;
+            return Ok(slf.into());
         }
 
         let (acc_phi, acc_theta, theta_draw_buf, ll_history, converged, model, corpus) = py
@@ -4783,17 +4783,17 @@ impl LabeledLDA {
             }
         }
 
-        self.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, k, None);
-        self.num_topics = k;
-        self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
-        self.phi = Some(phi);
-        self.theta = Some(theta);
-        self.label_vocab = label_vocab;
-        self.corpus = Some(corpus);
-        self.log_likelihood_history = ll_history;
-        self.converged = converged;
-        self.fitted = true;
-        Ok(())
+        slf.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, k, None);
+        slf.num_topics = k;
+        slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.phi = Some(phi);
+        slf.theta = Some(theta);
+        slf.label_vocab = label_vocab;
+        slf.corpus = Some(corpus);
+        slf.log_likelihood_history = ll_history;
+        slf.converged = converged;
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Topic-word matrix φ, shape ``(num_topics, num_words)``.
@@ -5221,7 +5221,7 @@ impl SAGE {
                         convergence_tol=0.0_f64, check_every=10_usize))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         groups: &Bound<'_, PyAny>,
@@ -5235,7 +5235,7 @@ impl SAGE {
         num_theta_draws: usize,
         convergence_tol: f64,
         check_every: usize,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -5291,21 +5291,21 @@ impl SAGE {
             })
             .collect::<PyResult<_>>()?;
 
-        let k = self.num_topics;
+        let k = slf.num_topics;
         let group_n = group_vocab.len();
         let num_types = corpus.num_types();
-        let alpha = self.alpha;
+        let alpha = slf.alpha;
         let alpha_sum = alpha * k as f64;
         let total_tokens = corpus.total_tokens().max(1) as f64;
 
-        let mut model = sage::SageModel::new(k, group_n, num_types, alpha, self.prior_variance);
+        let mut model = sage::SageModel::new(k, group_n, num_types, alpha, slf.prior_variance);
         model.set_background(&corpus.docs);
-        let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
+        let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         model.initialize(&corpus.docs, &groups_idx, &mut rng);
 
-        let optimize_interval = self.optimize_interval;
-        let burn_in = self.burn_in;
-        let lbfgs_iters = self.lbfgs_iters;
+        let optimize_interval = slf.optimize_interval;
+        let burn_in = slf.burn_in;
+        let lbfgs_iters = slf.lbfgs_iters;
 
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
@@ -5407,17 +5407,17 @@ impl SAGE {
             }
         }
 
-        self.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, k, None);
-        self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
-        self.num_groups = group_n;
-        self.beta = beta;
-        self.theta = Some(theta);
-        self.group_names = group_vocab;
-        self.corpus = Some(corpus);
-        self.log_likelihood_history = ll_history;
-        self.converged = converged_flag;
-        self.fitted = true;
-        Ok(())
+        slf.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, k, None);
+        slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.num_groups = group_n;
+        slf.beta = beta;
+        slf.theta = Some(theta);
+        slf.group_names = group_vocab;
+        slf.corpus = Some(corpus);
+        slf.log_likelihood_history = ll_history;
+        slf.converged = converged_flag;
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Topic-word distributions per group, shape ``(num_topics, num_groups, num_words)``.
@@ -6077,7 +6077,7 @@ impl CTM {
                         keep_eta_cov=true, num_threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: usize,
@@ -6090,7 +6090,7 @@ impl CTM {
         em_tol: Option<f64>,
         keep_eta_cov: bool,
         num_threads: Option<usize>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
             warnings.call_method1(
@@ -6141,12 +6141,12 @@ impl CTM {
             }
         };
 
-        let k = self.num_topics;
+        let k = slf.num_topics;
         let num_types = corpus.num_types();
-        let shrink = self.sigma_shrink;
-        let spectral = self.init_spectral;
-        let diagonal = self.variational == "diagonal";
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        let shrink = slf.sigma_shrink;
+        let spectral = slf.init_spectral;
+        let diagonal = slf.variational == "diagonal";
+        let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
         let init_beta = parse_init_beta(beta_init, k, num_types, svi)?;
 
@@ -6253,26 +6253,26 @@ impl CTM {
             arr
         };
 
-        self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
-        self.beta = Some(beta);
-        self.theta = Some(theta);
-        self.corr = Some(corr);
-        self.eta_mean = Some(eta_mean_arr);
-        self.eta_cov = stored_eta_cov;
-        self.mu = model.mu.clone();
-        self.sigma = model.sigma.clone();
+        slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.beta = Some(beta);
+        slf.theta = Some(theta);
+        slf.corr = Some(corr);
+        slf.eta_mean = Some(eta_mean_arr);
+        slf.eta_cov = stored_eta_cov;
+        slf.mu = model.mu.clone();
+        slf.sigma = model.sigma.clone();
         // Retain the E-step snapshots only when eta_cov was NOT kept, so the
         // default path carries no extra state (recompute uses the stored eta_cov).
         if !keep_eta_cov {
-            self.sigma_estep = model.sigma_estep.clone();
-            self.beta_estep = Some(beta_estep_arr);
+            slf.sigma_estep = model.sigma_estep.clone();
+            slf.beta_estep = Some(beta_estep_arr);
         }
-        self.corpus = Some(corpus);
-        self.bound = model.bound;
-        self.bound_history = model.bound_history.clone();
-        self.converged = model.converged;
-        self.fitted = true;
-        Ok(())
+        slf.corpus = Some(corpus);
+        slf.bound = model.bound;
+        slf.bound_history = model.bound_history.clone();
+        slf.converged = model.converged;
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Topic-word matrix β, shape ``(num_topics, num_words)``.
@@ -6885,7 +6885,7 @@ impl STM {
                         covariates=None, keep_eta_cov=true, num_threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         prevalence: Option<&Bound<'_, PyAny>>,
@@ -6905,7 +6905,7 @@ impl STM {
         covariates: Option<&Bound<'_, PyAny>>,
         keep_eta_cov: bool,
         num_threads: Option<usize>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
             warnings.call_method1(
@@ -7140,12 +7140,12 @@ impl STM {
             }
         };
 
-        let k = self.num_topics;
+        let k = slf.num_topics;
         let num_types = corpus.num_types();
-        let shrink = self.sigma_shrink;
-        let spectral = self.init_spectral;
-        let diagonal = self.variational == "diagonal";
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        let shrink = slf.sigma_shrink;
+        let spectral = slf.init_spectral;
+        let diagonal = slf.variational == "diagonal";
+        let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
         let init_beta = parse_init_beta(beta_init, k, num_types, false)?;
 
@@ -7196,7 +7196,7 @@ impl STM {
                 corr[[i, j]] = corr_v[i][j];
             }
         }
-        self.gamma = model.gamma.as_ref().map(|g| {
+        slf.gamma = model.gamma.as_ref().map(|g| {
             let nf = g.len();
             let mut arr = Array2::<f64>::zeros((nf, k - 1));
             for ff in 0..nf {
@@ -7246,34 +7246,34 @@ impl STM {
             arr
         };
 
-        self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
-        self.beta = Some(beta);
-        self.theta = Some(theta);
-        self.corr = Some(corr);
-        self.eta_mean = Some(eta_mean_arr);
-        self.eta_cov = stored_eta_cov;
+        slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.beta = Some(beta);
+        slf.theta = Some(theta);
+        slf.corr = Some(corr);
+        slf.eta_mean = Some(eta_mean_arr);
+        slf.eta_cov = stored_eta_cov;
         // E-step β snapshot: retained only when eta_cov was NOT kept (see below).
         if !keep_eta_cov {
-            self.beta_estep = Some(beta_estep_arr);
+            slf.beta_estep = Some(beta_estep_arr);
         }
-        self.feature_names = feat_names;
-        self.content_beta = model.content_beta;
-        self.content_kappa = model.content_kappa;
-        self.group_names = group_vocab;
-        self.num_base_groups = num_base_groups;
-        self.num_time_periods = num_time_periods;
-        self.mu = model.mu.clone();
-        self.sigma = model.sigma.clone();
+        slf.feature_names = feat_names;
+        slf.content_beta = model.content_beta;
+        slf.content_kappa = model.content_kappa;
+        slf.group_names = group_vocab;
+        slf.num_base_groups = num_base_groups;
+        slf.num_time_periods = num_time_periods;
+        slf.mu = model.mu.clone();
+        slf.sigma = model.sigma.clone();
         // E-step Σ snapshot: retained only when eta_cov was NOT kept.
         if !keep_eta_cov {
-            self.sigma_estep = model.sigma_estep.clone();
+            slf.sigma_estep = model.sigma_estep.clone();
         }
-        self.corpus = Some(corpus);
-        self.bound = model.bound;
-        self.bound_history = model.bound_history.clone();
-        self.converged = model.converged;
-        self.fitted = true;
-        Ok(())
+        slf.corpus = Some(corpus);
+        slf.bound = model.bound;
+        slf.bound_history = model.bound_history.clone();
+        slf.converged = model.converged;
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Topic-word matrix β, shape ``(num_topics, num_words)``.
@@ -8276,7 +8276,7 @@ impl STS {
                         keep_eta_cov=true))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         sentiment_seed: Vec<f64>,
@@ -8289,7 +8289,7 @@ impl STS {
         em_tol: Option<f64>,
         covariates: Option<&Bound<'_, PyAny>>,
         keep_eta_cov: bool,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
             warnings.call_method1(
@@ -8405,10 +8405,10 @@ impl STS {
             prevalence_x = Some(x);
         }
 
-        let k = self.num_topics;
+        let k = slf.num_topics;
         let num_types = corpus.num_types();
-        let spectral = self.init_spectral;
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        let spectral = slf.init_spectral;
+        let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
         let (model, corpus) = py.allow_threads(move || {
             let prev_ref = prevalence_x.as_deref();
@@ -8445,7 +8445,7 @@ impl STS {
                 sentiment[[di, t]] = val;
             }
         }
-        self.gamma = model.gamma.as_ref().map(|g| {
+        slf.gamma = model.gamma.as_ref().map(|g| {
             let nf = g.len();
             let mut arr = Array2::<f64>::zeros((nf, n));
             for ff in 0..nf {
@@ -8480,31 +8480,31 @@ impl STS {
         } else {
             None
         };
-        self.eta_mean = Some(eta_mean_arr);
-        self.eta_cov = stored_eta_cov;
+        slf.eta_mean = Some(eta_mean_arr);
+        slf.eta_cov = stored_eta_cov;
         // Retain the E-step snapshots only when eta_cov was NOT kept, so the
         // default path carries no extra state; they let _recompute_eta_cov
         // reproduce ν exactly. When kept, the stored eta_cov is used directly.
         if !keep_eta_cov {
-            self.sigma_estep = model.sigma_estep.clone();
-            self.kappa_t_estep = model.kappa_t_estep.clone();
-            self.kappa_s_estep = model.kappa_s_estep.clone();
+            slf.sigma_estep = model.sigma_estep.clone();
+            slf.kappa_t_estep = model.kappa_t_estep.clone();
+            slf.kappa_s_estep = model.kappa_s_estep.clone();
         }
-        self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
-        self.beta = Some(beta);
-        self.theta = Some(theta);
-        self.sentiment = Some(sentiment);
-        self.feature_names = feat_names;
-        self.kappa_t = model.kappa_t;
-        self.kappa_s = model.kappa_s;
-        self.mv = model.mv;
-        self.sigma = model.sigma;
-        self.corpus = Some(corpus);
-        self.bound = model.bound_history.last().copied().unwrap_or(f64::NAN);
-        self.bound_history = model.bound_history;
-        self.converged = model.converged;
-        self.fitted = true;
-        Ok(())
+        slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.beta = Some(beta);
+        slf.theta = Some(theta);
+        slf.sentiment = Some(sentiment);
+        slf.feature_names = feat_names;
+        slf.kappa_t = model.kappa_t;
+        slf.kappa_s = model.kappa_s;
+        slf.mv = model.mv;
+        slf.sigma = model.sigma;
+        slf.corpus = Some(corpus);
+        slf.bound = model.bound_history.last().copied().unwrap_or(f64::NAN);
+        slf.bound_history = model.bound_history;
+        slf.converged = model.converged;
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Baseline topic-word matrix β at neutral sentiment, shape ``(num_topics,
@@ -9086,7 +9086,7 @@ impl HDP {
     #[pyo3(signature = (data, *, iters=150, progress_interval=0,
                         keep_theta_draws=true, num_theta_draws=25, report_interval=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: usize,
@@ -9094,7 +9094,7 @@ impl HDP {
         keep_theta_draws: bool,
         num_theta_draws: usize,
         report_interval: Option<usize>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let progress_interval = if let Some(old_val) = report_interval {
             let warnings = py.import_bound("warnings")?;
             warnings.call_method1(
@@ -9138,8 +9138,8 @@ impl HDP {
 
         let num_docs = corpus.num_docs();
         let num_types = corpus.num_types();
-        let (alpha, gamma, eta, conc) = (self.alpha, self.gamma, self.eta, self.resample_conc);
-        let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
+        let (alpha, gamma, eta, conc) = (slf.alpha, slf.gamma, slf.eta, slf.resample_conc);
+        let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         // 0 = auto: ~50 evenly spaced trace points across the run.
         let ll_interval = if progress_interval == 0 {
             (iters / 50).max(1)
@@ -9187,7 +9187,7 @@ impl HDP {
         // Draw from Dirichlet(njk[d] + alpha*beta[k]) for each draw request.
         let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
         if draw_cap > 0 {
-            let mut draw_rng = Pcg64Mcg::seed_from_u64(self.seed.wrapping_add(1));
+            let mut draw_rng = Pcg64Mcg::seed_from_u64(slf.seed.wrapping_add(1));
             for _ in 0..draw_cap {
                 let snap: Vec<Vec<f32>> = model
                     .njk
@@ -9212,17 +9212,17 @@ impl HDP {
             }
         }
 
-        self.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, k, None);
-        self.num_topics = k;
-        self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
-        self.learned_alpha = model.alpha;
-        self.learned_gamma = model.gamma;
-        self.beta = Some(beta);
-        self.theta = Some(theta);
-        self.corpus = Some(corpus);
-        self.trace = model.trace.clone();
-        self.fitted = true;
-        Ok(())
+        slf.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, k, None);
+        slf.num_topics = k;
+        slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.learned_alpha = model.alpha;
+        slf.learned_gamma = model.gamma;
+        slf.beta = Some(beta);
+        slf.theta = Some(theta);
+        slf.corpus = Some(corpus);
+        slf.trace = model.trace.clone();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Topic-word matrix β, shape ``(num_topics, num_words)``.
@@ -9651,12 +9651,12 @@ impl DTM {
     /// `iters` is the number of variational-EM iterations.
     #[pyo3(signature = (data, times, *, iters=20))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         times: Vec<i64>,
         iters: usize,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -9702,10 +9702,10 @@ impl DTM {
         }
 
         let num_types = corpus.num_types();
-        let k = self.num_topics;
-        let (alpha, cv, ov) = (self.alpha, self.chain_variance, self.obs_variance);
-        let init_spectral = self.init_spectral;
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        let k = slf.num_topics;
+        let (alpha, cv, ov) = (slf.alpha, slf.chain_variance, slf.obs_variance);
+        let init_spectral = slf.init_spectral;
+        let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
         let (model, corpus) = py.allow_threads(move || {
             let m = dtm::fit_dtm(
@@ -9727,13 +9727,13 @@ impl DTM {
         // Precompute p(word | topic, time) for every slice.
         let tw: Vec<Vec<Vec<f64>>> = (0..num_times).map(|t| model.topic_word_matrix(t)).collect();
 
-        self.num_times = num_times;
-        self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
-        self.bound = model.bound;
-        self.topic_words = Some(tw);
-        self.corpus = Some(corpus);
-        self.fitted = true;
-        Ok(())
+        slf.num_times = num_times;
+        slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.bound = model.bound;
+        slf.topic_words = Some(tw);
+        slf.corpus = Some(corpus);
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Topic-word matrix at time slice `time`, shape ``(num_topics, num_words)``;
@@ -10106,7 +10106,7 @@ impl SupervisedLDA {
                         keep_theta_draws=true, num_theta_draws=25,
                         convergence_tol=0.0_f64, check_every=1_usize))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         y: Vec<f64>,
@@ -10116,7 +10116,7 @@ impl SupervisedLDA {
         num_theta_draws: usize,
         convergence_tol: f64,
         check_every: usize,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -10148,12 +10148,12 @@ impl SupervisedLDA {
 
         let num_docs = corpus.num_docs();
         let num_types = corpus.num_types();
-        let (k, alpha) = (self.num_topics, self.alpha);
+        let (k, alpha) = (slf.num_topics, slf.alpha);
 
         let draw_cap = if keep_theta_draws { num_theta_draws } else { 0 };
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
         let (model, ll_history, converged_flag, corpus) = py.allow_threads(move || {
             let (m, hist, conv) = slda::fit_slda(
@@ -10189,7 +10189,7 @@ impl SupervisedLDA {
         // Draw from Dirichlet(gamma_d) for each requested draw.
         let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
         if draw_cap > 0 {
-            let mut draw_rng = ChaCha8Rng::seed_from_u64(self.seed.wrapping_add(1));
+            let mut draw_rng = ChaCha8Rng::seed_from_u64(slf.seed.wrapping_add(1));
             for _ in 0..draw_cap {
                 let snap: Vec<Vec<f32>> = model
                     .gamma
@@ -10211,20 +10211,20 @@ impl SupervisedLDA {
                 theta_draw_buf.push(snap);
             }
         }
-        self.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, k, None);
+        slf.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, k, None);
 
-        self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
-        self.sigma2 = model.sigma2;
-        self.eta = Some(Array1::from(model.eta.clone()));
-        self.m_mat = Some(model.m_mat.clone());
-        self.beta = Some(beta);
-        self.theta = Some(theta);
-        self.log_beta = Some(model.log_beta.clone());
-        self.corpus = Some(corpus);
-        self.log_likelihood_history = ll_history;
-        self.converged = converged_flag;
-        self.fitted = true;
-        Ok(())
+        slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.sigma2 = model.sigma2;
+        slf.eta = Some(Array1::from(model.eta.clone()));
+        slf.m_mat = Some(model.m_mat.clone());
+        slf.beta = Some(beta);
+        slf.theta = Some(theta);
+        slf.log_beta = Some(model.log_beta.clone());
+        slf.corpus = Some(corpus);
+        slf.log_likelihood_history = ll_history;
+        slf.converged = converged_flag;
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Predict the response ŷ for new documents (`list[list[str]]` or a
@@ -10698,7 +10698,7 @@ impl PT {
     #[pyo3(signature = (data, *, iters=1000, keep_theta_draws=true, num_theta_draws=25,
                         convergence_tol=0.0_f64, check_every=10_usize))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: usize,
@@ -10706,7 +10706,7 @@ impl PT {
         num_theta_draws: usize,
         convergence_tol: f64,
         check_every: usize,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -10730,12 +10730,12 @@ impl PT {
         }
         let num_docs = corpus.num_docs();
         let num_types = corpus.num_types();
-        let (k, p, a, b) = (self.num_topics, self.num_pseudo, self.alpha, self.beta);
+        let (k, p, a, b) = (slf.num_topics, slf.num_pseudo, slf.alpha, slf.beta);
 
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
-        let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
+        let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         let (model, ll_history, converged_flag, corpus) = py.allow_threads(move || {
             let (m, hist, conv) = pt::fit_ptm_with_draws(
                 &corpus.docs,
@@ -10752,15 +10752,15 @@ impl PT {
             );
             (m, hist, conv, corpus)
         });
-        self.theta_draws = draws_to_array3(&model.theta_draws, num_docs, k, None);
-        self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
-        self.phi = Some(vecs_to_arr2(&model.topic_word()));
-        self.theta = Some(vecs_to_arr2(&model.doc_topic()));
-        self.log_likelihood_history = ll_history;
-        self.converged = converged_flag;
-        self.corpus = Some(corpus);
-        self.fitted = true;
-        Ok(())
+        slf.theta_draws = draws_to_array3(&model.theta_draws, num_docs, k, None);
+        slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.phi = Some(vecs_to_arr2(&model.topic_word()));
+        slf.theta = Some(vecs_to_arr2(&model.doc_topic()));
+        slf.log_likelihood_history = ll_history;
+        slf.converged = converged_flag;
+        slf.corpus = Some(corpus);
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]
@@ -11084,13 +11084,13 @@ impl GSDMM {
     /// `report_interval` is a deprecated alias for `progress_interval`.
     #[pyo3(signature = (data, *, iters=30, progress_interval=0, report_interval=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: usize,
         progress_interval: usize,
         report_interval: Option<usize>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let progress_interval = if let Some(old_val) = report_interval {
             let warnings = py.import_bound("warnings")?;
             warnings.call_method1(
@@ -11131,8 +11131,8 @@ impl GSDMM {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
         let num_types = corpus.num_types();
-        let (k, a, b) = (self.k_max, self.alpha, self.beta);
-        let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
+        let (k, a, b) = (slf.k_max, slf.alpha, slf.beta);
+        let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         let ll_interval = if progress_interval == 0 {
             (iters / 50).max(1)
         } else {
@@ -11154,14 +11154,14 @@ impl GSDMM {
 
         // Keep only non-empty clusters; remap their ids to a dense 0..num_used.
         let used = model.used_clusters();
-        let mut remap = vec![usize::MAX; self.k_max];
+        let mut remap = vec![usize::MAX; slf.k_max];
         for (new_i, &old) in used.iter().enumerate() {
             remap[old] = new_i;
         }
         let num_used = used.len();
 
         let phi_rows: Vec<Vec<f64>> = used.iter().map(|&k| model.cluster_word(k)).collect();
-        self.phi = Some(vecs_to_arr2(&phi_rows));
+        slf.phi = Some(vecs_to_arr2(&phi_rows));
 
         // Soft per-doc distribution restricted to the used clusters, renormalized.
         let dist = model.doc_cluster_dist(&corpus.docs);
@@ -11177,14 +11177,14 @@ impl GSDMM {
                 theta[[di, ni]] = row[old] / s;
             }
         }
-        self.theta = Some(theta);
-        self.doc_cluster = model.doc_cluster().iter().map(|&c| remap[c]).collect();
-        self.num_used = num_used;
-        self.topic_names = (0..num_used).map(|i| format!("topic_{i}")).collect();
-        self.corpus = Some(corpus);
-        self.trace = model.trace.clone();
-        self.fitted = true;
-        Ok(())
+        slf.theta = Some(theta);
+        slf.doc_cluster = model.doc_cluster().iter().map(|&c| remap[c]).collect();
+        slf.num_used = num_used;
+        slf.topic_names = (0..num_used).map(|i| format!("topic_{i}")).collect();
+        slf.corpus = Some(corpus);
+        slf.trace = model.trace.clone();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Topic-word matrix β, shape ``(num_topics, num_words)`` (used clusters only).
@@ -11566,7 +11566,7 @@ impl SeededLDA {
                         keep_theta_draws=true, num_theta_draws=25,
                         convergence_tol=0.0_f64, check_every=10_usize))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: usize,
@@ -11575,7 +11575,7 @@ impl SeededLDA {
         num_theta_draws: usize,
         convergence_tol: f64,
         check_every: usize,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -11597,10 +11597,10 @@ impl SeededLDA {
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
-        let num_topics = self.num_topics_val();
+        let num_topics = slf.num_topics_val();
         let num_types = corpus.num_types();
-        let seeds = seed_word_ids(&self.seed_words, &corpus.id_to_word, num_topics);
-        let (alpha, beta, seed_weight) = (self.alpha, self.beta, self.weight * 100.0);
+        let seeds = seed_word_ids(&slf.seed_words, &corpus.id_to_word, num_topics);
+        let (alpha, beta, seed_weight) = (slf.alpha, slf.beta, slf.weight * 100.0);
 
         let doc_alpha: Option<Vec<Vec<f64>>> = match doc_topic_prior {
             Some(p) => {
@@ -11640,9 +11640,9 @@ impl SeededLDA {
             corpus.num_docs(),
             num_topics,
         )?;
-        let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
+        let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
 
-        if self.cvb0 {
+        if slf.cvb0 {
             // CVB0 seeded path: deterministic, asymmetric β via set_seeds. The
             // per-document prior is not threaded through CVB0's θ output yet.
             if doc_alpha.is_some() {
@@ -11659,22 +11659,22 @@ impl SeededLDA {
                 }
                 (cv.topic_word(), cv.doc_topic(), corpus)
             });
-            self.phi = Some(vecs_to_arr2(&phi_tw));
-            self.theta = Some(vecs_to_arr2(&theta_dk));
-            self.theta_draws = None;
-            let mut names = self.seed_names.clone();
-            for i in 0..self.residual {
+            slf.phi = Some(vecs_to_arr2(&phi_tw));
+            slf.theta = Some(vecs_to_arr2(&theta_dk));
+            slf.theta_draws = None;
+            let mut names = slf.seed_names.clone();
+            for i in 0..slf.residual {
                 names.push(format!("residual_{}", i + 1));
             }
-            self.topic_names = names;
-            self.corpus = Some(corpus);
-            self.log_likelihood_history = Vec::new();
-            self.converged = false;
-            self.fitted = true;
-            return Ok(());
+            slf.topic_names = names;
+            slf.corpus = Some(corpus);
+            slf.log_likelihood_history = Vec::new();
+            slf.converged = false;
+            slf.fitted = true;
+            return Ok(slf.into());
         }
 
-        if self.warp {
+        if slf.warp {
             // WarpLDA seeded path. The per-document prior (doc_topic_prior) is not
             // yet wired through the warp θ output, so require the symmetric case.
             if doc_alpha.is_some() {
@@ -11705,19 +11705,19 @@ impl SeededLDA {
                 ws.theta_into(&corpus, &mut theta_dk);
                 (phi_tw, theta_dk, theta_draw_buf, corpus)
             });
-            self.phi = Some(vecs_to_arr2(&phi_tw));
-            self.theta = Some(vecs_to_arr2(&theta_dk));
-            self.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, num_topics, None);
-            let mut names = self.seed_names.clone();
-            for i in 0..self.residual {
+            slf.phi = Some(vecs_to_arr2(&phi_tw));
+            slf.theta = Some(vecs_to_arr2(&theta_dk));
+            slf.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, num_topics, None);
+            let mut names = slf.seed_names.clone();
+            for i in 0..slf.residual {
                 names.push(format!("residual_{}", i + 1));
             }
-            self.topic_names = names;
-            self.corpus = Some(corpus);
-            self.log_likelihood_history = Vec::new();
-            self.converged = false;
-            self.fitted = true;
-            return Ok(());
+            slf.topic_names = names;
+            slf.corpus = Some(corpus);
+            slf.log_likelihood_history = Vec::new();
+            slf.converged = false;
+            slf.fitted = true;
+            return Ok(slf.into());
         }
 
         let (model, ll_history, converged, corpus) = py.allow_threads(move || {
@@ -11738,19 +11738,19 @@ impl SeededLDA {
             );
             (m, ll, conv, corpus)
         });
-        self.phi = Some(vecs_to_arr2(&model.topic_word_all()));
-        self.theta = Some(vecs_to_arr2(&model.doc_topic()));
-        self.theta_draws = draws_to_array3(&model.theta_draws, corpus.num_docs(), num_topics, None);
-        let mut names = self.seed_names.clone();
-        for i in 0..self.residual {
+        slf.phi = Some(vecs_to_arr2(&model.topic_word_all()));
+        slf.theta = Some(vecs_to_arr2(&model.doc_topic()));
+        slf.theta_draws = draws_to_array3(&model.theta_draws, corpus.num_docs(), num_topics, None);
+        let mut names = slf.seed_names.clone();
+        for i in 0..slf.residual {
             names.push(format!("residual_{}", i + 1));
         }
-        self.topic_names = names;
-        self.corpus = Some(corpus);
-        self.log_likelihood_history = ll_history;
-        self.converged = converged;
-        self.fitted = true;
-        Ok(())
+        slf.topic_names = names;
+        slf.corpus = Some(corpus);
+        slf.log_likelihood_history = ll_history;
+        slf.converged = converged;
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]
@@ -12332,14 +12332,14 @@ impl FASTopic {
     /// `convergence_tol` overrides the constructor value for this run (when given).
     #[pyo3(signature = (data, doc_embeddings, *, iters=None, convergence_tol=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         doc_embeddings: &Bound<'_, PyAny>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
-    ) -> PyResult<()> {
-        let tol = convergence_tol.unwrap_or(self.em_tol);
+    ) -> PyResult<Py<Self>> {
+        let tol = convergence_tol.unwrap_or(slf.em_tol);
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -12371,36 +12371,36 @@ impl FASTopic {
         }
         check_all_finite_2d("doc_embeddings", &doc_emb)?;
         let num_types = corpus.num_types();
-        if num_types < self.num_topics {
+        if num_types < slf.num_topics {
             return Err(PyValueError::new_err(
                 "vocabulary must have at least num_topics words",
             ));
         }
-        self.id_to_word = corpus.id_to_word.clone();
+        slf.id_to_word = corpus.id_to_word.clone();
         let docs_ids = corpus.docs.clone();
         let ep = iters.unwrap_or(200);
 
         let (k, lr, dta, twa, tt, et, si, st) = (
-            self.num_topics,
-            self.lr,
-            self.dt_alpha,
-            self.tw_alpha,
-            self.theta_temp,
+            slf.num_topics,
+            slf.lr,
+            slf.dt_alpha,
+            slf.tw_alpha,
+            slf.theta_temp,
             tol,
-            self.sinkhorn_iters,
-            self.sinkhorn_tol,
+            slf.sinkhorn_iters,
+            slf.sinkhorn_tol,
         );
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let model = py.allow_threads(move || {
             fastopic::fit_fastopic(
                 &docs_ids, &doc_emb, k, num_types, ep, lr, dta, twa, tt, et, si, st, &mut rng,
             )
         });
-        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
-        self.model = Some(model);
-        self.corpus = Some(corpus);
-        self.fitted = true;
-        Ok(())
+        slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
+        slf.model = Some(model);
+        slf.corpus = Some(corpus);
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]
@@ -12529,13 +12529,13 @@ impl FASTopic {
     /// itself.
     #[pyo3(signature = (data, doc_embeddings))]
     fn fit_transform<'py>(
-        &mut self,
+        slf: PyRefMut<'_, Self>,
         py: Python<'py>,
         data: &Bound<'py, PyAny>,
         doc_embeddings: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        self.fit(py, data, doc_embeddings, None, None)?;
-        Ok(vecs_to_arr2(&self.fitted_model()?.doc_topic).to_pyarray_bound(py))
+        let fitted = Self::fit(slf, py, data, doc_embeddings, None, None)?;
+        Ok(vecs_to_arr2(&fitted.bind(py).borrow().fitted_model()?.doc_topic).to_pyarray_bound(py))
     }
 
     /// Save the fitted model to `path` (topica's binary format).
@@ -12928,7 +12928,7 @@ impl KeyATM {
                         report_interval=None, turbo_alpha_stride=1))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: usize,
@@ -12950,7 +12950,7 @@ impl KeyATM {
         convergence_tol: f64,
         report_interval: Option<usize>,
         turbo_alpha_stride: usize,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         if turbo_alpha_stride < 1 {
             return Err(PyValueError::new_err(
                 "turbo_alpha_stride must be >= 1 (1 = exact; >1 = approximate, subsample documents in the alpha sampler)",
@@ -12984,7 +12984,7 @@ impl KeyATM {
                 progress_interval
             };
         // num_threads: fit()-level value overrides the constructor default.
-        let nthreads_fit = num_threads.unwrap_or(self.num_threads).max(1);
+        let nthreads_fit = num_threads.unwrap_or(slf.num_threads).max(1);
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -13006,7 +13006,7 @@ impl KeyATM {
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
-        let num_topics = self.num_topics;
+        let num_topics = slf.num_topics;
         let num_types = corpus.num_types();
         // Thinned θ-draw retention schedule (issue #31), shared by all three fits.
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
@@ -13024,7 +13024,7 @@ impl KeyATM {
         {
             let vocab: HashSet<&str> = corpus.id_to_word.iter().map(|s| s.as_str()).collect();
             let mut notes: Vec<String> = Vec::new();
-            for (name, words) in self.key_names.iter().zip(self.keywords.iter()) {
+            for (name, words) in slf.key_names.iter().zip(slf.keywords.iter()) {
                 let oov: Vec<&str> = words
                     .iter()
                     .map(|w| w.as_str())
@@ -13051,16 +13051,16 @@ impl KeyATM {
                 )?;
             }
         }
-        let keys = seed_word_ids(&self.keywords, &corpus.id_to_word, num_topics);
+        let keys = seed_word_ids(&slf.keywords, &corpus.id_to_word, num_topics);
         let (alpha, beta, beta_key, g1, g2) = (
-            self.alpha,
-            self.beta,
-            self.beta_keyword,
-            self.gamma1,
-            self.gamma2,
+            slf.alpha,
+            slf.beta,
+            slf.beta_keyword,
+            slf.gamma1,
+            slf.gamma2,
         );
-        let estimate_alpha = self.estimate_alpha;
-        let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
+        let estimate_alpha = slf.estimate_alpha;
+        let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         let nthreads = nthreads_fit;
         let weight_scheme = match weights {
             "information-theory" | "info" => keyatm::WeightScheme::InfoTheory,
@@ -13081,7 +13081,7 @@ impl KeyATM {
         };
 
         // The CVB0 backend covers only the base model.
-        if self.cvb0 && (timestamps.is_some() || covariates.is_some() || prior_offset.is_some()) {
+        if slf.cvb0 && (timestamps.is_some() || covariates.is_some() || prior_offset.is_some()) {
             return Err(PyValueError::new_err(
                 "sampler=\"cvb0\" supports only the base keyATM (no timestamps, covariates, or prior_offset)",
             ));
@@ -13094,7 +13094,7 @@ impl KeyATM {
                 "turbo_alpha_stride > 1 applies only to the base keyATM (not the covariate or dynamic model)",
             ));
         }
-        let cvb0 = self.cvb0;
+        let cvb0 = slf.cvb0;
 
         // --- Dynamic model: timestamps drive a change-point HMM on prevalence. ---
         if let Some(ts) = timestamps {
@@ -13157,36 +13157,36 @@ impl KeyATM {
             for (i, &d) in order.iter().enumerate() {
                 theta[d] = theta_sorted[i].clone();
             }
-            self.theta = Some(vecs_to_arr2(&theta));
+            slf.theta = Some(vecs_to_arr2(&theta));
             // θ draws are also sorted; unsort their rows via `order` to match θ.
-            self.theta_draws = draws_to_array3(
+            slf.theta_draws = draws_to_array3(
                 &model.theta_draws,
                 corpus.num_docs(),
                 num_topics,
                 Some(&order),
             );
-            self.phi = Some(vecs_to_arr2(&model.topic_word_all()));
-            self.keyword_rate = model.keyword_rate();
-            self.time_prevalence = model.time_prevalence().map(|tp| vecs_to_arr2(&tp));
+            slf.phi = Some(vecs_to_arr2(&model.topic_word_all()));
+            slf.keyword_rate = model.keyword_rate();
+            slf.time_prevalence = model.time_prevalence().map(|tp| vecs_to_arr2(&tp));
             if let Some(d) = &model.dynamic {
-                self.time_state = d.r_est.clone();
-                self.transition_matrix = Some(vecs_to_arr2(&d.p_est));
+                slf.time_state = d.r_est.clone();
+                slf.transition_matrix = Some(vecs_to_arr2(&d.p_est));
             }
-            self.log_likelihood_history = model.log_likelihood_history.clone();
-            self.converged = model.converged;
-            self.alpha_history = model.alpha_history.clone();
-            self.pi_history = model.pi_history.clone();
-            self.alpha_vec = model.alpha_vec.clone();
-            self.time_labels = labels;
+            slf.log_likelihood_history = model.log_likelihood_history.clone();
+            slf.converged = model.converged;
+            slf.alpha_history = model.alpha_history.clone();
+            slf.pi_history = model.pi_history.clone();
+            slf.alpha_vec = model.alpha_vec.clone();
+            slf.time_labels = labels;
 
-            let mut names = self.key_names.clone();
-            for i in self.key_names.len()..num_topics {
+            let mut names = slf.key_names.clone();
+            for i in slf.key_names.len()..num_topics {
                 names.push(format!("topic_{}", i));
             }
-            self.topic_names = names;
-            self.corpus = Some(corpus);
-            self.fitted = true;
-            return Ok(());
+            slf.topic_names = names;
+            slf.corpus = Some(corpus);
+            slf.fitted = true;
+            return Ok(slf.into());
         }
 
         // Build the (intercept-prepended) feature matrix if covariates were given.
@@ -13330,28 +13330,28 @@ impl KeyATM {
             };
             (m, corpus)
         });
-        self.phi = Some(vecs_to_arr2(&model.topic_word_all()));
-        self.theta = Some(vecs_to_arr2(&model.doc_topic()));
-        self.theta_draws = draws_to_array3(&model.theta_draws, corpus.num_docs(), num_topics, None);
-        self.keyword_rate = model.keyword_rate();
-        self.log_likelihood_history = model.log_likelihood_history.clone();
-        self.converged = model.converged;
-        self.alpha_history = model.alpha_history.clone();
-        self.pi_history = model.pi_history.clone();
-        self.alpha_vec = model.alpha_vec.clone();
+        slf.phi = Some(vecs_to_arr2(&model.topic_word_all()));
+        slf.theta = Some(vecs_to_arr2(&model.doc_topic()));
+        slf.theta_draws = draws_to_array3(&model.theta_draws, corpus.num_docs(), num_topics, None);
+        slf.keyword_rate = model.keyword_rate();
+        slf.log_likelihood_history = model.log_likelihood_history.clone();
+        slf.converged = model.converged;
+        slf.alpha_history = model.alpha_history.clone();
+        slf.pi_history = model.pi_history.clone();
+        slf.alpha_vec = model.alpha_vec.clone();
         if let Some(lam) = &model.lambda {
-            self.feature_effects = Some(vecs_to_arr2(lam));
-            self.feature_effect_se = model.lambda_se.as_ref().map(|se| vecs_to_arr2(se));
-            self.feature_names = cov_names;
+            slf.feature_effects = Some(vecs_to_arr2(lam));
+            slf.feature_effect_se = model.lambda_se.as_ref().map(|se| vecs_to_arr2(se));
+            slf.feature_names = cov_names;
         }
-        let mut names = self.key_names.clone();
-        for i in self.key_names.len()..num_topics {
+        let mut names = slf.key_names.clone();
+        for i in slf.key_names.len()..num_topics {
             names.push(format!("topic_{}", i));
         }
-        self.topic_names = names;
-        self.corpus = Some(corpus);
-        self.fitted = true;
-        Ok(())
+        slf.topic_names = names;
+        slf.corpus = Some(corpus);
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Covariate model: learned DMR coefficients λ, shape ``(num_topics, F+1)``;

@@ -125,7 +125,7 @@ impl Wordfish {
     #[pyo3(signature = (data, *, group=None, control=None, anchors=None, iters=None,
                         convergence_tol=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         group: Option<Vec<String>>,
@@ -133,7 +133,7 @@ impl Wordfish {
         anchors: Option<HashMap<String, f64>>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let (docs_str, doc_names): (Vec<Vec<String>>, Vec<String>) =
             if let Ok(c) = data.extract::<Corpus>() {
                 let strings = c
@@ -235,7 +235,7 @@ impl Wordfish {
         }
         let mut vocab_pairs: Vec<(&str, usize)> = freq
             .iter()
-            .filter(|&(_, &c)| c >= self.min_count)
+            .filter(|&(_, &c)| c >= slf.min_count)
             .map(|(&w, &c)| (w, c))
             .collect();
         vocab_pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
@@ -296,9 +296,9 @@ impl Wordfish {
             }
         };
 
-        let tol = convergence_tol.unwrap_or(self.convergence_tol);
+        let tol = convergence_tol.unwrap_or(slf.convergence_tol);
         let it = iters.unwrap_or(100);
-        let (bsd, tsd) = (self.beta_prior_sd, self.theta_prior_sd);
+        let (bsd, tsd) = (slf.beta_prior_sd, slf.theta_prior_sd);
         let model = py.allow_threads(move || {
             wordfish::fit_wordfish_controlled(
                 &counts,
@@ -313,12 +313,12 @@ impl Wordfish {
             )
         });
 
-        self.model = Some(model);
-        self.id_to_word = id_to_word;
-        self.author_names = author_names;
-        self.control_names = control_names;
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.id_to_word = id_to_word;
+        slf.author_names = author_names;
+        slf.control_names = control_names;
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]

@@ -194,12 +194,12 @@ impl DiscLDA {
     /// document). Classes are sorted to a fixed order.
     #[pyo3(signature = (data, y, *, iters=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         y: &Bound<'_, PyAny>,
         iters: Option<usize>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let labels_str = extract_labels(y)?;
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -242,15 +242,15 @@ impl DiscLDA {
 
         let num_types = corpus.num_types();
         let num_classes = classes.len();
-        let l = num_classes * self.k_class + self.k_shared;
+        let l = num_classes * slf.k_class + slf.k_shared;
         if num_types < l {
             return Err(PyValueError::new_err(
                 "vocabulary must have at least num_classes*k_class + k_shared words",
             ));
         }
-        let iters = iters.unwrap_or(self.iters);
-        let alpha = self.alpha.unwrap_or(0.1);
-        let (k_class, k_shared, beta, seed) = (self.k_class, self.k_shared, self.beta, self.seed);
+        let iters = iters.unwrap_or(slf.iters);
+        let alpha = slf.alpha.unwrap_or(0.1);
+        let (k_class, k_shared, beta, seed) = (slf.k_class, slf.k_shared, slf.beta, slf.seed);
 
         let (model, corpus) = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -268,12 +268,12 @@ impl DiscLDA {
             );
             (m, corpus)
         });
-        self.model = Some(model);
-        self.corpus = Some(corpus);
-        self.classes = classes;
-        self.topic_names = self.build_topic_names();
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.corpus = Some(corpus);
+        slf.classes = classes;
+        slf.topic_names = slf.build_topic_names();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// The class-marginalized discriminative representation Σ_c p(c|w)·θ_c for new

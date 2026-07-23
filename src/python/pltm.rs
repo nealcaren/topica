@@ -220,11 +220,11 @@ impl PolylingualLDA {
     /// document `[]` at that index.
     #[pyo3(signature = (data, *, iters=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: Option<usize>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let (languages, str_docs) = extract_languages(data)?;
 
         // Build one corpus per language (independent vocabularies), preserving
@@ -257,7 +257,7 @@ impl PolylingualLDA {
             }
         }
         for c in &corpora {
-            if c.num_types() < self.num_topics {
+            if c.num_types() < slf.num_topics {
                 return Err(PyValueError::new_err(
                     "each language's vocabulary must have at least num_topics words",
                 ));
@@ -266,15 +266,15 @@ impl PolylingualLDA {
 
         let vocab_sizes: Vec<usize> = corpora.iter().map(|c| c.num_types()).collect();
         let docs_by_lang: Vec<Vec<Vec<u32>>> = corpora.iter().map(|c| c.docs.clone()).collect();
-        let iters = iters.unwrap_or(self.iters);
-        let alpha_init = self.alpha.unwrap_or(0.01);
-        let beta = vec![self.beta; languages.len()];
+        let iters = iters.unwrap_or(slf.iters);
+        let alpha_init = slf.alpha.unwrap_or(0.01);
+        let beta = vec![slf.beta; languages.len()];
         let (optimize_alpha, optimize_interval, optimize_burn_in, seed, k) = (
-            self.optimize_alpha,
-            self.optimize_interval,
-            self.optimize_burn_in,
-            self.seed,
-            self.num_topics,
+            slf.optimize_alpha,
+            slf.optimize_interval,
+            slf.optimize_burn_in,
+            slf.seed,
+            slf.num_topics,
         );
 
         let model = py.allow_threads(move || {
@@ -293,12 +293,12 @@ impl PolylingualLDA {
             )
         });
 
-        self.model = Some(model);
-        self.corpora = corpora;
-        self.languages = languages;
-        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.corpora = corpora;
+        slf.languages = languages;
+        slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Infer tuple-topic distributions θ (num_tuples, num_topics) for new aligned

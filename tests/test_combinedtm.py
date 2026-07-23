@@ -51,7 +51,7 @@ def test_fit_surface(cls):
     docs, embs, vocab = _planted()
     m = _model(cls, seed=1)
     out = m.fit(docs, embs, iters=120)
-    assert out is None  # fit() trains in place
+    assert out is m  # fit() trains in place and returns self (#402)
     assert m.num_topics == 3
     assert m.topic_word.shape == (3, len(vocab))
     assert m.doc_topic.shape == (len(docs), 3)

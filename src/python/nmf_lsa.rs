@@ -165,13 +165,13 @@ impl NMF {
     /// overrides the constructor value for this run (when given).
     #[pyo3(signature = (data, *, iters=None, convergence_tol=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
-    ) -> PyResult<()> {
-        let tol = convergence_tol.unwrap_or(self.convergence_tol);
+    ) -> PyResult<Py<Self>> {
+        let tol = convergence_tol.unwrap_or(slf.convergence_tol);
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -194,28 +194,28 @@ impl NMF {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
         let num_types = corpus.num_types();
-        if num_types < self.num_topics {
+        if num_types < slf.num_topics {
             return Err(PyValueError::new_err(
                 "vocabulary must have at least num_topics words",
             ));
         }
         let it = iters.unwrap_or(200);
         let (k, bl, ini, tfidf, seed) = (
-            self.num_topics,
-            self.beta_loss,
-            self.init,
-            self.weighting_tfidf,
-            self.seed,
+            slf.num_topics,
+            slf.beta_loss,
+            slf.init,
+            slf.weighting_tfidf,
+            slf.seed,
         );
         let (model, corpus) = py.allow_threads(move || {
             let m = nmf::fit_nmf(&corpus.docs, k, num_types, bl, ini, tfidf, it, tol, seed);
             (m, corpus)
         });
-        self.model = Some(model);
-        self.corpus = Some(corpus);
-        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.corpus = Some(corpus);
+        slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]
@@ -502,7 +502,11 @@ impl LSA {
 
     /// Fit on `data` (a Corpus or list of token lists). The SVD is a direct solve,
     /// so there is no `iters` argument.
-    fn fit(&mut self, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<()> {
+    fn fit(
+        mut slf: PyRefMut<'_, Self>,
+        py: Python<'_>,
+        data: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -528,22 +532,22 @@ impl LSA {
         // K must not exceed min(num_docs, vocabulary size): the truncated SVD has
         // at most min(D, V) nonzero singular triplets.
         let max_k = corpus.num_docs().min(num_types);
-        if self.num_topics > max_k {
+        if slf.num_topics > max_k {
             return Err(PyValueError::new_err(format!(
                 "num_topics ({}) must be <= min(num_docs, vocab) = {}",
-                self.num_topics, max_k
+                slf.num_topics, max_k
             )));
         }
-        let (k, tfidf, seed) = (self.num_topics, self.weighting_tfidf, self.seed);
+        let (k, tfidf, seed) = (slf.num_topics, slf.weighting_tfidf, slf.seed);
         let (model, corpus) = py.allow_threads(move || {
             let m = lsa::fit_lsa(&corpus.docs, k, num_types, tfidf, seed);
             (m, corpus)
         });
-        self.model = Some(model);
-        self.corpus = Some(corpus);
-        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.corpus = Some(corpus);
+        slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]

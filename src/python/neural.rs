@@ -330,16 +330,16 @@ impl ETM {
     /// `convergence_tol` overrides the constructor value for this run (when given).
     #[pyo3(signature = (data, word_embeddings, vocabulary, *, iters=None, convergence_tol=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         word_embeddings: &Bound<'_, PyAny>,
         vocabulary: Vec<String>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         // Use fit()-level convergence_tol if given, else fall back to constructor value.
-        let tol = convergence_tol.unwrap_or(self.em_tol);
+        let tol = convergence_tol.unwrap_or(slf.em_tol);
         let (docs_str, corpus_opt): (Vec<Vec<String>>, Option<corpus::Corpus>) =
             if let Ok(c) = data.extract::<Corpus>() {
                 let strings = c
@@ -368,7 +368,7 @@ impl ETM {
             )));
         }
         check_all_finite_2d("word_embeddings", &rho)?;
-        if vocabulary.len() < self.num_topics {
+        if vocabulary.len() < slf.num_topics {
             return Err(PyValueError::new_err(
                 "vocabulary must have at least num_topics words",
             ));
@@ -392,23 +392,23 @@ impl ETM {
             ));
         }
         let num_types = vocabulary.len();
-        self.id_to_word = vocabulary.clone();
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        slf.id_to_word = vocabulary.clone();
+        let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
-        if self.inference == "vae" {
+        if slf.inference == "vae" {
             let ep = iters.unwrap_or(150);
             let opts = build_avitm_options(
-                &self.prior,
-                self.contrastive,
-                self.contrastive_weight,
-                self.contrastive_temp,
+                &slf.prior,
+                slf.contrastive,
+                slf.contrastive_weight,
+                slf.contrastive_temp,
             )?;
             let (k, h, bs, lr, wd, et) = (
-                self.num_topics,
-                self.hidden_size,
-                self.batch_size,
-                self.lr,
-                self.wdecay,
+                slf.num_topics,
+                slf.hidden_size,
+                slf.batch_size,
+                slf.lr,
+                slf.wdecay,
                 tol,
             );
             let m = py.allow_threads(move || {
@@ -416,25 +416,25 @@ impl ETM {
                     &docs_ids, k, num_types, &rho, h, ep, bs, lr, wd, et, opts, &mut rng,
                 )
             });
-            self.vae = Some(m);
-            self.model = None;
+            slf.vae = Some(m);
+            slf.model = None;
         } else {
             let ei = iters.unwrap_or(100);
             let (k, et, ss, pv, mi) = (
-                self.num_topics,
+                slf.num_topics,
                 tol,
-                self.sigma_shrink,
-                self.prior_variance,
-                self.max_inner,
+                slf.sigma_shrink,
+                slf.prior_variance,
+                slf.max_inner,
             );
             let model = py.allow_threads(move || {
                 etm::fit_etm(&docs_ids, k, num_types, &rho, ei, et, ss, pv, mi, &mut rng)
             });
-            self.model = Some(model);
-            self.vae = None;
+            slf.model = Some(model);
+            slf.vae = None;
         }
         // Retain the corpus for coherence/doc_names; build a minimal one if raw docs were given.
-        self.corpus = Some(corpus_opt.unwrap_or_else(|| {
+        slf.corpus = Some(corpus_opt.unwrap_or_else(|| {
             let n = docs_str.len();
             let vocab_clone = vocabulary.clone();
             let v = vocab_clone.len();
@@ -465,9 +465,9 @@ impl ETM {
                 total_freqs: tf,
             }
         }));
-        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
-        self.fitted = true;
-        Ok(())
+        slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]
@@ -781,15 +781,15 @@ impl ETM {
     /// epochs).
     #[pyo3(signature = (data, word_embeddings, vocabulary, *, iters=None))]
     fn fit_transform<'py>(
-        &mut self,
+        slf: PyRefMut<'_, Self>,
         py: Python<'py>,
         data: &Bound<'py, PyAny>,
         word_embeddings: &Bound<'py, PyAny>,
         vocabulary: Vec<String>,
         iters: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        self.fit(py, data, word_embeddings, vocabulary, iters, None)?;
-        Ok(vecs_to_arr2(&self.surf_doc_topic()?).to_pyarray_bound(py))
+        let fitted = Self::fit(slf, py, data, word_embeddings, vocabulary, iters, None)?;
+        Ok(vecs_to_arr2(&fitted.bind(py).borrow().surf_doc_topic()?).to_pyarray_bound(py))
     }
 
     fn __repr__(&self) -> String {
@@ -989,7 +989,7 @@ impl DETM {
                         iters=100, convergence_tol=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         word_embeddings: &Bound<'_, PyAny>,
@@ -998,7 +998,7 @@ impl DETM {
         timestamps: Option<Vec<i64>>,
         iters: usize,
         convergence_tol: Option<f64>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         // times is canonical; timestamps is the accepted alias.
         let times = match (times, timestamps) {
             (Some(t), None) => t,
@@ -1014,7 +1014,7 @@ impl DETM {
                 ))
             }
         };
-        let tol = convergence_tol.unwrap_or(self.convergence_tol);
+        let tol = convergence_tol.unwrap_or(slf.convergence_tol);
 
         let (docs_str, corpus_opt): (Vec<Vec<String>>, Option<corpus::Corpus>) =
             if let Ok(c) = data.extract::<Corpus>() {
@@ -1069,7 +1069,7 @@ impl DETM {
             )));
         }
         check_all_finite_2d("word_embeddings", &rho)?;
-        if vocabulary.len() < self.num_topics {
+        if vocabulary.len() < slf.num_topics {
             return Err(PyValueError::new_err(
                 "vocabulary must have at least num_topics words",
             ));
@@ -1100,19 +1100,19 @@ impl DETM {
         }
 
         let num_types = vocabulary.len();
-        self.id_to_word = vocabulary.clone();
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        slf.id_to_word = vocabulary.clone();
+        let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
         let (k, delta, h, eh, enl, bs, lr, wd, gc) = (
-            self.num_topics,
-            self.delta,
-            self.hidden_size,
-            self.eta_hidden_size,
-            self.eta_nlayers,
-            self.batch_size,
-            self.lr,
-            self.wdecay,
-            self.grad_clip,
+            slf.num_topics,
+            slf.delta,
+            slf.hidden_size,
+            slf.eta_hidden_size,
+            slf.eta_nlayers,
+            slf.batch_size,
+            slf.lr,
+            slf.wdecay,
+            slf.grad_clip,
         );
         let model = py.allow_threads(move || {
             detm::fit_detm(
@@ -1121,10 +1121,10 @@ impl DETM {
             )
         });
 
-        self.num_times = num_times;
-        self.model = Some(model);
+        slf.num_times = num_times;
+        slf.model = Some(model);
         // Retain a corpus for coherence/doc_names; build a minimal one if raw docs were given.
-        self.corpus = Some(corpus_opt.unwrap_or_else(|| {
+        slf.corpus = Some(corpus_opt.unwrap_or_else(|| {
             let n = docs_str.len();
             let v = num_types;
             let mut df = vec![0u32; v];
@@ -1154,9 +1154,9 @@ impl DETM {
                 total_freqs: tf,
             }
         }));
-        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
-        self.fitted = true;
-        Ok(())
+        slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]
@@ -1590,7 +1590,7 @@ impl InfoCTM {
                         embeddings_b=None, iters=None, batch_size=128))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data_a: &Bound<'_, PyAny>,
         data_b: &Bound<'_, PyAny>,
@@ -1599,7 +1599,7 @@ impl InfoCTM {
         embeddings_b: Option<std::collections::HashMap<String, Vec<f64>>>,
         iters: Option<usize>,
         batch_size: usize,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let to_corpus = |data: &Bound<'_, PyAny>| -> PyResult<corpus::Corpus> {
             if let Ok(c) = data.extract::<Corpus>() {
                 Ok(c.inner)
@@ -1626,7 +1626,7 @@ impl InfoCTM {
         if corpus_a.num_docs() == 0 || corpus_b.num_docs() == 0 {
             return Err(PyValueError::new_err("both corpora must contain documents"));
         }
-        if va < self.num_topics || vb < self.num_topics {
+        if va < slf.num_topics || vb < slf.num_topics {
             return Err(PyValueError::new_err(
                 "each vocabulary must have at least num_topics words",
             ));
@@ -1669,14 +1669,14 @@ impl InfoCTM {
 
         let ep = iters.unwrap_or(500);
         let (k, h, dp, lr, et) = (
-            self.num_topics,
-            self.hidden_size,
-            self.dropout,
-            self.lr,
-            self.em_tol,
+            slf.num_topics,
+            slf.hidden_size,
+            slf.dropout,
+            slf.lr,
+            slf.em_tol,
         );
-        let (mw, mt, pt) = (self.mi_weight, self.mi_temperature, self.pos_threshold);
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        let (mw, mt, pt) = (slf.mi_weight, slf.mi_temperature, slf.pos_threshold);
+        let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
         let docs_a = corpus_a.docs.clone();
         let docs_b = corpus_b.docs.clone();
@@ -1702,11 +1702,11 @@ impl InfoCTM {
                 &mut rng,
             )
         });
-        self.model = Some(model);
-        self.corpus_a = Some(corpus_a);
-        self.corpus_b = Some(corpus_b);
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.corpus_a = Some(corpus_a);
+        slf.corpus_b = Some(corpus_b);
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]
@@ -2066,13 +2066,13 @@ impl ProdLDA {
     /// `convergence_tol` overrides the constructor value for this run (when given).
     #[pyo3(signature = (data, *, iters=None, convergence_tol=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
-    ) -> PyResult<()> {
-        let tol = convergence_tol.unwrap_or(self.em_tol);
+    ) -> PyResult<Py<Self>> {
+        let tol = convergence_tol.unwrap_or(slf.em_tol);
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -2095,28 +2095,28 @@ impl ProdLDA {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
         let num_types = corpus.num_types();
-        if num_types < self.num_topics {
+        if num_types < slf.num_topics {
             return Err(PyValueError::new_err(
                 "vocabulary must have at least num_topics words",
             ));
         }
         let ep = iters.unwrap_or(200);
         let opts = build_avitm_options(
-            &self.prior,
-            self.contrastive,
-            self.contrastive_weight,
-            self.contrastive_temp,
+            &slf.prior,
+            slf.contrastive,
+            slf.contrastive_weight,
+            slf.contrastive_temp,
         )?;
         let (k, h, a, dp, bs, lr, et) = (
-            self.num_topics,
-            self.hidden_size,
-            self.alpha,
-            self.dropout,
-            self.batch_size,
-            self.lr,
+            slf.num_topics,
+            slf.hidden_size,
+            slf.alpha,
+            slf.dropout,
+            slf.batch_size,
+            slf.lr,
             tol,
         );
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let empty: Vec<Vec<f64>> = vec![Vec::new(); corpus.docs.len()];
         let (model, corpus) = py.allow_threads(move || {
             let m = prodlda::fit_avitm(
@@ -2138,11 +2138,11 @@ impl ProdLDA {
             );
             (m, corpus)
         });
-        self.model = Some(model);
-        self.corpus = Some(corpus);
-        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.corpus = Some(corpus);
+        slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]
@@ -2265,12 +2265,12 @@ impl ProdLDA {
     /// Fit, then return the document-topic proportions (`fit_transform`).
     #[pyo3(signature = (data))]
     fn fit_transform<'py>(
-        &mut self,
+        slf: PyRefMut<'_, Self>,
         py: Python<'py>,
         data: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        self.fit(py, data, None, None)?;
-        Ok(vecs_to_arr2(&self.fitted_model()?.doc_topic).to_pyarray_bound(py))
+        let fitted = Self::fit(slf, py, data, None, None)?;
+        Ok(vecs_to_arr2(&fitted.bind(py).borrow().fitted_model()?.doc_topic).to_pyarray_bound(py))
     }
 
     /// Save the fitted model to `path` (topica's binary format).
@@ -2620,14 +2620,14 @@ macro_rules! ctm_embedding_model {
             /// for this run (when given).
             #[pyo3(signature = (data, doc_embeddings, *, iters=None, convergence_tol=None))]
             fn fit(
-                &mut self,
+                mut slf: PyRefMut<'_, Self>,
                 py: Python<'_>,
                 data: &Bound<'_, PyAny>,
                 doc_embeddings: &Bound<'_, PyAny>,
                 iters: Option<usize>,
                 convergence_tol: Option<f64>,
-            ) -> PyResult<()> {
-                let tol = convergence_tol.unwrap_or(self.convergence_tol);
+            ) -> PyResult<Py<Self>> {
+                let tol = convergence_tol.unwrap_or(slf.convergence_tol);
                 let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
                     c.inner
                 } else {
@@ -2650,7 +2650,7 @@ macro_rules! ctm_embedding_model {
                     return Err(PyValueError::new_err("corpus contains no documents"));
                 }
                 let num_types = corpus.num_types();
-                if num_types < self.num_topics {
+                if num_types < slf.num_topics {
                     return Err(PyValueError::new_err(
                         "vocabulary must have at least num_topics words",
                     ));
@@ -2662,23 +2662,23 @@ macro_rules! ctm_embedding_model {
                         "doc_embeddings must have at least one column",
                     ));
                 }
-                self.emb_dim = emb_dim;
+                slf.emb_dim = emb_dim;
                 let ep = iters.unwrap_or(200);
                 let opts = build_avitm_options(
-                    &self.prior,
-                    self.contrastive,
-                    self.contrastive_weight,
-                    self.contrastive_temp,
+                    &slf.prior,
+                    slf.contrastive,
+                    slf.contrastive_weight,
+                    slf.contrastive_temp,
                 )?;
                 let (k, h, a, dp, bs, lr) = (
-                    self.num_topics,
-                    self.hidden_size,
-                    self.alpha,
-                    self.dropout,
-                    self.batch_size,
-                    self.lr,
+                    slf.num_topics,
+                    slf.hidden_size,
+                    slf.alpha,
+                    slf.dropout,
+                    slf.batch_size,
+                    slf.lr,
                 );
-                let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+                let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
                 let (model, corpus) = py.allow_threads(move || {
                     let m = prodlda::fit_avitm(
                         &corpus.docs,
@@ -2699,11 +2699,11 @@ macro_rules! ctm_embedding_model {
                     );
                     (m, corpus)
                 });
-                self.model = Some(model);
-                self.corpus = Some(corpus);
-                self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
-                self.fitted = true;
-                Ok(())
+                slf.model = Some(model);
+                slf.corpus = Some(corpus);
+                slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
+                slf.fitted = true;
+                Ok(slf.into())
             }
 
             #[getter]
@@ -2839,14 +2839,15 @@ macro_rules! ctm_embedding_model {
             /// per document in corpus order. `iters` is the number of training epochs.
             #[pyo3(signature = (data, doc_embeddings, *, iters=None))]
             fn fit_transform<'py>(
-                &mut self,
+                slf: PyRefMut<'_, Self>,
                 py: Python<'py>,
                 data: &Bound<'py, PyAny>,
                 doc_embeddings: &Bound<'py, PyAny>,
                 iters: Option<usize>,
             ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-                self.fit(py, data, doc_embeddings, iters, None)?;
-                Ok(vecs_to_arr2(&self.fitted_model()?.doc_topic).to_pyarray_bound(py))
+                let fitted = Self::fit(slf, py, data, doc_embeddings, iters, None)?;
+                Ok(vecs_to_arr2(&fitted.bind(py).borrow().fitted_model()?.doc_topic)
+                    .to_pyarray_bound(py))
             }
 
             /// Save the fitted model to `path` (topica's binary format).
