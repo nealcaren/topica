@@ -165,7 +165,7 @@ impl PA {
     #[pyo3(signature = (data, *, iters=1000, keep_theta_draws=true, num_theta_draws=25,
                         convergence_tol=0.0_f64, check_every=10_usize))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: usize,
@@ -173,7 +173,7 @@ impl PA {
         num_theta_draws: usize,
         convergence_tol: f64,
         check_every: usize,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -197,12 +197,12 @@ impl PA {
         }
         let num_docs = corpus.num_docs();
         let num_types = corpus.num_types();
-        let (s, k, a, b) = (self.num_super, self.num_sub, self.alpha, self.beta);
+        let (s, k, a, b) = (slf.num_super, slf.num_sub, slf.alpha, slf.beta);
 
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
-        let mut rng = Pcg64Mcg::seed_from_u64(self.seed);
+        let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         let (model, ll_history, converged_flag, corpus) = py.allow_threads(move || {
             let (m, hist, conv) = pa::fit_pam_with_draws(
                 &corpus.docs,
@@ -219,16 +219,16 @@ impl PA {
             );
             (m, hist, conv, corpus)
         });
-        self.theta_draws = draws_to_array3(&model.theta_draws, num_docs, k, None);
-        self.phi = Some(vecs_to_arr2(&model.topic_word()));
-        self.theta = Some(vecs_to_arr2(&model.doc_topic()));
-        self.super_sub = Some(vecs_to_arr2(&model.super_sub()));
-        self.topic_names = (0..self.num_sub).map(|i| format!("topic_{i}")).collect();
-        self.log_likelihood_history = ll_history;
-        self.converged = converged_flag;
-        self.corpus = Some(corpus);
-        self.fitted = true;
-        Ok(())
+        slf.theta_draws = draws_to_array3(&model.theta_draws, num_docs, k, None);
+        slf.phi = Some(vecs_to_arr2(&model.topic_word()));
+        slf.theta = Some(vecs_to_arr2(&model.doc_topic()));
+        slf.super_sub = Some(vecs_to_arr2(&model.super_sub()));
+        slf.topic_names = (0..slf.num_sub).map(|i| format!("topic_{i}")).collect();
+        slf.log_likelihood_history = ll_history;
+        slf.converged = converged_flag;
+        slf.corpus = Some(corpus);
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Sub-topic word distributions, shape ``(num_sub, num_words)``.
@@ -589,7 +589,12 @@ impl HLDA {
 
     /// Fit by nested-CRP collapsed Gibbs sampling for `iters` sweeps.
     #[pyo3(signature = (data, *, iters=500))]
-    fn fit(&mut self, py: Python<'_>, data: &Bound<'_, PyAny>, iters: usize) -> PyResult<()> {
+    fn fit(
+        mut slf: PyRefMut<'_, Self>,
+        py: Python<'_>,
+        data: &Bound<'_, PyAny>,
+        iters: usize,
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -612,8 +617,8 @@ impl HLDA {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
         let num_types = corpus.num_types();
-        let (depth, gamma, eta, alpha) = (self.depth, self.gamma, self.eta, self.alpha);
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        let (depth, gamma, eta, alpha) = (slf.depth, slf.gamma, slf.eta, slf.alpha);
+        let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let (model, corpus) = py.allow_threads(move || {
             let m = hlda::fit_hlda(
                 &corpus.docs,
@@ -635,17 +640,17 @@ impl HLDA {
                 tw[[i, w]] = val;
             }
         }
-        self.num_nodes = nn;
-        self.topic_names = (0..nn).map(|i| format!("topic_{i}")).collect();
-        self.node_topic_word = Some(tw);
-        self.node_levels = (0..nn).map(|i| model.node_level(i)).collect();
-        self.node_parents = (0..nn)
+        slf.num_nodes = nn;
+        slf.topic_names = (0..nn).map(|i| format!("topic_{i}")).collect();
+        slf.node_topic_word = Some(tw);
+        slf.node_levels = (0..nn).map(|i| model.node_level(i)).collect();
+        slf.node_parents = (0..nn)
             .map(|i| model.node_parent(i).map(|p| p as i64).unwrap_or(-1))
             .collect();
-        self.doc_paths = (0..corpus.num_docs()).map(|d| model.doc_path(d)).collect();
-        self.corpus = Some(corpus);
-        self.fitted = true;
-        Ok(())
+        slf.doc_paths = (0..corpus.num_docs()).map(|d| model.doc_path(d)).collect();
+        slf.corpus = Some(corpus);
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// The number of topic nodes in the inferred tree.

@@ -286,7 +286,7 @@ class DMR:
         convergence_tol: float = 0.0,
         check_every: int = 10,
         covariates: Optional[numpy.typing.NDArray[numpy.float64]] = None,
-    ) -> None:
+    ) -> "DMR":
         """Fit by collapsed Gibbs with the per-document Dirichlet prior
         alpha_{d,t} = exp(lambda_t . x_d). `features` (or `covariates`, a
         symmetric alias) is required: an (num_docs, F) covariate matrix (no
@@ -459,7 +459,7 @@ class CTM:
         em_tol: Optional[float] = None,
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
-    ) -> None:
+    ) -> "CTM":
         """EM stops once the relative change in the variational bound falls below
         convergence_tol or after iters iterations, whichever comes first. Pass
         convergence_tol=0 to always run iters steps. Check converged and bound
@@ -627,7 +627,7 @@ class STM:
         covariates: Optional[numpy.typing.NDArray[numpy.float64]] = None,
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
-    ) -> None:
+    ) -> "STM":
         """Fit. prevalence (or covariates, a symmetric alias) is (num_docs, F)
         covariates driving topic proportions (mu_d = X_d gamma; intercept
         prepended). content is one group label per document, making topic-word
@@ -834,7 +834,7 @@ class STS:
         em_tol: Optional[float] = None,
         covariates: Optional[numpy.typing.NDArray[numpy.float64]] = None,
         keep_eta_cov: bool = True,
-    ) -> None:
+    ) -> "STS":
         """Fit. sentiment_seed (required, one value per document) defines the
         aggregation groups for the topic-word (kappa) Poisson M-step and seeds the
         initial sentiment — e.g. a star rating the sentiment should track.
@@ -990,7 +990,7 @@ class HDP:
         keep_theta_draws: bool = True,
         num_theta_draws: int = 25,
         report_interval: Optional[int] = None,
-    ) -> None:
+    ) -> "HDP":
         """Fit by `iters` Gibbs sweeps. The inferred K is then `num_topics`.
 
         progress_interval controls the discovery/convergence trace
@@ -1141,7 +1141,7 @@ class DTM:
         times: Sequence[int],
         *,
         iters: int = 20,
-    ) -> None:
+    ) -> "DTM":
         """Fit by variational EM. `times` is each document's integer time-slice
         index (0-based, contiguous); the slice count is max(times)+1."""
         ...
@@ -1263,7 +1263,7 @@ class DETM:
         timestamps: Sequence[int] | None = None,
         iters: int = 100,
         convergence_tol: float | None = None,
-    ) -> None:
+    ) -> "DETM":
         """Fit on `data` with `word_embeddings` (len(vocabulary), L) aligned to
         `vocabulary`. `times` is each document's integer time-slice index (0-based,
         contiguous; `timestamps` is the accepted alias). `iters` is the epoch count."""
@@ -1382,7 +1382,7 @@ class SupervisedLDA:
         num_theta_draws: int = 25,
         convergence_tol: float = 0.0,
         check_every: int = 1,
-    ) -> None:
+    ) -> "SupervisedLDA":
         """Fit by variational EM. `y` is the per-document response (length =
         number of documents)."""
         ...
@@ -1542,7 +1542,7 @@ class SAGE:
         num_theta_draws: int = 25,
         convergence_tol: float = 0.0,
         check_every: int = 10,
-    ) -> None:
+    ) -> "SAGE":
         """Fit. groups is one group label per document (strings or ints);
         group_names fixes group order (default: sorted union)."""
         ...
@@ -1702,7 +1702,7 @@ class LabeledLDA:
         num_theta_draws: int = 25,
         convergence_tol: float = 0.0,
         check_every: int = 10,
-    ) -> None:
+    ) -> "LabeledLDA":
         """Fit the model. labels is one label-list per document; the topic set is
         the union of all labels (or label_names, which fixes topic order). An
         empty label list leaves that document unconstrained (all topics)."""
@@ -1885,7 +1885,7 @@ class LDA:
         check_every: int = 10,
         num_threads: Optional[int] = None,
         turbo_merge_every: int = 1,
-    ) -> None:
+    ) -> "LDA":
         """Run Gibbs sampling to fit the model on data.
 
         With ``keep_theta_draws`` (default on), the last ``num_theta_draws``
@@ -2153,7 +2153,7 @@ class PT:
         num_theta_draws: int = 25,
         convergence_tol: float = 0.0,
         check_every: int = 10,
-    ) -> None: ...
+    ) -> "PT": ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
@@ -2251,7 +2251,7 @@ class GSDMM:
         iters: int = 30,
         progress_interval: int = 0,
         report_interval: Optional[int] = None,
-    ) -> None:
+    ) -> "GSDMM":
         """Fit by the Movie Group Process. progress_interval controls the
         cluster-discovery trace (0 = auto ~50 points).
 
@@ -2336,7 +2336,7 @@ class BTM:
     ) -> None: ...
     def fit(
         self, data: Corpus | Sequence[Sequence[str]], *, iters: int | None = None
-    ) -> None: ...
+    ) -> "BTM": ...
     def transform(
         self, data: Corpus | Sequence[Sequence[str]]
     ) -> numpy.typing.NDArray[numpy.float64]:
@@ -2416,7 +2416,7 @@ class PolylingualLDA:
         | Sequence[Corpus | Sequence[Sequence[str]]],
         *,
         iters: int | None = None,
-    ) -> None:
+    ) -> "PolylingualLDA":
         """Fit on aligned document tuples: a dict {language: docs} (preferred) or a
         list of per-language corpora. Every language must have the same number of
         tuples, aligned by index."""
@@ -2509,7 +2509,7 @@ class DiscLDA:
         y: Sequence[str] | Sequence[int],
         *,
         iters: int | None = None,
-    ) -> None:
+    ) -> "DiscLDA":
         """Fit on documents with one class label `y` per document (str or int)."""
         ...
     def transform(
@@ -2597,7 +2597,7 @@ class PA:
         num_theta_draws: int = 25,
         convergence_tol: float = 0.0,
         check_every: int = 10,
-    ) -> None: ...
+    ) -> "PA": ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
         """Sub-topic word matrix, shape (num_sub, num_words); rows sum to 1."""
@@ -2706,7 +2706,7 @@ class HLDA:
 
         eta is a deprecated alias for beta."""
         ...
-    def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int = 500) -> None: ...
+    def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int = 500) -> "HLDA": ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
         """Node-word matrix, shape (num_nodes, num_words); rows sum to 1."""
@@ -2798,7 +2798,7 @@ class SeededLDA:
         num_theta_draws: int = 25,
         convergence_tol: float = 0.0,
         check_every: int = 10,
-    ) -> None:
+    ) -> "SeededLDA":
         """Fit the seeded model. `convergence_tol` (default 0.0, disabled) enables
         opt-in log-likelihood early stopping on the default ("sparse") sampler,
         recording the `fit_history` trace every `check_every` sweeps; the "cvb0"
@@ -2920,7 +2920,7 @@ class Top2Vec:
         *,
         word_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]] | None = None,
         vocabulary: Sequence[str] | None = None,
-    ) -> None:
+    ) -> "Top2Vec":
         """Fit on token documents plus one `doc_embeddings` row per document.
         Pass `word_embeddings` with the aligned `vocabulary` (same space) to
         enable `topic_neighbors`; they are realigned to topica's vocabulary."""
@@ -3028,7 +3028,7 @@ class BERTopic:
         self,
         data: Corpus | Sequence[Sequence[str]],
         doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
-    ) -> None:
+    ) -> "BERTopic":
         """Fit on token documents plus one `doc_embeddings` row per document."""
         ...
     @property
@@ -3142,7 +3142,7 @@ class ETM:
         *,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
-    ) -> None:
+    ) -> "ETM":
         """Fit on token documents plus word embeddings (len(vocabulary) x E) and
         the aligned vocabulary, which defines the word ids. `iters` sets the number
         of training iterations (EM iterations or VAE epochs).
@@ -3253,7 +3253,7 @@ class InfoCTM:
         embeddings_b: dict[str, Sequence[float]] | None = None,
         iters: int | None = None,
         batch_size: int = 128,
-    ) -> None:
+    ) -> "InfoCTM":
         """Fit both languages jointly. ``dictionary`` is an iterable of
         ``(word_a, word_b)`` pairs; ``embeddings_*`` are optional ``{word: vector}``
         maps that densify the alignment mask. ``iters`` is the epoch count (500)."""
@@ -3330,7 +3330,7 @@ class ProdLDA:
         *,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
-    ) -> None:
+    ) -> "ProdLDA":
         """Fit on a Corpus or a list of token lists. `iters` sets the number of epochs.
 
         convergence_tol overrides the constructor's convergence_tol for this fit
@@ -3432,7 +3432,7 @@ class Scholar:
         content: object | None = None,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
-    ) -> None:
+    ) -> "Scholar":
         """Fit on a Corpus or list of token lists with prior ``covariates``, supervised
         ``labels`` (str/int, one per document), and/or topic-covariate ``content``. At
         least one of covariates, labels, or content must be given."""
@@ -3563,7 +3563,7 @@ class CombinedTM:
         *,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
-    ) -> None:
+    ) -> "CombinedTM":
         """Fit on token documents plus per-document embeddings (num_docs x E,
         in corpus order). `iters` sets the number of training epochs.
 
@@ -3670,7 +3670,7 @@ class ZeroShotTM:
         *,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
-    ) -> None:
+    ) -> "ZeroShotTM":
         """Fit on token documents plus per-document embeddings (num_docs x E,
         in corpus order). The encoder uses the embeddings alone. `iters` sets the
         number of training epochs.
@@ -3768,7 +3768,7 @@ class NMF:
         *,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
-    ) -> None:
+    ) -> "NMF":
         """Fit on a Corpus or a list of token lists. `iters` is the maximum number
         of multiplicative-update iterations (default 200). convergence_tol
         overrides the constructor value for this fit call only."""
@@ -3841,7 +3841,7 @@ class LSA:
         """weighting is 'tfidf' (default, classic LSI) or 'count'. seed seeds the
         randomized-SVD sketch."""
         ...
-    def fit(self, data: Corpus | Sequence[Sequence[str]]) -> None:
+    def fit(self, data: Corpus | Sequence[Sequence[str]]) -> "LSA":
         """Fit on a Corpus or a list of token lists. The SVD is a direct solve, so
         there is no iters argument."""
         ...
@@ -3921,7 +3921,7 @@ class TensorLDA:
         pca_batch_size: int = 128,
         seed: int = 42,
     ) -> None: ...
-    def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int | None = None) -> None: ...
+    def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int | None = None) -> "TensorLDA": ...
     def partial_fit(
         self,
         data: Corpus | Sequence[Sequence[str]],
@@ -4009,7 +4009,7 @@ class FASTopic:
         *,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
-    ) -> None:
+    ) -> "FASTopic":
         """Fit on token documents plus frozen document embeddings (num_docs x E).
         The vocabulary is taken from the corpus; the word embeddings are learned.
         `iters` sets the number of training epochs.
@@ -4152,7 +4152,7 @@ class KeyATM:
         convergence_tol: float = 0.0,
         report_interval: Optional[int] = None,
         turbo_alpha_stride: int = 1,
-    ) -> None:
+    ) -> "KeyATM":
         """Fit by collapsed Gibbs. Pass `covariates` (num_docs x F) for the
         covariate keyATM: the document-topic prior becomes a DMR,
         alpha_{d,k} = exp(x_d . lambda_k) (an intercept is prepended), and the
@@ -4395,7 +4395,7 @@ class IdealPointTM:
         anchors: dict[str, float] | None = None,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
-    ) -> None:
+    ) -> "IdealPointTM":
         """Fit on token documents. Omit `word_embeddings` for the count
         representation (the vocabulary is built from the corpus by min_count; do not
         pass `vocabulary`). Pass `word_embeddings` (len(vocabulary) x E) with the
@@ -4529,7 +4529,7 @@ class Wordfish:
         anchors: dict[str, float] | None = None,
         iters: int | None = None,
         convergence_tol: float | None = None,
-    ) -> None:
+    ) -> "Wordfish":
         """group pools documents sharing a label into one unit with one position;
         control is an optional categorical confound (constant within each author)
         whose level-specific word usage is absorbed into per-level offsets so it does
@@ -4606,7 +4606,7 @@ class IdealPointSentenceTM:
         anchors: dict[str, float] | None = None,
         iters: int | None = None,
         convergence_tol: float | None = None,
-    ) -> None:
+    ) -> "IdealPointSentenceTM":
         """embeddings is an (N, D) array of per-observation sentence/document
         embeddings; group (length N) gives the author of each observation."""
         ...
@@ -4695,7 +4695,7 @@ class TBIP:
         iters: int | None = None,
         batch_size: int | None = None,
         learning_rate: float | None = None,
-    ) -> None:
+    ) -> "TBIP":
         """data is a Corpus or list of token lists; group (length num_docs) gives the
         author of each document (documents sharing a label share one ideal point)."""
         ...
@@ -4790,7 +4790,7 @@ class PartyEmbeddings:
         control: Sequence[str] | None = None,
         anchors: dict[str, float] | None = None,
         iters: int = 5,
-    ) -> None:
+    ) -> "PartyEmbeddings":
         """data is a Corpus or list of token lists; group (length num_docs) is the
         party-period label of each document. control is an optional second
         per-document metadata tag (estimated but not placed); anchors

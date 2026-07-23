@@ -432,7 +432,7 @@ impl IdealPointTM {
                         anchors=None, iters=None, convergence_tol=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         word_embeddings: Option<&Bound<'_, PyAny>>,
@@ -441,11 +441,11 @@ impl IdealPointTM {
         anchors: Option<HashMap<String, f64>>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
-    ) -> PyResult<()> {
-        let tol = convergence_tol.unwrap_or(self.convergence_tol);
+    ) -> PyResult<Py<Self>> {
+        let tol = convergence_tol.unwrap_or(slf.convergence_tol);
         let it = iters.unwrap_or(50);
         match word_embeddings {
-            Some(emb) => self.fit_embedded(py, data, emb, vocabulary, group, anchors, it, tol),
+            Some(emb) => slf.fit_embedded(py, data, emb, vocabulary, group, anchors, it, tol)?,
             None => {
                 if vocabulary.is_some() {
                     return Err(PyValueError::new_err(
@@ -453,9 +453,10 @@ impl IdealPointTM {
                          representation (the vocabulary is built from the corpus by min_count)",
                     ));
                 }
-                self.fit_counts(py, data, group, anchors, it, tol)
+                slf.fit_counts(py, data, group, anchors, it, tol)?
             }
         }
+        Ok(slf.into())
     }
 
     #[getter]

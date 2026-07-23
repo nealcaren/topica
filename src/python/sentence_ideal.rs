@@ -122,14 +122,14 @@ impl IdealPointSentenceTM {
     #[pyo3(signature = (embeddings, *, group=None, anchors=None, iters=None,
                         convergence_tol=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         embeddings: &Bound<'_, PyAny>,
         group: Option<Vec<String>>,
         anchors: Option<HashMap<String, f64>>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let emb = parse_features(embeddings)?;
         let n = emb.len();
         if n == 0 {
@@ -193,14 +193,9 @@ impl IdealPointSentenceTM {
             }
         };
 
-        let tol = convergence_tol.unwrap_or(self.convergence_tol);
+        let tol = convergence_tol.unwrap_or(slf.convergence_tol);
         let it = iters.unwrap_or(100);
-        let (k, dd, xpv, seed) = (
-            self.num_topics,
-            self.num_dims,
-            self.x_prior_variance,
-            self.seed,
-        );
+        let (k, dd, xpv, seed) = (slf.num_topics, slf.num_dims, slf.x_prior_variance, slf.seed);
         let model = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             sentence_ideal::fit_sentence_ideal(
@@ -217,11 +212,11 @@ impl IdealPointSentenceTM {
             )
         });
 
-        self.model = Some(model);
-        self.author_names = author_names;
-        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.author_names = author_names;
+        slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]

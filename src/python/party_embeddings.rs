@@ -192,14 +192,14 @@ impl PartyEmbeddings {
     /// epochs (default 5).
     #[pyo3(signature = (data, *, group, control=None, anchors=None, iters=5))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         group: Vec<String>,
         control: Option<Vec<String>>,
         anchors: Option<HashMap<String, f64>>,
         iters: usize,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         // Extract documents as ordered token lists (PV-DM needs word order).
         let docs_str: Vec<Vec<String>> = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -248,7 +248,7 @@ impl PartyEmbeddings {
         }
         let mut vocab_pairs: Vec<(&str, u32)> = freq
             .iter()
-            .filter(|&(_, &c)| c as usize >= self.min_count)
+            .filter(|&(_, &c)| c as usize >= slf.min_count)
             .map(|(&w, &c)| (w, c))
             .collect();
         vocab_pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
@@ -333,15 +333,15 @@ impl PartyEmbeddings {
         };
 
         let cfg = PvdmConfig {
-            vector_size: self.vector_size,
-            window: self.window,
-            negative: self.negative,
-            sample: self.sample,
-            start_lr: self.learning_rate,
-            min_lr: (self.learning_rate * 1e-4).min(1e-4),
+            vector_size: slf.vector_size,
+            window: slf.window,
+            negative: slf.negative,
+            sample: slf.sample,
+            start_lr: slf.learning_rate,
+            min_lr: (slf.learning_rate * 1e-4).min(1e-4),
             epochs: iters,
         };
-        let seed = self.seed;
+        let seed = slf.seed;
         let model = py.allow_threads(move || {
             party_embeddings::fit_pvdm(
                 &docs_ids,
@@ -358,7 +358,7 @@ impl PartyEmbeddings {
 
         // Placement: PCA of the party vectors, standardized, sign-oriented to the
         // anchors (each dimension independently).
-        let mut positions = crate::reduce::pca(&model.group_matrix(), self.num_dims, self.seed);
+        let mut positions = crate::reduce::pca(&model.group_matrix(), slf.num_dims, slf.seed);
         standardize_columns(&mut positions);
         if !anchor_pairs.is_empty() && !positions.is_empty() {
             let ndim = positions[0].len();
@@ -372,13 +372,13 @@ impl PartyEmbeddings {
             }
         }
 
-        self.loss_history = model.loss_history.clone();
-        self.positions = Some(positions);
-        self.model = Some(model);
-        self.id_to_word = id_to_word;
-        self.author_names = group_names;
-        self.fitted = true;
-        Ok(())
+        slf.loss_history = model.loss_history.clone();
+        slf.positions = Some(positions);
+        slf.model = Some(model);
+        slf.id_to_word = id_to_word;
+        slf.author_names = group_names;
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]

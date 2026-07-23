@@ -219,11 +219,11 @@ impl TensorLDA {
     /// Fit the model on the given corpus or token lists.
     #[pyo3(signature = (data, *, iters=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: Option<usize>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -244,20 +244,20 @@ impl TensorLDA {
         };
         let num_docs = corpus.num_docs();
         let num_types = corpus.num_types();
-        if num_docs < self.num_topics {
+        if num_docs < slf.num_topics {
             return Err(PyValueError::new_err(format!(
                 "corpus must have at least num_topics={} documents, got {}",
-                self.num_topics, num_docs
+                slf.num_topics, num_docs
             )));
         }
-        if num_types < self.num_topics {
+        if num_types < slf.num_topics {
             return Err(PyValueError::new_err(
                 "vocabulary must have at least num_topics words",
             ));
         }
 
         let max_rank = num_docs.min(num_types);
-        let n_eigen = self.n_eigenvec.unwrap_or(self.num_topics);
+        let n_eigen = slf.n_eigenvec.unwrap_or(slf.num_topics);
         if n_eigen > max_rank {
             return Err(PyValueError::new_err(format!(
                 "whitening rank n_eigenvec={} cannot exceed min(num_docs, vocab_size)={}",
@@ -265,17 +265,17 @@ impl TensorLDA {
             )));
         }
 
-        let n_iter_train = iters.unwrap_or(self.n_iter_train);
+        let n_iter_train = iters.unwrap_or(slf.n_iter_train);
         let (k, alpha_0, n_iter_test, lr, bs, smoothing, theta, n_eigen, seed) = (
-            self.num_topics,
-            self.alpha_0,
-            self.n_iter_test,
-            self.learning_rate,
-            self.batch_size,
-            self.smoothing,
-            self.theta,
-            self.n_eigenvec,
-            self.seed,
+            slf.num_topics,
+            slf.alpha_0,
+            slf.n_iter_test,
+            slf.learning_rate,
+            slf.batch_size,
+            slf.smoothing,
+            slf.theta,
+            slf.n_eigenvec,
+            slf.seed,
         );
 
         let (model, corpus) = py.allow_threads(move || {
@@ -296,15 +296,15 @@ impl TensorLDA {
             (m, corpus)
         });
 
-        self.model = Some(model);
-        self.corpus = Some(corpus);
-        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
-        self.fitted = true;
+        slf.model = Some(model);
+        slf.corpus = Some(corpus);
+        slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
+        slf.fitted = true;
         // A batch fit supersedes any half-built stream.
-        self.stream = None;
-        self.stream_index = None;
-        self.stream_vocab = None;
-        Ok(())
+        slf.stream = None;
+        slf.stream_index = None;
+        slf.stream_vocab = None;
+        Ok(slf.into())
     }
 
     /// Update the model with a batch of documents (streaming / online fit).

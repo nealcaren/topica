@@ -385,7 +385,7 @@ impl Scholar {
                         convergence_tol=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         covariates: Option<&Bound<'_, PyAny>>,
@@ -393,7 +393,7 @@ impl Scholar {
         content: Option<&Bound<'_, PyAny>>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -447,8 +447,8 @@ impl Scholar {
 
         // Covariates / content (optional): empty rows when absent. Require at least
         // one of covariates / labels / content so the model has metadata to condition on.
-        let has_covars = covariates.is_some() || self.covariates.is_some();
-        let has_content = content.is_some() || self.content.is_some();
+        let has_covars = covariates.is_some() || slf.covariates.is_some();
+        let has_content = content.is_some() || slf.content.is_some();
         if !has_covars && label_idx.is_none() && !has_content {
             return Err(PyValueError::new_err(
                 "Scholar needs covariates, labels, and/or content: pass covariates=, labels=, \
@@ -456,50 +456,50 @@ impl Scholar {
             ));
         }
         let pcs = if has_covars {
-            self.resolve_covariates(covariates, num_docs)?
+            slf.resolve_covariates(covariates, num_docs)?
         } else {
             vec![Vec::new(); num_docs]
         };
         let n_prior_covars = pcs[0].len();
         let tcs = if has_content {
-            self.resolve_content(content, num_docs)?
+            slf.resolve_content(content, num_docs)?
         } else {
             vec![Vec::new(); num_docs]
         };
         let n_topic_covars = tcs[0].len();
 
         let num_types = corpus.num_types();
-        if num_types < self.num_topics {
+        if num_types < slf.num_topics {
             return Err(PyValueError::new_err(
                 "vocabulary must have at least num_topics words",
             ));
         }
-        let names = match &self.covariate_names {
+        let names = match &slf.covariate_names {
             Some(n) if n.len() == n_prior_covars => n.clone(),
             _ => (0..n_prior_covars)
                 .map(|c| format!("covariate_{c}"))
                 .collect(),
         };
-        let content_names = match &self.content_names {
+        let content_names = match &slf.content_names {
             Some(n) if n.len() == n_topic_covars => n.clone(),
             _ => (0..n_topic_covars)
                 .map(|c| format!("content_{c}"))
                 .collect(),
         };
-        let tol = convergence_tol.unwrap_or(self.convergence_tol);
+        let tol = convergence_tol.unwrap_or(slf.convergence_tol);
         let ep = iters.unwrap_or(200);
-        let interactions = self.interactions && n_topic_covars > 0;
+        let interactions = slf.interactions && n_topic_covars > 0;
         let (k, h, a, dp, bs, lr, l2, l1c) = (
-            self.num_topics,
-            self.hidden_size,
-            self.alpha,
-            self.dropout,
-            self.batch_size,
-            self.lr,
-            self.l2_prior_reg,
-            self.l1_content_reg,
+            slf.num_topics,
+            slf.hidden_size,
+            slf.alpha,
+            slf.dropout,
+            slf.batch_size,
+            slf.lr,
+            slf.l2_prior_reg,
+            slf.l1_content_reg,
         );
-        let seed = self.seed;
+        let seed = slf.seed;
         let (model, corpus) = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let m = crate::scholar::fit_scholar(
@@ -526,14 +526,14 @@ impl Scholar {
             );
             (m, corpus)
         });
-        self.model = Some(model);
-        self.corpus = Some(corpus);
-        self.covariate_names = Some(names);
-        self.content_names = Some(content_names);
-        self.classes = classes;
-        self.topic_names = (0..self.num_topics).map(|i| format!("topic_{i}")).collect();
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.corpus = Some(corpus);
+        slf.covariate_names = Some(names);
+        slf.content_names = Some(content_names);
+        slf.classes = classes;
+        slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]

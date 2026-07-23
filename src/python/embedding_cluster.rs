@@ -227,13 +227,13 @@ impl Top2Vec {
     /// `topic_neighbors`; the word embeddings are realigned to topica's vocabulary.
     #[pyo3(signature = (data, doc_embeddings, *, word_embeddings=None, vocabulary=None))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         doc_embeddings: &Bound<'_, PyAny>,
         word_embeddings: Option<&Bound<'_, PyAny>>,
         vocabulary: Option<Vec<String>>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -299,23 +299,23 @@ impl Top2Vec {
             }
             None => Vec::new(),
         };
-        self.has_word_vectors = !word_vecs.is_empty();
-        self.id_to_word = corpus.id_to_word.clone();
-        self.docs = corpus.docs.clone();
+        slf.has_word_vectors = !word_vecs.is_empty();
+        slf.id_to_word = corpus.id_to_word.clone();
+        slf.docs = corpus.docs.clone();
 
-        umap_notice(py, self.use_umap)?;
+        umap_notice(py, slf.use_umap)?;
         let (nc, uu, nn, mcs, ms, seed) = (
-            self.n_components,
-            self.use_umap,
-            self.n_neighbors,
-            self.min_cluster_size,
-            self.min_samples,
-            self.seed,
+            slf.n_components,
+            slf.use_umap,
+            slf.n_neighbors,
+            slf.min_cluster_size,
+            slf.min_samples,
+            slf.seed,
         );
-        let clusterer = self.clusterer.clone();
-        let num_clusters = self.num_clusters;
-        let (resolution, knn_neighbors) = (self.resolution, self.knn_neighbors);
-        let umap_params = self.umap_params.clone();
+        let clusterer = slf.clusterer.clone();
+        let num_clusters = slf.num_clusters;
+        let (resolution, knn_neighbors) = (slf.resolution, slf.knn_neighbors);
+        let umap_params = slf.umap_params.clone();
         let model = py.allow_threads(move || {
             top2vec::fit_top2vec(
                 &corpus.docs,
@@ -344,20 +344,20 @@ impl Top2Vec {
                  min_cluster_size, add data, or check the scale of your embeddings.",
                 ),
             )?;
-        } else if self.diagnostics {
+        } else if slf.diagnostics {
             emit_cluster_diagnostics(
                 py,
                 "Top2Vec",
-                &self.clusterer,
+                &slf.clusterer,
                 model.num_topics,
                 &model.labels,
             )?;
         }
         let k = model.num_topics;
-        self.model = Some(model);
-        self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     /// Number of topics discovered (HDBSCAN clusters found).
@@ -580,15 +580,15 @@ impl Top2Vec {
     /// word strings aligned to the rows of `word_embeddings`.
     #[pyo3(signature = (data, doc_embeddings, *, word_embeddings=None, vocabulary=None))]
     fn fit_transform<'py>(
-        &mut self,
+        slf: PyRefMut<'_, Self>,
         py: Python<'py>,
         data: &Bound<'py, PyAny>,
         doc_embeddings: &Bound<'py, PyAny>,
         word_embeddings: Option<&Bound<'py, PyAny>>,
         vocabulary: Option<Vec<String>>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        self.fit(py, data, doc_embeddings, word_embeddings, vocabulary)?;
-        Ok(vecs_to_arr2(&self.fitted_model()?.doc_topic).to_pyarray_bound(py))
+        let fitted = Self::fit(slf, py, data, doc_embeddings, word_embeddings, vocabulary)?;
+        Ok(vecs_to_arr2(&fitted.bind(py).borrow().fitted_model()?.doc_topic).to_pyarray_bound(py))
     }
 
     /// Merge groups of topics into single topics, e.g. ``[[3, 7], [1, 2]]``. The
@@ -932,11 +932,11 @@ impl BERTopic {
     /// (`(num_docs, E)`), one row per document. No word embeddings are needed.
     #[pyo3(signature = (data, doc_embeddings))]
     fn fit(
-        &mut self,
+        mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         doc_embeddings: &Bound<'_, PyAny>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -968,26 +968,26 @@ impl BERTopic {
         }
         check_all_finite_2d("doc_embeddings", &doc_emb)?;
         let num_types = corpus.num_types();
-        self.id_to_word = corpus.id_to_word.clone();
-        self.docs = corpus.docs.clone();
-        umap_notice(py, self.use_umap)?;
+        slf.id_to_word = corpus.id_to_word.clone();
+        slf.docs = corpus.docs.clone();
+        umap_notice(py, slf.use_umap)?;
         let (nc, uu, nn, mcs, ms, nr, win, st, b25, rf, seed) = (
-            self.n_components,
-            self.use_umap,
-            self.n_neighbors,
-            self.min_cluster_size,
-            self.min_samples,
-            self.nr_topics,
-            self.window,
-            self.stride,
-            self.bm25,
-            self.reduce_frequent,
-            self.seed,
+            slf.n_components,
+            slf.use_umap,
+            slf.n_neighbors,
+            slf.min_cluster_size,
+            slf.min_samples,
+            slf.nr_topics,
+            slf.window,
+            slf.stride,
+            slf.bm25,
+            slf.reduce_frequent,
+            slf.seed,
         );
-        let clusterer = self.clusterer.clone();
-        let num_clusters = self.num_clusters;
-        let (resolution, knn_neighbors) = (self.resolution, self.knn_neighbors);
-        let umap_params = self.umap_params.clone();
+        let clusterer = slf.clusterer.clone();
+        let num_clusters = slf.num_clusters;
+        let (resolution, knn_neighbors) = (slf.resolution, slf.knn_neighbors);
+        let umap_params = slf.umap_params.clone();
         let model = py.allow_threads(move || {
             bertopic::fit_bertopic(
                 &corpus.docs,
@@ -1020,20 +1020,20 @@ impl BERTopic {
                  min_cluster_size, add data, or check the scale of your embeddings.",
                 ),
             )?;
-        } else if self.diagnostics {
+        } else if slf.diagnostics {
             emit_cluster_diagnostics(
                 py,
                 "BERTopic",
-                &self.clusterer,
+                &slf.clusterer,
                 model.num_topics,
                 &model.labels,
             )?;
         }
         let k = model.num_topics;
-        self.model = Some(model);
-        self.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
-        self.fitted = true;
-        Ok(())
+        slf.model = Some(model);
+        slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
+        slf.fitted = true;
+        Ok(slf.into())
     }
 
     #[getter]
@@ -1201,13 +1201,13 @@ impl BERTopic {
     /// one row per document in corpus order.
     #[pyo3(signature = (data, doc_embeddings))]
     fn fit_transform<'py>(
-        &mut self,
+        slf: PyRefMut<'_, Self>,
         py: Python<'py>,
         data: &Bound<'py, PyAny>,
         doc_embeddings: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        self.fit(py, data, doc_embeddings)?;
-        Ok(vecs_to_arr2(&self.fitted_model()?.doc_topic).to_pyarray_bound(py))
+        let fitted = Self::fit(slf, py, data, doc_embeddings)?;
+        Ok(vecs_to_arr2(&fitted.bind(py).borrow().fitted_model()?.doc_topic).to_pyarray_bound(py))
     }
 
     /// Merge groups of topics into single topics, e.g. ``[[3, 7], [1, 2]]``,
