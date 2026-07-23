@@ -5170,6 +5170,10 @@ impl SAGE {
     }
 
     /// β for (topic, group) averaged over groups → a plain (K, V) topic-word.
+    /// Group-neutral topic-word matrix: `β_{k,g,·}` averaged with equal weight over
+    /// groups (a uniform group prior), so each topic's content is summarized without
+    /// tilting toward the more prevalent groups. Backs `topic_word_marginal`,
+    /// `top_words`, and coherence. Not the empirical marginal `Σ_g P(g|z=k) β_{k,g}`.
     fn topic_marginal(&self) -> Array2<f64> {
         let k = self.num_topics;
         let g = self.num_groups;
@@ -5619,7 +5623,13 @@ impl SAGE {
         Ok(arr.to_pyarray_bound(py))
     }
 
-    /// Group-averaged topic-word matrix, shape ``(num_topics, num_words)``.
+    /// Group-neutral topic-word matrix, shape ``(num_topics, num_words)``: the
+    /// per-group ``β_{k,g,·}`` averaged with **equal weight** over groups,
+    /// ``β_k = (1/G) Σ_g β_{k,g}``. This is a deliberate group-neutral summary of
+    /// each topic's content (the topic with the group covariate marginalized out
+    /// under a uniform group prior); it is *not* the empirical marginal
+    /// ``Σ_g P(g|z=k) β_{k,g}``, which would tilt topics toward the more prevalent
+    /// groups. Use :attr:`topic_word` for the full per-group distributions.
     #[getter]
     fn topic_word_marginal<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;

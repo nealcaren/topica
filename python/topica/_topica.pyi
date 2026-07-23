@@ -1594,7 +1594,11 @@ class SAGE:
 
     @property
     def topic_word_marginal(self) -> numpy.typing.NDArray[numpy.float64]:
-        """Group-averaged topic-word, shape (num_topics, num_words)."""
+        """Group-neutral topic-word, shape (num_topics, num_words): the per-group
+        beta averaged with equal weight over groups (a uniform group prior), a
+        deliberate group-neutral summary of each topic. Not the empirical marginal
+        sum_g P(g|z=k) beta_{k,g}, which would tilt toward more prevalent groups;
+        use topic_word for the full per-group distributions."""
         ...
 
     @property

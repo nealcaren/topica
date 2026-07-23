@@ -16,6 +16,14 @@
 //! (fit by adaptive reweighting, driving most deviations to ~0 — this is what
 //! makes it SAGE rather than a ridge content model) or a dense `Gaussian` ridge.
 //! Both reuse the L-BFGS from DMR.
+//!
+//! Inference is collapsed Gibbs for the token–topic assignments with periodic MAP
+//! re-estimation of κ — this is the SAGE *model*, not a literal reproduction of the
+//! ICML paper's variational EM (which uses expected counts). SAGE has no external
+//! reference implementation to benchmark against (no widely-used library ships it),
+//! so it is validated by planted-topic recovery, refit self-consistency
+//! (`parity/sage_gold.py`), and the defining sparsity behaviour — the sparse prior
+//! must drive non-discriminative κ to ≈0 while keeping discriminative words nonzero.
 
 use rand::Rng;
 
@@ -113,18 +121,25 @@ impl SageModel {
         k * self.num_groups + g
     }
 
-    /// Set the background `m_v` to the corpus log word-frequency.
+    /// Set the fixed background `m_v` to the unsmoothed empirical corpus log
+    /// word-frequency (Eisenstein, Ahmed & Xing 2011): `m_v = ln(count_v / N)`.
+    /// The κ deviations are estimated relative to this fixed reference, so it is
+    /// the raw corpus frequency, not a smoothed distribution. The vocabulary is
+    /// built from the same corpus, so every type has `count_v ≥ 1`; a type absent
+    /// from `docs` is floored to one count purely to keep `m` finite.
     pub fn set_background(&mut self, docs: &[Vec<u32>]) {
-        let mut freq = vec![1.0f64; self.num_types]; // +1 smoothing
-        let mut total = self.num_types as f64;
+        let mut freq = vec![0.0f64; self.num_types];
+        let mut total = 0.0f64;
         for doc in docs {
             for &w in doc {
                 freq[w as usize] += 1.0;
                 total += 1.0;
             }
         }
+        let total = total.max(1.0);
         for v in 0..self.num_types {
-            self.m[v] = (freq[v] / total).ln();
+            let count = if freq[v] > 0.0 { freq[v] } else { 1.0 };
+            self.m[v] = (count / total).ln();
         }
     }
 
@@ -662,6 +677,25 @@ mod tests {
         assert_eq!(model.kappa_t, kappa_t_before, "κT mutated on failure");
         assert_eq!(model.kappa_i, kappa_i_before, "κI mutated on failure");
         assert_eq!(model.beta, beta_before, "β mutated on failure");
+    }
+
+    #[test]
+    fn set_background_is_the_unsmoothed_empirical_log_frequency() {
+        // #422: the fixed background is the raw corpus log word-frequency
+        // (Eisenstein et al.), not an add-one-smoothed distribution. Word 0 occurs
+        // 3x and word 1 once out of 4 tokens, so m = [ln(3/4), ln(1/4)] exactly —
+        // the previous +1 smoothing would have given ln(4/6), ln(2/6).
+        let mut model = SageModel::new(1, 2, 2, 0.1, 1.0, SagePrior::Gaussian);
+        let docs = vec![vec![0u32, 0, 0, 1]];
+        model.set_background(&docs);
+        assert!((model.m[0] - (3.0_f64 / 4.0).ln()).abs() < 1e-12);
+        assert!((model.m[1] - (1.0_f64 / 4.0).ln()).abs() < 1e-12);
+        // A vocabulary word absent from the corpus is floored to one count so the
+        // background stays finite rather than -inf.
+        let mut model2 = SageModel::new(1, 2, 3, 0.1, 1.0, SagePrior::Gaussian);
+        model2.set_background(&docs); // word 2 never appears
+        assert!(model2.m[2].is_finite());
+        assert!((model2.m[2] - (1.0_f64 / 4.0).ln()).abs() < 1e-12);
     }
 
     #[test]
