@@ -40,6 +40,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Fixed
 
+- **STM content-model ν recompute (#442):** for a content (covariate-word) STM,
+  `_recompute_eta_cov` rebuilt every document's variational covariance ν against
+  the group-averaged β instead of the document's own group β, so the recomputed ν
+  (used for method-of-composition uncertainty when `keep_eta_cov=False`) did not
+  match the fit's. It now rebuilds ν against each document's group β. A fresh fit
+  carries a new `content_beta_estep` snapshot (the group β active during the final
+  E-step, the content analogue of `beta_estep`) and reproduces the stored ν
+  exactly; a loaded model uses the persisted per-group `content_beta` (off by the
+  final content M-step, still far closer than the group average). Non-content
+  models are unchanged. Save-format note: the per-document group index is now
+  persisted, so an STM **content** model saved by an earlier version cannot be
+  loaded by this one (the trailing bincode field fails at EOF; `#[serde(default)]`
+  does not migrate positional saves — see #443). Refit to recompute exactly.
+
 - **SAGE correctness (#422):** the opt-in `convergence_tol` early stop tripped at
   iter 20 (before any content-deviation `κ` was learned), because with `κ=0` the
   monitored word log-likelihood is a corpus constant; it is now gated on a completed

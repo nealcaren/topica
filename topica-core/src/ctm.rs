@@ -434,6 +434,15 @@ pub struct CtmModel {
     /// Lets the config-aware determinism report distinguish a genuinely bit-exact
     /// spectral fit from a seeded random fallback.
     pub initialization: String,
+    /// Per-group topic-word distributions (G × K × V) that were active during the
+    /// final E-step — the content analogue of `beta_estep`. `Some` only for a
+    /// fresh content fit; `recompute_nu` uses it to reproduce the stored ν exactly
+    /// (the final M-step's `optimize_content` updated `content_beta` afterwards, so
+    /// `content_beta` differs). Like `beta_estep`/`sigma_estep`, this is NOT
+    /// persisted: a loaded content model has `None` here and `recompute_nu` falls
+    /// back to `content_beta` (the same post-M-step approximation `beta_estep`
+    /// degrades to on load). Appended last for bincode-positional compatibility.
+    pub content_beta_estep: Option<Vec<Vec<Vec<f64>>>>,
 }
 
 /// Build per-group topic-word β (G×K×V) from the SAGE content deviations:
@@ -1231,13 +1240,18 @@ pub fn fit_ctm<R: Rng>(
     // it — see `recompute_nu`.)
     let mut sigma_estep = sigma.clone();
     let mut beta_estep = beta.clone();
+    // Content analogue of `beta_estep`: the per-group β the E-step ran against,
+    // captured before the final M-step's `optimize_content` overwrites it. Empty
+    // for a non-content fit (never stored on the model in that case).
+    let mut content_beta_estep = content_beta.clone();
 
     for em in 0..em_iters {
         em_iters_run = em + 1;
         sigma_estep = sigma.clone(); // capture sigma before E-step
         beta_estep = beta.clone(); // capture beta before E-step
-                                   // Inverse and log-det from a single factor so the bound's quadratic and
-                                   // entropy terms stay consistent even when Σ needs a PD repair.
+        content_beta_estep = content_beta.clone(); // capture group β before E-step
+                                                   // Inverse and log-det from a single factor so the bound's quadratic
+                                                   // and entropy terms stay consistent even when Σ needs a PD repair.
         let (siginv, entropy) = crate::linalg::spd_inverse_and_half_logdet(&sigma, km1);
 
         let mut beta_ss = vec![vec![1e-8f64; num_types]; k];
@@ -1453,6 +1467,11 @@ pub fn fit_ctm<R: Rng>(
         em_iters_run,
         diagonal,
         initialization: init_route.to_string(),
+        content_beta_estep: if content.is_some() {
+            Some(content_beta_estep)
+        } else {
+            None
+        },
     }
 }
 
@@ -1662,6 +1681,7 @@ pub fn fit_ctm_svi<R: Rng>(
         em_iters_run: epochs,
         diagonal,
         initialization: init_route.to_string(),
+        content_beta_estep: None,
     }
 }
 
@@ -1690,16 +1710,21 @@ pub fn recompute_nu(model: &CtmModel, sparse: &[(Vec<usize>, Vec<f64>)]) -> Vec<
             let (words, counts) = &sparse[di];
             // For a content model the E-step ran each document against its own
             // group's topic-word distribution, so ν must be rebuilt the same way:
-            // pick `content_beta[groups[di]]`, not the group-averaged `beta_estep`.
-            // (`content_beta` is the final M-step value; the ν it yields differs
-            // from the stored one only by that last content update — far smaller
-            // than the group-vs-average error this replaces, and well below the
-            // Monte-Carlo noise of the composition draws that consume ν.)
-            // Otherwise use `beta_estep` (the beta active during the last E-step;
-            // model.beta was updated by the final M-step). The prior mean does not
-            // enter the Hessian, so model.mu is used for all documents.
-            let beta_doc: &[Vec<f64>] = match (&model.content_beta, &model.groups) {
-                (Some(cbeta), Some(groups)) => &cbeta[groups[di]],
+            // pick that group's β, not the group-averaged `beta_estep`. A fresh fit
+            // carries `content_beta_estep` (the group β active during the final
+            // E-step) and reproduces the stored ν exactly. A loaded content model
+            // does not persist it (like `beta_estep`), so we fall back to the
+            // post-M-step `content_beta` — the same one-M-step approximation the
+            // shared path already accepts when `beta_estep` degrades to `beta` on
+            // load. The prior mean does not enter the Hessian, so model.mu is used
+            // for all documents.
+            let beta_doc: &[Vec<f64>] = match (
+                &model.content_beta_estep,
+                &model.content_beta,
+                &model.groups,
+            ) {
+                (Some(cbeta_estep), _, Some(groups)) => &cbeta_estep[groups[di]],
+                (None, Some(cbeta), Some(groups)) => &cbeta[groups[di]],
                 _ => &model.beta_estep,
             };
             let res = ctm_hpb(
@@ -2508,8 +2533,9 @@ mod tests {
                 / a.len() as f64
         };
 
-        // Per-group reconstruction matches the stored ν closely (differs only by
-        // the final content-β M-step).
+        // Per-group reconstruction reproduces the stored ν essentially exactly:
+        // `content_beta_estep` is the group β the E-step actually ran against, so
+        // ctm_hpb at the stored λ returns the same ν (to machine precision).
         let recomputed = recompute_nu(&model, &sparse);
         let err_fixed = mean_l1(&stored, &recomputed);
 
@@ -2519,12 +2545,106 @@ mod tests {
         let err_shared = mean_l1(&stored, &shared_nu);
 
         assert!(
-            err_fixed < 1e-2,
-            "per-group recompute far from stored ν: {err_fixed}"
+            err_fixed < 1e-9,
+            "per-group recompute should reproduce stored ν exactly: {err_fixed}"
         );
         assert!(
-            err_shared > 20.0 * err_fixed,
+            err_shared > 20.0 * err_fixed.max(1e-12),
             "group-averaged recompute ({err_shared}) should be far worse than per-group ({err_fixed})"
+        );
+    }
+
+    /// The E-step-snapshot guard: with a single EM iteration the final content-β
+    /// M-step moves `content_beta` well away from the β the (only) E-step ran
+    /// against, so reconstructing ν from the post-M-step `content_beta` (the state
+    /// before `content_beta_estep` was tracked) is materially wrong. `recompute_nu`
+    /// must use the E-step snapshot and reproduce the stored ν exactly.
+    #[test]
+    fn recompute_nu_uses_estep_content_beta_not_final_mstep() {
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let mut docs: Vec<Vec<u32>> = Vec::new();
+        let mut groups: Vec<usize> = Vec::new();
+        for i in 0..120 {
+            if i % 2 == 0 {
+                docs.push(vec![0, 1, 0, 1, 0, 1]);
+                groups.push(0);
+            } else {
+                docs.push(vec![2, 3, 2, 3, 2, 3]);
+                groups.push(1);
+            }
+        }
+        // em_iters = 1: exactly one E-step (against the initial content β) then one
+        // M-step that overwrites content_beta. keep_nu = true stores the E-step ν.
+        let mut model = fit_ctm(
+            &docs,
+            2,
+            4,
+            1,
+            0.0,
+            0.0,
+            None,
+            Some((&groups, 2)),
+            None,
+            1.0,
+            0.0,
+            false,
+            None,
+            GammaPrior::Pooled,
+            true,
+            false,
+            &mut rng,
+        );
+        assert!(
+            model.content_beta_estep.is_some(),
+            "content_beta_estep captured for a fresh content fit"
+        );
+        // The final M-step must actually have moved content_beta, or the test would
+        // pass trivially even against the buggy post-M-step path.
+        let moved = {
+            let est = model.content_beta_estep.as_ref().unwrap();
+            let fin = model.content_beta.as_ref().unwrap();
+            est.iter()
+                .zip(fin)
+                .map(|(a, b)| {
+                    a.iter()
+                        .zip(b)
+                        .map(|(x, y)| x.iter().zip(y).map(|(p, q)| (p - q).abs()).sum::<f64>())
+                        .sum::<f64>()
+                })
+                .sum::<f64>()
+        };
+        assert!(
+            moved > 1e-3,
+            "final M-step should have moved content_beta (got {moved}); test would be vacuous"
+        );
+
+        let sparse: Vec<(Vec<usize>, Vec<f64>)> = docs.iter().map(|d| doc_sparse(d)).collect();
+        let stored = model.nu.clone();
+        let recomputed = recompute_nu(&model, &sparse);
+        let err: f64 = stored
+            .iter()
+            .zip(&recomputed)
+            .map(|(a, b)| a.iter().zip(b).map(|(p, q)| (p - q).abs()).sum::<f64>())
+            .sum::<f64>()
+            / stored.len() as f64;
+        assert!(
+            err < 1e-9,
+            "recompute_nu must use the E-step content β snapshot (err {err})"
+        );
+
+        // Sanity: recomputing against the post-M-step content_beta (the pre-fix
+        // behavior) is materially wrong — clearing the snapshot forces that path.
+        model.content_beta_estep = None;
+        let post_mstep = recompute_nu(&model, &sparse);
+        let err_post: f64 = stored
+            .iter()
+            .zip(&post_mstep)
+            .map(|(a, b)| a.iter().zip(b).map(|(p, q)| (p - q).abs()).sum::<f64>())
+            .sum::<f64>()
+            / stored.len() as f64;
+        assert!(
+            err_post > 100.0 * err.max(1e-12),
+            "post-M-step content_beta should be far worse ({err_post}) than the snapshot ({err})"
         );
     }
 }

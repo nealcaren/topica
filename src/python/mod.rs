@@ -332,8 +332,12 @@ struct StmState {
     #[serde(default)]
     initialization: Option<String>,
     /// Per-document group index for a content model (empty otherwise); lets a
-    /// loaded model recompute ν per group. Old saves lack it and fall back to the
-    /// group-averaged beta (refit to recompute exactly).
+    /// loaded model recompute ν per group. The payload is positional bincode, so
+    /// this trailing field cannot migrate saves written before it existed —
+    /// `#[serde(default)]` is inert there and such a load fails at EOF (the
+    /// save-format-versioning gap tracked by #443). It applies to models saved
+    /// from this version on; empty for a non-content model, which recompute_nu
+    /// handles via the shared `beta_estep` path regardless.
     #[serde(default)]
     groups: Vec<usize>,
 }
@@ -6652,6 +6656,8 @@ impl CTM {
             diagonal: self.variational == "diagonal",
             // Unused by recompute_nu; carry the recorded route if present.
             initialization: self.initialization.clone().unwrap_or_default(),
+            // Not persisted; recompute_nu falls back to content_beta on load.
+            content_beta_estep: None,
         };
         let nu = py.allow_threads(|| ctm::recompute_nu(&model_stub, &sparse));
         let mut out = Array3::<f32>::zeros((d, km1, km1));
@@ -7679,9 +7685,14 @@ impl STM {
             lambda: lambda_v,
             nu: Vec::new(),
             gamma: None,
-            // Content model: rebuild each document's ν against its own group's β
-            // (falls back to the averaged beta_estep when groups weren't persisted,
-            // e.g. a model saved before this was tracked).
+            // Content model: rebuild each document's ν against its own group's β.
+            // A loaded model has no `content_beta_estep` (not persisted), so
+            // recompute_nu uses the per-group `content_beta` here — the post-M-step
+            // value, off by one content update from the E-step β, which is far
+            // smaller than the group-vs-average error it replaces. A non-content
+            // model has `content_beta = None` and takes the shared `beta_estep`
+            // path. (Saves predating the `groups` field cannot load at all — see
+            // the StmState note and #443 — so there is no old-save fallback here.)
             content_beta: self.content_beta.clone(),
             content_kappa: self.content_kappa.clone(),
             num_groups: self.content_beta.as_ref().map_or(1, |cb| cb.len()),
@@ -7698,6 +7709,8 @@ impl STM {
             diagonal: self.variational == "diagonal",
             // Unused by recompute_nu; carry the recorded route if present.
             initialization: self.initialization.clone().unwrap_or_default(),
+            // Not persisted; recompute_nu falls back to content_beta on load.
+            content_beta_estep: None,
         };
         let nu = py.allow_threads(|| ctm::recompute_nu(&model_stub, &sparse));
         let mut out = Array3::<f32>::zeros((d, km1, km1));
