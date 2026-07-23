@@ -163,16 +163,21 @@ impl DiscLDA {
         if k_shared == 0 {
             return Err(PyValueError::new_err("k_shared must be >= 1"));
         }
+        // `<= 0.0` is false for NaN and +inf, so those slipped through and produced
+        // NaN topic-word / doc-topic / predict_proba. Require finite and positive (#460).
         if let Some(a) = alpha {
-            if a <= 0.0 {
-                return Err(PyValueError::new_err("alpha must be > 0.0"));
+            if !a.is_finite() || a <= 0.0 {
+                return Err(PyValueError::new_err("alpha must be finite and > 0.0"));
             }
         }
-        if beta <= 0.0 {
-            return Err(PyValueError::new_err("beta must be > 0.0"));
+        if !beta.is_finite() || beta <= 0.0 {
+            return Err(PyValueError::new_err("beta must be finite and > 0.0"));
         }
         if iters == 0 {
             return Err(PyValueError::new_err("iters must be > 0"));
+        }
+        if infer_sweeps == 0 {
+            return Err(PyValueError::new_err("infer_sweeps must be > 0"));
         }
         Ok(DiscLDA {
             k_class,
@@ -249,6 +254,10 @@ impl DiscLDA {
             ));
         }
         let iters = iters.unwrap_or(slf.iters);
+        // The constructor rejects iters == 0, but a per-fit override bypassed it.
+        if iters == 0 {
+            return Err(PyValueError::new_err("iters must be > 0"));
+        }
         let alpha = slf.alpha.unwrap_or(0.1);
         let (k_class, k_shared, beta, seed) = (slf.k_class, slf.k_shared, slf.beta, slf.seed);
 
