@@ -1,0 +1,20 @@
+Context: topica (Rust core + PyO3 topic-modeling library). Root guidance: @/CLAUDE.md.
+
+You reviewed PR #442 (branch fix/ctm-content-recompute-nu) earlier and found it NOT mergeable, with two blocking issues:
+  (1) SNAPSHOT MISMATCH: recompute_nu rebuilt each content document's ν using model.content_beta, which is the POST-final-M-step value, but the stored ν was produced during the last E-step against the PRE-M-step group β. You said a content_beta_estep snapshot analogous to beta_estep was needed.
+  (2) SAVE-MIGRATION FALSE CLAIM: the new StmState `groups` field claimed old saves would "fall back to the group-averaged beta", but the payload is positional bincode, so #[serde(default)] cannot migrate old saves (issue #443).
+
+A follow-up commit (14fe9de) was pushed to address both. Please verify whether the two blockers are now correctly resolved, and whether the follow-up introduces any NEW correctness, determinism, or save/load bug.
+
+Task: review ONLY the follow-up commit and its interaction with the base PR.
+  git diff c4ecf7e..14fe9de   (the follow-up)
+  git diff main...HEAD        (the whole PR)
+
+Specific things to check:
+  A) content_beta_estep: is it captured at the right point (before the E-step, inside the EM loop, so it holds the group β the final E-step actually ran against)? Confirm fit_ctm sets it, fit_ctm_svi and both mod.rs load stubs set None, and recompute_nu prefers it with the correct fallback ordering (Some(estep) -> use per-group snapshot; None+Some(content_beta) -> loaded-model per-group fallback; else -> shared beta_estep). Files: topica-core/src/ctm.rs, src/python/mod.rs.
+  B) Is the field appended LAST in the CtmModel struct and struct literals (bincode-positional safety)? Note CtmModel is Serialize/Deserialize under the "serde" feature; is that used for any on-disk save, or only the topica-core golden test? Does content_beta_estep being non-persisted create any inconsistency?
+  C) Do the corrected comments (StmState field, load stub) and the new CHANGELOG entry now state the truth about the bincode positional format break for content-model saves?
+  D) The new test recompute_nu_uses_estep_content_beta_not_final_mstep (em_iters=1): is it a valid discriminating test — would it FAIL under the old post-M-step-content_beta code and PASS now? Any way it could pass vacuously?
+  E) Any regression for NON-content models, fit_ctm_svi, or the diagonal variational mode?
+
+Please return: (1) decisive verdict — are both blockers resolved and is the PR now mergeable; (2) citations (path:line); (3) any remaining risks/edge cases; (4) recommended tests if any gap remains; (5) open questions. List uncertainties explicitly.

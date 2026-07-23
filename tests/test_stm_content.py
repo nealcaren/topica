@@ -485,3 +485,40 @@ class TestSTMContentDeterminism:
         assert np.array_equal(m1.doc_topic, m2.doc_topic), (
             "Same seed must produce identical doc_topic"
         )
+
+
+# ---------------------------------------------------------------------------
+# keep_eta_cov=False recompute for a CONTENT model (#442): _recompute_eta_cov
+# must rebuild each document's ν against its own group's β and reproduce the
+# stored (keep_eta_cov=True) ν. A fresh fit retains content_beta_estep (the
+# group β active during the last E-step), so the match is exact, not just close.
+# ---------------------------------------------------------------------------
+
+class TestSTMContentRecomputeEtaCov:
+    @staticmethod
+    def _fit_pair(variational, iters):
+        # Few iters: the final content M-step still moves the per-group β well
+        # away from the E-step β, so a recompute against the post-M-step
+        # content_beta (the pre-snapshot behavior) would be materially wrong.
+        docs, groups = _make_bilingual_corpus(n_per_cell=30, seed=42)
+        keep = STM(num_topics=2, seed=1, variational=variational)
+        keep.fit(docs, content=groups, iters=iters, keep_eta_cov=True)
+        drop = STM(num_topics=2, seed=1, variational=variational)
+        drop.fit(docs, content=groups, iters=iters, keep_eta_cov=False)
+        return keep, drop
+
+    @pytest.mark.parametrize("variational", ["laplace", "diagonal"])
+    def test_recompute_matches_stored_content(self, variational):
+        keep, drop = self._fit_pair(variational, iters=4)
+        # The recompute path must actually be a content model.
+        assert keep.groups == ["de", "en"]
+        stored = np.asarray(keep.eta_cov, dtype=np.float64)
+        # keep_eta_cov=False makes the getter raise; recompute regenerates ν.
+        with pytest.raises(RuntimeError, match="keep_eta_cov"):
+            _ = drop.eta_cov
+        recomp = np.asarray(drop._recompute_eta_cov(), dtype=np.float64)
+        assert recomp.shape == stored.shape
+        # Exact reproduction (f32 storage precision): the E-step group-β snapshot
+        # rode through to the Python object, so ctm_hpb at the stored λ returns
+        # the same ν. A group-averaged or post-M-step β would blow past this.
+        npt.assert_allclose(recomp, stored, rtol=0, atol=1e-5)
