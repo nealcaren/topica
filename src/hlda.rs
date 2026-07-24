@@ -421,55 +421,35 @@ impl HldaModel {
             .expect("tree must have a root")
     }
 
-    /// Delete subtrees whose root node has zero customers. A node with no
-    /// customers has no tokens either (its counts were removed first), so it is
-    /// safe to drop along with its (necessarily also-empty) descendants.
+    /// Delete every subtree whose root node has zero customers. A node with no
+    /// customers has no tokens either (its counts were removed first), and if a
+    /// node is empty so are all of its descendants, so the whole empty region is
+    /// safe to drop.
+    ///
+    /// We remove empty nodes **leaf-first**: repeatedly drop any non-root node
+    /// that is empty *and currently childless*, re-scanning after each
+    /// `swap_remove`. An empty internal node is only removed once its (also-empty)
+    /// children are gone, so no node index is ever held across the `swap_remove`
+    /// that could invalidate it. The previous recurse-then-detach walk read
+    /// `self.nodes[i].parent` after descendant `swap_remove`s had already
+    /// relocated `i`, which corrupted links / panicked once an empty subtree
+    /// spanned three or more removal levels (reachable at `depth >= 4`).
     fn delete_empty_subtrees(&mut self) {
-        // Mark reachable-and-nonempty nodes; collect deletions of any node with
-        // ndocs == 0 that is not the root.
         loop {
-            let mut to_delete = None;
-            for i in 0..self.nodes.len() {
-                if self.nodes[i].level != 0 && self.nodes[i].ndocs == 0 {
-                    to_delete = Some(i);
-                    break;
-                }
+            let target = (0..self.nodes.len()).find(|&i| {
+                self.nodes[i].level != 0
+                    && self.nodes[i].ndocs == 0
+                    && self.nodes[i].children.is_empty()
+            });
+            let Some(i) = target else { break };
+            // Detach the childless empty leaf from its parent, then swap-remove it.
+            // `swap_remove_node` remaps the one element it moves; because `i` has no
+            // children, nothing we still need points into `i`.
+            if let Some(p) = self.nodes[i].parent {
+                self.nodes[p].children.retain(|&c| c != i);
             }
-            match to_delete {
-                None => break,
-                Some(i) => self.remove_node(i),
-            }
+            self.swap_remove_node(i);
         }
-    }
-
-    /// Remove a single (childless or empty-subtree) node `i`, detaching it from
-    /// its parent. Assumes `i` has ndocs == 0; if it has children they must also
-    /// be empty and will be removed on subsequent passes (we only remove leaves
-    /// of the empty region here by requiring no children).
-    fn remove_node(&mut self, i: usize) {
-        // If it still has children, remove them first (they are empty too).
-        let children = self.nodes[i].children.clone();
-        for c in children {
-            self.remove_node_subtree_member(c);
-        }
-        // Detach from parent.
-        if let Some(p) = self.nodes[i].parent {
-            self.nodes[p].children.retain(|&c| c != i);
-        }
-        self.swap_remove_node(i);
-    }
-
-    /// Recursively remove a node and its descendants (all empty) without touching
-    /// the parent link cleanup of the top call.
-    fn remove_node_subtree_member(&mut self, i: usize) {
-        let children = self.nodes[i].children.clone();
-        for c in children {
-            self.remove_node_subtree_member(c);
-        }
-        if let Some(p) = self.nodes[i].parent {
-            self.nodes[p].children.retain(|&c| c != i);
-        }
-        self.swap_remove_node(i);
     }
 
     /// `swap_remove` node `i` from the Vec and fix up every index that referred to
@@ -758,5 +738,98 @@ mod tests {
         let model = fit_hlda(&docs, v, 2, 1.0, 0.1, 0.5, 80, &mut rng);
         let base = crate::conformance::check_conformance(&model);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
+    }
+
+    #[test]
+    fn depth4_delete_empty_subtrees_stays_consistent() {
+        // Regression for #496: `delete_empty_subtrees` used to hold node indices
+        // across `swap_remove` and corrupt links / panic once an empty subtree
+        // spanned three removal levels — reachable only at `depth >= 4`. Fit a
+        // churny depth-4 tree over several seeds and assert the tree stays fully
+        // consistent (no panic, every parent/child link and document path valid,
+        // no empty non-root node left behind).
+        for seed in [1u64, 7, 42, 99, 2024, 31337] {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            // A churny random corpus (not the stable planted one): many short docs
+            // over a small vocab, with a high nCRP concentration so the sampler
+            // spawns deep transient subtrees that then empty out as documents
+            // resample — the regime that makes an empty subtree span 3+ removal
+            // levels. depth=5 gives the extra level headroom over the depth-3-safe
+            // region.
+            let v = 12usize;
+            let mut docs = Vec::new();
+            for d in 0..220 {
+                let len = 3 + (d % 5);
+                let mut doc = Vec::new();
+                for _ in 0..len {
+                    doc.push((rng.gen::<f64>() * v as f64) as u32 % v as u32);
+                }
+                docs.push(doc);
+            }
+            let model = fit_hlda(&docs, v, 5, 4.0, 0.1, 0.5, 80, &mut rng);
+
+            let n = model.num_nodes();
+            assert_eq!(
+                (0..n).filter(|&i| model.nodes[i].level == 0).count(),
+                1,
+                "seed {seed}: expected exactly one root"
+            );
+            for i in 0..n {
+                match model.nodes[i].parent {
+                    Some(p) => {
+                        assert!(p < n, "seed {seed}: node {i} parent {p} out of range");
+                        assert!(
+                            model.nodes[p].children.contains(&i),
+                            "seed {seed}: node {i} missing from parent {p}'s children"
+                        );
+                        assert_eq!(
+                            model.nodes[p].level + 1,
+                            model.nodes[i].level,
+                            "seed {seed}: node {i} level != parent level + 1"
+                        );
+                    }
+                    None => assert_eq!(
+                        model.nodes[i].level, 0,
+                        "seed {seed}: parentless node {i} is not the root"
+                    ),
+                }
+                for &c in &model.nodes[i].children {
+                    assert!(c < n, "seed {seed}: node {i} child {c} out of range");
+                    assert_eq!(
+                        model.nodes[c].parent,
+                        Some(i),
+                        "seed {seed}: child {c}'s parent link != {i}"
+                    );
+                }
+                assert!(
+                    model.nodes[i].level == 0 || model.nodes[i].ndocs > 0,
+                    "seed {seed}: empty non-root node {i} survived pruning"
+                );
+            }
+            // Every document path is a valid root->leaf chain of length `depth`.
+            for (d, path) in model.paths.iter().enumerate() {
+                assert_eq!(
+                    path.len(),
+                    model.depth,
+                    "seed {seed}: doc {d} path len != depth"
+                );
+                assert_eq!(
+                    model.nodes[path[0]].level, 0,
+                    "seed {seed}: doc {d} path[0] is not the root"
+                );
+                for w in 1..path.len() {
+                    assert!(
+                        path[w] < n,
+                        "seed {seed}: doc {d} path node {} out of range",
+                        path[w]
+                    );
+                    assert_eq!(
+                        model.nodes[path[w]].parent,
+                        Some(path[w - 1]),
+                        "seed {seed}: doc {d} path broken at level {w}"
+                    );
+                }
+            }
+        }
     }
 }
