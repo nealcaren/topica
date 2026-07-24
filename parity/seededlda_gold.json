@@ -1,19 +1,54 @@
 {
-  "corpus": "planted K=4 block corpus, 300 docs, with one seed set per block (tests/test_model_invariants _block_keywords)",
-  "cosine_bar": 0.99,
-  "coverage_bar": 4,
-  "date": "2026-06-22",
-  "eff_paths_bar": null,
-  "kind": "PLANTED self-consistency gold (NO external reference exists for SeededLDA (Jagarlamudi et al. 2012)). Locks topica's own fixed-seed output: a refit must reproduce the frozen topic-word matrix in cosine, the planted block structure must be recovered, and the validity invariants must hold; non-vacuous via the shuffle check.",
-  "model": "SeededLDA (Jagarlamudi et al. 2012)",
-  "num_topics": 4,
-  "pass_bar": "refit-vs-gold aligned topic-word cosine >= cosine_bar AND planted recovery clears its bar",
-  "purity_bar": 0.9,
-  "recovery": {
-    "block_purity": 1.0,
-    "blocks_covered": 4,
-    "n_topics": 4
+  "alpha": 0.5,
+  "beta": 0.1,
+  "corpus": "poliblog subsample (400 docs, seed 271)",
+  "date": "2026-07-24",
+  "iters": 200,
+  "keyword_r_self_cosine": 0.9732196013328055,
+  "margin": 0.15,
+  "model": "SeededLDA (koheiw/seededlda)",
+  "num_docs": 400,
+  "num_seeded": 4,
+  "pass_bar": "topica seed_prior_matrix == R tfm (exact) AND topica keyword phi cosine >= keyword_r_self_cosine - margin",
+  "reference": "R seededlda 1.4.4",
+  "residual": 1,
+  "seed_prior": "frequency",
+  "seeds": {
+    "econ": [
+      "tax",
+      "economi",
+      "econom",
+      "market",
+      "spend",
+      "budget"
+    ],
+    "elect": [
+      "obama",
+      "mccain",
+      "vote",
+      "voter",
+      "campaign",
+      "elect"
+    ],
+    "social": [
+      "abort",
+      "gay",
+      "marriag",
+      "religi",
+      "church",
+      "famili"
+    ],
+    "war": [
+      "iraq",
+      "iraqi",
+      "war",
+      "troop",
+      "militari",
+      "surg"
+    ]
   },
-  "reference": "topica SeededLDA (Jagarlamudi et al. 2012) (self-consistency / planted-recovery gold)",
-  "vocab_size": 32
+  "tfm_max_abs_diff": 1.4210854715202004e-14,
+  "topica_keyword_cosine": 0.936444376058246,
+  "vocab_size": 2560,
+  "weight": 0.01
 }

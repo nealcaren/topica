@@ -77,21 +77,23 @@ pub struct WarpLda {
     /// doc-proposal smoothing alias per document. `None` is the plain-LDA path.
     doc_alpha: Option<Vec<Vec<f64>>>,
 
-    /// Asymmetric β for SeededLDA. When `Some`, a seed word gets an extra
-    /// `seed_weight` pseudocount in each topic it seeds, so β and its per-topic
-    /// sum become topic/word dependent (see [`Self::beta_at`] /
+    /// Asymmetric β for SeededLDA. When `Some`, a seed word gets its per-(topic,
+    /// word) mass `m_{k,w}` in each topic it seeds, so β and its per-topic sum
+    /// become topic/word dependent (see [`Self::beta_at`] /
     /// [`Self::beta_sum_at`]). `None` is the plain symmetric-β path.
     seed: Option<SeedBeta>,
 }
 
-/// SeededLDA's asymmetric-β bookkeeping: `β_{k,w} = β + seed_weight·[w ∈ seeds[k]]`
-/// and `β_sum_k = V·β + |seeds[k]|·seed_weight`.
+/// SeededLDA's asymmetric-β bookkeeping: `β_{k,w} = β + m_{k,w}` and
+/// `β_sum_k = V·β + Σ_w m_{k,w}`, where `m_{k,w}` is the per-(topic, word) seed
+/// pseudocount (0 for non-seeds).
 struct SeedBeta {
-    seed_weight: f64,
     /// Per-topic β normalizer `β_sum_k`.
     beta_sum_k: Vec<f64>,
     /// `inv_seeds[w]` = the (sorted) topics that word `w` seeds.
     inv_seeds: Vec<Vec<u32>>,
+    /// `inv_mass[w][i]` = the seed mass `m_{inv_seeds[w][i], w}` (aligned to `inv_seeds`).
+    inv_mass: Vec<Vec<f64>>,
 }
 
 impl WarpLda {
@@ -150,45 +152,50 @@ impl WarpLda {
     }
 
     /// Enable SeededLDA's asymmetric β. `seeds[k]` is the list of seed word-ids
-    /// for topic `k`; each gets an extra `seed_weight` pseudocount in topic `k`.
-    pub fn set_seeds(&mut self, seeds: &[Vec<usize>], seed_weight: f64) {
+    /// for topic `k` and `seed_masses[k]` the aligned per-word pseudocounts; each
+    /// distinct in-vocabulary seed word `w` gets `m_{k,w}` in topic `k`.
+    pub fn set_seeds(&mut self, seeds: &[Vec<usize>], seed_masses: &[Vec<f64>]) {
         let k = self.num_topics;
         let v = self.num_types;
         let mut beta_sum_k = vec![self.beta * v as f64; k];
-        let mut inv_seeds: Vec<Vec<u32>> = vec![Vec::new(); v];
+        // Collect (topic, mass) per word, keeping each distinct in-vocab seed once.
+        // The per-topic normalizer must equal Σ_w beta_at(t, w) = V·β + Σ_w m_{t,w};
+        // duplicate/out-of-vocab seed words are dropped so it is not inflated.
+        let mut inv: Vec<Vec<(u32, f64)>> = vec![Vec::new(); v];
         for (t, ws) in seeds.iter().enumerate().take(k) {
-            // Count each DISTINCT, in-vocabulary seed word once. `beta_at` adds the
-            // seed weight per (topic, word) via a membership test, so the per-topic
-            // normalizer `beta_sum_k[t]` must equal Σ_w beta_at(t, w) = V·β +
-            // (#distinct valid seeds)·seed_weight. Adding `ws.len()` verbatim
-            // over-counted out-of-vocabulary and duplicate seed words, inflating the
-            // denominator and under-normalizing the seeded topic's φ.
+            let ms = &seed_masses[t];
             let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
-            for &w in ws {
+            for (i, &w) in ws.iter().enumerate() {
                 if w < v && seen.insert(w) {
-                    beta_sum_k[t] += seed_weight;
-                    inv_seeds[w].push(t as u32);
+                    let m = ms[i];
+                    beta_sum_k[t] += m;
+                    inv[w].push((t as u32, m));
                 }
             }
         }
-        for row in inv_seeds.iter_mut() {
-            row.sort_unstable();
+        let mut inv_seeds: Vec<Vec<u32>> = vec![Vec::new(); v];
+        let mut inv_mass: Vec<Vec<f64>> = vec![Vec::new(); v];
+        for (w, row) in inv.iter_mut().enumerate() {
+            row.sort_by_key(|p| p.0);
+            inv_seeds[w] = row.iter().map(|p| p.0).collect();
+            inv_mass[w] = row.iter().map(|p| p.1).collect();
         }
         self.seed = Some(SeedBeta {
-            seed_weight,
             beta_sum_k,
             inv_seeds,
+            inv_mass,
         });
     }
 
-    /// β_{k,w}: the base β plus the seed boost when word `w` seeds topic `k`.
+    /// β_{k,w}: the base β plus the seed mass when word `w` seeds topic `k`.
     #[inline]
     fn beta_at(&self, k: usize, w: usize) -> f64 {
         match &self.seed {
-            Some(s) if s.inv_seeds[w].binary_search(&(k as u32)).is_ok() => {
-                self.beta + s.seed_weight
-            }
-            _ => self.beta,
+            Some(s) => match s.inv_seeds[w].binary_search(&(k as u32)) {
+                Ok(i) => self.beta + s.inv_mass[w][i],
+                Err(_) => self.beta,
+            },
+            None => self.beta,
         }
     }
 
@@ -425,7 +432,6 @@ impl WarpLda {
         // Borrow the seed bookkeeping for the whole pass: disjoint from the
         // z/prop/word_index fields the token loop touches.
         let seed = self.seed.as_ref().unwrap();
-        let seed_weight = seed.seed_weight;
         let mut c_w = vec![0i64; k];
 
         for w in 0..self.num_types {
@@ -442,15 +448,15 @@ impl WarpLda {
             }
             let n_w_f = n_w as f64;
             let inv_w = &seed.inv_seeds[w];
-            // β_{k,w} = β + seed_weight·[k seeds w]; Σ_k β_{k,w} = Kβ + |inv_w|·sw.
+            let inv_m = &seed.inv_mass[w];
+            // β_{k,w} = β + m_{k,w}·[k seeds w]; Σ_k β_{k,w} = Kβ + Σ_k m_{k,w}.
             let bt = |t: usize| -> f64 {
-                if inv_w.binary_search(&(t as u32)).is_ok() {
-                    beta + seed_weight
-                } else {
-                    beta
+                match inv_w.binary_search(&(t as u32)) {
+                    Ok(i) => beta + inv_m[i],
+                    Err(_) => beta,
                 }
             };
-            let sum_beta_w = kbeta + inv_w.len() as f64 * seed_weight;
+            let sum_beta_w = kbeta + inv_m.iter().sum::<f64>();
 
             for &(d, pos) in toks {
                 let (d, pos) = (d as usize, pos as usize);
@@ -720,7 +726,8 @@ mod tests {
         let mut s = WarpLda::new(&corpus, k, &alpha, 0.01, &mut rng);
         // seeds[t] = the first word id of block t.
         let seeds: Vec<Vec<usize>> = (0..k).map(|t| vec![t * wpb]).collect();
-        s.set_seeds(&seeds, 50.0);
+        let masses: Vec<Vec<f64>> = seeds.iter().map(|s| vec![50.0; s.len()]).collect();
+        s.set_seeds(&seeds, &masses);
         for _ in 0..200 {
             s.sweep(&corpus, &mut rng);
         }
@@ -833,7 +840,8 @@ mod tests {
         let mut w = WarpLda::new(&corpus, k, &vec![0.1; k], 0.05, &mut rng);
         // Topic 0: a duplicate (0 twice) and an OOV id (99); topic 1: a duplicate.
         let seeds = vec![vec![0usize, 1, 0, 99], vec![2usize, 2, 3]];
-        w.set_seeds(&seeds, 7.0);
+        let masses: Vec<Vec<f64>> = seeds.iter().map(|s| vec![7.0; s.len()]).collect();
+        w.set_seeds(&seeds, &masses);
         let v = corpus.num_types();
         for t in 0..k {
             let summed: f64 = (0..v).map(|word| w.beta_at(t, word)).sum();
