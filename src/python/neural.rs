@@ -905,9 +905,10 @@ impl DETM {
         Ok(d)
     }
 
-    /// Create an unfitted model. ``delta`` is the random-walk standard-deviation
-    /// knob on the topic-embedding and topic-prior trajectories (smaller = smoother
-    /// drift; reference default 0.005). ``hidden_size`` is the document encoder
+    /// Create an unfitted model. ``delta`` is the random-walk **variance** knob on
+    /// the topic-embedding and topic-prior trajectories (the reference sets the
+    /// prior log-variance to ``log(delta)``; smaller = smoother drift; reference
+    /// default 0.005). ``hidden_size`` is the document encoder
     /// width. ``eta_hidden_size``/``eta_nlayers`` size the LSTM that amortizes the
     /// per-time topic prior q(eta) (reference defaults 200 / 3).
     /// ``batch_size``/``lr``/``wdecay`` drive Adam; ``convergence_tol`` stops on the

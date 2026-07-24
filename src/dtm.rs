@@ -633,6 +633,10 @@ pub fn fit_dtm<R: Rng>(
 
     let mut bound = 0.0;
     let mut lda_max_iter = 25usize;
+    // gensim's fit_lda_seq runs at least `em_min_iter` EM sweeps before honoring the
+    // convergence break (`while iter_ < em_min_iter or ...`); default 6. Bounded by
+    // the user's `em_iters` budget, so a smaller budget still caps the work.
+    const EM_MIN_ITER: usize = 6;
     for iter in 0..em_iters {
         let old_bound = bound;
         // E-step: per-document inference, accumulate topic suff-stats per slice.
@@ -669,7 +673,10 @@ pub fn fit_dtm<R: Rng>(
         if bound < old_bound && lda_max_iter < 10 {
             lda_max_iter *= 2; // gensim: back off when the bound dips
         }
-        if iter > 0 && old_bound != 0.0 && ((bound - old_bound) / old_bound).abs() < 1e-4 {
+        if iter + 1 >= EM_MIN_ITER
+            && old_bound != 0.0
+            && ((bound - old_bound) / old_bound).abs() < 1e-4
+        {
             break;
         }
     }

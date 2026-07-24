@@ -1,7 +1,9 @@
 """Offline planted-gold test for topica GSDMM (issue #271, Wave 2).
 
-GSDMM has NO external reference implementation, so this is a PLANTED
-self-consistency gold (see ``parity/gsdmm_gold.py``). It loads the committed gold
+There is no committed cross-implementation reference (the canonical
+``rwalk/gsdmm`` matches topica only on unique-token docs — topica follows the
+paper's Eq. 4 including the ``+ j - 1`` term rwalk omits; see ``src/gsdmm.rs``),
+so this is a PLANTED self-consistency gold (see ``parity/gsdmm_gold.py``). It loads the committed gold
 (``parity/gsdmm_gold.npz`` + ``.json``), refits topica on the same fixed-seed
 planted corpus, and asserts (1) the refit reproduces the frozen topic-word matrix
 in cosine (determinism), (2) the planted structure is recovered, and (3) the

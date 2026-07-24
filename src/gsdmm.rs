@@ -28,6 +28,12 @@
 //! where `c_{dw}` is the count of word `w` in document `d` and `N_d` is the
 //! total token count of document `d`.  The denominator of the document-cluster
 //! prior `(D − 1 + K·α)` is constant across clusters and is omitted.
+//!
+//! Note on the popular `rwalk/gsdmm` implementation: it assumes deduplicated
+//! documents and omits the `+ j − 1` rising-factorial term in the numerator
+//! (its `j` is always 1). The two therefore agree on unique-token documents and
+//! diverge only when a document repeats a token, where this port follows the
+//! paper — scoring a twice-seen word as `(nw+β)(nw+β+1)` rather than `(nw+β)²`.
 
 use rand::Rng;
 

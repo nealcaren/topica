@@ -468,10 +468,14 @@ pub fn fit_pam_with_draws<R: Rng>(
                         .collect()
                 })
                 .collect();
-            if model.theta_draws.len() < opts.cap {
-                model.theta_draws.push(snap);
-            } else {
-                model.theta_draws.remove(0);
+            // Ring buffer of theta snapshots; cap == 0 disables collection. Guard
+            // the pop so an empty buffer can never underflow on remove(0) (#497):
+            // ThetaDrawOpts::new forces thin == 0 when cap == 0, so this is a
+            // defensive invariant rather than a live path.
+            if opts.cap > 0 {
+                if model.theta_draws.len() >= opts.cap {
+                    model.theta_draws.remove(0);
+                }
                 model.theta_draws.push(snap);
             }
         }

@@ -1,6 +1,11 @@
 """Planted self-consistency gold for topica GSDMM (Yin & Wang 2014, short-text DMM) (issue #271, Wave 2).
 
-GSDMM has no external reference; it auto-prunes empty clusters so the frozen topic count is what the fit settled on, so this is a PLANTED self-consistency / planted-recovery gold, NOT a
+The canonical ``rwalk/gsdmm`` implementation exists, but it assumes deduplicated
+documents and omits the paper's ``+ j - 1`` numerator term, so it agrees with
+topica's Eq. 4 only on unique-token docs (topica follows Yin & Wang exactly; see
+``src/gsdmm.rs``). There is thus no committed cross-implementation reference, and
+GSDMM auto-prunes empty clusters so the frozen topic count is what the fit settled
+on, so this is a PLANTED self-consistency / planted-recovery gold, NOT a
 cross-implementation one (mirrors ``parity/sage_gold.py``). We fit topica gsdmm
 ONCE on a fixed-seed planted corpus and freeze its topic-word + doc-topic
 matrices and the planted layout; the test then refits and asserts the fit

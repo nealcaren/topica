@@ -684,9 +684,6 @@ impl EtaNet {
                     let gb_hh = &mut g.b_hh[layer];
                     for j in 0..eh {
                         let dpj = dp[j];
-                        if dpj == 0.0 {
-                            // bias still gets 0; skip the inner loops cheaply.
-                        }
                         let row = (blk * eh + j) * eh;
                         gb_ih[blk * eh + j] += dpj;
                         gb_hh[blk * eh + j] += dpj;
