@@ -2992,8 +2992,21 @@ class SeededLDA:
         seed: int = 42,
         seed_prior: str = "frequency",
         sampler: str = "sparse",
+        seed_match: str = "fixed",
+        case_insensitive: bool = False,
     ) -> None:
-        """seed_prior selects how each seed word's prior pseudocount is built:
+        """seed_match selects how each seed pattern is matched to the vocabulary:
+        "fixed" (default) exact literal equality; "glob" reads `*`/`?` wildcards
+        anchored to the whole token (e.g. "tax*" seeds tax, taxes, taxation);
+        "regex" matches a regular expression anywhere in the token. These mirror
+        quanteda's dictionary valuetype (the seededlda package's matcher).
+        case_insensitive (default False) folds case; set it True with
+        seed_match="glob" to reproduce quanteda's dictionary defaults. The "regex"
+        dialect is Rust's linear-time regex crate, not R's ICU/stringi: common
+        syntax matches identically, but backreferences and lookaround are
+        unsupported.
+
+        seed_prior selects how each seed word's prior pseudocount is built:
         "frequency" (default) reproduces the seededlda package (pseudocount =
         corpus-frequency * weight * 100, random initialization); "uniform" gives
         every seed word the same weight * 100 pseudocount with seed-word tokens

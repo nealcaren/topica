@@ -504,6 +504,12 @@ struct SeededState {
     // this field and used the uniform fixed-mass scheme, so default to "uniform".
     #[serde(default = "seeded_prior_legacy_default")]
     seed_prior: String,
+    // Seed-to-vocabulary matcher. Older saves predate these and used exact literal,
+    // case-sensitive matching, so default to "fixed" / case-sensitive.
+    #[serde(default = "seeded_match_legacy_default")]
+    seed_match: String,
+    #[serde(default)]
+    case_insensitive: bool,
     // Sampler backend flags.
     #[serde(default)]
     warp: bool,
@@ -515,6 +521,9 @@ struct SeededState {
 }
 fn seeded_prior_legacy_default() -> String {
     "uniform".to_string()
+}
+fn seeded_match_legacy_default() -> String {
+    "fixed".to_string()
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct KeyAtmState {
@@ -11931,28 +11940,130 @@ fn parse_seed_dict(d: &Bound<'_, PyDict>) -> PyResult<(Vec<String>, Vec<Vec<Stri
     Ok((names, words))
 }
 
-/// Map per-topic seed/keyword *words* to vocabulary ids (dropping out-of-vocab),
+/// How seed/keyword patterns are matched against the vocabulary, following
+/// quanteda's dictionary `valuetype` (the matcher the seededlda package uses).
+#[derive(Clone, Copy, PartialEq)]
+enum SeedMatch {
+    /// Exact literal equality (topica's original and default behavior).
+    Fixed,
+    /// Glob wildcards — `*` matches any run of characters, `?` a single one —
+    /// anchored to the whole token (quanteda's default `valuetype`).
+    Glob,
+    /// A regular expression, matched unanchored (found anywhere in the token),
+    /// as quanteda's `valuetype = "regex"` does via `stri_detect_regex`.
+    Regex,
+}
+
+impl SeedMatch {
+    fn parse(s: &str) -> PyResult<Self> {
+        match s {
+            "fixed" => Ok(SeedMatch::Fixed),
+            "glob" => Ok(SeedMatch::Glob),
+            "regex" => Ok(SeedMatch::Regex),
+            other => Err(PyValueError::new_err(format!(
+                "seed_match must be \"fixed\", \"glob\", or \"regex\", got {other:?}"
+            ))),
+        }
+    }
+}
+
+/// Translate a glob body (only `*` and `?` are special) into a regex body,
+/// escaping every regex metacharacter so the rest matches literally.
+fn glob_to_regex_body(glob: &str) -> String {
+    let mut body = String::with_capacity(glob.len() + 8);
+    for c in glob.chars() {
+        match c {
+            '*' => body.push_str(".*"),
+            '?' => body.push('.'),
+            '.' | '+' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$' | '\\' => {
+                body.push('\\');
+                body.push(c);
+            }
+            _ => body.push(c),
+        }
+    }
+    body
+}
+
+/// Compile one glob/regex seed pattern. Glob is anchored to the whole token;
+/// regex is left unanchored (quanteda semantics). `(?i)` folds case when asked.
+fn compile_seed_pattern(pat: &str, mode: SeedMatch, case_insensitive: bool) -> PyResult<Regex> {
+    let body = match mode {
+        SeedMatch::Glob => format!("^(?:{})$", glob_to_regex_body(pat)),
+        SeedMatch::Regex => pat.to_string(),
+        SeedMatch::Fixed => unreachable!("Fixed does not compile a regex"),
+    };
+    let full = if case_insensitive {
+        format!("(?i){body}")
+    } else {
+        body
+    };
+    Regex::new(&full)
+        .map_err(|e| PyValueError::new_err(format!("invalid seed pattern {pat:?}: {e}")))
+}
+
+/// Map per-topic seed/keyword *patterns* to vocabulary ids (dropping non-matches),
 /// padding with empty lists up to `num_topics` total topics.
+///
+/// `mode` selects the matcher. `Fixed` (case-sensitive) keeps the original O(1)
+/// exact lookup, including its original duplicate-preserving, no-dedup behavior.
+/// `Glob`/`Regex` (and case-insensitive `Fixed`) scan the vocabulary per pattern
+/// and dedup within each topic, so an expanding pattern (or overlapping patterns)
+/// contributes each matched vocabulary word to a topic exactly once.
 fn seed_word_ids(
     word_strings: &[Vec<String>],
     id_to_word: &[String],
     num_topics: usize,
-) -> Vec<Vec<usize>> {
-    let index: HashMap<&str, usize> = id_to_word
-        .iter()
-        .enumerate()
-        .map(|(i, w)| (w.as_str(), i))
-        .collect();
-    let mut out: Vec<Vec<usize>> = word_strings
-        .iter()
-        .map(|ws| {
-            ws.iter()
-                .filter_map(|w| index.get(w.as_str()).copied())
-                .collect()
-        })
-        .collect();
+    mode: SeedMatch,
+    case_insensitive: bool,
+) -> PyResult<Vec<Vec<usize>>> {
+    let mut out: Vec<Vec<usize>> = Vec::with_capacity(word_strings.len());
+
+    if mode == SeedMatch::Fixed && !case_insensitive {
+        let index: HashMap<&str, usize> = id_to_word
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.as_str(), i))
+            .collect();
+        for ws in word_strings {
+            out.push(
+                ws.iter()
+                    .filter_map(|w| index.get(w.as_str()).copied())
+                    .collect(),
+            );
+        }
+    } else {
+        for topic_pats in word_strings {
+            let mut ids: Vec<usize> = Vec::new();
+            let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            for pat in topic_pats {
+                match mode {
+                    SeedMatch::Fixed => {
+                        // Case-insensitive exact equality (scans to catch every
+                        // vocabulary casing that folds onto the pattern).
+                        let lp = pat.to_lowercase();
+                        for (i, w) in id_to_word.iter().enumerate() {
+                            if w.to_lowercase() == lp && seen.insert(i) {
+                                ids.push(i);
+                            }
+                        }
+                    }
+                    SeedMatch::Glob | SeedMatch::Regex => {
+                        let re = compile_seed_pattern(pat, mode, case_insensitive)?;
+                        for (i, w) in id_to_word.iter().enumerate() {
+                            if re.is_match(w) && seen.insert(i) {
+                                ids.push(i);
+                            }
+                        }
+                    }
+                }
+            }
+            out.push(ids);
+        }
+    }
+
     out.resize(num_topics, Vec::new());
-    out
+    Ok(out)
 }
 
 /// Seeded LDA (guided topic modeling): you supply a few **seed words** per topic
@@ -11974,6 +12085,11 @@ pub struct SeededLDA {
     // count·weight·100, tokens initialised at random) or "uniform" (every seed
     // word gets the same weight·100 mass, seed-word tokens anchored at init).
     seed_prior: String,
+    // How seed patterns are matched to the vocabulary: "fixed" (exact, default),
+    // "glob" (quanteda-style `*`/`?` wildcards), or "regex". `case_insensitive`
+    // folds case in the match (quanteda's default is case-insensitive).
+    seed_match: String,
+    case_insensitive: bool,
     seed: u64,
     // WarpLDA cache-efficient sampler (seeded word phase) instead of the default
     // SparseLDA seeded sweep. Recommended for large K.
@@ -12020,6 +12136,8 @@ impl SeededLDA {
         d.set_item("beta", self.beta)?;
         d.set_item("weight", self.weight)?;
         d.set_item("seed_prior", &self.seed_prior)?;
+        d.set_item("seed_match", &self.seed_match)?;
+        d.set_item("case_insensitive", self.case_insensitive)?;
         d.set_item("seed", self.seed)?;
         let sampler = if self.warp {
             "warp"
@@ -12053,9 +12171,23 @@ impl SeededLDA {
     ///
     /// `sampler` selects the inference backend: ``"sparse"`` (default), ``"warp"``
     /// (WarpLDA), or ``"cvb0"`` (deterministic collapsed variational Bayes).
+    ///
+    /// `seed_match` chooses how each seed pattern is matched to the vocabulary:
+    /// ``"fixed"`` (default) is exact literal equality; ``"glob"`` reads `*`/`?`
+    /// wildcards anchored to the whole token (e.g. ``"tax*"`` seeds tax, taxes,
+    /// taxation); ``"regex"`` matches a regular expression anywhere in the token.
+    /// These mirror quanteda's dictionary ``valuetype``, the matcher the seededlda
+    /// package uses; an expanding pattern seeds every matched word (each once).
+    /// `case_insensitive` (default False) folds case in the match — set it True
+    /// with ``seed_match="glob"`` to reproduce quanteda's dictionary defaults.
+    /// The ``"regex"`` dialect is Rust's linear-time `regex` crate, not R's
+    /// ICU/stringi: common syntax (alternation, anchors, classes) matches
+    /// identically, but backreferences and lookaround are unsupported.
     #[new]
     #[pyo3(signature = (seed_words, *, residual=0, alpha=0.5, beta=0.1, weight=0.01, seed=42,
-                        seed_prior="frequency", sampler="sparse"))]
+                        seed_prior="frequency", sampler="sparse", seed_match="fixed",
+                        case_insensitive=false))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         seed_words: &Bound<'_, PyDict>,
         residual: usize,
@@ -12065,11 +12197,15 @@ impl SeededLDA {
         seed: u64,
         seed_prior: &str,
         sampler: &str,
+        seed_match: &str,
+        case_insensitive: bool,
     ) -> PyResult<Self> {
         let (names, words) = parse_seed_dict(seed_words)?;
         if !finite_pos(alpha) || !finite_pos(beta) {
             return Err(PyValueError::new_err("alpha and beta must be > 0"));
         }
+        // Validate seed_match up front so a typo fails at construction, not fit.
+        SeedMatch::parse(seed_match)?;
         // `weight` scales the seed pseudocount; an unvalidated value silently
         // corrupted the fit — a negative weight yields negative topic-word
         // probabilities and NaN/inf yield non-finite ones. The seededlda package
@@ -12107,6 +12243,8 @@ impl SeededLDA {
             beta,
             weight,
             seed_prior: seed_prior.to_string(),
+            seed_match: seed_match.to_string(),
+            case_insensitive,
             seed,
             warp,
             cvb0,
@@ -12176,7 +12314,14 @@ impl SeededLDA {
         }
         let num_topics = slf.num_topics_val();
         let num_types = corpus.num_types();
-        let seeds = seed_word_ids(&slf.seed_words, &corpus.id_to_word, num_topics);
+        let seed_match = SeedMatch::parse(&slf.seed_match)?;
+        let seeds = seed_word_ids(
+            &slf.seed_words,
+            &corpus.id_to_word,
+            num_topics,
+            seed_match,
+            slf.case_insensitive,
+        )?;
         let (alpha, beta) = (slf.alpha, slf.beta);
 
         // Build the per-(topic, seed word) prior mass, aligned to `seeds`.
@@ -12449,19 +12594,21 @@ impl SeededLDA {
                 }
             }
         }
-        let index: std::collections::HashMap<&str, usize> = corpus
-            .id_to_word
-            .iter()
-            .enumerate()
-            .map(|(i, w)| (w.as_str(), i))
-            .collect();
+        // Expand the seed patterns exactly as fit() does (fixed/glob/regex), so the
+        // reported mass matches what was applied — not just literal matches (#456).
+        let seed_match = SeedMatch::parse(&self.seed_match)?;
+        let seeds = seed_word_ids(
+            &self.seed_words,
+            &corpus.id_to_word,
+            num_topics,
+            seed_match,
+            self.case_insensitive,
+        )?;
         let mut m = Array2::<f64>::zeros((num_topics, num_types));
-        for (k, words) in self.seed_words.iter().enumerate() {
-            for w in words {
-                if let Some(&wid) = index.get(w.as_str()) {
-                    let base = if freq_scaled { word_freq[wid] } else { 1.0 };
-                    m[[k, wid]] = base * self.weight * 100.0;
-                }
+        for (k, ids) in seeds.iter().enumerate() {
+            for &wid in ids {
+                let base = if freq_scaled { word_freq[wid] } else { 1.0 };
+                m[[k, wid]] = base * self.weight * 100.0;
             }
         }
         Ok(m.to_pyarray_bound(py))
@@ -12553,6 +12700,8 @@ impl SeededLDA {
                 seed_words: self.seed_words.clone(),
                 residual: self.residual,
                 seed_prior: self.seed_prior.clone(),
+                seed_match: self.seed_match.clone(),
+                case_insensitive: self.case_insensitive,
                 warp: self.warp,
                 cvb0: self.cvb0,
                 theta_draws: arr3f32_opt(&self.theta_draws),
@@ -12572,6 +12721,8 @@ impl SeededLDA {
             beta: s.beta,
             weight: s.weight,
             seed_prior: s.seed_prior,
+            seed_match: s.seed_match,
+            case_insensitive: s.case_insensitive,
             seed: s.seed,
             warp: s.warp,
             cvb0: s.cvb0,
@@ -13714,7 +13865,15 @@ impl KeyATM {
                 )?;
             }
         }
-        let mut keys = seed_word_ids(&slf.keywords, &corpus.id_to_word, num_topics);
+        // KeyATM matches keywords by exact literal (issue #456's glob/regex matching
+        // is SeededLDA-scoped); the dedup below already covers repeated surface forms.
+        let mut keys = seed_word_ids(
+            &slf.keywords,
+            &corpus.id_to_word,
+            num_topics,
+            SeedMatch::Fixed,
+            false,
+        )?;
         // Duplicate keyword ids in a topic reach the core's "keyword id listed more
         // than once" invariant and panic across the FFI boundary. They arise from a
         // repeated keyword string *or* two distinct surface forms that resolve to the

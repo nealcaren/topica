@@ -22,13 +22,23 @@ the package's `tfm` construction — and tokens are initialized at random
 initialization. You can read the exact per-topic, per-word pseudocounts a fit
 used from `model.seed_prior_matrix`.
 
+Seed patterns are matched to the vocabulary by `seed_match`, mirroring quanteda's
+dictionary `valuetype` (the matcher the `seededlda` package uses): `"fixed"`
+(default) is exact literal equality; `"glob"` reads `*`/`?` wildcards anchored to
+the whole token, so `"tax*"` seeds `tax`, `taxes`, and `taxation` at once; and
+`"regex"` matches a regular expression anywhere in the token. `case_insensitive`
+(default `False`) folds case — set it `True` with `seed_match="glob"` to reproduce
+quanteda's dictionary defaults. An expanding pattern seeds every matched word
+(each once); `seed_prior_matrix` reflects exactly what was applied.
+
 ```python
 import topica
 
 model = topica.SeededLDA(
-    {"economy": ["jobs", "wages", "tax"],
-     "immigration": ["border", "visa", "deport"]},
+    {"economy": ["job*", "wage*", "tax*"],
+     "immigration": ["border", "visa*", "deport*"]},
     residual=3,           # 3 extra unseeded topics
+    seed_match="glob",    # "job*" seeds jobs, "tax*" seeds tax/taxes/taxation
     seed=1,
 )
 model.fit(docs, iters=2000)
