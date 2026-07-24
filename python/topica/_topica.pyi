@@ -484,8 +484,11 @@ class CTM:
         Under "svi", iters is the number of epochs (passes over the data), and the
         global parameters update from minibatches of batch_size docs with a Robbins-
         Monro step rho_t = (tau + t)^(-kappa). tau (>= 0) and kappa in (0.5, 1] set
-        the learning-rate schedule; convergence_tol is ignored. SVI does not retain a
-        per-iteration bound trace.
+        the learning-rate schedule. convergence_tol early-stops on the relative
+        epoch-to-epoch change in the running training ELBO (each epoch's per-minibatch
+        bounds summed; a streaming monitoring signal, not a fixed-parameter corpus
+        bound), and fit_history reports that per-epoch trace; pass convergence_tol=0 to
+        run the full epoch budget.
 
         beta_init (K x num_words) overrides the spectral/random topic-word
         initialization with a caller-supplied base beta -- the warm-start hook for

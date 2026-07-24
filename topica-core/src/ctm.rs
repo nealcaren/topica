@@ -1580,12 +1580,15 @@ pub fn fit_ctm_svi<R: Rng>(
 
     let mut t_step: usize = 0;
 
-    // Per-epoch running ELBO trace plus the early-stop bookkeeping. Every doc is
-    // visited exactly once per epoch (the shuffled order covers all D), so the sum
-    // of the per-minibatch bounds is a full-corpus ELBO estimate for that epoch —
-    // a "running" bound because the globals move within the epoch, which is the
-    // standard streaming-VB convergence signal. `convergence_tol > 0` stops early
-    // on the relative epoch-to-epoch change; `converged` reports whether it did.
+    // Per-epoch running-ELBO trace plus the early-stop bookkeeping. Every doc is
+    // visited exactly once per epoch (the shuffled order covers all D), and we sum
+    // its per-minibatch bound. Each bound is scored against the globals *as they
+    // stood at that minibatch*, which move within the epoch — so this is a streaming
+    // training score, not a fixed-parameter corpus ELBO. It is the standard, cheap
+    // streaming-VB monitoring signal; evaluating a fixed-global corpus bound each
+    // epoch would cost a full extra E-step and defeat SVI's purpose. `convergence_tol
+    // > 0` early-stops on the relative epoch-to-epoch change in this score (a
+    // heuristic); `converged` reports whether it did.
     let mut bound_history: Vec<f64> = Vec::with_capacity(epochs);
     let mut converged = false;
     let mut epochs_run = epochs;
