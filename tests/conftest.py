@@ -17,6 +17,13 @@ def pytest_configure(config: pytest.Config) -> None:
         "fit tens of thousands of documents and are opt-in: run with "
         "`-m slow`; the default suite deselects them.",
     )
+    config.addinivalue_line(
+        "markers",
+        "invariants: reference-free metamorphic / invariant check (issue #420). "
+        "Asserts properties that must hold regardless of the correct numeric "
+        "answer (finiteness, normalization, sampling-control invariance, SE "
+        "stationarity) to cover the blind spot cross-implementation parity leaves.",
+    )
 
 
 # ---------------------------------------------------------------------------
