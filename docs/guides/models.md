@@ -1187,15 +1187,23 @@ the **variational** path R can only be a directional baseline — it is instead
 validated against a standalone NumPy implementation of the paper's variational
 equations (`parity/rtm_reference.py`, finite-difference-checked on the link gradients
 and the ρ term): topica reproduces it to aligned topic-word cosine ≈ 1
-(`parity/rtm_compare.py`). The **Gibbs** path *is* the same algorithm as R `lda`, so
-R becomes an authoritative oracle: on a fixed planted network topica's Gibbs fit
-clears R's own seed-to-seed self-consistency floor (topic-word cosine 0.9947 vs R
-self 0.9936; `parity/rtm_gibbs_gold.py`). One caveat inherited from the reference:
-R lda's link-coefficient M-step (`estimate.params`, `β_k = log(p_k)`) fits a
-*negative* coefficient even on strongly-linked data, so the Gibbs backend's link
-scores rank dissimilar documents higher — use `inference="variational"` for
-`predict_link` / `suggest_links`, and the Gibbs backend for same-algorithm topic
-parity.
+(`parity/rtm_compare.py`). The **Gibbs** path ports R `lda`'s exact mechanics — a
+fresh sampler restarted each M-step, per-`(word, count)`-cell block sampling, and
+the same link factor and `estimate.params` β update — so R becomes an authoritative
+same-algorithm oracle. On a fixed planted network topica's Gibbs fit clears R's own
+seed-to-seed self-consistency floor (topic-word cosine **0.999 vs R self 0.999**;
+`parity/rtm_gibbs_gold.py`), and its link coefficient matches R's to ~0.001.
+
+Two properties of R's `rtm.em` shape how the parity is measured. First, R restarts
+each M-step, so quality comes from a *converged* E-sweep budget, not accumulation;
+R's Mersenne-Twister and topica's RNG mix at different rates, so the gold compares
+the two at convergence rather than at R's marginal 8-sweep default. Second, R's
+`estimate.params` (`β_k = log(p_k/(p_k+reg))`) fits a *negative* coefficient even on
+strongly-linked data, and that β can run away over many M-steps (R's own fit
+degenerates by ~10 M-steps) — so a modest M-step budget is used. The negative β
+means the Gibbs backend's link scores rank dissimilar documents higher: use
+`inference="variational"` for `predict_link` / `suggest_links`, and the Gibbs
+backend for same-algorithm topic parity.
 
 ## SAGE
 

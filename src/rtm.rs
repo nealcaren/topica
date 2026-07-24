@@ -535,28 +535,50 @@ fn rtm_gibbs_estimate_beta(
     };
     let reg = lambda * alpha * alpha * num_pairs;
     p.iter()
-        .map(|&pk| (pk / (pk + reg)).max(1e-300).ln())
+        .map(|&pk| {
+            // R computes `log(p_k / (p_k + reg))`. With no links at all (reg = 0 and
+            // p_k = 0) that is `log(0/0) = log(NaN) = NaN` in R; report an honest
+            // β_k = 0 (no link signal → an inert exp(0) = 1 factor, i.e. plain LDA)
+            // rather than R's NaN or a −690 sentinel. A topic with links but zero
+            // co-occurrence (p_k = 0, reg > 0) keeps R's `log(0) → −∞`, floored.
+            if pk + reg <= 0.0 {
+                0.0
+            } else {
+                (pk / (pk + reg)).max(1e-300).ln()
+            }
+        })
         .collect()
 }
 
-/// Fit RTM by **collapsed Gibbs**, matching R lda's `rtm.collapsed.gibbs.sampler`
-/// wrapped in `rtm.em`. This is the same-algorithm counterpart to [`fit_rtm`]'s
-/// variational EM, so R lda is an authoritative (not merely directional) oracle.
+/// Fit RTM by **collapsed Gibbs**, faithfully matching R lda's `rtm.em` (which
+/// wraps the dedicated `rtm()` C sampler / `rtm.collapsed.gibbs.sampler`). This is
+/// the same-algorithm counterpart to [`fit_rtm`]'s variational EM, so R lda is an
+/// authoritative same-algorithm oracle (distributional, not bit-exact — R uses a
+/// Mersenne-Twister stream topica cannot reproduce).
 ///
-/// The per-token conditional is the LDA collapsed conditional times the link
-/// factor `exp( β_k · Σ_{d'~d} n_{d',k} / (len_d · len_{d'}) )`, with the link
-/// coefficient β held fixed during each E-step sweep and re-estimated between
-/// sweeps by [`rtm_gibbs_estimate_beta`]. Following the reference, the link factor
-/// is computed once per document per sweep (neighbour counts do not change while a
-/// document's own tokens are resampled). `p.em_iters` is the number of M-steps and
-/// `p.e_sweeps` the Gibbs sweeps per E-step. The exponential link's coefficient is
-/// stored as `eta` (with `nu = 0`, matching the reference's intercept-free link).
+/// Mechanics ported exactly from R's `src/gibbs.c` `rtm()`:
+/// - **Restart per M-step.** `rtm.em` calls the sampler fresh in each of its
+///   `p.em_iters` M-steps, carrying only the link coefficient β; every count table
+///   is zeroed and re-seeded. Between M-steps β is re-estimated from the final
+///   counts by [`rtm_gibbs_estimate_beta`] (`estimate.params`).
+/// - **`p.e_sweeps` sweeps per sampler call, sweep 0 is a uniform-random init.** On
+///   sweep 0 every cell draws a topic uniformly (all conditional weights = 1, no
+///   link/LDA factor); sweeps `1..e_sweeps-1` are the real RTM Gibbs updates.
+/// - **Per-`(word, count)`-cell block sampling.** Each document is a set of
+///   `(word, count)` cells; the sampler removes the *whole* count, draws one topic,
+///   and adds the whole count back — it does not resample tokens individually.
+/// - **Per-cell conditional** = `link_probs[k] · (n_{d,k}+α)(n_{k,w}+η)/(n_k+Vη)`
+///   with `link_probs[k] = exp(β_k · Σ_{d'∈links(d)} n_{d',k}/(len_d·len_{d'}))`
+///   computed once per document per sweep from neighbours' raw topic counts and the
+///   fixed document token lengths. The exponential link's coefficient is stored as
+///   `eta` (with `nu = 0`, matching R's intercept-free link).
 pub fn fit_rtm_gibbs<R: Rng>(
     docs: &[Vec<u32>],
     edges: &[(usize, usize)],
     p: &RtmParams,
     rng: &mut R,
 ) -> RTMModel {
+    use std::collections::BTreeMap;
     let k = p.num_topics;
     let v = p.num_types;
     let d = docs.len();
@@ -564,7 +586,21 @@ pub fn fit_rtm_gibbs<R: Rng>(
     let beta_tw = p.beta; // topic-word smoothing (R lda's `eta`)
     let vbeta = v as f64 * beta_tw;
     let (adj, obs) = build_adjacency(edges, d);
+    // R's `document_lengths`: fixed total token count per doc (sum of cell counts).
     let len: Vec<f64> = docs.iter().map(|doc| doc.len().max(1) as f64).collect();
+
+    // Each document as `(word, count)` cells in sorted word-id order (R lexicalize's
+    // 2×W matrix). Block sampling assigns one topic per cell.
+    let cells: Vec<Vec<(usize, i64)>> = docs
+        .iter()
+        .map(|doc| {
+            let mut m: BTreeMap<usize, i64> = BTreeMap::new();
+            for &w in doc {
+                *m.entry(w as usize).or_insert(0) += 1;
+            }
+            m.into_iter().collect()
+        })
+        .collect();
 
     // R's default λ = Σdegree / #pairs = 2|E| / (D(D-1)/2).
     let sum_deg: f64 = adj.iter().map(|n| n.len() as f64).sum();
@@ -579,22 +615,14 @@ pub fn fit_rtm_gibbs<R: Rng>(
         sum_deg / num_pairs
     };
 
-    // Count tables and per-token assignments.
-    let mut ndk = vec![vec![0i64; k]; d];
-    let mut nkw = vec![vec![0i64; v]; k];
-    let mut nk = vec![0i64; k];
-    let mut z: Vec<Vec<usize>> = docs.iter().map(|doc| vec![0usize; doc.len()]).collect();
-    for (di, doc) in docs.iter().enumerate() {
-        for (n, &w) in doc.iter().enumerate() {
-            let t = (rng.gen::<f64>() * k as f64) as usize % k;
-            z[di][n] = t;
-            ndk[di][t] += 1;
-            nkw[t][w as usize] += 1;
-            nk[t] += 1;
-        }
-    }
+    // Count tables (re-zeroed every M-step) and per-cell topic assignments.
+    let mut ndk = vec![vec![0i64; k]; d]; // document_sums (Kᵀ per doc)
+    let mut nkw = vec![vec![0i64; v]; k]; // topics
+    let mut nk = vec![0i64; k]; // topic_sums
+    let mut z: Vec<Vec<usize>> = cells.iter().map(|c| vec![0usize; c.len()]).collect();
 
-    // Link coefficient β, initialised as R does (`initial.beta = rep(3, K)`).
+    // Link coefficient β, initialised as R does (`initial.beta = rep(3, K)`); carried
+    // across M-steps and re-estimated after each.
     let mut link_beta = vec![3.0f64; k];
 
     let mut scores = vec![0.0f64; k];
@@ -603,12 +631,23 @@ pub fn fit_rtm_gibbs<R: Rng>(
     let mut history: Vec<(usize, f64)> = Vec::new();
 
     let m_steps = p.em_iters.max(1);
-    let e_sweeps = p.e_sweeps.max(1);
+    let n_sweeps = p.e_sweeps.max(1); // R's num.e.iterations (sweep 0 = init)
     for m in 0..m_steps {
-        for _ in 0..e_sweeps {
+        // Fresh restart: zero every count table (R's `rtm()` reallocates them).
+        for row in ndk.iter_mut() {
+            row.iter_mut().for_each(|c| *c = 0);
+        }
+        for row in nkw.iter_mut() {
+            row.iter_mut().for_each(|c| *c = 0);
+        }
+        nk.iter_mut().for_each(|c| *c = 0);
+
+        for sweep in 0..n_sweeps {
+            let init_sweep = sweep == 0;
             for di in 0..d {
-                // Link factor for document di (computed once per sweep, as R does).
-                if !adj[di].is_empty() {
+                // Link factor once per doc per sweep (skipped on the init sweep, as R
+                // does — `if (ii > 0)`).
+                if !init_sweep && !adj[di].is_empty() {
                     for kk in 0..k {
                         nb_sum[kk] = 0.0;
                     }
@@ -618,27 +657,37 @@ pub fn fit_rtm_gibbs<R: Rng>(
                             nb_sum[kk] += ndk[dj][kk] as f64 * inv;
                         }
                     }
+                    let inv_di = 1.0 / len[di];
                     for kk in 0..k {
-                        link_probs[kk] = (link_beta[kk] * nb_sum[kk] / len[di]).exp();
+                        link_probs[kk] = (link_beta[kk] * nb_sum[kk] * inv_di).exp();
                     }
                 } else {
                     for kk in 0..k {
                         link_probs[kk] = 1.0;
                     }
                 }
-                for n in 0..docs[di].len() {
-                    let w = docs[di][n] as usize;
-                    let old = z[di][n];
-                    ndk[di][old] -= 1;
-                    nkw[old][w] -= 1;
-                    nk[old] -= 1;
+                for (ci, &(w, count)) in cells[di].iter().enumerate() {
+                    // Remove the whole cell count from its current topic (skipped on
+                    // the init sweep, where nothing was assigned yet).
+                    if !init_sweep {
+                        let old = z[di][ci];
+                        ndk[di][old] -= count;
+                        nkw[old][w] -= count;
+                        nk[old] -= count;
+                    }
 
                     let mut total = 0.0;
                     for kk in 0..k {
-                        let s = link_probs[kk]
-                            * (ndk[di][kk] as f64 + alpha)
-                            * (nkw[kk][w] as f64 + beta_tw)
-                            / (nk[kk] as f64 + vbeta);
+                        // Init sweep: uniform draw (all weights 1). Otherwise the
+                        // link-scaled LDA collapsed conditional.
+                        let s = if init_sweep {
+                            1.0
+                        } else {
+                            link_probs[kk]
+                                * (ndk[di][kk] as f64 + alpha)
+                                * (nkw[kk][w] as f64 + beta_tw)
+                                / (nk[kk] as f64 + vbeta)
+                        };
                         scores[kk] = s;
                         total += s;
                     }
@@ -651,14 +700,14 @@ pub fn fit_rtm_gibbs<R: Rng>(
                             break;
                         }
                     }
-                    z[di][n] = new_t;
-                    ndk[di][new_t] += 1;
-                    nkw[new_t][w] += 1;
-                    nk[new_t] += 1;
+                    z[di][ci] = new_t;
+                    ndk[di][new_t] += count;
+                    nkw[new_t][w] += count;
+                    nk[new_t] += count;
                 }
             }
         }
-        // M-step: re-estimate the link coefficient from the current counts.
+        // M-step: re-estimate the link coefficient from the final counts.
         link_beta = rtm_gibbs_estimate_beta(&ndk, &adj, alpha, lambda, k);
         history.push((m + 1, link_beta.iter().sum::<f64>()));
     }
@@ -932,6 +981,18 @@ mod tests {
         }
     }
 
+    /// Stable collapsed-Gibbs config (#424): a converged E-sweep budget (R restarts
+    /// each M-step, so quality comes from within-sweep mixing, not accumulation) and
+    /// only a few M-steps, before R lda's `estimate.params` β estimate runs away
+    /// negative and degenerates the fit. Mirrors `parity/rtm_gibbs_gold.py`.
+    fn gibbs_params(k: usize, v: usize) -> RtmParams {
+        RtmParams {
+            em_iters: 5,
+            e_sweeps: 60,
+            ..params(k, v, Link::Exponential)
+        }
+    }
+
     #[test]
     fn rtm_recovers_planted_topics() {
         for link in [Link::Logistic, Link::Exponential] {
@@ -1020,7 +1081,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let (docs, edges, _groups, v) = planted(&mut rng, 60, 3, 6, 40);
         let mut frng = ChaCha8Rng::seed_from_u64(0);
-        let m = fit_rtm_gibbs(&docs, &edges, &params(3, v, Link::Exponential), &mut frng);
+        let m = fit_rtm_gibbs(&docs, &edges, &gibbs_params(3, v), &mut frng);
 
         // rows are valid simplices
         for row in &m.topic_word {
@@ -1058,7 +1119,7 @@ mod tests {
         let (docs, edges, _g, v) = planted(&mut rng, 30, 2, 5, 30);
         let fit = || {
             let mut r = ChaCha8Rng::seed_from_u64(3);
-            fit_rtm_gibbs(&docs, &edges, &params(2, v, Link::Exponential), &mut r)
+            fit_rtm_gibbs(&docs, &edges, &gibbs_params(2, v), &mut r)
         };
         let a = fit();
         let b = fit();
@@ -1066,7 +1127,7 @@ mod tests {
         assert_eq!(a.eta, b.eta);
         assert_eq!(a.doc_topic, b.doc_topic);
         let mut r2 = ChaCha8Rng::seed_from_u64(99);
-        let c = fit_rtm_gibbs(&docs, &edges, &params(2, v, Link::Exponential), &mut r2);
+        let c = fit_rtm_gibbs(&docs, &edges, &gibbs_params(2, v), &mut r2);
         assert_ne!(a.topic_word, c.topic_word);
     }
 
@@ -1075,7 +1136,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
         let (docs, edges, _g, v) = planted(&mut rng, 20, 2, 5, 25);
         let mut frng = ChaCha8Rng::seed_from_u64(0);
-        let m = fit_rtm_gibbs(&docs, &edges, &params(2, v, Link::Exponential), &mut frng);
+        let m = fit_rtm_gibbs(&docs, &edges, &gibbs_params(2, v), &mut frng);
         assert!(crate::conformance::check_conformance(&m).is_empty());
     }
 
@@ -1087,11 +1148,43 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(5);
         let (docs, edges, _g, v) = planted(&mut rng, 60, 3, 6, 40);
         let mut frng = ChaCha8Rng::seed_from_u64(0);
-        let m = fit_rtm_gibbs(&docs, &edges, &params(3, v, Link::Exponential), &mut frng);
+        let m = fit_rtm_gibbs(&docs, &edges, &gibbs_params(3, v), &mut frng);
         assert!(
             m.eta.iter().all(|&b| b < 0.0),
             "expected all-negative link β (R quirk), got {:?}",
             m.eta
+        );
+    }
+
+    #[test]
+    fn rtm_gibbs_estimate_beta_matches_r_hand_computed() {
+        // The relational M-step (R lda `estimate.params`) is the RTM-specific link
+        // computation; a plain-LDA fit could clear the topic-cosine gate, so this
+        // pins the β math to a hand-computed R value. K=2, 3 docs, edges (0,1),(1,2)
+        // symmetrized to adj[0]=[1], adj[1]=[0,2], adj[2]=[1]; α=0.1.
+        //   z̄_d = (n_d + α)/(N_d + Kα), all N_d = 4 → denom 4.2.
+        //   p_k = Σ_{directed (d→d')} z̄_{d,k} z̄_{d',k}  →  p = [0.6485262, 1.1247166].
+        //   λ = Σdeg/#pairs = 4/3, reg = λ·α²·#pairs = 0.04.
+        //   β_k = ln(p_k/(p_k+reg))  →  [-0.0598510, -0.0349467].
+        let ndk = vec![vec![3i64, 1], vec![1, 3], vec![2, 2]];
+        let adj = vec![vec![1usize], vec![0usize, 2], vec![1usize]];
+        let lambda = 4.0 / 3.0;
+        let beta = rtm_gibbs_estimate_beta(&ndk, &adj, 0.1, lambda, 2);
+        assert!((beta[0] - (-0.0598510)).abs() < 1e-5, "β0 = {}", beta[0]);
+        assert!((beta[1] - (-0.0349467)).abs() < 1e-5, "β1 = {}", beta[1]);
+    }
+
+    #[test]
+    fn rtm_gibbs_no_links_beta_is_zero_not_sentinel() {
+        // With no links, R's estimate.params computes log(0/0) = NaN; topica reports
+        // an honest β = 0 (inert link) rather than a −690 floor sentinel.
+        let ndk = vec![vec![3i64, 1], vec![1, 3]];
+        let adj = vec![vec![], vec![]];
+        let beta = rtm_gibbs_estimate_beta(&ndk, &adj, 0.1, 0.0, 2);
+        assert_eq!(
+            beta,
+            vec![0.0, 0.0],
+            "no-link β must be an honest 0, got {beta:?}"
         );
     }
 }

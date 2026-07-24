@@ -38,8 +38,20 @@ DOCLEN = 40
 CORPUS_SEED = 0
 ALPHA = 0.1
 BETA = 0.1  # R lda's `eta` (topic-word smoothing)
-M_ITERS = 25  # rtm.em num.m.iterations
-E_SWEEPS = 8  # num.e.iterations (Gibbs sweeps per E-step)
+# rtm.em restarts a fresh Gibbs sampler each M-step (only the link coefficient β
+# carries over) and re-estimates β = log(p_k/(p_k+reg)) between them. Two regimes
+# matter for a fair same-algorithm gold:
+#   * The comparison must be at CONVERGENCE. R's Mersenne-Twister and topica's ChaCha
+#     stream mix at different rates; R is converged on this corpus by ~8 E-sweeps but
+#     topica needs more, so a marginal sweep budget measures the RNG gap, not the
+#     algorithm. At a converged budget the two stationary distributions agree to ~0.999.
+#   * β can run away negative over many M-steps (the link then pushes linked docs
+#     apart, degenerating the fit) — this instability is in R's own rtm.em (its
+#     seed-to-seed self-cosine collapses to ~0.60 by M_ITERS=10). M_ITERS=5 keeps R
+#     self-consistent (~0.999) while still exercising the link M-step several times.
+# (#424)
+M_ITERS = 5  # rtm.em num.m.iterations
+E_SWEEPS = 100  # num.e.iterations (Gibbs sweeps per E-step; converged)
 MARGIN = 0.05
 
 

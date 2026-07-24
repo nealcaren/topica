@@ -15,8 +15,11 @@ use std::collections::HashMap;
 /// mean topic assignments, so the same topics explain both words and links. Fit
 /// with ``fit(docs, links=edges)`` on a document graph (citations, hyperlinks,
 /// co-sponsorship, adjacency); predict links from words for unseen documents with
-/// ``suggest_links``. Undirected links; ``link="logistic"`` (default) or
-/// ``"exponential"``.
+/// ``suggest_links``. Undirected links; ``link`` is ``"logistic"`` or
+/// ``"exponential"`` (default resolves per backend). ``inference="variational"``
+/// (default) runs the paper's variational EM; ``inference="gibbs"`` runs the
+/// collapsed-Gibbs backend that faithfully matches R lda's ``rtm.em`` (exponential
+/// link only), with ``beta`` the topic-word Dirichlet smoothing (R lda's ``eta``).
 #[pyclass(module = "topica")]
 pub struct RTM {
     num_topics: usize,
@@ -132,13 +135,13 @@ fn doc_to_ids(corpus: &corpus::Corpus, doc: &Bound<'_, PyAny>) -> PyResult<Vec<u
 #[pymethods]
 impl RTM {
     #[new]
-    #[pyo3(signature = (num_topics, *, link="logistic", inference="variational",
+    #[pyo3(signature = (num_topics, *, link=None, inference="variational",
                         alpha=None, beta=0.1, rho=None,
                         negative_ratio=1.0, ridge=1.0, seed=42))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
-        link: &str,
+        link: Option<&str>,
         inference: &str,
         alpha: Option<f64>,
         beta: f64,
@@ -155,16 +158,25 @@ impl RTM {
                 "inference must be \"variational\" or \"gibbs\", got {inference:?}"
             )));
         }
-        // R lda's collapsed-Gibbs RTM sampler supports only the exponential link,
-        // so the Gibbs backend always uses (and stores) it — otherwise it would
-        // train exponential but score links with σ on the reference's negative
-        // coefficients. `link` defaults to "logistic", so an unspecified link
-        // resolves to exponential here; an unknown link string still errors.
-        let parsed_link = Link::parse(link).map_err(PyValueError::new_err)?;
-        let link = if inference == "gibbs" {
-            Link::Exponential
-        } else {
-            parsed_link
+        // R lda's collapsed-Gibbs RTM sampler supports only the exponential link, so
+        // the Gibbs backend uses (and stores) it. `link` is a sentinel: unset (None)
+        // resolves to the backend's default — "logistic" for variational, the
+        // required "exponential" for Gibbs. An *explicitly* non-exponential link under
+        // Gibbs is rejected rather than silently overwritten (which would train
+        // exponential but let a later `link` read imply σ on the negative reference
+        // coefficients).
+        let link = match (inference, link) {
+            ("gibbs", None) | ("gibbs", Some("exponential")) | ("gibbs", Some("exp")) => {
+                Link::Exponential
+            }
+            ("gibbs", Some(other)) => {
+                return Err(PyValueError::new_err(format!(
+                    "the gibbs backend supports only link=\"exponential\" (R lda's \
+                     sole option), got {other:?}; omit `link` or pass \"exponential\""
+                )));
+            }
+            (_, None) => Link::Logistic,
+            (_, Some(s)) => Link::parse(s).map_err(PyValueError::new_err)?,
         };
         if let Some(a) = alpha {
             ensure_finite_pos("alpha", a)?;

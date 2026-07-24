@@ -2682,7 +2682,7 @@ class RTM:
         self,
         num_topics: int,
         *,
-        link: str = "logistic",
+        link: str | None = None,
         inference: str = "variational",
         alpha: float | None = None,
         beta: float = 0.1,
