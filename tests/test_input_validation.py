@@ -102,14 +102,17 @@ def test_nonfinite_hyperparameters_rejected_across_constructors(build, bad):
         build(bad)
 
 
-def test_tlda_nonfinite_hyperparameters_rejected():
+@pytest.mark.parametrize("bad", [NAN, INF])
+@pytest.mark.parametrize("param", ["alpha_0", "learning_rate", "theta"])
+def test_tlda_nonfinite_hyperparameters_rejected(param, bad):
     # TensorLDA is gated behind the experimental flag; enable it just for this check.
+    # Each strictly-positive param is rejected for both NaN and +inf (symmetric with
+    # the _NONFINITE_POS_CASES coverage of the other constructors).
     was = topica.experimental_enabled()
     topica.enable_experimental(True)
     try:
-        for kw in (dict(alpha_0=NAN), dict(learning_rate=INF), dict(theta=NAN)):
-            with pytest.raises(ValueError, match="finite"):
-                topica.TensorLDA(3, **kw)
+        with pytest.raises(ValueError, match="finite"):
+            topica.TensorLDA(3, **{param: bad})
     finally:
         topica.enable_experimental(was)
 
