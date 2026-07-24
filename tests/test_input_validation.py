@@ -90,6 +90,16 @@ _NONFINITE_POS_CASES = [
     ("RTM.negative_ratio", lambda bad: topica.RTM(3, negative_ratio=bad)),
     ("RTM.ridge", lambda bad: topica.RTM(3, ridge=bad)),
     ("FASTopic.theta_temp", lambda bad: topica.FASTopic(3, theta_temp=bad)),
+    # Second batch of #481-class guards from the model-review sweep (#498-#508):
+    # strictly-positive params that route through ensure_finite_pos.
+    ("FASTopic.dt_alpha", lambda bad: topica.FASTopic(3, dt_alpha=bad)),
+    ("FASTopic.tw_alpha", lambda bad: topica.FASTopic(3, tw_alpha=bad)),
+    ("FASTopic.lr", lambda bad: topica.FASTopic(3, lr=bad)),
+    ("InfoCTM.mi_weight", lambda bad: topica.InfoCTM(3, mi_weight=bad)),
+    ("InfoCTM.lr", lambda bad: topica.InfoCTM(3, lr=bad)),
+    ("ProdLDA.lr", lambda bad: topica.ProdLDA(3, lr=bad)),
+    ("CombinedTM.lr", lambda bad: topica.CombinedTM(3, lr=bad)),
+    ("ZeroShotTM.lr", lambda bad: topica.ZeroShotTM(3, lr=bad)),
 ]
 
 
@@ -113,6 +123,68 @@ def test_tlda_nonfinite_hyperparameters_rejected(param, bad):
     try:
         with pytest.raises(ValueError, match="finite"):
             topica.TensorLDA(3, **{param: bad})
+    finally:
+        topica.enable_experimental(was)
+
+
+# #481-class guards from the model-review sweep that are NOT plain finite-and-positive:
+# integer size params (>= 1), a [0, 1) mixing ratio, non-negative tolerances, prior
+# SDs that keep +inf legal (flat prior), and a subsample rate that keeps 0.0 legal.
+def test_zero_size_params_rejected():
+    for build in (
+        lambda: topica.ProdLDA(3, hidden_size=0),
+        lambda: topica.ProdLDA(3, batch_size=0),
+        lambda: topica.CombinedTM(3, hidden_size=0),
+        lambda: topica.ZeroShotTM(3, batch_size=0),
+        lambda: topica.InfoCTM(3, hidden_size=0),
+    ):
+        with pytest.raises(ValueError, match=">= 1"):
+            build()
+
+
+@pytest.mark.parametrize("bad", [NAN, INF])
+def test_infoctm_pos_threshold_must_be_finite(bad):
+    with pytest.raises(ValueError, match="finite"):
+        topica.InfoCTM(3, pos_threshold=bad)
+
+
+@pytest.mark.parametrize("bad", [NAN, -1.0])
+def test_wordfish_prior_sd_rejects_nan_and_negative_but_allows_inf(bad):
+    # Prior SDs reject NaN/negative but keep +inf legal (the documented flat prior).
+    with pytest.raises(ValueError):
+        topica.Wordfish(beta_prior_sd=bad)
+    with pytest.raises(ValueError):
+        topica.Wordfish(theta_prior_sd=bad)
+    topica.Wordfish(beta_prior_sd=INF, theta_prior_sd=INF)  # flat prior: must not raise
+
+
+@pytest.mark.parametrize("bad", [NAN, INF])
+def test_convergence_tol_rejects_nonfinite(bad):
+    with pytest.raises(ValueError, match="finite"):
+        topica.Wordfish(convergence_tol=bad)
+
+
+@pytest.mark.parametrize("bad", [NAN, -0.5])
+def test_partyembeddings_sample_rejects_nan_negative_allows_zero(bad):
+    with pytest.raises(ValueError):
+        topica.PartyEmbeddings(sample=bad)
+    topica.PartyEmbeddings(sample=0.0)  # subsampling off: must not raise
+
+
+def test_idealpoint_family_guards():
+    # IdealPointTM / IdealPointSentenceTM are experimental-gated.
+    was = topica.experimental_enabled()
+    topica.enable_experimental(True)
+    try:
+        for bad in (NAN, 1.0, -0.1):
+            with pytest.raises(ValueError, match="sigma_shrink"):
+                topica.IdealPointTM(3, sigma_shrink=bad)
+        topica.IdealPointTM(3, sigma_shrink=0.0)  # boundary: must not raise
+        for bad in (NAN, INF):
+            with pytest.raises(ValueError, match="finite"):
+                topica.IdealPointTM(3, convergence_tol=bad)
+            with pytest.raises(ValueError, match="finite"):
+                topica.IdealPointSentenceTM(3, convergence_tol=bad)
     finally:
         topica.enable_experimental(was)
 

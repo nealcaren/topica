@@ -1562,6 +1562,19 @@ impl InfoCTM {
         if !(mi_temperature > 0.0 && mi_temperature.is_finite()) {
             return Err(PyValueError::new_err("mi_temperature must be > 0"));
         }
+        // #481-class guards: a NaN/+inf mi_weight flows through `scale = weight/denom`
+        // into the beta gradient -> NaN topics; a non-finite lr poisons Adam; a NaN
+        // pos_threshold silently mis-densifies the alignment mask.
+        ensure_finite_pos("mi_weight", mi_weight)?;
+        ensure_finite_pos("lr", lr)?;
+        if hidden_size < 1 {
+            return Err(PyValueError::new_err("hidden_size must be >= 1"));
+        }
+        if !pos_threshold.is_finite() {
+            return Err(PyValueError::new_err(format!(
+                "pos_threshold must be finite (got {pos_threshold})"
+            )));
+        }
         Ok(InfoCTM {
             num_topics,
             mi_weight,
@@ -2049,6 +2062,15 @@ impl ProdLDA {
         }
         if !(0.0..1.0).contains(&dropout) {
             return Err(PyValueError::new_err("dropout must be in [0, 1)"));
+        }
+        // #481-class guards: a non-finite lr poisons Adam -> NaN topics; a zero
+        // hidden_size / batch_size is a degenerate encoder / empty minibatch.
+        ensure_finite_pos("lr", lr)?;
+        if hidden_size < 1 {
+            return Err(PyValueError::new_err("hidden_size must be >= 1"));
+        }
+        if batch_size < 1 {
+            return Err(PyValueError::new_err("batch_size must be >= 1"));
         }
         // Validate the flags eagerly so a bad prior/weight fails at construction.
         build_avitm_options(&prior, contrastive, contrastive_weight, contrastive_temp)?;
@@ -2618,6 +2640,15 @@ macro_rules! ctm_embedding_model {
                 }
                 if !(0.0..1.0).contains(&dropout) {
                     return Err(PyValueError::new_err("dropout must be in [0, 1)"));
+                }
+                // #481-class guards (shared with plain ProdLDA): a non-finite lr
+                // poisons Adam; a zero hidden_size / batch_size is degenerate.
+                ensure_finite_pos("lr", lr)?;
+                if hidden_size < 1 {
+                    return Err(PyValueError::new_err("hidden_size must be >= 1"));
+                }
+                if batch_size < 1 {
+                    return Err(PyValueError::new_err("batch_size must be >= 1"));
                 }
                 build_avitm_options(&prior, contrastive, contrastive_weight, contrastive_temp)?;
                 Ok($name {

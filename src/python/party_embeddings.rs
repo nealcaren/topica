@@ -164,6 +164,14 @@ impl PartyEmbeddings {
         if !learning_rate.is_finite() || learning_rate <= 0.0 {
             return Err(PyValueError::new_err("learning_rate must be > 0"));
         }
+        // #481-class guard: a NaN `sample` makes every keep-probability NaN, so every
+        // token is dropped and the model trains on nothing yet returns "fitted".
+        // Keep `0.0` legal — it is the documented "subsampling off" value.
+        if sample.is_nan() || sample < 0.0 {
+            return Err(PyValueError::new_err(format!(
+                "sample must be >= 0 (0 disables subsampling); got {sample}"
+            )));
+        }
         Ok(PartyEmbeddings {
             num_dims,
             vector_size,

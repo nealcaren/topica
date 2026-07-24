@@ -98,6 +98,20 @@ impl Wordfish {
         convergence_tol: f64,
         seed: u64,
     ) -> PyResult<Self> {
+        // #481-class guards. Prior SDs: reject NaN/negative but keep `+inf` legal —
+        // it is the documented "flat prior / no regularization" value (the core maps
+        // any non-finite-or-nonpositive sd to zero precision).
+        for (name, sd) in [
+            ("beta_prior_sd", beta_prior_sd),
+            ("theta_prior_sd", theta_prior_sd),
+        ] {
+            if sd.is_nan() || sd < 0.0 {
+                return Err(PyValueError::new_err(format!(
+                    "{name} must be >= 0 (or +inf for a flat prior); got {sd}"
+                )));
+            }
+        }
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         Ok(Wordfish {
             beta_prior_sd,
             theta_prior_sd,
