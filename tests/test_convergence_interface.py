@@ -24,6 +24,13 @@ _ANIMAL = ["cat", "dog", "fish", "cat", "dog"]
 _SPACE  = ["planet", "star", "moon", "rocket", "planet"]
 _TOY    = [list(_ANIMAL) for _ in range(15)] + [list(_SPACE) for _ in range(15)]
 
+# The conformance REGISTRY seeds KeyATM/SeededLDA with placeholder keywords
+# "x"/"y"; a keyATM keyword topic whose seeds are all out-of-vocabulary now raises
+# (#418), so those two models fit on a corpus that contains x/y. Scoped to the seed
+# models so the shared _TOY (and every other model's behavior) is untouched.
+_SEED_MODELS = {"KeyATM", "SeededLDA"}
+_TOY_SEEDED = _TOY + [["x", "y", "cat", "planet"] for _ in range(10)]
+
 # Cluster models: fit_history == [] and converged is None by design (not a gap).
 _CLUSTER_MODELS = {"BERTopic", "Top2Vec"}
 
@@ -161,6 +168,11 @@ def _fit_model(name: str, factory):
     if name in _LLM_MODELS:
         model._backend_arg = lambda prompt: "{}"
         model.fit(_TOY)
+        return model
+
+    # Seed models: their factory keywords ("x"/"y") must be in the vocabulary.
+    if name in _SEED_MODELS:
+        model.fit(_TOY_SEEDED, iters=10)
         return model
 
     # All others: plain fit

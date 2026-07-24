@@ -1115,12 +1115,15 @@ pub fn fit_keyatm<R: Rng>(
     alpha_stride: usize,
     rng: &mut R,
 ) -> KeyAtmModel {
-    assert_eq!(
-        keywords.len(),
-        num_topics,
-        "keywords length must equal num_topics"
-    );
-
+    // A fixed symmetric α (estimate_alpha = false) must be a valid Dirichlet
+    // parameter; when α is estimated the passed value is only a start and is not
+    // constrained here (#418, item 3).
+    if !estimate_alpha {
+        assert!(
+            alpha.is_finite() && alpha > 0.0,
+            "alpha must be finite and positive when estimate_alpha is false (got {alpha})"
+        );
+    }
     let (mut model, mut assignments, ki) = init_state(
         docs, num_types, num_topics, keywords, alpha, beta, beta_key, gamma1, gamma2, weights, rng,
     );
@@ -1206,6 +1209,87 @@ pub fn fit_keyatm<R: Rng>(
     model
 }
 
+/// Validate the public-API preconditions the Python wrapper already guarantees,
+/// so a direct Rust caller gets a clear panic instead of silent count corruption
+/// or an out-of-range index (#418, item 3). Shared by every public fit through
+/// [`init_state`]; per-fit hyperparameters (`alpha`, the dynamic `eta`s) and the
+/// dynamic `time_index` are validated at their own call sites.
+#[allow(clippy::too_many_arguments)]
+fn validate_keyatm_inputs(
+    docs: &[Vec<u32>],
+    num_types: usize,
+    num_topics: usize,
+    keywords: &[Vec<usize>],
+    beta: f64,
+    beta_key: f64,
+    gamma1: f64,
+    gamma2: f64,
+) {
+    assert!(num_topics >= 1, "num_topics must be at least 1");
+    // An empty corpus has no counts to sample and, with estimate_alpha, the base
+    // fit passes `docs.len() - 1` (usize) to the α sampler, which would wrap to
+    // usize::MAX. Reject it up front so every public fit rejects it identically.
+    assert!(!docs.is_empty(), "docs must be non-empty");
+    assert_eq!(
+        keywords.len(),
+        num_topics,
+        "keywords length must equal num_topics"
+    );
+    for (name, val) in [
+        ("beta", beta),
+        ("beta_key", beta_key),
+        ("gamma1", gamma1),
+        ("gamma2", gamma2),
+    ] {
+        assert!(
+            val.is_finite() && val > 0.0,
+            "{name} must be finite and positive (got {val})"
+        );
+    }
+    // Keyword topics must occupy a contiguous prefix `0..m`: the sampler derives
+    // `num_keyword_topics` as the count of non-empty lists but then assumes those
+    // topics are `0..num_keyword_topics`, so an empty list *before* a non-empty
+    // one would route keyword-switch factors to the wrong topic. Also reject
+    // duplicate and out-of-range keyword ids (a duplicate lets `KeywordIndex`
+    // score one position but restore counts through another matching position).
+    let mut seen_empty = false;
+    for (k, kws) in keywords.iter().enumerate() {
+        if kws.is_empty() {
+            seen_empty = true;
+            continue;
+        }
+        assert!(
+            !seen_empty,
+            "keyword topics must be the first topics: topic {k} has keywords but an \
+             earlier topic's keyword list is empty"
+        );
+        let mut sorted = kws.clone();
+        sorted.sort_unstable();
+        for pair in sorted.windows(2) {
+            assert!(
+                pair[0] != pair[1],
+                "topic {k} lists keyword id {} more than once",
+                pair[0]
+            );
+        }
+        for &wid in kws {
+            assert!(
+                wid < num_types,
+                "keyword id {wid} in topic {k} is out of range (num_types = {num_types})"
+            );
+        }
+    }
+    // Every document token id must be a valid vocabulary index.
+    for (d, doc) in docs.iter().enumerate() {
+        for &w in doc {
+            assert!(
+                (w as usize) < num_types,
+                "document {d} has word id {w} out of range (num_types = {num_types})"
+            );
+        }
+    }
+}
+
 /// Shared initialisation for the base and covariate fits: build the keyword
 /// index, seed token assignments (keyword tokens anchored to their keyword topic
 /// with the switch on), and the count tables. Returns the model with
@@ -1224,6 +1308,9 @@ fn init_state<R: Rng>(
     weights: WeightScheme,
     rng: &mut R,
 ) -> (KeyAtmModel, Vec<Vec<(usize, u8)>>, KeywordIndex) {
+    validate_keyatm_inputs(
+        docs, num_types, num_topics, keywords, beta, beta_key, gamma1, gamma2,
+    );
     let d_count = docs.len();
     let v = num_types;
     let k = num_topics;
@@ -1340,10 +1427,9 @@ pub fn fit_keyatm_cvb0<R: Rng>(
     weights: WeightScheme,
     rng: &mut R,
 ) -> KeyAtmModel {
-    assert_eq!(
-        keywords.len(),
-        num_topics,
-        "keywords length must equal num_topics"
+    assert!(
+        alpha.is_finite() && alpha > 0.0,
+        "alpha must be finite and positive (got {alpha})"
     );
     let (mut model, _assign, ki) = init_state(
         docs, num_types, num_topics, keywords, alpha, beta, beta_key, gamma1, gamma2, weights, rng,
@@ -2121,6 +2207,17 @@ pub fn fit_keyatm_dynamic<R: Rng>(
         "time_index length must equal number of documents"
     );
     assert!(num_states >= 1, "num_states must be at least 1");
+    for (name, val) in [
+        ("eta1", eta1),
+        ("eta2", eta2),
+        ("eta1_reg", eta1_reg),
+        ("eta2_reg", eta2_reg),
+    ] {
+        assert!(
+            val.is_finite() && val > 0.0,
+            "{name} must be finite and positive (got {val})"
+        );
+    }
 
     // Time segments must be contiguous and non-decreasing (docs sorted by time).
     for w in time_index.windows(2) {
@@ -2129,10 +2226,31 @@ pub fn fit_keyatm_dynamic<R: Rng>(
             "documents must be sorted by time_index (non-decreasing)"
         );
     }
-    let num_time = time_index.iter().copied().max().map(|m| m + 1).unwrap_or(0);
+    let num_time = time_index
+        .iter()
+        .copied()
+        .max()
+        .map(|m| {
+            m.checked_add(1)
+                .expect("time_index entry is usize::MAX; segment count overflows")
+        })
+        .unwrap_or(0);
     assert!(
         num_time >= num_states,
         "num_time ({num_time}) must be >= num_states ({num_states})"
+    );
+    // Contiguity: every segment in `0..num_time` must contain at least one
+    // document. A gap (e.g. time_index skipping a period, or not starting at 0)
+    // leaves that segment's `time_doc_start`/`time_doc_end` at 0 and can underflow
+    // `time_doc_start[t + 1] - 1` downstream (#418, item 3).
+    let mut segment_seen = vec![false; num_time];
+    for &t in time_index {
+        segment_seen[t] = true;
+    }
+    assert!(
+        segment_seen.iter().all(|&seen| seen),
+        "time_index must be gap-free: every segment in 0..{num_time} must contain at \
+         least one document (and it must start at 0)"
     );
 
     // Document index ranges for each time segment.
@@ -3268,5 +3386,145 @@ mod tests {
             alpha, initial,
             "a fully-rejected slice step must leave α at its current value, not a rejected proposal"
         );
+    }
+
+    // ----- #418 item 3: public-Rust-API input validation ---------------------
+
+    /// A minimal base keyATM fit over a fixed two-token corpus, used to drive the
+    /// input-validation guards below.
+    fn run_base(
+        docs: &[Vec<u32>],
+        v: usize,
+        k: usize,
+        keywords: &[Vec<usize>],
+        alpha: f64,
+        beta: f64,
+        estimate_alpha: bool,
+    ) {
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        fit_keyatm(
+            docs,
+            v,
+            k,
+            keywords,
+            alpha,
+            beta,
+            0.5,
+            1.0,
+            1.0,
+            1,
+            0,
+            estimate_alpha,
+            WeightScheme::None,
+            1,
+            ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            1,
+            &mut rng,
+        );
+    }
+
+    fn two_docs() -> Vec<Vec<u32>> {
+        vec![vec![0u32, 1], vec![1u32, 0]]
+    }
+
+    #[test]
+    #[should_panic(expected = "docs must be non-empty")]
+    fn rejects_empty_corpus() {
+        // With estimate_alpha=true and iters>0 the base fit passes
+        // `docs.len() - 1` to the α sampler; an empty corpus would wrap it to
+        // usize::MAX. The validator rejects it first.
+        run_base(&[], 2, 1, &[vec![0]], 0.1, 0.1, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "keyword topics must be the first topics")]
+    fn rejects_empty_keyword_list_before_a_nonempty_one() {
+        // topic 0 empty, topic 1 has keywords: the sampler would misroute switch
+        // factors because num_keyword_topics=1 but the keyword topic is index 1.
+        run_base(&two_docs(), 2, 2, &[vec![], vec![0]], 0.1, 0.1, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "more than once")]
+    fn rejects_duplicate_keyword_within_a_topic() {
+        run_base(&two_docs(), 2, 1, &[vec![0, 0]], 0.1, 0.1, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of range")]
+    fn rejects_out_of_range_keyword_id() {
+        run_base(&two_docs(), 2, 1, &[vec![5]], 0.1, 0.1, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "word id 5 out of range")]
+    fn rejects_out_of_range_document_word_id() {
+        run_base(&[vec![0u32, 5]], 2, 1, &[vec![0]], 0.1, 0.1, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "beta must be finite and positive")]
+    fn rejects_nonpositive_beta() {
+        run_base(&two_docs(), 2, 1, &[vec![0]], 0.1, 0.0, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "alpha must be finite and positive when estimate_alpha is false")]
+    fn rejects_nonpositive_fixed_alpha() {
+        run_base(&two_docs(), 2, 1, &[vec![0]], 0.0, 0.1, false);
+    }
+
+    #[test]
+    fn accepts_nonpositive_alpha_when_estimated() {
+        // α is only a start when estimated, so a 0 start is not rejected.
+        run_base(&two_docs(), 2, 1, &[vec![0]], 0.0, 0.1, true);
+    }
+
+    fn run_dynamic(time_index: &[usize], num_states: usize, eta1: f64) {
+        let docs: Vec<Vec<u32>> = time_index.iter().map(|_| vec![0u32, 1]).collect();
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        fit_keyatm_dynamic(
+            &docs,
+            2,
+            1,
+            &[vec![0]],
+            time_index,
+            num_states,
+            0.1,
+            0.5,
+            1.0,
+            1.0,
+            eta1,
+            1.0,
+            2.0,
+            1.0,
+            1,
+            0,
+            WeightScheme::None,
+            1,
+            ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            &mut rng,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "gap-free")]
+    fn rejects_time_index_with_a_gap() {
+        // segment 1 is skipped: [0,0,2,2] leaves segment 1 empty.
+        run_dynamic(&[0, 0, 2, 2], 1, 1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "gap-free")]
+    fn rejects_time_index_not_starting_at_zero() {
+        run_dynamic(&[1, 1, 2, 2], 1, 1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "eta1 must be finite and positive")]
+    fn rejects_nonpositive_eta() {
+        run_dynamic(&[0, 0, 1, 1], 1, 0.0);
     }
 }
