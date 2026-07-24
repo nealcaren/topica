@@ -10,7 +10,8 @@ they need no reference implementation:
 - sampling-control invariance (num_samples/sample_interval move only the SE, never
   the point estimate);
 - determinism (same seed -> bit-identical fit);
-- SE stationarity (an SE is finite when emitted, else None -- never a silent NaN).
+- SE stationarity (when lambda is optimized the SE is emitted and free of any
+  infinity; an individual entry may be an advertised NaN for a clamped effect).
 
 This is the first slice of the #420 harness, covering the shared count-Gibbs core
 (LDA / DMR / keyATM / SAGE / GDMR) at the Python-API level. The reconstruction and
@@ -56,7 +57,11 @@ _MODELS: dict[str, dict] = {
         covariate=False,
     ),
     "DMR": dict(
-        build=lambda k: topica.DMR(k, seed=1),
+        # optimize_interval/burn_in are set below _ITERS so lambda actually
+        # optimizes within the short fits these invariants use -- otherwise
+        # feature_effects stays at its zero init and feature_effect_se is None,
+        # which would make the covariate invariants vacuous.
+        build=lambda k: topica.DMR(k, seed=1, optimize_interval=10, burn_in=10),
         fit=lambda m, docs: m.fit(docs, _covariate(len(docs)), iters=_ITERS),
         covariate=True,
     ),
@@ -71,7 +76,9 @@ _MODELS: dict[str, dict] = {
         covariate=False,
     ),
     "GDMR": dict(
-        build=lambda k: topica.GDMR(k, degrees=[2], seed=1),
+        build=lambda k: topica.GDMR(
+            k, degrees=[2], seed=1, optimize_interval=10, burn_in=10
+        ),
         fit=lambda m, docs: m.fit(docs, _covariate(len(docs)), iters=_ITERS),
         covariate=True,
     ),
@@ -160,6 +167,14 @@ def test_sampling_control_does_not_move_the_point_estimate(name):
 
     base = fe(3, 10)
     more = fe(9, 5)
+    # Guard against a vacuous pass: if lambda never optimized (burn_in >= iters),
+    # feature_effects would be an all-zero init and the equality below would hold
+    # trivially. The build sets optimize_interval/burn_in below iters, so lambda
+    # is a real MAP optimum here -- assert it actually moved off the init.
+    assert np.any(base != 0.0), (
+        f"{name}.feature_effects is all-zero -- lambda never optimized, so this "
+        f"invariant is vacuous (raise iters or lower burn_in)"
+    )
     assert np.array_equal(base, more), (
         f"{name}.feature_effects moved with sampling settings (max |Δ| = "
         f"{np.abs(base - more).max():.3e}); sampling must affect only the SE"
@@ -170,17 +185,20 @@ def test_sampling_control_does_not_move_the_point_estimate(name):
 
 
 @pytest.mark.parametrize("name", _COVARIATE)
-def test_se_is_none_or_finite_never_silent_nan(name):
+def test_se_emitted_at_the_optimum_has_no_infinity(name):
     # An observed-information SE is meaningful only at a stationary optimum. The
-    # estimator must return either a finite SE or None -- never inf, and never a
-    # NaN slipped into an otherwise-numeric array (#419).
+    # build sets optimize_interval/burn_in below iters, so lambda IS optimized
+    # here and the estimator must actually emit an SE (not None -- otherwise this
+    # invariant never exercises the #419 code path). When emitted, it may carry a
+    # NaN in an individual entry by design -- a clamped / unidentified effect
+    # advertises "no SE for this cell" as NaN -- but it must never contain an
+    # infinity, and the point estimate it hangs off of must itself be finite.
     m = _fit(name, 3, _docs())
     se = m.feature_effect_se
-    if se is None:
-        return
+    assert se is not None, (
+        f"{name}.feature_effect_se is None even though lambda was optimized "
+        f"(optimize_interval/burn_in < iters); the SE path is untested"
+    )
     se = np.asarray(se)
-    # Individual entries may be NaN by design (a clamped / unidentified effect
-    # advertises "no SE" as NaN), but there must be no infinities and the point
-    # estimate it hangs off of must itself be finite.
     assert not np.isinf(se).any(), f"{name} SE contains an infinity"
     assert np.isfinite(np.asarray(m.feature_effects)).all(), f"{name} feature_effects not finite"
