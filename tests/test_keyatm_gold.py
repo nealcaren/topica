@@ -3,10 +3,9 @@
 Loads the committed gold (``parity/keyatm_gold.npz`` + ``.json``), fits topica
 KeyATM on the same poliblog corpus + keyword sets, aligns to R's keyword-topic
 ``phi``, and asserts the aligned cosine clears R's own seed-to-seed keyword-phi
-noise floor (minus a small multimodality margin). The covariate variant also
-checks the rating-effect sign agrees with R at least as often as R agrees with
-itself — the observable that the #270 fix restored (theta no longer collapses
-onto one topic).
+noise floor (minus a small multimodality margin). The covariate and dynamic
+variants also check their observable prevalence effects (rating difference and
+time-trend sign) agree with R at least as often as R agrees with itself.
 
 This runs in CI WITHOUT Rscript: the reference fit is frozen in the committed
 gold, so no R toolchain is touched at test time.
@@ -52,6 +51,18 @@ def test_keyatm_covariate_matches_committed_gold():
     )
 
 
+def test_keyatm_dynamic_matches_committed_gold():
+    """Dynamic change-point HMM — locks keyword phi and prevalence trends
+    against R `keyATM`'s own two-seed reproducibility."""
+    r = keyatm_gold.run(verbose=False)
+    d = r["dynamic"]
+    assert d["passes"], (
+        f"topica KeyATM dynamic keyword cosine {d['keyword_cosine']:.4f} "
+        f"(bar {d['bar']:.4f}) / trend-sign agree {d['trend_sign_agree']:.2f} "
+        f"(R self {d['trend_sign_r_self']:.2f}); details: {d}"
+    )
+
+
 def test_keyatm_gold_is_non_vacuous():
     """A shuffled keyword-topic phi must FALL BELOW the bar for both variants —
     proving the gate discriminates a correct fit from a wrong one."""
@@ -62,7 +73,7 @@ def test_keyatm_gold_is_non_vacuous():
     margin = float(meta["margin"])
     rng = np.random.default_rng(0)
 
-    for key, prefix in (("base", "base"), ("covariate", "cov")):
+    for key, prefix in (("base", "base"), ("covariate", "cov"), ("dynamic", "dyn")):
         m = models[key]
         phi1 = arrays[f"{prefix}_phi1"]
         nk = int(m["num_keyword"])
