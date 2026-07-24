@@ -204,6 +204,27 @@ def test_custom_prior_is_normalized_and_ordered():
     assert m.settings["class_prior"] == [3.0, 1.0]
 
 
+@pytest.mark.parametrize("weights", [[1e308, 1e308], [1e308, 1.0], [1e-300, 1e300]])
+def test_extreme_custom_prior_stays_finite(weights):
+    # Huge/tiny but finite weights must not overflow the normalizer to +inf (which
+    # would collapse every log-prior to -inf and yield NaN posteriors). The prior
+    # normalises exactly and predict_proba stays finite and sums to 1 (#460).
+    docs, y = _imbalanced_identical()
+    m = topica.DiscLDA(2, 2, iters=100, infer_sweeps=20, seed=1, class_prior=weights)
+    m.fit(docs, y)
+    prior = np.asarray(m.class_prior)
+    assert np.isfinite(prior).all()
+    np.testing.assert_allclose(prior.sum(), 1.0, atol=1e-9)
+    # Reference normalised the same stable way (dividing by max first) — a naive
+    # np.sum([1e308, 1e308]) itself overflows to inf, which is exactly the trap.
+    w = np.asarray(weights, dtype=float)
+    scaled = w / w.max()
+    np.testing.assert_allclose(prior, scaled / scaled.sum(), atol=1e-9)
+    proba = np.asarray(m.predict_proba([["w1", "w2", "w3"], ["not_in_vocab"]]))
+    assert np.isfinite(proba).all()
+    np.testing.assert_allclose(proba.sum(axis=1), 1.0, atol=1e-9)
+
+
 def test_bad_class_prior_string_rejected_at_construction():
     with pytest.raises(ValueError, match="empirical"):
         topica.DiscLDA(2, 2, class_prior="bogus")

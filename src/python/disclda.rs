@@ -123,13 +123,19 @@ fn resolve_log_prior(
             if w.len() != num_classes {
                 return Err(PyValueError::new_err(format!(
                     "class_prior has {} weights but there are {num_classes} classes \
-                     (weights are in sorted-class order: {:?})",
+                     (weights are in sorted-class order)",
                     w.len(),
-                    counts.len()
                 )));
             }
-            let s: f64 = w.iter().sum();
-            Ok(w.iter().map(|&x| (x / s).ln()).collect())
+            // Normalise stably. Dividing by the max weight before summing keeps the
+            // denominator in `(0, num_classes]`, so an extreme-but-valid weight (e.g.
+            // 1e308) cannot overflow the raw sum to +inf and collapse every log-prior
+            // to -inf — which would make predict_proba NaN (#460). The max cancels, so
+            // `(x/wmax) / Σ(x/wmax)` == `x / Σx` exactly; the largest-weight class
+            // always keeps a finite log-prior, so the softmax stays well-defined.
+            let wmax = w.iter().cloned().fold(0.0f64, f64::max);
+            let s: f64 = w.iter().map(|&x| x / wmax).sum();
+            Ok(w.iter().map(|&x| ((x / wmax) / s).ln()).collect())
         }
         _ => Err(PyValueError::new_err(format!(
             "unknown class_prior mode {mode:?}"
