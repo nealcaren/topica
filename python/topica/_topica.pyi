@@ -855,7 +855,7 @@ class STS:
         prevalence_names: list[str] | None = None,
         iters: int = 30,
         convergence_tol: float = 1e-5,
-        kappa_estimation: str = "ridge",
+        kappa_estimation: str | None = None,
         kappa_ridge: float = 1e-3,
         em_tol: Optional[float] = None,
         covariates: Optional[numpy.typing.NDArray[numpy.float64]] = None,
@@ -871,7 +871,8 @@ class STS:
 
         EM stops once the relative change in the variational bound falls below
         convergence_tol or after iters iterations. kappa_estimation chooses the
-        topic-word estimator: "ridge" (default, fast, topica-native; kappa_ridge
+        topic-word estimator: None (default) uses the topica-native "ridge" unless a
+        reference profile overrides it; "ridge" (fast, topica-native; kappa_ridge
         sets the ridge), "lasso" (an L1 Poisson path with AIC-selected penalty),
         or "adjusted" (the CRAN sts public default: the same L1/AIC solve with a
         phi-mass-weighted sentiment aggregation).
@@ -881,7 +882,8 @@ class STS:
         sentiment-prior-variance-20 init, the "lasso" estimator, no kappa damping),
         or "cran" (CRAN sts: same init, the "adjusted" estimator, reference
         half-step kappa damping). A reference profile forces its own estimator, so
-        pairing it with a conflicting kappa_estimation raises.
+        pairing it with any explicit kappa_estimation that differs (including an
+        explicit "ridge") raises.
 
         keep_eta_cov=False skips storing the per-document variational covariance
         (nu), saving O(N*(2K-1)^2) memory. The fit is bit-identical. Use

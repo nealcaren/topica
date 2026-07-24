@@ -8632,8 +8632,11 @@ impl STS {
     /// EM runs until the relative change in the variational bound drops below
     /// `convergence_tol` or `iters` iterations are reached.
     ///
-    /// `kappa_estimation` chooses the topic-word (κ) estimator: ``"ridge"``
-    /// (default) is a fast ridge-penalized Poisson fit (`kappa_ridge` sets the
+    /// `kappa_estimation` chooses the topic-word (κ) estimator. Left unset
+    /// (``None``, the default) it resolves to ``"ridge"`` unless a `reference`
+    /// profile overrides it; passing it explicitly pins the estimator and, under a
+    /// reference profile, is checked for conflict (see below). ``"ridge"``
+    /// is a fast ridge-penalized Poisson fit (`kappa_ridge` sets the
     /// ridge) — topica-native, not a reference target. ``"lasso"`` is an L1
     /// Poisson path with AIC-selected penalty (the paper replication code's
     /// default). ``"adjusted"`` is the CRAN `sts` public default: the same L1/AIC
@@ -8646,8 +8649,8 @@ impl STS {
     /// sentiment-prior-variance-20 init, the ``"lasso"`` estimator, no κ damping).
     /// ``"cran"`` reproduces CRAN `sts` (the same init, the ``"adjusted"``
     /// estimator, and the reference half-step κ damping). A reference profile
-    /// forces its own estimator, so pairing it with a conflicting explicit
-    /// `kappa_estimation` raises.
+    /// forces its own estimator, so pairing it with any explicit
+    /// `kappa_estimation` that differs — including an explicit ``"ridge"`` — raises.
     /// `prevalence_names` are human-readable labels for the prevalence design-matrix
     /// columns, surfaced in the effect outputs. `em_tol` is the relative-bound
     /// tolerance for EM early stopping — the run stops when the relative change in
@@ -8656,7 +8659,7 @@ impl STS {
     /// save memory.
     #[pyo3(signature = (data, sentiment_seed, prevalence=None, *,
                         prevalence_names=None, iters=30, convergence_tol=1e-5,
-                        kappa_estimation="ridge", kappa_ridge=1e-3, em_tol=None, covariates=None,
+                        kappa_estimation=None, kappa_ridge=1e-3, em_tol=None, covariates=None,
                         keep_eta_cov=true, reference="none"))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
@@ -8668,7 +8671,7 @@ impl STS {
         prevalence_names: Option<Vec<String>>,
         iters: usize,
         convergence_tol: f64,
-        kappa_estimation: &str,
+        kappa_estimation: Option<&str>,
         kappa_ridge: f64,
         em_tol: Option<f64>,
         covariates: Option<&Bound<'_, PyAny>>,
@@ -8704,6 +8707,13 @@ impl STS {
             (None, Some(c)) => Some(c),
             (None, None) => None,
         };
+        // `kappa_estimation` is a sentinel Option so an explicit "ridge" (the
+        // topica-native default estimator) is distinguishable from "unset". This
+        // matters for the reference-profile conflict check below: reference="cran"
+        // paired with an explicit kappa_estimation="ridge" must raise, not be
+        // silently overwritten with the profile's estimator.
+        let user_set_kappa = kappa_estimation.is_some();
+        let kappa_estimation: &str = kappa_estimation.unwrap_or("ridge");
         let lasso = sts::KappaEst::Lasso {
             nlambda: 100,
             lambda_min_ratio: 0.001,
@@ -8732,8 +8742,7 @@ impl STS {
         //             φ-mass-weighted aggregation, half-step κ damping).
         //   "none"  — topica-native; honors kappa_estimation as given (ridge default).
         // A reference profile forces its estimator, so pairing it with a conflicting
-        // explicit kappa_estimation is an error.
-        let user_set_kappa = kappa_estimation != "ridge";
+        // explicit kappa_estimation is an error (including an explicit "ridge").
         let (kappa_est, reference_init, kappa_damping) = match reference {
             "none" => (kappa_est, false, false),
             "paper" => {

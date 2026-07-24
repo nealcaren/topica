@@ -226,10 +226,29 @@ class TestKappaEstimationAndReference:
                               reference="bogus")
 
     @pytest.mark.parametrize(
-        "ref,bad_kappa", [("cran", "lasso"), ("paper", "adjusted")]
+        "ref,bad_kappa",
+        [
+            ("cran", "lasso"),
+            ("paper", "adjusted"),
+            # An explicit "ridge" must also conflict: because kappa_estimation is a
+            # sentinel Option, an explicit "ridge" is distinguishable from unset and
+            # is not silently overwritten by the profile's estimator.
+            ("cran", "ridge"),
+            ("paper", "ridge"),
+        ],
     )
     def test_conflicting_estimator_and_profile_raises(self, ref, bad_kappa):
         docs, sent_seed, prev, _ = _planted()
         with pytest.raises(ValueError, match="estimator"):
             topica.STS(2).fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=2,
                               reference=ref, kappa_estimation=bad_kappa)
+
+    @pytest.mark.parametrize("ref,ok_kappa", [("cran", "adjusted"), ("paper", "lasso")])
+    def test_matching_explicit_estimator_and_profile_is_allowed(self, ref, ok_kappa):
+        # Passing the profile's own estimator explicitly is redundant but not a
+        # conflict, so it must fit rather than raise.
+        docs, sent_seed, prev, _ = _planted()
+        m = topica.STS(num_topics=2, seed=1)
+        m.fit(docs, sentiment_seed=sent_seed, prevalence=prev, iters=10,
+              reference=ref, kappa_estimation=ok_kappa)
+        assert np.isfinite(m.topic_word).all()
