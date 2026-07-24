@@ -2362,6 +2362,14 @@ class GSDMM:
         ...
     @property
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    def transform(self, data: Corpus | list[list[str]]) -> numpy.typing.NDArray[numpy.float64]:
+        """Soft cluster assignment of held-out documents, shape (num_docs, num_topics).
+
+        Scores each document with the fitted Movie-Group-Process conditional
+        (Yin & Wang Eq. 4), restricted to the discovered clusters and renormalized;
+        out-of-vocabulary words are dropped. The fitted counts are not modified.
+        """
+        ...
     @property
     def doc_cluster(self) -> numpy.typing.NDArray[numpy.int64]:
         """Hard cluster assignment per document, shape (num_docs,)."""
