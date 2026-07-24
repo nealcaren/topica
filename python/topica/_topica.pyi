@@ -2921,8 +2921,11 @@ class SeededLDA:
     """Seeded (guided) LDA: supply a few seed words per topic and the model is
     steered so those topics form around them, while the rest of each topic's
     vocabulary and any `residual` unseeded topics are still learned. Seeding
-    follows the seededlda package (seed words get a `weight * 100` prior
-    pseudocount in their topic, plus seeded initialization)."""
+    follows the seededlda package: by default each seed word's prior pseudocount
+    scales with its corpus frequency (`count * weight * 100`) and tokens are
+    initialized at random (`seed_prior="frequency"`; alpha/beta default to the
+    package's 0.5/0.1). `seed_prior="uniform"` is topica's original scheme (a flat
+    `weight * 100` per seed word with seeded initialization)."""
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,
@@ -2940,13 +2943,20 @@ class SeededLDA:
         seed_words: dict[str, Sequence[str]],
         *,
         residual: int = 0,
-        alpha: float = 0.1,
-        beta: float = 0.01,
+        alpha: float = 0.5,
+        beta: float = 0.1,
         weight: float = 0.01,
         seed: int = 42,
+        seed_prior: str = "frequency",
         sampler: str = "sparse",
     ) -> None:
-        """sampler selects the backend: "sparse" (default) is the seeded
+        """seed_prior selects how each seed word's prior pseudocount is built:
+        "frequency" (default) reproduces the seededlda package (pseudocount =
+        corpus-frequency * weight * 100, random initialization); "uniform" gives
+        every seed word the same weight * 100 pseudocount with seed-word tokens
+        anchored to their topic at initialization (topica's original scheme).
+
+        sampler selects the backend: "sparse" (default) is the seeded
         collapsed-Gibbs sweep; "warp" is the WarpLDA cache-efficient sampler
         (seeded word phase), whose per-sweep cost is flat in K; "cvb0" is
         deterministic collapsed variational Bayes (seeded β), the quality choice.
@@ -2976,6 +2986,14 @@ class SeededLDA:
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def seed_prior_matrix(self) -> numpy.typing.NDArray[numpy.float64]:
+        """The seed pseudocount matrix m[k, w] applied at fit, shape
+        (num_topics, vocab_size), aligned to vocabulary and topic_names. Under
+        seed_prior="frequency" this reproduces the seededlda package's tfm matrix
+        (corpus-frequency(word) * weight * 100); under "uniform" each seed word's
+        entry is weight * 100. Residual topics are all-zero rows."""
+        ...
     @property
     def theta_draws(self) -> Optional[numpy.typing.NDArray[numpy.float32]]:
         """Thinned MCMC theta draws, shape (num_draws, num_docs, num_topics), or

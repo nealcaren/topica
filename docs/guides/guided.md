@@ -13,8 +13,14 @@ topica has two, matching the two standard R packages.
 ## SeededLDA
 
 Seed-word priors steer some topics; `residual` unseeded topics are learned
-freely. Faithful to the `seededlda` package (Watanabe): a seed word gets a
-`weight × 100` prior pseudocount in its topic, plus seeded initialization.
+freely. Faithful to the `seededlda` package (Watanabe): by default each seed
+word's prior pseudocount scales with its corpus frequency — `count × weight × 100`,
+the package's `tfm` construction — and tokens are initialized at random
+(`seed_prior="frequency"`; `alpha` and `beta` default to the package's 0.5 and
+0.1). topica's original scheme is available as `seed_prior="uniform"`: a flat
+`weight × 100` per seed word with seed-word tokens anchored to their topic at
+initialization. You can read the exact per-topic, per-word pseudocounts a fit
+used from `model.seed_prior_matrix`.
 
 ```python
 import topica

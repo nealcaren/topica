@@ -325,8 +325,13 @@ class EmbeddingLDA:
         # One clustering pass: keep the unit centroids for the document prior.
         xn, labels, self._centroids = _cluster_words(embeddings, num_topics, seed=seed)
         self.seeds = _seeds_from_clusters(xn, labels, self._centroids, vocabulary, num_topics, top_m)
+        # EmbeddingLDA anchors on embedding-derived seeds, not on the seededlda
+        # package's corpus-frequency prior, so it pins the uniform scheme: every
+        # seed word gets a flat ``weight * 100`` pseudocount and is anchored at
+        # init (its designed behavior, independent of SeededLDA's default).
         self._model = SeededLDA(
-            self.seeds, alpha=alpha, beta=beta, weight=weight, seed=seed
+            self.seeds, alpha=alpha, beta=beta, weight=weight,
+            seed_prior="uniform", seed=seed,
         )
 
     @property

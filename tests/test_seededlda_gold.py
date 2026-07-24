@@ -1,11 +1,15 @@
-"""Offline planted-gold test for topica SeededLDA (issue #271, Wave 2).
+"""Offline R-`seededlda` gold test for topica SeededLDA (#456).
 
-SeededLDA has NO external reference implementation, so this is a PLANTED
-self-consistency gold (see ``parity/seededlda_gold.py``). It loads the committed gold
-(``parity/seededlda_gold.npz`` + ``.json``), refits topica on the same fixed-seed
-planted corpus, and asserts (1) the refit reproduces the frozen topic-word matrix
-in cosine (determinism), (2) the planted structure is recovered, and (3) the
-Wave 0 validity invariants hold. The shuffle check proves the gate is non-vacuous.
+SeededLDA now has a real external reference: the koheiw/`seededlda` R package.
+This loads the committed gold (``parity/seededlda_gold.npz`` + ``.json``) — R's
+seeded topic-word phi at two seeds and R's exact ``tfm`` seed matrix — refits
+topica with the reference-faithful default (``seed_prior="frequency"``), and
+asserts (1) topica's ``seed_prior_matrix`` reproduces R's ``tfm`` construction
+(``count * weight * 100``) EXACTLY, and (2) topica's seeded-topic phi clears R's
+own two-seed cosine floor (minus a margin). The shuffle check proves the cosine
+gate is non-vacuous.
+
+Runs in CI WITHOUT Rscript: the reference fit is frozen in the committed gold.
 """
 
 import sys
@@ -31,33 +35,37 @@ def test_seededlda_gold_present():
 
 
 def test_seededlda_matches_committed_gold():
-    # Asserts determinism (refit-vs-gold cosine), planted recovery, and the
-    # Wave 0 validity invariants (run inside wave2.run).
+    # (1) topica's seed-mass construction reproduces R's tfm exactly; (2) topica's
+    # seeded-topic phi clears R's own two-seed cosine floor minus the margin.
     r = seededlda_gold.run(verbose=False)
+    assert r["tfm_exact"], (
+        f"topica seed_prior_matrix does not reproduce R tfm (max |Δ| = "
+        f"{r['tfm_max_abs_diff']:.2e}); the count*weight*100 seed-mass construction "
+        f"has drifted from the seededlda package"
+    )
     assert r["passes"], (
-        f"topica SeededLDA refit-vs-gold cosine {r['cosine']:.4f} below bar "
-        f"{r['cosine_bar']:.2f} or recovery failed {r['recovery']}; details: {r}"
+        f"topica SeededLDA keyword cosine {r['keyword_cosine']:.4f} below bar "
+        f"{r['bar']:.4f} (R self {r['keyword_r_self_cosine']:.4f}); details: {r}"
     )
 
 
 def test_seededlda_gold_is_non_vacuous():
     """A shuffled topic-word matrix must FALL BELOW the cosine bar (and lose its
     top-word overlap), proving the gate discriminates a correct fit from a wrong
-    one even when the softmax rows are near-flat."""
+    one."""
     arrays, meta = harness.load_gold(NAME)
-    gold_tw = arrays["topic_word"]
-    bar = float(meta["cosine_bar"])
+    n_seeded = int(meta["num_seeded"])
+    r_phi = arrays["phi1"][:n_seeded]
+    bar = float(meta["keyword_r_self_cosine"]) - float(meta["margin"])
 
     rng = np.random.default_rng(0)
-    shuffled = gold_tw[:, rng.permutation(gold_tw.shape[1])]
-    cos, _ = harness.align_cosine(gold_tw, shuffled)
-    jacc = harness.top_word_jaccard(gold_tw, shuffled, n=5)
+    shuffled = r_phi[:, rng.permutation(r_phi.shape[1])]
+    cos, _ = harness.align_cosine(r_phi, shuffled)
+    jacc = harness.top_word_jaccard(r_phi, shuffled, n=5)
     assert cos < bar, (
-        f"shuffled SeededLDA topic-word cosine {cos:.4f} should be below the bar "
-        f"{bar:.2f}; the gate is vacuous"
+        f"shuffled SeededLDA keyword cosine {cos:.4f} should be below the bar "
+        f"{bar:.4f}; the gate is vacuous"
     )
-    # Belt-and-suspenders for near-flat softmax rows: the shuffle must also wreck
-    # the top-word overlap a genuine recovery keeps high.
     assert jacc < 0.5, (
         f"shuffled SeededLDA top-word jaccard {jacc:.4f} too high; gate is weak"
     )

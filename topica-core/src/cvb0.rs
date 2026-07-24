@@ -57,11 +57,24 @@ pub struct Cvb0 {
     allowed: Option<Vec<Vec<usize>>>,
 }
 
-/// SeededLDA's asymmetric-β bookkeeping for CVB0 (mirrors the WarpLDA one).
+/// SeededLDA's asymmetric-β bookkeeping for CVB0 (mirrors the WarpLDA one):
+/// `β_{k,w} = β + m_{k,w}` with a per-(topic, word) seed mass.
 struct CvbSeedBeta {
-    seed_weight: f64,
     beta_sum_k: Vec<f64>,
     inv_seeds: Vec<Vec<u32>>,
+    /// `inv_mass[w][i]` = the seed mass for `(inv_seeds[w][i], w)`.
+    inv_mass: Vec<Vec<f64>>,
+}
+
+impl CvbSeedBeta {
+    /// β_{t,w}: base β plus the seed mass when word `w` seeds topic `t`.
+    #[inline]
+    fn beta_at(&self, w: usize, t: usize, base_beta: f64) -> f64 {
+        match self.inv_seeds[w].binary_search(&(t as u32)) {
+            Ok(i) => base_beta + self.inv_mass[w][i],
+            Err(_) => base_beta,
+        }
+    }
 }
 
 impl Cvb0 {
@@ -207,35 +220,39 @@ impl Cvb0 {
     }
 
     /// Enable SeededLDA's asymmetric β. `seeds[k]` are the seed word-ids for
-    /// topic `k`, each gaining `seed_weight` in topic `k`.
-    pub fn set_seeds(&mut self, seeds: &[Vec<usize>], seed_weight: f64) {
+    /// topic `k` and `seed_masses[k]` the aligned per-word pseudocounts; each
+    /// distinct in-vocab seed word `w` gains `m_{k,w}` in topic `k`.
+    pub fn set_seeds(&mut self, seeds: &[Vec<usize>], seed_masses: &[Vec<f64>]) {
         let k = self.num_topics;
         let v = self.num_types;
         let mut beta_sum_k = vec![self.beta * v as f64; k];
-        let mut inv_seeds: Vec<Vec<u32>> = vec![Vec::new(); v];
+        // Keep each DISTINCT, in-vocabulary seed word once. The per-topic
+        // normalizer must equal Σ_w β_at(t, w) = V·β + Σ_w m_{t,w}; duplicate or
+        // out-of-vocab seed words are dropped so it is not inflated (matches the
+        // sparse and warp backends).
+        let mut inv: Vec<Vec<(u32, f64)>> = vec![Vec::new(); v];
         for (t, ws) in seeds.iter().enumerate().take(k) {
-            // Count each DISTINCT, in-vocabulary seed word once. The numerator
-            // `beta + seed_weight` is applied per (topic, word) by a boolean
-            // membership test below, so the per-topic normalizer must equal
-            // Σ_w β_at(t, w) = V·β + (#distinct valid seeds)·seed_weight. Using
-            // `ws.len()` over-counted duplicate/out-of-vocab seed words, inflating
-            // the denominator and under-normalizing the seeded topic (matches the
-            // sparse and warp backends, which already dedupe).
+            let ms = &seed_masses[t];
             let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
-            for &w in ws {
+            for (i, &w) in ws.iter().enumerate() {
                 if w < v && seen.insert(w) {
-                    beta_sum_k[t] += seed_weight;
-                    inv_seeds[w].push(t as u32);
+                    let m = ms[i];
+                    beta_sum_k[t] += m;
+                    inv[w].push((t as u32, m));
                 }
             }
         }
-        for row in inv_seeds.iter_mut() {
-            row.sort_unstable();
+        let mut inv_seeds: Vec<Vec<u32>> = vec![Vec::new(); v];
+        let mut inv_mass: Vec<Vec<f64>> = vec![Vec::new(); v];
+        for (w, row) in inv.iter_mut().enumerate() {
+            row.sort_by_key(|p| p.0);
+            inv_seeds[w] = row.iter().map(|p| p.0).collect();
+            inv_mass[w] = row.iter().map(|p| p.1).collect();
         }
         self.seed = Some(CvbSeedBeta {
-            seed_weight,
             beta_sum_k,
             inv_seeds,
+            inv_mass,
         });
     }
 
@@ -289,14 +306,7 @@ impl Cvb0 {
                         None => self.alpha[t],
                     };
                     let (bt, bsum) = match &self.seed {
-                        Some(s) => (
-                            if s.inv_seeds[w].binary_search(&(t as u32)).is_ok() {
-                                beta + s.seed_weight
-                            } else {
-                                beta
-                            },
-                            s.beta_sum_k[t],
-                        ),
+                        Some(s) => (s.beta_at(w, t, beta), s.beta_sum_k[t]),
                         None => (beta, beta_sum),
                     };
                     let val = (self.n_dk[d][t] + a) * (self.n_wk[w][t] + bt) / (self.n_k[t] + bsum);
@@ -335,14 +345,7 @@ impl Cvb0 {
         for w in 0..self.num_types {
             for t in 0..self.num_topics {
                 let (bt, bsum) = match &self.seed {
-                    Some(s) => (
-                        if s.inv_seeds[w].binary_search(&(t as u32)).is_ok() {
-                            beta + s.seed_weight
-                        } else {
-                            beta
-                        },
-                        s.beta_sum_k[t],
-                    ),
+                    Some(s) => (s.beta_at(w, t, beta), s.beta_sum_k[t]),
                     None => (beta, self.beta_sum),
                 };
                 acc[w][t] += (self.n_wk[w][t] + bt) / (self.n_k[t] + bsum);
@@ -358,14 +361,7 @@ impl Cvb0 {
         for w in 0..self.num_types {
             for t in 0..self.num_topics {
                 let (bt, bsum) = match &self.seed {
-                    Some(s) => (
-                        if s.inv_seeds[w].binary_search(&(t as u32)).is_ok() {
-                            beta + s.seed_weight
-                        } else {
-                            beta
-                        },
-                        s.beta_sum_k[t],
-                    ),
+                    Some(s) => (s.beta_at(w, t, beta), s.beta_sum_k[t]),
                     None => (beta, self.beta_sum),
                 };
                 phi[t][w] = (self.n_wk[w][t] + bt) / (self.n_k[t] + bsum);
@@ -504,15 +500,16 @@ mod tests {
         let alpha = vec![0.1f64; 2];
         let mut rng = Pcg64Mcg::seed_from_u64(1);
 
+        // Per-word masses are aligned to the seed lists; the duplicate word 0 carries
+        // a mass in both slots, but dedup must count it once.
         let mut dup = Cvb0::new(&corpus, 2, &alpha, 0.01, &mut rng);
-        dup.set_seeds(&[vec![0, 0, 1], vec![]], 5.0);
+        dup.set_seeds(&[vec![0, 0, 1], vec![]], &[vec![5.0, 5.0, 5.0], vec![]]);
         let mut uniq = Cvb0::new(&corpus, 2, &alpha, 0.01, &mut rng);
-        uniq.set_seeds(&[vec![0, 1], vec![]], 5.0);
+        uniq.set_seeds(&[vec![0, 1], vec![]], &[vec![5.0, 5.0], vec![]]);
 
         let ds = dup.seed.as_ref().unwrap();
         let us = uniq.seed.as_ref().unwrap();
-        // Two distinct seeds -> V*beta + 2*seed_weight; the duplicate must not add a
-        // third seed_weight.
+        // Two distinct seeds -> V*beta + 2*mass; the duplicate must not add a third.
         assert_eq!(ds.beta_sum_k, us.beta_sum_k);
         assert!((ds.beta_sum_k[0] - (v as f64 * 0.01 + 2.0 * 5.0)).abs() < 1e-9);
         // word 0 seeds only topic 0, once.

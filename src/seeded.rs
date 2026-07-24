@@ -5,16 +5,25 @@
 //!
 //! Standard collapsed-Gibbs LDA, except the topic-word Dirichlet prior is
 //! **asymmetric**: a *seed word* for topic k receives an extra prior
-//! pseudocount of `seed_weight` in that topic, encouraging the topic to form
-//! around its seeds.  Topics with no seeds behave as ordinary LDA topics.
+//! pseudocount `m_{k,w}` in that topic, encouraging the topic to form around
+//! its seeds.  Topics with no seeds behave as ordinary LDA topics.
 //!
 //! ## Prior parameterisation
 //!
-//! For topic k and word w:
+//! For topic k and word w (with `m_{k,w}` the seed pseudocount, 0 for non-seeds):
 //! ```text
-//! β_{k,w} = β  +  (seed_weight  if  w ∈ seeds[k]  else  0)
-//! β_sum[k] = V·β  +  |seeds[k]|·seed_weight
+//! β_{k,w} = β  +  m_{k,w}
+//! β_sum[k] = V·β  +  Σ_w m_{k,w}
 //! ```
+//!
+//! The mass `m_{k,w}` is supplied per (topic, seed word). Two constructions are
+//! used by the binding: the **seededlda-package** default, where a seed word's
+//! mass scales with its corpus frequency (`count_w · weight · 100`, matching
+//! `seededlda::tfm`), and the topica-native **uniform** scheme, where every seed
+//! word gets the same `weight · 100`. This is exactly `seededlda`'s model: it
+//! adds the same seed matrix to the word-topic count once and never removes it,
+//! so the mass acts as a persistent asymmetric-β pseudocount in both the
+//! sampling conditional and φ.
 //!
 //! ## Algorithm (per-token collapsed Gibbs)
 //!
@@ -26,7 +35,6 @@
 
 use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 use rand::Rng;
-use std::collections::HashSet;
 
 // ---------------------------------------------------------------------------
 // Model struct
@@ -46,10 +54,15 @@ pub struct SeededModel {
     pub alpha: f64,
     /// Base topic-word smoothing scalar β.
     pub beta: f64,
-    /// Extra pseudocount added to seed words in their seed topic.
-    pub seed_weight: f64,
     /// `seeds[k]` — set of seed word-ids for topic k (sorted, de-duped).
     pub seeds: Vec<Vec<usize>>,
+    /// `seed_mass[k][i]` — the prior pseudocount for `seeds[k][i]` in topic k
+    /// (aligned to `seeds`). The seededlda-compatible construction scales each by
+    /// its corpus frequency; the uniform scheme gives every seed word the same
+    /// mass. An older save without this field falls back to a per-seed `1.0`
+    /// (any refit rebuilds it from the binding).
+    #[serde(default)]
+    pub seed_mass: Vec<Vec<f64>>,
     /// `nkw[k][w]` — count of word type w assigned to topic k.  Shape: K × V.
     pub nkw: Vec<Vec<u32>>,
     /// `nk[k]` — total token count in topic k.  Length: K.
@@ -75,21 +88,37 @@ impl SeededModel {
     // Prior helpers
     // -----------------------------------------------------------------------
 
-    /// β_{k,w}: base prior plus the seed boost (if word w seeds topic k).
+    /// The seed pseudocount `m_{k,w}` for word w in topic k (0 if w does not seed
+    /// k). `seeds[k]` is sorted, so a binary search indexes the aligned mass.
     #[inline]
-    fn beta_kw(&self, k: usize, w: usize) -> f64 {
-        // seeds[k] is small (typically 0–10 entries); linear scan is fine.
-        if self.seeds[k].contains(&w) {
-            self.beta + self.seed_weight
-        } else {
-            self.beta
+    fn mass_kw(&self, k: usize, w: usize) -> f64 {
+        match self.seeds[k].binary_search(&w) {
+            // Old saves may carry `seeds` without `seed_mass`; fall back to 1.0.
+            Ok(i) => self
+                .seed_mass
+                .get(k)
+                .and_then(|m| m.get(i))
+                .copied()
+                .unwrap_or(1.0),
+            Err(_) => 0.0,
         }
     }
 
-    /// β_sum[k]: sum of β_{k,w} over the full vocabulary V.
+    /// β_{k,w}: base prior plus the seed pseudocount for word w in topic k.
+    #[inline]
+    fn beta_kw(&self, k: usize, w: usize) -> f64 {
+        self.beta + self.mass_kw(k, w)
+    }
+
+    /// β_sum[k]: sum of β_{k,w} over the full vocabulary V = V·β + Σ_w m_{k,w}.
     #[inline]
     fn beta_sum(&self, k: usize) -> f64 {
-        self.num_types as f64 * self.beta + self.seeds[k].len() as f64 * self.seed_weight
+        let seed_total: f64 = match self.seed_mass.get(k) {
+            Some(m) if !m.is_empty() => m.iter().sum(),
+            // Old-save fallback: 1.0 per seed word.
+            _ => self.seeds[k].len() as f64,
+        };
+        self.num_types as f64 * self.beta + seed_total
     }
 
     // -----------------------------------------------------------------------
@@ -119,15 +148,11 @@ impl SeededModel {
 
         // Topic-word contribution.
         for t in 0..k {
-            let beta_sum_t = v as f64 * self.beta + self.seeds[t].len() as f64 * self.seed_weight;
+            let beta_sum_t = self.beta_sum(t);
             for w in 0..v {
                 let n_tw = self.nkw[t][w] as f64;
                 if n_tw > 0.0 {
-                    let beta_tw = if self.seeds[t].contains(&w) {
-                        self.beta + self.seed_weight
-                    } else {
-                        self.beta
-                    };
+                    let beta_tw = self.beta_kw(t, w);
                     ll += digamma(beta_tw + n_tw) - digamma(beta_tw);
                 }
             }
@@ -302,8 +327,13 @@ fn seeded_theta_snapshot(
 ///                   Empty slices are allowed (unseeded / residual topics).
 /// * `alpha`       — symmetric per-topic document-topic prior (α).
 /// * `beta`        — base topic-word Dirichlet smoothing scalar (β).
-/// * `seed_weight` — extra pseudocount added to a seed word in its topic.
-///                   Set to 0.0 for ordinary LDA with symmetric priors.
+/// * `seed_masses` — `seed_masses[k][i]` is the prior pseudocount for
+///                   `seeds[k][i]`, aligned to `seeds`. Empty lists (no seeds)
+///                   give an ordinary LDA topic.
+/// * `random_init` — when true, every token starts in a uniformly random topic
+///                   (the seededlda-package behaviour: seeds enter only through
+///                   the β pseudocount). When false, a token whose word seeds a
+///                   topic is anchored there at init (topica's uniform scheme).
 /// * `iters`       — number of full Gibbs sweeps.
 /// * `draws`            — thinned θ-draw retention schedule (issue #31).
 /// * `convergence_tol`  — relative-change tolerance for early stopping (0 = off).
@@ -320,7 +350,8 @@ pub fn fit_seeded_lda<R: Rng>(
     seeds: &[Vec<usize>],
     alpha: f64,
     beta: f64,
-    seed_weight: f64,
+    seed_masses: &[Vec<f64>],
+    random_init: bool,
     doc_alpha: Option<Vec<Vec<f64>>>,
     iters: usize,
     draws: crate::keyatm::ThetaDrawOpts,
@@ -343,34 +374,42 @@ pub fn fit_seeded_lda<R: Rng>(
         );
     }
 
-    // Normalise seeds: sort and de-dup so `contains` scans are minimal.
-    let seeds_clean: Vec<Vec<usize>> = seeds
-        .iter()
-        .map(|sv| {
-            let mut s = sv.clone();
-            s.sort_unstable();
-            s.dedup();
-            s
-        })
-        .collect();
+    // Normalise seeds: sort by word id (carrying the aligned mass) and drop
+    // duplicate words within a topic (keeping the first mass), so `binary_search`
+    // and the mass maps are well-defined.
+    assert_eq!(
+        seed_masses.len(),
+        seeds.len(),
+        "seed_masses must have one row per topic, aligned to seeds"
+    );
+    let mut seeds_clean: Vec<Vec<usize>> = Vec::with_capacity(seeds.len());
+    let mut seed_mass_clean: Vec<Vec<f64>> = Vec::with_capacity(seeds.len());
+    for (sv, mv) in seeds.iter().zip(seed_masses.iter()) {
+        assert_eq!(
+            sv.len(),
+            mv.len(),
+            "each seed row must align with its masses"
+        );
+        let mut pairs: Vec<(usize, f64)> = sv.iter().copied().zip(mv.iter().copied()).collect();
+        pairs.sort_by_key(|p| p.0);
+        pairs.dedup_by_key(|p| p.0);
+        seeds_clean.push(pairs.iter().map(|p| p.0).collect());
+        seed_mass_clean.push(pairs.iter().map(|p| p.1).collect());
+    }
 
-    // Precompute per-word, which topics seed it: word_seed_topics[w] is a
-    // sorted list of topic indices k such that w ∈ seeds[k].
-    // Used only during the initial β_kw / beta_sum lookups in the sweep; the
-    // hot path uses `seeds_clean[k].contains(&w)` which is O(|seeds[k]|) — fast
-    // because seed lists are tiny.  The HashSet approach below provides O(1)
-    // membership tests when iterating over all K topics for each token.
-    let seed_sets: Vec<HashSet<usize>> = seeds_clean
+    // Per-topic mass map for O(1) lookups in the hot loop: mass_map[k][w] = m_{k,w}.
+    let mass_map: Vec<std::collections::HashMap<usize, f64>> = seeds_clean
         .iter()
-        .map(|sv| sv.iter().cloned().collect())
+        .zip(seed_mass_clean.iter())
+        .map(|(sv, mv)| sv.iter().copied().zip(mv.iter().copied()).collect())
         .collect();
 
     // Precompute β_sum[k] once (it is constant after init).
     let beta_sum_k: Vec<f64> = (0..k)
-        .map(|kk| v as f64 * beta + seeds_clean[kk].len() as f64 * seed_weight)
+        .map(|kk| v as f64 * beta + seed_mass_clean[kk].iter().sum::<f64>())
         .collect();
 
-    // For each word, which topics seed it (used for seeded initialisation).
+    // For each word, which topics seed it (used only for anchored initialisation).
     let mut word_seed_topics: Vec<Vec<usize>> = vec![Vec::new(); v];
     for (kk, sv) in seeds_clean.iter().enumerate() {
         for &w in sv {
@@ -378,11 +417,11 @@ pub fn fit_seeded_lda<R: Rng>(
         }
     }
 
-    // --- Initialise. A token whose word seeds some topic starts in that topic
-    // (random among ties); other tokens start in a uniformly random topic. This
-    // seeded initialisation is what propagates the seeds: documents that contain
-    // seed words begin with mass on the seeded topic, pulling their co-occurring
-    // words along. A weak β prior alone does not do this. ---
+    // --- Initialise. Under `random_init` (the seededlda-package default) every
+    // token starts in a uniformly random topic and the seeds bias the fit purely
+    // through the β pseudocount. Otherwise (topica's uniform scheme) a token
+    // whose word seeds some topic is anchored there at init, so documents with
+    // seed words begin with mass on the seeded topic. ---
     let mut nkw: Vec<Vec<u32>> = vec![vec![0u32; v]; k];
     let mut nk: Vec<u32> = vec![0u32; k];
     let mut ndk: Vec<Vec<u32>> = vec![vec![0u32; k]; d_count];
@@ -393,7 +432,7 @@ pub fn fit_seeded_lda<R: Rng>(
             doc.iter()
                 .map(|&w| {
                     let cands = &word_seed_topics[w as usize];
-                    if cands.is_empty() {
+                    if random_init || cands.is_empty() {
                         (rng.gen::<f64>() * k as f64) as usize % k
                     } else if cands.len() == 1 {
                         cands[0]
@@ -437,15 +476,11 @@ pub fn fit_seeded_lda<R: Rng>(
             ll -= digamma(k_alpha + n_d) - digamma(k_alpha);
         }
         for t in 0..k {
-            let beta_sum_t = v as f64 * beta + seeds_clean[t].len() as f64 * seed_weight;
+            let beta_sum_t = beta_sum_k[t];
             for w in 0..v {
                 let n_tw = nkw[t][w] as f64;
                 if n_tw > 0.0 {
-                    let beta_tw = if seed_sets[t].contains(&w) {
-                        beta + seed_weight
-                    } else {
-                        beta
-                    };
+                    let beta_tw = beta + mass_map[t].get(&w).copied().unwrap_or(0.0);
                     ll += digamma(beta_tw + n_tw) - digamma(beta_tw);
                 }
             }
@@ -471,11 +506,7 @@ pub fn fit_seeded_lda<R: Rng>(
 
                 // Compute unnormalised sampling probabilities.
                 for t in 0..k {
-                    let beta_tw = if seed_sets[t].contains(&w) {
-                        beta + seed_weight
-                    } else {
-                        beta
-                    };
+                    let beta_tw = beta + mass_map[t].get(&w).copied().unwrap_or(0.0);
                     let a_t = a_row.map_or(alpha, |r| r[t]);
                     scores[t] = (a_t + ndk[d][t] as f64) * (beta_tw + nkw[t][w] as f64)
                         / (beta_sum_k[t] + nk[t] as f64);
@@ -515,8 +546,8 @@ pub fn fit_seeded_lda<R: Rng>(
         num_types: v,
         alpha,
         beta,
-        seed_weight,
         seeds: seeds_clean,
+        seed_mass: seed_mass_clean,
         nkw,
         nk,
         ndk,
@@ -535,6 +566,11 @@ mod tests {
     use super::*;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha8Rng;
+
+    /// Uniform seed masses: every seed word in a topic gets `w`. Aligned to `seeds`.
+    fn uniform_masses(seeds: &[Vec<usize>], w: f64) -> Vec<Vec<f64>> {
+        seeds.iter().map(|s| vec![w; s.len()]).collect()
+    }
 
     // -----------------------------------------------------------------------
     // Helper: build a 3-block synthetic corpus.
@@ -603,6 +639,7 @@ mod tests {
         let seed_blocks = [0usize, 1usize]; // expected dominant block for topics 0 and 1
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
+        let masses = uniform_masses(&seeds, 50.0);
         let (model, _, _) = fit_seeded_lda(
             &docs,
             v,
@@ -610,7 +647,8 @@ mod tests {
             &seeds,
             0.1,
             0.01,
-            50.0,
+            &masses,
+            false,
             None,
             300,
             crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
@@ -663,6 +701,7 @@ mod tests {
         let seeds: Vec<Vec<usize>> = vec![vec![]; k];
 
         let mut rng = ChaCha8Rng::seed_from_u64(123);
+        let masses = uniform_masses(&seeds, 0.0);
         let (model, _, _) = fit_seeded_lda(
             &docs,
             v,
@@ -670,7 +709,8 @@ mod tests {
             &seeds,
             0.1,
             0.1,
-            0.0,
+            &masses,
+            true,
             None,
             50,
             crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
@@ -720,6 +760,7 @@ mod tests {
             .map(|d| (0..5).map(|i| ((i + d * 2) % v) as u32).collect())
             .collect();
         let seeds = vec![vec![0usize, 1usize], vec![10usize, 11usize], vec![]];
+        let masses = uniform_masses(&seeds, 2.0);
 
         let mut r1 = ChaCha8Rng::seed_from_u64(55);
         let mut r2 = ChaCha8Rng::seed_from_u64(55);
@@ -730,7 +771,8 @@ mod tests {
             &seeds,
             0.1,
             0.1,
-            2.0,
+            &masses,
+            false,
             None,
             80,
             crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
@@ -745,7 +787,8 @@ mod tests {
             &seeds,
             0.1,
             0.1,
-            2.0,
+            &masses,
+            false,
             None,
             80,
             crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
@@ -774,6 +817,7 @@ mod tests {
             .map(|d| (0..5).map(|i| ((i + d * 3) % v) as u32).collect())
             .collect();
         let seeds: Vec<Vec<usize>> = vec![vec![]; k];
+        let masses = uniform_masses(&seeds, 0.0);
         let mut rng = ChaCha8Rng::seed_from_u64(99);
         let (m, _, _) = fit_seeded_lda(
             &docs,
@@ -782,7 +826,8 @@ mod tests {
             &seeds,
             0.1,
             0.1,
-            0.0,
+            &masses,
+            true,
             None,
             20,
             crate::keyatm::ThetaDrawOpts::new(false, 0, 0),

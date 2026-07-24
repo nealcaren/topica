@@ -4,9 +4,12 @@ These models do not have a convenient byte-identical external reference runner
 in the way topica's MALLET-backed LDA path does. The reference contracts we can
 test exactly are the advertised algorithmic formulas:
 
-* SeededLDA follows the seededlda convention that a seed word receives
+* SeededLDA's ``seed_prior="uniform"`` scheme: a seed word receives a flat
   ``weight * 100`` extra topic-word prior mass in its seed topic, and seeded
-  tokens initialize into that topic.
+  tokens initialize into that topic. (The default ``seed_prior="frequency"``
+  scales that mass by corpus frequency and initializes at random; its exact
+  seed-mass construction is checked against R ``seededlda::tfm`` in
+  ``parity/seededlda_r_compare.py``.)
 * GSDMM follows the Movie Group Process equations for smoothed cluster-word
   distributions and in-sample soft document-cluster probabilities.
 """
@@ -27,6 +30,7 @@ def test_seededlda_zero_sweep_seed_prior_is_exact() -> None:
         alpha=0.1,
         beta=0.01,
         weight=0.01,
+        seed_prior="uniform",
         seed=123,
     )
     model.fit(docs, iters=0)
@@ -61,6 +65,7 @@ def test_seededlda_weight_zero_reduces_to_symmetric_word_prior_at_initialization
         alpha=0.1,
         beta=0.01,
         weight=0.0,
+        seed_prior="uniform",
         seed=123,
     )
     model.fit(docs, iters=0)
@@ -74,6 +79,44 @@ def test_seededlda_weight_zero_reduces_to_symmetric_word_prior_at_initialization
         ]
     )
     np.testing.assert_allclose(model.topic_word, expected_phi, rtol=0, atol=1e-12)
+
+
+def test_seededlda_frequency_seed_mass_is_exact() -> None:
+    """The default seed_prior="frequency" builds each seed word's pseudocount as
+    corpus-frequency(word) * weight * 100 (the seededlda::tfm construction),
+    including repeated seed words with unequal corpus frequency. This is the exact
+    seed-mass contract, checked without a reference toolchain via
+    ``seed_prior_matrix``."""
+    # 'tax' occurs 4x, 'budget' 2x, 'war' 3x across the corpus.
+    docs = [
+        ["tax", "tax", "budget"],
+        ["tax", "war", "budget"],
+        ["tax", "war", "war"],
+        ["market", "market"],
+    ]
+    model = topica.SeededLDA(
+        {"econ": ["tax", "budget"], "conflict": ["war"]},
+        weight=0.02,
+        seed_prior="frequency",
+        seed=1,
+    )
+    model.fit(docs, iters=0)
+
+    freq = Counter(w for d in docs for w in d)
+    vi = {w: i for i, w in enumerate(model.vocabulary)}
+    ti = {n: i for i, n in enumerate(model.topic_names)}
+    m = np.asarray(model.seed_prior_matrix)
+
+    assert m.shape == (2, len(model.vocabulary))
+    for topic, words in {"econ": ["tax", "budget"], "conflict": ["war"]}.items():
+        for w in words:
+            expected = freq[w] * 0.02 * 100.0
+            assert m[ti[topic], vi[w]] == expected, (topic, w, m[ti[topic], vi[w]], expected)
+    # Non-seed cells (and the unrelated 'market') are zero.
+    assert m[ti["econ"], vi["market"]] == 0.0
+    assert m[ti["conflict"], vi["tax"]] == 0.0
+    # 'war' (freq 3) carries more mass than 'budget' (freq 2): frequency scaling bites.
+    assert m[ti["conflict"], vi["war"]] > m[ti["econ"], vi["budget"]]
 
 
 def _manual_gsdmm_counts(docs: list[list[str]], clusters: np.ndarray, vocab: list[str]):

@@ -500,6 +500,10 @@ struct SeededState {
     seed_words: Vec<Vec<String>>,
     #[serde(default)]
     residual: usize,
+    // Seed-prior construction ("frequency" | "uniform"). An older save predates
+    // this field and used the uniform fixed-mass scheme, so default to "uniform".
+    #[serde(default = "seeded_prior_legacy_default")]
+    seed_prior: String,
     // Sampler backend flags.
     #[serde(default)]
     warp: bool,
@@ -508,6 +512,9 @@ struct SeededState {
     // Thinned MCMC theta draws (num_draws, num_docs, num_topics), f32.
     #[serde(default)]
     theta_draws: Option<Arr3f32>,
+}
+fn seeded_prior_legacy_default() -> String {
+    "uniform".to_string()
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct KeyAtmState {
@@ -11932,6 +11939,11 @@ pub struct SeededLDA {
     alpha: f64,
     beta: f64,
     weight: f64,
+    // Seed-prior construction: "frequency" (the seededlda package default —
+    // each seed word's pseudocount scales with its corpus frequency,
+    // count·weight·100, tokens initialised at random) or "uniform" (every seed
+    // word gets the same weight·100 mass, seed-word tokens anchored at init).
+    seed_prior: String,
     seed: u64,
     // WarpLDA cache-efficient sampler (seeded word phase) instead of the default
     // SparseLDA seeded sweep. Recommended for large K.
@@ -11977,6 +11989,7 @@ impl SeededLDA {
         d.set_item("alpha", self.alpha)?;
         d.set_item("beta", self.beta)?;
         d.set_item("weight", self.weight)?;
+        d.set_item("seed_prior", &self.seed_prior)?;
         d.set_item("seed", self.seed)?;
         let sampler = if self.warp {
             "warp"
@@ -11997,13 +12010,22 @@ impl SeededLDA {
 
     /// Create an unfitted model. `seed_words` is ``{topic_name: [words]}``;
     /// `residual` adds that many extra unseeded topics. `weight` (default 0.01,
-    /// matching the seededlda package) scales the seed prior. `alpha` is the
-    /// per-topic Dirichlet, `beta` the base topic-word smoothing.
+    /// matching the seededlda package) scales the seed prior. `alpha` (default
+    /// 0.5) is the per-topic Dirichlet and `beta` (default 0.1) the base
+    /// topic-word smoothing — the seededlda package defaults.
+    ///
+    /// `seed_prior` chooses how each seed word's prior pseudocount is built:
+    /// ``"frequency"`` (default) reproduces the seededlda package —
+    /// pseudocount = corpus-frequency(word) · weight · 100, and tokens are
+    /// initialised at random. ``"uniform"`` is topica's original scheme — every
+    /// seed word gets the same weight · 100 pseudocount and seed-word tokens are
+    /// anchored to their seed topic at initialisation.
+    ///
     /// `sampler` selects the inference backend: ``"sparse"`` (default), ``"warp"``
     /// (WarpLDA), or ``"cvb0"`` (deterministic collapsed variational Bayes).
     #[new]
-    #[pyo3(signature = (seed_words, *, residual=0, alpha=0.1, beta=0.01, weight=0.01, seed=42,
-                        sampler="sparse"))]
+    #[pyo3(signature = (seed_words, *, residual=0, alpha=0.5, beta=0.1, weight=0.01, seed=42,
+                        seed_prior="frequency", sampler="sparse"))]
     fn new(
         seed_words: &Bound<'_, PyDict>,
         residual: usize,
@@ -12011,6 +12033,7 @@ impl SeededLDA {
         beta: f64,
         weight: f64,
         seed: u64,
+        seed_prior: &str,
         sampler: &str,
     ) -> PyResult<Self> {
         let (names, words) = parse_seed_dict(seed_words)?;
@@ -12025,6 +12048,11 @@ impl SeededLDA {
             return Err(PyValueError::new_err(
                 "weight must be finite and in [0, 1] (as in the seededlda package)",
             ));
+        }
+        if !matches!(seed_prior, "frequency" | "uniform") {
+            return Err(PyValueError::new_err(format!(
+                "seed_prior must be \"frequency\" or \"uniform\", got {seed_prior:?}"
+            )));
         }
         if names.len() + residual < 2 {
             return Err(PyValueError::new_err(
@@ -12048,6 +12076,7 @@ impl SeededLDA {
             alpha,
             beta,
             weight,
+            seed_prior: seed_prior.to_string(),
             seed,
             warp,
             cvb0,
@@ -12118,7 +12147,43 @@ impl SeededLDA {
         let num_topics = slf.num_topics_val();
         let num_types = corpus.num_types();
         let seeds = seed_word_ids(&slf.seed_words, &corpus.id_to_word, num_topics);
-        let (alpha, beta, seed_weight) = (slf.alpha, slf.beta, slf.weight * 100.0);
+        let (alpha, beta) = (slf.alpha, slf.beta);
+
+        // Build the per-(topic, seed word) prior mass, aligned to `seeds`.
+        //   "frequency" (seededlda package): mass = corpus_freq(word) · weight · 100
+        //                (the `seededlda::tfm` construction), tokens init at random.
+        //   "uniform":   mass = weight · 100 for every seed word, tokens anchored.
+        // weight == 0 means no seed matrix (plain LDA) and, like the reference,
+        // an unbiased random initialisation.
+        let freq_scaled = slf.seed_prior == "frequency";
+        let word_freq: Vec<f64> = if freq_scaled {
+            let mut f = vec![0.0f64; num_types];
+            for doc in &corpus.docs {
+                for &w in doc {
+                    f[w as usize] += 1.0;
+                }
+            }
+            f
+        } else {
+            Vec::new()
+        };
+        let seed_masses: Vec<Vec<f64>> = seeds
+            .iter()
+            .map(|topic_seeds| {
+                topic_seeds
+                    .iter()
+                    .map(|&w| {
+                        let base = if freq_scaled { word_freq[w] } else { 1.0 };
+                        base * slf.weight * 100.0
+                    })
+                    .collect()
+            })
+            .collect();
+        // The frequency scheme (the seededlda package) always initialises at
+        // random; the uniform scheme anchors seed tokens at init even when
+        // weight == 0 (topica's original behaviour). weight == 0 already zeroes
+        // every mass, so a frequency fit with weight == 0 is plain random LDA.
+        let random_init = freq_scaled;
 
         let doc_alpha: Option<Vec<Vec<f64>>> = match doc_topic_prior {
             Some(p) => {
@@ -12176,7 +12241,7 @@ impl SeededLDA {
             let (phi_tw, theta_dk, corpus) = py.allow_threads(move || {
                 let alpha0 = vec![alpha; num_topics];
                 let mut cv = cvb0::Cvb0::new(&corpus, num_topics, &alpha0, beta, &mut rng);
-                cv.set_seeds(&seeds, seed_weight);
+                cv.set_seeds(&seeds, &seed_masses);
                 for _ in 0..iters {
                     cv.sweep();
                 }
@@ -12209,7 +12274,7 @@ impl SeededLDA {
             let (phi_tw, theta_dk, theta_draw_buf, corpus) = py.allow_threads(move || {
                 let alpha0 = vec![alpha; num_topics];
                 let mut ws = warplda::WarpLda::new(&corpus, num_topics, &alpha0, beta, &mut rng);
-                ws.set_seeds(&seeds, seed_weight);
+                ws.set_seeds(&seeds, &seed_masses);
                 let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
                 for iter in 1..=iters {
                     ws.sweep(&corpus, &mut rng);
@@ -12251,7 +12316,8 @@ impl SeededLDA {
                 &seeds,
                 alpha,
                 beta,
-                seed_weight,
+                &seed_masses,
+                random_init,
                 doc_alpha,
                 iters,
                 draws_opts,
@@ -12330,6 +12396,45 @@ impl SeededLDA {
     fn alpha<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
         Ok(Array1::from(vec![self.alpha; self.num_topics_val()]).to_pyarray_bound(py))
+    }
+    /// The seed pseudocount matrix `m_{k,w}` actually applied at fit, shape
+    /// ``(num_topics, vocab_size)`` aligned to :attr:`vocabulary` and the topic
+    /// order of :attr:`topic_names`. Under ``seed_prior="frequency"`` this
+    /// reproduces the seededlda package's ``tfm`` matrix
+    /// (corpus-frequency(word) × weight × 100); under ``"uniform"`` each seed
+    /// word's entry is ``weight × 100``. Residual/unseeded topics are all-zero
+    /// rows. Recomputed from the fitted corpus and seed configuration.
+    #[getter]
+    fn seed_prior_matrix<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        let corpus = self.corpus.as_ref().unwrap();
+        let num_types = corpus.num_types();
+        let num_topics = self.num_topics_val();
+        let freq_scaled = self.seed_prior == "frequency";
+        let mut word_freq = vec![0.0f64; num_types];
+        if freq_scaled {
+            for doc in &corpus.docs {
+                for &w in doc {
+                    word_freq[w as usize] += 1.0;
+                }
+            }
+        }
+        let index: std::collections::HashMap<&str, usize> = corpus
+            .id_to_word
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.as_str(), i))
+            .collect();
+        let mut m = Array2::<f64>::zeros((num_topics, num_types));
+        for (k, words) in self.seed_words.iter().enumerate() {
+            for w in words {
+                if let Some(&wid) = index.get(w.as_str()) {
+                    let base = if freq_scaled { word_freq[wid] } else { 1.0 };
+                    m[[k, wid]] = base * self.weight * 100.0;
+                }
+            }
+        }
+        Ok(m.to_pyarray_bound(py))
     }
     /// The topic labels: the seed names you gave, then ``residual_1`` … for any
     /// unseeded topics. Settable after fit; length must equal ``num_topics``.
@@ -12417,6 +12522,7 @@ impl SeededLDA {
                 seed_names: self.seed_names.clone(),
                 seed_words: self.seed_words.clone(),
                 residual: self.residual,
+                seed_prior: self.seed_prior.clone(),
                 warp: self.warp,
                 cvb0: self.cvb0,
                 theta_draws: arr3f32_opt(&self.theta_draws),
@@ -12435,6 +12541,7 @@ impl SeededLDA {
             alpha: s.alpha,
             beta: s.beta,
             weight: s.weight,
+            seed_prior: s.seed_prior,
             seed: s.seed,
             warp: s.warp,
             cvb0: s.cvb0,
