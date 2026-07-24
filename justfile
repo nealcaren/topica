@@ -59,6 +59,11 @@ test-rust-features:
 test-py:
     {{py}} -m pytest tests/ -q
 
+# Reference-free metamorphic / invariant checks only (issue #420) — a failure
+# reads as "invariant: <property>" rather than a numeric drift.
+test-invariants:
+    {{py}} -m pytest tests/ -m invariants -q
+
 # Every test surface: Rust core, feature-gated Rust, and Python.
 test: test-rust test-rust-features test-py
 
