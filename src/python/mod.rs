@@ -569,6 +569,35 @@ fn finite_pos(x: f64) -> bool {
     x.is_finite() && x > 0.0
 }
 
+/// Validate a strictly-positive float hyperparameter, returning a clean
+/// `ValueError` (naming the parameter) for a non-finite or non-positive value.
+/// A bare `x <= 0.0` check admits NaN/+inf; route positivity checks through this
+/// so those cannot slip past a constructor and silently produce NaN output (#481).
+#[inline]
+pub(crate) fn ensure_finite_pos(name: &str, x: f64) -> PyResult<()> {
+    if finite_pos(x) {
+        Ok(())
+    } else {
+        Err(PyValueError::new_err(format!(
+            "{name} must be finite and > 0 (got {x})"
+        )))
+    }
+}
+
+/// Validate a non-negative float hyperparameter (zero admissible), returning a
+/// clean `ValueError` for a non-finite or negative value. The `>= 0` companion to
+/// [`ensure_finite_pos`] for params like a ridge or a mixing ratio (#481).
+#[inline]
+pub(crate) fn ensure_finite_nonneg(name: &str, x: f64) -> PyResult<()> {
+    if x.is_finite() && x >= 0.0 {
+        Ok(())
+    } else {
+        Err(PyValueError::new_err(format!(
+            "{name} must be finite and >= 0 (got {x})"
+        )))
+    }
+}
+
 pub(super) fn build_corpus_from_docs(
     docs_in: Vec<Vec<String>>,
     doc_names_in: Option<Vec<String>>,
@@ -12934,9 +12963,7 @@ impl FASTopic {
         if num_topics < 2 {
             return Err(PyValueError::new_err("need at least 2 topics"));
         }
-        if theta_temp <= 0.0 {
-            return Err(PyValueError::new_err("theta_temp must be > 0"));
-        }
+        ensure_finite_pos("theta_temp", theta_temp)?;
         Ok(FASTopic {
             num_topics,
             lr,

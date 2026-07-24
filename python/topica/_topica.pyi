@@ -2688,7 +2688,14 @@ class RTM:
         negative_ratio: float = 1.0,
         ridge: float = 1.0,
         seed: int = 42,
-    ) -> None: ...
+    ) -> None:
+        """`rho` (or `negative_ratio`, which scales it by the link count) is the
+        pseudo-negative regularization that prevents the degenerate positive-links-
+        only fit — the paper's rho, R lda's `lambda` — and must be strictly
+        positive; `rho=None` resolves to `negative_ratio * num_links`. `ridge` is
+        the separate L2 Gaussian prior on the link coefficients and may be 0 (plain
+        MLE)."""
+        ...
     def fit(
         self,
         data: Corpus | Sequence[Sequence[str]],

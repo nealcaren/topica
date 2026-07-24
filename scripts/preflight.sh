@@ -34,6 +34,27 @@ if ! cargo clippy --workspace --all-targets --all-features -- -D warnings; then
     fail=1
 fi
 
+# #481: a bare `if X <= 0.0 { return Err(PyValueError...) }` positivity guard
+# admits NaN/+inf (both compare false) and silently corrupts the fit. New
+# hyperparameter checks must route through ensure_finite_pos / ensure_finite_nonneg
+# (or an explicit `!x.is_finite()` clause). Flag the raw anti-pattern before it
+# lands. (perl, not `grep -P`, so this runs on the macOS pre-push hook.)
+step "no NaN-admitting '<= 0.0' hyperparameter guards in the bindings (#481)"
+antipattern=$(perl -ne '
+    if ($prev =~ /^\s*if\s+[A-Za-z_][\w.]*\s*<=?\s*0\.0\s*\{\s*$/ && /return\s+Err\(PyValueError/) {
+        print "  $ARGV:", ($. - 1), ": ", $prev;
+    }
+    $prev = $_;
+    # Reset per file so $. is the file-local line number and $prev cannot leak
+    # across the *.rs glob boundary.
+    if (eof) { close ARGV; $prev = ""; }
+' src/python/*.rs || true)
+if [ -n "$antipattern" ]; then
+    echo "  a hyperparameter guard admits NaN/+inf; use ensure_finite_pos/_nonneg:" >&2
+    printf '%s\n' "$antipattern" >&2
+    fail=1
+fi
+
 # Python-side checks need the built extension; prefer an active venv, else .venv-dev.
 VENV="${VIRTUAL_ENV:-$PWD/.venv-dev}"
 PY="$VENV/bin/python"

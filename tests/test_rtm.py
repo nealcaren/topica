@@ -124,6 +124,14 @@ def test_bad_params():
         topica.RTM(3, alpha=0.0)
     with pytest.raises(ValueError):
         topica.RTM(3, negative_ratio=-1.0)
+    # The pseudo-negative count (rho / negative_ratio, the paper's regularization,
+    # R lda's `lambda`) prevents the degenerate positive-links-only fit, so zero is
+    # rejected -- not merely negatives. `ridge` (the l2 prior) still allows zero.
+    with pytest.raises(ValueError, match="finite and > 0"):
+        topica.RTM(3, negative_ratio=0.0)
+    with pytest.raises(ValueError, match="finite and > 0"):
+        topica.RTM(3, rho=0.0)
+    topica.RTM(3, ridge=0.0)  # zero l2 prior (plain MLE) is allowed
 
 
 def test_edge_cases():

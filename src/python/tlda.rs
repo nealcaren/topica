@@ -165,27 +165,21 @@ impl TensorLDA {
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
-        if alpha_0 <= 0.0 {
-            return Err(PyValueError::new_err("alpha_0 must be > 0.0"));
-        }
+        ensure_finite_pos("alpha_0", alpha_0)?;
         if n_iter_train == 0 {
             return Err(PyValueError::new_err("n_iter_train must be > 0"));
         }
         if n_iter_test == 0 {
             return Err(PyValueError::new_err("n_iter_test must be > 0"));
         }
-        if learning_rate <= 0.0 {
-            return Err(PyValueError::new_err("learning_rate must be > 0.0"));
-        }
+        ensure_finite_pos("learning_rate", learning_rate)?;
         if batch_size == 0 {
             return Err(PyValueError::new_err("batch_size must be > 0"));
         }
         if !(0.0..1.0).contains(&smoothing) {
             return Err(PyValueError::new_err("smoothing must be in [0.0, 1.0)"));
         }
-        if theta <= 0.0 {
-            return Err(PyValueError::new_err("theta must be > 0.0"));
-        }
+        ensure_finite_pos("theta", theta)?;
         if let Some(ne) = n_eigenvec {
             if ne < num_topics {
                 return Err(PyValueError::new_err("n_eigenvec must be >= num_topics"));
