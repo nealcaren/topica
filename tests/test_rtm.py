@@ -134,6 +134,92 @@ def test_bad_params():
     topica.RTM(3, ridge=0.0)  # zero l2 prior (plain MLE) is allowed
 
 
+# --- collapsed-Gibbs backend (#424) -----------------------------------------
+
+# R lda's rtm.em restarts a fresh sampler each M-step, so quality comes from a
+# converged E-sweep budget, and its estimate.params beta runs away negative after
+# too many M-steps -- so the Gibbs tests use a converged, few-M-step config that
+# mirrors parity/rtm_gibbs_gold.py (see fit_rtm_gibbs docs).
+_GIBBS = dict(iters=5, e_sweeps=60)
+
+
+def test_gibbs_recovers_topics_and_round_trips_settings():
+    docs, edges, groups, V = _planted()
+    m = topica.RTM(3, link="exponential", inference="gibbs", alpha=0.5, seed=0)
+    m.fit(docs, edges, **_GIBBS)
+    assert m.settings["inference"] == "gibbs"
+    assert "beta" in m.settings
+    np.testing.assert_allclose(m.topic_word.sum(axis=1), 1.0, atol=1e-9)
+    np.testing.assert_allclose(m.doc_topic.sum(axis=1), 1.0, atol=1e-9)
+    # each topic owns a distinct planted word block
+    tw = m.topic_word[:, np.argsort([int(w) for w in m.vocabulary])]
+    owned = [max(range(3), key=lambda b: tw[t, b * 6:(b + 1) * 6].sum()) for t in range(3)]
+    assert set(owned) == {0, 1, 2}
+
+
+def test_gibbs_link_beta_is_negative_like_r():
+    # R lda's estimate.params sets beta_k = log(p_k), p_k in (0,1), so the link
+    # coefficient is negative even on strongly-linked data (the documented quirk).
+    docs, edges, _g, _V = _planted()
+    m = topica.RTM(3, link="exponential", inference="gibbs", seed=0).fit(docs, edges, **_GIBBS)
+    assert (np.asarray(m.eta) < 0).all()
+    assert m.nu == 0.0  # the reference's exponential link has no intercept
+
+
+def test_gibbs_determinism_and_save_load(tmp_path):
+    docs, edges, _g, _V = _planted()
+    a = topica.RTM(3, inference="gibbs", seed=3).fit(docs, edges, **_GIBBS)
+    b = topica.RTM(3, inference="gibbs", seed=3).fit(docs, edges, **_GIBBS)
+    assert np.array_equal(a.topic_word, b.topic_word)
+    assert np.array_equal(a.eta, b.eta)
+    c = topica.RTM(3, inference="gibbs", seed=99).fit(docs, edges, **_GIBBS)
+    assert not np.array_equal(a.topic_word, c.topic_word)
+    # save/load preserves the backend + fit
+    p = str(tmp_path / "gibbs.tt")
+    a.save(p)
+    n = topica.RTM.load(p)
+    assert n.settings["inference"] == "gibbs"
+    assert np.array_equal(n.topic_word, a.topic_word)
+    assert np.array_equal(n.eta, a.eta)
+
+
+def test_bad_inference_rejected():
+    with pytest.raises(ValueError, match="inference"):
+        topica.RTM(3, inference="mcmc")
+
+
+def test_gibbs_link_defaults_to_exponential_and_rejects_explicit_conflict():
+    # R lda's collapsed-Gibbs sampler is exponential-only. `link` is a sentinel: an
+    # unset link under gibbs resolves to (and stores) exponential; an explicit
+    # non-exponential link is rejected, not silently overwritten.
+    docs, edges, _g, _V = _planted()
+    m = topica.RTM(3, inference="gibbs", seed=0).fit(docs, edges, iters=5, e_sweeps=20)
+    assert m.settings["link"] == "exponential"
+    # explicit exponential is fine; explicit logistic under gibbs raises
+    topica.RTM(3, link="exponential", inference="gibbs")
+    with pytest.raises(ValueError, match="exponential"):
+        topica.RTM(3, link="logistic", inference="gibbs")
+    # variational still defaults to logistic
+    assert topica.RTM(3).settings["link"] == "logistic"
+    # exponential link scores are exp(sum eta*z*z) <= 1; a logistic read would be 0.5-ish
+    pr = m.predict_link(0, 1)
+    assert 0.0 < pr <= 1.0
+
+
+def test_gibbs_handles_no_links_and_empty_docs():
+    docs, _edges, _g, _V = _planted()
+    # no links: reduces to an LDA-like Gibbs fit, still valid output
+    m = topica.RTM(3, inference="gibbs", seed=0).fit(docs, [], iters=5, e_sweeps=20)
+    assert m.topic_word.shape == (3, len(m.vocabulary))
+    np.testing.assert_allclose(m.topic_word.sum(axis=1), 1.0, atol=1e-9)
+    # an empty document is tolerated (its phi_bar row is all-zero, no div-by-zero)
+    docs2 = docs[:10] + [[]] + docs[10:]
+    edges2 = [(0, 2), (3, 5)]
+    m2 = topica.RTM(3, inference="gibbs", seed=1).fit(docs2, edges2, iters=15)
+    assert np.isfinite(m2.doc_topic).all()
+    assert np.isfinite(m2.phi_bar).all()
+
+
 def test_edge_cases():
     docs, edges = _toy()
     # empty corpus

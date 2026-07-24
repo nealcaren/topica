@@ -15,16 +15,23 @@ use std::collections::HashMap;
 /// mean topic assignments, so the same topics explain both words and links. Fit
 /// with ``fit(docs, links=edges)`` on a document graph (citations, hyperlinks,
 /// co-sponsorship, adjacency); predict links from words for unseen documents with
-/// ``suggest_links``. Undirected links; ``link="logistic"`` (default) or
-/// ``"exponential"``.
+/// ``suggest_links``. Undirected links; ``link`` is ``"logistic"`` or
+/// ``"exponential"`` (default resolves per backend). ``inference="variational"``
+/// (default) runs the paper's variational EM; ``inference="gibbs"`` runs the
+/// collapsed-Gibbs backend that faithfully matches R lda's ``rtm.em`` (exponential
+/// link only), with ``beta`` the topic-word Dirichlet smoothing (R lda's ``eta``).
 #[pyclass(module = "topica")]
 pub struct RTM {
     num_topics: usize,
     link: Link,
     alpha: Option<f64>,
+    beta: f64,
     rho: Option<f64>,
     negative_ratio: f64,
     ridge: f64,
+    // "variational" (default, the shipped EM) or "gibbs" (collapsed Gibbs, R lda
+    // rtm.collapsed.gibbs.sampler / rtm.em same-algorithm parity).
+    inference: String,
     seed: u64,
     fitted: bool,
     model: Option<crate::rtm::RTMModel>,
@@ -36,9 +43,13 @@ struct RtmState {
     num_topics: usize,
     link: String,
     alpha: Option<f64>,
+    #[serde(default = "rtm_default_beta")]
+    beta: f64,
     rho: Option<f64>,
     negative_ratio: f64,
     ridge: f64,
+    #[serde(default = "rtm_default_inference")]
+    inference: String,
     seed: u64,
     fitted: bool,
     corpus: Option<corpus::Corpus>,
@@ -49,6 +60,13 @@ struct RtmState {
     nu: Option<f64>,
     fit_history: Option<Vec<(usize, f64)>>,
     converged: Option<bool>,
+}
+
+fn rtm_default_inference() -> String {
+    "variational".to_string()
+}
+fn rtm_default_beta() -> f64 {
+    0.1
 }
 
 impl RTM {
@@ -117,13 +135,16 @@ fn doc_to_ids(corpus: &corpus::Corpus, doc: &Bound<'_, PyAny>) -> PyResult<Vec<u
 #[pymethods]
 impl RTM {
     #[new]
-    #[pyo3(signature = (num_topics, *, link="logistic", alpha=None, rho=None,
+    #[pyo3(signature = (num_topics, *, link=None, inference="variational",
+                        alpha=None, beta=0.1, rho=None,
                         negative_ratio=1.0, ridge=1.0, seed=42))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
-        link: &str,
+        link: Option<&str>,
+        inference: &str,
         alpha: Option<f64>,
+        beta: f64,
         rho: Option<f64>,
         negative_ratio: f64,
         ridge: f64,
@@ -132,10 +153,37 @@ impl RTM {
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
-        let link = Link::parse(link).map_err(PyValueError::new_err)?;
+        if !matches!(inference, "variational" | "gibbs") {
+            return Err(PyValueError::new_err(format!(
+                "inference must be \"variational\" or \"gibbs\", got {inference:?}"
+            )));
+        }
+        // R lda's collapsed-Gibbs RTM sampler supports only the exponential link, so
+        // the Gibbs backend uses (and stores) it. `link` is a sentinel: unset (None)
+        // resolves to the backend's default — "logistic" for variational, the
+        // required "exponential" for Gibbs. An *explicitly* non-exponential link under
+        // Gibbs is rejected rather than silently overwritten (which would train
+        // exponential but let a later `link` read imply σ on the negative reference
+        // coefficients).
+        let link = match (inference, link) {
+            ("gibbs", None) | ("gibbs", Some("exponential")) | ("gibbs", Some("exp")) => {
+                Link::Exponential
+            }
+            ("gibbs", Some(other)) => {
+                return Err(PyValueError::new_err(format!(
+                    "the gibbs backend supports only link=\"exponential\" (R lda's \
+                     sole option), got {other:?}; omit `link` or pass \"exponential\""
+                )));
+            }
+            (_, None) => Link::Logistic,
+            (_, Some(s)) => Link::parse(s).map_err(PyValueError::new_err)?,
+        };
         if let Some(a) = alpha {
             ensure_finite_pos("alpha", a)?;
         }
+        // `beta` is the topic-word Dirichlet smoothing (R lda's `eta`) for the Gibbs
+        // backend; it must be finite and strictly positive.
+        ensure_finite_pos("beta", beta)?;
         // `rho` / `negative_ratio` are the paper's pseudo-negative count (R lda's
         // `lambda`): the regularization that prevents the degenerate positive-links-
         // only fit, so zero is not a valid setting (it removes the negatives and the
@@ -150,9 +198,11 @@ impl RTM {
             num_topics,
             link,
             alpha,
+            beta,
             rho,
             negative_ratio,
             ridge,
+            inference: inference.to_string(),
             seed,
             fitted: false,
             model: None,
@@ -174,7 +224,9 @@ impl RTM {
         let d = PyDict::new_bound(py);
         d.set_item("num_topics", self.num_topics)?;
         d.set_item("link", self.link.as_str())?;
+        d.set_item("inference", &self.inference)?;
         d.set_item("alpha", self.alpha)?;
+        d.set_item("beta", self.beta)?;
         d.set_item("rho", self.rho)?;
         d.set_item("negative_ratio", self.negative_ratio)?;
         d.set_item("ridge", self.ridge)?;
@@ -228,6 +280,7 @@ impl RTM {
             num_topics: slf.num_topics,
             num_types: corpus.num_types(),
             alpha: slf.resolved_alpha(),
+            beta: slf.beta,
             link: slf.link,
             rho: slf.rho,
             negative_ratio: slf.negative_ratio,
@@ -238,9 +291,14 @@ impl RTM {
             var_tol: 1e-4,
             convergence_tol: 1e-5,
         };
+        let gibbs = slf.inference == "gibbs";
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let (model, corpus) = py.allow_threads(move || {
-            let model = crate::rtm::fit_rtm(&corpus.docs, &edges, &params, &mut rng);
+            let model = if gibbs {
+                crate::rtm::fit_rtm_gibbs(&corpus.docs, &edges, &params, &mut rng)
+            } else {
+                crate::rtm::fit_rtm(&corpus.docs, &edges, &params, &mut rng)
+            };
             (model, corpus)
         });
         slf.model = Some(model);
@@ -391,9 +449,11 @@ impl RTM {
                 num_topics: self.num_topics,
                 link: self.link.as_str().to_string(),
                 alpha: self.alpha,
+                beta: self.beta,
                 rho: self.rho,
                 negative_ratio: self.negative_ratio,
                 ridge: self.ridge,
+                inference: self.inference.clone(),
                 seed: self.seed,
                 fitted: self.fitted,
                 corpus: self.corpus.clone(),
@@ -432,9 +492,11 @@ impl RTM {
             num_topics: s.num_topics,
             link,
             alpha: s.alpha,
+            beta: s.beta,
             rho: s.rho,
             negative_ratio: s.negative_ratio,
             ridge: s.ridge,
+            inference: s.inference,
             seed: s.seed,
             fitted: s.fitted,
             model,

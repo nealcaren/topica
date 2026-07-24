@@ -1,0 +1,20 @@
+{
+  "alpha": 0.1,
+  "beta": 0.1,
+  "corpus": "planted network (90 docs, K=3, 479 links, seed 0)",
+  "date": "2026-07-24",
+  "e_sweeps": 100,
+  "m_iters": 5,
+  "margin": 0.05,
+  "model": "RTM collapsed Gibbs (R lda rtm.em / rtm.collapsed.gibbs.sampler)",
+  "num_docs": 90,
+  "num_links": 479,
+  "num_topics": 3,
+  "pass_bar": "topica gibbs topic-word cosine >= topic_r_self_cosine - margin",
+  "r_link_beta_mean": -0.0338982333415473,
+  "reference": "R lda 1.5.2",
+  "topic_r_self_cosine": 0.9994241377626039,
+  "topica_link_beta_mean": -0.032811635603213644,
+  "topica_topic_cosine": 0.9990432450579,
+  "vocab_size": 24
+}
