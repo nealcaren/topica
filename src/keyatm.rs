@@ -1226,6 +1226,10 @@ fn validate_keyatm_inputs(
     gamma2: f64,
 ) {
     assert!(num_topics >= 1, "num_topics must be at least 1");
+    // An empty corpus has no counts to sample and, with estimate_alpha, the base
+    // fit passes `docs.len() - 1` (usize) to the α sampler, which would wrap to
+    // usize::MAX. Reject it up front so every public fit rejects it identically.
+    assert!(!docs.is_empty(), "docs must be non-empty");
     assert_eq!(
         keywords.len(),
         num_topics,
@@ -2222,7 +2226,15 @@ pub fn fit_keyatm_dynamic<R: Rng>(
             "documents must be sorted by time_index (non-decreasing)"
         );
     }
-    let num_time = time_index.iter().copied().max().map(|m| m + 1).unwrap_or(0);
+    let num_time = time_index
+        .iter()
+        .copied()
+        .max()
+        .map(|m| {
+            m.checked_add(1)
+                .expect("time_index entry is usize::MAX; segment count overflows")
+        })
+        .unwrap_or(0);
     assert!(
         num_time >= num_states,
         "num_time ({num_time}) must be >= num_states ({num_states})"
@@ -3414,6 +3426,15 @@ mod tests {
 
     fn two_docs() -> Vec<Vec<u32>> {
         vec![vec![0u32, 1], vec![1u32, 0]]
+    }
+
+    #[test]
+    #[should_panic(expected = "docs must be non-empty")]
+    fn rejects_empty_corpus() {
+        // With estimate_alpha=true and iters>0 the base fit passes
+        // `docs.len() - 1` to the α sampler; an empty corpus would wrap it to
+        // usize::MAX. The validator rejects it first.
+        run_base(&[], 2, 1, &[vec![0]], 0.1, 0.1, true);
     }
 
     #[test]
