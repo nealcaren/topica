@@ -214,9 +214,17 @@ impl Cvb0 {
         let mut beta_sum_k = vec![self.beta * v as f64; k];
         let mut inv_seeds: Vec<Vec<u32>> = vec![Vec::new(); v];
         for (t, ws) in seeds.iter().enumerate().take(k) {
-            beta_sum_k[t] += ws.len() as f64 * seed_weight;
+            // Count each DISTINCT, in-vocabulary seed word once. The numerator
+            // `beta + seed_weight` is applied per (topic, word) by a boolean
+            // membership test below, so the per-topic normalizer must equal
+            // Σ_w β_at(t, w) = V·β + (#distinct valid seeds)·seed_weight. Using
+            // `ws.len()` over-counted duplicate/out-of-vocab seed words, inflating
+            // the denominator and under-normalizing the seeded topic (matches the
+            // sparse and warp backends, which already dedupe).
+            let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
             for &w in ws {
-                if w < v {
+                if w < v && seen.insert(w) {
+                    beta_sum_k[t] += seed_weight;
                     inv_seeds[w].push(t as u32);
                 }
             }
@@ -483,6 +491,32 @@ mod tests {
             }
         }
         assert_eq!(covered.len(), n_blocks, "only recovered {covered:?}");
+    }
+
+    #[test]
+    fn set_seeds_dedupes_the_denominator() {
+        // A duplicated seed word (["tax","tax"]) must not inflate beta_sum_k or push
+        // its topic twice into inv_seeds: the numerator boost is a boolean membership
+        // test, so a duplicate would over-count the denominator and under-normalize
+        // the topic. Distinct-count and duplicate-count seeds must agree.
+        let (corpus, _) = planted(2, 3, 20);
+        let v = corpus.num_types();
+        let alpha = vec![0.1f64; 2];
+        let mut rng = Pcg64Mcg::seed_from_u64(1);
+
+        let mut dup = Cvb0::new(&corpus, 2, &alpha, 0.01, &mut rng);
+        dup.set_seeds(&[vec![0, 0, 1], vec![]], 5.0);
+        let mut uniq = Cvb0::new(&corpus, 2, &alpha, 0.01, &mut rng);
+        uniq.set_seeds(&[vec![0, 1], vec![]], 5.0);
+
+        let ds = dup.seed.as_ref().unwrap();
+        let us = uniq.seed.as_ref().unwrap();
+        // Two distinct seeds -> V*beta + 2*seed_weight; the duplicate must not add a
+        // third seed_weight.
+        assert_eq!(ds.beta_sum_k, us.beta_sum_k);
+        assert!((ds.beta_sum_k[0] - (v as f64 * 0.01 + 2.0 * 5.0)).abs() < 1e-9);
+        // word 0 seeds only topic 0, once.
+        assert_eq!(ds.inv_seeds[0], vec![0u32]);
     }
 
     #[test]

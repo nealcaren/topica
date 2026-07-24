@@ -62,6 +62,19 @@ def test_seededlda_rejects_bad_weight(bad):
         topica.SeededLDA(seeds, weight=bad)
 
 
+@pytest.mark.parametrize("bad", [NAN, INF])
+def test_seededlda_rejects_nonfinite_doc_topic_prior(bad):
+    # #456: the doc_topic_prior guard was `a <= 0.0`, which is false for NaN and
+    # +inf, so a non-finite prior slipped through and contaminated the fit. It must
+    # be rejected up front (same non-finite class as the weight guard above).
+    seeds = {"sports": ["ball", "goal"], "politics": ["vote", "law"]}
+    docs = [["ball", "goal", "vote"], ["law", "vote", "ball"], ["goal", "law", "ball"]]
+    m = topica.SeededLDA(seeds, seed=1)
+    prior = [[1.0, bad] for _ in docs]
+    with pytest.raises(ValueError, match="finite"):
+        m.fit(docs, iters=10, doc_topic_prior=prior)
+
+
 def test_valid_hyperparameters_still_construct_and_fit():
     m = LDA(num_topics=2, beta=0.01, alpha_sum=1.0, seed=42)
     m.fit(DOCS, iters=20)

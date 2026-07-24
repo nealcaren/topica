@@ -12066,8 +12066,13 @@ impl SeededLDA {
                         "each doc_topic_prior row must have num_topics entries",
                     ));
                 }
-                if rows.iter().any(|r| r.iter().any(|&a| a <= 0.0)) {
-                    return Err(PyValueError::new_err("doc_topic_prior entries must be > 0"));
+                // `a <= 0.0` is false for NaN and +inf, so a non-finite prior would
+                // slip through and contaminate sampling/output. Require finite and
+                // positive (#456, same non-finite class as #472/#473).
+                if rows.iter().any(|r| r.iter().any(|&a| !finite_pos(a))) {
+                    return Err(PyValueError::new_err(
+                        "doc_topic_prior entries must be finite and > 0",
+                    ));
                 }
                 Some(rows)
             }
