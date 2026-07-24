@@ -121,3 +121,73 @@ class TestClusterDiscovery:
         ld = topica.GSDMM.load(path)
         assert ld.cluster_count_history == m.cluster_count_history
         assert ld.log_likelihood_history == m.log_likelihood_history
+
+
+class TestTransform:
+    """Held-out cluster assignment via the Movie-Group-Process conditional (#490)."""
+
+    def _fit(self, seed=1, n=300):
+        docs = _short_corpus(n=n, seed=seed)
+        m = topica.GSDMM(num_topics=12, seed=seed).fit(docs, iters=40)
+        return m, docs
+
+    def test_shape_and_rows_sum_to_one(self):
+        m, _ = self._fit()
+        held = [["cat", "dog", "pet"], ["star", "sky"], ["tax", "vote", "law"]]
+        t = m.transform(held)
+        assert t.shape == (3, m.num_topics)
+        assert np.allclose(t.sum(axis=1), 1.0)
+        assert np.all(t >= 0.0)
+
+    def test_in_sample_matches_doc_topic(self):
+        # transform on the training docs reproduces the training-time scoring,
+        # so its argmax equals doc_topic's argmax (both are doc_cluster_dist).
+        m, docs = self._fit()
+        assert np.array_equal(m.transform(docs).argmax(1), np.asarray(m.doc_topic).argmax(1))
+
+    def test_pure_heldout_doc_lands_on_its_block(self):
+        m, _ = self._fit()
+        # A doc made only of one block's words concentrates on one cluster, and the
+        # three blocks map to three distinct clusters.
+        pure = [["cat", "dog", "pet", "vet"], ["star", "moon", "sky"], ["tax", "law", "bill"]]
+        t = m.transform(pure)
+        assert t.max(axis=1).min() > 0.9  # each row confident
+        assert len(set(t.argmax(axis=1))) == 3  # three distinct clusters
+
+    def test_oov_and_empty_fall_back_to_size_prior(self):
+        m, _ = self._fit()
+        t = m.transform([["zzzz", "qqqq"], []])  # all-OOV, then empty
+        assert np.allclose(t.sum(axis=1), 1.0)
+        assert np.all(np.isfinite(t))
+        # No in-vocabulary evidence -> the posterior reduces to the clusters' size
+        # prior, which is the SAME for every evidence-free document.
+        assert np.allclose(t[0], t[1])
+
+    def test_deterministic_and_leaves_fit_intact(self):
+        m, _ = self._fit()
+        held = [["cat", "dog"], ["star", "sun"]]
+        before = np.asarray(m.doc_topic).copy()
+        t1 = m.transform(held)
+        t2 = m.transform(held)
+        assert np.array_equal(t1, t2)
+        assert np.array_equal(np.asarray(m.doc_topic), before)  # not mutated
+
+    def test_accepts_corpus(self):
+        m, _ = self._fit()
+        c = topica.Corpus.from_documents([["cat", "dog", "pet"], ["tax", "vote"]])
+        t = m.transform(c)
+        assert t.shape == (2, m.num_topics)
+        assert np.allclose(t.sum(axis=1), 1.0)
+
+    def test_survives_save_load(self, tmp_path):
+        m, _ = self._fit()
+        held = [["cat", "dog", "pet"], ["star", "sky"]]
+        expected = m.transform(held)
+        path = str(tmp_path / "g.bin")
+        m.save(path)
+        ld = topica.GSDMM.load(path)
+        assert np.allclose(ld.transform(held), expected)
+
+    def test_requires_fit(self):
+        with pytest.raises(RuntimeError):
+            topica.GSDMM(num_topics=5).transform([["cat"]])

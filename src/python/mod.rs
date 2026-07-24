@@ -483,6 +483,10 @@ struct GsdmmState {
     trace: Vec<(usize, usize, f64)>,
     #[serde(default)]
     topic_names: Vec<String>,
+    // Retained Gibbs state for held-out `transform`. `serde(default)` -> None on
+    // pre-transform saves, which `transform` reports with a clear "refit" error.
+    #[serde(default)]
+    model: Option<gsdmm::GsdmmModel>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SeededState {
@@ -11586,6 +11590,9 @@ pub struct GSDMM {
     theta: Option<Array2<f64>>, // num_docs × num_used (soft assignment)
     doc_cluster: Vec<usize>,    // hard assignment per doc, remapped to 0..num_used
     corpus: Option<corpus::Corpus>,
+    // The final Gibbs state, retained so `transform` can score held-out docs via
+    // the same Eq. 4 conditional `fit` uses (`GsdmmModel::doc_cluster_dist`).
+    model: Option<gsdmm::GsdmmModel>,
     // Discovery/convergence trace: (iteration, num_clusters, log-likelihood).
     trace: Vec<(usize, usize, f64)>,
 }
@@ -11599,6 +11606,25 @@ impl GSDMM {
                 "model is not fitted yet; call fit() first",
             ))
         }
+    }
+
+    /// Map token-string documents to id documents over the fitted vocabulary,
+    /// dropping out-of-vocabulary words (words unseen at fit contribute no
+    /// evidence, matching held-out inference in the other bindings).
+    fn to_ids(&self, docs: &[Vec<String>]) -> Vec<Vec<u32>> {
+        let id_to_word = &self.corpus.as_ref().unwrap().id_to_word;
+        let map: std::collections::HashMap<&str, u32> = id_to_word
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.as_str(), i as u32))
+            .collect();
+        docs.iter()
+            .map(|d| {
+                d.iter()
+                    .filter_map(|w| map.get(w.as_str()).copied())
+                    .collect()
+            })
+            .collect()
     }
 }
 
@@ -11655,6 +11681,7 @@ impl GSDMM {
             theta: None,
             doc_cluster: Vec::new(),
             corpus: None,
+            model: None,
             trace: Vec::new(),
         })
     }
@@ -11765,6 +11792,7 @@ impl GSDMM {
         slf.topic_names = (0..num_used).map(|i| format!("topic_{i}")).collect();
         slf.corpus = Some(corpus);
         slf.trace = model.trace.clone();
+        slf.model = Some(model);
         slf.fitted = true;
         Ok(slf.into())
     }
@@ -11813,6 +11841,72 @@ impl GSDMM {
         self.require_fitted()?;
         Ok(self.theta.as_ref().unwrap().to_pyarray_bound(py))
     }
+
+    /// Soft cluster assignment of held-out documents, shape
+    /// ``(num_docs, num_topics)`` over the discovered (non-empty) clusters; rows
+    /// sum to 1.
+    ///
+    /// `data` is a Corpus or a list of token lists. Each document is scored with
+    /// the same Movie-Group-Process conditional the fit uses (Yin & Wang Eq. 4)
+    /// against the *fitted* cluster counts, then restricted to the used clusters
+    /// and renormalized — the held-out analog of the training `doc_topic`.
+    /// Out-of-vocabulary words are dropped (they carry no evidence); a document
+    /// with no in-vocabulary words falls back to the clusters' size prior. The
+    /// fitted counts are not modified.
+    fn transform<'py>(
+        &self,
+        py: Python<'py>,
+        data: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        let model = self.model.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err(
+                "this GSDMM was loaded from a pre-transform save (no retained Gibbs \
+                 state); refit to enable transform()",
+            )
+        })?;
+
+        // Accept a Corpus (map its ids back to strings via its own vocab) or a raw
+        // list of token lists, then realign to the fitted vocabulary.
+        let docs_str: Vec<Vec<String>> = if let Ok(c) = data.extract::<Corpus>() {
+            c.inner
+                .docs
+                .iter()
+                .map(|d| {
+                    d.iter()
+                        .map(|&w| c.inner.id_to_word[w as usize].clone())
+                        .collect()
+                })
+                .collect()
+        } else {
+            data.extract().map_err(|_| {
+                PyValueError::new_err("transform() expects a Corpus or a list of token lists")
+            })?
+        };
+        let id_docs = self.to_ids(&docs_str);
+
+        // Score against the fitted state, then restrict to the used clusters and
+        // renormalize — identical to how `fit` derives `doc_topic`.
+        let dist = model.doc_cluster_dist(&id_docs);
+        let used = model.used_clusters();
+        let num_used = used.len();
+        let mut out = Array2::<f64>::zeros((id_docs.len(), num_used));
+        for (di, row) in dist.iter().enumerate() {
+            let s: f64 = used.iter().map(|&old| row[old]).sum();
+            if s > 0.0 {
+                for (ni, &old) in used.iter().enumerate() {
+                    out[[di, ni]] = row[old] / s;
+                }
+            } else if num_used > 0 {
+                let u = 1.0 / num_used as f64;
+                for ni in 0..num_used {
+                    out[[di, ni]] = u;
+                }
+            }
+        }
+        Ok(out.to_pyarray_bound(py))
+    }
+
     /// Hard cluster assignment of each document, shape ``(num_docs,)``; values in
     /// ``0..num_topics``. GSDMM gives each document a single cluster.
     #[getter]
@@ -11906,6 +12000,7 @@ impl GSDMM {
                 corpus: self.corpus.clone(),
                 trace: self.trace.clone(),
                 topic_names: self.topic_names.clone(),
+                model: self.model.clone(),
             },
         )
     }
@@ -11930,6 +12025,7 @@ impl GSDMM {
             theta: arr2_back(s.theta)?,
             doc_cluster: s.doc_cluster,
             corpus: s.corpus,
+            model: s.model,
             trace: s.trace,
         })
     }
