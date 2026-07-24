@@ -115,13 +115,17 @@ without an R toolchain.
 [`parity/sts_cran_gold.py`](https://github.com/nealcaren/topica/blob/main/parity/sts_cran_gold.py)
 records R `sts`'s topic-word distribution at mean sentiment (the adjusted profile,
 two `stmSeed`s for a self-consistency floor) plus the exact tokenized corpus on a
-fixed 300-doc poliblog subsample. `tests/test_sts_cran_gold.py` refits topica with
-`reference="cran"` on that frozen corpus and asserts its topic-word distribution
-clears a bar of R's two-seed cosine floor minus a margin. R's adjusted-profile fit
-is near-identical across seeds (self cosine ~0.998), so the bar lands at ~0.80 —
-an externally calibrated cross-implementation regression threshold (the same floor
-the live script uses), which a shuffled-β negative control falls well below. No
-Rscript is touched at test time.
+fixed 300-doc poliblog subsample. `tests/test_sts_cran_gold.py` refits topica on
+that frozen corpus and applies two gates. First an **absolute** bar: `reference="cran"`
+topic-word cosine vs R clears R's two-seed floor minus a margin. R's adjusted fit is
+near-identical across seeds (self cosine ~0.998), so the bar lands at ~0.80 — an
+externally calibrated cross-implementation threshold (the same floor the live script
+uses), which a shuffled-β negative control falls well below. On its own that bar only
+catches gross drift, so the test adds a **relative** gate: `reference="cran"` must beat
+the topica-native ridge default (`reference="none"`) against the same R gold by a
+small margin. Both fits are pure topica and drift together across platforms, so the
+gap is stable and is what makes the gate *specific to the adjusted estimator* the gold
+is named for. No Rscript is touched at test time.
 
 ## Scope and honest limits
 

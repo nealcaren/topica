@@ -6,15 +6,17 @@
   "model": "STS reference profile (CRAN sts, kappaEstimation='adjusted')",
   "num_docs": 300,
   "num_topics": 5,
-  "pass_bar": "topica reference='cran' topic-word cosine (at mean sentiment) >= r_self_cosine - margin",
+  "pass_bar": "topica reference='cran' cosine (at mean sentiment) >= r_self_cosine - margin AND >= topica reference='none' (ridge) cosine + rel_margin",
   "r_seeds": [
     1,
     2
   ],
   "r_self_cosine": 0.9978378868270237,
   "reference": "R sts 1.4",
+  "rel_margin": 0.02,
   "topica_cosine": 0.8868296317888233,
   "topica_profile": "reference='cran'",
+  "topica_ridge_cosine": 0.8252452387174246,
   "topica_seed": 1,
   "vocab_shared": 2539,
   "vocab_size": 2539

@@ -55,7 +55,10 @@ def test_sts_cran_gold_shape():
 
 def test_sts_cran_gold_is_non_vacuous():
     """A shuffled topic-word matrix must fall below the cosine bar — proving the
-    gate discriminates a correct adjusted-profile fit from a wrong one. No fit."""
+    absolute bar is not vacuous (it rejects a scrambled fit). This alone does not
+    prove specificity to the adjusted profile — the ridge default also clears the
+    absolute bar; that distinction is enforced by the relative gate in
+    ``test_sts_cran_matches_committed_gold``. No fit here."""
     arrays, meta = harness.load_gold(NAME)
     beta1 = np.asarray(arrays["beta1"], dtype=np.float64)
     bar = float(meta["r_self_cosine"]) - float(meta["margin"])
@@ -73,12 +76,24 @@ def test_sts_cran_gold_is_non_vacuous():
 
 @pytest.mark.slow
 def test_sts_cran_matches_committed_gold():
-    """Refit topica STS with reference="cran" on the frozen corpus and check that
-    its topic-word distribution at mean sentiment clears R's two-seed cosine floor
-    minus the margin. Marked ``slow`` (the adjusted-profile EM refit is ~30s)."""
+    """Refit topica STS on the frozen corpus and apply both gates (``slow`` — two
+    EM refits, ~30s):
+
+      * absolute — ``reference="cran"`` cosine vs R's gold clears R's two-seed
+        floor minus the margin, and
+      * relative — ``reference="cran"`` beats the topica-native ridge default
+        (``reference="none"``) against that same gold by ``REL_MARGIN``, which is
+        what pins the adjusted phi-weighting specifically (the absolute bar alone
+        also passes ridge; see #493)."""
     r = sts_cran_gold.run(verbose=False)
-    assert r["passes"], (
+    assert r["passes_absolute"], (
         f"topica STS(reference='cran') topic-word cosine {r['cosine']:.4f} below bar "
         f"{r['bar']:.4f} (R self {r['r_self_cosine']:.4f}); the adjusted-profile fit "
         f"has drifted from the CRAN sts package. details: {r}"
+    )
+    assert r["passes_relative"], (
+        f"topica STS(reference='cran') cosine {r['cosine']:.4f} does not beat the "
+        f"ridge default {r['cosine_ridge']:.4f} by {r['rel_margin']} "
+        f"(gap {r['rel_gap']:+.4f}); the adjusted phi-mass-weighted aggregation may "
+        f"have regressed toward the topica-native ridge estimator. details: {r}"
     )

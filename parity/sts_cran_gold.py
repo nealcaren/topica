@@ -16,15 +16,26 @@ prepped by `prepDocuments`) we freeze:
   2. the exact tokenized corpus + sentiment + rating R fit on, so topica refits
      the identical data offline.
 
-The offline test refits topica STS with `reference="cran"` on the frozen corpus
-and asserts its topic-word distribution at neutral latent sentiment (alpha^(s)=0)
-clears a bar of R's two-seed cosine floor minus a margin. R's adjusted-profile
-fit is near-identical across seeds (self cosine ~0.998), so that bar lands at
-~0.80 -- an externally calibrated cross-implementation threshold (the same floor
-the live `sts_r_package_compare.py` uses), not a claim that topica matches R as
-closely as R matches itself. The kappa solver is separately validated against
-glmnet in `sts_kappa_glmnet.py`; this pins the whole adjusted-profile EM end to
-end without an R toolchain at test time.
+The offline test refits topica STS on the frozen corpus and applies two gates,
+both scored on the topic-word distribution at neutral latent sentiment
+(alpha^(s)=0):
+
+  * an ABSOLUTE bar -- `reference="cran"` cosine vs R's gold >= R's two-seed floor
+    minus a margin (~0.80). R's adjusted fit is near-identical across seeds (self
+    cosine ~0.998), so this bar is an externally calibrated cross-implementation
+    threshold (the same floor the live `sts_r_package_compare.py` uses), not a
+    claim that topica matches R as closely as R matches itself. On its own it only
+    catches gross drift: the topica-native ridge default also clears it.
+  * a RELATIVE gate -- `reference="cran"` must beat the topica-native ridge default
+    (`reference="none"`) against that same R gold by `REL_MARGIN`. This is what
+    makes the gate SPECIFIC to the adjusted estimator the gold is named for: a
+    silent regression of the adjusted phi-mass-weighted aggregation + half-step
+    kappa damping back to ridge would fail it. Both fits are pure topica, so the
+    gap is platform-robust and needs no R toolchain (see #493).
+
+The kappa solver is separately validated against glmnet in `sts_kappa_glmnet.py`.
+Together these pin the adjusted-profile EM end to end without an R toolchain at
+test time.
 
 Two phases::
 
@@ -57,6 +68,14 @@ SEEDS = (1, 2)  # two R fits -> the self-consistency (noise) floor
 # floor the live `sts_r_package_compare.py` uses and has validated — giving topica's
 # ~0.89 a platform-robust headroom while the shuffle check keeps the gate honest.
 MARGIN = 0.20
+# Relative gate: the adjusted ("cran") profile must beat the topica-native ridge
+# default ("none") on the SAME frozen corpus, both scored against R's gold beta1,
+# by at least this margin. The measured gap is ~0.062 (cran ~0.887 vs ridge ~0.825);
+# 0.02 stays well clear while directly protecting the adjusted phi-mass-weighted
+# aggregation + half-step kappa damping. Both fits are pure topica (no R at test
+# time) and drift together across platforms, so the gap — unlike the absolute bar —
+# is platform-robust and specific to the estimator this gold is named for.
+REL_MARGIN = 0.02
 TOPICA_SEED = 1
 
 
@@ -100,9 +119,11 @@ cat("ok\\n")
 """
 
 
-def _fit_topica(docs, sent, rating, K, seed):
-    """Fit topica STS with the reference-compatible ("cran") profile; return its
-    topic-word-at-mean-sentiment matrix and vocabulary."""
+def _fit_topica(docs, sent, rating, K, seed, reference="cran"):
+    """Fit topica STS under the given reference profile; return its
+    topic-word-at-mean-sentiment matrix and vocabulary. ``reference="cran"`` is
+    the adjusted profile this gold pins; ``reference="none"`` is the topica-native
+    ridge default, used as the relative baseline the adjusted profile must beat."""
     import topica
 
     model = topica.STS(num_topics=K, seed=seed)
@@ -111,7 +132,7 @@ def _fit_topica(docs, sent, rating, K, seed):
         sentiment_seed=sent,
         prevalence=[[r] for r in rating],
         iters=MAXITER,
-        reference="cran",
+        reference=reference,
     )
     return np.asarray(model.topic_word), list(model.vocabulary)
 
@@ -157,10 +178,12 @@ def regenerate() -> None:
     sent = [float(x) for x in out["sent.txt"].split()]
     rating = [float(x) for x in out["rating.txt"].split()]
 
-    # R's own two-seed floor, then topica against seed-1's fit.
+    # R's own two-seed floor, then topica (adjusted + ridge) against seed-1's fit.
     r_self, _ = _shared_cosine(beta1, vocab, beta2, vocab)
-    t_beta, t_vocab = _fit_topica(docs, sent, rating, K, TOPICA_SEED)
+    t_beta, t_vocab = _fit_topica(docs, sent, rating, K, TOPICA_SEED, reference="cran")
     topica_cos, n_shared = _shared_cosine(beta1, vocab, t_beta, t_vocab)
+    r_beta, r_voc = _fit_topica(docs, sent, rating, K, TOPICA_SEED, reference="none")
+    topica_ridge_cos, _ = _shared_cosine(beta1, vocab, r_beta, r_voc)
 
     harness.save_gold(
         NAME,
@@ -184,16 +207,20 @@ def regenerate() -> None:
             "vocab_size": len(vocab),
             "vocab_shared": n_shared,
             "margin": MARGIN,
+            "rel_margin": REL_MARGIN,
             "r_self_cosine": r_self,
             "topica_cosine": topica_cos,
+            "topica_ridge_cosine": topica_ridge_cos,
             "date": datetime.date.today().isoformat(),
-            "pass_bar": "topica reference='cran' topic-word cosine (at mean sentiment) "
-            ">= r_self_cosine - margin",
+            "pass_bar": "topica reference='cran' cosine (at mean sentiment) "
+            ">= r_self_cosine - margin AND >= topica reference='none' (ridge) "
+            "cosine + rel_margin",
         },
     )
     print(f"regenerated {NAME} gold:")
-    print(f"  R self cosine {r_self:.4f}  topica {topica_cos:.4f}  "
-          f"(bar {r_self - MARGIN:.4f}, shared vocab {n_shared})")
+    print(f"  R self cosine {r_self:.4f}  topica cran {topica_cos:.4f}  "
+          f"ridge {topica_ridge_cos:.4f}  (bar {r_self - MARGIN:.4f}, "
+          f"cran-ridge {topica_cos - topica_ridge_cos:+.4f}, shared vocab {n_shared})")
 
 
 def run(verbose: bool = True) -> dict:
@@ -207,24 +234,40 @@ def run(verbose: bool = True) -> dict:
     margin = float(meta["margin"])
     bar = r_self - margin
 
-    t_beta, t_vocab = _fit_topica(docs, sent, rating, int(meta["num_topics"]), TOPICA_SEED)
+    K = int(meta["num_topics"])
+    t_beta, t_vocab = _fit_topica(docs, sent, rating, K, TOPICA_SEED, reference="cran")
     cos, n_shared = _shared_cosine(beta1, vocab, t_beta, t_vocab)
+
+    # Relative gate: the adjusted profile must beat the topica-native ridge default
+    # against the same R gold. This is what makes the gate SPECIFIC to the adjusted
+    # estimator — the absolute bar alone also passes ridge (see #493). Both fits are
+    # pure topica, so no R is touched.
+    r_beta, r_voc = _fit_topica(docs, sent, rating, K, TOPICA_SEED, reference="none")
+    cos_ridge, _ = _shared_cosine(beta1, vocab, r_beta, r_voc)
+    rel_gap = cos - cos_ridge
 
     result = {
         "cosine": cos,
+        "cosine_ridge": cos_ridge,
         "r_self_cosine": r_self,
         "bar": bar,
         "margin_over_bar": cos - bar,
+        "rel_gap": rel_gap,
+        "rel_margin": REL_MARGIN,
         "vocab_shared": n_shared,
-        "passes": bool(cos >= bar),
+        "passes_absolute": bool(cos >= bar),
+        "passes_relative": bool(rel_gap >= REL_MARGIN),
+        "passes": bool(cos >= bar and rel_gap >= REL_MARGIN),
     }
     if verbose:
         print(f"gold: {meta.get('reference')}  ({meta.get('model')})")
         print("STS reference='cran' topic-word at mean sentiment vs R sts:")
-        print(f"  topica {cos:.4f}  (R self {r_self:.4f}, bar {bar:.4f}, "
-              f"shared vocab {n_shared})")
-        print(f"  verdict: {'PASS' if result['passes'] else 'FAIL'} "
+        print(f"  topica cran {cos:.4f}  ridge {cos_ridge:.4f}  "
+              f"(R self {r_self:.4f}, bar {bar:.4f}, shared vocab {n_shared})")
+        print(f"  absolute: {'PASS' if result['passes_absolute'] else 'FAIL'} "
               f"(margin {result['margin_over_bar']:+.4f})")
+        print(f"  relative: {'PASS' if result['passes_relative'] else 'FAIL'} "
+              f"(cran - ridge = {rel_gap:+.4f}, need >= {REL_MARGIN})")
     return result
 
 
