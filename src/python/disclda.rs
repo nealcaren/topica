@@ -24,6 +24,13 @@ pub struct DiscLDA {
     iters: usize,
     infer_sweeps: usize,
     seed: u64,
+    // Class-prior policy for the direct classifier: "empirical" (default,
+    // observed class frequencies), "uniform", or "custom" (per-class weights in
+    // `class_prior_custom`, sorted-class order). Resolved to a log-prior at fit.
+    class_prior_mode: String,
+    class_prior_custom: Option<Vec<f64>>,
+    // Observed class document counts (sorted-class order), set at fit.
+    class_counts: Vec<usize>,
     fitted: bool,
     classes: Vec<String>,
     topic_names: Vec<String>,
@@ -49,6 +56,91 @@ struct DiscLdaState {
     num_topics: Option<usize>,
     topic_word: Option<Vec<Vec<f64>>>,
     doc_topic: Option<Vec<Vec<f64>>>,
+    // Class-prior policy + the resolved log-prior (older saves default to uniform).
+    #[serde(default = "disclda_prior_mode_legacy")]
+    class_prior_mode: String,
+    #[serde(default)]
+    class_prior_custom: Option<Vec<f64>>,
+    #[serde(default)]
+    class_counts: Vec<usize>,
+    #[serde(default)]
+    class_log_prior: Option<Vec<f64>>,
+}
+
+fn disclda_prior_mode_legacy() -> String {
+    "uniform".to_string()
+}
+
+/// Parse the `class_prior` constructor argument into (mode, custom weights).
+fn parse_class_prior(spec: Option<&Bound<'_, PyAny>>) -> PyResult<(String, Option<Vec<f64>>)> {
+    let Some(obj) = spec else {
+        return Ok(("empirical".to_string(), None));
+    };
+    if let Ok(s) = obj.extract::<String>() {
+        return match s.as_str() {
+            "empirical" | "uniform" => Ok((s, None)),
+            other => Err(PyValueError::new_err(format!(
+                "class_prior must be \"empirical\", \"uniform\", or a sequence of \
+                 per-class weights, got {other:?}"
+            ))),
+        };
+    }
+    let v: Vec<f64> = obj.extract().map_err(|_| {
+        PyValueError::new_err(
+            "class_prior must be \"empirical\", \"uniform\", or a sequence of floats",
+        )
+    })?;
+    if v.is_empty() || v.iter().any(|x| !x.is_finite() || *x <= 0.0) {
+        return Err(PyValueError::new_err(
+            "class_prior weights must be non-empty, finite, and > 0",
+        ));
+    }
+    Ok(("custom".to_string(), Some(v)))
+}
+
+/// Resolve the class-prior policy to a log-prior (length `num_classes`) given the
+/// observed per-class document counts (sorted-class order).
+fn resolve_log_prior(
+    mode: &str,
+    custom: &Option<Vec<f64>>,
+    counts: &[usize],
+    num_classes: usize,
+) -> PyResult<Vec<f64>> {
+    match mode {
+        "uniform" => Ok(vec![-(num_classes as f64).ln(); num_classes]),
+        "empirical" => {
+            let total: usize = counts.iter().sum();
+            let total = total.max(1) as f64;
+            Ok(counts
+                .iter()
+                .map(|&c| ((c as f64).max(1e-300) / total).ln())
+                .collect())
+        }
+        "custom" => {
+            let w = custom
+                .as_ref()
+                .ok_or_else(|| PyValueError::new_err("custom class_prior weights missing"))?;
+            if w.len() != num_classes {
+                return Err(PyValueError::new_err(format!(
+                    "class_prior has {} weights but there are {num_classes} classes \
+                     (weights are in sorted-class order)",
+                    w.len(),
+                )));
+            }
+            // Normalise stably. Dividing by the max weight before summing keeps the
+            // denominator in `(0, num_classes]`, so an extreme-but-valid weight (e.g.
+            // 1e308) cannot overflow the raw sum to +inf and collapse every log-prior
+            // to -inf — which would make predict_proba NaN (#460). The max cancels, so
+            // `(x/wmax) / Σ(x/wmax)` == `x / Σx` exactly; the largest-weight class
+            // always keeps a finite log-prior, so the softmax stays well-defined.
+            let wmax = w.iter().cloned().fold(0.0f64, f64::max);
+            let s: f64 = w.iter().map(|&x| x / wmax).sum();
+            Ok(w.iter().map(|&x| ((x / wmax) / s).ln()).collect())
+        }
+        _ => Err(PyValueError::new_err(format!(
+            "unknown class_prior mode {mode:?}"
+        ))),
+    }
 }
 
 impl DiscLDA {
@@ -134,6 +226,10 @@ impl DiscLDA {
         d.set_item("beta", self.beta)?;
         d.set_item("iters", self.iters)?;
         d.set_item("infer_sweeps", self.infer_sweeps)?;
+        match (&self.class_prior_mode, &self.class_prior_custom) {
+            (mode, Some(w)) if mode == "custom" => d.set_item("class_prior", w.clone())?,
+            (mode, _) => d.set_item("class_prior", mode)?,
+        }
         d.set_item("seed", self.seed)?;
         Ok(d)
     }
@@ -144,9 +240,16 @@ impl DiscLDA {
     /// at fit. `alpha` defaults to 0.1 (per allowed topic), `beta` to 0.01.
     /// `infer_sweeps` is the restricted-Gibbs passes used per class in
     /// `transform`/`predict`.
+    ///
+    /// `class_prior` sets the prior the direct classifier combines with each
+    /// document's plug-in likelihood: ``"empirical"`` (default) uses the observed
+    /// class frequencies from fit, so `predict_proba` is calibrated to class
+    /// prevalence; ``"uniform"`` gives every class equal prior; or pass a sequence
+    /// of positive per-class weights (in the sorted-class order of `classes`),
+    /// which is normalised.
     #[new]
     #[pyo3(signature = (k_class, k_shared, *, alpha=None, beta=0.01, iters=1000,
-                        infer_sweeps=100, seed=42))]
+                        infer_sweeps=100, class_prior=None, seed=42))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         k_class: usize,
@@ -155,8 +258,10 @@ impl DiscLDA {
         beta: f64,
         iters: usize,
         infer_sweeps: usize,
+        class_prior: Option<&Bound<'_, PyAny>>,
         seed: u64,
     ) -> PyResult<Self> {
+        let (class_prior_mode, class_prior_custom) = parse_class_prior(class_prior)?;
         if k_class == 0 {
             return Err(PyValueError::new_err("k_class must be >= 1"));
         }
@@ -186,6 +291,9 @@ impl DiscLDA {
             beta,
             iters,
             infer_sweeps,
+            class_prior_mode,
+            class_prior_custom,
+            class_counts: Vec::new(),
             seed,
             fitted: false,
             classes: Vec::new(),
@@ -261,7 +369,20 @@ impl DiscLDA {
         let alpha = slf.alpha.unwrap_or(0.1);
         let (k_class, k_shared, beta, seed) = (slf.k_class, slf.k_shared, slf.beta, slf.seed);
 
-        let (model, corpus) = py.allow_threads(move || {
+        // Observed per-class document counts (sorted-class order) — the empirical
+        // prior and the reported `class_counts`.
+        let mut class_counts = vec![0usize; num_classes];
+        for &c in &labels {
+            class_counts[c] += 1;
+        }
+        let class_log_prior = resolve_log_prior(
+            &slf.class_prior_mode,
+            &slf.class_prior_custom,
+            &class_counts,
+            num_classes,
+        )?;
+
+        let (mut model, corpus) = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let m = crate::disclda::fit_disclda(
                 &corpus.docs,
@@ -277,6 +398,8 @@ impl DiscLDA {
             );
             (m, corpus)
         });
+        model.class_log_prior = class_log_prior;
+        slf.class_counts = class_counts;
         slf.model = Some(model);
         slf.corpus = Some(corpus);
         slf.classes = classes;
@@ -310,9 +433,10 @@ impl DiscLDA {
         Ok(vecs_to_arr2(&rep).to_pyarray_bound(py))
     }
 
-    /// Predict the class label of each document (MAP under p(class|words)). A
-    /// document with no in-vocabulary tokens has a uniform posterior and resolves to
-    /// the first class.
+    /// Predict the class label of each document (argmax of `predict_proba`). A
+    /// document with no in-vocabulary tokens carries no likelihood signal, so its
+    /// prediction is the most probable class under `class_prior` (the majority
+    /// class for the default empirical prior).
     fn predict(&self, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
         let m = self.fitted_model()?;
         let mapped = map_to_vocab(self.corpus.as_ref().unwrap(), data)?;
@@ -334,8 +458,14 @@ impl DiscLDA {
         }))
     }
 
-    /// Class posterior probabilities p(class|words) for each document
+    /// Approximate class posterior probabilities for each document
     /// (num_docs, num_classes), columns in `classes` order.
+    ///
+    /// This is a topica-native **plug-in** classifier, not a fully marginalized
+    /// DiscLDA evidence: each class score is the posterior-mean-θ likelihood of the
+    /// document under that class, combined with `class_prior` (empirical class
+    /// frequencies by default) and softmaxed. Treat it as a well-behaved,
+    /// prior-calibrated score rather than an exact p(class | words).
     fn predict_proba<'py>(
         &self,
         py: Python<'py>,
@@ -366,6 +496,22 @@ impl DiscLDA {
     fn classes(&self) -> PyResult<Vec<String>> {
         self.fitted_model()?;
         Ok(self.classes.clone())
+    }
+
+    /// The resolved class prior p(c) used by `predict`/`predict_proba`, length
+    /// `num_classes` in `classes` order (sums to 1). Empirical class frequencies
+    /// by default; uniform or the normalised custom weights otherwise.
+    #[getter]
+    fn class_prior(&self) -> PyResult<Vec<f64>> {
+        let m = self.fitted_model()?;
+        Ok(m.class_log_prior.iter().map(|&lp| lp.exp()).collect())
+    }
+
+    /// The observed per-class document counts from fit, in `classes` order.
+    #[getter]
+    fn class_counts(&self) -> PyResult<Vec<usize>> {
+        self.fitted_model()?;
+        Ok(self.class_counts.clone())
     }
 
     /// Topic-word matrix φ (num_topics, vocab); rows sum to 1. Topics are ordered
@@ -527,6 +673,10 @@ impl DiscLDA {
                 num_topics: Some(m.num_topics),
                 topic_word: Some(m.topic_word.clone()),
                 doc_topic: Some(m.doc_topic.clone()),
+                class_prior_mode: self.class_prior_mode.clone(),
+                class_prior_custom: self.class_prior_custom.clone(),
+                class_counts: self.class_counts.clone(),
+                class_log_prior: Some(m.class_log_prior.clone()),
             },
         )
     }
@@ -535,8 +685,13 @@ impl DiscLDA {
     #[classmethod]
     fn load(_cls: &Bound<'_, PyType>, path: &str) -> PyResult<Self> {
         let s: DiscLdaState = read_state(path, MODEL_TAG_DISCLDA)?;
+        let num_classes = s.classes.len();
         let model = if s.fitted && s.topic_word.is_some() {
-            let num_classes = s.classes.len();
+            // Older saves have no class_log_prior; fall back to uniform.
+            let clp = s
+                .class_log_prior
+                .clone()
+                .unwrap_or_else(|| vec![-(num_classes as f64).ln(); num_classes]);
             Some(crate::disclda::DiscLdaModel {
                 num_classes,
                 k_class: s.k_class,
@@ -547,6 +702,7 @@ impl DiscLDA {
                 num_topics: s.num_topics.unwrap_or(num_classes * s.k_class + s.k_shared),
                 topic_word: s.topic_word.unwrap_or_default(),
                 doc_topic: s.doc_topic.unwrap_or_default(),
+                class_log_prior: clp,
             })
         } else {
             None
@@ -558,6 +714,9 @@ impl DiscLDA {
             beta: s.beta,
             iters: s.iters,
             infer_sweeps: s.infer_sweeps,
+            class_prior_mode: s.class_prior_mode,
+            class_prior_custom: s.class_prior_custom,
+            class_counts: s.class_counts,
             seed: s.seed,
             fitted: s.fitted,
             classes: s.classes,

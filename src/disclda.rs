@@ -40,6 +40,14 @@ pub struct DiscLdaModel {
     /// Document-topic matrix θ (D × L); rows sum to 1, mass only on the document's
     /// class block and the shared block.
     pub doc_topic: Vec<Vec<f64>>,
+    /// Log class prior `ln p(c)` used by `predict`/`predict_proba`, length
+    /// `num_classes`. The direct classifier is a topica-native plug-in: it scores
+    /// a document under each class and combines the scores with this prior. The
+    /// binding resolves it from the constructor's `class_prior` (empirical class
+    /// frequencies by default, uniform, or a user-supplied vector); `fit_disclda`
+    /// initialises it uniform. A shift-invariant softmax means only the prior's
+    /// *relative* magnitudes matter.
+    pub class_log_prior: Vec<f64>,
 }
 
 impl DiscLdaModel {
@@ -197,6 +205,8 @@ pub fn fit_disclda<R: Rng>(
         num_topics: l,
         topic_word,
         doc_topic,
+        // Uniform by default; the binding overrides from `class_prior` after fit.
+        class_log_prior: vec![-(num_classes as f64).ln(); num_classes],
     }
 }
 
@@ -210,8 +220,8 @@ pub fn fit_disclda<R: Rng>(
 /// because every class's allowed set has the same size (`k_class + k_shared`), so no
 /// class gets a capacity advantage in the `predict`/`predict_proba` comparison — do
 /// not make `k_class` vary by class without revisiting this.
-/// An empty document (no in-vocab tokens) yields loglik 0 for every class, so
-/// `predict` returns a uniform posterior (its argmax is class 0).
+/// An empty document (no in-vocab tokens) yields loglik 0 for every class, so its
+/// posterior in `predict_doc` reduces to the class prior.
 pub fn infer_doc_class<R: Rng>(
     doc: &[u32],
     c: usize,
@@ -275,9 +285,17 @@ pub fn infer_doc_class<R: Rng>(
     (theta, loglik)
 }
 
-/// Predict class posteriors p(c|w) for a document (uniform class prior), and the
-/// class-marginalized discriminative representation Σ_c p(c|w)·θ_c (length L). Runs
-/// one `infer_doc_class` per class.
+/// Predict class posteriors p(c|w) for a document and the class-marginalized
+/// discriminative representation Σ_c p(c|w)·θ_c (length L). Runs one
+/// `infer_doc_class` per class and softmaxes `ln p(c) + plug-in loglik(doc|c)`,
+/// using `model.class_log_prior` (empirical class frequencies by default).
+///
+/// This is a plug-in *approximate* posterior: the per-class score is the
+/// posterior-mean-θ likelihood, not the fully marginalized evidence. An empty /
+/// all-OOV document has an identical (zero) likelihood under every class, so its
+/// posterior is exactly the class prior — `predict`'s argmax is then the most
+/// probable class under the prior (the majority class for an empirical prior),
+/// not a sorted-order tie break.
 pub fn predict_doc<R: Rng>(
     doc: &[u32],
     model: &DiscLdaModel,
@@ -289,10 +307,10 @@ pub fn predict_doc<R: Rng>(
     let mut thetas = vec![Vec::new(); c];
     for ci in 0..c {
         let (theta, ll) = infer_doc_class(doc, ci, model, sweeps, rng);
-        logliks[ci] = ll;
+        logliks[ci] = ll + model.class_log_prior.get(ci).copied().unwrap_or(0.0);
         thetas[ci] = theta;
     }
-    // softmax over class log-likelihoods (uniform prior)
+    // softmax over class log-posteriors (log-prior + plug-in log-likelihood)
     let m = logliks.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     let mut post: Vec<f64> = logliks.iter().map(|&x| (x - m).exp()).collect();
     let s: f64 = post.iter().sum();
@@ -427,5 +445,22 @@ mod tests {
         let b = run();
         assert_eq!(a.topic_word, b.topic_word);
         assert_eq!(a.doc_topic, b.doc_topic);
+    }
+
+    #[test]
+    fn empty_doc_posterior_equals_class_prior() {
+        // An empty / all-OOV document has zero likelihood under every class, so its
+        // posterior must be exactly the (softmaxed) class prior — not a uniform
+        // tie or a sorted-order argmax.
+        let (nc, cbw, sbw) = (2, 5, 5);
+        let (docs, labels, v) = planted(nc, cbw, sbw, 80, 10, 5);
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let mut m = fit_disclda(&docs, &labels, nc, 2, 2, v, 0.1, 0.01, 100, &mut rng);
+        // A skewed empirical-style prior: p = [0.8, 0.2].
+        m.class_log_prior = vec![0.8f64.ln(), 0.2f64.ln()];
+        let mut prng = ChaCha8Rng::seed_from_u64(2);
+        let (post, _) = predict_doc(&[], &m, 30, &mut prng);
+        assert!((post[0] - 0.8).abs() < 1e-9, "post {post:?}");
+        assert!((post[1] - 0.2).abs() < 1e-9, "post {post:?}");
     }
 }

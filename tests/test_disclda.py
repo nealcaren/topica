@@ -152,6 +152,115 @@ def test_zero_infer_sweeps_rejected():
         topica.DiscLDA(2, 2, infer_sweeps=0)
 
 
+# --- #460: direct-classifier class-prior semantics --------------------------
+
+def _imbalanced_identical(n=200, dlen=8, seed=0, maj_frac=0.9):
+    """A deliberately imbalanced corpus whose two classes are language-identical:
+    every document draws from the SAME vocabulary regardless of label, so the
+    likelihood carries no class signal and the classifier output is driven purely
+    by the class prior. The review's calibration test case."""
+    rng = np.random.default_rng(seed)
+    vocab = [f"w{i}" for i in range(12)]
+    docs = [[vocab[int(rng.integers(len(vocab)))] for _ in range(dlen)] for _ in range(n)]
+    n_maj = int(round(n * maj_frac))
+    y = ["maj"] * n_maj + ["min"] * (n - n_maj)
+    return docs, y
+
+
+def test_empirical_prior_calibrates_to_class_prevalence():
+    # Language-identical 90:10 corpus: with the empirical prior (default),
+    # predict_proba tracks prevalence rather than collapsing to ~0.5/0.5.
+    docs, y = _imbalanced_identical(maj_frac=0.9)
+    m = topica.DiscLDA(2, 2, iters=200, infer_sweeps=40, seed=1)
+    m.fit(docs, y)
+    assert m.classes == ["maj", "min"]
+    assert m.class_counts == [180, 20]
+    np.testing.assert_allclose(m.class_prior, [0.9, 0.1], atol=1e-9)
+    # A held-out language-identical doc leans to the majority class near the prior.
+    proba = np.asarray(m.predict_proba([["w1", "w2", "w3"]]))[0]
+    assert proba[0] > proba[1] and proba[0] > 0.75
+    # An empty / all-OOV document returns exactly the prior (majority prediction),
+    # not a sorted-order tie break.
+    oov = np.asarray(m.predict_proba([["not_in_vocab"]]))[0]
+    np.testing.assert_allclose(oov, [0.9, 0.1], atol=1e-9)
+    assert m.predict([[]]) == ["maj"]
+
+
+def test_uniform_prior_is_uninformative_on_identical_classes():
+    docs, y = _imbalanced_identical(maj_frac=0.9)
+    m = topica.DiscLDA(2, 2, iters=200, infer_sweeps=40, seed=1, class_prior="uniform")
+    m.fit(docs, y)
+    np.testing.assert_allclose(m.class_prior, [0.5, 0.5], atol=1e-9)
+    oov = np.asarray(m.predict_proba([["not_in_vocab"]]))[0]
+    np.testing.assert_allclose(oov, [0.5, 0.5], atol=1e-9)
+
+
+def test_custom_prior_is_normalized_and_ordered():
+    docs, y = _imbalanced_identical()
+    # Weights are in sorted-class order: classes == ["maj", "min"].
+    m = topica.DiscLDA(2, 2, iters=100, infer_sweeps=20, seed=1, class_prior=[3.0, 1.0])
+    m.fit(docs, y)
+    np.testing.assert_allclose(m.class_prior, [0.75, 0.25], atol=1e-9)
+    assert m.settings["class_prior"] == [3.0, 1.0]
+
+
+@pytest.mark.parametrize("weights", [[1e308, 1e308], [1e308, 1.0], [1e-300, 1e300]])
+def test_extreme_custom_prior_stays_finite(weights):
+    # Huge/tiny but finite weights must not overflow the normalizer to +inf (which
+    # would collapse every log-prior to -inf and yield NaN posteriors). The prior
+    # normalises exactly and predict_proba stays finite and sums to 1 (#460).
+    docs, y = _imbalanced_identical()
+    m = topica.DiscLDA(2, 2, iters=100, infer_sweeps=20, seed=1, class_prior=weights)
+    m.fit(docs, y)
+    prior = np.asarray(m.class_prior)
+    assert np.isfinite(prior).all()
+    np.testing.assert_allclose(prior.sum(), 1.0, atol=1e-9)
+    # Reference normalised the same stable way (dividing by max first) — a naive
+    # np.sum([1e308, 1e308]) itself overflows to inf, which is exactly the trap.
+    w = np.asarray(weights, dtype=float)
+    scaled = w / w.max()
+    np.testing.assert_allclose(prior, scaled / scaled.sum(), atol=1e-9)
+    proba = np.asarray(m.predict_proba([["w1", "w2", "w3"], ["not_in_vocab"]]))
+    assert np.isfinite(proba).all()
+    np.testing.assert_allclose(proba.sum(axis=1), 1.0, atol=1e-9)
+
+
+def test_bad_class_prior_string_rejected_at_construction():
+    with pytest.raises(ValueError, match="empirical"):
+        topica.DiscLDA(2, 2, class_prior="bogus")
+
+
+def test_wrong_length_custom_prior_rejected_at_fit():
+    # Length is only checkable once num_classes is known (at fit): 3 weights, 2 classes.
+    docs, y = _imbalanced_identical()
+    m = topica.DiscLDA(2, 2, iters=10, class_prior=[1.0, 2.0, 3.0])
+    with pytest.raises(ValueError, match="classes"):
+        m.fit(docs, y)
+
+
+@pytest.mark.parametrize("bad", [[1.0, -1.0], [1.0, float("nan")], []])
+def test_bad_custom_prior_weights_rejected_at_construction(bad):
+    with pytest.raises(ValueError, match="class_prior"):
+        topica.DiscLDA(2, 2, class_prior=bad)
+
+
+def test_class_prior_survives_save_load(tmp_path):
+    docs, y = _imbalanced_identical()
+    m = topica.DiscLDA(2, 2, iters=100, infer_sweeps=20, seed=1)  # empirical
+    m.fit(docs, y)
+    p = tmp_path / "disclda_prior.topica"
+    m.save(str(p))
+    ml = topica.DiscLDA.load(str(p))
+    np.testing.assert_allclose(ml.class_prior, m.class_prior, atol=1e-12)
+    assert ml.class_counts == m.class_counts
+    # predictions reproduce after reload
+    np.testing.assert_allclose(
+        np.asarray(ml.predict_proba([["not_in_vocab"]])),
+        np.asarray(m.predict_proba([["not_in_vocab"]])),
+        atol=1e-12,
+    )
+
+
 def test_fit_iters_zero_rejected():
     # The constructor rejects iters == 0; a per-fit override must too (#460).
     docs, y = _corpus()
