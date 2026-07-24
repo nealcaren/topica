@@ -142,7 +142,11 @@ def fit_pt(iters=300):
     import topica
 
     docs = tmi._short_corpus()
-    m = topica.PT(num_topics=K, num_pseudo=10, seed=1)
+    # P=50: the faithful (m_p + lambda) popularity prior aggregates real docs into
+    # pseudo-docs, so it needs enough pseudo-docs to avoid over-aggregating a small
+    # short-text corpus into one collapsed pseudo-doc (P=10 was fine only for the
+    # earlier uniform-psi variant that did not aggregate). See #491.
+    m = topica.PT(num_topics=K, num_pseudo=50, seed=1)
     m.fit(docs, iters=iters)
     return m
 
