@@ -2217,8 +2217,13 @@ class PT:
         num_pseudo: int = 100,
         alpha: float = 0.1,
         beta: float = 0.01,
+        pseudo_doc_prior: float = 0.1,
         seed: int = 42,
-    ) -> None: ...
+    ) -> None:
+        """pseudo_doc_prior (lambda) is the symmetric Dirichlet prior on the
+        pseudo-document mixture; it drives PTM's (m_p + lambda) rich-get-richer
+        aggregation (smaller = stronger popularity bias, larger flattens it)."""
+        ...
     def fit(
         self,
         data: Corpus | Sequence[Sequence[str]],

@@ -7,7 +7,7 @@ matrices and the planted layout; the test then refits and asserts the fit
 reproduces the frozen solution in cosine, recovers the planted structure, and
 passes the Wave 0 validity invariants. A shuffled matrix fails the gate.
 
-Corpus: short (3-token) K=4 planted-block corpus, 300 docs, 10 pseudo-documents.
+Corpus: short (3-token) K=4 planted-block corpus, 300 docs, 50 pseudo-documents.
 
 The fit contract is reused verbatim from ``tests/test_model_invariants.py`` (its
 ``FIT_ADAPTERS`` already encodes the right corpus / covariates / embeddings).
@@ -32,7 +32,7 @@ SPEC = wave2.Spec(
     "PT (Pseudo-document Topic model / Zuo et al. 2016)",
     wave2.fit_pt,
     block_fn=wave2.block_of_bw, top_n=4, purity_bar=0.9, coverage_bar=4,
-    corpus_desc="short (3-token) K=4 planted-block corpus, 300 docs, 10 pseudo-documents",
+    corpus_desc="short (3-token) K=4 planted-block corpus, 300 docs, 50 pseudo-documents",
 )
 
 

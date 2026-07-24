@@ -440,12 +440,21 @@ struct SldaState {
     #[serde(default)]
     m_mat: Option<Vec<f64>>,
 }
+fn default_pseudo_doc_prior() -> f64 {
+    0.1
+}
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PtState {
     num_topics: usize,
     num_pseudo: usize,
     alpha: f64,
     beta: f64,
+    // Added mid-struct (#491). The state is positional bincode, so serde(default)
+    // does NOT migrate a pre-#491 PT save — those simply fail to load rather than
+    // defaulting to 0.1. Accepted pre-v1.0 (only local saves exist); the default
+    // fn covers forward-compatible formats and fresh in-memory construction.
+    #[serde(default = "default_pseudo_doc_prior")]
+    pseudo_doc_prior: f64,
     seed: u64,
     fitted: bool,
     phi: Option<Arr2>,
@@ -11150,6 +11159,7 @@ pub struct PT {
     num_pseudo: usize,
     alpha: f64,
     beta: f64,
+    pseudo_doc_prior: f64,
     seed: u64,
     fitted: bool,
     topic_names: Vec<String>,
@@ -11186,6 +11196,7 @@ impl PT {
         d.set_item("num_pseudo", self.num_pseudo)?;
         d.set_item("alpha", self.alpha)?;
         d.set_item("beta", self.beta)?;
+        d.set_item("pseudo_doc_prior", self.pseudo_doc_prior)?;
         d.set_item("seed", self.seed)?;
         Ok(d)
     }
@@ -11199,15 +11210,18 @@ impl PT {
     /// Create an unfitted model. `num_pseudo` is the number of pseudo-documents
     /// short texts are aggregated into (more = finer, fewer = more aggregation).
     /// `num_topics` is the number of topics K; `alpha` is the document-topic
-    /// Dirichlet prior, `beta` the topic-word Dirichlet smoothing; `seed` seeds
-    /// the Gibbs RNG.
+    /// Dirichlet prior, `beta` the topic-word Dirichlet smoothing. `pseudo_doc_prior`
+    /// (λ) is the symmetric Dirichlet prior on the pseudo-document mixture — it
+    /// drives PTM's `(m_p + λ)` rich-get-richer aggregation (smaller = stronger
+    /// popularity bias; larger flattens it). `seed` seeds the Gibbs RNG.
     #[new]
-    #[pyo3(signature = (num_topics, *, num_pseudo=100, alpha=0.1, beta=0.01, seed=42))]
+    #[pyo3(signature = (num_topics, *, num_pseudo=100, alpha=0.1, beta=0.01, pseudo_doc_prior=0.1, seed=42))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         #[pyo3(from_py_with = "py_num_pseudo")] num_pseudo: usize,
         alpha: f64,
         beta: f64,
+        pseudo_doc_prior: f64,
         seed: u64,
     ) -> PyResult<Self> {
         if num_topics < 2 {
@@ -11219,11 +11233,15 @@ impl PT {
         if !finite_pos(alpha) || !finite_pos(beta) {
             return Err(PyValueError::new_err("alpha and beta must be > 0"));
         }
+        if !finite_pos(pseudo_doc_prior) {
+            return Err(PyValueError::new_err("pseudo_doc_prior must be > 0"));
+        }
         Ok(PT {
             num_topics,
             num_pseudo,
             alpha,
             beta,
+            pseudo_doc_prior,
             seed,
             fitted: false,
             topic_names: Vec::new(),
@@ -11285,7 +11303,13 @@ impl PT {
         }
         let num_docs = corpus.num_docs();
         let num_types = corpus.num_types();
-        let (k, p, a, b) = (slf.num_topics, slf.num_pseudo, slf.alpha, slf.beta);
+        let (k, p, a, b, lam) = (
+            slf.num_topics,
+            slf.num_pseudo,
+            slf.alpha,
+            slf.beta,
+            slf.pseudo_doc_prior,
+        );
 
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
@@ -11299,6 +11323,7 @@ impl PT {
                 p,
                 a,
                 b,
+                lam,
                 iters,
                 draws_opts,
                 convergence_tol,
@@ -11444,6 +11469,7 @@ impl PT {
                 num_pseudo: self.num_pseudo,
                 alpha: self.alpha,
                 beta: self.beta,
+                pseudo_doc_prior: self.pseudo_doc_prior,
                 seed: self.seed,
                 fitted: self.fitted,
                 phi: arr2_opt(&self.phi),
@@ -11469,6 +11495,7 @@ impl PT {
             num_pseudo: s.num_pseudo,
             alpha: s.alpha,
             beta: s.beta,
+            pseudo_doc_prior: s.pseudo_doc_prior,
             seed: s.seed,
             fitted: s.fitted,
             topic_names,
