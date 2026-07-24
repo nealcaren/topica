@@ -13505,7 +13505,18 @@ impl KeyATM {
                 )?;
             }
         }
-        let keys = seed_word_ids(&slf.keywords, &corpus.id_to_word, num_topics);
+        let mut keys = seed_word_ids(&slf.keywords, &corpus.id_to_word, num_topics);
+        // Duplicate keyword ids in a topic reach the core's "keyword id listed more
+        // than once" invariant and panic across the FFI boundary. They arise from a
+        // repeated keyword string *or* two distinct surface forms that resolve to the
+        // same vocabulary id, and are semantically harmless (a keyword anchors a topic
+        // once), so dedupe each list in place, preserving first-seen order (#418). This
+        // mirrors the empty-list guard below: fail-soft here rather than let the core
+        // guard panic.
+        for ids in keys.iter_mut() {
+            let mut seen = std::collections::HashSet::new();
+            ids.retain(|&w| seen.insert(w));
+        }
         // A seeded topic whose keywords were *all* dropped becomes an empty list in
         // the keyword-topic prefix, which the sampler cannot represent (keyword
         // topics must be the contiguous first topics, #418). Fail clearly here

@@ -93,3 +93,14 @@ def test_all_out_of_vocab_seeded_topic_raises(recwarn):
     m = topica.KeyATM({"econ": A[:2], "ghost": ["zzzznotaword"]}, num_topics=3, seed=1)
     with pytest.raises(ValueError, match="no keywords left in the vocabulary"):
         m.fit(docs, iters=3)
+
+
+def test_duplicate_keyword_string_fits_without_panicking():
+    # A repeated keyword string (or two surface forms that resolve to the same
+    # vocabulary id) would reach the core's "keyword id listed more than once"
+    # invariant and panic across the FFI boundary. topica dedupes the resolved ids
+    # first, so a duplicate is harmless and the fit completes cleanly (#418).
+    docs, _ = _corpus()
+    m = topica.KeyATM({"econ": ["tax", "tax", "market"], "war": B}, num_topics=3, seed=1)
+    m.fit(docs, iters=5)  # must not raise or panic
+    assert np.isfinite(np.asarray(m.topic_word)).all()
