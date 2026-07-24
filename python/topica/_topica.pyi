@@ -1151,7 +1151,10 @@ class DTM:
     distributions evolve across time slices via a Gaussian state-space model.
     Fit variationally with Kalman smoothing (a port of Blei's C dtm /
     gensim's LdaSeqModel). Query a topic's distribution at a slice with
-    topic_word(time) and a word's trajectory with word_evolution(topic, word)."""
+    topic_word(time) and a word's trajectory with word_evolution(topic, word).
+
+    Exposes evolving topic-word distributions but no per-document `doc_topic` —
+    it targets topic evolution, not per-doc mixtures (#494)."""
     @property
     def initialization(self) -> str | None:
         """The initialization route the fit took (#410): 'spectral',
@@ -2781,7 +2784,11 @@ class RTM:
 class PA:
     """Pachinko Allocation Model (Li & McCallum 2006): a DAG of `num_super`
     super-topics over `num_sub` shared sub-topics over words, capturing topic
-    correlations. `super_sub` reports which sub-topics each super-topic groups."""
+    correlations. `super_sub` reports which sub-topics each super-topic groups.
+
+    Behavioral differences from MALLET's PAM: a small default `alpha=0.1` with a
+    hard single-super commitment at init, and α_s adaptation only in the final
+    quarter of sweeps. See ``help(PA)`` (#497)."""
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,
@@ -2892,7 +2899,11 @@ class PA:
 class HLDA:
     """Hierarchical LDA (Blei et al.): topics arranged in a `depth`-level tree via
     the nested Chinese Restaurant Process. Each document follows a root-to-leaf
-    path; general words sit near the root, specific words near the leaves."""
+    path; general words sit near the root, specific words near the leaves.
+
+    Simplifies hlda-c: a symmetric level Dirichlet `alpha` (not the GEM stick),
+    a scalar `beta` (not per-level), and fixed hyperparameters; the default
+    `beta=0.01` is a sharp topica calibration. See ``help(HLDA)`` (#496)."""
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,

@@ -1431,7 +1431,14 @@ pub fn fit_detm<R: Rng>(
             a_w_ls.step(&mut enc.w_ls, &g_enc.w_ls);
             a_b_ls.step(&mut enc.b_ls, &g_enc.b_ls);
 
-            epoch_loss += batch_loss / coeff; // report per-doc-scaled (== /num_docs) loss
+            // Report a per-doc-scaled (== /num_docs) loss. NOTE (#495 F2): this
+            // divides the whole minibatch loss by coeff = D/batch, which also shrinks
+            // the once-per-minibatch global temporal KLs (kl_alpha, kl_eta) by
+            // batch/D. So `bound_history` is reconstruction-dominated and NOT on the
+            // reference's ELBO scale under minibatching — it is a consistent internal
+            // convergence signal, not directly comparable to adjidieng/DETM's printed
+            // ELBO. Optimization is unaffected (gradients use the separate g_* buffers).
+            epoch_loss += batch_loss / coeff;
             batches += 1;
         }
 

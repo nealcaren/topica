@@ -55,6 +55,16 @@ struct HldaState {
 /// super-topics over `num_sub` shared sub-topics over words, capturing topic
 /// *correlations* — `super_sub` reports which sub-topics each super-topic groups
 /// together. Collapsed Gibbs over (super, sub) pairs.
+///
+/// Behavioral differences from MALLET's PAM, worth knowing (#497): the default
+/// `alpha = 0.1` is much smaller than MALLET's effective ~50/num_super super
+/// prior, which (with the single-super-topic commitment at init) makes documents
+/// commit hard to their initial super-topic early — the intended "give the super
+/// layer something to specialize on" design, but a real difference. α_s is
+/// re-estimated only over the final quarter of sweeps (vs MALLET's periodic
+/// post-burn-in optimization), so short runs adapt little. `doc_topic` is the
+/// doc->sub marginal, floored by `alpha` (the doc->super prior; there is no
+/// canonical PAM doc->sub prior).
 #[pyclass(module = "topica")]
 pub struct PA {
     num_super: usize,
@@ -476,6 +486,16 @@ impl PA {
 /// the shared (general) topic; deeper nodes are progressively more specific.
 /// Each document follows a root-to-leaf path. Inspect the tree with
 /// `topic_word`/`node_levels`/`node_parents`/`doc_paths`.
+///
+/// Simplifications vs the hlda-c reference, worth knowing when comparing (#496):
+/// the level prior is a symmetric Dirichlet `alpha`, not the GEM stick-breaking
+/// prior, so there is no built-in bias of general words toward shallower levels
+/// (recovery relies on the likelihood); `beta` is a single scalar topic-word
+/// Dirichlet, not hlda-c's per-level (typically decreasing) vector, so deeper
+/// topics are not sharpened by the prior; the hyperparameters are held fixed (no
+/// per-sweep `eta`/`gamma`/GEM resampling); and the default `beta = 0.01` is
+/// topica's own sharp calibration, below hlda-c's ~0.1-1.0 norm — expect more,
+/// sparser nodes at the default.
 #[pyclass(module = "topica")]
 pub struct HLDA {
     depth: usize,

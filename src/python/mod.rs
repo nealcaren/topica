@@ -10067,6 +10067,11 @@ impl HDP {
 /// port of Blei's C `dtm` / gensim's `LdaSeqModel`. After fitting, query a
 /// topic's word distribution at any slice with `topic_word(time)` and trace a
 /// word's trajectory with `word_evolution(topic, word)`.
+///
+/// Note (#494): DTM exposes the evolving topic-word distributions but not
+/// per-document topic proportions — the E-step `gamma` values gensim retains as
+/// `self.gammas` are consumed for the suff-stats and not stored, so there is no
+/// `doc_topic` output (the model targets topic *evolution*, not per-doc mixtures).
 #[pyclass(module = "topica")]
 pub struct DTM {
     num_topics: usize,
