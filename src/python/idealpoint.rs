@@ -395,6 +395,14 @@ impl IdealPointTM {
                 "prior_variance, w_prior_variance and x_prior_variance must be > 0",
             ));
         }
+        // #481-class guards: a non-finite sigma_shrink feeds `1.0 - sigma_shrink`
+        // into the prior covariance -> NaN topics; it is a mixing ratio in [0, 1).
+        if !(sigma_shrink.is_finite() && (0.0..1.0).contains(&sigma_shrink)) {
+            return Err(PyValueError::new_err(format!(
+                "sigma_shrink must be in [0, 1) (got {sigma_shrink})"
+            )));
+        }
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         Ok(IdealPointTM {
             num_topics,
             num_dims,

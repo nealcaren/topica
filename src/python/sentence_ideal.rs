@@ -100,6 +100,9 @@ impl IdealPointSentenceTM {
         if !finite_pos(x_prior_variance) {
             return Err(PyValueError::new_err("x_prior_variance must be > 0"));
         }
+        // #481-class guard: a non-finite convergence_tol makes the relative-change
+        // early-stop always-false; reject it at the boundary for guard-parity.
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         Ok(IdealPointSentenceTM {
             num_topics,
             num_dims,

@@ -13244,6 +13244,11 @@ impl FASTopic {
             return Err(PyValueError::new_err("need at least 2 topics"));
         }
         ensure_finite_pos("theta_temp", theta_temp)?;
+        // #481-class guards: a NaN/+inf alpha flows into `log_k = -alpha*cost` and
+        // produces NaN transport plans -> NaN topics; a non-finite lr poisons Adam.
+        ensure_finite_pos("dt_alpha", dt_alpha)?;
+        ensure_finite_pos("tw_alpha", tw_alpha)?;
+        ensure_finite_pos("lr", lr)?;
         Ok(FASTopic {
             num_topics,
             lr,
