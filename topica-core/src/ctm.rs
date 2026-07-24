@@ -1552,6 +1552,27 @@ pub fn fit_ctm_svi<R: Rng>(
     };
 
     let batch = batch_size.clamp(1, d.max(1));
+
+    // The persistent SVI global state for the topic-word distribution is the
+    // *unnormalized* count statistic `lambda_beta` (the Dirichlet natural
+    // parameter), not the normalized `beta`. Blending the normalized per-minibatch
+    // ratio (the old code) cancels the D/B corpus scaling and loses the count
+    // magnitude, so a topic dominated by a high-count word drifts toward uniform
+    // instead of keeping its mass (#421). `beta` is `lambda_beta` normalized and is
+    // what the E-step reads. Seed `lambda_beta` on the corpus count scale from the
+    // starting `beta` so its normalization is the same initial `beta` and the first
+    // minibatch blend is count-scale-consistent.
+    let total_tokens: f64 = sparse
+        .iter()
+        .map(|(_, c)| c.iter().sum::<f64>())
+        .sum::<f64>()
+        .max(1.0);
+    let beta_mass = total_tokens / k as f64;
+    let mut lambda_beta: Vec<Vec<f64>> = beta
+        .iter()
+        .map(|row| row.iter().map(|&b| 1e-8 + b * beta_mass).collect())
+        .collect();
+
     let mut t_step: usize = 0;
 
     for _epoch in 0..epochs {
@@ -1603,14 +1624,22 @@ pub fn fit_ctm_svi<R: Rng>(
             }
             let bsz = chunk.len() as f64;
 
-            // β: scale the minibatch soft counts to the full corpus, normalize to
-            // a distribution, and blend toward it (a convex step, so β stays a
-            // valid distribution).
+            // β: online-VB update of the topic-word count statistic. Blend the
+            // D/B-scaled minibatch soft counts (η + (D/B)·Σ_batch φ, the
+            // natural-gradient target for the Dirichlet natural parameter) into the
+            // persistent `lambda_beta`, then renormalize to the distribution `beta`.
+            // Blending the counts — not the normalized ratio, whose D/B cancels —
+            // preserves the corpus-scale magnitude (#421). All terms are positive,
+            // so `lambda_beta` stays positive and `beta` a valid simplex.
             for tt in 0..k {
-                let s: f64 = beta_ss[tt].iter().sum::<f64>() * (d as f64 / bsz);
+                let mut s = 0.0;
                 for v in 0..num_types {
-                    let bhat = (d as f64 / bsz) * beta_ss[tt][v] / s;
-                    beta[tt][v] = (1.0 - rho) * beta[tt][v] + rho * bhat;
+                    let lam_hat = 1e-8 + (d as f64 / bsz) * (beta_ss[tt][v] - 1e-8);
+                    lambda_beta[tt][v] = (1.0 - rho) * lambda_beta[tt][v] + rho * lam_hat;
+                    s += lambda_beta[tt][v];
+                }
+                for v in 0..num_types {
+                    beta[tt][v] = lambda_beta[tt][v] / s;
                 }
             }
             // μ: blend toward the minibatch mean η.
@@ -1963,6 +1992,39 @@ mod tests {
         assert!(
             off3 > 0.05,
             "shrinkage collapsed the off-diagonal to ~0 (the per-minibatch bug): {off3}"
+        );
+    }
+
+    /// #421: the SVI β update must blend the D/B-scaled minibatch *counts*, not the
+    /// normalized per-minibatch ratio (whose D/B cancels), so β reflects the
+    /// aggregate count magnitude. Vocab {0, 1}; with `batch_size = 1` half the
+    /// documents are word-0 dominated (99:1) and half are balanced (1:1), an
+    /// aggregate ratio of ~50:1. The fixed update accumulates counts and puts >0.9
+    /// mass on word 0; the old normalized-ratio blend averages 0.99 and 0.5 toward
+    /// ~0.74 and fails.
+    #[test]
+    fn svi_beta_preserves_count_magnitude() {
+        let mut docs: Vec<Vec<u32>> = Vec::new();
+        for i in 0..80 {
+            if i % 2 == 0 {
+                let mut doc = vec![0u32; 99];
+                doc.push(1);
+                docs.push(doc);
+            } else {
+                docs.push(vec![0u32, 1]);
+            }
+        }
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let model = fit_ctm_svi(
+            &docs, 2, 2, 40, 1, 64.0, 0.7, 0.0, false, false, false, &mut rng,
+        );
+        let max_w0 = (0..model.num_topics)
+            .map(|t| model.beta[t][0])
+            .fold(0.0f64, f64::max);
+        assert!(
+            max_w0 > 0.9,
+            "β should track the ~50:1 aggregate count ratio (max word-0 mass \
+             {max_w0}); the old normalized-ratio blend collapses toward ~0.74"
         );
     }
 
