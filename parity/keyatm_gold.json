@@ -1,11 +1,8 @@
 {
   "corpus": "poliblog (examples/poliblog.csv), already stemmed",
-  "date": "2026-06-22",
-  "deferred": {
-    "dynamic": "Chib change-point HMM. Deferred: the live keyatm_models_r_compare.py dynamic check has no R-self phi noise floor (single seed) and benchmarks only a loose trend-sign agreement, so there is no sharp committed bar to lock. Base + covariate cover the keyword-anchoring core and the #270 fix."
-  },
+  "date": "2026-07-23",
   "margin": 0.15,
-  "model": "KeyATM (base + covariate)",
+  "model": "KeyATM (base + covariate + dynamic)",
   "models": {
     "base": {
       "keyword_r_self_cosine": 0.9124697046345465,
@@ -104,6 +101,58 @@
       },
       "topica_keyword_cosine": 0.9122431029695659,
       "topica_rating_sign_agree": 1.0,
+      "vocab_size": 2632
+    },
+    "dynamic": {
+      "keyword_r_self_cosine": 0.886723320664098,
+      "keywords": {
+        "econ": [
+          "tax",
+          "economi",
+          "econom",
+          "market",
+          "spend",
+          "budget"
+        ],
+        "elect": [
+          "obama",
+          "mccain",
+          "vote",
+          "voter",
+          "campaign",
+          "elect"
+        ],
+        "social": [
+          "abort",
+          "gay",
+          "marriag",
+          "religi",
+          "church",
+          "famili"
+        ],
+        "war": [
+          "iraq",
+          "iraqi",
+          "war",
+          "troop",
+          "militari",
+          "surg"
+        ]
+      },
+      "num_docs": 2000,
+      "num_keyword": 4,
+      "num_regular": 4,
+      "num_states": 5,
+      "num_time_bins": 8,
+      "num_topics": 8,
+      "seeds": {
+        "phi1": 1,
+        "phi2": 2
+      },
+      "time_index": "poliblog day rank, sorted and binned",
+      "topica_keyword_cosine": 0.9127449646075209,
+      "topica_trend_sign_agree": 1.0,
+      "trend_sign_r_self": 1.0,
       "vocab_size": 2632
     }
   },

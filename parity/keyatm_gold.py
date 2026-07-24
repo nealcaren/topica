@@ -11,7 +11,7 @@ keyATM's signature is keyword anchoring, so the sharp, fair comparison is the
 should agree across implementations at least as well as R agrees with itself.
 The committed gold freezes R's keyword-topic-word distributions (`phi`), the
 vocab, the keyword sets, the config, and R's own seed-to-seed keyword-phi noise
-floor, for two variants:
+floor, for all three reference variants:
 
   1. base       — keyword-anchored, no covariates (the core model).
   2. covariate  — document-topic prior is a Dirichlet-multinomial regression on
@@ -19,8 +19,9 @@ floor, for two variants:
                   (theta was collapsing onto one topic before R's covariate
                   standardization + lambda bounds were added); a committed gold
                   vs R locks that fix against the reference.
-
-The dynamic model is DEFERRED (see MODULE NOTE at the bottom).
+  3. dynamic    — Chib's change-point HMM over a shared, binned time index.
+                  The gold locks both keyword-topic phi and the observable
+                  per-topic prevalence-trend signs against R's own spread.
 
 Two phases (mirrors parity/stm_gold.py exactly):
 
@@ -146,6 +147,28 @@ write.csv(c2$theta, file.path(dir, "cov_theta2.csv"), row.names = FALSE)
 cat("ok\n")
 """
 
+_R_DYNAMIC_DRIVER = r"""
+suppressMessages(library(keyATM)); suppressMessages(library(quanteda))
+if (!requireNamespace("jsonlite", quietly=TRUE)) stop("need jsonlite")
+lines <- readLines(file.path(dir, "vdocs.txt"))
+toks  <- quanteda::as.tokens(strsplit(lines, " ", fixed = TRUE))
+dfmat <- quanteda::dfm(toks)
+docs  <- keyATM_read(texts = dfmat)
+keywords <- lapply(jsonlite::fromJSON(file.path(dir, "keywords.json"), simplifyVector = FALSE), unlist)
+tindex <- as.integer(scan(file.path(dir, "time.txt"), quiet = TRUE))
+fit_dyn <- function(seed) {
+  keyATM(docs = docs, model = "dynamic", no_keyword_topics = NREG, keywords = keywords,
+         model_settings = list(time_index = tindex, num_states = NSTATES),
+         options = list(seed = seed, iterations = ITERS, verbose = FALSE))
+}
+d1 <- fit_dyn(1); d2 <- fit_dyn(2)
+write.csv(d1$phi, file.path(dir, "dyn_phi1.csv"))
+write.csv(d2$phi, file.path(dir, "dyn_phi2.csv"))
+write.csv(d1$theta, file.path(dir, "dyn_theta1.csv"), row.names = FALSE)
+write.csv(d2$theta, file.path(dir, "dyn_theta2.csv"), row.names = FALSE)
+cat("ok\n")
+"""
+
 
 def _read_phi_csv(path, r_vocab):
     return base_live._read_r_phi(path, r_vocab)
@@ -264,24 +287,78 @@ def regenerate() -> None:
         "note": "model fixed in #270 (covariate standardization + lambda bounds)",
     }
 
+    # ----- dynamic model ----- #
+    # Reuse the covariate corpus because it supplies the shared, sorted time
+    # index used by the live dynamic parity check.  Two R seeds give both a
+    # keyword-phi noise floor and a trend-sign reproducibility floor.
+    ddocs, dkeywords, _rating, time = cov_live.load_with_covariates()
+    dnum_keyword = len(dkeywords)
+    dK = dnum_keyword + NUM_REGULAR_COV
+    num_states = 5
+
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "vdocs.txt"), "w") as f:
+            f.write("\n".join(" ".join(doc) for doc in ddocs) + "\n")
+        with open(os.path.join(d, "keywords.json"), "w") as f:
+            json.dump(dkeywords, f)
+        np.savetxt(os.path.join(d, "time.txt"), time, fmt="%d")
+        script = (f'dir <- "{d}"\nNREG <- {NUM_REGULAR_COV}\nITERS <- {ITERS}\n'
+                  f"NSTATES <- {num_states}\n" + _R_DYNAMIC_DRIVER)
+        proc = subprocess.run(["Rscript", "-e", script], capture_output=True,
+                              text=True, timeout=3600)
+        if "ok" not in proc.stdout:
+            raise RuntimeError(f"R dynamic driver failed:\n{proc.stdout}\n{proc.stderr}")
+        import csv as _csv
+        with open(os.path.join(d, "dyn_phi1.csv"), newline="") as f:
+            dr_vocab = [h.strip('\"') for h in next(_csv.reader(f))[1:]]
+        dyn_phi1 = _read_phi_csv(os.path.join(d, "dyn_phi1.csv"), dr_vocab)
+        dyn_phi2 = _read_phi_csv(os.path.join(d, "dyn_phi2.csv"), dr_vocab)
+        dyn_th1 = _read_theta_csv(os.path.join(d, "dyn_theta1.csv"))
+        dyn_th2 = _read_theta_csv(os.path.join(d, "dyn_theta2.csv"))
+
+    dkw = slice(0, dnum_keyword)
+    dyn_r_self = cov_live._best_alignment_cosine(dyn_phi1[dkw], dyn_phi2[dkw])
+    trend_r1 = cov_live._trend_sign(dyn_th1, time)[dkw]
+    trend_r2 = cov_live._trend_sign(dyn_th2, time)[dkw]
+    dyn_trend_r_self = float((trend_r1 == trend_r2).mean())
+    dyn_tt, dyn_th_tt = _fit_topica_dynamic(
+        ddocs, dkeywords, dK, time, num_states, dr_vocab,
+    )
+    dyn_tt_cos = cov_live._best_alignment_cosine(dyn_phi1[dkw], dyn_tt[dkw])
+    dyn_trend_tt = cov_live._trend_sign(dyn_th_tt, time)[dkw]
+    dyn_trend_tt_agree = float((trend_r1 == dyn_trend_tt).mean())
+
+    arrays["dyn_phi1"] = dyn_phi1
+    arrays["dyn_vocab"] = np.array(dr_vocab, dtype=object)
+    arrays["dyn_trend_sign_r"] = trend_r1.astype(float)
+    meta_models["dynamic"] = {
+        "num_topics": dK,
+        "num_keyword": dnum_keyword,
+        "num_regular": NUM_REGULAR_COV,
+        "num_states": num_states,
+        "num_time_bins": cov_live.NUM_TIME_BINS,
+        "keywords": dkeywords,
+        "time_index": "poliblog day rank, sorted and binned",
+        "num_docs": len(ddocs),
+        "vocab_size": len(dr_vocab),
+        "seeds": {"phi1": 1, "phi2": 2},
+        "keyword_r_self_cosine": dyn_r_self,
+        "topica_keyword_cosine": dyn_tt_cos,
+        "trend_sign_r_self": dyn_trend_r_self,
+        "topica_trend_sign_agree": dyn_trend_tt_agree,
+    }
+
     harness.save_gold(
         NAME,
         arrays=arrays,
         meta={
             "reference": _r_version(),
-            "model": "KeyATM (base + covariate)",
+            "model": "KeyATM (base + covariate + dynamic)",
             "corpus": "poliblog (examples/poliblog.csv), already stemmed",
             "topica_iters": ITERS,
             "margin": MARGIN,
             "date": datetime.date.today().isoformat(),
             "pass_bar": "topica keyword-phi cosine >= keyword_r_self_cosine - margin",
-            "deferred": {
-                "dynamic": "Chib change-point HMM. Deferred: the live "
-                "keyatm_models_r_compare.py dynamic check has no R-self phi noise "
-                "floor (single seed) and benchmarks only a loose trend-sign "
-                "agreement, so there is no sharp committed bar to lock. Base + "
-                "covariate cover the keyword-anchoring core and the #270 fix.",
-            },
             "models": meta_models,
         },
     )
@@ -290,6 +367,8 @@ def regenerate() -> None:
     print(f"  base      — R self {base_r_self:.4f}  topica {base_tt_cos:.4f}")
     print(f"  covariate — R self {cov_r_self:.4f}  topica {cov_tt_cos:.4f}  "
           f"sign agree {cov_sign_tt:.2f} (R self {cov_sign_r_self:.2f})")
+    print(f"  dynamic   — R self {dyn_r_self:.4f}  topica {dyn_tt_cos:.4f}  "
+          f"trend agree {dyn_trend_tt_agree:.2f} (R self {dyn_trend_r_self:.2f})")
 
 
 # --------------------------------------------------------------------------- #
@@ -309,6 +388,15 @@ def _fit_topica_cov(docs, keywords, K, rating, r_vocab):
     model = KeyATM(keywords, num_topics=K, seed=1)
     model.fit(docs, iters=ITERS, covariates=rating.reshape(-1, 1),
               feature_names=["rating"])
+    phi = _to_r_vocab(np.asarray(model.topic_word), list(model.vocabulary), r_vocab)
+    return phi, np.asarray(model.doc_topic)
+
+
+def _fit_topica_dynamic(docs, keywords, K, time, num_states, r_vocab):
+    from topica import KeyATM
+
+    model = KeyATM(keywords, num_topics=K, seed=1)
+    model.fit(docs, iters=ITERS, timestamps=time.tolist(), num_states=num_states)
     phi = _to_r_vocab(np.asarray(model.topic_word), list(model.vocabulary), r_vocab)
     return phi, np.asarray(model.doc_topic)
 
@@ -372,7 +460,38 @@ def run(verbose: bool = True) -> dict:
                        and cov_sign_agree >= cov_sign_r_self - 1e-9),
     }
 
-    result["passes"] = result["base"]["passes"] and result["covariate"]["passes"]
+    # ----- dynamic ----- #
+    dm = models["dynamic"]
+    dyn_phi1 = arrays["dyn_phi1"]
+    dyn_vocab = list(arrays["dyn_vocab"])
+    dnum_keyword = int(dm["num_keyword"])
+    dkw = slice(0, dnum_keyword)
+    trend_r = arrays["dyn_trend_sign_r"]
+    ddocs, dkeywords, _rating, time = cov_live.load_with_covariates()
+    dyn_tt, dyn_th_tt = _fit_topica_dynamic(
+        ddocs, dkeywords, int(dm["num_topics"]), time,
+        int(dm["num_states"]), dyn_vocab,
+    )
+    dyn_cos = cov_live._best_alignment_cosine(dyn_phi1[dkw], dyn_tt[dkw])
+    dyn_r_self = float(dm["keyword_r_self_cosine"])
+    dyn_bar = dyn_r_self - margin
+    dyn_trend = cov_live._trend_sign(dyn_th_tt, time)[dkw]
+    dyn_trend_agree = float((trend_r == dyn_trend).mean())
+    dyn_trend_r_self = float(dm["trend_sign_r_self"])
+    result["dynamic"] = {
+        "keyword_cosine": dyn_cos,
+        "keyword_r_self_cosine": dyn_r_self,
+        "bar": dyn_bar,
+        "margin_over_bar": dyn_cos - dyn_bar,
+        "trend_sign_agree": dyn_trend_agree,
+        "trend_sign_r_self": dyn_trend_r_self,
+        "passes": bool(dyn_cos >= dyn_bar
+                       and dyn_trend_agree >= dyn_trend_r_self - 1e-9),
+    }
+
+    result["passes"] = (result["base"]["passes"]
+                        and result["covariate"]["passes"]
+                        and result["dynamic"]["passes"])
 
     if verbose:
         print(f"gold: {meta.get('reference')}")
@@ -390,6 +509,14 @@ def run(verbose: bool = True) -> dict:
               f"(R self {c['rating_sign_r_self']:.2f})")
         print(f"  verdict: {'PASS' if c['passes'] else 'FAIL'} "
               f"(margin {c['margin_over_bar']:+.4f})")
+        d = result["dynamic"]
+        print("dynamic model:")
+        print(f"  keyword phi  — topica {d['keyword_cosine']:.4f}  "
+              f"(R self {d['keyword_r_self_cosine']:.4f}, bar {d['bar']:.4f})")
+        print(f"  trend sign   — agree {d['trend_sign_agree']:.2f}  "
+              f"(R self {d['trend_sign_r_self']:.2f})")
+        print(f"  verdict: {'PASS' if d['passes'] else 'FAIL'} "
+              f"(margin {d['margin_over_bar']:+.4f})")
     return result
 
 
