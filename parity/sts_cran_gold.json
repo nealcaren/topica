@@ -1,0 +1,21 @@
+{
+  "corpus": "stm poliblog5k first 300 docs, prepDocuments",
+  "date": "2026-07-24",
+  "margin": 0.2,
+  "maxiter": 8,
+  "model": "STS reference profile (CRAN sts, kappaEstimation='adjusted')",
+  "num_docs": 300,
+  "num_topics": 5,
+  "pass_bar": "topica reference='cran' topic-word cosine (at mean sentiment) >= r_self_cosine - margin",
+  "r_seeds": [
+    1,
+    2
+  ],
+  "r_self_cosine": 0.9978378868270237,
+  "reference": "R sts 1.4",
+  "topica_cosine": 0.8868296317888233,
+  "topica_profile": "reference='cran'",
+  "topica_seed": 1,
+  "vocab_shared": 2539,
+  "vocab_size": 2539
+}

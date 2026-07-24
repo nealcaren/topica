@@ -110,12 +110,24 @@ compares instead against the authors' *frozen* published fit and needs the
 replication package on disk. Both skip cleanly when Rscript or the R packages are
 unavailable.
 
+That live comparison is also **frozen into a committed gold** so it gates CI
+without an R toolchain.
+[`parity/sts_cran_gold.py`](https://github.com/nealcaren/topica/blob/main/parity/sts_cran_gold.py)
+records R `sts`'s topic-word distribution at mean sentiment (the adjusted profile,
+two `stmSeed`s for a self-consistency floor) plus the exact tokenized corpus on a
+fixed 300-doc poliblog subsample. `tests/test_sts_cran_gold.py` refits topica with
+`reference="cran"` on that frozen corpus and asserts its topic-word distribution
+clears R's own two-seed cosine floor minus a margin — the same "at least as
+consistent as R is with itself" bar the SeededLDA and keyATM golds use. No Rscript
+is touched at test time.
+
 ## Scope and honest limits
 
 What is validated and committed is: the κ-solver kernel (against R glmnet), the
-exact aggregation and damping arithmetic (Rust unit tests), and an end-to-end
+exact aggregation and damping arithmetic (Rust unit tests), an end-to-end
 topic-recovery comparison against the live R `sts` package on the shipped
-poliblog corpus. The `reference` profiles are R-aligned configurations whose
+poliblog corpus, and a committed offline gold of that comparison that gates CI
+without R. The `reference` profiles are R-aligned configurations whose
 numerical kernel is validated and whose topics track R `sts`; they are not a
 claim of byte-for-byte reproduction of a specific R fit, since the two engines
 initialize independently and the reference init is a documented
