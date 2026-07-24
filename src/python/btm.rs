@@ -115,7 +115,12 @@ impl BTM {
     }
 
     /// Create an unfitted BTM model. `alpha` defaults to `50 / num_topics`
-    /// (the reference default), `beta` to `0.01`, `window` to 15.
+    /// (the reference default), `beta` to `0.01`, `window` to 15. With
+    /// `background=True`, topic 0 becomes a background topic that absorbs corpus-wide
+    /// common words (drawn from the biterm-participation word distribution), leaving
+    /// `num_topics - 1` content topics; its reported `topic_word` row is emitted from
+    /// the biterm counts it accumulated, not the background distribution it sampled
+    /// from.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=None, beta=0.01, iters=1000,
                         window=15, background=false, seed=42))]
