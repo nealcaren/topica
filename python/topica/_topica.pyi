@@ -2563,8 +2563,16 @@ class DiscLDA:
         beta: float = 0.01,
         iters: int = 1000,
         infer_sweeps: int = 100,
+        class_prior: str | Sequence[float] | None = None,
         seed: int = 42,
-    ) -> None: ...
+    ) -> None:
+        """class_prior sets the prior the direct classifier combines with each
+        document's plug-in likelihood: "empirical" (default) uses the observed
+        class frequencies from fit, so predict_proba is calibrated to class
+        prevalence; "uniform" gives every class an equal prior; or pass a sequence
+        of positive per-class weights (in the sorted-class order of `classes`),
+        which is normalised."""
+        ...
     def fit(
         self,
         data: Corpus | Sequence[Sequence[str]],
@@ -2580,15 +2588,29 @@ class DiscLDA:
         """Class-marginalized discriminative representation (num_docs, num_topics)."""
         ...
     def predict(self, data: Corpus | Sequence[Sequence[str]]) -> list[str]:
-        """MAP class label per document."""
+        """Predicted class label per document (argmax of predict_proba). An empty /
+        all-OOV document resolves to the most probable class under class_prior (the
+        majority class for the default empirical prior)."""
         ...
     def predict_proba(
         self, data: Corpus | Sequence[Sequence[str]]
     ) -> numpy.typing.NDArray[numpy.float64]:
-        """Class posteriors (num_docs, num_classes), columns in `classes` order."""
+        """Approximate class posteriors (num_docs, num_classes), columns in
+        `classes` order. A topica-native plug-in classifier: each class score is
+        the posterior-mean-theta likelihood combined with class_prior (empirical by
+        default) and softmaxed — a prior-calibrated score, not exact evidence."""
         ...
     @property
     def classes(self) -> list[str]: ...
+    @property
+    def class_prior(self) -> list[float]:
+        """The resolved class prior p(c) used by predict/predict_proba, in `classes`
+        order (sums to 1)."""
+        ...
+    @property
+    def class_counts(self) -> list[int]:
+        """Observed per-class document counts from fit, in `classes` order."""
+        ...
     @property
     def num_topics(self) -> int: ...
     @property

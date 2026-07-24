@@ -1105,6 +1105,17 @@ restricts tokens to a document's own labels, DiscLDA is the one that builds the
 class-specific-vs-shared split and a discriminative representation. Determinism is
 `seed-reproducible`.
 
+`predict` / `predict_proba` are a topica-native **plug-in** classifier, not part of
+the paper: each class score is the document's posterior-mean-θ likelihood combined
+with a class prior and softmaxed, so treat `predict_proba` as a prior-calibrated
+score rather than exact evidence. The prior is set by `class_prior`: `"empirical"`
+(default) uses the observed class frequencies from fit — so on an imbalanced corpus
+the probabilities track prevalence, and an empty/all-out-of-vocabulary document
+returns the prior (the majority class) rather than a sorted-order tie. Pass
+`class_prior="uniform"` for an equal prior, or a sequence of per-class weights (in
+`classes` order) for a custom one; `m.class_prior` and `m.class_counts` report what
+was used.
+
 DiscLDA has no canonical reference implementation, so it is validated against the
 paper's 20 Newsgroups result (`parity/disclda_20ng.py`): DiscLDA's topic-proportion
 features feed a linear classifier better than unsupervised-LDA features of matched
