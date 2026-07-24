@@ -84,3 +84,12 @@ def test_by_strata_validates_length():
     theta = np.full((5, 3), 1 / 3)
     with pytest.raises(ValueError):
         keyatm.by_strata(theta, ["a", "b"])
+
+
+def test_all_out_of_vocab_seeded_topic_raises(recwarn):
+    # A seeded topic whose keywords are all out-of-vocabulary would leave a hole
+    # in the keyword-topic prefix; the fit must raise cleanly, not panic (#418).
+    docs, _ = _corpus()
+    m = topica.KeyATM({"econ": A[:2], "ghost": ["zzzznotaword"]}, num_topics=3, seed=1)
+    with pytest.raises(ValueError, match="no keywords left in the vocabulary"):
+        m.fit(docs, iters=3)

@@ -13372,6 +13372,8 @@ impl KeyATM {
     /// then targets the subsampled posterior rather than the full-data one, and
     /// because the stride subset is deterministic the bias also depends on document
     /// order. Use `stride=1` for the exact α (base model only, `estimate_alpha=True`).
+    /// A seeded topic whose keywords are all pruned or out-of-vocabulary raises
+    /// (it can no longer be a keyword topic); drop the topic or adjust the pruning.
     #[pyo3(signature = (data, *, iters=1500, covariates=None, feature_names=None,
                         times=None, timestamps=None, num_states=5, weights="information-theory",
                         num_threads=None, optimize_interval=50, burn_in=200, prior_variance=1.0,
@@ -13504,6 +13506,20 @@ impl KeyATM {
             }
         }
         let keys = seed_word_ids(&slf.keywords, &corpus.id_to_word, num_topics);
+        // A seeded topic whose keywords were *all* dropped becomes an empty list in
+        // the keyword-topic prefix, which the sampler cannot represent (keyword
+        // topics must be the contiguous first topics, #418). Fail clearly here
+        // rather than let the core's invariant guard panic across the FFI boundary.
+        for (name, ids) in slf.key_names.iter().zip(keys.iter()) {
+            if ids.is_empty() {
+                return Err(PyValueError::new_err(format!(
+                    "KeyATM: seeded topic '{}' has no keywords left in the vocabulary \
+                     (all were pruned or out-of-vocabulary); remove the topic or adjust \
+                     its keywords / the vocabulary pruning",
+                    name
+                )));
+            }
+        }
         let (alpha, beta, beta_key, g1, g2) = (
             slf.alpha,
             slf.beta,
