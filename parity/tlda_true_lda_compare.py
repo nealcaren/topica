@@ -1,9 +1,11 @@
 """Known-truth LDA recovery report for experimental TensorLDA.
 
-This is a deterministic validation benchmark, not a pass/fail parity gate. It
-samples documents from ordinary LDA with known topic-word distributions and
-unequal Dirichlet topic weights, fits TensorLDA at square and rectangular
-whitening ranks, and prints aligned recovery diagnostics.
+This is the fuller human-readable report over the same fixed simulation. The
+square-rank topic-recovery floor is enforced as an acceptance gate in
+``tests/test_tlda_recovery.py`` (CI-runnable, hermetic); this script prints the
+full diagnostics -- per-topic cosines at square and rectangular whitening ranks,
+plus the weight and document-topic recovery that remain a separate, ungated
+prevalence question.
 
     python parity/tlda_true_lda_compare.py
 """
