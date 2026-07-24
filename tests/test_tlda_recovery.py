@@ -24,6 +24,19 @@ import pytest
 
 import topica
 
+
+@pytest.fixture(autouse=True)
+def _experimental_on():
+    """TensorLDA is gated; enable it for these tests and restore the process-global
+    flag afterwards so it does not bleed into later tests in the same pytest run."""
+    was = topica.experimental_enabled()
+    topica.enable_experimental(True)
+    try:
+        yield
+    finally:
+        topica.enable_experimental(was)
+
+
 # Square-rank topic-recovery floors. Current baseline on this fixed simulation is
 # mean aligned cosine 0.529 with a per-topic minimum of 0.443; these floors sit
 # safely below to catch regression without being brittle.
@@ -59,7 +72,6 @@ def _align(cosine: np.ndarray) -> np.ndarray:
 
 def _fit_and_score(rank: int):
     docs, beta, theta_true, weights_true = _simulate()
-    topica.enable_experimental(True)
     model = topica.TensorLDA(
         beta.shape[0], alpha_0=1.0, n_eigenvec=rank, n_iter_train=500,
         n_iter_test=50, learning_rate=0.01, batch_size=25, seed=2026,

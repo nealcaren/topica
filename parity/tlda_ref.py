@@ -36,15 +36,26 @@ def reference_dir() -> Optional[str]:
 def load_reference_tlda():
     """Return the upstream ``TLDA`` class, or ``None`` if the reference is absent.
 
-    The reference checkout is placed on ``sys.path`` only when
-    ``TOPICA_TLDA_REF`` points at a real directory. Several import shapes are
-    tried so a flat repo checkout, a packaged install, or a local convenience
-    wrapper all resolve.
+    The env-var-only contract is strict: with ``TOPICA_TLDA_REF`` unset we return
+    ``None`` immediately and never probe the ambient path, so a stray installed
+    ``tlda`` package or a leftover local ``tlda_wrapper.py`` cannot silently stand
+    in for the configured reference. When the var is set, the checkout is placed
+    on ``sys.path`` and several import shapes are tried (flat repo checkout,
+    packaged install, local wrapper) -- but a resolved module is accepted only if
+    it actually originates under the configured checkout, not from an ambient
+    install shadowing the same name.
+
+    If the var is set but nothing usable resolves (e.g. the reference's own deps
+    are broken), a warning is emitted to stderr so a misconfigured integration
+    job does not look like a clean skip.
     """
     ref = reference_dir()
-    if ref and ref not in sys.path:
+    if ref is None:
+        return None
+    if ref not in sys.path:
         sys.path.insert(0, ref)
 
+    ref_real = os.path.realpath(ref)
     for module, attr in (
         ("tlda_final", "TLDA"),   # flat tensorly/tlda checkout
         ("tlda", "TLDA"),         # packaged install
@@ -52,7 +63,16 @@ def load_reference_tlda():
     ):
         try:
             mod = __import__(module, fromlist=[attr])
-            return getattr(mod, attr)
+            cls = getattr(mod, attr)
         except (ImportError, AttributeError):
             continue
+        mod_file = getattr(mod, "__file__", None)
+        if mod_file and os.path.realpath(mod_file).startswith(ref_real + os.sep):
+            return cls
+
+    print(
+        f"[tlda_ref] TOPICA_TLDA_REF={ref!r} is set but no usable TLDA reference "
+        f"resolved under it (broken deps or unexpected layout); treating as absent.",
+        file=sys.stderr,
+    )
     return None
