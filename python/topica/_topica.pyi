@@ -3522,6 +3522,13 @@ class InfoCTM:
     def fit_history(self) -> list[float]: ...
     @property
     def converged(self) -> bool | None: ...
+    def save(self, path: str) -> None:
+        """Persist the fitted model (both languages) to path. Reload with InfoCTM.load."""
+        ...
+    @staticmethod
+    def load(path: str) -> "InfoCTM":
+        """Load a model previously written by save."""
+        ...
 
 
 class ProdLDA:

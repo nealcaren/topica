@@ -162,3 +162,24 @@ def test_fit_history_records_epochs():
     hist = m.fit_history
     assert len(hist) >= 1
     assert all(np.isfinite(hist))
+
+
+def test_save_load_round_trip(tmp_path):
+    """Both-language outputs survive a save/load exactly (#504)."""
+    m, (a, b, _) = _fit(seed=1)
+    path = str(tmp_path / "ictm.bin")
+    m.save(path)
+    ld = topica.InfoCTM.load(path)
+    for lang, docs in (("en", a), ("zh", b)):
+        assert np.array_equal(m.topic_word(lang=lang), ld.topic_word(lang=lang))
+        assert np.array_equal(m.doc_topic(lang=lang), ld.doc_topic(lang=lang))
+        assert m.vocabulary(lang=lang) == ld.vocabulary(lang=lang)
+        # The retained per-language ProdLDA encoders reproduce held-out transform.
+        assert np.allclose(m.transform(docs[:5], lang=lang), ld.transform(docs[:5], lang=lang))
+    assert ld.fit_history == m.fit_history
+
+
+def test_save_requires_fit(tmp_path):
+    m = topica.InfoCTM(num_topics=3)
+    with pytest.raises(RuntimeError):
+        m.save(str(tmp_path / "x.bin"))

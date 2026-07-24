@@ -322,6 +322,7 @@ impl LangState {
 
 /// A fitted InfoCTM model: two fitted ProdLDA models (one per language) sharing the
 /// topic index, so topic `k` means the same theme in both languages.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct InfoctmModel {
     pub num_topics: usize,
     pub model_a: ProdldaModel,

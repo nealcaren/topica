@@ -73,7 +73,7 @@ const BN_EPS: f64 = 1e-5;
 
 /// Trainable-free batch-normalization layer (affine = false): it stores only the
 /// running mean/variance used at evaluation time.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct BatchNorm {
     pub running_mean: Vec<f64>,
     pub running_var: Vec<f64>,
@@ -206,7 +206,7 @@ impl BatchNorm {
 /// - [`InputMode::EmbOnly`] is ZeroShotTM: input is the document embedding alone;
 ///   `w1` is `hidden x E` (its `V`-column block is unused at the encoder, though
 ///   `beta` still reconstructs the `V`-word BoW).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum InputMode {
     BowOnly,
     BowEmb,
@@ -218,7 +218,7 @@ pub enum InputMode {
 /// weight matrix `w1` is `hidden x (V + E)`: the first `V` columns multiply the
 /// sparse normalized bag of words, the next `E` columns the dense document
 /// embedding. With `e == 0` this is exactly the bag-of-words ProdLDA encoder.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Weights {
     pub v: usize,
     pub e: usize,
@@ -497,7 +497,7 @@ fn lgamma(x: f64) -> f64 {
 ///   ordered sticks let early topics claim most mass and later ones decay, softening
 ///   the fixed-`K` assumption. Because the latent and KL are unchanged, the laplace
 ///   path stays byte-identical.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Prior {
     Laplace,
     Dirichlet,
@@ -1541,6 +1541,7 @@ impl Optim {
 /// A fitted ProdLDA model. `beta` (K x V) is the unnormalized topic-word matrix;
 /// `topic_word()` exposes its per-topic softmax. The encoder and the mean-head
 /// batchnorm are retained so new documents transform with one forward pass.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProdldaModel {
     pub num_topics: usize,
     pub num_types: usize,

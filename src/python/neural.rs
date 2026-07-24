@@ -1464,6 +1464,26 @@ pub struct InfoCTM {
     fitted: bool,
 }
 
+/// Serializable snapshot of a fitted InfoCTM: config, the two-language model
+/// (each a full ProdLDA), and both corpora. Written only when fitted.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct InfoctmState {
+    num_topics: usize,
+    mi_weight: f64,
+    mi_temperature: f64,
+    pos_threshold: f64,
+    hidden_size: usize,
+    dropout: f64,
+    lr: f64,
+    em_tol: f64,
+    seed: u64,
+    languages: (String, String),
+    fitted: bool,
+    model: infoctm::InfoctmModel,
+    corpus_a: corpus::Corpus,
+    corpus_b: corpus::Corpus,
+}
+
 impl InfoCTM {
     fn lang_index(&self, lang: &str) -> PyResult<usize> {
         if lang == self.languages.0 || lang == "a" || lang == "0" {
@@ -1788,6 +1808,57 @@ impl InfoCTM {
     #[getter]
     fn converged(&self) -> Option<bool> {
         self.model.as_ref().map(|m| m.converged)
+    }
+
+    /// Save the fitted model to `path`. Reload with :meth:`InfoCTM.load`.
+    fn save(&self, path: &str) -> PyResult<()> {
+        if !self.fitted {
+            return Err(PyRuntimeError::new_err(
+                "model is not fitted yet; call fit() first",
+            ));
+        }
+        write_state(
+            path,
+            MODEL_TAG_INFOCTM,
+            &InfoctmState {
+                num_topics: self.num_topics,
+                mi_weight: self.mi_weight,
+                mi_temperature: self.mi_temperature,
+                pos_threshold: self.pos_threshold,
+                hidden_size: self.hidden_size,
+                dropout: self.dropout,
+                lr: self.lr,
+                em_tol: self.em_tol,
+                seed: self.seed,
+                languages: self.languages.clone(),
+                fitted: self.fitted,
+                model: self.model.clone().unwrap(),
+                corpus_a: self.corpus_a.clone().unwrap(),
+                corpus_b: self.corpus_b.clone().unwrap(),
+            },
+        )
+    }
+
+    /// Load a model previously written by :meth:`save`.
+    #[staticmethod]
+    fn load(path: &str) -> PyResult<Self> {
+        let s: InfoctmState = read_state(path, MODEL_TAG_INFOCTM)?;
+        Ok(InfoCTM {
+            num_topics: s.num_topics,
+            mi_weight: s.mi_weight,
+            mi_temperature: s.mi_temperature,
+            pos_threshold: s.pos_threshold,
+            hidden_size: s.hidden_size,
+            dropout: s.dropout,
+            lr: s.lr,
+            em_tol: s.em_tol,
+            seed: s.seed,
+            languages: s.languages,
+            model: Some(s.model),
+            corpus_a: Some(s.corpus_a),
+            corpus_b: Some(s.corpus_b),
+            fitted: s.fitted,
+        })
     }
 
     fn __repr__(&self) -> String {
