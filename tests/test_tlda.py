@@ -107,7 +107,7 @@ def test_tlda_parameter_validations():
     # 2. Invalid alpha_0
     with pytest.raises(ValueError) as exc:
         topica.TensorLDA(2, alpha_0=0.0)
-    assert "alpha_0 must be > 0.0" in str(exc.value)
+    assert "alpha_0 must be finite and > 0" in str(exc.value)
 
     # 3. Invalid n_iter_train
     with pytest.raises(ValueError) as exc:
@@ -138,7 +138,7 @@ def test_tlda_parameter_validations():
     # 8. Invalid theta
     with pytest.raises(ValueError) as exc:
         topica.TensorLDA(2, theta=0.0)
-    assert "theta must be > 0.0" in str(exc.value)
+    assert "theta must be finite and > 0" in str(exc.value)
 
     # 9. Invalid n_eigenvec
     with pytest.raises(ValueError) as exc:

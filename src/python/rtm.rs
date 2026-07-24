@@ -134,21 +134,13 @@ impl RTM {
         }
         let link = Link::parse(link).map_err(PyValueError::new_err)?;
         if let Some(a) = alpha {
-            if a <= 0.0 {
-                return Err(PyValueError::new_err("alpha must be > 0"));
-            }
+            ensure_finite_pos("alpha", a)?;
         }
         if let Some(r) = rho {
-            if r < 0.0 {
-                return Err(PyValueError::new_err("rho must be >= 0"));
-            }
+            ensure_finite_nonneg("rho", r)?;
         }
-        if negative_ratio < 0.0 {
-            return Err(PyValueError::new_err("negative_ratio must be >= 0"));
-        }
-        if ridge < 0.0 {
-            return Err(PyValueError::new_err("ridge must be >= 0"));
-        }
+        ensure_finite_nonneg("negative_ratio", negative_ratio)?;
+        ensure_finite_nonneg("ridge", ridge)?;
         Ok(RTM {
             num_topics,
             link,

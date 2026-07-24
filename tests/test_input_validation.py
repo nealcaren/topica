@@ -75,6 +75,45 @@ def test_seededlda_rejects_nonfinite_doc_topic_prior(bad):
         m.fit(docs, iters=10, doc_topic_prior=prior)
 
 
+# #481: the `a <= 0.0` guard admits NaN/+inf (both compare false), so a
+# non-finite constructor argument slipped past validation and produced NaN
+# topic_word / doc_topic. Every strictly-positive param below now routes through
+# ensure_finite_pos; the non-negative RTM params (rho/negative_ratio/ridge)
+# through ensure_finite_nonneg. Both reject NaN and +inf.
+_NONFINITE_POS_CASES = [
+    ("BTM.alpha", lambda bad: topica.BTM(3, alpha=bad)),
+    ("BTM.beta", lambda bad: topica.BTM(3, beta=bad)),
+    ("PLTM.alpha", lambda bad: topica.PolylingualLDA(3, alpha=bad)),
+    ("PLTM.beta", lambda bad: topica.PolylingualLDA(3, beta=bad)),
+    ("RTM.alpha", lambda bad: topica.RTM(3, alpha=bad)),
+    ("RTM.rho", lambda bad: topica.RTM(3, rho=bad)),
+    ("RTM.negative_ratio", lambda bad: topica.RTM(3, negative_ratio=bad)),
+    ("RTM.ridge", lambda bad: topica.RTM(3, ridge=bad)),
+    ("FASTopic.theta_temp", lambda bad: topica.FASTopic(3, theta_temp=bad)),
+]
+
+
+@pytest.mark.parametrize("bad", [NAN, INF])
+@pytest.mark.parametrize(
+    "build", [c[1] for c in _NONFINITE_POS_CASES], ids=[c[0] for c in _NONFINITE_POS_CASES]
+)
+def test_nonfinite_hyperparameters_rejected_across_constructors(build, bad):
+    with pytest.raises(ValueError, match="finite"):
+        build(bad)
+
+
+def test_tlda_nonfinite_hyperparameters_rejected():
+    # TensorLDA is gated behind the experimental flag; enable it just for this check.
+    was = topica.experimental_enabled()
+    topica.enable_experimental(True)
+    try:
+        for kw in (dict(alpha_0=NAN), dict(learning_rate=INF), dict(theta=NAN)):
+            with pytest.raises(ValueError, match="finite"):
+                topica.TensorLDA(3, **kw)
+    finally:
+        topica.enable_experimental(was)
+
+
 def test_valid_hyperparameters_still_construct_and_fit():
     m = LDA(num_topics=2, beta=0.01, alpha_sum=1.0, seed=42)
     m.fit(DOCS, iters=20)

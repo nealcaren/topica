@@ -187,13 +187,9 @@ impl PolylingualLDA {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
         if let Some(a) = alpha {
-            if a <= 0.0 {
-                return Err(PyValueError::new_err("alpha must be > 0.0"));
-            }
+            ensure_finite_pos("alpha", a)?;
         }
-        if beta <= 0.0 {
-            return Err(PyValueError::new_err("beta must be > 0.0"));
-        }
+        ensure_finite_pos("beta", beta)?;
         if iters == 0 {
             return Err(PyValueError::new_err("iters must be > 0"));
         }
