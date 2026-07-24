@@ -680,8 +680,19 @@ pub fn fit_rtm_gibbs<R: Rng>(
                 .collect()
         })
         .collect();
-    // phi_bar = the empirical topic proportions z̄ (the link quantity).
-    let phi_bar = doc_topic.clone();
+    // phi_bar = the *empirical* mean topic assignment z̄_d = n_{d,k} / N_d (the
+    // link quantity), unsmoothed — distinct from the α-smoothed `doc_topic` above.
+    // An empty document has no assignments, so its row is left at zero.
+    let phi_bar: Vec<Vec<f64>> = (0..d)
+        .map(|di| {
+            let nd: f64 = ndk[di].iter().map(|&c| c as f64).sum();
+            if nd > 0.0 {
+                (0..k).map(|kk| ndk[di][kk] as f64 / nd).collect()
+            } else {
+                vec![0.0; k]
+            }
+        })
+        .collect();
 
     RTMModel {
         num_topics: k,
@@ -690,7 +701,9 @@ pub fn fit_rtm_gibbs<R: Rng>(
         phi_bar,
         eta: link_beta,
         nu: 0.0,
-        link: p.link,
+        // R lda's collapsed-Gibbs sampler is exponential-link only; store that so
+        // link prediction uses exp(·), not σ(·), on the (negative) coefficients.
+        link: Link::Exponential,
         fit_history: history,
         converged: false,
     }

@@ -11,8 +11,10 @@
   "num_links": 479,
   "num_topics": 3,
   "pass_bar": "topica gibbs topic-word cosine >= topic_r_self_cosine - margin",
+  "r_link_beta_mean": -0.0374900189410272,
   "reference": "R lda 1.5.2",
   "topic_r_self_cosine": 0.9936445083774196,
+  "topica_link_beta_mean": -0.0339861510689898,
   "topica_topic_cosine": 0.9946623647945717,
   "vocab_size": 24
 }

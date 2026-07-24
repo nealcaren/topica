@@ -88,6 +88,7 @@ fit_one <- function(s) {{
 m1 <- fit_one(1); m2 <- fit_one(2)
 write.csv(phi(m1), file.path(dir, "phi1.csv"), row.names = FALSE)
 write.csv(phi(m2), file.path(dir, "phi2.csv"), row.names = FALSE)
+writeLines(as.character(m1$beta), file.path(dir, "beta1.txt"))
 cat("ok\\n")
 """
 
@@ -135,19 +136,24 @@ def regenerate() -> None:
             "vocab.txt": "\n".join(vocab) + "\n",
             "edges.csv": _edge_csv(edges),
         },
-        ["phi1.csv", "phi2.csv"],
+        ["phi1.csv", "phi2.csv", "beta1.txt"],
         timeout=1800,
     )
     phi1 = harness.read_r_beta_csv(out["phi1.csv"], vocab)
     phi2 = harness.read_r_beta_csv(out["phi2.csv"], vocab)
     r_self, _ = harness.align_cosine(phi1, phi2)
+    r_beta = np.array([float(x) for x in out["beta1.txt"].split()])
 
-    topica_phi, _eta = _fit_topica(docs, edges, vocab)
+    topica_phi, topica_eta = _fit_topica(docs, edges, vocab)
     topica_cos, _ = harness.align_cosine(phi1, topica_phi)
 
     harness.save_gold(
         NAME,
-        arrays={"phi1": phi1, "vocab": np.array(vocab, dtype=object)},
+        arrays={
+            "phi1": phi1,
+            "vocab": np.array(vocab, dtype=object),
+            "r_beta": r_beta,
+        },
         meta={
             "reference": _r_version(),
             "model": "RTM collapsed Gibbs (R lda rtm.em / rtm.collapsed.gibbs.sampler)",
@@ -163,6 +169,8 @@ def regenerate() -> None:
             "margin": MARGIN,
             "topic_r_self_cosine": r_self,
             "topica_topic_cosine": topica_cos,
+            "r_link_beta_mean": float(r_beta.mean()),
+            "topica_link_beta_mean": float(topica_eta.mean()),
             "date": datetime.date.today().isoformat(),
             "pass_bar": "topica gibbs topic-word cosine >= topic_r_self_cosine - margin",
         },
@@ -175,6 +183,7 @@ def regenerate() -> None:
 def run(verbose: bool = True) -> dict:
     arrays, meta = harness.load_gold(NAME)
     phi1 = arrays["phi1"]
+    r_beta = arrays["r_beta"]
     vocab = [str(w) for w in arrays["vocab"]]
     r_self = float(meta["topic_r_self_cosine"])
     margin = float(meta["margin"])
@@ -185,18 +194,27 @@ def run(verbose: bool = True) -> dict:
     topica_phi, eta = _fit_topica(docs, edges, vocab)
     cos, _ = harness.align_cosine(phi1, topica_phi)
 
+    # Relational-M-step coverage: the link coefficient β = ln(p_k) is negative in
+    # both, and (permutation-invariantly) its mean should match R closely — a
+    # planted-topic LDA-like fit would not reproduce R's β regime.
+    beta_mean_gap = abs(float(eta.mean()) - float(r_beta.mean()))
     result = {
         "topic_cosine": cos,
         "topic_r_self_cosine": r_self,
         "bar": bar,
         "margin_over_bar": cos - bar,
         "link_beta_all_negative": bool((eta < 0).all()),
-        "passes": bool(cos >= bar),
+        "r_link_beta_mean": float(r_beta.mean()),
+        "topica_link_beta_mean": float(eta.mean()),
+        "link_beta_mean_gap": beta_mean_gap,
+        "passes": bool(cos >= bar and (eta < 0).all() and beta_mean_gap < 0.02),
     }
     if verbose:
         print(f"gold: {meta.get('reference')}")
         print("same-algorithm topic-word phi (topica gibbs vs R lda rtm.em):")
         print(f"  topica {cos:.4f}  (R self {r_self:.4f}, bar {bar:.4f})")
+        print(f"  link β mean: topica {result['topica_link_beta_mean']:+.4f}  "
+              f"R {result['r_link_beta_mean']:+.4f}  (gap {beta_mean_gap:.4f})")
         print(f"  verdict: {'PASS' if result['passes'] else 'FAIL'} "
               f"(margin {result['margin_over_bar']:+.4f})")
     return result

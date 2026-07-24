@@ -2693,10 +2693,12 @@ class RTM:
     ) -> None:
         """`inference` selects the backend: "variational" (default, the shipped
         variational EM) or "gibbs" (collapsed Gibbs matching R lda's `rtm.em` /
-        `rtm.collapsed.gibbs.sampler`, for same-algorithm parity). `beta` is the
-        topic-word Dirichlet smoothing used by the Gibbs backend (R lda's `eta`).
-        The Gibbs backend reproduces R lda's link coefficient, which is negative
-        even on strongly-linked data — use "variational" for link scores.
+        `rtm.collapsed.gibbs.sampler`, for same-algorithm parity). The Gibbs
+        backend uses the exponential link only (R lda's sole option), so `link`
+        must be "exponential" (its default) under it. `beta` is the topic-word
+        Dirichlet smoothing used by the Gibbs backend (R lda's `eta`). The Gibbs
+        backend reproduces R lda's link coefficient, which is negative even on
+        strongly-linked data — use "variational" for link scores.
 
         `rho` (or `negative_ratio`, which scales it by the link count) is the
         variational pseudo-negative regularization that prevents the degenerate

@@ -150,12 +150,22 @@ impl RTM {
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
-        let link = Link::parse(link).map_err(PyValueError::new_err)?;
         if !matches!(inference, "variational" | "gibbs") {
             return Err(PyValueError::new_err(format!(
                 "inference must be \"variational\" or \"gibbs\", got {inference:?}"
             )));
         }
+        // R lda's collapsed-Gibbs RTM sampler supports only the exponential link,
+        // so the Gibbs backend always uses (and stores) it — otherwise it would
+        // train exponential but score links with σ on the reference's negative
+        // coefficients. `link` defaults to "logistic", so an unspecified link
+        // resolves to exponential here; an unknown link string still errors.
+        let parsed_link = Link::parse(link).map_err(PyValueError::new_err)?;
+        let link = if inference == "gibbs" {
+            Link::Exponential
+        } else {
+            parsed_link
+        };
         if let Some(a) = alpha {
             ensure_finite_pos("alpha", a)?;
         }

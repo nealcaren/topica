@@ -181,6 +181,32 @@ def test_bad_inference_rejected():
         topica.RTM(3, inference="mcmc")
 
 
+def test_gibbs_forces_exponential_link():
+    # R lda's collapsed-Gibbs sampler is exponential-only. The link default is
+    # logistic, so inference="gibbs" must resolve to (and store) exponential —
+    # otherwise predict_link would apply sigmoid to the negative R coefficients.
+    docs, edges, _g, _V = _planted()
+    m = topica.RTM(3, inference="gibbs", seed=0).fit(docs, edges, iters=10)
+    assert m.settings["link"] == "exponential"
+    # exponential link scores are exp(sum eta*z*z) <= 1; a logistic read would be 0.5-ish
+    pr = m.predict_link(0, 1)
+    assert 0.0 < pr <= 1.0
+
+
+def test_gibbs_handles_no_links_and_empty_docs():
+    docs, _edges, _g, _V = _planted()
+    # no links: reduces to an LDA-like Gibbs fit, still valid output
+    m = topica.RTM(3, inference="gibbs", seed=0).fit(docs, [], iters=15)
+    assert m.topic_word.shape == (3, len(m.vocabulary))
+    np.testing.assert_allclose(m.topic_word.sum(axis=1), 1.0, atol=1e-9)
+    # an empty document is tolerated (its phi_bar row is all-zero, no div-by-zero)
+    docs2 = docs[:10] + [[]] + docs[10:]
+    edges2 = [(0, 2), (3, 5)]
+    m2 = topica.RTM(3, inference="gibbs", seed=1).fit(docs2, edges2, iters=15)
+    assert np.isfinite(m2.doc_topic).all()
+    assert np.isfinite(m2.phi_bar).all()
+
+
 def test_edge_cases():
     docs, edges = _toy()
     # empty corpus
