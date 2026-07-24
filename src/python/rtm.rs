@@ -136,10 +136,15 @@ impl RTM {
         if let Some(a) = alpha {
             ensure_finite_pos("alpha", a)?;
         }
+        // `rho` / `negative_ratio` are the paper's pseudo-negative count (R lda's
+        // `lambda`): the regularization that prevents the degenerate positive-links-
+        // only fit, so zero is not a valid setting (it removes the negatives and the
+        // logistic intercept diverges). `ridge` is the separate l2 Gaussian prior on
+        // eta, where zero (plain MLE, no prior) is a legitimate choice.
         if let Some(r) = rho {
-            ensure_finite_nonneg("rho", r)?;
+            ensure_finite_pos("rho", r)?;
         }
-        ensure_finite_nonneg("negative_ratio", negative_ratio)?;
+        ensure_finite_pos("negative_ratio", negative_ratio)?;
         ensure_finite_nonneg("ridge", ridge)?;
         Ok(RTM {
             num_topics,
