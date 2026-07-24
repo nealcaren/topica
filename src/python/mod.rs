@@ -12150,6 +12150,9 @@ impl SeededLDA {
     /// package uses; an expanding pattern seeds every matched word (each once).
     /// `case_insensitive` (default False) folds case in the match — set it True
     /// with ``seed_match="glob"`` to reproduce quanteda's dictionary defaults.
+    /// The ``"regex"`` dialect is Rust's linear-time `regex` crate, not R's
+    /// ICU/stringi: common syntax (alternation, anchors, classes) matches
+    /// identically, but backreferences and lookaround are unsupported.
     #[new]
     #[pyo3(signature = (seed_words, *, residual=0, alpha=0.5, beta=0.1, weight=0.01, seed=42,
                         seed_prior="frequency", sampler="sparse", seed_match="fixed",

@@ -2980,7 +2980,10 @@ class SeededLDA:
         "regex" matches a regular expression anywhere in the token. These mirror
         quanteda's dictionary valuetype (the seededlda package's matcher).
         case_insensitive (default False) folds case; set it True with
-        seed_match="glob" to reproduce quanteda's dictionary defaults.
+        seed_match="glob" to reproduce quanteda's dictionary defaults. The "regex"
+        dialect is Rust's linear-time regex crate, not R's ICU/stringi: common
+        syntax matches identically, but backreferences and lookaround are
+        unsupported.
 
         seed_prior selects how each seed word's prior pseudocount is built:
         "frequency" (default) reproduces the seededlda package (pseudocount =
