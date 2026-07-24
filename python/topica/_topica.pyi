@@ -427,7 +427,7 @@ class CTM:
     @property
     def initialization(self) -> str | None:
         """The initialization route the fit took (#410): 'spectral',
-        'random-fallback', 'random', or 'provided'; None before fit."""
+        'random-fallback', or 'random'; None before fit."""
         ...
 
     @property
@@ -598,7 +598,7 @@ class STM:
     @property
     def initialization(self) -> str | None:
         """The initialization route the fit took (#410): 'spectral',
-        'random-fallback', 'random', or 'provided'; None before fit."""
+        'random-fallback', or 'random'; None before fit."""
         ...
 
     @property
@@ -823,7 +823,7 @@ class STS:
     @property
     def initialization(self) -> str | None:
         """The initialization route the fit took (#410): 'spectral',
-        'random-fallback', 'random', or 'provided'; None before fit."""
+        'random-fallback', or 'random'; None before fit."""
         ...
 
     @property
@@ -1155,7 +1155,7 @@ class DTM:
     @property
     def initialization(self) -> str | None:
         """The initialization route the fit took (#410): 'spectral',
-        'random-fallback', 'random', or 'provided'; None before fit."""
+        'random-fallback', or 'random'; None before fit."""
         ...
 
     @property
@@ -2910,9 +2910,10 @@ class HLDA:
         seed: int = 42,
         eta: Optional[float] = None,
     ) -> None:
-        """depth is the number of levels in the topic tree. gamma controls
-        branching (higher = more nodes). beta is the topic-word Dirichlet base
-        measure. alpha is the document-path concentration.
+        """depth is the number of levels in the topic tree. gamma is the nCRP
+        branching concentration (higher = more nodes). beta is the topic-word
+        Dirichlet base measure. alpha is the symmetric Dirichlet smoothing over the
+        L path levels (the per-document level distribution).
 
         eta is a deprecated alias for beta."""
         ...
