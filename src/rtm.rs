@@ -17,9 +17,14 @@
 //! the paper's ρ regularization: `ρ` pseudo-negative links placed at the expected
 //! Hadamard product under the Dirichlet prior, `π̄_α = (α/1ᵀα) ∘ (α/1ᵀα)`.
 //!
-//! Validated against a standalone NumPy implementation of the same equations
-//! (`parity/rtm_reference.py`); the R `lda` package's `rtm.em` is a *collapsed
-//! Gibbs* sampler, so it is only a directional baseline (`parity/rtm_compare.py`).
+//! The variational path is validated against a standalone NumPy implementation of
+//! the same equations (`parity/rtm_reference.py`); the R `lda` package's `rtm.em`
+//! is a *collapsed Gibbs* sampler, so for the variational fit it is only a
+//! directional baseline (`parity/rtm_compare.py`).
+//!
+//! [`fit_rtm_gibbs`] adds that collapsed-Gibbs backend (matching R lda's
+//! `rtm.em` / `rtm.collapsed.gibbs.sampler`), so R lda becomes an *authoritative*
+//! same-algorithm oracle for it (`parity/rtm_gibbs_gold.py`).
 //!
 //! Pure Rust, no PyO3. Fitted state stores matrices as `Vec<Vec<f64>>`.
 
@@ -252,6 +257,9 @@ pub struct RtmParams {
     pub num_topics: usize,
     pub num_types: usize,
     pub alpha: f64,
+    /// Topic-word Dirichlet smoothing (R lda's `eta`). Used by the collapsed-Gibbs
+    /// backend; the variational backend derives its own smoothed β init.
+    pub beta: f64,
     pub link: Link,
     /// Explicit pseudo-negative count. When `None`, `negative_ratio * num_links`.
     pub rho: Option<f64>,
@@ -487,6 +495,207 @@ pub fn fit_rtm<R: Rng>(
     }
 }
 
+/// The M-step of R lda's `rtm.em` (`estimate.params`): re-estimate the per-topic
+/// link coefficient β from the current topic counts. With smoothed proportions
+/// `z̄_d = (n_d + α) / Σ(n_d + α)`, `p_k = Σ_{(d,d')∈links} z̄_{d,k} z̄_{d',k}`
+/// (over directed link endpoints), regularized by `λ α² · #pairs` pseudo-negatives,
+/// and `β_k = ln( p_k / (p_k + λ α² · #pairs) )`. Because that ratio is in (0, 1),
+/// β is negative — the reference's known behaviour (match the algorithm, not the
+/// sign quirk). `lambda` defaults to R's link density `Σdegree / #pairs`.
+fn rtm_gibbs_estimate_beta(
+    ndk: &[Vec<i64>],
+    adj: &[Vec<usize>],
+    alpha: f64,
+    lambda: f64,
+    k: usize,
+) -> Vec<f64> {
+    let d = ndk.len();
+    // Smoothed per-document topic proportions z̄_d.
+    let zbar: Vec<Vec<f64>> = ndk
+        .iter()
+        .map(|row| {
+            let denom: f64 = row.iter().map(|&c| c as f64 + alpha).sum();
+            row.iter().map(|&c| (c as f64 + alpha) / denom).collect()
+        })
+        .collect();
+    // p_k over every directed link endpoint (d -> d'); z̄∘z̄ is symmetric, so an
+    // undirected edge contributes both directions, matching R's `unlist(links)`.
+    let mut p = vec![0.0f64; k];
+    for (di, nbrs) in adj.iter().enumerate() {
+        for &dj in nbrs {
+            for kk in 0..k {
+                p[kk] += zbar[di][kk] * zbar[dj][kk];
+            }
+        }
+    }
+    let num_pairs = if d >= 2 {
+        d as f64 * (d as f64 - 1.0) / 2.0
+    } else {
+        1.0
+    };
+    let reg = lambda * alpha * alpha * num_pairs;
+    p.iter()
+        .map(|&pk| (pk / (pk + reg)).max(1e-300).ln())
+        .collect()
+}
+
+/// Fit RTM by **collapsed Gibbs**, matching R lda's `rtm.collapsed.gibbs.sampler`
+/// wrapped in `rtm.em`. This is the same-algorithm counterpart to [`fit_rtm`]'s
+/// variational EM, so R lda is an authoritative (not merely directional) oracle.
+///
+/// The per-token conditional is the LDA collapsed conditional times the link
+/// factor `exp( β_k · Σ_{d'~d} n_{d',k} / (len_d · len_{d'}) )`, with the link
+/// coefficient β held fixed during each E-step sweep and re-estimated between
+/// sweeps by [`rtm_gibbs_estimate_beta`]. Following the reference, the link factor
+/// is computed once per document per sweep (neighbour counts do not change while a
+/// document's own tokens are resampled). `p.em_iters` is the number of M-steps and
+/// `p.e_sweeps` the Gibbs sweeps per E-step. The exponential link's coefficient is
+/// stored as `eta` (with `nu = 0`, matching the reference's intercept-free link).
+pub fn fit_rtm_gibbs<R: Rng>(
+    docs: &[Vec<u32>],
+    edges: &[(usize, usize)],
+    p: &RtmParams,
+    rng: &mut R,
+) -> RTMModel {
+    let k = p.num_topics;
+    let v = p.num_types;
+    let d = docs.len();
+    let alpha = p.alpha;
+    let beta_tw = p.beta; // topic-word smoothing (R lda's `eta`)
+    let vbeta = v as f64 * beta_tw;
+    let (adj, obs) = build_adjacency(edges, d);
+    let len: Vec<f64> = docs.iter().map(|doc| doc.len().max(1) as f64).collect();
+
+    // R's default λ = Σdegree / #pairs = 2|E| / (D(D-1)/2).
+    let sum_deg: f64 = adj.iter().map(|n| n.len() as f64).sum();
+    let num_pairs = if d >= 2 {
+        d as f64 * (d as f64 - 1.0) / 2.0
+    } else {
+        1.0
+    };
+    let lambda = if obs.is_empty() {
+        0.0
+    } else {
+        sum_deg / num_pairs
+    };
+
+    // Count tables and per-token assignments.
+    let mut ndk = vec![vec![0i64; k]; d];
+    let mut nkw = vec![vec![0i64; v]; k];
+    let mut nk = vec![0i64; k];
+    let mut z: Vec<Vec<usize>> = docs.iter().map(|doc| vec![0usize; doc.len()]).collect();
+    for (di, doc) in docs.iter().enumerate() {
+        for (n, &w) in doc.iter().enumerate() {
+            let t = (rng.gen::<f64>() * k as f64) as usize % k;
+            z[di][n] = t;
+            ndk[di][t] += 1;
+            nkw[t][w as usize] += 1;
+            nk[t] += 1;
+        }
+    }
+
+    // Link coefficient β, initialised as R does (`initial.beta = rep(3, K)`).
+    let mut link_beta = vec![3.0f64; k];
+
+    let mut scores = vec![0.0f64; k];
+    let mut nb_sum = vec![0.0f64; k]; // Σ_{d'~d} n_{d',k} / len_{d'}
+    let mut link_probs = vec![1.0f64; k];
+    let mut history: Vec<(usize, f64)> = Vec::new();
+
+    let m_steps = p.em_iters.max(1);
+    let e_sweeps = p.e_sweeps.max(1);
+    for m in 0..m_steps {
+        for _ in 0..e_sweeps {
+            for di in 0..d {
+                // Link factor for document di (computed once per sweep, as R does).
+                if !adj[di].is_empty() {
+                    for kk in 0..k {
+                        nb_sum[kk] = 0.0;
+                    }
+                    for &dj in &adj[di] {
+                        let inv = 1.0 / len[dj];
+                        for kk in 0..k {
+                            nb_sum[kk] += ndk[dj][kk] as f64 * inv;
+                        }
+                    }
+                    for kk in 0..k {
+                        link_probs[kk] = (link_beta[kk] * nb_sum[kk] / len[di]).exp();
+                    }
+                } else {
+                    for kk in 0..k {
+                        link_probs[kk] = 1.0;
+                    }
+                }
+                for n in 0..docs[di].len() {
+                    let w = docs[di][n] as usize;
+                    let old = z[di][n];
+                    ndk[di][old] -= 1;
+                    nkw[old][w] -= 1;
+                    nk[old] -= 1;
+
+                    let mut total = 0.0;
+                    for kk in 0..k {
+                        let s = link_probs[kk]
+                            * (ndk[di][kk] as f64 + alpha)
+                            * (nkw[kk][w] as f64 + beta_tw)
+                            / (nk[kk] as f64 + vbeta);
+                        scores[kk] = s;
+                        total += s;
+                    }
+                    let mut r = rng.gen::<f64>() * total;
+                    let mut new_t = k - 1;
+                    for kk in 0..k {
+                        r -= scores[kk];
+                        if r <= 0.0 {
+                            new_t = kk;
+                            break;
+                        }
+                    }
+                    z[di][n] = new_t;
+                    ndk[di][new_t] += 1;
+                    nkw[new_t][w] += 1;
+                    nk[new_t] += 1;
+                }
+            }
+        }
+        // M-step: re-estimate the link coefficient from the current counts.
+        link_beta = rtm_gibbs_estimate_beta(&ndk, &adj, alpha, lambda, k);
+        history.push((m + 1, link_beta.iter().sum::<f64>()));
+    }
+
+    // Fitted surface (same shape as the variational backend).
+    let topic_word: Vec<Vec<f64>> = (0..k)
+        .map(|kk| {
+            let denom = nk[kk] as f64 + vbeta;
+            (0..v)
+                .map(|w| (nkw[kk][w] as f64 + beta_tw) / denom)
+                .collect()
+        })
+        .collect();
+    let doc_topic: Vec<Vec<f64>> = (0..d)
+        .map(|di| {
+            let denom: f64 = ndk[di].iter().map(|&c| c as f64 + alpha).sum();
+            (0..k)
+                .map(|kk| (ndk[di][kk] as f64 + alpha) / denom)
+                .collect()
+        })
+        .collect();
+    // phi_bar = the empirical topic proportions z̄ (the link quantity).
+    let phi_bar = doc_topic.clone();
+
+    RTMModel {
+        num_topics: k,
+        topic_word,
+        doc_topic,
+        phi_bar,
+        eta: link_beta,
+        nu: 0.0,
+        link: p.link,
+        fit_history: history,
+        converged: false,
+    }
+}
+
 /// The variational objective (evidence lower bound, paper §3.2): the word,
 /// topic-assignment, Dirichlet-`θ`, and link expected log-likelihood terms plus
 /// the `q` entropy. Used as the convergence criterion. It generally increases
@@ -697,6 +906,7 @@ mod tests {
             num_topics: k,
             num_types: v,
             alpha: 0.5,
+            beta: 0.1,
             link,
             rho: None,
             negative_ratio: 1.0,
@@ -788,5 +998,87 @@ mod tests {
         let mut frng = ChaCha8Rng::seed_from_u64(0);
         let m = fit_rtm(&docs, &edges, &params(2, v, Link::Logistic), &mut frng);
         assert!(crate::conformance::check_conformance(&m).is_empty());
+    }
+
+    // --- collapsed-Gibbs backend (#424) ---------------------------------------
+
+    #[test]
+    fn rtm_gibbs_recovers_planted_topics() {
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let (docs, edges, _groups, v) = planted(&mut rng, 60, 3, 6, 40);
+        let mut frng = ChaCha8Rng::seed_from_u64(0);
+        let m = fit_rtm_gibbs(&docs, &edges, &params(3, v, Link::Exponential), &mut frng);
+
+        // rows are valid simplices
+        for row in &m.topic_word {
+            assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        }
+        for row in &m.doc_topic {
+            assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        }
+        // each topic owns a distinct planted word block. (Link-prediction *quality*
+        // is deliberately not asserted for the Gibbs backend: R lda's estimate.params
+        // fits a negative β, so exp(β·z̄∘z̄) ranks dissimilar docs higher — see
+        // rtm_gibbs_link_beta_is_negative_like_r. The Gibbs backend's prize is
+        // same-algorithm *topic* parity; use inference="variational" for link scores.)
+        let owned: Vec<usize> = (0..3)
+            .map(|t| {
+                (0..3)
+                    .max_by(|&a, &b| {
+                        let sa: f64 = m.topic_word[t][a * 6..(a + 1) * 6].iter().sum();
+                        let sb: f64 = m.topic_word[t][b * 6..(b + 1) * 6].iter().sum();
+                        sa.total_cmp(&sb)
+                    })
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(
+            owned.iter().collect::<std::collections::HashSet<_>>().len(),
+            3,
+            "topics did not partition the blocks: {owned:?}"
+        );
+    }
+
+    #[test]
+    fn rtm_gibbs_is_deterministic() {
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let (docs, edges, _g, v) = planted(&mut rng, 30, 2, 5, 30);
+        let fit = || {
+            let mut r = ChaCha8Rng::seed_from_u64(3);
+            fit_rtm_gibbs(&docs, &edges, &params(2, v, Link::Exponential), &mut r)
+        };
+        let a = fit();
+        let b = fit();
+        assert_eq!(a.topic_word, b.topic_word);
+        assert_eq!(a.eta, b.eta);
+        assert_eq!(a.doc_topic, b.doc_topic);
+        let mut r2 = ChaCha8Rng::seed_from_u64(99);
+        let c = fit_rtm_gibbs(&docs, &edges, &params(2, v, Link::Exponential), &mut r2);
+        assert_ne!(a.topic_word, c.topic_word);
+    }
+
+    #[test]
+    fn rtm_gibbs_conforms() {
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
+        let (docs, edges, _g, v) = planted(&mut rng, 20, 2, 5, 25);
+        let mut frng = ChaCha8Rng::seed_from_u64(0);
+        let m = fit_rtm_gibbs(&docs, &edges, &params(2, v, Link::Exponential), &mut frng);
+        assert!(crate::conformance::check_conformance(&m).is_empty());
+    }
+
+    #[test]
+    fn rtm_gibbs_link_beta_is_negative_like_r() {
+        // R lda's estimate.params sets β_k = ln(p_k) with p_k ∈ (0,1), so the link
+        // coefficient is negative even on strongly-linked data (the documented
+        // reference quirk). Match it.
+        let mut rng = ChaCha8Rng::seed_from_u64(5);
+        let (docs, edges, _g, v) = planted(&mut rng, 60, 3, 6, 40);
+        let mut frng = ChaCha8Rng::seed_from_u64(0);
+        let m = fit_rtm_gibbs(&docs, &edges, &params(3, v, Link::Exponential), &mut frng);
+        assert!(
+            m.eta.iter().all(|&b| b < 0.0),
+            "expected all-negative link β (R quirk), got {:?}",
+            m.eta
+        );
     }
 }

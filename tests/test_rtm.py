@@ -134,6 +134,53 @@ def test_bad_params():
     topica.RTM(3, ridge=0.0)  # zero l2 prior (plain MLE) is allowed
 
 
+# --- collapsed-Gibbs backend (#424) -----------------------------------------
+
+def test_gibbs_recovers_topics_and_round_trips_settings():
+    docs, edges, groups, V = _planted()
+    m = topica.RTM(3, link="exponential", inference="gibbs", alpha=0.5, seed=0)
+    m.fit(docs, edges, iters=40)
+    assert m.settings["inference"] == "gibbs"
+    assert "beta" in m.settings
+    np.testing.assert_allclose(m.topic_word.sum(axis=1), 1.0, atol=1e-9)
+    np.testing.assert_allclose(m.doc_topic.sum(axis=1), 1.0, atol=1e-9)
+    # each topic owns a distinct planted word block
+    tw = m.topic_word[:, np.argsort([int(w) for w in m.vocabulary])]
+    owned = [max(range(3), key=lambda b: tw[t, b * 6:(b + 1) * 6].sum()) for t in range(3)]
+    assert set(owned) == {0, 1, 2}
+
+
+def test_gibbs_link_beta_is_negative_like_r():
+    # R lda's estimate.params sets beta_k = log(p_k), p_k in (0,1), so the link
+    # coefficient is negative even on strongly-linked data (the documented quirk).
+    docs, edges, _g, _V = _planted()
+    m = topica.RTM(3, link="exponential", inference="gibbs", seed=0).fit(docs, edges, iters=40)
+    assert (np.asarray(m.eta) < 0).all()
+    assert m.nu == 0.0  # the reference's exponential link has no intercept
+
+
+def test_gibbs_determinism_and_save_load(tmp_path):
+    docs, edges, _g, _V = _planted()
+    a = topica.RTM(3, inference="gibbs", seed=3).fit(docs, edges, iters=20)
+    b = topica.RTM(3, inference="gibbs", seed=3).fit(docs, edges, iters=20)
+    assert np.array_equal(a.topic_word, b.topic_word)
+    assert np.array_equal(a.eta, b.eta)
+    c = topica.RTM(3, inference="gibbs", seed=99).fit(docs, edges, iters=20)
+    assert not np.array_equal(a.topic_word, c.topic_word)
+    # save/load preserves the backend + fit
+    p = str(tmp_path / "gibbs.tt")
+    a.save(p)
+    n = topica.RTM.load(p)
+    assert n.settings["inference"] == "gibbs"
+    assert np.array_equal(n.topic_word, a.topic_word)
+    assert np.array_equal(n.eta, a.eta)
+
+
+def test_bad_inference_rejected():
+    with pytest.raises(ValueError, match="inference"):
+        topica.RTM(3, inference="mcmc")
+
+
 def test_edge_cases():
     docs, edges = _toy()
     # empty corpus
