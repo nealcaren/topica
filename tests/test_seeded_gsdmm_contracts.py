@@ -119,6 +119,135 @@ def test_seededlda_frequency_seed_mass_is_exact() -> None:
     assert m[ti["conflict"], vi["war"]] > m[ti["econ"], vi["budget"]]
 
 
+# ---------------------------------------------------------------------------
+# Dictionary seed matching (#456): quanteda-style fixed/glob/regex + case.
+# All checked exactly via seed_prior_matrix, which reflects the seeds actually
+# applied at fit — no reference toolchain required.
+# ---------------------------------------------------------------------------
+
+_DICT_DOCS = [
+    ["tax", "taxes", "taxation", "revenue"],
+    ["war", "conflict", "military"],
+    ["tax", "revenue", "budget"],
+    ["War", "Conflict", "defense"],
+]
+
+
+def _seeded_cells(model) -> set[tuple[str, str]]:
+    """(topic_name, word) pairs carrying nonzero seed mass."""
+    m = np.asarray(model.seed_prior_matrix)
+    vocab = list(model.vocabulary)
+    names = list(model.topic_names)
+    return {
+        (names[k], vocab[w])
+        for k in range(m.shape[0])
+        for w in range(m.shape[1])
+        if m[k, w] != 0.0
+    }
+
+
+def test_fixed_matching_is_exact_and_default() -> None:
+    """seed_match defaults to "fixed": a literal seed matches only that exact type,
+    not morphological variants sharing a prefix."""
+    model = topica.SeededLDA(
+        {"econ": ["tax"], "mil": ["war"]}, seed_prior="uniform", seed=1
+    )
+    assert model.settings["seed_match"] == "fixed"
+    assert model.settings["case_insensitive"] is False
+    model.fit(_DICT_DOCS, iters=0)
+    cells = _seeded_cells(model)
+    assert ("econ", "tax") in cells
+    # "taxes"/"taxation" are distinct types; a fixed "tax" seed must not reach them.
+    assert ("econ", "taxes") not in cells
+    assert ("econ", "taxation") not in cells
+    # Case-sensitive by default: "War" is a different type from the "war" seed.
+    assert ("mil", "War") not in cells
+
+
+def test_glob_expands_to_matching_vocabulary() -> None:
+    """seed_match="glob": "tax*" seeds every vocabulary type with that prefix."""
+    model = topica.SeededLDA(
+        {"econ": ["tax*"], "mil": ["war", "conflict"]},
+        seed_prior="uniform",
+        seed_match="glob",
+        seed=1,
+    )
+    model.fit(_DICT_DOCS, iters=0)
+    cells = _seeded_cells(model)
+    assert ("econ", "tax") in cells
+    assert ("econ", "taxes") in cells
+    assert ("econ", "taxation") in cells
+    # The glob is anchored, so "revenue" (no "tax" prefix) is not swept in.
+    assert ("econ", "revenue") not in cells
+
+
+def test_glob_case_insensitive_folds_case() -> None:
+    """case_insensitive=True folds case, so a lowercase glob also seeds the
+    capitalized surface forms (quanteda's dictionary default)."""
+    model = topica.SeededLDA(
+        {"econ": ["tax*"], "mil": ["war", "conflict"]},
+        seed_prior="uniform",
+        seed_match="glob",
+        case_insensitive=True,
+        seed=1,
+    )
+    model.fit(_DICT_DOCS, iters=0)
+    cells = _seeded_cells(model)
+    # Both "war"/"War" and "conflict"/"Conflict" are present in the vocab.
+    assert ("mil", "war") in cells
+    assert ("mil", "War") in cells
+    assert ("mil", "conflict") in cells
+    assert ("mil", "Conflict") in cells
+
+
+def test_regex_matches_unanchored() -> None:
+    """seed_match="regex" matches anywhere in the token (quanteda stri_detect_regex)."""
+    model = topica.SeededLDA(
+        {"econ": ["^tax"], "mil": ["war|conflict"]},
+        seed_prior="uniform",
+        seed_match="regex",
+        seed=1,
+    )
+    model.fit(_DICT_DOCS, iters=0)
+    cells = _seeded_cells(model)
+    # "^tax" anchors the start: tax, taxes, taxation.
+    assert {("econ", "tax"), ("econ", "taxes"), ("econ", "taxation")} <= cells
+    # Alternation, matched unanchored.
+    assert ("mil", "war") in cells
+    assert ("mil", "conflict") in cells
+
+
+def test_invalid_seed_match_rejected_at_construction() -> None:
+    with np.testing.assert_raises(ValueError):
+        topica.SeededLDA({"a": ["x"], "b": ["y"]}, seed_match="bogus")
+
+
+def test_invalid_regex_pattern_rejected_at_fit() -> None:
+    model = topica.SeededLDA(
+        {"a": ["["], "b": ["y"]}, seed_match="regex", seed=1
+    )
+    with np.testing.assert_raises(ValueError):
+        model.fit(_DICT_DOCS, iters=5)
+
+
+def test_seed_match_survives_save_load(tmp_path) -> None:
+    model = topica.SeededLDA(
+        {"econ": ["tax*"], "mil": ["war"]},
+        seed_prior="uniform",
+        seed_match="glob",
+        case_insensitive=True,
+        seed=1,
+    )
+    model.fit(_DICT_DOCS, iters=0)
+    before = _seeded_cells(model)
+    path = str(tmp_path / "seeded_glob.topica")
+    model.save(path)
+    reloaded = topica.SeededLDA.load(path)
+    assert reloaded.settings["seed_match"] == "glob"
+    assert reloaded.settings["case_insensitive"] is True
+    assert _seeded_cells(reloaded) == before
+
+
 def _manual_gsdmm_counts(docs: list[list[str]], clusters: np.ndarray, vocab: list[str]):
     word_index = {w: i for i, w in enumerate(vocab)}
     k = int(clusters.max()) + 1
