@@ -8632,11 +8632,25 @@ impl STS {
     /// EM runs until the relative change in the variational bound drops below
     /// `convergence_tol` or `iters` iterations are reached.
     ///
-    /// `kappa_estimation` chooses the topic-word (κ) estimator: ``"ridge"``
-    /// (default) is a fast ridge-penalized Poisson fit (`kappa_ridge` sets the
-    /// ridge); ``"lasso"`` is an L1 Poisson path with AIC-selected penalty,
-    /// matching the reference R `sts` exactly (sparser κ) at a higher cost. The
-    /// two give the same topics on well-conditioned corpora.
+    /// `kappa_estimation` chooses the topic-word (κ) estimator. Left unset
+    /// (``None``, the default) it resolves to ``"ridge"`` unless a `reference`
+    /// profile overrides it; passing it explicitly pins the estimator and, under a
+    /// reference profile, is checked for conflict (see below). ``"ridge"``
+    /// is a fast ridge-penalized Poisson fit (`kappa_ridge` sets the
+    /// ridge) — topica-native, not a reference target. ``"lasso"`` is an L1
+    /// Poisson path with AIC-selected penalty (the paper replication code's
+    /// default). ``"adjusted"`` is the CRAN `sts` public default: the same L1/AIC
+    /// solve but with the aggregated sentiment column formed as a φ-mass-weighted
+    /// group mean of ``α^(s)`` (the reference `weighted_alpha` reweighting).
+    ///
+    /// `reference` selects a reference-fidelity fitting profile. ``"none"``
+    /// (default) is topica-native and honors `kappa_estimation` as given.
+    /// ``"paper"`` reproduces Chen & Mankad (2024) (STM-derived spectral-eta /
+    /// sentiment-prior-variance-20 init, the ``"lasso"`` estimator, no κ damping).
+    /// ``"cran"`` reproduces CRAN `sts` (the same init, the ``"adjusted"``
+    /// estimator, and the reference half-step κ damping). A reference profile
+    /// forces its own estimator, so pairing it with any explicit
+    /// `kappa_estimation` that differs — including an explicit ``"ridge"`` — raises.
     /// `prevalence_names` are human-readable labels for the prevalence design-matrix
     /// columns, surfaced in the effect outputs. `em_tol` is the relative-bound
     /// tolerance for EM early stopping — the run stops when the relative change in
@@ -8645,8 +8659,8 @@ impl STS {
     /// save memory.
     #[pyo3(signature = (data, sentiment_seed, prevalence=None, *,
                         prevalence_names=None, iters=30, convergence_tol=1e-5,
-                        kappa_estimation="ridge", kappa_ridge=1e-3, em_tol=None, covariates=None,
-                        keep_eta_cov=true))]
+                        kappa_estimation=None, kappa_ridge=1e-3, em_tol=None, covariates=None,
+                        keep_eta_cov=true, reference="none"))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -8657,11 +8671,12 @@ impl STS {
         prevalence_names: Option<Vec<String>>,
         iters: usize,
         convergence_tol: f64,
-        kappa_estimation: &str,
+        kappa_estimation: Option<&str>,
         kappa_ridge: f64,
         em_tol: Option<f64>,
         covariates: Option<&Bound<'_, PyAny>>,
         keep_eta_cov: bool,
+        reference: &str,
     ) -> PyResult<Py<Self>> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
@@ -8692,15 +8707,67 @@ impl STS {
             (None, Some(c)) => Some(c),
             (None, None) => None,
         };
+        // `kappa_estimation` is a sentinel Option so an explicit "ridge" (the
+        // topica-native default estimator) is distinguishable from "unset". This
+        // matters for the reference-profile conflict check below: reference="cran"
+        // paired with an explicit kappa_estimation="ridge" must raise, not be
+        // silently overwritten with the profile's estimator.
+        let user_set_kappa = kappa_estimation.is_some();
+        let kappa_estimation: &str = kappa_estimation.unwrap_or("ridge");
+        let lasso = sts::KappaEst::Lasso {
+            nlambda: 100,
+            lambda_min_ratio: 0.001,
+        };
+        let adjusted = sts::KappaEst::Adjusted {
+            nlambda: 100,
+            lambda_min_ratio: 0.001,
+        };
         let kappa_est = match kappa_estimation {
-            "lasso" => sts::KappaEst::Lasso {
-                nlambda: 100,
-                lambda_min_ratio: 0.001,
-            },
+            "lasso" => lasso,
+            "adjusted" => adjusted,
             "ridge" => sts::KappaEst::Ridge(kappa_ridge),
             other => {
                 return Err(PyValueError::new_err(format!(
-                    "kappa_estimation must be \"lasso\" or \"ridge\", got {:?}",
+                    "kappa_estimation must be \"ridge\", \"lasso\", or \"adjusted\", got {:?}",
+                    other
+                )))
+            }
+        };
+        // `reference` selects a reference-fidelity fitting profile. Both profiles
+        // share the STM-derived spectral-eta / sentiment-prior-variance-20
+        // initialization; they differ only in the κ estimator and damping:
+        //   "paper" — Chen & Mankad (2024) replication (`estimation="lasso"`, plain
+        //             group-mean aggregation, no κ damping).
+        //   "cran"  — CRAN `sts` public default (`kappaEstimation="adjusted"`,
+        //             φ-mass-weighted aggregation, half-step κ damping).
+        //   "none"  — topica-native; honors kappa_estimation as given (ridge default).
+        // A reference profile forces its estimator, so pairing it with a conflicting
+        // explicit kappa_estimation is an error (including an explicit "ridge").
+        let (kappa_est, reference_init, kappa_damping) = match reference {
+            "none" => (kappa_est, false, false),
+            "paper" => {
+                if user_set_kappa && kappa_estimation != "lasso" {
+                    return Err(PyValueError::new_err(format!(
+                        "reference=\"paper\" uses the \"lasso\" estimator; \
+                         remove kappa_estimation={:?} or set it to \"lasso\"",
+                        kappa_estimation
+                    )));
+                }
+                (lasso, true, false)
+            }
+            "cran" => {
+                if user_set_kappa && kappa_estimation != "adjusted" {
+                    return Err(PyValueError::new_err(format!(
+                        "reference=\"cran\" uses the \"adjusted\" estimator; \
+                         remove kappa_estimation={:?} or set it to \"adjusted\"",
+                        kappa_estimation
+                    )));
+                }
+                (adjusted, true, true)
+            }
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "reference must be \"none\", \"paper\", or \"cran\", got {:?}",
                     other
                 )))
             }
@@ -8796,6 +8863,8 @@ impl STS {
                 kappa_est,
                 spectral,
                 keep_eta_cov,
+                reference_init,
+                kappa_damping,
                 &mut rng,
             );
             (m, corpus)
@@ -14255,6 +14324,39 @@ fn experimental_is_enabled() -> bool {
     experimental_enabled()
 }
 
+/// Parity hook (private): run STS's native Poisson L1/AIC κ solve on a
+/// caller-supplied aggregated design and return the AIC-selected coefficients.
+/// This is the kernel shared by `kappa_estimation="lasso"` and `"adjusted"`; it
+/// exists so `parity/sts_kappa_glmnet.py` can validate the native path head-to-head
+/// with R glmnet. Not part of the public API. `x` is the (n × p) design, `y` the
+/// Poisson response, `offset` the per-row log-offset; `nlambda` and
+/// `lambda_min_ratio` set the λ path exactly as in `opt_kappa`.
+#[pyfunction]
+#[pyo3(signature = (x, y, offset, nlambda=250, lambda_min_ratio=0.001))]
+fn _sts_poisson_lasso(
+    py: Python<'_>,
+    x: Vec<Vec<f64>>,
+    y: Vec<f64>,
+    offset: Vec<f64>,
+    nlambda: usize,
+    lambda_min_ratio: f64,
+) -> PyResult<Py<PyArray1<f64>>> {
+    let n = x.len();
+    if y.len() != n || offset.len() != n {
+        return Err(PyValueError::new_err(
+            "x, y, and offset must have the same number of rows",
+        ));
+    }
+    let p = x.first().map(|r| r.len()).unwrap_or(0);
+    if x.iter().any(|r| r.len() != p) {
+        return Err(PyValueError::new_err(
+            "all rows of x must have equal length",
+        ));
+    }
+    let coef = sts::poisson_lasso(&x, &y, &offset, nlambda, lambda_min_ratio);
+    Ok(PyArray1::from_vec_bound(py, coef).unbind())
+}
+
 #[pymodule]
 fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LDA>()?;
@@ -14306,6 +14408,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(project, m)?)?;
     m.add_function(wrap_pyfunction!(set_experimental, m)?)?;
     m.add_function(wrap_pyfunction!(experimental_is_enabled, m)?)?;
+    m.add_function(wrap_pyfunction!(_sts_poisson_lasso, m)?)?;
     m.add("DEFAULT_TOKEN_REGEX", corpus::DEFAULT_TOKEN_REGEX)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())

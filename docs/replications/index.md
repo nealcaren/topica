@@ -14,3 +14,4 @@ diverge, we say so.
 - [Structural Topic Model: the `stm` vignette](stm.md) (Roberts, Stewart & Tingley)
 - [Dynamic keyATM: U.S. Supreme Court opinions](keyatm-dynamic.md) (Eshima, Imai & Sasaki 2024)
 - [TensorLDA: implementation validation](tlda.md) (Kangaslahti et al. 2026)
+- [STS: reference-fidelity fitting profiles](sts.md) (Chen & Mankad 2024)

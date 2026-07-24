@@ -567,7 +567,7 @@ fn soft_threshold(z: f64, g: f64) -> f64 {
 /// `alpha=1`, `intercept=FALSE`, `standardize=FALSE`). Fit by IRLS with inner
 /// coordinate descent (Friedman, Hastie & Tibshirani 2010); warm-started down the
 /// path. `x` is `n×p`, with a fixed `offset`. Returns the AIC-selected coefficients.
-fn poisson_lasso(
+pub(crate) fn poisson_lasso(
     x: &[Vec<f64>],
     y: &[f64],
     offset: &[f64],
@@ -663,14 +663,33 @@ fn poisson_lasso(
 /// How the topic-word coefficients `κ` are estimated in the M-step.
 #[derive(Clone, Copy)]
 pub enum KappaEst {
-    /// Ridge-penalized Poisson (Newton) per (word, topic). Stable and fast.
+    /// Ridge-penalized Poisson (Newton) per (word, topic). topica-native: fast and
+    /// stable, and the topica default. Not a reference-fidelity target.
     Ridge(f64),
-    /// L1 (lasso) Poisson over a λ path with AIC-selected penalty — the reference
-    /// `opt.kappa.R` default (glmnet). Sparser κ; closer to the R `sts` solution.
+    /// L1 (lasso) Poisson over a λ path with AIC-selected penalty (glmnet-style).
+    /// Sparser κ. This is the paper replication code's `opt.kappa.R` default, but
+    /// not the CRAN `sts` public default — see [`KappaEst::Adjusted`].
     Lasso {
         nlambda: usize,
         lambda_min_ratio: f64,
     },
+    /// The CRAN `sts` public default (`kappaEstimation = "adjusted"`). Identical
+    /// L1/AIC Poisson solve as [`KappaEst::Lasso`], but the aggregated sentiment
+    /// design column for each group is a φ-weighted mean of `α^(s)` (each document
+    /// weighted by its topic-`t` expected token mass), matching the `weighted_alpha`
+    /// reweighting in CRAN `opt.kappa.R`. See [`group_means_weighted`].
+    Adjusted {
+        nlambda: usize,
+        lambda_min_ratio: f64,
+    },
+}
+
+impl KappaEst {
+    /// Whether the κ aggregation weights `α^(s)` by per-document topic mass
+    /// (the CRAN "adjusted" reweighting) rather than a plain group mean.
+    fn weighted_aggregation(&self) -> bool {
+        matches!(self, KappaEst::Adjusted { .. })
+    }
 }
 
 /// M-step for the topic-word coefficients `κ` (Chen & Mankad §4.2; `opt.kappa.R`).
@@ -728,9 +747,15 @@ fn opt_kappa(
         KappaEst::Lasso {
             nlambda,
             lambda_min_ratio,
+        }
+        | KappaEst::Adjusted {
+            nlambda,
+            lambda_min_ratio,
         } => {
             // Joint (G·K)×(2K) design, word-independent: row (g,t) carries a 1 in
             // the topic-t dummy column and α^(s)_agg in the topic-t slope column.
+            // `Adjusted` differs only in how `alpha_agg` was aggregated (φ-weighted,
+            // see `group_means_weighted`); the solve below is identical.
             let n = num_groups * k;
             let p = 2 * k;
             let mut x = vec![vec![0.0f64; p]; n];
@@ -786,11 +811,63 @@ fn group_means(alpha: &[Vec<f64>], group: &[usize], num_groups: usize, k: usize)
     sums
 }
 
+/// φ-weighted per-group means of the sentiment block `α^(s)`, the CRAN `sts`
+/// "adjusted" aggregation. Each document `d` weights topic `t` by its expected
+/// topic mass `phi_d[d][t] = Σ_v φ_{d,v,t}`, so
+/// `alpha_agg[g][t] = Σ_{d∈g} α^(s)_{d,t} · phi_d[d][t] / Σ_{d∈g} phi_d[d][t]`.
+/// This reproduces `weighted_alpha[[t]] <- alpha_s[[t]] * softmax(log phiD[[t]])`
+/// in `opt.kappa.R` (softmax over log topic mass = mass-proportional weights). A
+/// group whose topic mass is zero falls back to the plain mean.
+fn group_means_weighted(
+    alpha: &[Vec<f64>],
+    group: &[usize],
+    num_groups: usize,
+    k: usize,
+    phi_d: &[Vec<f64>],
+) -> Vec<Vec<f64>> {
+    let mut weighted = vec![vec![0.0f64; k]; num_groups];
+    let mut wsum = vec![vec![0.0f64; k]; num_groups];
+    for (di, a) in alpha.iter().enumerate() {
+        let g = group[di];
+        for t in 0..k {
+            let w = phi_d[di][t];
+            weighted[g][t] += a[k - 1 + t] * w;
+            wsum[g][t] += w;
+        }
+    }
+    for g in 0..num_groups {
+        for t in 0..k {
+            if wsum[g][t] > 1e-300 {
+                weighted[g][t] /= wsum[g][t];
+            }
+        }
+    }
+    weighted
+}
+
+/// Apply the CRAN `opt.kappa.R` half-step damping in place: each new coefficient
+/// is averaged with the previous value, `κ ← (κ_new + κ_old)/2`. At the initial
+/// κ estimation the reference passes an all-zero κ, so `prev` should be zeros
+/// there (the new coefficients are simply halved).
+fn damp_kappa_halfstep(new: &mut [Vec<f64>], prev: &[Vec<f64>]) {
+    for (nrow, prow) in new.iter_mut().zip(prev.iter()) {
+        for (nv, &pv) in nrow.iter_mut().zip(prow.iter()) {
+            *nv = 0.5 * (*nv + pv);
+        }
+    }
+}
+
 /// Fit the STS model (Chen & Mankad 2024). The E-step is the Laplace variational
 /// inference of [`sts_lhood`]/[`sts_grad`]/[`sts_precision`]; the M-step updates
 /// `Γ` (pooled ridge), `Σ` (as in CTM/STM), and `κ` (the Poisson regression of
 /// [`opt_kappa`]). Aggregation groups for the `κ` step are the distinct levels of
 /// `sentiment_seed`, which also seeds the initial `α^(s)`.
+///
+/// `reference_init` and `kappa_damping` select the CRAN `sts` reference-fidelity
+/// behavior: `reference_init` starts the prevalence latents `α^(topic)` at the
+/// spectral solution and sets the sentiment-block prior variance to 20 (the
+/// reference `diag(1/20)` precision); `kappa_damping` applies the reference
+/// half-step κ update `(κ_new + κ_old)/2` on every M-step and at initialization.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_sts<R: Rng>(
     docs: &[Vec<u32>],
@@ -803,6 +880,8 @@ pub fn fit_sts<R: Rng>(
     kappa_est: KappaEst,
     init_spectral: bool,
     keep_nu: bool,
+    reference_init: bool,
+    kappa_damping: bool,
     rng: &mut R,
 ) -> StsModel {
     let k = num_topics;
@@ -890,29 +969,72 @@ pub fn fit_sts<R: Rng>(
 
     // Initial κ (Chen & Mankad §4.3): aggregate the spectral-β responsibilities
     // (uniform θ) by group and run the Poisson M-step against the seeded α^(s), so
-    // κ_s enters the first E-step non-zero.
+    // κ_s enters the first E-step non-zero. `phi_d[d][t] = Σ_v φ_{d,v,t}` is the
+    // per-document topic mass, needed by the CRAN "adjusted" φ-weighted aggregation
+    // and (below) the reference eta initialization.
+    let mut phi_d = vec![vec![0.0f64; k]; d];
     {
         let mut phi_by_group = vec![vec![vec![0.0f64; k]; v]; num_groups];
         for (di, (words, counts)) in sparse.iter().enumerate() {
             for (wi, &w) in words.iter().enumerate() {
                 let denom: f64 = (0..k).map(|t| beta[t][w]).sum::<f64>().max(1e-12);
                 for t in 0..k {
-                    phi_by_group[group[di]][w][t] += counts[wi] * beta[t][w] / denom;
+                    let r = counts[wi] * beta[t][w] / denom;
+                    phi_by_group[group[di]][w][t] += r;
+                    phi_d[di][t] += r;
                 }
             }
         }
-        let alpha_agg = group_means(&alpha, &group, num_groups, k);
-        let (kt, ks) = opt_kappa(&phi_by_group, &alpha_agg, &mv, k, v, num_groups, kappa_est);
+        let alpha_agg = if kappa_est.weighted_aggregation() {
+            group_means_weighted(&alpha, &group, num_groups, k, &phi_d)
+        } else {
+            group_means(&alpha, &group, num_groups, k)
+        };
+        let (mut kt, mut ks) =
+            opt_kappa(&phi_by_group, &alpha_agg, &mv, k, v, num_groups, kappa_est);
+        if kappa_damping {
+            // Reference damps the initial κ against an all-zero κ (halving it).
+            let zero = vec![vec![0.0f64; v]; k];
+            damp_kappa_halfstep(&mut kt, &zero);
+            damp_kappa_halfstep(&mut ks, &zero);
+        }
         kappa_t = kt;
         kappa_s = ks;
     }
 
-    let mut gamma: Option<Vec<Vec<f64>>> = nf.map(|f| vec![vec![0.0f64; n]; f]);
-    let mut mu_shared = vec![0.0f64; n];
+    // Reference-compatible latent/covariance init (item #5). The prevalence latents
+    // start at the spectral solution (`α^(topic)_d = log θ_d − log θ_{d,K}`, the
+    // softmax-basis analog of STM's `mod.out$eta`) instead of 0, and the
+    // sentiment-block prior variance is set to 20 (the reference `diag(1/20)`
+    // precision). This is the documented statistically-equivalent substitute for
+    // STM's spectral eta / invsigma initialization, not a byte-identical STM port.
     let mut sigma = vec![0.0f64; n * n];
     for i in 0..n {
         sigma[i * n + i] = 1.0;
     }
+    if reference_init {
+        for di in 0..d {
+            let sum: f64 = phi_d[di].iter().sum::<f64>().max(1e-12);
+            let ref_log = (phi_d[di][k - 1] / sum).max(1e-8).ln();
+            for t in 0..(k - 1) {
+                alpha[di][t] = (phi_d[di][t] / sum).max(1e-8).ln() - ref_log;
+            }
+        }
+        // Topic-block prior covariance ≈ sample variance of the init eta (the STM
+        // invsigma analog), floored for conditioning; sentiment block at variance 20.
+        for t in 0..(k - 1) {
+            let mean: f64 = alpha.iter().map(|a| a[t]).sum::<f64>() / d as f64;
+            let var: f64 =
+                alpha.iter().map(|a| (a[t] - mean).powi(2)).sum::<f64>() / (d.max(1) as f64);
+            sigma[t * n + t] = var.max(1e-2);
+        }
+        for i in (k - 1)..n {
+            sigma[i * n + i] = 20.0;
+        }
+    }
+
+    let mut gamma: Option<Vec<Vec<f64>>> = nf.map(|f| vec![vec![0.0f64; n]; f]);
+    let mut mu_shared = vec![0.0f64; n];
     // When keep_nu=false, don't allocate storage for per-doc ν (saves O(N·(2K-1)²)
     // memory), but still consume it transiently for the Σ sufficient-stat update.
     let mut nu_store: Vec<Vec<f64>> = if keep_nu {
@@ -1027,11 +1149,15 @@ pub fn fit_sts<R: Rng>(
         } else {
             vec![0.0f64; n * n]
         };
+        for di in 0..d {
+            phi_d[di].iter_mut().for_each(|x| *x = 0.0);
+        }
         for (di, (a_hat, nu_d, bound_contrib, phi_contrib)) in doc_results {
             let g = group[di];
             for (w, row) in &phi_contrib {
                 for t in 0..k {
                     phi_by_group[g][*w][t] += row[t];
+                    phi_d[di][t] += row[t];
                 }
             }
             total_bound += bound_contrib;
@@ -1086,8 +1212,18 @@ pub fn fit_sts<R: Rng>(
         // sentiment (skipped when there is only one group, which leaves κ_s
         // unidentified and κ_t at its β-derived initialization).
         if num_groups >= 2 {
-            let alpha_agg = group_means(&alpha, &group, num_groups, k);
-            let (kt, ks) = opt_kappa(&phi_by_group, &alpha_agg, &mv, k, v, num_groups, kappa_est);
+            let alpha_agg = if kappa_est.weighted_aggregation() {
+                group_means_weighted(&alpha, &group, num_groups, k, &phi_d)
+            } else {
+                group_means(&alpha, &group, num_groups, k)
+            };
+            let (mut kt, mut ks) =
+                opt_kappa(&phi_by_group, &alpha_agg, &mv, k, v, num_groups, kappa_est);
+            if kappa_damping {
+                // Reference half-step: average the new κ with the previous iterate.
+                damp_kappa_halfstep(&mut kt, &kappa_t);
+                damp_kappa_halfstep(&mut ks, &kappa_s);
+            }
             kappa_t = kt;
             kappa_s = ks;
         }
@@ -1317,6 +1453,8 @@ mod tests {
             KappaEst::Ridge(1e-3),
             true,
             true,
+            false,
+            false,
             &mut rng,
         );
 
@@ -1369,6 +1507,8 @@ mod tests {
             KappaEst::Ridge(1e-3),
             true,
             true,
+            false,
+            false,
             &mut r1,
         );
         let m2 = fit_sts(
@@ -1382,6 +1522,8 @@ mod tests {
             KappaEst::Ridge(1e-3),
             true,
             true,
+            false,
+            false,
             &mut r2,
         );
         for (a, b) in m1.alpha.iter().flatten().zip(m2.alpha.iter().flatten()) {
@@ -1479,6 +1621,8 @@ mod tests {
             KappaEst::Ridge(1e-3),
             true,
             true,
+            false,
+            false,
             &mut rng,
         );
 
@@ -1515,6 +1659,8 @@ mod tests {
             est,
             true,
             true,
+            false,
+            false,
             &mut rng,
         );
 
@@ -1544,6 +1690,153 @@ mod tests {
     }
 
     #[test]
+    fn weighted_aggregation_matches_hand_computed_mass_weighted_mean() {
+        // Two groups, K=2. group 0 = docs {0,1}; group 1 = doc {2}. The adjusted
+        // aggregation is Σ_d α^(s)_{d,t}·phi_d[d][t] / Σ_d phi_d[d][t] per group.
+        let k = 2;
+        let group = vec![0usize, 0, 1];
+        // alpha rows are length 2K-1 = 3; sentiment block is indices [k-1..] = [1,2].
+        let alpha = vec![
+            vec![0.0, 2.0, 4.0],  // doc0: α^(s) = (2,4)
+            vec![0.0, 6.0, 8.0],  // doc1: α^(s) = (6,8)
+            vec![0.0, 1.0, -1.0], // doc2: α^(s) = (1,-1)
+        ];
+        let phi_d = vec![
+            vec![1.0, 3.0], // doc0 topic mass
+            vec![3.0, 1.0], // doc1 topic mass
+            vec![5.0, 5.0], // doc2 topic mass
+        ];
+        let agg = group_means_weighted(&alpha, &group, 2, k, &phi_d);
+        // group 0, topic 0: (2*1 + 6*3)/(1+3) = 20/4 = 5
+        // group 0, topic 1: (4*3 + 8*1)/(3+1) = 20/4 = 5
+        assert!((agg[0][0] - 5.0).abs() < 1e-12);
+        assert!((agg[0][1] - 5.0).abs() < 1e-12);
+        // group 1 has a single doc, so the weighted mean is that doc's α^(s).
+        assert!((agg[1][0] - 1.0).abs() < 1e-12);
+        assert!((agg[1][1] - (-1.0)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn halfstep_damping_averages_with_previous() {
+        let mut new = vec![vec![2.0, 4.0], vec![0.0, -2.0]];
+        let prev = vec![vec![0.0, 0.0], vec![4.0, 2.0]];
+        damp_kappa_halfstep(&mut new, &prev);
+        // (2+0)/2=1, (4+0)/2=2 ; (0+4)/2=2, (-2+2)/2=0
+        assert_eq!(new, vec![vec![1.0, 2.0], vec![2.0, 0.0]]);
+    }
+
+    #[test]
+    fn adjusted_kappa_fits_end_to_end_and_moves_sentiment() {
+        // The CRAN-default "adjusted" κ path runs a full fit, learns a non-zero
+        // κ_s, and still separates the planted blocks.
+        let (docs, x, truth, v) = planted_corpus();
+        let seed: Vec<f64> = x.iter().map(|row| row[1]).collect();
+        let mut rng = StdRng::seed_from_u64(11);
+        let est = KappaEst::Adjusted {
+            nlambda: 60,
+            lambda_min_ratio: 0.001,
+        };
+        let m = fit_sts(
+            &docs,
+            2,
+            v,
+            20,
+            1e-6,
+            Some(&x),
+            Some(&seed),
+            est,
+            true,
+            true,
+            false,
+            false,
+            &mut rng,
+        );
+        let ks_max = m
+            .kappa_s
+            .iter()
+            .flatten()
+            .fold(0.0f64, |acc, &x| acc.max(x.abs()));
+        assert!(ks_max > 1e-3, "adjusted κ_s never moved off zero: {ks_max}");
+        let tw = m.topic_word();
+        let top0 = (0..v)
+            .max_by(|&a, &b| tw[0][a].partial_cmp(&tw[0][b]).unwrap())
+            .unwrap();
+        let topic_for_a = if top0 < 4 { 0 } else { 1 };
+        let correct = m
+            .doc_topics()
+            .iter()
+            .enumerate()
+            .filter(|(d, th)| {
+                let dominant = if th[0] >= th[1] { 0 } else { 1 };
+                dominant
+                    == if truth[*d] == 0 {
+                        topic_for_a
+                    } else {
+                        1 - topic_for_a
+                    }
+            })
+            .count();
+        assert!(
+            correct as f64 / 60.0 > 0.85,
+            "adjusted fit only {correct}/60 separated"
+        );
+    }
+
+    #[test]
+    fn reference_compatible_profile_fits_finite_and_recovers() {
+        // reference_init + damping + adjusted together: the fit stays finite, the
+        // bound is well-formed, and the planted blocks are recovered.
+        let (docs, x, truth, v) = planted_corpus();
+        let seed: Vec<f64> = x.iter().map(|row| row[1]).collect();
+        let mut rng = StdRng::seed_from_u64(13);
+        let est = KappaEst::Adjusted {
+            nlambda: 60,
+            lambda_min_ratio: 0.001,
+        };
+        let m = fit_sts(
+            &docs,
+            2,
+            v,
+            20,
+            1e-6,
+            Some(&x),
+            Some(&seed),
+            est,
+            true,
+            true,
+            true,
+            true,
+            &mut rng,
+        );
+        assert!(m.kappa_t.iter().flatten().all(|x| x.is_finite()));
+        assert!(m.kappa_s.iter().flatten().all(|x| x.is_finite()));
+        assert!(m.bound_history.iter().all(|b| b.is_finite()));
+        let tw = m.topic_word();
+        let top0 = (0..v)
+            .max_by(|&a, &b| tw[0][a].partial_cmp(&tw[0][b]).unwrap())
+            .unwrap();
+        let topic_for_a = if top0 < 4 { 0 } else { 1 };
+        let correct = m
+            .doc_topics()
+            .iter()
+            .enumerate()
+            .filter(|(d, th)| {
+                let dominant = if th[0] >= th[1] { 0 } else { 1 };
+                dominant
+                    == if truth[*d] == 0 {
+                        topic_for_a
+                    } else {
+                        1 - topic_for_a
+                    }
+            })
+            .count();
+        assert!(
+            correct as f64 / 60.0 > 0.8,
+            "reference-compatible fit only {correct}/60 separated"
+        );
+    }
+
+    #[test]
     fn sts_conforms() {
         use crate::conformance::{check_conformance, check_logistic_normal};
         let (docs, x, _truth, v) = planted_corpus();
@@ -1560,6 +1853,8 @@ mod tests {
             KappaEst::Ridge(1e-3),
             true,
             true,
+            false,
+            false,
             &mut rng,
         );
         let base = check_conformance(&m);
