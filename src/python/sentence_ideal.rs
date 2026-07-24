@@ -232,6 +232,13 @@ impl IdealPointSentenceTM {
         Ok(self.fitted_model()?.num_authors)
     }
     /// Author positions (num_authors, num_dims), standardized to mean 0 / unit var.
+    ///
+    /// Identifiability: identified only up to **sign** per dimension — and, for
+    /// `num_dims > 1`, up to an arbitrary **rotation** of the axes (the Gaussian
+    /// mixture is invariant under `x -> x @ R`, `V -> R^-1 @ V`). Pass `anchors` to
+    /// `fit()` to fix the sign of dimension 0; without them the orientation is
+    /// deterministic for a given seed but otherwise arbitrary, and multi-dimensional
+    /// positions are best read through the loadings, not coordinate-by-coordinate.
     #[getter]
     fn author_positions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(&self.fitted_model()?.x).to_pyarray_bound(py))

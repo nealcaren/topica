@@ -331,6 +331,13 @@ impl Wordfish {
     }
     /// Author positions as a (num_authors, 1) matrix, standardized to mean 0 / unit
     /// variance. The latent left-right scale.
+    ///
+    /// Identifiability: identified only up to **sign** — the scale is symmetric, so
+    /// which pole is "left" is arbitrary. Pass `anchors` to `fit()` to orient it;
+    /// without anchors the sign is deterministic for a given corpus but otherwise
+    /// arbitrary (it can flip across corpora). Note R quanteda instead *always*
+    /// orients by default (`dir = c(1, 2)`, i.e. document 1 < document 2), so an
+    /// unanchored topica axis may point opposite to quanteda's.
     #[getter]
     fn author_positions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(&self.fitted_model()?.positions()).to_pyarray_bound(py))
