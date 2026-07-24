@@ -6458,6 +6458,7 @@ impl CTM {
                         tau,
                         kappa,
                         shrink,
+                        convergence_tol,
                         spectral,
                         keep_eta_cov,
                         diagonal,

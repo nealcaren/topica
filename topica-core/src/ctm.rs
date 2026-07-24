@@ -1506,6 +1506,7 @@ pub fn fit_ctm_svi<R: Rng>(
     tau: f64,
     kappa: f64,
     sigma_shrink: f64,
+    convergence_tol: f64,
     init_spectral: bool,
     keep_nu: bool,
     diagonal: bool,
@@ -1541,8 +1542,12 @@ pub fn fit_ctm_svi<R: Rng>(
 
     let mut mu_shared = vec![0.0f64; km1];
     let mut sigma = vec![0.0f64; km1 * km1];
+    // `m2` is the persistent second-moment sufficient statistic E[ν + η ηᵀ]; Σ is
+    // derived from it each M-step as M2 − μ μᵀ. With μ = 0 and Σ = I at init, M2 = I.
+    let mut m2 = vec![0.0f64; km1 * km1];
     for i in 0..km1 {
         sigma[i * km1 + i] = 1.0;
+        m2[i * km1 + i] = 1.0;
     }
     let mut lambda = vec![vec![0.0f64; km1]; d];
     let mut nu_store: Vec<Vec<f64>> = if keep_nu {
@@ -1575,9 +1580,20 @@ pub fn fit_ctm_svi<R: Rng>(
 
     let mut t_step: usize = 0;
 
-    for _epoch in 0..epochs {
+    // Per-epoch running ELBO trace plus the early-stop bookkeeping. Every doc is
+    // visited exactly once per epoch (the shuffled order covers all D), so the sum
+    // of the per-minibatch bounds is a full-corpus ELBO estimate for that epoch —
+    // a "running" bound because the globals move within the epoch, which is the
+    // standard streaming-VB convergence signal. `convergence_tol > 0` stops early
+    // on the relative epoch-to-epoch change; `converged` reports whether it did.
+    let mut bound_history: Vec<f64> = Vec::with_capacity(epochs);
+    let mut converged = false;
+    let mut epochs_run = epochs;
+
+    for epoch in 0..epochs {
         // Deterministic shuffle (Fisher-Yates with the supplied rng).
         let order = crate::variational::svi::shuffled_order(d, rng);
+        let mut epoch_bound = 0.0;
 
         for chunk in order.chunks(batch) {
             t_step += 1;
@@ -1620,6 +1636,7 @@ pub fn fit_ctm_svi<R: Rng>(
                 if keep_nu {
                     nu_store[di] = res.nu.clone();
                 }
+                epoch_bound += res.bound;
                 etas.push(opt);
             }
             let bsz = chunk.len() as f64;
@@ -1642,30 +1659,60 @@ pub fn fit_ctm_svi<R: Rng>(
                     beta[tt][v] = lambda_beta[tt][v] / s;
                 }
             }
-            // μ: blend toward the minibatch mean η.
+            // (μ, Σ): faithful SVI on the Gaussian's expected sufficient statistics
+            // (Hoffman et al. 2013). The globals are the first and second moments
+            //   s1 = E[η]              (= μ)
+            //   s2 = E[ν + η ηᵀ]       (= M2, the persistent `m2`)
+            // Each is a Robbins-Monro blend toward its minibatch estimate, then
+            //   Σ = M2 − μ μᵀ.
+            // Deriving Σ from the raw second moment — rather than centering a
+            // per-minibatch cross-product on some choice of μ — is what makes this
+            // correct: the batch M-step can center on the just-updated μ only because
+            // there μ IS the exact mean of the same λ set, but the SVI μ is a blended
+            // value that is neither the minibatch mean nor a consistent center, so
+            // centering on it folds the μ step into Σ (#421). Accumulating ηηᵀ instead
+            // has no centering choice and stays well-defined at batch_size = 1, where
+            // any batch-mean-centered covariance would collapse to ν alone.
+            let mut m2_hat = vec![0.0f64; km1 * km1];
+            for eta in &etas {
+                for i in 0..km1 {
+                    for j in 0..km1 {
+                        m2_hat[i * km1 + j] += eta[i] * eta[j];
+                    }
+                }
+            }
             for i in 0..km1 {
                 mu_shared[i] = (1.0 - rho) * mu_shared[i] + rho * (lambda_sum[i] / bsz);
             }
-            // Σ: blend toward the minibatch covariance estimate.
             for i in 0..km1 {
                 for j in 0..km1 {
-                    let mut cross = 0.0;
-                    for eta in &etas {
-                        cross += (eta[i] - mu_shared[i]) * (eta[j] - mu_shared[j]);
-                    }
-                    let mut shat = (sigma_ss[i * km1 + j] + cross) / bsz;
-                    // Shrink the minibatch TARGET, then take the Robbins-Monro step.
-                    // Multiplying the blended value instead applied the shrink on
-                    // every minibatch regardless of ρ, so off-diagonals contracted
-                    // by (1-shrink) per step and collapsed to ~0 (a spurious
-                    // diagonal Σ) rather than shrinking gently as ρ → 0.
+                    let s2_hat = (sigma_ss[i * km1 + j] + m2_hat[i * km1 + j]) / bsz;
+                    m2[i * km1 + j] = (1.0 - rho) * m2[i * km1 + j] + rho * s2_hat;
+                    let mut sij = m2[i * km1 + j] - mu_shared[i] * mu_shared[j];
+                    // Off-diagonal shrinkage toward a diagonal Σ, applied once to the
+                    // freshly derived covariance (not fed back into the unshrunk `m2`),
+                    // so it is a fixed shrinkage prior — it does not compound step over
+                    // step into the collapse the per-minibatch multiply once caused.
                     if sigma_shrink > 0.0 && i != j {
-                        shat *= 1.0 - sigma_shrink;
+                        sij *= 1.0 - sigma_shrink;
                     }
-                    sigma[i * km1 + j] = (1.0 - rho) * sigma[i * km1 + j] + rho * shat;
+                    sigma[i * km1 + j] = sij;
                 }
             }
         }
+
+        // Epoch-to-epoch convergence on the relative change in the running ELBO.
+        // Disabled when `convergence_tol <= 0` (run the full epoch budget).
+        if let Some(&prev) = bound_history.last() {
+            let rel = (epoch_bound - prev).abs() / prev.abs().max(1e-10);
+            if convergence_tol > 0.0 && rel < convergence_tol {
+                bound_history.push(epoch_bound);
+                converged = true;
+                epochs_run = epoch + 1;
+                break;
+            }
+        }
+        bound_history.push(epoch_bound);
     }
 
     // Final full E-step with the converged globals to give every document a
@@ -1715,9 +1762,9 @@ pub fn fit_ctm_svi<R: Rng>(
         num_groups: 1,
         groups: None,
         bound: total_bound,
-        bound_history: vec![total_bound],
-        converged: true,
-        em_iters_run: epochs,
+        bound_history,
+        converged,
+        em_iters_run: epochs_run,
         diagonal,
         initialization: init_route.to_string(),
         content_beta_estep: None,
@@ -1903,7 +1950,7 @@ mod tests {
             })
             .collect();
         let m = fit_ctm_svi(
-            &docs, nb, v, 20, 32, 16.0, 0.7, 0.0, false, true, false, &mut rng,
+            &docs, nb, v, 20, 32, 16.0, 0.7, 0.0, 0.0, false, true, false, &mut rng,
         );
         // Each planted block is the top of some topic.
         let mut covered = std::collections::HashSet::new();
@@ -1929,7 +1976,7 @@ mod tests {
         let run = || {
             let mut rng = ChaCha8Rng::seed_from_u64(7);
             fit_ctm_svi(
-                &docs, 3, 9, 10, 16, 16.0, 0.7, 0.0, false, true, false, &mut rng,
+                &docs, 3, 9, 10, 16, 16.0, 0.7, 0.0, 0.0, false, true, false, &mut rng,
             )
             .beta
         };
@@ -1975,7 +2022,7 @@ mod tests {
             let docs = corr_docs();
             let mut rng = ChaCha8Rng::seed_from_u64(2);
             fit_ctm_svi(
-                &docs, 3, 9, 40, 16, 64.0, 0.7, shrink, false, false, false, &mut rng,
+                &docs, 3, 9, 40, 16, 64.0, 0.7, shrink, 0.0, false, false, false, &mut rng,
             )
         };
         let off0 = max_offdiag(&fit(0.0));
@@ -2016,7 +2063,7 @@ mod tests {
         }
         let mut rng = ChaCha8Rng::seed_from_u64(1);
         let model = fit_ctm_svi(
-            &docs, 2, 2, 40, 1, 64.0, 0.7, 0.0, false, false, false, &mut rng,
+            &docs, 2, 2, 40, 1, 64.0, 0.7, 0.0, 0.0, false, false, false, &mut rng,
         );
         let max_w0 = (0..model.num_topics)
             .map(|t| model.beta[t][0])
@@ -2025,6 +2072,82 @@ mod tests {
             max_w0 > 0.9,
             "β should track the ~50:1 aggregate count ratio (max word-0 mass \
              {max_w0}); the old normalized-ratio blend collapses toward ~0.74"
+        );
+    }
+
+    /// #421: `fit_ctm_svi` must honor `convergence_tol` — early-stop on the relative
+    /// epoch-to-epoch ELBO change and report `converged` honestly. The prior code
+    /// hardcoded `converged: true` with a length-1 `bound_history`, so the behavioral
+    /// test passed trivially without any convergence test ever running.
+    #[test]
+    fn svi_honors_convergence_tol() {
+        let docs: Vec<Vec<u32>> = (0..120)
+            .map(|d| (0..6).map(|i| ((i + d) % 9) as u32).collect())
+            .collect();
+        let epochs = 30usize;
+
+        // tol = 0 → run the full epoch budget; `converged` must be false and the
+        // ELBO trace has one entry per epoch.
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let full = fit_ctm_svi(
+            &docs, 3, 9, epochs, 16, 16.0, 0.7, 0.0, 0.0, false, false, false, &mut rng,
+        );
+        assert!(!full.converged, "tol = 0 must not report convergence");
+        assert_eq!(full.em_iters_run, epochs);
+        assert_eq!(full.bound_history.len(), epochs);
+
+        // A loose tol early-stops well before the budget and reports `converged`.
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let early = fit_ctm_svi(
+            &docs, 3, 9, epochs, 16, 16.0, 0.7, 0.0, 1e-2, false, false, false, &mut rng,
+        );
+        assert!(early.converged, "a loose tol should early-stop");
+        assert!(
+            early.em_iters_run < epochs,
+            "SVI should stop before the {epochs}-epoch budget, ran {}",
+            early.em_iters_run
+        );
+        assert_eq!(early.bound_history.len(), early.em_iters_run);
+    }
+
+    /// #421: the SVI Σ update must derive the covariance from the raw second-moment
+    /// statistic M2 (Σ = M2 − μμᵀ), not from a per-minibatch cross-product centered
+    /// on the blended μ. The old centering folded the μ step into Σ, which is worst
+    /// at `batch_size = 1` (large per-doc μ swings) — and a batch-mean-centered
+    /// covariance would collapse to ν there. Here strongly correlated topics must
+    /// still yield a finite, PD Σ with a real positive off-diagonal at B = 1.
+    #[test]
+    fn svi_covariance_well_defined_at_batch_one() {
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let mut docs: Vec<Vec<u32>> = Vec::new();
+        for _ in 0..200 {
+            if rng.gen::<f64>() < 0.7 {
+                docs.push(vec![0, 1, 2, 3, 4, 5, 0, 1, 3, 4]);
+            } else {
+                docs.push(vec![6, 7, 8, 6, 7, 8, 6, 7, 8, 6]);
+            }
+        }
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
+        let m = fit_ctm_svi(
+            &docs, 3, 9, 40, 1, 64.0, 0.7, 0.0, 0.0, false, false, false, &mut rng,
+        );
+        let km1 = m.num_topics - 1;
+        for i in 0..km1 {
+            let d = m.sigma[i * km1 + i];
+            assert!(
+                d.is_finite() && d > 0.0,
+                "Σ diagonal must be finite and positive at batch_size = 1, got {d}"
+            );
+        }
+        let max_off = (0..km1)
+            .flat_map(|i| (0..km1).map(move |j| (i, j)))
+            .filter(|&(i, j)| i != j)
+            .map(|(i, j)| m.sigma[i * km1 + j].abs())
+            .fold(0.0f64, f64::max);
+        assert!(
+            max_off > 0.05,
+            "correlated topics must leave a real off-diagonal, not collapse to ν \
+             (a batch-mean-centered covariance would); got {max_off}"
         );
     }
 
