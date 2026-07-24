@@ -17,11 +17,14 @@ prepped by `prepDocuments`) we freeze:
      the identical data offline.
 
 The offline test refits topica STS with `reference="cran"` on the frozen corpus
-and asserts its topic-word distribution at mean sentiment clears R's own
-two-seed cosine floor (minus a margin) -- the same "at least as consistent as R
-is with itself" bar the SeededLDA / keyATM / STM golds use. The kappa solver is
-separately validated against glmnet in `sts_kappa_glmnet.py`; this pins the whole
-adjusted-profile EM end to end without an R toolchain at test time.
+and asserts its topic-word distribution at neutral latent sentiment (alpha^(s)=0)
+clears a bar of R's two-seed cosine floor minus a margin. R's adjusted-profile
+fit is near-identical across seeds (self cosine ~0.998), so that bar lands at
+~0.80 -- an externally calibrated cross-implementation threshold (the same floor
+the live `sts_r_package_compare.py` uses), not a claim that topica matches R as
+closely as R matches itself. The kappa solver is separately validated against
+glmnet in `sts_kappa_glmnet.py`; this pins the whole adjusted-profile EM end to
+end without an R toolchain at test time.
 
 Two phases::
 

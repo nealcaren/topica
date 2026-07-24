@@ -117,9 +117,11 @@ records R `sts`'s topic-word distribution at mean sentiment (the adjusted profil
 two `stmSeed`s for a self-consistency floor) plus the exact tokenized corpus on a
 fixed 300-doc poliblog subsample. `tests/test_sts_cran_gold.py` refits topica with
 `reference="cran"` on that frozen corpus and asserts its topic-word distribution
-clears R's own two-seed cosine floor minus a margin — the same "at least as
-consistent as R is with itself" bar the SeededLDA and keyATM golds use. No Rscript
-is touched at test time.
+clears a bar of R's two-seed cosine floor minus a margin. R's adjusted-profile fit
+is near-identical across seeds (self cosine ~0.998), so the bar lands at ~0.80 —
+an externally calibrated cross-implementation regression threshold (the same floor
+the live script uses), which a shuffled-β negative control falls well below. No
+Rscript is touched at test time.
 
 ## Scope and honest limits
 

@@ -4,11 +4,13 @@ topica's STS ships a `reference="cran"` profile that matches the CRAN `sts`
 package's public default (`kappaEstimation="adjusted"`, reference `diag(1/20)`
 sentiment prior, anchor init, half-step kappa damping). This loads the committed
 gold (``parity/sts_cran_gold.npz`` + ``.json``) — R `sts`'s topic-word
-distribution at mean sentiment on a fixed 300-doc poliblog corpus, plus the exact
-tokenized corpus/sentiment/rating R fit on — refits topica STS with
-``reference="cran"`` on that identical data, and asserts topica's topic-word
-distribution at mean sentiment clears R's own two-seed cosine floor (minus a
-margin). The shuffle check proves the gate is non-vacuous.
+distribution at neutral latent sentiment (α^(s)=0) on a fixed 300-doc poliblog
+corpus, plus the exact tokenized corpus/sentiment/rating R fit on — refits topica
+STS with ``reference="cran"`` on that identical data, and asserts topica's
+topic-word distribution clears a bar of R's two-seed cosine floor minus a margin.
+R's fit is near-identical across seeds (self cosine ~0.998), so the bar lands at
+~0.80 — an externally calibrated cross-implementation regression threshold. The
+shuffle check proves the gate is non-vacuous.
 
 Runs in CI WITHOUT Rscript: the reference fit and corpus are frozen in the
 committed gold. The topica refit is ~30s, so the parity assertion is marked
