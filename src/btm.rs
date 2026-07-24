@@ -74,6 +74,30 @@ fn gen_biterms(doc: &[u32], window: usize, out: &mut Vec<(u32, u32)>) {
     }
 }
 
+/// Empirical background word distribution `pw_b`, weighted by **biterm
+/// participation** (not raw token counts) and normalized to a simplex over the V
+/// words. The reference (xiaohuiyan `Model::load_docs`, wrapped by R `BTM`)
+/// accumulates over biterm endpoints — `pw_b[bi.wi] += 1; pw_b[bi.wj] += 1` per
+/// biterm — so a word is weighted by how many within-window neighbours it has
+/// (position- and length-dependent). This matters on variable-length corpora or
+/// when `window < doc len`; single-word / sub-window docs form no biterms and so
+/// contribute nothing, exactly as in the reference (#492). Returns all-zeros if
+/// there are no biterms (the caller's `background` path is inert then).
+fn biterm_word_dist(biterms: &[(u32, u32)], v: usize) -> Vec<f64> {
+    let mut pw_b = vec![0.0f64; v];
+    for &(w1, w2) in biterms {
+        pw_b[w1 as usize] += 1.0;
+        pw_b[w2 as usize] += 1.0;
+    }
+    let sum: f64 = pw_b.iter().sum();
+    if sum > 0.0 {
+        for p in pw_b.iter_mut() {
+            *p /= sum;
+        }
+    }
+    pw_b
+}
+
 /// Sample an index from an unnormalized weight vector by the inverse-CDF scan the
 /// reference uses (`Sampler::mult_sample`): draw `u ~ U(0,1)`, return the first
 /// `k` whose cumulative weight reaches `u * total`.
@@ -163,23 +187,13 @@ pub fn fit_btm<R: Rng>(
     let k = num_topics;
     let v = num_types;
 
-    // Empirical word distribution (for the optional background topic 0).
-    let mut pw_b = vec![0.0f64; v];
     let mut biterms: Vec<(u32, u32)> = Vec::new();
     for doc in docs {
         gen_biterms(doc, window, &mut biterms);
-        for &w in doc {
-            if (w as usize) < v {
-                pw_b[w as usize] += 1.0;
-            }
-        }
     }
-    let pw_sum: f64 = pw_b.iter().sum();
-    if pw_sum > 0.0 {
-        for p in pw_b.iter_mut() {
-            *p /= pw_sum;
-        }
-    }
+
+    // Empirical word distribution for the optional background topic 0.
+    let pw_b = biterm_word_dist(&biterms, v);
 
     let b = biterms.len();
     // Count tables: nb_z[k] = #biterms in topic k, nwz[k][w] = word occurrences
@@ -289,6 +303,60 @@ mod tests {
             })
             .collect();
         (docs, v)
+    }
+
+    #[test]
+    fn pw_b_is_biterm_weighted_not_token_weighted() {
+        // A variable-length corpus where biterm participation and raw token counts
+        // give DIFFERENT background distributions (#492). At window=2 each adjacent
+        // pair is a biterm:
+        //   doc A: [0,0,0,0]  -> (0,0) x3 (pos 0-1,1-2,2-3):   pw_b[0] += 6
+        //   doc B: [1,2]      -> (1,2):                        pw_b[1]+=1, pw_b[2]+=1
+        //   doc C: [3,4,5]    -> (3,4),(4,5):        pw_b[3]+=1, pw_b[4]+=2, pw_b[5]+=1
+        //   doc D: [6]        -> single word, no biterm:       contributes nothing
+        // This test is the discriminating guard for the fix: a token-weighted pw_b
+        // would give the `tok` shares below and fail the equality assertion.
+        let v = 7usize;
+        let window = 2usize;
+        let docs: Vec<Vec<u32>> = vec![vec![0, 0, 0, 0], vec![1, 2], vec![3, 4, 5], vec![6]];
+
+        let mut biterms: Vec<(u32, u32)> = Vec::new();
+        for d in &docs {
+            gen_biterms(d, window, &mut biterms);
+        }
+        let pw_b = biterm_word_dist(&biterms, v);
+
+        // Hand-computed biterm-participation counts (see the table above).
+        let raw = [6.0, 1.0, 1.0, 1.0, 2.0, 1.0, 0.0];
+        let sum: f64 = raw.iter().sum();
+        for w in 0..v {
+            assert!(
+                (pw_b[w] - raw[w] / sum).abs() < 1e-12,
+                "pw_b[{w}] = {} != biterm share {}",
+                pw_b[w],
+                raw[w] / sum
+            );
+        }
+
+        // It must NOT equal the token-frequency distribution the old code used.
+        let tok = [4.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]; // raw token counts
+        let tok_sum: f64 = tok.iter().sum();
+        let token_dist: Vec<f64> = tok.iter().map(|&c| c / tok_sum).collect();
+        let differs = (0..v).any(|w| (pw_b[w] - token_dist[w]).abs() > 1e-6);
+        assert!(
+            differs,
+            "pw_b must differ from the token-frequency distribution"
+        );
+        // Word 4 has two within-window neighbours -> up-weighted vs its single token.
+        assert!(
+            pw_b[4] > token_dist[4],
+            "biterm weighting should up-weight word 4"
+        );
+        // The single-word doc's word contributes nothing.
+        assert_eq!(
+            pw_b[6], 0.0,
+            "a word appearing only in a biterm-less doc gets 0"
+        );
     }
 
     #[test]
