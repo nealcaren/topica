@@ -2225,7 +2225,10 @@ class PT:
     ) -> None:
         """pseudo_doc_prior (lambda) is the symmetric Dirichlet prior on the
         pseudo-document mixture; it drives PTM's (m_p + lambda) rich-get-richer
-        aggregation (smaller = stronger popularity bias, larger flattens it)."""
+        aggregation (smaller = stronger popularity bias, larger flattens it).
+        PTM's regime is P << D: keep num_pseudo well below the corpus size.
+        Fitting with num_pseudo >= num_docs warns and collapses toward
+        per-document LDA."""
         ...
     def fit(
         self,

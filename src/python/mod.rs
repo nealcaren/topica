@@ -11218,11 +11218,14 @@ impl PT {
 
     /// Create an unfitted model. `num_pseudo` is the number of pseudo-documents
     /// short texts are aggregated into (more = finer, fewer = more aggregation).
-    /// `num_topics` is the number of topics K; `alpha` is the document-topic
-    /// Dirichlet prior, `beta` the topic-word Dirichlet smoothing. `pseudo_doc_prior`
-    /// (λ) is the symmetric Dirichlet prior on the pseudo-document mixture — it
-    /// drives PTM's `(m_p + λ)` rich-get-richer aggregation (smaller = stronger
-    /// popularity bias; larger flattens it). `seed` seeds the Gibbs RNG.
+    /// PTM's regime is P << D, so keep `num_pseudo` well below the corpus size;
+    /// fitting with `num_pseudo >= num_docs` warns and collapses toward
+    /// per-document LDA. `num_topics` is the number of topics K; `alpha` is the
+    /// document-topic Dirichlet prior, `beta` the topic-word Dirichlet smoothing.
+    /// `pseudo_doc_prior` (λ) is the symmetric Dirichlet prior on the
+    /// pseudo-document mixture — it drives PTM's `(m_p + λ)` rich-get-richer
+    /// aggregation (smaller = stronger popularity bias; larger flattens it).
+    /// `seed` seeds the Gibbs RNG.
     #[new]
     #[pyo3(signature = (num_topics, *, num_pseudo=100, alpha=0.1, beta=0.01, pseudo_doc_prior=0.1, seed=42))]
     fn new(
@@ -11312,6 +11315,23 @@ impl PT {
         }
         let num_docs = corpus.num_docs();
         let num_types = corpus.num_types();
+        // PTM's regime is P << D: a few pseudo-documents pool many short texts so
+        // topic statistics are estimated from richer aggregated counts. When
+        // num_pseudo >= num_docs most pseudo-docs hold at most one real document,
+        // the (m_p + lambda) aggregation collapses toward per-document LDA, and
+        // PTM loses the very pooling it exists to provide (#491).
+        if slf.num_pseudo >= num_docs {
+            let msg = format!(
+                "num_pseudo ({}) >= number of documents ({}); PTM's regime is \
+                 P << D. With this many pseudo-documents each pools at most one \
+                 real document, so the pseudo-document aggregation collapses \
+                 toward per-document LDA. Use a num_pseudo well below the corpus \
+                 size.",
+                slf.num_pseudo, num_docs
+            );
+            let warnings = py.import_bound("warnings")?;
+            warnings.call_method1("warn", (msg,))?;
+        }
         let (k, p, a, b, lam) = (
             slf.num_topics,
             slf.num_pseudo,
