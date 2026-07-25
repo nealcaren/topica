@@ -358,6 +358,11 @@ impl Estimator for GsdmmModel {
         (0..self.k_max).map(|k| self.cluster_word(k)).collect()
     }
 
+    // The generic Estimator surface returns the HARD assignment as a one-hot over
+    // `k_max` (what composition/conformance machinery expects for a single-membership
+    // model). This intentionally differs from the Python `doc_topic` getter, which
+    // exposes the SOFT in-sample Eq. 4 conditional remapped to the used clusters —
+    // the same distinction as `doc_cluster` (hard) vs the soft scores (#490).
     fn doc_topic(&self) -> Vec<Vec<f64>> {
         self.z
             .iter()

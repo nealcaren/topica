@@ -11841,6 +11841,17 @@ impl GSDMM {
         Ok(false)
     }
     /// Document-topic matrix θ, shape ``(num_docs, num_topics)``; rows sum to 1.
+    ///
+    /// Each row is the Movie-Group-Process soft conditional (Yin & Wang Eq. 4) of
+    /// the training document over the discovered clusters, scored **in-sample**:
+    /// the document's own words are still counted in its cluster (it is not held
+    /// out), matching the reference `gsdmm` `score()`. Two consequences worth
+    /// knowing: (1) it is an in-sample plug-in estimate, not a Gibbs-draw-averaged
+    /// posterior; and (2) because GSDMM is a hard-clustering (single-membership)
+    /// model, `doc_topic.argmax(axis=1)` is *usually* but not *guaranteed* to equal
+    /// the hard :attr:`doc_cluster` (the last sampled assignment). Use
+    /// :attr:`doc_cluster` for the hard label; use `doc_topic` for the soft scores.
+    /// :meth:`transform` applies the same conditional to held-out documents.
     #[getter]
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
