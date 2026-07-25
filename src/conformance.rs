@@ -369,6 +369,7 @@ mod ctm_conformance_tests {
             GammaPrior::Pooled,
             true,
             false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
             &mut rng,
         );
 

@@ -6427,9 +6427,15 @@ impl CTM {
     /// `em_tol` is the relative-bound tolerance for EM early stopping — the run
     /// stops when the relative change in the variational evidence bound falls below
     /// it (the criterion R `stm` uses).
+    /// `spectral_projection_threshold` is the vocabulary size above which the
+    /// spectral (anchor-word) init switches from the exact V*V co-occurrence to a
+    /// deterministic random projection. The default (10000) matches R `stm`, which
+    /// stays exact up to that size; lower it to force the cheaper approximate path
+    /// on smaller vocabularies. It only affects `init="spectral"` runs.
     #[pyo3(signature = (data, *, iters=500, convergence_tol=1e-5, inference="batch",
                         batch_size=256, tau=64.0, kappa=0.7, beta_init=None, em_tol=None,
-                        keep_eta_cov=true, num_threads=None))]
+                        keep_eta_cov=true, num_threads=None,
+                        spectral_projection_threshold=spectral::DEFAULT_PROJ_THRESHOLD))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -6445,6 +6451,7 @@ impl CTM {
         em_tol: Option<f64>,
         keep_eta_cov: bool,
         num_threads: Option<usize>,
+        spectral_projection_threshold: usize,
     ) -> PyResult<Py<Self>> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
@@ -6521,6 +6528,7 @@ impl CTM {
                         spectral,
                         keep_eta_cov,
                         diagonal,
+                        spectral_projection_threshold,
                         &mut rng,
                     )
                 } else {
@@ -6541,6 +6549,7 @@ impl CTM {
                         ctm::GammaPrior::Pooled,
                         keep_eta_cov,
                         diagonal,
+                        spectral_projection_threshold,
                         &mut rng,
                     )
                 }
@@ -7276,12 +7285,20 @@ impl STM {
     /// stopping — the run stops when the relative change in the variational evidence
     /// bound falls below it (the criterion R `stm` uses). `beta_init` is an optional
     /// initial topic-word matrix to warm-start from.
+    /// `spectral_projection_threshold` is the vocabulary size above which the
+    /// spectral (anchor-word) init switches from the exact V*V co-occurrence to a
+    /// deterministic random projection. The default (10000) matches R `stm`, which
+    /// stays exact up to that size, so at the default topica and `stm` take the same
+    /// exact init for any vocabulary at or below 10000 types. Lower it to force the
+    /// cheaper approximate path on smaller vocabularies (trading fidelity for
+    /// speed/memory). It has no effect when the constructor sets `init="random"`.
     #[pyo3(signature = (data, prevalence=None, *, prevalence_names=None,
                         content=None, content_names=None, content_time=None, content_smooth=1.0,
                         content_prior_var=0.5, content_prior="l2",
                         iters=500, convergence_tol=1e-5,
                         gamma_prior="pooled", gamma_enet=1.0, beta_init=None, em_tol=None,
-                        covariates=None, keep_eta_cov=true, num_threads=None))]
+                        covariates=None, keep_eta_cov=true, num_threads=None,
+                        spectral_projection_threshold=spectral::DEFAULT_PROJ_THRESHOLD))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -7304,6 +7321,7 @@ impl STM {
         covariates: Option<&Bound<'_, PyAny>>,
         keep_eta_cov: bool,
         num_threads: Option<usize>,
+        spectral_projection_threshold: usize,
     ) -> PyResult<Py<Self>> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
@@ -7598,6 +7616,7 @@ impl STM {
                     gprior,
                     keep_eta_cov,
                     diagonal,
+                    spectral_projection_threshold,
                     &mut rng,
                 )
             });

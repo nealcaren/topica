@@ -1100,6 +1100,12 @@ fn mu_from(x_d: &[f64], gamma: &[Vec<f64>], km1: usize) -> Vec<f64> {
 /// approximation (ν = diag(1/H_ii)), which skips the per-document Cholesky and
 /// inverse for a large E-step speedup at high K, at the cost of dropping the
 /// off-diagonal posterior covariance.
+///
+/// `spectral_proj_threshold` is the vocabulary size above which the spectral init
+/// switches from the exact V×V co-occurrence to a random projection (see
+/// [`crate::spectral::spectral_init_with_threshold`]); pass
+/// [`crate::spectral::DEFAULT_PROJ_THRESHOLD`] to match R `stm`. It only matters
+/// when `init_spectral` is set.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_ctm<R: Rng>(
     docs: &[Vec<u32>],
@@ -1118,6 +1124,7 @@ pub fn fit_ctm<R: Rng>(
     gamma_prior: GammaPrior,
     keep_nu: bool,
     diagonal: bool,
+    spectral_proj_threshold: usize,
     rng: &mut R,
 ) -> CtmModel {
     let k = num_topics;
@@ -1184,7 +1191,12 @@ pub fn fit_ctm<R: Rng>(
     // computed base β (e.g. R `stm`'s exact spectral β) and reproduce that fit.
     let (mut beta, init_route): (Vec<Vec<f64>>, &'static str) = match init_beta {
         Some(b) => (b.iter().map(|row| row.to_vec()).collect(), "provided"),
-        None if init_spectral => match crate::spectral::spectral_init(docs, k, num_types) {
+        None if init_spectral => match crate::spectral::spectral_init_with_threshold(
+            docs,
+            k,
+            num_types,
+            spectral_proj_threshold,
+        ) {
             Some(b) => (b, "spectral"),
             None => (random_beta(rng), "random-fallback"),
         },
@@ -1519,6 +1531,10 @@ pub fn fit_ctm<R: Rng>(
 /// full-batch EM must touch every document each iteration; on moderate corpora
 /// the full-batch [`fit_ctm`] is preferable. Base model only — no prevalence or
 /// content covariates.
+///
+/// `spectral_proj_threshold` behaves as in [`fit_ctm`]: the vocabulary size above
+/// which the spectral init switches to a random projection (only relevant when
+/// `init_spectral` is set).
 #[allow(clippy::too_many_arguments)]
 pub fn fit_ctm_svi<R: Rng>(
     docs: &[Vec<u32>],
@@ -1533,6 +1549,7 @@ pub fn fit_ctm_svi<R: Rng>(
     init_spectral: bool,
     keep_nu: bool,
     diagonal: bool,
+    spectral_proj_threshold: usize,
     rng: &mut R,
 ) -> CtmModel {
     let k = num_topics;
@@ -1555,7 +1572,12 @@ pub fn fit_ctm_svi<R: Rng>(
         b
     };
     let (mut beta, init_route): (Vec<Vec<f64>>, &'static str) = if init_spectral {
-        match crate::spectral::spectral_init(docs, k, num_types) {
+        match crate::spectral::spectral_init_with_threshold(
+            docs,
+            k,
+            num_types,
+            spectral_proj_threshold,
+        ) {
             Some(b) => (b, "spectral"),
             None => (random_beta(rng), "random-fallback"),
         }
@@ -1894,6 +1916,7 @@ mod tests {
                 GammaPrior::Pooled,
                 true,
                 false,
+                crate::spectral::DEFAULT_PROJ_THRESHOLD,
                 &mut rng,
             )
         };
@@ -1976,7 +1999,20 @@ mod tests {
             })
             .collect();
         let m = fit_ctm_svi(
-            &docs, nb, v, 20, 32, 16.0, 0.7, 0.0, 0.0, false, true, false, &mut rng,
+            &docs,
+            nb,
+            v,
+            20,
+            32,
+            16.0,
+            0.7,
+            0.0,
+            0.0,
+            false,
+            true,
+            false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            &mut rng,
         );
         // Each planted block is the top of some topic.
         let mut covered = std::collections::HashSet::new();
@@ -2002,7 +2038,20 @@ mod tests {
         let run = || {
             let mut rng = ChaCha8Rng::seed_from_u64(7);
             fit_ctm_svi(
-                &docs, 3, 9, 10, 16, 16.0, 0.7, 0.0, 0.0, false, true, false, &mut rng,
+                &docs,
+                3,
+                9,
+                10,
+                16,
+                16.0,
+                0.7,
+                0.0,
+                0.0,
+                false,
+                true,
+                false,
+                crate::spectral::DEFAULT_PROJ_THRESHOLD,
+                &mut rng,
             )
             .beta
         };
@@ -2048,7 +2097,20 @@ mod tests {
             let docs = corr_docs();
             let mut rng = ChaCha8Rng::seed_from_u64(2);
             fit_ctm_svi(
-                &docs, 3, 9, 40, 16, 64.0, 0.7, shrink, 0.0, false, false, false, &mut rng,
+                &docs,
+                3,
+                9,
+                40,
+                16,
+                64.0,
+                0.7,
+                shrink,
+                0.0,
+                false,
+                false,
+                false,
+                crate::spectral::DEFAULT_PROJ_THRESHOLD,
+                &mut rng,
             )
         };
         let off0 = max_offdiag(&fit(0.0));
@@ -2089,7 +2151,20 @@ mod tests {
         }
         let mut rng = ChaCha8Rng::seed_from_u64(1);
         let model = fit_ctm_svi(
-            &docs, 2, 2, 40, 1, 64.0, 0.7, 0.0, 0.0, false, false, false, &mut rng,
+            &docs,
+            2,
+            2,
+            40,
+            1,
+            64.0,
+            0.7,
+            0.0,
+            0.0,
+            false,
+            false,
+            false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            &mut rng,
         );
         let max_w0 = (0..model.num_topics)
             .map(|t| model.beta[t][0])
@@ -2116,7 +2191,20 @@ mod tests {
         // ELBO trace has one entry per epoch.
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let full = fit_ctm_svi(
-            &docs, 3, 9, epochs, 16, 16.0, 0.7, 0.0, 0.0, false, false, false, &mut rng,
+            &docs,
+            3,
+            9,
+            epochs,
+            16,
+            16.0,
+            0.7,
+            0.0,
+            0.0,
+            false,
+            false,
+            false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            &mut rng,
         );
         assert!(!full.converged, "tol = 0 must not report convergence");
         assert_eq!(full.em_iters_run, epochs);
@@ -2125,7 +2213,20 @@ mod tests {
         // A loose tol early-stops well before the budget and reports `converged`.
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let early = fit_ctm_svi(
-            &docs, 3, 9, epochs, 16, 16.0, 0.7, 0.0, 1e-2, false, false, false, &mut rng,
+            &docs,
+            3,
+            9,
+            epochs,
+            16,
+            16.0,
+            0.7,
+            0.0,
+            1e-2,
+            false,
+            false,
+            false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            &mut rng,
         );
         assert!(early.converged, "a loose tol should early-stop");
         assert!(
@@ -2155,7 +2256,20 @@ mod tests {
         }
         let mut rng = ChaCha8Rng::seed_from_u64(2);
         let m = fit_ctm_svi(
-            &docs, 3, 9, 40, 1, 64.0, 0.7, 0.0, 0.0, false, false, false, &mut rng,
+            &docs,
+            3,
+            9,
+            40,
+            1,
+            64.0,
+            0.7,
+            0.0,
+            0.0,
+            false,
+            false,
+            false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            &mut rng,
         );
         let km1 = m.num_topics - 1;
         for i in 0..km1 {
@@ -2209,6 +2323,7 @@ mod tests {
             GammaPrior::Pooled,
             true,
             false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
             &mut rng,
         );
         let theta = model.doc_topics();
@@ -2258,6 +2373,7 @@ mod tests {
             GammaPrior::Pooled,
             true,
             false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
             &mut rng,
         );
         let cb = model.content_beta.expect("content_beta present");
@@ -2334,6 +2450,7 @@ mod tests {
                 GammaPrior::Pooled,
                 true,
                 false,
+                crate::spectral::DEFAULT_PROJ_THRESHOLD,
                 &mut rng,
             )
             .content_beta
@@ -2402,6 +2519,7 @@ mod tests {
             GammaPrior::Pooled,
             true,
             false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
             &mut rng,
         );
         // The bound trajectory is (weakly) monotone increasing.
@@ -2436,6 +2554,7 @@ mod tests {
             GammaPrior::Pooled,
             true,
             false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
             &mut rng2,
         );
         assert!(!capped.converged);
@@ -2477,6 +2596,7 @@ mod tests {
             GammaPrior::Pooled,
             true,
             true,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
             &mut rng,
         );
         assert!(model.diagonal, "model should record diagonal mode");
@@ -2736,6 +2856,7 @@ mod tests {
             GammaPrior::Pooled,
             true,
             false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
             &mut rng,
         );
         let stored = m_keep.nu.clone(); // per-group E-step ν (keep_nu = true)
@@ -2760,6 +2881,7 @@ mod tests {
             GammaPrior::Pooled,
             false,
             false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
             &mut rng2,
         );
         assert!(model.content_beta.is_some(), "content_beta present");
@@ -2844,6 +2966,7 @@ mod tests {
             GammaPrior::Pooled,
             true,
             false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
             &mut rng,
         );
         let stored = m_keep.nu.clone();
@@ -2865,6 +2988,7 @@ mod tests {
             GammaPrior::Pooled,
             false,
             false,
+            crate::spectral::DEFAULT_PROJ_THRESHOLD,
             &mut rng2,
         );
         assert!(
