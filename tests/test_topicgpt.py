@@ -481,6 +481,25 @@ def test_min_topic_count_prunes_rare_topics():
     assert any(stage == "pruned" for stage, _ in model.stage_log)
 
 
+def test_min_topic_count_counts_documents_not_mentions():
+    # (#509-5) A topic listed twice within a SINGLE document's generation reply is
+    # one document, so min_topic_count is a document-frequency threshold, not a
+    # mention count. "Tech" is evoked (twice) by only the phone document, so it is
+    # pruned at min_topic_count=2; counting mentions would wrongly keep it.
+    def be(prompt: str) -> str:
+        if prompt.startswith(PROMPTS["assignment"][:40]):
+            return '[1] Common: assigned ("the")'
+        if prompt.startswith(PROMPTS["generation"][:40]):
+            if "phone" in prompt or "chip" in prompt:
+                return "[1] Tech: fast chip\n[1] Tech: better camera"
+            return "[1] Common: appears in the other two documents"
+        return "None"  # refinement no-op
+
+    model = TopicGPT(backend=be, min_topic_count=2)
+    model.fit(DOCS)
+    assert model.topic_names == ["Common"]
+
+
 def test_min_topic_count_default_is_no_op():
     # (#509-5) The default keeps every topic that appeared at least once.
     model, _ = _fit(min_topic_count=1)

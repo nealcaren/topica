@@ -680,10 +680,14 @@ class TopicGPT:
             # count how many documents evoke each topic (the pruning signal).
             triples, drops = _parse_topic_lines(self._ask(backend, prompt))
             dropped.extend(drops)
+            doc_keys: set[str] = set()  # count each topic at most once per document
             for lvl, name, desc in triples:
                 if lvl != 1:  # generation_1 induces top-level topics only
                     continue
                 key = _norm(name)
+                if key in doc_keys:  # same topic listed twice in one reply
+                    continue
+                doc_keys.add(key)
                 if key in seen:
                     counts[seen[key]] += 1
                     continue
