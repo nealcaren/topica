@@ -12,10 +12,22 @@
 //!
 //! Inference is closed-form EM (a Gaussian mixture): the E-step is the soft topic
 //! assignment; the M-step solves weighted least squares for `(mu_k, V_k)` jointly,
-//! a small linear system for each author's `x_a`, and a residual update for
-//! `sigma^2`. Identification matches the other ideal-point models: positions are
-//! standardized each iteration (absorbed losslessly into `mu`/`V`) and the sign is
-//! oriented to the anchors.
+//! a small linear system for each author's `x_a` (MAP, with the Gaussian position
+//! prior `x_prior_variance`), and a residual update for `sigma^2`. Identification
+//! standardizes the positions to mean 0 / unit sample variance (absorbed losslessly
+//! into `mu`/`V`) and orients the sign to the anchors. Unlike the other ideal-point
+//! models this happens *once, after* the EM loop rather than every sweep: with the
+//! Gaussian position prior the scale of `x` is identified during fitting, and
+//! re-standardizing mid-loop rescales the regressors the (mu, V) M-step sees, which
+//! breaks monotonicity of the penalized objective (issue #530).
+//!
+//! Because the standardization is post-hoc and lossless for the likelihood, the
+//! returned positions always have unit sample variance, so `x_prior_variance` does
+//! not set their *scale*; it sets how strongly the M-step shrinks them during fitting.
+//! The x M-step is MAP, so the bare data log-likelihood is not the EM objective and
+//! need not be monotone. `ll_history` therefore reports the penalized objective (data
+//! log-likelihood minus the position prior penalty), which is monotone
+//! non-decreasing; see the field docs.
 
 use crate::linalg::spd_inverse;
 use rand::Rng;
@@ -37,6 +49,14 @@ pub struct SentenceIdealModel {
     pub resp: Vec<Vec<f64>>,
     pub group: Vec<usize>,
     pub log_likelihood: f64,
+    /// Per-sweep penalized incomplete-data objective (the MAP-EM objective:
+    /// data log-likelihood minus the position prior penalty
+    /// `sum_a ||x_a||^2 / (2 x_prior_variance)`, evaluated at the positions the
+    /// M-step produced before the identification rescale). This is the quantity EM
+    /// maximizes here, so it is monotone non-decreasing across sweeps (up to the
+    /// tiny ridge added to the least-squares solves). The bare data log-likelihood
+    /// is *not* monotone when `x_prior_variance` differs from the unit
+    /// identification scale, which is why the penalty is subtracted.
     pub ll_history: Vec<f64>,
     pub converged: bool,
     pub iters_run: usize,
@@ -241,6 +261,19 @@ pub fn fit_sentence_ideal<R: Rng>(
         }
     }
     let mut x = init_positions(emb, group, a_n, dd, rng);
+    // Position penalty `sum_a ||x_a||^2 / (2 x_prior_variance)`, i.e. the negative
+    // log-prior (up to a constant) the MAP x-step trades off against the data fit.
+    let pen_of = |x: &[Vec<f64>]| -> f64 {
+        0.5 * inv_xvar
+            * x.iter()
+                .map(|xa| xa.iter().map(|&z| z * z).sum::<f64>())
+                .sum::<f64>()
+    };
+    // Standardize the PCA init once to set a sane starting scale. Identification
+    // (standardize + sign orientation) then runs a *single* time after the EM loop,
+    // not each sweep: with the Gaussian position prior the scale of `x` is identified,
+    // so re-standardizing mid-loop would rescale the positions the (mu, V) M-step uses
+    // as regressors and break monotonicity of the penalized objective (issue #530).
     standardize_positions(&mut x, &mut mu, &mut v);
     let mut pi = vec![1.0 / k as f64; k];
     // Spherical variance initialized from the overall embedding spread.
@@ -280,11 +313,11 @@ pub fn fit_sentence_ideal<R: Rng>(
         // normalization) but is included in the reported incomplete-data
         // log-likelihood so the value is a properly normalized log-density.
         // Because sigma2 is re-estimated each sweep the term is not a constant
-        // offset, so dropping it distorts the per-iteration `ll_history` trace.
-        // (Note: `ll_history` is the data log-likelihood, which EM does not
-        // maximize here — the x M-step is MAP and the positions are re-standardized
-        // each sweep — so it is not guaranteed monotone when `x_prior_variance`
-        // differs from the unit identification scale; see the `fit_history` docs.)
+        // offset, so dropping it distorts the per-iteration data log-likelihood.
+        // (Note: this data log-likelihood is not the objective MAP-EM maximizes —
+        // the x M-step is MAP, so it trades data fit against the position prior. The
+        // reported `ll_history` below subtracts the prior penalty to recover the
+        // penalized objective, which is monotone; see the `ll_history` field docs.)
         let log_norm = -0.5 * dim as f64 * (2.0 * std::f64::consts::PI * sigma2).ln();
         let log_pi: Vec<f64> = pi.iter().map(|&p| p.max(1e-300).ln()).collect();
         // Per-document log-likelihood, collected in document order then summed
@@ -323,7 +356,13 @@ pub fn fit_sentence_ideal<R: Rng>(
             })
             .collect();
         let ll: f64 = ll_parts.iter().sum();
-        ll_history.push(ll);
+        // Penalized incomplete-data objective (log-posterior up to a constant): the
+        // data log-likelihood of the current params minus the prior penalty of their
+        // positions. Because identification no longer rescales `x` mid-loop, these are
+        // the same positions the M-step optimized, so this is the genuine MAP-EM
+        // objective and is monotone non-decreasing across sweeps.
+        let obj = ll - pen_of(&x);
+        ll_history.push(obj);
 
         // M-step: mixture weights.
         let mut nk = vec![0.0f64; k];
@@ -472,36 +511,41 @@ pub fn fit_sentence_ideal<R: Rng>(
         let ss: f64 = ss_parts.iter().sum();
         sigma2 = (ss / (n.max(1) * dim.max(1)) as f64).max(1e-8);
 
-        // Identification: standardize positions (lossless into mu/V), orient sign.
-        standardize_positions(&mut x, &mut mu, &mut v);
-        if dd >= 1 && !anchors.is_empty() {
-            let mut dot = 0.0;
-            for &(au, target) in anchors {
-                if au < a_n {
-                    dot += x[au][0] * target;
-                }
-            }
-            if dot < 0.0 {
-                for xa in x.iter_mut() {
-                    xa[0] = -xa[0];
-                }
-                for vk in v.iter_mut() {
-                    for z in vk[0].iter_mut() {
-                        *z = -*z;
-                    }
-                }
-            }
-        }
-
+        // Convergence is judged on the monotone penalized objective, not the raw
+        // data log-likelihood (which the MAP x-step does not maximize).
         if prev_ll.is_finite() {
             let denom = prev_ll.abs().max(1.0);
-            if (ll - prev_ll).abs() / denom < em_tol {
+            if (obj - prev_ll).abs() / denom < em_tol {
                 converged = true;
-                prev_ll = ll;
+                prev_ll = obj;
                 break;
             }
         }
-        prev_ll = ll;
+        prev_ll = obj;
+    }
+
+    // Identification, once, after fitting: standardize positions to mean 0 / unit
+    // sample variance (absorbed losslessly into mu/V) and orient the sign to the
+    // anchors. This is data-likelihood-invariant, so it does not change the reported
+    // `log_likelihood` recomputed below; it only fixes the reporting convention.
+    standardize_positions(&mut x, &mut mu, &mut v);
+    if dd >= 1 && !anchors.is_empty() {
+        let mut dot = 0.0;
+        for &(au, target) in anchors {
+            if au < a_n {
+                dot += x[au][0] * target;
+            }
+        }
+        if dot < 0.0 {
+            for xa in x.iter_mut() {
+                xa[0] = -xa[0];
+            }
+            for vk in v.iter_mut() {
+                for z in vk[0].iter_mut() {
+                    *z = -*z;
+                }
+            }
+        }
     }
 
     let mut model = SentenceIdealModel {
@@ -523,8 +567,7 @@ pub fn fit_sentence_ideal<R: Rng>(
     };
     // Report the incomplete-data log-likelihood of the *returned* parameters, not
     // the top-of-loop value from the previous sweep's parameters (which lags by one
-    // M-step). `ll_history` keeps the per-iteration E-step trace for convergence
-    // monitoring.
+    // M-step). `ll_history` keeps the per-sweep penalized-objective trace.
     model.log_likelihood = model.incomplete_data_ll(emb);
     model
 }
@@ -797,6 +840,55 @@ mod tests {
                 "xpv={xpv}: normalizer term missing from the reported ll"
             );
             assert!(m.log_likelihood.is_finite());
+        }
+    }
+
+    // The reported objective (`ll_history`) is monotone non-decreasing across EM
+    // sweeps even for non-default `x_prior_variance`, including the small-prior
+    // regime where the bare data log-likelihood dips (issue #530: worst step -9.06
+    // at x_prior_variance=0.05). We disable early stopping so every sweep is checked.
+    #[test]
+    fn fit_history_objective_is_monotone() {
+        let mut rng = ChaCha8Rng::seed_from_u64(11);
+        let (k, dim, dd, a_n) = (2usize, 5usize, 1usize, 8usize);
+        let mut emb: Vec<Vec<f64>> = Vec::new();
+        let mut group: Vec<usize> = Vec::new();
+        // Imbalanced authors + moderate noise: the regime the issue reproduces.
+        let counts = [1usize, 2, 40, 3, 30, 2, 1, 25];
+        for (a, &c) in counts.iter().enumerate() {
+            let pos = rng.gen::<f64>() - 0.5;
+            for _ in 0..c {
+                let t = rng.gen_range(0..k);
+                let mut e = vec![0.0f64; dim];
+                for (d, ed) in e.iter_mut().enumerate() {
+                    *ed = (t == 0) as usize as f64 * 3.0
+                        + pos * 0.5
+                        + (rng.gen::<f64>() - 0.5) * 1.4
+                        + d as f64 * 1e-9;
+                }
+                emb.push(e);
+                group.push(a.min(a_n - 1));
+            }
+        }
+        for xpv in [0.05f64, 0.2, 0.5, 1.0, 5.0] {
+            // em_tol = 0.0 => never early-stop, so the full trace is exercised.
+            let m = fit_sentence_ideal(&emb, &group, a_n, k, dd, &[], 200, 0.0, xpv, &mut rng);
+            let h = &m.ll_history;
+            assert!(h.len() >= 2, "xpv={xpv}: history too short");
+            for w in h.windows(2) {
+                // Allow only a tiny slack for the 1e-6 ridge in the WLS solves.
+                let slack = 1e-6 * w[0].abs().max(1.0);
+                assert!(
+                    w[1] >= w[0] - slack,
+                    "xpv={xpv}: objective decreased from {} to {} (drop {})",
+                    w[0],
+                    w[1],
+                    w[0] - w[1]
+                );
+            }
+            for &v in h {
+                assert!(v.is_finite(), "xpv={xpv}: non-finite objective");
+            }
         }
     }
 

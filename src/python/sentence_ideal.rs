@@ -301,13 +301,15 @@ impl IdealPointSentenceTM {
     fn log_likelihood(&self) -> PyResult<f64> {
         Ok(self.fitted_model()?.log_likelihood)
     }
-    /// Per-iteration `(iter, log_likelihood)` trace of the data log-likelihood at
-    /// each E-step, for convergence monitoring. Note this data log-likelihood is
-    /// **not** the objective EM maximizes here (the position M-step is MAP and the
-    /// positions are re-standardized to unit scale each sweep), so it is not
-    /// guaranteed monotone -- with `x_prior_variance` far from the unit
-    /// identification scale it can briefly decrease. Use the relative change, not
-    /// strict monotonicity, to judge convergence.
+    /// Per-iteration `(iter, objective)` trace of the penalized incomplete-data
+    /// objective that MAP-EM maximizes: the data log-likelihood minus the position
+    /// prior penalty `sum_a ||x_a||^2 / (2 x_prior_variance)`. It is monotone
+    /// non-decreasing across sweeps (up to the tiny ridge in the least-squares
+    /// solves), so convergence can be judged from it directly. The bare data
+    /// log-likelihood is not the EM objective here (the position M-step is MAP) and
+    /// is not monotone when `x_prior_variance` differs from the unit identification
+    /// scale; that is why the penalty is subtracted. The reported `log_likelihood`
+    /// remains the (unpenalized) incomplete-data log-likelihood of the fitted model.
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
         Ok(self
