@@ -1524,11 +1524,17 @@ def check_residuals(model, docs, *, tol=0.01):
 
     Returns a :class:`ResidualCheck` with ``dispersion`` (σ²), ``pvalue`` (χ²
     test of σ²=1 vs σ²>1), and ``df``.
+
+    The dispersion, ``df``, and χ² statistic come from the shared ``topica-core``
+    ``inspect::residual_dispersion`` implementation (the same port faSTM and the
+    Stata plugin consume), so every host reports one stm-faithful number. Only the
+    upper-tail χ² p-value is formed here.
     """
+    from ._topica import inspect_residual_dispersion
+
     phi = np.asarray(model.topic_word, dtype=np.float64)
     theta = np.asarray(model.doc_topic, dtype=np.float64)
     vocab = list(model.vocabulary)
-    k, v = phi.shape
     n = theta.shape[0]
     if len(docs) != n:
         raise ValueError(
@@ -1536,29 +1542,14 @@ def check_residuals(model, docs, *, tol=0.01):
             "pass the same documents used to fit the model"
         )
     vindex = {w: i for i, w in enumerate(vocab)}
+    docs_ids = [
+        [vindex[w] for w in doc if w in vindex] for doc in docs
+    ]
 
-    d_stat = 0.0
-    nhat = 0
-    for d in range(n):
-        q = np.clip(theta[d] @ phi, 1e-12, 1.0 - 1e-12)  # (V,) model word probs
-        x = np.zeros(v)
-        m = 0.0
-        for w in docs[d]:
-            i = vindex.get(w)
-            if i is not None:
-                x[i] += 1.0
-                m += 1.0
-        if m == 0:
-            continue
-        nhat += int(np.sum(q * m > tol))
-        first = np.sum((x * x - 2.0 * x * q * m) / (m * q * (1.0 - q)))
-        second = np.sum(m * q / (1.0 - q))
-        d_stat += float(first + second)
-
-    n_params = n * (k - 1) + k * (v - 1)
-    df = nhat - v - n_params
-    dispersion = d_stat / df if df > 0 else float("nan")
-    pvalue = _chisq_sf(d_stat, df) if df > 0 else float("nan")
+    dispersion, df, _n_params, statistic, _nhat = inspect_residual_dispersion(
+        phi.tolist(), theta.tolist(), docs_ids, float(tol)
+    )
+    pvalue = _chisq_sf(statistic, df) if df > 0 else float("nan")
     return ResidualCheck(dispersion=float(dispersion), pvalue=float(pvalue), df=float(df))
 
 

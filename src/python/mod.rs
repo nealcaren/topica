@@ -8390,6 +8390,29 @@ fn inspect_semantic_coherence(
     py.allow_threads(move || topica_core::inspect::semantic_coherence(&beta, &docs, m))
 }
 
+/// stm-faithful multinomial residual dispersion (`topica-core`
+/// `inspect::residual_dispersion`, stm's `checkResiduals` / Taddy 2012): the
+/// dispersion of the fitted model's multinomial residuals for judging whether K
+/// is too small. `beta` is the K×V topic-word matrix, `theta` the N×K per-document
+/// proportions, `docs` the token-id lists aligned to `theta`, `tol` Taddy's
+/// effective-count tolerance (stm default 1/100). Returns
+/// `(dispersion, df, num_params, statistic, nhat)`; the caller forms the χ²
+/// p-value from `statistic` and `df`. Internal: backs `topica.check_residuals`.
+#[pyfunction]
+#[pyo3(signature = (beta, theta, docs, tol=0.01))]
+fn inspect_residual_dispersion(
+    py: Python<'_>,
+    beta: Vec<Vec<f64>>,
+    theta: Vec<Vec<f64>>,
+    docs: Vec<Vec<u32>>,
+    tol: f64,
+) -> (f64, f64, f64, f64, f64) {
+    py.allow_threads(move || {
+        let r = topica_core::inspect::residual_dispersion(&beta, &theta, &docs, tol);
+        (r.dispersion, r.df, r.num_params, r.statistic, r.nhat)
+    })
+}
+
 /// Warn that a neighbor-preserving projection (UMAP / t-SNE) distorts global
 /// geometry, so PCA stays the distance-faithful default. UMAP is seeded and
 /// reproducible; t-SNE is additionally not reproducible (its optimizer is
@@ -14983,6 +15006,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(inspect_score_scores, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_exclusivity, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_semantic_coherence, m)?)?;
+    m.add_function(wrap_pyfunction!(inspect_residual_dispersion, m)?)?;
     m.add_function(wrap_pyfunction!(project, m)?)?;
     m.add_function(wrap_pyfunction!(set_experimental, m)?)?;
     m.add_function(wrap_pyfunction!(experimental_is_enabled, m)?)?;

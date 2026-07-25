@@ -265,6 +265,114 @@ pub fn exclusivity(beta: &[Vec<f64>], m: usize, frexw: f64) -> Vec<f64> {
     excl
 }
 
+/// Result of [`residual_dispersion`]: stm's `checkResiduals` return, split so the
+/// caller (Python / R / Stata) can form the chi-squared p-value from `statistic`
+/// and `df` with its own upper-tail routine.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResidualDispersion {
+    /// Sample dispersion sigma^2 = D / df. Equals ~1 under the data-generating
+    /// process; > 1 is evidence K is too small (Taddy 2012). NaN when df <= 0.
+    pub dispersion: f64,
+    /// Residual degrees of freedom: `nhat - V - num_params` (stm's `df`).
+    pub df: f64,
+    /// Number of estimated parameters d = n*(K-1) + K*(V-1) (stm's `d`).
+    pub num_params: f64,
+    /// The aggregated squared-residual statistic D (stm's `D`), the chi-squared
+    /// test statistic for sigma^2 = 1 vs sigma^2 > 1.
+    pub statistic: f64,
+    /// Taddy's approximate effective count Nhat: expected counts exceeding `tol`,
+    /// summed over documents (stm's `Nhat`).
+    pub nhat: f64,
+}
+
+/// stm `checkResiduals` / Taddy (2012) multinomial residual dispersion: the
+/// dispersion of the fitted model's multinomial residuals, used to judge whether
+/// K is too small. Under a correct model the dispersion is ~1; a value well above
+/// 1 means the latent topics cannot absorb the overdispersion (too few topics).
+///
+/// `beta` is the K×V topic-word probability matrix, `theta` the N×K per-document
+/// topic proportions, `docs` the corpus token-id lists (one per document, aligned
+/// to `theta`'s rows). `tol` is Taddy's tolerance for the effective-count
+/// degrees-of-freedom approximation (stm default 1/100).
+///
+/// This is a faithful port of stm's `checkResiduals`: for each document with
+/// length `m`, the expected word probability is `q_w = sum_k theta_dk beta_kw`
+/// and the squared standardized (Pearson) multinomial residual summed over the
+/// full vocabulary is `sum_w (x_w - m q_w)^2 / (m q_w (1 - q_w))`, formed via
+/// stm's algebraic split `sum_w (x_w^2 - 2 x_w q_w m)/(m q_w (1-q_w)) + sum_w m
+/// q_w/(1-q_w)`. `D` sums that over documents; `Nhat` counts, per document, the
+/// words whose expected count `m q_w` exceeds `tol`; the parameter count is
+/// `d = n*(K-1) + K*(V-1)`; and `df = Nhat - V - d`, `dispersion = D / df`.
+/// `q_w` is clamped to `[1e-12, 1 - 1e-12]` to keep the `1 - q_w` denominators
+/// finite (smoothed beta stays well inside that range, so the clamp does not move
+/// stm's number).
+pub fn residual_dispersion(
+    beta: &[Vec<f64>],
+    theta: &[Vec<f64>],
+    docs: &[Vec<u32>],
+    tol: f64,
+) -> ResidualDispersion {
+    let k = beta.len();
+    let v = if k > 0 { beta[0].len() } else { 0 };
+    let n = theta.len();
+
+    let mut statistic = 0.0f64;
+    let mut nhat = 0.0f64;
+    for (d, doc) in docs.iter().enumerate().take(n) {
+        let th = &theta[d];
+        // q_w = sum_k theta_dk beta_kw, clamped to keep (1 - q) finite.
+        let mut q = vec![0.0f64; v];
+        for kk in 0..k {
+            let t = th.get(kk).copied().unwrap_or(0.0);
+            if t == 0.0 {
+                continue;
+            }
+            let row = &beta[kk];
+            for (vv, qv) in q.iter_mut().enumerate() {
+                *qv += t * row[vv];
+            }
+        }
+        for qv in q.iter_mut() {
+            *qv = qv.clamp(1e-12, 1.0 - 1e-12);
+        }
+
+        // Observed counts x_w and document length m from the token-id list.
+        let mut x = vec![0.0f64; v];
+        let mut m = 0.0f64;
+        for &tok in doc {
+            let w = tok as usize;
+            if w < v {
+                x[w] += 1.0;
+                m += 1.0;
+            }
+        }
+        if m == 0.0 {
+            continue;
+        }
+
+        for vv in 0..v {
+            let qv = q[vv];
+            if qv * m > tol {
+                nhat += 1.0;
+            }
+            let xv = x[vv];
+            let denom = m * qv * (1.0 - qv);
+            statistic += (xv * xv - 2.0 * xv * qv * m) / denom + m * qv / (1.0 - qv);
+        }
+    }
+
+    let num_params = (n as f64) * ((k as f64) - 1.0) + (k as f64) * ((v as f64) - 1.0);
+    let df = nhat - v as f64 - num_params;
+    let dispersion = if df > 0.0 { statistic / df } else { f64::NAN };
+    ResidualDispersion {
+        dispersion,
+        df,
+        num_params,
+        statistic,
+        nhat,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -330,5 +438,76 @@ mod tests {
         let excl = exclusivity(&beta, 2, 0.7);
         assert_eq!(excl.len(), 2);
         assert!(excl.iter().all(|e| e.is_finite() && *e > 0.0));
+    }
+
+    // Two-cluster planted corpus: words {0,1,2} vs {3,4,5}. Docs 0-3 draw only
+    // from cluster A, docs 4-7 only from cluster B.
+    fn planted_corpus() -> Vec<Vec<u32>> {
+        let mut docs = Vec::new();
+        for _ in 0..4 {
+            docs.push(vec![0u32, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2]);
+        }
+        for _ in 0..4 {
+            docs.push(vec![3u32, 4, 5, 3, 4, 5, 3, 4, 5, 3, 4, 5]);
+        }
+        docs
+    }
+
+    #[test]
+    fn residual_dispersion_drops_as_k_reaches_truth() {
+        let docs = planted_corpus();
+        let n = docs.len();
+
+        // K = 1: a single averaged topic cannot represent the two clusters.
+        let beta1 = vec![vec![1.0 / 6.0; 6]];
+        let theta1 = vec![vec![1.0]; n];
+        let r1 = residual_dispersion(&beta1, &theta1, &docs, 0.01);
+
+        // K = 2: topics aligned to the true clusters, near-one-hot proportions.
+        let beta2 = vec![
+            vec![0.32, 0.32, 0.32, 0.013, 0.013, 0.014],
+            vec![0.013, 0.013, 0.014, 0.32, 0.32, 0.32],
+        ];
+        let mut theta2 = Vec::new();
+        for _ in 0..4 {
+            theta2.push(vec![0.98, 0.02]);
+        }
+        for _ in 0..4 {
+            theta2.push(vec![0.02, 0.98]);
+        }
+        let r2 = residual_dispersion(&beta2, &theta2, &docs, 0.01);
+
+        assert!(r1.df > 0.0 && r2.df > 0.0);
+        assert!(r1.dispersion.is_finite() && r2.dispersion.is_finite());
+        // Too-few-topics model is overdispersed relative to the well-specified one.
+        assert!(
+            r1.dispersion > r2.dispersion,
+            "K=1 dispersion {} should exceed K=2 dispersion {}",
+            r1.dispersion,
+            r2.dispersion
+        );
+        assert!(r1.dispersion > 1.0, "K=1 should be overdispersed (>1)");
+        // Parameter count matches stm's d = n*(K-1) + K*(V-1).
+        assert_eq!(r1.num_params, n as f64 * 0.0 + 1.0 * 5.0);
+        assert_eq!(r2.num_params, n as f64 * 1.0 + 2.0 * 5.0);
+    }
+
+    #[test]
+    fn residual_dispersion_is_deterministic() {
+        let docs = planted_corpus();
+        let beta = vec![
+            vec![0.32, 0.32, 0.32, 0.013, 0.013, 0.014],
+            vec![0.013, 0.013, 0.014, 0.32, 0.32, 0.32],
+        ];
+        let mut theta = Vec::new();
+        for _ in 0..4 {
+            theta.push(vec![0.98, 0.02]);
+        }
+        for _ in 0..4 {
+            theta.push(vec![0.02, 0.98]);
+        }
+        let a = residual_dispersion(&beta, &theta, &docs, 0.01);
+        let b = residual_dispersion(&beta, &theta, &docs, 0.01);
+        assert_eq!(a, b);
     }
 }

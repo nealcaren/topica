@@ -83,6 +83,28 @@ class TestCheckResiduals:
         with pytest.raises(ValueError):
             stm.check_residuals(m, docs[:10])
 
+    def test_backed_by_shared_core(self, two_topic):
+        # check_residuals delegates to topica-core inspect::residual_dispersion.
+        m, docs = two_topic
+        from topica._topica import inspect_residual_dispersion
+
+        phi = np.asarray(m.topic_word, dtype=np.float64)
+        theta = np.asarray(m.doc_topic, dtype=np.float64)
+        vocab = {w: i for i, w in enumerate(m.vocabulary)}
+        ids = [[vocab[w] for w in doc if w in vocab] for doc in docs]
+        dispersion, df, num_params, statistic, nhat = inspect_residual_dispersion(
+            phi.tolist(), theta.tolist(), ids, 0.01
+        )
+        rc = stm.check_residuals(m, docs)
+        assert np.isclose(rc.dispersion, dispersion, rtol=1e-9, atol=1e-12)
+        assert rc.df == df
+        assert dispersion > 0.0 and np.isfinite(dispersion)
+        # stm's d = n*(K-1) + K*(V-1); df = Nhat - V - d.
+        k, v = phi.shape
+        n = theta.shape[0]
+        assert num_params == n * (k - 1) + k * (v - 1)
+        assert np.isclose(df, nhat - v - num_params)
+
 
 class TestAlignment:
     def test_matches_swapped_topics(self, two_topic):
