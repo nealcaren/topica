@@ -417,8 +417,12 @@ struct DtmState {
     init_spectral: bool,
     #[serde(default)]
     initialization: Option<String>,
-    // (num_docs, num_topics) per-document topic proportions (#494); None for
-    // models saved before this field existed.
+    // (num_docs, num_topics) per-document topic proportions (#494). NOTE: the save
+    // format is positional bincode, so `#[serde(default)]` is inert here -- a
+    // genuine pre-#494 save lacks these trailing bytes and fails to deserialize
+    // (clean EOF error), rather than loading with `doc_topic = None`. The default
+    // only helps same-version round-trips and a self-describing reader; the getter
+    // still returns a clean error (not a panic) should it ever see `None`.
     #[serde(default)]
     doc_topic: Option<Arr2>,
 }
@@ -10322,7 +10326,16 @@ impl DTM {
     #[getter]
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
-        Ok(self.doc_topic.as_ref().unwrap().to_pyarray_bound(py))
+        // `fitted` does not by itself guarantee `doc_topic` is present: a model
+        // saved before #494 has no `doc_topic` in its state. Return a clean error
+        // rather than unwrap-panicking on that (already-degraded) path.
+        let dt = self.doc_topic.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err(
+                "doc_topic is unavailable; this model was saved before doc_topic \
+                 existed -- refit to populate it",
+            )
+        })?;
+        Ok(dt.to_pyarray_bound(py))
     }
 
     /// Trajectory of a word's probability in a topic across slices, shape
