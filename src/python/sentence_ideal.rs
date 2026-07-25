@@ -45,6 +45,13 @@ struct SentenceIdealState {
     ll_history: Option<Vec<f64>>,
     converged: Option<bool>,
     iters_run: Option<usize>,
+    // Per-dimension identification scale for a correctly scaled `position_se`.
+    // Positional bincode makes serde(default) inert for a genuine old save (it
+    // fails to deserialize), but the default keeps same-version round-trips and a
+    // self-describing reader working; an empty scale makes `position_se` fall back
+    // to sd = 1 (the pre-fix behavior).
+    #[serde(default)]
+    std_scale: Option<Vec<f64>>,
 }
 
 impl IdealPointSentenceTM {
@@ -301,13 +308,15 @@ impl IdealPointSentenceTM {
     fn log_likelihood(&self) -> PyResult<f64> {
         Ok(self.fitted_model()?.log_likelihood)
     }
-    /// Per-iteration `(iter, log_likelihood)` trace of the data log-likelihood at
-    /// each E-step, for convergence monitoring. Note this data log-likelihood is
-    /// **not** the objective EM maximizes here (the position M-step is MAP and the
-    /// positions are re-standardized to unit scale each sweep), so it is not
-    /// guaranteed monotone -- with `x_prior_variance` far from the unit
-    /// identification scale it can briefly decrease. Use the relative change, not
-    /// strict monotonicity, to judge convergence.
+    /// Per-iteration `(iter, objective)` trace of the penalized incomplete-data
+    /// objective that MAP-EM maximizes: the data log-likelihood minus the position
+    /// prior penalty `sum_a ||x_a||^2 / (2 x_prior_variance)`. It is monotone
+    /// non-decreasing across sweeps (up to the tiny ridge in the least-squares
+    /// solves), so convergence can be judged from it directly. The bare data
+    /// log-likelihood is not the EM objective here (the position M-step is MAP) and
+    /// is not monotone when `x_prior_variance` differs from the unit identification
+    /// scale; that is why the penalty is subtracted. The reported `log_likelihood`
+    /// remains the (unpenalized) incomplete-data log-likelihood of the fitted model.
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
         Ok(self
@@ -371,6 +380,7 @@ impl IdealPointSentenceTM {
                 ll_history: m.map(|m| m.ll_history.clone()),
                 converged: m.map(|m| m.converged),
                 iters_run: m.map(|m| m.iters_run),
+                std_scale: m.map(|m| m.std_scale.clone()),
             },
         )
     }
@@ -396,6 +406,7 @@ impl IdealPointSentenceTM {
                 ll_history: s.ll_history.unwrap_or_default(),
                 converged: s.converged.unwrap_or(false),
                 iters_run: s.iters_run.unwrap_or(0),
+                std_scale: s.std_scale.unwrap_or_default(),
             })
         } else {
             None

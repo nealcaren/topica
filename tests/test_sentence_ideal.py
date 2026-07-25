@@ -144,10 +144,31 @@ def test_reported_ll_is_a_normalized_density(): # noqa: D103
     # sane magnitude (not the huge value an unnormalized exponent sum would give).
     n_obs = m.doc_topic.shape[0]
     assert -1e4 < m.log_likelihood / n_obs < 1e4
-    # NOTE: `ll_history` is the data log-likelihood, which EM does not maximize here
-    # (the position M-step is MAP and positions are re-standardized each sweep), so
-    # it is intentionally NOT asserted monotone -- it can decrease when
-    # `x_prior_variance` is far from the unit identification scale. See #499.
+    # `fit_history` reports the penalized MAP-EM objective, not the bare data
+    # log-likelihood; the monotonicity of that objective is asserted in
+    # `test_fit_history_objective_is_monotone`. `log_likelihood` stays the
+    # (unpenalized) incomplete-data log-density (#499).
+
+
+@pytest.mark.parametrize("x_prior_variance", [0.05, 0.2, 5.0])
+def test_fit_history_objective_is_monotone(x_prior_variance):
+    # #530: with unit-variance identification the bare data log-likelihood is not
+    # monotone for a non-default prior (worst step -9.06 at x_prior_variance=0.05).
+    # `fit_history` now reports the penalized EM objective, which is monotone
+    # non-decreasing. iters is large and no convergence tolerance shortcut is used.
+    emb, group, _ = _planted(seed=3)
+    m = topica.IdealPointSentenceTM(
+        num_topics=2, num_dims=1, x_prior_variance=x_prior_variance, seed=1
+    )
+    m.fit(emb, group=group, iters=120)
+    lls = [ll for _, ll in m.fit_history]
+    assert len(lls) >= 3
+    for prev, cur in zip(lls, lls[1:]):
+        slack = 1e-6 * max(abs(prev), 1.0)
+        assert cur >= prev - slack, (
+            f"objective decreased from {prev} to {cur} at "
+            f"x_prior_variance={x_prior_variance}"
+        )
 
 
 def test_save_load(tmp_path):
