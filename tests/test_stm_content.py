@@ -548,3 +548,40 @@ class TestSTMContentRecomputeEtaCov:
         # Identical under the fix (both use the current fit's β); under the bug the
         # reused instance recomputes against the stale first-fit β and diverges.
         npt.assert_allclose(a, b, rtol=0, atol=1e-5)
+
+
+def test_l1_content_prior_is_pure_laplace_not_elastic_net():
+    # Under content_prior="l1" the deviation blocks (kappa_cov / kappa_interaction)
+    # must carry a *pure* Laplace prior, not a coupled L1+L2 elastic net (#532): the
+    # surviving (nonzero) deviations are therefore not ridge-shrunk, so they run
+    # larger in magnitude than the l2 fit's deviations at the same content_prior_var.
+    # The baseline kappa_topic keeps its L2 (stays dense) under both priors.
+    rng = np.random.default_rng(0)
+    A = [f"a{i}" for i in range(8)]; B = [f"b{i}" for i in range(8)]; F = [f"f{i}" for i in range(8)]
+    docs, grp = [], []
+    for _ in range(120):
+        docs.append(list(rng.choice(A + F, 20))); grp.append("A")
+        docs.append(list(rng.choice(B + F, 20))); grp.append("B")
+
+    def fit(prior):
+        m = STM(num_topics=2, seed=1).fit(
+            docs, content=grp, content_prior=prior, content_prior_var=0.5, iters=60
+        )
+        ck = m.content_kappa
+        dev = np.concatenate([np.ravel(v) for k, v in ck.items() if k != "kappa_topic"])
+        base = np.ravel(ck["kappa_topic"])
+        return dev, base
+
+    d_l1, base_l1 = fit("l1")
+    d_l2, _ = fit("l2")
+
+    # l1 sparsifies the deviations (exact zeros); l2 does not.
+    assert (d_l1 == 0).sum() > 0, "l1 should produce exact zeros on the deviations"
+    assert (d_l2 == 0).sum() == 0, "l2 should not force zeros"
+    # baseline is L2-regularized (dense) under l1, not sparsified.
+    assert (base_l1 == 0).sum() == 0, "kappa_topic must keep its L2 (stay dense) under l1"
+    # pure Laplace: surviving deviations are not additionally ridge-shrunk, so their
+    # mean magnitude exceeds the (fully ridge-shrunk) l2 deviations.
+    mean_l1 = np.abs(d_l1[d_l1 != 0]).mean()
+    mean_l2 = np.abs(d_l2).mean()
+    assert mean_l1 > mean_l2, f"l1 survivors should exceed l2 magnitudes: {mean_l1:.3f} vs {mean_l2:.3f}"
