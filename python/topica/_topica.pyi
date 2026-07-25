@@ -3210,7 +3210,7 @@ class Top2Vec:
         min_cluster_size: int = 15,
         min_samples: int | None = None,
         reducer: str = "umap",
-        n_neighbors: int = 50,
+        n_neighbors: int = 15,
         clusterer: str = "hdbscan",
         num_clusters: int | None = None,
         resolution: float = 1.0,

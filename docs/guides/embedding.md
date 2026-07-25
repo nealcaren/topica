@@ -521,9 +521,9 @@ For statistically-selected phrases instead of every bigram, use
   use `num_clusters` instead, and `clusterer="louvain"`/`"leiden"` discover the
   count on their own (see above).
 - `n_components` is the dimensionality the embeddings are reduced to before
-  clustering. `BERTopic` and `Top2Vec` both default to `reducer="umap"` (BERTopic
-  with `n_neighbors=15` matching the upstream package, Top2Vec with `n_neighbors=50`
-  matching the original, which always reduces with UMAP). `reducer="pca"` switches to
+  clustering. `BERTopic` and `Top2Vec` both default to `reducer="umap"` with
+  `n_neighbors=15` (matching the upstream BERTopic package and the original
+  Top2Vec's default UMAP config, both of which reduce with UMAP). `reducer="pca"` switches to
   a randomized PCA: fast, deterministic, and dependency-free, but it separates less
   sharply than UMAP and on closely spaced themes can merge clusters a UMAP run would
   split. Under PCA the reduced coordinates are L2-normalized onto the unit sphere

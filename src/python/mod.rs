@@ -13217,9 +13217,9 @@ fn emit_cluster_diagnostics(
     if auto_k && num_topics <= 2 && n >= 200 {
         warn(format!(
             "{model_name}: clustering produced only {num_topics} topic(s) from {n} \
-             documents. This usually means the reduced coordinates were poorly \
-             separated (try reducer=\"umap\", or check embedding quality) or \
-             min_cluster_size is too large."
+             documents. This usually means min_cluster_size is too large, the \
+             embeddings need checking, or the reduced coordinates were poorly \
+             separated (if you set reducer=\"pca\", try the default reducer=\"umap\")."
         ))?;
     }
 

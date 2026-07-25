@@ -1,6 +1,6 @@
 """Statistical-equivalence check for topica's Top2Vec against BERTopic.
 
-topica (randomized-PCA reducer) and BERTopic (UMAP reducer) are independent
+topica (in-house UMAP reducer) and BERTopic (umap-learn reducer) are independent
 embedding-clustering topic models, so we do not expect identical topics. On a
 controlled planted-cluster task with shared document embeddings, we require that
 topica recovers the ground truth at least as well as BERTopic does (within a
