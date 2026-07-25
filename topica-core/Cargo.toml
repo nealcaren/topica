@@ -1,6 +1,6 @@
 [package]
 name = "topica-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Logistic-normal structural-topic-model core (CTM/STM/SAGE + CVB0) extracted from the topica crate: small, dependency-light, and independently vendorable."
 license = "Apache-2.0"

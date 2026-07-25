@@ -722,7 +722,7 @@ dependencies = [
 
 [[package]]
 name = "topica"
-version = "0.34.0"
+version = "0.50.0"
 dependencies = [
  "bhtsne",
  "bincode",
@@ -742,7 +742,7 @@ dependencies = [
 
 [[package]]
 name = "topica-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rand 0.8.6",
  "rand_chacha 0.3.1",
