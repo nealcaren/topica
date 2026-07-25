@@ -123,6 +123,27 @@ def test_determinism():
     assert np.array_equal(a.author_positions, b.author_positions)
 
 
+def test_ll_history_is_monotone(): # noqa: D103
+    # Regression for #499: the reported per-iteration log-likelihood must include
+    # the sigma^2-dependent Gaussian normalizer -(D/2) ln(2 pi sigma^2). sigma^2 is
+    # re-estimated every sweep (it shrinks sharply early), so without the normalizer
+    # the reported ll_history is true_ll plus a per-iteration-varying offset and can
+    # DECREASE while the model improves. With it, ll_history is the actual EM
+    # objective and is monotone non-decreasing across iterations.
+    emb, group, _ = _planted(seed=7)
+    m = topica.IdealPointSentenceTM(num_topics=2, num_dims=1, seed=1)
+    m.fit(emb, group=group, iters=60)
+    hist = m.fit_history
+    lls = [ll for _, ll in hist]
+    assert len(lls) >= 3
+    # Every EM step must not decrease the reported log-likelihood (tiny tolerance
+    # for f64 rounding in the parallel reductions).
+    diffs = np.diff(lls)
+    assert np.all(diffs >= -1e-6), (
+        f"ll_history not monotone non-decreasing; min step = {diffs.min():.3e}"
+    )
+
+
 def test_save_load(tmp_path):
     emb, group, _ = _planted(seed=5)
     m = topica.IdealPointSentenceTM(num_topics=2, seed=1)

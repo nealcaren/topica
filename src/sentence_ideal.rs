@@ -237,6 +237,14 @@ pub fn fit_sentence_ideal<R: Rng>(
 
         // E-step: responsibilities r_{i,k} ∝ pi_k N(e_i | mu_k + x_a V_k, sigma2 I).
         let inv2s = 1.0 / (2.0 * sigma2);
+        // Per-observation Gaussian log-normalizer of the spherical density
+        // N(.| ., sigma2 I) in D dimensions: -(D/2) ln(2 pi sigma2). It is
+        // omitted from the responsibilities (it cancels in the per-row
+        // normalization) but MUST be included in the reported incomplete-data
+        // log-likelihood: because sigma2 is re-estimated each sweep, this term
+        // is not a constant offset, and dropping it makes `ll_history`
+        // non-monotone and the convergence test act on the wrong quantity.
+        let log_norm = -0.5 * dim as f64 * (2.0 * std::f64::consts::PI * sigma2).ln();
         let log_pi: Vec<f64> = pi.iter().map(|&p| p.max(1e-300).ln()).collect();
         // Per-document log-likelihood, collected in document order then summed
         // sequentially so the total is independent of rayon's work-stealing order
@@ -270,7 +278,7 @@ pub fn fit_sentence_ideal<R: Rng>(
                 for t in 0..k {
                     ri[t] /= z;
                 }
-                max + z.ln()
+                max + z.ln() + log_norm
             })
             .collect();
         let ll: f64 = ll_parts.iter().sum();
