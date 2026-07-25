@@ -17,18 +17,26 @@ use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::collections::{BTreeMap, HashMap};
 
-/// Above this vocabulary size the dense V×V co-occurrence is replaced by a
-/// random projection to `PROJ_DIM` columns (Johnson-Lindenstrauss), turning the
-/// O(V²) anchor search into O(V·PROJ_DIM) — the same trick R's `stm` uses for
-/// large vocabularies. At or below it, the exact path runs (cheap and exact).
-/// The threshold sits well above `PROJ_DIM`: projecting only pays off once V is
-/// several times the target dimension (otherwise the projection overhead exceeds
-/// the savings), and it keeps the small/moderate-vocab behavior unchanged.
-const PROJ_THRESHOLD: usize = 3000;
+/// Default vocabulary size above which the dense V×V co-occurrence is replaced by
+/// a random projection to `PROJ_DIM` columns (Johnson-Lindenstrauss), turning the
+/// O(V²) anchor search into O(V·PROJ_DIM). At or below it, the exact path runs
+/// (cheap and exact). This default (10000) matches R `stm`, whose spectral init
+/// builds the exact co-occurrence Gram matrix up to a vocabulary of ~10000 types;
+/// below that boundary topica and `stm` take the same exact path. Above it, the
+/// projected path is an approximation `stm` does not use, so a corpus with a
+/// vocabulary larger than the threshold gets an init that only approximates the
+/// exact one. Callers can lower the threshold (see [`spectral_init_with_threshold`])
+/// to force the cheaper projected path sooner; the threshold should stay well above
+/// `PROJ_DIM`, since projecting only pays off once V is several times the target
+/// dimension (otherwise the projection overhead exceeds the savings).
+pub const DEFAULT_PROJ_THRESHOLD: usize = 10000;
 const PROJ_DIM: usize = 1024;
-/// Fixed seed for the projection so `spectral_init` stays a deterministic,
-/// seed-independent function of the corpus (the projection is an internal
-/// implementation detail, not a modeling choice).
+/// Fixed seed for the projection so the projected path stays a deterministic,
+/// seed-independent function of the corpus: the same corpus and threshold always
+/// yield the same init (the projection is an internal implementation detail, not a
+/// modeling choice). This determinism guarantee holds on both the exact and the
+/// projected path, so lowering the threshold changes *which* init you get but never
+/// makes it seed-dependent.
 const PROJ_SEED: u64 = 0x5EED_C0FFEE;
 
 /// Build the row-normalized co-occurrence matrix `Q̄` (V×V) and the word
@@ -336,14 +344,33 @@ fn cooccurrence_projected(
 /// Returns `None` when it is not applicable (corpus too small, fewer candidate
 /// words than topics, or degenerate co-occurrence) so the caller can fall back.
 ///
-/// For large vocabularies the dense V×V co-occurrence is replaced by a
-/// random-projected V×M one (see [`cooccurrence_projected`]); the downstream
-/// anchor search and recovery are dimension-agnostic and run unchanged.
+/// For vocabularies larger than [`DEFAULT_PROJ_THRESHOLD`] the dense V×V
+/// co-occurrence is replaced by a random-projected V×M one (see
+/// [`cooccurrence_projected`]); the downstream anchor search and recovery are
+/// dimension-agnostic and run unchanged. To make the switch-over point
+/// configurable, call [`spectral_init_with_threshold`].
 pub fn spectral_init(docs: &[Vec<u32>], k: usize, v: usize) -> Option<Vec<Vec<f64>>> {
+    spectral_init_with_threshold(docs, k, v, DEFAULT_PROJ_THRESHOLD)
+}
+
+/// [`spectral_init`] with the exact→projected switch-over vocabulary size given
+/// explicitly. Vocabularies with `v > proj_threshold` take the approximate
+/// random-projected path; at or below it the exact co-occurrence path runs. The
+/// default ([`DEFAULT_PROJ_THRESHOLD`]) matches R `stm`; lowering `proj_threshold`
+/// forces the cheaper projected path on smaller vocabularies (trading fidelity for
+/// speed/memory). The result is deterministic for a fixed `(docs, k, v,
+/// proj_threshold)` regardless of any RNG (the projection uses a fixed internal
+/// seed), on both paths.
+pub fn spectral_init_with_threshold(
+    docs: &[Vec<u32>],
+    k: usize,
+    v: usize,
+    proj_threshold: usize,
+) -> Option<Vec<Vec<f64>>> {
     if v < k {
         return None;
     }
-    let (qbar, p) = if v > PROJ_THRESHOLD {
+    let (qbar, p) = if v > proj_threshold {
         cooccurrence_projected(docs, v, PROJ_DIM)?
     } else {
         cooccurrence(docs, v)?
@@ -360,10 +387,11 @@ mod tests {
 
     #[test]
     fn projected_recovers_planted_topics_large_vocab() {
-        // Vocabulary above PROJ_THRESHOLD so the random-projection path runs.
-        // Ten disjoint blocks of 400 words each (V = 4000 > 3000); each doc
-        // draws from one block. Spectral init should still put each topic's
-        // top words on a single block via the projected co-occurrence.
+        // Force the random-projection path with an explicit low threshold (the
+        // default is now 10000, above this fixture's V). Ten disjoint blocks of
+        // 400 words each (V = 4000 > threshold 3000); each doc draws from one
+        // block. Spectral init should still put each topic's top words on a
+        // single block via the projected co-occurrence.
         let nb = 10usize;
         let bs = 400usize;
         let v = nb * bs; // 4000
@@ -377,7 +405,8 @@ mod tests {
             let doc: Vec<u32> = (0..10).map(|j| blk[(i * 7 + j * 37) % bs]).collect();
             docs.push(doc);
         }
-        let beta = spectral_init(&docs, nb, v).expect("projected spectral init");
+        let beta =
+            spectral_init_with_threshold(&docs, nb, v, 3000).expect("projected spectral init");
         // Each topic's top words should fall predominantly in one block.
         let mut covered = std::collections::HashSet::new();
         for t in 0..nb {
@@ -418,8 +447,8 @@ mod tests {
         // the corpus by construction. This asserts within-process reproducibility
         // (two inits on the same large-vocab corpus are bit-identical); it is a
         // smoke test rather than a proof, since whether an unordered sum actually
-        // diverges in its low bits is data-dependent. V = 4000 > PROJ_THRESHOLD
-        // forces the projected path.
+        // diverges in its low bits is data-dependent. An explicit threshold of
+        // 3000 < V = 4000 forces the projected path (the default is now 10000).
         let nb = 10usize;
         let bs = 400usize;
         let v = nb * bs;
@@ -434,9 +463,61 @@ mod tests {
             let doc: Vec<u32> = (0..25).map(|j| blk[(i * 13 + j * 41) % bs]).collect();
             docs.push(doc);
         }
-        let a = spectral_init(&docs, nb, v).expect("projected spectral init");
-        let b = spectral_init(&docs, nb, v).expect("projected spectral init");
+        let a = spectral_init_with_threshold(&docs, nb, v, 3000).expect("projected spectral init");
+        let b = spectral_init_with_threshold(&docs, nb, v, 3000).expect("projected spectral init");
         assert_eq!(a, b, "projected spectral init is not bit-reproducible");
+    }
+
+    #[test]
+    fn threshold_selects_exact_vs_projected_path_and_stays_deterministic() {
+        // #542: the switch-over vocabulary size is configurable. A mid-size
+        // vocabulary (3000 < V < DEFAULT_PROJ_THRESHOLD = 10000) takes the exact
+        // path at the default and the approximate projected path once the
+        // threshold is lowered below V. The two paths give measurably different
+        // inits (the projection is an approximation), and each is deterministic.
+        let nb = 8usize;
+        let bs = 500usize;
+        let v = nb * bs; // 4000: above 3000, below the 10000 default.
+        assert!(v > 3000 && v < DEFAULT_PROJ_THRESHOLD);
+        let blocks: Vec<Vec<u32>> = (0..nb)
+            .map(|b| (b * bs..b * bs + bs).map(|w| w as u32).collect())
+            .collect();
+        let mut docs = Vec::new();
+        for i in 0..(nb * 200) {
+            let blk = &blocks[i % nb];
+            let doc: Vec<u32> = (0..12).map(|j| blk[(i * 11 + j * 29) % bs]).collect();
+            docs.push(doc);
+        }
+
+        // Default threshold (10000): exact path, since V = 4000 <= 10000.
+        let exact_default = spectral_init(&docs, nb, v).expect("exact default");
+        // An explicit high threshold reproduces the exact path bit-for-bit.
+        let exact_explicit =
+            spectral_init_with_threshold(&docs, nb, v, DEFAULT_PROJ_THRESHOLD).expect("exact");
+        assert_eq!(
+            exact_default, exact_explicit,
+            "default threshold must equal DEFAULT_PROJ_THRESHOLD"
+        );
+
+        // Lowering the threshold below V forces the projected path.
+        let projected = spectral_init_with_threshold(&docs, nb, v, 3000).expect("projected");
+
+        // The projected path is an approximation, so it differs from the exact one.
+        assert_ne!(
+            exact_default, projected,
+            "lowering the threshold must switch to the (different) projected path"
+        );
+
+        // Both paths are deterministic for a fixed (docs, k, v, threshold).
+        let exact_again = spectral_init_with_threshold(&docs, nb, v, DEFAULT_PROJ_THRESHOLD)
+            .expect("exact again");
+        let projected_again =
+            spectral_init_with_threshold(&docs, nb, v, 3000).expect("projected again");
+        assert_eq!(exact_explicit, exact_again, "exact path not deterministic");
+        assert_eq!(
+            projected, projected_again,
+            "projected path not deterministic"
+        );
     }
 
     #[test]

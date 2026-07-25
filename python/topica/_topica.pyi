@@ -473,6 +473,7 @@ class CTM:
         em_tol: Optional[float] = None,
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
+        spectral_projection_threshold: int = 10000,
     ) -> "CTM":
         """EM stops once the relative change in the variational bound falls below
         convergence_tol or after iters iterations, whichever comes first. Pass
@@ -650,6 +651,7 @@ class STM:
         covariates: Optional[numpy.typing.NDArray[numpy.float64]] = None,
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
+        spectral_projection_threshold: int = 10000,
     ) -> "STM":
         """Fit. prevalence (or covariates, a symmetric alias) is (num_docs, F)
         covariates driving topic proportions (mu_d = X_d gamma; intercept

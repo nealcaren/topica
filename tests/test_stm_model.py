@@ -559,3 +559,58 @@ class TestSTMConvergence:
         m = STM(num_topics=2)
         with pytest.raises(RuntimeError):
             _ = m.bound
+
+
+# ---------------------------------------------------------------------------
+# spectral_projection_threshold (issue #542)
+# ---------------------------------------------------------------------------
+# The spectral (anchor-word) init switches from the exact V*V co-occurrence to a
+# deterministic random projection once the vocabulary exceeds the threshold. The
+# default (10000) matches R stm; lowering it forces the (different) projected path.
+
+
+class TestSpectralProjectionThreshold:
+    def test_default_matches_high_explicit_threshold(self, stm_corpus_and_x):
+        # This corpus's vocabulary (10 types) is well below the default 10000, so
+        # the default and any high explicit threshold both take the exact path and
+        # must be bit-for-bit identical.
+        docs, x_2d = stm_corpus_and_x
+        m_default = STM(num_topics=2, seed=1)
+        m_default.fit(docs, x_2d, prevalence_names=["x"], iters=8)
+        m_high = STM(num_topics=2, seed=1)
+        m_high.fit(
+            docs,
+            x_2d,
+            prevalence_names=["x"],
+            iters=8,
+            spectral_projection_threshold=100_000,
+        )
+        assert np.array_equal(m_default.topic_word, m_high.topic_word)
+
+    def test_low_threshold_changes_init_and_result(self, stm_corpus_and_x):
+        # Lowering the threshold below V (10) forces the approximate projected
+        # co-occurrence path, which yields a different init and hence a different
+        # fit from the exact (default) path.
+        docs, x_2d = stm_corpus_and_x
+        m_exact = STM(num_topics=2, seed=1)
+        m_exact.fit(docs, x_2d, prevalence_names=["x"], iters=8)
+        m_proj = STM(num_topics=2, seed=1)
+        m_proj.fit(
+            docs,
+            x_2d,
+            prevalence_names=["x"],
+            iters=8,
+            spectral_projection_threshold=1,
+        )
+        assert not np.array_equal(m_exact.topic_word, m_proj.topic_word)
+
+    def test_projected_path_is_deterministic(self, stm_corpus_and_x):
+        # A fixed (corpus, threshold) gives a reproducible projected init/fit.
+        docs, x_2d = stm_corpus_and_x
+        a = STM(num_topics=2, seed=1)
+        a.fit(docs, x_2d, prevalence_names=["x"], iters=8,
+              spectral_projection_threshold=1)
+        b = STM(num_topics=2, seed=1)
+        b.fit(docs, x_2d, prevalence_names=["x"], iters=8,
+              spectral_projection_threshold=1)
+        assert np.array_equal(a.topic_word, b.topic_word)
