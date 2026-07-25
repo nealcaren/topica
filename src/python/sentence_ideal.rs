@@ -45,6 +45,13 @@ struct SentenceIdealState {
     ll_history: Option<Vec<f64>>,
     converged: Option<bool>,
     iters_run: Option<usize>,
+    // Per-dimension identification scale for a correctly scaled `position_se`.
+    // Positional bincode makes serde(default) inert for a genuine old save (it
+    // fails to deserialize), but the default keeps same-version round-trips and a
+    // self-describing reader working; an empty scale makes `position_se` fall back
+    // to sd = 1 (the pre-fix behavior).
+    #[serde(default)]
+    std_scale: Option<Vec<f64>>,
 }
 
 impl IdealPointSentenceTM {
@@ -373,6 +380,7 @@ impl IdealPointSentenceTM {
                 ll_history: m.map(|m| m.ll_history.clone()),
                 converged: m.map(|m| m.converged),
                 iters_run: m.map(|m| m.iters_run),
+                std_scale: m.map(|m| m.std_scale.clone()),
             },
         )
     }
@@ -398,6 +406,7 @@ impl IdealPointSentenceTM {
                 ll_history: s.ll_history.unwrap_or_default(),
                 converged: s.converged.unwrap_or(false),
                 iters_run: s.iters_run.unwrap_or(0),
+                std_scale: s.std_scale.unwrap_or_default(),
             })
         } else {
             None
