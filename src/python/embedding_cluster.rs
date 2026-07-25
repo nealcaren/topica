@@ -658,8 +658,8 @@ impl Top2Vec {
         }
         if !m.has_doc_vectors() {
             return Err(PyRuntimeError::new_err(
-                "this model was saved before the search API and did not retain \
-                 document embeddings; refit to search documents",
+                "this model has no retained document embeddings, so documents cannot be \
+                 searched; refit to enable the document searches",
             ));
         }
         Ok(m.documents_in_topic(num_docs, topic))
@@ -684,8 +684,8 @@ impl Top2Vec {
         }
         if !m.has_doc_vectors() {
             return Err(PyRuntimeError::new_err(
-                "this model was saved before the search API and did not retain \
-                 document embeddings; refit to search documents",
+                "this model has no retained document embeddings, so documents cannot be \
+                 searched; refit to enable the document searches",
             ));
         }
         let ids = self.resolve_keywords(&keywords)?;

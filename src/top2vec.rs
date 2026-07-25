@@ -48,9 +48,13 @@ pub struct Top2VecModel {
     word_vectors: Vec<Vec<f64>>,
     /// The document embeddings, kept so the search API can rank documents by
     /// cosine to a topic vector or a keyword query (D x E). `#[serde(default)]`
-    /// so a model saved before the search API loads with an empty set; the
-    /// document-ranking searches then raise cleanly rather than reading a
-    /// missing matrix.
+    /// leaves this empty whenever the field is absent, and `has_doc_vectors()`
+    /// then makes the document searches raise cleanly instead of indexing a
+    /// missing matrix. Note this default does NOT rescue a genuinely pre-search
+    /// save: topica's save format is bincode (not self-describing), so a payload
+    /// written before this field existed fails to `load()` outright ("unexpected
+    /// end of file") rather than deserializing with an empty set — such a model
+    /// must be refit. The default/guard are defensive, not an old-save migration.
     #[serde(default)]
     doc_vectors: Vec<Vec<f64>>,
 }
