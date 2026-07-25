@@ -13349,14 +13349,19 @@ impl FASTopic {
     /// `dt_alpha`/`tw_alpha` are the inverse entropic regularizations for the
     /// doc-topic and topic-word transport (reference defaults 3.0 and 2.0);
     /// `theta_temp` is the inference temperature; `convergence_tol` stops on the relative
-    /// loss change. `sinkhorn_iters`/`sinkhorn_tol` cap each Sinkhorn solve.
-    /// Pass `iters` to :meth:`fit` to set the number of training epochs.
+    /// loss change. `sinkhorn_iters` caps each Sinkhorn solve and `sinkhorn_tol` stops
+    /// it early on the L1 marginal error, matching the reference's `stop_thr` /
+    /// `OT_max_iter` (BobXWu/FASTopic `_ETP.py`; `sinkhorn_tol<=0` forces the full
+    /// `sinkhorn_iters`). The previous default `sinkhorn_tol=1e-4` was far tighter
+    /// than the reference and never tripped on large vocabularies, so the topic-word
+    /// plan always ran to the old 50-iteration cap. Pass `iters` to :meth:`fit` to
+    /// set the number of training epochs.
     ///
     /// `num_topics` is the number of topics K; `seed` seeds the RNG. `em_tol` is a
     /// deprecated alias for `convergence_tol`.
     #[new]
     #[pyo3(signature = (num_topics, *, lr=0.002, dt_alpha=3.0, tw_alpha=2.0,
-                        theta_temp=1.0, convergence_tol=1e-6, sinkhorn_iters=50, sinkhorn_tol=1e-4, seed=42, em_tol=None))]
+                        theta_temp=1.0, convergence_tol=1e-6, sinkhorn_iters=5000, sinkhorn_tol=5e-3, seed=42, em_tol=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,

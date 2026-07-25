@@ -139,7 +139,12 @@ pub fn sinkhorn_forward(
         log_u_traj.push(log_u.clone());
 
         if tol > 0.0 {
-            // Column-marginal error (rows are exact after the u-update).
+            // L1 column-marginal error ||P^T 1 - b||_1. Rows are exact after the
+            // u-update, so this equals the reference's stop test max(||row - a||_1,
+            // ||col - b||_1) (BobXWu/FASTopic `_ETP.py`, `stop_thr`). The reference
+            // default 5e-3 is reachable; the previous topica default 1e-4 was ~50x
+            // tighter, below the residual floor at large V, so the topic-word plan
+            // always ran to the iteration cap and stayed under-converged.
             let mut err = 0.0f64;
             for k in 0..m {
                 let mut s = 0.0;
