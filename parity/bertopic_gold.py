@@ -84,7 +84,10 @@ def _topica_fit(docs, doc_emb):
     """Fit topica BERTopic on the shared embeddings; return (labels, top_words, num)."""
     import topica
 
-    bt = topica.BERTopic(n_components=5, min_cluster_size=MIN_CLUSTER, seed=42)
+    # Pin reducer="pca" so this gold stays the deterministic, Rust-PCA fixture the
+    # provenance below documents, independent of BERTopic's default reducer (which
+    # is now "umap"); the committed frozen provenance was computed under PCA.
+    bt = topica.BERTopic(n_components=5, min_cluster_size=MIN_CLUSTER, reducer="pca", seed=42)
     bt.fit(docs, doc_emb)
     labels = np.array(bt.labels)
     words = [

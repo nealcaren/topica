@@ -39,6 +39,10 @@ def _fit(docs, emb, **kw):
     kw.setdefault("clusterer", "kmeans")
     kw.setdefault("num_clusters", 3)
     kw.setdefault("n_components", 5)
+    # These upstream c-TF-IDF / distribution checks are reducer-independent; pin
+    # the linear reducer so they exercise the deterministic path (the class now
+    # defaults to reducer="umap").
+    kw.setdefault("reducer", "pca")
     kw.setdefault("seed", 1)
     m = topica.BERTopic(**kw)
     m.fit(docs, emb)

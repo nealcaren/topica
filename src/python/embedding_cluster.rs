@@ -22,7 +22,7 @@ fn umap_notice(_py: Python<'_>, use_umap: bool) -> PyResult<()> {
     if !crate::reduce::umap_available() {
         return Err(PyRuntimeError::new_err(
             "reducer='umap' is not available in this build; rebuild with the `umap` \
-             feature, or use reducer='pca' (the default)",
+             feature, or pass reducer='pca'",
         ));
     }
     Ok(())
@@ -1060,10 +1060,16 @@ impl BERTopic {
     /// soft `doc_topic` distribution.
     ///
     /// Divergences from the upstream `bertopic` package to be aware of (issue
-    /// #488). topica defaults to `reducer="pca"` and `min_cluster_size=15` for a
-    /// deterministic, dependency-free pipeline; the package itself defaults to
-    /// UMAP (`n_components=5, n_neighbors=15, min_dist=0`, cosine) + HDBSCAN with
-    /// `min_topic_size=10`, so the PCA default is not a parity setting. `nr_topics`
+    /// #488). topica now defaults to `reducer="umap"` (`n_components=5,
+    /// n_neighbors=15, min_dist=0`, cosine) to match the package, which also
+    /// defaults to UMAP; topica's UMAP is the in-house, seed-reproducible reducer,
+    /// so the layout is deterministic for a fixed `seed` (upstream's is not). Pass
+    /// `reducer="pca"` for a linear, lighter-weight projection instead — topica
+    /// L2-normalizes the PCA scores onto the unit sphere before clustering so the
+    /// Euclidean clusterer sees the cosine geometry the embeddings were trained
+    /// for, which keeps PCA competitive, though UMAP still recovers more topics on
+    /// harder corpora. topica keeps `min_cluster_size=15` where the package uses
+    /// `min_topic_size=10`. `nr_topics`
     /// counts the number of *real* topics (the `-1` noise topic is not counted),
     /// whereas the package counts `-1` toward the total; and topica reduces by a
     /// greedy c-TF-IDF merge rather than the package's ward agglomeration over
@@ -1072,7 +1078,9 @@ impl BERTopic {
     /// `n_components` is the reduced dimensionality before clustering;
     /// `min_cluster_size` is the smallest HDBSCAN cluster and `min_samples` its
     /// core-point neighborhood (defaults to `min_cluster_size`). `reducer` is
-    /// ``"pca"`` (default, deterministic) or ``"umap"`` (stochastic) and
+    /// ``"umap"`` (default, matching upstream BERTopic; topica's in-house UMAP is
+    /// seed-reproducible) or ``"pca"`` (linear, lighter, L2-normalized onto the
+    /// unit sphere before clustering) and
     /// `n_neighbors` its neighborhood size. `bm25` switches the c-TF-IDF term
     /// weighting to class-based BM25 (matching upstream's formula, including the
     /// unclamped idf that goes negative for terms common across every class; note
@@ -1097,7 +1105,7 @@ impl BERTopic {
     /// `reducer="pca"`). `seed` seeds the deterministic phases.
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
-                        nr_topics=None, window=4, stride=1, reducer="pca", n_neighbors=15,
+                        nr_topics=None, window=4, stride=1, reducer="umap", n_neighbors=15,
                         bm25=false, reduce_frequent=false, min_similarity=0.0, clusterer="hdbscan",
                         num_clusters=None, resolution=1.0, knn_neighbors=15,
                         diagnostics=true, min_dist=0.0, spread=1.0, n_epochs=0,

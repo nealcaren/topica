@@ -1,9 +1,10 @@
 """The optional UMAP reducer for the embedding models.
 
-UMAP is shipped in the wheel as an opt-in (`reducer="umap"`); PCA stays the
-default. topica's in-house UMAP reducer is seeded, so the whole fit is
-reproducible for a fixed `seed` — it must run, NOT warn about non-determinism,
-and give identical results across runs.
+UMAP ships in the wheel and is `BERTopic`'s default reducer, matching the
+upstream package; PCA is the lighter opt-in (and still `Top2Vec`'s default).
+topica's in-house UMAP reducer is seeded, so the whole fit is reproducible for a
+fixed `seed` — it must run, NOT warn about non-determinism, and give identical
+results across runs.
 """
 
 import warnings
@@ -55,11 +56,11 @@ def test_umap_fit_is_reproducible(model_cls):
     assert list(a.labels) == list(b.labels)
 
 
-def test_pca_default_is_silent():
+def test_pca_is_silent():
     docs, emb = _manifold()
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        m = topica.BERTopic(min_cluster_size=15, seed=1)  # reducer="pca" default
+        m = topica.BERTopic(min_cluster_size=15, reducer="pca", seed=1)
         m.fit(docs, emb)
     assert not any("reproducible" in str(x.message) for x in w)
 
