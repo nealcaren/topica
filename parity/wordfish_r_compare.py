@@ -82,6 +82,14 @@ def main() -> int:
     authors = sorted(pos)
     topica_theta = [pos[a] for a in authors]
 
+    # Unanchored fit: topica default-orients to the first two authors
+    # (theta[0] < theta[1]), mirroring quanteda's default dir = c(1, 2). Refit with
+    # no anchors so the *signed* correlation with quanteda validates the default
+    # orientation (finding #2), not just the axis up to sign.
+    mu = topica.Wordfish(seed=1)
+    mu.fit(docs, group=group, iters=200)
+    unanchored = dict(zip(mu.author_names, mu.author_positions[:, 0]))
+
     # Build the author x word count matrix for quanteda.
     vocab = m.vocabulary
     vidx = {w: j for j, w in enumerate(vocab)}
@@ -125,9 +133,18 @@ def main() -> int:
     r_topica_truth = _pearson(topica_theta, planted)
     r_quanteda_truth = _pearson(quanteda_theta, planted)
 
+    # Signed correlation of the *unanchored* topica fit vs quanteda: both default to
+    # dir = c(1, 2), so a faithful default orientation gives a positive sign, not
+    # merely |r| ~ 1.
+    unanchored_theta = [unanchored[a] for a in authors]
+    signed_default = float(
+        np.corrcoef(np.asarray(unanchored_theta), np.asarray(quanteda_theta))[0, 1]
+    )
+
     print(f"topica Wordfish vs quanteda textmodel_wordfish : |r| = {r_vs_quanteda:.4f}")
     print(f"topica   vs planted truth                      : |r| = {r_topica_truth:.4f}")
     print(f"quanteda vs planted truth                      : |r| = {r_quanteda_truth:.4f}")
+    print(f"topica (unanchored, default dir) vs quanteda   :  r  = {signed_default:+.4f}")
 
     # per-word discrimination beta: topica vs quanteda, aligned by word.
     beta_r = float("nan")
@@ -156,6 +173,10 @@ def main() -> int:
     failures = []
     if r_vs_quanteda < 0.95:
         failures.append(f"theta |r|={r_vs_quanteda:.4f} < 0.95")
+    # Default orientation (no anchors) must match quanteda's dir sign, i.e. a strong
+    # *positive* signed correlation.
+    if signed_default < 0.95:
+        failures.append(f"unanchored signed r={signed_default:+.4f} < 0.95")
     # beta shares theta's identification, so a faithful scale recovers it too.
     if not np.isnan(beta_r) and beta_r < 0.95:
         failures.append(f"beta |r|={beta_r:.4f} < 0.95")
