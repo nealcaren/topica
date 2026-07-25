@@ -544,8 +544,9 @@ def estimate_effect(
       bounds where OLS can wander outside them (Papke & Wooldridge). Non-identity
       links report heteroskedasticity- or cluster-robust standard errors; the
       heteroskedasticity-robust GLM SE is HC0 (no ``n/(n-p)`` factor), matching
-      statsmodels' GLM sandwich and the Papke–Wooldridge convention, while the
-      identity link uses HC1 and the cluster path uses CR1.
+      statsmodels' GLM sandwich and the Papke–Wooldridge convention. The identity
+      link without ``cluster`` reports classical OLS standard errors; under
+      ``cluster`` both links use the CR1 cluster-robust sandwich.
     - ``weights`` — a length-``num_docs`` array of (survey) weights, or a column
       name in ``data``. Switches to weighted least squares: documents enter the
       regression in proportion to their weight, so a weighted sample (e.g. a
