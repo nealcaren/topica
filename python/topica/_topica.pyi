@@ -4343,8 +4343,8 @@ class FASTopic:
         tw_alpha: float = 2.0,
         theta_temp: float = 1.0,
         convergence_tol: float = 1e-6,
-        sinkhorn_iters: int = 50,
-        sinkhorn_tol: float = 1e-4,
+        sinkhorn_iters: int = 5000,
+        sinkhorn_tol: float = 5e-3,
         seed: int = 42,
         em_tol: Optional[float] = None,
     ) -> None:
