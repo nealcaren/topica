@@ -6,7 +6,37 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-07-25
+
 ### Changed
+
+- **BERTopic and Top2Vec now default to `reducer="umap"`** (#549, #550), matching
+  the upstream `bertopic` package and the original Top2Vec, both of which reduce
+  with UMAP (`n_neighbors=15`, `n_components=5`, cosine). topica's in-house UMAP is
+  seed-reproducible, so the default stays deterministic for a fixed `seed`. Pass
+  `reducer="pca"` for the former linear default. This is a behaviour change: a
+  default `BERTopic(...)` / `Top2Vec(...)` fit now uses UMAP.
+- **CombinedTM: faithful `adapt_bert` encoder and raw bag-of-words input** (#503),
+  matching the reference; the encoder concatenation and un-normalized BoW now match
+  Bianchi et al. This changes fitted output for CombinedTM/ZeroShotTM.
+- **FASTopic: the Sinkhorn solve matches the reference's stop criterion** (#500).
+  The early stop now compares the L1 marginal error against `sinkhorn_tol` (default
+  `5e-3`, the reference `stop_thr`) with `sinkhorn_iters=5000` (the reference
+  `OT_max_iter`), so the topic-word plan converges instead of hitting the old
+  50-iteration cap. Slightly changes fitted output and improves cross-implementation
+  parity (aligned topic-word cosine 0.607 -> 0.616).
+- **Spectral initialization: configurable projection threshold** (#542), default
+  10000 to match R `stm`.
+- **STM content-model refinements** (#531, #532, #534): `content_prior="l1"` is now
+  a pure Laplace prior (not L1+L2), content_time periods are ordered numerically
+  rather than lexically, and content-prior scales are guarded.
+- **`estimate_effect` robust standard errors now use HC0, not HC1** (#533).
+- **BTM: the background distribution `pw_b` is biterm-weighted**, not raw
+  token-weighted (#492). **PT: restored the `(m_p + lambda)` popularity prior** and
+  lgamma log-likelihood (#491).
+- **`topica-core` bumped to 0.2.0** (the vendorable logistic-normal STM/CTM/SAGE +
+  CVB0 core), which gained the shared residual-dispersion diagnostic (#543). topica
+  re-exports it, so the Python API is unchanged.
 
 - **GDMR prior is now faithful to tomotopy's `GDMRModel`** (#426), a breaking
   change to what `sigma`, `sigma0`, and `decay` mean. Previously `sigma` was the
@@ -44,6 +74,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Fixed
 
+- **Model-review faithfulness sweep (#488–#509).** A faithfulness and correctness
+  review of the remaining models, each traced against its reference, produced a
+  batch of fixes: HLDA's depth>=4 subtree-deletion index panic (#496), TopicGPT's
+  zero-doc-topic invariant break and brace-unsafe custom prompts (#509), DETM
+  gradient coverage and corpus-scale ELBO reporting (#495), the ideal-point family's
+  exact grid-path W gradient plus documented sign/rotation non-identifiability of
+  the position outputs (#498, #499, #505, #506, #508), Wordfish and TBIP honest
+  parity claims, PartyEmbeddings core panic guards and `+inf` rejection (#508),
+  non-lossy EmbeddingLDA save/load (#502), InfoCTM save/load persistence (#504), and
+  the remaining #481-class hyperparameter guards routed through finite-positive /
+  finite-non-negative checks across the batch (#510, #517). No core sampler or
+  gradient was found unfaithful; the value was in the periphery.
 - **STM content-model ν recompute (#442):** for a content (covariate-word) STM,
   `_recompute_eta_cov` rebuilt every document's variational covariance ν against
   the group-averaged β instead of the document's own group β, so the recomputed ν
@@ -79,6 +121,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **Top2Vec reference surface** (#489, PRs #520 and #548): size-ordered topics
+  (topic 0 largest) with a `topic_sizes` getter, `hierarchical_topic_reduction(n)`
+  (merge the smallest topic into its nearest by topic-vector cosine, the reference's
+  reduce-to-N driver), and the search API — `search_documents_by_topic`,
+  `search_documents_by_keywords`, `search_words_by_vector`, `similar_words`,
+  `search_topics`.
+- **`GSDMM.transform()`** to soft-assign held-out short texts (#490); **per-document
+  proportions** for PA (`doc_super`, #497) and DTM (`doc_topic`, #494); **InfoCTM
+  save/load** (#504).
+- **Shared residual-dispersion diagnostic** in `topica-core`, exposed through
+  `inspect` (#543).
 - **`RTM`, the relational topic model** ([Chang & Blei 2010](https://www.jstor.org/stable/27801582))
   (#414): joint model of document text and a link graph (citations, hyperlinks,
   co-sponsorship, adjacency). `fit(docs, links=edges)` on undirected document
