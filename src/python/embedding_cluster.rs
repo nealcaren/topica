@@ -898,11 +898,12 @@ impl Top2Vec {
 
 /// BERTopic: the same reduce/cluster pipeline as `Top2Vec`, but topics are
 /// defined by class-based TF-IDF over their documents' words, so no word
-/// embeddings are needed. `nr_topics` merges the most similar topics down to a
-/// target count; `doc_topic` is the approximate distribution (a sliding window's
-/// c-TF-IDF compared to each topic) — except with `clusterer="gmm"` (and no
-/// `nr_topics`), where it is the GMM's soft posterior membership. You bring the
-/// document embeddings.
+/// embeddings are needed. `nr_topics` reduces the discovered real topics down to a
+/// target count (topica's greedy c-TF-IDF merge, not the upstream package's ward
+/// agglomeration; see `__init__`); `doc_topic` is the approximate distribution (a
+/// sliding window's c-TF-IDF compared to each topic) — except with
+/// `clusterer="gmm"` (and no `nr_topics`), where it is the GMM's soft posterior
+/// membership. You bring the document embeddings.
 ///
 /// No embedder of your own? `topica.llm_embed(texts, model=...)` builds the
 /// matrix (OpenAI, or offline `sentence-transformers`).
@@ -918,6 +919,7 @@ pub struct BERTopic {
     stride: usize,
     bm25: bool,
     reduce_frequent: bool,
+    min_similarity: f64,
     clusterer: String,
     num_clusters: Option<usize>,
     resolution: f64,
@@ -944,6 +946,8 @@ struct BertopicState {
     stride: usize,
     bm25: bool,
     reduce_frequent: bool,
+    #[serde(default)]
+    min_similarity: f64,
     clusterer: String,
     num_clusters: Option<usize>,
     seed: u64,
@@ -1006,6 +1010,7 @@ impl BERTopic {
         d.set_item("n_neighbors", self.n_neighbors)?;
         d.set_item("bm25", self.bm25)?;
         d.set_item("reduce_frequent", self.reduce_frequent)?;
+        d.set_item("min_similarity", self.min_similarity)?;
         d.set_item("clusterer", self.clusterer.as_str())?;
         d.set_item("num_clusters", self.num_clusters)?;
         d.set_item("resolution", self.resolution)?;
@@ -1025,16 +1030,32 @@ impl BERTopic {
     }
 
     /// Create an unfitted model. `nr_topics` (optional) reduces the discovered
-    /// topics to that many by merging the most c-TF-IDF-similar; `window`/`stride`
-    /// parameterize the soft `doc_topic` distribution.
+    /// topics to that many; `window`/`stride`/`min_similarity` parameterize the
+    /// soft `doc_topic` distribution.
+    ///
+    /// Divergences from the upstream `bertopic` package to be aware of (issue
+    /// #488). topica defaults to `reducer="pca"` and `min_cluster_size=15` for a
+    /// deterministic, dependency-free pipeline; the package itself defaults to
+    /// UMAP (`n_components=5, n_neighbors=15, min_dist=0`, cosine) + HDBSCAN with
+    /// `min_topic_size=10`, so the PCA default is not a parity setting. `nr_topics`
+    /// counts the number of *real* topics (the `-1` noise topic is not counted),
+    /// whereas the package counts `-1` toward the total; and topica reduces by a
+    /// greedy c-TF-IDF merge rather than the package's ward agglomeration over
+    /// topic embeddings, so the two can pick different merges.
     ///
     /// `n_components` is the reduced dimensionality before clustering;
     /// `min_cluster_size` is the smallest HDBSCAN cluster and `min_samples` its
     /// core-point neighborhood (defaults to `min_cluster_size`). `reducer` is
     /// ``"pca"`` (default, deterministic) or ``"umap"`` (stochastic) and
     /// `n_neighbors` its neighborhood size. `bm25` switches the c-TF-IDF term
-    /// weighting to class-based BM25 and `reduce_frequent` dampens frequent terms
-    /// by a square-root before IDF. `clusterer` is ``"hdbscan"`` (default), the
+    /// weighting to class-based BM25 (matching upstream's formula, including the
+    /// unclamped idf that goes negative for terms common across every class; note
+    /// upstream truncates the average class size to an integer, topica does not) and
+    /// `reduce_frequent` dampens frequent terms by a square-root before IDF.
+    /// `min_similarity` (default 0.0) drops any window-to-topic cosine below this
+    /// value from `approximate_distribution`; the upstream package uses 0.1 for
+    /// its own `approximate_distribution`, so pass ``min_similarity=0.1`` to match
+    /// it. `clusterer` is ``"hdbscan"`` (default), the
     /// auto-K graph clusterers ``"louvain"`` / ``"leiden"``, ``"kmeans"``,
     /// ``"gmm"`` (diagonal-covariance Gaussian mixture), or ``"agglomerative"``;
     /// `num_clusters` sets the target count for the last three (ignored by HDBSCAN
@@ -1051,7 +1072,7 @@ impl BERTopic {
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
                         nr_topics=None, window=4, stride=1, reducer="pca", n_neighbors=15,
-                        bm25=false, reduce_frequent=false, clusterer="hdbscan",
+                        bm25=false, reduce_frequent=false, min_similarity=0.0, clusterer="hdbscan",
                         num_clusters=None, resolution=1.0, knn_neighbors=15,
                         diagnostics=true, min_dist=0.0, spread=1.0, n_epochs=0,
                         negative_sample_rate=5, repulsion_strength=1.0, metric="cosine",
@@ -1068,6 +1089,7 @@ impl BERTopic {
         n_neighbors: usize,
         bm25: bool,
         reduce_frequent: bool,
+        min_similarity: f64,
         clusterer: &str,
         num_clusters: Option<i64>,
         resolution: f64,
@@ -1095,6 +1117,9 @@ impl BERTopic {
             repulsion_strength,
             metric,
         )?;
+        if !min_similarity.is_finite() {
+            return Err(PyValueError::new_err("min_similarity must be finite"));
+        }
         Ok(BERTopic {
             n_components,
             use_umap,
@@ -1106,6 +1131,7 @@ impl BERTopic {
             stride: stride.max(1),
             bm25,
             reduce_frequent,
+            min_similarity,
             clusterer,
             num_clusters,
             resolution,
@@ -1164,7 +1190,7 @@ impl BERTopic {
         slf.id_to_word = corpus.id_to_word.clone();
         slf.docs = corpus.docs.clone();
         umap_notice(py, slf.use_umap)?;
-        let (nc, uu, nn, mcs, ms, nr, win, st, b25, rf, seed) = (
+        let (nc, uu, nn, mcs, ms, nr, win, st, b25, rf, msim, seed) = (
             slf.n_components,
             slf.use_umap,
             slf.n_neighbors,
@@ -1175,6 +1201,7 @@ impl BERTopic {
             slf.stride,
             slf.bm25,
             slf.reduce_frequent,
+            slf.min_similarity,
             slf.seed,
         );
         let clusterer = slf.clusterer.clone();
@@ -1196,6 +1223,7 @@ impl BERTopic {
                 st,
                 b25,
                 rf,
+                msim,
                 &clusterer,
                 num_clusters,
                 resolution,
@@ -1334,14 +1362,17 @@ impl BERTopic {
 
     /// The soft topic distribution for `data` (Corpus or token lists), as
     /// `(num_docs, num_topics)`. Words outside the fitted vocabulary are dropped;
-    /// `window`/`stride` default to the values set on the model.
-    #[pyo3(signature = (data, *, window=None, stride=None))]
+    /// `window`/`stride`/`min_similarity` default to the values set on the model.
+    /// Pass `min_similarity=0.1` to match the upstream package's own
+    /// `approximate_distribution` gate.
+    #[pyo3(signature = (data, *, window=None, stride=None, min_similarity=None))]
     fn approximate_distribution<'py>(
         &self,
         py: Python<'py>,
         data: &Bound<'_, PyAny>,
         window: Option<usize>,
         stride: Option<usize>,
+        min_similarity: Option<f64>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let m = self.fitted_model()?;
         if m.num_topics == 0 {
@@ -1365,11 +1396,17 @@ impl BERTopic {
                 PyValueError::new_err("approximate_distribution expects a Corpus or token lists")
             })?
         };
+        if let Some(msim) = min_similarity {
+            if !msim.is_finite() {
+                return Err(PyValueError::new_err("min_similarity must be finite"));
+            }
+        }
         let ids = self.to_ids(&docs_str);
         let dist = m.approximate_distribution(
             &ids,
             window.unwrap_or(self.window),
             stride.unwrap_or(self.stride),
+            min_similarity,
         );
         Ok(vecs_to_arr2(&dist).to_pyarray_bound(py))
     }
@@ -1386,7 +1423,7 @@ impl BERTopic {
         doc_embeddings: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let _ = doc_embeddings;
-        self.approximate_distribution(py, data, None, None)
+        self.approximate_distribution(py, data, None, None, None)
     }
 
     /// Fit, then return the document-topic distribution (`fit_transform`).
@@ -1459,6 +1496,7 @@ impl BERTopic {
                 stride: self.stride,
                 bm25: self.bm25,
                 reduce_frequent: self.reduce_frequent,
+                min_similarity: self.min_similarity,
                 clusterer: self.clusterer.clone(),
                 num_clusters: self.num_clusters,
                 seed: self.seed,
@@ -1492,6 +1530,7 @@ impl BERTopic {
             stride: s.stride,
             bm25: s.bm25,
             reduce_frequent: s.reduce_frequent,
+            min_similarity: s.min_similarity,
             clusterer: s.clusterer,
             num_clusters: s.num_clusters,
             // Fit-time knobs; a loaded model never re-reduces or re-clusters, so

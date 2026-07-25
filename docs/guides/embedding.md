@@ -75,7 +75,7 @@ model.doc_topic                        # (num_docs, num_topics) soft membership
 model.labels                           # hard cluster per doc; -1 is noise
 ```
 
-Two BERTopic features carry over. `nr_topics` merges the most similar topics down
+Two BERTopic features carry over. `nr_topics` reduces the discovered topics down
 to a target count:
 
 ```python
@@ -90,6 +90,37 @@ topic. It is the default `doc_topic`, and you can also run it on new documents:
 ```python
 dist = model.approximate_distribution(new_docs, window=4, stride=1)  # (n, num_topics)
 ```
+
+`min_similarity` (default `0.0`) drops any window-to-topic cosine below its value
+before averaging; a document with no surviving evidence becomes a *uniform* row
+so `doc_topic` stays a valid distribution.
+
+### Where topica differs from the `bertopic` package
+
+topica reproduces the reference `bertopic` package on its default c-TF-IDF path,
+but a few knobs diverge on purpose (issue #488), so name them when you report a
+BERTopic run:
+
+- **Defaults are not parity settings.** topica defaults to `reducer="pca"` and
+  `min_cluster_size=15` for a deterministic, dependency-free pipeline. The package
+  itself defaults to UMAP (`n_components=5`, `n_neighbors=15`, `min_dist=0`, cosine)
+  + HDBSCAN with `min_topic_size=10`. Pass `reducer="umap"` and matching sizes to
+  get close to the package's behavior.
+- **`nr_topics` reduction.** topica greedily folds the most c-TF-IDF-similar pair
+  of topics; the package fits one ward `AgglomerativeClustering` over the topic
+  *embeddings*. Different distance space and merge tree, so the two can pick
+  different merges. topica also reads `nr_topics` as the number of *real* topics
+  (the `-1` noise topic is never counted), whereas the package counts `-1` toward
+  the total.
+- **`bm25=True`** matches the package's class-based BM25 idf exactly, including the
+  unclamped log that goes *negative* for a term common to every class (which ranks
+  such terms last). The normalized `topic_word` surface floors those negatives to
+  zero so it stays a valid distribution; ranking is unaffected.
+- **`approximate_distribution`** weights each window with the same
+  `bm25`/`reduce_frequent` idf the topics used. The `min_similarity` gate defaults
+  to `0.0`; the package uses `0.1` for its own approximate distribution, so pass
+  `min_similarity=0.1` to match it. topica returns a uniform row for a document
+  with no surviving evidence where the package returns a zero row.
 
 ## Top2Vec
 

@@ -6,12 +6,26 @@
 //! BERTopic needs no word embeddings. Two features are characteristic and we port
 //! them here:
 //!
-//! - `nr_topics`: agglomeratively merge the most c-TF-IDF-similar topics down to a
-//!   target count, BERTopic's topic reduction.
+//! - `nr_topics`: reduce the discovered topics down to a target count. topica's
+//!   reduction is a **greedy** merge — it repeatedly folds the single most
+//!   cosine-similar pair of topic c-TF-IDF rows and recomputes — which differs
+//!   from upstream BERTopic. Upstream fits one `AgglomerativeClustering`
+//!   (`linkage="ward"`, Euclidean) over the topic *embeddings* and cuts it at
+//!   `nr_topics - _outliers` clusters. Different distance space (c-TF-IDF vs
+//!   embeddings) and different merge tree (greedy vs ward), so the two need not
+//!   pick the same merges. topica also reads `nr_topics` as the number of **real**
+//!   topics (the `-1` noise topic is not counted), whereas upstream counts the
+//!   `-1` topic toward the total. See `fit_bertopic` (issue #488).
 //! - `approximate_distribution`: a soft per-document topic distribution. We slide
-//!   a window over each document, build the window's c-TF-IDF vector, measure its
-//!   cosine to every topic, and average across windows. This is the document-topic
-//!   distribution BERTopic reports without re-running the clustering.
+//!   a window over each document, build the window's c-TF-IDF vector *with the same
+//!   `bm25`/`reduce_frequent` weighting the topics were built with* (issue #488),
+//!   measure its cosine to every topic, drop any window↔topic similarity below
+//!   `min_similarity`, and average across windows. This is the document-topic
+//!   distribution BERTopic reports without re-running the clustering. A document
+//!   with no surviving evidence (all out-of-vocabulary, or every similarity gated
+//!   out) becomes a uniform row rather than a zero row, so `doc_topic` stays a
+//!   valid per-document distribution (topica's cross-model surface contract);
+//!   upstream leaves such a document as a zero row.
 //!
 //! As elsewhere in this branch, the caller brings the document embeddings; topica
 //! does not embed the text.
@@ -28,10 +42,24 @@ pub struct BertopicModel {
     pub topic_word: Vec<Vec<f64>>,
     pub doc_topic: Vec<Vec<f64>>,
     /// Unnormalized c-TF-IDF rows, kept so `approximate_distribution` can be
-    /// recomputed at other window sizes after fitting.
+    /// recomputed at other window sizes after fitting. May carry negative entries
+    /// when `bm25` is on (issue #488).
     ctfidf_raw: Vec<Vec<f64>>,
-    /// idf weights `ln(1 + A / f_t)` per vocabulary term.
+    /// idf weights per vocabulary term, computed with the same `bm25` setting the
+    /// model was fit with so `approximate_distribution` weights its windows the way
+    /// the topics were weighted (issue #488). Plain idf is `ln(1 + A / f_t)`.
     idf: Vec<f64>,
+    /// Whether the c-TF-IDF term frequency was damped by a square root
+    /// (`reduce_frequent_words`). Kept so `approximate_distribution` can reproduce
+    /// the same window weighting. `#[serde(default)]` for old-save compatibility.
+    #[serde(default)]
+    reduce_frequent: bool,
+    /// Minimum window↔topic cosine that contributes to `approximate_distribution`;
+    /// lower similarities are dropped (BERTopic's `min_similarity`). `0.0` keeps
+    /// every non-negative similarity. `#[serde(default)]` for old-save
+    /// compatibility.
+    #[serde(default)]
+    min_similarity: f64,
 }
 
 impl BertopicModel {
@@ -41,12 +69,14 @@ impl BertopicModel {
     }
 
     /// Recompute the soft document-topic distribution at a chosen `window`/`stride`
-    /// over each document's tokens. Rows sum to one.
+    /// over each document's tokens. `min_similarity` overrides the fit-time gate
+    /// when `Some`. Rows sum to one.
     pub fn approximate_distribution(
         &self,
         docs: &[Vec<u32>],
         window: usize,
         stride: usize,
+        min_similarity: Option<f64>,
     ) -> Vec<Vec<f64>> {
         approximate_distribution(
             docs,
@@ -55,6 +85,8 @@ impl BertopicModel {
             self.num_topics,
             window,
             stride,
+            self.reduce_frequent,
+            min_similarity.unwrap_or(self.min_similarity),
         )
     }
 
@@ -104,19 +136,9 @@ impl BertopicModel {
         self.num_topics = topic_count(&self.labels);
         self.ctfidf_raw =
             represent::ctfidf_weighted(docs, &self.labels, vocab_size, bm25, reduce_frequent);
-        self.idf = idf_weights(docs, &self.labels, vocab_size);
-        self.topic_word = self
-            .ctfidf_raw
-            .iter()
-            .map(|row| {
-                let s: f64 = row.iter().sum();
-                if s > 0.0 {
-                    row.iter().map(|w| w / s).collect()
-                } else {
-                    row.clone()
-                }
-            })
-            .collect();
+        self.idf = idf_weights(docs, &self.labels, vocab_size, bm25);
+        self.reduce_frequent = reduce_frequent;
+        self.topic_word = topic_word_from_ctfidf(&self.ctfidf_raw);
         self.doc_topic = approximate_distribution(
             docs,
             &self.ctfidf_raw,
@@ -124,14 +146,18 @@ impl BertopicModel {
             self.num_topics,
             window,
             stride,
+            reduce_frequent,
+            self.min_similarity,
         );
     }
 }
 
 /// Fit BERTopic on token-id documents plus document embeddings. `nr_topics`, if
-/// set, reduces the discovered topics to that count by merging the most similar.
-/// `window`/`stride` parameterize the approximate distribution used for
-/// `doc_topic`.
+/// set, reduces the discovered **real** topics (the `-1` noise topic is never
+/// counted) to that count by greedily folding the most c-TF-IDF-similar pair, which
+/// differs from upstream BERTopic's ward agglomeration over topic embeddings (see
+/// the module docs, issue #488). `window`/`stride`/`min_similarity` parameterize the
+/// approximate distribution used for `doc_topic`.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_bertopic(
     docs: &[Vec<u32>],
@@ -147,6 +173,7 @@ pub fn fit_bertopic(
     stride: usize,
     bm25: bool,
     reduce_frequent: bool,
+    min_similarity: f64,
     clusterer: &str,
     num_clusters: Option<usize>,
     resolution: f64,
@@ -207,7 +234,9 @@ pub fn fit_bertopic(
     };
     let mut num_topics = topic_count(&labels);
 
-    // (3) optional topic reduction: merge the most c-TF-IDF-similar topics.
+    // (3) optional topic reduction: greedily merge the most c-TF-IDF-similar pair
+    // of topics until `target` real topics remain. This is topica's own greedy
+    // scheme, not upstream's ward agglomeration over topic embeddings (#488).
     if let Some(target) = nr_topics {
         while num_topics > target.max(1) {
             let ctfidf =
@@ -222,28 +251,26 @@ pub fn fit_bertopic(
     }
 
     // Final c-TF-IDF and its idf, then the topic-word distribution and the soft
-    // document-topic distribution.
+    // document-topic distribution. The idf is computed with the same `bm25` setting
+    // so `approximate_distribution` weights its windows the way the topics were.
     let ctfidf_raw = represent::ctfidf_weighted(docs, &labels, vocab_size, bm25, reduce_frequent);
-    let idf = idf_weights(docs, &labels, vocab_size);
-    // Row-normalize c-TF-IDF to sum to one so topic_word has the same surface as
-    // the probability models' (top_words, topic_table, coherence all read it).
-    // This is for cross-model compatibility, not a probability claim: c-TF-IDF is
-    // not P(w|topic), and the viz layer labels it "c-TF-IDF weight" accordingly.
-    let mut topic_word = ctfidf_raw.clone();
-    for row in topic_word.iter_mut() {
-        let sum: f64 = row.iter().sum();
-        if sum > 0.0 {
-            for w in row.iter_mut() {
-                *w /= sum;
-            }
-        }
-    }
+    let idf = idf_weights(docs, &labels, vocab_size, bm25);
+    let topic_word = topic_word_from_ctfidf(&ctfidf_raw);
     // GMM contributes a calibrated soft membership (the EM responsibilities); every
     // other clusterer uses the c-TF-IDF approximate distribution. `argmax` of the
     // GMM `doc_topic` equals `labels`, so the hard and soft views agree.
     let doc_topic = match gmm_soft {
         Some(soft) => normalize_rows(soft),
-        None => approximate_distribution(docs, &ctfidf_raw, &idf, num_topics, window, stride),
+        None => approximate_distribution(
+            docs,
+            &ctfidf_raw,
+            &idf,
+            num_topics,
+            window,
+            stride,
+            reduce_frequent,
+            min_similarity,
+        ),
     };
 
     BertopicModel {
@@ -253,7 +280,43 @@ pub fn fit_bertopic(
         doc_topic,
         ctfidf_raw,
         idf,
+        reduce_frequent,
+        min_similarity,
     }
+}
+
+/// Row-normalize c-TF-IDF into the `topic_word` probability surface topica shares
+/// across models (`top_words`, `topic_table`, `coherence` all read it). This is a
+/// cross-model compatibility surface, not a probability claim: c-TF-IDF is not
+/// P(w|topic), and the viz layer labels it "c-TF-IDF weight" accordingly.
+///
+/// With `bm25` on, a c-TF-IDF row may carry negative entries for ubiquitous terms
+/// (issue #488). We floor those to zero before normalizing so the surface stays a
+/// valid non-negative distribution and the row sum never collapses or flips sign;
+/// the flooring only affects terms BERTopic already ranks at the bottom, so the
+/// top-word ordering matches upstream. The raw c-TF-IDF (with its negatives) is
+/// kept separately for the cosine similarities in `approximate_distribution` and
+/// topic reduction, which is where upstream uses the signed values.
+fn topic_word_from_ctfidf(ctfidf_raw: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    ctfidf_raw
+        .iter()
+        .map(|row| {
+            let clamped: Vec<f64> = row.iter().map(|&w| w.max(0.0)).collect();
+            let sum: f64 = clamped.iter().sum();
+            if sum > 0.0 {
+                clamped.iter().map(|w| w / sum).collect()
+            } else if !clamped.is_empty() {
+                // Every term in this topic had a non-positive (e.g. negative bm25)
+                // c-TF-IDF, so flooring leaves an all-zero row. Fall back to uniform
+                // to keep `topic_word` a valid distribution (rows sum to 1), matching
+                // the `normalize_rows` / `approximate_distribution` zero-row contract.
+                let u = 1.0 / clamped.len() as f64;
+                vec![u; clamped.len()]
+            } else {
+                clamped
+            }
+        })
+        .collect()
 }
 
 fn topic_count(labels: &[i64]) -> usize {
@@ -265,9 +328,13 @@ fn topic_count(labels: &[i64]) -> usize {
         .unwrap_or(0)
 }
 
-/// idf factor `ln(1 + A / f_t)` per term, matching `represent::ctfidf` (A is the
-/// average class size, f_t the total count of term t across classes).
-fn idf_weights(docs: &[Vec<u32>], labels: &[i64], vocab_size: usize) -> Vec<f64> {
+/// idf factor per term, matching `represent::ctfidf_weighted` (A is the average
+/// class size, f_t the total count of term t across classes). With `bm25` on this
+/// is the unclamped class-based BM25 idf `ln(1 + (A - f_t + 0.5) / (f_t + 0.5))`
+/// (issue #488), otherwise the plain `ln(1 + A / f_t)`. Kept in step with the
+/// weighting the topics were built with so `approximate_distribution` points its
+/// windows in the same per-dimension space as the topic rows.
+fn idf_weights(docs: &[Vec<u32>], labels: &[i64], vocab_size: usize, bm25: bool) -> Vec<f64> {
     let k = topic_count(labels);
     let mut f = vec![0.0f64; vocab_size];
     let mut class_size = vec![0.0f64; k];
@@ -290,7 +357,15 @@ fn idf_weights(docs: &[Vec<u32>], labels: &[i64], vocab_size: usize) -> Vec<f64>
         0.0
     };
     f.iter()
-        .map(|&ft| if ft > 0.0 { (1.0 + a / ft).ln() } else { 0.0 })
+        .map(|&ft| {
+            if ft <= 0.0 {
+                0.0
+            } else if bm25 {
+                (1.0 + (a - ft + 0.5) / (ft + 0.5)).ln()
+            } else {
+                (1.0 + a / ft).ln()
+            }
+        })
         .collect()
 }
 
@@ -345,9 +420,16 @@ fn normalize_rows(mut m: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
 }
 
 /// The soft document-topic distribution. For each document we slide a `window` of
-/// tokens (step `stride`), weight the window's term counts by idf to form its
-/// c-TF-IDF vector, take the cosine to every topic, clamp negatives, and average
-/// across windows. Rows are normalized to sum to one (uniform when empty).
+/// tokens (step `stride`), build the window's c-TF-IDF vector with the **same**
+/// weighting the topics were built with — `reduce_frequent` damps the window's term
+/// counts by a square root before the (possibly BM25) `idf` multiplies them in, so
+/// windows and topics live in the same per-dimension space (issue #488) — then take
+/// the cosine to every topic. A window↔topic cosine below `min_similarity` (and any
+/// negative cosine) is dropped before summing, matching BERTopic's `min_similarity`
+/// gate. Rows are normalized to sum to one; a document with no surviving evidence
+/// becomes a uniform row so `doc_topic` stays a valid distribution (topica's
+/// cross-model contract; upstream leaves it a zero row).
+#[allow(clippy::too_many_arguments)]
 fn approximate_distribution(
     docs: &[Vec<u32>],
     ctfidf: &[Vec<f64>],
@@ -355,6 +437,8 @@ fn approximate_distribution(
     num_topics: usize,
     window: usize,
     stride: usize,
+    reduce_frequent: bool,
+    min_similarity: f64,
 ) -> Vec<Vec<f64>> {
     let w = window.max(1);
     let s = stride.max(1);
@@ -369,16 +453,27 @@ fn approximate_distribution(
             loop {
                 let end = (start + w).min(doc.len());
                 if end > start {
-                    // Build the window's idf-weighted bag of words.
-                    let mut vec = vec![0.0f64; idf.len()];
+                    // Count the window's tokens, damp with sqrt if reduce_frequent,
+                    // then weight by idf — the same transform the topic rows saw.
+                    let mut counts = vec![0.0f64; idf.len()];
                     for &tok in &doc[start..end] {
                         let t = tok as usize;
-                        if t < vec.len() {
-                            vec[t] += idf[t];
+                        if t < counts.len() {
+                            counts[t] += 1.0;
+                        }
+                    }
+                    let mut vec = vec![0.0f64; idf.len()];
+                    for (t, &c) in counts.iter().enumerate() {
+                        if c > 0.0 {
+                            let tf = if reduce_frequent { c.sqrt() } else { c };
+                            vec[t] = tf * idf[t];
                         }
                     }
                     for (k, row) in ctfidf.iter().enumerate() {
-                        acc[k] += cosine(&vec, row).max(0.0);
+                        let sim = cosine(&vec, row);
+                        if sim >= min_similarity && sim > 0.0 {
+                            acc[k] += sim;
+                        }
                     }
                     windows += 1;
                 }
@@ -558,6 +653,7 @@ mod tests {
             1,
             false,
             false,
+            0.0,
             "hdbscan",
             None,
             1.0,
@@ -598,6 +694,7 @@ mod tests {
             1,
             false,
             false,
+            0.0,
             "hdbscan",
             None,
             1.0,
@@ -641,6 +738,7 @@ mod tests {
             1,
             false,
             false,
+            0.0,
             "hdbscan",
             None,
             1.0,
@@ -663,6 +761,7 @@ mod tests {
             1,
             false,
             false,
+            0.0,
             "hdbscan",
             None,
             1.0,
@@ -690,6 +789,7 @@ mod tests {
             1,
             false,
             false,
+            0.0,
             "hdbscan",
             None,
             1.0,
@@ -703,11 +803,82 @@ mod tests {
             .find(|&t| m.top_words(1, t)[0].0 / 5 == 0)
             .expect("a block-0 topic exists");
         let doc0: Vec<u32> = vec![0, 1, 2, 3, 4, 0, 1, 2];
-        let dist = m.approximate_distribution(&[doc0], 4, 1);
+        let dist = m.approximate_distribution(&[doc0], 4, 1, None);
         let argmax = (0..m.num_topics)
             .max_by(|&a, &b| dist[0][a].total_cmp(&dist[0][b]))
             .unwrap();
         assert_eq!(argmax, block0_topic, "dist: {:?}", dist[0]);
+    }
+
+    #[test]
+    fn topic_word_floors_negative_bm25_weights_and_normalizes() {
+        // A row with a negative (ubiquitous-term) weight and two positives. The
+        // topic_word surface floors the negative to 0 and normalizes the rest, so
+        // it stays a valid distribution and the positive ranking is preserved.
+        let ctfidf = vec![vec![-2.0, 3.0, 1.0]];
+        let tw = topic_word_from_ctfidf(&ctfidf);
+        assert_eq!(tw[0][0], 0.0, "negative weight floored to zero");
+        let s: f64 = tw[0].iter().sum();
+        assert!((s - 1.0).abs() < 1e-12, "row sums to {s}");
+        assert!(tw[0][1] > tw[0][2], "positive ranking preserved");
+    }
+
+    #[test]
+    fn topic_word_all_negative_row_falls_back_to_uniform() {
+        // If every term in a topic has a non-positive (all-ubiquitous, negative
+        // bm25) c-TF-IDF, flooring leaves an all-zero row; topic_word must fall back
+        // to uniform so it stays a valid distribution (rows sum to 1), not all-zero.
+        let ctfidf = vec![vec![-2.0, -0.5, -3.0]];
+        let tw = topic_word_from_ctfidf(&ctfidf);
+        let s: f64 = tw[0].iter().sum();
+        assert!(
+            (s - 1.0).abs() < 1e-12,
+            "all-negative row must sum to 1, got {s}"
+        );
+        assert!(
+            tw[0].iter().all(|&w| (w - 1.0 / 3.0).abs() < 1e-12),
+            "uniform fallback"
+        );
+    }
+
+    #[test]
+    fn idf_weights_bm25_matches_ctfidf_weighted() {
+        // The stored idf must equal the per-term BM25 idf embedded in
+        // ctfidf_weighted, so windows and topics share one weighting (#488).
+        let docs = vec![
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2],
+        ];
+        let labels = vec![0, 1];
+        let idf = idf_weights(&docs, &labels, 3, true);
+        // Reconstruct the idf from ctfidf_weighted: divide class-0's word-0 weight
+        // (tf=10) by its idf factor.
+        let ct = represent::ctfidf_weighted(&docs, &labels, 3, true, false);
+        let recovered = ct[0][0] / 10.0;
+        assert!(
+            (idf[0] - recovered).abs() < 1e-12,
+            "{} vs {}",
+            idf[0],
+            recovered
+        );
+        assert!(idf[0] < 0.0, "ubiquitous term has negative bm25 idf");
+    }
+
+    #[test]
+    fn approximate_distribution_min_similarity_gates_low_matches() {
+        // Two orthogonal topics; a window matching topic 0 exactly. With no gate
+        // both topics could receive mass; a high gate keeps only the strong match.
+        let ctfidf = vec![vec![1.0, 0.0, 0.0, 0.0], vec![0.0, 0.0, 1.0, 1.0]];
+        let idf = vec![1.0, 1.0, 1.0, 1.0];
+        let docs = vec![vec![0u32]]; // one token, aligns with topic 0 only
+        let gated = approximate_distribution(&docs, &ctfidf, &idf, 2, 4, 1, false, 0.5);
+        assert!((gated[0][0] - 1.0).abs() < 1e-12, "all mass on topic 0");
+        assert_eq!(gated[0][1], 0.0);
+        // A window with no surviving similarity (gate above every match) falls back
+        // to a uniform row rather than a zero row (topica's distribution contract).
+        let all_gated = approximate_distribution(&docs, &ctfidf, &idf, 2, 4, 1, false, 1.5);
+        assert!((all_gated[0][0] - 0.5).abs() < 1e-12);
+        assert!((all_gated[0][1] - 0.5).abs() < 1e-12);
     }
 
     #[test]
@@ -727,6 +898,7 @@ mod tests {
             1,
             false,
             false,
+            0.0,
             "hdbscan",
             None,
             1.0,
