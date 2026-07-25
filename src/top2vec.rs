@@ -46,6 +46,13 @@ pub struct Top2VecModel {
     /// The word embeddings, kept so `topic_neighbors` can rank vocabulary terms
     /// against a topic vector (V x E).
     word_vectors: Vec<Vec<f64>>,
+    /// The document embeddings, kept so the search API can rank documents by
+    /// cosine to a topic vector or a keyword query (D x E). `#[serde(default)]`
+    /// so a model saved before the search API loads with an empty set; the
+    /// document-ranking searches then raise cleanly rather than reading a
+    /// missing matrix.
+    #[serde(default)]
+    doc_vectors: Vec<Vec<f64>>,
 }
 
 impl Top2VecModel {
@@ -67,6 +74,96 @@ impl Top2VecModel {
     /// the same assignment the fit uses for in-sample documents.
     pub fn assign(&self, doc_embeddings: &[Vec<f64>]) -> Vec<Vec<f64>> {
         soft_doc_topic(doc_embeddings, &self.topic_vectors)
+    }
+
+    /// Whether the document embeddings were retained (they are for any model fit
+    /// after the search API landed; models saved earlier deserialize without
+    /// them). The document-ranking searches gate on this.
+    pub fn has_doc_vectors(&self) -> bool {
+        !self.doc_vectors.is_empty()
+    }
+
+    /// The embedding dimension `E` (word, document, and topic vectors share it),
+    /// or 0 for an empty model. Used to validate a query vector's length.
+    pub fn embedding_dim(&self) -> usize {
+        self.word_vectors
+            .first()
+            .or_else(|| self.topic_vectors.first())
+            .or_else(|| self.doc_vectors.first())
+            .map_or(0, |v| v.len())
+    }
+
+    /// Per-topic document count (non-noise), indexed by topic id. Noise (`-1`)
+    /// documents are excluded, so the counts sum to the number of clustered docs.
+    pub fn topic_sizes(&self) -> Vec<usize> {
+        let mut sizes = vec![0usize; self.num_topics];
+        for &l in &self.labels {
+            if l >= 0 && (l as usize) < self.num_topics {
+                sizes[l as usize] += 1;
+            }
+        }
+        sizes
+    }
+
+    /// The centroid (mean) of the word vectors for `word_ids`, the query a
+    /// keyword search embeds. `None` when the list is empty, so a search with no
+    /// in-vocabulary keyword raises cleanly rather than dividing by zero.
+    pub fn keyword_centroid(&self, word_ids: &[usize]) -> Option<Vec<f64>> {
+        if word_ids.is_empty() {
+            return None;
+        }
+        let e = self.word_vectors.first().map_or(0, |v| v.len());
+        let mut c = vec![0.0f64; e];
+        for &id in word_ids {
+            for (d, &x) in self.word_vectors[id].iter().enumerate() {
+                c[d] += x;
+            }
+        }
+        let n = word_ids.len() as f64;
+        for x in c.iter_mut() {
+            *x /= n;
+        }
+        Some(c)
+    }
+
+    /// The `n` vocabulary words nearest `query` by cosine, as `(word_id, cosine)`.
+    pub fn search_words_by_vector(&self, n: usize, query: &[f64]) -> Vec<(usize, f64)> {
+        represent::nearest_by_cosine(query, &self.word_vectors, n)
+    }
+
+    /// The `n` topics whose vectors are nearest `query` by cosine, as
+    /// `(topic_id, cosine)`.
+    pub fn search_topics_by_vector(&self, n: usize, query: &[f64]) -> Vec<(usize, f64)> {
+        represent::nearest_by_cosine(query, &self.topic_vectors, n)
+    }
+
+    /// The `n` documents whose embeddings are nearest `query` by cosine, as
+    /// `(doc_index, cosine)`. Ranks over every document (noise included, since a
+    /// free keyword query is not tied to a topic).
+    pub fn search_documents_by_vector(&self, n: usize, query: &[f64]) -> Vec<(usize, f64)> {
+        represent::nearest_by_cosine(query, &self.doc_vectors, n)
+    }
+
+    /// The documents hard-assigned to `topic`, ranked by cosine of their
+    /// embedding to the topic vector, as `(doc_index, cosine)` (up to `n`). This
+    /// mirrors the reference `search_documents_by_topic`: only a topic's own
+    /// members are ranked, so noise (`-1`) documents never appear.
+    pub fn documents_in_topic(&self, n: usize, topic: usize) -> Vec<(usize, f64)> {
+        let tv = &self.topic_vectors[topic];
+        let mut scored: Vec<(usize, f64)> = self
+            .labels
+            .iter()
+            .enumerate()
+            .filter(|(_, &l)| l == topic as i64)
+            .map(|(i, _)| (i, cosine(&self.doc_vectors[i], tv)))
+            .collect();
+        scored.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.0.cmp(&b.0))
+        });
+        scored.truncate(n);
+        scored
     }
 
     /// Merge each group of topics into one. The merged topic vector is the
@@ -251,6 +348,7 @@ pub fn fit_top2vec(
         topic_word,
         doc_topic,
         word_vectors: word_embeddings.to_vec(),
+        doc_vectors: doc_embeddings.to_vec(),
     }
 }
 
