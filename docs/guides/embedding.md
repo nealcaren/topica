@@ -140,6 +140,7 @@ model.top_words(8, topic=0)            # default: centroid view (nearest word ve
 model.topic_neighbors(0, n=8)          # same centroid words, as (word, cosine)
 model.top_words(8, topic=0, representation="c-tf-idf")  # the shared c-TF-IDF view
 model.topic_vectors                    # (num_topics, E) topic positions
+model.topic_sizes                      # documents per topic, largest first
 ```
 
 Top2Vec and BERTopic share the class-based TF-IDF `topic_word` matrix, so given
@@ -149,6 +150,18 @@ centroid in embedding space. When you pass `word_embeddings`, `top_words` (and s
 `summary`) returns that by default; pass `representation="c-tf-idf"` for the
 shared view. Without `word_embeddings` Top2Vec still fits and `top_words` is
 c-TF-IDF.
+
+Like the reference package, topica orders topics by size (topic 0 is the
+largest, read `topic_sizes` for the counts) and exposes the reference search
+surface — `search_documents_by_topic`, `search_documents_by_keywords`,
+`search_words_by_vector`, `similar_words`, and `search_topics` — when fit with
+`word_embeddings`. To collapse to a target topic count the reference way, call
+`hierarchical_topic_reduction(n)`, which repeatedly merges the smallest topic
+into its nearest topic by topic-vector cosine until `n` remain:
+
+```python
+model.hierarchical_topic_reduction(5)   # reduce to 5 topics, then re-order by size
+```
 
 ## ETM
 
