@@ -1153,8 +1153,9 @@ class DTM:
     gensim's LdaSeqModel). Query a topic's distribution at a slice with
     topic_word(time) and a word's trajectory with word_evolution(topic, word).
 
-    Exposes evolving topic-word distributions but no per-document `doc_topic` —
-    it targets topic evolution, not per-doc mixtures (#494)."""
+    Topics are shared across slices, so it also exposes per-document topic
+    proportions via `doc_topic` (the final-iteration variational gammas,
+    row-normalized); the topic-word distributions are what evolve (#494)."""
     @property
     def initialization(self) -> str | None:
         """The initialization route the fit took (#410): 'spectral',
@@ -1204,6 +1205,13 @@ class DTM:
 
     def topic_word(self, time: int) -> numpy.typing.NDArray[numpy.float64]:
         """Topic-word matrix at `time`, shape (num_topics, num_words); rows sum to 1."""
+        ...
+
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-document topic proportions, shape (num_docs, num_topics); rows
+        sum to 1 (#494). The final-iteration variational gammas (gensim's
+        self.gammas), row-normalized. Topics are shared across slices."""
         ...
 
     def word_evolution(

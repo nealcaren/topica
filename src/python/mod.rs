@@ -417,6 +417,10 @@ struct DtmState {
     init_spectral: bool,
     #[serde(default)]
     initialization: Option<String>,
+    // (num_docs, num_topics) per-document topic proportions (#494); None for
+    // models saved before this field existed.
+    #[serde(default)]
+    doc_topic: Option<Arr2>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SldaState {
@@ -10072,10 +10076,10 @@ impl HDP {
 /// topic's word distribution at any slice with `topic_word(time)` and trace a
 /// word's trajectory with `word_evolution(topic, word)`.
 ///
-/// Note (#494): DTM exposes the evolving topic-word distributions but not
-/// per-document topic proportions — the E-step `gamma` values gensim retains as
-/// `self.gammas` are consumed for the suff-stats and not stored, so there is no
-/// `doc_topic` output (the model targets topic *evolution*, not per-doc mixtures).
+/// Note (#494): DTM's topics are shared across slices, so alongside the evolving
+/// topic-word distributions it also exposes per-document topic proportions via
+/// `doc_topic` — the final-iteration variational `gamma`s gensim keeps as
+/// `self.gammas`, row-normalized. The topic-word side is what evolves over time.
 #[pyclass(module = "topica")]
 pub struct DTM {
     num_topics: usize,
@@ -10093,6 +10097,8 @@ pub struct DTM {
     bound: f64,
     // (num_times, num_topics, num_words): p(word | topic, time).
     topic_words: Option<Vec<Vec<Vec<f64>>>>,
+    // (num_docs, num_topics): per-document topic proportions (#494).
+    doc_topic: Option<Array2<f64>>,
     corpus: Option<corpus::Corpus>,
 }
 
@@ -10184,6 +10190,7 @@ impl DTM {
             num_times: 0,
             bound: 0.0,
             topic_words: None,
+            doc_topic: None,
             corpus: None,
         })
     }
@@ -10270,10 +10277,20 @@ impl DTM {
         // Precompute p(word | topic, time) for every slice.
         let tw: Vec<Vec<Vec<f64>>> = (0..num_times).map(|t| model.topic_word_matrix(t)).collect();
 
+        // Per-document topic proportions (#494), shape (num_docs, num_topics).
+        let ndocs = model.doc_topic.len();
+        let mut dt = Array2::<f64>::zeros((ndocs, k));
+        for (d, row) in model.doc_topic.iter().enumerate() {
+            for (kk, &val) in row.iter().enumerate() {
+                dt[[d, kk]] = val;
+            }
+        }
+
         slf.num_times = num_times;
         slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
         slf.bound = model.bound;
         slf.topic_words = Some(tw);
+        slf.doc_topic = Some(dt);
         slf.initialization = Some(model.initialization.clone());
         slf.corpus = Some(corpus);
         slf.fitted = true;
@@ -10295,6 +10312,17 @@ impl DTM {
             }
         }
         Ok(arr.to_pyarray_bound(py))
+    }
+
+    /// Per-document topic proportions θ, shape ``(num_docs, num_topics)``; rows
+    /// sum to 1 (issue #494). These are the final-iteration variational
+    /// ``gamma``s (gensim's ``self.gammas``), row-normalized. Documents are in
+    /// corpus order; topics are shared across time slices, while the topic-word
+    /// distributions returned by :meth:`topic_word` are what evolve over time.
+    #[getter]
+    fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        Ok(self.doc_topic.as_ref().unwrap().to_pyarray_bound(py))
     }
 
     /// Trajectory of a word's probability in a topic across slices, shape
@@ -10499,6 +10527,7 @@ impl DTM {
                 topic_names: self.topic_names.clone(),
                 init_spectral: self.init_spectral,
                 initialization: self.initialization.clone(),
+                doc_topic: arr2_opt(&self.doc_topic),
             },
         )
     }
@@ -10525,6 +10554,7 @@ impl DTM {
             num_times: s.num_times,
             bound: s.bound,
             topic_words: s.topic_words,
+            doc_topic: arr2_back(s.doc_topic)?,
             corpus: s.corpus,
         })
     }
