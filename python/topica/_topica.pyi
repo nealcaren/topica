@@ -5108,7 +5108,15 @@ class PartyEmbeddings:
     @property
     def num_authors(self) -> int: ...
     @property
-    def author_positions(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    def author_positions(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Party placements as (num_authors, num_dims): the leading principal
+        components of the party vectors, standardized to mean 0 / unit variance
+        (column 0 is the left-right scale). Identifiability: without anchors the
+        sign of each dimension is arbitrary (PCA fixes the axes by variance, so
+        each column is identified only up to sign); pass anchors to fit() to fix
+        the signs. Columns are standardized independently, so the relative scale
+        of the components is not preserved; read author_vectors if you need it."""
+        ...
     @property
     def author_names(self) -> list[str]: ...
     @property

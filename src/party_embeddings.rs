@@ -149,6 +149,13 @@ pub fn fit_pvdm(
     cfg: &PvdmConfig,
     seed: u64,
 ) -> PartyEmbeddingsModel {
+    // Preconditions the binding already enforces (window >= 1 in the constructor,
+    // vocabulary >= 2 words after pruning). Assert them here so a direct core caller
+    // fails with a clear message rather than an opaque `% 0` or `last().unwrap()`
+    // panic in the training loop (issue #508).
+    assert!(cfg.window >= 1, "window must be >= 1");
+    assert!(num_words >= 1, "num_words must be >= 1");
+
     let m = cfg.vector_size;
     let num_tags = num_groups + num_controls;
     let mut rng = ChaCha8Rng::seed_from_u64(seed);

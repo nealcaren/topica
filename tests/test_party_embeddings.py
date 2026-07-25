@@ -145,6 +145,43 @@ def test_bad_params():
         m.fit([["a", "b"], ["c", "d"]], group=["x"])  # wrong length
 
 
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1.0])
+def test_sample_guard(bad):
+    # #481-class guard: a non-finite or negative subsampling threshold must be
+    # rejected at construction (a NaN sample would drop every token and return a
+    # fitted-looking-but-untrained model; +inf is a nonsensical threshold).
+    with pytest.raises(ValueError):
+        topica.PartyEmbeddings(sample=bad)
+
+
+def test_sample_zero_is_legal():
+    # 0.0 means "subsampling off" and must be accepted.
+    m = topica.PartyEmbeddings(vector_size=8, window=3, min_count=1, negative=2,
+                               sample=0.0, seed=1)
+    m.fit([["a", "b"], ["b", "a"]], group=["x", "y"], iters=2)
+    assert m.author_positions.shape[0] == 2
+
+
+@pytest.mark.parametrize(
+    "docs, groups, kw",
+    [
+        ([], [], {}),                                   # empty corpus
+        ([["a", "b", "c"]], ["x"], {}),                 # one group
+        ([["a"], ["a"]], ["x", "y"], {}),               # vocabulary < 2 words
+        ([[], []], ["x", "y"], {}),                     # no in-vocabulary tokens
+        ([["a", "b"], ["c", "d"]], ["x", "y"], {"min_count": 99}),  # pruned to nothing
+    ],
+)
+def test_degenerate_inputs_raise_cleanly(docs, groups, kw):
+    # Each degenerate input must raise a clean ValueError, never a Rust panic
+    # (PanicException, which is a BaseException and not caught by `except ValueError`).
+    opts = {"vector_size": 8, "window": 3, "min_count": 1, "negative": 2,
+            "sample": 0.0, "seed": 1, **kw}
+    m = topica.PartyEmbeddings(**opts)
+    with pytest.raises(ValueError):
+        m.fit(docs, group=groups, iters=2)
+
+
 def test_unfitted_raises():
     m = topica.PartyEmbeddings()
     with pytest.raises(Exception):
