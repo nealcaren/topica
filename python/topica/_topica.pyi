@@ -2361,7 +2361,17 @@ class GSDMM:
         """Always False; GSDMM has no early-stop criterion."""
         ...
     @property
-    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Document-topic matrix, shape (num_docs, num_topics); rows sum to 1.
+
+        The in-sample Movie-Group-Process soft conditional (Yin & Wang Eq. 4) over
+        the discovered clusters, with the document's own words still counted (not
+        held out), matching the reference gsdmm `score()`. It is a plug-in estimate,
+        not a Gibbs-averaged posterior, and its argmax is usually but not guaranteed
+        to equal the hard `doc_cluster`. Use `doc_cluster` for the hard label,
+        `transform` for the same conditional on held-out docs.
+        """
+        ...
     def transform(self, data: Corpus | list[list[str]]) -> numpy.typing.NDArray[numpy.float64]:
         """Soft cluster assignment of held-out documents, shape (num_docs, num_topics).
 
