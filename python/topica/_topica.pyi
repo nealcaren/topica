@@ -5000,8 +5000,9 @@ class TBIP:
     exp(x_s * eta_kv); documents mix topics with positive per-doc intensities
     theta_dk. Fit by the paper's mean-field variational inference (reparameterized
     single-sample SVI, Adam, document minibatching). Recovers ideological scales
-    from unlabeled text. Validated by planted-position recovery and a PyTorch
-    reference (parity/tbip_parity.py)."""
+    from unlabeled text. Validated by synthetic planted-position recovery
+    (parity/tbip_parity.py); the reference TF1.14/TFP0.7 code is not run as a
+    cross-implementation check."""
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,
@@ -5043,7 +5044,15 @@ class TBIP:
     @property
     def num_authors(self) -> int: ...
     @property
-    def ideal_points(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    def ideal_points(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Author ideal points (num_authors,), the posterior-mean positions mu_x.
+
+        Identifiability: identified only up to sign -- the model is invariant under
+        x -> -x, eta -> -eta, so the direction is arbitrary and determined by the
+        seed (TBIP has no anchoring). Compare runs by absolute correlation, or flip
+        to a chosen reference author. The scale is only softly pinned by the N(0, 1)
+        prior."""
+        ...
     @property
     def position_se(self) -> numpy.typing.NDArray[numpy.float64]:
         """Standard error of each author ideal point (num_authors,): the standard
