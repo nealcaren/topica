@@ -199,10 +199,19 @@ impl BatchNorm {
 ///
 /// - [`InputMode::BowOnly`] is plain ProdLDA: input is the normalized bag of
 ///   words (sparse, length `V`); `w1` is `hidden x V` and `e == 0`.
-/// - [`InputMode::BowEmb`] is CombinedTM: the normalized bag of words is
-///   concatenated with the caller's dense document embedding (length `E`); `w1`
-///   is `hidden x (V + E)`, with the BoW columns sparse and the embedding columns
-///   dense.
+/// - [`InputMode::BowEmb`] is the simple-concatenation encoder used by SCHOLAR
+///   (`src/scholar.rs`): the normalized bag of words is concatenated with a dense
+///   auxiliary channel (length `E`) fed directly, no projection; `w1` is
+///   `hidden x (V + E)`, with the BoW columns sparse and the auxiliary columns
+///   dense. SCHOLAR rides its covariates in on this channel.
+/// - [`InputMode::BowEmbAdapt`] is CombinedTM faithful to Bianchi, Terragni & Hovy
+///   (2021): the contextual (SBERT) embedding is first projected into vocabulary
+///   space by a learned `adapt_bert` layer (`w_adapt`, `V x E`), then concatenated
+///   with the *raw* bag of words, so the encoder's first layer is
+///   `Linear(2V, hidden)` (`w1` is `hidden x 2V`). This matches upstream
+///   `CombinedInferenceNetwork` (`adapt_bert = nn.Linear(bert_size, input_size)`,
+///   `input_layer = nn.Linear(input_size + input_size, hidden)`, raw `CountVectorizer`
+///   BoW).
 /// - [`InputMode::EmbOnly`] is ZeroShotTM: input is the document embedding alone;
 ///   `w1` is `hidden x E` (its `V`-column block is unused at the encoder, though
 ///   `beta` still reconstructs the `V`-word BoW).
@@ -210,6 +219,7 @@ impl BatchNorm {
 pub enum InputMode {
     BowOnly,
     BowEmb,
+    BowEmbAdapt,
     EmbOnly,
 }
 
@@ -234,6 +244,17 @@ pub struct Weights {
     pub w_ls: Vec<f64>, // K x hidden
     pub b_ls: Vec<f64>, // K
     pub beta: Vec<f64>, // K x V
+    /// CombinedTM `adapt_bert`: the learned linear projection of the contextual
+    /// embedding into vocabulary space (`V x E`, row-major), applied before
+    /// concatenation with the raw bag of words (Bianchi et al. 2021). Non-empty only
+    /// for [`InputMode::BowEmbAdapt`]; empty (and unused) for every other mode, so
+    /// the bow-only, simple-concat, and embedding-only encoders are unchanged.
+    /// `#[serde(default)]` keeps pre-CombinedTM-projection JSON states loadable.
+    #[serde(default)]
+    pub w_adapt: Vec<f64>, // V x E (BowEmbAdapt only)
+    /// Bias for `adapt_bert` (`V`); non-empty only for [`InputMode::BowEmbAdapt`].
+    #[serde(default)]
+    pub b_adapt: Vec<f64>, // V (BowEmbAdapt only)
 }
 
 impl Weights {
@@ -249,11 +270,25 @@ impl Weights {
         mode: InputMode,
         rng: &mut R,
     ) -> Self {
-        let cols = v + e; // w1 stores both blocks; the emb-only path leaves the BoW block unused.
-        let fan_in = match mode {
-            InputMode::BowOnly => v,
-            InputMode::BowEmb => v + e,
-            InputMode::EmbOnly => e,
+        // Encoder layer-1 input width and its `kaiming` fan-in. The bow-only,
+        // simple-concat (`BowEmb`), and emb-only paths keep `w1` at `hidden x (V + E)`
+        // (the emb-only path leaves its BoW block unused); CombinedTM's faithful
+        // encoder concatenates the raw BoW (`V`) with the `adapt_bert`-projected
+        // embedding (also `V`), so its first layer is `Linear(2V, hidden)`.
+        let (cols, fan_in) = match mode {
+            InputMode::BowOnly => (v + e, v),
+            InputMode::BowEmb => (v + e, v + e),
+            InputMode::BowEmbAdapt => (v + v, v + v),
+            InputMode::EmbOnly => (v + e, e),
+        };
+        let w1 = kaiming(hidden * cols, fan_in, rng);
+        // `adapt_bert = nn.Linear(E, V)` is drawn only for CombinedTM, so the RNG
+        // stream (and therefore the fitted weights) of every other mode is
+        // byte-identical to before this layer existed.
+        let (w_adapt, b_adapt) = if mode == InputMode::BowEmbAdapt {
+            (kaiming(v * e, e, rng), vec![0.0; v])
+        } else {
+            (Vec::new(), Vec::new())
         };
         Weights {
             v,
@@ -261,7 +296,7 @@ impl Weights {
             hidden,
             k,
             mode,
-            w1: kaiming(hidden * cols, fan_in, rng),
+            w1,
             b1: vec![0.0; hidden],
             w2: kaiming(hidden * hidden, hidden, rng),
             b2: vec![0.0; hidden],
@@ -270,7 +305,36 @@ impl Weights {
             w_ls: kaiming(k * hidden, hidden, rng),
             b_ls: vec![0.0; k],
             beta: kaiming(k * v, k, rng),
+            w_adapt,
+            b_adapt,
         }
+    }
+
+    /// Encoder layer-1 input width, matching the reference `Linear(input_size, hidden)`
+    /// per mode: `V + E` for bow-only / simple-concat / emb-only (the emb-only BoW
+    /// block is unused), and `2V` for CombinedTM's `adapt_bert` encoder.
+    fn w1_cols(&self) -> usize {
+        match self.mode {
+            InputMode::BowEmbAdapt => self.v + self.v,
+            _ => self.v + self.e,
+        }
+    }
+
+    /// CombinedTM `adapt_bert` forward: project the contextual embedding `emb`
+    /// (length `E`) into vocabulary space, `adapted[j] = b_adapt[j] + sum_k
+    /// w_adapt[j, k] * emb[k]` (a plain linear layer, no activation, as in the
+    /// reference). Returns a length-`V` vector.
+    fn adapt_bert(&self, emb: &[f64]) -> Vec<f64> {
+        let mut adapted = self.b_adapt.clone();
+        for (j, a) in adapted.iter_mut().enumerate() {
+            let base = j * self.e;
+            let mut s = *a;
+            for (kk, &ev) in emb.iter().enumerate() {
+                s += self.w_adapt[base + kk] * ev;
+            }
+            *a = s;
+        }
+        adapted
     }
 
     /// Encoder forward for one document up to the pre-batchnorm head outputs,
@@ -280,8 +344,16 @@ impl Weights {
     /// BoW columns of `w1`, emb-only the embedding columns, bow+emb both.
     fn encode_raw(&self, xn: &[(usize, f64)], emb: &[f64], mask2: &[f64]) -> DocCache {
         let (h, k) = (self.hidden, self.k);
-        let cols = self.v + self.e;
-        // Layer 1: the BoW part is sparse in the vocabulary, the embedding part dense.
+        let cols = self.w1_cols();
+        // CombinedTM: project the embedding into vocab space before concatenation.
+        let adapted = if self.mode == InputMode::BowEmbAdapt {
+            self.adapt_bert(emb)
+        } else {
+            Vec::new()
+        };
+        // Layer 1: the BoW part is sparse in the vocabulary, the second block dense.
+        // For `BowEmbAdapt` the second block is the `V`-wide adapted embedding; for
+        // `BowEmb`/`EmbOnly` it is the `E`-wide raw channel.
         let mut pre1 = self.b1.clone();
         for i in 0..h {
             let row = i * cols;
@@ -291,10 +363,19 @@ impl Weights {
                     s += self.w1[row + w] * val;
                 }
             }
-            if self.mode != InputMode::BowOnly {
-                let base = row + self.v;
-                for (j, &ev) in emb.iter().enumerate() {
-                    s += self.w1[base + j] * ev;
+            match self.mode {
+                InputMode::BowOnly => {}
+                InputMode::BowEmbAdapt => {
+                    let base = row + self.v;
+                    for (j, &av) in adapted.iter().enumerate() {
+                        s += self.w1[base + j] * av;
+                    }
+                }
+                InputMode::BowEmb | InputMode::EmbOnly => {
+                    let base = row + self.v;
+                    for (j, &ev) in emb.iter().enumerate() {
+                        s += self.w1[base + j] * ev;
+                    }
                 }
             }
             pre1[i] = s;
@@ -332,6 +413,7 @@ impl Weights {
             hd,
             mu_raw,
             lv_raw,
+            adapted,
         }
     }
 }
@@ -344,6 +426,8 @@ struct DocCache {
     hd: Vec<f64>,
     mu_raw: Vec<f64>,
     lv_raw: Vec<f64>,
+    /// CombinedTM `adapt_bert` output (length `V`); empty for every other mode.
+    adapted: Vec<f64>,
 }
 
 /// Gradient accumulators mirroring [`Weights`].
@@ -359,6 +443,9 @@ pub(crate) struct Grad {
     /// Topic-word (decoder) gradient, K x V. Exposed so a coupled model
     /// (`infoctm`) can add a cross-lingual alignment gradient before the Adam step.
     pub(crate) beta: Vec<f64>,
+    /// CombinedTM `adapt_bert` gradients (`V x E` and `V`); empty for other modes.
+    w_adapt: Vec<f64>,
+    b_adapt: Vec<f64>,
 }
 
 impl Grad {
@@ -381,6 +468,8 @@ impl Grad {
             w_ls: vec![0.0; w.w_ls.len()],
             b_ls: vec![0.0; w.b_ls.len()],
             beta: vec![0.0; w.beta.len()],
+            w_adapt: vec![0.0; w.w_adapt.len()],
+            b_adapt: vec![0.0; w.b_adapt.len()],
         }
     }
     pub(crate) fn scale(&mut self, s: f64) {
@@ -394,6 +483,8 @@ impl Grad {
             &mut self.w_ls,
             &mut self.b_ls,
             &mut self.beta,
+            &mut self.w_adapt,
+            &mut self.b_adapt,
         ] {
             for x in blk.iter_mut() {
                 *x *= s;
@@ -905,9 +996,18 @@ pub(crate) fn batch_forward(
     let (k, v) = (w.k, w.v);
     let n = batch.xns.len();
 
-    // Encoder up to the pre-BN heads.
+    // Encoder up to the pre-BN heads. CombinedTM (`BowEmbAdapt`) feeds the *raw*
+    // BoW counts (`batch.counts`), matching the reference's `CountVectorizer` input;
+    // every other mode keeps the length-normalized BoW (`batch.xns`).
     let doc: Vec<DocCache> = (0..n)
-        .map(|i| w.encode_raw(batch.xns[i], batch.embs[i], &batch.masks2[i]))
+        .map(|i| {
+            let enc_bow = if w.mode == InputMode::BowEmbAdapt {
+                batch.counts[i]
+            } else {
+                batch.xns[i]
+            };
+            w.encode_raw(enc_bow, batch.embs[i], &batch.masks2[i])
+        })
         .collect();
     let mu_raw: Vec<Vec<f64>> = doc.iter().map(|d| d.mu_raw.clone()).collect();
     let lv_raw: Vec<Vec<f64>> = doc.iter().map(|d| d.lv_raw.clone()).collect();
@@ -1434,22 +1534,48 @@ pub(crate) fn batch_backward(
         for j in 0..h {
             dpre1[j] = dh1[j] * sigmoid(dc.pre1[j]);
         }
-        // Layer 1: pre1 = W1 [xn ; emb] + b1. The BoW columns are sparse in the
-        // vocabulary; the embedding columns (offset by V) are dense. The mode
-        // selects which blocks contribute, mirroring `encode_raw`.
-        let cols = v + w.e;
-        for a in 0..h {
-            g.b1[a] += dpre1[a];
-            let row = a * cols;
-            if w.mode != InputMode::EmbOnly {
-                for &(word, val) in batch.xns[i] {
+        // Layer 1: pre1 = W1 [bow ; second] + b1. The BoW columns are sparse in the
+        // vocabulary; the second block (offset by V) is dense. The mode selects which
+        // blocks contribute, mirroring `encode_raw`.
+        let cols = w.w1_cols();
+        if w.mode == InputMode::BowEmbAdapt {
+            // CombinedTM: raw BoW ⊕ adapt_bert(emb). Accumulate the gradient into the
+            // dense adapted block, back-propagate it into the `adapt_bert` weights.
+            let mut dadapted = vec![0.0; v];
+            for a in 0..h {
+                g.b1[a] += dpre1[a];
+                let row = a * cols;
+                for &(word, val) in batch.counts[i] {
                     g.w1[row + word] += dpre1[a] * val;
                 }
-            }
-            if w.mode != InputMode::BowOnly {
                 let base = row + v;
-                for (j, &ev) in batch.embs[i].iter().enumerate() {
-                    g.w1[base + j] += dpre1[a] * ev;
+                for j in 0..v {
+                    g.w1[base + j] += dpre1[a] * dc.adapted[j];
+                    dadapted[j] += dpre1[a] * w.w1[base + j];
+                }
+            }
+            // adapt_bert = Linear(E, V): adapted[j] = b_adapt[j] + sum_k w_adapt[j,k]*emb[k].
+            for j in 0..v {
+                g.b_adapt[j] += dadapted[j];
+                let base = j * w.e;
+                for (kk, &ev) in batch.embs[i].iter().enumerate() {
+                    g.w_adapt[base + kk] += dadapted[j] * ev;
+                }
+            }
+        } else {
+            for a in 0..h {
+                g.b1[a] += dpre1[a];
+                let row = a * cols;
+                if w.mode != InputMode::EmbOnly {
+                    for &(word, val) in batch.xns[i] {
+                        g.w1[row + word] += dpre1[a] * val;
+                    }
+                }
+                if w.mode != InputMode::BowOnly {
+                    let base = row + v;
+                    for (j, &ev) in batch.embs[i].iter().enumerate() {
+                        g.w1[base + j] += dpre1[a] * ev;
+                    }
                 }
             }
         }
@@ -1509,6 +1635,8 @@ pub(crate) struct Optim {
     w_ls: Adam,
     b_ls: Adam,
     beta: Adam,
+    w_adapt: Adam,
+    b_adapt: Adam,
 }
 
 impl Optim {
@@ -1523,6 +1651,8 @@ impl Optim {
             w_ls: Adam::new(w.w_ls.len(), lr, beta1, wd),
             b_ls: Adam::new(w.b_ls.len(), lr, beta1, wd),
             beta: Adam::new(w.beta.len(), lr, beta1, wd),
+            w_adapt: Adam::new(w.w_adapt.len(), lr, beta1, wd),
+            b_adapt: Adam::new(w.b_adapt.len(), lr, beta1, wd),
         }
     }
     pub(crate) fn step(&mut self, w: &mut Weights, g: &Grad) {
@@ -1535,6 +1665,8 @@ impl Optim {
         self.w_ls.step(&mut w.w_ls, &g.w_ls);
         self.b_ls.step(&mut w.b_ls, &g.b_ls);
         self.beta.step(&mut w.beta, &g.beta);
+        self.w_adapt.step(&mut w.w_adapt, &g.w_adapt);
+        self.b_adapt.step(&mut w.b_adapt, &g.b_adapt);
     }
 }
 
@@ -1593,7 +1725,13 @@ impl ProdldaModel {
         docs.iter()
             .zip(embs.iter())
             .map(|(d, emb)| {
-                let xn = normalized_bow(d);
+                // CombinedTM reads raw counts at the encoder (see `batch_forward`);
+                // every other mode reads the length-normalized BoW.
+                let xn = if self.weights.mode == InputMode::BowEmbAdapt {
+                    raw_bow(d)
+                } else {
+                    normalized_bow(d)
+                };
                 let no_drop = vec![1.0; self.weights.hidden];
                 let dc = self.weights.encode_raw(&xn, emb, &no_drop);
                 let mu = self.bn_mu.forward_eval_row(&dc.mu_raw);
@@ -2001,6 +2139,9 @@ mod tests {
         check_block!(w_ls, "w_ls");
         check_block!(b_ls, "b_ls");
         check_block!(beta, "beta");
+        // CombinedTM `adapt_bert` blocks (empty, so no-ops, for every other mode).
+        check_block!(w_adapt, "w_adapt");
+        check_block!(b_adapt, "b_adapt");
         max_rel
     }
 
@@ -2015,6 +2156,15 @@ mod tests {
         // CombinedTM: BoW concatenated with a dense embedding block.
         let max_rel = fd_check_mode_opts(InputMode::BowEmb, 6, AvitmOptions::default());
         assert!(max_rel < 1e-4, "bow+emb max relative error {max_rel}");
+    }
+
+    #[test]
+    fn batch_gradients_match_fd_bow_emb_adapt() {
+        // CombinedTM faithful to Bianchi et al.: raw BoW concatenated with the
+        // `adapt_bert`-projected embedding. Exercises the new `w_adapt`/`b_adapt`
+        // gradients end-to-end against central differences.
+        let max_rel = fd_check_mode_opts(InputMode::BowEmbAdapt, 6, AvitmOptions::default());
+        assert!(max_rel < 1e-4, "bow+emb-adapt max relative error {max_rel}");
     }
 
     #[test]
@@ -2302,6 +2452,48 @@ mod tests {
     }
 
     #[test]
+    fn combinedtm_adapt_recovers_planted_blocks() {
+        // CombinedTM faithful to Bianchi et al.: raw BoW ⊕ adapt_bert(emb).
+        let (docs, embs, k, block, v) = planted_emb_corpus(180, 1);
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let m = fit_avitm(
+            &docs,
+            &embs,
+            InputMode::BowEmbAdapt,
+            k,
+            v,
+            k,
+            32,
+            1.0,
+            0.0,
+            250,
+            60,
+            0.01,
+            0.0,
+            AvitmOptions::default(),
+            &mut rng,
+        );
+        let tw = m.topic_word();
+        for row in &tw {
+            assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        }
+        for row in &m.doc_topic {
+            assert!((row.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        }
+        assert_eq!(
+            top_blocks(&tw, k, v, block),
+            k,
+            "topics did not cover all blocks"
+        );
+        // The projected embedding weights must be live (non-empty and trained).
+        assert_eq!(m.weights.w_adapt.len(), v * k);
+        assert_eq!(m.weights.b_adapt.len(), v);
+        assert!(m.weights.w_adapt.iter().any(|&x| x != 0.0));
+        let base = crate::conformance::check_conformance(&m);
+        assert!(base.is_empty(), "check_conformance: {:?}", base);
+    }
+
+    #[test]
     fn zeroshottm_recovers_planted_blocks() {
         let (docs, embs, k, block, v) = planted_emb_corpus(180, 1);
         let mut rng = ChaCha8Rng::seed_from_u64(7);
@@ -2339,7 +2531,11 @@ mod tests {
     #[test]
     fn embedding_modes_are_deterministic() {
         let (docs, embs, k, _block, v) = planted_emb_corpus(60, 2);
-        for mode in [InputMode::BowEmb, InputMode::EmbOnly] {
+        for mode in [
+            InputMode::BowEmb,
+            InputMode::BowEmbAdapt,
+            InputMode::EmbOnly,
+        ] {
             let mut r1 = ChaCha8Rng::seed_from_u64(11);
             let mut r2 = ChaCha8Rng::seed_from_u64(11);
             let a = fit_avitm(

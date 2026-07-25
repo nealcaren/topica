@@ -2,8 +2,10 @@
 reference of the contextualized topic model (Bianchi, Terragni & Hovy 2021).
 
 CombinedTM is ProdLDA (AVITM; Srivastava & Sutton 2017) with one change: the
-encoder reads the normalized bag of words *concatenated with* a caller-supplied
-document embedding. The decoder is unchanged -- a product-of-experts
+encoder reads the raw bag of words *concatenated with* a caller-supplied document
+embedding that is first projected into vocabulary space by a learned ``adapt_bert``
+``Linear(E, V)`` layer (first encoder layer ``Linear(2V, hidden)``; issue #503).
+The decoder is unchanged -- a product-of-experts
 ``softmax(beta . theta)`` reconstructing the bag of words over the V-vocabulary.
 The embedding is only an encoder input; it is never reconstructed.
 
@@ -12,8 +14,8 @@ encoder built ``fc1, fc2, mu, lv`` with affine-free batchnorm heads, the Laplace
 approximation to the Dirichlet prior, the reparameterization trick, and the
 Dirichlet-Laplace KL) and the same ProdLDA decoder + training loop as
 ``prodlda_compare.py``. The only difference from ProdLDA is the encoder input
-width and what it is fed: ``build_encoder(v_in = V + E, ...)`` fed
-``concat([norm_bow, doc_emb], dim=1)``. topica's network is hand-coded in Rust
+width and what it is fed: ``build_encoder(v_in = 2V, ...)`` fed
+``concat([raw_bow, adapt_bert(doc_emb)], dim=1)``. topica's network is hand-coded in Rust
 with no autograd; PyTorch differentiates the same graph. Initialization, RNG, and
 autograd-vs-hand-coded backward differ, so exact agreement is impossible -- we
 hold them to a statistical-equivalence bar on a shared task: the SAME planted
@@ -112,9 +114,10 @@ def load(seed: int = 0):
 # --- PyTorch reference: CombinedTM --------------------------------------------
 #
 # Identical to the ProdLDA reference (prodlda_compare.py) except the encoder is
-# built at ``v_in = V + E`` and fed ``concat([norm_bow, emb])``. The decoder,
-# Laplace-Dirichlet prior, reparameterization, KL, and batchnorm are unchanged
-# and come from ``refs.avitm``; nothing is re-implemented here.
+# built at ``v_in = 2V`` and fed ``concat([raw_bow, adapt_bert(emb)])`` with
+# ``adapt_bert = Linear(E, V)`` (Bianchi et al.'s CombinedInferenceNetwork, #503).
+# The decoder, Laplace-Dirichlet prior, reparameterization, KL, and batchnorm are
+# unchanged and come from ``refs.avitm``; nothing is re-implemented here.
 
 
 def _build_reference(v: int, e: int, k: int):
@@ -124,17 +127,20 @@ def _build_reference(v: int, e: int, k: int):
     class CombinedTMRef(nn.Module):
         def __init__(self):
             super().__init__()
-            # CombinedTM: encoder input is [norm_bow (V) | doc_emb (E)].
-            self.enc = build_encoder(v + e, k, HIDDEN, dropout=DROPOUT)
+            # CombinedTM (Bianchi et al., #503): encoder input is
+            # [raw_bow (V) | adapt_bert(doc_emb) (V)] with adapt_bert = Linear(E, V),
+            # so the first encoder layer is Linear(2V, hidden).
+            self.adapt_bert = nn.Linear(e, v)
+            self.enc = build_encoder(v + v, k, HIDDEN, dropout=DROPOUT)
             self.drop = nn.Dropout(DROPOUT)
             self.beta = nn.Linear(k, v, bias=False)  # weight V x K; logits = theta @ W^T
             self.bn_dec = nn.BatchNorm1d(v, affine=False, eps=1e-5, momentum=0.1)
 
-        def encode(self, xn, emb):
-            return self.enc.encode(torch.cat([xn, emb], dim=1))
+        def encode(self, x_raw, emb):
+            return self.enc.encode(torch.cat([x_raw, self.adapt_bert(emb)], dim=1))
 
-        def forward(self, xn, emb):
-            mu, lv = self.encode(xn, emb)
+        def forward(self, x_raw, emb):
+            mu, lv = self.encode(x_raw, emb)
             z = reparameterize(mu, lv)
             theta = self.drop(torch.softmax(z, dim=1))
             logits = self.bn_dec(self.beta(theta))
@@ -154,7 +160,6 @@ def _train_reference(counts: np.ndarray, emb: np.ndarray, k: int, seed: int):
     prior_mu, prior_var = laplace_prior(k, ALPHA)
 
     cnt = torch.tensor(counts, dtype=torch.float32)
-    norm = cnt / cnt.sum(1, keepdim=True).clamp_min(1.0)
     em = torch.tensor(emb, dtype=torch.float32)
     n = cnt.shape[0]
     opt = torch.optim.Adam(model.parameters(), lr=LR, betas=(0.99, 0.999))
@@ -167,7 +172,8 @@ def _train_reference(counts: np.ndarray, emb: np.ndarray, k: int, seed: int):
             if len(idx) < 2:
                 continue
             opt.zero_grad()
-            recon, mu, lv = model(norm[idx], em[idx])
+            # Encoder reads the RAW counts (not length-normalized), matching upstream.
+            recon, mu, lv = model(cnt[idx], em[idx])
             rl = -(cnt[idx] * recon).sum(1)
             kl = dirichlet_laplace_kl(mu, lv, prior_mu, prior_var, k)
             (rl + kl).mean().backward()
@@ -177,7 +183,7 @@ def _train_reference(counts: np.ndarray, emb: np.ndarray, k: int, seed: int):
     with torch.no_grad():
         beta = model.beta.weight.detach().t()  # K x V
         topic_word = torch.softmax(beta, dim=1).numpy()
-        mu, _ = model.encode(norm, em)
+        mu, _ = model.encode(cnt, em)
         assign = torch.softmax(mu, dim=1).argmax(1).numpy()
     return topic_word, assign
 

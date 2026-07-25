@@ -2,8 +2,8 @@
   "alpha": 1.0,
   "batch": 200,
   "corpus": "synthetic planted-block, 600 docs x 25 tokens, K=5 blocks of 10 words, per-doc one-hot+noise embedding (from parity/combinedtm_compare.py)",
-  "cosine_bar": 0.871874967467971,
-  "date": "2026-06-22",
+  "cosine_bar": 0.8796903767906742,
+  "date": "2026-07-25",
   "dropout": 0.2,
   "emb_dim": 5,
   "epochs": 150,
@@ -15,12 +15,12 @@
   "num_docs": 600,
   "num_topics": 5,
   "pass_bar": "topica-vs-reference Hungarian-aligned topic-word cosine >= reference seed-to-seed self cosine - margin",
-  "reference": "torch 2.12.0 (AVITM reference, parity/refs/avitm.py)",
-  "reference_self_cosine": 0.971874967467971,
+  "reference": "torch 2.13.0 (AVITM reference, parity/refs/avitm.py)",
+  "reference_self_cosine": 0.9796903767906742,
   "seeds": {
     "gold": 0,
     "noise_floor": 1
   },
-  "topica_vs_reference_cosine": 0.9720548039128115,
+  "topica_vs_reference_cosine": 0.9846480942791118,
   "vocab_size": 50
 }

@@ -864,6 +864,9 @@ impl Scholar {
                 w_ls: s.w_w_ls.unwrap(),
                 b_ls: s.w_b_ls.unwrap(),
                 beta,
+                // SCHOLAR uses the simple-concat `BowEmb` encoder (no `adapt_bert`).
+                w_adapt: Vec::new(),
+                b_adapt: Vec::new(),
             };
             let bn_mu = prodlda::BatchNorm {
                 running_mean: s.bn_running_mean.clone().unwrap_or_else(|| vec![0.0; k]),

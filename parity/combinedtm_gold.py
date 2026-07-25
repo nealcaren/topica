@@ -1,8 +1,10 @@
 """Committed-gold parity for topica CombinedTM vs a PyTorch AVITM reference (#271, Wave 1).
 
 CombinedTM (Bianchi, Terragni & Hovy 2021) is ProdLDA / AVITM with one change: the
-encoder reads the normalized bag of words *concatenated with* a per-document
-embedding. topica's network is hand-coded in Rust (no autograd); the reference is
+encoder reads the *raw* bag of words *concatenated with* a per-document embedding
+that is first projected into vocabulary space by a learned ``adapt_bert``
+``Linear(E, V)`` layer, so the first encoder layer is ``Linear(2V, hidden)`` (issue
+#503). topica's network is hand-coded in Rust (no autograd); the reference is
 the shared PyTorch AVITM backbone in ``parity/refs/avitm.py`` plus the ProdLDA
 decoder, exactly as in the live script ``parity/combinedtm_compare.py``. RNG,
 initialization, and autograd-vs-hand-coded backward differ, so agreement is
@@ -102,7 +104,10 @@ def _counts_matrix(token_docs, vocab):
 
 
 # --------------------------------------------------------------------------- #
-# PyTorch AVITM reference (CombinedTM: encoder reads [norm_bow | emb])
+# PyTorch AVITM reference (CombinedTM: encoder reads [raw_bow | adapt_bert(emb)],
+# faithful to Bianchi et al.'s CombinedInferenceNetwork -- a learned Linear(E, V)
+# projection of the embedding concatenated with the raw CountVectorizer BoW, so the
+# first layer is Linear(2V, hidden); see issue #503).
 # --------------------------------------------------------------------------- #
 def _torch_available() -> bool:
     try:
@@ -139,16 +144,20 @@ def _train_reference(counts: np.ndarray, emb: np.ndarray, k: int, seed: int):
     class CombinedTMRef(nn.Module):
         def __init__(self):
             super().__init__()
-            self.enc = build_encoder(v + e, k, HIDDEN, dropout=DROPOUT)
+            # adapt_bert = nn.Linear(bert_size, input_size=V), then the encoder's
+            # first layer is Linear(input_size + input_size, hidden) = Linear(2V, H).
+            self.adapt_bert = nn.Linear(e, v)
+            self.enc = build_encoder(v + v, k, HIDDEN, dropout=DROPOUT)
             self.drop = nn.Dropout(DROPOUT)
             self.beta = nn.Linear(k, v, bias=False)
             self.bn_dec = nn.BatchNorm1d(v, affine=False, eps=1e-5, momentum=0.1)
 
-        def encode(self, xn, em):
-            return self.enc.encode(torch.cat([xn, em], dim=1))
+        def encode(self, x_raw, em):
+            x_bert = self.adapt_bert(em)
+            return self.enc.encode(torch.cat([x_raw, x_bert], dim=1))
 
-        def forward(self, xn, em):
-            mu, lv = self.encode(xn, em)
+        def forward(self, x_raw, em):
+            mu, lv = self.encode(x_raw, em)
             z = reparameterize(mu, lv)
             theta = self.drop(torch.softmax(z, dim=1))
             logits = self.bn_dec(self.beta(theta))
@@ -158,7 +167,6 @@ def _train_reference(counts: np.ndarray, emb: np.ndarray, k: int, seed: int):
     prior_mu, prior_var = laplace_prior(k, ALPHA)
 
     cnt = torch.tensor(counts, dtype=torch.float32)
-    norm = cnt / cnt.sum(1, keepdim=True).clamp_min(1.0)
     em = torch.tensor(emb, dtype=torch.float32)
     n = cnt.shape[0]
     opt = torch.optim.Adam(model.parameters(), lr=LR, betas=(0.99, 0.999))
@@ -171,7 +179,8 @@ def _train_reference(counts: np.ndarray, emb: np.ndarray, k: int, seed: int):
             if len(idx) < 2:
                 continue
             opt.zero_grad()
-            recon, mu, lv = model(norm[idx], em[idx])
+            # Encoder reads the RAW counts (not length-normalized), matching upstream.
+            recon, mu, lv = model(cnt[idx], em[idx])
             rl = -(cnt[idx] * recon).sum(1)
             kl = dirichlet_laplace_kl(mu, lv, prior_mu, prior_var, k)
             (rl + kl).mean().backward()
