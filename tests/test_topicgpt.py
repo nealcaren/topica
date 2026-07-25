@@ -366,3 +366,134 @@ def test_with_prompt_after_fit_raises():
     model, _ = _fit()
     with pytest.raises(RuntimeError, match="before fit"):
         model.with_prompt("generation", "x {taxonomy} {document}")
+
+
+# ---------------------------------------------------------------------------
+# Issue #509: robustness fixes
+# ---------------------------------------------------------------------------
+
+def test_zero_doc_topic_keeps_topic_word_healthy_and_finite_coherence():
+    # (#509-1) The LLM discovers three topics but assigns every document to one of
+    # them. The two zero-doc topics must still yield a valid topic_word row (sum to
+    # 1) and finite coherence, not an all-zero row + NaN.
+    be = FakeBackend()
+
+    def skewed(prompt: str) -> str:
+        if prompt.startswith(PROMPTS["assignment"][:40]):
+            return '[1] Politics: everything here ("the")'
+        return be(prompt)
+
+    model = TopicGPT(backend=skewed)
+    model.fit(DOCS)
+    assert model.num_topics == 3
+    # exactly one topic actually received documents
+    assert int((model.doc_topic.sum(axis=0) > 0).sum()) == 1
+    tw = model.topic_word
+    assert np.allclose(tw.sum(axis=1), 1.0)  # invariant holds for zero-doc rows too
+    c = model.coherence(5)
+    assert np.asarray(c).shape == (3,)
+    assert np.all(np.isfinite(c))  # no NaN from empty topics
+
+
+def test_custom_prompt_with_literal_json_braces_is_rejected():
+    # (#509-2) A pasted JSON example in a custom template must fail fast at
+    # construction, not crash deep in fit with an opaque KeyError.
+    with pytest.raises(ValueError, match="brace-safe"):
+        TopicGPT(
+            backend=lambda p: "",
+            prompts={"generation": 'Do {taxonomy} then {document}. JSON: {"topic":"x"}'},
+        )
+
+
+def test_custom_prompt_with_positional_brace_is_rejected():
+    # (#509-2) A stray numeric brace (LaTeX/exponent) raises IndexError under
+    # str.format; it must be reported at construction.
+    with pytest.raises(ValueError, match="brace-safe"):
+        TopicGPT(
+            backend=lambda p: "",
+            prompts={"generation": "cost O(n^{2}) for {taxonomy} {document}"},
+        )
+
+
+def test_custom_prompt_with_escaped_braces_is_accepted():
+    # (#509-2) Doubling the braces makes the template brace-safe and the literal
+    # braces survive into the rendered prompt.
+    tmpl = 'Return JSON like {{"topic":"x"}} for {taxonomy} :: {document}'
+    model = TopicGPT(backend=lambda p: "None", prompts={"generation": tmpl})
+    rendered = model.prompts["generation"].format(taxonomy="t", document="d")
+    assert '{"topic":"x"}' in rendered
+
+
+def test_markdown_decorated_topic_lines_are_parsed_not_dropped():
+    # (#509-3) Bolded and bulleted topic lines used to be silently discarded.
+    from topica.topicgpt import _parse_topic_lines
+
+    triples, dropped = _parse_topic_lines(
+        "[1] Politics: gov\n**[1] Sports: games**\n- [1] Tech: chips\n1. [1] Health: care"
+    )
+    names = [n for _, n, _ in triples]
+    assert names == ["Politics", "Sports", "Tech", "Health"]
+    assert dropped == []
+
+
+def test_unparseable_lines_are_surfaced_not_silently_dropped():
+    # (#509-3/c) A prose reply that yields no topic lines is recorded in
+    # parse_drops and warned, instead of vanishing silently.
+    be = FakeBackend()
+
+    def noisy(prompt: str) -> str:
+        if prompt.startswith(PROMPTS["generation"][:40]) and "senate" in prompt:
+            return "Here are the topics:\nJust some prose with no bracket format"
+        return be(prompt)
+
+    model = TopicGPT(backend=noisy)
+    with pytest.warns(UserWarning, match="unparseable"):
+        model.fit(DOCS)
+    assert model.parse_drops  # the dropped lines are retained for inspection
+    assert any(stage == "parse_drops" for stage, _ in model.stage_log)
+
+
+def test_refinement_none_is_anchored_not_prefix_matched():
+    # (#509-7) "Nonetheless, ..." must not be mistaken for a bare "None" and drop
+    # the merged list.
+    from topica.topicgpt import _is_noise_line
+
+    assert _is_noise_line("None")
+    assert _is_noise_line("None.")
+    assert not _is_noise_line("Nonetheless, here is the merged list:")
+
+
+def test_min_topic_count_prunes_rare_topics():
+    # (#509-5) A topic evoked by a single document is pruned when
+    # min_topic_count=2; a topic evoked by two survives.
+    def be(prompt: str) -> str:
+        if prompt.startswith(PROMPTS["assignment"][:40]):
+            return '[1] Common: assigned ("the")'
+        if prompt.startswith(PROMPTS["generation"][:40]):
+            if "senate" in prompt or "championship" in prompt:
+                return "[1] Common: appears in two documents"
+            return "[1] Rare: appears once"
+        return "None"  # refinement no-op
+
+    model = TopicGPT(backend=be, min_topic_count=2)
+    model.fit(DOCS)
+    assert model.topic_names == ["Common"]
+    assert any(stage == "pruned" for stage, _ in model.stage_log)
+
+
+def test_min_topic_count_default_is_no_op():
+    # (#509-5) The default keeps every topic that appeared at least once.
+    model, _ = _fit(min_topic_count=1)
+    assert model.num_topics == 3
+
+
+def test_min_topic_count_below_one_raises():
+    with pytest.raises(ValueError, match="min_topic_count"):
+        TopicGPT(backend=lambda p: "", min_topic_count=0)
+
+
+def test_min_topic_count_never_prunes_all_topics():
+    # Even an unreachable threshold leaves the model with its topics rather than
+    # zero (the synthetic-topic fallback is a separate safety net).
+    model, _ = _fit(min_topic_count=999)
+    assert model.num_topics >= 1
