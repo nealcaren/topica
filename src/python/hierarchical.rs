@@ -21,6 +21,11 @@ struct PaState {
     phi: Option<Arr2>,
     theta: Option<Arr2>,
     super_sub: Option<Arr2>,
+    // NOTE: the save format is positional bincode, so `#[serde(default)]` is inert
+    // for this mid-struct field -- a genuine pre-#526 save does not round-trip to
+    // `doc_super = None`, it fails to deserialize (the trailing bytes misalign).
+    // The default only helps a JSON/self-describing reader. The `doc_super` getter
+    // therefore returns a clean error (not a panic) if it ever sees `None`.
     #[serde(default)]
     doc_super: Option<Arr2>,
     corpus: Option<corpus::Corpus>,
@@ -298,7 +303,16 @@ impl PA {
     #[getter]
     fn doc_super<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
-        Ok(self.doc_super.as_ref().unwrap().to_pyarray_bound(py))
+        // `fitted` does not by itself guarantee `doc_super` is present: a model
+        // saved before #526 has no `doc_super` in its state. Return a clean error
+        // rather than unwrap-panicking on that (already-degraded) path.
+        let ds = self.doc_super.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err(
+                "doc_super is unavailable; this model was saved before doc_super \
+                 existed -- refit to populate it",
+            )
+        })?;
+        Ok(ds.to_pyarray_bound(py))
     }
     #[getter]
     fn num_super(&self) -> usize {
