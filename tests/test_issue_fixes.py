@@ -320,9 +320,11 @@ def test_knn_neighbors_steers_topic_count():
     # #358: smaller knn_neighbors -> more, tighter communities. The effect is
     # weaker than resolution, so use a fine-grained corpus where it bites.
     docs, emb = _overlapping_blobs(k=20, per=40, dim=30, spread=1.4)
-    small = topica.Top2Vec(clusterer="leiden", knn_neighbors=5, min_cluster_size=5, seed=1)
+    # Pin the linear reducer: this checks the knn_neighbors knob on the graph
+    # clusterer, independent of the reducer (Top2Vec now defaults to umap).
+    small = topica.Top2Vec(clusterer="leiden", knn_neighbors=5, min_cluster_size=5, reducer="pca", seed=1)
     small.fit(docs, emb)
-    large = topica.Top2Vec(clusterer="leiden", knn_neighbors=30, min_cluster_size=5, seed=1)
+    large = topica.Top2Vec(clusterer="leiden", knn_neighbors=30, min_cluster_size=5, reducer="pca", seed=1)
     large.fit(docs, emb)
     assert small.num_topics > large.num_topics
 

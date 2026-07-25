@@ -3184,7 +3184,9 @@ class SeededLDA:
 
 class Top2Vec:
     """Top2Vec (Angelov 2020): topics by clustering document embeddings. The
-    embeddings are reduced (randomized PCA), density-clustered (HDBSCAN), and
+    embeddings are reduced with UMAP (matching the original, which always uses
+    UMAP; pass ``reducer="pca"`` for a linear projection), density-clustered
+    (HDBSCAN), and
     each topic is read off its cluster: the topic vector is the mean of its
     documents' embeddings and its words are the nearest vocabulary terms. You
     bring the embeddings; the topic count is discovered, not set. No embedder of
@@ -3207,14 +3209,14 @@ class Top2Vec:
         n_components: int = 5,
         min_cluster_size: int = 15,
         min_samples: int | None = None,
-        reducer: str = "pca",
+        reducer: str = "umap",
         n_neighbors: int = 15,
         clusterer: str = "hdbscan",
         num_clusters: int | None = None,
         resolution: float = 1.0,
         knn_neighbors: int = 15,
         diagnostics: bool = True,
-        min_dist: float = 0.0,
+        min_dist: float = 0.1,
         spread: float = 1.0,
         n_epochs: int = 0,
         negative_sample_rate: int = 5,

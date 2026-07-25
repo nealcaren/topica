@@ -2,8 +2,8 @@
 
 topica's Top2Vec and BERTopic are independent embedding-clustering topic models.
 They share the same shape (reduce the document embeddings, density-cluster, read
-topics off the clusters) but not the same reducer: topica uses randomized PCA,
-BERTopic uses UMAP. Exact agreement is therefore impossible, so we hold them to a
+topics off the clusters) but not the same implementation: topica reduces with its
+in-house UMAP, BERTopic with umap-learn. Exact agreement is therefore impossible, so we hold them to a
 statistical-equivalence bar on a controlled task.
 
 We plant well-separated document clusters (each with its own vocabulary block),
@@ -95,7 +95,7 @@ def run(verbose: bool = True) -> dict:
     docs, texts, doc_emb, word_emb, vocab, truth = make_data()
     min_cluster = 15
 
-    # topica: shared embeddings, randomized-PCA reducer.
+    # topica: shared embeddings, in-house UMAP reducer (the default).
     tv = topica.Top2Vec(n_components=5, min_cluster_size=min_cluster, seed=1)
     tv.fit(docs, doc_emb, word_embeddings=word_emb, vocabulary=vocab)
     tv_labels = np.array(tv.labels)

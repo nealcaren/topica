@@ -29,9 +29,10 @@ fn umap_notice(_py: Python<'_>, use_umap: bool) -> PyResult<()> {
 }
 
 /// Top2Vec: topics by clustering document embeddings. We reduce the document
-/// embeddings (randomized PCA), density-cluster them (HDBSCAN), and read each
-/// topic off its cluster: the topic vector is the mean of its documents'
-/// embeddings, and its words are the vocabulary terms nearest that vector.
+/// embeddings (UMAP by default, matching the original Top2Vec; `reducer="pca"`
+/// for a linear projection), density-cluster them (HDBSCAN), and read each topic
+/// off its cluster: the topic vector is the mean of its documents' embeddings,
+/// and its words are the vocabulary terms nearest that vector.
 ///
 /// You bring the embeddings. `fit(data, doc_embeddings)` needs one embedding row
 /// per document; pass `word_embeddings` with the aligned `vocabulary` (same
@@ -189,9 +190,13 @@ impl Top2Vec {
     /// cleanly. `"leiden"` runs Louvain modularity plus a refinement phase that
     /// guarantees connected topics. `min_samples` defaults to `min_cluster_size`.
     ///
-    /// `reducer` is the dimensionality-reduction method, ``"pca"`` (default,
-    /// deterministic) or ``"umap"`` (stochastic); `n_neighbors` is the
-    /// neighborhood size for the reducer. `resolution` (default 1.0) and
+    /// `reducer` is the dimensionality-reduction method, ``"umap"`` (default,
+    /// matching the original Top2Vec, which always reduces with UMAP; topica's
+    /// in-house UMAP is seed-reproducible) or ``"pca"`` (linear, lighter,
+    /// L2-normalized onto the unit sphere before clustering); `n_neighbors`
+    /// (default 15, ``metric="cosine"``) matches the original Top2Vec's default
+    /// UMAP config (``{n_neighbors: 15, n_components: 5, metric: "cosine"}``).
+    /// `resolution` (default 1.0) and
     /// `knn_neighbors` (default 15) steer the ``"louvain"``/``"leiden"`` graph
     /// clusterers — higher `resolution` yields more, smaller topics; they are
     /// ignored by the other clusterers. `diagnostics` (default True) emits a
@@ -204,9 +209,9 @@ impl Top2Vec {
     /// deterministic phases.
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
-                        reducer="pca", n_neighbors=15, clusterer="hdbscan",
+                        reducer="umap", n_neighbors=15, clusterer="hdbscan",
                         num_clusters=None, resolution=1.0, knn_neighbors=15,
-                        diagnostics=true, min_dist=0.0, spread=1.0, n_epochs=0,
+                        diagnostics=true, min_dist=0.1, spread=1.0, n_epochs=0,
                         negative_sample_rate=5, repulsion_strength=1.0, metric="cosine",
                         seed=42))]
     #[allow(clippy::too_many_arguments)]

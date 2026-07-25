@@ -83,8 +83,9 @@ rayon = "1"
 python = ["dep:pyo3", "dep:numpy", "dep:flate2", "pyo3/extension-module", "embeddings", "umap", "tsne"]
 # The embedding-native model branch (clustering pipeline + numerical models).
 embeddings = ["dep:petal-clustering", "dep:ndarray"]
-# Faithful UMAP reducer for the embedding models. BERTopic defaults to UMAP (to
-# match the upstream package); Top2Vec stays on PCA. topica's in-house UMAP is
+# Faithful UMAP reducer for the embedding models. BERTopic (to match the upstream
+# package) and Top2Vec (to match the original, which always reduces with UMAP) both
+# default to UMAP. topica's in-house UMAP is
 # seed-reproducible for a fixed seed, so the layout is deterministic.
 umap = ["embeddings"]
 # Barnes-Hut t-SNE projection (frjnn/bhtsne), exposed via `topica.project` and the
