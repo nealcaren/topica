@@ -2579,9 +2579,14 @@ struct CtmEmbState {
     w_w_ls: Option<Vec<f64>>,
     w_b_ls: Option<Vec<f64>>,
     w_beta: Option<Vec<f64>>,
-    // CombinedTM `adapt_bert` projection (#503). `#[serde(default)]` so a pre-#503
-    // CombinedTM save (positional bincode, no adapt block) loads to `None` and its
-    // `mode` byte routes it back through the simple-concat encoder it was fit with.
+    // CombinedTM `adapt_bert` projection (#503). NOTE: `CtmEmbState` is positional
+    // bincode, so `#[serde(default)]` is inert for these mid-struct fields -- a
+    // genuine pre-#503 CombinedTM/ZeroShotTM save has no bytes here, so it fails to
+    // deserialize (like the pre-#428 fields below) and must be refit; it does not
+    // silently load to `None`. The default only serves same-version round-trips and
+    // a self-describing reader. A fresh CombinedTM save carries `mode` byte 3 and
+    // `Some(..)` here; loading is None-safe (`unwrap_or_default`, and `adapt_bert`
+    // is only ever called under `BowEmbAdapt`).
     #[serde(default)]
     w_w_adapt: Option<Vec<f64>>,
     #[serde(default)]
@@ -2609,9 +2614,10 @@ fn mode_to_u8(m: prodlda::InputMode) -> u8 {
 fn u8_to_mode(m: u8) -> prodlda::InputMode {
     match m {
         2 => prodlda::InputMode::EmbOnly,
-        // `3` is CombinedTM's faithful `adapt_bert` encoder (#503). A pre-#503
-        // CombinedTM save carries `1` and still loads as the earlier simple-concat
-        // `BowEmb` encoder, matching the weights it was trained with.
+        // `3` is CombinedTM's faithful `adapt_bert` encoder (#503). (A pre-#503
+        // CombinedTM save carried `1`, the simple-concat `BowEmb` encoder; such a
+        // save no longer loads -- the new `CtmEmbState` fields fail to deserialize
+        // under positional bincode, per the note there -- and must be refit.)
         3 => prodlda::InputMode::BowEmbAdapt,
         _ => prodlda::InputMode::BowEmb,
     }
