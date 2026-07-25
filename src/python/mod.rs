@@ -7454,15 +7454,30 @@ impl STM {
                         num_docs
                     )));
                 }
-                // Ordered periods: sorted unique labels (pass sortable labels, e.g.
-                // years or zero-padded strings, so the order is chronological).
+                // Ordered periods: unique labels sorted chronologically. When every
+                // label parses as a number, sort numerically so integer-like periods
+                // (1,2,3,10,11,12) order 1<2<...<10<... rather than lexically
+                // (1,10,11,12,2,3) — the latter would tie the wrong chronological
+                // neighbors in the random walk (#534). Falls back to lexical order for
+                // non-numeric labels. This matches the numeric ordering the Python
+                // trajectory reader (content.py) already uses.
                 let mut periods: Vec<String> = times_str
                     .iter()
                     .cloned()
                     .collect::<HashSet<_>>()
                     .into_iter()
                     .collect();
-                periods.sort();
+                if periods.iter().all(|p| p.trim().parse::<f64>().is_ok()) {
+                    periods.sort_by(|a, b| {
+                        let (na, nb) = (
+                            a.trim().parse::<f64>().unwrap(),
+                            b.trim().parse::<f64>().unwrap(),
+                        );
+                        na.total_cmp(&nb).then_with(|| a.cmp(b))
+                    });
+                } else {
+                    periods.sort();
+                }
                 let pindex: HashMap<&str, usize> = periods
                     .iter()
                     .enumerate()
