@@ -18,10 +18,11 @@
 //! sample. The gradients are hand-coded (reverse-mode by hand, like `prodlda.rs`)
 //! and FD-checked in the unit tests below.
 //!
-//! This is a faithful reimplementation of the published model and inference; the
-//! official code is TF1.14/TFP0.7 graph-mode (no Apple-Silicon build), so the
-//! numerics are validated against a PyTorch reference (scratchpad/tbip_vi.py),
-//! synthetic planted-position recovery, and FD gradient checks.
+//! This is a faithful reimplementation of the published model and inference. The
+//! official code is TF1.14/TFP0.7 graph-mode (no Apple-Silicon build), so we do
+//! not run it as a cross-implementation reference; instead the port is validated
+//! by synthetic planted-position recovery (`parity/tbip_parity.py`) and by the FD
+//! gradient checks in the unit tests below.
 
 use rand::Rng;
 use rayon::prelude::*;
@@ -479,6 +480,8 @@ fn elbo_and_grads(
     // theta/beta reparam: z=exp(u); dz/dmu=z; dz/drs = z*eps*logistic(rs).
     // theta/beta MC prior term: T = a*u - b*z + log(sig) + const, u=log z.
     //   dT/dmu = a - b*z ;  dT/drs = (a - b*z)*eps*logistic(rs) + logistic(rs)/sig.
+    //   In the clamp tail (u saturated) z and u are frozen, so dT/dmu = 0 and
+    //   dT/drs collapses to the ln(sig) entropy term logistic(rs)/sig (issue #506).
     // eta/x reparam: z=u; dz/dmu=1; dz/drs=eps*logistic(rs).
     // eta/x -KL: d/dmu=-mu ; d/dsig=-(sig-1/sig) ; d/drs = that*logistic(rs).
 
@@ -505,8 +508,15 @@ fn elbo_and_grads(
                 grad_rs = 0.0;
             }
             // MC prior/entropy term T (also SVI-scaled, since theta is per-doc/local).
-            let dt_dmu = a_g - b_g * z;
-            let dt_drs = (a_g - b_g * z) * eps * lg + lg / sig;
+            // In the log-space clamp tail the forward freezes z and logz = clamp(u),
+            // so their gradients vanish; only the ln(sig) entropy term of logq stays
+            // live. Matching that here keeps this the exact adjoint of the coded ELBO
+            // in the clamp corner (issue #506), where `a - b*z` would otherwise leak.
+            let (dt_dmu, dt_drs) = if theta_unclamped[bi * k + kk] {
+                (a_g - b_g * z, (a_g - b_g * z) * eps * lg + lg / sig)
+            } else {
+                (0.0, lg / sig)
+            };
             grad_mu += svi * dt_dmu;
             grad_rs += svi * dt_drs;
             dmu[kk] = grad_mu;
@@ -534,9 +544,14 @@ fn elbo_and_grads(
             g_mu_beta[i] += svi * dl_dbeta[i] * z;
             g_rs_beta[i] += svi * dl_dbeta[i] * (z * eps * lg);
         }
-        // MC prior term at full weight (global factor).
-        let dt_dmu = a_g - b_g * z;
-        let dt_drs = (a_g - b_g * z) * eps * lg + lg / sig;
+        // MC prior/entropy term at full weight (global factor). Same clamp handling
+        // as theta: once z/logz saturate only the ln(sig) entropy term stays live
+        // (issue #506).
+        let (dt_dmu, dt_drs) = if beta_unclamped[i] {
+            (a_g - b_g * z, (a_g - b_g * z) * eps * lg + lg / sig)
+        } else {
+            (0.0, lg / sig)
+        };
         g_mu_beta[i] += dt_dmu;
         g_rs_beta[i] += dt_drs;
         let logz = z.max(1e-300).ln();
@@ -983,6 +998,140 @@ mod tests {
         }
         for (name, r) in &worst {
             assert!(*r < 1e-3, "{name} FD gradient error too large: {r:.3e}");
+        }
+    }
+
+    /// FD-check the theta/beta prior-term gradient INSIDE the log-space clamp
+    /// region. There z and logz are frozen, so the only live gradient is the
+    /// ln(sig) entropy term: d/dmu = 0, d/drs = logistic(rs)/sig. This guards the
+    /// clamp-aware branch added for issue #506 -- the old code applied the in-range
+    /// `a - b*z` term in the saturated tail, which is not the adjoint of the clamped
+    /// forward ELBO and fails this check.
+    #[test]
+    fn fd_gradient_check_clamp_region() {
+        let (docs, group, a_n, k, v) = tiny();
+        let cfg = TbipConfig {
+            a_gamma: 0.3,
+            b_gamma: 0.3,
+            iters: 1,
+            batch_size: 6,
+            learning_rate: 0.05,
+        };
+        let h = 1e-5;
+        let rel = |analytic: f64, numeric: f64| -> f64 {
+            (analytic - numeric).abs() / (analytic.abs().max(numeric.abs()).max(1e-6))
+        };
+
+        // Two setups: (1) theta deep in its clamp tail with beta moderate; (2) beta
+        // deep in its clamp tail with theta moderate. Holding the *other* factor
+        // small keeps the Poisson rate O(10) so the central difference does not lose
+        // precision to catastrophic cancellation.
+        for clamp_theta in [true, false] {
+            let mut rng = ChaCha8Rng::seed_from_u64(7);
+            let mut p = init_params(&docs, &group, a_n, k, v, &mut rng);
+            let (theta_mu, beta_mu) = if clamp_theta {
+                (9.0, -4.0)
+            } else {
+                (-4.0, 9.0)
+            };
+            for m in p.mu_theta.iter_mut() {
+                *m = theta_mu;
+            }
+            for m in p.rs_theta.iter_mut() {
+                *m = -1.5;
+            }
+            for m in p.mu_beta.iter_mut() {
+                *m = beta_mu;
+            }
+            for m in p.rs_beta.iter_mut() {
+                *m = -1.0;
+            }
+            for m in p.mu_eta.iter_mut() {
+                *m = 0.2;
+            }
+            for m in p.rs_eta.iter_mut() {
+                *m = -1.0;
+            }
+            for m in p.mu_x.iter_mut() {
+                *m = 0.3;
+            }
+            for m in p.rs_x.iter_mut() {
+                *m = -1.0;
+            }
+
+            let bidx: Vec<usize> = (0..6).collect();
+            let eps_theta: Vec<f64> = (0..6 * k).map(|_| randn(&mut rng)).collect();
+            let eps_beta: Vec<f64> = (0..k * v).map(|_| randn(&mut rng)).collect();
+            let eps_eta: Vec<f64> = (0..k * v).map(|_| randn(&mut rng)).collect();
+            let eps_x: Vec<f64> = (0..a_n).map(|_| randn(&mut rng)).collect();
+
+            let mut buf = vec![0.0f64; v];
+            let g = elbo_and_grads(
+                &p, &docs, &mut buf, &group, &bidx, &eps_theta, &eps_beta, &eps_eta, &eps_x, &cfg,
+            );
+
+            let fd = |p: &mut TbipParams, ptr_of: &dyn Fn(&mut TbipParams) -> *mut f64| -> f64 {
+                let ptr = ptr_of(p);
+                let orig = unsafe { *ptr };
+                unsafe {
+                    *ptr = orig + h;
+                }
+                let fp = elbo_only(
+                    p, &docs, &group, &bidx, &eps_theta, &eps_beta, &eps_eta, &eps_x, &cfg,
+                );
+                unsafe {
+                    *ptr = orig - h;
+                }
+                let fm = elbo_only(
+                    p, &docs, &group, &bidx, &eps_theta, &eps_beta, &eps_eta, &eps_x, &cfg,
+                );
+                unsafe {
+                    *ptr = orig;
+                }
+                (fp - fm) / (2.0 * h)
+            };
+
+            let dn = docs.len();
+            let mut g_mu_theta = vec![0.0f64; dn * k];
+            let mut g_rs_theta = vec![0.0f64; dn * k];
+            for (dd, dmu, drs) in &g.theta_rows {
+                for kk in 0..k {
+                    g_mu_theta[dd * k + kk] += dmu[kk];
+                    g_rs_theta[dd * k + kk] += drs[kk];
+                }
+            }
+
+            if clamp_theta {
+                for i in 0..dn * k {
+                    let num = fd(&mut p, &|pp| &mut pp.mu_theta[i] as *mut f64);
+                    assert!(
+                        rel(g_mu_theta[i], num) < 1e-3,
+                        "clamp mu_theta[{i}]: analytic {} vs fd {num}",
+                        g_mu_theta[i]
+                    );
+                    let num = fd(&mut p, &|pp| &mut pp.rs_theta[i] as *mut f64);
+                    assert!(
+                        rel(g_rs_theta[i], num) < 1e-3,
+                        "clamp rs_theta[{i}]: analytic {} vs fd {num}",
+                        g_rs_theta[i]
+                    );
+                }
+            } else {
+                for i in 0..k * v {
+                    let num = fd(&mut p, &|pp| &mut pp.mu_beta[i] as *mut f64);
+                    assert!(
+                        rel(g.g_mu_beta[i], num) < 1e-3,
+                        "clamp mu_beta[{i}]: analytic {} vs fd {num}",
+                        g.g_mu_beta[i]
+                    );
+                    let num = fd(&mut p, &|pp| &mut pp.rs_beta[i] as *mut f64);
+                    assert!(
+                        rel(g.g_rs_beta[i], num) < 1e-3,
+                        "clamp rs_beta[{i}]: analytic {} vs fd {num}",
+                        g.g_rs_beta[i]
+                    );
+                }
+            }
         }
     }
 

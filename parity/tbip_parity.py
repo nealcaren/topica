@@ -1,24 +1,20 @@
-"""Parity check for TBIP (Text-Based Ideal Points, Vafa-Naidu-Blei 2020) against an
-independent PyTorch reference of the SAME model + the SAME mean-field VI inference.
+"""Self-consistency check for TBIP (Text-Based Ideal Points, Vafa-Naidu-Blei 2020).
 
-The official implementation is TensorFlow 1.14 / TFP 0.7 (graph-mode `tf.Session`), which
-has no Apple-Silicon build and does not install on modern Python, so we validate against a
-faithful PyTorch reimplementation of the paper's model (Eq. 3) and inference (sec. 4):
-lognormal q(theta,beta), normal q(eta,x), reparameterized single-sample SVI, Adam.
+This is NOT a cross-implementation parity run. The official implementation is
+TensorFlow 1.14 / TFP 0.7 (graph-mode `tf.Session`), which has no Apple-Silicon build
+and does not install on modern Python, so we do not run it here as a reference. Instead
+we validate the port end-to-end by *planted-position recovery*: sample a corpus from the
+TBIP generative model (Eq. 3) with known author ideal points, fit `topica.TBIP`, and
+confirm the recovered positions correlate with the planted ones (Pearson |r| > 0.85).
+The ideal-point axis is identified only up to sign (the model is invariant under
+x -> -x, eta -> -eta), so we compare by absolute correlation.
 
-Self-contained: data is sampled from the generative model with planted author ideal points
-(no external corpus). Skips cleanly when torch is unavailable (e.g. CI without torch).
+Self-contained: no external corpus and no reference toolchain, so it runs offline in CI.
 
 Run: python parity/tbip_parity.py
 """
 import sys
 import numpy as np
-
-try:
-    import torch
-except Exception:
-    print("SKIP: torch not available (reference unavailable)")
-    sys.exit(0)
 
 import topica
 
