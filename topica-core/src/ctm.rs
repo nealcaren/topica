@@ -1120,7 +1120,18 @@ pub fn fit_ctm<R: Rng>(
     let nf = prevalence.map(|x| x[0].len());
     let groups = content.map(|(g, _)| g);
     let num_groups = content.map_or(1, |(_, ng)| ng);
-    if let Some((nb, nt, _)) = content_time_rw {
+    // Content-prior scale guards (shared by every front-end: topica's PyO3 layer
+    // and faSTM's extendr layer both reach the core here, so guarding at the source
+    // protects both). `content_prior_var` feeds `1/content_prior_var` — the L2
+    // precision, or the L1 rate under a sparse content prior — so a non-finite,
+    // zero, or negative value would silently produce NaN kappa and a NaN bound.
+    if content.is_some() {
+        assert!(
+            content_prior_var.is_finite() && content_prior_var > 0.0,
+            "content_prior_var must be finite and > 0; got {content_prior_var}"
+        );
+    }
+    if let Some((nb, nt, smooth)) = content_time_rw {
         assert!(
             content.is_some(),
             "content_time_rw requires a content covariate"
@@ -1129,6 +1140,12 @@ pub fn fit_ctm<R: Rng>(
             nb * nt,
             num_groups,
             "content_time_rw: num_base*num_times must equal the saturated num_groups"
+        );
+        // The random-walk precision (1/tau^2). Non-finite/negative would poison the
+        // RW penalty; 0.0 is legal (recovers the fully saturated content factor).
+        assert!(
+            smooth.is_finite() && smooth >= 0.0,
+            "content_smooth must be finite and >= 0; got {smooth}"
         );
     }
 
