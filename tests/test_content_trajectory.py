@@ -133,3 +133,44 @@ def test_to_frame(fit):
     df = tr.to_frame()
     assert list(df.columns) == ["word", "period", "estimate"]
     assert len(df) == 4  # 1 word x 4 periods
+
+
+def test_content_prior_var_guard():
+    # content_prior_var flows into 1/content_prior_var (the L2 precision / L1 rate),
+    # so a zero/negative/non-finite value silently produced NaN kappa and a NaN
+    # bound. It must be rejected at fit (issue: faSTM-extension guard review).
+    docs, grp, per, _ = _drift_corpus(per_cell=8)
+    for bad in (0.0, -1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="content_prior_var"):
+            topica.STM(num_topics=3, seed=1).fit(
+                docs, content=grp, content_prior_var=bad, iters=5
+            )
+
+
+def test_content_smooth_guard():
+    # content_smooth (the RW precision 1/tau^2) was gated as `> 0.0`, so a NaN or
+    # negative value silently disabled smoothing; +inf poisons the RW penalty.
+    # 0.0 is legal (recovers the fully saturated content factor).
+    docs, grp, per, _ = _drift_corpus(per_cell=8)
+    for bad in (-1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="content_smooth"):
+            topica.STM(num_topics=3, seed=1).fit(
+                docs, content=grp, content_time=per, content_smooth=bad, iters=5
+            )
+    # 0.0 is accepted and fits.
+    topica.STM(num_topics=3, seed=1).fit(
+        docs, content=grp, content_time=per, content_smooth=0.0, iters=5
+    )
+
+
+def test_bootstrap_all_failures_raise_not_silent_nan(fit):
+    # A fit_kwargs that cannot reproduce the model (here: content_time dropped, so
+    # every refit reads a non-content_time surface and raises) previously returned
+    # an all-NaN band with no signal. It must now surface the failure.
+    m, docs, grp, per = fit
+    fk_broken = dict(num_topics=3, seed=1, content=grp, iters=20)  # no content_time
+    with pytest.raises(RuntimeError, match="no usable replicates"):
+        content.content_divergence(
+            m, groups=("Dem", "Rep"), anchor_words=ANCHOR,
+            ci=True, corpus=docs, fit_kwargs=fk_broken, B=4, seed=3,
+        )

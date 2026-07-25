@@ -29,6 +29,7 @@ Nonlinear and interaction terms are built with :func:`spline` and
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -678,6 +679,26 @@ def estimate_effect(
             raise ValueError("weights must be finite and non-negative")
 
     p = X.shape[1]
+    # Cluster-robust SEs need many clusters. With G < 2 the sandwich meat
+    # collapses to ~0 (SEs spuriously near zero); with G <= p the cluster vcov is
+    # rank-deficient so some coefficients' SEs are understated. Previously silent.
+    if groups is not None:
+        n_g = len(groups)
+        if n_g < 2:
+            warnings.warn(
+                f"cluster-robust standard errors need at least 2 clusters; got {n_g}. "
+                f"The sandwich meat collapses and the reported SEs will be near zero "
+                f"(spuriously confident). Drop cluster= or use a coarser grouping.",
+                stacklevel=2,
+            )
+        elif n_g <= p:
+            warnings.warn(
+                f"cluster-robust standard errors have only {n_g} clusters for {p} "
+                f"coefficients: the cluster covariance is rank-deficient (G <= p), so "
+                f"some coefficients' SEs are unreliable (understated). Cluster-robust "
+                f"inference is trustworthy only with many clusters.",
+                stacklevel=2,
+            )
     if weights is None:
         XtX_inv = np.linalg.pinv(X.T @ X)
         hat = XtX_inv @ X.T  # (p, n)
