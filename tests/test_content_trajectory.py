@@ -174,3 +174,18 @@ def test_bootstrap_all_failures_raise_not_silent_nan(fit):
             m, groups=("Dem", "Rep"), anchor_words=ANCHOR,
             ci=True, corpus=docs, fit_kwargs=fk_broken, B=4, seed=3,
         )
+
+
+def test_content_time_periods_order_numerically_not_lexically():
+    # Integer-like periods of non-uniform width must order chronologically
+    # (1,2,3,10,11,12), not lexically (1,10,11,12,2,3), or the random walk ties the
+    # wrong neighbors (#534). 4-digit years happen to be safe; these labels are the
+    # regression case.
+    docs, grp, per = [], [], []
+    for t in [1, 2, 3, 10, 11, 12]:
+        for _ in range(6):
+            docs.append(["econ", "jobs", "climate", "border"]); grp.append("Dem"); per.append(t)
+            docs.append(["econ", "jobs", "border", "climate"]); grp.append("Rep"); per.append(t)
+    m = topica.STM(num_topics=2, seed=1).fit(docs, content=grp, content_time=per, iters=5)
+    dem = [g.split("@")[1] for g in m.groups if g.startswith("Dem@")]
+    assert dem == ["1", "2", "3", "10", "11", "12"], dem

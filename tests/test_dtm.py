@@ -117,6 +117,14 @@ class TestOutputs:
     def test_bound_finite(self, fitted):
         assert np.isfinite(fitted.bound)
 
+    def test_doc_topic_shape_and_normalized(self, fitted):
+        # Per-document topic proportions (#494): D x K, rows sum to 1.
+        docs, _, _ = _drift_corpus()
+        dt = fitted.doc_topic
+        assert dt.shape == (len(docs), fitted.num_topics)
+        np.testing.assert_allclose(dt.sum(axis=1), 1.0, atol=1e-9)
+        assert np.all(dt >= 0.0)
+
 
 class TestApi:
     def test_deterministic(self):
@@ -176,6 +184,30 @@ class TestApi:
         m = DTM(num_topics=2)
         with pytest.raises(RuntimeError):
             m.topic_word(0)
+
+    def test_single_time_slice(self):
+        # num_times == 1 collapses to a static model but must still fit and
+        # produce valid outputs (#494).
+        docs, _, _ = _drift_corpus()
+        times = [0] * len(docs)
+        m = DTM(num_topics=2, seed=1)
+        m.fit(docs, times, iters=6)
+        assert m.num_times == 1
+        tw = m.topic_word(0)
+        np.testing.assert_allclose(tw.sum(axis=1), 1.0, atol=1e-9)
+        np.testing.assert_allclose(m.doc_topic.sum(axis=1), 1.0, atol=1e-9)
+
+    def test_save_load_roundtrip(self, tmp_path):
+        # doc_topic survives a save/load round-trip (#494).
+        docs, times, _ = _drift_corpus()
+        m = DTM(num_topics=2, chain_variance=0.5, seed=1)
+        m.fit(docs, times, iters=8)
+        path = str(tmp_path / "dtm.bin")
+        m.save(path)
+        loaded = DTM.load(path)
+        np.testing.assert_array_equal(loaded.doc_topic, m.doc_topic)
+        for t in range(m.num_times):
+            np.testing.assert_array_equal(loaded.topic_word(t), m.topic_word(t))
 
     def test_bad_hyperparams_raise(self):
         with pytest.raises(ValueError):

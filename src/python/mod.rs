@@ -417,6 +417,14 @@ struct DtmState {
     init_spectral: bool,
     #[serde(default)]
     initialization: Option<String>,
+    // (num_docs, num_topics) per-document topic proportions (#494). NOTE: the save
+    // format is positional bincode, so `#[serde(default)]` is inert here -- a
+    // genuine pre-#494 save lacks these trailing bytes and fails to deserialize
+    // (clean EOF error), rather than loading with `doc_topic = None`. The default
+    // only helps same-version round-trips and a self-describing reader; the getter
+    // still returns a clean error (not a panic) should it ever see `None`.
+    #[serde(default)]
+    doc_topic: Option<Arr2>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SldaState {
@@ -7253,13 +7261,17 @@ impl STM {
     /// random walk, the temporal generalization of `content`. `content_smooth`
     /// controls that random-walk penalty strength (``1/tau^2``); larger values tie
     /// adjacent periods more tightly. `content_prior` selects the prior on the
-    /// content (SAGE κ) deviation blocks: ``"l2"`` (default) is a Gaussian ridge that
-    /// keeps every `kappa_topic`, while ``"l1"`` puts a sparse Laplace prior (FISTA,
-    /// exact zeros) that recovers sparse content contrasts, matching R `stm`'s sparse
-    /// content model. `content_prior_var` is the L2 prior variance on those content
-    /// deviations (default ``0.5``); larger loosens regularization (more group-driven
-    /// contrast), smaller tightens it toward the shared baseline. The ``"l2"`` path
-    /// with `content_time=None` is bit-for-bit identical to the prior release.
+    /// content (SAGE κ) deviation blocks: ``"l2"`` (default) is a Gaussian ridge on
+    /// the deviations, while ``"l1"`` puts a *pure* sparse Laplace prior (FISTA, exact
+    /// zeros) on them — recovering sparse content contrasts, matching R `stm`'s sparse
+    /// content model. Under ``"l1"`` the deviation blocks carry the Laplace prior only
+    /// (not an additional ridge); the topic baseline `kappa_topic` keeps its L2 either
+    /// way. `content_prior_var` (default ``0.5``) sets the deviation-prior scale: under
+    /// ``"l2"`` it is the Gaussian prior variance, under ``"l1"`` the Laplace scale (the
+    /// L1 rate is ``1/content_prior_var``). Larger loosens regularization (more
+    /// group-driven contrast), smaller tightens it toward the shared baseline. The
+    /// ``"l2"`` path with `content_time=None` is bit-for-bit identical to the prior
+    /// release.
     /// `convergence_tol` is the relative-bound tolerance for EM early
     /// stopping — the run stops when the relative change in the variational evidence
     /// bound falls below it (the criterion R `stm` uses). `beta_init` is an optional
@@ -7468,15 +7480,30 @@ impl STM {
                         num_docs
                     )));
                 }
-                // Ordered periods: sorted unique labels (pass sortable labels, e.g.
-                // years or zero-padded strings, so the order is chronological).
+                // Ordered periods: unique labels sorted chronologically. When every
+                // label parses as a number, sort numerically so integer-like periods
+                // (1,2,3,10,11,12) order 1<2<...<10<... rather than lexically
+                // (1,10,11,12,2,3) — the latter would tie the wrong chronological
+                // neighbors in the random walk (#534). Falls back to lexical order for
+                // non-numeric labels. This matches the numeric ordering the Python
+                // trajectory reader (content.py) already uses.
                 let mut periods: Vec<String> = times_str
                     .iter()
                     .cloned()
                     .collect::<HashSet<_>>()
                     .into_iter()
                     .collect();
-                periods.sort();
+                if periods.iter().all(|p| p.trim().parse::<f64>().is_ok()) {
+                    periods.sort_by(|a, b| {
+                        let (na, nb) = (
+                            a.trim().parse::<f64>().unwrap(),
+                            b.trim().parse::<f64>().unwrap(),
+                        );
+                        na.total_cmp(&nb).then_with(|| a.cmp(b))
+                    });
+                } else {
+                    periods.sort();
+                }
                 let pindex: HashMap<&str, usize> = periods
                     .iter()
                     .enumerate()
@@ -10086,10 +10113,10 @@ impl HDP {
 /// topic's word distribution at any slice with `topic_word(time)` and trace a
 /// word's trajectory with `word_evolution(topic, word)`.
 ///
-/// Note (#494): DTM exposes the evolving topic-word distributions but not
-/// per-document topic proportions — the E-step `gamma` values gensim retains as
-/// `self.gammas` are consumed for the suff-stats and not stored, so there is no
-/// `doc_topic` output (the model targets topic *evolution*, not per-doc mixtures).
+/// Note (#494): DTM's topics are shared across slices, so alongside the evolving
+/// topic-word distributions it also exposes per-document topic proportions via
+/// `doc_topic` — the final-iteration variational `gamma`s gensim keeps as
+/// `self.gammas`, row-normalized. The topic-word side is what evolves over time.
 #[pyclass(module = "topica")]
 pub struct DTM {
     num_topics: usize,
@@ -10107,6 +10134,8 @@ pub struct DTM {
     bound: f64,
     // (num_times, num_topics, num_words): p(word | topic, time).
     topic_words: Option<Vec<Vec<Vec<f64>>>>,
+    // (num_docs, num_topics): per-document topic proportions (#494).
+    doc_topic: Option<Array2<f64>>,
     corpus: Option<corpus::Corpus>,
 }
 
@@ -10198,6 +10227,7 @@ impl DTM {
             num_times: 0,
             bound: 0.0,
             topic_words: None,
+            doc_topic: None,
             corpus: None,
         })
     }
@@ -10284,10 +10314,20 @@ impl DTM {
         // Precompute p(word | topic, time) for every slice.
         let tw: Vec<Vec<Vec<f64>>> = (0..num_times).map(|t| model.topic_word_matrix(t)).collect();
 
+        // Per-document topic proportions (#494), shape (num_docs, num_topics).
+        let ndocs = model.doc_topic.len();
+        let mut dt = Array2::<f64>::zeros((ndocs, k));
+        for (d, row) in model.doc_topic.iter().enumerate() {
+            for (kk, &val) in row.iter().enumerate() {
+                dt[[d, kk]] = val;
+            }
+        }
+
         slf.num_times = num_times;
         slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
         slf.bound = model.bound;
         slf.topic_words = Some(tw);
+        slf.doc_topic = Some(dt);
         slf.initialization = Some(model.initialization.clone());
         slf.corpus = Some(corpus);
         slf.fitted = true;
@@ -10309,6 +10349,26 @@ impl DTM {
             }
         }
         Ok(arr.to_pyarray_bound(py))
+    }
+
+    /// Per-document topic proportions θ, shape ``(num_docs, num_topics)``; rows
+    /// sum to 1 (issue #494). These are the final-iteration variational
+    /// ``gamma``s (gensim's ``self.gammas``), row-normalized. Documents are in
+    /// corpus order; topics are shared across time slices, while the topic-word
+    /// distributions returned by :meth:`topic_word` are what evolve over time.
+    #[getter]
+    fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        // `fitted` does not by itself guarantee `doc_topic` is present: a model
+        // saved before #494 has no `doc_topic` in its state. Return a clean error
+        // rather than unwrap-panicking on that (already-degraded) path.
+        let dt = self.doc_topic.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err(
+                "doc_topic is unavailable; this model was saved before doc_topic \
+                 existed -- refit to populate it",
+            )
+        })?;
+        Ok(dt.to_pyarray_bound(py))
     }
 
     /// Trajectory of a word's probability in a topic across slices, shape
@@ -10513,6 +10573,7 @@ impl DTM {
                 topic_names: self.topic_names.clone(),
                 init_spectral: self.init_spectral,
                 initialization: self.initialization.clone(),
+                doc_topic: arr2_opt(&self.doc_topic),
             },
         )
     }
@@ -10539,6 +10600,7 @@ impl DTM {
             num_times: s.num_times,
             bound: s.bound,
             topic_words: s.topic_words,
+            doc_topic: arr2_back(s.doc_topic)?,
             corpus: s.corpus,
         })
     }
@@ -11232,11 +11294,14 @@ impl PT {
 
     /// Create an unfitted model. `num_pseudo` is the number of pseudo-documents
     /// short texts are aggregated into (more = finer, fewer = more aggregation).
-    /// `num_topics` is the number of topics K; `alpha` is the document-topic
-    /// Dirichlet prior, `beta` the topic-word Dirichlet smoothing. `pseudo_doc_prior`
-    /// (λ) is the symmetric Dirichlet prior on the pseudo-document mixture — it
-    /// drives PTM's `(m_p + λ)` rich-get-richer aggregation (smaller = stronger
-    /// popularity bias; larger flattens it). `seed` seeds the Gibbs RNG.
+    /// PTM's regime is P << D, so keep `num_pseudo` well below the corpus size;
+    /// fitting with `num_pseudo >= num_docs` warns and collapses toward
+    /// per-document LDA. `num_topics` is the number of topics K; `alpha` is the
+    /// document-topic Dirichlet prior, `beta` the topic-word Dirichlet smoothing.
+    /// `pseudo_doc_prior` (λ) is the symmetric Dirichlet prior on the
+    /// pseudo-document mixture — it drives PTM's `(m_p + λ)` rich-get-richer
+    /// aggregation (smaller = stronger popularity bias; larger flattens it).
+    /// `seed` seeds the Gibbs RNG.
     #[new]
     #[pyo3(signature = (num_topics, *, num_pseudo=100, alpha=0.1, beta=0.01, pseudo_doc_prior=0.1, seed=42))]
     fn new(
@@ -11326,6 +11391,23 @@ impl PT {
         }
         let num_docs = corpus.num_docs();
         let num_types = corpus.num_types();
+        // PTM's regime is P << D: a few pseudo-documents pool many short texts so
+        // topic statistics are estimated from richer aggregated counts. When
+        // num_pseudo >= num_docs most pseudo-docs hold at most one real document,
+        // the (m_p + lambda) aggregation collapses toward per-document LDA, and
+        // PTM loses the very pooling it exists to provide (#491).
+        if slf.num_pseudo >= num_docs {
+            let msg = format!(
+                "num_pseudo ({}) >= number of documents ({}); PTM's regime is \
+                 P << D. With this many pseudo-documents each pools at most one \
+                 real document, so the pseudo-document aggregation collapses \
+                 toward per-document LDA. Use a num_pseudo well below the corpus \
+                 size.",
+                slf.num_pseudo, num_docs
+            );
+            let warnings = py.import_bound("warnings")?;
+            warnings.call_method1("warn", (msg,))?;
+        }
         let (k, p, a, b, lam) = (
             slf.num_topics,
             slf.num_pseudo,

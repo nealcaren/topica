@@ -78,6 +78,20 @@ def test_gate_blocks_construction():
     topica.enable_experimental(True)  # restore for the rest (fixture also resets)
 
 
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -0.1, 1.0, 1.5])
+def test_sigma_shrink_rejects_invalid(bad):
+    # sigma_shrink is a mixing ratio applied as (1 - sigma_shrink) to the off-diagonal
+    # prior covariance; a non-finite or out-of-[0, 1) value would poison it (#481/#498).
+    with pytest.raises(ValueError):
+        topica.IdealPointTM(K, sigma_shrink=bad)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1e-6])
+def test_convergence_tol_rejects_invalid(bad):
+    with pytest.raises(ValueError):
+        topica.IdealPointTM(K, convergence_tol=bad)
+
+
 def test_fitted_surface_is_well_shaped():
     docs, vocab, emb, group, _ = _planted(seed=1)
     m = topica.IdealPointTM(K, num_dims=1, seed=1)

@@ -480,6 +480,10 @@ pub struct DtmModel {
     pub alpha: f64,
     chains: Vec<Sslm>,
     pub bound: f64,
+    /// Per-document topic proportions (D×K, rows sum to 1), from the final
+    /// E-step (issue #494). gensim retains the raw variational `gamma`s as
+    /// `self.gammas`; we row-normalize them into topic proportions.
+    pub doc_topic: Vec<Vec<f64>>,
     /// The initialization route the fit actually took (issue #410): `"spectral"`,
     /// `"random-fallback"` (spectral requested but recovery returned `None`, so the
     /// seeded static-LDA init ran), or `"random"` (`init="random"`).
@@ -633,6 +637,10 @@ pub fn fit_dtm<R: Rng>(
 
     let mut bound = 0.0;
     let mut lda_max_iter = 25usize;
+    // Per-document variational gammas from the most recent E-step (issue #494).
+    // gensim keeps these as `self.gammas`; we normalize them into `doc_topic`
+    // once EM finishes. Seeded to the uniform prior for the empty-loop edge case.
+    let mut gammas: Vec<Vec<f64>> = vec![vec![alpha; k]; docs.len()];
     // gensim's fit_lda_seq runs at least `em_min_iter` EM sweeps before honoring the
     // convergence break (`while iter_ < em_min_iter or ...`); default 6. Bounded by
     // the user's `em_iters` budget, so a smaller budget still caps the work.
@@ -646,18 +654,19 @@ pub fn fit_dtm<R: Rng>(
         // Per-document inference is independent; run it in parallel and fold the
         // suff-stats in serially (document order) so the fit is bit-for-bit
         // identical regardless of thread count.
-        let doc_results: Vec<(usize, Vec<Vec<f64>>, f64)> = bags
+        let doc_results: Vec<(usize, Vec<f64>, Vec<Vec<f64>>, f64)> = bags
             .par_iter()
             .enumerate()
             .map(|(d, bag)| {
                 let ti = times[d];
-                let (_, phi, lhood) = fit_lda_post(bag, ti, &topic_elp, alpha, lda_max_iter);
-                (d, phi, lhood)
+                let (gamma, phi, lhood) = fit_lda_post(bag, ti, &topic_elp, alpha, lda_max_iter);
+                (d, gamma, phi, lhood)
             })
             .collect();
-        for (d, phi, lhood) in &doc_results {
+        for (d, gamma, phi, lhood) in &doc_results {
             let ti = times[*d];
             doc_bound += *lhood;
+            gammas[*d].clone_from(gamma);
             for (n, &(word, count)) in bags[*d].iter().enumerate() {
                 for kk in 0..k {
                     sstats[kk][word][ti] += count * phi[n][kk];
@@ -681,6 +690,19 @@ pub fn fit_dtm<R: Rng>(
         }
     }
 
+    // Row-normalize the final gammas into per-document topic proportions.
+    let doc_topic: Vec<Vec<f64>> = gammas
+        .iter()
+        .map(|g| {
+            let s: f64 = g.iter().sum();
+            if s > 0.0 {
+                g.iter().map(|&x| x / s).collect()
+            } else {
+                vec![1.0 / k as f64; k]
+            }
+        })
+        .collect();
+
     DtmModel {
         num_topics: k,
         num_times: t,
@@ -688,6 +710,7 @@ pub fn fit_dtm<R: Rng>(
         alpha,
         chains,
         bound,
+        doc_topic,
         initialization: init_route.to_string(),
     }
 }
@@ -707,8 +730,10 @@ impl Estimator for DtmModel {
     }
 
     fn doc_topic(&self) -> Vec<Vec<f64>> {
-        // DTM is time-sliced; no static D×K matrix — EXEMPT.
-        Vec::new()
+        // Per-document topic proportions from the final E-step (issue #494),
+        // row-normalized. Topics are shared across slices, so this D×K matrix
+        // is well-defined even though the topic-word distributions are sliced.
+        self.doc_topic.clone()
     }
 
     fn fit_history(&self) -> Vec<(usize, f64)> {
@@ -842,6 +867,147 @@ mod tests {
         let m2 = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, false, &mut r2);
         assert_eq!(m1.topic_word(0, 0), m2.topic_word(0, 0));
         assert_eq!(m1.topic_word(1, 2), m2.topic_word(1, 2));
+    }
+
+    #[test]
+    fn state_space_recursions_match_gensim() {
+        // Fixed-input regression guard for the Kalman recursions and the obs
+        // gradient (issue #494). Expected values are dumped from gensim 4.4.0's
+        // `sslm` (compute_post_variance / compute_post_mean / update_zeta /
+        // compute_mean_deriv / compute_obs_deriv) for a V=3, T=2 case with
+        // chain_variance=0.005, obs_variance=0.5 and the observations below.
+        // These are the reference numbers, not analytic estimates: they pin the
+        // "verbatim gensim" claim against a subtle regression (a wrong
+        // backward-variance weighting, a dropped variance/2 in zeta, etc.).
+        let (v, t) = (3usize, 2usize);
+        let (cv, ov) = (0.005f64, 0.5f64);
+        let mut s = Sslm::new(v, t, cv, ov);
+        let obs = [[0.10, 0.40], [-0.20, 0.30], [0.05, -0.15]];
+        for w in 0..v {
+            s.obs[w] = obs[w].to_vec();
+        }
+        for w in 0..v {
+            s.compute_post_variance(w);
+            s.compute_post_mean(w);
+        }
+        s.update_zeta();
+
+        let close = |a: f64, b: f64, ctx: &str| {
+            assert!((a - b).abs() < 1e-10, "{ctx}: got {a}, expected {b}");
+        };
+        // Word 0 forward/backward variance.
+        let exp_fwd_var0 = [5.0, 0.4545867393278837, 0.23947118092200223];
+        let exp_var0 = [
+            0.24375180429813348,
+            0.23923455165853447,
+            0.23947118092200223,
+        ];
+        for i in 0..=t {
+            close(s.fwd_variance[0][i], exp_fwd_var0[i], "fwd_variance[0]");
+            close(s.variance[0][i], exp_var0[i], "variance[0]");
+        }
+        // Posterior means (word 0/1/2).
+        let exp_mean = [
+            [
+                0.23710252199469006,
+                0.23733962451668475,
+                0.23895012328384627,
+            ],
+            [
+                0.046379335639679865,
+                0.04642571497531954,
+                0.048936351460712416,
+            ],
+            [
+                -0.04708922343008314,
+                -0.04713631265351322,
+                -0.04815476500347844,
+            ],
+        ];
+        for (w, row) in exp_mean.iter().enumerate() {
+            for i in 0..=t {
+                close(s.mean[w][i], row[i], "mean");
+            }
+        }
+        // zeta (includes the +variance/2 term).
+        let exp_zeta = [3.6847704748598, 3.689383559558495];
+        for j in 0..t {
+            close(s.zeta[j], exp_zeta[j], "zeta");
+        }
+
+        // obs gradient for word 0 (compute_mean_deriv feeds compute_obs_deriv).
+        let mean_deriv_mtx: Vec<Vec<f64>> = (0..t).map(|ti| s.compute_mean_deriv(0, ti)).collect();
+        let exp_md = [
+            [0.22089785904790224, 0.22542906364111465, 0.2231970927139749],
+            [0.31498920778284323, 0.32145047703764595, 0.3281687891461841],
+        ];
+        for (ti, row) in exp_md.iter().enumerate() {
+            for i in 0..=t {
+                close(mean_deriv_mtx[ti][i], row[i], "mean_deriv_mtx");
+            }
+        }
+        let totals = [5.0, 7.0];
+        let wc = [2.0, 3.0];
+        let deriv = obs_deriv(
+            &s.mean[0],
+            &s.variance[0],
+            &mean_deriv_mtx,
+            &s.zeta,
+            &wc,
+            &totals,
+            cv,
+        );
+        let exp_deriv = [0.06717628543800844, 0.09541340847813345];
+        for i in 0..t {
+            close(deriv[i], exp_deriv[i], "obs_deriv");
+        }
+    }
+
+    #[test]
+    fn single_time_slice_smoke() {
+        // num_times == 1 is numerically handled (issue #494): the chains reduce
+        // to a static topic model. Just check the fit runs and produces valid
+        // topic-word rows and per-document proportions.
+        let v = 12;
+        let docs: Vec<Vec<u32>> = (0..24)
+            .map(|d| (0..6).map(|i| ((i + d) % v) as u32).collect())
+            .collect();
+        let times: Vec<usize> = vec![0; docs.len()];
+        let mut rng = ChaCha8Rng::seed_from_u64(3);
+        let m = fit_dtm(&docs, &times, v, 2, 1, 0.01, 0.005, 0.5, 6, false, &mut rng);
+        assert_eq!(m.num_times, 1);
+        for k in 0..2 {
+            let row = m.topic_word(k, 0);
+            let s: f64 = row.iter().sum();
+            assert!((s - 1.0).abs() < 1e-6, "topic_word row sums to {s}");
+            assert!(row.iter().all(|x| x.is_finite()));
+        }
+        assert_eq!(m.doc_topic.len(), docs.len());
+        for row in &m.doc_topic {
+            let s: f64 = row.iter().sum();
+            assert!((s - 1.0).abs() < 1e-6, "doc_topic row sums to {s}");
+        }
+    }
+
+    #[test]
+    fn doc_topic_shape_and_normalized() {
+        // Per-document topic proportions are D×K and row-normalized (#494).
+        let v = 12;
+        let docs: Vec<Vec<u32>> = (0..30)
+            .map(|d| (0..6).map(|i| ((i + d) % v) as u32).collect())
+            .collect();
+        let times: Vec<usize> = (0..30).map(|d| d % 3).collect();
+        let mut rng = ChaCha8Rng::seed_from_u64(5);
+        let m = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, true, &mut rng);
+        assert_eq!(m.doc_topic.len(), docs.len());
+        for row in &m.doc_topic {
+            assert_eq!(row.len(), 2);
+            let s: f64 = row.iter().sum();
+            assert!((s - 1.0).abs() < 1e-6, "doc_topic row sums to {s}");
+            assert!(row.iter().all(|&x| (0.0..=1.0).contains(&x)));
+        }
+        // Estimator surface exposes the same matrix.
+        assert_eq!(Estimator::doc_topic(&m), m.doc_topic);
     }
 
     #[test]

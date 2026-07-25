@@ -52,6 +52,28 @@ class TestPT:
             topica.PT(num_topics=1)
         with pytest.raises(ValueError):
             topica.PT(num_topics=2, num_pseudo=0)
+        with pytest.raises(ValueError):
+            # pseudo_doc_prior must be finite and positive (#481-class guard).
+            topica.PT(num_topics=2, pseudo_doc_prior=0.0)
+
+    def test_warns_when_num_pseudo_exceeds_num_docs(self):
+        # PTM's regime is P << D; fitting with num_pseudo >= num_docs collapses
+        # the pseudo-document aggregation toward per-document LDA and should warn
+        # (not error). See issue #491.
+        docs = [["cat", "dog"], ["star", "moon"], ["cat", "pet"]]
+        m = topica.PT(num_topics=2, num_pseudo=10, seed=1)
+        with pytest.warns(UserWarning, match="num_pseudo"):
+            m.fit(docs, iters=20)
+
+    def test_no_warning_in_normal_regime(self):
+        # P << D: no aggregation warning.
+        import warnings
+
+        docs = _short_corpus()
+        m = topica.PT(num_topics=2, num_pseudo=10, seed=1)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            m.fit(docs, iters=20, keep_theta_draws=False)
 
 
 # ---------------------------------------------------------------------------
