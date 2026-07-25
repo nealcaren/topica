@@ -83,9 +83,9 @@ rayon = "1"
 python = ["dep:pyo3", "dep:numpy", "dep:flate2", "pyo3/extension-module", "embeddings", "umap", "tsne"]
 # The embedding-native model branch (clustering pipeline + numerical models).
 embeddings = ["dep:petal-clustering", "dep:ndarray"]
-# Faithful UMAP reducer for the embedding models. PCA stays the default reducer;
-# UMAP's discovery fit is stochastic (the umap-rs optimizer's negative sampling is
-# unseeded), while the transform / prediction phase is deterministic regardless.
+# Faithful UMAP reducer for the embedding models. Top2Vec defaults to UMAP (to
+# match the original, which always reduces with UMAP). topica's in-house UMAP is
+# seed-reproducible for a fixed seed, so the layout is deterministic.
 umap = ["embeddings"]
 # Barnes-Hut t-SNE projection (frjnn/bhtsne), exposed via `topica.project` and the
 # `viz.document_map` panel. Independent of the embedding models, so it stands alone.

@@ -519,13 +519,15 @@ For statistically-selected phrases instead of every bigram, use
   use `num_clusters` instead, and `clusterer="louvain"`/`"leiden"` discover the
   count on their own (see above).
 - `n_components` is the dimensionality the embeddings are reduced to before
-  clustering. The default reducer is a randomized PCA: fast, deterministic, and
-  dependency-free, but it separates less sharply than UMAP and on closely spaced
-  themes can merge clusters a UMAP run would split. The reduced coordinates are
-  L2-normalized onto the unit sphere before clustering, so the Euclidean clusterer
-  measures cosine distance — the geometry sentence embeddings are trained for.
-  Without this the few highest-variance PCA directions dominate the metric and the
-  clusterer under-splits real embeddings into a couple of broad topics.
+  clustering. `Top2Vec` defaults to `reducer="umap"` (`n_neighbors=50`), matching
+  the original Top2Vec, which always reduces with UMAP. `reducer="pca"` switches to
+  a randomized PCA: fast, deterministic, and dependency-free, but it separates less
+  sharply than UMAP and on closely spaced themes can merge clusters a UMAP run would
+  split. Under PCA the reduced coordinates are L2-normalized onto the unit sphere
+  before clustering, so the Euclidean clusterer measures cosine distance — the
+  geometry sentence embeddings are trained for. Without this the few highest-variance
+  PCA directions dominate the metric and the clusterer under-splits real embeddings
+  into a couple of broad topics.
 - `reducer="umap"` switches to topica's in-house UMAP reducer (with `n_neighbors`),
   which separates real document embeddings much better than a linear projection
   and, on closely spaced themes, splits clusters PCA would merge. It is a faithful
