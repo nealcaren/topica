@@ -1048,8 +1048,9 @@ impl BERTopic {
     /// core-point neighborhood (defaults to `min_cluster_size`). `reducer` is
     /// ``"pca"`` (default, deterministic) or ``"umap"`` (stochastic) and
     /// `n_neighbors` its neighborhood size. `bm25` switches the c-TF-IDF term
-    /// weighting to class-based BM25 (matching upstream exactly, including the
-    /// unclamped idf that goes negative for terms common across every class) and
+    /// weighting to class-based BM25 (matching upstream's formula, including the
+    /// unclamped idf that goes negative for terms common across every class; note
+    /// upstream truncates the average class size to an integer, topica does not) and
     /// `reduce_frequent` dampens frequent terms by a square-root before IDF.
     /// `min_similarity` (default 0.0) drops any window-to-topic cosine below this
     /// value from `approximate_distribution`; the upstream package uses 0.1 for

@@ -305,6 +305,13 @@ fn topic_word_from_ctfidf(ctfidf_raw: &[Vec<f64>]) -> Vec<Vec<f64>> {
             let sum: f64 = clamped.iter().sum();
             if sum > 0.0 {
                 clamped.iter().map(|w| w / sum).collect()
+            } else if !clamped.is_empty() {
+                // Every term in this topic had a non-positive (e.g. negative bm25)
+                // c-TF-IDF, so flooring leaves an all-zero row. Fall back to uniform
+                // to keep `topic_word` a valid distribution (rows sum to 1), matching
+                // the `normalize_rows` / `approximate_distribution` zero-row contract.
+                let u = 1.0 / clamped.len() as f64;
+                vec![u; clamped.len()]
             } else {
                 clamped
             }
@@ -814,6 +821,24 @@ mod tests {
         let s: f64 = tw[0].iter().sum();
         assert!((s - 1.0).abs() < 1e-12, "row sums to {s}");
         assert!(tw[0][1] > tw[0][2], "positive ranking preserved");
+    }
+
+    #[test]
+    fn topic_word_all_negative_row_falls_back_to_uniform() {
+        // If every term in a topic has a non-positive (all-ubiquitous, negative
+        // bm25) c-TF-IDF, flooring leaves an all-zero row; topic_word must fall back
+        // to uniform so it stays a valid distribution (rows sum to 1), not all-zero.
+        let ctfidf = vec![vec![-2.0, -0.5, -3.0]];
+        let tw = topic_word_from_ctfidf(&ctfidf);
+        let s: f64 = tw[0].iter().sum();
+        assert!(
+            (s - 1.0).abs() < 1e-12,
+            "all-negative row must sum to 1, got {s}"
+        );
+        assert!(
+            tw[0].iter().all(|&w| (w - 1.0 / 3.0).abs() < 1e-12),
+            "uniform fallback"
+        );
     }
 
     #[test]
