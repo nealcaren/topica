@@ -17,7 +17,8 @@ without topica taking an API dependency.
 ```python
 import topica
 
-# Bring a model: a callable, or model="gpt-4o-mini" via the topica[llm] adapter.
+# Bring a model: a callable, or model="ollama/qwen3" via the topica[llm] adapter.
+# topica showcases open-source models; any callable str -> str backend works.
 model = topica.TopicGPT(backend=my_callable, assignment="hard")
 model.fit(docs)                       # docs: a Corpus, raw strings, or token lists
 
@@ -33,6 +34,12 @@ model.transform(new_docs)             # assign held-out docs to the taxonomy
 `model.hierarchy`. `sample=` restricts the generation stage to the first *n*
 documents as a cost control (assignment still covers every document), and
 `model.estimated_calls(docs)` reports the backend-call budget before you run.
+`min_topic_count=` prunes topics evoked by fewer than *n* documents before
+refinement (the reference's rare-topic removal; the default of 1 keeps every
+topic), and `max_topics=` caps the count carried past refinement. When a backend
+reply does not match the requested format, the unparsed lines are recorded in
+`model.parse_drops` and a warning reports the count, so a malformed backend is
+not silent.
 
 ### What composes, and the caveats
 

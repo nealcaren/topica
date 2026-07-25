@@ -50,6 +50,7 @@ import hashlib
 import json
 import pickle
 import re
+import warnings
 from collections import Counter
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
@@ -209,6 +210,23 @@ def _merge_prompts(overrides: Optional[dict]) -> dict[str, str]:
                 f"{missing} (expected placeholders: "
                 f"{['{' + f + '}' for f in PROMPT_FIELDS[stage]]})"
             )
+        # Fail fast on a template that ``str.format`` cannot fill. The
+        # orchestration substitutes only the stage's required fields via
+        # ``str.format``, so any *other* brace (a pasted JSON snippet like
+        # ``{"topic": "x"}``, a LaTeX/exponent ``O(n^{2})``, or a stray
+        # ``{placeholder}``) makes the real fit crash deep in ``fit`` with an
+        # opaque ``KeyError``/``IndexError``. Trial-format here with the exact
+        # stage kwargs so the failure surfaces at construction with a clear
+        # message and a fix (escape literal braces as ``{{`` / ``}}``).
+        try:
+            template.format(**{f: "" for f in PROMPT_FIELDS[stage]})
+        except (KeyError, IndexError, ValueError) as exc:
+            raise ValueError(
+                f"custom {stage!r} prompt is not brace-safe: str.format() raised "
+                f"{type(exc).__name__}: {exc}. The orchestration fills only "
+                f"{list(PROMPT_FIELDS[stage])} via str.format(), so escape every "
+                "other literal brace by doubling it ({{ and }})."
+            ) from exc
         merged[stage] = template
     return merged
 
@@ -308,24 +326,51 @@ _TOPIC_LINE = re.compile(r"^\s*\[(\d+)\]\s*([^:\]]+?)\s*:\s*(.*)$")
 # e.g. ``[1] Trade: reasoning ("...the quote...")``.
 _QUOTE_SPAN = re.compile(r"\(\s*[\"“‘]?(.*?)[\"”’]?\s*\)\s*$", re.DOTALL)
 
+# Leading list/markdown decoration an LLM often wraps a topic line in:
+# ``- ``, ``* ``, ``1. ``, ``1) ``, or a leading ``**`` bold marker. We strip
+# these before matching so a decorated ``**[1] Sports: ...**`` is not silently
+# dropped (github issue #509 finding #3).
+_LINE_DECORATION = re.compile(r"^\s*(?:[-*+•]\s+|\d+[.)]\s+)?\*{0,2}\s*")
 
-def _parse_topic_lines(text: str) -> list[tuple[int, str, str]]:
+
+def _strip_decorations(line: str) -> str:
+    """Remove leading bullet/number markers and surrounding ``**`` bold marks so a
+    markdown-wrapped topic line still matches :data:`_TOPIC_LINE`."""
+    s = _LINE_DECORATION.sub("", line)
+    s = re.sub(r"\*{1,2}\s*$", "", s)  # trailing bold close
+    return s.strip()
+
+
+def _is_noise_line(raw: str) -> bool:
+    """A blank line or a bare ``None`` reply (the reference's "no change / no
+    topic" signal) is expected, not a dropped topic line."""
+    s = raw.strip().rstrip(".")
+    return not s or s.lower() == "none"
+
+
+def _parse_topic_lines(text: str) -> tuple[list[tuple[int, str, str]], list[str]]:
     """Parse the reference ``[level] Label: Description`` format into
-    ``(level, name, description)`` triples. A bare ``None`` reply (the reference's
-    "no change / no topic" signal) yields an empty list. Falls back to a tolerant
-    JSON parse if no bracketed line is present (a backend that ignored the format).
+    ``(level, name, description)`` triples, plus the list of non-noise lines that
+    did not parse (so the caller can surface silent drops, issue #509 finding #3).
+
+    A bare ``None`` reply yields no triples and no drops. Markdown/bullet
+    decoration is stripped before matching. Falls back to a tolerant JSON parse if
+    no bracketed line is present (a backend that ignored the format); a reply that
+    parses cleanly as JSON reports no drops.
     """
     out: list[tuple[int, str, str]] = []
+    dropped: list[str] = []
     for line in str(text or "").splitlines():
-        m = _TOPIC_LINE.match(line)
-        if not m:
-            continue
-        name = m.group(2).strip()
+        raw = line.strip()
+        m = _TOPIC_LINE.match(_strip_decorations(line))
+        name = m.group(2).strip() if m else ""
         if not name:
+            if not _is_noise_line(raw):
+                dropped.append(raw)
             continue
         out.append((int(m.group(1)), name, m.group(3).strip()))
     if out:
-        return out
+        return out, dropped
     # Tolerant fallback: {"topics": [{topic, description}, ...]} or {topic, description}.
     obj = _extract_json(text)
     if isinstance(obj, dict) and isinstance(obj.get("topics"), list):
@@ -334,33 +379,39 @@ def _parse_topic_lines(text: str) -> list[tuple[int, str, str]]:
                 out.append((1, str(m["topic"]).strip(), str(m.get("description", "")).strip()))
     elif isinstance(obj, dict) and str(obj.get("topic", "")).strip():
         out.append((1, str(obj["topic"]).strip(), str(obj.get("description", "")).strip()))
-    return out
+    if out:  # the reply was JSON-shaped, not a dropped line format
+        return out, []
+    return out, dropped
 
 
-def _parse_assignment_lines(text: str) -> list[tuple[str, str]]:
+def _parse_assignment_lines(text: str) -> tuple[list[tuple[str, str]], list[str]]:
     """Parse the reference assignment format
-    ``[level] Label: reasoning (Supporting quote)`` into ``(name, quote)`` pairs.
-    Falls back to a tolerant JSON parse (``{"assignments": [{topic, quote}]}``).
+    ``[level] Label: reasoning (Supporting quote)`` into ``(name, quote)`` pairs,
+    plus the non-noise lines that did not parse. Falls back to a tolerant JSON
+    parse (``{"assignments": [{topic, quote}]}``).
     """
     out: list[tuple[str, str]] = []
+    dropped: list[str] = []
     for line in str(text or "").splitlines():
-        m = _TOPIC_LINE.match(line)
-        if not m:
-            continue
-        name = m.group(2).strip()
+        raw = line.strip()
+        m = _TOPIC_LINE.match(_strip_decorations(line))
+        name = m.group(2).strip() if m else ""
         if not name:
+            if not _is_noise_line(raw):
+                dropped.append(raw)
             continue
-        rest = m.group(3)
-        q = _QUOTE_SPAN.search(rest)
+        q = _QUOTE_SPAN.search(m.group(3))
         out.append((name, q.group(1).strip() if q else ""))
     if out:
-        return out
+        return out, dropped
     obj = _extract_json(text)
     if isinstance(obj, dict) and isinstance(obj.get("assignments"), list):
         for it in obj["assignments"]:
             if isinstance(it, dict) and str(it.get("topic", "")).strip():
                 out.append((str(it["topic"]).strip(), str(it.get("quote", "")).strip()))
-    return out
+    if out:
+        return out, []
+    return out, dropped
 
 
 def _norm(name: str) -> str:
@@ -387,7 +438,9 @@ class TopicGPT:
     ``ollama`` endpoint, or pass :func:`topica.llm_backend` ``model`` for the
     ``topica[llm]`` adapter; a fake callable makes the whole pipeline testable
     without a network. Pass either ``backend=`` or ``model=`` (the latter routes
-    through :func:`topica.llm_backend`); supplying both raises.
+    through :func:`topica.llm_backend`); supplying both raises. topica showcases
+    open-source models (e.g. ``model="ollama/qwen3"`` or an openrouter qwen id),
+    but any backend works.
 
     Determinism is ``llm-bounded``: ``temperature=0`` and a backend ``seed`` give
     *stable*, not bit-reproducible, results. Responses are cached within a fit
@@ -416,7 +469,14 @@ class TopicGPT:
         Use only the first ``sample`` documents in the generation stage (a cost
         control); assignment still covers every document. ``None`` uses all.
     max_topics : int, optional
-        Cap on the number of discovered topics carried past refinement.
+        Cap on the number of discovered topics carried past refinement (an
+        order-truncation, applied after refinement).
+    min_topic_count : int, default 1
+        Prune topics evoked by fewer than this many documents in the generation
+        stage before refinement (the reference's frequency-based rare-topic
+        removal). The default of 1 keeps every topic that appeared at least once
+        (a no-op); raise it to discard one-off spurious topics. Pruning never
+        removes the last topic.
     temperature : float, default 0.0
         Forwarded to :func:`topica.llm_backend` when ``model`` is given.
     seed : int, default 42
@@ -453,6 +513,7 @@ class TopicGPT:
         assignment: str = "hard",
         sample: Optional[int] = None,
         max_topics: Optional[int] = None,
+        min_topic_count: int = 1,
         temperature: float = 0.0,
         seed: int = 42,
         prompts: Optional[dict] = None,
@@ -461,12 +522,15 @@ class TopicGPT:
             raise ValueError("pass either backend= or model=, not both")
         if assignment not in ("hard", "soft"):
             raise ValueError('assignment must be "hard" or "soft"')
+        if int(min_topic_count) < 1:
+            raise ValueError("min_topic_count must be >= 1")
         self._backend_arg = backend
         self._model_name = model
         self.hierarchical = bool(hierarchical)
         self.assignment = assignment
         self.sample = sample
         self.max_topics = max_topics
+        self.min_topic_count = int(min_topic_count)
         self.temperature = float(temperature)
         self.seed = int(seed)
         # Merge any overrides over the published defaults so a partial dict (one
@@ -488,6 +552,7 @@ class TopicGPT:
         self.hierarchy: Optional[dict] = None
         self._cache: dict[str, str] = {}
         self._call_count: int = 0
+        self.parse_drops: list[str] = []
 
     @property
     def settings(self) -> dict:
@@ -500,6 +565,7 @@ class TopicGPT:
             "assignment": self.assignment,
             "sample": self.sample,
             "max_topics": self.max_topics,
+            "min_topic_count": self.min_topic_count,
             "temperature": self.temperature,
             "seed": self.seed,
             "prompts": dict(self.prompts),
@@ -513,7 +579,7 @@ class TopicGPT:
         A convenience over ``TopicGPT(prompts={stage: template})`` for swapping a
         single stage, e.g. to adapt the few-shot examples to your domain::
 
-            model = TopicGPT(model="gpt-4o-mini").with_prompt(
+            model = TopicGPT(model="ollama/qwen3").with_prompt(
                 "generation", my_generation_template)
 
         ``stage`` is one of ``"generation"``, ``"refinement"``, ``"assignment"``;
@@ -539,8 +605,10 @@ class TopicGPT:
         raise ImportError(
             "TopicGPT needs a model. Pass a backend callable "
             "(backend=lambda prompt: my_client(prompt)) or a model name "
-            "(model='gpt-4o-mini'), which routes through topica.llm_backend and "
-            'needs the optional `llm` package (pip install "topica[llm]").'
+            "(model='ollama/qwen3'), which routes through topica.llm_backend and "
+            'needs the optional `llm` package (pip install "topica[llm]"). '
+            "topica showcases open-source models (e.g. an ollama or openrouter "
+            "qwen); any callable str -> str backend works."
         )
 
     def _cache_key(self, prompt: str) -> str:
@@ -597,28 +665,51 @@ class TopicGPT:
             self.stage_log.append(("metadata", "recorded (not used to steer prompts in v1)"))
 
         # Stage 1: generation -------------------------------------------------
+        dropped: list[str] = []
         gen_idx = range(n_docs) if self.sample is None else range(min(self.sample, n_docs))
         topics: list[Topic] = []
         seen: dict[str, int] = {}
+        counts: list[int] = []  # per-topic document count (frequency signal)
         for i in gen_idx:
             taxonomy = self._render_taxonomy(topics) or "(none yet)"
             prompt = self.prompts["generation"].format(
                 taxonomy=taxonomy, document=text_docs[i][:2000]
             )
             # The reference generation prompt may return several top-level topics
-            # (newly added and/or existing duplicates); add each unseen one.
-            for lvl, name, desc in _parse_topic_lines(self._ask(backend, prompt)):
+            # (newly added and/or existing duplicates); add each unseen one and
+            # count how many documents evoke each topic (the pruning signal).
+            triples, drops = _parse_topic_lines(self._ask(backend, prompt))
+            dropped.extend(drops)
+            doc_keys: set[str] = set()  # count each topic at most once per document
+            for lvl, name, desc in triples:
                 if lvl != 1:  # generation_1 induces top-level topics only
                     continue
                 key = _norm(name)
+                if key in doc_keys:  # same topic listed twice in one reply
+                    continue
+                doc_keys.add(key)
                 if key in seen:
+                    counts[seen[key]] += 1
                     continue
                 seen[key] = len(topics)
                 topics.append(Topic(name=name, description=desc))
+                counts.append(1)
         self.stage_log.append(("generation", len(topics)))
 
+        # Prune rare topics: drop any evoked by fewer than ``min_topic_count``
+        # documents (the reference's frequency-based refinement). The default of 1
+        # keeps every topic that appeared at least once (a no-op); raise it to
+        # discard one-off spurious topics before the LLM merge.
+        if self.min_topic_count > 1 and topics:
+            kept = [t for t, c in zip(topics, counts) if c >= self.min_topic_count]
+            # Prune only when at least one topic survives; never leave zero topics.
+            if kept and len(kept) < len(topics):
+                self.stage_log.append(("pruned", len(topics) - len(kept)))
+                topics = kept
+
         # Stage 2: refinement -------------------------------------------------
-        topics = self._refine(backend, topics)
+        topics, refine_drops = self._refine(backend, topics)
+        dropped.extend(refine_drops)
         if self.max_topics is not None and len(topics) > self.max_topics:
             topics = topics[: self.max_topics]
         if not topics:  # never leave fit with zero topics
@@ -638,7 +729,8 @@ class TopicGPT:
             prompt = self.prompts["assignment"].format(
                 taxonomy=taxonomy, document=text_docs[i][:2000], n_label=n_label
             )
-            chosen = self._parse_assignments(self._ask(backend, prompt), name_to_id)
+            chosen, adrops = self._parse_assignments(self._ask(backend, prompt), name_to_id)
+            dropped.extend(adrops)
             if not chosen:
                 chosen = [(0, "")]  # fall back to topic 0 with no quote
             if self.assignment == "hard":
@@ -652,6 +744,21 @@ class TopicGPT:
         self.assignments = assignments
         self._doc_topic = doc_topic
         self.stage_log.append(("assignment", n_docs))
+
+        # Surface silently-dropped LLM output lines instead of discarding them.
+        # A non-noise line the parser could not read is a lost topic/assignment
+        # (a bolded line, a stray format, a prose refusal); record the count in
+        # ``stage_log`` and warn once so a malformed backend is not invisible.
+        self.parse_drops = list(dropped)
+        if dropped:
+            self.stage_log.append(("parse_drops", len(dropped)))
+            warnings.warn(
+                f"TopicGPT dropped {len(dropped)} unparseable LLM output line(s) "
+                "during fit (they matched no topic/assignment format and were not "
+                "a 'None' reply); see the `parse_drops` attribute. This usually "
+                "means the backend ignored the requested bracketed-line format.",
+                stacklevel=2,
+            )
 
         # Optional two-level hierarchy ---------------------------------------
         if self.hierarchical:
@@ -670,35 +777,42 @@ class TopicGPT:
         # prompt matches the format it is asked to produce.
         return "\n".join(f"[1] {t.name}: {t.description}" for t in topics)
 
-    def _refine(self, backend, topics: list[Topic]) -> list[Topic]:
+    def _refine(self, backend, topics: list[Topic]) -> tuple[list[Topic], list[str]]:
         """Merge near-duplicate topics. Asks the backend once; falls back to the
         input taxonomy if the reply is "None" or unusable. The reference returns
         only the incremental merge edits; topica's refinement prompt instead asks
-        for the complete refined list, which we adopt as the new topic set."""
+        for the complete refined list, which we adopt as the new topic set. Returns
+        ``(topics, dropped_lines)``."""
         if len(topics) < 2:
-            return topics
+            return topics, []
         prompt = self.prompts["refinement"].format(taxonomy=self._render_taxonomy(topics))
         reply = self._ask(backend, prompt)
-        if str(reply).strip().lower().startswith("none"):
-            return topics
+        # Anchor the "no change" signal so a "Nonetheless, ..." merge reply is not
+        # mistaken for a bare "None" (issue #509 finding #7).
+        if _is_noise_line(str(reply).splitlines()[0] if str(reply).strip() else ""):
+            return topics, []
         out: list[Topic] = []
         seen: set[str] = set()
-        for lvl, name, desc in _parse_topic_lines(reply):
+        triples, dropped = _parse_topic_lines(reply)
+        for lvl, name, desc in triples:
+            if lvl != 1:  # refinement operates on top-level topics only
+                continue
             key = _norm(name)
             if key in seen:
                 continue
             seen.add(key)
             out.append(Topic(name=name, description=desc))
-        return out or topics
+        return (out or topics), dropped
 
-    def _parse_assignments(self, reply: str, name_to_id: dict) -> list[tuple[int, str]]:
+    def _parse_assignments(self, reply: str, name_to_id: dict) -> tuple[list[tuple[int, str]], list[str]]:
         out: list[tuple[int, str]] = []
-        for name, quote in _parse_assignment_lines(reply):
+        pairs, dropped = _parse_assignment_lines(reply)
+        for name, quote in pairs:
             tid = name_to_id.get(_norm(name))
             if tid is None:
                 continue
             out.append((tid, quote))
-        return out
+        return out, dropped
 
     def _induce_hierarchy(self, backend, topics: list[Topic]) -> dict:
         """A two-level grouping of the discovered topics, reusing the refinement
@@ -710,7 +824,8 @@ class TopicGPT:
         reply = self._ask(backend, prompt)
         name_to_id = {_norm(t.name): j for j, t in enumerate(topics)}
         supers = []
-        for lvl, name, desc in _parse_topic_lines(reply):
+        triples, _drops = _parse_topic_lines(reply)
+        for lvl, name, desc in triples:
             nkey = _norm(name)
             children = [name_to_id[nkey]] if nkey in name_to_id else []
             supers.append({"name": name, "description": desc, "children": children})
@@ -746,8 +861,16 @@ class TopicGPT:
         idf = np.log(1.0 + avg_len / term_total)
         ctfidf = tf * idf[None, :]
         rowsum = ctfidf.sum(axis=1, keepdims=True)
+        empty = rowsum[:, 0] == 0.0
         rowsum[rowsum == 0.0] = 1.0
-        return vocab, ctfidf / rowsum
+        tw = ctfidf / rowsum
+        # A topic that received no documents has an all-zero c-TF-IDF row. Left as
+        # zeros it breaks the sum-to-1 descriptor invariant and makes `coherence`
+        # return NaN (empty `top_words`). Give it a uniform row so the invariant
+        # holds and every per-topic diagnostic stays finite (issue #509 finding #1).
+        if empty.any():
+            tw[empty, :] = 1.0 / v
+        return vocab, tw
 
     # -- fitted-model surface ---------------------------------------------
 
@@ -831,7 +954,11 @@ class TopicGPT:
         from .coherence import coherence as _coherence
 
         topics = [[w for w, _ in self.top_words(n, topic=t)] for t in range(self.num_topics)]
-        return _coherence(topics, self._docs_tokens, topn=n)
+        c = np.asarray(_coherence(topics, self._docs_tokens, topn=n), dtype=np.float64)
+        # A degenerate topic (e.g. one with no assigned documents, or too few
+        # distinct top words) can yield NaN from the windowed measure; report a
+        # finite 0.0 sentinel so the health invariant holds (issue #509 finding #1).
+        return np.nan_to_num(c, nan=0.0, posinf=0.0, neginf=0.0)
 
     # -- transform: assign held-out docs to the discovered taxonomy --------
 
@@ -855,7 +982,9 @@ class TopicGPT:
             prompt = self.prompts["assignment"].format(
                 taxonomy=taxonomy, document=text[:2000], n_label=n_label
             )
-            chosen = self._parse_assignments(self._ask(backend, prompt), name_to_id) or [(0, "")]
+            chosen, _drops = self._parse_assignments(self._ask(backend, prompt), name_to_id)
+            if not chosen:
+                chosen = [(0, "")]
             if self.assignment == "hard":
                 chosen = chosen[:1]
             for tid, _q in chosen:
