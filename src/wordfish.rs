@@ -48,8 +48,11 @@ impl WordfishModel {
     /// `I_aa = sum_j mu_ij`, `I_at = sum_j mu_ij beta_j`,
     /// `I_tt = sum_j mu_ij beta_j^2 + 1/sd^2` (with `mu_ij = exp(alpha_i + psi_j +
     /// beta_j theta_i)`); the marginal variance of `theta_i`, accounting for the
-    /// verbosity nuisance `alpha_i`, is `I_aa / (I_aa I_tt - I_at^2)`. This is the
-    /// same Hessian-based SE R quanteda reports as `se.theta`.
+    /// verbosity nuisance `alpha_i`, is `I_aa / (I_aa I_tt - I_at^2)`. This is a
+    /// Hessian-based observed-information SE comparable to quanteda's `se.theta` —
+    /// not guaranteed to equal it exactly: it profiles out `alpha_i` and folds in
+    /// the theta-prior precision, which quanteda's `se.theta` need not do. The R
+    /// parity harness (`parity/wordfish_r_compare.py`) reports the observed ratio.
     pub fn position_se(&self) -> Vec<f64> {
         let inv_var = if self.theta_prior_sd.is_finite() && self.theta_prior_sd > 0.0 {
             1.0 / (self.theta_prior_sd * self.theta_prior_sd)

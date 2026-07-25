@@ -357,8 +357,10 @@ impl Wordfish {
         Ok(vecs_to_arr2(&self.fitted_model()?.positions()).to_pyarray_bound(py))
     }
     /// Asymptotic standard error of each author position (num_authors,), from the
-    /// observed information of the penalized Poisson log-likelihood — the same
-    /// Hessian-based SE R quanteda reports as `se.theta`. Aligned to `author_names`.
+    /// observed information of the penalized Poisson log-likelihood — a Hessian-based
+    /// observed-information SE comparable to quanteda's `se.theta` (it profiles out
+    /// the verbosity nuisance and folds in the theta-prior precision, so it need not
+    /// equal quanteda's value exactly). Aligned to `author_names`.
     #[getter]
     fn position_se<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         Ok(Array1::from(self.fitted_model()?.position_se()).to_pyarray_bound(py))

@@ -32,6 +32,9 @@ wf <- textmodel_wordfish(d)
 out <- data.frame(speakerid = rownames(m), theta = as.numeric(wf$theta),
                   se = as.numeric(wf$se.theta))
 write.csv(out, args[2], row.names = FALSE)
+# Per-word discrimination beta, aligned to the dfm feature order (args[3]).
+bout <- data.frame(word = wf$features, beta = as.numeric(wf$beta))
+write.csv(bout, args[3], row.names = FALSE)
 """
 
 
@@ -91,13 +94,14 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         infile = Path(td) / "counts.csv"
         outfile = Path(td) / "theta.csv"
+        betafile = Path(td) / "beta.csv"
         with open(infile, "w", newline="", encoding="utf-8") as fh:
             wr = csv.writer(fh)
             wr.writerow(["speakerid", *vocab])
             for a in authors:
                 wr.writerow([a, *[int(x) for x in counts[a]]])
         proc = subprocess.run(
-            ["Rscript", "-e", R_WORDFISH, str(infile), str(outfile)],
+            ["Rscript", "-e", R_WORDFISH, str(infile), str(outfile), str(betafile)],
             capture_output=True,
             text=True,
             timeout=1200,
@@ -106,8 +110,14 @@ def main() -> int:
             print("SKIP: quanteda wordfish run failed:\n", proc.stderr)
             return 0
         rows = list(csv.DictReader(open(outfile, encoding="utf-8")))
+        beta_rows = (
+            list(csv.DictReader(open(betafile, encoding="utf-8")))
+            if betafile.exists()
+            else []
+        )
     r_theta = {row["speakerid"]: float(row["theta"]) for row in rows}
     r_se = {row["speakerid"]: float(row["se"]) for row in rows if row.get("se")}
+    r_beta = {row["word"]: float(row["beta"]) for row in beta_rows if row.get("beta")}
     quanteda_theta = [r_theta[a] for a in authors]
 
     planted = [theta_true[int(a[1:])] for a in authors]
@@ -119,7 +129,20 @@ def main() -> int:
     print(f"topica   vs planted truth                      : |r| = {r_topica_truth:.4f}")
     print(f"quanteda vs planted truth                      : |r| = {r_quanteda_truth:.4f}")
 
-    # standard errors: topica's analytic position_se vs quanteda's se.theta
+    # per-word discrimination beta: topica vs quanteda, aligned by word.
+    beta_r = float("nan")
+    if r_beta:
+        t_beta = dict(zip(vocab, m.word_discrimination))
+        common_b = [w for w in vocab if w in r_beta]
+        if len(common_b) >= 2:
+            beta_r = _pearson(
+                [t_beta[w] for w in common_b], [r_beta[w] for w in common_b]
+            )
+            print(f"topica beta vs quanteda beta                   : |r| = {beta_r:.4f}")
+
+    # standard errors: topica's analytic position_se vs quanteda's se.theta. These
+    # need not be bit-equal (topica profiles out alpha and folds in the theta
+    # prior; see position_se docstring), so the ratio is gated loosely.
     se_r = float("nan"); se_ratio = float("nan")
     if r_se:
         common_se = [a for a in authors if a in r_se]
@@ -130,10 +153,23 @@ def main() -> int:
         print(f"topica position_se vs quanteda se.theta        : |r| = {se_r:.4f} "
               f"(median ratio {se_ratio:.3f})")
 
+    failures = []
     if r_vs_quanteda < 0.95:
-        print(f"FAIL: topica and quanteda disagree (|r|={r_vs_quanteda:.4f} < 0.95)")
+        failures.append(f"theta |r|={r_vs_quanteda:.4f} < 0.95")
+    # beta shares theta's identification, so a faithful scale recovers it too.
+    if not np.isnan(beta_r) and beta_r < 0.95:
+        failures.append(f"beta |r|={beta_r:.4f} < 0.95")
+    # SE is only comparable, not equal: require the same order of magnitude and a
+    # strong rank correlation, not exact equality.
+    if not np.isnan(se_r) and se_r < 0.90:
+        failures.append(f"se |r|={se_r:.4f} < 0.90")
+    if not np.isnan(se_ratio) and not (0.5 <= se_ratio <= 2.0):
+        failures.append(f"se median ratio {se_ratio:.3f} outside [0.5, 2.0]")
+
+    if failures:
+        print("FAIL: topica and quanteda disagree (" + "; ".join(failures) + ")")
         return 1
-    print("PASS: topica Wordfish matches quanteda's scale")
+    print("PASS: topica Wordfish matches quanteda's scale (theta, beta, se)")
     return 0
 
 
