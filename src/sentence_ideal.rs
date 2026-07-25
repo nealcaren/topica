@@ -54,6 +54,43 @@ impl SentenceIdealModel {
         c
     }
 
+    /// The conditional incomplete-data (marginal) log-likelihood of the fitted
+    /// mixture on `emb`, holding the positions fixed:
+    /// `sum_i log sum_k pi_k N(e_i | mu_k + x_a V_k, sigma^2 I)`. A properly
+    /// normalized spherical-Gaussian density, so it includes the per-observation
+    /// normalizer `-(D/2) ln(2 pi sigma^2)`. This is the quantity `log_likelihood`
+    /// reports for the *returned* parameters (no one-iteration lag), and the oracle
+    /// the parity test recomputes independently.
+    pub fn incomplete_data_ll(&self, emb: &[Vec<f64>]) -> f64 {
+        if self.sigma2 <= 0.0 || !self.sigma2.is_finite() {
+            return f64::NAN;
+        }
+        let inv2s = 1.0 / (2.0 * self.sigma2);
+        let log_norm = -0.5 * self.dim as f64 * (2.0 * std::f64::consts::PI * self.sigma2).ln();
+        let log_pi: Vec<f64> = self.pi.iter().map(|&p| p.max(1e-300).ln()).collect();
+        emb.iter()
+            .zip(self.group.iter())
+            .map(|(e, &a)| {
+                let mut logr = vec![f64::NEG_INFINITY; self.num_topics];
+                let mut max = f64::NEG_INFINITY;
+                for t in 0..self.num_topics {
+                    let mean = self.position_topic_centroid(t, &self.x[a]);
+                    let mut sq = 0.0;
+                    for d in 0..self.dim {
+                        let z = e[d] - mean[d];
+                        sq += z * z;
+                    }
+                    logr[t] = log_pi[t] - inv2s * sq;
+                    if logr[t] > max {
+                        max = logr[t];
+                    }
+                }
+                let z: f64 = logr.iter().map(|&l| (l - max).exp()).sum();
+                max + z.ln() + log_norm
+            })
+            .sum()
+    }
+
     /// Per-topic discrimination `||V_k||` (Frobenius over the d x D loading).
     pub fn topic_discrimination(&self) -> Vec<f64> {
         self.v
@@ -240,10 +277,14 @@ pub fn fit_sentence_ideal<R: Rng>(
         // Per-observation Gaussian log-normalizer of the spherical density
         // N(.| ., sigma2 I) in D dimensions: -(D/2) ln(2 pi sigma2). It is
         // omitted from the responsibilities (it cancels in the per-row
-        // normalization) but MUST be included in the reported incomplete-data
-        // log-likelihood: because sigma2 is re-estimated each sweep, this term
-        // is not a constant offset, and dropping it makes `ll_history`
-        // non-monotone and the convergence test act on the wrong quantity.
+        // normalization) but is included in the reported incomplete-data
+        // log-likelihood so the value is a properly normalized log-density.
+        // Because sigma2 is re-estimated each sweep the term is not a constant
+        // offset, so dropping it distorts the per-iteration `ll_history` trace.
+        // (Note: `ll_history` is the data log-likelihood, which EM does not
+        // maximize here — the x M-step is MAP and the positions are re-standardized
+        // each sweep — so it is not guaranteed monotone when `x_prior_variance`
+        // differs from the unit identification scale; see the `fit_history` docs.)
         let log_norm = -0.5 * dim as f64 * (2.0 * std::f64::consts::PI * sigma2).ln();
         let log_pi: Vec<f64> = pi.iter().map(|&p| p.max(1e-300).ln()).collect();
         // Per-document log-likelihood, collected in document order then summed
@@ -463,7 +504,7 @@ pub fn fit_sentence_ideal<R: Rng>(
         prev_ll = ll;
     }
 
-    SentenceIdealModel {
+    let mut model = SentenceIdealModel {
         num_topics: k,
         dim,
         num_dims: dd,
@@ -479,7 +520,13 @@ pub fn fit_sentence_ideal<R: Rng>(
         ll_history,
         converged,
         iters_run,
-    }
+    };
+    // Report the incomplete-data log-likelihood of the *returned* parameters, not
+    // the top-of-loop value from the previous sweep's parameters (which lags by one
+    // M-step). `ll_history` keeps the per-iteration E-step trace for convergence
+    // monitoring.
+    model.log_likelihood = model.incomplete_data_ll(emb);
+    model
 }
 
 /// Initialize positions from the top `dd` PCs of the author-mean embedding matrix
@@ -679,6 +726,77 @@ mod tests {
             assert_eq!(row.len(), dd);
             assert!(row[0].is_finite() && row[0] > 0.0, "bad SE: {row:?}");
             assert!(row[0] <= 1.0 + 1e-9, "SE exceeds prior SD: {}", row[0]);
+        }
+    }
+
+    // The reported `log_likelihood` equals the conditional incomplete-data
+    // log-likelihood recomputed independently from the returned parameters, and it
+    // includes the spherical-Gaussian normalizer (regression for #499: the bug
+    // dropped -(D/2) ln(2 pi sigma^2)). Checked across prior scales that make the
+    // data LL non-monotone, so it does not rely on the monotone regime.
+    #[test]
+    fn reported_ll_matches_recompute() {
+        let mut rng = ChaCha8Rng::seed_from_u64(11);
+        let (k, dim, dd, a_n) = (2usize, 5usize, 1usize, 20usize);
+        let mut emb: Vec<Vec<f64>> = Vec::new();
+        let mut group: Vec<usize> = Vec::new();
+        // Imbalanced authors + moderate noise: the regime where the data LL is not
+        // EM-monotone, so this is a genuine test of the reported value, not luck.
+        let counts = [1usize, 2, 40, 3, 30, 2, 1, 25];
+        for (a, &c) in counts.iter().enumerate() {
+            let pos = rng.gen::<f64>() - 0.5;
+            for _ in 0..c {
+                let t = rng.gen_range(0..k);
+                let mut e = vec![0.0f64; dim];
+                for (d, ed) in e.iter_mut().enumerate() {
+                    *ed = (t == 0) as usize as f64 * 3.0
+                        + pos * 0.5
+                        + (rng.gen::<f64>() - 0.5) * 1.4
+                        + d as f64 * 1e-9;
+                }
+                emb.push(e);
+                group.push(a.min(a_n - 1));
+            }
+        }
+        for xpv in [0.05f64, 0.2, 1.0] {
+            let m = fit_sentence_ideal(&emb, &group, a_n, k, dd, &[], 200, 0.0, xpv, &mut rng);
+            // Independent oracle: recompute the incomplete-data mixture LL inline
+            // from the returned parameters (NOT via `incomplete_data_ll`, which is
+            // the code path that sets `log_likelihood`), including the normalizer.
+            let inv2s = 1.0 / (2.0 * m.sigma2);
+            let cst = -0.5 * dim as f64 * (2.0 * std::f64::consts::PI * m.sigma2).ln();
+            let mut oracle = 0.0f64;
+            let mut oracle_normless = 0.0f64; // same, but with the normalizer dropped
+            for (e, &a) in emb.iter().zip(group.iter()) {
+                let mut comp = vec![0.0f64; k];
+                let mut mx = f64::NEG_INFINITY;
+                for t in 0..k {
+                    let mut mean = m.mu[t].clone();
+                    for d in 0..dim {
+                        mean[d] += m.x[a][0] * m.v[t][0][d];
+                    }
+                    let sq: f64 = (0..dim).map(|d| (e[d] - mean[d]).powi(2)).sum();
+                    comp[t] = m.pi[t].max(1e-300).ln() - inv2s * sq;
+                    mx = mx.max(comp[t]);
+                }
+                let z: f64 = comp.iter().map(|&c| (c - mx).exp()).sum();
+                oracle += mx + z.ln() + cst;
+                oracle_normless += mx + z.ln();
+            }
+            let tol = 1e-9 * m.log_likelihood.abs().max(1.0);
+            assert!(
+                (m.log_likelihood - oracle).abs() <= tol,
+                "xpv={xpv}: reported ll {} != independent oracle {oracle}",
+                m.log_likelihood
+            );
+            // Guard the specific #499 regression: the reported value is the
+            // *normalized* density, i.e. it differs from the normalizer-dropped sum
+            // by the full N * (D/2) ln(2 pi sigma^2) (a large, non-zero gap here).
+            assert!(
+                (m.log_likelihood - oracle_normless - cst * emb.len() as f64).abs() <= tol,
+                "xpv={xpv}: normalizer term missing from the reported ll"
+            );
+            assert!(m.log_likelihood.is_finite());
         }
     }
 

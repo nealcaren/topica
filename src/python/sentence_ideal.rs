@@ -293,10 +293,21 @@ impl IdealPointSentenceTM {
         }
         Ok(Array1::from(m.position_topic_centroid(topic, &x)).to_pyarray_bound(py))
     }
+    /// The conditional incomplete-data log-likelihood of the *fitted* parameters,
+    /// `sum_i log sum_k pi_k N(e_i | mu_k + x_a V_k, sigma^2 I)` (a properly
+    /// normalized spherical-Gaussian mixture density). Computed on the returned
+    /// parameters, so unlike a mid-loop value it does not lag by an M-step.
     #[getter]
     fn log_likelihood(&self) -> PyResult<f64> {
         Ok(self.fitted_model()?.log_likelihood)
     }
+    /// Per-iteration `(iter, log_likelihood)` trace of the data log-likelihood at
+    /// each E-step, for convergence monitoring. Note this data log-likelihood is
+    /// **not** the objective EM maximizes here (the position M-step is MAP and the
+    /// positions are re-standardized to unit scale each sweep), so it is not
+    /// guaranteed monotone -- with `x_prior_variance` far from the unit
+    /// identification scale it can briefly decrease. Use the relative change, not
+    /// strict monotonicity, to judge convergence.
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
         Ok(self
