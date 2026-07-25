@@ -118,5 +118,6 @@ def test_top2vec_matches_committed_gold():
     assert r["passes"], (
         f"topica Top2Vec failed the clustering bars: truth ARI {r['topica_truth_ari']:.4f} "
         f"(bar {r['ari_bar']:.4f}), cross ARI {r['cross_ari']:.4f}, block purity "
-        f"{r['topica_block_purity']:.4f}, topics {r['topica_num_topics']}; details: {r}"
+        f"{r['topica_block_purity']:.4f} (centroid {r['topica_centroid_block_purity']:.4f}), "
+        f"topics {r['topica_num_topics']}; details: {r}"
     )

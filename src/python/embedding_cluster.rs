@@ -48,9 +48,10 @@ fn umap_notice(_py: Python<'_>, use_umap: bool) -> PyResult<()> {
 /// surface: `search_words_by_vector` / `similar_words` (vocabulary nearest a
 /// vector or a set of keywords), `search_topics` (topics nearest keywords),
 /// `search_documents_by_topic` / `search_documents_by_keywords` (documents
-/// nearest a topic or keywords), and `topic_sizes`. topica keeps HDBSCAN's
-/// cluster order and does not size-order topics, so read `topic_sizes` for the
-/// per-topic counts.
+/// nearest a topic or keywords), and `topic_sizes`. Topics are size-ordered like
+/// the reference — topic 0 is the largest — and `hierarchical_topic_reduction(n)`
+/// merges down to `n` topics the reference way (smallest into nearest by
+/// topic-vector cosine).
 ///
 /// No embedder of your own? `topica.llm_embed(texts, model=...)` builds the
 /// matrix (OpenAI, or offline `sentence-transformers`).
@@ -477,15 +478,15 @@ impl Top2Vec {
         Ok(self.id_to_word.clone())
     }
 
-    /// Top `n` words of `topic` (or every topic when `topic` is None) by
-    /// class-TF-IDF weight, as `(word, weight)` pairs.
-    /// Top words per topic. Top2Vec's distinctive view is the **centroid**
+    /// Top `n` words of `topic` (or every topic when `topic` is None), as
+    /// `(word, weight)` pairs. Top2Vec's distinctive view is the **centroid**
     /// representation: the vocabulary words nearest the cluster centroid in
     /// embedding space. When fit with `word_embeddings`, `top_words` returns that
     /// by default (so `summary`/`top_words` show Top2Vec's identity, not just the
-    /// class-based TF-IDF it shares with `BERTopic`). Pass
-    /// `representation="c-tf-idf"` for the c-TF-IDF words, or `"centroid"`
-    /// explicitly. `topic_word` and `topic_table` always stay c-TF-IDF.
+    /// class-based TF-IDF it shares with `BERTopic`); without `word_embeddings` it
+    /// falls back to c-TF-IDF weights. Pass `representation="c-tf-idf"` for the
+    /// c-TF-IDF words, or `"centroid"` explicitly. `topic_word` and `topic_table`
+    /// always stay c-TF-IDF.
     #[pyo3(signature = (n=10, *, topic=None, representation=None))]
     fn top_words<'py>(
         &self,
@@ -569,9 +570,8 @@ impl Top2Vec {
     }
 
     /// Number of documents assigned to each topic (non-noise), indexed by topic
-    /// id. topica keeps HDBSCAN's cluster-label order and does **not** reorder
-    /// topics by size the way the reference top2vec does (there topic 0 is always
-    /// the largest), so read this to recover per-topic sizes.
+    /// id. Topics are size-ordered like the reference top2vec, so this is
+    /// non-increasing and topic 0 is the largest.
     #[getter]
     fn topic_sizes(&self) -> PyResult<Vec<usize>> {
         Ok(self.fitted_model()?.topic_sizes())
@@ -794,6 +794,32 @@ impl Top2Vec {
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))?;
         m.merge_topics(&self.docs, &groups, vocab);
+        Ok(())
+    }
+
+    /// Reduce to ``num_topics`` topics the reference-top2vec way: repeatedly merge
+    /// the smallest topic (fewest documents) into its nearest topic by topic-vector
+    /// cosine, recomputing the merged vector as the size-weighted mean, until
+    /// ``num_topics`` remain; topics are then reordered by size (topic 0 largest).
+    /// ``num_topics`` must be ``>= 1`` and less than the current topic count. This
+    /// is the automatic driver over :meth:`merge_topics`. (Reference:
+    /// ``hierarchical_topic_reduction``.)
+    fn hierarchical_topic_reduction(&mut self, num_topics: usize) -> PyResult<()> {
+        let vocab = self.id_to_word.len();
+        let m = self
+            .model
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))?;
+        if num_topics < 1 {
+            return Err(PyValueError::new_err("num_topics must be >= 1"));
+        }
+        if num_topics >= m.num_topics {
+            return Err(PyValueError::new_err(format!(
+                "num_topics ({}) must be less than the current number of topics ({})",
+                num_topics, m.num_topics
+            )));
+        }
+        m.hierarchical_topic_reduction(&self.docs, num_topics, vocab);
         Ok(())
     }
 

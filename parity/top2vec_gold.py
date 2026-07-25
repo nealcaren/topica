@@ -73,17 +73,27 @@ def _ari(a, b) -> float:
 
 
 def _topica_fit(docs, doc_emb, word_emb, vocab):
-    """Fit topica Top2Vec on the shared embeddings; return (labels, top_words)."""
+    """Fit topica Top2Vec on the shared embeddings; return
+    ``(labels, ctfidf_words, centroid_words, num_topics)``.
+
+    We score both representations: the shared c-TF-IDF words (comparable to
+    BERTopic) and the distinctly-Top2Vec **centroid** words (#489 finding 5) —
+    the vocabulary nearest each topic's embedding, which no sibling model
+    produces and which the earlier gold never validated."""
     import topica
 
     tv = topica.Top2Vec(n_components=5, min_cluster_size=MIN_CLUSTER, seed=1)
     tv.fit(docs, doc_emb, word_embeddings=word_emb, vocabulary=vocab)
     labels = np.array(tv.labels)
-    words = [
+    ctfidf_words = [
         [w for w, _ in tv.top_words(BLOCK, topic=t, representation="c-tf-idf")]
         for t in range(tv.num_topics)
     ]
-    return labels, words, int(tv.num_topics)
+    centroid_words = [
+        [w for w, _ in tv.top_words(BLOCK, topic=t, representation="centroid")]
+        for t in range(tv.num_topics)
+    ]
+    return labels, ctfidf_words, centroid_words, int(tv.num_topics)
 
 
 def _block_purity(top_words_per_topic) -> float:
@@ -122,7 +132,7 @@ def regenerate() -> None:
     bt_num_topics = int(len([t for t in set(bt_labels) if t >= 0]))
 
     # topica summary at regenerate time for the provenance log.
-    t_labels, t_words, t_num = _topica_fit(docs, doc_emb, word_emb, vocab)
+    t_labels, t_words, t_centroid_words, t_num = _topica_fit(docs, doc_emb, word_emb, vocab)
     t_mask = t_labels >= 0
     t_truth_ari = _ari(truth[t_mask], t_labels[t_mask])
     cross_ari = _ari(t_labels, bt_labels)
@@ -156,6 +166,7 @@ def regenerate() -> None:
             "bertopic_num_topics": bt_num_topics,
             "topica_truth_ari": t_truth_ari,
             "topica_block_purity": _block_purity(t_words),
+            "topica_centroid_block_purity": _block_purity(t_centroid_words),
             "topica_num_topics": t_num,
             "cross_ari": cross_ari,
             "ari_margin": ARI_MARGIN,
@@ -200,17 +211,19 @@ def run(verbose: bool = True) -> dict:
 
     bt_truth_ari = float(meta["bertopic_truth_ari"])
 
-    t_labels, t_words, t_num = _topica_fit(docs, doc_emb, word_emb, vocab)
+    t_labels, t_words, t_centroid_words, t_num = _topica_fit(docs, doc_emb, word_emb, vocab)
     t_mask = t_labels >= 0
     t_truth_ari = _ari(truth[t_mask], t_labels[t_mask])
     cross_ari = _ari(t_labels, bt_labels)
     purity = _block_purity(t_words)
+    centroid_purity = _block_purity(t_centroid_words)
 
     ari_bar = max(TRUTH_ARI_MIN, bt_truth_ari - ARI_MARGIN)
     passes = (
         t_truth_ari >= ari_bar
         and cross_ari >= CROSS_ARI_MIN
         and purity >= PURITY_MIN
+        and centroid_purity >= PURITY_MIN
         and 2 <= t_num <= 8
     )
     result = {
@@ -218,6 +231,7 @@ def run(verbose: bool = True) -> dict:
         "bertopic_truth_ari": bt_truth_ari,
         "cross_ari": cross_ari,
         "topica_block_purity": purity,
+        "topica_centroid_block_purity": centroid_purity,
         "topica_num_topics": t_num,
         "ari_bar": ari_bar,
         "margin_over_ari_bar": t_truth_ari - ari_bar,
@@ -227,7 +241,7 @@ def run(verbose: bool = True) -> dict:
         print(f"gold: {meta.get('reference')}  (metric: {meta.get('metric_kind')})")
         print(f"  topica truth ARI {t_truth_ari:.4f} (bar {ari_bar:.4f}, "
               f"bertopic {bt_truth_ari:.4f}); cross ARI {cross_ari:.4f}; "
-              f"block purity {purity:.4f}; topics {t_num}")
+              f"block purity {purity:.4f} (centroid {centroid_purity:.4f}); topics {t_num}")
         print(f"  verdict: {'PASS' if passes else 'FAIL'}")
     return result
 

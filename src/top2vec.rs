@@ -239,6 +239,80 @@ impl Top2VecModel {
         self.labels = represent::assign_outliers(docs, &self.labels, &self.topic_word);
         self.topic_word = normalize_rows(represent::ctfidf(docs, &self.labels, vocab_size));
     }
+
+    /// Reduce to `target` topics the reference-top2vec way: repeatedly merge the
+    /// smallest topic (fewest documents) into its nearest topic by topic-vector
+    /// cosine, recomputing the merged vector as the size-weighted mean, until
+    /// `target` topics remain. This is the driver behind the reference
+    /// `hierarchical_topic_reduction(num_topics)`; the merge geometry itself is
+    /// [`Self::merge_topics`]. Topics are reordered by size afterwards (topic 0
+    /// largest), as the reference does. `docs`/`vocab_size` rebuild the c-TF-IDF
+    /// `topic_word` after each merge. No-op when `target` is already >= the current
+    /// topic count.
+    pub fn hierarchical_topic_reduction(
+        &mut self,
+        docs: &[Vec<u32>],
+        target: usize,
+        vocab_size: usize,
+    ) {
+        while self.num_topics > target && self.num_topics > 1 {
+            let sizes = self.topic_sizes();
+            // Smallest topic (fewest documents), ties broken by smallest id.
+            let smallest = (0..self.num_topics)
+                .min_by(|&a, &b| sizes[a].cmp(&sizes[b]).then(a.cmp(&b)))
+                .unwrap();
+            // Nearest other topic by topic-vector cosine, ties -> smallest id.
+            let sv = &self.topic_vectors[smallest];
+            let nearest = (0..self.num_topics)
+                .filter(|&t| t != smallest)
+                .max_by(|&x, &y| {
+                    cosine(sv, &self.topic_vectors[x])
+                        .partial_cmp(&cosine(sv, &self.topic_vectors[y]))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then(y.cmp(&x))
+                })
+                .unwrap();
+            self.merge_topics(docs, &[vec![smallest, nearest]], vocab_size);
+        }
+        self.reorder_by_size();
+    }
+
+    /// Permute topic ids so topic 0 is the largest (most documents), matching the
+    /// reference top2vec, which reorders topics by document count descending right
+    /// after clustering (`_calculate_topic_sizes` + `_reorder_topics`). Ties break
+    /// by original id. Noise (`-1`) labels are untouched. Every topic-indexed
+    /// surface — `topic_vectors`, `topic_word`, the `doc_topic` columns, and the
+    /// `labels` — is permuted together so the model stays internally consistent.
+    fn reorder_by_size(&mut self) {
+        let k = self.num_topics;
+        if k <= 1 {
+            return;
+        }
+        let sizes = self.topic_sizes();
+        // order[new_id] = old_id, sorted by size descending then id ascending.
+        let mut order: Vec<usize> = (0..k).collect();
+        order.sort_by(|&a, &b| sizes[b].cmp(&sizes[a]).then(a.cmp(&b)));
+        if order.iter().enumerate().all(|(new, &old)| new == old) {
+            return; // already size-ordered
+        }
+        let mut old_to_new = vec![0usize; k];
+        for (new, &old) in order.iter().enumerate() {
+            old_to_new[old] = new;
+        }
+        self.topic_vectors = order
+            .iter()
+            .map(|&o| self.topic_vectors[o].clone())
+            .collect();
+        self.topic_word = order.iter().map(|&o| self.topic_word[o].clone()).collect();
+        for row in self.doc_topic.iter_mut() {
+            *row = order.iter().map(|&o| row[o]).collect();
+        }
+        for l in self.labels.iter_mut() {
+            if *l >= 0 {
+                *l = old_to_new[*l as usize] as i64;
+            }
+        }
+    }
 }
 
 /// Row-normalize a matrix to sum to one per row (zero rows left as is).
@@ -345,7 +419,7 @@ pub fn fit_top2vec(
 
     let doc_topic = soft_doc_topic(doc_embeddings, &topic_vectors);
 
-    Top2VecModel {
+    let mut model = Top2VecModel {
         num_topics,
         labels,
         topic_vectors,
@@ -353,7 +427,11 @@ pub fn fit_top2vec(
         doc_topic,
         word_vectors: word_embeddings.to_vec(),
         doc_vectors: doc_embeddings.to_vec(),
-    }
+    };
+    // Reorder topics by size (topic 0 largest), as the reference top2vec does
+    // right after clustering, so per-index comparisons line up.
+    model.reorder_by_size();
+    model
 }
 
 /// Soft membership: cosine of each document embedding to each topic vector,
@@ -588,5 +666,98 @@ mod tests {
         );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
+    }
+
+    // Three planted blocks of unequal size (24 / 12 / 6 documents). After fit the
+    // topics must be size-ordered (topic 0 largest), and reducing to two topics
+    // must merge the two nearest blocks and leave two size-ordered topics.
+    fn fit_three_blocks() -> (Vec<Vec<u32>>, Top2VecModel) {
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let dim = 9;
+        let mut centers = vec![vec![0.0; dim]; 3];
+        centers[0][0] = 6.0;
+        centers[1][3] = 6.0;
+        // Block 2 sits close to block 1 so the reduction merges 1 and 2 first.
+        centers[2][3] = 5.0;
+        centers[2][6] = 2.0;
+
+        let jitter = |rng: &mut ChaCha8Rng, c: &[f64]| -> Vec<f64> {
+            c.iter().map(|&v| v + rng.gen::<f64>() * 0.3).collect()
+        };
+
+        let counts = [24usize, 12, 6];
+        let words: [Vec<u32>; 3] = [vec![0, 1, 2, 3], vec![4, 5, 6, 7], vec![8, 9, 10, 11]];
+        let mut docs = Vec::new();
+        let mut doc_emb = Vec::new();
+        for (b, &n) in counts.iter().enumerate() {
+            for _ in 0..n {
+                docs.push(words[b].clone());
+                doc_emb.push(jitter(&mut rng, &centers[b]));
+            }
+        }
+        let mut word_emb = Vec::new();
+        for w in 0..12 {
+            word_emb.push(jitter(&mut rng, &centers[w / 4]));
+        }
+        let m = fit_top2vec(
+            &docs,
+            &doc_emb,
+            &word_emb,
+            12,
+            5,
+            false,
+            15,
+            4,
+            2,
+            "hdbscan",
+            None,
+            1.0,
+            15,
+            &crate::reduce::UmapParams::default(),
+            7,
+        );
+        (docs, m)
+    }
+
+    #[test]
+    fn fit_is_size_ordered() {
+        let (_docs, m) = fit_three_blocks();
+        assert!(
+            m.num_topics >= 2,
+            "expected planted topics, got {}",
+            m.num_topics
+        );
+        let sizes = m.topic_sizes();
+        assert!(
+            sizes.windows(2).all(|w| w[0] >= w[1]),
+            "topics not size-ordered: {sizes:?}"
+        );
+    }
+
+    #[test]
+    fn hierarchical_reduction_reaches_target() {
+        let (docs, mut m) = fit_three_blocks();
+        let k0 = m.num_topics;
+        assert!(k0 >= 3, "need >=3 topics to reduce, got {k0}");
+        m.hierarchical_topic_reduction(&docs, 2, 12);
+        assert_eq!(m.num_topics, 2, "reduction did not reach target");
+        // Still size-ordered and a valid doc_topic after reduction.
+        let sizes = m.topic_sizes();
+        assert!(
+            sizes.windows(2).all(|w| w[0] >= w[1]),
+            "not size-ordered: {sizes:?}"
+        );
+        for row in &m.doc_topic {
+            assert_eq!(row.len(), 2);
+            let s: f64 = row.iter().sum();
+            assert!((s - 1.0).abs() < 1e-9, "doc_topic row sums to {s}");
+        }
+        // No-op when the target is not smaller than the current count.
+        let before = m.num_topics;
+        m.hierarchical_topic_reduction(&docs, 5, 12);
+        assert_eq!(
+            m.num_topics, before,
+            "reduction changed count when target >= current"
+        );
     }
 }
