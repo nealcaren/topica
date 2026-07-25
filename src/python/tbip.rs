@@ -303,6 +303,12 @@ impl TBIP {
         Ok(self.fitted_model()?.num_authors)
     }
     /// Author ideal points (num_authors,), the posterior-mean positions mu_x.
+    ///
+    /// Identifiability: identified only up to **sign** — the model is invariant
+    /// under `x -> -x, eta -> -eta`, so the direction is arbitrary and determined by
+    /// the seed (TBIP has no anchoring). Compare runs by absolute correlation, or
+    /// flip to a chosen reference author. The scale is only softly pinned by the
+    /// N(0, 1) prior.
     #[getter]
     fn ideal_points<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         Ok(Array1::from(self.fitted_model()?.ideal_points()).to_pyarray_bound(py))

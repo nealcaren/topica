@@ -396,7 +396,15 @@ impl PartyEmbeddings {
 
     /// Party placements as a (num_authors, num_dims) matrix: the leading principal
     /// components of the learned party vectors, standardized to mean 0 / unit
-    /// variance and sign-oriented to the anchors. Column 0 is the left-right scale.
+    /// variance and, when `anchors` are supplied to `fit()`, sign-oriented to them.
+    /// Column 0 is the left-right scale.
+    ///
+    /// Identifiability: **without anchors the sign of each dimension is arbitrary**
+    /// — PCA fixes the axes by variance, so each placement column is identified up
+    /// to sign (not rotation, unlike the fit-x-directly ideal-point models); pass
+    /// `anchors` to `fit()` to fix those signs. Columns are also standardized
+    /// independently, so the relative scale of the principal components is not
+    /// preserved; read the raw `author_vectors` if you need it.
     #[getter]
     fn author_positions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.fitted_model()?;

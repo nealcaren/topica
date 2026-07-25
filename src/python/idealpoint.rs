@@ -498,6 +498,15 @@ impl IdealPointTM {
     }
     /// Author positions (num_authors, num_dims): the latent ideal points,
     /// standardized to mean 0 / unit variance per dimension.
+    ///
+    /// Identifiability: the scale is fixed but the axis is identified only up to
+    /// **sign** per dimension — and, for `num_dims > 1`, up to an arbitrary
+    /// **rotation** of the axes (the likelihood is invariant under
+    /// `x -> x @ R`, `W -> R^-1 @ W`). Pass `anchors` to `fit()` to fix the sign of
+    /// dimension 0; without them the orientation is deterministic for a given seed
+    /// but otherwise arbitrary (it can flip across seeds/corpora), and
+    /// multi-dimensional positions are best read through the loadings, not
+    /// coordinate-by-coordinate.
     #[getter]
     fn author_positions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(self.fitted_model()?.x()).to_pyarray_bound(py))
