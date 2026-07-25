@@ -150,6 +150,34 @@ def test_composition_effect_inflates_over_ols():
         assert moc[t].se[1] >= ols[t].se[1] - 1e-9
 
 
+def test_cluster_robust_warns_on_too_few_clusters():
+    # With < 2 clusters the CR1 sandwich meat collapses to ~0 (SEs spuriously near
+    # zero); with G <= p the cluster vcov is rank-deficient. Both used to be silent.
+    _, corpus, x = _planted()
+    m = topica.LDA(2, seed=1)
+    m.fit(corpus, iters=250, keep_theta_draws=False)
+    X = x[:, None]
+    n = X.shape[0]
+    # one cluster -> collapse warning
+    with pytest.warns(UserWarning, match="at least 2 clusters"):
+        topica.estimate_effect(
+            m.doc_topic, X, feature_names=["x"], cluster=np.zeros(n, dtype=int)
+        )
+    # G == p (2 clusters, 2 coefficients incl. intercept) -> rank-deficient warning
+    with pytest.warns(UserWarning, match="rank-deficient"):
+        topica.estimate_effect(
+            m.doc_topic, X, feature_names=["x"], cluster=(np.arange(n) % 2)
+        )
+    # many clusters -> no warning
+    import warnings as _w
+
+    with _w.catch_warnings():
+        _w.simplefilter("error")
+        topica.estimate_effect(
+            m.doc_topic, X, feature_names=["x"], cluster=(np.arange(n) % 40)
+        )
+
+
 def test_composition_self_sufficient_for_gibbs_and_rejects_embedding():
     # A fitted LDA/keyATM/SeededLDA retains its own per-document lengths (issue
     # #32), so even with draws disabled the Dirichlet fallback needs no corpus=.

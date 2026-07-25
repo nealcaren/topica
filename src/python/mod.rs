@@ -7361,6 +7361,20 @@ impl STM {
                 "STM needs prevalence and/or content covariates; use CTM for neither",
             ));
         }
+        // #481-class guard: the content-deviation prior scale flows into
+        // `1/content_prior_var` (the L2 precision, or the L1 rate under
+        // content_prior="l1"), so a NaN/+inf/zero/negative value silently yields
+        // NaN kappa and a NaN bound. Only meaningful with a content model.
+        if content.is_some() || content_time.is_some() {
+            ensure_finite_pos("content_prior_var", content_prior_var)?;
+        }
+        // `content_smooth` (the random-walk precision 1/tau^2) is gated as
+        // `content_smooth > 0.0`, so a NaN or negative value silently disables the
+        // smoothing the user asked for, and +inf poisons the RW penalty. 0 is legal
+        // (recovers the fully saturated content factor).
+        if content_time.is_some() {
+            ensure_finite_nonneg("content_smooth", content_smooth)?;
+        }
 
         // --- Prevalence design (optional) ---
         let mut prevalence_x: Option<Vec<Vec<f64>>> = None;

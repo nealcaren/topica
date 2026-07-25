@@ -28,6 +28,7 @@ topic-word distribution ``topic_word_at(level)`` at a few sentiment levels
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -703,14 +704,32 @@ def _bootstrap(corpus, fit_kwargs, cluster, B, seed, anchor_words, read_fn, shap
     docs = corpus.documents() if hasattr(corpus, "documents") else [list(d) for d in corpus]
     n = len(docs)
     rng = np.random.default_rng(seed)
+    B = int(B)
     reps = []
-    for _ in range(int(B)):
+    fails = 0
+    last_err = None
+    for _ in range(B):
         idx = _boot_indices(n, cluster, rng)
         try:
             m = _refit_stm(docs, idx, fit_kwargs)
             reps.append(read_fn(m))
-        except Exception:
-            continue  # a degenerate resample (e.g. a period drops out) is skipped
+        except Exception as exc:  # a degenerate resample (e.g. a period drops out) is skipped
+            fails += 1
+            last_err = exc
+    # A handful of degenerate resamples is expected; every replicate failing is
+    # not, and previously returned an all-NaN band with no signal. Surface it so a
+    # misassembled ``fit_kwargs`` (e.g. a dropped ``content_time``) is not read as
+    # "wide uncertainty."
     if not reps:
-        return np.full((1,) + tuple(shape), np.nan)
+        raise RuntimeError(
+            f"bootstrap produced no usable replicates: all {B} refits failed. "
+            f"Check that fit_kwargs reproduces the original STM fit (e.g. it must "
+            f"include content_time= for a trajectory model). Last error: {last_err!r}"
+        )
+    if fails > B // 2:
+        warnings.warn(
+            f"bootstrap: {fails} of {B} refits failed; the CI is based on only "
+            f"{len(reps)} replicates and may be unreliable. Last error: {last_err!r}",
+            stacklevel=2,
+        )
     return np.stack(reps, axis=0)
