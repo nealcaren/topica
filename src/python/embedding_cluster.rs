@@ -189,9 +189,14 @@ impl Top2Vec {
     /// cleanly. `"leiden"` runs Louvain modularity plus a refinement phase that
     /// guarantees connected topics. `min_samples` defaults to `min_cluster_size`.
     ///
-    /// `reducer` is the dimensionality-reduction method, ``"pca"`` (default,
-    /// deterministic) or ``"umap"`` (stochastic); `n_neighbors` is the
-    /// neighborhood size for the reducer. `resolution` (default 1.0) and
+    /// `reducer` is the dimensionality-reduction method, ``"umap"`` (default,
+    /// matching the original Top2Vec, which always reduces with UMAP; topica's
+    /// in-house UMAP is seed-reproducible) or ``"pca"`` (linear, lighter,
+    /// L2-normalized onto the unit sphere before clustering); `n_neighbors`
+    /// (default 50, the Top2Vec value) is the reducer's neighborhood size. topica
+    /// keeps UMAP's ``metric="cosine"`` where the original Top2Vec uses Euclidean,
+    /// so a Euclidean clusterer sees the cosine geometry the embeddings were
+    /// trained for. `resolution` (default 1.0) and
     /// `knn_neighbors` (default 15) steer the ``"louvain"``/``"leiden"`` graph
     /// clusterers — higher `resolution` yields more, smaller topics; they are
     /// ignored by the other clusterers. `diagnostics` (default True) emits a
@@ -204,9 +209,9 @@ impl Top2Vec {
     /// deterministic phases.
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
-                        reducer="pca", n_neighbors=15, clusterer="hdbscan",
+                        reducer="umap", n_neighbors=50, clusterer="hdbscan",
                         num_clusters=None, resolution=1.0, knn_neighbors=15,
-                        diagnostics=true, min_dist=0.0, spread=1.0, n_epochs=0,
+                        diagnostics=true, min_dist=0.1, spread=1.0, n_epochs=0,
                         negative_sample_rate=5, repulsion_strength=1.0, metric="cosine",
                         seed=42))]
     #[allow(clippy::too_many_arguments)]
