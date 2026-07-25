@@ -845,6 +845,113 @@ fn beta_row(rho: &[Vec<f64>], alpha_k: &[f64]) -> Vec<f64> {
     logit.iter().map(|&e| (e - logz).exp()).collect()
 }
 
+/// Backprop the loss gradient on `beta = softmax_v(alpha . rho)` onto the
+/// topic-embedding trajectory `alpha`, splitting through the reparameterization
+/// `alpha = mu + exp(0.5 * lsc) * eps` into `g_mu_alpha` / `g_ls_alpha`.
+///
+/// `beta[t][k]` is the current per-slice topic-over-vocab distribution, `dbeta`
+/// the accumulated `d loss / d beta`, and `lsc_alpha` the *clamped* q(alpha)
+/// log-variance (as used in the forward `exp`). This is the reconstruction path's
+/// contribution to the alpha gradient; it accumulates (does not overwrite).
+///
+/// Pulled out of [`fit_detm`] verbatim so the reconstruction gradient is
+/// exercised by a finite-difference test (see `beta_recon_and_alpha_kl_match_fd`);
+/// the arithmetic is unchanged.
+fn beta_softmax_backward_to_alpha(
+    rho: &[Vec<f64>],
+    beta: &[Vec<Vec<f64>>],
+    dbeta: &[Vec<Vec<f64>>],
+    lsc_alpha: &[Vec<Vec<f64>>],
+    eps_alpha: &[Vec<Vec<f64>>],
+    g_mu_alpha: &mut [Vec<Vec<f64>>],
+    g_ls_alpha: &mut [Vec<Vec<f64>>],
+) {
+    let t = beta.len();
+    let v = rho.len();
+    let l = if v > 0 { rho[0].len() } else { 0 };
+    for tt in 0..t {
+        let k = beta[tt].len();
+        for kk in 0..k {
+            let bw = &beta[tt][kk];
+            let db = &dbeta[tt][kk];
+            let dot: f64 = (0..v).map(|w| db[w] * bw[w]).sum();
+            let mut dalpha = vec![0.0f64; l];
+            for w in 0..v {
+                let dlogit = bw[w] * (db[w] - dot);
+                if dlogit != 0.0 {
+                    let rw = &rho[w];
+                    for ll in 0..l {
+                        dalpha[ll] += dlogit * rw[ll];
+                    }
+                }
+            }
+            for ll in 0..l {
+                let std = (0.5 * lsc_alpha[tt][kk][ll]).exp();
+                g_mu_alpha[tt][kk][ll] += dalpha[ll];
+                g_ls_alpha[tt][kk][ll] += dalpha[ll] * eps_alpha[tt][kk][ll] * 0.5 * std;
+            }
+        }
+    }
+}
+
+/// Accumulate the global random-walk KL over the topic-embedding trajectory
+/// `alpha` and its gradient, returning the KL sum. `t = 0` uses the unit-Gaussian
+/// prior; `t >= 1` uses the prior `N(alpha_{t-1}, delta I)` whose mean is the
+/// *sampled* `alpha_{t-1}`, so the KL pushes a gradient back onto `alpha_{t-1}`
+/// through its reparameterization (the `t -> t-1` coupling). `lsc_alpha` is the
+/// clamped q(alpha) log-variance.
+///
+/// Pulled out of [`fit_detm`] verbatim so this gradient (the highest-risk
+/// "flow only to t, not t-1" spot) is exercised by a finite-difference test; the
+/// arithmetic is unchanged.
+#[allow(clippy::too_many_arguments)]
+fn alpha_rw_kl_and_grad(
+    mu_alpha: &[Vec<Vec<f64>>],
+    lsc_alpha: &[Vec<Vec<f64>>],
+    alpha: &[Vec<Vec<f64>>],
+    eps_alpha: &[Vec<Vec<f64>>],
+    delta: f64,
+    log_delta: f64,
+    g_mu_alpha: &mut [Vec<Vec<f64>>],
+    g_ls_alpha: &mut [Vec<Vec<f64>>],
+) -> f64 {
+    let t = mu_alpha.len();
+    if t == 0 {
+        return 0.0;
+    }
+    let k = mu_alpha[0].len();
+    let l = if k > 0 { mu_alpha[0][0].len() } else { 0 };
+    let mut kl = 0.0;
+    for kk in 0..k {
+        let pm = vec![0.0f64; l];
+        let plv = vec![0.0f64; l];
+        kl += kl_gauss(&mu_alpha[0][kk], &lsc_alpha[0][kk], &pm, &plv);
+        for ll in 0..l {
+            let dm = mu_alpha[0][kk][ll];
+            g_mu_alpha[0][kk][ll] += dm / (1.0 + 1e-6);
+            g_ls_alpha[0][kk][ll] += 0.5 * (lsc_alpha[0][kk][ll].exp() / (1.0 + 1e-6) - 1.0);
+        }
+        for tt in 1..t {
+            let prior_mean = alpha[tt - 1][kk].clone(); // sampled alpha_{t-1}
+            let plv: Vec<f64> = vec![log_delta; l];
+            kl += kl_gauss(&mu_alpha[tt][kk], &lsc_alpha[tt][kk], &prior_mean, &plv);
+            let inv_pv = 1.0 / (delta + 1e-6);
+            for ll in 0..l {
+                let dm = mu_alpha[tt][kk][ll] - prior_mean[ll];
+                g_mu_alpha[tt][kk][ll] += inv_pv * dm;
+                g_ls_alpha[tt][kk][ll] += 0.5 * (lsc_alpha[tt][kk][ll].exp() * inv_pv - 1.0);
+                // The prior mean is the sample alpha_{t-1}, so KL pushes a
+                // gradient back onto alpha_{t-1} (its mu/ls via the eps).
+                let dprior = -inv_pv * dm;
+                let std = (0.5 * lsc_alpha[tt - 1][kk][ll]).exp();
+                g_mu_alpha[tt - 1][kk][ll] += dprior;
+                g_ls_alpha[tt - 1][kk][ll] += dprior * eps_alpha[tt - 1][kk][ll] * 0.5 * std;
+            }
+        }
+    }
+    kl
+}
+
 /// Fit DETM by structured amortized variational inference (minibatch Adam on the
 /// ELBO). See the module docs for the variational families, including the LSTM
 /// amortization of q(eta).
@@ -1187,65 +1294,33 @@ pub fn fit_detm<R: Rng>(
             // For topic (t,k): logit_w = alpha . rho_w; beta = softmax(logit).
             // dlogit_w = beta_w * (dbeta_w - sum_w' dbeta_w' beta_w'); then project
             // onto rho to get d/d alpha. The reparameterization splits into mu/ls.
-            for tt in 0..t {
-                for kk in 0..k {
-                    let bw = &beta[tt][kk];
-                    let db = &dbeta[tt][kk];
-                    let dot: f64 = (0..v).map(|w| db[w] * bw[w]).sum();
-                    let mut dalpha = vec![0.0f64; l];
-                    for w in 0..v {
-                        let dlogit = bw[w] * (db[w] - dot);
-                        if dlogit != 0.0 {
-                            let rw = &rho[w];
-                            for ll in 0..l {
-                                dalpha[ll] += dlogit * rw[ll];
-                            }
-                        }
-                    }
-                    for ll in 0..l {
-                        let std = (0.5 * lsc_alpha[tt][kk][ll]).exp();
-                        g_mu_alpha[tt][kk][ll] += dalpha[ll];
-                        g_ls_alpha[tt][kk][ll] += dalpha[ll] * eps_alpha[tt][kk][ll] * 0.5 * std;
-                    }
-                }
-            }
+            // (Extracted to `beta_softmax_backward_to_alpha` for FD coverage.)
+            beta_softmax_backward_to_alpha(
+                rho,
+                &beta,
+                &dbeta,
+                &lsc_alpha,
+                &eps_alpha,
+                &mut g_mu_alpha,
+                &mut g_ls_alpha,
+            );
 
             // --- KL_alpha (global, random walk over time). ---
             // t = 0: prior N(0, I). t >= 1: prior N(alpha_{t-1}, delta I) with the
             // prior *mean* being the sampled alpha_{t-1} (reference uses the sample).
             // The clamped log-variance `lsc_alpha` feeds the KL `exp`; saturated
             // entries have their `g_ls_alpha` zeroed before the Adam step.
-            for kk in 0..k {
-                let pm = vec![0.0f64; l];
-                let plv = vec![0.0f64; l];
-                batch_loss += kl_gauss(&mu_alpha[0][kk], &lsc_alpha[0][kk], &pm, &plv);
-                for ll in 0..l {
-                    let dm = mu_alpha[0][kk][ll];
-                    g_mu_alpha[0][kk][ll] += dm / (1.0 + 1e-6);
-                    g_ls_alpha[0][kk][ll] +=
-                        0.5 * (lsc_alpha[0][kk][ll].exp() / (1.0 + 1e-6) - 1.0);
-                }
-                for tt in 1..t {
-                    let prior_mean = alpha[tt - 1][kk].clone(); // sampled alpha_{t-1}
-                    let plv: Vec<f64> = vec![log_delta; l];
-                    batch_loss +=
-                        kl_gauss(&mu_alpha[tt][kk], &lsc_alpha[tt][kk], &prior_mean, &plv);
-                    let inv_pv = 1.0 / (delta + 1e-6);
-                    for ll in 0..l {
-                        let dm = mu_alpha[tt][kk][ll] - prior_mean[ll];
-                        g_mu_alpha[tt][kk][ll] += inv_pv * dm;
-                        g_ls_alpha[tt][kk][ll] +=
-                            0.5 * (lsc_alpha[tt][kk][ll].exp() * inv_pv - 1.0);
-                        // The prior mean is the sample alpha_{t-1}, so KL pushes a
-                        // gradient back onto alpha_{t-1} (its mu/ls via the eps).
-                        let dprior = -inv_pv * dm;
-                        let std = (0.5 * lsc_alpha[tt - 1][kk][ll]).exp();
-                        g_mu_alpha[tt - 1][kk][ll] += dprior;
-                        g_ls_alpha[tt - 1][kk][ll] +=
-                            dprior * eps_alpha[tt - 1][kk][ll] * 0.5 * std;
-                    }
-                }
-            }
+            // (Extracted to `alpha_rw_kl_and_grad` for FD coverage.)
+            batch_loss += alpha_rw_kl_and_grad(
+                &mu_alpha,
+                &lsc_alpha,
+                &alpha,
+                &eps_alpha,
+                delta,
+                log_delta,
+                &mut g_mu_alpha,
+                &mut g_ls_alpha,
+            );
 
             // --- KL_eta (global, random walk over time). mu_t/ls_t are the LSTM
             // head outputs; the prior mean for t >= 1 is the *sampled* eta_{t-1}, so
@@ -1431,14 +1506,17 @@ pub fn fit_detm<R: Rng>(
             a_w_ls.step(&mut enc.w_ls, &g_enc.w_ls);
             a_b_ls.step(&mut enc.b_ls, &g_enc.b_ls);
 
-            // Report a per-doc-scaled (== /num_docs) loss. NOTE (#495 F2): this
-            // divides the whole minibatch loss by coeff = D/batch, which also shrinks
-            // the once-per-minibatch global temporal KLs (kl_alpha, kl_eta) by
-            // batch/D. So `bound_history` is reconstruction-dominated and NOT on the
-            // reference's ELBO scale under minibatching — it is a consistent internal
-            // convergence signal, not directly comparable to adjidieng/DETM's printed
-            // ELBO. Optimization is unaffected (gradients use the separate g_* buffers).
-            epoch_loss += batch_loss / coeff;
+            // Report the corpus-scale ELBO estimate (#495 F2). `batch_loss` already
+            // matches the reference's per-minibatch objective: the per-doc NLL and
+            // KL_theta are scaled up by coeff = D/batch, while the once-per-minibatch
+            // global temporal KLs (kl_alpha, kl_eta) are added at full weight. We
+            // accumulate it directly (the reference reports acc_loss / num_batches);
+            // the earlier `/ coeff` shrank the global KLs by batch/D and put
+            // `bound_history` on a reconstruction-dominated scale not comparable to
+            // adjidieng/DETM's printed ELBO. Optimization is unaffected either way
+            // (gradients use the separate g_* buffers); the relative-change em_tol
+            // gate stays consistent under the rescaled series.
+            epoch_loss += batch_loss;
             batches += 1;
         }
 
@@ -1862,6 +1940,195 @@ mod tests {
         check(&|n| &mut n.ls_b as *mut _, &g.ls_b, "ls_b");
         // (max_rel is asserted per-element above; this keeps the variable observed.)
         assert!(max_rel < 1e-4, "max relative FD error {max_rel:.2e}");
+    }
+
+    // FD gate on the reconstruction + alpha random-walk KL gradients (#495 F3).
+    // The q(eta) LSTM path already has `eta_lstm_bptt_matches_finite_difference`;
+    // this covers the two other hand-coded analytic paths that were previously
+    // untested: (1) the reconstruction gradient d NLL / d alpha routed through
+    // `beta = softmax_v(alpha . rho)` and the alpha reparameterization
+    // (`beta_softmax_backward_to_alpha`), and (2) the alpha random-walk KL,
+    // including the `t -> t-1` prior-mean coupling (`alpha_rw_kl_and_grad`) — the
+    // structural spot where a "flow only to t, not t-1" bug would hide. Central
+    // differences on the exact same forward loss the two functions differentiate.
+    #[test]
+    fn beta_recon_and_alpha_kl_match_finite_difference() {
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let (v, k, l, t) = (6usize, 3usize, 4usize, 4usize);
+        // Slightly larger than the 0.005 default keeps the random-walk KL (which
+        // divides by delta) well-conditioned for central differences.
+        let delta = 0.02_f64;
+        let log_delta = delta.ln();
+
+        // Fixed word embeddings rho (V x L) and alpha reparam noise (T x K x L).
+        let rho: Vec<Vec<f64>> = (0..v)
+            .map(|_| (0..l).map(|_| randn(&mut rng) * 0.5).collect())
+            .collect();
+        let eps_alpha: Vec<Vec<Vec<f64>>> = (0..t)
+            .map(|_| {
+                (0..k)
+                    .map(|_| (0..l).map(|_| randn(&mut rng)).collect())
+                    .collect()
+            })
+            .collect();
+        // Variational params: small log-variances so the clamp never saturates on
+        // the main check (the saturated branch is exercised separately below).
+        let mu_alpha: Vec<Vec<Vec<f64>>> = (0..t)
+            .map(|_| {
+                (0..k)
+                    .map(|_| (0..l).map(|_| randn(&mut rng) * 0.3).collect())
+                    .collect()
+            })
+            .collect();
+        let ls_alpha: Vec<Vec<Vec<f64>>> = (0..t)
+            .map(|_| {
+                (0..k)
+                    .map(|_| (0..l).map(|_| randn(&mut rng) * 0.3).collect())
+                    .collect()
+            })
+            .collect();
+        // A few documents: (time slice, dense bow as (word, count), fixed theta).
+        let docs: Vec<(usize, Vec<(usize, f64)>, Vec<f64>)> = (0..6)
+            .map(|di| {
+                let td = di % t;
+                let bow: Vec<(usize, f64)> = (0..v)
+                    .map(|w| (w, 1.0 + (rng.gen::<f64>() * 3.0).floor()))
+                    .collect();
+                let raw: Vec<f64> = (0..k).map(|_| randn(&mut rng)).collect();
+                (td, bow, softmax(&raw))
+            })
+            .collect();
+
+        // Forward loss = reconstruction NLL + alpha random-walk KL, as a function
+        // of (mu_alpha, ls_alpha), reparameterizing alpha exactly as fit_detm does.
+        let loss_fn = |mu: &[Vec<Vec<f64>>], ls: &[Vec<Vec<f64>>]| -> f64 {
+            let mut lsc = vec![vec![vec![0.0f64; l]; k]; t];
+            let mut alpha = vec![vec![vec![0.0f64; l]; k]; t];
+            for tt in 0..t {
+                for kk in 0..k {
+                    for ll in 0..l {
+                        let c = clamp_logvar(ls[tt][kk][ll]);
+                        lsc[tt][kk][ll] = c;
+                        alpha[tt][kk][ll] =
+                            mu[tt][kk][ll] + (0.5 * c).exp() * eps_alpha[tt][kk][ll];
+                    }
+                }
+            }
+            let beta: Vec<Vec<Vec<f64>>> = (0..t)
+                .map(|tt| (0..k).map(|kk| beta_row(&rho, &alpha[tt][kk])).collect())
+                .collect();
+            let mut loss = 0.0;
+            for (td, bow, theta) in &docs {
+                for &(w, c) in bow {
+                    let mut recon = 0.0;
+                    for kk in 0..k {
+                        recon += theta[kk] * beta[*td][kk][w];
+                    }
+                    loss -= c * (recon + 1e-6).ln();
+                }
+            }
+            for kk in 0..k {
+                let pm = vec![0.0f64; l];
+                let plv0 = vec![0.0f64; l];
+                loss += kl_gauss(&mu[0][kk], &lsc[0][kk], &pm, &plv0);
+                for tt in 1..t {
+                    let prior_mean = alpha[tt - 1][kk].clone();
+                    let plv = vec![log_delta; l];
+                    loss += kl_gauss(&mu[tt][kk], &lsc[tt][kk], &prior_mean, &plv);
+                }
+            }
+            loss
+        };
+
+        // Analytic gradient via the extracted production functions.
+        let mut lsc = vec![vec![vec![0.0f64; l]; k]; t];
+        let mut alpha = vec![vec![vec![0.0f64; l]; k]; t];
+        for tt in 0..t {
+            for kk in 0..k {
+                for ll in 0..l {
+                    let c = clamp_logvar(ls_alpha[tt][kk][ll]);
+                    lsc[tt][kk][ll] = c;
+                    alpha[tt][kk][ll] =
+                        mu_alpha[tt][kk][ll] + (0.5 * c).exp() * eps_alpha[tt][kk][ll];
+                }
+            }
+        }
+        let beta: Vec<Vec<Vec<f64>>> = (0..t)
+            .map(|tt| (0..k).map(|kk| beta_row(&rho, &alpha[tt][kk])).collect())
+            .collect();
+        let mut dbeta = vec![vec![vec![0.0f64; v]; k]; t];
+        for (td, bow, theta) in &docs {
+            for &(w, c) in bow {
+                let mut recon = 0.0;
+                for kk in 0..k {
+                    recon += theta[kk] * beta[*td][kk][w];
+                }
+                let cf = c / (recon + 1e-6);
+                for kk in 0..k {
+                    dbeta[*td][kk][w] -= cf * theta[kk];
+                }
+            }
+        }
+        let mut g_mu = vec![vec![vec![0.0f64; l]; k]; t];
+        let mut g_ls = vec![vec![vec![0.0f64; l]; k]; t];
+        beta_softmax_backward_to_alpha(&rho, &beta, &dbeta, &lsc, &eps_alpha, &mut g_mu, &mut g_ls);
+        let _ = alpha_rw_kl_and_grad(
+            &mu_alpha, &lsc, &alpha, &eps_alpha, delta, log_delta, &mut g_mu, &mut g_ls,
+        );
+
+        // Central-difference every mu/ls entry against the analytic gradient.
+        let h = 1e-6;
+        let mut max_rel: f64 = 0.0;
+        for tt in 0..t {
+            for kk in 0..k {
+                for ll in 0..l {
+                    // d/d mu.
+                    let mut up = mu_alpha.clone();
+                    up[tt][kk][ll] += h;
+                    let mut dn = mu_alpha.clone();
+                    dn[tt][kk][ll] -= h;
+                    let num = (loss_fn(&up, &ls_alpha) - loss_fn(&dn, &ls_alpha)) / (2.0 * h);
+                    let ana = g_mu[tt][kk][ll];
+                    let rel = (num - ana).abs() / (num.abs().max(ana.abs()).max(1e-6));
+                    assert!(
+                        rel < 1e-4,
+                        "g_mu_alpha[{tt}][{kk}][{ll}]: analytic {ana:.6e} vs numeric {num:.6e} (rel {rel:.2e})"
+                    );
+                    max_rel = max_rel.max(rel);
+
+                    // d/d ls (raw log-variance; unsaturated here).
+                    let mut up = ls_alpha.clone();
+                    up[tt][kk][ll] += h;
+                    let mut dn = ls_alpha.clone();
+                    dn[tt][kk][ll] -= h;
+                    let num = (loss_fn(&mu_alpha, &up) - loss_fn(&mu_alpha, &dn)) / (2.0 * h);
+                    let ana = g_ls[tt][kk][ll];
+                    let rel = (num - ana).abs() / (num.abs().max(ana.abs()).max(1e-6));
+                    assert!(
+                        rel < 1e-4,
+                        "g_ls_alpha[{tt}][{kk}][{ll}]: analytic {ana:.6e} vs numeric {num:.6e} (rel {rel:.2e})"
+                    );
+                    max_rel = max_rel.max(rel);
+                }
+            }
+        }
+        assert!(max_rel < 1e-4, "max relative FD error {max_rel:.2e}");
+
+        // Saturated-clamp branch (#495 F3): when a raw log-variance is pushed past
+        // +LOGVAR_CLAMP, the forward reads the clamped value, so the true gradient
+        // on the raw entry is 0 — which is exactly why fit_detm zeroes `g_ls_alpha`
+        // there before the Adam step. Confirm the numeric gradient is 0.
+        assert!(logvar_clamped(LOGVAR_CLAMP + 10.0));
+        assert!((clamp_logvar(LOGVAR_CLAMP + 10.0) - LOGVAR_CLAMP).abs() < 1e-12);
+        let mut ls_sat_up = ls_alpha.clone();
+        ls_sat_up[1][0][0] = LOGVAR_CLAMP + 10.0 + h;
+        let mut ls_sat_dn = ls_alpha.clone();
+        ls_sat_dn[1][0][0] = LOGVAR_CLAMP + 10.0 - h;
+        let num_sat = (loss_fn(&mu_alpha, &ls_sat_up) - loss_fn(&mu_alpha, &ls_sat_dn)) / (2.0 * h);
+        assert!(
+            num_sat.abs() < 1e-8,
+            "saturated raw log-variance should have ~0 gradient, got {num_sat:.2e}"
+        );
     }
 
     #[test]

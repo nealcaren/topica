@@ -1304,8 +1304,10 @@ class DETM:
         convergence_tol: float = 0.0,
         seed: int = 42,
     ) -> None:
-        """num_topics >= 2. delta is the random-walk standard-deviation knob on the
-        topic-embedding and topic-prior trajectories (smaller = smoother drift).
+        """num_topics >= 2. delta is the random-walk variance knob on the
+        topic-embedding and topic-prior trajectories (the prior variance for a step
+        is delta; the reference sets the prior log-variance to log(delta); smaller =
+        smoother drift).
         hidden_size is the document encoder width; eta_hidden_size/eta_nlayers size the
         LSTM that amortizes the per-time topic prior q(eta) (reference defaults 200/3);
         batch_size/lr/wdecay drive Adam; convergence_tol stops on the relative change
