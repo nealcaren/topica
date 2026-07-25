@@ -644,7 +644,13 @@ fn optimize_content(
                 }
             }
         }
-        for (i, &xi) in flat.iter().enumerate() {
+        // Gaussian (L2) prior. Under the sparse content prior (content_l1 > 0) the
+        // deviation blocks κ_cov / κ_interaction (indices >= n_t) are regularized by
+        // the L1 prox in FISTA instead, so they carry NO L2 here — only the baseline
+        // κ_topic keeps L2. This makes content_prior="l1" a genuine Laplace prior on
+        // the deviations rather than a coupled L1+L2 elastic net (#532).
+        let l2_end = if content_l1 > 0.0 { n_t } else { flat.len() };
+        for (i, &xi) in flat.iter().enumerate().take(l2_end) {
             value -= 0.5 * inv_var * xi * xi;
             grad[i] -= inv_var * xi;
         }

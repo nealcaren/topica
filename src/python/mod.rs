@@ -7261,13 +7261,17 @@ impl STM {
     /// random walk, the temporal generalization of `content`. `content_smooth`
     /// controls that random-walk penalty strength (``1/tau^2``); larger values tie
     /// adjacent periods more tightly. `content_prior` selects the prior on the
-    /// content (SAGE κ) deviation blocks: ``"l2"`` (default) is a Gaussian ridge that
-    /// keeps every `kappa_topic`, while ``"l1"`` puts a sparse Laplace prior (FISTA,
-    /// exact zeros) that recovers sparse content contrasts, matching R `stm`'s sparse
-    /// content model. `content_prior_var` is the L2 prior variance on those content
-    /// deviations (default ``0.5``); larger loosens regularization (more group-driven
-    /// contrast), smaller tightens it toward the shared baseline. The ``"l2"`` path
-    /// with `content_time=None` is bit-for-bit identical to the prior release.
+    /// content (SAGE κ) deviation blocks: ``"l2"`` (default) is a Gaussian ridge on
+    /// the deviations, while ``"l1"`` puts a *pure* sparse Laplace prior (FISTA, exact
+    /// zeros) on them — recovering sparse content contrasts, matching R `stm`'s sparse
+    /// content model. Under ``"l1"`` the deviation blocks carry the Laplace prior only
+    /// (not an additional ridge); the topic baseline `kappa_topic` keeps its L2 either
+    /// way. `content_prior_var` (default ``0.5``) sets the deviation-prior scale: under
+    /// ``"l2"`` it is the Gaussian prior variance, under ``"l1"`` the Laplace scale (the
+    /// L1 rate is ``1/content_prior_var``). Larger loosens regularization (more
+    /// group-driven contrast), smaller tightens it toward the shared baseline. The
+    /// ``"l2"`` path with `content_time=None` is bit-for-bit identical to the prior
+    /// release.
     /// `convergence_tol` is the relative-bound tolerance for EM early
     /// stopping — the run stops when the relative change in the variational evidence
     /// bound falls below it (the criterion R `stm` uses). `beta_init` is an optional
