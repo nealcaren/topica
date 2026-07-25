@@ -347,18 +347,20 @@ impl Wordfish {
     /// variance. The latent left-right scale.
     ///
     /// Identifiability: identified only up to **sign** — the scale is symmetric, so
-    /// which pole is "left" is arbitrary. Pass `anchors` to `fit()` to orient it;
-    /// without anchors the sign is deterministic for a given corpus but otherwise
-    /// arbitrary (it can flip across corpora). Note R quanteda instead *always*
-    /// orients by default (`dir = c(1, 2)`, i.e. document 1 < document 2), so an
-    /// unanchored topica axis may point opposite to quanteda's.
+    /// which pole is "left" is a convention. Pass `anchors` to `fit()` to orient it
+    /// to a substantive direction; with no anchors the axis is default-oriented so
+    /// the first two authors satisfy `theta[0] < theta[1]`, mirroring R quanteda's
+    /// default (`dir = c(1, 2)`, i.e. document 1 < document 2). The sign is therefore
+    /// deterministic and reproducible against `textmodel_wordfish`.
     #[getter]
     fn author_positions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(&self.fitted_model()?.positions()).to_pyarray_bound(py))
     }
     /// Asymptotic standard error of each author position (num_authors,), from the
-    /// observed information of the penalized Poisson log-likelihood — the same
-    /// Hessian-based SE R quanteda reports as `se.theta`. Aligned to `author_names`.
+    /// observed information of the penalized Poisson log-likelihood — a Hessian-based
+    /// observed-information SE comparable to quanteda's `se.theta` (it profiles out
+    /// the verbosity nuisance and folds in the theta-prior precision, so it need not
+    /// equal quanteda's value exactly). Aligned to `author_names`.
     #[getter]
     fn position_se<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         Ok(Array1::from(self.fitted_model()?.position_se()).to_pyarray_bound(py))

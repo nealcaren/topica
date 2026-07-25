@@ -85,6 +85,17 @@ def test_anchors_orient_sign():
     assert pos["a0"] < pos["a39"], "anchors did not orient the axis"
 
 
+def test_default_orient_without_anchors():
+    # With no anchors, topica default-orients to the first two authors
+    # (theta[0] < theta[1]), mirroring quanteda's default dir = c(1, 2), so the
+    # sign is deterministic and reproducible rather than arbitrary.
+    docs, group, _, _ = _planted(seed=2)
+    m = topica.Wordfish(seed=1)
+    m.fit(docs, group=group)
+    pos = m.author_positions[:, 0]
+    assert pos[0] < pos[1], "default orientation should give theta[0] < theta[1]"
+
+
 def test_discriminating_words():
     docs, group, _, _ = _planted(seed=3)
     m = topica.Wordfish(seed=1)

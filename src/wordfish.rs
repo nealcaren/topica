@@ -13,8 +13,10 @@
 //! on `beta` and `theta` for regularization. Identification is exact and applied
 //! every iteration: `theta` is standardized to mean 0 / unit variance (the scale is
 //! absorbed into `beta`, the location into `psi`), `psi` is centered (absorbed into
-//! `alpha`), and the sign is oriented to the anchors. The fit is deterministic — no
-//! RNG, fixed-order reductions — so it is bit-reproducible.
+//! `alpha`), and the sign is oriented to the anchors — or, with no anchors, to the
+//! first two authors (`theta[0] < theta[1]`), mirroring quanteda's default
+//! `dir = c(1, 2)`. The fit is deterministic — no RNG, fixed-order reductions — so
+//! it is bit-reproducible.
 
 /// A fitted Wordfish model. `theta` are the author positions (standardized);
 /// `beta`/`psi` are the per-word discrimination / intercept; `alpha` the per-author
@@ -48,8 +50,11 @@ impl WordfishModel {
     /// `I_aa = sum_j mu_ij`, `I_at = sum_j mu_ij beta_j`,
     /// `I_tt = sum_j mu_ij beta_j^2 + 1/sd^2` (with `mu_ij = exp(alpha_i + psi_j +
     /// beta_j theta_i)`); the marginal variance of `theta_i`, accounting for the
-    /// verbosity nuisance `alpha_i`, is `I_aa / (I_aa I_tt - I_at^2)`. This is the
-    /// same Hessian-based SE R quanteda reports as `se.theta`.
+    /// verbosity nuisance `alpha_i`, is `I_aa / (I_aa I_tt - I_at^2)`. This is a
+    /// Hessian-based observed-information SE comparable to quanteda's `se.theta` —
+    /// not guaranteed to equal it exactly: it profiles out `alpha_i` and folds in
+    /// the theta-prior precision, which quanteda's `se.theta` need not do. The R
+    /// parity harness (`parity/wordfish_r_compare.py`) reports the observed ratio.
     pub fn position_se(&self) -> Vec<f64> {
         let inv_var = if self.theta_prior_sd.is_finite() && self.theta_prior_sd > 0.0 {
             1.0 / (self.theta_prior_sd * self.theta_prior_sd)
@@ -452,8 +457,18 @@ fn center_psi(psi: &mut [f64], alpha: &mut [f64]) {
 }
 
 /// Orient the sign of the axis so it aligns with the anchors (positive correlation
-/// between anchored positions and their targets). No-op without anchors.
+/// between anchored positions and their targets). With no anchors, default-orient
+/// to the first two authors (`theta[0] < theta[1]`), mirroring quanteda's default
+/// `dir = c(1, 2)`, so the sign is reproducible against `textmodel_wordfish`
+/// instead of arbitrary.
 fn orient(theta: &mut [f64], beta: &mut [f64], anchors: &[(usize, f64)]) {
+    if anchors.is_empty() {
+        // No anchors: reproduce quanteda's `dir = c(1, 2)` (author 0 < author 1).
+        if theta.len() >= 2 && theta[0] > theta[1] {
+            flip(theta, beta);
+        }
+        return;
+    }
     if anchors.len() < 2 {
         // a single anchor: make its sign match its target's sign
         if let Some(&(i, target)) = anchors.first() {
