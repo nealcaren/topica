@@ -715,4 +715,63 @@ mod tests {
         assert_eq!(m1.model_a.topic_word(), m2.model_a.topic_word());
         assert_eq!(m1.model_b.doc_topic, m2.model_b.doc_topic);
     }
+
+    #[test]
+    fn build_masks_densifies_via_monolingual_neighbours() {
+        // Hand-checkable densification (#504), exercising both stages of
+        // `build_masks`: monolingual-neighbour expansion, then dictionary
+        // projection. Three words per language, an identity dictionary
+        // a_i <-> b_i, and embeddings where a0 and a1 are near-collinear
+        // (cosine ~0.994) while a2 is orthogonal to a0 (cos 0) and far from a1
+        // (cos ~0.110).
+        let trans = vec![
+            vec![1.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0],
+            vec![0.0, 0.0, 1.0],
+        ];
+        let emb = vec![vec![1.0, 0.0], vec![0.9, 0.1], vec![0.0, 1.0]];
+
+        // Stage 1 — no embeddings: the monolingual mask is the identity, so the
+        // positives are exactly the dictionary pairs.
+        let m0 = build_masks(&trans, None, 0.5);
+        assert_eq!(
+            m0.pos, trans,
+            "no-embedding positives must equal the dictionary"
+        );
+        assert_eq!(m0.pos_sum, 3.0);
+
+        // Stage 2 — with embeddings at threshold 0.5: a0 and a1 are mutual
+        // neighbours (>= 0.5), a2 is a neighbour of neither, so a0 inherits a1's
+        // translation (b1) and vice versa while a2 is unchanged.
+        let m = build_masks(&trans, Some(&emb), 0.5);
+        assert_eq!(
+            m.pos,
+            vec![
+                vec![1.0, 1.0, 0.0], // a0: its own b0 + neighbour a1's b1
+                vec![1.0, 1.0, 0.0], // a1: its own b1 + neighbour a0's b0
+                vec![0.0, 0.0, 1.0], // a2: only its own b2
+            ],
+            "positives must densify through the monolingual neighbour a0<->a1"
+        );
+        assert_eq!(m.pos_sum, 5.0);
+        // `neg` is exactly the complement of `pos`.
+        for i in 0..3 {
+            for j in 0..3 {
+                assert_eq!(
+                    m.neg[i][j],
+                    1.0 - m.pos[i][j],
+                    "neg must complement pos at ({i},{j})"
+                );
+            }
+        }
+
+        // Stage 3 — a threshold above the a0/a1 cosine (0.995 > ~0.994) drops the
+        // neighbour link, so the positives revert to the dictionary alone.
+        let m_hi = build_masks(&trans, Some(&emb), 0.995);
+        assert_eq!(
+            m_hi.pos, trans,
+            "a threshold above the neighbour cosine must revert to dict-only"
+        );
+        assert_eq!(m_hi.pos_sum, 3.0);
+    }
 }
