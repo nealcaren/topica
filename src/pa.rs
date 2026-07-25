@@ -148,6 +148,36 @@ impl PamModel {
         }
         out
     }
+
+    /// Per-document super-topic proportions, shape D×S. Row `d` is the posterior
+    /// mean of document `d`'s multinomial over super-topics, `θ^s_{d,s} ∝ n_{ds} +
+    /// alpha`, normalized to sum to 1. This is the doc→super analogue of
+    /// [`doc_topic`](Self::doc_topic) (which reports the doc→sub marginal): PAM's
+    /// distinguishing structure is the per-document super-topic mixture, so a user
+    /// doing correlation analysis reads it here. The smoothing uses `alpha`, which
+    /// is exactly the symmetric Dirichlet prior on the doc→super multinomial (the
+    /// factor-1 numerator in the Gibbs conditional), so this is the natural
+    /// posterior mean rather than an output-only floor.
+    pub fn doc_super(&self) -> Vec<Vec<f64>> {
+        let s_count = self.num_super;
+        self.nds
+            .iter()
+            .map(|doc| {
+                let mut row: Vec<f64> = doc.iter().map(|&c| c as f64 + self.alpha).collect();
+                let sum: f64 = row.iter().sum();
+                if sum > 0.0 {
+                    for x in row.iter_mut() {
+                        *x /= sum;
+                    }
+                } else {
+                    for x in row.iter_mut() {
+                        *x = 1.0 / s_count as f64;
+                    }
+                }
+                row
+            })
+            .collect()
+    }
 }
 
 impl Estimator for PamModel {
@@ -620,5 +650,53 @@ mod tests {
         assert!(base.is_empty(), "check_conformance: {:?}", base);
         let dir = crate::conformance::check_dirichlet(&m);
         assert!(dir.is_empty(), "check_dirichlet: {:?}", dir);
+    }
+
+    #[test]
+    fn doc_super_rows_are_probabilities_over_supers() {
+        // doc_super rows are per-document mixtures over super-topics: shape D×S,
+        // non-negative, and sum to 1. The planted corpus splits documents by
+        // super-topic (even/odd docs), so the dominant super-topic must partition
+        // the corpus into two groups aligned (up to label swap) with the planting.
+        let (docs, _, _, v) = planted_corpus();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        let model = fit_pam(&docs, v, 2, 4, 0.1, 0.01, 200, &mut rng);
+        let ds = model.doc_super();
+        assert_eq!(ds.len(), docs.len());
+        for row in &ds {
+            assert_eq!(row.len(), 2);
+            assert!(row.iter().all(|&x| x >= 0.0));
+            let sum: f64 = row.iter().sum();
+            assert!((sum - 1.0).abs() < 1e-9, "row sums to {sum}, not 1");
+        }
+        // Dominant super-topic per doc vs the planted (d % 2) label, up to swap.
+        let agree = ds
+            .iter()
+            .enumerate()
+            .filter(|(d, row)| {
+                let pred = if row[0] >= row[1] { 0 } else { 1 };
+                pred == d % 2
+            })
+            .count() as f64
+            / docs.len() as f64;
+        let acc = agree.max(1.0 - agree);
+        assert!(acc > 0.8, "doc_super super-topic recovery {acc:.2} too low");
+    }
+
+    #[test]
+    fn theta_ring_buffer_no_underflow_on_degenerate_opts() {
+        // Guard for #497: the θ-snapshot ring buffer must not call remove(0) on an
+        // empty Vec. ThetaDrawOpts::new forces thin=0 when cap=0, so this pairing
+        // is unreachable via the public constructor; construct it directly to lock
+        // the defensive `cap > 0` guard against regression.
+        let docs: Vec<Vec<u32>> = (0..20)
+            .map(|d| (0..8).map(|i| ((i + d) % 12) as u32).collect())
+            .collect();
+        let opts = crate::keyatm::ThetaDrawOpts { cap: 0, thin: 1 };
+        let mut rng = ChaCha8Rng::seed_from_u64(3);
+        let (model, _, _) =
+            fit_pam_with_draws(&docs, 12, 2, 3, 0.1, 0.01, 5, opts, 0.0, 0, &mut rng);
+        // Collection stays disabled: nothing pushed despite thin=1.
+        assert!(model.theta_draws.is_empty());
     }
 }

@@ -21,6 +21,8 @@ struct PaState {
     phi: Option<Arr2>,
     theta: Option<Arr2>,
     super_sub: Option<Arr2>,
+    #[serde(default)]
+    doc_super: Option<Arr2>,
     corpus: Option<corpus::Corpus>,
     #[serde(default)]
     topic_names: Vec<String>,
@@ -77,6 +79,7 @@ pub struct PA {
     phi: Option<Array2<f64>>,       // num_sub × V
     theta: Option<Array2<f64>>,     // num_docs × num_sub
     super_sub: Option<Array2<f64>>, // num_super × num_sub
+    doc_super: Option<Array2<f64>>, // num_docs × num_super
     corpus: Option<corpus::Corpus>,
     // Thinned MCMC θ snapshots (num_draws, num_docs, num_sub), f32; None when
     // keep_theta_draws=False. Sub-topic proportions marginalized over super-topics.
@@ -151,6 +154,7 @@ impl PA {
             phi: None,
             theta: None,
             super_sub: None,
+            doc_super: None,
             corpus: None,
             theta_draws: None,
             log_likelihood_history: Vec::new(),
@@ -233,6 +237,7 @@ impl PA {
         slf.phi = Some(vecs_to_arr2(&model.topic_word()));
         slf.theta = Some(vecs_to_arr2(&model.doc_topic()));
         slf.super_sub = Some(vecs_to_arr2(&model.super_sub()));
+        slf.doc_super = Some(vecs_to_arr2(&model.doc_super()));
         slf.topic_names = (0..slf.num_sub).map(|i| format!("topic_{i}")).collect();
         slf.log_likelihood_history = ll_history;
         slf.converged = converged_flag;
@@ -283,6 +288,17 @@ impl PA {
     fn super_sub<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         Ok(self.super_sub.as_ref().unwrap().to_pyarray_bound(py))
+    }
+    /// Document × super-topic proportions, shape ``(num_docs, num_super)``; row d
+    /// is document d's posterior-mean mixture over super-topics (``n_ds + alpha``
+    /// normalized). This is the doc→super analogue of :attr:`doc_topic` (the
+    /// doc→sub marginal) and the per-document companion to :attr:`super_sub` (the
+    /// global super→sub association), for per-document super-topic correlation
+    /// analysis (#497).
+    #[getter]
+    fn doc_super<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        Ok(self.doc_super.as_ref().unwrap().to_pyarray_bound(py))
     }
     #[getter]
     fn num_super(&self) -> usize {
@@ -388,6 +404,7 @@ impl PA {
                 phi: arr2_opt(&self.phi),
                 theta: arr2_opt(&self.theta),
                 super_sub: arr2_opt(&self.super_sub),
+                doc_super: arr2_opt(&self.doc_super),
                 corpus: self.corpus.clone(),
                 topic_names: self.topic_names.clone(),
                 log_likelihood_history: self.log_likelihood_history.clone(),
@@ -415,6 +432,7 @@ impl PA {
             phi: arr2_back(s.phi)?,
             theta: arr2_back(s.theta)?,
             super_sub: arr2_back(s.super_sub)?,
+            doc_super: arr2_back(s.doc_super)?,
             corpus: s.corpus,
             theta_draws: None,
             log_likelihood_history: s.log_likelihood_history,
