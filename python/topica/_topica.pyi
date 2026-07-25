@@ -93,6 +93,18 @@ def inspect_semantic_coherence(
     """stm-faithful per-topic semantic coherence (semCoh1beta) over top-m words (internal)."""
     ...
 
+def inspect_residual_dispersion(
+    beta: list[list[float]],
+    theta: list[list[float]],
+    docs: list[list[int]],
+    tol: float = 0.01,
+) -> tuple[float, float, float, float, float]:
+    """stm-faithful multinomial residual dispersion (checkResiduals / Taddy 2012).
+
+    Returns ``(dispersion, df, num_params, statistic, nhat)`` (internal).
+    """
+    ...
+
 def window_cooccurrence(
     docs: list[list[int]],
     num_relevant: int,
