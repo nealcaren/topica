@@ -161,17 +161,12 @@ impl PartyEmbeddings {
         if negative < 1 {
             return Err(PyValueError::new_err("negative must be >= 1"));
         }
-        if !learning_rate.is_finite() || learning_rate <= 0.0 {
-            return Err(PyValueError::new_err("learning_rate must be > 0"));
-        }
+        ensure_finite_pos("learning_rate", learning_rate)?;
         // #481-class guard: a NaN `sample` makes every keep-probability NaN, so every
-        // token is dropped and the model trains on nothing yet returns "fitted".
-        // Keep `0.0` legal — it is the documented "subsampling off" value.
-        if sample.is_nan() || sample < 0.0 {
-            return Err(PyValueError::new_err(format!(
-                "sample must be >= 0 (0 disables subsampling); got {sample}"
-            )));
-        }
+        // token is dropped and the model trains on nothing yet returns "fitted", and a
+        // non-finite `sample` is a nonsensical threshold. Keep `0.0` legal — it is the
+        // documented "subsampling off" value — so this is the non-negative guard.
+        ensure_finite_nonneg("sample", sample)?;
         Ok(PartyEmbeddings {
             num_dims,
             vector_size,
