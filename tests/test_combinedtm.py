@@ -159,6 +159,44 @@ def test_transform_validates_embedding_rows(cls):
         m.transform(docs[:10], embs[:5])
 
 
+def test_zeroshottm_output_unchanged_regression():
+    """Regression guard for issue #503: the CombinedTM encoder change (adapt_bert
+    projection + raw-BoW input, a new ``BowEmbAdapt`` mode) must leave ZeroShotTM's
+    embedding-only encoder byte-for-byte unchanged. These values were frozen from the
+    pre-change ``EmbOnly`` code path; the fit is deterministic under a fixed seed."""
+    docs, embs, _ = _planted(k=3, block=8, n=180, length=15, seed=0)
+    m = topica.ZeroShotTM(num_topics=3, batch_size=60, lr=0.01, dropout=0.0, seed=1)
+    m.fit(docs, embs, iters=120)
+    dt = np.asarray(m.doc_topic)
+    assert dt.shape == (180, 3)
+    np.testing.assert_allclose(dt[0], [0.085967, 0.82201, 0.092023], atol=1e-5)
+    np.testing.assert_allclose(dt[17], [0.095959, 0.084425, 0.819615], atol=1e-5)
+
+
+def test_combinedtm_adapt_bert_projection_is_live():
+    """CombinedTM (issue #503) projects the contextual embedding through a learned
+    adapt_bert layer, so perturbing the embeddings must move its topic assignments.
+    ZeroShotTM reads the embedding directly, so both react to embeddings; the point
+    here is that CombinedTM's fit is well-defined and embedding-sensitive under the
+    new encoder."""
+    docs, embs, _ = _planted(k=3, block=8, n=180, length=15, seed=3)
+    base = _model(topica.CombinedTM, seed=1)
+    base.fit(docs, embs, iters=150)
+    dt_base = np.asarray(base.doc_topic)
+    assert dt_base.shape == (180, 3)
+    np.testing.assert_allclose(dt_base.sum(1), np.ones(180), atol=1e-9)
+
+    shuffled = _model(topica.CombinedTM, seed=1)
+    perm = np.random.default_rng(0).permutation(embs.shape[0])
+    shuffled.fit(docs, embs[perm], iters=150)
+    dt_shuf = np.asarray(shuffled.doc_topic)
+    # Identical tokens, embeddings scrambled across documents: the only thing that
+    # changed is the contextual channel, so any measurable shift in the document-topic
+    # matrix must have flowed through the adapt_bert projection. (The shift is modest
+    # here because the raw BoW already carries most of the planted signal.)
+    assert np.abs(dt_base - dt_shuf).max() > 0.02
+
+
 def test_recovers_planted_blocks():
     """A light end-to-end recovery check (rigorous version lives in Rust). With
     embeddings that cleanly encode the block structure, each topic's top words

@@ -2460,6 +2460,9 @@ impl ProdLDA {
                     w_ls: s.w_w_ls.unwrap_or_default(),
                     b_ls: s.w_b_ls.unwrap_or_default(),
                     beta: s.w_beta.unwrap_or_default(),
+                    // Bow-only ProdLDA has no `adapt_bert` block.
+                    w_adapt: Vec::new(),
+                    b_adapt: Vec::new(),
                 },
                 bn_mu: prodlda::BatchNorm {
                     running_mean: s.bn_running_mean.unwrap_or_else(|| vec![0.0; k]),
@@ -2520,19 +2523,21 @@ impl ProdLDA {
 
 // --- CombinedTM / ZeroShotTM (Bianchi et al. 2021) ---------------------------
 //
-// Both models are ProdLDA with a different encoder *input*: CombinedTM
-// concatenates the normalized bag of words with a caller-supplied document
-// embedding (`InputMode::BowEmb`), and ZeroShotTM uses the embedding alone
-// (`InputMode::EmbOnly`). The decoder, prior, KL, reparameterization, batchnorm,
-// Adam, and BoW reconstruction loss are identical to ProdLDA; see
-// `crate::prodlda::fit_avitm`. The two pyclasses share their whole surface, so we
-// generate them with one macro and only vary the input mode, the model tag, and
-// the class name. Embeddings are caller-supplied (sentence-transformers / API /
-// ollama), matching ETM's caller-supplied-vectors pattern; ZeroShotTM's
+// Both models are ProdLDA with a different encoder *input*: CombinedTM concatenates
+// the raw bag of words with a caller-supplied document embedding that is first
+// projected into vocabulary space by a learned `adapt_bert` layer
+// (`InputMode::BowEmbAdapt`, faithful to Bianchi et al.'s `CombinedInferenceNetwork`),
+// and ZeroShotTM uses the embedding alone (`InputMode::EmbOnly`). The decoder, prior,
+// KL, reparameterization, batchnorm, Adam, and BoW reconstruction loss are identical
+// to ProdLDA; see `crate::prodlda::fit_avitm`. The two pyclasses share their whole
+// surface, so we generate them with one macro and only vary the input mode, the model
+// tag, and the class name. Embeddings are caller-supplied (sentence-transformers /
+// API / ollama), matching ETM's caller-supplied-vectors pattern; ZeroShotTM's
 // embedding-only encoder is what enables cross-lingual transfer at `transform`.
 
-/// Serializable snapshot of a fitted CombinedTM / ZeroShotTM. The encoder `w1` is
-/// `hidden x (V + E)`; `emb_dim` records `E` and `mode` the encoder input.
+/// Serializable snapshot of a fitted CombinedTM / ZeroShotTM. `emb_dim` records `E`
+/// and `mode` the encoder input; CombinedTM (`mode == 3`) also carries the
+/// `adapt_bert` projection (`w_w_adapt`, `w_b_adapt`).
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CtmEmbState {
     num_topics: usize,
@@ -2574,6 +2579,13 @@ struct CtmEmbState {
     w_w_ls: Option<Vec<f64>>,
     w_b_ls: Option<Vec<f64>>,
     w_beta: Option<Vec<f64>>,
+    // CombinedTM `adapt_bert` projection (#503). `#[serde(default)]` so a pre-#503
+    // CombinedTM save (positional bincode, no adapt block) loads to `None` and its
+    // `mode` byte routes it back through the simple-concat encoder it was fit with.
+    #[serde(default)]
+    w_w_adapt: Option<Vec<f64>>,
+    #[serde(default)]
+    w_b_adapt: Option<Vec<f64>>,
     bn_running_mean: Option<Vec<f64>>,
     bn_running_var: Option<Vec<f64>>,
     // BN log-variance running stats for the Dirichlet-prior transform (#428).
@@ -2590,12 +2602,17 @@ fn mode_to_u8(m: prodlda::InputMode) -> u8 {
         prodlda::InputMode::BowOnly => 0,
         prodlda::InputMode::BowEmb => 1,
         prodlda::InputMode::EmbOnly => 2,
+        prodlda::InputMode::BowEmbAdapt => 3,
     }
 }
 
 fn u8_to_mode(m: u8) -> prodlda::InputMode {
     match m {
         2 => prodlda::InputMode::EmbOnly,
+        // `3` is CombinedTM's faithful `adapt_bert` encoder (#503). A pre-#503
+        // CombinedTM save carries `1` and still loads as the earlier simple-concat
+        // `BowEmb` encoder, matching the weights it was trained with.
+        3 => prodlda::InputMode::BowEmbAdapt,
         _ => prodlda::InputMode::BowEmb,
     }
 }
@@ -3028,6 +3045,8 @@ macro_rules! ctm_embedding_model {
                         w_w_ls: Some(m.weights.w_ls.clone()),
                         w_b_ls: Some(m.weights.b_ls.clone()),
                         w_beta: Some(m.weights.beta.clone()),
+                        w_w_adapt: Some(m.weights.w_adapt.clone()),
+                        w_b_adapt: Some(m.weights.b_adapt.clone()),
                         bn_running_mean: Some(m.bn_mu.running_mean.clone()),
                         bn_running_var: Some(m.bn_mu.running_var.clone()),
                         bn_lv_running_mean: m.bn_lv.as_ref().map(|b| b.running_mean.clone()),
@@ -3068,6 +3087,8 @@ macro_rules! ctm_embedding_model {
                             w_ls: s.w_w_ls.unwrap_or_default(),
                             b_ls: s.w_b_ls.unwrap_or_default(),
                             beta: s.w_beta.unwrap_or_default(),
+                            w_adapt: s.w_w_adapt.unwrap_or_default(),
+                            b_adapt: s.w_b_adapt.unwrap_or_default(),
                         },
                         bn_mu: prodlda::BatchNorm {
                             running_mean: s.bn_running_mean.unwrap_or_else(|| vec![0.0; k]),
@@ -3132,15 +3153,18 @@ macro_rules! ctm_embedding_model {
 ctm_embedding_model!(
     CombinedTM,
     MODEL_TAG_COMBINEDTM,
-    prodlda::InputMode::BowEmb,
+    prodlda::InputMode::BowEmbAdapt,
     "CombinedTM",
     "CombinedTM (Bianchi, Terragni & Hovy 2021), a contextualized topic model. \
-CombinedTM is ProdLDA whose encoder reads the normalized bag of words \
-*concatenated with* a caller-supplied document embedding (e.g. from a \
-sentence-transformer); the product-of-experts decoder still reconstructs the bag \
-of words. Mixing contextual embeddings into the encoder yields more coherent \
-topics than bag-of-words ProdLDA. Bring the embeddings at :meth:`fit` as a \
-`(num_docs, E)` array, aligned to the documents. The reference implementation is \
+CombinedTM is ProdLDA whose encoder reads the bag of words *concatenated with* a \
+caller-supplied document embedding (e.g. from a sentence-transformer); the \
+product-of-experts decoder still reconstructs the bag of words. Following the \
+reference `CombinedInferenceNetwork`, the contextual embedding is first passed \
+through a learned `adapt_bert` linear projection into vocabulary space before it \
+is concatenated with the raw bag-of-words counts, so the encoder's first layer is \
+`Linear(2V, hidden)`. Mixing contextual embeddings into the encoder yields more \
+coherent topics than bag-of-words ProdLDA. Bring the embeddings at :meth:`fit` as \
+a `(num_docs, E)` array, aligned to the documents. The reference implementation is \
 `contextualized-topic-models` (Bianchi et al., MIT)."
 );
 

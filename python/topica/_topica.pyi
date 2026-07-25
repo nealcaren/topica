@@ -3831,11 +3831,14 @@ class Scholar:
 
 class CombinedTM:
     """CombinedTM (Bianchi, Terragni & Hovy 2021), a contextualized topic model.
-    ProdLDA whose encoder reads the normalized bag of words concatenated with a
-    caller-supplied document embedding; the product-of-experts decoder still
-    reconstructs the bag of words. Bring the embeddings at fit() as a
-    (num_docs, E) array, aligned to the documents. Reference implementation:
-    contextualized-topic-models (Bianchi et al., MIT)."""
+    ProdLDA whose encoder reads the bag of words concatenated with a
+    caller-supplied document embedding; following the reference
+    CombinedInferenceNetwork, the embedding is first passed through a learned
+    adapt_bert linear projection into vocabulary space before being concatenated
+    with the raw bag-of-words counts (first layer Linear(2V, hidden)). The
+    product-of-experts decoder still reconstructs the bag of words. Bring the
+    embeddings at fit() as a (num_docs, E) array, aligned to the documents.
+    Reference implementation: contextualized-topic-models (Bianchi et al., MIT)."""
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,
