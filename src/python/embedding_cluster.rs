@@ -44,6 +44,14 @@ fn umap_notice(_py: Python<'_>, use_umap: bool) -> PyResult<()> {
 /// default when `word_embeddings` are present (pass `representation="c-tf-idf"`
 /// for the shared view, or read it from `topic_neighbors`).
 ///
+/// With `word_embeddings` the model also exposes the reference package's search
+/// surface: `search_words_by_vector` / `similar_words` (vocabulary nearest a
+/// vector or a set of keywords), `search_topics` (topics nearest keywords),
+/// `search_documents_by_topic` / `search_documents_by_keywords` (documents
+/// nearest a topic or keywords), and `topic_sizes`. topica keeps HDBSCAN's
+/// cluster order and does not size-order topics, so read `topic_sizes` for the
+/// per-topic counts.
+///
 /// No embedder of your own? `topica.llm_embed(texts, model=...)` builds the
 /// matrix (OpenAI, or offline `sentence-transformers`).
 #[pyclass(module = "topica")]
@@ -92,6 +100,41 @@ impl Top2Vec {
         self.model
             .as_ref()
             .ok_or_else(|| PyRuntimeError::new_err("model is not fitted yet; call fit() first"))
+    }
+
+    /// Map keyword strings to their vocabulary ids, dropping any word the model
+    /// was not fit on. Errors if none remain, since there is then no query to
+    /// embed. Keyword searches build their query from these words' embeddings.
+    fn resolve_keywords(&self, keywords: &[String]) -> PyResult<Vec<usize>> {
+        let map: std::collections::HashMap<&str, usize> = self
+            .id_to_word
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.as_str(), i))
+            .collect();
+        let ids: Vec<usize> = keywords
+            .iter()
+            .filter_map(|k| map.get(k.as_str()).copied())
+            .collect();
+        if ids.is_empty() {
+            return Err(PyValueError::new_err(format!(
+                "none of the keywords {keywords:?} are in the fitted vocabulary; \
+                 search keywords must be words the model was fit on (they carry \
+                 the word embeddings used to build the query)"
+            )));
+        }
+        Ok(ids)
+    }
+
+    /// Validate that a user query vector matches the model's embedding dimension.
+    fn check_query_dim(&self, got: usize) -> PyResult<()> {
+        let want = self.fitted_model()?.embedding_dim();
+        if want != 0 && got != want {
+            return Err(PyValueError::new_err(format!(
+                "query vector has length {got} but the embedding dimension is {want}"
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -283,6 +326,29 @@ impl Top2Vec {
                 }
                 check_all_finite_2d("word_embeddings", &rows)?;
                 let e = rows.first().map(|r| r.len()).unwrap_or(0);
+                // Reject ragged word rows and a word/doc embedding-dim mismatch
+                // (#489). Topic vectors carry the doc-embedding dim and word
+                // vectors the word-embedding dim; `represent::cosine` would
+                // otherwise dot them over the shorter length and divide by
+                // mismatched norms, returning a silently wrong finite value. In
+                // the reference words and documents come from one embedding model
+                // so this cannot arise; topica takes the two matrices separately
+                // and must check. (The numpy fast path is already rectangular;
+                // the list-of-lists path is not.)
+                if rows.iter().any(|r| r.len() != e) {
+                    return Err(PyValueError::new_err(
+                        "word_embeddings has ragged rows; every word vector must \
+                         have the same length",
+                    ));
+                }
+                let doc_dim = doc_emb.first().map(|r| r.len()).unwrap_or(0);
+                if e != doc_dim {
+                    return Err(PyValueError::new_err(format!(
+                        "word_embeddings dim ({e}) must equal doc_embeddings dim \
+                         ({doc_dim}); word and document vectors must live in the \
+                         same embedding space"
+                    )));
+                }
                 let map: std::collections::HashMap<&str, usize> = vocab
                     .iter()
                     .enumerate()
@@ -500,6 +566,133 @@ impl Top2Vec {
             .into_iter()
             .map(|(w, s)| (self.id_to_word[w].clone(), s))
             .collect())
+    }
+
+    /// Number of documents assigned to each topic (non-noise), indexed by topic
+    /// id. topica keeps HDBSCAN's cluster-label order and does **not** reorder
+    /// topics by size the way the reference top2vec does (there topic 0 is always
+    /// the largest), so read this to recover per-topic sizes.
+    #[getter]
+    fn topic_sizes(&self) -> PyResult<Vec<usize>> {
+        Ok(self.fitted_model()?.topic_sizes())
+    }
+
+    /// The `n` vocabulary words whose embeddings are nearest the query `vector`
+    /// by cosine, as `(word, cosine)` pairs, best first. `vector` must live in the
+    /// fitted embedding space (its length equals the embedding dimension).
+    /// Requires fitting with `word_embeddings`. (Reference: `search_words_by_vector`.)
+    #[pyo3(signature = (vector, *, n=10))]
+    fn search_words_by_vector(&self, vector: Vec<f64>, n: usize) -> PyResult<Vec<(String, f64)>> {
+        let m = self.fitted_model()?;
+        if !self.has_word_vectors {
+            return Err(PyRuntimeError::new_err(
+                "fit with word_embeddings (and vocabulary) to search words",
+            ));
+        }
+        self.check_query_dim(vector.len())?;
+        Ok(m.search_words_by_vector(n, &vector)
+            .into_iter()
+            .map(|(w, s)| (self.id_to_word[w].clone(), s))
+            .collect())
+    }
+
+    /// The `n` vocabulary words nearest the centroid of `keywords` by cosine, as
+    /// `(word, cosine)` pairs. Keywords must be words the model was fit on (they
+    /// supply the query embedding); any keyword outside the vocabulary is dropped,
+    /// and it is an error if none remain. Requires fitting with `word_embeddings`.
+    /// (Reference: `similar_words`.)
+    #[pyo3(signature = (keywords, *, n=10))]
+    fn similar_words(&self, keywords: Vec<String>, n: usize) -> PyResult<Vec<(String, f64)>> {
+        let m = self.fitted_model()?;
+        if !self.has_word_vectors {
+            return Err(PyRuntimeError::new_err(
+                "fit with word_embeddings (and vocabulary) to search words",
+            ));
+        }
+        let ids = self.resolve_keywords(&keywords)?;
+        let q = m
+            .keyword_centroid(&ids)
+            .expect("resolve_keywords guarantees a non-empty id list");
+        Ok(m.search_words_by_vector(n, &q)
+            .into_iter()
+            .map(|(w, s)| (self.id_to_word[w].clone(), s))
+            .collect())
+    }
+
+    /// Topics ranked by cosine of their vector to the centroid of `keywords`, as
+    /// `(topic_id, cosine)` pairs, best first. `n` caps the count (default: every
+    /// topic). Keywords must be in the fitted vocabulary. Requires fitting with
+    /// `word_embeddings`. (Reference: `search_topics`.)
+    #[pyo3(signature = (keywords, *, n=None))]
+    fn search_topics(
+        &self,
+        keywords: Vec<String>,
+        n: Option<usize>,
+    ) -> PyResult<Vec<(usize, f64)>> {
+        let m = self.fitted_model()?;
+        if !self.has_word_vectors {
+            return Err(PyRuntimeError::new_err(
+                "fit with word_embeddings (and vocabulary) to search topics",
+            ));
+        }
+        let ids = self.resolve_keywords(&keywords)?;
+        let q = m
+            .keyword_centroid(&ids)
+            .expect("resolve_keywords guarantees a non-empty id list");
+        Ok(m.search_topics_by_vector(n.unwrap_or(m.num_topics), &q))
+    }
+
+    /// The documents most representative of `topic`, as `(doc_index, cosine)`
+    /// pairs: the topic's own member documents ranked by cosine of their embedding
+    /// to the topic vector, best first (noise documents are never returned).
+    /// `num_docs` caps the count. (Reference: `search_documents_by_topic`.)
+    #[pyo3(signature = (topic, *, num_docs=10))]
+    fn search_documents_by_topic(
+        &self,
+        topic: usize,
+        num_docs: usize,
+    ) -> PyResult<Vec<(usize, f64)>> {
+        let m = self.fitted_model()?;
+        if topic >= m.num_topics {
+            return Err(PyValueError::new_err("topic out of range"));
+        }
+        if !m.has_doc_vectors() {
+            return Err(PyRuntimeError::new_err(
+                "this model has no retained document embeddings, so documents cannot be \
+                 searched; refit to enable the document searches",
+            ));
+        }
+        Ok(m.documents_in_topic(num_docs, topic))
+    }
+
+    /// Documents ranked by cosine of their embedding to the centroid of
+    /// `keywords`, as `(doc_index, cosine)` pairs (every document is eligible, not
+    /// just one topic's members). `num_docs` caps the count. Requires fitting with
+    /// `word_embeddings` (to embed the keywords).
+    /// (Reference: `search_documents_by_keywords`.)
+    #[pyo3(signature = (keywords, *, num_docs=10))]
+    fn search_documents_by_keywords(
+        &self,
+        keywords: Vec<String>,
+        num_docs: usize,
+    ) -> PyResult<Vec<(usize, f64)>> {
+        let m = self.fitted_model()?;
+        if !self.has_word_vectors {
+            return Err(PyRuntimeError::new_err(
+                "fit with word_embeddings (and vocabulary) to search by keywords",
+            ));
+        }
+        if !m.has_doc_vectors() {
+            return Err(PyRuntimeError::new_err(
+                "this model has no retained document embeddings, so documents cannot be \
+                 searched; refit to enable the document searches",
+            ));
+        }
+        let ids = self.resolve_keywords(&keywords)?;
+        let q = m
+            .keyword_centroid(&ids)
+            .expect("resolve_keywords guarantees a non-empty id list");
+        Ok(m.search_documents_by_vector(num_docs, &q))
     }
 
     /// Soft topic membership for new documents from their embeddings (cosine to
