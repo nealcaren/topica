@@ -101,11 +101,13 @@ topica reproduces the reference `bertopic` package on its default c-TF-IDF path,
 but a few knobs diverge on purpose (issue #488), so name them when you report a
 BERTopic run:
 
-- **Defaults are not parity settings.** topica defaults to `reducer="pca"` and
-  `min_cluster_size=15` for a deterministic, dependency-free pipeline. The package
-  itself defaults to UMAP (`n_components=5`, `n_neighbors=15`, `min_dist=0`, cosine)
-  + HDBSCAN with `min_topic_size=10`. Pass `reducer="umap"` and matching sizes to
-  get close to the package's behavior.
+- **Reducer default matches the package.** topica defaults to `reducer="umap"`
+  (`n_components=5`, `n_neighbors=15`, `min_dist=0`, cosine), as the package does;
+  topica's UMAP is the in-house, seed-reproducible reducer, so the layout is
+  deterministic for a fixed `seed`. Pass `reducer="pca"` for a linear, lighter
+  projection (L2-normalized onto the unit sphere before clustering so a Euclidean
+  clusterer sees the cosine geometry). topica still keeps `min_cluster_size=15`
+  where the package uses `min_topic_size=10`, so name that when you report a run.
 - **`nr_topics` reduction.** topica greedily folds the most c-TF-IDF-similar pair
   of topics; the package fits one ward `AgglomerativeClustering` over the topic
   *embeddings*. Different distance space and merge tree, so the two can pick
@@ -519,9 +521,11 @@ For statistically-selected phrases instead of every bigram, use
   use `num_clusters` instead, and `clusterer="louvain"`/`"leiden"` discover the
   count on their own (see above).
 - `n_components` is the dimensionality the embeddings are reduced to before
-  clustering. The default reducer is a randomized PCA: fast, deterministic, and
-  dependency-free, but it separates less sharply than UMAP and on closely spaced
-  themes can merge clusters a UMAP run would split. The reduced coordinates are
+  clustering. `Top2Vec` defaults to a randomized PCA (`BERTopic` defaults to UMAP,
+  matching the upstream package — pass `reducer="pca"` for the linear path). PCA is
+  fast, deterministic, and dependency-free, but it separates less sharply than UMAP
+  and on closely spaced themes can merge clusters a UMAP run would split. The
+  reduced coordinates are
   L2-normalized onto the unit sphere before clustering, so the Euclidean clusterer
   measures cosine distance — the geometry sentence embeddings are trained for.
   Without this the few highest-variance PCA directions dominate the metric and the

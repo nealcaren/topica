@@ -307,9 +307,11 @@ def _overlapping_blobs(k=8, per=40, dim=15, spread=1.6, seed=0):
 def test_resolution_steers_topic_count(clusterer):
     # #358: higher resolution -> more, smaller topics for the graph clusterers.
     docs, emb = _overlapping_blobs()
-    lo = topica.BERTopic(clusterer=clusterer, resolution=0.5, min_cluster_size=5, seed=1)
+    # Pin the linear reducer: this checks the resolution knob's effect on the graph
+    # clusterer, which is independent of the reducer (BERTopic now defaults to umap).
+    lo = topica.BERTopic(clusterer=clusterer, resolution=0.5, min_cluster_size=5, reducer="pca", seed=1)
     lo.fit(docs, emb)
-    hi = topica.BERTopic(clusterer=clusterer, resolution=3.0, min_cluster_size=5, seed=1)
+    hi = topica.BERTopic(clusterer=clusterer, resolution=3.0, min_cluster_size=5, reducer="pca", seed=1)
     hi.fit(docs, emb)
     assert hi.num_topics > lo.num_topics
 

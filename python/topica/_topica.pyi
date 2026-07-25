@@ -3314,9 +3314,11 @@ class BERTopic:
     ward agglomeration over topic embeddings, and it counts real topics only, not
     the -1 noise topic); `doc_topic` is the approximate distribution. You bring the
     document embeddings; the topic count is discovered (before any reduction).
-    topica defaults to ``reducer="pca"`` / ``min_cluster_size=15`` for
-    determinism; the upstream package defaults to UMAP + HDBSCAN
-    (``min_topic_size=10``), so the defaults are not a parity setting (issue #488).
+    topica defaults to ``reducer="umap"`` to match the upstream package (its
+    UMAP is the in-house, seed-reproducible reducer); pass ``reducer="pca"`` for a
+    linear, lighter projection (L2-normalized onto the unit sphere before
+    clustering). topica keeps ``min_cluster_size=15`` where upstream uses
+    ``min_topic_size=10`` (issue #488).
     No embedder of your own? ``topica.llm_embed(texts, model=...)`` builds it."""
     @property
     def settings(self) -> dict:
@@ -3339,7 +3341,7 @@ class BERTopic:
         nr_topics: int | None = None,
         window: int = 4,
         stride: int = 1,
-        reducer: str = "pca",
+        reducer: str = "umap",
         n_neighbors: int = 15,
         bm25: bool = False,
         reduce_frequent: bool = False,
