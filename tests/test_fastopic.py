@@ -104,3 +104,7 @@ def test_errors():
         _ = m.topic_word  # not fitted
     with pytest.raises(ValueError):
         m.fit(docs, doc_emb[:10])  # row/doc mismatch
+    # #517 guard-parity: the fit-time convergence_tol override is guarded too.
+    for bad in (float("nan"), float("inf"), -1.0):
+        with pytest.raises(ValueError):
+            m.fit(docs, doc_emb, convergence_tol=bad)

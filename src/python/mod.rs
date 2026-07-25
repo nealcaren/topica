@@ -13261,8 +13261,10 @@ impl FASTopic {
         ensure_finite_pos("tw_alpha", tw_alpha)?;
         ensure_finite_pos("lr", lr)?;
         // Guard-parity with the other *_tol params (#517): these feed only
-        // comparison-based early-stops (a NaN/+inf merely disables early stopping),
-        // so this is a consistency guard, not a #481 NaN-topic hazard.
+        // comparison-based early-stops (NaN disables early stopping; +inf would
+        // instead trip it after one step), so this is a consistency guard, not a
+        // #481 NaN-topic hazard. The fit-time `convergence_tol` override is guarded
+        // the same way below.
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         ensure_finite_nonneg("sinkhorn_tol", sinkhorn_tol)?;
         Ok(FASTopic {
@@ -13297,6 +13299,11 @@ impl FASTopic {
         iters: Option<usize>,
         convergence_tol: Option<f64>,
     ) -> PyResult<Py<Self>> {
+        if let Some(t) = convergence_tol {
+            // Guard-parity (#517): the fit-time override must satisfy the same
+            // finite/non-negative contract as the constructor value.
+            ensure_finite_nonneg("convergence_tol", t)?;
+        }
         let tol = convergence_tol.unwrap_or(slf.em_tol);
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
