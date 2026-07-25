@@ -173,18 +173,25 @@ def _link_inv(eta, link):
     return eta
 
 
-def _sandwich(X, bread, score_resid, groups, n, p, weights=None):
+def _sandwich(X, bread, score_resid, groups, n, p, weights=None, *, hc1=True):
     """Robust covariance ``bread · meat · bread``. With `groups` (a list of index
-    arrays) the cluster-robust CR1 estimator; otherwise heteroskedasticity-robust
-    HC1. `score_resid` is the estimating-equation residual (y−μ). With `weights`
+    arrays) the cluster-robust CR1 estimator; otherwise heteroskedasticity-robust.
+    `score_resid` is the estimating-equation residual (y−μ). With `weights`
     (survey weights), the score rows become ``w_i · X_i · resid_i`` and `bread` is
     the weighted ``(X'WX)^-1`` the caller supplies — matching faSTM's weighted
-    cluster-robust meat."""
+    cluster-robust meat.
+
+    `hc1` applies the ``n/(n-p)`` finite-sample factor to the heteroskedasticity-
+    robust (non-cluster) meat: use it for the linear model (matches statsmodels
+    HC1), and turn it off for a GLM, whose robust SE convention is HC0 — statsmodels
+    treats HC0/HC1 identically for a GLM, and the Papke–Wooldridge fractional-logit
+    robust SE is HC0 (no df factor). The cluster CR1 factor is unaffected."""
     sr = score_resid if weights is None else weights * score_resid
     if groups is None:
         meat = X.T @ (X * (sr ** 2)[:, None])
         cov = bread @ meat @ bread
-        cov *= n / max(n - p, 1)                       # HC1 small-sample factor
+        if hc1:
+            cov *= n / max(n - p, 1)                   # HC1 small-sample factor
     else:
         g_count = len(groups)
         meat = np.zeros((p, p))
@@ -244,7 +251,9 @@ def _fit_one(y, X, *, link, groups, hat, XtX_inv, dof, weights=None):
         beta, W = _glm_irls(y, X, link, sw=weights)
         bread = np.linalg.pinv(X.T @ (X * W[:, None]))
         mu = _link_inv(X @ beta, link)
-        cov = _sandwich(X, bread, y - mu, groups, n, p, weights=weights)  # ψ_i = w_i X_i(y_i−μ_i)
+        # GLM robust SE is HC0 (no n/(n-p) factor): matches statsmodels' GLM
+        # sandwich and the Papke–Wooldridge fractional-logit convention (#533).
+        cov = _sandwich(X, bread, y - mu, groups, n, p, weights=weights, hc1=False)  # ψ_i = w_i X_i(y_i−μ_i)
     tss = float(((y - y.mean()) ** 2).sum())
     r2 = 1.0 - float(((y - mu) ** 2).sum()) / tss if tss > 0 else 0.0
     return beta, cov, r2
@@ -533,7 +542,10 @@ def estimate_effect(
       binomial quasi-likelihood), or ``"log"`` (quasi-Poisson). Because topic
       proportions live in ``[0, 1]``, the logit link keeps fitted values in
       bounds where OLS can wander outside them (Papke & Wooldridge). Non-identity
-      links report heteroskedasticity- or cluster-robust standard errors.
+      links report heteroskedasticity- or cluster-robust standard errors; the
+      heteroskedasticity-robust GLM SE is HC0 (no ``n/(n-p)`` factor), matching
+      statsmodels' GLM sandwich and the Papke–Wooldridge convention, while the
+      identity link uses HC1 and the cluster path uses CR1.
     - ``weights`` — a length-``num_docs`` array of (survey) weights, or a column
       name in ``data``. Switches to weighted least squares: documents enter the
       regression in proportion to their weight, so a weighted sample (e.g. a

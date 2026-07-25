@@ -289,3 +289,53 @@ def test_bootstrap_via_refit_hook():
     res = topica.standard_errors(m, corpus, of="prevalence", method="bootstrap",
                                  n_boot=20, topn=5, refit=refit, seed=0)
     assert len(res) == 2 and all(r.reliable for r in res)
+
+
+def test_sandwich_hc1_flag_toggles_df_factor():
+    # #533: the heteroskedasticity-robust meat carries the n/(n-p) HC1 factor only
+    # when hc1=True (linear model); with hc1=False it is HC0 (GLM / Papke-Wooldridge
+    # convention). The cluster path is unaffected by this flag.
+    from topica.stm import _sandwich
+
+    rng = np.random.default_rng(0)
+    n, p = 40, 3
+    X = np.column_stack([np.ones(n), rng.normal(size=(n, p - 1))])
+    bread = np.linalg.inv(X.T @ X)
+    resid = rng.normal(size=n)
+
+    hc0 = _sandwich(X, bread, resid, None, n, p, hc1=False)
+    hc1 = _sandwich(X, bread, resid, None, n, p, hc1=True)
+
+    # HC0 is exactly bread @ meat @ bread with no small-sample factor.
+    meat = X.T @ (X * (resid ** 2)[:, None])
+    np.testing.assert_allclose(hc0, bread @ meat @ bread, rtol=1e-12)
+    # HC1 = HC0 * n/(n-p).
+    np.testing.assert_allclose(hc1, hc0 * (n / (n - p)), rtol=1e-12)
+    assert not np.allclose(hc0, hc1)  # the factor is non-trivial here
+
+
+def test_fit_one_glm_reports_hc0_not_hc1():
+    # #533 wiring: _fit_one's GLM (non-identity) branch must report the HC0 robust
+    # covariance, not the HC1-inflated one the identity path uses. Reconstruct the
+    # HC0 sandwich from the same IRLS fit and require an exact match.
+    from topica.stm import _fit_one, _glm_irls, _sandwich, _link_inv
+
+    rng = np.random.default_rng(1)
+    n, p = 60, 3
+    X = np.column_stack([np.ones(n), rng.normal(size=(n, p - 1))])
+    y = rng.uniform(0.05, 0.95, size=n)  # fractional response for a logit link
+    XtX_inv = np.linalg.inv(X.T @ X)
+    hat = XtX_inv @ X.T
+
+    _, cov, _ = _fit_one(
+        y, X, link="logit", groups=None, hat=hat, XtX_inv=XtX_inv, dof=max(n - p, 1)
+    )
+
+    beta, W = _glm_irls(y, X, "logit")
+    bread = np.linalg.pinv(X.T @ (X * W[:, None]))
+    mu = _link_inv(X @ beta, "logit")
+    hc0 = _sandwich(X, bread, y - mu, None, n, p, hc1=False)
+
+    np.testing.assert_allclose(cov, hc0, rtol=1e-10)
+    # Guard the regression direction: it must NOT be the old HC1-inflated value.
+    assert not np.allclose(cov, hc0 * (n / (n - p)))
