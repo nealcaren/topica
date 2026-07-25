@@ -143,6 +143,10 @@ def test_construction_validation():
         topica.InfoCTM(num_topics=3, mi_temperature=0.0)
     with pytest.raises(ValueError):
         topica.InfoCTM(num_topics=3, dropout=1.0)
+    # #517 guard-parity: convergence_tol must be finite and >= 0.
+    for bad in (float("nan"), float("inf"), -1.0):
+        with pytest.raises(ValueError):
+            topica.InfoCTM(num_topics=3, convergence_tol=bad)
 
 
 def test_unknown_lang_raises():

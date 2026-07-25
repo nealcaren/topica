@@ -13260,6 +13260,11 @@ impl FASTopic {
         ensure_finite_pos("dt_alpha", dt_alpha)?;
         ensure_finite_pos("tw_alpha", tw_alpha)?;
         ensure_finite_pos("lr", lr)?;
+        // Guard-parity with the other *_tol params (#517): these feed only
+        // comparison-based early-stops (a NaN/+inf merely disables early stopping),
+        // so this is a consistency guard, not a #481 NaN-topic hazard.
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
+        ensure_finite_nonneg("sinkhorn_tol", sinkhorn_tol)?;
         Ok(FASTopic {
             num_topics,
             lr,

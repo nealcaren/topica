@@ -1587,6 +1587,10 @@ impl InfoCTM {
         // pos_threshold silently mis-densifies the alignment mask.
         ensure_finite_pos("mi_weight", mi_weight)?;
         ensure_finite_pos("lr", lr)?;
+        // Guard-parity with the other *_tol params (#517): convergence_tol feeds only
+        // a comparison-based early-stop (a NaN/+inf merely disables it), so this is a
+        // consistency guard, not a #481 NaN-topic hazard.
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         if hidden_size < 1 {
             return Err(PyValueError::new_err("hidden_size must be >= 1"));
         }

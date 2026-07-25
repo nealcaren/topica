@@ -93,6 +93,12 @@ def test_errors():
         topica.FASTopic(num_topics=1)
     with pytest.raises(ValueError):
         topica.FASTopic(num_topics=3, theta_temp=0.0)
+    # #517 guard-parity: the *_tol params must be finite and >= 0.
+    for bad in (float("nan"), float("inf"), -1.0):
+        with pytest.raises(ValueError):
+            topica.FASTopic(num_topics=3, convergence_tol=bad)
+        with pytest.raises(ValueError):
+            topica.FASTopic(num_topics=3, sinkhorn_tol=bad)
     m = topica.FASTopic(num_topics=3, seed=1)
     with pytest.raises(Exception):
         _ = m.topic_word  # not fitted
