@@ -4656,9 +4656,11 @@ class IdealPointTM:
 
     IdealPointTM consumes word tokens in one of two representations, selected at fit
     time by whether you pass `word_embeddings`: omit them and the topic-word matrix
-    is parameterized directly over the vocabulary (counts; "Wordfish with topics");
-    pass them and it is factored through word embeddings, as in ETM. Both are the
-    same model. Gated behind topica.enable_experimental()."""
+    is parameterized directly over the vocabulary (counts; an author-displaced
+    multinomial whose within-topic word choice coincides with Wordfish's through the
+    Poisson-multinomial equivalence); pass them and it is factored through word
+    embeddings, as in ETM. Both are the same model. Gated behind
+    topica.enable_experimental()."""
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,
@@ -4685,7 +4687,10 @@ class IdealPointTM:
         min_count: int = 1,
         seed: int = 42,
     ) -> None:
-        """num_dims is the dimensionality d of the latent ideal point.
+        """num_dims is the dimensionality d of the latent ideal point. For
+        num_dims > 1 the positions are identified only up to an orthogonal rotation
+        (and a per-dimension sign), so read them through the loadings, not
+        coordinate-by-coordinate; see author_positions.
         prior_variance is the Gaussian prior on the topic profiles (weak, as ETM);
         w_prior_variance regularizes the position loadings (smaller = more shrinkage
         toward neutral topics); x_prior_variance is the prior on the positions (1.0
@@ -4733,7 +4738,16 @@ class IdealPointTM:
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
     def author_positions(self) -> numpy.typing.NDArray[numpy.float64]:
-        """The latent ideal points (num_authors, num_dims)."""
+        """The latent ideal points (num_authors, num_dims), standardized to mean 0 /
+        unit variance per dimension.
+
+        Identifiability: the scale is fixed but the axis is identified only up to
+        sign per dimension, and for num_dims > 1 up to an arbitrary rotation of the
+        axes (the likelihood is invariant under x -> x @ R, W -> R^-1 @ W). Pass
+        `anchors` to fit() to fix the sign of dimension 0; without them the
+        orientation is deterministic for a given seed but otherwise arbitrary (it can
+        flip across seeds/corpora), and multi-dimensional positions are best read
+        through the loadings, not coordinate-by-coordinate."""
         ...
     @property
     def position_se(self) -> numpy.typing.NDArray[numpy.float64]:

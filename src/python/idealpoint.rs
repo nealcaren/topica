@@ -354,7 +354,10 @@ impl IdealPointTM {
     }
 
     /// Create an unfitted model. `num_topics` is K (>= 2); `num_dims` is the
-    /// dimensionality d of the latent ideal point (default 1). `prior_variance` is
+    /// dimensionality d of the latent ideal point (default 1). For `num_dims > 1`
+    /// the positions are identified only up to an orthogonal rotation (and a per-
+    /// dimension sign), so read them through the loadings, not coordinate-by-
+    /// coordinate; see `author_positions`. `prior_variance` is
     /// the Gaussian prior on the topic profiles (weak by default, as ETM);
     /// `w_prior_variance` regularizes the position loadings W (smaller = more
     /// shrinkage toward neutral topics); `x_prior_variance` is the prior on the

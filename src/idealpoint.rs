@@ -16,9 +16,14 @@
 //! topic at the neutral position `x = 0`; `||W_k||` is the topic's discrimination
 //! (how sharply it separates positions). The position is latent and estimated, not
 //! observed, so this is the unsupervised, latent-trait twin of the STM content
-//! covariate, and the embedding-native generalization of Wordfish (Slapin & Proksch
-//! 2008): with `K=1, d=1` the log word-rate is `base_v + x_a (rho_v . w)`, i.e.
-//! Wordfish with discrimination `rho_v . w` shared across semantically similar words.
+//! covariate, and an embedding-native relative of Wordfish (Slapin & Proksch 2008).
+//! Conceptually, with `K=1, d=1` each document is entirely the single topic and the
+//! word model is an author-displaced multinomial `softmax_v(base_v + x_a (rho_v . w))`
+//! whose within-row word choice coincides with Wordfish's through the Poisson-
+//! multinomial equivalence (dropping Wordfish's per-author verbosity fixed effect),
+//! with discrimination `rho_v . w` shared across semantically similar words. The
+//! reduction is conceptual only: `num_topics >= 2` is required, so `K=1` is never
+//! instantiated.
 //!
 //! Inference is variational EM on ETM's core. Position affects *content* (within-
 //! topic word choice); document topic proportions theta keep ETM's logistic-normal
@@ -721,18 +726,31 @@ fn standardize_positions(x: &mut [Vec<f64>], alpha: &mut [Vec<f64>], w: &mut [Ve
 /// is one-dimensional and there are many authors, `logZ` and `Ebeta` are smooth
 /// functions of the scalar position, so they are evaluated exactly on a grid of
 /// `G` positions and linearly interpolated to each author. This replaces the
-/// `A.V.E` per-topic cost with `G.V.E` (`G << A`). Linear interpolation commutes
-/// with differentiation in `alpha`/`W`, so the interpolated value and gradient stay
-/// consistent for L-BFGS. For `d > 1` (or few authors) it falls back to exact.
+/// `A.V.E` per-topic cost with `G.V.E` (`G << A`). For `d > 1` (or few authors) it
+/// falls back to the exact per-author evaluation.
+///
+/// The third return value is the *position-weighted* interpolated `Ebeta` the `W`
+/// gradient needs on the grid path, and is `Some` only there. Writing the
+/// interpolated value as `logZ_a = (1-f) gl_i + f gl_{i+1}` (with `f` constant in
+/// `alpha`/`W` for fixed positions), the exact derivative in `alpha` is the plain
+/// interpolated `Ebeta` — its grid-point derivative carries no position factor, so
+/// interpolation commutes with differentiation. The derivative in `W`, however,
+/// carries each grid point's OWN position:
+/// `dlogZ_a/dW_{0,ee} = (1-f) p_i ge_i[ee] + f p_{i+1} ge_{i+1}[ee]`, which is this
+/// quantity. Using `x_a * Ebeta_interp` instead would disagree with the interpolated
+/// value at `O(step^2)`; returning the position-weighted form makes the grid-path
+/// `W` gradient the exact derivative of the interpolated objective the line search
+/// minimizes.
 const POSGRID: usize = 64;
 
+#[allow(clippy::type_complexity)]
 fn topic_author_logz_ebeta(
     base_k: &[f64],
     disc_k: &[Vec<f64>],
     x: &[Vec<f64>],
     rho: &[Vec<f64>],
     e: usize,
-) -> (Vec<f64>, Vec<Vec<f64>>) {
+) -> (Vec<f64>, Vec<Vec<f64>>, Option<Vec<Vec<f64>>>) {
     let a_n = x.len();
     let dd = disc_k.len();
     if dd == 1 && a_n > POSGRID {
@@ -741,7 +759,10 @@ fn topic_author_logz_ebeta(
         let hi = xs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         if hi - lo < 1e-9 {
             let (lz, eb) = topic_logz_ebeta(base_k, disc_k, &[lo], rho, e);
-            return (vec![lz; a_n], vec![eb; a_n]);
+            // All authors sit at the same position `lo`, so the position-weighted
+            // Ebeta is exactly `lo * eb` (no interpolation).
+            let pe: Vec<f64> = eb.iter().map(|v| lo * v).collect();
+            return (vec![lz; a_n], vec![eb; a_n], Some(vec![pe; a_n]));
         }
         let g = POSGRID;
         let step = (hi - lo) / (g as f64 - 1.0);
@@ -754,6 +775,7 @@ fn topic_author_logz_ebeta(
         }
         let mut logz = vec![0.0f64; a_n];
         let mut ebeta = vec![vec![0.0f64; e]; a_n];
+        let mut pebeta = vec![vec![0.0f64; e]; a_n];
         for a in 0..a_n {
             let t = (xs[a] - lo) / step;
             let mut gi = t.floor() as usize;
@@ -761,12 +783,17 @@ fn topic_author_logz_ebeta(
                 gi = g - 2;
             }
             let frac = t - gi as f64;
+            let p_i = lo + step * gi as f64;
+            let p_i1 = lo + step * (gi + 1) as f64;
             logz[a] = gl[gi] * (1.0 - frac) + gl[gi + 1] * frac;
             for ee in 0..e {
                 ebeta[a][ee] = ge[gi][ee] * (1.0 - frac) + ge[gi + 1][ee] * frac;
+                // Position-weighted: each grid point keeps its own position, so this
+                // is the exact derivative of the interpolated logZ in W.
+                pebeta[a][ee] = p_i * ge[gi][ee] * (1.0 - frac) + p_i1 * ge[gi + 1][ee] * frac;
             }
         }
-        (logz, ebeta)
+        (logz, ebeta, Some(pebeta))
     } else {
         let mut logz = vec![0.0f64; a_n];
         let mut ebeta = vec![vec![0.0f64; e]; a_n];
@@ -775,17 +802,124 @@ fn topic_author_logz_ebeta(
             logz[a] = lz;
             ebeta[a] = eb;
         }
-        (logz, ebeta)
+        (logz, ebeta, None)
     }
+}
+
+/// Maximization objective (value, gradient) of the joint alpha/W update, with the
+/// parameters laid out flat as `[alpha (K x E), W (K x d x E)]`. Factored out of
+/// `update_alpha_w` so the analytic gradient can be finite-difference checked
+/// directly (issue #498); `update_alpha_w` negates it for the minimizer. The `alpha`
+/// gradient is `sum_a (S_{a,k} - n_{a,k} Ebeta_{a,k})`; the `W` gradient is
+/// `sum_a (x_{a,j} S_{a,k} - n_{a,k} <position-weighted Ebeta>_{a,k})`, which on the
+/// exact path is `sum_a x_{a,j} (S_{a,k} - n_{a,k} Ebeta_{a,k})` and on the grid path
+/// carries each grid point's own position (see `topic_author_logz_ebeta`). Parallel
+/// over topics, so the per-author reductions stay in a fixed order and the result is
+/// thread-count independent.
+#[allow(clippy::too_many_arguments)]
+fn alpha_w_value_grad(
+    flat: &[f64],
+    rho: &[Vec<f64>],
+    x: &[Vec<f64>],
+    s_stat: &[Vec<Vec<f64>>],
+    ntot: &[Vec<f64>],
+    k: usize,
+    e: usize,
+    dd: usize,
+    inv_va: f64,
+    inv_vw: f64,
+) -> (f64, Vec<f64>) {
+    let a_n = x.len();
+    let alpha_len = k * e;
+    // Cache base/disc for these alpha/W.
+    let alpha_v: Vec<Vec<f64>> = (0..k)
+        .map(|kk| flat[kk * e..(kk + 1) * e].to_vec())
+        .collect();
+    let w_v: Vec<Vec<Vec<f64>>> = (0..k)
+        .map(|kk| {
+            (0..dd)
+                .map(|j| {
+                    let off = alpha_len + (kk * dd + j) * e;
+                    flat[off..off + e].to_vec()
+                })
+                .collect()
+        })
+        .collect();
+    let (base, disc) = build_cache(rho, &alpha_v, &w_v);
+
+    // Per-topic contribution: value, dalpha_k (E), and dW_{k,j} (d x E). Each
+    // topic is independent, so this parallelizes cleanly and the per-author
+    // reduction within a topic stays in a fixed order.
+    let per_topic: Vec<(f64, Vec<f64>, Vec<Vec<f64>>)> = (0..k)
+        .into_par_iter()
+        .map(|kk| {
+            let (logz, ebeta, pebeta) = topic_author_logz_ebeta(&base[kk], &disc[kk], x, rho, e);
+            let mut val = 0.0;
+            let mut g_alpha = vec![0.0f64; e];
+            let mut g_w = vec![vec![0.0f64; e]; dd];
+            for a in 0..a_n {
+                let n = ntot[a][kk];
+                let s_ak = &s_stat[a][kk];
+                let mut s_dot = 0.0;
+                for ee in 0..e {
+                    let mut disp = alpha_v[kk][ee];
+                    for j in 0..dd {
+                        disp += x[a][j] * w_v[kk][j][ee];
+                    }
+                    s_dot += s_ak[ee] * disp;
+                }
+                val += s_dot - n * logz[a];
+                for ee in 0..e {
+                    // alpha gradient: exact on both paths (interpolation commutes).
+                    g_alpha[ee] += s_ak[ee] - n * ebeta[a][ee];
+                    // W gradient: the `-n Ebeta` term must carry each grid point's
+                    // own position. On the grid path (dd == 1) that is `pebeta`;
+                    // on the exact path it is `x_a * Ebeta` for every dimension.
+                    for j in 0..dd {
+                        let nebeta = match &pebeta {
+                            Some(pe) => n * pe[a][ee],
+                            None => n * x[a][j] * ebeta[a][ee],
+                        };
+                        g_w[j][ee] += x[a][j] * s_ak[ee] - nebeta;
+                    }
+                }
+            }
+            (val, g_alpha, g_w)
+        })
+        .collect();
+
+    let mut value = 0.0;
+    let mut grad = vec![0.0f64; flat.len()];
+    for (kk, (val, g_alpha, g_w)) in per_topic.iter().enumerate() {
+        value += val;
+        grad[kk * e..(kk + 1) * e].copy_from_slice(g_alpha);
+        for j in 0..dd {
+            let off = alpha_len + (kk * dd + j) * e;
+            grad[off..off + e].copy_from_slice(&g_w[j]);
+        }
+    }
+    // Gaussian priors on alpha and W.
+    for kk in 0..k {
+        for ee in 0..e {
+            let ai = kk * e + ee;
+            value -= 0.5 * inv_va * flat[ai] * flat[ai];
+            grad[ai] -= inv_va * flat[ai];
+        }
+        for j in 0..dd {
+            let off = alpha_len + (kk * dd + j) * e;
+            for ee in 0..e {
+                value -= 0.5 * inv_vw * flat[off + ee] * flat[off + ee];
+                grad[off + ee] -= inv_vw * flat[off + ee];
+            }
+        }
+    }
+    (value, grad)
 }
 
 /// Joint L-BFGS update of topic embeddings `alpha` (K x E) and loadings `W`
 /// (K x d x E) holding positions fixed. The objective per author and topic is
 /// `S_{a,k} . (alpha_k + sum_j x_{a,j} W_{k,j}) - n_{a,k} logZ_{a,k}` with Gaussian
-/// priors; the gradient uses `r_{a,k} = S_{a,k} - n_{a,k} Ebeta_{a,k}`:
-/// `dalpha_k = sum_a r_{a,k}`, `dW_{k,j} = sum_a x_{a,j} r_{a,k}`. Parallelized over
-/// topics (each topic's alpha/W gradients are independent), so the per-author
-/// reductions stay in a fixed order and the result is thread-count independent.
+/// priors; see `alpha_w_value_grad` for the value and gradient it minimizes.
 #[allow(clippy::too_many_arguments)]
 fn update_alpha_w(
     rho: &[Vec<f64>],
@@ -804,7 +938,6 @@ fn update_alpha_w(
     }
     let e = alpha[0].len();
     let dd = if w.is_empty() { 0 } else { w[0].len() };
-    let a_n = x.len();
     let inv_va = 1.0 / prior_variance;
     let inv_vw = 1.0 / w_prior_variance;
     let alpha_len = k * e;
@@ -821,81 +954,8 @@ fn update_alpha_w(
     }
 
     let obj = |flat: &[f64]| -> (f64, Vec<f64>) {
-        // Cache base/disc for these alpha/W.
-        let alpha_v: Vec<Vec<f64>> = (0..k)
-            .map(|kk| flat[kk * e..(kk + 1) * e].to_vec())
-            .collect();
-        let w_v: Vec<Vec<Vec<f64>>> = (0..k)
-            .map(|kk| {
-                (0..dd)
-                    .map(|j| {
-                        let off = alpha_len + (kk * dd + j) * e;
-                        flat[off..off + e].to_vec()
-                    })
-                    .collect()
-            })
-            .collect();
-        let (base, disc) = build_cache(rho, &alpha_v, &w_v);
-
-        // Per-topic contribution: value, dalpha_k (E), and dW_{k,j} (d x E). Each
-        // topic is independent, so this parallelizes cleanly and the per-author
-        // reduction within a topic stays in a fixed order.
-        let per_topic: Vec<(f64, Vec<f64>, Vec<Vec<f64>>)> = (0..k)
-            .into_par_iter()
-            .map(|kk| {
-                let (logz, ebeta) = topic_author_logz_ebeta(&base[kk], &disc[kk], x, rho, e);
-                let mut val = 0.0;
-                let mut g_alpha = vec![0.0f64; e];
-                let mut g_w = vec![vec![0.0f64; e]; dd];
-                for a in 0..a_n {
-                    let n = ntot[a][kk];
-                    let s_ak = &s_stat[a][kk];
-                    let mut s_dot = 0.0;
-                    for ee in 0..e {
-                        let mut disp = alpha_v[kk][ee];
-                        for j in 0..dd {
-                            disp += x[a][j] * w_v[kk][j][ee];
-                        }
-                        s_dot += s_ak[ee] * disp;
-                    }
-                    val += s_dot - n * logz[a];
-                    for ee in 0..e {
-                        let r = s_ak[ee] - n * ebeta[a][ee];
-                        g_alpha[ee] += r;
-                        for j in 0..dd {
-                            g_w[j][ee] += x[a][j] * r;
-                        }
-                    }
-                }
-                (val, g_alpha, g_w)
-            })
-            .collect();
-
-        let mut value = 0.0;
-        let mut grad = vec![0.0f64; flat.len()];
-        for (kk, (val, g_alpha, g_w)) in per_topic.iter().enumerate() {
-            value += val;
-            grad[kk * e..(kk + 1) * e].copy_from_slice(g_alpha);
-            for j in 0..dd {
-                let off = alpha_len + (kk * dd + j) * e;
-                grad[off..off + e].copy_from_slice(&g_w[j]);
-            }
-        }
-        // Gaussian priors on alpha and W.
-        for kk in 0..k {
-            for ee in 0..e {
-                let ai = kk * e + ee;
-                value -= 0.5 * inv_va * flat[ai] * flat[ai];
-                grad[ai] -= inv_va * flat[ai];
-            }
-            for j in 0..dd {
-                let off = alpha_len + (kk * dd + j) * e;
-                for ee in 0..e {
-                    value -= 0.5 * inv_vw * flat[off + ee] * flat[off + ee];
-                    grad[off + ee] -= inv_vw * flat[off + ee];
-                }
-            }
-        }
+        let (value, grad) =
+            alpha_w_value_grad(flat, rho, x, s_stat, ntot, k, e, dd, inv_va, inv_vw);
         (-value, grad.iter().map(|g| -g).collect())
     };
 
@@ -909,8 +969,63 @@ fn update_alpha_w(
     }
 }
 
+/// Maximization objective (value, gradient) of one author's position update at
+/// `flat`, given the precomputed `s_dot_w[k][j] = S_{a,k}.W_{k,j}` (constant in x).
+/// Factored out of `update_position` so the analytic gradient can be finite-
+/// difference checked directly (issue #498); `update_position` negates it for the
+/// minimizer. `dQ/dx_j = sum_k [ S_{a,k}.W_{k,j} - n_{a,k} Ebeta_{a,k}.W_{k,j} ]
+/// - x_j/var`.
+fn position_value_grad(
+    flat: &[f64],
+    base: &[Vec<f64>],
+    disc: &[Vec<Vec<f64>>],
+    s_dot_w: &[Vec<f64>],
+    ntot_a: &[f64],
+    inv_v: f64,
+    dd: usize,
+) -> (f64, Vec<f64>) {
+    let k = base.len();
+    let mut value = 0.0;
+    let mut grad = vec![0.0f64; dd];
+    for kk in 0..k {
+        let n = ntot_a[kk];
+        let vsz = base[kk].len();
+        // eta_v = base_k[v] + sum_j x_j disc_{k,j,v}; softmax for logZ and beta.
+        let mut eta = vec![0.0f64; vsz];
+        let mut max = f64::NEG_INFINITY;
+        for v in 0..vsz {
+            let mut et = base[kk][v];
+            for (j, &xj) in flat.iter().enumerate() {
+                et += xj * disc[kk][j][v];
+            }
+            eta[v] = et;
+            if et > max {
+                max = et;
+            }
+        }
+        let mut z = 0.0;
+        for &ev in &eta {
+            z += (ev - max).exp();
+        }
+        let logz = max + z.ln();
+        let beta: Vec<f64> = eta.iter().map(|&ev| (ev - logz).exp()).collect();
+        for j in 0..dd {
+            // sum_v beta_v disc_{k,j,v} = Ebeta_{a,k} . W_{k,j} without forming Ebeta.
+            let eb_disc: f64 = (0..vsz).map(|v| beta[v] * disc[kk][j][v]).sum();
+            value += flat[j] * s_dot_w[kk][j];
+            grad[j] += s_dot_w[kk][j] - n * eb_disc;
+        }
+        value -= n * logz;
+    }
+    for j in 0..dd {
+        value -= 0.5 * inv_v * flat[j] * flat[j];
+        grad[j] -= inv_v * flat[j];
+    }
+    (value, grad)
+}
+
 /// L-BFGS update of one author's position `x_a` (length d) holding alpha/W fixed.
-/// `dQ/dx_j = sum_k [ S_{a,k}.W_{k,j} - n_{a,k} Ebeta_{a,k}.W_{k,j} ] - x_j/var`.
+/// See `position_value_grad` for the objective it minimizes.
 #[allow(clippy::too_many_arguments)]
 fn update_position(
     base: &[Vec<f64>],
@@ -936,42 +1051,7 @@ fn update_position(
         })
         .collect();
     let obj = |flat: &[f64]| -> (f64, Vec<f64>) {
-        let mut value = 0.0;
-        let mut grad = vec![0.0f64; dd];
-        for kk in 0..k {
-            let n = ntot_a[kk];
-            let vsz = base[kk].len();
-            // eta_v = base_k[v] + sum_j x_j disc_{k,j,v}; softmax for logZ and beta.
-            let mut eta = vec![0.0f64; vsz];
-            let mut max = f64::NEG_INFINITY;
-            for v in 0..vsz {
-                let mut et = base[kk][v];
-                for (j, &xj) in flat.iter().enumerate() {
-                    et += xj * disc[kk][j][v];
-                }
-                eta[v] = et;
-                if et > max {
-                    max = et;
-                }
-            }
-            let mut z = 0.0;
-            for &ev in &eta {
-                z += (ev - max).exp();
-            }
-            let logz = max + z.ln();
-            let beta: Vec<f64> = eta.iter().map(|&ev| (ev - logz).exp()).collect();
-            for j in 0..dd {
-                // sum_v beta_v disc_{k,j,v} = Ebeta_{a,k} . W_{k,j} without forming Ebeta.
-                let eb_disc: f64 = (0..vsz).map(|v| beta[v] * disc[kk][j][v]).sum();
-                value += flat[j] * s_dot_w[kk][j];
-                grad[j] += s_dot_w[kk][j] - n * eb_disc;
-            }
-            value -= n * logz;
-        }
-        for j in 0..dd {
-            value -= 0.5 * inv_v * flat[j] * flat[j];
-            grad[j] -= inv_v * flat[j];
-        }
+        let (value, grad) = position_value_grad(flat, base, disc, &s_dot_w, ntot_a, inv_v, dd);
         (-value, grad.iter().map(|g| -g).collect())
     };
     lbfgs_minimize(x_a.to_vec(), obj, 30, 7, 1e-5)
@@ -1289,5 +1369,124 @@ mod tests {
         );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
+    }
+
+    // ----- Finite-difference gradient checks on the ideal-point head (issue #498).
+    // These validate the hand-coded analytic gradients that L-BFGS relies on for the
+    // alpha/W M-step and the per-author position update, directly (not via the loose
+    // recovery correlation the other tests use).
+
+    fn rand_vec<R: Rng>(n: usize, rng: &mut R) -> Vec<f64> {
+        (0..n).map(|_| rng.gen::<f64>() - 0.5).collect()
+    }
+
+    // Random inputs for the alpha/W objective: embeddings `rho` (V x E), positions
+    // `x` (A x d), sufficient stats `s_stat` (A x K x E), token totals `ntot` (A x K).
+    #[allow(clippy::type_complexity)]
+    fn alpha_w_fixture<R: Rng>(
+        k: usize,
+        e: usize,
+        dd: usize,
+        a_n: usize,
+        vsz: usize,
+        rng: &mut R,
+    ) -> (
+        Vec<Vec<f64>>,
+        Vec<Vec<f64>>,
+        Vec<Vec<Vec<f64>>>,
+        Vec<Vec<f64>>,
+        Vec<f64>,
+    ) {
+        let rho: Vec<Vec<f64>> = (0..vsz).map(|_| rand_vec(e, rng)).collect();
+        let x: Vec<Vec<f64>> = (0..a_n).map(|_| rand_vec(dd, rng)).collect();
+        let s_stat: Vec<Vec<Vec<f64>>> = (0..a_n)
+            .map(|_| (0..k).map(|_| rand_vec(e, rng)).collect())
+            .collect();
+        let ntot: Vec<Vec<f64>> = (0..a_n)
+            .map(|_| (0..k).map(|_| 1.0 + 4.0 * rng.gen::<f64>()).collect())
+            .collect();
+        let flat = rand_vec(k * e + k * dd * e, rng);
+        (rho, x, s_stat, ntot, flat)
+    }
+
+    fn assert_fd_matches(
+        analytic: &[f64],
+        eval: impl Fn(&[f64]) -> f64,
+        flat: &[f64],
+        label: &str,
+    ) {
+        let h = 1e-6;
+        for i in 0..flat.len() {
+            let mut fp = flat.to_vec();
+            fp[i] += h;
+            let mut fm = flat.to_vec();
+            fm[i] -= h;
+            let num = (eval(&fp) - eval(&fm)) / (2.0 * h);
+            let denom = analytic[i].abs().max(num.abs()).max(1e-4);
+            let rel = (analytic[i] - num).abs() / denom;
+            assert!(
+                rel < 1e-4,
+                "{label}: grad[{i}] analytic={} fd={} rel={}",
+                analytic[i],
+                num,
+                rel
+            );
+        }
+    }
+
+    // Exact path: few authors (<= POSGRID) so the grid interpolation is NOT used.
+    #[test]
+    fn alpha_w_gradient_fd_exact_path() {
+        let mut rng = ChaCha8Rng::seed_from_u64(11);
+        for &dd in &[1usize, 2] {
+            let (k, e, a_n, vsz) = (3usize, 4usize, 8usize, 9usize);
+            assert!(a_n <= POSGRID, "must stay on the exact path");
+            let (rho, x, s_stat, ntot, flat) = alpha_w_fixture(k, e, dd, a_n, vsz, &mut rng);
+            let (inv_va, inv_vw) = (1.0 / 1e6, 1.0 / 10.0);
+            let (_, grad) =
+                alpha_w_value_grad(&flat, &rho, &x, &s_stat, &ntot, k, e, dd, inv_va, inv_vw);
+            let eval = |f: &[f64]| {
+                alpha_w_value_grad(f, &rho, &x, &s_stat, &ntot, k, e, dd, inv_va, inv_vw).0
+            };
+            assert_fd_matches(&grad, eval, &flat, &format!("alpha_w exact dd={dd}"));
+        }
+    }
+
+    // Grid path: dd == 1 with many authors (> POSGRID) triggers the interpolation.
+    // With the position-weighted W derivative the analytic gradient is the exact
+    // derivative of the interpolated objective, so the FD check passes here too.
+    #[test]
+    fn alpha_w_gradient_fd_grid_path() {
+        let mut rng = ChaCha8Rng::seed_from_u64(13);
+        let (k, e, dd, a_n, vsz) = (2usize, 3usize, 1usize, POSGRID + 24, 7usize);
+        assert!(a_n > POSGRID, "must trigger the grid path");
+        let (rho, x, s_stat, ntot, flat) = alpha_w_fixture(k, e, dd, a_n, vsz, &mut rng);
+        let (inv_va, inv_vw) = (1.0 / 1e6, 1.0 / 10.0);
+        let (_, grad) =
+            alpha_w_value_grad(&flat, &rho, &x, &s_stat, &ntot, k, e, dd, inv_va, inv_vw);
+        let eval =
+            |f: &[f64]| alpha_w_value_grad(f, &rho, &x, &s_stat, &ntot, k, e, dd, inv_va, inv_vw).0;
+        assert_fd_matches(&grad, eval, &flat, "alpha_w grid");
+    }
+
+    #[test]
+    fn position_gradient_fd() {
+        let mut rng = ChaCha8Rng::seed_from_u64(17);
+        for &dd in &[1usize, 2] {
+            let (k, vsz) = (3usize, 9usize);
+            // base (K x V), disc (K x d x V), s_dot_w (K x d), ntot_a (K), flat (d).
+            let base: Vec<Vec<f64>> = (0..k).map(|_| rand_vec(vsz, &mut rng)).collect();
+            let disc: Vec<Vec<Vec<f64>>> = (0..k)
+                .map(|_| (0..dd).map(|_| rand_vec(vsz, &mut rng)).collect())
+                .collect();
+            let s_dot_w: Vec<Vec<f64>> = (0..k).map(|_| rand_vec(dd, &mut rng)).collect();
+            let ntot_a: Vec<f64> = (0..k).map(|_| 1.0 + 4.0 * rng.gen::<f64>()).collect();
+            let flat = rand_vec(dd, &mut rng);
+            let inv_v = 1.0 / 1.0;
+            let (_, grad) = position_value_grad(&flat, &base, &disc, &s_dot_w, &ntot_a, inv_v, dd);
+            let eval =
+                |f: &[f64]| position_value_grad(f, &base, &disc, &s_dot_w, &ntot_a, inv_v, dd).0;
+            assert_fd_matches(&grad, eval, &flat, &format!("position dd={dd}"));
+        }
     }
 }
