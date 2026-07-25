@@ -3292,9 +3292,14 @@ class Top2Vec:
 class BERTopic:
     """BERTopic (Grootendorst 2022): the same reduce/cluster pipeline as Top2Vec,
     but topics are defined by class-based TF-IDF over their documents' words, so
-    no word embeddings are needed. `nr_topics` merges the most similar topics down
-    to a target; `doc_topic` is the approximate distribution. You bring the
+    no word embeddings are needed. `nr_topics` reduces the discovered real topics
+    down to a target (topica's greedy c-TF-IDF merge, not the upstream package's
+    ward agglomeration over topic embeddings, and it counts real topics only, not
+    the -1 noise topic); `doc_topic` is the approximate distribution. You bring the
     document embeddings; the topic count is discovered (before any reduction).
+    topica defaults to ``reducer="pca"`` / ``min_cluster_size=15`` for
+    determinism; the upstream package defaults to UMAP + HDBSCAN
+    (``min_topic_size=10``), so the defaults are not a parity setting (issue #488).
     No embedder of your own? ``topica.llm_embed(texts, model=...)`` builds it."""
     @property
     def settings(self) -> dict:
@@ -3321,6 +3326,7 @@ class BERTopic:
         n_neighbors: int = 15,
         bm25: bool = False,
         reduce_frequent: bool = False,
+        min_similarity: float = 0.0,
         clusterer: str = "hdbscan",
         num_clusters: int | None = None,
         resolution: float = 1.0,
@@ -3365,6 +3371,7 @@ class BERTopic:
         *,
         window: int | None = None,
         stride: int | None = None,
+        min_similarity: float | None = None,
     ) -> numpy.typing.NDArray[numpy.float64]: ...
     def transform(
         self,

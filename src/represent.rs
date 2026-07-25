@@ -149,11 +149,16 @@ pub fn assign_outliers(docs: &[Vec<u32>], labels: &[i64], topic_word: &[Vec<f64>
 /// ln(1 + (A - f_t + 0.5) / (f_t + 0.5))
 /// ```
 ///
-/// where `A` plays the corpus-size role and `f_t` the document-frequency role. We
-/// clamp the argument of the log at 1.0 so the factor never goes negative even
-/// when `f_t` exceeds `A` (the BERTopic docs render this formula as an SVG rather
-/// than text; we use the standard class-based BM25 idf, guarded against negative
-/// logs).
+/// where `A` plays the corpus-size role and `f_t` the document-frequency role.
+/// This matches upstream BERTopic's `ClassTfidfTransformer(bm25_weighting=True)`
+/// exactly, including the **unclamped** log: when `f_t > A + 1` the argument drops
+/// below 1 and the idf goes negative, which is how BERTopic ranks a term that is
+/// ubiquitous across classes *below* a term that is merely absent. We do not clamp
+/// it (issue #488; earlier versions floored the argument at 1.0, tying ubiquitous
+/// terms with absent ones instead of ranking them last). Negative c-TF-IDF is
+/// carried through the raw matrix; the caller that builds a normalized topic-word
+/// distribution from it floors negatives to zero for that probability surface
+/// only, leaving the ranking BERTopic intends.
 ///
 /// The two flags compose: `bm25 && reduce_frequent` applies both.
 ///
@@ -201,17 +206,16 @@ pub fn ctfidf_weighted(
     let avg_class_size = total_tokens / num_classes as f64;
 
     // The idf-like factor depends only on the term, so compute it once. BM25 uses
-    // the saturating form; the plain form is BERTopic's default. Either way a term
-    // with `f_t == 0` gets weight 0, and we never feed the log a value below 1.
+    // the class-based BM25 form; the plain form is BERTopic's default. A term with
+    // `f_t == 0` gets weight 0. The BM25 log is unclamped to match upstream, so it
+    // is negative for terms with `f_t > A + 1` (issue #488).
     let idf: Vec<f64> = f
         .iter()
         .map(|&ft| {
             if ft == 0.0 {
                 0.0
             } else if bm25 {
-                (1.0 + (avg_class_size - ft + 0.5) / (ft + 0.5))
-                    .max(1.0)
-                    .ln()
+                (1.0 + (avg_class_size - ft + 0.5) / (ft + 0.5)).ln()
             } else {
                 (1.0 + avg_class_size / ft).ln()
             }
@@ -436,6 +440,26 @@ mod tests {
         // in the same class.
         assert!(m[0][1] > m[0][0]);
         assert!(m[1][2] > m[1][0]);
+    }
+
+    #[test]
+    fn ctfidf_bm25_goes_negative_when_df_exceeds_avg_class_size() {
+        // Word 0 is ubiquitous (10x in each of 2 classes); words 1/2 are rare.
+        // f_0 = 20, A = 22/2 = 11, so f_0 > A + 1 and upstream BM25 idf is
+        // negative. topica now matches upstream (issue #488): no clamp to 0.
+        let docs = vec![
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2],
+        ];
+        let labels = vec![0, 1];
+        let bm = ctfidf_weighted(&docs, &labels, 3, true, false);
+        // The ubiquitous term carries a negative c-TF-IDF in its class...
+        assert!(bm[0][0] < 0.0, "bm25 w0 in class 0 = {}", bm[0][0]);
+        // ...ranked below the distinctive term, exactly as upstream intends.
+        assert!(bm[0][1] > bm[0][0]);
+        // The plain (default) path keeps the same term non-negative.
+        let plain = ctfidf_weighted(&docs, &labels, 3, false, false);
+        assert!(plain[0][0] > 0.0);
     }
 
     #[test]
