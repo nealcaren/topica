@@ -863,11 +863,12 @@ fn damp_kappa_halfstep(new: &mut [Vec<f64>], prev: &[Vec<f64>]) {
 /// [`opt_kappa`]). Aggregation groups for the `κ` step are the distinct levels of
 /// `sentiment_seed`, which also seeds the initial `α^(s)`.
 ///
-/// `reference_init` and `kappa_damping` select the CRAN `sts` reference-fidelity
-/// behavior: `reference_init` starts the prevalence latents `α^(topic)` at the
-/// spectral solution and sets the sentiment-block prior variance to 20 (the
-/// reference `diag(1/20)` precision); `kappa_damping` applies the reference
-/// half-step κ update `(κ_new + κ_old)/2` on every M-step and at initialization.
+/// `reference_init` and `kappa_damping` select reference-fidelity behavior.
+/// `reference_init` reproduces `STS.R`'s `stm(..., max.em.its = 0)` seed: on that
+/// init STM returns `eta = 0` and `invsigma = diag(1/20)`, so the prevalence
+/// latents start at 0 and the prior covariance is `diag(20)` across all `2K-1`
+/// dims (`Sigma_Inv = diag(1/20)`). `kappa_damping` applies the CRAN half-step κ
+/// update `(κ_new + κ_old)/2` on every M-step and at initialization.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_sts<R: Rng>(
     docs: &[Vec<u32>],
@@ -1002,35 +1003,19 @@ pub fn fit_sts<R: Rng>(
         kappa_s = ks;
     }
 
-    // Reference-compatible latent/covariance init (item #5). The prevalence latents
-    // start at the spectral solution (`α^(topic)_d = log θ_d − log θ_{d,K}`, the
-    // softmax-basis analog of STM's `mod.out$eta`) instead of 0, and the
-    // sentiment-block prior variance is set to 20 (the reference `diag(1/20)`
-    // precision). This is the documented statistically-equivalent substitute for
-    // STM's spectral eta / invsigma initialization, not a byte-identical STM port.
+    // Reference-compatible latent/covariance init. The reference `STS.R` seeds STS
+    // from `stm(..., max.em.its = 0)`: on this init STM returns `eta = 0` and
+    // `invsigma = diag(1/20)` (verified against the poliblog corpus), so the
+    // prevalence latents start at 0 (already set above) and the prior covariance is
+    // `diag(20)` across all `2K-1` latent dims (`Sigma_Inv = diag(1/20)`). The
+    // sentiment latents are the centered seed (set above), matching
+    // `alpha.est[,1:K+K-1] <- X_seed - mean(X_seed)`. An earlier build approximated
+    // `eta` from a phi log-ratio and the covariance from the init-eta variance; the
+    // reference does neither, so we drop both to make this a faithful port.
     let mut sigma = vec![0.0f64; n * n];
+    let init_var = if reference_init { 20.0 } else { 1.0 };
     for i in 0..n {
-        sigma[i * n + i] = 1.0;
-    }
-    if reference_init {
-        for di in 0..d {
-            let sum: f64 = phi_d[di].iter().sum::<f64>().max(1e-12);
-            let ref_log = (phi_d[di][k - 1] / sum).max(1e-8).ln();
-            for t in 0..(k - 1) {
-                alpha[di][t] = (phi_d[di][t] / sum).max(1e-8).ln() - ref_log;
-            }
-        }
-        // Topic-block prior covariance ≈ sample variance of the init eta (the STM
-        // invsigma analog), floored for conditioning; sentiment block at variance 20.
-        for t in 0..(k - 1) {
-            let mean: f64 = alpha.iter().map(|a| a[t]).sum::<f64>() / d as f64;
-            let var: f64 =
-                alpha.iter().map(|a| (a[t] - mean).powi(2)).sum::<f64>() / (d.max(1) as f64);
-            sigma[t * n + t] = var.max(1e-2);
-        }
-        for i in (k - 1)..n {
-            sigma[i * n + i] = 20.0;
-        }
+        sigma[i * n + i] = init_var;
     }
 
     let mut gamma: Option<Vec<Vec<f64>>> = nf.map(|f| vec![vec![0.0f64; n]; f]);
