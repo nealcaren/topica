@@ -330,8 +330,9 @@ impl KeyAtmModel {
         // Covariate model: per-document, per-topic α from the regression
         // (plus the fixed embedding offset, when present).
         if let (Some(lambda), Some(features)) = (&self.lambda, &self.features) {
+            // keyATM keeps the bare exp() prior (no α floor) and a zero-mean λ prior.
             let doc_alpha =
-                crate::dmr::compute_doc_alpha(lambda, features, self.prior_offset.as_deref());
+                crate::dmr::compute_doc_alpha(lambda, features, self.prior_offset.as_deref(), 0.0);
             return self
                 .ndk
                 .iter()
@@ -387,7 +388,12 @@ impl KeyAtmModel {
                 .collect();
         }
         if let (Some(lambda), Some(features)) = (&self.lambda, &self.features) {
-            return crate::dmr::compute_doc_alpha(lambda, features, self.prior_offset.as_deref());
+            return crate::dmr::compute_doc_alpha(
+                lambda,
+                features,
+                self.prior_offset.as_deref(),
+                0.0,
+            );
         }
         let row = self
             .alpha_vec
@@ -1738,6 +1744,7 @@ fn covariate_lambda_se(
         t,
         f,
         prior_variance,
+        0.0,
         offset,
     );
     // Per-topic Jacobian M (F×F), identical across topics: row 0 maps the
@@ -1853,7 +1860,10 @@ pub fn fit_keyatm_cov<R: Rng>(
     );
 
     let mut lambda = vec![vec![0.0f64; num_features]; num_topics];
-    let mut doc_alpha = crate::dmr::compute_doc_alpha(&lambda, &features_std, offset);
+    // keyATM keeps DMR's original zero-mean λ prior and bare exp() prior (no α
+    // floor); the #563 baseline-α centering is DMR-specific.
+    let km_prior_mean = vec![0.0f64; num_features];
+    let mut doc_alpha = crate::dmr::compute_doc_alpha(&lambda, &features_std, offset, 0.0);
     let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
     // So the log-likelihood trace uses the covariate doc-topic prior: doc_topic()
     // takes the (lambda, features) path only when both are set on the model. While
@@ -1891,8 +1901,13 @@ pub fn fit_keyatm_cov<R: Rng>(
                 num_topics,
                 num_features,
                 prior_variance,
+                &km_prior_mean,
+                0.0,
                 lbfgs_iters,
                 offset,
+                // keyATM keeps the plain first step (bit-identical to pre-#563): it
+                // standardizes features and clamps λ, so it never had DMR's runaway.
+                false,
             );
             // Snapshot the counts this optimization ran against (before the next
             // sweep mutates them); only a converged run yields a valid SE optimum.
@@ -1908,7 +1923,7 @@ pub fn fit_keyatm_cov<R: Rng>(
                     *v = v.clamp(-LAMBDA_BOUND, LAMBDA_BOUND);
                 }
             }
-            doc_alpha = crate::dmr::compute_doc_alpha(&lambda, &features_std, offset);
+            doc_alpha = crate::dmr::compute_doc_alpha(&lambda, &features_std, offset, 0.0);
         }
         draws.maybe_collect(&mut theta_draw_buf, it + 1, &model.ndk, &doc_alpha);
         if record_ll(it + 1, ll_interval, iters) {
@@ -2586,8 +2601,8 @@ mod tests {
                 row
             })
             .collect();
-        let a_std = crate::dmr::compute_doc_alpha(&lambda_std, &fstd, None);
-        let a_orig = crate::dmr::compute_doc_alpha(&lambda_orig, &features, None);
+        let a_std = crate::dmr::compute_doc_alpha(&lambda_std, &fstd, None, 0.0);
+        let a_orig = crate::dmr::compute_doc_alpha(&lambda_orig, &features, None, 0.0);
         for d in 0..features.len() {
             for k in 0..lambda_std.len() {
                 assert!(
@@ -2635,7 +2650,7 @@ mod tests {
         // Reference: full p×p covariance in std space, transformed by the full
         // block-diagonal Jacobian J (each topic block = M), SE = sqrt(diag).
         let p = t * f;
-        let cov = crate::dmr::dmr_lambda_cov(&lambda_std, &fstd, &counts, t, f, sigma2, None);
+        let cov = crate::dmr::dmr_lambda_cov(&lambda_std, &fstd, &counts, t, f, sigma2, 0.0, None);
         // M (F×F): row 0 = [1, -mean_g/sd_g...]; row g≥1 = e_g / sd_g.
         let mut m = vec![vec![0.0f64; f]; f];
         m[0][0] = 1.0;

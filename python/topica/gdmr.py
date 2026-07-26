@@ -21,10 +21,11 @@ Reference implementations (both by the paper's first author, ``bab2min``):
 tomotopy ``GDMRModel`` and the ``bab2min/g-dmr`` experiment repo.
 
 Note: the constant term's prior is centered at ``log(alpha)`` in both reference
-implementations; topica's inner DMR currently uses a zero-mean prior on the
-intercept (implicit ``alpha = 1``). That intercept-mean difference is tracked
-separately (issue #426); the ``sigma``/``sigma0`` roles and the per-dimension
-decay implemented here match the references.
+implementations. g-DMR realizes that centering with an explicit ``log(alpha)``
+predictor offset (see ``fit``), which is why the inner ``DMR`` is constructed with
+``alpha=1.0`` (zero-mean intercept prior) — DMR's own ``log(alpha)`` centering
+(added in 0.54, #563) would otherwise double-apply. The ``sigma``/``sigma0`` roles
+and the per-dimension decay implemented here match the references.
 """
 
 from __future__ import annotations
@@ -455,13 +456,19 @@ class GDMR:
         # own intercept, so hand it the non-intercept names only.
         feature_names = _basis_feature_names(self._degrees, self._metadata_names)[1:]
 
-        # Build inner DMR
+        # Build inner DMR. Since 0.54 DMR itself centers the intercept prior at
+        # log(alpha) (#563), but g-DMR realizes that centering via its own `offset`
+        # below (so the constant-term prior interacts correctly with the Legendre
+        # basis / decay scaling). Pin the inner DMR to alpha=1.0 (log(1)=0, zero-mean
+        # intercept prior) so log(alpha) is applied exactly once, here, and NOT
+        # doubled by DMR's native centering.
         self._dmr = DMR(
             self._num_topics,
             beta=self._beta,
             optimize_interval=self._optimize_interval,
             burn_in=self._burn_in,
             seed=self._seed,
+            alpha=1.0,
             prior_variance=prior_variance,
             lbfgs_iters=self._lbfgs_iters,
             sampler=self._sampler,

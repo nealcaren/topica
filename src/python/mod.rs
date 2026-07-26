@@ -156,6 +156,12 @@ struct LdaState {
     #[serde(default)]
     theta_draws: Option<Arr3f32>,
 }
+/// Legacy DMR saves predate the baseline-α prior (#563); they were fit with an
+/// implicit symmetric prior of 1.0, so a missing `alpha` deserializes to 1.0 (see
+/// the field note below on the bincode `serde(default)` limitation).
+fn dmr_legacy_alpha() -> f64 {
+    1.0
+}
 #[derive(serde::Serialize, serde::Deserialize)]
 struct DmrState {
     num_topics: usize,
@@ -183,6 +189,15 @@ struct DmrState {
     // SE of the feature weights (num_topics, num_features); absent in old saves.
     #[serde(default)]
     feature_effect_se: Option<Arr2>,
+    // Baseline concentration + α floor (#563), appended last. Same pre-v1.0 caveat
+    // as the other trailing fields: `serde(default)` fills these only for a save
+    // whose stream is otherwise structurally current; a pre-0.54 bincode payload is
+    // positionally shorter and will not round-trip (documented, not supported —
+    // only the author has saved models). A same-version round-trip is exact.
+    #[serde(default = "dmr_legacy_alpha")]
+    alpha: f64,
+    #[serde(default)]
+    alpha_epsilon: f64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct LabeledState {
@@ -3658,6 +3673,11 @@ pub struct DMR {
     burn_in: usize,
     seed: u64,
     prior_variance: f64,
+    // Baseline Dirichlet concentration: the λ prior is centred at ln(alpha) on the
+    // intercept, matching tomotopy's DMR `alpha` (default 0.1). See #563.
+    alpha: f64,
+    // Additive floor on α (tomotopy's `alpha_epsilon`, default 1e-10) keeping α > 0.
+    alpha_epsilon: f64,
     lbfgs_iters: usize,
     // WarpLDA cache-efficient sampler (per-document-α doc phase) instead of the
     // default SparseLDA DMR sweep. Recommended for large K.
@@ -3705,6 +3725,8 @@ impl DMR {
         d.set_item("burn_in", self.burn_in)?;
         d.set_item("seed", self.seed)?;
         d.set_item("prior_variance", self.prior_variance)?;
+        d.set_item("alpha", self.alpha)?;
+        d.set_item("alpha_epsilon", self.alpha_epsilon)?;
         d.set_item("lbfgs_iters", self.lbfgs_iters)?;
         let sampler = if self.warp {
             "warp"
@@ -3723,8 +3745,13 @@ impl DMR {
         self.seed
     }
 
-    /// Create an unfitted DMR model. `prior_variance` is the Gaussian prior
-    /// variance σ² on the feature weights λ (smaller = stronger shrinkage);
+    /// Create an unfitted DMR model. `alpha` is the baseline Dirichlet
+    /// concentration: the λ Gaussian prior is centred at `ln(alpha)` on the
+    /// intercept, so with a null covariate the model reduces to LDA with symmetric
+    /// prior `alpha` (matching tomotopy's DMR `alpha`, default 0.1). `prior_variance`
+    /// is the Gaussian prior variance σ² on λ (smaller = stronger shrinkage; equals
+    /// tomotopy `sigma²`, default 1.0). `alpha_epsilon` is a small additive floor on
+    /// α keeping it strictly positive (tomotopy `alpha_epsilon`, default 1e-10).
     /// `lbfgs_iters` caps the L-BFGS steps per optimization round.
     ///
     /// `num_topics` is the number of topics K; `beta` is the topic-word Dirichlet
@@ -3732,17 +3759,28 @@ impl DMR {
     /// past `burn_in`. `seed` seeds the Gibbs RNG. `sampler` selects the inference
     /// backend: ``"sparse"`` (default), ``"warp"`` (WarpLDA), or ``"cvb0"``
     /// (deterministic collapsed variational Bayes).
+    ///
+    /// Note: pass `alpha=1.0` to recover the pre-0.54 zero-mean-intercept behaviour
+    /// (baseline concentration 1.0). Because topica uses intercept/reference coding
+    /// rather than tomotopy's one-hot metadata, the prior *mean* matches tomotopy
+    /// exactly while the prior *covariance* differs benignly (non-reference levels
+    /// carry 2σ² prior variance and share σ² with the intercept); this does not
+    /// affect the baseline concentration.
     #[new]
     #[pyo3(signature = (num_topics, *, beta=0.01, optimize_interval=50,
-                        burn_in=200, seed=42, prior_variance=1.0, lbfgs_iters=20,
+                        burn_in=200, seed=42, alpha=0.1, prior_variance=1.0,
+                        alpha_epsilon=1e-10, lbfgs_iters=20,
                         sampler="sparse"))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         beta: f64,
         optimize_interval: usize,
         burn_in: usize,
         seed: u64,
+        alpha: f64,
         prior_variance: f64,
+        alpha_epsilon: f64,
         lbfgs_iters: usize,
         sampler: &str,
     ) -> PyResult<Self> {
@@ -3752,8 +3790,16 @@ impl DMR {
         if !finite_pos(beta) {
             return Err(PyValueError::new_err("beta must be > 0"));
         }
+        if !finite_pos(alpha) {
+            return Err(PyValueError::new_err("alpha must be > 0"));
+        }
         if !finite_pos(prior_variance) {
             return Err(PyValueError::new_err("prior_variance must be > 0"));
+        }
+        if !alpha_epsilon.is_finite() || alpha_epsilon < 0.0 {
+            return Err(PyValueError::new_err(
+                "alpha_epsilon must be finite and >= 0",
+            ));
         }
         let (warp, cvb0) = match sampler {
             "sparse" => (false, false),
@@ -3772,6 +3818,8 @@ impl DMR {
             burn_in,
             seed,
             prior_variance,
+            alpha,
+            alpha_epsilon,
             lbfgs_iters,
             warp,
             cvb0,
@@ -3944,8 +3992,19 @@ impl DMR {
             }
         };
 
-        // λ starts at zero -> α ≡ 1 (symmetric) before optimization kicks in.
+        // The λ Gaussian prior is centred at ln(alpha) on the intercept (feature 0)
+        // and at 0 on the covariates, so before/without covariate steering the
+        // baseline concentration is `alpha` (matching tomotopy's DMR default 0.1),
+        // not the old implicit 1.0. λ starts at its prior mean (#563).
+        let alpha = slf.alpha;
+        let alpha_epsilon = slf.alpha_epsilon;
+        let ln_alpha = alpha.ln();
+        let mut prior_mean = vec![0.0f64; nf];
+        prior_mean[0] = ln_alpha; // feature 0 is the prepended intercept
         let mut lambda = vec![vec![0.0f64; nf]; k];
+        for lt in lambda.iter_mut() {
+            lt[0] = ln_alpha;
+        }
         let mut model = TopicModel::new(k, k as f64, slf.beta, num_types);
         let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         // The sparse path initializes `model` inside its branch below; the warp
@@ -3983,7 +4042,8 @@ impl DMR {
                 // λ, not at counts that drifted afterwards (#419).
                 let mut se_counts: Option<Vec<Vec<f64>>> = None;
                 for iter in 1..=iters {
-                    let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
+                    let doc_alpha =
+                        dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref(), alpha_epsilon);
                     cv.set_doc_alpha(doc_alpha);
                     cv.sweep();
                     if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
@@ -3995,8 +4055,11 @@ impl DMR {
                             k,
                             nf,
                             prior_variance,
+                            &prior_mean,
+                            alpha_epsilon,
                             lbfgs_iters,
                             offset.as_deref(),
+                            true, // standalone DMR caps the first L-BFGS step (#563)
                         );
                         se_counts = if converged { Some(dtc) } else { None };
                     }
@@ -4013,6 +4076,8 @@ impl DMR {
                         k,
                         nf,
                         prior_variance,
+                        &prior_mean,
+                        alpha_epsilon,
                         offset.as_deref(),
                     )
                 });
@@ -4042,7 +4107,8 @@ impl DMR {
                 let mut se_counts: Option<Vec<Vec<f64>>> = None;
 
                 for iter in 1..=iters {
-                    let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
+                    let doc_alpha =
+                        dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref(), alpha_epsilon);
                     ws.set_doc_alpha(doc_alpha);
                     ws.sweep(&corpus, &mut rng);
 
@@ -4055,15 +4121,22 @@ impl DMR {
                             k,
                             nf,
                             prior_variance,
+                            &prior_mean,
+                            alpha_epsilon,
                             lbfgs_iters,
                             offset.as_deref(),
+                            true, // standalone DMR caps the first L-BFGS step (#563)
                         );
                         se_counts = if converged { Some(dtc) } else { None };
                     }
 
                     if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
-                        let doc_alpha_snap =
-                            dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
+                        let doc_alpha_snap = dmr::compute_doc_alpha(
+                            &lambda,
+                            &feats,
+                            offset.as_deref(),
+                            alpha_epsilon,
+                        );
                         let snap: Vec<Vec<f32>> = ws
                             .doc_topics()
                             .iter()
@@ -4093,6 +4166,8 @@ impl DMR {
                                 k,
                                 nf,
                                 prior_variance,
+                                &prior_mean,
+                                alpha_epsilon,
                                 offset.as_deref(),
                             );
                             let llpt = ll / total_tokens;
@@ -4104,7 +4179,8 @@ impl DMR {
                 }
 
                 // Sampling phase: λ (and thus α per doc) fixed.
-                let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
+                let doc_alpha =
+                    dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref(), alpha_epsilon);
                 ws.set_doc_alpha(doc_alpha.clone());
                 let mut acc_phi = vec![vec![0.0f64; k]; num_types];
                 let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
@@ -4141,6 +4217,8 @@ impl DMR {
                         k,
                         nf,
                         prior_variance,
+                        &prior_mean,
+                        alpha_epsilon,
                         offset.as_deref(),
                     )
                 });
@@ -4168,7 +4246,8 @@ impl DMR {
                 let mut se_counts: Option<Vec<Vec<f64>>> = None;
 
                 'outer: for iter in 1..=iters {
-                    let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
+                    let doc_alpha =
+                        dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref(), alpha_epsilon);
                     dmr::run_sweep_dmr(
                         &mut model.type_topic_counts,
                         &mut model.tokens_per_topic,
@@ -4192,16 +4271,23 @@ impl DMR {
                             k,
                             nf,
                             prior_variance,
+                            &prior_mean,
+                            alpha_epsilon,
                             lbfgs_iters,
                             offset.as_deref(),
+                            true, // standalone DMR caps the first L-BFGS step (#563)
                         );
                         se_counts = if converged { Some(dtc) } else { None };
                     }
 
                     // Snapshot θ = (n_dk + α_dk) / (N_d + Σα_d) every thin sweeps.
                     if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
-                        let doc_alpha_snap =
-                            dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
+                        let doc_alpha_snap = dmr::compute_doc_alpha(
+                            &lambda,
+                            &feats,
+                            offset.as_deref(),
+                            alpha_epsilon,
+                        );
                         let snap: Vec<Vec<f32>> = model
                             .doc_topics
                             .iter()
@@ -4231,6 +4317,8 @@ impl DMR {
                                 k,
                                 nf,
                                 prior_variance,
+                                &prior_mean,
+                                alpha_epsilon,
                                 offset.as_deref(),
                             );
                             let llpt = ll / total_tokens;
@@ -4256,7 +4344,8 @@ impl DMR {
                 }
 
                 // Sampling phase: λ is now fixed, so α per doc is fixed too.
-                let doc_alpha = dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref());
+                let doc_alpha =
+                    dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref(), alpha_epsilon);
                 let mut acc_phi = vec![vec![0.0f64; k]; num_types];
                 let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
 
@@ -4308,6 +4397,8 @@ impl DMR {
                         k,
                         nf,
                         prior_variance,
+                        &prior_mean,
+                        alpha_epsilon,
                         offset.as_deref(),
                     )
                 });
@@ -4407,15 +4498,22 @@ impl DMR {
     }
 
     /// The baseline document-topic Dirichlet prior α, shape ``(num_topics,)``:
-    /// ``exp(λ_intercept)``, the per-topic prior at covariates = 0. DMR's prior is
-    /// per-document (``α_{d,k} = exp(λ_k · x_d)``), so this is the baseline; it
-    /// marks DMR as a Dirichlet model for :func:`topica.effects.composition_theta`.
+    /// ``exp(λ_intercept) + alpha_epsilon``, the per-topic prior at covariates = 0.
+    /// DMR's prior is per-document (``α_{d,k} = exp(λ_k · x_d) + alpha_epsilon``), so
+    /// this is the baseline; it marks DMR as a Dirichlet model for
+    /// :func:`topica.effects.composition_theta`.
     #[getter]
     fn alpha<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
         // feature_effects is (num_topics, num_features); column 0 is the intercept.
+        // Match the training prior: clamp the predictor then add the α floor.
         let lam = self.feature_effects.as_ref().unwrap();
-        let a: Vec<f64> = lam.column(0).iter().map(|&l| l.exp()).collect();
+        let eps = self.alpha_epsilon;
+        let a: Vec<f64> = lam
+            .column(0)
+            .iter()
+            .map(|&l| l.clamp(-dmr::PREDICTOR_CLAMP, dmr::PREDICTOR_CLAMP).exp() + eps)
+            .collect();
         Ok(Array1::from(a).to_pyarray_bound(py))
     }
 
@@ -4621,6 +4719,7 @@ impl DMR {
                     )));
                 }
                 check_all_finite_arr2("features", &x)?;
+                let eps = self.alpha_epsilon;
                 (0..docs_usize.len())
                     .map(|d| {
                         (0..k)
@@ -4629,14 +4728,24 @@ impl DMR {
                                 for f in 1..nf {
                                     s += eff[[t, f]] * x[[d, f - 1]];
                                 }
-                                s.exp()
+                                // Match the training prior exactly: clamp the linear
+                                // predictor (dmr::PREDICTOR_CLAMP) then add the α floor.
+                                s.clamp(-dmr::PREDICTOR_CLAMP, dmr::PREDICTOR_CLAMP).exp() + eps
                             })
                             .collect()
                     })
                     .collect()
             }
             None => {
-                let base: Vec<f64> = (0..k).map(|t| eff[[t, 0]].exp()).collect();
+                let eps = self.alpha_epsilon;
+                let base: Vec<f64> = (0..k)
+                    .map(|t| {
+                        eff[[t, 0]]
+                            .clamp(-dmr::PREDICTOR_CLAMP, dmr::PREDICTOR_CLAMP)
+                            .exp()
+                            + eps
+                    })
+                    .collect();
                 vec![base; docs_usize.len()]
             }
         };
@@ -4685,6 +4794,8 @@ impl DMR {
                 seed: self.seed,
                 prior_variance: self.prior_variance,
                 lbfgs_iters: self.lbfgs_iters,
+                alpha: self.alpha,
+                alpha_epsilon: self.alpha_epsilon,
                 fitted: self.fitted,
                 phi: arr2_opt(&self.phi),
                 theta: arr2_opt(&self.theta),
@@ -4716,6 +4827,8 @@ impl DMR {
             burn_in: s.burn_in,
             seed: s.seed,
             prior_variance: s.prior_variance,
+            alpha: s.alpha,
+            alpha_epsilon: s.alpha_epsilon,
             lbfgs_iters: s.lbfgs_iters,
             warp: false,
             cvb0: false,

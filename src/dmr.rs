@@ -28,7 +28,7 @@ use crate::sampler::sample_doc;
 /// (~1.4e217) is astronomically larger than any meaningful α yet leaves ample
 /// headroom below `f64::MAX` even summed over many topics, so this bites only
 /// pathological inputs and never a realistic fit.
-const PREDICTOR_CLAMP: f64 = 500.0;
+pub(crate) const PREDICTOR_CLAMP: f64 = 500.0;
 
 /// `exp` of the DMR linear predictor with the [`PREDICTOR_CLAMP`] guard.
 #[inline]
@@ -36,16 +36,20 @@ fn predictor_exp(dot: f64, off: f64) -> f64 {
     (dot + off).clamp(-PREDICTOR_CLAMP, PREDICTOR_CLAMP).exp()
 }
 
-/// Per-document, per-topic prior `α_{d,t} = exp(λ_t · x_d + s_{d,t})`.
+/// Per-document, per-topic prior `α_{d,t} = exp(λ_t · x_d + s_{d,t}) + ε`.
 ///
 /// `lambda` is `[num_topics][num_features]`, `features` is
 /// `[num_docs][num_features]`; returns `[num_docs][num_topics]`. The optional
 /// `offset` is a fixed `[num_docs][num_topics]` term added inside the exponent
 /// (the embedding anchor `s_{d,t}`); pass `None` for the plain DMR prior.
+/// `alpha_epsilon` is a small additive floor on α (tomotopy's `alpha_epsilon`,
+/// default `1e-10`) that keeps α strictly away from 0 so `logΓ`/`digamma` stay
+/// finite; pass `0.0` to recover the bare `exp` prior.
 pub fn compute_doc_alpha(
     lambda: &[Vec<f64>],
     features: &[Vec<f64>],
     offset: Option<&[Vec<f64>]>,
+    alpha_epsilon: f64,
 ) -> Vec<Vec<f64>> {
     features
         .iter()
@@ -57,7 +61,7 @@ pub fn compute_doc_alpha(
                 .map(|(t, lt)| {
                     let dot: f64 = lt.iter().zip(x).map(|(l, xi)| l * xi).sum();
                     let off = offset.map_or(0.0, |o| o[d][t]);
-                    predictor_exp(dot, off)
+                    predictor_exp(dot, off) + alpha_epsilon
                 })
                 .collect()
         })
@@ -130,15 +134,23 @@ pub fn run_sweep_dmr<R: Rng>(
 /// ```text
 ///   L = Σ_d [ logΓ(α_{d,·}) − logΓ(N_d + α_{d,·})
 ///             + Σ_t ( logΓ(n_{d,t} + α_{d,t}) − logΓ(α_{d,t}) ) ]
-///       − 1/(2σ²) Σ_{t,f} λ_{t,f}²
+///       − 1/(2σ²) Σ_{t,f} (λ_{t,f} − μ_f)²
 /// ```
-/// with `α_{d,t} = exp(λ_t · x_d + s_{d,t})` and `α_{d,·} = Σ_t α_{d,t}`. The
+/// with `α_{d,t} = exp(λ_t · x_d + s_{d,t}) + ε` and `α_{d,·} = Σ_t α_{d,t}`. The
 /// optional `offset` `s` is a fixed `[num_docs][num_topics]` term added inside
-/// the exponent; since it is constant in `λ`, the gradient still uses
-/// `∂α_{d,t}/∂λ_{t,f} = α_{d,t} · x_{d,f}`.
+/// the exponent; since it is constant in `λ`, the gradient uses
+/// `∂α_{d,t}/∂λ_{t,f} = exp(λ_t·x_d + s) · x_{d,f} = (α_{d,t} − ε) · x_{d,f}` —
+/// the additive floor `ε` drops out of the derivative but shifts the value.
+///
+/// `prior_mean` is the per-feature Gaussian prior mean `μ` (length
+/// `num_features`); the DMR baseline concentration is set by centring the
+/// intercept column at `log(alpha)` (tomotopy centres every λ at `log(alpha)`;
+/// in topica's intercept coding that is `μ = [log(alpha), 0, …, 0]`). Passing
+/// all-zeros recovers the old zero-mean prior (implicit `alpha = 1`).
 ///
 /// `doc_topic_counts` is `[num_docs][num_topics]`. Returns `(value, gradient)`
 /// where `gradient` matches the shape of `lambda` (`[num_topics][num_features]`).
+#[allow(clippy::too_many_arguments)]
 pub fn dmr_objective_and_gradient(
     lambda: &[Vec<f64>],
     features: &[Vec<f64>],
@@ -146,19 +158,26 @@ pub fn dmr_objective_and_gradient(
     num_topics: usize,
     num_features: usize,
     prior_variance: f64,
+    prior_mean: &[f64],
+    alpha_epsilon: f64,
     offset: Option<&[Vec<f64>]>,
 ) -> (f64, Vec<Vec<f64>>) {
     let mut value = 0.0f64;
     let mut grad = vec![vec![0.0f64; num_features]; num_topics];
 
     let mut alpha = vec![0.0f64; num_topics];
+    // The linear part exp(λ·x + s) without the ε floor: this is ∂α/∂(λ·x), so it
+    // (not α) multiplies x in the gradient chain (#563).
+    let mut alpha_lin = vec![0.0f64; num_topics];
 
     for (d, x) in features.iter().enumerate() {
         let mut alpha_sum = 0.0f64;
         for t in 0..num_topics {
             let dot: f64 = lambda[t].iter().zip(x).map(|(l, xi)| l * xi).sum();
             let off = offset.map_or(0.0, |o| o[d][t]);
-            let a = predictor_exp(dot, off);
+            let a_lin = predictor_exp(dot, off);
+            let a = a_lin + alpha_epsilon;
+            alpha_lin[t] = a_lin;
             alpha[t] = a;
             alpha_sum += a;
         }
@@ -175,9 +194,9 @@ pub fn dmr_objective_and_gradient(
             let n = counts[t];
             value += log_gamma(a + n) - log_gamma(a);
 
-            // ∂L/∂α_{d,t}, then chain through ∂α/∂λ = α · x.
+            // ∂L/∂α_{d,t}, then chain through ∂α/∂λ = exp(λ·x+s) · x = α_lin · x.
             let dl_da = dg_alpha_sum - dg_alpha_sum_n + digamma(a + n) - digamma(a);
-            let coef = dl_da * a;
+            let coef = dl_da * alpha_lin[t];
             let gt = &mut grad[t];
             for f in 0..num_features {
                 gt[f] += coef * x[f];
@@ -185,12 +204,13 @@ pub fn dmr_objective_and_gradient(
         }
     }
 
-    // Gaussian prior N(0, σ²) on every weight.
+    // Gaussian prior N(μ_f, σ²) on every weight (μ centres the DMR baseline).
     let inv_var = 1.0 / prior_variance;
     for t in 0..num_topics {
         for f in 0..num_features {
-            value -= 0.5 * inv_var * lambda[t][f] * lambda[t][f];
-            grad[t][f] -= inv_var * lambda[t][f];
+            let dev = lambda[t][f] - prior_mean[f];
+            value -= 0.5 * inv_var * dev * dev;
+            grad[t][f] -= inv_var * dev;
         }
     }
 
@@ -206,13 +226,16 @@ pub fn dmr_objective_and_gradient(
 /// normalizer `α_{d,·}`, so the Hessian is not block-diagonal across topics; per
 /// document `d` it is
 /// ```text
-///   ∂²L_d/∂λ_{t,f}∂λ_{u,g} = x_{d,f} x_{d,g} ( c_d a_t a_u + [t=u] a_t b_t )
+///   ∂²L_d/∂λ_{t,f}∂λ_{u,g} = x_{d,f} x_{d,g} ( c_d ℓ_t ℓ_u + [t=u] ℓ_t b_t )
 /// ```
-/// with `a_t = α_{d,t}`, `c_d = ψ'(α_{d,·}) − ψ'(α_{d,·}+N_d)`,
+/// with `ℓ_t = exp(λ_t·x_d + s_{d,t})` the linear part of α (so `α_{d,t} = ℓ_t + ε`
+/// and `∂α/∂λ = ℓ_t·x`), `a_t = α_{d,t} = ℓ_t + ε`,
+/// `c_d = ψ'(α_{d,·}) − ψ'(α_{d,·}+N_d)`,
 /// `g_t = ψ(α_·) − ψ(α_·+N_d) + ψ(a_t+n_t) − ψ(a_t)`, and
-/// `b_t = a_t(ψ'(a_t+n_t) − ψ'(a_t)) + g_t`. The observed information is
+/// `b_t = ℓ_t(ψ'(a_t+n_t) − ψ'(a_t)) + g_t`. The observed information is
 /// `J = (1/σ²)I − Σ_d H_d` (a `(T·F)×(T·F)` SPD matrix); the SE of `λ_{t,f}` is
 /// `sqrt(diag(J^{-1}))`. Returns `[num_topics][num_features]`, aligned to `lambda`.
+#[allow(clippy::too_many_arguments)]
 pub fn dmr_lambda_se(
     lambda: &[Vec<f64>],
     features: &[Vec<f64>],
@@ -220,6 +243,7 @@ pub fn dmr_lambda_se(
     num_topics: usize,
     num_features: usize,
     prior_variance: f64,
+    alpha_epsilon: f64,
     offset: Option<&[Vec<f64>]>,
 ) -> Vec<Vec<f64>> {
     let t = num_topics;
@@ -232,6 +256,7 @@ pub fn dmr_lambda_se(
         num_topics,
         num_features,
         prior_variance,
+        alpha_epsilon,
         offset,
     );
     (0..t)
@@ -257,6 +282,7 @@ pub fn dmr_lambda_se(
 /// square root of its diagonal. The full matrix is needed when `λ` is later
 /// transformed by a non-diagonal map (e.g. keyATM's standardization Jacobian),
 /// which mixes the within-topic covariance entries.
+#[allow(clippy::too_many_arguments)]
 pub fn dmr_lambda_cov(
     lambda: &[Vec<f64>],
     features: &[Vec<f64>],
@@ -264,6 +290,7 @@ pub fn dmr_lambda_cov(
     num_topics: usize,
     num_features: usize,
     prior_variance: f64,
+    alpha_epsilon: f64,
     offset: Option<&[Vec<f64>]>,
 ) -> Vec<f64> {
     use crate::linalg::{make_diagonally_dominant, spd_inverse};
@@ -273,8 +300,12 @@ pub fn dmr_lambda_cov(
     let f = num_features;
     let p = t * f;
     // Observed information J, assembled as (1/σ²)I − Σ_d H_d (row-major p x p).
+    // The α floor ε enters as a value shift only: ∂α/∂λ = exp(λ·x+s) = a_lin,
+    // so the x_f·x_g chain uses `a_lin` while the ψ/ψ' terms take the full
+    // α = a_lin + ε as argument (#563). The prior enters the Hessian only through
+    // its (1/σ²)I diagonal, so the prior *mean* does not appear here.
     let mut info = vec![0.0f64; p * p];
-    let mut a = vec![0.0f64; t];
+    let mut a_lin = vec![0.0f64; t];
     let mut b = vec![0.0f64; t];
 
     for (d, x) in features.iter().enumerate() {
@@ -282,8 +313,8 @@ pub fn dmr_lambda_cov(
         for tt in 0..t {
             let dot: f64 = lambda[tt].iter().zip(x).map(|(l, xi)| l * xi).sum();
             let off = offset.map_or(0.0, |o| o[d][tt]);
-            a[tt] = predictor_exp(dot, off);
-            alpha_sum += a[tt];
+            a_lin[tt] = predictor_exp(dot, off);
+            alpha_sum += a_lin[tt] + alpha_epsilon;
         }
         let counts = &doc_topic_counts[d];
         let n_d: f64 = counts.iter().sum();
@@ -291,17 +322,17 @@ pub fn dmr_lambda_cov(
         let dg_asum = digamma(alpha_sum);
         let dg_asum_n = digamma(alpha_sum + n_d);
         for tt in 0..t {
-            let at = a[tt];
+            let at = a_lin[tt] + alpha_epsilon;
             let n = counts[tt];
             let g_t = dg_asum - dg_asum_n + digamma(at + n) - digamma(at);
-            b[tt] = at * (trigamma(at + n) - trigamma(at)) + g_t;
+            b[tt] = a_lin[tt] * (trigamma(at + n) - trigamma(at)) + g_t;
         }
-        // Add −H_d = −x_f x_g ( c_d a_t a_u + [t=u] a_t b_t ) into J.
+        // Add −H_d = −x_f x_g ( c_d a_lin_t a_lin_u + [t=u] a_lin_t b_t ) into J.
         for tt in 0..t {
             for uu in 0..t {
-                let mut coef = -c_d * a[tt] * a[uu];
+                let mut coef = -c_d * a_lin[tt] * a_lin[uu];
                 if tt == uu {
-                    coef -= a[tt] * b[tt];
+                    coef -= a_lin[tt] * b[tt];
                 }
                 if coef == 0.0 {
                     continue;
@@ -333,7 +364,7 @@ pub fn dmr_lambda_cov(
 }
 
 use crate::mathfun::log_gamma;
-use crate::variational::lbfgs_minimize_status;
+use crate::variational::{lbfgs_minimize_status, lbfgs_minimize_status_capped};
 
 /// Optimize `lambda` in place to maximize the penalized DMR likelihood for the
 /// current topic counts (one L-BFGS run, used periodically during sampling).
@@ -344,6 +375,7 @@ use crate::variational::lbfgs_minimize_status;
 /// optimum, so a run that hit `max_iter` (or was given `max_iter == 0`) reports
 /// `false` and no SE is emitted (#419).
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn optimize_lambda(
     lambda: &mut [Vec<f64>],
     features: &[Vec<f64>],
@@ -351,41 +383,50 @@ pub fn optimize_lambda(
     num_topics: usize,
     num_features: usize,
     prior_variance: f64,
+    prior_mean: &[f64],
+    alpha_epsilon: f64,
     max_iter: usize,
     offset: Option<&[Vec<f64>]>,
+    cap_first_step: bool,
 ) -> bool {
     let mut x0 = Vec::with_capacity(num_topics * num_features);
     for lt in lambda.iter() {
         x0.extend_from_slice(lt);
     }
 
-    let (x, converged) = lbfgs_minimize_status(
-        x0,
-        |flat| {
-            let mut lam = vec![vec![0.0f64; num_features]; num_topics];
-            for t in 0..num_topics {
-                lam[t].copy_from_slice(&flat[t * num_features..(t + 1) * num_features]);
-            }
-            // We minimize, so negate the (maximization) objective and gradient.
-            let (val, grad) = dmr_objective_and_gradient(
-                &lam,
-                features,
-                doc_topic_counts,
-                num_topics,
-                num_features,
-                prior_variance,
-                offset,
-            );
-            let mut g = Vec::with_capacity(num_topics * num_features);
-            for gt in &grad {
-                g.extend(gt.iter().map(|v| -v));
-            }
-            (-val, g)
-        },
-        max_iter,
-        7,
-        1e-5,
-    );
+    let obj = |flat: &[f64]| -> (f64, Vec<f64>) {
+        let mut lam = vec![vec![0.0f64; num_features]; num_topics];
+        for t in 0..num_topics {
+            lam[t].copy_from_slice(&flat[t * num_features..(t + 1) * num_features]);
+        }
+        // We minimize, so negate the (maximization) objective and gradient.
+        let (val, grad) = dmr_objective_and_gradient(
+            &lam,
+            features,
+            doc_topic_counts,
+            num_topics,
+            num_features,
+            prior_variance,
+            prior_mean,
+            alpha_epsilon,
+            offset,
+        );
+        let mut g = Vec::with_capacity(num_topics * num_features);
+        for gt in &grad {
+            g.extend(gt.iter().map(|v| -v));
+        }
+        (-val, g)
+    };
+
+    // Standalone DMR (`cap_first_step = true`) caps the first L-BFGS step to stop the
+    // λ objective's large initial gradient from overshooting (#563); keyATM passes
+    // `false` to keep its optimizer trajectory bit-identical (it standardizes
+    // features and clamps λ, so it never had the runaway).
+    let (x, converged) = if cap_first_step {
+        lbfgs_minimize_status_capped(x0, obj, max_iter, 7, 1e-5)
+    } else {
+        lbfgs_minimize_status(x0, obj, max_iter, 7, 1e-5)
+    };
 
     for t in 0..num_topics {
         lambda[t].copy_from_slice(&x[t * num_features..(t + 1) * num_features]);
@@ -403,6 +444,7 @@ pub fn optimize_lambda(
 /// computed from the post-sampling counts, which have drifted away from the counts
 /// `lambda` was fit to, so it was not `J^{-1}` at the optimum for the returned
 /// `lambda`.
+#[allow(clippy::too_many_arguments)]
 pub fn dmr_lambda_se_checked(
     lambda: &[Vec<f64>],
     features: &[Vec<f64>],
@@ -410,6 +452,8 @@ pub fn dmr_lambda_se_checked(
     num_topics: usize,
     num_features: usize,
     prior_variance: f64,
+    prior_mean: &[f64],
+    alpha_epsilon: f64,
     offset: Option<&[Vec<f64>]>,
 ) -> Option<Vec<Vec<f64>>> {
     let (value, grad) = dmr_objective_and_gradient(
@@ -419,6 +463,8 @@ pub fn dmr_lambda_se_checked(
         num_topics,
         num_features,
         prior_variance,
+        prior_mean,
+        alpha_epsilon,
         offset,
     );
     if !value.is_finite() || grad.iter().flatten().any(|g| !g.is_finite()) {
@@ -431,6 +477,7 @@ pub fn dmr_lambda_se_checked(
         num_topics,
         num_features,
         prior_variance,
+        alpha_epsilon,
         offset,
     );
     if se.iter().flatten().any(|v| !v.is_finite()) {
@@ -462,6 +509,11 @@ mod tests {
             vec![2.0f64, 0.0, 1.0],
         ];
         let sigma2 = 10.0;
+        // Exercise the new paths: a nonzero per-feature prior mean and a non-trivial
+        // additive α floor, so the FD check covers the (λ−μ) prior term and the
+        // a_lin-vs-α split in the gradient chain (#563).
+        let prior_mean = vec![0.1_f64.ln(), 0.0]; // [ln(0.1), 0]
+        let alpha_epsilon = 0.05_f64;
 
         let (_, grad) = dmr_objective_and_gradient(
             &lambda,
@@ -470,6 +522,8 @@ mod tests {
             num_topics,
             num_features,
             sigma2,
+            &prior_mean,
+            alpha_epsilon,
             None,
         );
 
@@ -487,6 +541,8 @@ mod tests {
                     num_topics,
                     num_features,
                     sigma2,
+                    &prior_mean,
+                    alpha_epsilon,
                     None,
                 );
                 let (vm, _) = dmr_objective_and_gradient(
@@ -496,6 +552,8 @@ mod tests {
                     num_topics,
                     num_features,
                     sigma2,
+                    &prior_mean,
+                    alpha_epsilon,
                     None,
                 );
                 let numeric = (vp - vm) / (2.0 * eps);
@@ -535,13 +593,25 @@ mod tests {
             vec![1.0f64, 3.0, 2.0],
         ];
         let sigma2 = 10.0;
+        let alpha_epsilon = 0.05_f64; // exercise the a_lin-vs-α split in the Hessian
+        let prior_mean = vec![0.0_f64; f]; // SE is prior-mean-independent
         let p = t * f;
 
         // Analytic observed information J from the same assembly the SE uses.
         // Rebuild J by inverting the SE-derived covariance is circular, so instead
         // FD the gradient: H[i,j] = d g_i / d lambda_j, and J = -H + (1/sigma2)I.
         let grad_flat = |lam: &[Vec<f64>]| -> Vec<f64> {
-            let (_, g) = dmr_objective_and_gradient(lam, &features, &counts, t, f, sigma2, None);
+            let (_, g) = dmr_objective_and_gradient(
+                lam,
+                &features,
+                &counts,
+                t,
+                f,
+                sigma2,
+                &prior_mean,
+                alpha_epsilon,
+                None,
+            );
             let mut out = vec![0.0; p];
             for tt in 0..t {
                 for ff in 0..f {
@@ -569,7 +639,16 @@ mod tests {
             let cov = spd_inverse(&j_fd, p).expect("FD info not invertible");
             (0..p).map(|i| cov[i * p + i].sqrt()).collect()
         };
-        let se = dmr_lambda_se(&lambda, &features, &counts, t, f, sigma2, None);
+        let se = dmr_lambda_se(
+            &lambda,
+            &features,
+            &counts,
+            t,
+            f,
+            sigma2,
+            alpha_epsilon,
+            None,
+        );
         for tt in 0..t {
             for ff in 0..f {
                 let analytic = se[tt][ff];
@@ -603,8 +682,8 @@ mod tests {
         };
         let (fs, cs) = mk(40);
         let (fl, cl) = mk(400);
-        let se_small = dmr_lambda_se(&lambda, &fs, &cs, t, f, 100.0, None);
-        let se_large = dmr_lambda_se(&lambda, &fl, &cl, t, f, 100.0, None);
+        let se_small = dmr_lambda_se(&lambda, &fs, &cs, t, f, 100.0, 1e-10, None);
+        let se_large = dmr_lambda_se(&lambda, &fl, &cl, t, f, 100.0, 1e-10, None);
         for tt in 0..t {
             for ff in 0..f {
                 assert!(
@@ -638,6 +717,7 @@ mod tests {
             }
         }
         let mut lambda = vec![vec![0.0f64; num_features]; num_topics];
+        let prior_mean = vec![0.0f64; num_features];
         let converged = optimize_lambda(
             &mut lambda,
             &features,
@@ -645,8 +725,11 @@ mod tests {
             num_topics,
             num_features,
             100.0,
+            &prior_mean,
+            1e-10,
             100,
             None,
+            true,
         );
         assert!(converged, "L-BFGS should reach a stationary point here");
 
@@ -659,6 +742,68 @@ mod tests {
         );
     }
 
+    // #563: a nonzero prior mean pulls the fitted intercept toward log(alpha). With
+    // a null covariate and a tight prior, the fitted intercept must land near μ
+    // rather than near 0 (the old zero-mean behavior).
+    #[test]
+    fn prior_mean_pulls_intercept_toward_log_alpha() {
+        // Intercept-only design (single feature = intercept), two topics, balanced
+        // counts so the data likelihood is flat in the intercept and the prior mean
+        // decides where λ settles.
+        let (t, f) = (2usize, 1usize);
+        let mut features = Vec::new();
+        let mut counts = Vec::new();
+        for _ in 0..50 {
+            features.push(vec![1.0]);
+            counts.push(vec![4.0, 4.0]);
+        }
+        let ln_alpha = 0.1f64.ln();
+        let prior_mean = vec![ln_alpha];
+        // A tight prior (small variance) so the prior mean dominates.
+        let mut lambda = vec![vec![0.0f64; f]; t];
+        let converged = optimize_lambda(
+            &mut lambda,
+            &features,
+            &counts,
+            t,
+            f,
+            0.01,
+            &prior_mean,
+            1e-10,
+            200,
+            None,
+            true,
+        );
+        assert!(converged);
+        for lt in &lambda {
+            assert!(
+                (lt[0] - ln_alpha).abs() < 0.3,
+                "intercept {} should sit near ln(alpha)={ln_alpha}",
+                lt[0]
+            );
+        }
+        // Sanity: the zero-mean prior would instead pull the intercept toward 0.
+        let mut lambda0 = vec![vec![0.0f64; f]; t];
+        let zero_mean = vec![0.0f64; f];
+        let _ = optimize_lambda(
+            &mut lambda0,
+            &features,
+            &counts,
+            t,
+            f,
+            0.01,
+            &zero_mean,
+            1e-10,
+            200,
+            None,
+            true,
+        );
+        assert!(
+            lambda0[0][0].abs() < (lambda[0][0] - 0.0).abs(),
+            "zero-mean prior keeps the intercept nearer 0 than the ln(alpha)-centered prior"
+        );
+    }
+
     // #419: optimize_lambda reports non-convergence when it cannot take a real step
     // (max_iter = 0), which the SE guard uses to withhold an invalid covariance.
     #[test]
@@ -666,7 +811,20 @@ mod tests {
         let features = vec![vec![1.0, 1.0], vec![1.0, -1.0], vec![1.0, 0.5]];
         let counts = vec![vec![5.0, 1.0], vec![1.0, 5.0], vec![3.0, 3.0]];
         let mut lambda = vec![vec![0.0f64; 2]; 2];
-        let converged = optimize_lambda(&mut lambda, &features, &counts, 2, 2, 100.0, 0, None);
+        let prior_mean = vec![0.0f64; 2];
+        let converged = optimize_lambda(
+            &mut lambda,
+            &features,
+            &counts,
+            2,
+            2,
+            100.0,
+            &prior_mean,
+            1e-10,
+            0,
+            None,
+            true,
+        );
         assert!(
             !converged,
             "max_iter=0 leaves lambda un-optimized, so it must not report convergence"
@@ -690,9 +848,32 @@ mod tests {
             vec![4.0, 6.0],
         ];
         let mut lambda = vec![vec![0.0f64; 2]; 2];
-        let converged = optimize_lambda(&mut lambda, &features, &counts, 2, 2, 100.0, 200, None);
+        let prior_mean = vec![0.0f64; 2];
+        let converged = optimize_lambda(
+            &mut lambda,
+            &features,
+            &counts,
+            2,
+            2,
+            100.0,
+            &prior_mean,
+            1e-10,
+            200,
+            None,
+            true,
+        );
         assert!(converged);
-        let se = dmr_lambda_se_checked(&lambda, &features, &counts, 2, 2, 100.0, None);
+        let se = dmr_lambda_se_checked(
+            &lambda,
+            &features,
+            &counts,
+            2,
+            2,
+            100.0,
+            &prior_mean,
+            1e-10,
+            None,
+        );
         let se = se.expect("SE should be available at a converged optimum");
         assert!(se.iter().flatten().all(|v| v.is_finite() && *v > 0.0));
 
@@ -703,9 +884,18 @@ mod tests {
             vec![6.0, 4.0],
             vec![4.0, 6.0],
         ];
-        assert!(
-            dmr_lambda_se_checked(&lambda, &features, &bad_counts, 2, 2, 100.0, None).is_none()
-        );
+        assert!(dmr_lambda_se_checked(
+            &lambda,
+            &features,
+            &bad_counts,
+            2,
+            2,
+            100.0,
+            &prior_mean,
+            1e-10,
+            None
+        )
+        .is_none());
     }
 
     #[test]
