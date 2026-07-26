@@ -31,6 +31,7 @@
 //! does not embed the text.
 
 use crate::{cluster, reduce, represent};
+use rayon::prelude::*;
 
 /// A fitted BERTopic model. Exposes the branch's shared surface: `topic_word`
 /// (K x V, normalized c-TF-IDF), `doc_topic` (D x K, the approximate
@@ -440,39 +441,97 @@ fn approximate_distribution(
     reduce_frequent: bool,
     min_similarity: f64,
 ) -> Vec<Vec<f64>> {
+    if num_topics == 0 {
+        return docs.iter().map(|_| Vec::new()).collect();
+    }
     let w = window.max(1);
     let s = stride.max(1);
-    docs.iter()
-        .map(|doc| {
-            if num_topics == 0 {
-                return Vec::new();
+
+    // A window's weighted vector has at most `w` nonzero tokens, but each topic row is
+    // dense over the vocabulary V. The original code built a dense V-length window vector
+    // and ran a full O(V) cosine against every topic row, per window, per document —
+    // O(docs·windows·topics·V), single-threaded, which dominated `fit` on medium corpora
+    // (#557). Here we keep only the window's nonzero (token, weight) pairs and reduce the
+    // cosine to O(topics·w) per window, precompute each topic row's L2 norm once (instead
+    // of recomputing it inside `cosine` every call), and parallelize across documents.
+    //
+    // For a fitted model — the only way this runs — every `ctfidf` row has length
+    // `idf.len() = V` and holds finite weights, and there are exactly `num_topics` rows.
+    // Under that invariant this is BIT-IDENTICAL to the dense path: iterating the nonzero
+    // tokens in ascending index order reproduces the exact floating-point accumulation of
+    // the `t = 0..V` loop (a skipped entry contributed `vec[t] * row[t] = 0.0 * finite =
+    // ±0.0`, which leaves the accumulator unchanged), the topic-row norm is summed over the
+    // same `0..V` order, and topics with a zero window/row norm contribute `0.0` (skipped)
+    // just as `cosine` returned `0.0` and failed the `sim > 0.0` gate before.
+    debug_assert!(
+        ctfidf.len() == num_topics && ctfidf.iter().all(|r| r.len() == idf.len()),
+        "approximate_distribution expects num_topics rows each of length V = idf.len()"
+    );
+    let topic_norms: Vec<f64> = ctfidf
+        .iter()
+        .map(|row| {
+            let mut nb = 0.0;
+            for &y in row {
+                nb += y * y;
             }
+            nb.sqrt()
+        })
+        .collect();
+
+    docs.par_iter()
+        .map(|doc| {
             let mut acc = vec![0.0f64; num_topics];
             let mut windows = 0usize;
             let mut start = 0usize;
+            // Cap the buffers by the document length: a window holds at most `doc.len()`
+            // tokens, and `w` is a public, unbounded parameter (window=usize::MAX must not
+            // trigger a capacity-overflow panic the dense path never had).
+            let cap = w.min(doc.len());
+            let mut toks: Vec<u32> = Vec::with_capacity(cap);
+            let mut nonzeros: Vec<(usize, f64)> = Vec::with_capacity(cap);
             loop {
                 let end = (start + w).min(doc.len());
                 if end > start {
-                    // Count the window's tokens, damp with sqrt if reduce_frequent,
-                    // then weight by idf — the same transform the topic rows saw.
-                    let mut counts = vec![0.0f64; idf.len()];
+                    // Collect the window's in-vocabulary tokens, then fold repeats into a
+                    // single count per token in ascending index order. `sort_unstable`
+                    // then a dedup-with-count matches the dense `counts[t]` aggregation.
+                    toks.clear();
                     for &tok in &doc[start..end] {
-                        let t = tok as usize;
-                        if t < counts.len() {
-                            counts[t] += 1.0;
+                        if (tok as usize) < idf.len() {
+                            toks.push(tok);
                         }
                     }
-                    let mut vec = vec![0.0f64; idf.len()];
-                    for (t, &c) in counts.iter().enumerate() {
-                        if c > 0.0 {
-                            let tf = if reduce_frequent { c.sqrt() } else { c };
-                            vec[t] = tf * idf[t];
+                    toks.sort_unstable();
+                    nonzeros.clear();
+                    let mut na = 0.0f64;
+                    let mut i = 0;
+                    while i < toks.len() {
+                        let t = toks[i] as usize;
+                        let mut c = 1.0f64;
+                        while i + 1 < toks.len() && toks[i + 1] as usize == t {
+                            c += 1.0;
+                            i += 1;
                         }
+                        let tf = if reduce_frequent { c.sqrt() } else { c };
+                        let v = tf * idf[t];
+                        na += v * v;
+                        nonzeros.push((t, v));
+                        i += 1;
                     }
-                    for (k, row) in ctfidf.iter().enumerate() {
-                        let sim = cosine(&vec, row);
-                        if sim >= min_similarity && sim > 0.0 {
-                            acc[k] += sim;
+                    let na_sqrt = na.sqrt();
+                    if na_sqrt > 0.0 {
+                        for (k, row) in ctfidf.iter().enumerate() {
+                            let nb = topic_norms[k];
+                            if nb > 0.0 {
+                                let mut dot = 0.0f64;
+                                for &(t, v) in &nonzeros {
+                                    dot += v * row[t];
+                                }
+                                let sim = dot / (na_sqrt * nb);
+                                if sim >= min_similarity && sim > 0.0 {
+                                    acc[k] += sim;
+                                }
+                            }
                         }
                     }
                     windows += 1;
@@ -770,6 +829,137 @@ mod tests {
             2,
         );
         assert_eq!(reduced.num_topics, 2, "should reduce to 2 topics");
+    }
+
+    // The pre-#557 dense implementation, verbatim, as the bit-identity oracle.
+    fn approximate_distribution_dense_reference(
+        docs: &[Vec<u32>],
+        ctfidf: &[Vec<f64>],
+        idf: &[f64],
+        num_topics: usize,
+        window: usize,
+        stride: usize,
+        reduce_frequent: bool,
+        min_similarity: f64,
+    ) -> Vec<Vec<f64>> {
+        let w = window.max(1);
+        let s = stride.max(1);
+        docs.iter()
+            .map(|doc| {
+                if num_topics == 0 {
+                    return Vec::new();
+                }
+                let mut acc = vec![0.0f64; num_topics];
+                let mut windows = 0usize;
+                let mut start = 0usize;
+                loop {
+                    let end = (start + w).min(doc.len());
+                    if end > start {
+                        let mut counts = vec![0.0f64; idf.len()];
+                        for &tok in &doc[start..end] {
+                            let t = tok as usize;
+                            if t < counts.len() {
+                                counts[t] += 1.0;
+                            }
+                        }
+                        let mut vec = vec![0.0f64; idf.len()];
+                        for (t, &c) in counts.iter().enumerate() {
+                            if c > 0.0 {
+                                let tf = if reduce_frequent { c.sqrt() } else { c };
+                                vec[t] = tf * idf[t];
+                            }
+                        }
+                        for (k, row) in ctfidf.iter().enumerate() {
+                            let sim = cosine(&vec, row);
+                            if sim >= min_similarity && sim > 0.0 {
+                                acc[k] += sim;
+                            }
+                        }
+                        windows += 1;
+                    }
+                    if end >= doc.len() {
+                        break;
+                    }
+                    start += s;
+                }
+                let sum: f64 = acc.iter().sum();
+                if windows > 0 && sum > 0.0 {
+                    for v in acc.iter_mut() {
+                        *v /= sum;
+                    }
+                } else {
+                    acc.iter_mut().for_each(|v| *v = 1.0 / num_topics as f64);
+                }
+                acc
+            })
+            .collect()
+    }
+
+    #[test]
+    fn approximate_distribution_bit_identical_to_dense() {
+        // The sparse+parallel rewrite (#557) must reproduce the dense reference to the
+        // last bit across every divergence-prone case (some flagged by the adversarial
+        // review of #558): OOV tokens (>= V), repeated tokens in a window, reduce_frequent
+        // on/off, the exact min_similarity boundary, a short final window, an EMPTY doc, an
+        // ALL-OOV doc, a ZERO-NORM topic row, and an oversized `window` (larger than any
+        // doc — must not panic, must match).
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        let vocab = 30usize;
+        let idf: Vec<f64> = (0..vocab).map(|_| 0.2 + rng.gen::<f64>() * 3.0).collect();
+        let num_topics = 6usize;
+        let mut ctfidf: Vec<Vec<f64>> = (0..num_topics)
+            .map(|_| (0..vocab).map(|_| rng.gen::<f64>() * 2.0 - 0.5).collect())
+            .collect();
+        ctfidf[num_topics - 1] = vec![0.0; vocab]; // a zero-norm topic row
+                                                   // Docs draw tokens in 0..vocab+4, so some land out of vocabulary (>= V).
+        let mut docs: Vec<Vec<u32>> = (0..25)
+            .map(|_| {
+                let len = rng.gen_range(0..40);
+                (0..len)
+                    .map(|_| rng.gen_range(0..(vocab as u32 + 4)))
+                    .collect()
+            })
+            .collect();
+        docs.push(Vec::new()); // an empty document
+        docs.push(vec![vocab as u32 + 1; 6]); // an all-out-of-vocabulary document
+        for &reduce_frequent in &[false, true] {
+            // 0.15 exercises a nonzero gate; 0.0 exercises the exact boundary (sim >= 0.0).
+            for &min_sim in &[0.0, 0.15] {
+                // The last pair is an oversized window (bigger than every doc).
+                for &(win, stride) in &[(4usize, 1usize), (3, 2), (8, 4), (10_000, 1)] {
+                    let want = approximate_distribution_dense_reference(
+                        &docs,
+                        &ctfidf,
+                        &idf,
+                        num_topics,
+                        win,
+                        stride,
+                        reduce_frequent,
+                        min_sim,
+                    );
+                    let got = approximate_distribution(
+                        &docs,
+                        &ctfidf,
+                        &idf,
+                        num_topics,
+                        win,
+                        stride,
+                        reduce_frequent,
+                        min_sim,
+                    );
+                    assert_eq!(
+                        want, got,
+                        "mismatch at reduce_frequent={reduce_frequent} min_sim={min_sim} win={win} stride={stride}"
+                    );
+                }
+            }
+        }
+        // num_topics == 0 returns one empty row per document in both paths.
+        let want0 = approximate_distribution_dense_reference(&docs, &[], &idf, 0, 4, 1, false, 0.0);
+        let got0 = approximate_distribution(&docs, &[], &idf, 0, 4, 1, false, 0.0);
+        assert_eq!(want0, got0);
+        assert_eq!(got0.len(), docs.len());
+        assert!(got0.iter().all(|r| r.is_empty()));
     }
 
     #[test]
