@@ -6,6 +6,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-07-25
+
+### Added
+
+- **Vocabulary control on `Corpus` for scikit-learn / gensim parity** (#553).
+  `Corpus.from_documents` (and `from_dataframe`) gain `max_features`, capping the
+  vocabulary to the N most frequent surviving terms (scikit-learn's
+  `CountVectorizer(max_features=)`), and `vocabulary=`, pinning the vocabulary to a
+  fixed, ordered term list (scikit-learn's `vocabulary=`). A new
+  `Corpus.transform(documents)` vectorizes held-out documents against an existing
+  corpus's vocabulary (scikit-learn's `vectorizer.transform` / gensim's `doc2bow`
+  on new text), sharing the vocabulary at full width so a fitted model's
+  `topic_word` columns stay aligned. Out-of-vocabulary tokens are dropped; a
+  document left with no in-vocabulary token is dropped and recorded in
+  `kept_indices`.
+
 ## [0.50.0] - 2026-07-25
 
 ### Changed
