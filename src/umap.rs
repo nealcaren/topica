@@ -27,7 +27,15 @@ use rayon::prelude::*;
 
 /// Fit the `(a, b)` of the low-dimensional membership curve
 /// `1 / (1 + a·x^(2b))` to an offset exponential decay defined by `spread` and
-/// `min_dist`, by gradient descent (the `umap-learn` `find_ab_params`).
+/// `min_dist`. `umap-learn` uses SciPy `curve_fit` (Levenberg-Marquardt); we match
+/// it with a damped Gauss-Newton solve on the same 2-parameter least-squares problem.
+///
+/// The previous plain-gradient-descent fit under-converged from its `a = 1.5` start:
+/// at `min_dist = 0.0` (BERTopic's default) the true `a ≈ 1.933`, but GD stalled near
+/// `1.577`, giving a membership curve with too-weak short-range attraction. The layout
+/// then failed to open the density valleys HDBSCAN needs, collapsing to ~2 topics on
+/// real embeddings (issue #555). Gauss-Newton reaches the true optimum (`curve_fit`
+/// parity to 4 decimals across `min_dist`), restoring the correct attraction.
 pub fn find_ab_params(spread: f64, min_dist: f64) -> (f64, f64) {
     let n_points = 300usize;
     let xv: Vec<f64> = (0..n_points)
@@ -44,29 +52,43 @@ pub fn find_ab_params(spread: f64, min_dist: f64) -> (f64, f64) {
         })
         .collect();
 
-    let mut a = 1.5;
-    let mut b = 0.9;
-    let lr = 0.01;
-    for _ in 0..1000 {
-        let mut grad_a = 0.0;
-        let mut grad_b = 0.0;
-        let mut total_err = 0.0;
+    // curve_fit's default initial guess is (1, 1).
+    let mut a = 1.0;
+    let mut b = 1.0;
+    let lambda = 1e-3; // Levenberg-Marquardt diagonal damping.
+    for _ in 0..100 {
+        // Accumulate the Gauss-Newton normal equations JᵀJ (2×2, symmetric) and Jᵀr.
+        let (mut jtj00, mut jtj01, mut jtj11) = (0.0, 0.0, 0.0);
+        let (mut jtr0, mut jtr1) = (0.0, 0.0);
         for i in 0..n_points {
             let x = xv[i];
+            if x <= 0.0 {
+                continue; // x = 0 contributes a zero row (residual 0, zero Jacobian).
+            }
             let x_2b = x.powf(2.0 * b);
             let denom = 1.0 + a * x_2b;
-            let err = 1.0 / denom - yv[i];
-            total_err += err * err;
-            grad_a += 2.0 * err * (-x_2b / (denom * denom));
-            if x > 0.0 {
-                grad_b += 2.0 * err * (-2.0 * a * x_2b * x.ln() / (denom * denom));
-            }
+            let r = 1.0 / denom - yv[i];
+            let d_da = -x_2b / (denom * denom);
+            let d_db = -2.0 * a * x_2b * x.ln() / (denom * denom);
+            jtj00 += d_da * d_da;
+            jtj01 += d_da * d_db;
+            jtj11 += d_db * d_db;
+            jtr0 += d_da * r;
+            jtr1 += d_db * r;
         }
-        a -= lr * grad_a / n_points as f64;
-        b -= lr * grad_b / n_points as f64;
-        a = a.clamp(0.001, 10.0);
-        b = b.clamp(0.001, 10.0);
-        if total_err / (n_points as f64) < 1e-7 {
+        // Solve (JᵀJ + λ·diag(JᵀJ)) Δ = −Jᵀr for the step Δ.
+        let a00 = jtj00 * (1.0 + lambda);
+        let a11 = jtj11 * (1.0 + lambda);
+        let a01 = jtj01;
+        let det = a00 * a11 - a01 * a01;
+        if det.abs() < 1e-30 {
+            break;
+        }
+        let step_a = -(a11 * jtr0 - a01 * jtr1) / det;
+        let step_b = -(-a01 * jtr0 + a00 * jtr1) / det;
+        a = (a + step_a).max(1e-3);
+        b = (b + step_b).max(1e-3);
+        if step_a * step_a + step_b * step_b < 1e-14 {
             break;
         }
     }
@@ -309,6 +331,31 @@ fn clip(v: f64) -> f64 {
     v.clamp(-4.0, 4.0)
 }
 
+/// Rescale a flat `n × dim` embedding so each axis independently spans `[0, 10]`
+/// (umap-learn's `10 * (e − min) / (max − min)` applied per column before the SGD).
+/// A degenerate axis (zero range) collapses to the neutral midpoint `5.0`, avoiding
+/// the NaN the reference division would produce. Deterministic and in place.
+fn rescale_unit_box(embedding: &mut [f64], n: usize, dim: usize) {
+    for d in 0..dim {
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for i in 0..n {
+            let v = embedding[i * dim + d];
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+        let range = hi - lo;
+        for i in 0..n {
+            let idx = i * dim + d;
+            embedding[idx] = if range > 1e-12 {
+                10.0 * (embedding[idx] - lo) / range
+            } else {
+                5.0
+            };
+        }
+    }
+}
+
 /// SGD layout optimization, faithful to `umap-learn`'s
 /// `optimize_layout_euclidean` (sequential, seeded negative sampling).
 #[allow(clippy::too_many_arguments)]
@@ -459,6 +506,13 @@ pub fn umap(
         *v = rng.gen_range(-10.0..10.0);
     }
 
+    // Rescale the initial layout so each axis spans [0, 10], matching umap-learn's
+    // `10 * (e - min) / (max - min)` step applied right before the SGD (umap_.py). Without
+    // it topica started at ~2x the reference linear scale (span 20 vs 10), which halves the
+    // effective attractive velocity (grad ~ -2b/d for large d) so clusters never condense
+    // into the density valleys HDBSCAN cuts on — the #555 collapse.
+    rescale_unit_box(&mut embedding, n, n_components);
+
     let head: Vec<u32> = edges.iter().map(|&(h, _, _)| h).collect();
     let tail: Vec<u32> = edges.iter().map(|&(_, t, _)| t).collect();
     let weights: Vec<f64> = edges.iter().map(|&(_, _, w)| w).collect();
@@ -492,10 +546,54 @@ mod tests {
 
     #[test]
     fn ab_params_match_reference() {
-        // umap-learn's find_ab_params(1.0, 0.1) ~= (1.577, 0.895).
-        let (a, b) = find_ab_params(1.0, 0.1);
-        assert!((a - 1.577).abs() < 0.1, "a = {a}");
-        assert!((b - 0.895).abs() < 0.1, "b = {b}");
+        // Must match umap-learn's SciPy curve_fit across min_dist, especially the
+        // min_dist = 0.0 default path that the old GD fit got wrong (#555): there the
+        // reference is (1.933, 0.790), not the ~1.577 GD stalled at.
+        for (md, ea, eb) in [
+            (0.0, 1.933, 0.790),
+            (0.1, 1.577, 0.895),
+            (0.5, 0.583, 1.334),
+        ] {
+            let (a, b) = find_ab_params(1.0, md);
+            assert!(
+                (a - ea).abs() < 0.02,
+                "min_dist={md}: a = {a}, expected {ea}"
+            );
+            assert!(
+                (b - eb).abs() < 0.02,
+                "min_dist={md}: b = {b}, expected {eb}"
+            );
+        }
+    }
+
+    #[test]
+    fn rescale_spans_unit_box_per_axis() {
+        // Two axes on very different raw scales both land in [0, 10] independently,
+        // matching umap-learn's per-column min-max init rescale (the #555 fix).
+        let mut e = vec![
+            -10.0, 100.0, // point 0
+            10.0, 200.0, // point 1
+            0.0, 150.0, // point 2
+        ];
+        rescale_unit_box(&mut e, 3, 2);
+        for d in 0..2 {
+            let col: Vec<f64> = (0..3).map(|i| e[i * 2 + d]).collect();
+            let lo = col.iter().copied().fold(f64::INFINITY, f64::min);
+            let hi = col.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            assert!((lo - 0.0).abs() < 1e-9, "axis {d} min = {lo}");
+            assert!((hi - 10.0).abs() < 1e-9, "axis {d} max = {hi}");
+        }
+        // Midpoint of each axis maps to 5.0 (point 2 is the midpoint of both).
+        assert!((e[4] - 5.0).abs() < 1e-9 && (e[5] - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rescale_degenerate_axis_to_midpoint() {
+        // A zero-range axis must not divide by zero — it collapses to the midpoint.
+        let mut e = vec![7.0, -3.0, 7.0, 4.0];
+        rescale_unit_box(&mut e, 2, 2);
+        assert_eq!(e[0], 5.0, "degenerate axis 0 should be midpoint");
+        assert_eq!(e[2], 5.0, "degenerate axis 0 should be midpoint");
     }
 
     #[test]
