@@ -6,6 +6,34 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-07-26
+
+### Fixed
+
+- **UMAP reducer no longer collapses on real embeddings** (#555). The in-house
+  UMAP became the default `reducer` for `BERTopic`/`Top2Vec` in 0.50.0, but on real
+  sentence embeddings it collapsed to ~2 topics on the large majority of seeds for
+  small-to-moderate corpora. The cause was `find_ab_params` under-converging: it fit
+  the low-dimensional membership curve with plain gradient descent that stalled far
+  from the least-squares optimum at the `min_dist=0.0` default (`a≈1.58` where the
+  reference is `a≈1.93`), giving too-weak short-range attraction so the layout never
+  opened the density valleys HDBSCAN needs. It now uses a damped Gauss-Newton solve
+  matching SciPy `curve_fit` to four decimals across `min_dist`. Validated against
+  the reference `umap-learn`/`bertopic` on 20 Newsgroups, congressional bills, and a
+  synthetic corpus (collapse rate 88% to 0%; topic counts and ARI on par with the
+  reference).
+
+### Changed
+
+- **`BERTopic.fit` is dramatically faster on medium and large corpora** (#557). The
+  `approximate_distribution` step that builds the soft document-topic distribution
+  (`doc_topic`) was `O(docs · windows · topics · vocabulary)` and single-threaded,
+  dominating fit time — a 5000-document fit spent over an hour in it. It now keeps
+  only each window's nonzero tokens (reducing the per-window cosine from the full
+  vocabulary to the window size), precomputes each topic's norm once, and
+  parallelizes across documents. The output `doc_topic` is bit-identical to before;
+  the same 5000-document fit drops from ~72 minutes to a few seconds.
+
 ## [0.51.0] - 2026-07-25
 
 ### Added
