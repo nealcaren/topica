@@ -269,8 +269,10 @@ class DMR:
     """Dirichlet-Multinomial Regression topic model (Mimno & McCallum 2008).
 
     Like LDA, but the per-document topic prior is log-linear in document
-    features: alpha_{d,t} = exp(lambda_t . x_d). After fitting, the learned
-    weights are in `feature_effects`.
+    features: alpha_{d,t} = exp(lambda_t . x_d) + alpha_epsilon. The lambda prior
+    is centered at log(alpha) on the intercept, so with a null covariate the model
+    reduces to LDA with symmetric prior `alpha` (matching tomotopy's DMR default
+    0.1). After fitting, the learned weights are in `feature_effects`.
     """
     @property
     def settings(self) -> dict:
@@ -292,7 +294,9 @@ class DMR:
         optimize_interval: int = 50,
         burn_in: int = 200,
         seed: int = 42,
+        alpha: float = 0.1,
         prior_variance: float = 1.0,
+        alpha_epsilon: float = 1e-10,
         lbfgs_iters: int = 20,
         sampler: str = "sparse",
     ) -> None:

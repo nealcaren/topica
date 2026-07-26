@@ -5,7 +5,7 @@
 //! family trait.
 
 pub mod lbfgs;
-pub use lbfgs::{lbfgs_minimize, lbfgs_minimize_status};
+pub use lbfgs::{lbfgs_minimize, lbfgs_minimize_status, lbfgs_minimize_status_capped};
 
 pub mod sparse;
 pub use sparse::doc_sparse;

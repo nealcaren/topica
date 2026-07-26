@@ -95,6 +95,70 @@ class TestDMRConstructor:
         with pytest.raises(ValueError):
             DMR(2, prior_variance=-1.0)
 
+    def test_alpha_zero_raises(self):
+        with pytest.raises(ValueError):
+            DMR(2, alpha=0.0)
+
+    def test_alpha_negative_raises(self):
+        with pytest.raises(ValueError):
+            DMR(2, alpha=-0.1)
+
+    def test_alpha_epsilon_negative_raises(self):
+        with pytest.raises(ValueError):
+            DMR(2, alpha_epsilon=-1e-9)
+
+    def test_default_alpha_and_epsilon(self):
+        d = DMR(2)
+        assert d.settings["alpha"] == 0.1
+        assert d.settings["alpha_epsilon"] == 1e-10
+
+
+class TestCovariatePriorFaithfulness:
+    """#563: the covariate prior must not over-steer. For a *null* covariate,
+    DMR must reduce to LDA at the same baseline concentration (the λ optimizer
+    used to diverge to |λ|~100, collapsing θ toward uniform)."""
+
+    def _null_cov_corpus(self, n=300, doc_length=12, seed=0):
+        rng = np.random.default_rng(seed)
+        docs = []
+        for i in range(n):
+            vocab = _VOCAB_A if i % 2 == 0 else _VOCAB_B
+            docs.append(rng.choice(vocab, size=doc_length).tolist())
+        # A covariate that carries NO signal about the text.
+        x = rng.normal(size=(n, 1))
+        return docs, x
+
+    def test_lambda_stays_bounded_under_optimization(self):
+        docs, x = self._null_cov_corpus(seed=1)
+        m = DMR(num_topics=2, seed=1)
+        m.fit(docs, x, feature_names=["null"], iters=600)
+        fe = np.asarray(m.feature_effects)
+        # Pre-fix this ran to |lambda| ~ 40-100; a faithful fit keeps it O(1).
+        assert np.abs(fe).max() < 10.0, f"lambda diverged: max|λ|={np.abs(fe).max()}"
+
+    def test_dmr_reduces_to_lda_for_null_covariate(self):
+        from topica import LDA
+
+        docs, x = self._null_cov_corpus(seed=2)
+        d = DMR(num_topics=2, seed=1)
+        d.fit(docs, x, feature_names=["null"], iters=600)
+        lda = LDA(num_topics=2, seed=1)
+        lda.fit(docs, iters=600)
+
+        # Align topic-word rows across the shared vocabulary and require a high
+        # aligned cosine (DMR with a null covariate ≈ LDA).
+        dv = {w: i for i, w in enumerate(lda.vocabulary)}
+        shared = [w for w in d.vocabulary if w in dv]
+        Pd = np.asarray(d.topic_word)[:, [i for i, w in enumerate(d.vocabulary) if w in dv]]
+        Pl = np.asarray(lda.topic_word)[:, [dv[w] for w in shared]]
+        Pd = Pd / np.linalg.norm(Pd, axis=1, keepdims=True)
+        Pl = Pl / np.linalg.norm(Pl, axis=1, keepdims=True)
+        best = max(
+            np.mean([Pd[i] @ Pl[p[i]] for i in range(2)])
+            for p in [(0, 1), (1, 0)]
+        )
+        assert best > 0.7, f"DMR diverges from LDA for a null covariate: cos={best:.3f}"
+
 
 # ---------------------------------------------------------------------------
 # Unfitted access raises RuntimeError

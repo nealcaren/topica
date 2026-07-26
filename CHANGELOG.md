@@ -6,6 +6,28 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`DMR` / `GDMR` covariate prior now faithfully reproduces `tomotopy`** (#563).
+  topica's Dirichlet-multinomial regression diverged from the `tomotopy` reference
+  on poliblog (K=10) at an aligned topic-word cosine of ~0.25, far below both
+  engines' own seed-to-seed ceiling of ~0.71, and topica's DMR disagreed with its
+  *own* LDA at 0.33 where `tomotopy`'s DMR matches its LDA at 0.99. The base Gibbs
+  sampler was faithful (plain LDA agrees with MALLET/`tomotopy` above their mutual
+  ceiling); the fault was in the λ covariate layer. Two causes: (1) the L-BFGS λ
+  optimizer took an unscaled first step (`x − ∇f`), so on the Dirichlet-multinomial
+  objective's large initial gradient it overshot and drove λ to ±100, collapsing
+  every document's topic prior toward uniform — the fix caps the first step by
+  `1/‖∇f‖` (standard L-BFGS initialization); and (2) topica used a zero-mean λ prior
+  (implicit baseline concentration 1.0) where `tomotopy` centers the λ prior at
+  `log(alpha)` with default `alpha=0.1`, so `DMR` now exposes `alpha` (default 0.1)
+  and `alpha_epsilon` (default 1e-10) matching the reference. After the fix,
+  topica↔`tomotopy` DMR aligned cosine is **0.81**, above the seed ceiling, and DMR
+  reduces to LDA for a weak covariate as it should. Pass `alpha=1.0` to recover the
+  old zero-mean-intercept behaviour. keyATM base/dynamic fits are unchanged; the
+  covariate fit shifts negligibly (R-gold keyword cosine 0.912 → 0.906, still far
+  above bar, sign agreement 1.00).
+
 ## [0.53.0] - 2026-07-26
 
 ### Fixed

@@ -570,10 +570,14 @@ def leg_dmr(k):
     RESULTS["dmr"] = f"{cos:.2f} (ceil.\\ {ceiling:.2f})"
     intro = (r"The metadata covariate is the post's ideology (\code{rating}); DMR makes "
              rf"each document's topic prior log-linear in it. Aligned cosine "
-             rf"\textbf{{{cos:.3f}}} --- at the ceiling for independent DMR samplers: two "
-             rf"\pkg{{tomotopy}} runs from different seeds agree only {ceiling:.3f} with "
-             r"each other (these are random-initialized collapsed-Gibbs fits, so the "
-             r"dominant topics coincide while the diffuse tail differs run to run).")
+             rf"\textbf{{{cos:.3f}}}, above the reference's own seed-to-seed ceiling: two "
+             rf"\pkg{{tomotopy}} runs from different seeds agree {ceiling:.3f} with each "
+             r"other (these are random-initialized collapsed-Gibbs fits). As with plain "
+             r"LDA, the two engines agree at least as well as "
+             r"either agrees with itself. For this weak single covariate DMR reduces to "
+             r"LDA in both engines --- \pkg{topica}'s DMR matches its own LDA at 0.83 and "
+             r"\pkg{tomotopy}'s at 0.99 --- so the covariate-prior layer adds no "
+             r"cross-engine divergence.")
     return subsection(title, "\n\n".join([intro, table, feat]))
 
 
