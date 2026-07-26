@@ -916,17 +916,20 @@ class STS:
 
         EM stops once the relative change in the variational bound falls below
         convergence_tol or after iters iterations. kappa_estimation chooses the
-        topic-word estimator: None (default) uses the topica-native "ridge" unless a
-        reference profile overrides it; "ridge" (fast, topica-native; kappa_ridge
-        sets the ridge), "lasso" (an L1 Poisson path with AIC-selected penalty),
-        or "adjusted" (the CRAN sts public default: the same L1/AIC solve with a
-        phi-mass-weighted sentiment aggregation).
+        topic-word estimator: None (default) uses "lasso" -- R STS.R's default --
+        unless a reference profile overrides it; "lasso" (an L1 Poisson path with
+        AIC-selected penalty, the reference opt.kappa.R glmnet default), "ridge"
+        (topica-native ridge-penalized Poisson; kappa_ridge sets the ridge, an opt-in
+        for large-K regimes where it is faster), or "adjusted" (the CRAN sts public
+        default: the same L1/AIC solve with a phi-mass-weighted sentiment aggregation).
 
-        reference selects a reference-fidelity profile: "none" (default, honors
-        kappa_estimation), "paper" (Chen & Mankad 2024: STM-derived spectral-eta /
-        sentiment-prior-variance-20 init, the "lasso" estimator, no kappa damping),
-        or "cran" (CRAN sts: same init, the "adjusted" estimator, reference
-        half-step kappa damping). A reference profile forces its own estimator, so
+        reference selects a reference-fidelity profile: "none" (default: the
+        reference STS.R init -- prevalence latents at 0 and prior covariance diag(20)
+        -- honoring kappa_estimation, so the default lasso fit reproduces the
+        reference), "paper" (Chen & Mankad 2024: their stm(max.em.its=0)
+        seed -- prevalence latents at 0 and prior covariance diag(20) -- the "lasso"
+        estimator, no kappa damping), or "cran" (CRAN sts: same init, the "adjusted"
+        estimator, reference half-step kappa damping). A reference profile forces its own estimator, so
         pairing it with any explicit kappa_estimation that differs (including an
         explicit "ridge") raises.
 

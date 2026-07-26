@@ -8930,20 +8930,25 @@ impl STS {
     /// `convergence_tol` or `iters` iterations are reached.
     ///
     /// `kappa_estimation` chooses the topic-word (κ) estimator. Left unset
-    /// (``None``, the default) it resolves to ``"ridge"`` unless a `reference`
-    /// profile overrides it; passing it explicitly pins the estimator and, under a
-    /// reference profile, is checked for conflict (see below). ``"ridge"``
-    /// is a fast ridge-penalized Poisson fit (`kappa_ridge` sets the
-    /// ridge) — topica-native, not a reference target. ``"lasso"`` is an L1
-    /// Poisson path with AIC-selected penalty (the paper replication code's
-    /// default). ``"adjusted"`` is the CRAN `sts` public default: the same L1/AIC
-    /// solve but with the aggregated sentiment column formed as a φ-mass-weighted
-    /// group mean of ``α^(s)`` (the reference `weighted_alpha` reweighting).
+    /// (``None``, the default) it resolves to ``"lasso"`` — R `STS.R`'s default
+    /// estimator — unless a `reference` profile overrides it; passing it explicitly
+    /// pins the estimator and, under a reference profile, is checked for conflict
+    /// (see below). ``"lasso"`` is an L1 Poisson path with AIC-selected penalty (the
+    /// reference `opt.kappa.R` glmnet default). ``"ridge"`` is a ridge-penalized
+    /// Poisson fit (`kappa_ridge` sets the ridge) — topica-native, an opt-in for
+    /// regimes where it is faster (large K). ``"adjusted"`` is the CRAN `sts` public
+    /// default: the same L1/AIC solve but with the aggregated sentiment column formed
+    /// as a φ-mass-weighted group mean of ``α^(s)`` (the reference `weighted_alpha`
+    /// reweighting).
     ///
     /// `reference` selects a reference-fidelity fitting profile. ``"none"``
-    /// (default) is topica-native and honors `kappa_estimation` as given.
-    /// ``"paper"`` reproduces Chen & Mankad (2024) (STM-derived spectral-eta /
-    /// sentiment-prior-variance-20 init, the ``"lasso"`` estimator, no κ damping).
+    /// (default) uses the reference `STS.R` initialization (prevalence latents at 0,
+    /// prior covariance ``diag(20)``) and honors `kappa_estimation` as given, so the
+    /// default fit (lasso) reproduces the reference; pass `kappa_estimation="ridge"`
+    /// for the topica-native estimator with the same init.
+    /// ``"paper"`` reproduces Chen & Mankad (2024) (their `stm(max.em.its=0)` seed:
+    /// prevalence latents at 0 and prior covariance ``diag(20)``, the ``"lasso"``
+    /// estimator, no κ damping).
     /// ``"cran"`` reproduces CRAN `sts` (the same init, the ``"adjusted"``
     /// estimator, and the reference half-step κ damping). A reference profile
     /// forces its own estimator, so pairing it with any explicit
@@ -9004,13 +9009,14 @@ impl STS {
             (None, Some(c)) => Some(c),
             (None, None) => None,
         };
-        // `kappa_estimation` is a sentinel Option so an explicit "ridge" (the
-        // topica-native default estimator) is distinguishable from "unset". This
-        // matters for the reference-profile conflict check below: reference="cran"
-        // paired with an explicit kappa_estimation="ridge" must raise, not be
-        // silently overwritten with the profile's estimator.
+        // `kappa_estimation` is a sentinel Option so an explicit estimator is
+        // distinguishable from "unset". This matters for the reference-profile
+        // conflict check below: reference="cran" paired with an explicit
+        // kappa_estimation="ridge" must raise, not be silently overwritten with the
+        // profile's estimator. The default is "lasso" — R `STS.R`'s default
+        // (`opt.kappa.R` glmnet), so the out-of-the-box fit reproduces the reference.
         let user_set_kappa = kappa_estimation.is_some();
-        let kappa_estimation: &str = kappa_estimation.unwrap_or("ridge");
+        let kappa_estimation: &str = kappa_estimation.unwrap_or("lasso");
         let lasso = sts::KappaEst::Lasso {
             nlambda: 100,
             lambda_min_ratio: 0.001,
@@ -9037,11 +9043,17 @@ impl STS {
         //             group-mean aggregation, no κ damping).
         //   "cran"  — CRAN `sts` public default (`kappaEstimation="adjusted"`,
         //             φ-mass-weighted aggregation, half-step κ damping).
-        //   "none"  — topica-native; honors kappa_estimation as given (ridge default).
+        //   "none"  — reference STS.R init (diag(20)); honors kappa_estimation (lasso default).
         // A reference profile forces its estimator, so pairing it with a conflicting
         // explicit kappa_estimation is an error (including an explicit "ridge").
+        //
+        // Every profile enables `reference_init` (the faithful STS.R seed: prevalence
+        // latents at 0, prior covariance diag(20)). The `reference_init = false`
+        // path (Sigma = identity) is intentionally not exposed to Python — it is a
+        // strictly less faithful init with no principled use for an STS port — but is
+        // kept in `fit_sts` and exercised by the Rust conformance tests.
         let (kappa_est, reference_init, kappa_damping) = match reference {
-            "none" => (kappa_est, false, false),
+            "none" => (kappa_est, true, false),
             "paper" => {
                 if user_set_kappa && kappa_estimation != "lasso" {
                     return Err(PyValueError::new_err(format!(

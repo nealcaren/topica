@@ -202,9 +202,14 @@ def run(verbose: bool = True) -> dict:
     K = r_sts.shape[0]
     X = rating.reshape(-1, 1)
     sts = STS(num_topics=K, init="spectral")
+    # reference="paper" replicates Chen & Mankad's STS.R init faithfully: prevalence
+    # latents at 0 and Σ = diag(20) (their stm(max.em.its=0) returns eta=0,
+    # invsigma=diag(1/20)), the "lasso" (plain group-mean) κ estimator, and the
+    # centered-seed sentiment init. This is the profile the reference RDS was produced
+    # with, so it is what we validate against.
     sts.fit(docs, sentiment_seed=rating.tolist(), prevalence=X,
             prevalence_names=["rating"],
-            iters=50, kappa_estimation="lasso")  # match the reference's kappa estimator
+            iters=50, kappa_estimation="lasso", reference="paper")
     stm = STM(num_topics=K, init="spectral")
     stm.fit(docs, X, prevalence_names=["rating"], iters=80)
 
