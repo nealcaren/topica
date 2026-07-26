@@ -6,7 +6,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
-## [0.52.0] - 2026-07-26
+## [0.53.0] - 2026-07-26
+
+### Fixed
+
+- **`STS` default now faithfully reproduces the reference model** (#560). topica's
+  Structural Topic and Sentiment-Discourse model diverged from Chen & Mankad (2024)
+  on its default fit, aligning to the authors' poliblog reference at a topic-word
+  cosine of 0.85 where the reference expects the mid-0.90s. The reference-init path
+  was not a faithful port: it approximated the prevalence latents from a phi
+  log-ratio and built the prior covariance from the init-eta variance. R's `STS.R`
+  seeds from `stm(max.em.its=0)`, which returns `eta = 0` and `invsigma = diag(1/20)`,
+  so the prevalence latents start at 0 and the prior covariance is `diag(20)` across
+  all latent dimensions. The default fit now uses that initialization and the
+  reference's `lasso` kappa estimator (was topica-native `ridge`; ridge remains
+  available via `kappa_estimation="ridge"`). The default `STS(...).fit(...)` now
+  reproduces the reference at cosine 0.94, and on this corpus the lasso default is
+  also faster than ridge.
 
 ### Fixed
 
