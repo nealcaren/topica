@@ -81,6 +81,51 @@ print(corpus.num_docs, corpus.num_words, corpus.total_tokens)
 The vocabulary is compiled in Rust, so even multi-gigabyte corpora build quickly.
 A `Corpus` can also load from disk (one document per line, or MALLET-style TSV).
 
+### Cap the vocabulary size (`max_features`)
+
+To keep only the most frequent terms, pass `max_features`. It caps the vocabulary
+to the N most frequent surviving word types, applied after the other filters, and
+matches scikit-learn's `CountVectorizer(max_features=)`:
+
+```python
+corpus = Corpus.from_documents(docs, max_features=10_000)   # keep the 10k most frequent terms
+```
+
+Ties are broken deterministically (by frequency, then by first appearance). Note
+that scikit-learn ranks by collection (total) frequency, while gensim's `keep_n`
+ranks by document frequency; topica follows scikit-learn.
+
+## Apply a fixed vocabulary, or vectorize held-out documents
+
+Two related tasks need the vocabulary held fixed rather than learned from the data.
+
+Pin the vocabulary to a predetermined, ordered term list with `vocabulary=`
+(scikit-learn's `vocabulary=`). Out-of-vocabulary tokens are dropped, the column
+order follows your list, and the frequency filters are not applied (so
+`vocabulary` cannot be combined with `min_doc_freq`, `max_features`, and friends):
+
+```python
+corpus = Corpus.from_documents(docs, vocabulary=["climate", "policy", "economy"])
+```
+
+To score held-out documents with a model you already fit, vectorize them against
+the training corpus with `transform`. The result shares the training vocabulary
+exactly (same terms, order, and ids, at full width), so the model's `topic_word`
+columns stay aligned:
+
+```python
+corpus = Corpus.from_documents(train_docs, min_doc_freq=5)
+model = topica.LDA(num_topics=20).fit(corpus)
+
+heldout = corpus.transform(test_docs)          # same vocabulary as `corpus`
+theta = model.transform(heldout)               # held-out document-topic mixtures
+```
+
+This is scikit-learn's `vectorizer.transform` and gensim's `doc2bow` on new text.
+A held-out document with no in-vocabulary tokens is dropped; its surviving index
+is recorded in `heldout.kept_indices`, so external labels can be realigned the
+same way as after pruning.
+
 ## Detect phrases
 
 Fixed expressions carry meaning together. Detect collocations and rewrite the

@@ -259,7 +259,8 @@ class TestPreprocessingGetter:
             [["a", "b", "c"], ["b", "c", "d"]],
             min_doc_freq=1, max_doc_fraction=1.0, min_cf=0, rm_top=2)
         assert c.preprocessing == {
-            "min_doc_freq": 1, "max_doc_fraction": 1.0, "min_cf": 0, "rm_top": 2}
+            "min_doc_freq": 1, "max_doc_fraction": 1.0, "min_cf": 0, "rm_top": 2,
+            "max_features": None, "vocabulary": False}
 
     def test_none_after_load(self, tmp_path):
         c = Corpus.from_documents([["a", "b"], ["b", "c", "a"]])

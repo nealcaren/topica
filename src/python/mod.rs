@@ -638,6 +638,45 @@ pub(super) fn build_corpus_from_docs(
     min_cf: u32,
     rm_top: usize,
 ) -> PyResult<(corpus::Corpus, Vec<usize>)> {
+    build_corpus_from_docs_ext(
+        docs_in,
+        doc_names_in,
+        doc_labels_in,
+        stopwords,
+        min_doc_freq,
+        max_doc_fraction,
+        min_cf,
+        rm_top,
+        None,
+        None,
+    )
+}
+
+/// Extended corpus builder backing [`build_corpus_from_docs`].
+///
+/// `max_features` caps the pruned vocabulary to the N most frequent word types
+/// (by total collection frequency, ties broken by ascending vocab id, the same
+/// convention as `rm_top`), applied *after* the `min_doc_freq` / `max_doc_fraction`
+/// / `min_cf` / `rm_top` filters, matching scikit-learn's `CountVectorizer`.
+///
+/// `fixed_vocab`, when `Some`, pins the vocabulary to the given term list in the
+/// given order: tokens are mapped to those ids, out-of-vocabulary tokens are
+/// dropped, and the frequency filters (`min_doc_freq`, …, `max_features`) are
+/// ignored. See [`build_with_fixed_vocab`]. This is scikit-learn's `vocabulary=`
+/// and the machinery behind [`Corpus::transform`].
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_corpus_from_docs_ext(
+    docs_in: Vec<Vec<String>>,
+    doc_names_in: Option<Vec<String>>,
+    doc_labels_in: Option<Vec<String>>,
+    stopwords: HashSet<String>,
+    min_doc_freq: u32,
+    max_doc_fraction: f64,
+    min_cf: u32,
+    rm_top: usize,
+    max_features: Option<usize>,
+    fixed_vocab: Option<Vec<String>>,
+) -> PyResult<(corpus::Corpus, Vec<usize>)> {
     let n = docs_in.len();
     if let Some(names) = &doc_names_in {
         if names.len() != n {
@@ -658,6 +697,14 @@ pub(super) fn build_corpus_from_docs(
         }
     }
 
+    // Fixed-vocabulary path: map against a predetermined term list, dropping
+    // out-of-vocabulary tokens and all frequency filters. Kept separate from the
+    // dynamic path so the latter's "retain an already-empty input document"
+    // contract is untouched.
+    if let Some(vocab_list) = fixed_vocab {
+        return build_with_fixed_vocab(docs_in, doc_names_in, doc_labels_in, stopwords, vocab_list);
+    }
+
     let mut vocab: HashMap<String, usize> = HashMap::new();
     let mut id_to_word: Vec<String> = Vec::new();
     let mut total_freqs: Vec<u32> = Vec::new();
@@ -668,7 +715,9 @@ pub(super) fn build_corpus_from_docs(
         let mut token_ids: Vec<u32> = Vec::with_capacity(tokens.len());
         let mut seen: HashSet<usize> = HashSet::new();
         for tok in tokens {
-            if stopwords.contains(tok) {
+            // An empty string is not a word; skip it so it never becomes a
+            // vocabulary type (which a later fixed-vocab `transform` would reject).
+            if tok.is_empty() || stopwords.contains(tok) {
                 continue;
             }
             let id = if let Some(&eid) = vocab.get(tok) {
@@ -719,7 +768,7 @@ pub(super) fn build_corpus_from_docs(
     } else {
         HashSet::new()
     };
-    let keep: Vec<bool> = (0..num_types)
+    let mut keep: Vec<bool> = (0..num_types)
         .map(|id| {
             doc_freqs[id] >= min_doc_freq
                 && doc_freqs[id] <= max_df
@@ -727,6 +776,20 @@ pub(super) fn build_corpus_from_docs(
                 && !drop_top.contains(&id)
         })
         .collect();
+
+    // `max_features`: after the df/cf/rm_top filters, keep only the N most
+    // frequent survivors (by total frequency, ties broken by ascending id — the
+    // same ordering `rm_top` uses). Matches scikit-learn's CountVectorizer, which
+    // also applies max_features last. `None` = unlimited.
+    if let Some(mf) = max_features {
+        let mut surviving: Vec<usize> = (0..num_types).filter(|&id| keep[id]).collect();
+        if surviving.len() > mf {
+            surviving.sort_by(|&a, &b| total_freqs[b].cmp(&total_freqs[a]).then(a.cmp(&b)));
+            for &id in &surviving[mf..] {
+                keep[id] = false;
+            }
+        }
+    }
 
     if keep.iter().all(|&k| k) {
         let n = docs.len();
@@ -799,6 +862,98 @@ pub(super) fn build_corpus_from_docs(
         doc_labels: final_labels,
         doc_freqs: new_doc_freqs,
         total_freqs: new_total_freqs,
+    };
+    Ok((corpus, kept_indices))
+}
+
+/// Build a corpus against a fixed, predetermined vocabulary (scikit-learn's
+/// `vocabulary=` / gensim's `doc2bow` on new text). Tokens are mapped to the ids
+/// implied by `vocab_list` order; out-of-vocabulary tokens are dropped; no
+/// frequency filtering is applied.
+///
+/// The vocabulary is preserved at full width and in the given order (terms that
+/// never appear in `docs_in` remain as columns with frequency zero), so a model
+/// trained on the source corpus keeps its `topic_word` columns aligned. Documents
+/// left empty (every token out-of-vocabulary) are dropped, with `doc_names` /
+/// `doc_labels` kept aligned and the surviving original indices returned in the
+/// second tuple field (topica's usual `kept_indices` contract). `stopwords` are
+/// still honoured, so a caller may drop extra tokens even if they are in the
+/// vocabulary.
+fn build_with_fixed_vocab(
+    docs_in: Vec<Vec<String>>,
+    doc_names_in: Option<Vec<String>>,
+    doc_labels_in: Option<Vec<String>>,
+    stopwords: HashSet<String>,
+    vocab_list: Vec<String>,
+) -> PyResult<(corpus::Corpus, Vec<usize>)> {
+    if vocab_list.is_empty() {
+        return Err(PyValueError::new_err("vocabulary must not be empty"));
+    }
+    let num_types = vocab_list.len();
+    let mut word_to_id: HashMap<&str, u32> = HashMap::with_capacity(num_types);
+    for (i, w) in vocab_list.iter().enumerate() {
+        if w.is_empty() {
+            return Err(PyValueError::new_err(
+                "vocabulary contains an empty-string term",
+            ));
+        }
+        if word_to_id.insert(w.as_str(), i as u32).is_some() {
+            return Err(PyValueError::new_err(format!(
+                "vocabulary contains a duplicate term: {:?}",
+                w
+            )));
+        }
+    }
+
+    let n = docs_in.len();
+    let doc_names: Vec<String> =
+        doc_names_in.unwrap_or_else(|| (0..n).map(|i| format!("doc_{}", i)).collect());
+    let doc_labels: Vec<String> = doc_labels_in.unwrap_or_else(|| vec![String::new(); n]);
+
+    let mut total_freqs = vec![0u32; num_types];
+    let mut doc_freqs = vec![0u32; num_types];
+    let mut final_docs: Vec<Vec<u32>> = Vec::new();
+    let mut final_names: Vec<String> = Vec::new();
+    let mut final_labels: Vec<String> = Vec::new();
+    let mut kept_indices: Vec<usize> = Vec::new();
+
+    for (idx, tokens) in docs_in.into_iter().enumerate() {
+        let mut token_ids: Vec<u32> = Vec::with_capacity(tokens.len());
+        let mut seen: HashSet<usize> = HashSet::new();
+        for tok in &tokens {
+            if tok.is_empty() || stopwords.contains(tok) {
+                continue;
+            }
+            if let Some(&id) = word_to_id.get(tok.as_str()) {
+                total_freqs[id as usize] += 1;
+                token_ids.push(id);
+                seen.insert(id as usize);
+            }
+        }
+        if !token_ids.is_empty() {
+            for id in seen {
+                doc_freqs[id] += 1;
+            }
+            final_docs.push(token_ids);
+            final_names.push(doc_names[idx].clone());
+            final_labels.push(doc_labels[idx].clone());
+            kept_indices.push(idx);
+        }
+    }
+
+    if final_docs.is_empty() {
+        return Err(PyValueError::new_err(
+            "no documents survived: none of the tokens matched the fixed vocabulary",
+        ));
+    }
+
+    let corpus = corpus::Corpus {
+        id_to_word: vocab_list,
+        docs: final_docs,
+        doc_names: final_names,
+        doc_labels: final_labels,
+        doc_freqs,
+        total_freqs,
     };
     Ok((corpus, kept_indices))
 }

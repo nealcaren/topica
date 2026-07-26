@@ -125,8 +125,9 @@ class Corpus:
 
     @property
     def preprocessing(self) -> dict | None:
-        """The vocabulary-filtering parameters Topica applied when this corpus
-        was built (min_doc_freq/max_doc_fraction/min_cf/rm_top), or None after load."""
+        """The vocabulary-filtering parameters Topica applied when this corpus was
+        built (min_doc_freq/max_doc_fraction/min_cf/rm_top/max_features, plus a
+        ``vocabulary`` flag for a fixed-vocabulary build), or None after load."""
         ...
 
     @staticmethod
@@ -140,6 +141,8 @@ class Corpus:
         max_doc_fraction: float = 1.0,
         min_cf: int = 0,
         rm_top: int = 0,
+        max_features: int | None = None,
+        vocabulary: list[str] | None = None,
     ) -> Corpus:
         """Build a Corpus from a list of token lists.
 
@@ -148,6 +151,31 @@ class Corpus:
         ``kept_indices`` (realign external covariates with ``X[corpus.kept_indices]``).
         ``min_cf`` drops words whose corpus frequency is below the threshold.
         ``rm_top`` removes the top-N most frequent words before any other pruning.
+        ``max_features`` then caps the vocabulary to the N most frequent surviving
+        terms (scikit-learn's ``CountVectorizer(max_features=)``); None is unbounded.
+        ``vocabulary`` pins the vocabulary to a fixed, ordered term list
+        (scikit-learn's ``vocabulary=``): out-of-vocabulary tokens are dropped and
+        the frequency filters are not applied, so it cannot be combined with them.
+        To vectorize held-out documents against an existing corpus, use
+        :meth:`transform`.
+        """
+        ...
+
+    def transform(
+        self,
+        documents: list[list[str]],
+        *,
+        doc_names: list[str] | None = None,
+        doc_labels: list[str] | None = None,
+    ) -> Corpus:
+        """Vectorize new documents against this corpus's vocabulary.
+
+        Returns a Corpus sharing this one's vocabulary exactly (same terms, order,
+        and ids, at full width), so a model fitted here keeps its ``topic_word``
+        columns aligned. Out-of-vocabulary tokens are dropped; documents left with
+        no in-vocabulary token are dropped, with the survivors' indices in the
+        result's ``kept_indices``. scikit-learn's ``vectorizer.transform`` /
+        gensim's ``doc2bow`` on held-out text. Raises if no document survives.
         """
         ...
 
