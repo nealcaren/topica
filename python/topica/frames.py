@@ -31,6 +31,8 @@ def from_dataframe(
     max_doc_fraction=1.0,
     min_cf=0,
     rm_top=0,
+    max_features=None,
+    vocabulary=None,
 ):
     """Build a :class:`Corpus` from a pandas or Polars DataFrame, keeping
     per-document metadata aligned to the documents that survive pruning.
@@ -66,6 +68,14 @@ def from_dataframe(
         broken in a topic table), so pass a lemmatizing tokenizer here if you want
         to merge inflections while keeping readable surface forms. See the
         preprocessing guide ("Readable topic words: lemmatize, don't stem").
+    max_features : int, optional
+        Cap the vocabulary to the ``max_features`` most frequent surviving terms
+        (scikit-learn's ``CountVectorizer(max_features=)``). ``None`` leaves it
+        unbounded. Passed through to :meth:`Corpus.from_documents`.
+    vocabulary : sequence[str], optional
+        Pin the vocabulary to this fixed, ordered term list (scikit-learn's
+        ``vocabulary=``). Mutually exclusive with the frequency-pruning arguments
+        and ``max_features``; see :meth:`Corpus.from_documents`.
     """
     texts = list(df[text_col])  # pandas Series and Polars Series both iterate to values
     if tokenizer is None:
@@ -83,6 +93,8 @@ def from_dataframe(
         max_doc_fraction=max_doc_fraction,
         min_cf=min_cf,
         rm_top=rm_top,
+        max_features=max_features,
+        vocabulary=vocabulary,
     )
 
     cols = (

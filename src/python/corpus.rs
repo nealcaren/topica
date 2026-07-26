@@ -11,7 +11,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use super::build_corpus_from_docs;
+use super::build_corpus_from_docs_ext;
 use super::error::io_err;
 use crate::corpus::{self, InputFormat, LoadOptions};
 
@@ -24,6 +24,12 @@ pub(crate) struct PrepInfo {
     pub max_doc_fraction: f64,
     pub min_cf: u32,
     pub rm_top: usize,
+    /// Cap on the vocabulary size (top-N by frequency); `None` when unlimited.
+    pub max_features: Option<usize>,
+    /// True when the corpus was built against a fixed, user-supplied vocabulary
+    /// (or produced by :meth:`Corpus.transform`), in which case the frequency
+    /// filters above were not applied.
+    pub vocabulary: bool,
 }
 
 /// A preprocessed, integer-encoded document collection.
@@ -67,17 +73,26 @@ impl Corpus {
     /// `min_doc_freq` (minimum document frequency) and `max_doc_fraction`
     /// (maximum fraction of documents), by `min_cf` (minimum collection/total
     /// frequency), and by `rm_top` (drop the N most frequent words) — matching
-    /// tomotopy's `min_df` / `min_cf` / `rm_top`.
+    /// tomotopy's `min_df` / `min_cf` / `rm_top`. `max_features` then caps the
+    /// vocabulary to the N most frequent surviving word types (scikit-learn's
+    /// `CountVectorizer(max_features=)`); `None` leaves it unbounded.
+    ///
+    /// `vocabulary` pins the vocabulary to a fixed, ordered term list
+    /// (scikit-learn's `vocabulary=`): tokens are mapped to those columns,
+    /// out-of-vocabulary tokens are dropped, and the frequency filters above are
+    /// not applied, so passing `vocabulary` together with any of them is an error.
+    /// To vectorize new documents against an *existing* corpus's vocabulary
+    /// (held-out data), prefer :meth:`Corpus.transform`.
     ///
     /// A document left with no tokens by pruning is dropped, so `num_docs` can be
     /// smaller than `len(documents)`. The surviving original indices are in
     /// `kept_indices`; realign any external covariate matrix with
-    /// `X[corpus.kept_indices]`. (An input document that is empty before any
-    /// pruning is retained.)
+    /// `X[corpus.kept_indices]`. (Without a fixed `vocabulary`, an input document
+    /// that is empty before any pruning is retained.)
     #[staticmethod]
     #[pyo3(signature = (documents, *, doc_names=None, doc_labels=None,
                         stopwords=None, min_doc_freq=1, max_doc_fraction=1.0,
-                        min_cf=0, rm_top=0))]
+                        min_cf=0, rm_top=0, max_features=None, vocabulary=None))]
     #[allow(clippy::too_many_arguments)]
     fn from_documents(
         documents: Vec<Vec<String>>,
@@ -88,9 +103,33 @@ impl Corpus {
         max_doc_fraction: f64,
         min_cf: u32,
         rm_top: usize,
+        max_features: Option<usize>,
+        vocabulary: Option<Vec<String>>,
     ) -> PyResult<Self> {
+        if let Some(mf) = max_features {
+            if mf == 0 {
+                return Err(PyValueError::new_err(
+                    "max_features must be a positive integer",
+                ));
+            }
+        }
+        if vocabulary.is_some()
+            && (min_doc_freq > 1
+                || max_doc_fraction != 1.0
+                || min_cf > 0
+                || rm_top > 0
+                || max_features.is_some())
+        {
+            return Err(PyValueError::new_err(
+                "vocabulary= pins a fixed vocabulary and cannot be combined with \
+                 frequency pruning (a non-default min_doc_freq, max_doc_fraction, \
+                 min_cf, rm_top, or max_features); drop those arguments or prune first \
+                 and pass the resulting corpus.vocabulary",
+            ));
+        }
+        let used_fixed_vocab = vocabulary.is_some();
         let stop: HashSet<String> = stopwords.unwrap_or_default().into_iter().collect();
-        let (inner, kept_indices) = build_corpus_from_docs(
+        let (inner, kept_indices) = build_corpus_from_docs_ext(
             documents,
             doc_names,
             doc_labels,
@@ -99,6 +138,8 @@ impl Corpus {
             max_doc_fraction,
             min_cf,
             rm_top,
+            max_features,
+            vocabulary,
         )?;
         Ok(Corpus {
             inner,
@@ -109,6 +150,56 @@ impl Corpus {
                 max_doc_fraction,
                 min_cf,
                 rm_top,
+                max_features,
+                vocabulary: used_fixed_vocab,
+            }),
+        })
+    }
+
+    /// Vectorize new documents against this corpus's vocabulary.
+    ///
+    /// The returned corpus shares this one's vocabulary exactly (same terms, same
+    /// order, same ids, at full width; terms absent from `documents` remain as
+    /// zero-frequency columns), so a model fitted on this corpus keeps its
+    /// `topic_word` columns aligned to the result. Out-of-vocabulary tokens are
+    /// dropped; `doc_freqs` / `word_counts` are recomputed over `documents`. This
+    /// is scikit-learn's `vectorizer.transform` / gensim's `doc2bow` on held-out
+    /// text.
+    ///
+    /// A document with no in-vocabulary tokens is dropped (as elsewhere in
+    /// topica); `kept_indices` on the result gives the surviving `documents`
+    /// indices so external labels/covariates can be realigned. `metadata` is not
+    /// carried over. Raises if no document retains any in-vocabulary token.
+    #[pyo3(signature = (documents, *, doc_names=None, doc_labels=None))]
+    fn transform(
+        &self,
+        documents: Vec<Vec<String>>,
+        doc_names: Option<Vec<String>>,
+        doc_labels: Option<Vec<String>>,
+    ) -> PyResult<Self> {
+        let (inner, kept_indices) = build_corpus_from_docs_ext(
+            documents,
+            doc_names,
+            doc_labels,
+            HashSet::new(),
+            1,
+            1.0,
+            0,
+            0,
+            None,
+            Some(self.inner.id_to_word.clone()),
+        )?;
+        Ok(Corpus {
+            inner,
+            kept_indices,
+            metadata: None,
+            preprocessing: Some(PrepInfo {
+                min_doc_freq: 1,
+                max_doc_fraction: 1.0,
+                min_cf: 0,
+                rm_top: 0,
+                max_features: None,
+                vocabulary: true,
             }),
         })
     }
@@ -172,6 +263,8 @@ impl Corpus {
                 max_doc_fraction,
                 min_cf: 0,
                 rm_top: 0,
+                max_features: None,
+                vocabulary: false,
             }),
         })
     }
@@ -288,6 +381,8 @@ impl Corpus {
                 d.set_item("max_doc_fraction", p.max_doc_fraction)?;
                 d.set_item("min_cf", p.min_cf)?;
                 d.set_item("rm_top", p.rm_top)?;
+                d.set_item("max_features", p.max_features)?;
+                d.set_item("vocabulary", p.vocabulary)?;
                 Ok(Some(d))
             }
         }
