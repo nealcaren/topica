@@ -31,8 +31,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 ### Changed
 
 - **ProdLDA-family VAE decoder now uses a BLAS-free GEMM (2.7–6.8× faster on the
-  decoder)** (#378). The hand-coded VAE backbone shared by `ProdLDA`, `CombinedTM`,
-  `ZeroShotTM`, `ETM(inference="vae")`, `InfoCTM`, and `Scholar` spent most of a fit
+  decoder)** (#378). The hand-coded dense-decoder VAE backbone shared by `ProdLDA`,
+  `CombinedTM`, `ZeroShotTM`, `InfoCTM`, and `Scholar` spent most of a fit
   in three dense `O(N·K·V)` decoder terms written as scalar triple-loops, which ran
   4.7–6.8× slower than a CPU PyTorch reference at scale. These now route through
   `matrixmultiply` (pure-Rust, cache-blocked + SIMD, BLAS-free — no PyTorch, no new
@@ -44,8 +44,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   decoder scales across cores while keeping that guarantee. Output differs from the
   previous scalar path only at floating-point-rounding level (~1e-15 relative), so
   reference-parity and finite-difference-gradient tests are unchanged. SCHOLAR's
-  content-deviation terms stay scalar and bit-identical. Encoder GEMMs and the
-  elementwise `O(N·V)` work are untouched (candidate follow-ups).
+  content-deviation terms stay scalar and bit-identical. `ETM(inference="vae")` is
+  not affected — it has its own sparse per-document decoder, not the dense
+  `theta·beta`. Encoder GEMMs and the elementwise `O(N·V)` work are untouched
+  (candidate follow-ups).
 
 ## [0.53.0] - 2026-07-26
 

@@ -1,15 +1,17 @@
 //! Deterministic, BLAS-free dense matrix multiply for the ProdLDA-family VAE
 //! decoder (issue #378).
 //!
-//! The VAE backbone shared by `ProdLDA`, `CombinedTM`, `ZeroShotTM`,
-//! `ETM(inference="vae")`, `InfoCTM`, and `Scholar` spends most of a fit
+//! The dense-decoder VAE backbone shared by `ProdLDA`, `CombinedTM`,
+//! `ZeroShotTM`, `InfoCTM`, and `Scholar` spends most of a fit
 //! iteration in three dense `O(N·K·V)` decoder terms — a forward `theta·beta`, a
 //! backward `dlogit·betaᵀ`, and the cross-document `g.beta += theta_doᵀ·dlogit`
 //! reduction. Written as scalar triple-loops they were 4.7–6.8× slower than a CPU
 //! PyTorch reference at scale. These thin wrappers route them through
 //! [`matrixmultiply`] (pure-Rust, cache-blocked + SIMD, BLAS-free), which is 2.7–6.8×
 //! faster single-threaded on those shapes and scales across cores with its
-//! `threading` feature.
+//! `threading` feature. (`ETM(inference="vae")` is *not* in this set: it has its
+//! own sparse per-document decoder over each document's actual words, not the dense
+//! `theta·beta`, so it is untouched here — a candidate follow-up.)
 //!
 //! **Determinism.** topica's VAE family must fit bit-for-bit identically regardless
 //! of thread count. `matrixmultiply` parallelizes over *output blocks*; every output
@@ -36,6 +38,14 @@ pub fn matmul_nn(m: usize, k: usize, n: usize, a: &[f64], b: &[f64], c: &mut [f6
     debug_assert_eq!(b.len(), k * n);
     debug_assert_eq!(c.len(), m * n);
     if m == 0 || n == 0 {
+        return;
+    }
+    if k == 0 {
+        // Empty contraction: C is the sum over nothing = 0. `matrixmultiply` may
+        // skip writing C when k == 0, so zero it here to honor the "overwrites c"
+        // contract unconditionally (the decoder's tn reduction hits this on an
+        // empty batch, where C's buffer happens to be pre-zeroed anyway).
+        c.fill(0.0);
         return;
     }
     // A: row-major m×k -> rsa=k, csa=1. B: row-major k×n -> rsb=n, csb=1.
@@ -71,6 +81,14 @@ pub fn matmul_nt(m: usize, k: usize, n: usize, a: &[f64], b: &[f64], c: &mut [f6
     if m == 0 || n == 0 {
         return;
     }
+    if k == 0 {
+        // Empty contraction: C is the sum over nothing = 0. `matrixmultiply` may
+        // skip writing C when k == 0, so zero it here to honor the "overwrites c"
+        // contract unconditionally (the decoder's tn reduction hits this on an
+        // empty batch, where C's buffer happens to be pre-zeroed anyway).
+        c.fill(0.0);
+        return;
+    }
     // A: row-major m×k -> rsa=k, csa=1. bᵀ is k×n from a row-major n×k `b`:
     // view it with rsb=1, csb=k (no copy). C: row-major m×n.
     unsafe {
@@ -104,6 +122,14 @@ pub fn matmul_tn(m: usize, k: usize, n: usize, a: &[f64], b: &[f64], c: &mut [f6
     debug_assert_eq!(b.len(), k * n);
     debug_assert_eq!(c.len(), m * n);
     if m == 0 || n == 0 {
+        return;
+    }
+    if k == 0 {
+        // Empty contraction: C is the sum over nothing = 0. `matrixmultiply` may
+        // skip writing C when k == 0, so zero it here to honor the "overwrites c"
+        // contract unconditionally (the decoder's tn reduction hits this on an
+        // empty batch, where C's buffer happens to be pre-zeroed anyway).
+        c.fill(0.0);
         return;
     }
     // aᵀ is m×k from a row-major k×m `a`: view it with rsa=1, csa=m (no copy).
@@ -232,5 +258,18 @@ mod tests {
         matmul_nt(0, 5, 0, &[], &[], &mut c);
         matmul_tn(0, 5, 0, &[], &[], &mut c);
         assert!(c.is_empty());
+    }
+
+    #[test]
+    fn zero_contraction_zeroes_c() {
+        // k == 0 with m,n > 0 (e.g. the tn reduction on an empty batch): the result
+        // is the empty sum = 0, and the "overwrites c" contract must hold even
+        // though C's buffer starts non-zero.
+        let (m, n) = (3, 4);
+        for f in [matmul_nn, matmul_nt, matmul_tn] {
+            let mut c = vec![7.0; m * n];
+            f(m, 0, n, &[], &[], &mut c);
+            assert!(c.iter().all(|&x| x == 0.0), "k==0 must zero C");
+        }
     }
 }

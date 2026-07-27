@@ -9,11 +9,13 @@ bit-level determinism proof.
 
 ## The problem, briefly
 
-The hand-coded VAE backbone shared by `ProdLDA`, `CombinedTM`, `ZeroShotTM`,
-`ETM(inference="vae")`, `InfoCTM`, and `Scholar` is single-threaded scalar Rust. On
+The hand-coded dense-decoder VAE backbone shared by `ProdLDA`, `CombinedTM`,
+`ZeroShotTM`, `InfoCTM`, and `Scholar` is single-threaded scalar Rust. On
 realistic inputs it runs 4.7–6.8× slower than a CPU PyTorch reference at scale
 because the decoder's three dense `O(N·K·V)` terms (and the encoder GEMMs) are
-scalar triple-loops while PyTorch uses multithreaded BLAS.
+scalar triple-loops while PyTorch uses multithreaded BLAS. (`ETM(inference="vae")`
+has its own *sparse* per-document decoder, not the dense `theta·beta`, so it is out
+of scope for this change.)
 
 The hard constraint is **determinism**: fits must be bit-for-bit identical
 regardless of thread count (fixed-order reductions), with no PyTorch/autodiff
