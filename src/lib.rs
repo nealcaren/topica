@@ -50,6 +50,7 @@ pub mod mathfun;
 pub mod mh;
 pub mod model;
 pub mod nmf;
+pub mod online_lda;
 pub mod optimize;
 pub mod output;
 pub mod pa;

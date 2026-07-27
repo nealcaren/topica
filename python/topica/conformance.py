@@ -53,6 +53,7 @@ import topica as _topica
 REGISTRY: list[tuple[str, object, str]] = [
     # collapsed-Gibbs / Dirichlet doc-topic posterior
     ("LDA",          lambda: _topica.LDA(2),                                     "dirichlet"),
+    ("OnlineLDA",    lambda: _topica.OnlineLDA(2),                               "dirichlet"),
     ("DMR",          lambda: _topica.DMR(2),                                     "dirichlet"),
     ("GDMR",         lambda: _topica.GDMR(2, degrees=[2]),                        "dirichlet"),
     ("SAGE",         lambda: _topica.SAGE(2),                                    "dirichlet"),

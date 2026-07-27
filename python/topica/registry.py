@@ -78,6 +78,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("LDA", "general-purpose", ("text",), "gibbs", "seed-reproducible", (),
            "Classic latent Dirichlet allocation via a fast SparseLDA collapsed-Gibbs sampler.",
            "guides/models.md#lda"),
+        _m("OnlineLDA", "general-purpose", ("text",), "variational", "seed-reproducible", ("streaming",),
+           "Online (streaming) variational-Bayes LDA (Hoffman et al. 2010): minibatch stochastic VB with a decaying learning rate and a streaming partial_fit; the gensim LdaModel analogue for very large or streaming corpora.",
+           "guides/models.md#onlinelda"),
         _m("CTM", "general-purpose", ("text",), "variational", "bit-exact", (),
            "Correlated topic model: a logistic-normal prior that lets topics co-occur.",
            "guides/models.md#ctm"),
@@ -258,6 +261,7 @@ def _i(source: str, binding: str, core: str, feature: str, validation: str) -> I
 # the same models as REGISTRY. Add a model here when you add it to REGISTRY.
 IMPL: dict[str, ImplInfo] = {
     "LDA": _i("src/model.rs", "src/python/mod.rs", "SparseLDA collapsed Gibbs (model.rs, sampler.rs)", "", "parity/lda_gold.py, parity/mallet_parity.py"),
+    "OnlineLDA": _i("src/online_lda.rs", "src/python/online_lda.rs", "online-VB SVI schedule (variational/svi.rs), Dirichlet mean-field E-step (optimize.rs digamma)", "", "parity/online_lda_gensim_compare.py"),
     "CTM": _i("topica-core/src/ctm.rs", "src/python/mod.rs", "CTM/STM variational core (topica-core)", "", "parity/ctm_gold.py, parity/ctm_r_compare.py"),
     "ProdLDA": _i("src/prodlda.rs", "src/python/neural.rs", "hand-coded batched VAE (prodlda.rs)", "", "parity/prodlda_gold.py, parity/prodlda_compare.py"),
     "HDP": _i("src/hdp.rs", "src/python/mod.rs", "collapsed Gibbs (model.rs, sampler.rs)", "", "parity/hdp_gold.py"),

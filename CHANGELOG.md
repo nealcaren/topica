@@ -76,6 +76,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`OnlineLDA` — online (streaming) variational-Bayes LDA, a gensim `LdaModel`
+  equivalent** (#572). Minibatch stochastic VB on the Dirichlet LDA model
+  (Hoffman, Blei & Bach 2010): fits in minibatches with a decaying learning rate
+  `ρ_t = (tau + t)^(−kappa)` without holding the whole corpus in memory, and
+  supports a streaming `partial_fit` that folds new documents into an
+  already-fitted model (plus `transform` for held-out inference). The constructor
+  mirrors gensim's `LdaModel` (`batch_size`↔`chunksize`, `tau`↔`offset`,
+  `kappa`↔`decay`, `beta`↔`eta`, `inner_iters`↔`iterations`, `fit(iters=)`↔
+  `passes`). The Dirichlet mean-field E-step, sufficient-statistic accumulation,
+  and stochastic global blend reproduce Blei/Hoffman's reference `onlineldavb.py`
+  and gensim's `LdaModel` (validated in `parity/online_lda_gensim_compare.py`);
+  the online-VB Robbins-Monro schedule is shared with the CTM/STM SVI path.
+  Seed-reproducible (bit-identical for a fixed seed and batch schedule). Prefer it
+  over the batch-Gibbs `LDA` for very large or streaming corpora.
 - **Vocabulary control on `Corpus` for scikit-learn / gensim parity** (#553).
   `Corpus.from_documents` (and `from_dataframe`) gain `max_features`, capping the
   vocabulary to the N most frequent surviving terms (scikit-learn's

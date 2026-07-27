@@ -38,6 +38,7 @@ _DATA_ARGS: dict[str, set[str]] = {
 # *construction config*, which is available before fit.
 _FACTORIES: dict[str, object] = {
     "LDA": lambda: topica.LDA(2),
+    "OnlineLDA": lambda: topica.OnlineLDA(2),
     "DMR": lambda: topica.DMR(2),
     "SAGE": lambda: topica.SAGE(2),
     "PA": lambda: topica.PA(num_super=2, num_sub=4),

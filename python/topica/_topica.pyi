@@ -1983,6 +1983,187 @@ class LabeledLDA:
     def __repr__(self) -> str: ...
 
 
+class OnlineLDA:
+    """Online (streaming) variational-Bayes LDA (Hoffman, Blei & Bach 2010).
+
+    Minibatch stochastic VB on the Dirichlet LDA model -- the analogue of
+    gensim's ``LdaModel``. Fits in minibatches with a decaying learning rate
+    ``rho_t = (tau + t)**(-kappa)`` without holding the whole corpus in memory,
+    and supports a streaming :meth:`partial_fit` that folds new documents into an
+    already-fitted model. Prefer it over the batch-Gibbs :class:`LDA` for very
+    large or streaming corpora.
+    """
+
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha_sum: float | None = None,
+        beta: float = 0.01,
+        tau: float = 1.0,
+        kappa: float = 0.7,
+        batch_size: int = 256,
+        inner_iters: int = 100,
+        mean_change_tol: float = 1e-3,
+        total_docs: float | None = None,
+        seed: int = 42,
+    ) -> None:
+        """Create an unfitted OnlineLDA model.
+
+        ``alpha_sum`` is the total document-topic Dirichlet mass (default
+        ``num_topics``, i.e. 1.0 per topic); the symmetric per-topic alpha is
+        ``alpha_sum / num_topics``. ``beta`` is the symmetric topic-word Dirichlet
+        prior (gensim's ``eta``). ``tau`` (offset >= 0, gensim's ``offset``)
+        down-weights early minibatches and ``kappa`` (decay in (0.5, 1], gensim's
+        ``decay``) sets the forgetting rate of ``rho_t = (tau + t)**(-kappa)``.
+        ``batch_size`` is the minibatch size (gensim's ``chunksize``).
+        ``inner_iters`` caps the per-document E-step iterations (gensim's
+        ``iterations``), stopping once the mean change in gamma is below
+        ``mean_change_tol``. ``total_docs`` is the assumed corpus size D used for
+        the ``D / batch_size`` gradient scaling -- set it when streaming a corpus
+        larger than the first :meth:`fit` batch (default: the fit corpus size).
+        ``seed`` seeds the initial lambda and the per-pass shuffle.
+        """
+        ...
+
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        *,
+        iters: int = 100,
+        convergence_tol: float = 0.0,
+    ) -> "OnlineLDA":
+        """Fit by online VB: sweep the corpus for ``iters`` passes (gensim's
+        ``passes``), one stochastic lambda update per minibatch.
+        ``convergence_tol > 0`` early-stops on the relative change in the per-pass
+        evidence lower bound. Returns ``self``."""
+        ...
+
+    def partial_fit(
+        self, data: Corpus | Sequence[Sequence[str]]
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Fold one fresh minibatch into the fitted model: a single stochastic
+        lambda update that advances the Robbins-Monro schedule. Out-of-vocabulary
+        tokens are dropped (the vocabulary is fixed at the first :meth:`fit`).
+        Updates :attr:`topic_word` and returns the minibatch's document-topic
+        matrix, shape (num_docs, num_topics). Requires a prior :meth:`fit`."""
+        ...
+
+    def transform(
+        self, data: Corpus | Sequence[Sequence[str]]
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Infer the document-topic matrix for held-out ``data`` at the current
+        lambda, without updating the model (a pure E-step). Out-of-vocabulary
+        tokens are dropped. Returns a (num_docs, num_topics) row-stochastic array."""
+        ...
+
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """phi matrix of shape (num_topics, num_words); each row is lambda
+        normalized to sum 1."""
+        ...
+
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """theta matrix of shape (num_docs, num_topics); rows sum to 1. After
+        :meth:`fit` this covers the training corpus; after :meth:`partial_fit` it
+        is the most recently processed minibatch."""
+        ...
+
+    @property
+    def updates(self) -> int:
+        """Number of stochastic lambda updates applied so far (the Robbins-Monro
+        step index); advanced by every minibatch of fit and each partial_fit."""
+        ...
+
+    @property
+    def alpha(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-topic document-topic Dirichlet prior, shape (num_topics,)."""
+        ...
+
+    @property
+    def beta(self) -> float:
+        """Scalar topic-word Dirichlet prior."""
+        ...
+
+    @property
+    def doc_lengths(self) -> list[int]:
+        """Per-document token counts, in doc_topic row order."""
+        ...
+
+    @property
+    def theta_draws(self) -> None:
+        """Always None: online VB keeps one variational posterior, not MCMC
+        draws. Present for the Dirichlet-family contract."""
+        ...
+
+    @property
+    def converged(self) -> bool:
+        """Whether fit stopped early on the per-pass bound tolerance."""
+        ...
+
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """Per-pass evidence-lower-bound trace as (pass, elbo) pairs."""
+        ...
+
+    @property
+    def vocabulary(self) -> list[str]:
+        """Vocabulary list; column order matches topic_word."""
+        ...
+
+    @property
+    def doc_names(self) -> list[str]:
+        """Document names; row order matches the training doc_topic."""
+        ...
+
+    @property
+    def num_topics(self) -> int:
+        """Number of topics (available before fit)."""
+        ...
+
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+
+    @overload
+    def top_words(self, n: int = ..., *, topic: int) -> list[tuple[str, float]]: ...
+    @overload
+    def top_words(
+        self, n: int = ..., *, topic: None = ...
+    ) -> list[list[tuple[str, float]]]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]:
+        """Return top n (word, probability) pairs for one or all topics."""
+        ...
+
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-topic u_mass coherence over the top ``n`` words."""
+        ...
+
+    def save(self, path: str) -> None:
+        """Save the fitted model to ``path`` (topica's binary format)."""
+        ...
+
+    @staticmethod
+    def load(path: str) -> "OnlineLDA":
+        """Load a model previously written by :meth:`save`."""
+        ...
+
+
 class LDA:
     """Sparse LDA topic model (MALLET's algorithm) implemented in Rust."""
     @property
