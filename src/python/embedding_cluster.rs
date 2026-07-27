@@ -28,6 +28,24 @@ fn umap_notice(_py: Python<'_>, use_umap: bool) -> PyResult<()> {
     Ok(())
 }
 
+/// Normalize the BERTopic `weighting` argument to a canonical scheme name.
+/// Accepts the two topica names and the reference package's spellings:
+/// `"c-tf-idf"` (BERTopic class-based TF-IDF; aliases `"ctfidf"`, `"c_tf_idf"`) and
+/// `"tfidf-idf"` (CETopic's TFIDF×IDF_i; aliases `"tfidf_idf"`, `"tfidf_idfi"`,
+/// `"tfidf-idfi"`, `"cetopic"`). Case-insensitive. Returns the canonical string the
+/// core `build_ctfidf` dispatches on, or a `ValueError` naming the valid options.
+fn parse_weighting(weighting: &str) -> PyResult<String> {
+    match weighting.to_ascii_lowercase().as_str() {
+        "c-tf-idf" | "ctfidf" | "c_tf_idf" | "c-tfidf" => Ok("c-tf-idf".to_string()),
+        "tfidf-idf" | "tfidf_idf" | "tfidf_idfi" | "tfidf-idfi" | "cetopic" => {
+            Ok("tfidf-idf".to_string())
+        }
+        other => Err(PyValueError::new_err(format!(
+            "weighting must be 'c-tf-idf' or 'tfidf-idf' (CETopic's TFIDF×IDF_i), got {other:?}"
+        ))),
+    }
+}
+
 /// Top2Vec: topics by clustering document embeddings. We reduce the document
 /// embeddings (UMAP by default, matching the original Top2Vec; `reducer="pca"`
 /// for a linear projection), density-cluster them (HDBSCAN), and read each topic
@@ -950,6 +968,7 @@ pub struct BERTopic {
     stride: usize,
     bm25: bool,
     reduce_frequent: bool,
+    weighting: String,
     min_similarity: f64,
     clusterer: String,
     num_clusters: Option<usize>,
@@ -977,6 +996,8 @@ struct BertopicState {
     stride: usize,
     bm25: bool,
     reduce_frequent: bool,
+    #[serde(default)]
+    weighting: String,
     #[serde(default)]
     min_similarity: f64,
     clusterer: String,
@@ -1041,6 +1062,7 @@ impl BERTopic {
         d.set_item("n_neighbors", self.n_neighbors)?;
         d.set_item("bm25", self.bm25)?;
         d.set_item("reduce_frequent", self.reduce_frequent)?;
+        d.set_item("weighting", self.weighting.as_str())?;
         d.set_item("min_similarity", self.min_similarity)?;
         d.set_item("clusterer", self.clusterer.as_str())?;
         d.set_item("num_clusters", self.num_clusters)?;
@@ -1091,6 +1113,15 @@ impl BERTopic {
     /// unclamped idf that goes negative for terms common across every class; note
     /// upstream truncates the average class size to an integer, topica does not) and
     /// `reduce_frequent` dampens frequent terms by a square-root before IDF.
+    /// `weighting` selects the topic-word scheme: ``"c-tf-idf"`` (default,
+    /// BERTopic's class-based TF-IDF, tuned by `bm25`/`reduce_frequent`) or
+    /// ``"tfidf-idf"`` for CETopic's TFIDF×IDF_i (Zhang et al., NAACL 2022): a
+    /// corpus-level TF-IDF averaged per cluster, multiplied by a cross-cluster IDF
+    /// that penalizes words shared across clusters, which raises topic diversity
+    /// (issue #581). CETopic's pipeline is exactly ``reducer="umap",
+    /// clusterer="kmeans"`` with this weighting. Under ``"tfidf-idf"`` the
+    /// `bm25`/`reduce_frequent` knobs do not apply (they belong to class-based
+    /// TF-IDF); `doc_topic` still uses the class-based-TF-IDF window geometry.
     /// `min_similarity` (default 0.0) drops any window-to-topic cosine below this
     /// value from `approximate_distribution`; the upstream package uses 0.1 for
     /// its own `approximate_distribution`, so pass ``min_similarity=0.1`` to match
@@ -1111,7 +1142,8 @@ impl BERTopic {
     #[new]
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
                         nr_topics=None, window=4, stride=1, reducer="umap", n_neighbors=15,
-                        bm25=false, reduce_frequent=false, min_similarity=0.0, clusterer="hdbscan",
+                        bm25=false, reduce_frequent=false, weighting="c-tf-idf",
+                        min_similarity=0.0, clusterer="hdbscan",
                         num_clusters=None, resolution=1.0, knn_neighbors=15,
                         diagnostics=true, min_dist=0.0, spread=1.0, n_epochs=0,
                         negative_sample_rate=5, repulsion_strength=1.0, metric="cosine",
@@ -1128,6 +1160,7 @@ impl BERTopic {
         n_neighbors: usize,
         bm25: bool,
         reduce_frequent: bool,
+        weighting: &str,
         min_similarity: f64,
         clusterer: &str,
         num_clusters: Option<i64>,
@@ -1159,6 +1192,7 @@ impl BERTopic {
         if !min_similarity.is_finite() {
             return Err(PyValueError::new_err("min_similarity must be finite"));
         }
+        let weighting = parse_weighting(weighting)?;
         Ok(BERTopic {
             n_components,
             use_umap,
@@ -1170,6 +1204,7 @@ impl BERTopic {
             stride: stride.max(1),
             bm25,
             reduce_frequent,
+            weighting,
             min_similarity,
             clusterer,
             num_clusters,
@@ -1244,6 +1279,7 @@ impl BERTopic {
             slf.seed,
         );
         let clusterer = slf.clusterer.clone();
+        let weighting = slf.weighting.clone();
         let num_clusters = slf.num_clusters;
         let (resolution, knn_neighbors) = (slf.resolution, slf.knn_neighbors);
         let umap_params = slf.umap_params.clone();
@@ -1267,6 +1303,7 @@ impl BERTopic {
                 num_clusters,
                 resolution,
                 knn_neighbors,
+                &weighting,
                 &umap_params,
                 seed,
             )
@@ -1535,6 +1572,7 @@ impl BERTopic {
                 stride: self.stride,
                 bm25: self.bm25,
                 reduce_frequent: self.reduce_frequent,
+                weighting: self.weighting.clone(),
                 min_similarity: self.min_similarity,
                 clusterer: self.clusterer.clone(),
                 num_clusters: self.num_clusters,
@@ -1569,6 +1607,12 @@ impl BERTopic {
             stride: s.stride,
             bm25: s.bm25,
             reduce_frequent: s.reduce_frequent,
+            // An empty string from an old save reads as the c-TF-IDF default.
+            weighting: if s.weighting.is_empty() {
+                "c-tf-idf".to_string()
+            } else {
+                s.weighting
+            },
             min_similarity: s.min_similarity,
             clusterer: s.clusterer,
             num_clusters: s.num_clusters,

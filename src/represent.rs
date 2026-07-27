@@ -237,6 +237,164 @@ pub fn ctfidf_weighted(
     tf
 }
 
+/// CETopic's TFIDF×IDF_i topic-word weighting (Zhang et al., NAACL 2022, Eq. 4).
+///
+/// c-TF-IDF ([`ctfidf`]) asks only "which terms are frequent in this cluster and
+/// rare across clusters". CETopic's winning scheme instead multiplies a
+/// **corpus-level TF-IDF** (a term's importance in the whole corpus, averaged over
+/// the cluster's documents) by a **cross-cluster IDF** that penalizes terms spread
+/// across many clusters. The first factor keeps globally salient words; the second
+/// lifts topic *diversity* by demoting words several clusters would otherwise share.
+/// The paper's ablation (their Table 3) finds this the decisive win over plain
+/// per-cluster TF/TF-IDF.
+///
+/// Faithful to the reference (`hyintell/topicx`, MIT), which layers two
+/// scikit-learn `TfidfTransformer`s at their defaults (smoothed idf, per-row L2,
+/// then L1). For cluster `i` and term `t`:
+///
+/// 1. **Global TF-IDF, averaged per cluster.** For document `d`,
+///    `g_{t,d} = n_{t,d} * idf(t)` with the smoothed corpus idf
+///    `idf(t) = ln((1 + |D|) / (1 + df_t)) + 1` (`df_t` = #docs containing `t`,
+///    `|D|` = #docs), then L2-normalized across `t` within each document. Row `i`
+///    of the cluster matrix is the mean of `g_d` over the documents in cluster `i`.
+/// 2. **Cross-cluster IDF.** Treating each cluster as one pseudo-document,
+///    `idf_i(t) = ln((1 + |K|) / (1 + cf_t)) + 1` (`cf_t` = #clusters containing
+///    `t`, `|K|` = #clusters).
+/// 3. **Combine and L1-normalize.** `score_{i,t} = avg_global_{i,t} * idf_i(t)`,
+///    then each cluster row is scaled to sum to 1.
+///
+/// Noise documents (`-1`) join no cluster and so enter no cluster mean; to keep the
+/// corpus idf and the averaged population consistent, they are excluded from `|D|`
+/// and `df_t` as well (CETopic's own clusterer is K-Means, which leaves no noise, so
+/// the reference never faces the choice). Scores are non-negative throughout
+/// (`avg_global >= 0`, smoothed `idf_i >= 1`). Returns a `num_classes x vocab_size`
+/// matrix with `num_classes = max_label + 1` (row `c` is cluster `c`), or an empty
+/// matrix when there are no non-noise documents. An empty cluster (a label with no
+/// documents) yields a zero row, which the caller renders as a uniform topic, matching
+/// [`ctfidf`]'s empty-cluster behavior.
+pub fn tfidf_idf_cluster(docs: &[Vec<u32>], labels: &[i64], vocab_size: usize) -> Vec<Vec<f64>> {
+    let max_label = labels.iter().copied().max().unwrap_or(-1);
+    if max_label < 0 {
+        return Vec::new();
+    }
+    let num_classes = (max_label + 1) as usize;
+
+    // Per-cluster term counts (K x V) and per-cluster document counts. Only
+    // non-noise documents (label >= 0) participate, as in `ctfidf`.
+    let mut cluster_tf = vec![vec![0.0f64; vocab_size]; num_classes];
+    let mut docs_in_cluster = vec![0usize; num_classes];
+    // Global document frequency (df_t) and the non-noise corpus size (|D|).
+    let mut df = vec![0.0f64; vocab_size];
+    let mut num_docs = 0usize;
+    for (doc, &label) in docs.iter().zip(labels) {
+        if label < 0 {
+            continue;
+        }
+        let c = label as usize;
+        docs_in_cluster[c] += 1;
+        num_docs += 1;
+        // Count each term once per document for df_t; accumulate raw counts per cluster.
+        let mut seen = std::collections::HashSet::new();
+        for &w in doc {
+            let w = w as usize;
+            if w < vocab_size {
+                cluster_tf[c][w] += 1.0;
+                if seen.insert(w) {
+                    df[w] += 1.0;
+                }
+            }
+        }
+    }
+    if num_docs == 0 {
+        // Every non-noise label pointed only at empty/out-of-vocab documents.
+        return vec![vec![0.0; vocab_size]; num_classes];
+    }
+
+    // Smoothed corpus idf, sklearn's TfidfTransformer default: ln((1+|D|)/(1+df))+1.
+    let d = num_docs as f64;
+    let idf_global: Vec<f64> = df
+        .iter()
+        .map(|&dft| ((1.0 + d) / (1.0 + dft)).ln() + 1.0)
+        .collect();
+
+    // Cross-cluster idf_i: treat each cluster as one pseudo-document. cf_t is the
+    // number of clusters whose count of t is nonzero. Smoothed the same way over
+    // |K| = num_classes "documents": ln((1+|K|)/(1+cf))+1.
+    let mut cf = vec![0.0f64; vocab_size];
+    for class in &cluster_tf {
+        for (t, &count) in class.iter().enumerate() {
+            if count > 0.0 {
+                cf[t] += 1.0;
+            }
+        }
+    }
+    let k = num_classes as f64;
+    let idf_i: Vec<f64> = cf
+        .iter()
+        .map(|&cft| ((1.0 + k) / (1.0 + cft)).ln() + 1.0)
+        .collect();
+
+    // Sum of per-document, L2-normalized global TF-IDF vectors within each cluster.
+    // Summing over documents in the fixed input order keeps the reduction
+    // deterministic. Dividing by `docs_in_cluster` gives the per-cluster mean.
+    let mut avg_global = vec![vec![0.0f64; vocab_size]; num_classes];
+    // Reused scratch for one document's (term, weight) pairs.
+    let mut pairs: Vec<(usize, f64)> = Vec::new();
+    for (doc, &label) in docs.iter().zip(labels) {
+        if label < 0 {
+            continue;
+        }
+        let c = label as usize;
+        // Fold repeats into per-term counts, then weight by the global idf.
+        pairs.clear();
+        let mut counts: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
+        for &w in doc {
+            let w = w as usize;
+            if w < vocab_size {
+                *counts.entry(w).or_insert(0.0) += 1.0;
+            }
+        }
+        for (t, count) in counts {
+            pairs.push((t, count * idf_global[t]));
+        }
+        // Sort by term id first, so BOTH the L2 norm sum and the accumulation into
+        // avg_global run in a fixed order regardless of HashMap iteration order.
+        // (Float addition is non-associative, so summing norm_sq over the raw
+        // HashMap order would leave inv_norm — and the output — bit-dependent on the
+        // process's random hash seed.)
+        pairs.sort_unstable_by_key(|&(t, _)| t);
+        let norm_sq: f64 = pairs.iter().map(|&(_, v)| v * v).sum();
+        if norm_sq == 0.0 {
+            continue; // all-out-of-vocab document: contributes a zero vector.
+        }
+        let inv_norm = 1.0 / norm_sq.sqrt();
+        for &(t, v) in &pairs {
+            avg_global[c][t] += v * inv_norm;
+        }
+    }
+
+    // Mean, multiply by the cross-cluster idf, and L1-normalize each cluster row.
+    for (c, row) in avg_global.iter_mut().enumerate() {
+        let n = docs_in_cluster[c];
+        if n == 0 {
+            continue; // empty cluster stays a zero row (uniform topic downstream).
+        }
+        let inv_n = 1.0 / n as f64;
+        let mut sum = 0.0f64;
+        for (t, x) in row.iter_mut().enumerate() {
+            *x = *x * inv_n * idf_i[t];
+            sum += *x;
+        }
+        if sum > 0.0 {
+            let inv_sum = 1.0 / sum;
+            for x in row.iter_mut() {
+                *x *= inv_sum;
+            }
+        }
+    }
+    avg_global
+}
+
 /// Mean embedding vector per cluster (Top2Vec's topic vector).
 ///
 /// `vectors[d]` is document `d`'s embedding; rows labeled `-1` are noise and are
@@ -467,6 +625,118 @@ mod tests {
         let docs = vec![vec![0, 1], vec![1, 2]];
         let labels = vec![-1, -1];
         assert!(ctfidf(&docs, &labels, 3).is_empty());
+    }
+
+    #[test]
+    fn tfidf_idf_penalizes_cross_cluster_words() {
+        // Vocab: 0 = shared across both clusters, 1 = distinctive-A, 2 = distinctive-B.
+        // Same layout as `ctfidf_picks_distinctive_words`, so the two schemes are
+        // directly comparable: the cross-cluster IDF must demote the shared word.
+        let docs = vec![vec![0, 1, 1], vec![0, 1, 1], vec![0, 2, 2], vec![0, 2, 2]];
+        let labels = vec![0, 0, 1, 1];
+        let m = tfidf_idf_cluster(&docs, &labels, 3);
+
+        assert_eq!(m.len(), 2);
+        // Each cluster row is a valid L1 distribution and non-negative.
+        for row in &m {
+            let s: f64 = row.iter().sum();
+            assert!((s - 1.0).abs() < 1e-12, "row sums to {s}");
+            assert!(row.iter().all(|&w| w >= 0.0));
+        }
+        // The distinctive word tops its own cluster; the cross-cluster word does not.
+        assert!(
+            m[0][1] > m[0][0],
+            "distinctive A beats shared word in cluster 0"
+        );
+        assert!(
+            m[1][2] > m[1][0],
+            "distinctive B beats shared word in cluster 1"
+        );
+        // The word absent from a cluster scores exactly zero there.
+        assert_eq!(m[0][2], 0.0);
+        assert_eq!(m[1][1], 0.0);
+
+        // The cross-cluster IDF penalty is the whole point: the shared word (in 2/2
+        // clusters, idf_i = ln(3/3)+1 = 1) is penalized relative to a distinctive
+        // word (in 1/2 clusters, idf_i = ln(3/2)+1 > 1). So TFIDF×IDF_i suppresses
+        // the shared word's share of cluster 0 more than plain c-TF-IDF does.
+        let base = ctfidf(&docs, &labels, 3);
+        let share = |row: &[f64]| -> f64 {
+            let s: f64 = row.iter().sum();
+            if s > 0.0 {
+                row[0] / s
+            } else {
+                0.0
+            }
+        };
+        assert!(
+            share(&m[0]) < share(&base[0]),
+            "cross-cluster word share {} should drop below c-TF-IDF's {}",
+            share(&m[0]),
+            share(&base[0])
+        );
+    }
+
+    #[test]
+    fn tfidf_idf_matches_sklearn_reference_values() {
+        // Gold values computed with the reference's exact scikit-learn pipeline
+        // (TfidfTransformer defaults: smooth_idf, per-row L2, then l1-normalized
+        // score = avg_global_tfidf * idf_i). Corpus below; the numbers are frozen
+        // from that pipeline so this test pins bit-level fidelity to CETopic.
+        //
+        //   docs   = [[0,0,1], [0,1,2], [1,2,2], [2,3,3]]
+        //   labels = [0, 0, 1, 1]   (vocab size 4)
+        let docs = vec![vec![0, 0, 1], vec![0, 1, 2], vec![1, 2, 2], vec![2, 3, 3]];
+        let labels = vec![0, 0, 1, 1];
+        let m = tfidf_idf_cluster(&docs, &labels, 4);
+        // Reference output (scikit-learn 1.x), row-wise l1-normalized:
+        let want = [
+            [
+                0.6072850707222552,
+                0.2475092236893676,
+                0.1452057055883772,
+                0.0,
+            ],
+            [
+                0.0,
+                0.14983999450857777,
+                0.40154781498192094,
+                0.44861219050950124,
+            ],
+        ];
+        assert_eq!(m.len(), 2);
+        for (i, want_row) in want.iter().enumerate() {
+            for (t, &wv) in want_row.iter().enumerate() {
+                assert!(
+                    (m[i][t] - wv).abs() < 1e-9,
+                    "row {i} term {t}: got {}, want {}",
+                    m[i][t],
+                    wv
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tfidf_idf_only_noise_is_empty() {
+        let docs = vec![vec![0, 1], vec![1, 2]];
+        let labels = vec![-1, -1];
+        assert!(tfidf_idf_cluster(&docs, &labels, 3).is_empty());
+    }
+
+    #[test]
+    fn tfidf_idf_empty_cluster_is_zero_row() {
+        // Labels 0 and 2 are used, 1 is not: cluster 1 must be an all-zero row.
+        let docs = vec![vec![0, 0, 1], vec![2, 3, 3]];
+        let labels = vec![0, 2];
+        let m = tfidf_idf_cluster(&docs, &labels, 4);
+        assert_eq!(m.len(), 3);
+        assert!(
+            m[1].iter().all(|&w| w == 0.0),
+            "empty cluster 1 is zero row"
+        );
+        assert!((m[0].iter().sum::<f64>() - 1.0).abs() < 1e-12);
+        assert!((m[2].iter().sum::<f64>() - 1.0).abs() < 1e-12);
     }
 
     #[test]
