@@ -12982,6 +12982,10 @@ pub struct SeededLDA {
     warp: bool,
     // CVB0 deterministic collapsed-variational inference (seeded β).
     cvb0: bool,
+    // Default worker count for the default sparse seeded-Gibbs fit. `1` is the
+    // exact serial path; `>1` runs AD-LDA partition-and-merge (deterministic for a
+    // fixed num_threads+seed). Ignored by the warp/cvb0 backends.
+    num_threads: usize,
     fitted: bool,
     topic_names: Vec<String>,
     phi: Option<Array2<f64>>,
@@ -13033,6 +13037,7 @@ impl SeededLDA {
             "sparse"
         };
         d.set_item("sampler", sampler)?;
+        d.set_item("num_threads", self.num_threads)?;
         Ok(d)
     }
 
@@ -13057,6 +13062,11 @@ impl SeededLDA {
     ///
     /// `sampler` selects the inference backend: ``"sparse"`` (default), ``"warp"``
     /// (WarpLDA), or ``"cvb0"`` (deterministic collapsed variational Bayes).
+    /// `num_threads` ``>1`` runs the default sparse backend as MALLET-style
+    /// approximate-parallel (AD-LDA) seeded Gibbs (partition documents, sample
+    /// against per-worker count copies, merge; deterministic for a fixed
+    /// `num_threads`+`seed`); ``1`` is the exact serial path. It is ignored by the
+    /// warp/cvb0 backends. `fit(num_threads=)` overrides it per call.
     ///
     /// `seed_match` chooses how each seed pattern is matched to the vocabulary:
     /// ``"fixed"`` (default) is exact literal equality; ``"glob"`` reads `*`/`?`
@@ -13072,7 +13082,7 @@ impl SeededLDA {
     #[new]
     #[pyo3(signature = (seed_words, *, residual=0, alpha=0.5, beta=0.1, weight=0.01, seed=42,
                         seed_prior="frequency", sampler="sparse", seed_match="fixed",
-                        case_insensitive=false))]
+                        case_insensitive=false, num_threads=1))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         seed_words: &Bound<'_, PyDict>,
@@ -13085,6 +13095,7 @@ impl SeededLDA {
         sampler: &str,
         seed_match: &str,
         case_insensitive: bool,
+        num_threads: usize,
     ) -> PyResult<Self> {
         let (names, words) = parse_seed_dict(seed_words)?;
         if !finite_pos(alpha) || !finite_pos(beta) {
@@ -13134,6 +13145,7 @@ impl SeededLDA {
             seed,
             warp,
             cvb0,
+            num_threads: num_threads.max(1),
             fitted: false,
             topic_names: Vec::new(),
             phi: None,
@@ -13163,9 +13175,13 @@ impl SeededLDA {
     /// snapshots in `theta_draws`, the cross-sweep posterior samples
     /// `composition_theta` prefers over the Dirichlet approximation; set it False to
     /// save memory.
+    /// `num_threads` overrides the constructor's worker count for this fit only
+    /// (`None` = constructor value); `>1` runs the sparse seeded-Gibbs sweep as
+    /// approximate-parallel AD-LDA (deterministic for a fixed `num_threads`+`seed`),
+    /// `1` is the exact serial path, and it is ignored by the warp/cvb0 backends.
     #[pyo3(signature = (data, *, iters=2000, doc_topic_prior=None,
                         keep_theta_draws=true, num_theta_draws=25,
-                        convergence_tol=0.0_f64, check_every=10_usize))]
+                        convergence_tol=0.0_f64, check_every=10_usize, num_threads=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -13176,7 +13192,11 @@ impl SeededLDA {
         num_theta_draws: usize,
         convergence_tol: f64,
         check_every: usize,
+        num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
+        // num_threads: fit()-level value overrides the constructor default; the
+        // sparse seeded-Gibbs sweep runs AD-LDA partition-and-merge when >1.
+        let num_threads = num_threads.unwrap_or(slf.num_threads).max(1);
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -13384,6 +13404,7 @@ impl SeededLDA {
                 draws_opts,
                 convergence_tol,
                 check_every,
+                num_threads,
                 &mut rng,
             );
             (m, ll, conv, corpus)
@@ -13612,6 +13633,9 @@ impl SeededLDA {
             seed: s.seed,
             warp: s.warp,
             cvb0: s.cvb0,
+            // num_threads is a runtime resource knob, not fitted state; a loaded
+            // (already-fitted) model defaults to serial.
+            num_threads: 1,
             fitted: s.fitted,
             topic_names: s.topic_names,
             phi: arr2_back(s.phi)?,

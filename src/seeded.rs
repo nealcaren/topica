@@ -35,6 +35,10 @@
 
 use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 use rand::Rng;
+use rand::SeedableRng;
+use rand_pcg::Pcg64Mcg;
+use rayon::prelude::*;
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Model struct
@@ -316,6 +320,176 @@ fn seeded_theta_snapshot(
         .collect()
 }
 
+/// One restricted collapsed-Gibbs sweep over a contiguous block of documents.
+///
+/// `ndk`, `z`, `docs`, and `doc_alpha` (when present) are all indexed by the same
+/// local document index `0..docs.len()`, so a caller can pass the whole corpus
+/// (serial) or a `[start..end]` partition (one AD-LDA worker). `nkw`/`nk` are the
+/// (possibly per-worker private) count tables; `scores` is a reused length-K
+/// scratch buffer. The per-token math is identical to the original inline loop.
+#[allow(clippy::too_many_arguments)]
+fn run_sweep_seeded_range<R: Rng>(
+    nkw: &mut [Vec<u32>],
+    nk: &mut [u32],
+    ndk: &mut [Vec<u32>],
+    z: &mut [Vec<usize>],
+    docs: &[Vec<u32>],
+    doc_alpha: Option<&[Vec<f64>]>,
+    mass_map: &[HashMap<usize, f64>],
+    beta_sum_k: &[f64],
+    beta: f64,
+    alpha: f64,
+    k: usize,
+    scores: &mut [f64],
+    rng: &mut R,
+) {
+    for d in 0..docs.len() {
+        let doc = &docs[d];
+        // The document's α row: per-document when supplied, else symmetric.
+        let a_row: Option<&Vec<f64>> = doc_alpha.map(|da| &da[d]);
+        for i in 0..doc.len() {
+            let w = doc[i] as usize;
+            let old = z[d][i];
+
+            // Remove token from counts.
+            nkw[old][w] -= 1;
+            nk[old] -= 1;
+            ndk[d][old] -= 1;
+
+            // Compute unnormalised sampling probabilities.
+            for t in 0..k {
+                let beta_tw = beta + mass_map[t].get(&w).copied().unwrap_or(0.0);
+                let a_t = a_row.map_or(alpha, |r| r[t]);
+                scores[t] = (a_t + ndk[d][t] as f64) * (beta_tw + nkw[t][w] as f64)
+                    / (beta_sum_k[t] + nk[t] as f64);
+            }
+
+            // Sample new topic and update counts.
+            let new_t = sample_index(scores, rng);
+            nkw[new_t][w] += 1;
+            nk[new_t] += 1;
+            ndk[d][new_t] += 1;
+            z[d][i] = new_t;
+        }
+    }
+}
+
+/// Contiguous, non-overlapping document ranges — one per worker (clamped so the
+/// worker count never exceeds the document count). Mirrors the binding's
+/// `partition_ranges`, kept local so the core stays self-contained.
+fn partition_ranges(n: usize, parts: usize) -> Vec<(usize, usize)> {
+    let parts = parts.max(1).min(n.max(1));
+    let base = n / parts;
+    let rem = n % parts;
+    let mut ranges = Vec::with_capacity(parts);
+    let mut start = 0;
+    for i in 0..parts {
+        let len = base + if i < rem { 1 } else { 0 };
+        ranges.push((start, start + len));
+        start += len;
+    }
+    ranges
+}
+
+/// One approximate-parallel (AD-LDA) sweep over the dense SeededLDA count tables.
+/// Documents are partitioned across workers; each worker samples its slice against
+/// a private clone of the global `nkw`/`nk`, owning copies of its `z`/`ndk` slice,
+/// then the results are reconciled: `nkw` is the exact additive merge
+/// `Σ_workers − (W−1)·original` (accumulated in `i64`, clamped ≥ 0), `nk` is
+/// **recomputed** from the merged `nkw` rows so `nk[k] == Σ_w nkw[k][w]` holds
+/// exactly (no zero-clamp drift), and each worker's `z`/`ndk` slice is written
+/// straight back (documents are disjoint). The seeded asymmetric prior `β_{k,w}`
+/// is a fixed pseudocount that never enters `nkw`, so the merge is unaffected by
+/// it. Deterministic for a fixed `sweep_seed`/`num_threads`.
+#[allow(clippy::too_many_arguments)]
+fn parallel_sweep_seeded(
+    nkw: &mut [Vec<u32>],
+    nk: &mut [u32],
+    ndk: &mut [Vec<u32>],
+    z: &mut [Vec<usize>],
+    docs: &[Vec<u32>],
+    doc_alpha: Option<&[Vec<f64>]>,
+    mass_map: &[HashMap<usize, f64>],
+    beta_sum_k: &[f64],
+    beta: f64,
+    alpha: f64,
+    k: usize,
+    num_threads: usize,
+    sweep_seed: u64,
+) {
+    struct SeededWorkerOut {
+        nkw: Vec<Vec<u32>>,
+        z: Vec<Vec<usize>>,
+        ndk: Vec<Vec<u32>>,
+        start: usize,
+    }
+
+    let v = nkw.first().map_or(0, |row| row.len());
+    let ranges = partition_ranges(docs.len(), num_threads);
+    let orig_nkw = nkw.to_vec();
+    let orig_nk = nk.to_vec();
+    // Read-only views so workers can copy their slices inside the parallel map.
+    let z_ro: &[Vec<usize>] = z;
+    let ndk_ro: &[Vec<u32>] = ndk;
+
+    let outs: Vec<SeededWorkerOut> = ranges
+        .par_iter()
+        .enumerate()
+        .map(|(wid, &(start, end))| {
+            let mut wnkw = orig_nkw.clone();
+            let mut wnk = orig_nk.clone();
+            let mut wz: Vec<Vec<usize>> = z_ro[start..end].to_vec();
+            let mut wndk: Vec<Vec<u32>> = ndk_ro[start..end].to_vec();
+            let da_slice = doc_alpha.map(|da| &da[start..end]);
+            let mut rng = Pcg64Mcg::seed_from_u64(
+                sweep_seed ^ (wid as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            );
+            let mut scores = vec![0.0f64; k];
+            run_sweep_seeded_range(
+                &mut wnkw,
+                &mut wnk,
+                &mut wndk,
+                &mut wz,
+                &docs[start..end],
+                da_slice,
+                mass_map,
+                beta_sum_k,
+                beta,
+                alpha,
+                k,
+                &mut scores,
+                &mut rng,
+            );
+            SeededWorkerOut {
+                nkw: wnkw,
+                z: wz,
+                ndk: wndk,
+                start,
+            }
+        })
+        .collect();
+
+    // --- Reconcile nkw: final = Σ_workers − (W−1)·original, clamped ≥ 0. ---
+    let wm1 = (outs.len() as i64) - 1;
+    for t in 0..k {
+        for w in 0..v {
+            let sum_w: i64 = outs.iter().map(|o| o.nkw[t][w] as i64).sum();
+            let val = sum_w - wm1 * orig_nkw[t][w] as i64;
+            nkw[t][w] = val.max(0) as u32;
+        }
+        // Recompute nk from the merged nkw row so the two stay exactly consistent.
+        nk[t] = nkw[t].iter().map(|&c| c as u64).sum::<u64>() as u32;
+    }
+
+    // --- Write back each worker's per-document z / ndk slice (disjoint docs). ---
+    for out in outs {
+        for (i, (zrow, ndkrow)) in out.z.into_iter().zip(out.ndk).enumerate() {
+            z[out.start + i] = zrow;
+            ndk[out.start + i] = ndkrow;
+        }
+    }
+}
+
 /// Fit a Seeded-LDA model by collapsed Gibbs sampling.
 ///
 /// # Arguments
@@ -338,6 +512,9 @@ fn seeded_theta_snapshot(
 /// * `draws`            — thinned θ-draw retention schedule (issue #31).
 /// * `convergence_tol`  — relative-change tolerance for early stopping (0 = off).
 /// * `check_every`      — LL-trace cadence in sweeps (0 = no trace).
+/// * `num_threads`      — `1` runs the exact serial sweep; `>1` runs MALLET-style
+///                        approximate-parallel (AD-LDA) sampling, deterministic
+///                        for a fixed `num_threads` + seed.
 /// * `rng`              — random-number source; deterministic for a fixed seed.
 ///
 /// Returns `(model, ll_history, converged)` where `ll_history` is a vector of
@@ -357,6 +534,7 @@ pub fn fit_seeded_lda<R: Rng>(
     draws: crate::keyatm::ThetaDrawOpts,
     convergence_tol: f64,
     check_every: usize,
+    num_threads: usize,
     rng: &mut R,
 ) -> (SeededModel, Vec<(usize, f64)>, bool) {
     let k = num_topics;
@@ -491,34 +669,42 @@ pub fn fit_seeded_lda<R: Rng>(
 
     for it in 0..iters {
         let iter = it + 1;
-        for d in 0..d_count {
-            let doc = &docs[d];
-            // The document's α row: per-document when supplied, else symmetric.
-            let a_row: Option<&Vec<f64>> = doc_alpha.as_ref().map(|da| &da[d]);
-            for i in 0..doc.len() {
-                let w = doc[i] as usize;
-                let old = z[d][i];
-
-                // Remove token from counts.
-                nkw[old][w] -= 1;
-                nk[old] -= 1;
-                ndk[d][old] -= 1;
-
-                // Compute unnormalised sampling probabilities.
-                for t in 0..k {
-                    let beta_tw = beta + mass_map[t].get(&w).copied().unwrap_or(0.0);
-                    let a_t = a_row.map_or(alpha, |r| r[t]);
-                    scores[t] = (a_t + ndk[d][t] as f64) * (beta_tw + nkw[t][w] as f64)
-                        / (beta_sum_k[t] + nk[t] as f64);
-                }
-
-                // Sample new topic and update counts.
-                let new_t = sample_index(&scores, rng);
-                nkw[new_t][w] += 1;
-                nk[new_t] += 1;
-                ndk[d][new_t] += 1;
-                z[d][i] = new_t;
-            }
+        if num_threads <= 1 {
+            // Exact serial path — byte-identical to the pre-threading loop.
+            run_sweep_seeded_range(
+                &mut nkw,
+                &mut nk,
+                &mut ndk,
+                &mut z,
+                docs,
+                doc_alpha.as_deref(),
+                &mass_map,
+                &beta_sum_k,
+                beta,
+                alpha,
+                k,
+                &mut scores,
+                rng,
+            );
+        } else {
+            // Approximate-parallel AD-LDA. One per-sweep seed drawn from the main
+            // RNG keeps it deterministic for a fixed num_threads + seed.
+            let sweep_seed = rng.gen::<u64>();
+            parallel_sweep_seeded(
+                &mut nkw,
+                &mut nk,
+                &mut ndk,
+                &mut z,
+                docs,
+                doc_alpha.as_deref(),
+                &mass_map,
+                &beta_sum_k,
+                beta,
+                alpha,
+                k,
+                num_threads,
+                sweep_seed,
+            );
         }
         if draws.thin > 0 && iter % draws.thin == 0 {
             theta_draw_buf.push(seeded_theta_snapshot(&ndk, doc_alpha.as_ref(), alpha, k));
@@ -654,6 +840,7 @@ mod tests {
             crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
             0.0,
             0,
+            1,
             &mut rng,
         );
 
@@ -716,6 +903,7 @@ mod tests {
             crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
             0.0,
             0,
+            1,
             &mut rng,
         );
 
@@ -778,6 +966,7 @@ mod tests {
             crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
             0.0,
             0,
+            1,
             &mut r1,
         );
         let (m2, _, _) = fit_seeded_lda(
@@ -794,6 +983,7 @@ mod tests {
             crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
             0.0,
             0,
+            1,
             &mut r2,
         );
 
@@ -833,6 +1023,7 @@ mod tests {
             crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
             0.0,
             0,
+            1,
             &mut rng,
         );
         let base = crate::conformance::check_conformance(&m);
