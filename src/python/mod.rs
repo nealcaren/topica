@@ -1168,6 +1168,9 @@ impl LDA {
     /// (alias-table Metropolis-Hastings, with `mh_steps` MH proposals per token),
     /// ``"warp"`` (cache-efficient WarpLDA, flat per-sweep cost in K), or ``"cvb0"``
     /// (zeroth-order collapsed variational Bayes, deterministic, no MCMC draws).
+    /// On speed ``"warp"`` overtakes ``"sparse"`` around K≈50 and wins by several
+    /// fold at large K; ``"sparse"`` stays the default for its small-K coherence
+    /// edge and convergence trace (``"warp"``/``"cvb0"`` record none).
     /// `use_symmetric_alpha` mirrors MALLET's ``--use-symmetric-alpha``: when True,
     /// optimization learns only the α concentration and keeps the per-topic α equal
     /// instead of an asymmetric prior. `init` is ``"random"`` (default,

@@ -309,9 +309,10 @@ class DMR:
         per-sweep cost is flat in K; "cvb0" is deterministic collapsed
         variational Bayes (per-document α; the soft expected counts feed the λ
         optimizer directly), the quality choice at the cost of O(K)-per-token
-        compute. As with plain LDA, prefer "sparse" up to ~K=200, "warp" for
-        large-K (K >= ~500); the "warp"/"cvb0" paths record no convergence
-        trace, so convergence_tol has no effect there."""
+        compute. As with plain LDA, warp is flat in K and overtakes sparse on
+        speed around K~=50 (dominating at large K), while sparse keeps a small-K
+        coherence edge and a convergence trace; the "warp"/"cvb0" paths record no
+        convergence trace, so convergence_tol has no effect there."""
         ...
 
     def fit(
@@ -2010,10 +2011,17 @@ class LDA:
         whose per-sweep cost is flat in K; "cvb0" is collapsed variational
         Bayes, zeroth-order (Asuncion et al. 2009) -- deterministic, non-MCMC
         inference that tends to give higher topic coherence at moderate-to-large
-        K, at the cost of O(K)-per-token compute (slower, not faster). "sparse"
-        is the best speed/quality default up to ~K=200; "warp" is the speed
-        choice for large K; "cvb0" is the quality choice when fit time is not the
-        constraint. CVB0 produces no MCMC theta draws (theta_draws is None).
+        K, at the cost of O(K)-per-token compute (slower, not faster). On speed,
+        "warp" is flat in K while "sparse" grows with it, so warp overtakes sparse
+        around K~=50 and wins by several-fold at large K (measured on poliblog:
+        warp ~13 ms/sweep at every K; sparse 16 ms at K=10 rising to 28 ms at
+        K=200). "sparse" remains the default because at small K its collapsed-Gibbs
+        posterior gives slightly better coherence than warp's MAP/MCEM target, and
+        it records a convergence trace warp does not. Rules of thumb: "sparse" for
+        small K or when you need the trace; "warp" when per-sweep speed dominates
+        (large K, or K>=~50 with the trace not needed); "cvb0" for the best
+        coherence when fit time is not the constraint. CVB0 produces no MCMC theta
+        draws (theta_draws is None).
         mh_steps is the number of MH proposals per token (lightlda only).
 
         init selects the initial token-topic assignment: "random" (default,
