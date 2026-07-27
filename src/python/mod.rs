@@ -12323,6 +12323,25 @@ impl PT {
 // GSDMM: Gibbs Sampling Dirichlet Multinomial Mixture (short-text clustering)
 // ---------------------------------------------------------------------------
 
+/// GSDMM does not support approximate-parallel (AD-LDA) sampling: its Movie Group
+/// Process discovers the cluster count `K` via within-sweep reinforcement, which
+/// document-partitioned parallel sampling would break, making `K` thread-dependent.
+/// Accept only `num_threads == 1`; reject anything larger with a clear message
+/// (rather than a bare `TypeError`, since users arriving from the sibling count
+/// models reasonably expect the knob).
+fn gsdmm_reject_threads(num_threads: usize) -> PyResult<()> {
+    if num_threads > 1 {
+        return Err(PyValueError::new_err(
+            "GSDMM's Movie Group Process discovers the cluster count K sequentially \
+             (within-sweep reinforcement drives the collapse), so num_threads>1 would \
+             make K depend on the thread count. Only num_threads=1 is supported. Use \
+             num_threads>1 on the other collapsed-Gibbs count models (DMR, LabeledLDA, \
+             SeededLDA, BTM) instead.",
+        ));
+    }
+    Ok(())
+}
+
 /// GSDMM — the "Movie Group Process" (Yin & Wang 2014). A mixture model for
 /// **short texts** (tweets, survey answers, headlines) where each document
 /// belongs to exactly *one* topic, not a mixture. You set an upper bound `K` on
@@ -12391,6 +12410,8 @@ impl GSDMM {
         d.set_item("alpha", self.alpha)?;
         d.set_item("beta", self.beta)?;
         d.set_item("seed", self.seed)?;
+        // Always 1: GSDMM is intentionally not parallelized (see gsdmm_reject_threads).
+        d.set_item("num_threads", 1)?;
         Ok(d)
     }
 
@@ -12405,13 +12426,23 @@ impl GSDMM {
     /// `num_topics` getter and is usually smaller. `alpha` controls the pull
     /// toward populous clusters; `beta` is the word-Dirichlet smoothing.
     /// `seed` seeds the Movie Group Process Gibbs RNG.
+    ///
+    /// `num_threads` must be `1`. Unlike the other collapsed-Gibbs count models
+    /// (`DMR`, `LabeledLDA`, `SeededLDA`, `BTM`), GSDMM is **not** parallelized:
+    /// its Movie Group Process discovers the cluster count `K` through *within-sweep*
+    /// reinforcement (once a document births a cluster, later documents in the same
+    /// sweep join it), and approximate-parallel (AD-LDA) sampling would break that
+    /// reinforcement and make the discovered `K` depend on the thread count — an
+    /// unacceptable dependence for a headline structural output. Passing
+    /// `num_threads > 1` raises `ValueError`.
     #[new]
-    #[pyo3(signature = (num_topics, *, alpha=0.1, beta=0.1, seed=42))]
+    #[pyo3(signature = (num_topics, *, alpha=0.1, beta=0.1, seed=42, num_threads=1))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         alpha: f64,
         beta: f64,
         seed: u64,
+        num_threads: usize,
     ) -> PyResult<Self> {
         if num_topics < 2 {
             return Err(PyValueError::new_err(
@@ -12421,6 +12452,7 @@ impl GSDMM {
         if !finite_pos(alpha) || !finite_pos(beta) {
             return Err(PyValueError::new_err("alpha and beta must be > 0"));
         }
+        gsdmm_reject_threads(num_threads)?;
         Ok(GSDMM {
             k_max: num_topics,
             alpha,
@@ -12443,7 +12475,11 @@ impl GSDMM {
     /// (`cluster_count_history` / `log_likelihood_history`): 0 = auto (~50
     /// points), a positive value records every that-many sweeps.
     /// `report_interval` is a deprecated alias for `progress_interval`.
-    #[pyo3(signature = (data, *, iters=30, progress_interval=0, report_interval=None))]
+    /// `num_threads` must be `1`; GSDMM is not parallelized (its cluster-count
+    /// discovery is inherently sequential — see the constructor). `num_threads > 1`
+    /// raises `ValueError`.
+    #[pyo3(signature = (data, *, iters=30, progress_interval=0, report_interval=None,
+                        num_threads=1))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -12451,7 +12487,9 @@ impl GSDMM {
         iters: usize,
         progress_interval: usize,
         report_interval: Option<usize>,
+        num_threads: usize,
     ) -> PyResult<Py<Self>> {
+        gsdmm_reject_threads(num_threads)?;
         let progress_interval = if let Some(old_val) = report_interval {
             let warnings = py.import_bound("warnings")?;
             warnings.call_method1(
