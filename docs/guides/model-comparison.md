@@ -225,3 +225,57 @@ be recoverable, is in real trouble, which is what makes the `HDP` and `HLDA`
 results informative. But passing here is necessary, not sufficient. Real text is
 messier, and the honest use of this benchmark is as a floor: a method that cannot
 recover planted structure under ideal conditions will not find it in the wild.
+
+## Reading agreement on real data: the self-agreement ceiling
+
+On real text there is no answer key, so the only check available is *agreement*:
+how closely two fits line up, scored here by aligned topic-word cosine (each topic
+Hungarian-matched to its nearest counterpart, then the mean cosine). We use it two
+ways — topica against a reference implementation (`benchmarks/full_model_run.py`
+scores every model this way), and one model against another. Both are bounded by
+the same thing, and it is easy to misread a number without it.
+
+The bound is that **a stochastic model does not even reproduce itself.** Refit the
+same model on the same corpus with a different random seed and the two runs settle
+into different-but-comparable topics; their aligned cosine is below 1.0. That
+"self-agreement" is the ceiling: no cross-implementation comparison can beat how
+well a method agrees with itself, and how high the ceiling sits depends almost
+entirely on the **inference family**. Refitting each model twice (seeds 1 and 2)
+on the 5,000-document political-blog corpus at K=10:
+
+| Inference family | Models (self-agreement) | Ceiling |
+|---|---|--:|
+| Matrix factorization | NMF 1.00, LSA 0.99 | ~1.00 |
+| Batch variational (EM / VAE) | CTM 1.00, ProdLDA 0.99 | ~1.00 |
+| Collapsed Gibbs (MCMC) | DMR 0.83, LDA 0.79 | ~0.80 |
+| Online / minibatch VB | gensim `LdaModel` 0.77, `OnlineLDA` 0.77 | ~0.77 |
+
+The spread is large and it is not "variational versus sampled." Matrix methods and
+*batch* variational fits (CTM, ProdLDA) converge to essentially one optimum, so
+they reproduce themselves almost exactly. Collapsed-Gibbs samplers wander between
+comparable modes, landing around 0.80. **Online (minibatch-stochastic) VB is the
+most seed-sensitive of all** — its noisy per-minibatch gradient explores different
+local optima, so even gensim's reference `LdaModel` only agrees with *itself*
+around 0.77.
+
+The consequence for reading the benchmark: **score a model against its family's
+ceiling, not against 1.0.** The same cosine means different things across
+families. Take `OnlineLDA`, which recovers the reference topics at ~0.67 against
+gensim — a number that looks alarming until you place it:
+
+- online-VB self-agreement is only ~0.77 (gensim does not beat that against
+  itself), so ~0.67 is roughly 90% of the achievable agreement, not 67% of a
+  reachable 1.0;
+- `OnlineLDA` agrees with topica's own collapsed-Gibbs `LDA` (~0.72) *better* than
+  gensim does (~0.67);
+- its topic coherence matches Gibbs `LDA`, and its top words are clean.
+
+So ~0.67 is a healthy online-VB result. The same 0.67 from `NMF`, whose ceiling is
+1.00, would instead be a red flag. This is why the harness frames accuracy against
+a per-model **reference ceiling** rather than a flat threshold.
+
+These numbers are illustrative, not constants: the ceiling also moves with the
+corpus, with K, and with how far each fit is run toward convergence (a
+lightly-iterated Gibbs run self-agrees less than a long one). The ordering across
+families, though — deterministic and batch-variational at the top, online VB at
+the bottom — is the stable, transferable lesson.
