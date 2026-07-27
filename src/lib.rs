@@ -36,6 +36,7 @@ pub mod dmr;
 pub mod dtm;
 pub mod etm;
 pub mod etm_vae;
+pub mod gemm;
 pub mod gsdmm;
 pub mod hdp;
 pub mod hlda;
