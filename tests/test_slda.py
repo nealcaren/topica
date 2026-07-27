@@ -169,3 +169,49 @@ class TestApi:
             SupervisedLDA(num_topics=1)
         with pytest.raises(ValueError):
             SupervisedLDA(num_topics=2, alpha=0.0)
+
+
+class TestGibbsBackend:
+    """inference="gibbs" is the tomotopy-style collapsed Gibbs sampler; it must
+    recover the same supervised structure as the variational default."""
+
+    @pytest.fixture(scope="class")
+    def fitted_gibbs(self):
+        docs, y = _supervised_corpus()
+        m = SupervisedLDA(num_topics=2, seed=7, inference="gibbs")
+        m.fit(docs, y, iters=300)
+        return m, docs, y
+
+    def test_inference_getter_and_settings(self):
+        m = SupervisedLDA(num_topics=2, inference="gibbs")
+        assert m.inference == "gibbs"
+        assert m.settings["inference"] == "gibbs"
+        assert SupervisedLDA(num_topics=2).inference == "variational"
+
+    def test_invalid_inference_raises(self):
+        with pytest.raises(ValueError, match="variational|gibbs"):
+            SupervisedLDA(num_topics=2, inference="mcmc")
+
+    def test_topics_separate_and_coefficients_rank(self, fitted_gibbs):
+        m, _, _ = fitted_gibbs
+        tw = m.topic_word
+        vocab = m.vocabulary
+        idx0 = [vocab.index(w) for w in T0]
+        idx1 = [vocab.index(w) for w in T1]
+        t0_block = 0 if tw[0][idx0].sum() > tw[1][idx0].sum() else 1
+        t1_block = 0 if tw[0][idx1].sum() > tw[1][idx1].sum() else 1
+        assert t0_block != t1_block
+        # The topic owning the T0 vocabulary drives y up -> larger coefficient.
+        assert m.coefficients[t0_block] > m.coefficients[1 - t0_block]
+
+    def test_prediction_correlates(self, fitted_gibbs):
+        m, docs, y = fitted_gibbs
+        preds = m.predict(docs)
+        assert np.corrcoef(preds, y)[0, 1] > 0.7
+
+    def test_deterministic_for_fixed_seed(self):
+        docs, y = _supervised_corpus(n=60)
+        a = SupervisedLDA(num_topics=2, seed=11, inference="gibbs").fit(docs, y, iters=100)
+        b = SupervisedLDA(num_topics=2, seed=11, inference="gibbs").fit(docs, y, iters=100)
+        assert np.allclose(a.topic_word, b.topic_word)
+        assert np.allclose(a.coefficients, b.coefficients)
