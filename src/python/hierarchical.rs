@@ -35,6 +35,15 @@ struct PaState {
     log_likelihood_history: Vec<(usize, f64)>,
     #[serde(default)]
     converged: bool,
+    // Appended last with a default so older self-describing saves still load; the
+    // positional bincode format cannot round-trip a genuine pre-threading save
+    // regardless (see the `doc_super` note above), so this is only a soft default.
+    #[serde(default = "default_num_threads")]
+    num_threads: usize,
+}
+
+fn default_num_threads() -> usize {
+    1
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct HldaState {
@@ -79,6 +88,9 @@ pub struct PA {
     alpha: f64,
     beta: f64,
     seed: u64,
+    // Default AD-LDA worker count; `fit(num_threads=)` overrides it per call.
+    // `1` is the exact serial path.
+    num_threads: usize,
     fitted: bool,
     topic_names: Vec<String>,
     phi: Option<Array2<f64>>,       // num_sub × V
@@ -123,6 +135,7 @@ impl PA {
         d.set_item("alpha", self.alpha)?;
         d.set_item("beta", self.beta)?;
         d.set_item("seed", self.seed)?;
+        d.set_item("num_threads", self.num_threads)?;
         Ok(d)
     }
 
@@ -130,15 +143,20 @@ impl PA {
     /// sub-topics (the sub-topics are the word-level topics).
     /// `alpha` is the symmetric Dirichlet prior on each document's distribution
     /// over super-topics; `beta` is the topic-word Dirichlet smoothing; `seed`
-    /// seeds the Gibbs RNG.
+    /// seeds the Gibbs RNG. `num_threads` `>1` runs the collapsed-Gibbs sweep as
+    /// MALLET-style approximate-parallel AD-LDA (documents partitioned across
+    /// workers sampling private sub-topic→word count copies, then merged;
+    /// deterministic for a fixed `num_threads`+`seed`); `1` is the exact serial
+    /// path. `fit(num_threads=)` overrides it per call.
     #[new]
-    #[pyo3(signature = (num_super, num_sub, *, alpha=0.1, beta=0.01, seed=42))]
+    #[pyo3(signature = (num_super, num_sub, *, alpha=0.1, beta=0.01, seed=42, num_threads=1))]
     fn new(
         #[pyo3(from_py_with = "py_num_super")] num_super: usize,
         #[pyo3(from_py_with = "py_num_sub")] num_sub: usize,
         alpha: f64,
         beta: f64,
         seed: u64,
+        num_threads: usize,
     ) -> PyResult<Self> {
         if num_super < 1 || num_sub < 2 {
             return Err(PyValueError::new_err(
@@ -154,6 +172,7 @@ impl PA {
             alpha,
             beta,
             seed,
+            num_threads: num_threads.max(1),
             fitted: false,
             topic_names: Vec::new(),
             phi: None,
@@ -181,8 +200,12 @@ impl PA {
     /// heuristic on the log-likelihood trace, not a guarantee the Gibbs chain has
     /// mixed. `check_every` is how often, in sweeps, the log-likelihood is recorded
     /// and the `convergence_tol` test is applied.
+    /// `num_threads` overrides the constructor's worker count for this fit only
+    /// (`None` = constructor value); `>1` runs the collapsed-Gibbs sweep as
+    /// approximate-parallel AD-LDA (deterministic for a fixed `num_threads`+`seed`),
+    /// `1` is the exact serial path.
     #[pyo3(signature = (data, *, iters=1000, keep_theta_draws=true, num_theta_draws=25,
-                        convergence_tol=0.0_f64, check_every=10_usize))]
+                        convergence_tol=0.0_f64, check_every=10_usize, num_threads=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -192,6 +215,7 @@ impl PA {
         num_theta_draws: usize,
         convergence_tol: f64,
         check_every: usize,
+        num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -217,6 +241,8 @@ impl PA {
         let num_docs = corpus.num_docs();
         let num_types = corpus.num_types();
         let (s, k, a, b) = (slf.num_super, slf.num_sub, slf.alpha, slf.beta);
+        // fit()-level num_threads overrides the constructor default for this run.
+        let num_threads = num_threads.unwrap_or(slf.num_threads).max(1);
 
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
@@ -234,6 +260,7 @@ impl PA {
                 draws_opts,
                 convergence_tol,
                 check_every,
+                num_threads,
                 &mut rng,
             );
             (m, hist, conv, corpus)
@@ -423,6 +450,7 @@ impl PA {
                 topic_names: self.topic_names.clone(),
                 log_likelihood_history: self.log_likelihood_history.clone(),
                 converged: self.converged,
+                num_threads: self.num_threads,
             },
         )
     }
@@ -441,6 +469,7 @@ impl PA {
             alpha: s.alpha,
             beta: s.beta,
             seed: s.seed,
+            num_threads: s.num_threads.max(1),
             fitted: s.fitted,
             topic_names,
             phi: arr2_back(s.phi)?,
