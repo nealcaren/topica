@@ -354,19 +354,20 @@ pub fn tfidf_idf_cluster(docs: &[Vec<u32>], labels: &[i64], vocab_size: usize) -
                 *counts.entry(w).or_insert(0.0) += 1.0;
             }
         }
-        let mut norm_sq = 0.0f64;
         for (t, count) in counts {
-            let v = count * idf_global[t];
-            norm_sq += v * v;
-            pairs.push((t, v));
+            pairs.push((t, count * idf_global[t]));
         }
+        // Sort by term id first, so BOTH the L2 norm sum and the accumulation into
+        // avg_global run in a fixed order regardless of HashMap iteration order.
+        // (Float addition is non-associative, so summing norm_sq over the raw
+        // HashMap order would leave inv_norm — and the output — bit-dependent on the
+        // process's random hash seed.)
+        pairs.sort_unstable_by_key(|&(t, _)| t);
+        let norm_sq: f64 = pairs.iter().map(|&(_, v)| v * v).sum();
         if norm_sq == 0.0 {
             continue; // all-out-of-vocab document: contributes a zero vector.
         }
         let inv_norm = 1.0 / norm_sq.sqrt();
-        // Sort by term id so the accumulation order into avg_global is fixed
-        // regardless of the HashMap iteration order (determinism).
-        pairs.sort_unstable_by_key(|&(t, _)| t);
         for &(t, v) in &pairs {
             avg_global[c][t] += v * inv_norm;
         }

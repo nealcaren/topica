@@ -110,6 +110,9 @@ def _reference_tfidf_idfi(docs, labels, vocab):
 
 
 def test_tfidf_idf_matches_sklearn_reference_on_same_clusters():
+    # scikit-learn is a dev-only reference toolchain; CI runs without it, so this
+    # parity test skips cleanly there rather than erroring the whole test job.
+    pytest.importorskip("sklearn")
     docs, emb = _planted(ubiquitous=True, seed=3)
     m = _fit(docs, emb, weighting="tfidf-idf")
     labels = list(m.labels)
