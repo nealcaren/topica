@@ -74,6 +74,13 @@ bhtsne = { version = "0.5", optional = true }
 # (python.rs); kept non-optional so the parallel path compiles and is exercised
 # by the default `cargo test` build, not only under the `python` feature.
 rayon = "1"
+# Pure-Rust, BLAS-free GEMM for the ProdLDA-family VAE decoder matmuls (issue
+# #378). Already a transitive dep via ndarray; a direct dep here. The `threading`
+# feature parallelizes over output blocks while each element's reduction stays in
+# fixed order, so results are bit-identical regardless of thread count (topica's
+# determinism guarantee). No external/BLAS dependency, so the single-wheel promise
+# holds. See `src/gemm.rs`.
+matrixmultiply = { version = "0.3", features = ["threading"] }
 
 [features]
 # maturin enables this (see pyproject.toml -> [tool.maturin] features).

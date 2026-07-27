@@ -1096,21 +1096,35 @@ pub(crate) fn batch_forward(
                 theta_pos[i] = softmax(&mu[i]);
             }
         }
+    }
 
-        // logit_raw = theta_do . beta  (product of experts, beta unnormalized).
-        let row = &mut logit_raw[i];
-        for t in 0..k {
-            let w_t = theta_do[i][t];
-            if w_t != 0.0 {
-                let base = t * v;
-                for j in 0..v {
-                    row[j] += w_t * w.beta[base + j];
-                }
-            }
+    // Decoder forward: logit_raw (N×V) = theta_do (N×K) · beta (K×V). This dense
+    // product dominates the fit, so route it through a deterministic BLAS-free GEMM
+    // (issue #378) instead of the per-document scalar triple-loop. `theta_do` is a
+    // Vec<Vec> (rows not contiguous), so flatten it and scatter the result back; the
+    // O(N·K)+O(N·V) copies are negligible next to the O(N·K·V) product. The GEMM
+    // reduction order is fixed, so the result is bit-identical regardless of thread
+    // count (topica's determinism guarantee); it differs from the old scalar loop
+    // only at float-rounding level (~1e-15). A zero `theta_do[i][t]` (dropout)
+    // contributes zero exactly as the old `if w_t != 0.0` skip did.
+    {
+        let mut theta_flat = vec![0.0; n * k];
+        for (i, td) in theta_do.iter().enumerate() {
+            theta_flat[i * k..(i + 1) * k].copy_from_slice(td);
         }
-        // SCHOLAR content deviation: per-covariate word shifts (+ optional
-        // topic-covariate interactions on theta_do).
-        if let Some(ct) = content {
+        let mut logit_flat = vec![0.0; n * v];
+        crate::gemm::matmul_nn(n, k, v, &theta_flat, &w.beta, &mut logit_flat);
+        for (i, row) in logit_raw.iter_mut().enumerate() {
+            row.copy_from_slice(&logit_flat[i * v..(i + 1) * v]);
+        }
+    }
+
+    // SCHOLAR content deviation: per-covariate word shifts (+ optional
+    // topic-covariate interactions on theta_do), added onto the decoder logits after
+    // the GEMM. Fires only when a content model is attached (ProdLDA/InfoCTM pass
+    // None), so the common path is a plain GEMM.
+    if let Some(ct) = content {
+        for (i, row) in logit_raw.iter_mut().enumerate() {
             let tc_i = &ct.tc[i];
             for (cc, &tcv) in tc_i.iter().enumerate().take(ct.c) {
                 if tcv != 0.0 {
@@ -1304,28 +1318,57 @@ pub(crate) fn batch_backward(
     }
     let dlogit_raw = BatchNorm::backward(&dlogit, &c.bn_dec);
 
-    let (content_fwd, mut content_grad): (Option<&ContentFwd>, Option<&mut ContentGrad>) =
-        match content {
-            Some((f, g)) => (Some(f), Some(g)),
-            None => (None, None),
-        };
+    let (content_fwd, content_grad): (Option<&ContentFwd>, Option<&mut ContentGrad>) = match content
+    {
+        Some((f, g)) => (Some(f), Some(g)),
+        None => (None, None),
+    };
 
-    // logit_raw = theta_do . beta  (+ SCHOLAR content deviation).
+    // Decoder backward, the two dense O(N·K·V) terms (issue #378):
+    //   dtheta_do (N×K) = dlogit_raw (N×V) · betaᵀ        (per-document)
+    //   g.beta   (K×V) += theta_doᵀ (K×N) · dlogit_raw   (cross-document reduction)
+    // Both go through the deterministic BLAS-free GEMM: a fixed reduction order, so
+    // bit-identical regardless of thread count (topica's determinism guarantee), and
+    // it resolves the g.beta reduction that a rayon-over-batch approach could not
+    // parallelize without reordering the sum. g.beta is accumulated via a scratch
+    // buffer to preserve the "add into g" contract (a coupled caller may seed g.beta).
     let mut dtheta_do = vec![vec![0.0; k]; n];
-    for i in 0..n {
-        for t in 0..k {
-            let base = t * v;
-            let mut acc = 0.0;
-            for j in 0..v {
-                let dl = dlogit_raw[i][j];
-                acc += dl * w.beta[base + j];
-                g.beta[base + j] += c.theta_do[i][t] * dl;
-            }
-            // Content interaction beta_ci[t,c]*theta_do[i][t]*tc[i][c]: adds to both
-            // dtheta_do (through theta_do) and the beta_ci gradient.
-            if let (Some(cf), Some(cg)) = (content_fwd, content_grad.as_deref_mut()) {
-                if let (Some(bci), Some(gci)) = (cf.beta_ci, cg.beta_ci.as_deref_mut()) {
-                    let tc_i = &cf.tc[i];
+    {
+        // Flatten the Vec<Vec> operands (rows are not contiguous); O(N·V)+O(N·K),
+        // negligible next to the O(N·K·V) products.
+        let mut dlogit_flat = vec![0.0; n * v];
+        for (i, dr) in dlogit_raw.iter().enumerate() {
+            dlogit_flat[i * v..(i + 1) * v].copy_from_slice(dr);
+        }
+        let mut theta_flat = vec![0.0; n * k];
+        for (i, td) in c.theta_do.iter().enumerate() {
+            theta_flat[i * k..(i + 1) * k].copy_from_slice(td);
+        }
+        // dtheta_do = dlogit_raw · betaᵀ (beta stored K×V).
+        let mut dtheta_flat = vec![0.0; n * k];
+        crate::gemm::matmul_nt(n, v, k, &dlogit_flat, &w.beta, &mut dtheta_flat);
+        for (i, dt) in dtheta_do.iter_mut().enumerate() {
+            dt.copy_from_slice(&dtheta_flat[i * k..(i + 1) * k]);
+        }
+        // g.beta += theta_doᵀ · dlogit_raw.
+        let mut gbeta = vec![0.0; k * v];
+        crate::gemm::matmul_tn(k, n, v, &theta_flat, &dlogit_flat, &mut gbeta);
+        for (gb, add) in g.beta.iter_mut().zip(gbeta.iter()) {
+            *gb += *add;
+        }
+    }
+
+    // SCHOLAR content-deviation gradients (scalar; fire only with a content model,
+    // so ProdLDA/InfoCTM skip this entirely). The topic-covariate interaction
+    // beta_ci adds into both dtheta_do and its own gradient; the main deviation
+    // beta_c accumulates independent of the topic. Accumulation order matches the
+    // old fused loop (i, t, cc, j), so gci/beta_c stay bit-identical.
+    if let (Some(cf), Some(cg)) = (content_fwd, content_grad) {
+        for i in 0..n {
+            let tc_i = &cf.tc[i];
+            if let (Some(bci), Some(gci)) = (cf.beta_ci, cg.beta_ci.as_deref_mut()) {
+                for t in 0..k {
+                    let mut acc = 0.0;
                     for (cc, &tcv) in tc_i.iter().enumerate().take(cf.c) {
                         if tcv == 0.0 {
                             continue;
@@ -1337,13 +1380,9 @@ pub(crate) fn batch_backward(
                             gci[cbase + j] += c.theta_do[i][t] * tcv * dl;
                         }
                     }
+                    dtheta_do[i][t] += acc;
                 }
             }
-            dtheta_do[i][t] = acc;
-        }
-        // Content main deviation beta_c[c]*tc[i][c]: gradient independent of the topic.
-        if let (Some(cf), Some(cg)) = (content_fwd, content_grad.as_deref_mut()) {
-            let tc_i = &cf.tc[i];
             for (cc, &tcv) in tc_i.iter().enumerate().take(cf.c) {
                 if tcv == 0.0 {
                     continue;
