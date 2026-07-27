@@ -16,6 +16,9 @@
 
 use crate::estimator::{Estimator, ModelFamily};
 use rand::Rng;
+use rand::SeedableRng;
+use rand_pcg::Pcg64Mcg;
+use rayon::prelude::*;
 
 /// A fitted Biterm Topic Model.
 pub struct BtmModel {
@@ -170,8 +173,171 @@ pub fn infer_doc(
     pz_d
 }
 
+/// One collapsed-Gibbs sweep over a contiguous block of biterms. `biterms` and
+/// `z_assign` are the (possibly sliced) parallel arrays for this block, indexed by
+/// the same local index; `nb_z`/`nwz` are the (possibly per-worker private) count
+/// tables. `pz` is a reused length-K scratch buffer. The per-biterm conditional is
+/// identical to the original inline loop.
+#[allow(clippy::too_many_arguments)]
+fn run_sweep_btm_range<R: Rng>(
+    nb_z: &mut [i64],
+    nwz: &mut [Vec<i64>],
+    z_assign: &mut [usize],
+    biterms: &[(u32, u32)],
+    pw_b: &[f64],
+    alpha: f64,
+    beta: f64,
+    vbeta: f64,
+    denom_z: f64,
+    k: usize,
+    background: bool,
+    pz: &mut [f64],
+    rng: &mut R,
+) {
+    for bi in 0..biterms.len() {
+        let (w1, w2) = (biterms[bi].0 as usize, biterms[bi].1 as usize);
+        let z_old = z_assign[bi];
+        // Remove this biterm's contribution.
+        nb_z[z_old] -= 1;
+        nwz[z_old][w1] -= 1;
+        nwz[z_old][w2] -= 1;
+
+        // Conditional p(z|b) ∝ p(z) p(w1|z) p(w2|z), matching compute_pz_b
+        // (note the asymmetric +1 in the second word's denominator).
+        for z in 0..k {
+            let nbz = nb_z[z] as f64;
+            let (pw1, pw2) = if background && z == 0 {
+                (pw_b[w1], pw_b[w2])
+            } else {
+                (
+                    (nwz[z][w1] as f64 + beta) / (2.0 * nbz + vbeta),
+                    (nwz[z][w2] as f64 + beta) / (2.0 * nbz + 1.0 + vbeta),
+                )
+            };
+            let pk = (nbz + alpha) / denom_z;
+            pz[z] = pk * pw1 * pw2;
+        }
+        let z_new = mult_sample(pz, rng);
+        z_assign[bi] = z_new;
+        nb_z[z_new] += 1;
+        nwz[z_new][w1] += 1;
+        nwz[z_new][w2] += 1;
+    }
+}
+
+/// Contiguous, non-overlapping ranges partitioning `0..n` into `parts` blocks
+/// (clamped so the block count never exceeds `n`). Local mirror of the binding's
+/// `partition_ranges`.
+fn partition_ranges(n: usize, parts: usize) -> Vec<(usize, usize)> {
+    let parts = parts.max(1).min(n.max(1));
+    let base = n / parts;
+    let rem = n % parts;
+    let mut ranges = Vec::with_capacity(parts);
+    let mut start = 0;
+    for i in 0..parts {
+        let len = base + if i < rem { 1 } else { 0 };
+        ranges.push((start, start + len));
+        start += len;
+    }
+    ranges
+}
+
+/// One approximate-parallel (AD-LDA) sweep over the biterm topic assignments.
+/// Biterms are globally exchangeable and carry no per-document state, so the flat
+/// biterm array is partitioned across workers; each samples its slice against a
+/// private clone of `nb_z`/`nwz`, then both tables are reconciled by the exact
+/// additive merge `Σ_workers − (W−1)·original` (clamped ≥ 0 to keep the sampling
+/// numerators/denominators positive under staleness). Each worker's `z_assign`
+/// slice is written straight back (biterms are disjoint). Deterministic for a
+/// fixed `sweep_seed`/`num_threads`.
+#[allow(clippy::too_many_arguments)]
+fn parallel_sweep_btm(
+    nb_z: &mut [i64],
+    nwz: &mut [Vec<i64>],
+    z_assign: &mut [usize],
+    biterms: &[(u32, u32)],
+    pw_b: &[f64],
+    alpha: f64,
+    beta: f64,
+    vbeta: f64,
+    denom_z: f64,
+    k: usize,
+    background: bool,
+    num_threads: usize,
+    sweep_seed: u64,
+) {
+    let v = nwz.first().map_or(0, |row| row.len());
+    let ranges = partition_ranges(biterms.len(), num_threads);
+    let orig_nb_z = nb_z.to_vec();
+    let orig_nwz = nwz.to_vec();
+    let z_ro: &[usize] = z_assign;
+
+    struct BtmWorkerOut {
+        nb_z: Vec<i64>,
+        nwz: Vec<Vec<i64>>,
+        z: Vec<usize>,
+        start: usize,
+    }
+
+    let outs: Vec<BtmWorkerOut> = ranges
+        .par_iter()
+        .enumerate()
+        .map(|(wid, &(start, end))| {
+            let mut wnb = orig_nb_z.clone();
+            let mut wnwz = orig_nwz.clone();
+            let mut wz: Vec<usize> = z_ro[start..end].to_vec();
+            let mut rng = Pcg64Mcg::seed_from_u64(
+                sweep_seed ^ (wid as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            );
+            let mut pz = vec![0.0f64; k];
+            run_sweep_btm_range(
+                &mut wnb,
+                &mut wnwz,
+                &mut wz,
+                &biterms[start..end],
+                pw_b,
+                alpha,
+                beta,
+                vbeta,
+                denom_z,
+                k,
+                background,
+                &mut pz,
+                &mut rng,
+            );
+            BtmWorkerOut {
+                nb_z: wnb,
+                nwz: wnwz,
+                z: wz,
+                start,
+            }
+        })
+        .collect();
+
+    // --- Reconcile both count tables: final = Σ_workers − (W−1)·original,
+    // clamped ≥ 0 so a stale-driven negative never poisons the sampling CDF. ---
+    let wm1 = (outs.len() as i64) - 1;
+    for z in 0..k {
+        let sum_b: i64 = outs.iter().map(|o| o.nb_z[z]).sum();
+        nb_z[z] = (sum_b - wm1 * orig_nb_z[z]).max(0);
+        for w in 0..v {
+            let sum_w: i64 = outs.iter().map(|o| o.nwz[z][w]).sum();
+            nwz[z][w] = (sum_w - wm1 * orig_nwz[z][w]).max(0);
+        }
+    }
+
+    // --- Write back each worker's biterm topic assignments (disjoint slices). ---
+    for out in outs {
+        for (i, zi) in out.z.into_iter().enumerate() {
+            z_assign[out.start + i] = zi;
+        }
+    }
+}
+
 /// Fit BTM on the given token-id documents with collapsed Gibbs sampling over
-/// biterm topic assignments.
+/// biterm topic assignments. `num_threads` `1` runs the exact serial sweep; `>1`
+/// runs MALLET-style approximate-parallel (AD-LDA) sampling over the biterms,
+/// deterministic for a fixed `num_threads` + seed.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_btm<R: Rng>(
     docs: &[Vec<u32>],
@@ -182,6 +348,7 @@ pub fn fit_btm<R: Rng>(
     iters: usize,
     window: usize,
     background: bool,
+    num_threads: usize,
     rng: &mut R,
 ) -> BtmModel {
     let k = num_topics;
@@ -217,34 +384,42 @@ pub fn fit_btm<R: Rng>(
     let mut pz = vec![0.0f64; k];
 
     for _ in 0..iters {
-        for bi in 0..b {
-            let (w1, w2) = (biterms[bi].0 as usize, biterms[bi].1 as usize);
-            let z_old = z_assign[bi];
-            // Remove this biterm's contribution.
-            nb_z[z_old] -= 1;
-            nwz[z_old][w1] -= 1;
-            nwz[z_old][w2] -= 1;
-
-            // Conditional p(z|b) ∝ p(z) p(w1|z) p(w2|z), matching compute_pz_b
-            // (note the asymmetric +1 in the second word's denominator).
-            for z in 0..k {
-                let nbz = nb_z[z] as f64;
-                let (pw1, pw2) = if background && z == 0 {
-                    (pw_b[w1], pw_b[w2])
-                } else {
-                    (
-                        (nwz[z][w1] as f64 + beta) / (2.0 * nbz + vbeta),
-                        (nwz[z][w2] as f64 + beta) / (2.0 * nbz + 1.0 + vbeta),
-                    )
-                };
-                let pk = (nbz + alpha) / denom_z;
-                pz[z] = pk * pw1 * pw2;
-            }
-            let z_new = mult_sample(&pz, rng);
-            z_assign[bi] = z_new;
-            nb_z[z_new] += 1;
-            nwz[z_new][w1] += 1;
-            nwz[z_new][w2] += 1;
+        if num_threads <= 1 {
+            // Exact serial path — byte-identical to the pre-threading loop.
+            run_sweep_btm_range(
+                &mut nb_z,
+                &mut nwz,
+                &mut z_assign,
+                &biterms,
+                &pw_b,
+                alpha,
+                beta,
+                vbeta,
+                denom_z,
+                k,
+                background,
+                &mut pz,
+                rng,
+            );
+        } else {
+            // Approximate-parallel AD-LDA over the biterms. One per-sweep seed from
+            // the main RNG keeps it deterministic for a fixed num_threads + seed.
+            let sweep_seed = rng.gen::<u64>();
+            parallel_sweep_btm(
+                &mut nb_z,
+                &mut nwz,
+                &mut z_assign,
+                &biterms,
+                &pw_b,
+                alpha,
+                beta,
+                vbeta,
+                denom_z,
+                k,
+                background,
+                num_threads,
+                sweep_seed,
+            );
         }
     }
 
@@ -364,7 +539,18 @@ mod tests {
         let (k, block) = (3, 6);
         let (docs, v) = planted(k, block, 150, 5, 42);
         let mut rng = ChaCha8Rng::seed_from_u64(7);
-        let m = fit_btm(&docs, k, v, 50.0 / k as f64, 0.01, 200, 15, false, &mut rng);
+        let m = fit_btm(
+            &docs,
+            k,
+            v,
+            50.0 / k as f64,
+            0.01,
+            200,
+            15,
+            false,
+            1,
+            &mut rng,
+        );
 
         assert_eq!(m.topic_word.len(), k);
         assert_eq!(m.topic_word[0].len(), v);
@@ -391,7 +577,7 @@ mod tests {
         let (docs, v) = planted(k, block, 60, 4, 123);
         let run = || {
             let mut rng = ChaCha8Rng::seed_from_u64(99);
-            fit_btm(&docs, k, v, 1.0, 0.01, 80, 15, false, &mut rng)
+            fit_btm(&docs, k, v, 1.0, 0.01, 80, 15, false, 1, &mut rng)
         };
         let a = run();
         let b = run();
