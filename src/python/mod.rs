@@ -3077,6 +3077,83 @@ fn parallel_sweep_dmr_batched(
     reconcile_worker_outs(model, outs, &original_ttc, &original_tpt);
 }
 
+/// One approximate-parallel restricted Gibbs sweep for **Labeled LDA**. Same
+/// AD-LDA partition-and-merge as [`parallel_sweep_dmr_batched`], but the workers
+/// sample with [`labeled::run_sweep_labeled`], which restricts each token to its
+/// document's allowed-topic set. `run_sweep_labeled` operates on a whole
+/// `TopicModel` (via its packed-table methods) and indexes `model.doc_topics[d]`,
+/// so each worker is handed a lightweight `TopicModel` carrying a clone of the
+/// shared count tables and only its *slice* of `doc_topics` — indices then line
+/// up with `docs[start..end]` / `allowed[start..end]`. The additive merge stays
+/// exact: a worker touches only its own documents' tokens relative to the shared
+/// snapshot, and a topic disallowed for every doc in the slice contributes a zero
+/// net delta. Deterministic for a fixed `num_threads`/`batch`/`sweep_seed`.
+fn parallel_sweep_labeled_batched(
+    model: &mut TopicModel,
+    docs: &[Vec<u32>],
+    allowed: &[Vec<usize>],
+    num_threads: usize,
+    sweep_seed: u64,
+    batch: usize,
+) {
+    let batch = batch.max(1);
+    let k = model.num_topics;
+    let v = model.num_types;
+    let mask = model.topic_mask;
+    let bits = model.topic_bits;
+    let alpha = model.alpha.clone();
+    let alpha_sum = model.alpha_sum;
+    let beta = model.beta;
+    let beta_sum = model.beta_sum;
+    let ranges = partition_ranges(docs.len(), num_threads);
+
+    let original_ttc = model.type_topic_counts.clone();
+    let original_tpt = model.tokens_per_topic.clone();
+    let dt_all = &model.doc_topics;
+
+    let outs: Vec<WorkerOut> = ranges
+        .par_iter()
+        .enumerate()
+        .map(|(wid, &(start, end))| {
+            // A per-worker model that shares the global count tables but carries
+            // only this partition's doc_topics, so run_sweep_labeled's 0-based
+            // document loop aligns with docs[start..end] / allowed[start..end].
+            let mut wm = TopicModel {
+                num_topics: k,
+                num_types: v,
+                topic_mask: mask,
+                topic_bits: bits,
+                alpha: alpha.clone(),
+                alpha_sum,
+                beta,
+                beta_sum,
+                type_topic_counts: original_ttc.clone(),
+                tokens_per_topic: original_tpt.clone(),
+                doc_topics: dt_all[start..end].to_vec(),
+            };
+            let mut rng = Pcg64Mcg::seed_from_u64(
+                sweep_seed ^ (wid as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            );
+            for _ in 0..batch {
+                labeled::run_sweep_labeled(
+                    &mut wm,
+                    &docs[start..end],
+                    &allowed[start..end],
+                    &mut rng,
+                );
+            }
+            WorkerOut {
+                ttc: wm.type_topic_counts,
+                tpt: wm.tokens_per_topic,
+                start,
+                dt: wm.doc_topics,
+            }
+        })
+        .collect();
+
+    reconcile_worker_outs(model, outs, &original_ttc, &original_tpt);
+}
+
 // ---------------------------------------------------------------------------
 // Held-out evaluation: Wallach et al. (2009) left-to-right estimator
 // ---------------------------------------------------------------------------
@@ -5022,6 +5099,10 @@ pub struct LabeledLDA {
     // CVB0 deterministic collapsed-variational inference (masked γ per document)
     // instead of the default restricted SparseLDA sweep.
     cvb0: bool,
+    // Default worker count for the sparse restricted-Gibbs fit. `1` is the exact
+    // serial path; `>1` runs AD-LDA partition-and-merge (deterministic for a fixed
+    // num_threads+seed). Ignored by the cvb0 backend.
+    num_threads: usize,
 
     fitted: bool,
     num_topics: usize,
@@ -5060,6 +5141,7 @@ impl LabeledLDA {
         d.set_item("beta", self.beta)?;
         d.set_item("seed", self.seed)?;
         d.set_item("sampler", if self.cvb0 { "cvb0" } else { "sparse" })?;
+        d.set_item("num_threads", self.num_threads)?;
         Ok(d)
     }
 
@@ -5072,11 +5154,16 @@ impl LabeledLDA {
     /// Create an unfitted model. `alpha` is the (symmetric) per-topic prior
     /// over a document's allowed topics.
     /// `beta` is the topic-word Dirichlet smoothing; `seed` seeds the Gibbs RNG.
-    /// `sampler` selects the inference backend: ``"sparse"`` (default), ``"warp"``
-    /// (WarpLDA), or ``"cvb0"`` (deterministic collapsed variational Bayes).
+    /// `sampler` selects the inference backend: ``"sparse"`` (default) or
+    /// ``"cvb0"`` (deterministic collapsed variational Bayes). `num_threads`
+    /// ``>1`` runs the sparse backend as MALLET-style approximate-parallel
+    /// restricted Gibbs (partition documents, sample against per-worker count
+    /// copies, merge; deterministic for a fixed `num_threads`+`seed`); ``1`` is the
+    /// exact serial path. It is ignored by the cvb0 backend. `fit(num_threads=)`
+    /// overrides it per call.
     #[new]
-    #[pyo3(signature = (*, alpha=0.1, beta=0.01, seed=42, sampler="sparse"))]
-    fn new(alpha: f64, beta: f64, seed: u64, sampler: &str) -> PyResult<Self> {
+    #[pyo3(signature = (*, alpha=0.1, beta=0.01, seed=42, sampler="sparse", num_threads=1))]
+    fn new(alpha: f64, beta: f64, seed: u64, sampler: &str, num_threads: usize) -> PyResult<Self> {
         if !finite_pos(alpha) {
             return Err(PyValueError::new_err("alpha must be > 0"));
         }
@@ -5097,6 +5184,7 @@ impl LabeledLDA {
             beta,
             seed,
             cvb0,
+            num_threads: num_threads.max(1),
             fitted: false,
             num_topics: 0,
             topic_names: Vec::new(),
@@ -5129,10 +5217,14 @@ impl LabeledLDA {
     /// snapshots in `theta_draws`, the cross-sweep posterior samples
     /// `composition_theta` prefers over the Dirichlet approximation; set it False to
     /// save memory.
+    /// `num_threads` overrides the constructor's worker count for this fit only
+    /// (`None` = constructor value); `>1` runs the sparse restricted-Gibbs sweep as
+    /// approximate-parallel AD-LDA (deterministic for a fixed `num_threads`+`seed`),
+    /// `1` is the exact serial path, and it is ignored by the cvb0 backend.
     #[pyo3(signature = (data, labels, *, label_names=None, iters=1000,
                         num_samples=5, sample_interval=25, progress=None, progress_interval=50,
                         keep_theta_draws=true, num_theta_draws=25,
-                        convergence_tol=0.0_f64, check_every=10_usize))]
+                        convergence_tol=0.0_f64, check_every=10_usize, num_threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -5149,7 +5241,11 @@ impl LabeledLDA {
         num_theta_draws: usize,
         convergence_tol: f64,
         check_every: usize,
+        num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
+        // num_threads: fit()-level value overrides the constructor default; the
+        // sparse restricted-Gibbs sweep runs AD-LDA partition-and-merge when >1.
+        let num_threads = num_threads.unwrap_or(slf.num_threads).max(1);
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -5300,6 +5396,10 @@ impl LabeledLDA {
             return Ok(slf.into());
         }
 
+        // Base seed for the approximate-parallel sparse sweep: per-sweep seeds are
+        // derived from it and the sweep index, so a fixed num_threads+seed run is
+        // deterministic and independent of when the sampling phase starts.
+        let seed_base = slf.seed;
         let (acc_phi, acc_theta, theta_draw_buf, ll_history, converged, model, corpus) = py
             .allow_threads(move || {
                 let mut theta_draw_buf: Vec<Vec<Vec<f32>>> = Vec::new();
@@ -5308,7 +5408,20 @@ impl LabeledLDA {
                 let mut converged = false;
 
                 'outer: for iter in 1..=iters {
-                    labeled::run_sweep_labeled(&mut model, &corpus.docs, &allowed, &mut rng);
+                    if num_threads <= 1 {
+                        labeled::run_sweep_labeled(&mut model, &corpus.docs, &allowed, &mut rng);
+                    } else {
+                        let s = seed_base
+                            .wrapping_add((iter as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+                        parallel_sweep_labeled_batched(
+                            &mut model,
+                            &corpus.docs,
+                            &allowed,
+                            num_threads,
+                            s,
+                            1,
+                        );
+                    }
                     if draws_opts.thin > 0 && iter % draws_opts.thin == 0 {
                         let counts = doc_topic_counts(&model.doc_topics, k);
                         let snap: Vec<Vec<f32>> = (0..num_docs)
@@ -5355,9 +5468,31 @@ impl LabeledLDA {
 
                 let mut acc_phi = vec![vec![0.0f64; k]; num_types];
                 let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
+                // Continue the per-sweep seed sequence past the training sweeps so
+                // the sampling phase stays deterministic and non-overlapping.
+                let mut post_sweep: u64 = iters as u64;
                 for _ in 0..num_samples {
                     for _ in 0..sample_interval {
-                        labeled::run_sweep_labeled(&mut model, &corpus.docs, &allowed, &mut rng);
+                        post_sweep += 1;
+                        if num_threads <= 1 {
+                            labeled::run_sweep_labeled(
+                                &mut model,
+                                &corpus.docs,
+                                &allowed,
+                                &mut rng,
+                            );
+                        } else {
+                            let s = seed_base
+                                .wrapping_add(post_sweep.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+                            parallel_sweep_labeled_batched(
+                                &mut model,
+                                &corpus.docs,
+                                &allowed,
+                                num_threads,
+                                s,
+                                1,
+                            );
+                        }
                     }
                     accumulate_phi(&model, &mut acc_phi);
                     let counts = doc_topic_counts(&model.doc_topics, k);
@@ -5656,6 +5791,9 @@ impl LabeledLDA {
             beta: s.beta,
             seed: s.seed,
             cvb0: false,
+            // num_threads is a runtime resource knob, not fitted state; a loaded
+            // (already-fitted) model defaults to serial.
+            num_threads: 1,
             fitted: s.fitted,
             num_topics: s.num_topics,
             topic_names,

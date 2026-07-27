@@ -1839,7 +1839,7 @@ class LabeledLDA:
 
     def __init__(
         self, *, alpha: float = 0.1, beta: float = 0.01, seed: int = 42,
-        sampler: str = "sparse",
+        sampler: str = "sparse", num_threads: int = 1,
     ) -> None:
         """Create an unfitted model. alpha is the symmetric per-topic prior.
 
@@ -1849,7 +1849,13 @@ class LabeledLDA:
         off the allowed topics). CVB0 enforces the same supervised constraint
         deterministically and tends to higher coherence; it produces no MCMC
         theta_draws. (WarpLDA is not offered here: masked proposals mix poorly,
-        whereas masking is free in CVB0.)"""
+        whereas masking is free in CVB0.)
+
+        num_threads > 1 runs the sparse backend as MALLET-style approximate-parallel
+        restricted Gibbs (partition documents, sample against per-worker count
+        copies, merge; deterministic for a fixed num_threads+seed); 1 is the exact
+        serial path. It is ignored by the cvb0 backend and can be overridden per
+        call via fit(num_threads=)."""
         ...
 
     def fit(
@@ -1867,11 +1873,17 @@ class LabeledLDA:
         num_theta_draws: int = 25,
         convergence_tol: float = 0.0,
         check_every: int = 10,
+        num_threads: int | None = None,
     ) -> "LabeledLDA":
         """Fit the model. labels is one label-list per document; the topic set is
         the union of all labels (or label_names, which fixes topic order and must
         contain every non-empty observed label exactly once). An empty label list
-        leaves that document unconstrained (all topics)."""
+        leaves that document unconstrained (all topics).
+
+        num_threads overrides the constructor's worker count for this fit only
+        (None = constructor value); >1 runs the sparse sweep as approximate-parallel
+        AD-LDA (deterministic for a fixed num_threads+seed), 1 is the exact serial
+        path, and it is ignored by the cvb0 backend."""
         ...
 
     @property
