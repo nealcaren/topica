@@ -3145,6 +3145,7 @@ class SeededLDA:
         sampler: str = "sparse",
         seed_match: str = "fixed",
         case_insensitive: bool = False,
+        num_threads: int = 1,
     ) -> None:
         """seed_match selects how each seed pattern is matched to the vocabulary:
         "fixed" (default) exact literal equality; "glob" reads `*`/`?` wildcards
@@ -3170,7 +3171,13 @@ class SeededLDA:
         SeededLDA's sparse sweep scores all K topics per token, so "warp" is
         dramatically faster at large K (e.g. ~40x at K=500 on a 2,000-document
         corpus) at comparable coherence. The "warp" and "cvb0" paths do not yet
-        support doc_topic_prior."""
+        support doc_topic_prior.
+
+        num_threads > 1 runs the default sparse backend as MALLET-style
+        approximate-parallel (AD-LDA) seeded Gibbs (partition documents, sample
+        against per-worker count copies, merge; deterministic for a fixed
+        num_threads+seed); 1 is the exact serial path. It is ignored by the
+        warp/cvb0 backends and can be overridden per call via fit(num_threads=)."""
         ...
     def fit(
         self,
@@ -3182,12 +3189,18 @@ class SeededLDA:
         num_theta_draws: int = 25,
         convergence_tol: float = 0.0,
         check_every: int = 10,
+        num_threads: int | None = None,
     ) -> "SeededLDA":
         """Fit the seeded model. `convergence_tol` (default 0.0, disabled) enables
         opt-in log-likelihood early stopping on the default ("sparse") sampler,
         recording the `fit_history` trace every `check_every` sweeps; the "cvb0"
         and "warp" backends ignore both (no per-iteration trace, `converged`
-        stays False)."""
+        stays False).
+
+        num_threads overrides the constructor's worker count for this fit only
+        (None = constructor value); >1 runs the sparse sweep as approximate-parallel
+        AD-LDA (deterministic for a fixed num_threads+seed), 1 is the exact serial
+        path, and it is ignored by the warp/cvb0 backends."""
         ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
