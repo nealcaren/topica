@@ -31,6 +31,7 @@
 //! every gradient is checked against finite differences in the unit tests.
 
 use rand::Rng;
+use rayon::prelude::*;
 
 /// Kaiming-uniform initialization matching PyTorch's `nn.Linear` default:
 /// entries uniform on `[-1/sqrt(fan_in), 1/sqrt(fan_in)]`.
@@ -999,7 +1000,14 @@ pub(crate) fn batch_forward(
     // Encoder up to the pre-BN heads. CombinedTM (`BowEmbAdapt`) feeds the *raw*
     // BoW counts (`batch.counts`), matching the reference's `CountVectorizer` input;
     // every other mode keeps the length-normalized BoW (`batch.xns`).
+    // Encoder forward is a pure per-document map (each doc reads shared weights and
+    // writes its own DocCache), so rayon-parallelize it (issue #378 follow-up).
+    // `into_par_iter().map().collect()` on a range preserves index order, so `doc`
+    // is bit-identical to the sequential build regardless of thread count — no
+    // reduction is reordered. This is the reduction-free half the g.beta/g.w*
+    // reductions are not.
     let doc: Vec<DocCache> = (0..n)
+        .into_par_iter()
         .map(|i| {
             let enc_bow = if w.mode == InputMode::BowEmbAdapt {
                 batch.counts[i]
