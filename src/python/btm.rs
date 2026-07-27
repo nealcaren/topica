@@ -22,6 +22,10 @@ pub struct BTM {
     window: usize,
     background: bool,
     seed: u64,
+    // Default worker count for the biterm Gibbs fit. `1` is the exact serial path;
+    // `>1` runs AD-LDA partition-and-merge (deterministic for a fixed
+    // num_threads+seed).
+    num_threads: usize,
     fitted: bool,
     topic_names: Vec<String>,
     model: Option<crate::btm::BtmModel>,
@@ -111,6 +115,7 @@ impl BTM {
         d.set_item("window", self.window)?;
         d.set_item("background", self.background)?;
         d.set_item("seed", self.seed)?;
+        d.set_item("num_threads", self.num_threads)?;
         Ok(d)
     }
 
@@ -120,10 +125,13 @@ impl BTM {
     /// common words (drawn from the biterm-participation word distribution), leaving
     /// `num_topics - 1` content topics; its reported `topic_word` row is emitted from
     /// the biterm counts it accumulated, not the background distribution it sampled
-    /// from.
+    /// from. `num_threads` `>1` runs the biterm Gibbs sweep as MALLET-style
+    /// approximate-parallel (AD-LDA) sampling (partition the biterms, sample against
+    /// per-worker count copies, merge; deterministic for a fixed `num_threads`+`seed`);
+    /// `1` is the exact serial path. `fit(num_threads=)` overrides it per call.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=None, beta=0.01, iters=1000,
-                        window=15, background=false, seed=42))]
+                        window=15, background=false, seed=42, num_threads=1))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         num_topics: usize,
@@ -133,6 +141,7 @@ impl BTM {
         window: usize,
         background: bool,
         seed: u64,
+        num_threads: usize,
     ) -> PyResult<Self> {
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
@@ -156,6 +165,7 @@ impl BTM {
             iters,
             window,
             background,
+            num_threads: num_threads.max(1),
             seed,
             fitted: false,
             topic_names: Vec::new(),
@@ -164,13 +174,18 @@ impl BTM {
         })
     }
 
-    /// Fit the model on a corpus or list of token lists.
-    #[pyo3(signature = (data, *, iters=None))]
+    /// Fit the model on a corpus or list of token lists. `num_threads` overrides
+    /// the constructor's worker count for this fit only (`None` = constructor
+    /// value); `>1` runs the biterm Gibbs sweep as approximate-parallel AD-LDA
+    /// (deterministic for a fixed `num_threads`+`seed`), `1` is the exact serial
+    /// path.
+    #[pyo3(signature = (data, *, iters=None, num_threads=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: Option<usize>,
+        num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -197,6 +212,8 @@ impl BTM {
             ));
         }
         let iters = iters.unwrap_or(slf.iters);
+        // fit()-level num_threads overrides the constructor default for this run.
+        let num_threads = num_threads.unwrap_or(slf.num_threads).max(1);
         let alpha = slf.alpha.unwrap_or(50.0 / slf.num_topics as f64);
         let (k, beta, window, background, seed) = (
             slf.num_topics,
@@ -217,6 +234,7 @@ impl BTM {
                 iters,
                 window,
                 background,
+                num_threads,
                 &mut rng,
             );
             (m, corpus)
@@ -419,6 +437,9 @@ impl BTM {
             window: s.window,
             background: s.background,
             seed: s.seed,
+            // num_threads is a runtime resource knob, not fitted state; a loaded
+            // (already-fitted) model defaults to serial.
+            num_threads: 1,
             fitted: s.fitted,
             topic_names: s.topic_names,
             model,

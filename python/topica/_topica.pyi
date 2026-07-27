@@ -2544,10 +2544,23 @@ class BTM:
         window: int = 15,
         background: bool = False,
         seed: int = 42,
-    ) -> None: ...
+        num_threads: int = 1,
+    ) -> None:
+        """num_threads > 1 runs the biterm Gibbs sweep as MALLET-style
+        approximate-parallel (AD-LDA) sampling (partition the biterms, sample
+        against per-worker count copies, merge; deterministic for a fixed
+        num_threads+seed); 1 is the exact serial path. Override per call via
+        fit(num_threads=)."""
+        ...
     def fit(
-        self, data: Corpus | Sequence[Sequence[str]], *, iters: int | None = None
-    ) -> "BTM": ...
+        self, data: Corpus | Sequence[Sequence[str]], *, iters: int | None = None,
+        num_threads: int | None = None,
+    ) -> "BTM":
+        """num_threads overrides the constructor's worker count for this fit only
+        (None = constructor value); >1 runs the biterm sweep as approximate-parallel
+        AD-LDA (deterministic for a fixed num_threads+seed), 1 is the exact serial
+        path."""
+        ...
     def transform(
         self, data: Corpus | Sequence[Sequence[str]]
     ) -> numpy.typing.NDArray[numpy.float64]:
