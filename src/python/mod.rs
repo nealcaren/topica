@@ -75,6 +75,7 @@ mod hierarchical;
 mod idealpoint;
 mod neural;
 mod nmf_lsa;
+mod online_lda;
 mod party_embeddings;
 mod pltm;
 #[path = "corpus.rs"]
@@ -95,6 +96,7 @@ use hierarchical::{HLDA, PA};
 use idealpoint::IdealPointTM;
 use neural::{CombinedTM, InfoCTM, ProdLDA, ZeroShotTM, DETM, ETM};
 use nmf_lsa::{LSA, NMF};
+use online_lda::OnlineLDA;
 use party_embeddings::PartyEmbeddings;
 use pltm::PolylingualLDA;
 use py_corpus::Corpus;
@@ -15594,6 +15596,7 @@ fn _sts_poisson_lasso(
 #[pymodule]
 fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LDA>()?;
+    m.add_class::<OnlineLDA>()?;
     m.add_class::<DMR>()?;
     m.add_class::<LabeledLDA>()?;
     m.add_class::<SAGE>()?;

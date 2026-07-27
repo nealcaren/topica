@@ -186,6 +186,14 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::Dirichlet,
         exempt: &[],
     },
+    // Online (streaming) variational-Bayes LDA — Dirichlet family, but a
+    // mean-field variational posterior (no MCMC theta_draws) rather than
+    // collapsed Gibbs.
+    RegistryEntry {
+        name: "OnlineLDA",
+        family: ModelFamily::Dirichlet,
+        exempt: &[],
+    },
     RegistryEntry {
         name: "SeededLDA",
         family: ModelFamily::Dirichlet,

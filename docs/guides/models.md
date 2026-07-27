@@ -39,6 +39,7 @@ generated from `python/topica/registry.py`.
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
 | `LDA` | text | gibbs | seed-reproducible | Classic latent Dirichlet allocation via a fast SparseLDA collapsed-Gibbs sampler. |
+| `OnlineLDA` | text | variational | seed-reproducible | Online (streaming) variational-Bayes LDA (Hoffman et al. 2010): minibatch stochastic VB with a decaying learning rate and a streaming partial_fit; the gensim LdaModel analogue for very large or streaming corpora. |
 | `CTM` | text | variational | bit-exact | Correlated topic model: a logistic-normal prior that lets topics co-occur. |
 | `ProdLDA` | text | vae | seed-reproducible | Product-of-experts LDA (AVITM) for sharper, more coherent topics; hand-coded VAE. |
 | `HDP` | text | gibbs | seed-reproducible | Hierarchical Dirichlet process: infers the number of topics from the data. |
@@ -185,6 +186,50 @@ model.fit(docs, iters=300)
 All four target the same model. Use the default `"sparse"` up to a couple
 hundred topics; `"warp"` for large-`K` (`K ≳ 500`) work where speed matters; and
 `"cvb0"` when you want the cleanest topics and can spend the compute.
+
+## OnlineLDA
+
+Online (streaming) variational-Bayes LDA — the minibatch stochastic-VB algorithm
+of [Hoffman, Blei & Bach (2010)](https://papers.nips.cc/paper/2010/hash/71f6278d140af599e06ad9bf1ba03cb0-Abstract.html),
+and the direct analogue of gensim's `LdaModel`. Where the batch-Gibbs [`LDA`](#lda)
+above touches every document each sweep, `OnlineLDA` fits in **minibatches** with a
+decaying learning rate `ρ_t = (tau + t)^(−kappa)` and never holds the whole corpus
+in memory, so it reaches a good fit in a fraction of an epoch on very large
+corpora. It also supports **streaming updates**: fold new documents into an
+already-fitted model with `partial_fit`.
+
+```python
+import topica
+
+# Batch online-VB fit (passes over the whole corpus in minibatches).
+model = topica.OnlineLDA(num_topics=20, batch_size=256, seed=42)
+model.fit(docs, iters=10)          # iters = passes over the corpus
+model.top_words(10)
+
+# Streaming: fit an initial batch, then fold in later minibatches.
+model = topica.OnlineLDA(num_topics=20, batch_size=1024, total_docs=1_000_000, seed=42)
+model.fit(first_chunk, iters=1)
+for chunk in later_chunks:         # each chunk a list[list[str]]
+    theta_chunk = model.partial_fit(chunk)   # (len(chunk), num_topics)
+
+# Held-out inference without updating the model.
+theta_new = model.transform(held_out_docs)
+```
+
+The constructor mirrors gensim's `LdaModel`: `batch_size` ↔ `chunksize`, `tau` ↔
+`offset`, `kappa` ↔ `decay`, `beta` ↔ `eta`, `inner_iters` ↔ `iterations`, and
+`fit(iters=)` ↔ `passes`. The vocabulary is fixed at the first `fit` (as gensim
+fixes it via its `id2word` dictionary); tokens outside it are dropped by
+`partial_fit` / `transform`.
+
+**When to prefer it.** Reach for `OnlineLDA` when the corpus is too large to hold
+in memory, arrives as a stream, or must be updated incrementally. For a corpus
+that fits comfortably in memory, the batch samplers (or `cvb0`) usually give
+better topics per unit of compute — `OnlineLDA` trades some statistical
+efficiency for streaming scalability. Fits are seed-reproducible (identical for a
+fixed seed and batch schedule). The E-step, sufficient-statistic accumulation, and
+global blend reproduce Blei/Hoffman's reference `onlineldavb.py` and gensim's
+`LdaModel`; see `parity/online_lda_gensim_compare.py`.
 
 ## STM
 

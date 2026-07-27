@@ -58,6 +58,7 @@ pub(crate) const MODEL_TAG_DISCLDA: u8 = 40;
 pub(crate) const MODEL_TAG_SCHOLAR: u8 = 41;
 pub(crate) const MODEL_TAG_RTM: u8 = 42;
 pub(crate) const MODEL_TAG_INFOCTM: u8 = 43;
+pub(crate) const MODEL_TAG_ONLINE_LDA: u8 = 44;
 
 pub(crate) fn model_tag_name(tag: u8) -> &'static str {
     match tag {
@@ -102,6 +103,7 @@ pub(crate) fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_SCHOLAR => "Scholar",
         MODEL_TAG_RTM => "RTM",
         MODEL_TAG_INFOCTM => "InfoCTM",
+        MODEL_TAG_ONLINE_LDA => "OnlineLDA",
         _ => "unknown",
     }
 }

@@ -40,6 +40,7 @@ Column meanings:
 | Model | Source | Binding | Core / family | Feature | Validation |
 |---|---|---|---|---|---|
 | `LDA` | `src/model.rs` | `src/python/mod.rs` | SparseLDA collapsed Gibbs (model.rs, sampler.rs) | default | `parity/lda_gold.py`, `parity/mallet_parity.py` |
+| `OnlineLDA` | `src/online_lda.rs` | `src/python/online_lda.rs` | online-VB SVI schedule (variational/svi.rs), Dirichlet mean-field E-step (optimize.rs digamma) | default | `parity/online_lda_gensim_compare.py` |
 | `CTM` | `topica-core/src/ctm.rs` | `src/python/mod.rs` | CTM/STM variational core (topica-core) | default | `parity/ctm_gold.py`, `parity/ctm_r_compare.py` |
 | `ProdLDA` | `src/prodlda.rs` | `src/python/neural.rs` | hand-coded batched VAE (prodlda.rs) | default | `parity/prodlda_gold.py`, `parity/prodlda_compare.py` |
 | `HDP` | `src/hdp.rs` | `src/python/mod.rs` | collapsed Gibbs (model.rs, sampler.rs) | default | `parity/hdp_gold.py` |

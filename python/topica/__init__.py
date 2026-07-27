@@ -7,6 +7,7 @@ and editors/type-checkers see a stable namespace.
 
 from ._topica import (
     LDA,
+    OnlineLDA,
     DMR,
     LabeledLDA,
     SAGE,
@@ -301,6 +302,7 @@ __all__ = [
     "REGISTRY",
     "effective_determinism",
     "LDA",
+    "OnlineLDA",
     "DMR",
     "GDMR",
     "NarrativeTM",
