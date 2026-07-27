@@ -269,6 +269,11 @@ class GDMR:
     sampler:
         Gibbs sampler variant: ``"sparse"`` (default), ``"warp"``, or
         ``"cvb0"``.  See ``topica.DMR`` for details.
+    num_threads:
+        Worker count for the inner ``DMR`` sparse Gibbs fit.  ``> 1`` enables
+        MALLET-style approximate-parallel sampling (deterministic for a fixed
+        ``num_threads`` + ``seed``); ``1`` is the exact serial path.  Ignored by
+        the ``"warp"``/``"cvb0"`` backends.
     """
 
     def __init__(
@@ -287,6 +292,7 @@ class GDMR:
         metadata_range: list[tuple[float, float]] | None = None,
         lbfgs_iters: int = 20,
         sampler: str = "sparse",
+        num_threads: int = 1,
     ) -> None:
         if num_topics < 1:
             raise ValueError("num_topics must be >= 1")
@@ -320,6 +326,7 @@ class GDMR:
         )
         self._lbfgs_iters = lbfgs_iters
         self._sampler = sampler
+        self._num_threads = num_threads
         # names of the D continuous metadata dimensions; set at fit
         self._metadata_names: list[str] | None = None
 
@@ -472,6 +479,7 @@ class GDMR:
             prior_variance=prior_variance,
             lbfgs_iters=self._lbfgs_iters,
             sampler=self._sampler,
+            num_threads=self._num_threads,
         )
 
         # Center the intercept (constant-term) prior at log(alpha) by adding a
@@ -677,6 +685,7 @@ class GDMR:
             ),
             "lbfgs_iters": self._lbfgs_iters,
             "sampler": self._sampler,
+            "num_threads": self._num_threads,
         }
 
     @property
@@ -968,6 +977,7 @@ class GDMR:
             "metadata_names": self._metadata_names,
             "lbfgs_iters": self._lbfgs_iters,
             "sampler": self._sampler,
+            "num_threads": self._num_threads,
             "recover_scales": self._recover_scales,
             "fitted": self._fitted,
         }
@@ -1003,6 +1013,7 @@ class GDMR:
             metadata_range=state["metadata_range"],
             lbfgs_iters=state["lbfgs_iters"],
             sampler=state["sampler"],
+            num_threads=state.get("num_threads", 1),
         )
         # Resolve the sidecar next to the wrapper file we are loading, so a moved
         # (wrapper + sidecar) pair loads from the new location rather than the

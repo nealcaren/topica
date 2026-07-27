@@ -299,6 +299,7 @@ class DMR:
         alpha_epsilon: float = 1e-10,
         lbfgs_iters: int = 20,
         sampler: str = "sparse",
+        num_threads: int = 1,
     ) -> None:
         """Create an unfitted DMR model. prior_variance is the Gaussian prior
         variance on the feature weights; lbfgs_iters caps L-BFGS steps per round.
@@ -312,7 +313,13 @@ class DMR:
         compute. As with plain LDA, warp is flat in K and overtakes sparse on
         speed around K~=50 (dominating at large K), while sparse keeps a small-K
         coherence edge and a convergence trace; the "warp"/"cvb0" paths record no
-        convergence trace, so convergence_tol has no effect there."""
+        convergence trace, so convergence_tol has no effect there.
+
+        num_threads > 1 runs MALLET-style approximate-parallel Gibbs on the
+        default sparse backend (partition documents, sample against per-worker
+        count copies, merge; deterministic for a fixed num_threads+seed); 1 is the
+        exact serial path. It is ignored by the warp/cvb0 backends and can be
+        overridden per call via fit(num_threads=)."""
         ...
 
     def fit(
@@ -332,6 +339,7 @@ class DMR:
         check_every: int = 10,
         covariates: Optional[numpy.typing.NDArray[numpy.float64]] = None,
         offset: Optional[numpy.typing.NDArray[numpy.float64]] = None,
+        num_threads: int | None = None,
     ) -> "DMR":
         """Fit by collapsed Gibbs with the per-document Dirichlet prior
         alpha_{d,t} = exp(lambda_t . x_d + offset[d, t]). `features` (or

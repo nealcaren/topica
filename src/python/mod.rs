@@ -2889,7 +2889,6 @@ fn parallel_sweep_batched(
     let bits = model.topic_bits;
     let beta = model.beta;
     let beta_sum = model.beta_sum;
-    let v = model.num_types;
     let ranges = partition_ranges(docs.len(), num_threads);
 
     // Snapshot for reconciliation, and clone the shared read-only inputs.
@@ -2933,11 +2932,32 @@ fn parallel_sweep_batched(
         })
         .collect();
 
-    // --- Reconcile topic-word counts. Each worker started from `original` and
-    // only changed its own documents' tokens, so the exact global state is
-    //     final = Σ_w worker_w − (W−1)·original
-    // computed densely per word (in parallel, reusing a per-thread accumulator
-    // to avoid per-word allocation). Re-encode into the packed layout. ---
+    reconcile_worker_outs(model, outs, &original_ttc, &original_tpt);
+}
+
+/// Merge per-worker AD-LDA sampling results back into `model`. Each worker
+/// started from the shared `original_ttc`/`original_tpt` snapshot and only
+/// touched its own documents' tokens, so the exact global count state is
+///     final = Σ_w worker_w − (W−1)·original
+/// (topic-word counts and tokens-per-topic alike), and each worker's updated
+/// document topic assignments are written straight back into their slice. This
+/// is shared verbatim by every AD-LDA-style sweep (plain LDA and the per-document
+/// prior models like DMR), which differ only in how the workers *sample*, not in
+/// how their results reconcile.
+fn reconcile_worker_outs(
+    model: &mut TopicModel,
+    outs: Vec<WorkerOut>,
+    original_ttc: &[Vec<u32>],
+    original_tpt: &[u32],
+) {
+    let k = model.num_topics;
+    let mask = model.topic_mask;
+    let bits = model.topic_bits;
+    let v = model.num_types;
+
+    // --- Reconcile topic-word counts, computed densely per word (in parallel,
+    // reusing a per-thread accumulator to avoid per-word allocation), then
+    // re-encoded into the packed layout. ---
     let wm1 = (outs.len() as i64) - 1;
     let new_ttc: Vec<Vec<u32>> = (0..v)
         .into_par_iter()
@@ -2990,6 +3010,71 @@ fn parallel_sweep_batched(
             model.doc_topics[start + i] = row;
         }
     }
+}
+
+/// One approximate-parallel Gibbs sweep for a **per-document prior** model (DMR
+/// and the other DMR-family count models): identical AD-LDA partition-and-merge
+/// to [`parallel_sweep_batched`], but each worker samples its slice with
+/// [`dmr::run_sweep_dmr`], passing the matching slice of `doc_alpha`, so the only
+/// difference from plain LDA is that α varies by document. `batch` worker sweeps
+/// run against private count tables before the single exact reconciliation;
+/// `batch == 1` is the exact per-sweep path. Deterministic for a fixed
+/// `num_threads`/`batch`/`sweep_seed`: each worker seeds one RNG from `sweep_seed`.
+fn parallel_sweep_dmr_batched(
+    model: &mut TopicModel,
+    docs: &[Vec<u32>],
+    doc_alpha: &[Vec<f64>],
+    num_threads: usize,
+    sweep_seed: u64,
+    batch: usize,
+) {
+    let batch = batch.max(1);
+    let k = model.num_topics;
+    let mask = model.topic_mask;
+    let bits = model.topic_bits;
+    let beta = model.beta;
+    let beta_sum = model.beta_sum;
+    let ranges = partition_ranges(docs.len(), num_threads);
+
+    let original_ttc = model.type_topic_counts.clone();
+    let original_tpt = model.tokens_per_topic.clone();
+    let dt_all = &model.doc_topics;
+
+    let outs: Vec<WorkerOut> = ranges
+        .par_iter()
+        .enumerate()
+        .map(|(wid, &(start, end))| {
+            let mut ttc = original_ttc.clone();
+            let mut tpt = original_tpt.clone();
+            let mut dt: Vec<Vec<u32>> = dt_all[start..end].to_vec();
+            let mut rng = Pcg64Mcg::seed_from_u64(
+                sweep_seed ^ (wid as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            );
+            for _ in 0..batch {
+                dmr::run_sweep_dmr(
+                    &mut ttc,
+                    &mut tpt,
+                    &mut dt,
+                    &docs[start..end],
+                    &doc_alpha[start..end],
+                    beta,
+                    beta_sum,
+                    mask,
+                    bits,
+                    k,
+                    &mut rng,
+                );
+            }
+            WorkerOut {
+                ttc,
+                tpt,
+                start,
+                dt,
+            }
+        })
+        .collect();
+
+    reconcile_worker_outs(model, outs, &original_ttc, &original_tpt);
 }
 
 // ---------------------------------------------------------------------------
@@ -3693,6 +3778,10 @@ pub struct DMR {
     warp: bool,
     // CVB0 deterministic collapsed-variational inference (per-document α).
     cvb0: bool,
+    // Default worker count for the sparse Gibbs fit. `1` is the exact serial
+    // path; `>1` runs AD-LDA partition-and-merge (deterministic for a fixed
+    // num_threads+seed). Ignored by the warp/cvb0 backends.
+    num_threads: usize,
 
     fitted: bool,
     topic_names: Vec<String>,
@@ -3745,6 +3834,7 @@ impl DMR {
             "sparse"
         };
         d.set_item("sampler", sampler)?;
+        d.set_item("num_threads", self.num_threads)?;
         Ok(d)
     }
 
@@ -3767,7 +3857,12 @@ impl DMR {
     /// smoothing. λ is re-estimated by L-BFGS every `optimize_interval` sweeps once
     /// past `burn_in`. `seed` seeds the Gibbs RNG. `sampler` selects the inference
     /// backend: ``"sparse"`` (default), ``"warp"`` (WarpLDA), or ``"cvb0"``
-    /// (deterministic collapsed variational Bayes).
+    /// (deterministic collapsed variational Bayes). `num_threads` ``>1`` enables
+    /// MALLET-style approximate-parallel Gibbs on the default sparse backend
+    /// (partition documents, sample against per-worker count copies, merge;
+    /// deterministic for a fixed `num_threads`+`seed`); ``1`` is the exact serial
+    /// path. It is ignored by the warp/cvb0 backends. `fit(num_threads=)` overrides
+    /// it per call.
     ///
     /// Note: pass `alpha=1.0` to recover the pre-0.54 zero-mean-intercept behaviour
     /// (baseline concentration 1.0). Because topica uses intercept/reference coding
@@ -3779,7 +3874,7 @@ impl DMR {
     #[pyo3(signature = (num_topics, *, beta=0.01, optimize_interval=50,
                         burn_in=200, seed=42, alpha=0.1, prior_variance=1.0,
                         alpha_epsilon=1e-10, lbfgs_iters=20,
-                        sampler="sparse"))]
+                        sampler="sparse", num_threads=1))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
@@ -3792,6 +3887,7 @@ impl DMR {
         alpha_epsilon: f64,
         lbfgs_iters: usize,
         sampler: &str,
+        num_threads: usize,
     ) -> PyResult<Self> {
         if num_topics == 0 {
             return Err(PyValueError::new_err("num_topics must be >= 1"));
@@ -3832,6 +3928,7 @@ impl DMR {
             lbfgs_iters,
             warp,
             cvb0,
+            num_threads: num_threads.max(1),
             fitted: false,
             topic_names: Vec::new(),
             phi: None,
@@ -3876,11 +3973,15 @@ impl DMR {
     /// A constant offset shifts the baseline Dirichlet concentration (e.g. GDMR
     /// passes `log(alpha)` to center the intercept prior at `log(alpha)`); `None`
     /// (default) leaves the prior unshifted.
+    /// `num_threads` overrides the constructor's worker count for this fit only
+    /// (`None` = constructor value); `>1` runs the sparse Gibbs sweep as
+    /// approximate-parallel AD-LDA (deterministic for a fixed `num_threads`+`seed`),
+    /// `1` is the exact serial path, and it is ignored by the warp/cvb0 backends.
     #[pyo3(signature = (data, features=None, *, feature_names=None, iters=1000,
                         num_samples=5, sample_interval=25, progress=None, progress_interval=50,
                         keep_theta_draws=true, num_theta_draws=25,
                         convergence_tol=0.0_f64, check_every=10_usize, covariates=None,
-                        offset=None))]
+                        offset=None, num_threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -3899,7 +4000,11 @@ impl DMR {
         check_every: usize,
         covariates: Option<&Bound<'_, PyAny>>,
         offset: Option<&Bound<'_, PyAny>>,
+        num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
+        // num_threads: fit()-level value overrides the constructor default; the
+        // sparse Gibbs sweep runs AD-LDA partition-and-merge when this is >1.
+        let num_threads = num_threads.unwrap_or(slf.num_threads).max(1);
         // covariates= is a no-deprecation alias for features=
         let features: &Bound<'_, PyAny> = match (features, covariates) {
             (Some(_), Some(_)) => {
@@ -4029,6 +4134,10 @@ impl DMR {
         let beta = slf.beta;
         let warp = slf.warp;
         let cvb0_flag = slf.cvb0;
+        // Base seed for the approximate-parallel sparse sweep: per-sweep seeds are
+        // derived from it and the sweep index, so a fixed num_threads+seed run is
+        // deterministic and independent of when optimization/sampling phases start.
+        let seed_base = slf.seed;
         let (
             acc_phi,
             acc_theta,
@@ -4257,19 +4366,32 @@ impl DMR {
                 'outer: for iter in 1..=iters {
                     let doc_alpha =
                         dmr::compute_doc_alpha(&lambda, &feats, offset.as_deref(), alpha_epsilon);
-                    dmr::run_sweep_dmr(
-                        &mut model.type_topic_counts,
-                        &mut model.tokens_per_topic,
-                        &mut model.doc_topics,
-                        &corpus.docs,
-                        &doc_alpha,
-                        model.beta,
-                        model.beta_sum,
-                        model.topic_mask,
-                        model.topic_bits,
-                        k,
-                        &mut rng,
-                    );
+                    if num_threads <= 1 {
+                        dmr::run_sweep_dmr(
+                            &mut model.type_topic_counts,
+                            &mut model.tokens_per_topic,
+                            &mut model.doc_topics,
+                            &corpus.docs,
+                            &doc_alpha,
+                            model.beta,
+                            model.beta_sum,
+                            model.topic_mask,
+                            model.topic_bits,
+                            k,
+                            &mut rng,
+                        );
+                    } else {
+                        let s = seed_base
+                            .wrapping_add((iter as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+                        parallel_sweep_dmr_batched(
+                            &mut model,
+                            &corpus.docs,
+                            &doc_alpha,
+                            num_threads,
+                            s,
+                            1,
+                        );
+                    }
 
                     if optimize_interval > 0 && iter > burn_in && iter % optimize_interval == 0 {
                         let dtc = doc_topic_counts(&model.doc_topics, k);
@@ -4358,21 +4480,38 @@ impl DMR {
                 let mut acc_phi = vec![vec![0.0f64; k]; num_types];
                 let mut acc_theta = vec![vec![0.0f64; k]; num_docs];
 
+                // Continue the per-sweep seed sequence past the training sweeps so
+                // the sampling phase stays deterministic and non-overlapping.
+                let mut post_sweep: u64 = iters as u64;
                 for _ in 0..num_samples {
                     for _ in 0..sample_interval {
-                        dmr::run_sweep_dmr(
-                            &mut model.type_topic_counts,
-                            &mut model.tokens_per_topic,
-                            &mut model.doc_topics,
-                            &corpus.docs,
-                            &doc_alpha,
-                            model.beta,
-                            model.beta_sum,
-                            model.topic_mask,
-                            model.topic_bits,
-                            k,
-                            &mut rng,
-                        );
+                        post_sweep += 1;
+                        if num_threads <= 1 {
+                            dmr::run_sweep_dmr(
+                                &mut model.type_topic_counts,
+                                &mut model.tokens_per_topic,
+                                &mut model.doc_topics,
+                                &corpus.docs,
+                                &doc_alpha,
+                                model.beta,
+                                model.beta_sum,
+                                model.topic_mask,
+                                model.topic_bits,
+                                k,
+                                &mut rng,
+                            );
+                        } else {
+                            let s = seed_base
+                                .wrapping_add(post_sweep.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+                            parallel_sweep_dmr_batched(
+                                &mut model,
+                                &corpus.docs,
+                                &doc_alpha,
+                                num_threads,
+                                s,
+                                1,
+                            );
+                        }
                     }
                     accumulate_phi(&model, &mut acc_phi);
                     // DMR θ uses the per-document prior.
@@ -4841,6 +4980,9 @@ impl DMR {
             lbfgs_iters: s.lbfgs_iters,
             warp: false,
             cvb0: false,
+            // num_threads is a runtime resource knob, not fitted state; a loaded
+            // (already-fitted) model defaults to serial.
+            num_threads: 1,
             fitted: s.fitted,
             topic_names,
             phi: arr2_back(s.phi)?,
