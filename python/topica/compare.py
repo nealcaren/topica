@@ -21,8 +21,8 @@ Design commitments:
   :func:`topica.align_topics`, which pairs two topics only when each is the other's
   *unique* above-``threshold`` partner (a mutual-best rule that never force-pairs),
   and reports splits, merges, and unaligned topics. (The reseed null below instead
-  reads the Hungarian self-assignment `align_topics` also exposes, so a topic always
-  has a self-match to measure wander against.)
+  reads the Hungarian self-assignment :func:`align_topics` also exposes, so a topic
+  always has a self-match to measure wander against.)
 - **The "unmatched" bucket is honest.** A topic with no good counterpart is reported
   as *appeared* / *vanished*, never paired to its least-bad neighbor; a split (one
   topic in A → two in B) is a named outcome. This matters most across different K.
