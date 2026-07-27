@@ -3973,6 +3973,10 @@ impl DMR {
     /// A constant offset shifts the baseline Dirichlet concentration (e.g. GDMR
     /// passes `log(alpha)` to center the intercept prior at `log(alpha)`); `None`
     /// (default) leaves the prior unshifted.
+    /// `num_threads` overrides the constructor's worker count for this fit only
+    /// (`None` = constructor value); `>1` runs the sparse Gibbs sweep as
+    /// approximate-parallel AD-LDA (deterministic for a fixed `num_threads`+`seed`),
+    /// `1` is the exact serial path, and it is ignored by the warp/cvb0 backends.
     #[pyo3(signature = (data, features=None, *, feature_names=None, iters=1000,
                         num_samples=5, sample_interval=25, progress=None, progress_interval=50,
                         keep_theta_draws=true, num_theta_draws=25,
