@@ -2510,13 +2510,18 @@ class PT:
         beta: float = 0.01,
         pseudo_doc_prior: float = 0.1,
         seed: int = 42,
+        num_threads: int = 1,
     ) -> None:
         """pseudo_doc_prior (lambda) is the symmetric Dirichlet prior on the
         pseudo-document mixture; it drives PTM's (m_p + lambda) rich-get-richer
         aggregation (smaller = stronger popularity bias, larger flattens it).
         PTM's regime is P << D: keep num_pseudo well below the corpus size.
         Fitting with num_pseudo >= num_docs warns and collapses toward
-        per-document LDA."""
+        per-document LDA. num_threads > 1 runs the two-phase collapsed-Gibbs sweep
+        as MALLET-style approximate-parallel AD-LDA (documents partitioned across
+        workers sampling private count copies, then merged; deterministic for a
+        fixed num_threads+seed); 1 is the exact serial path. Overridden per call
+        via fit(num_threads=)."""
         ...
     def fit(
         self,
@@ -2527,6 +2532,7 @@ class PT:
         num_theta_draws: int = 25,
         convergence_tol: float = 0.0,
         check_every: int = 10,
+        num_threads: int | None = None,
     ) -> "PT": ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...

@@ -27,6 +27,9 @@
 use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 use crate::mathfun::log_gamma;
 use rand::Rng;
+use rand::SeedableRng;
+use rand_pcg::Pcg64Mcg;
+use rayon::prelude::*;
 
 // ---------------------------------------------------------------------------
 // Model struct
@@ -154,122 +157,290 @@ fn sample_index<R: Rng>(probs: &[f64], rng: &mut R) -> usize {
 }
 
 impl PtmModel {
-    /// Sample a new topic for token (d, i) with word w, given pseudo-doc p.
-    /// Removes the token from counts before sampling, then re-adds.
-    fn resample_token<R: Rng>(
-        &mut self,
-        d: usize,
-        i: usize,
-        w: usize,
-        probs: &mut [f64],
-        rng: &mut R,
-    ) {
-        let p = self.l[d];
-        let k_old = self.z[d][i];
-        // Remove token from counts.
-        self.nkw[k_old][w] -= 1;
-        self.nk[k_old] -= 1;
-        self.npk[p][k_old] -= 1;
-        self.np[p] -= 1;
+    /// One full Gibbs sweep over the whole corpus, delegating to the shared,
+    /// range-based [`run_sweep_ptm_range`]. Disjoint `&mut self.field` borrows in a
+    /// single call are permitted, so the serial path and each AD-LDA worker share a
+    /// single copy of the sampling logic (no drift).
+    fn sweep<R: Rng>(&mut self, docs: &[Vec<u32>], rng: &mut R) {
+        run_sweep_ptm_range(
+            &mut self.nkw,
+            &mut self.nk,
+            &mut self.npk,
+            &mut self.np,
+            &mut self.mp,
+            &mut self.l,
+            &mut self.z,
+            docs,
+            self.alpha,
+            self.beta,
+            self.lambda,
+            self.num_topics,
+            self.num_types,
+            self.num_pseudo,
+            rng,
+        );
+    }
+}
 
-        let k = self.num_topics;
-        let v = self.num_types;
-        // `probs` is a reusable scratch buffer (one allocation per sweep, not per
-        // token); the k entries are all overwritten below.
-        for kk in 0..k {
-            let topic_doc = self.npk[p][kk] as f64 + self.alpha;
-            let topic_word =
-                (self.nkw[kk][w] as f64 + self.beta) / (self.nk[kk] as f64 + v as f64 * self.beta);
-            probs[kk] = topic_doc * topic_word;
+/// One full two-phase Gibbs sweep over a contiguous slice of documents: first
+/// resample every token's topic, then every document's pseudo-doc assignment.
+/// The global topic-word (`nkw`/`nk`) and pseudo-doc (`npk`/`np`/`mp`) count tables
+/// are the state shared across documents; the per-document `l`/`z` are indexed
+/// 0-based within the slice and must align with `docs` (the `l` *values* are global
+/// pseudo-doc ids in `0..num_pseudo`). The arithmetic, allocation pattern, and
+/// per-token / per-doc RNG draw order are exactly those of the original
+/// `sweep`/`resample_token`/`resample_pseudo`, so the serial call site stays
+/// byte-identical.
+#[allow(clippy::too_many_arguments)]
+fn run_sweep_ptm_range<R: Rng>(
+    nkw: &mut [Vec<u32>],
+    nk: &mut [u32],
+    npk: &mut [Vec<u32>],
+    np: &mut [u32],
+    mp: &mut [u32],
+    l: &mut [usize],
+    z: &mut [Vec<usize>],
+    docs: &[Vec<u32>],
+    alpha: f64,
+    beta: f64,
+    lambda: f64,
+    num_topics: usize,
+    num_types: usize,
+    num_pseudo: usize,
+    rng: &mut R,
+) {
+    let k = num_topics;
+    let v = num_types;
+
+    // --- Phase 1: token topics ---
+    // `probs` is a reusable scratch buffer (one allocation per sweep, not per token).
+    let mut probs = vec![0.0f64; k];
+    for d in 0..docs.len() {
+        let p = l[d];
+        for i in 0..docs[d].len() {
+            let w = docs[d][i] as usize;
+            let k_old = z[d][i];
+            // Remove token from counts.
+            nkw[k_old][w] -= 1;
+            nk[k_old] -= 1;
+            npk[p][k_old] -= 1;
+            np[p] -= 1;
+
+            for kk in 0..k {
+                let topic_doc = npk[p][kk] as f64 + alpha;
+                let topic_word = (nkw[kk][w] as f64 + beta) / (nk[kk] as f64 + v as f64 * beta);
+                probs[kk] = topic_doc * topic_word;
+            }
+            let k_new = sample_index(&probs, rng);
+
+            nkw[k_new][w] += 1;
+            nk[k_new] += 1;
+            npk[p][k_new] += 1;
+            np[p] += 1;
+            z[d][i] = k_new;
         }
-        let k_new = sample_index(probs, rng);
-
-        self.nkw[k_new][w] += 1;
-        self.nk[k_new] += 1;
-        self.npk[p][k_new] += 1;
-        self.np[p] += 1;
-        self.z[d][i] = k_new;
     }
 
-    /// Sample a new pseudo-doc assignment for document d.
-    ///
-    /// The proposal probability (log-space) is:
-    ///   log p(l_d = p) = Σ_k [ lgamma(n_pk^{-d} + α + m_{d,k})
-    ///                          - lgamma(n_pk^{-d} + α) ]
-    ///                   - [ lgamma(n_p^{-d} + K·α + N_d)
-    ///                       - lgamma(n_p^{-d} + K·α) ]
-    ///
-    /// This is the full PTM pseudo-document posterior: the `(m_p^{¬d} + λ)`
-    /// popularity prior (ψ ~ Dir(λ), collapsed) times the two Gamma-ratio
-    /// content-fit factors, where `m_p^{¬d}` is the number of *other* documents
-    /// currently assigned to pseudo-doc p. The popularity term is PTM's
-    /// rich-get-richer aggregation: popular pseudo-docs attract more documents,
-    /// with λ preventing collapse.
-    fn resample_pseudo<R: Rng>(&mut self, d: usize, doc: &[u32], rng: &mut R) {
-        let k = self.num_topics;
-        let p_old = self.l[d];
+    // --- Phase 2: pseudo-doc assignments ---
+    // The proposal (log-space) for doc d is
+    //   log p(l_d = p) = ln(m_p^{-d} + lambda)                   [popularity prior]
+    //     + Sum_k [ lgamma(n_pk^{-d} + a + m_dk) - lgamma(n_pk^{-d} + a) ]  [content]
+    //     - [ lgamma(n_p^{-d} + K*a + N_d) - lgamma(n_p^{-d} + K*a) ]       [norm],
+    // the collapsed PTM posterior whose `(m_p + lambda)` term is the rich-get-richer
+    // aggregation (lambda prevents collapse). `m_dk` uses the *updated* z from phase 1.
+    let k_alpha = k as f64 * alpha;
+    for d in 0..docs.len() {
+        let n_d_len = docs[d].len();
+        let p_old = l[d];
 
-        // Compute m_{d,k}: topic counts for document d's current tokens.
+        // m_{d,k}: topic counts for doc d's current tokens.
         let mut m_dk = vec![0u32; k];
-        for &zi in &self.z[d] {
+        for &zi in &z[d] {
             m_dk[zi] += 1;
         }
-        let n_d = doc.len() as f64;
+        let n_d = n_d_len as f64;
 
-        // Remove doc d from its current pseudo-doc: its token/topic counts and its
-        // one customer, so every count below is the leave-one-out `·^{¬d}`.
+        // Leave-one-out: remove doc d (its token/topic counts and its one customer).
         for kk in 0..k {
-            self.npk[p_old][kk] -= m_dk[kk];
+            npk[p_old][kk] -= m_dk[kk];
         }
-        self.np[p_old] -= doc.len() as u32;
-        self.mp[p_old] -= 1;
+        np[p_old] -= n_d_len as u32;
+        mp[p_old] -= 1;
 
-        let num_pseudo = self.num_pseudo;
         let mut log_probs = vec![0.0f64; num_pseudo];
-        let k_alpha = k as f64 * self.alpha;
-
         for p in 0..num_pseudo {
-            let np_minus = self.np[p] as f64;
-            // Popularity prior: ln(m_p^{-d} + λ).
-            let prior_log = (self.mp[p] as f64 + self.lambda).ln();
-            // Denominator ratio: lgamma(n_p^{-d} + K·α + N_d) - lgamma(n_p^{-d} + K·α)
+            let np_minus = np[p] as f64;
+            let prior_log = (mp[p] as f64 + lambda).ln();
             let denom_log = log_gamma(np_minus + k_alpha + n_d) - log_gamma(np_minus + k_alpha);
-            // Numerator: Σ_k [ lgamma(n_pk^{-d} + α + m_{d,k}) - lgamma(n_pk^{-d} + α) ]
             let mut numer_log = 0.0f64;
             for kk in 0..k {
-                let base = self.npk[p][kk] as f64 + self.alpha;
+                let base = npk[p][kk] as f64 + alpha;
                 numer_log += log_gamma(base + m_dk[kk] as f64) - log_gamma(base);
             }
             log_probs[p] = prior_log + numer_log - denom_log;
         }
 
-        // Softmax to get normalised probs from log-probs (subtract max for stability).
+        // Softmax (subtract max for stability), then sample.
         let max_lp = log_probs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let probs: Vec<f64> = log_probs.iter().map(|&lp| (lp - max_lp).exp()).collect();
         let p_new = sample_index(&probs, rng);
 
         // Add doc d's counts (and its one customer) to the new pseudo-doc.
         for kk in 0..k {
-            self.npk[p_new][kk] += m_dk[kk];
+            npk[p_new][kk] += m_dk[kk];
         }
-        self.np[p_new] += doc.len() as u32;
-        self.mp[p_new] += 1;
-        self.l[d] = p_new;
+        np[p_new] += n_d_len as u32;
+        mp[p_new] += 1;
+        l[d] = p_new;
+    }
+}
+
+/// Contiguous, non-overlapping document ranges — one per worker (clamped so the
+/// worker count never exceeds the document count). Mirrors the binding's
+/// `partition_ranges`, kept local so the core stays self-contained.
+fn partition_ranges(n: usize, parts: usize) -> Vec<(usize, usize)> {
+    let parts = parts.max(1).min(n.max(1));
+    let base = n / parts;
+    let rem = n % parts;
+    let mut ranges = Vec::with_capacity(parts);
+    let mut start = 0;
+    for i in 0..parts {
+        let len = base + if i < rem { 1 } else { 0 };
+        ranges.push((start, start + len));
+        start += len;
+    }
+    ranges
+}
+
+/// One approximate-parallel (AD-LDA) sweep over the PTM count tables. Documents are
+/// partitioned across workers; each worker samples its slice (both phases) against
+/// private clones of ALL FIVE global tables (`nkw`/`nk`/`npk`/`np`/`mp`), owning
+/// copies of its per-document `l`/`z` slice (documents are disjoint), then the
+/// results are reconciled. `nkw`, `npk`, and `mp` are each the exact additive merge
+/// `Σ_workers − (W−1)·original` (accumulated in `i64`, clamped ≥ 0); `nk` and `np`
+/// are **recomputed** from the merged `nkw`/`npk` rows so they stay exactly
+/// consistent (no zero-clamp drift). The merge is valid because each worker only
+/// touches its own documents' contributions to every global table (word tokens,
+/// pseudo-doc topic counts, and the one CRP customer per document alike), so the
+/// per-worker deltas sum linearly; the doc-count invariant `Σ_p mp[p] = D` and
+/// `mp[p] ≥ 0` are preserved automatically. `num_pseudo` (P) is fixed, so no
+/// pseudo-doc count is discovered under threading. Deterministic for a fixed
+/// `sweep_seed`/`num_threads`.
+#[allow(clippy::too_many_arguments)]
+fn parallel_sweep_ptm(
+    nkw: &mut [Vec<u32>],
+    nk: &mut [u32],
+    npk: &mut [Vec<u32>],
+    np: &mut [u32],
+    mp: &mut [u32],
+    l: &mut [usize],
+    z: &mut [Vec<usize>],
+    docs: &[Vec<u32>],
+    alpha: f64,
+    beta: f64,
+    lambda: f64,
+    num_topics: usize,
+    num_types: usize,
+    num_pseudo: usize,
+    num_threads: usize,
+    sweep_seed: u64,
+) {
+    struct PtmWorkerOut {
+        nkw: Vec<Vec<u32>>,
+        npk: Vec<Vec<u32>>,
+        mp: Vec<u32>,
+        l: Vec<usize>,
+        z: Vec<Vec<usize>>,
+        start: usize,
     }
 
-    /// One full Gibbs sweep: resample every token's topic, then every doc's
-    /// pseudo-doc assignment.
-    fn sweep<R: Rng>(&mut self, docs: &[Vec<u32>], rng: &mut R) {
-        // --- Token topics ---
-        let mut probs = vec![0.0f64; self.num_topics];
-        for (d, doc) in docs.iter().enumerate() {
-            for (i, &w) in doc.iter().enumerate() {
-                self.resample_token(d, i, w as usize, &mut probs, rng);
+    let v = num_types;
+    let k = num_topics;
+    let p_count = num_pseudo;
+    let ranges = partition_ranges(docs.len(), num_threads);
+    let orig_nkw = nkw.to_vec();
+    let orig_nk = nk.to_vec();
+    let orig_npk = npk.to_vec();
+    let orig_np = np.to_vec();
+    let orig_mp = mp.to_vec();
+    // Read-only views so workers can copy their slices inside the parallel map.
+    let l_ro: &[usize] = l;
+    let z_ro: &[Vec<usize>] = z;
+
+    let outs: Vec<PtmWorkerOut> = ranges
+        .par_iter()
+        .enumerate()
+        .map(|(wid, &(start, end))| {
+            let mut wnkw = orig_nkw.clone();
+            let mut wnk = orig_nk.clone();
+            let mut wnpk = orig_npk.clone();
+            let mut wnp = orig_np.clone();
+            let mut wmp = orig_mp.clone();
+            let mut wl: Vec<usize> = l_ro[start..end].to_vec();
+            let mut wz: Vec<Vec<usize>> = z_ro[start..end].to_vec();
+            let mut rng = Pcg64Mcg::seed_from_u64(
+                sweep_seed ^ (wid as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            );
+            run_sweep_ptm_range(
+                &mut wnkw,
+                &mut wnk,
+                &mut wnpk,
+                &mut wnp,
+                &mut wmp,
+                &mut wl,
+                &mut wz,
+                &docs[start..end],
+                alpha,
+                beta,
+                lambda,
+                num_topics,
+                num_types,
+                num_pseudo,
+                &mut rng,
+            );
+            PtmWorkerOut {
+                nkw: wnkw,
+                npk: wnpk,
+                mp: wmp,
+                l: wl,
+                z: wz,
+                start,
             }
+        })
+        .collect();
+
+    let wm1 = (outs.len() as i64) - 1;
+
+    // --- Reconcile nkw: final = Σ_workers − (W−1)·original, clamp ≥ 0; nk from rows. ---
+    for t in 0..k {
+        for w in 0..v {
+            let sum_w: i64 = outs.iter().map(|o| o.nkw[t][w] as i64).sum();
+            nkw[t][w] = (sum_w - wm1 * orig_nkw[t][w] as i64).max(0) as u32;
         }
-        // --- Pseudo-doc assignments ---
-        for (d, doc) in docs.iter().enumerate() {
-            self.resample_pseudo(d, doc, rng);
+        nk[t] = nkw[t].iter().map(|&c| c as u64).sum::<u64>() as u32;
+    }
+
+    // --- Reconcile npk the same way; recompute np from the merged npk rows. ---
+    for p in 0..p_count {
+        for t in 0..k {
+            let sum_w: i64 = outs.iter().map(|o| o.npk[p][t] as i64).sum();
+            npk[p][t] = (sum_w - wm1 * orig_npk[p][t] as i64).max(0) as u32;
+        }
+        np[p] = npk[p].iter().map(|&c| c as u64).sum::<u64>() as u32;
+    }
+
+    // --- Reconcile mp (CRP customer counts) additively; Σ_p mp = D preserved. ---
+    for p in 0..p_count {
+        let sum_w: i64 = outs.iter().map(|o| o.mp[p] as i64).sum();
+        mp[p] = (sum_w - wm1 * orig_mp[p] as i64).max(0) as u32;
+    }
+
+    // --- Write back each worker's per-document l / z slice (disjoint docs). ---
+    for out in outs {
+        let start = out.start;
+        for (i, (lv, zrow)) in out.l.into_iter().zip(out.z).enumerate() {
+            l[start + i] = lv;
+            z[start + i] = zrow;
         }
     }
 }
@@ -364,6 +535,7 @@ pub fn fit_ptm<R: Rng>(
         crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
         0.0,
         0,
+        1,
         rng,
     );
     model
@@ -371,6 +543,11 @@ pub fn fit_ptm<R: Rng>(
 
 /// Fit a PTM with thinned θ snapshots collected every `thin` sweeps (ring-buffered
 /// to `cap` total draws). `cap=0` disables collection entirely.
+///
+/// `num_threads` selects the sampler: `1` (or `0`) runs the exact serial two-phase
+/// sweep, byte-identical to the pre-threading path; `>1` runs MALLET-style
+/// approximate-parallel (AD-LDA) sampling, deterministic for a fixed
+/// `num_threads` + seed.
 ///
 /// Returns `(model, ll_history, converged)`.
 #[allow(clippy::too_many_arguments)]
@@ -386,6 +563,7 @@ pub fn fit_ptm_with_draws<R: Rng>(
     opts: crate::keyatm::ThetaDrawOpts,
     convergence_tol: f64,
     check_every: usize,
+    num_threads: usize,
     rng: &mut R,
 ) -> (PtmModel, Vec<(usize, f64)>, bool) {
     let d_count = docs.len();
@@ -444,7 +622,32 @@ pub fn fit_ptm_with_draws<R: Rng>(
     let mut converged = false;
 
     for iter in 1..=iters {
-        model.sweep(docs, rng);
+        if num_threads <= 1 {
+            // Exact serial path — byte-identical to the pre-threading loop.
+            model.sweep(docs, rng);
+        } else {
+            // Approximate-parallel AD-LDA. One per-sweep seed drawn from the main
+            // RNG keeps it deterministic for a fixed num_threads + seed.
+            let sweep_seed = rng.gen::<u64>();
+            parallel_sweep_ptm(
+                &mut model.nkw,
+                &mut model.nk,
+                &mut model.npk,
+                &mut model.np,
+                &mut model.mp,
+                &mut model.l,
+                &mut model.z,
+                docs,
+                model.alpha,
+                model.beta,
+                model.lambda,
+                model.num_topics,
+                model.num_types,
+                model.num_pseudo,
+                num_threads,
+                sweep_seed,
+            );
+        }
         if opts.thin > 0 && iter % opts.thin == 0 {
             let snap: Vec<Vec<f32>> = model
                 .l
@@ -596,5 +799,114 @@ mod tests {
         assert!(base.is_empty(), "check_conformance: {:?}", base);
         let dir = crate::conformance::check_dirichlet(&m);
         assert!(dir.is_empty(), "check_dirichlet: {:?}", dir);
+    }
+
+    // --- AD-LDA threading (#566) ---
+
+    fn threading_corpus() -> (Vec<Vec<u32>>, usize) {
+        let v = 16usize;
+        // 80 short docs (4 tokens) — enough to partition across workers.
+        let docs: Vec<Vec<u32>> = (0..80usize)
+            .map(|d| (0..4).map(|i| ((i * 3 + d) % v) as u32).collect())
+            .collect();
+        (docs, v)
+    }
+
+    fn fit_threaded(
+        docs: &[Vec<u32>],
+        v: usize,
+        iters: usize,
+        num_threads: usize,
+        seed: u64,
+    ) -> PtmModel {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let opts = crate::keyatm::ThetaDrawOpts::new(false, 0, 0);
+        let (m, _, _) = fit_ptm_with_draws(
+            docs,
+            v,
+            3,
+            8,
+            0.1,
+            0.01,
+            0.1,
+            iters,
+            opts,
+            0.0,
+            0,
+            num_threads,
+            &mut rng,
+        );
+        m
+    }
+
+    #[test]
+    fn num_threads_one_is_bit_identical_to_serial() {
+        // num_threads=1 must never draw the per-sweep seed and must reproduce the
+        // pre-threading serial path exactly, across all count tables and per-doc
+        // assignments (both sweep phases).
+        let (docs, v) = threading_corpus();
+        let mut r_serial = ChaCha8Rng::seed_from_u64(42);
+        let serial = fit_ptm(&docs, v, 3, 8, 0.1, 0.01, 0.1, 40, &mut r_serial);
+        let threaded1 = fit_threaded(&docs, v, 40, 1, 42);
+        assert_eq!(serial.nkw, threaded1.nkw, "nkw differs at num_threads=1");
+        assert_eq!(serial.nk, threaded1.nk, "nk differs at num_threads=1");
+        assert_eq!(serial.npk, threaded1.npk, "npk differs at num_threads=1");
+        assert_eq!(serial.np, threaded1.np, "np differs at num_threads=1");
+        assert_eq!(serial.mp, threaded1.mp, "mp differs at num_threads=1");
+        assert_eq!(serial.l, threaded1.l, "l differs at num_threads=1");
+        assert_eq!(serial.z, threaded1.z, "z differs at num_threads=1");
+    }
+
+    #[test]
+    fn threaded_is_deterministic_for_fixed_threads_and_seed() {
+        let (docs, v) = threading_corpus();
+        let a = fit_threaded(&docs, v, 40, 4, 123);
+        let b = fit_threaded(&docs, v, 40, 4, 123);
+        assert_eq!(a.nkw, b.nkw);
+        assert_eq!(a.npk, b.npk);
+        assert_eq!(a.mp, b.mp);
+        assert_eq!(a.l, b.l);
+        assert_eq!(a.topic_word(), b.topic_word());
+    }
+
+    #[test]
+    fn threaded_preserves_all_count_invariants() {
+        // The merge recomputes nk from nkw and np from npk, merges mp additively,
+        // and must conserve tokens (nk and np totals) and documents (Σ mp = D).
+        let (docs, v) = threading_corpus();
+        let m = fit_threaded(&docs, v, 40, 4, 7);
+        let total_tokens: usize = docs.iter().map(|d| d.len()).sum();
+        for t in 0..m.num_topics {
+            assert_eq!(m.nk[t], m.nkw[t].iter().sum::<u32>(), "nk[{t}] != Σ_w nkw");
+        }
+        for p in 0..m.num_pseudo {
+            assert_eq!(m.np[p], m.npk[p].iter().sum::<u32>(), "np[{p}] != Σ_k npk");
+        }
+        assert_eq!(
+            m.nk.iter().sum::<u32>() as usize,
+            total_tokens,
+            "token loss (nk)"
+        );
+        assert_eq!(
+            m.np.iter().sum::<u32>() as usize,
+            total_tokens,
+            "token loss (np)"
+        );
+        assert_eq!(m.mp.iter().sum::<u32>() as usize, docs.len(), "Σ mp != D");
+    }
+
+    #[test]
+    fn threaded_handles_more_workers_than_docs() {
+        // partition_ranges clamps workers to the doc count; oversized num_threads
+        // must run cleanly and keep the invariants.
+        let docs: Vec<Vec<u32>> = (0..3)
+            .map(|d| (0..4).map(|i| ((i + d) % 12) as u32).collect())
+            .collect();
+        let m = fit_threaded(&docs, 12, 20, 16, 5);
+        assert_eq!(m.mp.iter().sum::<u32>() as usize, docs.len());
+        assert_eq!(
+            m.nk.iter().sum::<u32>() as usize,
+            docs.iter().map(|d| d.len()).sum::<usize>()
+        );
     }
 }
