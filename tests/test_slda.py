@@ -215,3 +215,15 @@ class TestGibbsBackend:
         b = SupervisedLDA(num_topics=2, seed=11, inference="gibbs").fit(docs, y, iters=100)
         assert np.allclose(a.topic_word, b.topic_word)
         assert np.allclose(a.coefficients, b.coefficients)
+
+
+def test_num_threads_is_deterministic_resource_knob():
+    """num_threads caps the parallel per-document variational E-step. sLDA's
+    variational fit is deterministic, so output must be identical across worker
+    counts (the knob controls only resource use). None/0 = all cores."""
+    docs, y = _supervised_corpus(n=80)
+    base = SupervisedLDA(num_topics=2, seed=5).fit(docs, y, iters=10, num_threads=1)
+    for nt in (2, 4, 8, 0, None):
+        m = SupervisedLDA(num_topics=2, seed=5).fit(docs, y, iters=10, num_threads=nt)
+        assert np.array_equal(base.topic_word, m.topic_word), f"num_threads={nt}"
+        assert np.array_equal(base.coefficients, m.coefficients), f"num_threads={nt}"
