@@ -3142,7 +3142,14 @@ class PA:
         alpha: float = 0.1,
         beta: float = 0.01,
         seed: int = 42,
-    ) -> None: ...
+        num_threads: int = 1,
+    ) -> None:
+        """num_threads > 1 runs the collapsed-Gibbs sweep as MALLET-style
+        approximate-parallel AD-LDA (documents partitioned across workers sampling
+        private sub-topic-word count copies, then merged; deterministic for a fixed
+        num_threads+seed); 1 is the exact serial path. Overridden per call via
+        fit(num_threads=)."""
+        ...
     def fit(
         self,
         data: Corpus | Sequence[Sequence[str]],
@@ -3152,6 +3159,7 @@ class PA:
         num_theta_draws: int = 25,
         convergence_tol: float = 0.0,
         check_every: int = 10,
+        num_threads: int | None = None,
     ) -> "PA": ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:

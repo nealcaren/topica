@@ -51,6 +51,9 @@
 
 use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 use rand::Rng;
+use rand::SeedableRng;
+use rand_pcg::Pcg64Mcg;
+use rayon::prelude::*;
 
 /// A fitted Pachinko Allocation model (four-level, two-tier).
 pub struct PamModel {
@@ -232,68 +235,236 @@ fn sample_index<R: Rng>(probs: &[f64], rng: &mut R) -> usize {
     probs.len() - 1
 }
 
-impl PamModel {
-    /// Draw a `(super, sub)` pair for token (d, i)=w from the current state (the
-    /// token's counts must already be removed) and add the token back under the
-    /// chosen pair.
-    fn assign_token<R: Rng>(
-        &mut self,
-        d: usize,
-        i: usize,
-        w: usize,
-        probs: &mut [f64],
-        rng: &mut R,
-    ) {
-        let v = self.num_types;
-        let s_count = self.num_super;
-        let k = self.num_sub;
-        let n_d: u32 = self.nds[d].iter().sum();
-        // The doc→super normalizer (n_d + S·alpha) cancels across pairs, but we
-        // include it for clarity/numeric scaling.
-        let super_norm = n_d as f64 + s_count as f64 * self.alpha;
+/// One collapsed-Gibbs sweep over a contiguous slice of documents. Per-document
+/// tables (`nds`, `ndsk`, `zs`, `zk`) are indexed 0-based within the slice and must
+/// align with `docs`; the global sub-topic→word counts (`nkw`, `nk`) are the only
+/// state shared across documents. `probs` is a reusable `S·K` scratch buffer. The
+/// arithmetic and per-token RNG draw order are exactly those of the original
+/// `PamModel::sweep`/`assign_token`, so the serial call site stays byte-identical.
+#[allow(clippy::too_many_arguments)]
+fn run_sweep_pam_range<R: Rng>(
+    nds: &mut [Vec<u32>],
+    ndsk: &mut [Vec<Vec<u32>>],
+    zs: &mut [Vec<usize>],
+    zk: &mut [Vec<usize>],
+    nkw: &mut [Vec<u32>],
+    nk: &mut [u32],
+    docs: &[Vec<u32>],
+    alpha_sk: &[Vec<f64>],
+    alpha: f64,
+    beta: f64,
+    num_super: usize,
+    num_sub: usize,
+    num_types: usize,
+    probs: &mut [f64],
+    rng: &mut R,
+) {
+    let v = num_types;
+    let s_count = num_super;
+    let k = num_sub;
+    for d in 0..docs.len() {
+        let doc = &docs[d];
+        for i in 0..doc.len() {
+            let w = doc[i] as usize;
+            let s_old = zs[d][i];
+            let k_old = zk[d][i];
+            nds[d][s_old] -= 1;
+            ndsk[d][s_old][k_old] -= 1;
+            nkw[k_old][w] -= 1;
+            nk[k_old] -= 1;
 
-        // `probs` is a reusable scratch buffer (one allocation per sweep, not per
-        // token); the s_count·k entries are all overwritten below.
-        for s in 0..s_count {
-            let nds = self.nds[d][s] as f64;
-            let super_term = (nds + self.alpha) / super_norm;
-            let alpha_sum: f64 = self.alpha_sk[s].iter().sum();
-            let sub_norm = nds + alpha_sum;
-            for sub in 0..k {
-                let sub_super = (self.ndsk[d][s][sub] as f64 + self.alpha_sk[s][sub]) / sub_norm;
-                let emit = (self.nkw[sub][w] as f64 + self.beta)
-                    / (self.nk[sub] as f64 + v as f64 * self.beta);
-                probs[s * k + sub] = super_term * sub_super * emit;
+            // The doc→super normalizer (n_d + S·alpha) cancels across pairs, but we
+            // include it for clarity/numeric scaling.
+            let n_d: u32 = nds[d].iter().sum();
+            let super_norm = n_d as f64 + s_count as f64 * alpha;
+            for s in 0..s_count {
+                let nds_s = nds[d][s] as f64;
+                let super_term = (nds_s + alpha) / super_norm;
+                let alpha_sum: f64 = alpha_sk[s].iter().sum();
+                let sub_norm = nds_s + alpha_sum;
+                for sub in 0..k {
+                    let sub_super = (ndsk[d][s][sub] as f64 + alpha_sk[s][sub]) / sub_norm;
+                    let emit = (nkw[sub][w] as f64 + beta) / (nk[sub] as f64 + v as f64 * beta);
+                    probs[s * k + sub] = super_term * sub_super * emit;
+                }
             }
+
+            let g = sample_index(probs, rng);
+            let s = g / k;
+            let sub = g % k;
+            nds[d][s] += 1;
+            ndsk[d][s][sub] += 1;
+            nkw[sub][w] += 1;
+            nk[sub] += 1;
+            zs[d][i] = s;
+            zk[d][i] = sub;
         }
+    }
+}
 
-        let g = sample_index(probs, rng);
-        let s = g / k;
-        let sub = g % k;
+/// Contiguous, non-overlapping document ranges — one per worker (clamped so the
+/// worker count never exceeds the document count). Mirrors the binding's
+/// `partition_ranges`, kept local so the core stays self-contained.
+fn partition_ranges(n: usize, parts: usize) -> Vec<(usize, usize)> {
+    let parts = parts.max(1).min(n.max(1));
+    let base = n / parts;
+    let rem = n % parts;
+    let mut ranges = Vec::with_capacity(parts);
+    let mut start = 0;
+    for i in 0..parts {
+        let len = base + if i < rem { 1 } else { 0 };
+        ranges.push((start, start + len));
+        start += len;
+    }
+    ranges
+}
 
-        self.nds[d][s] += 1;
-        self.ndsk[d][s][sub] += 1;
-        self.nkw[sub][w] += 1;
-        self.nk[sub] += 1;
-        self.zs[d][i] = s;
-        self.zk[d][i] = sub;
+/// One approximate-parallel (AD-LDA) sweep over the PAM count tables. Documents are
+/// partitioned across workers; each worker samples its slice against a private clone
+/// of the global `nkw`/`nk`, owning copies of its per-document `nds`/`ndsk`/`zs`/`zk`
+/// slice (documents are disjoint), then the results are reconciled: `nkw` is the
+/// exact additive merge `Σ_workers − (W−1)·original` (accumulated in `i64`, clamped
+/// ≥ 0) and `nk` is **recomputed** from the merged `nkw` rows so
+/// `nk[k] == Σ_w nkw[k][w]` holds exactly (no zero-clamp drift). Only the sub-topic
+/// index of the sampled `(super, sub)` pair touches `nkw`, so word-token counts stay
+/// conserved per worker and the standard AD-LDA merge applies unchanged. `alpha_sk`
+/// is read-only during the sweep (it is adapted serially by `estimate_alpha_sk`
+/// after the merge). Deterministic for a fixed `sweep_seed`/`num_threads`.
+#[allow(clippy::too_many_arguments)]
+fn parallel_sweep_pam(
+    nds: &mut [Vec<u32>],
+    ndsk: &mut [Vec<Vec<u32>>],
+    zs: &mut [Vec<usize>],
+    zk: &mut [Vec<usize>],
+    nkw: &mut [Vec<u32>],
+    nk: &mut [u32],
+    docs: &[Vec<u32>],
+    alpha_sk: &[Vec<f64>],
+    alpha: f64,
+    beta: f64,
+    num_super: usize,
+    num_sub: usize,
+    num_types: usize,
+    num_threads: usize,
+    sweep_seed: u64,
+) {
+    struct PamWorkerOut {
+        nkw: Vec<Vec<u32>>,
+        nds: Vec<Vec<u32>>,
+        ndsk: Vec<Vec<Vec<u32>>>,
+        zs: Vec<Vec<usize>>,
+        zk: Vec<Vec<usize>>,
+        start: usize,
     }
 
-    /// One full Gibbs sweep over every token.
+    let v = num_types;
+    let k = num_sub;
+    let ranges = partition_ranges(docs.len(), num_threads);
+    let orig_nkw = nkw.to_vec();
+    let orig_nk = nk.to_vec();
+    // Read-only views so workers can copy their slices inside the parallel map.
+    let nds_ro: &[Vec<u32>] = nds;
+    let ndsk_ro: &[Vec<Vec<u32>>] = ndsk;
+    let zs_ro: &[Vec<usize>] = zs;
+    let zk_ro: &[Vec<usize>] = zk;
+
+    let outs: Vec<PamWorkerOut> = ranges
+        .par_iter()
+        .enumerate()
+        .map(|(wid, &(start, end))| {
+            let mut wnkw = orig_nkw.clone();
+            let mut wnk = orig_nk.clone();
+            let mut wnds: Vec<Vec<u32>> = nds_ro[start..end].to_vec();
+            let mut wndsk: Vec<Vec<Vec<u32>>> = ndsk_ro[start..end].to_vec();
+            let mut wzs: Vec<Vec<usize>> = zs_ro[start..end].to_vec();
+            let mut wzk: Vec<Vec<usize>> = zk_ro[start..end].to_vec();
+            let mut rng = Pcg64Mcg::seed_from_u64(
+                sweep_seed ^ (wid as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            );
+            let mut probs = vec![0.0f64; num_super * num_sub];
+            run_sweep_pam_range(
+                &mut wnds,
+                &mut wndsk,
+                &mut wzs,
+                &mut wzk,
+                &mut wnkw,
+                &mut wnk,
+                &docs[start..end],
+                alpha_sk,
+                alpha,
+                beta,
+                num_super,
+                num_sub,
+                num_types,
+                &mut probs,
+                &mut rng,
+            );
+            PamWorkerOut {
+                nkw: wnkw,
+                nds: wnds,
+                ndsk: wndsk,
+                zs: wzs,
+                zk: wzk,
+                start,
+            }
+        })
+        .collect();
+
+    // --- Reconcile nkw: final = Σ_workers − (W−1)·original, clamped ≥ 0. ---
+    let wm1 = (outs.len() as i64) - 1;
+    for t in 0..k {
+        for w in 0..v {
+            let sum_w: i64 = outs.iter().map(|o| o.nkw[t][w] as i64).sum();
+            let val = sum_w - wm1 * orig_nkw[t][w] as i64;
+            nkw[t][w] = val.max(0) as u32;
+        }
+        // Recompute nk from the merged nkw row so the two stay exactly consistent.
+        nk[t] = nkw[t].iter().map(|&c| c as u64).sum::<u64>() as u32;
+    }
+
+    // --- Write back each worker's per-document slices (documents are disjoint). ---
+    for out in outs {
+        let start = out.start;
+        for (i, (((ndsr, ndskr), zsr), zkr)) in out
+            .nds
+            .into_iter()
+            .zip(out.ndsk)
+            .zip(out.zs)
+            .zip(out.zk)
+            .enumerate()
+        {
+            nds[start + i] = ndsr;
+            ndsk[start + i] = ndskr;
+            zs[start + i] = zsr;
+            zk[start + i] = zkr;
+        }
+    }
+}
+
+impl PamModel {
+    /// One full Gibbs sweep over every token, delegating to the shared, range-based
+    /// [`run_sweep_pam_range`] over the whole corpus. Disjoint `&mut self.field`
+    /// borrows in a single call are permitted, so a single copy of the sampling
+    /// logic is used by both the serial path and each AD-LDA worker (no drift).
     fn sweep<R: Rng>(&mut self, docs: &[Vec<u32>], rng: &mut R) {
         let mut probs = vec![0.0f64; self.num_super * self.num_sub];
-        for (d, doc) in docs.iter().enumerate() {
-            for (i, &w) in doc.iter().enumerate() {
-                let w = w as usize;
-                let s_old = self.zs[d][i];
-                let k_old = self.zk[d][i];
-                self.nds[d][s_old] -= 1;
-                self.ndsk[d][s_old][k_old] -= 1;
-                self.nkw[k_old][w] -= 1;
-                self.nk[k_old] -= 1;
-                self.assign_token(d, i, w, &mut probs, rng);
-            }
-        }
+        run_sweep_pam_range(
+            &mut self.nds,
+            &mut self.ndsk,
+            &mut self.zs,
+            &mut self.zk,
+            &mut self.nkw,
+            &mut self.nk,
+            docs,
+            &self.alpha_sk,
+            self.alpha,
+            self.beta,
+            self.num_super,
+            self.num_sub,
+            self.num_types,
+            &mut probs,
+            rng,
+        );
     }
 
     /// Re-estimate each super-topic's asymmetric sub-topic prior `α_s` by moment
@@ -395,6 +566,7 @@ pub fn fit_pam<R: Rng>(
         crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
         0.0,
         0,
+        1,
         rng,
     );
     model
@@ -403,6 +575,11 @@ pub fn fit_pam<R: Rng>(
 /// Fit a PAM with thinned θ snapshots (sub-topic proportions, marginalized over
 /// super-topics) collected every `thin` sweeps, ring-buffered to `cap` draws.
 /// `cap=0` disables collection entirely.
+///
+/// `num_threads` selects the sampler: `1` (or `0`) runs the exact serial sweep,
+/// byte-identical to the pre-threading path; `>1` runs MALLET-style
+/// approximate-parallel (AD-LDA) sampling, deterministic for a fixed
+/// `num_threads` + seed.
 ///
 /// Returns `(model, ll_history, converged)`.
 #[allow(clippy::too_many_arguments)]
@@ -417,6 +594,7 @@ pub fn fit_pam_with_draws<R: Rng>(
     opts: crate::keyatm::ThetaDrawOpts,
     convergence_tol: f64,
     check_every: usize,
+    num_threads: usize,
     rng: &mut R,
 ) -> (PamModel, Vec<(usize, f64)>, bool) {
     let d = docs.len();
@@ -477,7 +655,31 @@ pub fn fit_pam_with_draws<R: Rng>(
     let mut converged = false;
 
     for it in 0..iters {
-        model.sweep(docs, rng);
+        if num_threads <= 1 {
+            // Exact serial path — byte-identical to the pre-threading loop.
+            model.sweep(docs, rng);
+        } else {
+            // Approximate-parallel AD-LDA. One per-sweep seed drawn from the main
+            // RNG keeps it deterministic for a fixed num_threads + seed.
+            let sweep_seed = rng.gen::<u64>();
+            parallel_sweep_pam(
+                &mut model.nds,
+                &mut model.ndsk,
+                &mut model.zs,
+                &mut model.zk,
+                &mut model.nkw,
+                &mut model.nk,
+                docs,
+                &model.alpha_sk,
+                model.alpha,
+                model.beta,
+                model.num_super,
+                model.num_sub,
+                model.num_types,
+                num_threads,
+                sweep_seed,
+            );
+        }
         if it >= adapt_after {
             model.estimate_alpha_sk();
         }
@@ -695,8 +897,101 @@ mod tests {
         let opts = crate::keyatm::ThetaDrawOpts { cap: 0, thin: 1 };
         let mut rng = ChaCha8Rng::seed_from_u64(3);
         let (model, _, _) =
-            fit_pam_with_draws(&docs, 12, 2, 3, 0.1, 0.01, 5, opts, 0.0, 0, &mut rng);
+            fit_pam_with_draws(&docs, 12, 2, 3, 0.1, 0.01, 5, opts, 0.0, 0, 1, &mut rng);
         // Collection stays disabled: nothing pushed despite thin=1.
         assert!(model.theta_draws.is_empty());
+    }
+
+    /// Helper: a small corpus with enough documents to partition across workers.
+    fn threading_corpus() -> (Vec<Vec<u32>>, usize) {
+        let v = 16;
+        let docs: Vec<Vec<u32>> = (0..60)
+            .map(|d| (0..12).map(|i| ((i * 5 + d * 3) % v) as u32).collect())
+            .collect();
+        (docs, v)
+    }
+
+    fn fit_threaded(
+        docs: &[Vec<u32>],
+        v: usize,
+        iters: usize,
+        num_threads: usize,
+        seed: u64,
+    ) -> PamModel {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let opts = crate::keyatm::ThetaDrawOpts::new(false, 0, 0);
+        let (m, _, _) = fit_pam_with_draws(
+            docs,
+            v,
+            3,
+            4,
+            0.1,
+            0.01,
+            iters,
+            opts,
+            0.0,
+            0,
+            num_threads,
+            &mut rng,
+        );
+        m
+    }
+
+    #[test]
+    fn num_threads_one_is_bit_identical_to_serial() {
+        // num_threads=1 must never draw the per-sweep seed and must reproduce the
+        // pre-threading serial path exactly.
+        let (docs, v) = threading_corpus();
+        let mut r_serial = ChaCha8Rng::seed_from_u64(99);
+        let serial = fit_pam(&docs, v, 3, 4, 0.1, 0.01, 40, &mut r_serial);
+        let threaded1 = fit_threaded(&docs, v, 40, 1, 99);
+        assert_eq!(serial.nkw, threaded1.nkw, "nkw differs at num_threads=1");
+        assert_eq!(serial.nk, threaded1.nk, "nk differs at num_threads=1");
+        assert_eq!(serial.zs, threaded1.zs, "zs differs at num_threads=1");
+        assert_eq!(serial.zk, threaded1.zk, "zk differs at num_threads=1");
+        assert_eq!(serial.nds, threaded1.nds, "nds differs at num_threads=1");
+        assert_eq!(serial.ndsk, threaded1.ndsk, "ndsk differs at num_threads=1");
+    }
+
+    #[test]
+    fn threaded_is_deterministic_for_fixed_threads_and_seed() {
+        // A fixed num_threads>1 with a fixed seed reproduces exactly across runs.
+        let (docs, v) = threading_corpus();
+        let a = fit_threaded(&docs, v, 40, 4, 123);
+        let b = fit_threaded(&docs, v, 40, 4, 123);
+        assert_eq!(a.nkw, b.nkw);
+        assert_eq!(a.nk, b.nk);
+        assert_eq!(a.nds, b.nds);
+        assert_eq!(a.ndsk, b.ndsk);
+        assert_eq!(a.topic_word(), b.topic_word());
+    }
+
+    #[test]
+    fn threaded_nk_matches_merged_nkw_and_token_total() {
+        // The AD-LDA merge recomputes nk from the merged nkw rows, so nk[k] must
+        // equal Σ_w nkw[k][w] exactly, and the grand total must equal the corpus
+        // token count (no tokens lost or duplicated in the partition-and-merge).
+        let (docs, v) = threading_corpus();
+        let m = fit_threaded(&docs, v, 40, 4, 7);
+        for t in 0..m.num_sub {
+            let row_sum: u32 = m.nkw[t].iter().sum();
+            assert_eq!(m.nk[t], row_sum, "nk[{t}] != Σ_w nkw[{t}][w]");
+        }
+        let total_tokens: usize = docs.iter().map(|d| d.len()).sum();
+        let nk_total: u32 = m.nk.iter().sum();
+        assert_eq!(nk_total as usize, total_tokens, "token count not conserved");
+    }
+
+    #[test]
+    fn threaded_handles_more_workers_than_docs() {
+        // partition_ranges clamps the worker count to the document count, so an
+        // oversized num_threads must run cleanly without empty-chunk corruption.
+        let docs: Vec<Vec<u32>> = (0..3)
+            .map(|d| (0..6).map(|i| ((i + d) % 8) as u32).collect())
+            .collect();
+        let m = fit_threaded(&docs, 8, 20, 16, 5);
+        let total_tokens: usize = docs.iter().map(|d| d.len()).sum();
+        let nk_total: u32 = m.nk.iter().sum();
+        assert_eq!(nk_total as usize, total_tokens);
     }
 }
