@@ -290,22 +290,28 @@ that question as a first-class operation rather than a manual diff.
 ```python
 cmp = topica.compare(fit_a, fit_b)
 
-cmp.aligned            # matched topic pairs (Hungarian on topic-word distance)
+cmp.aligned            # mutual-best matched topic pairs (each the other's unique above-threshold match)
 cmp.unmatched_a        # topics that vanished (only in A) — never force-paired
 cmp.unmatched_b        # topics that appeared (only in B)
 cmp.splits, cmp.merges # one-to-many outcomes, named honestly (esp. across different K)
-cmp.drift              # per-pair distance + whether it beats the reseed null
-cmp.prevalence_shift   # change in topic prevalence, with a standard error
+cmp.drift              # per-pair distance + whether it exceeds the reseed range
+cmp.prevalence_shift   # change in topic prevalence, with a posterior-spread uncertainty
 print(cmp.render())    # HTML card (same house as the manifest render()); to_markdown() too
 ```
 
-Alignment reuses `align_topics` (Hungarian assignment), so a topic with no
-honest counterpart is reported as *appeared* / *vanished*, not paired to its
-least-bad neighbor — and a split (one topic in A → two in B) is a named outcome, not
-a silent mismatch. This matters most when the two fits have different K.
+Alignment reuses `align_topics`, which pairs two topics only when each is the
+other's *unique* above-`threshold` match, so a topic with no honest counterpart is
+reported as *appeared* / *vanished*, not paired to its least-bad neighbor — and a
+split (one topic in A → two in B) is a named outcome, not a silent mismatch. This
+matters most when the two fits have different K. (The reseed null below reads the
+Hungarian self-assignment `align_topics` also exposes, so every A-topic has a
+self-match to measure wander against.)
 
 **Drift needs a null.** Give `compare` a reseed baseline and each matched pair is
-flagged as drifting *beyond reseed noise* — a claim with a threshold, not a vibe:
+flagged when it moves *beyond the range of self-agreement A shows across the
+reseeds* — a heuristic band, not a calibrated significance test (the floor is the
+worst self-match over `n_reseed` refits, so a truly-null pair trips it at a rough
+`~1/(n_reseed+1)` rate, and only A is reseeded):
 
 ```python
 # refit A on the same corpus under fresh seeds; compare builds the per-topic floor

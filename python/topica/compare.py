@@ -18,16 +18,22 @@ Three uses, one tool:
 Design commitments:
 
 - **Alignment is reused, not reinvented.** Matching runs through
-  :func:`topica.align_topics` (Hungarian assignment on a topic-word distance), which
-  already returns matched pairs, splits, merges, and unaligned topics.
+  :func:`topica.align_topics`, which pairs two topics only when each is the other's
+  *unique* above-``threshold`` partner (a mutual-best rule that never force-pairs),
+  and reports splits, merges, and unaligned topics. (The reseed null below instead
+  reads the Hungarian self-assignment `align_topics` also exposes, so a topic always
+  has a self-match to measure wander against.)
 - **The "unmatched" bucket is honest.** A topic with no good counterpart is reported
   as *appeared* / *vanished*, never paired to its least-bad neighbor; a split (one
   topic in A → two in B) is a named outcome. This matters most across different K.
 - **Drift needs a null.** A raw distance between two topics is uninterpretable on its
   own. Supply a reseed baseline (``refit=`` a callable that refits A under a new
-  seed, or ``baseline=`` a similarity ceiling) and each matched pair is flagged as
-  drifting *beyond reseed noise* — a claim with a threshold, not a vibe. Without a
-  null, distances are still reported, but ``drifted`` is ``None`` (honestly "unknown").
+  seed, or ``baseline=`` a similarity ceiling) and each matched pair is flagged when
+  it moves *beyond the range of self-agreement A shows across the reseeds*. This is a
+  heuristic band, **not a calibrated test**: the floor is the worst self-match over
+  ``n_reseed`` refits (so a genuinely-null pair trips it at a rough
+  ``~1/(n_reseed+1)`` rate), and only A is reseeded. Without a null, distances are
+  still reported but ``drifted`` is ``None`` (honestly "unknown").
 - **Not an ensemble.** This describes and tests *difference*; it does not build a
   consensus model (that is :func:`topica.ensemble`).
 """
@@ -124,8 +130,9 @@ class MatchedPair:
     prevalence_a: float
     prevalence_b: float
     prevalence_shift: float
-    #: Standard error of the prevalence shift, when a posterior over theta was
-    #: available for both fits; ``None`` otherwise.
+    #: Uncertainty of the prevalence shift: the two fits' posterior-spread SDs of
+    #: mean prevalence combined in quadrature (assumes the fits are independent —
+    #: see :func:`compare`). ``None`` when no posterior over theta was available.
     prevalence_shift_se: float | None
 
     def as_dict(self) -> dict[str, Any]:
@@ -201,8 +208,9 @@ class CompareResult:
 
     @property
     def prevalence_shift(self) -> list[dict[str, Any]]:
-        """Per-matched-pair change in topic prevalence, with a standard error when
-        a posterior over theta was available for both fits."""
+        """Per-matched-pair change in topic prevalence, with a posterior-spread
+        uncertainty (the two fits' between-draw SDs combined in quadrature; see
+        :func:`compare`) when a posterior over theta was available for both fits."""
         return [
             {
                 "topic_a": p.topic_a,
@@ -317,12 +325,17 @@ def compare(
     """Compare two fitted topic models statistically.
 
     ``a``, ``b`` are two fitted models (or ``K×V`` topic-word arrays). Topics are
-    aligned one-to-one by minimal topic-word distance (:func:`align_topics`); topics
+    matched one-to-one when each is the other's *unique* above-``threshold`` partner
+    (:func:`align_topics`, a mutual-best rule — never force-paired); topics
     with no honest counterpart are reported as *vanished* (only in ``a``) or
     *appeared* (only in ``b``), and one-to-many relationships as *splits* / *merges*.
+    ``threshold=0.3`` is permissive for ``metric="cosine"`` on real corpora (shared
+    common words push cross-topic cosine up), so raise it if you see spurious
+    splits/merges.
 
     **Drift needs a null.** Pass exactly one reseed source to judge whether a matched
-    pair moved more than reseeding alone would:
+    pair moved beyond the self-agreement A shows across reseeds (a heuristic band —
+    see the module docstring — not a calibrated significance test):
 
     - ``refit`` — a callable ``seed -> fitted_model`` that refits ``a`` on the same
       corpus with a new seed (``compare`` calls it ``n_reseed`` times); or
@@ -337,7 +350,11 @@ def compare(
     (``doc_topic.mean(0)``) per matched pair. When a posterior over theta is
     available (logistic-normal models, or Gibbs models with retained draws — pass
     ``corpus_a``/``corpus_b`` for the Dirichlet approximation otherwise) the shift
-    carries a standard error.
+    carries an uncertainty: each fit's posterior spread of the mean prevalence
+    (the between-draw SD over ``nsims`` ``composition_theta`` draws) combined in
+    quadrature, ``sqrt(se_a**2 + se_b**2)``. This treats the two fits' posteriors as
+    independent — correct for two genuinely distinct fits, and conservative (it
+    cannot go to zero) as the two fits approach identical.
 
     ``metric`` is passed to :func:`align_topics` (``"cosine"``, ``"js"``, ``"rbo"``,
     ``"emd"``); ``threshold`` is the minimum similarity for an honest match.
@@ -368,7 +385,13 @@ def compare(
         n_used = (len(reseed_fits) if reseed_fits is not None else 0) + (
             n_reseed if refit is not None else 0
         )
-        baseline_info = {"kind": "reseed", "n_reseed": n_used}
+        # An empty reseed source (e.g. reseed_fits=[]) yields no floor; report that
+        # honestly as "no null" rather than a reseed run of size 0.
+        baseline_info = (
+            {"kind": "reseed", "n_reseed": n_used}
+            if null_floor is not None
+            else {"kind": "none"}
+        )
     else:
         baseline_info = {"kind": "none"}
 
@@ -459,7 +482,7 @@ def _render_html(r: CompareResult, *, title: str | None) -> str:
     title = title or "Topic comparison"
     parts: list[str] = [f"<style>{_CARD_CSS}</style>"]
     drifted = r.n_drifted
-    drift_txt = "no drift null supplied" if drifted is None else f"{drifted} drifted beyond reseed noise"
+    drift_txt = "no drift null supplied" if drifted is None else f"{drifted} drifted beyond the reseed range"
     sub = (
         f"K {r.num_topics_a} → {r.num_topics_b} · {len(r.aligned)} matched · "
         f"{len(r.unmatched_a)} vanished · {len(r.unmatched_b)} appeared · metric={r.metric}"
