@@ -1468,7 +1468,11 @@ class SupervisedLDA:
     """Supervised LDA (Blei & McAuliffe 2007): LDA where each document has a
     real-valued response y_d ~ N(eta^T zbar_d, sigma^2) regressed on its topic
     usage. Topics are shaped to predict the response; `coefficients` (eta) report
-    how each topic moves y. Fit by variational EM; `predict` scores new docs."""
+    how each topic moves y. `predict` scores new docs.
+
+    inference="variational" (default) is the original Blei & McAuliffe (2007)
+    variational EM; inference="gibbs" is the collapsed Gibbs sampler used by
+    tomotopy."""
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,
@@ -1481,9 +1485,22 @@ class SupervisedLDA:
         """The random seed the model was constructed with."""
         ...
 
-    def __init__(self, num_topics: int, *, alpha: float = 0.1, seed: int = 42) -> None:
+    @property
+    def inference(self) -> str:
+        """The inference backend ("variational" or "gibbs")."""
+        ...
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha: float = 0.1,
+        seed: int = 42,
+        inference: str = "variational",
+    ) -> None:
         """num_topics >= 2. alpha is the Dirichlet concentration on doc-topic
-        proportions; both must be > 0."""
+        proportions; both must be > 0. inference is "variational" (Blei &
+        McAuliffe variational EM) or "gibbs" (tomotopy-style collapsed Gibbs)."""
         ...
 
     def fit(
@@ -1498,8 +1515,11 @@ class SupervisedLDA:
         convergence_tol: float = 0.0,
         check_every: int = 1,
     ) -> "SupervisedLDA":
-        """Fit by variational EM. `y` is the per-document response (length =
-        number of documents)."""
+        """Fit the model. `y` is the per-document response (length = number of
+        documents). With inference="variational", `iters` is EM iterations and
+        `var_iters` the per-document E-step iterations. With inference="gibbs",
+        `iters` is the number of collapsed-Gibbs sweeps (use more, e.g. 1000) and
+        `var_iters`/`convergence_tol` do not apply."""
         ...
 
     def predict(

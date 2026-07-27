@@ -5,13 +5,19 @@
 //! response: topics are shaped to be predictive of `y`, and the fitted
 //! regression coefficients `η` say how each topic moves the response.
 //!
-//! Inference is the variational EM of Blei & McAuliffe (2007):
-//!   - **E-step** (per document): coordinate ascent on the variational `γ`
-//!     (Dirichlet) and `φ` (per-word topic) parameters. The `φ` update carries
-//!     the response-coupling term that ties the words together through `η`/`σ²`.
-//!   - **M-step**: `β` from the expected word-topic counts (as in LDA); `η` by
-//!     the normal equations `η = (Σ_d E[z̄_d z̄_dᵀ])⁻¹ Σ_d y_d E[z̄_d]`; and
-//!     `σ²` from the residual.
+//! Two inference backends are provided:
+//!   - [`fit_slda`] — the original variational EM of Blei & McAuliffe (2007):
+//!     an **E-step** (per document coordinate ascent on the variational `γ`
+//!     Dirichlet and `φ` per-word-topic parameters, whose `φ` update carries the
+//!     response-coupling term that ties the words together through `η`/`σ²`) and
+//!     an **M-step** (`β` from the expected word-topic counts as in LDA; `η` by
+//!     the normal equations `η = (Σ_d E[z̄_d z̄_dᵀ])⁻¹ Σ_d y_d E[z̄_d]`; `σ²`
+//!     from the residual).
+//!   - [`fit_slda_gibbs`] — the collapsed Gibbs sampler used by \pkg{tomotopy},
+//!     sampling each token's topic with the same Gaussian response term applied
+//!     to a hard assignment, then re-estimating `η` by ridge regression on the
+//!     sampled topic frequencies each sweep (`σ²` is a fixed hyperparameter, as
+//!     in tomotopy).
 //!
 //! Prediction for a new document infers `φ`/`γ` with the response term removed
 //! (ordinary LDA inference against the fixed `β`) and returns `ŷ = ηᵀ z̄`.
@@ -392,6 +398,202 @@ pub fn fit_slda<R: Rng>(
     )
 }
 
+/// Fit a supervised-LDA model by **collapsed Gibbs sampling** (the algorithm
+/// used by \pkg{tomotopy}'s `SLDAModel`), an alternative to the variational EM of
+/// [`fit_slda`]. The topic-word structure is the standard collapsed LDA sampler;
+/// the response couples the tokens through the same Gaussian term the variational
+/// φ update uses, applied to a *hard* assignment. Each token `n` in document `d`
+/// is drawn with probability
+///
+/// ```text
+/// p(z=k) ∝ (n_dk^{-n} + α) · (n_kw^{-n} + β)/(n_k^{-n} + Vβ)
+///          · exp( η_k(y_d − η·z̄_d^{-n})/(N_d σ²) − η_k²/(2 N_d² σ²) )
+/// ```
+///
+/// where `z̄_d^{-n}` is the doc's topic frequency excluding token `n`. After each
+/// sweep, `η` is re-estimated by MAP ridge regression of `y` on the sampled topic
+/// frequencies `z̄`, with the ridge `λ = σ²/nu_sq` from \pkg{tomotopy}'s Gaussian
+/// coefficient prior `N(0, nu_sq)` (default `nu_sq = 1`). The response variance
+/// `σ²` (tomotopy's `glm_param`) is a fixed hyperparameter (default `1.0`), not
+/// re-estimated, matching tomotopy. `β` (the word prior) defaults to `0.01`, also
+/// matching \pkg{tomotopy}.
+///
+/// Returns `(model, response_ll_history, converged=false)`, mirroring
+/// [`fit_slda`]'s shape; the history records `(sweep, response_log_likelihood)`
+/// every `check_every` sweeps (no early stopping — Gibbs runs the full `iters`).
+#[allow(clippy::too_many_arguments)]
+pub fn fit_slda_gibbs<R: Rng>(
+    docs: &[Vec<u32>],
+    y: &[f64],
+    num_types: usize,
+    num_topics: usize,
+    alpha: f64,
+    iters: usize,
+    check_every: usize,
+    rng: &mut R,
+) -> (SldaModel, Vec<(usize, f64)>, bool) {
+    let k = num_topics;
+    let v = num_types;
+    let d = docs.len();
+    let beta = 0.01_f64; // word prior; tomotopy SLDAModel default `eta`
+    let beta_sum = v as f64 * beta;
+    let nu_sq = 1.0_f64; // tomotopy coefficient-prior variance N(0, nu_sq)
+                         // Response variance σ² (tomotopy's `glm_param` for a linear variable) is a
+                         // fixed hyperparameter, default 1.0 — it is NOT re-estimated. Keeping it fixed
+                         // matches tomotopy and keeps the supervised-term scaling identical across
+                         // engines.
+    let sigma2 = 1.0_f64;
+
+    // Token-topic assignments and the count tables behind the collapsed sampler.
+    // usize counts so a large corpus cannot overflow a topic/word total.
+    let mut z: Vec<Vec<usize>> = docs.iter().map(|doc| vec![0usize; doc.len()]).collect();
+    let mut n_dk = vec![vec![0usize; k]; d]; // D × K
+    let mut n_kw = vec![vec![0usize; v]; k]; // K × V
+    let mut n_k = vec![0usize; k]; // K
+    for (di, doc) in docs.iter().enumerate() {
+        for (n, &w) in doc.iter().enumerate() {
+            let t = rng.gen_range(0..k);
+            z[di][n] = t;
+            n_dk[di][t] += 1;
+            n_kw[t][w as usize] += 1;
+            n_k[t] += 1;
+        }
+    }
+
+    let mut eta = vec![0.0f64; k];
+    let mut probs = vec![0.0f64; k];
+    let mut logp = vec![0.0f64; k];
+    let mut bound_history: Vec<(usize, f64)> = Vec::new();
+    let mut last_m = vec![0.0f64; k * k];
+
+    for sweep in 1..=iters {
+        for (di, doc) in docs.iter().enumerate() {
+            let nd = doc.len() as f64;
+            if nd == 0.0 {
+                continue;
+            }
+            let yd = y[di];
+            for (n, &w) in doc.iter().enumerate() {
+                let w = w as usize;
+                let old = z[di][n];
+                n_dk[di][old] -= 1;
+                n_kw[old][w] -= 1;
+                n_k[old] -= 1;
+                // η·z̄^{-n}: topic frequencies of the doc with this token removed.
+                let eta_dot_minus: f64 = (0..k).map(|t| eta[t] * (n_dk[di][t] as f64) / nd).sum();
+                // Accumulate the conditional in log-space, then softmax — the
+                // supervised term can be large in magnitude, so exponentiating each
+                // factor directly (`lda * sup.exp()`) risks overflow to +inf / NaN.
+                let mut mx = f64::NEG_INFINITY;
+                for t in 0..k {
+                    let lda = (n_dk[di][t] as f64 + alpha) * (n_kw[t][w] as f64 + beta)
+                        / (n_k[t] as f64 + beta_sum);
+                    // Same Gaussian response coupling as the variational φ update,
+                    // applied to a hard assignment (see module docs).
+                    let sup = eta[t] * (yd - eta_dot_minus) / (nd * sigma2)
+                        - eta[t] * eta[t] / (2.0 * nd * nd * sigma2);
+                    logp[t] = lda.ln() + sup; // lda > 0 (α, β > 0) so ln is finite
+                    if logp[t] > mx {
+                        mx = logp[t];
+                    }
+                }
+                let mut sum = 0.0f64;
+                for t in 0..k {
+                    let e = (logp[t] - mx).exp();
+                    probs[t] = e;
+                    sum += e;
+                }
+                // Sample a new topic from the (finite, positive) weights.
+                let mut r = rng.gen::<f64>() * sum;
+                let mut newt = k - 1;
+                for t in 0..k {
+                    r -= probs[t];
+                    if r < 0.0 {
+                        newt = t;
+                        break;
+                    }
+                }
+                z[di][n] = newt;
+                n_dk[di][newt] += 1;
+                n_kw[newt][w] += 1;
+                n_k[newt] += 1;
+            }
+        }
+
+        // Re-estimate η by MAP ridge regression of y on the sampled topic
+        // frequencies z̄_d (σ² is fixed, see above). M = Σ_d z̄ z̄ᵀ, b = Σ_d y_d z̄;
+        // the ridge λ = σ²/nu_sq is the coefficient prior N(0, nu_sq).
+        let mut m_mat = vec![0.0f64; k * k];
+        let mut b_vec = vec![0.0f64; k];
+        for (di, doc) in docs.iter().enumerate() {
+            let nd = doc.len() as f64;
+            if nd == 0.0 {
+                continue;
+            }
+            let zbar: Vec<f64> = (0..k).map(|t| n_dk[di][t] as f64 / nd).collect();
+            for a in 0..k {
+                b_vec[a] += y[di] * zbar[a];
+                for b in 0..k {
+                    m_mat[a * k + b] += zbar[a] * zbar[b];
+                }
+            }
+        }
+        let ridge = sigma2 / nu_sq;
+        for a in 0..k {
+            m_mat[a * k + a] += ridge;
+        }
+        last_m.copy_from_slice(&m_mat);
+        if let Some(minv) = spd_inverse(&m_mat, k) {
+            for a in 0..k {
+                eta[a] = (0..k).map(|c| minv[a * k + c] * b_vec[c]).sum();
+            }
+        }
+
+        if check_every > 0 && sweep % check_every == 0 {
+            // Response log-likelihood under the current hard z̄ and (η, σ²).
+            let mut ll = 0.0f64;
+            for (di, doc) in docs.iter().enumerate() {
+                let nd = doc.len() as f64;
+                if nd == 0.0 {
+                    continue;
+                }
+                let ezbar: f64 = (0..k).map(|t| eta[t] * (n_dk[di][t] as f64) / nd).sum();
+                let resid = y[di] - ezbar;
+                ll -= resid * resid / (2.0 * sigma2);
+            }
+            ll -= d as f64 * 0.5 * (2.0 * std::f64::consts::PI * sigma2).ln();
+            bound_history.push((sweep, ll));
+        }
+    }
+
+    // Read out β from the final counts and γ = α + topic counts (for doc_topic).
+    let mut log_beta = vec![vec![0.0; v]; k];
+    for kk in 0..k {
+        let denom = n_k[kk] as f64 + beta_sum;
+        for w in 0..v {
+            log_beta[kk][w] = ((n_kw[kk][w] as f64 + beta) / denom).ln();
+        }
+    }
+    let gamma: Vec<Vec<f64>> = (0..d)
+        .map(|di| (0..k).map(|t| alpha + n_dk[di][t] as f64).collect())
+        .collect();
+
+    (
+        SldaModel {
+            num_topics: k,
+            num_types: v,
+            alpha,
+            log_beta,
+            eta,
+            sigma2,
+            gamma,
+            m_mat: last_m,
+        },
+        bound_history,
+        false,
+    )
+}
+
 use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 
 impl Estimator for SldaModel {
@@ -574,6 +776,63 @@ mod tests {
             vb += (b[i] - mb).powi(2);
         }
         cov / (va.sqrt() * vb.sqrt())
+    }
+
+    #[test]
+    fn gibbs_recovers_predictive_topics() {
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let (docs, y, v) = supervised_corpus(&mut rng);
+        let (model, hist, conv) = fit_slda_gibbs(&docs, &y, v, 2, 0.1, 300, 50, &mut rng);
+        assert!(!conv); // Gibbs runs the full sweep budget
+        assert!(!hist.is_empty(), "expected a response-ll trace");
+
+        // The two topics should separate the two disjoint vocabularies.
+        let tw = model.topic_word();
+        let mass = |t: usize, block: &[usize]| -> f64 { block.iter().map(|&w| tw[t][w]).sum() };
+        let k0 = if mass(0, &[0, 1, 2, 3, 4, 5]) > mass(1, &[0, 1, 2, 3, 4, 5]) {
+            0
+        } else {
+            1
+        };
+        let k1 = 1 - k0;
+        assert!(
+            mass(k1, &[6, 7, 8, 9, 10, 11]) > mass(k0, &[6, 7, 8, 9, 10, 11]),
+            "topics did not separate the two vocabularies"
+        );
+        // Topic 0's vocabulary drives the response up, so its coefficient leads.
+        assert!(
+            model.eta[k0] > model.eta[k1],
+            "eta should rank topic-0 above topic-1: {:?}",
+            model.eta
+        );
+        // Predictions correlate strongly with the true responses.
+        let preds: Vec<f64> = docs.iter().map(|d| predict_one(&model, d, 20)).collect();
+        let corr = pearson(&preds, &y);
+        assert!(corr > 0.7, "prediction correlation too low: {corr}");
+    }
+
+    #[test]
+    fn gibbs_deterministic_for_fixed_seed() {
+        let mut r0 = ChaCha8Rng::seed_from_u64(3);
+        let (docs, y, v) = supervised_corpus(&mut r0);
+        let mut r1 = ChaCha8Rng::seed_from_u64(9);
+        let mut r2 = ChaCha8Rng::seed_from_u64(9);
+        let (m1, _, _) = fit_slda_gibbs(&docs, &y, v, 2, 0.1, 50, 0, &mut r1);
+        let (m2, _, _) = fit_slda_gibbs(&docs, &y, v, 2, 0.1, 50, 0, &mut r2);
+        assert_eq!(m1.eta, m2.eta);
+        assert_eq!(m1.sigma2, m2.sigma2);
+        assert_eq!(m1.log_beta, m2.log_beta);
+    }
+
+    #[test]
+    fn gibbs_conforms() {
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let (docs, y, v) = supervised_corpus(&mut rng);
+        let (m, _, _) = fit_slda_gibbs(&docs, &y, v, 2, 0.1, 100, 0, &mut rng);
+        let base = crate::conformance::check_conformance(&m);
+        assert!(base.is_empty(), "check_conformance: {:?}", base);
+        let dir = crate::conformance::check_dirichlet(&m);
+        assert!(dir.is_empty(), "check_dirichlet: {:?}", dir);
     }
 
     #[test]

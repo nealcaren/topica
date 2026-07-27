@@ -462,6 +462,12 @@ struct SldaState {
     // K×K normal-equations matrix for coefficient SEs; absent in old saves.
     #[serde(default)]
     m_mat: Option<Vec<f64>>,
+    // Fitting backend ("variational"/"gibbs"); old saves predate it -> variational.
+    #[serde(default = "default_slda_inference")]
+    inference: String,
+}
+fn default_slda_inference() -> String {
+    "variational".to_string()
 }
 fn default_pseudo_doc_prior() -> f64 {
     0.1
@@ -10953,6 +10959,7 @@ pub struct SupervisedLDA {
     num_topics: usize,
     alpha: f64,
     seed: u64,
+    inference: String,
 
     fitted: bool,
     topic_names: Vec<String>,
@@ -10992,6 +10999,7 @@ impl SupervisedLDA {
         d.set_item("num_topics", self.num_topics)?;
         d.set_item("alpha", self.alpha)?;
         d.set_item("seed", self.seed)?;
+        d.set_item("inference", &self.inference)?;
         Ok(d)
     }
 
@@ -11001,15 +11009,26 @@ impl SupervisedLDA {
         self.seed
     }
 
+    /// The inference backend the model was constructed with
+    /// (``"variational"`` or ``"gibbs"``).
+    #[getter]
+    fn inference(&self) -> &str {
+        &self.inference
+    }
+
     /// Create an unfitted model. `alpha` is the symmetric Dirichlet
     /// concentration on document-topic proportions.
     /// `num_topics` is the number of topics K; `seed` seeds the RNG.
+    /// `inference` selects the fitting algorithm: ``"variational"`` (default) is
+    /// the original Blei & McAuliffe (2007) variational EM; ``"gibbs"`` is the
+    /// collapsed Gibbs sampler used by \pkg{tomotopy}.
     #[new]
-    #[pyo3(signature = (num_topics, *, alpha=0.1, seed=42))]
+    #[pyo3(signature = (num_topics, *, alpha=0.1, seed=42, inference="variational"))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         alpha: f64,
         seed: u64,
+        inference: &str,
     ) -> PyResult<Self> {
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
@@ -11017,10 +11036,16 @@ impl SupervisedLDA {
         if !finite_pos(alpha) {
             return Err(PyValueError::new_err("alpha must be > 0"));
         }
+        if inference != "variational" && inference != "gibbs" {
+            return Err(PyValueError::new_err(
+                "inference must be \"variational\" or \"gibbs\"",
+            ));
+        }
         Ok(SupervisedLDA {
             num_topics,
             alpha,
             seed,
+            inference: inference.to_string(),
             fitted: false,
             topic_names: Vec::new(),
             sigma2: 0.0,
@@ -11036,11 +11061,14 @@ impl SupervisedLDA {
         })
     }
 
-    /// Fit by variational EM. `data` is a :class:`Corpus` or `list[list[str]]`;
+    /// Fit the model. `data` is a :class:`Corpus` or `list[list[str]]`;
     /// `y` is the per-document real-valued response (length = number of docs).
     ///
-    /// `iters` is the number of variational-EM iterations; `var_iters` is the
-    /// number of variational E-step iterations per document.
+    /// With the default ``inference="variational"``, `iters` is the number of
+    /// variational-EM iterations and `var_iters` the number of variational E-step
+    /// iterations per document. With ``inference="gibbs"``, `iters` is the number
+    /// of collapsed-Gibbs sweeps (use more, e.g. 1000, plus a larger value than
+    /// the variational default), and `var_iters`, `convergence_tol` do not apply.
     /// `keep_theta_draws` (default True) retains `num_theta_draws` θ samples in
     /// `theta_draws`. For SupervisedLDA these are independent draws from each
     /// document's fitted variational Dirichlet(γ_d) — the mean-field posterior
@@ -11116,20 +11144,36 @@ impl SupervisedLDA {
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
+        let use_gibbs = slf.inference == "gibbs";
 
         let (model, ll_history, converged_flag, corpus) = py.allow_threads(move || {
-            let (m, hist, conv) = slda::fit_slda(
-                &corpus.docs,
-                &y,
-                num_types,
-                k,
-                alpha,
-                iters,
-                var_iters,
-                convergence_tol,
-                check_every,
-                &mut rng,
-            );
+            let (m, hist, conv) = if use_gibbs {
+                // Gibbs ignores var_iters (no per-document E-step) and never early
+                // stops; convergence_tol is not applicable.
+                slda::fit_slda_gibbs(
+                    &corpus.docs,
+                    &y,
+                    num_types,
+                    k,
+                    alpha,
+                    iters,
+                    check_every,
+                    &mut rng,
+                )
+            } else {
+                slda::fit_slda(
+                    &corpus.docs,
+                    &y,
+                    num_types,
+                    k,
+                    alpha,
+                    iters,
+                    var_iters,
+                    convergence_tol,
+                    check_every,
+                    &mut rng,
+                )
+            };
             (m, hist, conv, corpus)
         });
 
@@ -11512,6 +11556,7 @@ impl SupervisedLDA {
                 log_likelihood_history: self.log_likelihood_history.clone(),
                 converged: self.converged,
                 m_mat: self.m_mat.clone(),
+                inference: self.inference.clone(),
             },
         )
     }
@@ -11529,6 +11574,7 @@ impl SupervisedLDA {
             num_topics: s.num_topics,
             alpha: s.alpha,
             seed: s.seed,
+            inference: s.inference,
             fitted: s.fitted,
             topic_names,
             sigma2: s.sigma2,
