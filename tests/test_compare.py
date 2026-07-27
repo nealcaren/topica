@@ -153,6 +153,23 @@ def test_compare_reseed_fits_list():
     assert all(p.drifted is False for p in cmp.aligned)  # identical → within noise
 
 
+def test_compare_refit_callable_builds_the_null():
+    # The refit= callable path (fast, dummy models): compare must call it n_reseed
+    # times and derive the same kind of reseed floor the reseed_fits= list does.
+    phi = _onehot_topics(3, 12, seed=11)
+    a = DummyModel(phi)
+    calls = []
+
+    def refit(s):
+        calls.append(s)
+        return DummyModel(_onehot_topics(3, 12, seed=300 + s, noise=0.02))
+
+    cmp = topica.compare(a, DummyModel(phi), refit=refit, n_reseed=4)
+    assert len(calls) == 4  # called exactly n_reseed times
+    assert cmp.baseline == {"kind": "reseed", "n_reseed": 4}
+    assert all(p.drifted is False for p in cmp.aligned)  # identical → within noise
+
+
 def test_compare_rejects_multiple_null_sources():
     a = DummyModel(_onehot_topics(2, 8, seed=8))
     with pytest.raises(ValueError, match="at most one drift null"):
