@@ -3656,6 +3656,7 @@ class BERTopic:
         n_neighbors: int = 15,
         bm25: bool = False,
         reduce_frequent: bool = False,
+        weighting: str = "c-tf-idf",
         min_similarity: float = 0.0,
         clusterer: str = "hdbscan",
         num_clusters: int | None = None,

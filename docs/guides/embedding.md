@@ -95,6 +95,35 @@ dist = model.approximate_distribution(new_docs, window=4, stride=1)  # (n, num_t
 before averaging; a document with no surviving evidence becomes a *uniform* row
 so `doc_topic` stays a valid distribution.
 
+### Topic-word weighting: c-TF-IDF vs CETopic's TFIDF×IDF_i
+
+`weighting` chooses how topic words are scored. The default `"c-tf-idf"` is
+BERTopic's class-based TF-IDF (tuned by `bm25` / `reduce_frequent`). Pass
+`weighting="tfidf-idf"` for **CETopic**'s TFIDF×IDF_i scheme (Zhang et al., "Is
+Neural Topic Modelling Better than Clustering?", NAACL 2022):
+
+```python
+model = topica.BERTopic(
+    reducer="umap", clusterer="kmeans", num_clusters=20,
+    weighting="tfidf-idf", seed=1,
+)
+model.fit(docs, doc_emb)   # exactly CETopic's contextual-embeddings → UMAP → K-Means → TFIDF×IDF_i pipeline
+```
+
+CETopic multiplies a **corpus-level TF-IDF** (a term's importance across the whole
+corpus, averaged over each cluster's documents) by a **cross-cluster IDF** that
+penalizes terms appearing in many clusters. c-TF-IDF asks only "frequent here, rare
+across clusters"; TFIDF×IDF_i keeps globally salient words *and* actively demotes
+words several clusters share, which lifts topic **diversity** (the paper's Table 3
+ablation finds this the decisive win over plain per-cluster TF/TF-IDF). It is
+topica's faithful port of the reference (`hyintell/topicx`, MIT), reproducing its
+scikit-learn `TfidfTransformer` defaults (smoothed idf, per-document L2 norm, then
+L1-normalized scores). Under `"tfidf-idf"` the `bm25` / `reduce_frequent` knobs do
+not apply (they belong to class-based TF-IDF), and `doc_topic` still uses the
+class-based-TF-IDF window geometry. CETopic's canonical clusterer is K-Means, which
+leaves no `-1` noise; with the default HDBSCAN, noise documents are excluded from
+both the corpus and the cluster means.
+
 ### Where topica differs from the `bertopic` package
 
 topica reproduces the reference `bertopic` package on its default c-TF-IDF path,

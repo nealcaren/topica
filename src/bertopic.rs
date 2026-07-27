@@ -33,6 +33,26 @@
 use crate::{cluster, reduce, represent};
 use rayon::prelude::*;
 
+/// Build the `K x V` topic-word weight matrix under the selected `weighting`
+/// scheme. `"tfidf-idf"` is CETopic's TFIDF×IDF_i (Zhang et al. 2022, issue #581),
+/// which is its own weighting and so ignores the class-based TF-IDF knobs
+/// `bm25`/`reduce_frequent`; any other value (including the empty string from an
+/// old save) is BERTopic's class-based TF-IDF, tuned by those two knobs.
+fn build_ctfidf(
+    docs: &[Vec<u32>],
+    labels: &[i64],
+    vocab_size: usize,
+    weighting: &str,
+    bm25: bool,
+    reduce_frequent: bool,
+) -> Vec<Vec<f64>> {
+    if weighting == "tfidf-idf" {
+        represent::tfidf_idf_cluster(docs, labels, vocab_size)
+    } else {
+        represent::ctfidf_weighted(docs, labels, vocab_size, bm25, reduce_frequent)
+    }
+}
+
 /// A fitted BERTopic model. Exposes the branch's shared surface: `topic_word`
 /// (K x V, normalized c-TF-IDF), `doc_topic` (D x K, the approximate
 /// distribution), plus the hard `labels` (`-1` is noise).
@@ -55,6 +75,14 @@ pub struct BertopicModel {
     /// the same window weighting. `#[serde(default)]` for old-save compatibility.
     #[serde(default)]
     reduce_frequent: bool,
+    /// Topic-word weighting scheme used to build `topic_word`: `"c-tf-idf"`
+    /// (default, BERTopic's class-based TF-IDF, tuned by `bm25`/`reduce_frequent`)
+    /// or `"tfidf-idf"` (CETopic's TFIDF×IDF_i, issue #581). Kept so a post-fit
+    /// `merge_topics` / `reduce_outliers` rebuilds with the same scheme it was fit
+    /// with. `#[serde(default)]` deserializes an empty string for old saves, which
+    /// `build_ctfidf` reads as the c-TF-IDF default.
+    #[serde(default)]
+    weighting: String,
     /// Minimum window↔topic cosine that contributes to `approximate_distribution`;
     /// lower similarities are dropped (BERTopic's `min_similarity`). `0.0` keeps
     /// every non-negative similarity. `#[serde(default)]` for old-save
@@ -135,8 +163,15 @@ impl BertopicModel {
         stride: usize,
     ) {
         self.num_topics = topic_count(&self.labels);
-        self.ctfidf_raw =
-            represent::ctfidf_weighted(docs, &self.labels, vocab_size, bm25, reduce_frequent);
+        let weighting = self.weighting.clone();
+        self.ctfidf_raw = build_ctfidf(
+            docs,
+            &self.labels,
+            vocab_size,
+            &weighting,
+            bm25,
+            reduce_frequent,
+        );
         self.idf = idf_weights(docs, &self.labels, vocab_size, bm25);
         self.reduce_frequent = reduce_frequent;
         self.topic_word = topic_word_from_ctfidf(&self.ctfidf_raw);
@@ -158,7 +193,11 @@ impl BertopicModel {
 /// counted) to that count by greedily folding the most c-TF-IDF-similar pair, which
 /// differs from upstream BERTopic's ward agglomeration over topic embeddings (see
 /// the module docs, issue #488). `window`/`stride`/`min_similarity` parameterize the
-/// approximate distribution used for `doc_topic`.
+/// approximate distribution used for `doc_topic`. `weighting` selects the topic-word
+/// scheme (`"c-tf-idf"` default, or CETopic's `"tfidf-idf"`; see [`build_ctfidf`],
+/// issue #581); `bm25`/`reduce_frequent` tune the c-TF-IDF scheme only. `doc_topic`
+/// always uses the class-based-TF-IDF window geometry (the `bm25` idf), independent
+/// of `weighting`.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_bertopic(
     docs: &[Vec<u32>],
@@ -179,6 +218,7 @@ pub fn fit_bertopic(
     num_clusters: Option<usize>,
     resolution: f64,
     knn_neighbors: usize,
+    weighting: &str,
     umap_params: &reduce::UmapParams,
     seed: u64,
 ) -> BertopicModel {
@@ -240,8 +280,7 @@ pub fn fit_bertopic(
     // scheme, not upstream's ward agglomeration over topic embeddings (#488).
     if let Some(target) = nr_topics {
         while num_topics > target.max(1) {
-            let ctfidf =
-                represent::ctfidf_weighted(docs, &labels, vocab_size, bm25, reduce_frequent);
+            let ctfidf = build_ctfidf(docs, &labels, vocab_size, weighting, bm25, reduce_frequent);
             let (a, b) = most_similar_pair(&ctfidf);
             if a == b {
                 break;
@@ -254,7 +293,7 @@ pub fn fit_bertopic(
     // Final c-TF-IDF and its idf, then the topic-word distribution and the soft
     // document-topic distribution. The idf is computed with the same `bm25` setting
     // so `approximate_distribution` weights its windows the way the topics were.
-    let ctfidf_raw = represent::ctfidf_weighted(docs, &labels, vocab_size, bm25, reduce_frequent);
+    let ctfidf_raw = build_ctfidf(docs, &labels, vocab_size, weighting, bm25, reduce_frequent);
     let idf = idf_weights(docs, &labels, vocab_size, bm25);
     let topic_word = topic_word_from_ctfidf(&ctfidf_raw);
     // GMM contributes a calibrated soft membership (the EM responsibilities); every
@@ -282,6 +321,7 @@ pub fn fit_bertopic(
         ctfidf_raw,
         idf,
         reduce_frequent,
+        weighting: weighting.to_string(),
         min_similarity,
     }
 }
@@ -717,6 +757,7 @@ mod tests {
             None,
             1.0,
             15,
+            "c-tf-idf",
             &crate::reduce::UmapParams::default(),
             7,
         );
@@ -758,6 +799,7 @@ mod tests {
             None,
             1.0,
             15,
+            "c-tf-idf",
             &crate::reduce::UmapParams::default(),
             1,
         );
@@ -777,6 +819,60 @@ mod tests {
         for row in &m.doc_topic {
             let s: f64 = row.iter().sum();
             assert!((s - 1.0).abs() < 1e-9, "row sums to {s}");
+        }
+    }
+
+    #[test]
+    fn tfidf_idf_weighting_recovers_topics() {
+        // The CETopic weighting path (issue #581) must fit end-to-end and produce
+        // block-pure topics, just like the c-TF-IDF default, on planted data.
+        let (docs, emb, vocab) = planted(3, 40, 5);
+        let m = fit_bertopic(
+            &docs,
+            &emb,
+            vocab,
+            5,
+            false,
+            15,
+            15,
+            2,
+            None,
+            4,
+            1,
+            false,
+            false,
+            0.0,
+            "hdbscan",
+            None,
+            1.0,
+            15,
+            "tfidf-idf",
+            &crate::reduce::UmapParams::default(),
+            5,
+        );
+        assert!(
+            m.num_topics >= 3,
+            "expected >=3 topics, got {}",
+            m.num_topics
+        );
+        assert_eq!(m.weighting, "tfidf-idf");
+        // Each topic's top words come from a single planted block.
+        for t in 0..m.num_topics {
+            let blocks: std::collections::HashSet<usize> =
+                m.top_words(4, t).into_iter().map(|(w, _)| w / 5).collect();
+            assert_eq!(blocks.len(), 1, "topic {t} mixes blocks: {blocks:?}");
+        }
+        // topic_word rows stay valid distributions.
+        for row in &m.topic_word {
+            let s: f64 = row.iter().sum();
+            assert!((s - 1.0).abs() < 1e-9, "topic_word row sums to {s}");
+        }
+        // A merge rebuilds under the same (tfidf-idf) weighting and stays valid.
+        let mut m2 = m.clone();
+        m2.merge_topics(&docs, &[vec![0, 1]], vocab, false, false, 4, 1);
+        for row in &m2.topic_word {
+            let s: f64 = row.iter().sum();
+            assert!((s - 1.0).abs() < 1e-9, "post-merge row sums to {s}");
         }
     }
 
@@ -802,6 +898,7 @@ mod tests {
             None,
             1.0,
             15,
+            "c-tf-idf",
             &crate::reduce::UmapParams::default(),
             2,
         );
@@ -825,6 +922,7 @@ mod tests {
             None,
             1.0,
             15,
+            "c-tf-idf",
             &crate::reduce::UmapParams::default(),
             2,
         );
@@ -984,6 +1082,7 @@ mod tests {
             None,
             1.0,
             15,
+            "c-tf-idf",
             &crate::reduce::UmapParams::default(),
             3,
         );
@@ -1093,6 +1192,7 @@ mod tests {
             None,
             1.0,
             15,
+            "c-tf-idf",
             &crate::reduce::UmapParams::default(),
             1,
         );
