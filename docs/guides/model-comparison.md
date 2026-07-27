@@ -279,3 +279,51 @@ corpus, with K, and with how far each fit is run toward convergence (a
 lightly-iterated Gibbs run self-agrees less than a long one). The ordering across
 families, though — deterministic and batch-variational at the top, online VB at
 the bottom — is the stable, transferable lesson.
+
+## Comparing two fits statistically: `topica.compare`
+
+The ceiling above is exactly what makes a raw distance between two topics
+uninterpretable on its own: is a drop from cosine 1.00 to 0.80 real movement, or
+just the Monte-Carlo wander any refit shows? `topica.compare(fit_a, fit_b)` answers
+that question as a first-class operation rather than a manual diff.
+
+```python
+cmp = topica.compare(fit_a, fit_b)
+
+cmp.aligned            # matched topic pairs (Hungarian on topic-word distance)
+cmp.unmatched_a        # topics that vanished (only in A) — never force-paired
+cmp.unmatched_b        # topics that appeared (only in B)
+cmp.splits, cmp.merges # one-to-many outcomes, named honestly (esp. across different K)
+cmp.drift              # per-pair distance + whether it beats the reseed null
+cmp.prevalence_shift   # change in topic prevalence, with a standard error
+print(cmp.render())    # HTML card (same house as the manifest render()); to_markdown() too
+```
+
+Alignment reuses `align_topics` (Hungarian assignment), so a topic with no
+honest counterpart is reported as *appeared* / *vanished*, not paired to its
+least-bad neighbor — and a split (one topic in A → two in B) is a named outcome, not
+a silent mismatch. This matters most when the two fits have different K.
+
+**Drift needs a null.** Give `compare` a reseed baseline and each matched pair is
+flagged as drifting *beyond reseed noise* — a claim with a threshold, not a vibe:
+
+```python
+# refit A on the same corpus under fresh seeds; compare builds the per-topic floor
+cmp = topica.compare(fit_a, fit_b, refit=lambda s: topica.LDA(num_topics=20, seed=s).fit(corpus))
+
+# or pass refits you already have, or a flat similarity floor (a family ceiling)
+cmp = topica.compare(fit_a, fit_b, reseed_fits=[a2, a3, a4])
+cmp = topica.compare(fit_a, fit_b, baseline=0.70)   # e.g. an online-VB ceiling
+```
+
+The floor for each A-topic is the *worst* self-agreement it keeps across the
+reseeds; an A↔B match below that floor moved more than reseeding A alone did, so its
+pair reads `drifted=True`. Without a null, distances are still reported but
+`drifted` is `None` (honestly "unknown") — never a false verdict.
+
+Three uses, one tool: track which topics are stable / drift / are new across **two
+corpora or time slices**; measure how much apparent change is just **seed wander**;
+and use it as a **library regression test** — refit a canonical corpus across topica
+versions and flag when a "harmless" refactor silently moves the topics. It describes
+and tests *difference*; it does not build a consensus model (that is
+`ensemble`).
