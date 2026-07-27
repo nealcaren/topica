@@ -76,7 +76,8 @@ pub struct OnlineLDAModel {
     pub tau: f64,
     /// Robbins-Monro decay κ ∈ (0.5, 1].
     pub kappa: f64,
-    /// Minibatch size |B| used by [`fit`] and the default for `partial_fit`.
+    /// Minibatch size |B| used to chunk the corpus in [`fit`]. `partial_fit` treats
+    /// each supplied slice as one minibatch and does not consult this value.
     pub batch_size: usize,
     /// Per-document E-step fixed-point iteration cap.
     pub inner_iters: usize,
@@ -151,8 +152,8 @@ fn e_step_doc(
     exp_elogbeta: &[Vec<f64>],
     inner_iters: usize,
     mean_change_tol: f64,
-    mut sstats: Option<&mut [Vec<f64>]>,
-    mut word_bound: Option<&mut f64>,
+    sstats: Option<&mut [Vec<f64>]>,
+    word_bound: Option<&mut f64>,
 ) -> Vec<f64> {
     let k = alpha.len();
     let n = ids.len();
@@ -196,14 +197,18 @@ fn e_step_doc(
         }
         recompute_phinorm(&mut phinorm, &exp_elogtheta);
 
-        let mean_change: f64 =
-            gamma.iter().zip(&last).map(|(a, b)| (a - b).abs()).sum::<f64>() / k as f64;
+        let mean_change: f64 = gamma
+            .iter()
+            .zip(&last)
+            .map(|(a, b)| (a - b).abs())
+            .sum::<f64>()
+            / k as f64;
         if mean_change < mean_change_tol {
             break;
         }
     }
 
-    if let Some(ss) = sstats.as_deref_mut() {
+    if let Some(ss) = sstats {
         for (i, &w) in ids.iter().enumerate() {
             let ratio = cnts[i] / phinorm[i];
             for t in 0..k {
@@ -211,7 +216,7 @@ fn e_step_doc(
             }
         }
     }
-    if let Some(wb) = word_bound.as_deref_mut() {
+    if let Some(wb) = word_bound {
         // Σ_w n_w · ln φnorm_w = Σ_w n_w · ln Σ_k exp(Elogθ_k + Elogβ_{kw}).
         for i in 0..n {
             *wb += cnts[i] * phinorm[i].ln();
@@ -434,10 +439,15 @@ pub fn fit<R: Rng>(
     mean_change_tol: f64,
     iters: usize,
     convergence_tol: f64,
+    total_docs_override: Option<f64>,
     rng: &mut R,
 ) -> OnlineLDAModel {
     let num_types = corpus.num_types();
     let d = corpus.num_docs();
+    // The natural-gradient scaling uses the declared streaming corpus size when the
+    // caller supplied one (so `fit(first_chunk)` with `total_docs=D` is already on
+    // the D-corpus gradient), otherwise the actual fit-corpus size.
+    let total_docs = total_docs_override.unwrap_or(d.max(1) as f64).max(1.0);
     let mut model = OnlineLDAModel::new(
         num_topics,
         num_types,
@@ -448,7 +458,7 @@ pub fn fit<R: Rng>(
         batch_size,
         inner_iters,
         mean_change_tol,
-        d.max(1) as f64,
+        total_docs,
         rng,
     );
 
@@ -597,6 +607,7 @@ mod tests {
             1e-3,
             100,
             0.0,
+            None,
             &mut rng,
         )
     }

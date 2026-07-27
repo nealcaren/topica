@@ -126,7 +126,9 @@ impl OnlineLDA {
                 .collect()
         } else {
             data.extract::<Vec<Vec<String>>>().map_err(|_| {
-                PyValueError::new_err("expected a Corpus or a list of token lists (list[list[str]])")
+                PyValueError::new_err(
+                    "expected a Corpus or a list of token lists (list[list[str]])",
+                )
             })?
         };
 
@@ -296,7 +298,9 @@ impl OnlineLDA {
 
         let (model, corpus) = py.allow_threads(move || {
             let mut rng = Pcg64Mcg::seed_from_u64(seed);
-            let mut m = online_lda::fit(
+            // A user-declared streaming corpus size scales the natural gradient for
+            // BOTH the batch fit and later partial_fit; otherwise D = fit-corpus size.
+            let m = online_lda::fit(
                 &corpus,
                 num_topics,
                 alpha,
@@ -308,13 +312,9 @@ impl OnlineLDA {
                 mct,
                 iters,
                 convergence_tol,
+                total_docs_override,
                 &mut rng,
             );
-            // Honor a user-declared streaming corpus size for later partial_fit
-            // gradient scaling; batch fit otherwise assumes D = corpus size.
-            if let Some(td) = total_docs_override {
-                m.total_docs = td.max(1.0);
-            }
             (m, corpus)
         });
 
@@ -363,6 +363,11 @@ impl OnlineLDA {
         let docs = self.map_to_ids(data)?;
         let model = self.fitted_model()?;
         let theta = py.allow_threads(|| model.transform(&docs));
+        // Preserve the (0, num_topics) shape on an empty input rather than the
+        // (0, 0) that `vecs_to_arr2` returns for an empty row set.
+        if theta.is_empty() {
+            return Ok(Array2::<f64>::zeros((0, self.num_topics)).to_pyarray_bound(py));
+        }
         Ok(vecs_to_arr2(&theta).to_pyarray_bound(py))
     }
 
@@ -469,7 +474,10 @@ impl OnlineLDA {
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word);
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
-        Ok(Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops)).to_pyarray_bound(py))
+        Ok(
+            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
+                .to_pyarray_bound(py),
+        )
     }
 
     /// Save the fitted model to `path` (topica's binary format).

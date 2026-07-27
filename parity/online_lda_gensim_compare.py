@@ -113,9 +113,16 @@ def main() -> int:
     K = len(BLOCKS)
     docs = planted_docs()
 
+    # The doc-topic prior is matched explicitly: topica's alpha_sum=K gives a
+    # per-topic alpha of 1.0; gensim's default is 'symmetric' (1/K per topic), so we
+    # pass gensim alpha=1.0 to line the two priors up (every other knob is matched
+    # below).
+    per_topic_alpha = 1.0
+
     # --- topica OnlineLDA -------------------------------------------------
     tm = topica.OnlineLDA(
-        K, batch_size=64, tau=1.0, kappa=0.7, beta=0.01, seed=42
+        K, alpha_sum=per_topic_alpha * K, batch_size=64, tau=1.0, kappa=0.7,
+        beta=0.01, seed=42,
     ).fit(docs, iters=20)
     tw_topica = np.asarray(tm.topic_word)
     vocab = list(tm.vocabulary)
@@ -127,6 +134,7 @@ def main() -> int:
         corpus=bow,
         id2word=dictionary,
         num_topics=K,
+        alpha=per_topic_alpha,  # match topica's per-topic alpha (default is 1/K)
         chunksize=64,      # == batch_size
         offset=1.0,        # == tau
         decay=0.7,         # == kappa
