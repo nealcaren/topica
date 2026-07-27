@@ -2436,7 +2436,14 @@ class GSDMM:
         alpha: float = 0.1,
         beta: float = 0.1,
         seed: int = 42,
-    ) -> None: ...
+        num_threads: int = 1,
+    ) -> None:
+        """num_threads must be 1. Unlike the other collapsed-Gibbs count models
+        (DMR, LabeledLDA, SeededLDA, BTM), GSDMM is not parallelized: its Movie
+        Group Process discovers the cluster count K via within-sweep reinforcement,
+        which approximate-parallel (AD-LDA) sampling would break, making K depend on
+        the thread count. Passing num_threads > 1 raises ValueError."""
+        ...
     def fit(
         self,
         data: Corpus | Sequence[Sequence[str]],
@@ -2444,11 +2451,15 @@ class GSDMM:
         iters: int = 30,
         progress_interval: int = 0,
         report_interval: Optional[int] = None,
+        num_threads: int = 1,
     ) -> "GSDMM":
         """Fit by the Movie Group Process. progress_interval controls the
         cluster-discovery trace (0 = auto ~50 points).
 
-        report_interval is a deprecated alias for progress_interval."""
+        report_interval is a deprecated alias for progress_interval.
+
+        num_threads must be 1; GSDMM is not parallelized (cluster-count discovery
+        is inherently sequential). num_threads > 1 raises ValueError."""
         ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
