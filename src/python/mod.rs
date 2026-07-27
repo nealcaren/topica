@@ -11374,9 +11374,13 @@ impl SupervisedLDA {
     /// early-stop heuristic on the bound trace, not a convergence guarantee.
     /// `check_every` is how often, in EM iterations, the bound is recorded and the
     /// `convergence_tol` test is applied.
+    /// `num_threads` caps the worker pool for the parallel per-document variational
+    /// E-step (`None`/`0` = all cores). Output is deterministic regardless of the
+    /// worker count, so this controls only resource use, not results; it has no
+    /// effect on the serial `inference="gibbs"` backend.
     #[pyo3(signature = (data, y, *, iters=25, var_iters=15,
                         keep_theta_draws=true, num_theta_draws=25,
-                        convergence_tol=0.0_f64, check_every=1_usize))]
+                        convergence_tol=0.0_f64, check_every=1_usize, num_threads=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -11388,6 +11392,7 @@ impl SupervisedLDA {
         num_theta_draws: usize,
         convergence_tol: f64,
         check_every: usize,
+        num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -11438,33 +11443,36 @@ impl SupervisedLDA {
         let use_gibbs = slf.inference == "gibbs";
 
         let (model, ll_history, converged_flag, corpus) = py.allow_threads(move || {
-            let (m, hist, conv) = if use_gibbs {
-                // Gibbs ignores var_iters (no per-document E-step) and never early
-                // stops; convergence_tol is not applicable.
-                slda::fit_slda_gibbs(
-                    &corpus.docs,
-                    &y,
-                    num_types,
-                    k,
-                    alpha,
-                    iters,
-                    check_every,
-                    &mut rng,
-                )
-            } else {
-                slda::fit_slda(
-                    &corpus.docs,
-                    &y,
-                    num_types,
-                    k,
-                    alpha,
-                    iters,
-                    var_iters,
-                    convergence_tol,
-                    check_every,
-                    &mut rng,
-                )
-            };
+            let (m, hist, conv) = run_with_threads(num_threads, || {
+                if use_gibbs {
+                    // Gibbs ignores var_iters (no per-document E-step) and never
+                    // early stops; convergence_tol is not applicable. It is serial,
+                    // so the worker pool is inert here.
+                    slda::fit_slda_gibbs(
+                        &corpus.docs,
+                        &y,
+                        num_types,
+                        k,
+                        alpha,
+                        iters,
+                        check_every,
+                        &mut rng,
+                    )
+                } else {
+                    slda::fit_slda(
+                        &corpus.docs,
+                        &y,
+                        num_types,
+                        k,
+                        alpha,
+                        iters,
+                        var_iters,
+                        convergence_tol,
+                        check_every,
+                        &mut rng,
+                    )
+                }
+            });
             (m, hist, conv, corpus)
         });
 

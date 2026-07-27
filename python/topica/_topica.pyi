@@ -1523,6 +1523,7 @@ class SupervisedLDA:
         num_theta_draws: int = 25,
         convergence_tol: float = 0.0,
         check_every: int = 1,
+        num_threads: int | None = None,
     ) -> "SupervisedLDA":
         """Fit the model. `y` is the per-document response (length = number of
         documents). With inference="variational", `iters` is EM iterations and
@@ -4434,6 +4435,7 @@ class NMF:
         *,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
+        num_threads: int | None = None,
     ) -> "NMF":
         """Fit on a Corpus or a list of token lists. `iters` is the maximum number
         of multiplicative-update iterations (default 200). convergence_tol
@@ -4507,7 +4509,12 @@ class LSA:
         """weighting is 'tfidf' (default, classic LSI) or 'count'. seed seeds the
         randomized-SVD sketch."""
         ...
-    def fit(self, data: Corpus | Sequence[Sequence[str]]) -> "LSA":
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        *,
+        num_threads: int | None = None,
+    ) -> "LSA":
         """Fit on a Corpus or a list of token lists. The SVD is a direct solve, so
         there is no iters argument."""
         ...

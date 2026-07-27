@@ -206,3 +206,15 @@ def test_nndsvd_at_exactly_the_rank_is_accepted():
     m = topica.NMF(3, init="nndsvd")
     m.fit(docs, iters=5)  # must not raise/panic
     assert m.topic_word.shape[0] == 3
+
+
+def test_num_threads_is_deterministic_resource_knob():
+    """num_threads bounds the multiplicative-update matmul pool; because NMF is a
+    deterministic solve, the output must be identical across worker counts (the
+    knob controls only resource use). None/0 mean 'all cores' and are accepted."""
+    docs, _vocab, _truth = _planted(seed=2)
+    base = topica.NMF(3, seed=1).fit(docs, iters=40, num_threads=1)
+    for nt in (2, 4, 8, 0, None):
+        m = topica.NMF(3, seed=1).fit(docs, iters=40, num_threads=nt)
+        assert np.array_equal(base.topic_word, m.topic_word), f"num_threads={nt}"
+        assert np.array_equal(base.doc_topic, m.doc_topic), f"num_threads={nt}"

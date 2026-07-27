@@ -168,14 +168,18 @@ impl NMF {
 
     /// Fit on `data` (a Corpus or list of token lists). `iters` is the maximum
     /// number of multiplicative-update iterations (default 200). `convergence_tol`
-    /// overrides the constructor value for this run (when given).
-    #[pyo3(signature = (data, *, iters=None, convergence_tol=None))]
+    /// overrides the constructor value for this run (when given). `num_threads` caps
+    /// the worker pool for the parallel multiplicative-update matmuls (`None`/`0` =
+    /// all cores); output is deterministic regardless of the worker count, so it
+    /// controls only resource use, not results.
+    #[pyo3(signature = (data, *, iters=None, convergence_tol=None, num_threads=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
+        num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
         let tol = convergence_tol.unwrap_or(slf.convergence_tol);
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
@@ -233,7 +237,9 @@ impl NMF {
             slf.seed,
         );
         let (model, corpus) = py.allow_threads(move || {
-            let m = nmf::fit_nmf(&corpus.docs, k, num_types, bl, ini, tfidf, it, tol, seed);
+            let m = run_with_threads(num_threads, || {
+                nmf::fit_nmf(&corpus.docs, k, num_types, bl, ini, tfidf, it, tol, seed)
+            });
             (m, corpus)
         });
         slf.model = Some(model);
@@ -526,11 +532,16 @@ impl LSA {
     }
 
     /// Fit on `data` (a Corpus or list of token lists). The SVD is a direct solve,
-    /// so there is no `iters` argument.
+    /// so there is no `iters` argument. `num_threads` caps the worker pool for the
+    /// parallel matmuls in the truncated SVD (`None`/`0` = all cores); output is
+    /// deterministic regardless of the worker count, so it controls only resource
+    /// use, not results.
+    #[pyo3(signature = (data, *, num_threads=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
+        num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -565,7 +576,9 @@ impl LSA {
         }
         let (k, tfidf, seed) = (slf.num_topics, slf.weighting_tfidf, slf.seed);
         let (model, corpus) = py.allow_threads(move || {
-            let m = lsa::fit_lsa(&corpus.docs, k, num_types, tfidf, seed);
+            let m = run_with_threads(num_threads, || {
+                lsa::fit_lsa(&corpus.docs, k, num_types, tfidf, seed)
+            });
             (m, corpus)
         });
         slf.model = Some(model);

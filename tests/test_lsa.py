@@ -150,3 +150,13 @@ def test_input_validation():
     empty = topica.LSA(3)
     with pytest.raises(Exception):
         empty.fit([])
+
+
+def test_num_threads_is_deterministic_resource_knob():
+    """num_threads bounds the truncated-SVD matmul pool; LSA is a direct solve, so
+    the output must be identical across worker counts. None/0 = all cores."""
+    docs, _vocab = _planted(seed=2)
+    base = topica.LSA(3, seed=1).fit(docs, num_threads=1)
+    for nt in (2, 4, 8, 0, None):
+        m = topica.LSA(3, seed=1).fit(docs, num_threads=nt)
+        assert np.array_equal(base.topic_word, m.topic_word), f"num_threads={nt}"
