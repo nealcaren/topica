@@ -124,7 +124,8 @@ and half `O(N·V)` elementwise (batchnorm apply, vocab softmax, reconstruction).
    `matrixmultiply` to a direct dependency (one line; BLAS-free, no new transitive
    weight). Re-baseline the golden fixtures once and re-run the FD + parity sweeps.
    Prove `np.array_equal` for `topic_word`/`doc_topic` across two thread counts and
-   two runs. Ship — this alone is a real single-threaded win for all six models.
+   two runs. Ship — this alone is a real single-threaded win for all five
+   dense-decoder models (ProdLDA, CombinedTM, ZeroShotTM, InfoCTM, Scholar).
 2. **B — GEMM the encoder** layer-2 + head projections; keep layer-1 sparse.
 3. **C — turn on `matrixmultiply` threading** for free multi-core scaling that stays
    bit-identical across thread counts (verified here).
