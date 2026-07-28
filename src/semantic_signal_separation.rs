@@ -130,6 +130,14 @@ pub fn fit<R: Rng>(
     let m = doc_emb.first().map(|r| r.len()).unwrap_or(0);
     let k = num_topics;
     let vv = vocab_emb.len();
+    // FastICA cannot extract more components than samples or features; the binding
+    // rejects this before calling. Guard the core too so a direct Rust caller gets a
+    // clear failure instead of an out-of-bounds panic in `whiten_kw` (where L clamps
+    // to `min(k+10, m, d)` and the top-K read would index past `l`).
+    debug_assert!(
+        k <= d.min(m),
+        "num_topics ({k}) must be <= min(num_docs {d}, embedding_dim {m}) for FastICA"
+    );
     let dp = d as f64;
     let sqrt_d = dp.sqrt();
 
@@ -178,8 +186,9 @@ pub fn fit<R: Rng>(
     let mut history = Vec::new();
     let mut converged = false;
     for ii in 0..iters {
-        let wx = w.dot(&x1); // K x D
-        let gwtx = wx.mapv(f64::tanh);
+        // gwtx = tanh(W @ X1) (K x D). `mapv_into` applies tanh in place on the GEMM
+        // output instead of allocating a second K x D array each iteration.
+        let gwtx = w.dot(&x1).mapv_into(f64::tanh);
         // g_mean[j] = mean_i (1 - gwtx[j,i]²).
         let mut g_mean = vec![0.0f64; k];
         for j in 0..k {
@@ -342,7 +351,8 @@ pub fn fit<R: Rng>(
 
     // 8. Nonnegative, row-normalized φ / θ for the shared surface.
     let topic_word = positive_normalized_rows(&components);
-    let doc_topic = positive_normalized_rows(&source_scores_rows(&s));
+    // `s` is already the D x K row layout the normalizer wants (no clone needed).
+    let doc_topic = positive_normalized_rows(&s);
 
     SemanticSignalSeparationModel {
         num_topics: k,
@@ -355,12 +365,6 @@ pub fn fit<R: Rng>(
         fit_history: history,
         converged,
     }
-}
-
-/// Identity pass-through kept for readability at the call site (the sources are
-/// already the D x K row layout the normalizer wants).
-fn source_scores_rows(s: &[Vec<f64>]) -> Vec<Vec<f64>> {
-    s.to_vec()
 }
 
 /// The positive pole of each row, normalized to sum to 1. A row with no positive

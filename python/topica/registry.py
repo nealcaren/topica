@@ -177,7 +177,7 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("Top2Vec", "embedding", ("text", "embeddings"), "clustering", "seed-reproducible", (),
            "Topics as dense regions in a joint document-word embedding space.",
            "guides/embedding.md"),
-        _m("SemanticSignalSeparation", "embedding", ("text", "embeddings"), "ica", "bit-exact", (),
+        _m("SemanticSignalSeparation", "embedding", ("text", "embeddings"), "ica", "seed-reproducible", (),
            "Topics as independent axes of semantic space (S3, Kardos et al. 2025): FastICA over the document embeddings, with each word's importance read off by projecting the vocabulary embeddings onto each axis. Signed poles.",
            "guides/models.md#semanticsignalseparation"),
         _m("ETM", "embedding", ("text", "embeddings"), "variational", "seed-reproducible", (),

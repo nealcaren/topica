@@ -173,6 +173,11 @@ impl SemanticSignalSeparation {
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
+        if corpus.num_types() == 0 {
+            return Err(PyValueError::new_err(
+                "corpus has an empty vocabulary; every topic_word row would be zero-width",
+            ));
+        }
 
         let doc_emb = parse_features(doc_embeddings)?;
         if doc_emb.len() != corpus.num_docs() {
