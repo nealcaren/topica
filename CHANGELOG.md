@@ -62,7 +62,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   unchanged **except**: `llm_embed` drops the old `batch=` keyword (the SDKs batch
   natively), it no longer reaches in-process `sentence-transformers` models (compute
   those embeddings directly and pass the array, as every embedding model already
-  accepts), and Anthropic has no embedding API (`llm_embed` raises for it).
+  accepts), and Anthropic has no embedding API (`llm_embed` raises for it). Provider
+  routing is now by model family, not by the old `llm`-CLI plugin slug: a prefixed
+  name like `"ollama/qwen3"` or `"openrouter/…"` resolves by its last path segment
+  (so it defaults to OpenAI) — point at a local/alternate endpoint with `base_url=`
+  instead.
 - **ProdLDA-family VAE decoder now uses a BLAS-free GEMM (2.7–6.8× faster on the
   decoder)** (#378). The hand-coded dense-decoder VAE backbone shared by `ProdLDA`,
   `CombinedTM`, `ZeroShotTM`, `InfoCTM`, and `Scholar` spent most of a fit

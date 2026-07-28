@@ -194,10 +194,16 @@ def load_embeddings(path, *, with_meta=False):
 def _detect_embed_provider(model: str, base_url) -> str:
     """Pick an embedding provider from the model name. ``base_url`` forces an
     OpenAI-compatible endpoint. OpenAI is the default (``text-embedding-3-*``,
-    ``text-embedding-ada-002``); Gemini for ``gemini-embedding-*``."""
+    ``text-embedding-ada-002``); Gemini for ``gemini-embedding-*``. A ``claude-*``
+    model resolves to ``anthropic`` so ``llm_embed`` raises the clear "no
+    embedding API" error rather than mis-routing to OpenAI (mirrors
+    :func:`topica.labeling._detect_provider`)."""
     if base_url is not None:
         return "openai"
-    if model.lower().split("/")[-1].startswith("gemini"):
+    m = model.lower().split("/")[-1]  # tolerate "anthropic/claude-...", "models/gemini-..."
+    if m.startswith("claude"):
+        return "anthropic"
+    if m.startswith("gemini"):
         return "gemini"
     return "openai"
 
@@ -236,6 +242,11 @@ def _gemini_embed(items, model, *, key):
     # Some google-genai versions expose a single-item embed as `.embedding`
     # (singular) with `.embeddings` left None; fall back so a 1-text call works.
     embs = resp.embeddings if resp.embeddings is not None else [resp.embedding]
+    if len(embs) != len(items):  # never silently drop/duplicate rows
+        raise RuntimeError(
+            f"Gemini embed_content returned {len(embs)} embeddings for "
+            f"{len(items)} inputs."
+        )
     return np.asarray([e.values for e in embs], dtype=float)
 
 

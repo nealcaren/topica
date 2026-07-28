@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 import topica
-from topica import labeling
+from topica import embedding, labeling
 
 
 # --- fake SDK modules ---------------------------------------------------------
@@ -233,6 +233,52 @@ def test_gemini_embed(monkeypatch):
     arr = topica.llm_embed(["aa", "bbbb"], model="gemini-embedding-001")
     assert arr.shape == (2, 3)
     assert cap["gemini_embed"]["model"] == "gemini-embedding-001"
+
+
+@pytest.mark.parametrize("model,base_url,expected", [
+    ("text-embedding-3-small", None, "openai"),
+    ("gemini-embedding-001", None, "gemini"),
+    ("models/gemini-embedding-001", None, "gemini"),
+    ("claude-3-5-haiku-latest", None, "anthropic"),
+    ("anthropic/claude-3-5-sonnet", None, "anthropic"),
+    ("text-embedding-3-small", "http://localhost:11434/v1", "openai"),
+])
+def test_detect_embed_provider(model, base_url, expected):
+    assert embedding._detect_embed_provider(model, base_url) == expected
+
+
+def test_embed_claude_raises_no_api(monkeypatch):
+    # A claude model auto-detects to anthropic, so the clear "no embedding API"
+    # error fires instead of mis-routing to OpenAI.
+    cap = {}
+    _install(monkeypatch, cap)
+    with pytest.raises(ValueError, match="no embedding API"):
+        topica.llm_embed(["a", "b"], model="claude-3-5-haiku-latest")
+    assert "openai_embed" not in cap  # never dispatched to OpenAI
+
+
+def test_embed_unknown_provider_raises(monkeypatch):
+    cap = {}
+    _install(monkeypatch, cap)
+    with pytest.raises(ValueError, match="unknown embedding provider"):
+        topica.llm_embed(["a", "b"], model="whatever", provider="cohere")
+
+
+def test_gemini_embed_length_mismatch_raises(monkeypatch):
+    # A response whose embedding count disagrees with the input count must error,
+    # never silently return the wrong number of rows.
+    cap = {}
+    _install(monkeypatch, cap)
+    genai = sys.modules["google.genai"]
+    short = types.SimpleNamespace(
+        embeddings=[types.SimpleNamespace(values=[1.0, 2.0, 3.0])]
+    )
+    monkeypatch.setattr(
+        genai.Client, "__init__", lambda self, *, api_key=None: setattr(
+            self, "models", types.SimpleNamespace(
+                embed_content=lambda *, model, contents: short)))
+    with pytest.raises(RuntimeError, match="returned 1 embeddings for 2 inputs"):
+        topica.llm_embed(["aa", "bbbb"], model="gemini-embedding-001")
 
 
 def test_embed_cache_embeds_once(tmp_path, monkeypatch):
