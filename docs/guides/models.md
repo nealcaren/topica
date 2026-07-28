@@ -92,6 +92,7 @@ generated from `python/topica/registry.py`.
 |---|---|---|---|---|
 | `BERTopic` | text, embeddings | clustering | seed-reproducible | Cluster document embeddings; label topics by class-based TF-IDF. |
 | `Top2Vec` | text, embeddings | clustering | seed-reproducible | Topics as dense regions in a joint document-word embedding space. |
+| `SemanticSignalSeparation` | text, embeddings | ica | seed-reproducible | Topics as independent axes of semantic space (S3, Kardos et al. 2025): FastICA over the document embeddings, with each word's importance read off by projecting the vocabulary embeddings onto each axis. Signed poles. |
 | `ETM` | text, embeddings | variational | seed-reproducible | Embedded topic model: topic-word distributions factored through word embeddings. |
 | `FASTopic` | text, embeddings | optimal-transport | seed-reproducible | Topics from optimal-transport plans between document, topic, and word embeddings. |
 | `EmbeddingLDA` | text, embeddings, seeds | gibbs | seed-reproducible | Seeded LDA whose seed sets are expanded with nearest neighbors in an embedding space. |
@@ -774,6 +775,27 @@ LSA is not a probabilistic topic model, and its outputs reflect that. `topic_wor
 The SVD is unique only up to a per-component sign, so we fix the sign with the `svd_flip` convention scikit-learn uses: for each component we flip the `(u, v)` pair together so the largest-magnitude entry of the right singular vector is positive. That makes the fit deterministic and directly comparable to the reference. `weighting` builds `X` from topica's own TF-IDF (default, classic LSI) or from raw counts. The Rust core reuses NMF's BLAS-free randomized truncated SVD (rayon-parallel dense products, sparse document-term products), so fits are bit-identical regardless of thread count. The SVD is a direct solve, so there is no `iters` argument, `fit_history` is empty, and `converged` is `None`.
 
 We validate against `sklearn.decomposition.TruncatedSVD` (`algorithm='randomized'`) in `parity/lsa_vs_sklearn.py`. On the same document-term matrix, after applying `svd_flip` on both sides, topica reproduces sklearn's solution exactly: per-component right-singular-vector cosine 1.000000, singular values agreeing to a maximum relative error of 1.5e-9, and document-coordinate correlation 1.000000. Because the truncated SVD is well-posed (a unique solution up to sign when the singular values are distinct), this is a match-the-solution result, not agreement within a noise band.
+
+## SemanticSignalSeparation
+
+Semantic Signal Separation ([S³; Kardos, Kostkan, Enevoldsen, Vermillet, Nielbo & Rocca, ACL 2025](https://aclanthology.org/2025.acl-long.32/)) treats topics as *independent axes* of semantic space rather than distributions over a bag of words. It runs FastICA on the document embeddings; each recovered independent component is a topic axis. A word's importance to a topic comes from projecting the vocabulary embeddings onto that axis, so the topics are described in words without any bag-of-words modelling. The reference is the flagship model of [turftopic](https://github.com/x-tabdeveloping/turftopic), and the authors report it is the fastest contextual topic model.
+
+Like topica's other embedding-native models, you bring the embeddings: a `doc_embeddings` matrix (one row per document) and a `vocab_embeddings` matrix (one row per vocabulary term) in the same space. `topica.llm_embed(texts, model=...)` can build them.
+
+```python
+m = topica.SemanticSignalSeparation(num_topics=10, seed=1)
+m.fit(docs, doc_embeddings, vocab_embeddings, vocabulary=vocab)
+m.top_words(10, topic=0)                     # positive pole of axis 0
+m.top_words(10, topic=0, pole="negative")    # negative pole of axis 0
+m.components                                 # signed per-word importance (K x V)
+m.source_scores                              # signed document loadings (D x K)
+```
+
+ICA axes are **signed**: each topic has a positive and a negative pole, and both are meaningful (an axis might run from, say, sports vocabulary at one pole to finance vocabulary at the other). `top_words` returns the positive pole by default; pass `pole="negative"` for the opposite end. The signed native outputs are `components` (K x V, the per-word importance under `feature_importance`) and `source_scores` (D x K, the raw ICA document loadings); `axial_components` exposes the unweighted projection (turftopic's `axial_components_`). For the shared analysis surface, `topic_word` (φ) and `doc_topic` (θ) are the nonnegative, row-normalized positive poles of those two, so coherence, `topic_table`, and the effect estimators work unchanged.
+
+`feature_importance` chooses how per-word importance is scored, matching turftopic: `"combined"` (default, `axial² × angular`, sharp and signed), `"axial"` (the raw projection), or `"angular"` (cosine of each word's axial vector to the axis). FastICA follows scikit-learn's defaults (logcosh, parallel, unit-variance whitening, `iters=200`, `convergence_tol=1e-4`); the whitening uses a seeded randomized range finder for the top-K components (fast, no external linear-algebra dependency), so a fixed `seed` reproduces the fit bit-for-bit. ICA recovers each axis only up to sign, so we orient each axis to put its heavier word mass on the positive pole; a corpus term you supply no embedding for gets exactly zero importance rather than a spurious score from a placeholder vector.
+
+We validate against the reference algorithm (scikit-learn's `FastICA` with turftopic's projection) in `parity/s3_compare.py`. On planted independent-source embeddings, after Hungarian-aligning the signed component matrices, topica reproduces the reference's axes at mean absolute cosine 1.000, inside the reference's own seed-to-seed spread. Because the sources are well-separated the ICA solution is effectively unique up to sign and permutation, so this is a match-the-solution result.
 
 ## AnchorLDA
 

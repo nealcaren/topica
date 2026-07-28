@@ -466,6 +466,23 @@ def _fit_top2vec(iters=None):
     return m.doc_topic, m.topic_word, m.num_topics
 
 
+def _fit_semanticsignalseparation(iters=None):
+    # S³ (FastICA over embeddings): doc and vocab embeddings share one space. Each
+    # planted block is an independent one-hot signal, so ICA recovers the K axes.
+    docs, vocab = _planted_blocks(k=K, block=8, n=300, seed=0)
+    doc_emb = _doc_embeddings(docs, k=K, block=8, seed=0)  # (n, K+2)
+    e = K + 2
+    rng = np.random.default_rng(0)
+    vocab_emb = np.zeros((len(vocab), e))
+    for i, w in enumerate(vocab):
+        b = int(w.split("w")[0][1:])  # "b3w5" -> 3
+        vocab_emb[i, b] += 3.0
+        vocab_emb[i] += rng.normal(0, 0.2, e)
+    m = topica.SemanticSignalSeparation(K, seed=1)
+    m.fit(docs, doc_emb, vocab_emb, vocabulary=vocab)
+    return m.doc_topic, m.topic_word, K
+
+
 def _fit_etm(iters=80):
     docs, vocab = _planted_blocks(k=K, block=8, n=240, length=12, seed=0)
     _, word_emb = _planted_embeddings(k=K, block=8, seed=0)
@@ -624,6 +641,7 @@ FIT_ADAPTERS = {
     "PA": _fit_pa,
     "BERTopic": _fit_bertopic,
     "Top2Vec": _fit_top2vec,
+    "SemanticSignalSeparation": _fit_semanticsignalseparation,
     "ETM": _fit_etm,
     "IdealPointTM": _fit_idealpoint,
     "IdealPointSentenceTM": _fit_sentence_ideal,
