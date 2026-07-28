@@ -81,6 +81,10 @@ pub mod bertopic;
 #[cfg(feature = "embeddings")]
 pub mod cluster;
 pub mod fastopic;
+// Faithful HDBSCAN* cluster extraction (replaces petal-clustering's diverging
+// selection, issue #555). Behind `embeddings`, its only consumer (`cluster`).
+#[cfg(feature = "embeddings")]
+pub mod hdbscan;
 #[cfg(feature = "embeddings")]
 pub mod reduce;
 #[cfg(feature = "embeddings")]

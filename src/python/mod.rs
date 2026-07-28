@@ -9021,6 +9021,27 @@ fn warn_stochastic(py: Python<'_>, method: &str) -> PyResult<()> {
     Ok(())
 }
 
+/// Debug harness (issue #555): cluster `data` (a 2D float array / list of lists)
+/// directly with topica's in-house HDBSCAN (`petal-clustering`), returning the
+/// per-row integer labels (`-1` = noise). Bypasses every reducer/normalization so
+/// petal's cluster selection can be compared 1:1 against the reference `hdbscan`
+/// package on an identical point set. `min_samples=0` means "use min_cluster_size".
+#[pyfunction]
+#[pyo3(signature = (data, min_cluster_size=15, min_samples=0))]
+fn _hdbscan_labels_debug(
+    data: &Bound<'_, PyAny>,
+    min_cluster_size: usize,
+    min_samples: usize,
+) -> PyResult<Vec<i64>> {
+    let rows = parse_features(data)?;
+    let ms = if min_samples == 0 {
+        min_cluster_size
+    } else {
+        min_samples
+    };
+    Ok(crate::cluster::hdbscan_labels(&rows, min_cluster_size, ms))
+}
+
 /// Project a high-dimensional array to a low-dimensional layout (for plotting or
 /// clustering). `method` is "pca" (default, deterministic, distance-faithful),
 /// "umap", or "tsne"; the latter two preserve local neighborhoods but distort
@@ -15743,6 +15764,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(inspect_semantic_coherence, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_residual_dispersion, m)?)?;
     m.add_function(wrap_pyfunction!(project, m)?)?;
+    m.add_function(wrap_pyfunction!(_hdbscan_labels_debug, m)?)?;
     m.add_function(wrap_pyfunction!(set_experimental, m)?)?;
     m.add_function(wrap_pyfunction!(experimental_is_enabled, m)?)?;
     m.add_function(wrap_pyfunction!(_sts_poisson_lasso, m)?)?;

@@ -229,7 +229,7 @@ impl Top2Vec {
     #[pyo3(signature = (*, n_components=5, min_cluster_size=15, min_samples=None,
                         reducer="umap", n_neighbors=15, clusterer="hdbscan",
                         num_clusters=None, resolution=1.0, knn_neighbors=15,
-                        diagnostics=true, min_dist=0.1, spread=1.0, n_epochs=0,
+                        diagnostics=true, min_dist=0.0, spread=1.0, n_epochs=0,
                         negative_sample_rate=5, repulsion_strength=1.0, metric="cosine",
                         seed=42))]
     #[allow(clippy::too_many_arguments)]
