@@ -55,7 +55,15 @@ class Bunch(dict):
             raise AttributeError(key) from exc
 
     __setattr__ = dict.__setitem__
-    __delattr__ = dict.__delitem__
+
+    def __delattr__(self, key):  # `del b.missing` must raise AttributeError
+        try:
+            del self[key]
+        except KeyError as exc:  # pragma: no cover - trivial
+            raise AttributeError(key) from exc
+
+    def __dir__(self):  # surface the keys for REPL/Jupyter tab-completion
+        return list(self.keys()) + list(super().__dir__())
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
         return f"Bunch({', '.join(self.keys())})"
@@ -305,9 +313,11 @@ def load_ng20_minilm(*, return_path: bool = False):
     - ``word_embeddings`` — ``(vocab, 384)`` float16 MiniLM vectors
     - ``meta`` — provenance string
 
-    Embeddings are stored as float16 to keep the download small; cast to
-    ``float32`` if a model needs it. Downloaded once and cached. Pass
-    ``return_path=True`` for the cached ``.npz`` path instead of the Bunch.
+    Embeddings are stored as float16 to keep the download small. topica's own
+    models accept them directly (inputs are coerced internally); cast to
+    ``float32`` only for an external tool that needs it. Downloaded once and
+    cached. Pass ``return_path=True`` for the cached ``.npz`` path instead of the
+    Bunch.
     """
     path = _resolve("ng20_minilm")
     if return_path:

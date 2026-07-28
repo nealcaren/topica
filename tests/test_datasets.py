@@ -171,8 +171,15 @@ def test_ng20_minilm_registered():
 def test_bunch_attribute_access():
     b = datasets.Bunch(x=1, y=2)
     assert b.x == 1 and b["y"] == 2
+    b.z = 3
+    assert b["z"] == 3
+    assert "x" in dir(b)  # keys surface for tab-completion
     with pytest.raises(AttributeError):
         _ = b.missing
+    with pytest.raises(AttributeError):  # del of a missing attr, not KeyError
+        del b.missing
+    del b.z
+    assert "z" not in b
 
 
 def test_ng20_minilm_loads_bunch(tmp_path, monkeypatch):
