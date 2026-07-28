@@ -34,9 +34,39 @@ __all__ = [
     "load_gadarian",
     "load_poliblog",
     "load_dubois",
+    "load_ng20_minilm",
     "get_data_home",
     "clear_cache",
 ]
+
+
+class Bunch(dict):
+    """A dict whose keys are also accessible as attributes (sklearn-style).
+
+    Returned by loaders that carry more than a text table — e.g.
+    :func:`load_ng20_minilm`, which bundles documents, labels, and precomputed
+    embedding arrays. ``b["texts"]`` and ``b.texts`` are the same thing.
+    """
+
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError as exc:  # pragma: no cover - trivial
+            raise AttributeError(key) from exc
+
+    __setattr__ = dict.__setitem__
+
+    def __delattr__(self, key):  # `del b.missing` must raise AttributeError
+        try:
+            del self[key]
+        except KeyError as exc:  # pragma: no cover - trivial
+            raise AttributeError(key) from exc
+
+    def __dir__(self):  # surface the keys for REPL/Jupyter tab-completion
+        return list(self.keys()) + list(super().__dir__())
+
+    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+        return f"Bunch({', '.join(self.keys())})"
 
 # Immutable commit that holds the dataset files. Pinned (not ``main``) so a
 # given topica version always fetches the same bytes; override with the
@@ -81,6 +111,18 @@ _REGISTRY = {
         "summary": (
             "Du Bois-era articles from The Crisis (1910-1922). Raw text in 'text'; "
             "covariates 'year', 'decade', 'volume', 'issue', 'author', 'subjects'."
+        ),
+    },
+    "ng20_minilm": {
+        "remote": "examples/ng20_minilm.npz",
+        "filename": "ng20_minilm.npz",
+        "sha256": "aa4afb4c88af8692b8639ae4ea62025139643b63e706de6412dace1df63a8518",
+        "n_docs": 2594,
+        "summary": (
+            "20-Newsgroups (5 groups) with precomputed MiniLM sentence embeddings "
+            "for both documents and vocabulary; the embedding-native example "
+            "corpus for ProdLDA/FASTopic/BERTopic/Top2Vec. Bundles 'texts', "
+            "'labels', 'doc_embeddings', 'vocab', 'word_embeddings'."
         ),
     },
 }
@@ -242,3 +284,52 @@ def load_dubois(*, return_path: bool = False):
     Downloaded once and cached. Pass ``return_path=True`` for the CSV path.
     """
     return _load("dubois", return_path)
+
+
+def load_ng20_minilm(*, return_path: bool = False):
+    """Load 20-Newsgroups with precomputed MiniLM embeddings (5 groups).
+
+    The embedding-native counterpart to the text datasets: the same corpus the
+    ProdLDA/FASTopic/BERTopic/Top2Vec examples use, with
+    ``sentence-transformers`` ``all-MiniLM-L6-v2`` vectors already computed for
+    every document *and* every vocabulary term. This lets the embedding topic
+    models run offline, with no ``sentence-transformers``/``torch`` install::
+
+        b = topica.datasets.load_ng20_minilm()
+        bt = topica.BERTopic(reducer="umap", n_components=5).fit(
+            [t.split() for t in b.texts], b.doc_embeddings
+        )
+        tv = topica.Top2Vec(n_components=5).fit(
+            [t.split() for t in b.texts], b.doc_embeddings,
+            word_embeddings=b.word_embeddings, vocabulary=b.vocab,
+        )
+
+    Returns a :class:`Bunch` with attribute access to:
+
+    - ``texts`` — list of documents (space-joined in-vocab tokens)
+    - ``labels`` — newsgroup name per document (numpy object array)
+    - ``doc_embeddings`` — ``(n_docs, 384)`` float16 MiniLM vectors
+    - ``vocab`` — list of vocabulary terms
+    - ``word_embeddings`` — ``(vocab, 384)`` float16 MiniLM vectors
+    - ``meta`` — provenance string
+
+    Embeddings are stored as float16 to keep the download small. topica's own
+    models accept them directly (inputs are coerced internally); cast to
+    ``float32`` only for an external tool that needs it. Downloaded once and
+    cached. Pass ``return_path=True`` for the cached ``.npz`` path instead of the
+    Bunch.
+    """
+    path = _resolve("ng20_minilm")
+    if return_path:
+        return path
+    import numpy as np
+
+    with np.load(path, allow_pickle=True) as npz:
+        return Bunch(
+            texts=list(npz["texts"]),
+            labels=npz["labels"],
+            doc_embeddings=npz["doc_embeddings"],
+            vocab=list(npz["vocab"]),
+            word_embeddings=npz["word_embeddings"],
+            meta=str(npz["meta"]),
+        )

@@ -138,3 +138,78 @@ def test_fetch_network_error_is_friendly(tmp_path, monkeypatch):
     monkeypatch.setattr(datasets.urllib.request, "urlopen", boom)
     with pytest.raises(RuntimeError, match="could not download"):
         datasets.load_dubois(return_path=True)
+
+
+# ---------------------------------------------------------------------------
+# Embeddings dataset: ng20_minilm (fetch-on-demand .npz -> Bunch)
+# ---------------------------------------------------------------------------
+
+
+def _fake_ng20_npz() -> bytes:
+    import numpy as np
+
+    buf = io.BytesIO()
+    np.savez_compressed(
+        buf,
+        texts=np.array(["foo bar baz", "qux quux corge"], dtype=object),
+        labels=np.array(["sci.space", "sci.med"], dtype=object),
+        doc_embeddings=np.zeros((2, 4), dtype=np.float16),
+        vocab=np.array(["foo", "bar", "baz", "qux"], dtype=object),
+        word_embeddings=np.ones((4, 4), dtype=np.float16),
+        meta=np.array("synthetic test payload", dtype=object),
+    )
+    return buf.getvalue()
+
+
+def test_ng20_minilm_registered():
+    assert "load_ng20_minilm" in datasets.__all__
+    rec = datasets._REGISTRY["ng20_minilm"]
+    assert rec["remote"].endswith("ng20_minilm.npz")
+    assert len(rec["sha256"]) == 64
+
+
+def test_bunch_attribute_access():
+    b = datasets.Bunch(x=1, y=2)
+    assert b.x == 1 and b["y"] == 2
+    b.z = 3
+    assert b["z"] == 3
+    assert "x" in dir(b)  # keys surface for tab-completion
+    with pytest.raises(AttributeError):
+        _ = b.missing
+    with pytest.raises(AttributeError):  # del of a missing attr, not KeyError
+        del b.missing
+    del b.z
+    assert "z" not in b
+
+
+def test_ng20_minilm_loads_bunch(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOPICA_DATA_HOME", str(tmp_path / "cache"))
+    payload = _fake_ng20_npz()
+
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self.close()
+            return False
+
+    monkeypatch.setattr(
+        datasets.urllib.request, "urlopen", lambda url, timeout=None: _Resp(payload)
+    )
+    monkeypatch.setitem(
+        datasets._REGISTRY["ng20_minilm"], "sha256", _sha256_bytes(payload)
+    )
+
+    b = datasets.load_ng20_minilm()
+    assert isinstance(b, datasets.Bunch)
+    assert b.texts == ["foo bar baz", "qux quux corge"]
+    assert list(b.labels) == ["sci.space", "sci.med"]
+    assert b.doc_embeddings.shape == (2, 4)
+    assert b.vocab == ["foo", "bar", "baz", "qux"]
+    assert b.word_embeddings.shape == (4, 4)
+    assert "synthetic" in b.meta
+    assert b["texts"] is b.texts  # attribute and item access are the same object
+    # second call hits the cache; return_path yields the cached .npz
+    p = datasets.load_ng20_minilm(return_path=True)
+    assert p.name == "ng20_minilm.npz" and p.exists()
