@@ -797,6 +797,17 @@ ICA axes are **signed**: each topic has a positive and a negative pole, and both
 
 We validate against the reference algorithm (scikit-learn's `FastICA` with turftopic's projection) in `parity/s3_compare.py`. On planted independent-source embeddings, after Hungarian-aligning the signed component matrices, topica reproduces the reference's axes at mean absolute cosine 1.000, inside the reference's own seed-to-seed spread. Because the sources are well-separated the ICA solution is effectively unique up to sign and permutation, so this is a match-the-solution result.
 
+### Reading S³ results
+
+S³ optimizes a different notion of a topic than a bag-of-words model, so the coherence metric you choose decides which model looks better. On a 20 Newsgroups sample (MiniLM embeddings, top-10 words, K from 10 to 50) we compared S³ against topica's `LDA` and `NMF`:
+
+- On **embedding coherence** (mean pairwise cosine of the top words' embeddings) and **topic diversity** (the share of distinct words across topics), S³ leads at every K. Its diversity holds near 0.97 as K grows, while `LDA` and `NMF` fall toward 0.72 as their high-K topics begin repeating words. This is the strength the authors report.
+- On **UMass coherence** (whether the top words co-occur in the corpus), `LDA` and `NMF` lead by a wide margin. S³'s top words are close in semantic space but co-occur in documents less often.
+
+The two results are consistent. S³ groups words by proximity in embedding space, so a topic like "rifle, firearm, weapon, ammunition" reads as tight and distinct even when those words rarely share a document, whereas a bag-of-words model forms a topic only from words that co-occur. Judge S³ by whether its axes are semantically interpretable and distinct, and reach for a count-based model when you want topics whose words actually appear together.
+
+One caveat about stability. FastICA does not reach its convergence tolerance on general contextual embeddings like these within the default 200 iterations (`converged` is `False` on the 20 Newsgroups MiniLM sample), so the axes are only loosely identified. A hard document assignment, the argmax axis per document, is then about 0.33 correlated across seeds. The turftopic reference behaves the same way (about 0.32), so this reflects ICA on contextual embeddings rather than the port. Fix a `seed` for reproducibility, read topics from the top words of each axis rather than from hard document labels, and treat a `converged` of `False` as a signal that the axes are not sharply separated in this embedding space.
+
 ## AnchorLDA
 
 !!! warning "Experimental"
