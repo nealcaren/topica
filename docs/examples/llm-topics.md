@@ -1,9 +1,9 @@
 # LLM embeddings and labels: Du Bois's *Crisis* essays
 
-This worked example runs the **embedding-native** path end to end with the
-[`llm`](https://llm.datasette.io/) library doing the two jobs that touch a model:
-generating the document embeddings and naming the topics. Everything between is
-pure topica. The corpus is the 704 essays W. E. B. Du Bois wrote for *The Crisis*
+This worked example runs the **embedding-native** path end to end. Two steps
+touch a model: generating the document embeddings (a local `sentence-transformers`
+model here) and naming the topics (`llm_backend`). Everything between is pure
+topica. The corpus is the 704 essays W. E. B. Du Bois wrote for *The Crisis*
 between 1910 and 1934 (the same corpus as the [Du Bois example](dubois.md), here
 modeled from sentence embeddings rather than word counts).
 
@@ -12,10 +12,10 @@ modeled from sentence embeddings rather than word counts).
     `plot_report`. For the count-based workflow on this corpus see
     [Du Bois](dubois.md).
 
-    `pip install "topica[llm,viz]"` covers `llm` (OpenAI built in) and the ollama
-    plugin. The local `sentence-transformers` embedder below additionally needs
-    `pip install llm-sentence-transformers`; for a fully local, torch-free run use
-    ollama embeddings (`all-minilm`) instead. Reproducible with
+    `pip install "topica[openai,viz]" sentence-transformers` covers the label
+    model (OpenAI, via `OPENAI_API_KEY`) and the local embedder below. To label
+    with Claude or Gemini instead, install `topica[anthropic]` / `topica[gemini]`
+    and pass that model name. Reproducible with
     [`examples/llm_topics.py`](https://github.com/nealcaren/topica/blob/main/examples/llm_topics.py).
 
 ## 1. Corpus
@@ -32,15 +32,21 @@ docs = [topica.tokenize(t, stopwords=stop, min_length=4) for t in texts]   # tok
 
 ## 2. Embed — once, cached
 
-`llm_embed` produces the document-vector matrix the embedding models need. Naming
-a local `sentence-transformers` model keeps it offline and free; `cache=` writes
-the matrix to disk so re-running the script reloads it instead of re-embedding
-(embeddings are the costly step).
+Any `(num_docs, E)` matrix works as the document vectors. A local
+`sentence-transformers` model keeps this step offline and free; we cache the
+matrix to disk with `save_embeddings` so re-running the script reloads it instead
+of re-embedding (embeddings are the costly step). For a hosted embedder instead,
+`topica.llm_embed(texts, model="text-embedding-3-small")` returns the same shape.
 
 ```python
-doc_emb = topica.llm_embed(
-    texts, model="sentence-transformers/all-MiniLM-L6-v2", cache="crisis_emb.npz"
-)
+import os
+from sentence_transformers import SentenceTransformer
+
+if os.path.exists("crisis_emb.npz"):
+    doc_emb = topica.load_embeddings("crisis_emb.npz")
+else:
+    doc_emb = SentenceTransformer("all-MiniLM-L6-v2").encode(texts)
+    topica.save_embeddings("crisis_emb.npz", doc_emb, texts=texts, model="all-MiniLM-L6-v2")
 doc_emb.shape          # (704, 384)
 ```
 
@@ -100,10 +106,11 @@ topica.topic_label_prompts(model, texts)[1]   # inspect exactly what the model s
 9 voter segregation and rights
 ```
 
-The key is resolved by `llm`: by default the `OPENAI_API_KEY` environment variable
-(or a stored `llm keys` value), or pass `llm_backend(..., key=...)` to hand one in.
-A local model works the same way — `llm_backend("llama3.2", ...)` with the
-`llm-ollama` plugin needs no key at all. The deterministic descriptors
+The key is resolved from the provider's environment variable (here
+`OPENAI_API_KEY`), or pass `llm_backend(..., key=...)` to hand one in. A local
+model works the same way and needs no key —
+`llm_backend("llama3.2", base_url="http://localhost:11434/v1")` routes to an
+ollama server. The deterministic descriptors
 (`label_topics`: FREX / probability / lift) remain the defensible naming for
 publication; the LLM labels are the readable shorthand. With `set_labels=True` they
 replace the default labels everywhere, including the report below.

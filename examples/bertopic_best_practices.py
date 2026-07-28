@@ -53,8 +53,9 @@ def main():
     titles = dataset["title"]  # noqa: F841  (used for hover labels in the original)
 
     # --- Pre-calculate embeddings (the tutorial's all-MiniLM-L6-v2) -------
-    # topica is bring-your-own-vectors. (topica.llm_embed(abstracts,
-    # model="sentence-transformers/all-MiniLM-L6-v2") is the in-package route.)
+    # topica is bring-your-own-vectors: compute the matrix however you like and
+    # pass it in. (For a hosted embedder, topica.llm_embed(abstracts,
+    # model="text-embedding-3-small") returns the same shape.)
     embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
     embeddings = embedding_model.encode(abstracts, show_progress_bar=True)
 

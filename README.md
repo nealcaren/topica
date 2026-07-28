@@ -45,7 +45,7 @@ Your own data is one line away: pass `pandas.read_csv("yours.csv")` to `from_dat
 
 Fits are reproducible and validated: the variational models are identical to the bit, the samplers reproduce from a fixed seed and thread count, and every model is checked against its reference implementation (R `stm`, MALLET, keyATM, and more).
 
-The core needs only NumPy and pandas. Optional extras add features without weighing it down: `topica[viz]` (matplotlib plots), `topica[formula]` (R-style formulas), `topica[polars]` (Polars frames), and `topica[llm]` (LLM labels and embeddings, OpenAI or local via ollama).
+The core needs only NumPy and pandas. Optional extras add features without weighing it down: `topica[viz]` (matplotlib plots), `topica[formula]` (R-style formulas), `topica[polars]` (Polars frames), and, for LLM labels and embeddings, one lightweight provider SDK per backend, dispatched by model name: `topica[openai]` (`gpt-*`, and any OpenAI-compatible endpoint including local ollama via `base_url=`), `topica[anthropic]` (`claude-*`), `topica[gemini]` (`gemini-*`), or `topica[llm]` for all three.
 
 ## Models
 

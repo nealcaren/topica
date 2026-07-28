@@ -30,7 +30,9 @@ _DATA_ARGS: dict[str, set[str]] = {
     "SeededLDA": {"seed_words"},
     "Scholar": {"covariates", "content"},
     "EmbeddingLDA": {"embeddings", "vocabulary"},
-    "TopicGPT": {"backend"},
+    # `key` is a secret, deliberately kept out of settings (so it never lands in a
+    # provenance record or save); `backend` is a callable, i.e. data not a config.
+    "TopicGPT": {"backend", "key"},
 }
 
 # Zero/low-arg factories for every Rust-backed public model. Guidance/label args

@@ -9,7 +9,7 @@ model — small models are fine for rating but fail the harder intrusion/labelin
 The namespace collects the suite so it reads as a family and signals the shared
 ``llm-bounded`` contract at the call site::
 
-    backend = topica.llm.backend("openrouter/meta-llama/llama-3.3-70b-instruct", temperature=0)
+    backend = topica.llm.backend("gpt-4o-mini", temperature=0)  # or "claude-3-5-haiku-latest", "gemini-2.5-flash"
     topica.llm.coherence(model, backend=backend)        # per-topic 1-3 rating (Stammbach et al. 2023)
     topica.llm.intrusion(model, backend=backend)        # LLM picks the planted intruder -> accuracy
     topica.llm.select_k(models, docs, backend=backend)  # number of topics by doc-label purity

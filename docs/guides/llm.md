@@ -17,8 +17,9 @@ without topica taking an API dependency.
 ```python
 import topica
 
-# Bring a model: a callable, or model="ollama/qwen3" via the topica[llm] adapter.
-# topica showcases open-source models; any callable str -> str backend works.
+# Bring a model: a callable, or a model name via llm_backend, e.g.
+# model="gpt-4o-mini" / "claude-3-5-haiku-latest" / "gemini-2.5-flash", or a local
+# model with base_url="http://localhost:11434/v1" (ollama). Any callable works.
 model = topica.TopicGPT(backend=my_callable, assignment="hard")
 model.fit(docs)                       # docs: a Corpus, raw strings, or token lists
 
