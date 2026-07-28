@@ -3543,7 +3543,7 @@ class Top2Vec:
         resolution: float = 1.0,
         knn_neighbors: int = 15,
         diagnostics: bool = True,
-        min_dist: float = 0.1,
+        min_dist: float = 0.0,
         spread: float = 1.0,
         n_epochs: int = 0,
         negative_sample_rate: int = 5,
