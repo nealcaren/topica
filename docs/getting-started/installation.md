@@ -21,16 +21,12 @@ is an optional extra, so the core stays light. Install the ones you need:
 | `pip install "topica[viz]"` | matplotlib figures: [`plot_report`](../api/diagnostics.md), `quality_frontier(plot=True)`, the search-K and discovery plots |
 | `pip install "topica[formula]"` | The R-style formula interface ([`design_matrix`](../api/keywords.md), `estimate_effect(formula=...)`); pulls in `formulaic` and `pandas` |
 | `pip install "topica[polars]"` | Pass Polars DataFrames/Series to [`from_dataframe`](../api/keywords.md), `align`, and `design_matrix` |
-| `pip install "topica[openai]"` | LLM topic labels and embeddings ([`llm_topic_labels`](../api/diagnostics.md), [`llm_embed`](../api/keywords.md)) with OpenAI (`gpt-*`, `text-embedding-*`); also reaches any OpenAI-compatible endpoint (ollama, openrouter, ...) via `base_url=`. Set `OPENAI_API_KEY` or pass `key=` |
-| `pip install "topica[anthropic]"` | Label topics with Claude (`claude-*`); set `ANTHROPIC_API_KEY` or pass `key=` |
-| `pip install "topica[gemini]"` | Label and embed with Gemini (`gemini-*`); set `GEMINI_API_KEY` or pass `key=` |
-| `pip install "topica[llm]"` | All three provider SDKs above, in one install |
+| `pip install "topica[llm]"` | LLM topic labels and embeddings ([`llm_topic_labels`](../api/diagnostics.md), [`llm_embed`](../api/keywords.md)); installs `llm` plus the ollama plugin, so OpenAI works with `OPENAI_API_KEY` and a fully local path runs through ollama |
 
-`llm_backend` / `llm_embed` dispatch to the right SDK by the model name, so you
-install only what you use. Combine extras in one install, e.g.
-`pip install "topica[llm,viz,formula]"`. For fully offline, in-process embeddings
-without a server, use `sentence-transformers` directly and pass the array. Two
-more packages also light up if already present: `pyLDAvis` (interactive
+Combine extras in one install, e.g. `pip install "topica[llm,viz,formula]"`. For
+local *sentence-transformer* embeddings add `llm-sentence-transformers` (which
+pulls in PyTorch); ollama's own embedding models need nothing extra. Two more
+packages also light up if already present: `pyLDAvis` (interactive
 intertopic-distance charts) and `pandas` (tabular handling of effect/diagnostic
 tables).
 

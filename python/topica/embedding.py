@@ -191,93 +191,31 @@ def load_embeddings(path, *, with_meta=False):
         return emb, meta
 
 
-def _detect_embed_provider(model: str, base_url) -> str:
-    """Pick an embedding provider from the model name. ``base_url`` forces an
-    OpenAI-compatible endpoint. OpenAI is the default (``text-embedding-3-*``,
-    ``text-embedding-ada-002``); Gemini for ``gemini-embedding-*``. A ``claude-*``
-    model resolves to ``anthropic`` so ``llm_embed`` raises the clear "no
-    embedding API" error rather than mis-routing to OpenAI (mirrors
-    :func:`topica.labeling._detect_provider`)."""
-    if base_url is not None:
-        return "openai"
-    m = model.lower().split("/")[-1]  # tolerate "anthropic/claude-...", "models/gemini-..."
-    if m.startswith("claude"):
-        return "anthropic"
-    if m.startswith("gemini"):
-        return "gemini"
-    return "openai"
-
-
-def _openai_embed(items, model, *, base_url, key):
-    import importlib
-
-    try:
-        openai = importlib.import_module("openai")
-    except ImportError as e:  # pragma: no cover - exercised via message
-        raise ImportError(
-            "llm_embed with an OpenAI model needs the optional `openai` package "
-            '(pip install openai, or pip install "topica[openai]" / "topica[llm]").'
-        ) from e
-    api_key = key or os.environ.get("OPENAI_API_KEY")
-    if api_key is None and base_url is not None:
-        api_key = "not-needed"  # local compatible servers ignore auth
-    client = openai.OpenAI(base_url=base_url, api_key=api_key)
-    resp = client.embeddings.create(model=model, input=items)
-    return np.asarray([d.embedding for d in resp.data], dtype=float)
-
-
-def _gemini_embed(items, model, *, key):
-    import importlib
-
-    try:
-        genai = importlib.import_module("google.genai")
-    except ImportError as e:  # pragma: no cover - exercised via message
-        raise ImportError(
-            "llm_embed with a Gemini model needs the optional `google-genai` "
-            'package (pip install google-genai, or pip install "topica[gemini]" '
-            '/ "topica[llm]").'
-        ) from e
-    client = genai.Client(api_key=key) if key is not None else genai.Client()
-    resp = client.models.embed_content(model=model, contents=items)
-    # Some google-genai versions expose a single-item embed as `.embedding`
-    # (singular) with `.embeddings` left None; fall back so a 1-text call works.
-    embs = resp.embeddings if resp.embeddings is not None else [resp.embedding]
-    if len(embs) != len(items):  # never silently drop/duplicate rows
-        raise RuntimeError(
-            f"Gemini embed_content returned {len(embs)} embeddings for "
-            f"{len(items)} inputs."
-        )
-    return np.asarray([e.values for e in embs], dtype=float)
-
-
-def llm_embed(texts, model="text-embedding-3-small", *, provider=None,
-              base_url=None, key=None, cache=None):
-    """Embed ``texts`` as a dense ``(n, dim)`` float array, via a lightweight
-    provider SDK dispatched by the model name.
+def llm_embed(texts, model="text-embedding-3-small", *, key=None, batch=True, cache=None):
+    """Embed ``texts`` with the `llm` library's embedding models, as a dense
+    ``(n, dim)`` float array.
 
     The embedding models in topica (``BERTopic``, ``Top2Vec``, ``ETM``,
     ``FASTopic``) and :func:`embedding_seeds` all take embeddings you supply; this
-    is one way to produce them. Pass document texts for document embeddings, or
-    the vocabulary for word embeddings.
+    is one way to produce them. ``model`` names any embedding model
+    `llm <https://llm.datasette.io/>`_ can reach — OpenAI's
+    ``"text-embedding-3-small"`` / ``"3-large"`` (needs an API key), or a local
+    model such as ``"sentence-transformers/all-MiniLM-L6-v2"`` via the
+    ``llm-sentence-transformers`` plugin (no API, runs offline). Pass document
+    texts for document embeddings, or the vocabulary for word embeddings.
 
-    - ``text-embedding-3-*`` / anything else -> OpenAI (the ``openai`` client)
-    - ``gemini-embedding-*``                 -> Gemini (the ``google-genai`` client)
-
-    Pass ``base_url`` to force an OpenAI-compatible ``/v1/embeddings`` endpoint
-    (e.g. ``ollama`` at ``"http://localhost:11434/v1"``); ``provider`` overrides
-    auto-detection. ``key`` sets the API key, else the provider's environment
-    variable is used (``OPENAI_API_KEY`` / ``GEMINI_API_KEY``). Anthropic has no
-    embedding API; for offline in-process embeddings without a server, use
-    ``sentence-transformers`` directly and pass the array to the model.
+    By default the API key (for hosted embedders) is resolved by ``llm`` itself: a
+    stored ``llm keys`` value, else the provider's environment variable
+    (``OPENAI_API_KEY`` for OpenAI). Pass ``key`` to override it explicitly.
 
     Embeddings are costly, so pass ``cache=path`` to embed once and reuse: if the
     file exists and was saved for the same ``texts``, it is loaded and no model is
     called; otherwise the embeddings are computed and written there (see
     :func:`save_embeddings`).
 
-    Needs the matching optional SDK: ``pip install "topica[openai]"``,
-    ``"topica[gemini]"``, or ``"topica[llm]"``. The embeddings are the only thing
-    topica needs from a model; everything downstream runs in the wheel.
+    Requires the optional ``llm`` package (``pip install "topica[llm]"``). The
+    embeddings are the only thing topica needs from a model; everything downstream
+    runs in the wheel.
     """
     items = [str(t) for t in texts]
     if cache is not None:
@@ -287,23 +225,26 @@ def llm_embed(texts, model="text-embedding-3-small", *, provider=None,
             if arr.shape[0] == len(items) and meta.get("texts_hash") == _texts_hash(items):
                 return arr
 
-    prov = provider or _detect_embed_provider(model, base_url)
-    if prov == "anthropic":
-        raise ValueError(
-            "Anthropic has no embedding API; use an OpenAI or Gemini embedding "
-            "model, or compute embeddings with sentence-transformers and pass the "
-            "array directly."
-        )
-    if prov not in ("openai", "gemini"):
-        raise ValueError(
-            f"unknown embedding provider {prov!r}; expected 'openai' or 'gemini' "
-            "(or pass base_url= for an OpenAI-compatible endpoint)."
-        )
-    if prov == "gemini":
-        arr = _gemini_embed(items, model, key=key)
-    else:
-        arr = _openai_embed(items, model, base_url=base_url, key=key)
+    try:
+        import llm as _llm
+    except ImportError as e:  # pragma: no cover - exercised via message
+        raise ImportError(
+            "llm_embed needs the optional `llm` package "
+            '(pip install llm, or pip install "topica[llm]").'
+        ) from e
+    try:
+        em = _llm.get_embedding_model(model)
+    except Exception as e:
+        from .labeling import _unknown_model_message
 
+        unknown = getattr(_llm, "UnknownModelError", None)
+        if unknown is not None and not isinstance(e, unknown):
+            raise
+        raise ValueError(_unknown_model_message(_llm, model, kind="embedding")) from e
+    if key is not None:
+        em.key = key
+    vecs = list(em.embed_multi(items)) if batch else [em.embed(t) for t in items]
+    arr = np.asarray(vecs, dtype=float)
     if cache is not None:
         save_embeddings(cache, arr, texts=items, model=model)
     return arr

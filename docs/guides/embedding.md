@@ -14,21 +14,14 @@ wherever you like, a sentence-transformer, an API, or a local model such as
 ollama. Everything downstream is in the wheel.
 
 If you would rather not wire up an embedder yourself, `topica.llm_embed` produces
-the matrix from a hosted embedding model, dispatched by the model name to a
-lightweight provider SDK: OpenAI (`topica[openai]`) or Gemini (`topica[gemini]`).
-It also reaches any OpenAI-compatible `/v1/embeddings` endpoint via `base_url=`
-(e.g. ollama):
+the matrix through Simon Willison's [`llm`](https://llm.datasette.io/) library
+(the optional `topica[llm]` extra), which reaches OpenAI embeddings and local
+sentence-transformers via plugins:
 
 ```python
-doc_emb = topica.llm_embed(texts, model="text-embedding-3-small")   # OpenAI
-doc_emb = topica.llm_embed(texts, model="gemini-embedding-001")     # Gemini
-doc_emb = topica.llm_embed(texts, model="nomic-embed-text",
-                           base_url="http://localhost:11434/v1")    # local ollama
+doc_emb = topica.llm_embed(texts, model="text-embedding-3-small")          # API
+doc_emb = topica.llm_embed(texts, model="sentence-transformers/all-MiniLM-L6-v2")  # local
 ```
-
-For fully offline, in-process embeddings without any server, use
-`sentence-transformers` directly and pass the array to any model that accepts
-`embeddings=` (see the end-to-end example below).
 
 Embeddings are costly, so cache them. Pass `cache=path` to embed a corpus once and
 reuse it on later runs (it reloads when the file matches the same `texts`, and
@@ -41,12 +34,11 @@ topica.save_embeddings("emb.npz", doc_emb, texts=texts, model="all-MiniLM-L6-v2"
 doc_emb = topica.load_embeddings("emb.npz")
 ```
 
-End to end, from raw text to a fitted model, with `sentence-transformers` doing
-the text-to-vectors step fully offline (no API key, in-process):
+End to end, from raw text to a fitted model, with `llm_embed` doing the
+text-to-vectors step offline (no API key, runs in the wheel):
 
 ```python
 import topica
-from sentence_transformers import SentenceTransformer
 
 texts = [
     "The economy added jobs as the unemployment rate fell again.",
@@ -57,8 +49,8 @@ texts = [
     "The rookie hit two home runs and drove in five for the win.",
 ]
 
-# text -> (num_docs, E) vectors, computed locally and passed straight in.
-doc_emb = SentenceTransformer("all-MiniLM-L6-v2").encode(texts)
+# text -> (num_docs, E) vectors; the topica[llm] extra, sentence-transformers backend
+doc_emb = topica.llm_embed(texts, model="sentence-transformers/all-MiniLM-L6-v2")
 
 docs = [topica.tokenize(t, stopwords=topica.ENGLISH_STOPWORDS) for t in texts]
 model = topica.BERTopic(min_cluster_size=2, seed=1)

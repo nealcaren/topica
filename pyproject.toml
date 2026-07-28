@@ -36,28 +36,20 @@ formula = ["formulaic>=0.6", "pandas>=1.3"]
 # design_matrix). The DataFrame is not the cost center, so this is a convenience,
 # not a speedup.
 polars = ["polars>=0.20"]
-# LLM labeling and embeddings (topica.llm_backend / llm_embed) are optional and
-# provider-dispatched: the model name picks the backend, and you install only the
-# SDK(s) you use. The core (llm_topic_labels with backend=..., or your own
-# embeddings) takes any callable/array and needs none of these. Each SDK is
-# lightweight and wheel-only, unlike the former `llm` CLI, which pulled a large
-# tree including a pre-release of `sqlite-migrate` that breaks `uv pip install`.
-# OpenAI also reaches any OpenAI-compatible endpoint via base_url= (ollama,
-# openrouter, vLLM, LM Studio, groq). Anthropic has no embedding API.
-openai = ["openai>=1.0"]        # gpt-*, and OpenAI-compatible servers via base_url=
-anthropic = ["anthropic>=0.40"]  # claude-*
-gemini = ["google-genai>=1.0"]   # gemini-*
-# The convenience bundle: all three provider SDKs (chat for OpenAI/Anthropic/
-# Gemini, embeddings for OpenAI/Gemini).
-llm = ["openai>=1.0", "anthropic>=0.40", "google-genai>=1.0"]
+# Optional adapter for LLM labeling and embeddings (topica.llm_backend /
+# llm_embed). The core (llm_topic_labels with call=..., or your own embeddings)
+# takes any callable/array and needs nothing. This extra adds `llm` plus the
+# ollama plugin, so OpenAI works out of the box (set OPENAI_API_KEY) and a fully
+# local, torch-free path runs through ollama (both chat and embedding models).
+# Local sentence-transformer embeddings additionally need `llm-sentence-transformers`.
+llm = ["llm>=0.13", "llm-ollama"]
 # The visualization toolkit (topica.viz), static and interactive in one extra:
 # matplotlib for .to_png(), pandas for every panel's .to_frame(), scipy to seriate
 # the similarity heatmap (degrades gracefully if absent), and plotly (WebGL) as the
 # single interactive .to_html() backend.
 viz = ["matplotlib>=3.4", "pandas>=1.3", "scipy>=1.7", "plotly>=5"]
 # Everything, for a one-shot install.
-all = ["formulaic>=0.6", "pandas>=1.3", "polars>=0.20",
-       "openai>=1.0", "anthropic>=0.40", "google-genai>=1.0",
+all = ["formulaic>=0.6", "pandas>=1.3", "polars>=0.20", "llm>=0.13", "llm-ollama",
        "matplotlib>=3.4", "scipy>=1.7", "plotly>=5"]
 test = ["pytest>=7", "pandas>=1.3", "formulaic>=0.6", "matplotlib>=3.4", "scipy>=1.7", "plotly>=5"]
 

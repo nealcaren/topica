@@ -52,15 +52,15 @@ topica.find_thoughts_html(model, texts, n_docs=3)               # highlighted cl
 For readable labels, `llm_topic_labels` asks an LLM to name each topic from its
 top words and representative documents. topica is the plumbing: it assembles the
 prompt and you bring the model. Pass any callable (your own client, a local
-`ollama` endpoint) as `call`, or name a model through the optional `llm_backend`
-adapter, which dispatches by the model name to a lightweight OpenAI / Anthropic /
-Gemini SDK (and reaches any OpenAI-compatible endpoint via `base_url=`).
+`ollama` endpoint) as `call`, or name a model through the optional
+[`llm`](https://llm.datasette.io/) adapter, which reaches every provider and
+local models via plugins.
 
 ```python
 # Bring your own callable (no extra dependency):
 labels = topica.llm_topic_labels(model, texts, backend=my_model_fn, set_labels=True)
 
-# Or name a model via llm_backend (pip install "topica[openai]"):
+# Or name a model via the `llm` adapter (pip install "topica[llm]"):
 backend = topica.llm_backend("gpt-4o-mini", temperature=0)   # pin for stability
 labels = topica.llm_topic_labels(model, texts, backend=backend, set_labels=True)
 
@@ -85,12 +85,11 @@ et al. (2023) show that an LLM, prompted with the *same* instructions the crowd-
 received, tracks human ratings more closely — especially the rating task. topica
 exposes these diagnostics under the **`topica.llm`** namespace — an `llm-bounded`
 family kept distinct from the bit-exact diagnostics above. All reuse the
-provider-dispatched `llm_backend`.
+provider-agnostic `topica[llm]` backend.
 
 ```python
-# A capable open-source model via OpenRouter (base_url), or name a hosted model:
-backend = topica.llm.backend("meta-llama/llama-3.3-70b-instruct",
-                             base_url="https://openrouter.ai/api/v1", temperature=0)
+# A capable open-source model, via OpenRouter or a local endpoint:
+backend = topica.llm.backend("openrouter/meta-llama/llama-3.3-70b-instruct", temperature=0)
 
 topica.llm.coherence(model, backend=backend, n_words=10)        # per-topic 1-3 rating (the headline)
 topica.llm.intrusion(model, backend=backend, n_words=5)         # LLM picks the intruder -> accuracy
