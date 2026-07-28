@@ -457,6 +457,30 @@ or seed with `omega_priors` to pin an axis. Second, the block sampler enumerates
 factors; for many factors raise `block_freq` to sample each factor independently
 (additive cost, at some loss of mixing).
 
+**When to reach for it — and when not.** Be realistic about what the extra factors
+buy you. fLDA reliably learns a good *topic* factor, but the second (and later)
+factors are only weakly identified: unsupervised, they tend to absorb *more topic
+variation* rather than discovering a latent sentiment or perspective axis, because
+subject matter dominates the lexicon. On the STM poliblog posts, an unsupervised
+`[8, 2]` fit recovers the Conservative/Liberal axis at only ~0.59 (chance 0.5); on
+2000 labeled movie reviews the second factor tracks true sentiment at ~0.52 —
+essentially chance — and the *original* Java implementation does no better on the
+same data (~0.63, one non-reproducible draw). Seeding the axis with `omega_priors`
+(a sentiment or partisan lexicon) helps but only to a moderate ~0.67. This is a
+property of the method, not the port, and is much of why fLDA never displaced
+simpler models. So:
+
+- If you **already have** the second axis (sentiment labels, ideology, discipline),
+  a model built to condition on it — [SAGE](#sage), [STM](#stm)/[STS](#sts), or
+  [SeededLDA](#guided-topics) — will use it more robustly than fLDA's unsupervised
+  factors.
+- If you **don't**, don't expect fLDA to hand you a clean sentiment/perspective axis
+  for free; at minimum seed it with `omega_priors`.
+- The output that *is* worth having is the **tuple view**: the same topic worded
+  differently across a (seeded or inferred) second factor — e.g. a war topic framed
+  as "terrorist/attack" versus "Iraq/troops/Bush." Read the tuples, not just the
+  per-factor overviews.
+
 The reference is Michael Paul's GPL Java, which draws a fresh unseeded RNG per token
 and is not reproducible, so topica claims no bit/seed parity against it. Instead the
 port's correctness is certified directly: finite-difference gradient tests on every
