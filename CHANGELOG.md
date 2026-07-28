@@ -69,6 +69,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   not affected — it has its own sparse per-document decoder, not the dense
   `theta·beta`. Encoder GEMMs and the elementwise `O(N·V)` work are untouched
   (candidate follow-ups).
+- **ProdLDA-family VAE encoder now uses a BLAS-free GEMM (~1.8–2× faster
+  single-threaded)** (#378, sequel to the decoder GEMM above). The encoder's dense
+  layer-2 and head projections were per-document scalar loops; they now batch into
+  the same deterministic `matrixmultiply` GEMMs — forward `PRE2 = H1·W2ᵀ`,
+  `MU_RAW/LV_RAW = HD·W_mu/lsᵀ`; backward the `g.w2`/`g.w_mu`/`g.w_ls` cross-document
+  reductions (`dpre2ᵀ·H1`, `dmu/dlvᵀ·HD`) and `dH1`/`dHD`. Layer 1 is sparse and
+  mode-dependent (bag-of-words / embedding / CombinedTM `adapt_bert`), so it stays a
+  per-document accumulation in fixed document order (its forward matvec is now a
+  rayon-parallel, order-preserving map). A full ProdLDA fit is **bit-for-bit
+  identical across `RAYON_NUM_THREADS` and `MATMUL_NUM_THREADS` = 1/2/4**; output
+  differs from the old scalar path only at ~1e-15, so FD-gradient and
+  reference-parity tests are unchanged. Measured 47.7s → 27.1s single-threaded at
+  D3000/V2000/K20/H200 (~1.76×; an independent clean baseline-vs-HEAD before/after
+  measured ~2.0×), on top of the decoder GEMM. Multi-core gain is modest
+  (~1.10× on 4 cores): with the encoder and decoder both GEMM'd, the remaining serial
+  `O(N·V)` reconstruction-softmax/batch-norm and the sparse layer-1 now dominate
+  (rayon-ing those is a candidate follow-up).
 
 ## [0.53.0] - 2026-07-26
 

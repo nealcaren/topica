@@ -31,6 +31,7 @@
 //! every gradient is checked against finite differences in the unit tests.
 
 use rand::Rng;
+use rayon::prelude::*;
 
 /// Kaiming-uniform initialization matching PyTorch's `nn.Linear` default:
 /// entries uniform on `[-1/sqrt(fan_in), 1/sqrt(fan_in)]`.
@@ -342,8 +343,14 @@ impl Weights {
     /// normalized bag of words; `emb` is the dense document embedding (length `E`,
     /// empty for bow-only). Layer 1's input depends on the mode: bow-only uses the
     /// BoW columns of `w1`, emb-only the embedding columns, bow+emb both.
-    fn encode_raw(&self, xn: &[(usize, f64)], emb: &[f64], mask2: &[f64]) -> DocCache {
-        let (h, k) = (self.hidden, self.k);
+    /// Encoder layer 1 for one document: the sparse BoW ⊕ dense second-block matvec
+    /// through `w1`, plus its softplus. Returns `(pre1, h1, adapted)` where `adapted`
+    /// is the CombinedTM `adapt_bert` projection (empty for other modes). This is the
+    /// mode-dependent, sparse part of the encoder; layers 2 and the heads are dense
+    /// and are batched into GEMMs by `batch_forward` (issue #378). `encode_raw` keeps
+    /// them per-document for single-document inference (`transform`).
+    fn encode_layer1(&self, xn: &[(usize, f64)], emb: &[f64]) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+        let h = self.hidden;
         let cols = self.w1_cols();
         // CombinedTM: project the embedding into vocab space before concatenation.
         let adapted = if self.mode == InputMode::BowEmbAdapt {
@@ -381,6 +388,15 @@ impl Weights {
             pre1[i] = s;
         }
         let h1: Vec<f64> = pre1.iter().map(|&p| softplus(p)).collect();
+        (pre1, h1, adapted)
+    }
+
+    /// Full per-document encoder (layer 1 + layer 2 + heads). Kept for single-document
+    /// inference (`transform`) and tests; `batch_forward` batches layers 2 and the
+    /// heads into GEMMs instead (issue #378), but produces the same `DocCache`.
+    fn encode_raw(&self, xn: &[(usize, f64)], emb: &[f64], mask2: &[f64]) -> DocCache {
+        let (h, k) = (self.hidden, self.k);
+        let (pre1, h1, adapted) = self.encode_layer1(xn, emb);
         // Layer 2 dense.
         let mut pre2 = self.b2.clone();
         for i in 0..h {
@@ -996,17 +1012,68 @@ pub(crate) fn batch_forward(
     let (k, v) = (w.k, w.v);
     let n = batch.xns.len();
 
-    // Encoder up to the pre-BN heads. CombinedTM (`BowEmbAdapt`) feeds the *raw*
-    // BoW counts (`batch.counts`), matching the reference's `CountVectorizer` input;
-    // every other mode keeps the length-normalized BoW (`batch.xns`).
-    let doc: Vec<DocCache> = (0..n)
+    // Encoder up to the pre-BN heads (issue #378 follow-up). Layer 1 is sparse and
+    // mode-dependent, so it stays a per-document map — pure (each doc reads shared
+    // weights, writes its own row), so rayon-parallelized and order-preserving.
+    // CombinedTM (`BowEmbAdapt`) feeds the *raw* BoW counts (`batch.counts`), matching
+    // the reference's `CountVectorizer` input; every other mode keeps the
+    // length-normalized BoW (`batch.xns`). Layers 2 and the heads are DENSE, so they
+    // batch into deterministic GEMMs (fixed reduction order → bit-identical regardless
+    // of thread count, like the decoder in #586) instead of per-document scalar loops.
+    let h = w.hidden;
+    let l1: Vec<(Vec<f64>, Vec<f64>, Vec<f64>)> = (0..n)
+        .into_par_iter()
         .map(|i| {
             let enc_bow = if w.mode == InputMode::BowEmbAdapt {
                 batch.counts[i]
             } else {
                 batch.xns[i]
             };
-            w.encode_raw(enc_bow, batch.embs[i], &batch.masks2[i])
+            w.encode_layer1(enc_bow, batch.embs[i])
+        })
+        .collect();
+    // Flatten h1 into a contiguous N×H buffer for the GEMMs.
+    let mut h1_flat = vec![0.0; n * h];
+    for (i, (_, h1, _)) in l1.iter().enumerate() {
+        h1_flat[i * h..(i + 1) * h].copy_from_slice(h1);
+    }
+    // Layer 2: PRE2 (N×H) = H1 (N×H) · W2ᵀ (w2 is H×H row-major), then + b2.
+    let mut pre2_flat = vec![0.0; n * h];
+    crate::gemm::matmul_nt(n, h, h, &h1_flat, &w.w2, &mut pre2_flat);
+    // Dropout on softplus(pre2): HD (N×H). Also fold the b2 bias in here.
+    let mut hd_flat = vec![0.0; n * h];
+    for i in 0..n {
+        let m2 = &batch.masks2[i];
+        for a in 0..h {
+            let p = pre2_flat[i * h + a] + w.b2[a];
+            pre2_flat[i * h + a] = p;
+            hd_flat[i * h + a] = softplus(p) * m2[a];
+        }
+    }
+    // Heads: MU_RAW (N×K) = HD · W_muᵀ + b_mu; LV_RAW = HD · W_lsᵀ + b_ls.
+    let mut mu_raw_flat = vec![0.0; n * k];
+    let mut lv_raw_flat = vec![0.0; n * k];
+    crate::gemm::matmul_nt(n, h, k, &hd_flat, &w.w_mu, &mut mu_raw_flat);
+    crate::gemm::matmul_nt(n, h, k, &hd_flat, &w.w_ls, &mut lv_raw_flat);
+    for i in 0..n {
+        for t in 0..k {
+            mu_raw_flat[i * k + t] += w.b_mu[t];
+            lv_raw_flat[i * k + t] += w.b_ls[t];
+        }
+    }
+    // Assemble per-document DocCache (unchanged downstream/backward contract).
+    let doc: Vec<DocCache> = (0..n)
+        .map(|i| {
+            let (pre1, h1, adapted) = &l1[i];
+            DocCache {
+                pre1: pre1.clone(),
+                h1: h1.clone(),
+                pre2: pre2_flat[i * h..(i + 1) * h].to_vec(),
+                hd: hd_flat[i * h..(i + 1) * h].to_vec(),
+                mu_raw: mu_raw_flat[i * k..(i + 1) * k].to_vec(),
+                lv_raw: lv_raw_flat[i * k..(i + 1) * k].to_vec(),
+                adapted: adapted.clone(),
+            }
         })
         .collect();
     let mu_raw: Vec<Vec<f64>> = doc.iter().map(|d| d.mu_raw.clone()).collect();
@@ -1533,50 +1600,93 @@ pub(crate) fn batch_backward(
     let dmu_raw = BatchNorm::backward(&dmu, &c.bn_mu);
     let dlv_raw = BatchNorm::backward(&dlv, &c.bn_lv);
 
-    // --- Encoder per document. ---
+    // --- Encoder backward (issue #378). ---
+    // The dense layer-2 + head projections are batched into deterministic GEMMs
+    // (fixed reduction order → bit-identical regardless of thread count, like the
+    // decoder in #586); the mode-dependent sparse layer 1 stays a per-document
+    // accumulation in fixed doc order; the activation derivatives are elementwise.
+    //
+    // Flatten the batched intermediates the GEMMs consume (rows are not contiguous in
+    // the per-doc cache); O(N·H)+O(N·K), negligible next to the O(N·H²) products.
+    let mut hd_flat = vec![0.0; n * h];
+    let mut h1_flat = vec![0.0; n * h];
+    let mut dmu_flat = vec![0.0; n * k];
+    let mut dlv_flat = vec![0.0; n * k];
     for i in 0..n {
-        let dc = &c.doc[i];
-        // Heads: mu_raw = W_mu hd + b_mu, lv_raw = W_ls hd + b_ls.
-        let mut dhd = vec![0.0; h];
+        hd_flat[i * h..(i + 1) * h].copy_from_slice(&c.doc[i].hd);
+        h1_flat[i * h..(i + 1) * h].copy_from_slice(&c.doc[i].h1);
+        dmu_flat[i * k..(i + 1) * k].copy_from_slice(&dmu_raw[i]);
+        dlv_flat[i * k..(i + 1) * k].copy_from_slice(&dlv_raw[i]);
+    }
+    // Head weight gradients (K×H reductions): g.w_mu += dmu_rawᵀ·HD, g.w_ls += dlv_rawᵀ·HD.
+    {
+        let mut gwmu = vec![0.0; k * h];
+        let mut gwls = vec![0.0; k * h];
+        crate::gemm::matmul_tn(k, n, h, &dmu_flat, &hd_flat, &mut gwmu);
+        crate::gemm::matmul_tn(k, n, h, &dlv_flat, &hd_flat, &mut gwls);
+        for (g0, a) in g.w_mu.iter_mut().zip(&gwmu) {
+            *g0 += *a;
+        }
+        for (g0, a) in g.w_ls.iter_mut().zip(&gwls) {
+            *g0 += *a;
+        }
+    }
+    // Head bias gradients (column sums over documents, fixed order).
+    for i in 0..n {
         for t in 0..k {
-            let row = t * h;
             g.b_mu[t] += dmu_raw[i][t];
             g.b_ls[t] += dlv_raw[i][t];
-            for j in 0..h {
-                g.w_mu[row + j] += dmu_raw[i][t] * dc.hd[j];
-                g.w_ls[row + j] += dlv_raw[i][t] * dc.hd[j];
-                dhd[j] += dmu_raw[i][t] * w.w_mu[row + j] + dlv_raw[i][t] * w.w_ls[row + j];
-            }
         }
-        // Dropout on h2.
-        let mut dh2 = vec![0.0; h];
-        for j in 0..h {
-            dh2[j] = dhd[j] * batch.masks2[i][j];
+    }
+    // dHD (N×H) = dmu_raw·W_mu + dlv_raw·W_ls (W_mu, W_ls are K×H row-major).
+    let mut dhd_flat = vec![0.0; n * h];
+    {
+        let mut tmp = vec![0.0; n * h];
+        crate::gemm::matmul_nn(n, k, h, &dmu_flat, &w.w_mu, &mut dhd_flat);
+        crate::gemm::matmul_nn(n, k, h, &dlv_flat, &w.w_ls, &mut tmp);
+        for (d, t) in dhd_flat.iter_mut().zip(&tmp) {
+            *d += *t;
         }
-        // softplus on layer 2.
-        let mut dpre2 = vec![0.0; h];
-        for j in 0..h {
-            dpre2[j] = dh2[j] * sigmoid(dc.pre2[j]);
-        }
-        // Layer 2: pre2 = W2 h1 + b2.
-        let mut dh1 = vec![0.0; h];
+    }
+    // dpre2 (N×H) = dHD * mask2 * softplus'(pre2), with softplus'(x) = sigmoid(x).
+    let mut dpre2_flat = vec![0.0; n * h];
+    for i in 0..n {
+        let m2 = &batch.masks2[i];
+        let pre2 = &c.doc[i].pre2;
         for a in 0..h {
-            let row = a * h;
-            g.b2[a] += dpre2[a];
-            for b in 0..h {
-                g.w2[row + b] += dpre2[a] * dc.h1[b];
-                dh1[b] += dpre2[a] * w.w2[row + b];
-            }
+            dpre2_flat[i * h + a] = dhd_flat[i * h + a] * m2[a] * sigmoid(pre2[a]);
         }
-        // softplus on layer 1.
-        let mut dpre1 = vec![0.0; h];
-        for j in 0..h {
-            dpre1[j] = dh1[j] * sigmoid(dc.pre1[j]);
+    }
+    // Layer-2 weight gradient (H×H reduction): g.w2 += dpre2ᵀ·H1. Bias: column sum.
+    {
+        let mut gw2 = vec![0.0; h * h];
+        crate::gemm::matmul_tn(h, n, h, &dpre2_flat, &h1_flat, &mut gw2);
+        for (g0, a) in g.w2.iter_mut().zip(&gw2) {
+            *g0 += *a;
         }
-        // Layer 1: pre1 = W1 [bow ; second] + b1. The BoW columns are sparse in the
-        // vocabulary; the second block (offset by V) is dense. The mode selects which
-        // blocks contribute, mirroring `encode_raw`.
-        let cols = w.w1_cols();
+    }
+    for i in 0..n {
+        for a in 0..h {
+            g.b2[a] += dpre2_flat[i * h + a];
+        }
+    }
+    // dH1 (N×H) = dpre2·W2 (W2 is H×H row-major).
+    let mut dh1_flat = vec![0.0; n * h];
+    crate::gemm::matmul_nn(n, h, h, &dpre2_flat, &w.w2, &mut dh1_flat);
+    // dpre1 (N×H) = dH1 * softplus'(pre1).
+    let mut dpre1_flat = vec![0.0; n * h];
+    for i in 0..n {
+        let pre1 = &c.doc[i].pre1;
+        for a in 0..h {
+            dpre1_flat[i * h + a] = dh1_flat[i * h + a] * sigmoid(pre1[a]);
+        }
+    }
+    // Layer 1 (sparse BoW ⊕ dense second block, mode-dependent): accumulate into
+    // g.w1/g.b1 (+ the CombinedTM adapt_bert weights) per document in fixed doc order
+    // — a sparse cross-document reduction kept serial to preserve bit-identity.
+    let cols = w.w1_cols();
+    for i in 0..n {
+        let dpre1 = &dpre1_flat[i * h..(i + 1) * h];
         if w.mode == InputMode::BowEmbAdapt {
             // CombinedTM: raw BoW ⊕ adapt_bert(emb). Accumulate the gradient into the
             // dense adapted block, back-propagate it into the `adapt_bert` weights.
@@ -1589,7 +1699,7 @@ pub(crate) fn batch_backward(
                 }
                 let base = row + v;
                 for j in 0..v {
-                    g.w1[base + j] += dpre1[a] * dc.adapted[j];
+                    g.w1[base + j] += dpre1[a] * c.doc[i].adapted[j];
                     dadapted[j] += dpre1[a] * w.w1[base + j];
                 }
             }
