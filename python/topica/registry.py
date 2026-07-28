@@ -130,6 +130,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("RTM", "covariates", ("text", "links"), "variational", "seed-reproducible", ("network",),
            "Relational topic model (Chang & Blei 2010): jointly models document text and a link graph (citations, hyperlinks, adjacency); predicts links from words and words from links.",
            "guides/models.md#rtm"),
+        _m("FactorialLDA", "covariates", ("text",), "gibbs", "seed-reproducible", (),
+           "Factorial LDA (Paul & Dredze 2012): each token is a K-tuple of latent factors (e.g. topic x sentiment); structured word priors tie tuples sharing a component and a sparsity prior deactivates unsupported tuples.",
+           "guides/models.md#factorial-lda"),
         # ---- Guided & supervised -------------------------------------------
         _m("KeyATM", "guided", ("text", "seeds"), "gibbs", "seed-reproducible", (),
            "Keyword-assisted topics: anchor named topics with a few seed words each.",
@@ -289,6 +292,7 @@ IMPL: dict[str, ImplInfo] = {
     "GSDMM": _i("src/gsdmm.rs", "src/python/mod.rs", "collapsed Gibbs mixture (one topic/doc)", "", "parity/gsdmm_gold.py"),
     "PT": _i("src/pt.rs", "src/python/mod.rs", "collapsed Gibbs over pseudo-documents", "", "parity/pt_gold.py"),
     "BTM": _i("src/btm.rs", "src/python/btm.rs", "collapsed Gibbs over biterms", "", "parity/btm_compare.py, tests/test_btm.py"),
+    "FactorialLDA": _i("src/factorial_lda.rs", "src/python/factorial_lda.rs", "collapsed Gibbs over tuples + MCEM gradient ascent on log-linear priors", "", "parity/factorial_lda_compare.py, tests/test_factorial_lda.py"),
     "DTM": _i("src/dtm.rs", "src/python/mod.rs", "variational Kalman over time slices", "", "parity/dtm_gold.py"),
     "DETM": _i("src/detm.rs", "src/python/neural.rs", "embedding VAE + LSTM q(eta) (etm_vae.rs)", "", "parity/detm_gold.py"),
     "HLDA": _i("src/hlda.rs", "src/python/hierarchical.rs", "nested-CRP collapsed Gibbs", "", "parity/hlda_gold.py"),

@@ -58,6 +58,7 @@ generated from `python/topica/registry.py`.
 | `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
 | `Scholar` | text, metadata, labels | vae | seed-reproducible | SCHOLAR (Card et al. 2018): a ProdLDA VAE with a covariate-shifted prevalence prior, an optional supervised label head, and optional content (topic-covariate) word deviations — neural STM prevalence + sLDA + SAGE. |
 | `RTM` | text, links | variational | seed-reproducible | Relational topic model (Chang & Blei 2010): jointly models document text and a link graph (citations, hyperlinks, adjacency); predicts links from words and words from links. |
+| `FactorialLDA` | text | gibbs | seed-reproducible | Factorial LDA (Paul & Dredze 2012): each token is a K-tuple of latent factors (e.g. topic x sentiment); structured word priors tie tuples sharing a component and a sparsity prior deactivates unsupported tuples. |
 
 ### Guided & supervised
 
@@ -407,6 +408,61 @@ evaluate the fitted surface. `metadata_names` labels the continuous dimensions;
 aligned with `feature_effects`. Because a continuous covariate's per-degree
 coefficients are rarely interpretable on their own, read the surface with `tdf`
 rather than the individual basis coefficients.
+
+## Factorial LDA
+
+Factorial LDA (fLDA; Paul & Dredze 2012) models each token as a **K-tuple** of
+latent factors rather than a single topic. The canonical case is two factors —
+topic × sentiment, or topic × perspective — but the model takes any number: a
+document about (ECONOMICS, CONSERVATIVE) shares economics words with (ECONOMICS,
+LIBERAL) and conservative words with (ENVIRONMENT, CONSERVATIVE). That sharing is
+what makes it factorial rather than an LDA with `∏ Z_k` unrelated topics: a
+structured log-linear word prior `ω` ties every tuple that shares a component, and
+a relaxed sparsity prior can switch unsupported tuples off.
+
+```python
+model = topica.FactorialLDA(factor_sizes=[3, 2], seed=1)   # 3 topics x 2 sentiments
+model.fit(docs, iters=2000, samples=100)
+model.topic_word          # (6, V) — one word distribution per (topic, sentiment) tuple
+model.tuples              # [[0,0], [0,1], ...] tuple index -> factor components
+model.factor_top_words(0, 1)   # top words for component 1 of factor 0 (the "overview")
+model.tuple_activity      # b_x in (0,1); a tuple with b_x <= 0.5 is effectively off
+```
+
+`factor_sizes` lists the components per factor, so `num_topics` is the product
+`∏ Z_k`. Fit is Monte Carlo EM: a collapsed Gibbs sweep over tuples, then one
+gradient step on the log-linear `α` (document prior) and `ω` (word prior) weights
+and the sparsity logits `β` — the same Dirichlet-multinomial gradient `DMR` uses.
+
+The paper's ablations are flags: `word_priors=False` drops the structured word
+priors (untied factors), `sparsity=False` fixes every tuple on, and
+`symmetric_word_prior=True` fixes the per-word background to zero. You can also seed
+the word priors with domain knowledge (the drug-experiences setting of Paul &
+Dredze 2013) by passing `omega_priors=` to `fit`:
+
+```python
+model.fit(docs, omega_priors={"components": {
+    (1, 0): {"great": 2.0, "love": 2.0},     # steer factor 1, component 0 -> positive
+    (1, 1): {"awful": 2.0, "hate": 2.0},     # component 1 -> negative
+}})
+```
+
+Two caveats worth knowing. First, which factor becomes which axis is **not fixed**:
+the factors are role-exchangeable and `ω` is identified only up to a per-word shift
+(as in the reference), so on an unsupervised run the "topic" axis may land on
+factor 0 or factor 1 — align factors to your labels rather than assuming an order,
+or seed with `omega_priors` to pin an axis. Second, the block sampler enumerates all
+`∏ Z_k` tuples per token, so cost and memory grow multiplicatively in the number of
+factors; for many factors raise `block_freq` to sample each factor independently
+(additive cost, at some loss of mixing).
+
+The reference is Michael Paul's GPL Java, which draws a fresh unseeded RNG per token
+and is not reproducible, so topica claims no bit/seed parity against it. Instead the
+port's correctness is certified directly: finite-difference gradient tests on every
+weight group and factor-tying invariant tests (`src/factorial_lda.rs`), plus
+tuple-level recovery of a planted topic × sentiment corpus
+(`tests/test_factorial_lda.py`), with a qualitative cross-check against the Java in
+`parity/factorial_lda_compare.py`. A fixed seed reproduces bit-for-bit.
 
 ## Scholar
 

@@ -6,6 +6,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **`topica.FactorialLDA` — Factorial LDA (fLDA)** (#606). A port of Paul & Dredze
+  (NIPS 2012): each token is a K-tuple of latent factors (e.g. topic × sentiment)
+  rather than a single topic. Structured log-linear word priors (`ω`, SAGE-like) tie
+  tuples that share a component, a document-specific log-linear prior (`α`, DMR-like)
+  shapes the per-document tuple mixture, and a relaxed group-lasso sparsity prior can
+  deactivate unsupported tuples (`tuple_activity`). Takes `factor_sizes=[...]` for any
+  number of factors; exposes `tuples`, `factor_word`/`factor_top_words`, and the
+  paper's base/W/S/SW ablations (`word_priors=`, `sparsity=`, `symmetric_word_prior=`)
+  plus informed word-prior seeding (`omega_priors=`, the Paul & Dredze 2013
+  drug-experiences feature). Inference is Monte Carlo EM (collapsed Gibbs over tuples
+  + gradient ascent on the log-linear weights); bit-for-bit reproducible from `seed`.
+  The reference Java is non-reproducible, so correctness is certified by
+  finite-difference gradient and factor-tying tests plus planted topic × sentiment
+  recovery rather than by seed parity.
+
 ## [0.54.0] - 2026-07-28
 
 ### Added

@@ -2811,6 +2811,131 @@ class BTM:
     def __repr__(self) -> str: ...
 
 
+class FactorialLDA:
+    """Factorial LDA (Paul & Dredze 2012): a sparse multi-dimensional topic model.
+    Each token is drawn from a K-tuple of latent factors (e.g. (topic, sentiment) or
+    (topic, perspective, focus)); structured log-linear word priors tie tuples that
+    share a component, and a relaxed sparsity prior can deactivate unsupported
+    tuples. ``factor_sizes`` gives the number of components per factor; the model has
+    ``prod(factor_sizes)`` tuples (= ``num_topics``). Fit is Monte Carlo EM (collapsed
+    Gibbs over tuples + gradient ascent on the log-linear weights)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+    def __init__(
+        self,
+        factor_sizes: Sequence[int],
+        *,
+        sigma_alpha: float = 1.0,
+        sigma_alpha_bias: float = 1.0,
+        sigma_omega: float = 0.5,
+        sigma_omega_bias: float = 10.0,
+        delta0: float = 0.1,
+        delta1: float = 0.1,
+        alpha_bias_init: float = -5.0,
+        omega_bias_init: float = -5.0,
+        step_alpha_doc: float = 1e-2,
+        step_alpha_corpus: float | None = None,
+        step_alpha_bias: float | None = None,
+        step_omega: float = 1e-3,
+        step_omega_bias: float | None = None,
+        step_beta: float = 1e-3,
+        block_freq: int = 1,
+        weight_burnin: int = 100,
+        word_priors: bool = True,
+        sparsity: bool = True,
+        symmetric_word_prior: bool = False,
+        seed: int = 42,
+    ) -> None:
+        """``factor_sizes`` lists the components per factor, e.g. ``[20, 2]`` for 20
+        topics x 2 sentiments. ``word_priors``/``sparsity`` toggle the paper's
+        base/W/S/SW ablations; ``symmetric_word_prior`` fixes the per-word background
+        to 0. Step sizes default to the reference's (``step_alpha_corpus`` and
+        ``step_alpha_bias`` to ``step_alpha_doc/100``, ``step_omega_bias`` to
+        ``step_omega/100``) when left ``None``."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        *,
+        iters: int = 2000,
+        samples: int = 100,
+        eval_every: int = 0,
+        omega_priors: dict | None = None,
+    ) -> "FactorialLDA":
+        """``samples`` tail iterations are averaged for the posterior-mean topic-word
+        and doc-topic. ``eval_every`` > 0 records a log-likelihood trace. Optional
+        informed ``omega_priors`` seed the log-linear word prior (the NAACL-2013
+        feature): ``{"background": {word: mean} | [float, ...],
+        "components": {(factor, component): {word: mean} | [float, ...]}}``."""
+        ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-tuple word distribution phi, shape (num_tuples, vocab)."""
+        ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-document tuple distribution theta, shape (num_docs, num_tuples)."""
+        ...
+    @property
+    def num_topics(self) -> int:
+        """Number of tuples = prod(factor_sizes)."""
+        ...
+    @property
+    def num_tuples(self) -> int: ...
+    @property
+    def factor_sizes(self) -> list[int]: ...
+    @property
+    def tuples(self) -> list[list[int]]:
+        """Tuple index -> its per-factor component vector."""
+        ...
+    @property
+    def tuple_activity(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-tuple activity b_x = sigmoid(beta_x) in (0, 1); a tuple is inactive
+        when b_x <= 0.5. All ones when ``sparsity=False``."""
+        ...
+    @property
+    def omega_background(self) -> float:
+        """Corpus-wide word-prior bias omega_B."""
+        ...
+    @property
+    def omega_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Background per-word weights omega_w (vocab,)."""
+        ...
+    def factor_word(self, factor: int) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-component word weights for ``factor``, shape (Z_k, vocab) -- the
+        "overview" weights summarizing each component."""
+        ...
+    def factor_top_words(
+        self, factor: int, component: int, n: int = 10
+    ) -> list[tuple[str, float]]:
+        """Top ``n`` words (by omega weight) for ``component`` of ``factor``."""
+        ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """(iter, log-likelihood) trace; empty unless ``eval_every > 0``, always
+        ending with the final-iteration value."""
+        ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> "FactorialLDA": ...
+    def __repr__(self) -> str: ...
+
+
 class PolylingualLDA:
     """Polylingual Topic Model (Mimno, Wallach, Naradowsky, Smith & McCallum 2009):
     LDA for aligned document tuples across L languages. Every document in a tuple

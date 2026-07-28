@@ -281,6 +281,11 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         exempt: &[],
     },
     RegistryEntry {
+        name: "FactorialLDA",
+        family: ModelFamily::Dirichlet,
+        exempt: &[],
+    },
+    RegistryEntry {
         name: "BERTopic",
         family: ModelFamily::None_,
         exempt: &[],
@@ -335,11 +340,11 @@ mod registry_tests {
             }
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
-        // Estimator-backed Rust struct). Bumped to 29 when SemanticSignalSeparation
-        // (S³) was added.
+        // Estimator-backed Rust struct). Bumped to 30 when FactorialLDA (fLDA)
+        // was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            29,
+            30,
             "registry size drifted from the Python REGISTRY"
         );
     }

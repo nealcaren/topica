@@ -111,6 +111,13 @@ REGISTRY: list[tuple[str, object, str]] = [
     # well-behaved flat-K model, validated in tests/test_disclda.py and
     # parity/disclda_20ng.py.
     #
+    # FactorialLDA is EXCLUDED (like BTM/DiscLDA): its "topic" is a K-tuple of
+    # factors, its prior is a structured log-linear function (not a scalar Tier-2
+    # `alpha`), and held-out `transform` / MCMC `theta_draws` are documented
+    # follow-ups rather than v1 surface. Its numerical correctness is certified by
+    # the finite-difference gradient + factor-tying tests in src/factorial_lda.rs and
+    # the recovery tests in tests/test_factorial_lda.py / parity/factorial_lda_compare.py.
+    #
     # EmbeddingLDA is EXCLUDED: it is a Python wrapper around SeededLDA (see
     # module-level note in python/topica/embedding.py). It delegates every
     # fitted-model getter to self._model via __getattr__, has no class-level

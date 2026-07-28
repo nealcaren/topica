@@ -381,6 +381,15 @@ def _fit_btm(iters=200):
     return m.doc_topic, m.topic_word, K
 
 
+def _fit_factorial_lda(iters=400):
+    # 6 planted blocks map to the 6 tuples of factor_sizes=[3, 2]; a healthy fit
+    # spreads mass across the six tuple word-distributions.
+    docs, _ = _planted_blocks(k=6, block=8, n=300, length=14)
+    m = topica.FactorialLDA(factor_sizes=[3, 2], seed=1)
+    m.fit(docs, iters=iters, samples=iters // 4)
+    return m.doc_topic, m.topic_word, 6
+
+
 # ---- Dynamic & hierarchical -------------------------------------------------
 
 def _fit_dtm(iters=20):
@@ -633,6 +642,7 @@ FIT_ADAPTERS = {
     "RTM": _fit_rtm,
     "GSDMM": _fit_gsdmm,
     "BTM": _fit_btm,
+    "FactorialLDA": _fit_factorial_lda,
     "PolylingualLDA": _fit_pltm,
     "PT": _fit_pt,
     "DTM": _fit_dtm,
