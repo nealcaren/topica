@@ -244,6 +244,32 @@ The embedding-native models build on two pure-Rust crates: [**petal-clustering**
 
 Full citations for every model and reference implementation, and how to cite topica, are on the [Citing](https://nealcaren.github.io/topica/citing/) page.
 
+## Contributing, tests, and support
+
+Contributions are welcome. See [CONTRIBUTING](.github/CONTRIBUTING.md) for the
+development setup and workflow, [CONTRIBUTING-MODELS](.github/CONTRIBUTING-MODELS.md)
+for adding a new topic model, and the [conventions guide](docs/contributing/conventions.md)
+for the cross-model naming and API contract. All participants are expected to
+follow our [Code of Conduct](CODE_OF_CONDUCT.md).
+
+To run the test suite after a source build:
+
+```bash
+cargo test --lib                                   # Rust unit tests
+python -m pytest tests/ -q                         # Python tests
+mkdocs build --strict                              # docs build clean
+```
+
+Every push runs these on CI (see the badge above). The `parity/` checks
+validate models against their reference implementations (R `stm`, keyATM,
+MALLET); they skip cleanly when those toolchains are not installed.
+
+- **Report a bug or request a feature:** open an [issue](https://github.com/nealcaren/topica/issues).
+- **Ask a question or share how you are using topica:** start a [discussion](https://github.com/nealcaren/topica/discussions).
+
+topica is maintained by Neal Caren. Issues and pull requests are triaged on a
+best-effort basis.
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).
