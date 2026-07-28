@@ -29,8 +29,12 @@
 //! feature).
 
 use crate::estimator::{Estimator, ModelFamily};
+use crate::linalg::qr_reduced;
 use crate::reduce::jacobi_eigen_symmetric;
+use ndarray::Array2;
 use rand::Rng;
+use rand_chacha::rand_core::SeedableRng;
+use rand_chacha::ChaCha8Rng;
 
 /// Which per-word importance the model reports as `components` / `topic_word`.
 /// Matches turftopic's `feature_importance` knob.
@@ -102,6 +106,11 @@ pub struct SemanticSignalSeparationModel {
 /// * `feature_importance` — how signed per-word importance is scored.
 /// * `iters` — FastICA `max_iter`.
 /// * `tol` — FastICA convergence tolerance.
+/// * `missing` — optional per-vocabulary-term mask (length V); a `true` entry marks
+///   a corpus term the caller supplied no embedding for (its `vocab_emb` row is a
+///   placeholder). Such terms get exactly zero importance on every axis, rather
+///   than the spurious score a placeholder vector would project to. An empty slice
+///   means every term is present.
 /// * `rng` — seeds the FastICA `w_init`; a fixed seed reproduces bit-for-bit.
 ///
 /// `num_topics` must be `<= min(D, M)` (FastICA cannot extract more components than
@@ -114,14 +123,19 @@ pub fn fit<R: Rng>(
     feature_importance: FeatureImportance,
     iters: usize,
     tol: f64,
+    missing: &[bool],
     rng: &mut R,
 ) -> SemanticSignalSeparationModel {
     let d = doc_emb.len();
     let m = doc_emb.first().map(|r| r.len()).unwrap_or(0);
     let k = num_topics;
+    let vv = vocab_emb.len();
+    let dp = d as f64;
+    let sqrt_d = dp.sqrt();
 
     // 1. Center the document embeddings (per feature, over documents). `mean_`
-    //    also centers the vocabulary in the projection step.
+    //    also centers the vocabulary in the projection step. `xc` (D x M) is the
+    //    centered matrix, built row-major for the whitening range finder.
     let mut mean = vec![0.0f64; m];
     for row in doc_emb {
         for (f, &x) in row.iter().enumerate() {
@@ -129,108 +143,72 @@ pub fn fit<R: Rng>(
         }
     }
     for mval in mean.iter_mut() {
-        *mval /= d as f64;
+        *mval /= dp;
     }
-    let xc: Vec<Vec<f64>> = doc_emb
-        .iter()
-        .map(|row| row.iter().zip(&mean).map(|(&x, &mu)| x - mu).collect())
-        .collect();
-
-    // 2. Unit-variance whitening. From the covariance C = Xcᵀ Xc (M x M), whose
-    //    eigenpairs are the squared singular values / left singular vectors of Xcᵀ,
-    //    the whitening rows are Kw[j] = evec_j / sqrt(eval_j). ICA is invariant to
-    //    the whitening rotation, so we need not match scikit-learn's SVD sign/order.
-    let mut cov = vec![0.0f64; m * m];
-    for row in &xc {
-        for a in 0..m {
-            let ra = row[a];
-            let base = a * m;
-            for b in a..m {
-                cov[base + b] += ra * row[b];
-            }
-        }
-    }
-    for a in 0..m {
-        for b in (a + 1)..m {
-            cov[b * m + a] = cov[a * m + b];
-        }
-    }
-    let (evals, evecs) = jacobi_eigen_symmetric(&cov, m);
-    let tiny = f64::MIN_POSITIVE;
-    // Whitening matrix Kw (K x M) and the whitened, unit-variance-scaled data
-    // X1 (K x D) = Kw @ Xcᵀ * sqrt(D).
-    let sqrt_d = (d as f64).sqrt();
-    let mut kw = vec![vec![0.0f64; m]; k];
-    for j in 0..k {
-        let dj = evals[j].max(tiny).sqrt();
+    let mut xc_flat = vec![0.0f64; d * m];
+    for (i, row) in doc_emb.iter().enumerate() {
         for f in 0..m {
-            kw[j][f] = evecs[j][f] / dj;
-        }
-    }
-    // X1[j][i] = sum_f Kw[j][f] * Xc[i][f] * sqrt(D).
-    let mut x1 = vec![vec![0.0f64; d]; k];
-    for j in 0..k {
-        for (i, row) in xc.iter().enumerate() {
-            let mut s = 0.0;
-            for f in 0..m {
-                s += kw[j][f] * row[f];
-            }
-            x1[j][i] = s * sqrt_d;
+            xc_flat[i * m + f] = row[f] - mean[f];
         }
     }
 
-    // 3. Parallel FastICA with the logcosh nonlinearity (alpha = 1).
+    // 2. Unit-variance whitening. The whitening rows are Kw[j] = √D · V[:,j] / σ_j,
+    //    where V (M x K) are the top-K right singular vectors of the centered data
+    //    Xc (equivalently the top-K eigenvectors of Xcᵀ Xc) and σ_j its singular
+    //    values. The √D folds in scikit-learn's unit-variance scale so `components_`
+    //    (and hence `axial`) match the reference magnitude. ICA is invariant to the
+    //    whitening rotation, so the SVD sign/order need not match sklearn. `whiten_kw`
+    //    finds only the top-K via a seeded randomized range finder (fast and
+    //    deterministic), so a fixed seed reproduces the fit bit-for-bit.
+    let xc = Array2::from_shape_vec((d, m), xc_flat).expect("xc shape");
+    let svd_seed = rng.gen::<u64>();
+    let kw = whiten_kw(&xc, d, m, k, sqrt_d, svd_seed);
+    // X1 (K x D) = Kw @ Xcᵀ. The √D is already folded into Kw.
+    let x1 = kw.dot(&xc.t());
+
+    // 3. Parallel FastICA with the logcosh nonlinearity (alpha = 1). The two hot
+    //    matmuls per iteration (W @ X1 and gwtx @ X1ᵀ) go through ndarray's GEMM.
     let mut w_init = vec![vec![0.0f64; k]; k];
     for row in w_init.iter_mut() {
         for v in row.iter_mut() {
             *v = next_standard_normal(rng);
         }
     }
-    let mut w = sym_decorrelation(&w_init, k);
+    let mut w = vecs_to_nd(&sym_decorrelation(&w_init, k));
     let mut history = Vec::new();
     let mut converged = false;
-    let dp = d as f64;
     for ii in 0..iters {
-        // WX = W @ X1 (K x D); gwtx = tanh(WX); g_wtx[j] = mean_i (1 - gwtx²).
-        let mut gwtx = vec![vec![0.0f64; d]; k];
+        let wx = w.dot(&x1); // K x D
+        let gwtx = wx.mapv(f64::tanh);
+        // g_mean[j] = mean_i (1 - gwtx[j,i]²).
         let mut g_mean = vec![0.0f64; k];
         for j in 0..k {
-            let mut gm = 0.0;
-            for i in 0..d {
-                let mut wx = 0.0;
-                for l in 0..k {
-                    wx += w[j][l] * x1[l][i];
-                }
-                let t = wx.tanh();
-                gwtx[j][i] = t;
-                gm += 1.0 - t * t;
-            }
-            g_mean[j] = gm / dp;
+            let ss: f64 = gwtx.row(j).iter().map(|&t| t * t).sum();
+            g_mean[j] = 1.0 - ss / dp;
         }
-        // W1_pre[j][l] = (1/D) sum_i gwtx[j][i] X1[l][i]  -  g_mean[j] W[j][l].
-        let mut w1_pre = vec![vec![0.0f64; k]; k];
+        // W1_pre = (gwtx @ X1ᵀ)/D − diag(g_mean) · W.
+        let mut w1_pre = gwtx.dot(&x1.t()) / dp;
         for j in 0..k {
+            let gm = g_mean[j];
             for l in 0..k {
-                let mut s = 0.0;
-                for i in 0..d {
-                    s += gwtx[j][i] * x1[l][i];
-                }
-                w1_pre[j][l] = s / dp - g_mean[j] * w[j][l];
+                w1_pre[[j, l]] -= gm * w[[j, l]];
             }
         }
-        let w1 = sym_decorrelation(&w1_pre, k);
-        // lim = max_j | |<W1[j], W[j]>| - 1 |.
+        let w1 = vecs_to_nd(&sym_decorrelation(&nd_to_vecs(&w1_pre), k));
+        // lim = max_j | |<W1[j], W[j]>| − 1 |. NaN must propagate (a non-finite
+        // update is not "converged"): `f64::max` drops NaN, so track it explicitly.
         let mut lim = 0.0f64;
         for j in 0..k {
             let mut dot = 0.0;
             for l in 0..k {
-                dot += w1[j][l] * w[j][l];
+                dot += w1[[j, l]] * w[[j, l]];
             }
-            lim = lim.max((dot.abs() - 1.0).abs());
+            let v = (dot.abs() - 1.0).abs();
+            lim = if v.is_nan() { f64::NAN } else { lim.max(v) };
         }
         w = w1;
         history.push((ii + 1, lim));
-        if lim < tol {
+        if lim.is_finite() && lim < tol {
             converged = true;
             break;
         }
@@ -238,14 +216,11 @@ pub fn fit<R: Rng>(
 
     // 4. Sources S = (W @ X1)ᵀ (D x K), then unit-variance rescale: divide each
     //    column by its (population) std and fold the same factor into W.
+    let s_nd = w.dot(&x1); // K x D
     let mut s = vec![vec![0.0f64; k]; d];
-    for (i, srow) in s.iter_mut().enumerate() {
-        for (j, sval) in srow.iter_mut().enumerate() {
-            let mut acc = 0.0;
-            for l in 0..k {
-                acc += w[j][l] * x1[l][i];
-            }
-            *sval = acc;
+    for i in 0..d {
+        for j in 0..k {
+            s[i][j] = s_nd[[j, i]];
         }
     }
     for j in 0..k {
@@ -259,38 +234,68 @@ pub fn fit<R: Rng>(
             let e = srow[j] - mu;
             var += e * e;
         }
-        let std = (var / dp).sqrt().max(tiny);
+        let std = (var / dp).sqrt().max(f64::MIN_POSITIVE);
         for srow in s.iter_mut() {
             srow[j] /= std;
         }
         for l in 0..k {
-            w[j][l] /= std;
+            w[[j, l]] /= std;
         }
     }
 
     // 5. Unmixing components_ = W @ Kw (K x M): the map from a centered embedding
     //    to its source scores.
-    let mut comps_emb = vec![vec![0.0f64; m]; k];
-    for j in 0..k {
+    let comps_emb = w.dot(&kw); // K x M
+
+    // 6. Project the vocabulary: axial[k][v] = components_[k] · (vocab[v] − mean_).
+    //    Build the centered vocabulary Vc (V x M), then axial = comps_emb @ Vcᵀ.
+    let mut vc = Array2::<f64>::zeros((vv, m));
+    for (v, wrow) in vocab_emb.iter().enumerate() {
         for f in 0..m {
-            let mut acc = 0.0;
-            for l in 0..k {
-                acc += w[j][l] * kw[l][f];
+            vc[[v, f]] = wrow[f] - mean[f];
+        }
+    }
+    let axial_nd = comps_emb.dot(&vc.t()); // K x V
+    let mut axial: Vec<Vec<f64>> = (0..k)
+        .map(|j| (0..vv).map(|v| axial_nd[[j, v]]).collect())
+        .collect();
+
+    // 6b. Terms with no caller-supplied embedding carry a placeholder vector, which
+    //     would otherwise project to a spurious (often dominant) score; force their
+    //     importance to exactly zero on every axis so they never surface as a topic
+    //     word.
+    if !missing.is_empty() {
+        for arow in axial.iter_mut() {
+            for (v, a) in arow.iter_mut().enumerate() {
+                if missing[v] {
+                    *a = 0.0;
+                }
             }
-            comps_emb[j][f] = acc;
         }
     }
 
-    // 6. Project the vocabulary: axial[k][v] = components_[k] · (vocab[v] - mean_).
-    let vv = vocab_emb.len();
-    let mut axial = vec![vec![0.0f64; vv]; k];
-    for (v, wrow) in vocab_emb.iter().enumerate() {
-        for j in 0..k {
-            let mut acc = 0.0;
-            for f in 0..m {
-                acc += comps_emb[j][f] * (wrow[f] - mean[f]);
+    // 6c. Canonicalize each axis's sign (ICA recovers components only up to sign):
+    //     orient each topic so its positive pole carries the larger word mass. This
+    //     makes the reported "positive pole" the dominant one and guarantees the
+    //     nonnegative `topic_word` has real support instead of collapsing to uniform.
+    //     Flip `axial` and the matching `source_scores` column together.
+    for j in 0..k {
+        let mut pos = 0.0;
+        let mut neg = 0.0;
+        for &a in &axial[j] {
+            if a > 0.0 {
+                pos += a;
+            } else {
+                neg -= a;
             }
-            axial[j][v] = acc;
+        }
+        if neg > pos {
+            for a in axial[j].iter_mut() {
+                *a = -*a;
+            }
+            for srow in s.iter_mut() {
+                srow[j] = -srow[j];
+            }
         }
     }
 
@@ -380,6 +385,82 @@ fn positive_normalized_rows(rows: &[Vec<f64>]) -> Vec<Vec<f64>> {
         .collect()
 }
 
+/// The reduced-QR orthonormal factor Q (rows x cols) of `a`, as an ndarray.
+fn qr_q(a: &Array2<f64>, rows: usize, cols: usize) -> Array2<f64> {
+    let flat: Vec<f64> = a.iter().copied().collect();
+    let (q, _r) = qr_reduced(&flat, rows, cols);
+    Array2::from_shape_vec((rows, cols), q).expect("qr Q shape")
+}
+
+/// Unit-variance whitening matrix Kw (K x M) via a seeded randomized range finder.
+///
+/// Finds the top-K right singular vectors V (and singular values σ) of the centered
+/// data Xc (D x M) without a full M x M eigendecomposition: sketch Xc onto an
+/// L = K + oversample subspace, orthonormalize (with power iterations for accuracy),
+/// then eigendecompose the small L x L Gram of the projected data. Returns
+/// `Kw[j] = √D · V[:,j] / σ_j`. Seeded, so the whitening is deterministic; the L x L
+/// eigenproblem uses the robust cyclic-Jacobi solver so large K stays stable.
+fn whiten_kw(
+    xc: &Array2<f64>,
+    d: usize,
+    m: usize,
+    k: usize,
+    sqrt_d: f64,
+    seed: u64,
+) -> Array2<f64> {
+    let l = (k + 10).min(m).min(d);
+    let mut srng = ChaCha8Rng::seed_from_u64(seed);
+    let mut omega = Array2::<f64>::zeros((m, l));
+    for x in omega.iter_mut() {
+        *x = next_standard_normal(&mut srng);
+    }
+    // Range finder Q (D x L) for Xc, refined by a few power iterations.
+    let mut q = qr_q(&xc.dot(&omega), d, l);
+    for _ in 0..7 {
+        let z = xc.t().dot(&q); // M x L
+        let qz = qr_q(&z, m, l);
+        let y = xc.dot(&qz); // D x L
+        q = qr_q(&y, d, l);
+    }
+    // B = Qᵀ Xc (L x M); the right singular vectors of Xc equal those of B.
+    let b = q.t().dot(xc); // L x M
+    let bbt = b.dot(&b.t()); // L x L = Ub diag(σ²) Ubᵀ
+    let bbt_flat: Vec<f64> = bbt.iter().copied().collect();
+    let (evals, evecs) = jacobi_eigen_symmetric(&bbt_flat, l);
+    let lam0 = evals.first().copied().unwrap_or(0.0).max(1.0);
+    let lam_floor = lam0 * 1e-24;
+    let mut kw = Array2::<f64>::zeros((k, m));
+    for j in 0..k {
+        let sj = evals[j].max(lam_floor).sqrt();
+        // V[:,j] = Bᵀ Ub[:,j] / σ_j, so Kw[j][f] = √D · V[f][j] / σ_j.
+        for f in 0..m {
+            let mut vfj = 0.0;
+            for (l2, &u) in evecs[j].iter().enumerate() {
+                vfj += b[[l2, f]] * u;
+            }
+            kw[[j, f]] = sqrt_d * vfj / (sj * sj);
+        }
+    }
+    kw
+}
+
+/// Row-major `Vec<Vec<f64>>` (K x K) to a K x K ndarray.
+fn vecs_to_nd(rows: &[Vec<f64>]) -> Array2<f64> {
+    let k = rows.len();
+    let mut a = Array2::<f64>::zeros((k, k));
+    for (j, row) in rows.iter().enumerate() {
+        for (l, &x) in row.iter().enumerate() {
+            a[[j, l]] = x;
+        }
+    }
+    a
+}
+
+/// A K x K ndarray back to row-major `Vec<Vec<f64>>`.
+fn nd_to_vecs(a: &Array2<f64>) -> Vec<Vec<f64>> {
+    a.rows().into_iter().map(|r| r.to_vec()).collect()
+}
+
 /// Symmetric decorrelation: W <- (W Wᵀ)^{-1/2} W. Eigendecompose the K x K Gram
 /// W Wᵀ, form U diag(1/√s) Uᵀ, and left-multiply W.
 fn sym_decorrelation(w: &[Vec<f64>], k: usize) -> Vec<Vec<f64>> {
@@ -437,10 +518,12 @@ impl SemanticSignalSeparationModel {
     pub fn top_words(&self, n: usize, topic: usize, negative: bool) -> Vec<(usize, f64)> {
         let row = &self.components[topic];
         let mut idx: Vec<usize> = (0..row.len()).collect();
+        // `total_cmp` gives a total order (NaN-safe), so a stray non-finite score
+        // sorts deterministically instead of panicking on `partial_cmp().unwrap()`.
         if negative {
-            idx.sort_by(|&a, &b| row[a].partial_cmp(&row[b]).unwrap());
+            idx.sort_by(|&a, &b| row[a].total_cmp(&row[b]));
         } else {
-            idx.sort_by(|&a, &b| row[b].partial_cmp(&row[a]).unwrap());
+            idx.sort_by(|&a, &b| row[b].total_cmp(&row[a]));
         }
         idx.into_iter().take(n).map(|i| (i, row[i])).collect()
     }
@@ -509,6 +592,7 @@ mod tests {
             FeatureImportance::Combined,
             200,
             1e-4,
+            &[],
             &mut rng,
         );
         // Each topic's strongest pole should own one of the two word blocks:
@@ -546,6 +630,7 @@ mod tests {
             FeatureImportance::Combined,
             100,
             1e-4,
+            &[],
             &mut r1,
         );
         let b = fit(
@@ -555,6 +640,7 @@ mod tests {
             FeatureImportance::Combined,
             100,
             1e-4,
+            &[],
             &mut r2,
         );
         assert_eq!(a.components, b.components);
@@ -568,6 +654,7 @@ mod tests {
             FeatureImportance::Combined,
             100,
             1e-4,
+            &[],
             &mut r3,
         );
         assert!(a.source_scores != c.source_scores);
@@ -584,6 +671,7 @@ mod tests {
             FeatureImportance::Combined,
             200,
             1e-4,
+            &[],
             &mut rng,
         );
         let d = m.source_scores.len() as f64;
@@ -613,6 +701,7 @@ mod tests {
             FeatureImportance::Combined,
             100,
             1e-4,
+            &[],
             &mut rng,
         );
         assert!(crate::conformance::check_conformance(&m).is_empty());

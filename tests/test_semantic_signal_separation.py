@@ -160,3 +160,48 @@ def test_bad_pole_argument():
     m = _fit()
     with pytest.raises(ValueError):
         m.top_words(3, topic=0, pole="sideways")
+
+
+def test_non_finite_convergence_tol_rejected():
+    # +inf and NaN tolerances are rejected (an inf tol would "converge" instantly).
+    with pytest.raises(ValueError):
+        topica.SemanticSignalSeparation(2, convergence_tol=float("inf"))
+    with pytest.raises(ValueError):
+        topica.SemanticSignalSeparation(2, convergence_tol=float("nan"))
+
+
+def test_duplicate_vocabulary_rejected():
+    docs, doc_emb = _planted()
+    dup = list(_VOCAB)
+    dup[1] = dup[0]  # duplicate "cat"
+    with pytest.raises(ValueError):
+        topica.SemanticSignalSeparation(2).fit(docs, doc_emb, _VOCAB_EMB, vocabulary=dup)
+
+
+def test_missing_vocab_words_get_zero_importance():
+    # A corpus term with no supplied embedding must contribute exactly zero to every
+    # axis (not the spurious score a placeholder vector would project to), so it never
+    # appears among a topic's top words.
+    docs, doc_emb = _planted()
+    partial_vocab = _VOCAB[:4]  # drop "moon", "sky"
+    partial_emb = _VOCAB_EMB[:4]
+    m = topica.SemanticSignalSeparation(2, seed=1).fit(
+        docs, doc_emb, partial_emb, vocabulary=partial_vocab
+    )
+    missing_ids = [i for i, w in enumerate(m.vocabulary) if w in {"moon", "sky"}]
+    assert missing_ids, "the dropped words should still be in the corpus vocabulary"
+    comps = np.asarray(m.components)
+    for i in missing_ids:
+        assert np.all(comps[:, i] == 0.0), "a word with no embedding must score zero"
+    # A zero-scored missing word cannot outrank a genuinely positive word, so it
+    # never leads a topic's positive pole.
+    leads = {m.top_words(1, topic=t)[0][0] for t in range(2)}
+    assert leads.isdisjoint({"moon", "sky"})
+
+
+def test_all_missing_vocab_rejected():
+    docs, doc_emb = _planted()
+    with pytest.raises(ValueError):
+        topica.SemanticSignalSeparation(2).fit(
+            docs, doc_emb, np.zeros((1, doc_emb.shape[1])), vocabulary=["not_a_corpus_word"]
+        )

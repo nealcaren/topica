@@ -121,8 +121,10 @@ impl SemanticSignalSeparation {
         if iters < 1 {
             return Err(PyValueError::new_err("iters must be >= 1"));
         }
-        if convergence_tol <= 0.0 || convergence_tol.is_nan() {
-            return Err(PyValueError::new_err("convergence_tol must be > 0"));
+        if !convergence_tol.is_finite() || convergence_tol <= 0.0 {
+            return Err(PyValueError::new_err(
+                "convergence_tol must be a finite value > 0",
+            ));
         }
         Ok(SemanticSignalSeparation {
             num_topics,
@@ -201,9 +203,12 @@ impl SemanticSignalSeparation {
         }
         let num_types = corpus.num_types();
         // Realign vocab embeddings to topica's vocabulary order. With `vocabulary`,
-        // map by word (terms topica kept but the user did not supply get a zero
-        // vector). Without it, the rows must already be in corpus order.
-        let vocab_emb: Vec<Vec<f64>> = match vocabulary {
+        // map by word; a corpus term the caller supplied no embedding for gets a
+        // placeholder row AND a `missing` flag, so the core zeroes its importance
+        // (a placeholder vector would otherwise project to a spurious score).
+        // Without `vocabulary`, the rows must already be in corpus order (none
+        // missing).
+        let (vocab_emb, missing): (Vec<Vec<f64>>, Vec<bool>) = match vocabulary {
             Some(vocab) => {
                 if raw_vocab.len() != vocab.len() {
                     return Err(PyValueError::new_err(format!(
@@ -212,19 +217,36 @@ impl SemanticSignalSeparation {
                         vocab.len()
                     )));
                 }
-                let map: std::collections::HashMap<&str, usize> = vocab
-                    .iter()
-                    .enumerate()
-                    .map(|(i, w)| (w.as_str(), i))
-                    .collect();
-                corpus
-                    .id_to_word
-                    .iter()
-                    .map(|w| match map.get(w.as_str()) {
-                        Some(&i) => raw_vocab[i].clone(),
-                        None => vec![0.0; e],
-                    })
-                    .collect()
+                let mut map: std::collections::HashMap<&str, usize> =
+                    std::collections::HashMap::with_capacity(vocab.len());
+                for (i, w) in vocab.iter().enumerate() {
+                    if map.insert(w.as_str(), i).is_some() {
+                        return Err(PyValueError::new_err(format!(
+                            "vocabulary has a duplicate word '{w}'; every word must be unique"
+                        )));
+                    }
+                }
+                let mut emb = Vec::with_capacity(num_types);
+                let mut miss = Vec::with_capacity(num_types);
+                for w in &corpus.id_to_word {
+                    match map.get(w.as_str()) {
+                        Some(&i) => {
+                            emb.push(raw_vocab[i].clone());
+                            miss.push(false);
+                        }
+                        None => {
+                            emb.push(vec![0.0; e]);
+                            miss.push(true);
+                        }
+                    }
+                }
+                if miss.iter().all(|&x| x) {
+                    return Err(PyValueError::new_err(
+                        "no corpus term has a vocab_embeddings row; check that `vocabulary` \
+                         covers the corpus vocabulary",
+                    ));
+                }
+                (emb, miss)
             }
             None => {
                 if raw_vocab.len() != num_types {
@@ -235,7 +257,7 @@ impl SemanticSignalSeparation {
                         num_types
                     )));
                 }
-                raw_vocab
+                (raw_vocab, Vec::new())
             }
         };
 
@@ -249,8 +271,20 @@ impl SemanticSignalSeparation {
         let fi = FeatureImportance::parse(&slf.feature_importance).unwrap();
         let (iters, tol, seed) = (slf.iters, slf.tol, slf.seed);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let model =
-            py.allow_threads(move || s3_fit(&doc_emb, &vocab_emb, k, fi, iters, tol, &mut rng));
+        let model = py.allow_threads(move || {
+            s3_fit(&doc_emb, &vocab_emb, k, fi, iters, tol, &missing, &mut rng)
+        });
+
+        // A non-finite fit (e.g. embeddings with pathological scale/conditioning)
+        // must not be silently rectified into a "valid" uniform topic_word; surface
+        // it as an error the caller can act on.
+        let finite = |rows: &[Vec<f64>]| rows.iter().all(|r| r.iter().all(|x| x.is_finite()));
+        if !finite(&model.components) || !finite(&model.source_scores) {
+            return Err(PyValueError::new_err(
+                "S³ fit produced non-finite values; check that the embeddings are finite and \
+                 reasonably scaled (e.g. L2-normalized)",
+            ));
+        }
 
         slf.id_to_word = corpus.id_to_word.clone();
         slf.docs = corpus.docs.clone();
