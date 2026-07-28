@@ -233,7 +233,10 @@ def _gemini_embed(items, model, *, key):
         ) from e
     client = genai.Client(api_key=key) if key is not None else genai.Client()
     resp = client.models.embed_content(model=model, contents=items)
-    return np.asarray([e.values for e in resp.embeddings], dtype=float)
+    # Some google-genai versions expose a single-item embed as `.embedding`
+    # (singular) with `.embeddings` left None; fall back so a 1-text call works.
+    embs = resp.embeddings if resp.embeddings is not None else [resp.embedding]
+    return np.asarray([e.values for e in embs], dtype=float)
 
 
 def llm_embed(texts, model="text-embedding-3-small", *, provider=None,
@@ -274,6 +277,17 @@ def llm_embed(texts, model="text-embedding-3-small", *, provider=None,
                 return arr
 
     prov = provider or _detect_embed_provider(model, base_url)
+    if prov == "anthropic":
+        raise ValueError(
+            "Anthropic has no embedding API; use an OpenAI or Gemini embedding "
+            "model, or compute embeddings with sentence-transformers and pass the "
+            "array directly."
+        )
+    if prov not in ("openai", "gemini"):
+        raise ValueError(
+            f"unknown embedding provider {prov!r}; expected 'openai' or 'gemini' "
+            "(or pass base_url= for an OpenAI-compatible endpoint)."
+        )
     if prov == "gemini":
         arr = _gemini_embed(items, model, key=key)
     else:

@@ -188,6 +188,11 @@ def llm_backend(model="gpt-4o-mini", *, provider=None, base_url=None, key=None,
     three.
     """
     prov = provider or _detect_provider(model, base_url)
+    if prov not in ("openai", "anthropic", "gemini"):
+        raise ValueError(
+            f"unknown provider {prov!r}; expected 'openai', 'anthropic', or "
+            "'gemini' (or pass base_url= for an OpenAI-compatible endpoint)."
+        )
     if prov == "anthropic":
         return _anthropic_chat_call(model, key=key, system=system, options=options)
     if prov == "gemini":

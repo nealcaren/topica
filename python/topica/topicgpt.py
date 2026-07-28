@@ -574,9 +574,13 @@ class TopicGPT:
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict, keyword-named
         to match ``__init__`` (issue #400). The ``backend`` callable is data, not a
-        hyperparameter, so it is not reported; ``model`` records the named backend."""
+        hyperparameter, so it is not reported; ``model`` records the named backend.
+        ``key`` is a secret and is deliberately omitted so it never lands in a
+        provenance record or save; ``base_url`` is reported (it is reproducibility-
+        relevant config, e.g. which endpoint served the run)."""
         return {
             "model": self._model_name,
+            "base_url": self._base_url,
             "hierarchical": self.hierarchical,
             "assignment": self.assignment,
             "sample": self.sample,
@@ -595,7 +599,7 @@ class TopicGPT:
         A convenience over ``TopicGPT(prompts={stage: template})`` for swapping a
         single stage, e.g. to adapt the few-shot examples to your domain::
 
-            model = TopicGPT(model="gpt-4o-mini").with_prompt(
+            model = TopicGPT(model="ollama/qwen3").with_prompt(
                 "generation", my_generation_template)
 
         ``stage`` is one of ``"generation"``, ``"refinement"``, ``"assignment"``;

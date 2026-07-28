@@ -51,6 +51,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Changed
 
+- **LLM helpers now use lightweight per-provider SDKs instead of the `llm` CLI**
+  (#597). `llm_backend` / `llm_embed` dispatch by model name to the `openai`,
+  `anthropic`, or `google-genai` SDKs (`gpt*`→OpenAI, `claude*`→Anthropic,
+  `gemini*`→Gemini; `provider=` overrides; `base_url=` forces an OpenAI-compatible
+  endpoint for ollama / openrouter / vLLM / LM Studio / groq). This drops the single
+  heavyweight `llm` dependency (which pulled ~42 packages and a pre-release
+  `sqlite-migrate` that `uv` blocks). Extras are now `topica[openai]` /
+  `[anthropic]` / `[gemini]`; `topica[llm]` installs all three. The public API is
+  unchanged **except**: `llm_embed` drops the old `batch=` keyword (the SDKs batch
+  natively), it no longer reaches in-process `sentence-transformers` models (compute
+  those embeddings directly and pass the array, as every embedding model already
+  accepts), and Anthropic has no embedding API (`llm_embed` raises for it).
 - **ProdLDA-family VAE decoder now uses a BLAS-free GEMM (2.7–6.8× faster on the
   decoder)** (#378). The hand-coded dense-decoder VAE backbone shared by `ProdLDA`,
   `CombinedTM`, `ZeroShotTM`, `InfoCTM`, and `Scholar` spent most of a fit
