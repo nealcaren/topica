@@ -457,8 +457,36 @@ or seed with `omega_priors` to pin an axis. Second, the block sampler enumerates
 factors; for many factors raise `block_freq` to sample each factor independently
 (additive cost, at some loss of mixing).
 
+**Supervise a factor (semi-supervised).** Because the unsupervised factors are only
+weakly identified (below), the reliable way to *get* a topic × sentiment or topic ×
+party decomposition is to tell the model what the second axis is. Pass
+`observed_factors={factor: labels}` to `fit`, where `labels` has one entry per
+document — the observed component of that factor (`0..Z_factor`) or `None` to leave
+it latent:
+
+```python
+# sentiment known for some reviews (0/1), unknown (None) for the rest
+labels = [0, 1, None, 1, None, ...]          # one per document
+m = topica.FactorialLDA(factor_sizes=[8, 2], seed=1)
+m.fit(docs, observed_factors={1: labels})    # factor 1 IS sentiment now
+```
+
+A labeled document's factor is pinned to its label for every token (its topic
+distribution lives on that sub-simplex); an unlabeled document's value for that
+factor is inferred, and you can read it back by marginalizing `doc_topic` over the
+other factors. On 2000 movie reviews, labeling a random 10% lifts transductive
+sentiment recovery on the other 90% from 0.52 (unsupervised, ≈chance) to ~0.71, and
+50% labels to ~0.77 — better than a seeded lexicon, and it also cleans up the topic
+factor by explaining sentiment away. This is *transductive label completion* (the
+unlabeled documents take part in the fit), not held-out prediction, and fLDA is a
+generative topic model, not a discriminative classifier — treat it as a
+semi-supervised joint topic × axis model. When a factor is fully observed its
+per-component word weights still learn a sensible lexicon, but its `α` prevalence
+terms become confounded with the document bias and should not be read as a latent
+prevalence.
+
 **When to reach for it — and when not.** Be realistic about what the extra factors
-buy you. fLDA reliably learns a good *topic* factor, but the second (and later)
+buy you *unsupervised*. fLDA reliably learns a good *topic* factor, but the second (and later)
 factors are only weakly identified: unsupervised, they tend to absorb *more topic
 variation* rather than discovering a latent sentiment or perspective axis, because
 subject matter dominates the lexicon. On the STM poliblog posts, an unsupervised

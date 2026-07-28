@@ -2868,12 +2868,24 @@ class FactorialLDA:
         samples: int = 100,
         eval_every: int = 0,
         omega_priors: dict | None = None,
+        observed_factors: dict | None = None,
     ) -> "FactorialLDA":
         """``samples`` tail iterations are averaged for the posterior-mean topic-word
         and doc-topic. ``eval_every`` > 0 records a log-likelihood trace. Optional
         informed ``omega_priors`` seed the log-linear word prior (the NAACL-2013
         feature): ``{"background": {word: mean} | [float, ...],
-        "components": {(factor, component): {word: mean} | [float, ...]}}``."""
+        "components": {(factor, component): {word: mean} | [float, ...]}}``.
+
+        ``observed_factors`` runs the model **semi-supervised**: ``{factor_index:
+        labels}`` where ``labels`` is one entry per document giving the observed
+        component of that factor (an int in ``[0, Z_factor)``) or ``None`` to leave
+        it latent. A document's observed factor is pinned to its label for every
+        token, so that factor *becomes* the supervised axis (sentiment, party, …);
+        latent documents' value for that factor is inferred and can be read from
+        ``doc_topic`` (marginalize over the other factors). This is transductive
+        label completion (unlabeled documents participate in the fit), not held-out
+        prediction. Omitting ``observed_factors`` gives the faithful unsupervised
+        model."""
         ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:

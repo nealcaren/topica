@@ -205,6 +205,10 @@ struct State<'a> {
     k: usize,
     z0: usize,
     tuple_vecs: Vec<Vec<usize>>,
+    /// Semi-supervised observed factors: `observed[d][kf] = Some(label)` pins factor
+    /// kf of every token in doc d to `label`; `None` leaves it latent. Empty rows
+    /// mean fully unsupervised (the faithful default).
+    observed: Vec<Vec<Option<usize>>>,
 
     // counts
     n_dz: Vec<Vec<u32>>,     // D x Z0
@@ -242,6 +246,13 @@ struct State<'a> {
 impl<'a> State<'a> {
     #[inline]
     fn prior_a(&self, d: usize, x: usize) -> f64 {
+        // An observed factor masks the document prior HARD: a tuple that violates
+        // doc d's observed constraint gets exactly 0 (not the ridge floor), so it is
+        // excluded from alphaNorm, carries no theta mass, and contributes no alpha/
+        // beta gradient — the doc's theta lives on the observed sub-simplex only.
+        if !self.tuple_allowed(d, x) {
+            return 0.0;
+        }
         let z = &self.tuple_vecs[x];
         let mut weight = self.alpha_b;
         for i in 0..self.k {
@@ -263,6 +274,19 @@ impl<'a> State<'a> {
             weight += self.omega_zw[i][z[i]][w];
         }
         weight.exp().max(PRIOR_RIDGE)
+    }
+
+    /// Whether tuple `x` is allowed for document `d` under its observed factors.
+    #[inline]
+    fn tuple_allowed(&self, d: usize, x: usize) -> bool {
+        let obs = &self.observed[d];
+        if obs.is_empty() {
+            return true;
+        }
+        let z = &self.tuple_vecs[x];
+        obs.iter()
+            .enumerate()
+            .all(|(kf, o)| o.is_none_or(|y| z[kf] == y))
     }
 
     fn recompute_alpha_cache(&mut self) {
@@ -300,6 +324,9 @@ impl<'a> State<'a> {
         let mut p = vec![0.0f64; self.z0];
         let mut total = 0.0;
         for x in 0..self.z0 {
+            if !self.tuple_allowed(d, x) {
+                continue; // pinned by an observed factor
+            }
             let pr = (self.n_dz[d][x] as f64 + self.prior_dz[d][x])
                 * (self.n_zw[x][w] as f64 + self.prior_zw[x][w])
                 / (self.n_z[x] as f64 + self.omega_norm[x]);
@@ -331,6 +358,12 @@ impl<'a> State<'a> {
         let z = self.ti.to_vector(cur);
         let mut z_new = z.clone();
         for kf in 0..self.k {
+            // Observed factors are pinned: set z_new[kf] to the observed label
+            // explicitly (do not merely assume the current assignment is correct).
+            if let Some(&Some(y)) = self.observed[d].get(kf) {
+                z_new[kf] = y;
+                continue;
+            }
             let zk = self.cfg.factor_sizes[kf];
             let mut p = vec![0.0f64; zk];
             let mut total = 0.0;
@@ -623,24 +656,42 @@ impl<'a> State<'a> {
     }
 }
 
+/// Sample an index proportional to `p` (unnormalized; `total = sum(p)`). The result
+/// is ALWAYS an index with `p[i] > 0` when any exists, so a caller that zeroes
+/// disallowed entries (observed-factor constraints) can never draw a forbidden one:
+/// the overshoot / degenerate fallbacks return the last positive index, not a fixed
+/// 0 or `len-1` that might be disallowed. Byte-identical to the old behavior when
+/// every entry is positive (the unsupervised path).
 #[inline]
 fn draw<R: Rng>(p: &[f64], total: f64, rng: &mut R) -> usize {
-    if !total.is_finite() || total <= 0.0 {
-        return 0;
-    }
-    let u = rng.gen::<f64>() * total;
-    let mut v = 0.0;
-    for (i, &pi) in p.iter().enumerate() {
-        v += pi;
-        if v > u {
-            return i;
+    let mut last_pos: Option<usize> = None;
+    if total.is_finite() && total > 0.0 {
+        let u = rng.gen::<f64>() * total;
+        let mut v = 0.0;
+        for (i, &pi) in p.iter().enumerate() {
+            if pi > 0.0 {
+                last_pos = Some(i);
+                v += pi;
+                if v > u {
+                    return i;
+                }
+            }
+        }
+        if let Some(i) = last_pos {
+            return i; // float overshoot: the last positive-probability index
         }
     }
-    p.len() - 1
+    // Degenerate (no positive mass): first positive if any, else 0.
+    p.iter().position(|&pi| pi > 0.0).unwrap_or(0)
 }
 
 impl<'a> State<'a> {
-    fn new(corpus: &'a Corpus, cfg: &'a FactorialLdaConfig, priors: &OmegaPriors) -> State<'a> {
+    fn new(
+        corpus: &'a Corpus,
+        cfg: &'a FactorialLdaConfig,
+        priors: &OmegaPriors,
+        observed: &[Vec<Option<usize>>],
+    ) -> State<'a> {
         let ti = TupleIndex::new(&cfg.factor_sizes);
         let z0 = ti.z0;
         let k = cfg.factor_sizes.len();
@@ -648,6 +699,19 @@ impl<'a> State<'a> {
         let docs = &corpus.docs;
         let d = docs.len();
         let tuple_vecs: Vec<Vec<usize>> = (0..z0).map(|x| ti.to_vector(x)).collect();
+        // `observed` is either empty (fully unsupervised) or exactly one row per
+        // document; the binding guarantees the latter. A mismatched length is a
+        // caller bug, not a silent downgrade to unsupervised.
+        assert!(
+            observed.is_empty() || observed.len() == d,
+            "observed has {} rows but the corpus has {d} documents",
+            observed.len()
+        );
+        let observed: Vec<Vec<Option<usize>>> = if observed.len() == d {
+            observed.to_vec()
+        } else {
+            vec![vec![]; d]
+        };
 
         // omega initialized AT the prior means eta (Gate A blocker: not 0).
         // The ablation flags REMOVE their term entirely (Gate B blocker): they
@@ -683,6 +747,7 @@ impl<'a> State<'a> {
             k,
             z0,
             tuple_vecs,
+            observed,
             n_dz: vec![vec![0u32; z0]; d],
             n_zw: vec![vec![0u32; v]; z0],
             n_z: vec![0u32; z0],
@@ -719,6 +784,9 @@ impl<'a> State<'a> {
                 let mut p = vec![0.0f64; self.z0];
                 let mut total = 0.0;
                 for x in 0..self.z0 {
+                    if !self.tuple_allowed(di, x) {
+                        continue;
+                    }
                     p[x] = self.prior_zw[x][w];
                     total += p[x];
                 }
@@ -732,14 +800,18 @@ impl<'a> State<'a> {
     }
 }
 
-/// Fit fLDA with the given configuration and omega priors.
+/// Fit fLDA with the given configuration and omega priors. `observed` is an
+/// optional semi-supervised constraint: `observed[d][kf] = Some(label)` pins factor
+/// kf of document d to `label`; pass an empty slice (or all-empty rows) for the
+/// faithful fully-unsupervised fit.
 pub fn fit_flda<R: Rng>(
     corpus: &Corpus,
     cfg: &FactorialLdaConfig,
     priors: &OmegaPriors,
+    observed: &[Vec<Option<usize>>],
     rng: &mut R,
 ) -> FactorialLDAModel {
-    let mut st = State::new(corpus, cfg, priors);
+    let mut st = State::new(corpus, cfg, priors, observed);
     let z0 = st.z0;
     let d = st.d;
     let docs = corpus.docs.as_slice();
@@ -892,8 +964,8 @@ mod tests {
         let c = tiny_corpus();
         let cfg = cfg();
         let priors = OmegaPriors::default();
-        let m1 = fit_flda(&c, &cfg, &priors, &mut ChaCha8Rng::seed_from_u64(42));
-        let m2 = fit_flda(&c, &cfg, &priors, &mut ChaCha8Rng::seed_from_u64(42));
+        let m1 = fit_flda(&c, &cfg, &priors, &[], &mut ChaCha8Rng::seed_from_u64(42));
+        let m2 = fit_flda(&c, &cfg, &priors, &[], &mut ChaCha8Rng::seed_from_u64(42));
         assert_eq!(m1.topic_word, m2.topic_word);
         assert_eq!(m1.doc_topic, m2.doc_topic);
     }
@@ -905,6 +977,7 @@ mod tests {
             &c,
             &cfg(),
             &OmegaPriors::default(),
+            &[],
             &mut ChaCha8Rng::seed_from_u64(0),
         );
         assert!(crate::conformance::check_conformance(&m).is_empty());
@@ -925,6 +998,7 @@ mod tests {
             &c,
             &cfg(),
             &OmegaPriors::default(),
+            &[],
             &mut ChaCha8Rng::seed_from_u64(7),
         );
         for row in &m.topic_word {
@@ -947,6 +1021,7 @@ mod tests {
             &c,
             &cfg,
             &OmegaPriors::default(),
+            &[],
             &mut ChaCha8Rng::seed_from_u64(3),
         );
         assert!(m.tuple_activity.iter().all(|b| b.is_finite()));
@@ -1004,7 +1079,7 @@ mod tests {
                 vec![vec![0.0, 0.0, 0.2, 0.0], vec![0.0, 0.0, 0.0, 0.6]],
             ],
         };
-        let st = State::new(&c, &cfg, &priors);
+        let st = State::new(&c, &cfg, &priors, &[]);
         assert_eq!(st.omega_w, priors.eta_w);
         assert_eq!(st.omega_zw, priors.eta_zw);
     }
@@ -1024,7 +1099,7 @@ mod tests {
         priors: &OmegaPriors,
         rng: &mut ChaCha8Rng,
     ) -> State<'a> {
-        let mut st = State::new(c, cfg, priors);
+        let mut st = State::new(c, cfg, priors, &[]);
         st.recompute_omega_cache();
         st.recompute_alpha_cache();
         st.seed_tokens(rng);
@@ -1191,13 +1266,13 @@ mod tests {
         };
         let mut cfg_no_wp = cfg();
         cfg_no_wp.word_priors = false;
-        let st = State::new(&c, &cfg_no_wp, &priors);
+        let st = State::new(&c, &cfg_no_wp, &priors, &[]);
         assert!(st.omega_zw.iter().flatten().flatten().all(|&x| x == 0.0));
         assert!(st.eta_zw.iter().flatten().flatten().all(|&x| x == 0.0));
 
         let mut cfg_sym = cfg();
         cfg_sym.symmetric_word_prior = true;
-        let st = State::new(&c, &cfg_sym, &priors);
+        let st = State::new(&c, &cfg_sym, &priors, &[]);
         assert!(st.omega_w.iter().all(|&x| x == 0.0));
         assert!(st.eta_w.iter().all(|&x| x == 0.0));
     }

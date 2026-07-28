@@ -202,6 +202,55 @@ fn parse_omega_priors(
     Ok(OmegaPriors { eta_w, eta_zw })
 }
 
+/// Parse `observed_factors` into a `[num_docs][K]` matrix of optional labels.
+/// Accepts `{factor_index: labels}` where `labels` is a length-`num_docs` sequence
+/// of ints (the observed component for that document) or `None` (latent for that
+/// document — semi-supervised). Only the named factors are constrained.
+fn parse_observed_factors(
+    obj: &Bound<'_, PyAny>,
+    num_docs: usize,
+    factor_sizes: &[usize],
+) -> PyResult<Vec<Vec<Option<usize>>>> {
+    let k = factor_sizes.len();
+    let dict = obj
+        .downcast::<PyDict>()
+        .map_err(|_| PyValueError::new_err("observed_factors must be a dict {factor: labels}"))?;
+    let mut out = vec![vec![None; k]; num_docs];
+    for (key, val) in dict.iter() {
+        let kf: usize = key
+            .extract()
+            .map_err(|_| PyValueError::new_err("observed_factors keys must be factor indices"))?;
+        if kf >= k {
+            return Err(PyValueError::new_err(format!(
+                "observed factor {kf} out of range (K = {k})"
+            )));
+        }
+        let labels: Vec<Option<i64>> = val.extract().map_err(|_| {
+            PyValueError::new_err(
+                "observed_factors[factor] must be a sequence of ints or None, one per document",
+            )
+        })?;
+        if labels.len() != num_docs {
+            return Err(PyValueError::new_err(format!(
+                "observed_factors[{kf}] has {} labels but the corpus has {num_docs} documents",
+                labels.len()
+            )));
+        }
+        for (d, lab) in labels.into_iter().enumerate() {
+            if let Some(y) = lab {
+                if y < 0 || y as usize >= factor_sizes[kf] {
+                    return Err(PyValueError::new_err(format!(
+                        "observed label {y} for factor {kf} is out of range [0, {})",
+                        factor_sizes[kf]
+                    )));
+                }
+                out[d][kf] = Some(y as usize);
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[pymethods]
 impl FactorialLDA {
     #[new]
@@ -323,7 +372,7 @@ impl FactorialLDA {
         })
     }
 
-    #[pyo3(signature = (data, *, iters=2000, samples=100, eval_every=0, omega_priors=None))]
+    #[pyo3(signature = (data, *, iters=2000, samples=100, eval_every=0, omega_priors=None, observed_factors=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -332,6 +381,7 @@ impl FactorialLDA {
         samples: usize,
         eval_every: usize,
         omega_priors: Option<&Bound<'_, PyAny>>,
+        observed_factors: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -358,10 +408,14 @@ impl FactorialLDA {
             Some(obj) => parse_omega_priors(obj, &corpus.id_to_word, &slf.factor_sizes)?,
             None => OmegaPriors::default(),
         };
+        let observed = match observed_factors {
+            Some(obj) => parse_observed_factors(obj, corpus.num_docs(), &slf.factor_sizes)?,
+            None => Vec::new(),
+        };
         let cfg = slf.build_config(iters, samples, eval_every);
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let (model, corpus) = py.allow_threads(move || {
-            let model = crate::factorial_lda::fit_flda(&corpus, &cfg, &priors, &mut rng);
+            let model = crate::factorial_lda::fit_flda(&corpus, &cfg, &priors, &observed, &mut rng);
             (model, corpus)
         });
         slf.model = Some(model);

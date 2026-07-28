@@ -215,6 +215,82 @@ def test_settings_roundtrip():
     assert s["seed"] == 9
 
 
+def _sentiment_marginal(m):
+    """Per-doc distribution over factor 1, marginalizing theta over factor 0."""
+    tuples = m.tuples
+    theta = m.doc_topic
+    persp = np.zeros((theta.shape[0], 2))
+    for x, (t, s) in enumerate(tuples):
+        persp[:, s] += theta[:, x]
+    return persp
+
+
+def test_observed_factor_default_off_is_identical():
+    """observed_factors=None / {} must be byte-identical to the unsupervised fit."""
+    docs, _ = planted_corpus(n_docs=120, doc_len=25)
+    base = topica.FactorialLDA(factor_sizes=[3, 2], seed=1)
+    base.fit(docs, iters=150, samples=40)
+    for arg in (None, {}):
+        m = topica.FactorialLDA(factor_sizes=[3, 2], seed=1)
+        m.fit(docs, iters=150, samples=40, observed_factors=arg)
+        assert np.array_equal(m.topic_word, base.topic_word)
+        assert np.array_equal(m.doc_topic, base.doc_topic)
+
+
+def test_observed_factor_pins_labeled_docs():
+    """Labeled docs carry theta mass only on tuples matching their observed label."""
+    docs, labels = planted_corpus(n_docs=200, doc_len=30)
+    sent = [s for (_, s) in labels]
+    m = topica.FactorialLDA(factor_sizes=[3, 2], seed=1)
+    m.fit(docs, iters=300, samples=60, observed_factors={1: sent})
+    tuples = m.tuples
+    theta = m.doc_topic
+    for d in range(len(docs)):
+        for x, (t, s) in enumerate(tuples):
+            if s != sent[d]:
+                assert theta[d, x] < 1e-9, f"doc {d} has mass on disallowed tuple {x}"
+
+
+def test_observed_factor_determinism():
+    docs, labels = planted_corpus(n_docs=120, doc_len=25)
+    part = [s if i % 2 else None for i, (_, s) in enumerate(labels)]
+    a = topica.FactorialLDA(factor_sizes=[3, 2], seed=3)
+    a.fit(docs, iters=150, samples=40, observed_factors={1: part})
+    b = topica.FactorialLDA(factor_sizes=[3, 2], seed=3)
+    b.fit(docs, iters=150, samples=40, observed_factors={1: part})
+    assert np.array_equal(a.topic_word, b.topic_word)
+    assert np.array_equal(a.doc_topic, b.doc_topic)
+
+
+def test_observed_factor_semisupervised_recovers_axis():
+    """Transductive: observe sentiment on half the docs; the model recovers the true
+    sentiment of the *unlabeled* half far better than an unsupervised fit."""
+    docs, labels = planted_corpus(n_docs=300)
+    sent = np.array([s for (_, s) in labels])
+    rng = np.random.default_rng(0)
+    labeled = rng.random(len(docs)) < 0.5
+    part = [int(sent[d]) if labeled[d] else None for d in range(len(docs))]
+
+    sup = topica.FactorialLDA(factor_sizes=[3, 2], seed=1)
+    sup.fit(docs, iters=500, samples=100, observed_factors={1: part})
+    persp = _sentiment_marginal(sup)
+    pred = persp.argmax(1)
+    unl = ~labeled
+    pos = int(persp[labeled & (sent == 1)].mean(0).argmax())
+    acc = np.mean((pred[unl] == pos).astype(int) == sent[unl])
+    assert acc > 0.75, f"semi-supervised sentiment recovery only {acc:.3f}"
+
+
+def test_observed_factor_validation():
+    docs, _ = planted_corpus(n_docs=40, doc_len=15)
+    with pytest.raises(ValueError):  # wrong length
+        topica.FactorialLDA(factor_sizes=[3, 2]).fit(docs, observed_factors={1: [0, 1]})
+    with pytest.raises(ValueError):  # factor out of range
+        topica.FactorialLDA(factor_sizes=[3, 2]).fit(docs, observed_factors={5: [0] * 40})
+    with pytest.raises(ValueError):  # label out of range
+        topica.FactorialLDA(factor_sizes=[3, 2]).fit(docs, observed_factors={1: [9] * 40})
+
+
 def test_validation_errors():
     with pytest.raises(ValueError):
         topica.FactorialLDA(factor_sizes=[])
