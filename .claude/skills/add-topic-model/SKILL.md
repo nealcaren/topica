@@ -1,6 +1,6 @@
 ---
 name: add-topic-model
-description: End-to-end workflow for adding a new topic-modeling algorithm to the topica library (a Rust + PyO3 + numpy package). Use when a user asks to add, port, or implement a topic model (e.g. "add CTM-2", "port BTM", "implement an anchored model") into topica. Covers grounding in the literature, finding and running the reference implementation to build a gold-standard result set, implementing a Rust core with Python bindings under topica's conventions, validating with an independent benchmark agent and an author-emulation review agent, and shipping via a GitHub issue + PR that also updates the README and docs.
+description: End-to-end workflow for adding a new topic-modeling algorithm to the topica library (a Rust + PyO3 + numpy package). Use when a user asks to add, port, or implement a topic model (e.g. "add CTM-2", "port BTM", "implement an anchored model") into topica. Covers grounding in the literature, finding and running the reference implementation to build a gold-standard result set, implementing a Rust core with Python bindings under topica's conventions, a two-reviewer dual-review gate (Codex + Gemini, one faithful-parity and one adversarial) run both after the plan is approved and again before the PR, benchmarking against the reference, and shipping via a GitHub issue + PR that also updates the README and docs.
 ---
 
 # Add a topic model to topica
@@ -11,8 +11,17 @@ Python bindings, validated against its reference implementation, with the README
 and docs updated.
 
 This is a long, multi-phase task. Run the phases in order. Each builds on the
-last; do not skip the validation phases (4 and 5) — faithfulness to the reference
-is the whole point of a port.
+last; do not skip the validation phases — faithfulness to the reference is the
+whole point of a port.
+
+**Two dual-review gates bracket the implementation.** A fixed pair of reviewers —
+**Reviewer A (faithful / full parity, Codex)** and **Reviewer B (adversarial,
+Gemini)**, with a Claude subagent as the per-slot fallback — reviews the work
+**twice**: once **after the plan is approved and before any code** (Gate A, below
+after Phase 2), and once **after implementation and before opening the PR** (Gate B,
+Phase 5). The roles and their backing models stay fixed across both gates; do not
+swap who is faithful-parity and who is adversarial. See
+`references/evaluation-agents.md` for the mechanism, prompts, and synthesis rule.
 
 ## Orient first (read these once)
 
@@ -73,6 +82,28 @@ Read `references/reference-and-gold-standard.md` for the full procedure. In shor
 4. Add a check under `parity/` that re-runs the reference when its tool is present
    and skips cleanly when it is not (mirror the existing `parity/` scripts).
 
+## Gate A — dual review of the plan (before any code)
+
+Goal: catch a faithfulness or completeness problem in the *design* before you spend
+a multi-phase implementation on it.
+
+Once the Phase-1/2 spec is written and you (with the user) have approved the plan —
+which core file, which estimator, the defaults, the public surface — hand it to the
+**two fixed reviewers** before writing model code:
+
+1. **Reviewer A (faithful / full parity — Codex)** via the `codex` skill. It reads
+   the spec, the paper, and the reference code (where the license allows) and judges
+   whether *this plan* reproduces the method faithfully and completely.
+2. **Reviewer B (adversarial — Gemini)** via the `antigravity` skill. It attacks the
+   plan: the single most likely way this design yields a plausible-but-wrong model,
+   and what to test early to catch it.
+
+If the `codex` CLI or Antigravity is unavailable, run that slot as a Claude subagent
+(Agent tool, model `opus`) — same role, do not swap. Then **synthesize** both reports
+into one findings list, resolve blockers with the user, and only then proceed to
+Phase 3. Use the exact prompts and synthesis rule in `references/evaluation-agents.md`
+(§Gate A, §Reviewer A/B prompts, §Synthesis).
+
 ## Phase 3 — Implement: Rust core + Python bindings
 
 Goal: a working model that builds, passes the conventions test, and is
@@ -117,44 +148,50 @@ Follow `references/conventions.md` closely. In short:
 Do this implementation work on a short-lived branch off `main` (see `CLAUDE.md`
 branching). Use `uv` for any Python env/package work.
 
-## Phase 4 — Independent benchmark + evaluation agent
+## Phase 4 — Benchmark against the reference
 
-Goal: an unbiased measurement of fidelity and speed by an agent that did NOT write
-the implementation.
+Goal: an unbiased measurement of fidelity and speed — the empirical substrate the
+Gate-B reviewers judge against.
 
-Spawn a subagent (the **benchmark agent**) in an isolated git worktree. It runs the
-new model against the Phase-2 gold standard and the live reference, reports aligned
-parity (topic-aligned cosine / Jaccard / correlation) and fit speed across corpus
-sizes, and renders a verdict. Use the exact prompt and rubric in
-`references/evaluation-agents.md` (§Benchmark agent). Independence matters: this
-agent must not have implemented the model.
+Measure the finished model against the Phase-2 gold standard and the live reference:
+topic-aligned parity (cosine / Jaccard / doc-topic correlation with the noise floor),
+model-specific diagnostics, determinism, and fit speed across corpus sizes. Do this
+in an isolated git worktree with its own venv — either inline or via a Claude
+benchmark subagent that did NOT write the model (independence matters). Use the
+rubric in `references/evaluation-agents.md` (§Phase-4 benchmark).
 
-Act on its findings before proceeding. Re-verify any fix yourself (rebuild, re-run
-the parity check) — do not merge on the agent's word alone.
+"Fast" is part of the deliverable, so apply the **speed gate** (within ≈2-3x of the
+reference on realistic-density inputs, or justify the gap). If it is missed, a
+**performance-optimization iteration is a normal sub-phase**, not a failure —
+optimize and re-benchmark before shipping; the first cut being slow is expected. To
+amortize the multi-minute `--release` build + venv, **fold related checks into one
+agent** (e.g. run the live-reference real-corpus parity inside the benchmark agent).
 
-"Fast" is part of the deliverable, so the benchmark agent applies a **speed gate**
-(within ≈2-3x of the reference on realistic-density inputs, or justify the gap). If
-it is missed, a **performance-optimization iteration is a normal sub-phase**, not a
-failure — optimize and re-benchmark before shipping; the first cut being slow is
-expected. To amortize the multi-minute `--release` build + venv each agent pays,
-**fold related checks into one agent** (e.g. run the live-reference real-corpus
-parity inside the benchmark agent) rather than spawning a separate agent per check.
+Re-verify any fix yourself (rebuild, re-run the parity check). Carry the parity table,
+determinism result, and speed table into Gate B — the reviewers work from these.
 
-## Phase 5 — Author-emulation review agent
+## Phase 5 — Gate B: dual review before the PR
 
-Goal: a faithfulness critique from the perspective of the method's originator.
+Goal: the same two-reviewer fidelity check as Gate A, now against the finished
+artifact, before the PR is opened.
 
-Spawn a second subagent (the **author-emulation reviewer**) that role-plays the
-original method's author. Give it the paper, the reference (or its description if
-the license barred reading the code), and the topica implementation diff. It
-critiques fidelity to the method as published, flags any silent deviation
-(different default, dropped term, changed estimator), and judges whether this is a
-faithful port. Use the exact prompt in `references/evaluation-agents.md`
-(§Author-emulation reviewer).
+Hand the **implementation diff**, the spec, and the Phase-4 benchmark/parity results
+to the **same two fixed reviewers**, in the **same roles** as Gate A:
 
-Reconcile its critique with Phase 4. Genuine fidelity gaps are blockers; defensible
-design choices (a topica-canonical name, a shared optimizer) are documented, not
-"fixed."
+1. **Reviewer A (faithful / full parity — Codex)** via the `codex` skill: does the
+   diff faithfully and completely reproduce the method, and do the measured parity
+   numbers actually support the "faithful" claim (no overclaim past the noise floor)?
+2. **Reviewer B (adversarial — Gemini)** via the `antigravity` skill: silent
+   deviations, correctness bugs, determinism holes, overclaimed parity/speed,
+   untested edge cases.
+
+Fall back per-slot to a Claude subagent (model `opus`, isolated worktree,
+background) only if the external model is unavailable — same role, do not swap.
+Then **synthesize** both reports into one findings list. Genuine fidelity gaps,
+broken determinism, failing gates, and overclaims are **blockers** — fix and
+**re-verify yourself** before the PR. Defensible design choices (a topica-canonical
+name, a shared optimizer) are documented, not "fixed." Use the exact prompts and
+synthesis rule in `references/evaluation-agents.md` (§Gate B, §Synthesis).
 
 ## Phase 6 — Ship: issue, PR, README, docs
 
@@ -165,8 +202,9 @@ Read `references/pr-and-docs.md` for the checklist. In short:
 1. **Create or reference** a tracking **issue** describing the model, the reference,
    and the validation result (one often already exists — reuse it, e.g. #178 for NMF).
 2. Open a **PR** from the feature branch (squash-merge, delete branch on merge, per
-   `CLAUDE.md`). The PR body summarizes the method, the parity result, and both
-   agents' verdicts.
+   `CLAUDE.md`). The PR body summarizes the method, the parity result, and the
+   synthesized verdicts from **both dual-review gates** (Gate A on the plan, Gate B
+   on the diff) — naming the reviewer models used and any documented deviations.
 3. **Update the docs as part of the same PR.** Both generated tables come from the
    registry (`python/topica/registry.py`), enforced by `test_registry.py`: add a
    `ModelInfo` to `REGISTRY` (drives the README/docs roster) **and** an `ImplInfo`
@@ -187,8 +225,10 @@ Read `references/pr-and-docs.md` for the checklist. In short:
   determinism guarantee, build/test gates, file layout.
 - `references/reference-and-gold-standard.md` — finding/running the reference,
   license rules, capturing the gold-standard fixture, the `parity/` pattern.
-- `references/evaluation-agents.md` — ready-to-use prompts for the Phase-4
-  benchmark agent and the Phase-5 author-emulation reviewer, plus the parity rubric.
+- `references/evaluation-agents.md` — the dual-review mechanism: the two fixed
+  reviewers (faithful-parity Codex + adversarial Gemini, Claude fallback), the two
+  gates (plan and pre-PR), ready-to-use prompts, the synthesis rule, and the
+  Phase-4 benchmark rubric.
 - `references/pr-and-docs.md` — the issue/PR template and the README + docs update
   checklist.
 

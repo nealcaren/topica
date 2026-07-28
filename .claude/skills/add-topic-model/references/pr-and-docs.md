@@ -10,7 +10,8 @@ Open a tracking issue with `gh issue create` that states:
 - The model: name, what it does, and where it sits in the family.
 - The reference: package/paper, version, license, and whether the port is
   code-derived (permissive license) or paper-derived (black-box oracle).
-- The validation plan / result: the parity bar and the two agents' verdicts.
+- The validation plan / result: the parity bar and the synthesized verdicts from
+  both dual-review gates (plan and pre-PR).
 
 ## Branch and PR
 
@@ -20,8 +21,10 @@ Open a tracking issue with `gh issue create` that states:
   - **What**: the model and its method, in two or three sentences.
   - **Validation**: the parity table (topic-aligned cosine, Jaccard, doc-topic
     correlation) against the reference, the noise floor it was calibrated to, and
-    the determinism check. Summarize the benchmark agent and author-emulation
-    reviewer verdicts and how any blockers were resolved.
+    the determinism check. Summarize the synthesized verdicts from both dual-review
+    gates — Gate A (plan) and Gate B (diff) — naming the reviewer models used
+    (Reviewer A faithful-parity, Reviewer B adversarial) and how any blockers were
+    resolved.
   - **Conventions**: confirm `tests/test_naming_conventions.py` passes and note any
     reference-package aliases added.
   - **Gates**: `just test` (Rust core + feature-gated + pytest) and
