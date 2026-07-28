@@ -39,7 +39,7 @@ pub struct FactorialLdaConfig {
     /// Number of components per factor, `Z_k`. `factor_sizes.len()` is K.
     pub factor_sizes: Vec<usize>,
     pub iters: usize,
-    /// Tail samples averaged for the posterior-mean topic-word / doc-topic.
+    /// Tail iterations averaged for the topic-word / doc-topic MCEM estimate.
     pub samples: usize,
     pub sigma_alpha: f64,
     pub sigma_alpha_bias: f64,
@@ -235,9 +235,11 @@ struct State<'a> {
     omega_norm: Vec<f64>,    // Z0
 
     // tail-sample accumulators: the per-sample predictive phi/theta are summed
-    // (each using that sample's own counts AND prior/normalizer) and averaged, so
-    // the estimator is a consistent Monte Carlo posterior mean even while omega is
-    // still moving during the tail (Gate B: no count/prior mismatch).
+    // (each using that sample's OWN counts AND prior/normalizer — no count/prior
+    // mismatch) and averaged. This is an MCEM tail estimate, not a strict
+    // fixed-parameter posterior mean: the log-linear weights are still updated
+    // across the tail (as in the reference), so the average is over a slowly-moving
+    // target that has effectively converged by the tail.
     samp_theta: Vec<Vec<f64>>, // D x Z0
     samp_phi: Vec<Vec<f64>>,   // Z0 x V
     n_collected: f64,
@@ -577,6 +579,11 @@ impl<'a> State<'a> {
             }
             val += log_gamma(norm) - log_gamma(norm + self.n_d[d] as f64);
             for x in 0..self.z0 {
+                // A forbidden tuple (observed-factor constraint) has prior 0 and count
+                // 0; it contributes nothing (log_gamma(0)-log_gamma(0) would be NaN).
+                if priors[x] == 0.0 {
+                    continue;
+                }
                 val += log_gamma(priors[x] + self.n_dz[d][x] as f64) - log_gamma(priors[x]);
             }
         }
@@ -708,6 +715,25 @@ impl<'a> State<'a> {
             observed.len()
         );
         let observed: Vec<Vec<Option<usize>>> = if observed.len() == d {
+            // Defensive validation for direct Rust callers (the Python binding
+            // already rejects bad shapes/labels): every row is empty or K-wide, and
+            // each observed label is in range, else there would be no allowed tuple.
+            for row in observed {
+                assert!(
+                    row.is_empty() || row.len() == k,
+                    "observed row has {} entries but K = {k}",
+                    row.len()
+                );
+                for (kf, lab) in row.iter().enumerate() {
+                    if let Some(y) = lab {
+                        assert!(
+                            *y < cfg.factor_sizes[kf],
+                            "observed label {y} out of range for factor {kf} (Z = {})",
+                            cfg.factor_sizes[kf]
+                        );
+                    }
+                }
+            }
             observed.to_vec()
         } else {
             vec![vec![]; d]
@@ -854,7 +880,7 @@ pub fn fit_flda<R: Rng>(
     let final_ll = st.log_likelihood();
     fit_history.push((cfg.iters, final_ll));
 
-    // posterior-mean topic-word (phi) and doc-topic (theta): the average of the
+    // topic-word (phi) and doc-topic (theta): the MCEM tail average of the
     // per-sample predictive distributions accumulated in collect_sample. Each row
     // is a mean of distributions, so it already sums to 1.
     let nc = st.n_collected.max(1.0);
@@ -1115,6 +1141,74 @@ mod tests {
             st.recompute_omega_cache();
         }
         st
+    }
+
+    fn fitted_state_obs<'a>(
+        c: &'a Corpus,
+        cfg: &'a FactorialLdaConfig,
+        observed: &[Vec<Option<usize>>],
+        rng: &mut ChaCha8Rng,
+    ) -> State<'a> {
+        let priors = OmegaPriors::default();
+        let mut st = State::new(c, cfg, &priors, observed);
+        st.recompute_omega_cache();
+        st.recompute_alpha_cache();
+        st.seed_tokens(rng);
+        for iter in 1..=cfg.iters {
+            for di in 0..st.d {
+                for n in 0..st.docs[di].len() {
+                    st.sample_block(di, n, rng);
+                }
+            }
+            st.update_omega(iter);
+            st.update_alpha(iter);
+            st.recompute_alpha_cache();
+            st.recompute_omega_cache();
+        }
+        st
+    }
+
+    // The alpha gradient is FD-correct on the OBSERVED (restricted) path too: with a
+    // factor pinned, forbidden tuples contribute 0 to both the objective and the
+    // gradient (Gate B: certifies the conditioned-model M-step, not just the
+    // unsupervised one).
+    #[test]
+    fn observed_alpha_gradient_matches_fd() {
+        let c = tiny_corpus();
+        let cfg = cfg();
+        // observe factor 1 on the 4 docs: labels 0,1,0,1
+        let observed = vec![
+            vec![None, Some(0)],
+            vec![None, Some(1)],
+            vec![None, Some(0)],
+            vec![None, Some(1)],
+        ];
+        let mut st = fitted_state_obs(&c, &cfg, &observed, &mut ChaCha8Rng::seed_from_u64(5));
+        let iter = cfg.iters;
+        let ag = st.alpha_gradient(iter);
+        let eps = 1e-6;
+        let close = |fd: f64, an: f64, what: &str| {
+            assert!(
+                (fd - an).abs() < 1e-4 + 1e-3 * an.abs(),
+                "{what}: fd={fd} analytic={an}"
+            );
+        };
+        // alpha_z on the LATENT factor 0 (the observed factor's alpha is confounded
+        // but its gradient must still match FD).
+        for (i, zi) in [(0usize, 1usize), (1usize, 0usize)] {
+            st.alpha_z[i][zi] += eps;
+            let vp = st.alpha_objective(iter);
+            st.alpha_z[i][zi] -= 2.0 * eps;
+            let vm = st.alpha_objective(iter);
+            st.alpha_z[i][zi] += eps;
+            close((vp - vm) / (2.0 * eps), ag.z[i][zi], "obs alpha_z");
+        }
+        st.alpha_b += eps;
+        let vp = st.alpha_objective(iter);
+        st.alpha_b -= 2.0 * eps;
+        let vm = st.alpha_objective(iter);
+        st.alpha_b += eps;
+        close((vp - vm) / (2.0 * eps), ag.b, "obs alpha_b");
     }
 
     // BACKBONE: analytic alpha/omega/beta gradients match central finite differences

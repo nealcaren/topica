@@ -2870,8 +2870,9 @@ class FactorialLDA:
         omega_priors: dict | None = None,
         observed_factors: dict | None = None,
     ) -> "FactorialLDA":
-        """``samples`` tail iterations are averaged for the posterior-mean topic-word
-        and doc-topic. ``eval_every`` > 0 records a log-likelihood trace. Optional
+        """``samples`` tail iterations are averaged into the topic-word and
+        doc-topic MCEM estimate (a tail mean of the per-sweep predictive
+        distributions, not a strict fixed-parameter posterior mean). ``eval_every`` > 0 records a log-likelihood trace. Optional
         informed ``omega_priors`` seed the log-linear word prior (the NAACL-2013
         feature): ``{"background": {word: mean} | [float, ...],
         "components": {(factor, component): {word: mean} | [float, ...]}}``.
