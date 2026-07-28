@@ -373,7 +373,17 @@ fn optimize_layout(
     negative_sample_rate: usize,
     seed: u64,
 ) {
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    // Per-vertex negative-sampling RNG state (splitmix64), mirroring umap-learn's
+    // `rng_state_per_sample[j]`. Keying the stream to the head vertex `j` (not one
+    // global stream advanced in edge-processing order) makes negative sampling
+    // independent of edge order, which — together with the canonical edge sort in
+    // `umap()` — is what stops the #555 layout collapse.
+    let mut vstate: Vec<u64> = (0..n)
+        .map(|j| {
+            let s = seed ^ (j as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            (s ^ (s >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9)
+        })
+        .collect();
     let mut epoch_of_next_sample = epochs_per_sample.to_vec();
     let epochs_per_negative_sample: Vec<f64> = epochs_per_sample
         .iter()
@@ -414,7 +424,13 @@ fn optimize_layout(
             let n_neg = ((epoch as f64 - epoch_of_next_negative_sample[e])
                 / epochs_per_negative_sample[e]) as usize;
             for _ in 0..n_neg {
-                let k = rng.gen_range(0..n);
+                // splitmix64 draw from vertex j's own stream (order-independent).
+                vstate[j] = vstate[j].wrapping_add(0x9E37_79B9_7F4A_7C15);
+                let mut z = vstate[j];
+                z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+                z ^= z >> 31;
+                let k = (z % n as u64) as usize;
                 if k == j {
                     continue;
                 }
@@ -496,6 +512,15 @@ pub fn umap(
     if edges.is_empty() {
         return vec![vec![0.0; n_components]; n];
     }
+
+    // Canonical (head, tail) ordering, matching umap-learn's `sum_duplicates()` COO
+    // layout. `fuzzy_simplicial_set` emits an undirected edge's two directed halves
+    // (i,j) and (j,i) *adjacently*; with the same weight they share a schedule and
+    // fire back-to-back, so the sequential SGD applies the i↔j attraction twice in a
+    // row (move_other moves both endpoints) and the layout over-collapses. Sorting
+    // puts (i,j) in head i's block and (j,i) in head j's block, far apart, exactly as
+    // in umap-learn — the primary #555 fix.
+    edges.sort_by_key(|&(h, t, _)| (h, t));
 
     let (a, b) = find_ab_params(spread, min_dist);
 

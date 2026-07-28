@@ -26,6 +26,17 @@ def tokenize(
     ...
 
 
+def _hdbscan_labels_debug(
+    data: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+    min_cluster_size: int = 15,
+    min_samples: int = 0,
+) -> list[int]:
+    """Debug harness (#555): cluster `data` with topica's in-house HDBSCAN directly,
+    bypassing every reducer/normalization, for 1:1 comparison against the reference
+    `hdbscan` package. `min_samples=0` means "use min_cluster_size". Returns per-row
+    labels (`-1` = noise)."""
+    ...
+
 def project(
     data: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
     n_components: int = 2,

@@ -6,8 +6,6 @@
 //! document embeddings: it finds clusters of varying density and leaves sparse
 //! points unassigned (the "outlier" topic, conventionally label `-1`).
 
-use ndarray::Array2;
-use petal_clustering::{Fit, HDbscan};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
@@ -19,7 +17,6 @@ use std::collections::HashMap;
 /// HDBSCAN / BERTopic outlier convention. `min_cluster_size` is the smallest
 /// group that counts as a topic; `min_samples` controls how conservative the
 /// density estimate is (larger = more points called noise).
-#[allow(clippy::field_reassign_with_default)] // HDbscan (external) has private fields
 pub fn hdbscan_labels(
     points: &[Vec<f64>],
     min_cluster_size: usize,
@@ -34,38 +31,11 @@ pub fn hdbscan_labels(
         points.iter().all(|r| r.len() == dim),
         "all points must share the same dimensionality"
     );
-    let mcs = min_cluster_size.max(2);
-    let ms = min_samples.max(1);
-    // petal-clustering's MST / core-distance step panics when the corpus is too
-    // small for the requested density parameters: it tries to read `min_samples`
-    // nearest neighbours from fewer points (e.g. min_cluster_size=100 on 2 docs).
-    // No cluster can form in that regime, so report all-noise (num_topics=0) and
-    // let the caller's "lower min_cluster_size / add data" warning fire, rather
-    // than letting a Rust panic escape into Python.
-    if n < mcs || n <= ms {
-        return vec![-1i64; n];
-    }
-
-    let flat: Vec<f64> = points.iter().flat_map(|r| r.iter().copied()).collect();
-    let array = Array2::from_shape_vec((n, dim), flat).expect("point matrix shape");
-
-    // HDbscan is an external struct; struct-update syntax can't reach its private
-    // fields, so post-construction assignment is the only option here.
-    let mut model: HDbscan<f64, _> = HDbscan::default();
-    model.min_cluster_size = mcs;
-    model.min_samples = ms;
-    let (clusters, _outliers, _scores) = model.fit(&array, None);
-
-    // Map petal's arbitrary cluster keys to a dense, deterministic 0..k.
-    let mut ids: Vec<usize> = clusters.keys().copied().collect();
-    ids.sort_unstable();
-    let mut labels = vec![-1i64; n];
-    for (new_id, old_id) in ids.into_iter().enumerate() {
-        for &idx in &clusters[&old_id] {
-            labels[idx] = new_id as i64;
-        }
-    }
-    labels
+    // Faithful HDBSCAN* (crate::hdbscan), matching the reference `hdbscan` package.
+    // Replaces petal-clustering, whose excess-of-mass selection diverged from the
+    // reference on real embedding projections (issue #555). The reimplementation
+    // handles the too-few-points / all-noise regimes internally.
+    crate::hdbscan::labels(points, min_cluster_size, min_samples)
 }
 
 /// Dispatch to the requested clustering method. `clusterer` is `"hdbscan"`
