@@ -11,8 +11,9 @@ topics with a supporting quote. The headline output is the set of topic
 topica follows the same division of labor here as in :mod:`topica.labeling`:
 topica assembles the prompts; you bring the model. The backend is any callable
 ``str -> str`` (your own client, an ``ollama`` endpoint, a fake for testing, or
-the :func:`topica.llm_backend` adapter for Simon Willison's ``llm`` library), so
-the core takes no API dependency. The prompt templates live in :data:`PROMPTS`
+the :func:`topica.llm_backend` adapter, which dispatches by model name to a
+lightweight OpenAI / Anthropic / Gemini SDK), so the core takes no API
+dependency. The prompt templates live in :data:`PROMPTS`
 and are overridable, because the prompts are part of the method and a researcher
 must be able to audit and adapt them.
 
@@ -435,12 +436,14 @@ class TopicGPT:
     not produce.
 
     The backend is any callable ``str -> str``. Bring your own client, an
-    ``ollama`` endpoint, or pass :func:`topica.llm_backend` ``model`` for the
-    ``topica[llm]`` adapter; a fake callable makes the whole pipeline testable
-    without a network. Pass either ``backend=`` or ``model=`` (the latter routes
-    through :func:`topica.llm_backend`); supplying both raises. topica showcases
-    open-source models (e.g. ``model="ollama/qwen3"`` or an openrouter qwen id),
-    but any backend works.
+    ``ollama`` endpoint, or pass a ``model`` name routed through
+    :func:`topica.llm_backend` (dispatched to a lightweight OpenAI / Anthropic /
+    Gemini SDK by the model name); a fake callable makes the whole pipeline
+    testable without a network. Pass either ``backend=`` or ``model=`` (the latter
+    routes through :func:`topica.llm_backend`); supplying both raises. topica
+    showcases open-source models (e.g. a local ``model="qwen3"`` with
+    ``base_url="http://localhost:11434/v1"``, or an openrouter qwen id), but any
+    backend works.
 
     Determinism is ``llm-bounded``: ``temperature=0`` and a backend ``seed`` give
     *stable*, not bit-reproducible, results. Responses are cached within a fit
@@ -458,7 +461,16 @@ class TopicGPT:
     backend : callable ``str -> str``, optional
         The model. Mutually exclusive with ``model``.
     model : str, optional
-        A model name routed through :func:`topica.llm_backend` (``topica[llm]``).
+        A model name routed through :func:`topica.llm_backend`, which dispatches
+        by name to a lightweight provider SDK (``gpt-*`` -> ``topica[openai]``,
+        ``claude-*`` -> ``topica[anthropic]``, ``gemini-*`` -> ``topica[gemini]``,
+        or all three via ``topica[llm]``). Mutually exclusive with ``backend``.
+    base_url : str, optional
+        Forwarded to :func:`topica.llm_backend`: an OpenAI-compatible endpoint
+        (ollama at ``"http://localhost:11434/v1"``, openrouter, vLLM, ...).
+    key : str, optional
+        Forwarded to :func:`topica.llm_backend` as the API key (else the
+        provider's environment variable is used).
     hierarchical : bool, default False
         When True, ``fit`` also induces a two-level (super/sub) grouping of the
         discovered topics. ``num_topics`` always counts the leaf topics.
@@ -509,6 +521,8 @@ class TopicGPT:
         *,
         backend: Optional[Callable[[str], str]] = None,
         model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        key: Optional[str] = None,
         hierarchical: bool = False,
         assignment: str = "hard",
         sample: Optional[int] = None,
@@ -526,6 +540,8 @@ class TopicGPT:
             raise ValueError("min_topic_count must be >= 1")
         self._backend_arg = backend
         self._model_name = model
+        self._base_url = base_url
+        self._key = key
         self.hierarchical = bool(hierarchical)
         self.assignment = assignment
         self.sample = sample
@@ -579,7 +595,7 @@ class TopicGPT:
         A convenience over ``TopicGPT(prompts={stage: template})`` for swapping a
         single stage, e.g. to adapt the few-shot examples to your domain::
 
-            model = TopicGPT(model="ollama/qwen3").with_prompt(
+            model = TopicGPT(model="gpt-4o-mini").with_prompt(
                 "generation", my_generation_template)
 
         ``stage`` is one of ``"generation"``, ``"refinement"``, ``"assignment"``;
@@ -601,14 +617,23 @@ class TopicGPT:
         if self._model_name is not None:
             from .labeling import llm_backend
 
-            return llm_backend(self._model_name, temperature=self.temperature)
+            return llm_backend(
+                self._model_name,
+                base_url=self._base_url,
+                key=self._key,
+                temperature=self.temperature,
+            )
         raise ImportError(
             "TopicGPT needs a model. Pass a backend callable "
             "(backend=lambda prompt: my_client(prompt)) or a model name "
-            "(model='ollama/qwen3'), which routes through topica.llm_backend and "
-            'needs the optional `llm` package (pip install "topica[llm]"). '
-            "topica showcases open-source models (e.g. an ollama or openrouter "
-            "qwen); any callable str -> str backend works."
+            "(model='gpt-4o-mini', model='claude-3-5-haiku-latest', "
+            "model='gemini-2.5-flash', or a local model with "
+            "base_url='http://localhost:11434/v1'), which routes through "
+            "topica.llm_backend and needs the matching optional SDK "
+            '(pip install "topica[openai]" / "topica[anthropic]" / '
+            '"topica[gemini]" / "topica[llm]"). topica showcases open-source '
+            "models (e.g. an ollama or openrouter qwen); any callable "
+            "str -> str backend works."
         )
 
     def _cache_key(self, prompt: str) -> str:

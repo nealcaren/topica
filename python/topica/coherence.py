@@ -812,8 +812,7 @@ def _resolve_llm_call(backend):
         return llm_backend(backend)
     raise TypeError(
         "backend must be a callable (str -> str) or a model-name string; pass e.g. "
-        'backend=topica.llm.backend("openrouter/meta-llama/llama-3.3-70b-instruct") '
-        'or backend="<your model>".'
+        'backend=topica.llm.backend("gpt-4o-mini") or backend="<your model>".'
     )
 
 
