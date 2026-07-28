@@ -69,6 +69,7 @@ _FACTORIES: dict[str, object] = {
     "LSA": lambda: topica.LSA(2),
     "BERTopic": lambda: topica.BERTopic(min_cluster_size=5),
     "Top2Vec": lambda: topica.Top2Vec(),
+    "SemanticSignalSeparation": lambda: topica.SemanticSignalSeparation(2),
     "PolylingualLDA": lambda: topica.PolylingualLDA(2),
     "Scholar": lambda: topica.Scholar(2),
     "RTM": lambda: topica.RTM(2),

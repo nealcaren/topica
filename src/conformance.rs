@@ -290,6 +290,11 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::None_,
         exempt: &[],
     },
+    RegistryEntry {
+        name: "SemanticSignalSeparation",
+        family: ModelFamily::None_,
+        exempt: &[],
+    },
     // Time-sliced and tree-structured — flat doc_topic is structurally undefined.
     RegistryEntry {
         name: "DTM",
@@ -330,10 +335,11 @@ mod registry_tests {
             }
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
-        // Estimator-backed Rust struct). Bumped to 28 when OnlineLDA was added.
+        // Estimator-backed Rust struct). Bumped to 29 when SemanticSignalSeparation
+        // (S³) was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            28,
+            29,
             "registry size drifted from the Python REGISTRY"
         );
     }

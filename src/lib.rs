@@ -86,6 +86,8 @@ pub mod reduce;
 #[cfg(feature = "embeddings")]
 pub mod represent;
 #[cfg(feature = "embeddings")]
+pub mod semantic_signal_separation;
+#[cfg(feature = "embeddings")]
 pub mod top2vec;
 // In-house faithful UMAP reducer (replaces the umap-rs crate). Behind the `umap`
 // feature, which no longer pulls an external dependency.

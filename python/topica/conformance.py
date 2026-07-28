@@ -84,6 +84,8 @@ REGISTRY: list[tuple[str, object, str]] = [
     # embedding-cluster — no generative word distribution
     ("BERTopic",     lambda: _topica.BERTopic(min_cluster_size=5),               "none"),
     ("Top2Vec",      lambda: _topica.Top2Vec(),                                  "none"),
+    # ICA decomposition — signed axes, no generative word distribution
+    ("SemanticSignalSeparation", lambda: _topica.SemanticSignalSeparation(2),    "none"),
     # llm-based — pure-Python prompting pipeline, no generative word distribution
     ("TopicGPT",     lambda: _topica.TopicGPT(backend=lambda p: ""),             "none"),
     # InfoCTM is EXCLUDED: it is a cross-lingual model that fits TWO aligned
@@ -195,6 +197,11 @@ EXEMPT: dict[tuple[str, str], str] = {
     # not apply.
     ("BERTopic", "iters"): "BERTopic is not an iterative sampler (UMAP + HDBSCAN); no iteration count applies",
     ("Top2Vec",  "iters"): "Top2Vec is not an iterative sampler (UMAP + HDBSCAN); no iteration count applies",
+    # S³: FastICA's max_iter is a constructor arg (iters=), not a fit kwarg; the
+    # fit is a one-shot decomposition, so no per-fit iteration count applies.
+    ("SemanticSignalSeparation", "iters"): "S³ FastICA max_iter is a constructor arg (iters=), not a fit kwarg; the decomposition is one-shot",
+    ("SemanticSignalSeparation", "doc_names"): "S³ is embedding-native and exposes no doc_names index",
+    ("SemanticSignalSeparation", "topic_names"): "S³ topics are signed ICA axes, not named clusters; default names are derived by the analysis layer",
 
     # --- TopicGPT: LLM prompting pipeline, no generative word distribution ---
     # iters: TopicGPT runs a fixed three-stage prompt flow (generate / refine /

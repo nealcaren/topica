@@ -3741,6 +3741,99 @@ class BERTopic:
     def __repr__(self) -> str: ...
 
 
+class SemanticSignalSeparation:
+    """Semantic Signal Separation (S3; Kardos et al., ACL 2025): topics as
+    independent axes of semantic space. Decomposes the document embeddings with
+    FastICA; each independent component is a topic axis, and a word's importance
+    to a topic comes from projecting the vocabulary embeddings onto that axis.
+    Works directly in the embedding space, with no bag-of-words modelling, and is
+    fully deterministic from ``seed``.
+
+    ICA axes are signed: each topic has a positive and a negative pole.
+    ``components`` (K x V) and ``source_scores`` (D x K) are the signed native
+    outputs; ``topic_word`` and ``doc_topic`` are the nonnegative, row-normalized
+    positive poles the rest of topica's surface consumes.
+    ``top_words(..., pole="negative")`` reaches the negative pole. You bring the
+    embeddings; ``topica.llm_embed(texts, model=...)`` can build them.
+
+    Reference: turftopic ``SemanticSignalSeparation`` (MIT, Marton Kardos)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        feature_importance: str = "combined",
+        iters: int = 200,
+        convergence_tol: float = 1e-4,
+        seed: int = 42,
+    ) -> None: ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+        vocab_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+        *,
+        vocabulary: Sequence[str] | None = None,
+    ) -> "SemanticSignalSeparation":
+        """Fit on token documents plus one ``doc_embeddings`` row per document and
+        one ``vocab_embeddings`` row per vocabulary term, in one shared embedding
+        space. Pass ``vocabulary`` (the words matching ``vocab_embeddings`` rows)
+        to realign them to topica's vocabulary; omit it only when the rows are
+        already in the corpus vocabulary order."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Nonnegative topic-word distribution phi (K x V): the positive pole of
+        ``components``, row-normalized to sum to 1."""
+        ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Nonnegative document-topic distribution theta (D x K): the positive
+        pole of ``source_scores``, row-normalized to sum to 1."""
+        ...
+    @property
+    def components(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Signed per-word importance under ``feature_importance`` (K x V)."""
+        ...
+    @property
+    def axial_components(self) -> numpy.typing.NDArray[numpy.float64]:
+        """The raw axial projection of the vocabulary onto each axis (K x V),
+        turftopic's ``axial_components_``."""
+        ...
+    @property
+    def source_scores(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Signed document loadings on each axis, the raw ICA sources (D x K)."""
+        ...
+    @property
+    def converged(self) -> bool:
+        """Whether FastICA reached ``convergence_tol`` before ``iters``."""
+        ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """``(iteration, convergence measure)`` for the FastICA fixed-point."""
+        ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None, pole: str = "positive"
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]:
+        """Top ``n`` words of a topic. ``pole="positive"`` (default) returns the
+        highest-loading words; ``pole="negative"`` the opposite pole, with signed
+        importance."""
+        ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> "SemanticSignalSeparation": ...
+    def __repr__(self) -> str: ...
+
+
 class ETM:
     """Embedded Topic Model (Dieng, Ruiz & Blei 2020): LDA with the topic-word
     matrix factored through embeddings, beta_{k,v} = softmax_v(rho_v . alpha_k),

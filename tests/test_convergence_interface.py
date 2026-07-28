@@ -55,6 +55,12 @@ _NO_TRACE_MODELS = _CLUSTER_MODELS | _DIRECT_SOLVE_MODELS | _LLM_MODELS
 # (keyATM is NOT here: it supports opt-in convergence_tol early-stopping.)
 _CONVERGED_FALSE_ALWAYS = {"HDP", "GSDMM", "DTM", "HLDA"}
 
+# Models that converge by DEFAULT: their stopping rule is intrinsic, not an opt-in
+# convergence_tol early-stop. S³'s FastICA fixed-point always runs to its native
+# tolerance, so a default fit reports converged=True (with a real per-iteration
+# trace). Excluded only from the "converged is False by default" check.
+_ALWAYS_CONVERGES = {"SemanticSignalSeparation"}
+
 # ---------------------------------------------------------------------------
 # Helpers to build a minimal fitted instance for any registry model
 # ---------------------------------------------------------------------------
@@ -144,6 +150,16 @@ def _fit_model(name: str, factory):
         rng = np.random.default_rng(42)
         doc_emb = rng.standard_normal((len(_TOY), 8))
         model.fit(_TOY, doc_emb, iters=10)
+        return model
+
+    # S³: requires BOTH doc_embeddings and vocab_embeddings (an aligned vocabulary
+    # row per corpus term). FastICA's max_iter is a constructor arg, not a fit kwarg.
+    if name == "SemanticSignalSeparation":
+        rng = np.random.default_rng(42)
+        doc_emb = rng.standard_normal((len(_TOY), 8))
+        vocab = sorted({w for doc in _TOY for w in doc})
+        vocab_emb = rng.standard_normal((len(vocab), 8))
+        model.fit(_TOY, doc_emb, vocab_emb, vocabulary=vocab)
         return model
 
     # Embedding models (FASTopic, BERTopic, Top2Vec): require doc_embeddings
@@ -304,6 +320,9 @@ def test_converged_false_by_default(name, factory, family):
     """
     if name in _NO_TRACE_MODELS:
         pytest.skip(f"{name}: non-iterative model, converged is None")
+
+    if name in _ALWAYS_CONVERGES:
+        pytest.skip(f"{name}: intrinsic stopping rule, converges by default (not opt-in)")
 
     model = _fit_model(name, factory)
     c = model.converged

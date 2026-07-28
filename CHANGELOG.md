@@ -8,6 +8,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`topica.SemanticSignalSeparation` — Semantic Signal Separation (S³)** (#589).
+  A port of the flagship model of [turftopic](https://github.com/x-tabdeveloping/turftopic)
+  (Kardos et al., ACL 2025): topics as independent axes of semantic space. FastICA
+  decomposes the document embeddings into independent components (topic axes), and a
+  word's importance to a topic comes from projecting the vocabulary embeddings onto
+  each axis. Embedding-native (you bring `doc_embeddings` and `vocab_embeddings`),
+  pure linear algebra with no torch, and bit-for-bit reproducible from `seed`. ICA
+  axes are signed: `top_words(..., pole="negative")` reaches the negative pole, and
+  the signed `components` / `source_scores` sit alongside the nonnegative
+  `topic_word` / `doc_topic`. Reproduces the reference's scikit-learn `FastICA`
+  solution exactly on planted data (`parity/s3_compare.py`).
+
 - **`topica.datasets.load_ng20_minilm()` — an embeddings sample dataset.** A
   20-Newsgroups subset (5 groups, ~2.6k docs) with `all-MiniLM-L6-v2` sentence
   embeddings precomputed for every document *and* every vocabulary term, so the
