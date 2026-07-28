@@ -6,6 +6,27 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **`topica.compare(fit_a, fit_b)` — statistical two-fit topic comparison** (#415).
+  Comparing two fits is now a first-class operation rather than a manual diff. It
+  aligns topics one-to-one (reusing `align_topics`' mutual-best above-threshold
+  match), reports topics with no honest counterpart as *appeared* / *vanished*
+  (never force-paired) and one-to-many relationships as named *splits* / *merges*,
+  and — given a reseed baseline (`refit=` a callable, `reseed_fits=` a list, or
+  `baseline=` a similarity floor) — flags each matched pair when it moves *beyond
+  the range of self-agreement A shows across the reseeds* (a heuristic band, not a
+  calibrated test) rather than reporting an uninterpretable raw distance. It also
+  reports each topic's `prevalence_shift` (with a posterior-spread uncertainty,
+  combined across the two fits in quadrature, when a posterior over theta is
+  available) and renders an HTML/Markdown card in the same house as the analysis
+  manifest (`cmp.render()` / `cmp.to_markdown()`). Three uses, one tool: track topic
+  stability across two corpora/time slices, separate real change from seed wander,
+  and use it as a library regression test across topica versions. Not an ensemble —
+  it describes and tests difference, it does not build a consensus model.
+  (Manifest-native comparison from provenance records is the tracked follow-up; it
+  needs `record_fit` to retain top words, which it does not yet.)
+
 ### Fixed
 
 - **`DMR` / `GDMR` covariate prior now faithfully reproduces `tomotopy`** (#563).

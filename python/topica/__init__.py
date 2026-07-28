@@ -249,6 +249,12 @@ from .validation import (  # noqa: E402  general, model-agnostic post-hoc analys
     topic_stability,
 )
 from .ensemble import ensemble, EnsembleResult, cross_ensemble  # noqa: E402  (consensus across runs)
+from .compare import (  # noqa: E402  (statistical two-fit topic-drift comparison, #415)
+    compare,
+    CompareResult,
+    MatchedPair,
+    UnmatchedTopic,
+)
 from .analysis import (  # noqa: E402  (model-neutral fitted-model analysis surface)
     topic_info,
     topic_sizes,
@@ -389,6 +395,10 @@ __all__ = [
     "TopicDendrogram",
     "align_topics",
     "topic_stability",
+    "compare",
+    "CompareResult",
+    "MatchedPair",
+    "UnmatchedTopic",
     "ensemble",
     "EnsembleResult",
     "cross_ensemble",

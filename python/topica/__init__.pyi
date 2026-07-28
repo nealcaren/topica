@@ -327,6 +327,74 @@ def align_topics(
     ...
 
 
+class MatchedPair:
+    topic_a: int
+    topic_b: int
+    similarity: float
+    distance: float
+    drifted: bool | None
+    null_similarity: float | None
+    top_words_a: list[str]
+    top_words_b: list[str]
+    prevalence_a: float
+    prevalence_b: float
+    prevalence_shift: float
+    prevalence_shift_se: float | None
+    def as_dict(self) -> dict[str, Any]: ...
+
+
+class UnmatchedTopic:
+    topic: int
+    side: str
+    status: str
+    top_words: list[str]
+    prevalence: float
+    def as_dict(self) -> dict[str, Any]: ...
+
+
+class CompareResult:
+    aligned: list[MatchedPair]
+    unmatched_a: list[UnmatchedTopic]
+    unmatched_b: list[UnmatchedTopic]
+    splits: dict[int, list[int]]
+    merges: dict[int, list[int]]
+    metric: str
+    threshold: float
+    num_topics_a: int
+    num_topics_b: int
+    baseline: dict[str, Any]
+    @property
+    def drift(self) -> list[dict[str, Any]]: ...
+    @property
+    def prevalence_shift(self) -> list[dict[str, Any]]: ...
+    @property
+    def n_drifted(self) -> int | None: ...
+    def to_dict(self) -> dict[str, Any]: ...
+    def render(self, path: str | None = None, *, title: str | None = None) -> str: ...
+    def to_markdown(self) -> str: ...
+
+
+def compare(
+    a: Any,
+    b: Any,
+    *,
+    metric: str = "cosine",
+    threshold: float = 0.3,
+    refit: Any = None,
+    reseed_fits: Any = None,
+    n_reseed: int = 4,
+    baseline: float | None = None,
+    corpus_a: Any = None,
+    corpus_b: Any = None,
+    nsims: int = 25,
+    seed: int = 0,
+    top_n: int = 10,
+) -> CompareResult:
+    """Statistical comparison of two fitted topic models (alignment, drift vs a
+    reseed null, prevalence shift, and an HTML/markdown card)."""
+    ...
+
+
 class EnsembleResult:
     topic_word: Any
     doc_topic: Any
@@ -602,6 +670,10 @@ __all__ = [
     "topic_dendrogram",
     "TopicDendrogram",
     "align_topics",
+    "compare",
+    "CompareResult",
+    "MatchedPair",
+    "UnmatchedTopic",
     "topic_stability",
     "ensemble",
     "EnsembleResult",
