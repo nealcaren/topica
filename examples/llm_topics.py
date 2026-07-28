@@ -1,17 +1,16 @@
-"""End-to-end embedding topics: embed, model, label, report.
+"""End-to-end embedding topics with the `llm` library: embed, model, label, report.
 
-Embeds the corpus once (local sentence-transformers, cached to disk), fits
-FASTopic, labels the topics with an LLM, and writes a plot_report figure.
+Uses topica.llm_embed to produce document embeddings (cached so the corpus is
+embedded once), fits FASTopic, labels the topics with an LLM, and writes a
+plot_report figure.
 
-    pip install "topica[openai,viz]" sentence-transformers
+    pip install "topica[llm,viz]" llm-sentence-transformers
     python examples/llm_topics.py
 
 The embedder is a local sentence-transformers model (offline, no key). The labeler
 defaults to OpenAI gpt-4o-mini, whose key is read from OPENAI_API_KEY (or pass
-key=... to llm_backend). To label with Claude or Gemini, pip install
-topica[anthropic]/topica[gemini] and set LABEL_MODEL to "claude-3-5-haiku-latest"
-or "gemini-2.5-flash"; for a local run set LABEL_MODEL to a pulled ollama model
-and LABEL_BASE_URL to "http://localhost:11434/v1".
+key=... to llm_backend). For a fully local, key-free run, install llm-ollama and
+set LABEL_MODEL to a pulled model such as "llama3.2".
 """
 
 import csv
@@ -24,9 +23,8 @@ ROOT = os.path.dirname(HERE)
 CRISIS = os.path.join(ROOT, "examples", "dubois_crisis.csv")
 STOP = os.path.join(ROOT, "examples", "english-stoplist.txt")
 
-EMBED_MODEL = "all-MiniLM-L6-v2"       # local sentence-transformers, offline
-LABEL_MODEL = "gpt-4o-mini"            # OpenAI; key from OPENAI_API_KEY
-LABEL_BASE_URL = None                  # set to an OpenAI-compatible URL for local models
+EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"  # local, offline
+LABEL_MODEL = "gpt-4o-mini"                             # OpenAI; key from OPENAI_API_KEY
 
 
 def main():
@@ -37,14 +35,7 @@ def main():
     docs = [topica.tokenize(t, stopwords=stop, min_length=4) for t in texts]
 
     # 1. Embed once, cached. Re-runs reload from disk instead of re-embedding.
-    cache = os.path.join(HERE, "crisis_emb.npz")
-    if os.path.exists(cache):
-        doc_emb = topica.load_embeddings(cache)
-    else:
-        from sentence_transformers import SentenceTransformer
-
-        doc_emb = SentenceTransformer(EMBED_MODEL).encode(texts)
-        topica.save_embeddings(cache, doc_emb, texts=texts, model=EMBED_MODEL)
+    doc_emb = topica.llm_embed(texts, model=EMBED_MODEL, cache=os.path.join(HERE, "crisis_emb.npz"))
 
     # 2. Fit an embedding-native, mixed-membership model.
     model = topica.FASTopic(num_topics=10, seed=1)
@@ -54,7 +45,7 @@ def main():
     # the one step that needs a labeling model; skip it gracefully if none is set
     # up, in which case the report keeps topica's default top-word labels.
     try:
-        backend = topica.llm_backend(LABEL_MODEL, base_url=LABEL_BASE_URL, temperature=0)
+        backend = topica.llm_backend(LABEL_MODEL, temperature=0)
         labels = topica.llm_topic_labels(model, texts, backend=backend, set_labels=True)
         for t, label in enumerate(labels):
             print(f"{t:2d}  {label}")
