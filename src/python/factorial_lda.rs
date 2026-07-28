@@ -263,10 +263,20 @@ impl FactorialLDA {
                 "every factor must have at least one component",
             ));
         }
-        let num_topics: usize = factor_sizes.iter().product();
-        if num_topics == 0 {
+        // Checked product so an enormous factor_sizes returns a clean error rather
+        // than panicking on overflow (Gate B).
+        let num_topics: usize = factor_sizes
+            .iter()
+            .try_fold(1usize, |acc, &x| acc.checked_mul(x))
+            .ok_or_else(|| {
+                PyValueError::new_err(
+                    "factor_sizes product overflows usize; use fewer/smaller factors",
+                )
+            })?;
+        if block_freq < 1 {
             return Err(PyValueError::new_err(
-                "factor_sizes product overflowed / is zero",
+                "block_freq must be >= 1 (block-sample every k-th iteration; \
+                 a large value approximates always-independent sampling)",
             ));
         }
         for (name, s) in [

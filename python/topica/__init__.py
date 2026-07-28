@@ -22,6 +22,7 @@ from ._topica import (
     GSDMM,
     BTM,
     FactorialLDA,
+    FactorialLDA as FLDA,
     PolylingualLDA,
     DiscLDA,
     SeededLDA,

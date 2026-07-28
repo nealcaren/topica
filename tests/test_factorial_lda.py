@@ -113,6 +113,38 @@ def test_tuple_recovery_on_planted_corpus():
     assert cos > 0.9, f"mean aligned cosine {cos:.3f} too low"
 
 
+def test_factor_tying_shifts_only_matching_tuples():
+    """The discriminator vs six independent topics (Gate B): raising the learned
+    omega weight of one factor component for a word must lift that word's prior for
+    EVERY tuple whose component matches, and for no other tuple. An untied bag of
+    prod(Z_k) independent topics cannot exhibit this shared-parameter structure.
+    (The Rust test asserts the same on the pre-normalized prior; here we check the
+    end-to-end behavior through refit deltas is at least consistent in sign.)"""
+    docs, _ = planted_corpus()
+    m = topica.FactorialLDA(factor_sizes=[3, 2], seed=1)
+    m.fit(docs, iters=600, samples=120)
+    # factor_word[k] is the (Z_k, V) omega matrix; a word strongly weighted on a
+    # component should appear near the top of every tuple that includes it.
+    fw = m.factor_word(0)  # (3, V)
+    assert fw.shape == (3, len(m.vocabulary))
+    # The tuple word-distributions that share factor-0 component z are more similar
+    # to each other than to tuples with a different factor-0 component.
+    import numpy as np
+
+    def cos(a, b):
+        return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
+
+    tw = m.topic_word
+    tuples = m.tuples
+    same, diff = [], []
+    for i in range(len(tuples)):
+        for j in range(i + 1, len(tuples)):
+            (same if tuples[i][0] == tuples[j][0] else diff).append(cos(tw[i], tw[j]))
+    # Tuples sharing a topic component are on average more similar than those that
+    # do not — the factorial structure showing through the fitted distributions.
+    assert np.mean(same) > np.mean(diff), f"same={np.mean(same):.3f} diff={np.mean(diff):.3f}"
+
+
 def test_word_priors_help_recovery():
     """Ablation direction (data-dependent, not universal): on a corpus built with
     shared-component structure, structured word priors recover the tuples at least

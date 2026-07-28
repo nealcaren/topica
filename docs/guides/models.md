@@ -436,9 +436,10 @@ and the sparsity logits `β` — the same Dirichlet-multinomial gradient `DMR` u
 
 The paper's ablations are flags: `word_priors=False` drops the structured word
 priors (untied factors), `sparsity=False` fixes every tuple on, and
-`symmetric_word_prior=True` fixes the per-word background to zero. You can also seed
-the word priors with domain knowledge (the drug-experiences setting of Paul &
-Dredze 2013) by passing `omega_priors=` to `fit`:
+`symmetric_word_prior=True` fixes the per-word background to zero. An ablation
+removes its term outright, so it overrides any seed you pass for that term. You can
+otherwise seed the word priors with domain knowledge (the drug-experiences setting
+of Paul & Dredze 2013) by passing `omega_priors=` to `fit`:
 
 ```python
 model.fit(docs, omega_priors={"components": {

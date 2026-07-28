@@ -164,9 +164,26 @@ def test_reference_qualitative_agreement(tmp_path):
             w = np.array([ozw0[t][z0] + ozw1[t][z1] for t in vocab])
             e = np.exp(w - w.max())
             phi.append(e / e.sum())
-    cos = _mean_aligned_cosine(np.array(phi), profs_planted)
+    phi = np.array(phi)
+    cos = _mean_aligned_cosine(phi, profs_planted)
     # Qualitative: the reference should also land near the planted structure.
     assert cos > 0.6, f"reference mean aligned cosine {cos:.3f}"
+
+    # Direct topica-vs-reference agreement: fit topica on the same corpus and align
+    # its tuple phi to the reference's tuple profiles (up to permutation). This
+    # compares the two implementations' outputs to each other, not just each to the
+    # planted profiles. Qualitative only (the reference is non-reproducible).
+    tm = topica.FactorialLDA(factor_sizes=[3, 2], seed=1)
+    tm.fit(docs, iters=800, samples=150)
+    tvocab = list(tm.vocabulary)
+    # reorder reference phi columns to topica's vocabulary
+    ref_by_word = phi  # columns are in `vocab` order
+    col = {w: i for i, w in enumerate(vocab)}
+    ref_aligned = np.array(
+        [[row[col[w]] if w in col else 0.0 for w in tvocab] for row in ref_by_word]
+    )
+    cos_tv = _mean_aligned_cosine(tm.topic_word, ref_aligned)
+    assert cos_tv > 0.6, f"topica-vs-reference mean aligned cosine {cos_tv:.3f}"
 
 
 if __name__ == "__main__":

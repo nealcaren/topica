@@ -230,10 +230,12 @@ struct State<'a> {
     prior_zw: Vec<Vec<f64>>, // Z0 x V
     omega_norm: Vec<f64>,    // Z0
 
-    // tail-sample accumulators (posterior mean)
-    samp_n_dz: Vec<Vec<f64>>,
-    samp_n_zw: Vec<Vec<f64>>,
-    samp_n_z: Vec<f64>,
+    // tail-sample accumulators: the per-sample predictive phi/theta are summed
+    // (each using that sample's own counts AND prior/normalizer) and averaged, so
+    // the estimator is a consistent Monte Carlo posterior mean even while omega is
+    // still moving during the tail (Gate B: no count/prior mismatch).
+    samp_theta: Vec<Vec<f64>>, // D x Z0
+    samp_phi: Vec<Vec<f64>>,   // Z0 x V
     n_collected: f64,
 }
 
@@ -321,7 +323,13 @@ impl<'a> State<'a> {
         self.n_z[cur] -= 1;
         self.n_dz[d][cur] -= 1;
 
-        let mut z = self.ti.to_vector(cur);
+        // Each factor is resampled conditioned on the OTHER factors' ORIGINAL
+        // values (the reference's Jacobi-style `sampleInd`, which clones the
+        // pre-decrement tuple for every factor draw), not on the newly-sampled
+        // ones. Assemble the result in `z_new` so the loop never feeds a fresh
+        // draw back into the next factor's candidates.
+        let z = self.ti.to_vector(cur);
+        let mut z_new = z.clone();
         for kf in 0..self.k {
             let zk = self.cfg.factor_sizes[kf];
             let mut p = vec![0.0f64; zk];
@@ -336,9 +344,9 @@ impl<'a> State<'a> {
                 p[j] = pr;
                 total += pr;
             }
-            z[kf] = draw(&p, total, rng);
+            z_new[kf] = draw(&p, total, rng);
         }
-        let tuple = self.ti.to_index(&z);
+        let tuple = self.ti.to_index(&z_new);
         self.n_zw[tuple][w] += 1;
         self.n_z[tuple] += 1;
         self.n_dz[d][tuple] += 1;
@@ -597,15 +605,18 @@ impl<'a> State<'a> {
     }
 
     fn collect_sample(&mut self) {
+        // theta_d = (nDZ + priorDZ) / (N_d + alphaNorm), using this sample's caches.
         for d in 0..self.d {
+            let denom = (self.n_d[d] as f64 + self.alpha_norm[d]).max(1e-300);
             for x in 0..self.z0 {
-                self.samp_n_dz[d][x] += self.n_dz[d][x] as f64;
+                self.samp_theta[d][x] += (self.n_dz[d][x] as f64 + self.prior_dz[d][x]) / denom;
             }
         }
+        // phi_x = (nZW + priorZW) / (nZ + omegaNorm), using this sample's caches.
         for x in 0..self.z0 {
-            self.samp_n_z[x] += self.n_z[x] as f64;
+            let denom = (self.n_z[x] as f64 + self.omega_norm[x]).max(1e-300);
             for w in 0..self.v {
-                self.samp_n_zw[x][w] += self.n_zw[x][w] as f64;
+                self.samp_phi[x][w] += (self.n_zw[x][w] as f64 + self.prior_zw[x][w]) / denom;
             }
         }
         self.n_collected += 1.0;
@@ -639,12 +650,19 @@ impl<'a> State<'a> {
         let tuple_vecs: Vec<Vec<usize>> = (0..z0).map(|x| ti.to_vector(x)).collect();
 
         // omega initialized AT the prior means eta (Gate A blocker: not 0).
-        let eta_w = if priors.eta_w.len() == v {
+        // The ablation flags REMOVE their term entirely (Gate B blocker): they
+        // override any informed prior, so `word_priors=false` zeros omega_zw (and
+        // its eta target) and `symmetric_word_prior=true` zeros the background
+        // omega_w — matching the paper's "fix omega^(k)=0" / "fix omega^(0)=0",
+        // rather than merely freezing a seeded value.
+        let eta_w = if cfg.symmetric_word_prior {
+            vec![0.0; v]
+        } else if priors.eta_w.len() == v {
             priors.eta_w.clone()
         } else {
             vec![0.0; v]
         };
-        let eta_zw: Vec<Vec<Vec<f64>>> = if priors.eta_zw.len() == k {
+        let eta_zw: Vec<Vec<Vec<f64>>> = if cfg.word_priors && priors.eta_zw.len() == k {
             priors.eta_zw.clone()
         } else {
             cfg.factor_sizes
@@ -687,9 +705,8 @@ impl<'a> State<'a> {
             alpha_norm: vec![0.0; d],
             prior_zw: vec![vec![0.0; v]; z0],
             omega_norm: vec![0.0; z0],
-            samp_n_dz: vec![vec![0.0; z0]; d],
-            samp_n_zw: vec![vec![0.0; v]; z0],
-            samp_n_z: vec![0.0; z0],
+            samp_theta: vec![vec![0.0; z0]; d],
+            samp_phi: vec![vec![0.0; v]; z0],
             n_collected: 0.0,
         }
     }
@@ -725,7 +742,6 @@ pub fn fit_flda<R: Rng>(
     let mut st = State::new(corpus, cfg, priors);
     let z0 = st.z0;
     let d = st.d;
-    let v = st.v;
     let docs = corpus.docs.as_slice();
 
     // initial caches, then seed each token from the word-prior weights.
@@ -737,7 +753,10 @@ pub fn fit_flda<R: Rng>(
     let mut fit_history = Vec::new();
     for iter in 1..=cfg.iters {
         let burned_in = iter > cfg.iters.saturating_sub(samples);
-        let block = cfg.block_freq == 0 || iter % cfg.block_freq == 0;
+        // block-sample every block_freq-th iteration, otherwise sample each factor
+        // independently. block_freq is validated >= 1 in the binding; clamp here so
+        // a direct Rust caller cannot trigger a modulo-by-zero.
+        let block = iter % cfg.block_freq.max(1) == 0;
         for di in 0..d {
             for n in 0..docs[di].len() {
                 if block {
@@ -763,23 +782,20 @@ pub fn fit_flda<R: Rng>(
     let final_ll = st.log_likelihood();
     fit_history.push((cfg.iters, final_ll));
 
-    // posterior-mean topic-word (phi) and doc-topic (theta) from the tail samples.
+    // posterior-mean topic-word (phi) and doc-topic (theta): the average of the
+    // per-sample predictive distributions accumulated in collect_sample. Each row
+    // is a mean of distributions, so it already sums to 1.
     let nc = st.n_collected.max(1.0);
-    let mut topic_word = vec![vec![0.0f64; v]; z0];
-    for x in 0..z0 {
-        let nz = st.samp_n_z[x] / nc;
-        let denom = nz + st.omega_norm[x];
-        for w in 0..v {
-            topic_word[x][w] = (st.samp_n_zw[x][w] / nc + st.prior_zw[x][w]) / denom;
-        }
-    }
-    let mut doc_topic = vec![vec![0.0f64; z0]; d];
-    for di in 0..d {
-        let denom = st.n_d[di] as f64 + st.alpha_norm[di];
-        for x in 0..z0 {
-            doc_topic[di][x] = (st.samp_n_dz[di][x] / nc + st.prior_dz[di][x]) / denom.max(1e-300);
-        }
-    }
+    let topic_word: Vec<Vec<f64>> = st
+        .samp_phi
+        .iter()
+        .map(|row| row.iter().map(|&p| p / nc).collect())
+        .collect();
+    let doc_topic: Vec<Vec<f64>> = st
+        .samp_theta
+        .iter()
+        .map(|row| row.iter().map(|&p| p / nc).collect())
+        .collect();
     let tuple_activity: Vec<f64> = (0..z0)
         .map(|x| {
             if cfg.sparsity {
@@ -999,9 +1015,16 @@ mod tests {
         cfg: &'a FactorialLdaConfig,
         rng: &mut ChaCha8Rng,
     ) -> State<'a> {
-        let priors = OmegaPriors::default();
-        // leak the priors default (owned inside) — fine for a test; State clones eta.
-        let mut st = State::new(c, cfg, &priors);
+        fitted_state_with(c, cfg, &OmegaPriors::default(), rng)
+    }
+
+    fn fitted_state_with<'a>(
+        c: &'a Corpus,
+        cfg: &'a FactorialLdaConfig,
+        priors: &OmegaPriors,
+        rng: &mut ChaCha8Rng,
+    ) -> State<'a> {
+        let mut st = State::new(c, cfg, priors);
         st.recompute_omega_cache();
         st.recompute_alpha_cache();
         st.seed_tokens(rng);
@@ -1107,5 +1130,75 @@ mod tests {
             st.omega_zw[0][1][3] += eps;
             close((vp - vm) / (2.0 * eps), og.zw[0][1][3], "omega_zw[0][1][3]");
         }
+    }
+
+    // The omega gradient's `-(omega - eta)/sigma^2` prior term must be FD-correct for
+    // NON-ZERO eta too (Gate B: the default test only covered eta = 0). Uses informed
+    // priors so omega is pulled toward a non-zero target.
+    #[test]
+    fn omega_gradient_matches_fd_with_nonzero_eta() {
+        let c = tiny_corpus();
+        let cfg = cfg();
+        let priors = OmegaPriors {
+            eta_w: vec![0.3, -0.2, 0.1, 0.05],
+            eta_zw: vec![
+                vec![vec![0.5, -0.1, 0.0, 0.2], vec![-0.3, 0.4, 0.1, 0.0]],
+                vec![vec![0.0, 0.2, -0.2, 0.1], vec![0.1, -0.1, 0.3, 0.6]],
+            ],
+        };
+        let mut st = fitted_state_with(&c, &cfg, &priors, &mut ChaCha8Rng::seed_from_u64(11));
+        let og = st.omega_gradient();
+        let eps = 1e-6;
+        let close = |fd: f64, an: f64, what: &str| {
+            assert!(
+                (fd - an).abs() < 1e-4 + 1e-3 * an.abs(),
+                "{what}: fd={fd} analytic={an}"
+            );
+        };
+        for (i, j, w) in [(0usize, 0usize, 0usize), (0, 1, 2), (1, 0, 3)] {
+            st.omega_zw[i][j][w] += eps;
+            let vp = st.omega_objective();
+            st.omega_zw[i][j][w] -= 2.0 * eps;
+            let vm = st.omega_objective();
+            st.omega_zw[i][j][w] += eps;
+            close(
+                (vp - vm) / (2.0 * eps),
+                og.zw[i][j][w],
+                "omega_zw(nonzero eta)",
+            );
+        }
+        for w in [0usize, 3] {
+            st.omega_w[w] += eps;
+            let vp = st.omega_objective();
+            st.omega_w[w] -= 2.0 * eps;
+            let vm = st.omega_objective();
+            st.omega_w[w] += eps;
+            close((vp - vm) / (2.0 * eps), og.w[w], "omega_w(nonzero eta)");
+        }
+    }
+
+    // Ablations override informed priors (Gate B): word_priors=false zeros omega_zw
+    // even when omega_priors seed it, and symmetric_word_prior=true zeros omega_w.
+    #[test]
+    fn ablations_override_informed_priors() {
+        let c = tiny_corpus();
+        let priors = OmegaPriors {
+            eta_w: vec![0.3, -0.2, 0.1, 0.05],
+            eta_zw: vec![
+                vec![vec![0.5, 0.0, 0.0, 0.0], vec![0.0, 0.4, 0.0, 0.0]],
+                vec![vec![0.0, 0.0, 0.2, 0.0], vec![0.0, 0.0, 0.0, 0.6]],
+            ],
+        };
+        let mut cfg_no_wp = cfg();
+        cfg_no_wp.word_priors = false;
+        let st = State::new(&c, &cfg_no_wp, &priors);
+        assert!(st.omega_zw.iter().flatten().flatten().all(|&x| x == 0.0));
+        assert!(st.eta_zw.iter().flatten().flatten().all(|&x| x == 0.0));
+
+        let mut cfg_sym = cfg();
+        cfg_sym.symmetric_word_prior = true;
+        let st = State::new(&c, &cfg_sym, &priors);
+        assert!(st.omega_w.iter().all(|&x| x == 0.0));
+        assert!(st.eta_w.iter().all(|&x| x == 0.0));
     }
 }
