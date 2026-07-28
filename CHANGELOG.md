@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-07-28
+
 ### Added
 
 - **`topica.SemanticSignalSeparation` — Semantic Signal Separation (S³)** (#589).
@@ -50,6 +52,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Fixed
 
+- **`BERTopic` / `Top2Vec` no longer collapse to ~2 topics on real embeddings**
+  (#602, completing #555). The 0.53.0 fix (`find_ab_params`) addressed only one of
+  three stacked causes. (1) The in-house HDBSCAN used `petal-clustering`, whose
+  cluster selection diverged from the reference `hdbscan` package on real UMAP
+  projections (ARI 0.12–0.16; 2 topics where the reference finds 13) — replaced with
+  a faithful from-scratch HDBSCAN\* (`src/hdbscan.rs`: mutual-reachability MST,
+  condensed tree, excess-of-mass selection) that matches the reference `generic`
+  algorithm at ARI 0.99–1.00. (2) The UMAP layout emitted each undirected edge's two
+  directed halves adjacently, so the sequential SGD over-attracted and collapsed the
+  layout — edges are now sorted canonically and negative sampling is per-vertex,
+  matching `umap-learn`. (3) `BERTopic` defaulted `min_dist=0.1`, where even
+  `umap-learn` collapses on this data; the default is now `0.0` to match upstream
+  BERTopic. (Reference-default `boruvka` MST parity on tie-heavy data is tracked in
+  #603.)
 - **`DMR` / `GDMR` covariate prior now faithfully reproduces `tomotopy`** (#563).
   topica's Dirichlet-multinomial regression diverged from the `tomotopy` reference
   on poliblog (K=10) at an aligned topic-word cosine of ~0.25, far below both
