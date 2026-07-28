@@ -8,6 +8,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`topica.datasets.load_ng20_minilm()` — an embeddings sample dataset.** A
+  20-Newsgroups subset (5 groups, ~2.6k docs) with `all-MiniLM-L6-v2` sentence
+  embeddings precomputed for every document *and* every vocabulary term, so the
+  embedding-native models (ProdLDA, FASTopic, BERTopic, Top2Vec) run offline with
+  no `sentence-transformers`/`torch` install. Returns a `Bunch` bundling `texts`,
+  `labels`, `doc_embeddings`, `vocab`, and `word_embeddings`; embeddings are
+  stored as float16 to keep the download small (~4.8 MB, fetched once and cached).
+
 - **`topica.compare(fit_a, fit_b)` — statistical two-fit topic comparison** (#415).
   Comparing two fits is now a first-class operation rather than a manual diff. It
   aligns topics one-to-one (reusing `align_topics`' mutual-best above-threshold
