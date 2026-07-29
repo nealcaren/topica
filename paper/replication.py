@@ -109,8 +109,7 @@ def spanning_comparison(docs, conservative):
         lambda m: m.fit(docs, conservative, prevalence_names=["conservative"], iters=25))
     try:
         emb = lsa_embeddings(docs)
-        run("BERTopic", lambda: topica.BERTopic(reducer="pca", n_components=5,
-                                                min_cluster_size=10, seed=42),
+        run("BERTopic", lambda: topica.BERTopic(seed=42),
             lambda m: m.fit_transform(docs, emb))
     except Exception as e:  # embedding extra not available: report and continue
         print(f"  (embedding model skipped: {type(e).__name__}: {e})")
