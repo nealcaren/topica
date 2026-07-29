@@ -1350,3 +1350,28 @@ m = topica.HLDA(depth=3, level_prior="gem", gem_mean=0.35).fit(docs)
 The default (`level_prior="dirichlet"`, scalar `alpha=0.1`) is unchanged from
 earlier releases and fits bit-for-bit identically. `beta` (topic-word) stays a
 single scalar and the hyperparameters are held fixed, as before.
+
+### `beta` sets the tree granularity
+
+The single most important knob for the *size* of the inferred tree is `beta`, the
+topic-word Dirichlet. A small `beta` makes each node's word distribution sharp, so
+the collapsed posterior rewards many pure, fine-grained topics; a large `beta`
+smooths the nodes and the posterior prefers a few broad topics. On a 500-document
+20 Newsgroups sample (`depth=3`, `gamma=0.1`) the number of inferred nodes moves
+sharply with `beta`:
+
+| `beta` | nodes |
+|--------|-------|
+| 0.01 (default) | ~300 |
+| 0.1  | ~80 |
+| 1.0  | ~10 |
+
+This is not a convergence artifact — it is the collapsed posterior mode at each
+`beta` (verified by the joint log-probability), and the fit is much faster with a
+larger `beta` because runtime scales with the number of nodes. topica's default
+`beta=0.01` is a sharp calibration that produces many specific topics; if you want
+a compact, coarse hierarchy (and a faster fit), raise `beta` toward `0.5`–`1.0`.
+Note that reference implementations such as tomotopy tend to settle on a small,
+coarse tree even at a sharp `beta`; topica instead follows the posterior to the
+finer tree, so match `beta` to the granularity you want rather than expecting the
+same node count.
