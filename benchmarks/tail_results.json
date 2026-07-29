@@ -1,0 +1,50 @@
+[
+  {
+    "model": "BTM (biterm topic model, Yan et al. 2013)",
+    "reference": "R BTM package (Wijffels, Apache-2.0)",
+    "corpus": "planted biterm fixture (btm_compare)",
+    "num_docs": null, "k": 4,
+    "agree": 1.0, "ceiling": 1.0, "external": true,
+    "note": "mean topica-vs-R aligned topic-word cosine (uniform + varlen/background)"
+  },
+  {
+    "model": "Wordfish (Slapin & Proksch 2008)",
+    "reference": "R quanteda.textmodels textmodel_wordfish",
+    "corpus": "planted 1-D scaling fixture (wordfish_r_compare)",
+    "num_docs": null, "k": null,
+    "agree": 1.0, "ceiling": 0.993, "external": true,
+    "note": "|r| of document positions theta (beta and position_se also 1.000); ceiling = both-vs-planted-truth |r|"
+  },
+  {
+    "model": "PolylingualLDA / PLTM (Mimno et al. 2009)",
+    "reference": "Java MALLET PolylingualTopicModel",
+    "corpus": "planted trilingual parallel fixture (pltm_compare)",
+    "num_docs": null, "k": null,
+    "agree": 1.0, "ceiling": null, "external": true,
+    "note": "overall mean aligned topic-word cosine across 3 languages (floor 0.9)"
+  },
+  {
+    "model": "GSDMM (Yin & Wang 2014, short-text DMM)",
+    "reference": "rwalk/gsdmm MovieGroupProcess",
+    "corpus": "20NG 1500-doc subset",
+    "num_docs": 1500, "k": 20,
+    "agree": 0.45, "ceiling": null, "external": true,
+    "note": "aligned topic-word cosine; reference collapsed to 13 live clusters. GSDMM cluster discovery is implementation-variance-sensitive (like HDP), so cross-impl agreement is inherently modest -- its parity gold uses self-consistency for this reason."
+  },
+  {
+    "model": "ETM (embedded topic model, Dieng et al. 2020)",
+    "reference": "embedded_topic_model 1.2.1 (amortized VAE)",
+    "corpus": "20NG 1200-doc subset (shared vocab + word2vec)",
+    "num_docs": 1200, "k": 20,
+    "agree": 0.275, "ceiling": null, "external": true,
+    "note": "aligned topic-word cosine, shared word2vec embeddings. Modest because topica's ETM uses variational-EM inference while the reference uses an amortized VAE -- same model family, different inference, so topic-word distributions diverge more than for exact-algorithm ports."
+  },
+  {
+    "model": "InfoCTM (Wu et al. 2023, AAAI)",
+    "reference": "paper-derived torch InfoCTM (parity/refs)",
+    "corpus": "matched bilingual planted-block",
+    "num_docs": null, "k": 5,
+    "agree": 1.0, "ceiling": 0.8, "external": true,
+    "note": "metric = cross-lingual ALIGNMENT (not topic-word cosine); topica passes at 1.0 (floor 0.8). topica per-language purity (0.384/0.360) exceeds the reference's (0.277/0.262). See #610."
+  }
+]

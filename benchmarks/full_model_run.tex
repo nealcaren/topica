@@ -1,0 +1,48 @@
+\begin{table}[t!]
+\centering
+\caption{\pkg{topica} versus each model's reference implementation on a shared \code{poliblog} corpus (single core, both sides thread-pinned). \emph{Agreement} is aligned topic-word cosine against the reference, or document-assignment cross-NMI ($\dagger$) for the embedding and neural models whose topic-word matrix is not directly comparable. \emph{Speedup} is the wall-clock ratio reference$/$\pkg{topica}. ``auto'' marks models that discover $K$. Models validated only through the \code{parity/} scripts (no reference runnable in this harness) are omitted.}
+\label{tab:fidelity-speed}
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{llccccc}
+\toprule
+Model & Reference & $K$ & Agreement & \multicolumn{2}{c}{Wall-clock (s)} & Speedup \\
+\cmidrule(lr){5-6}
+ & & & & \pkg{topica} & ref. & \\
+\midrule
+\multicolumn{7}{l}{\emph{Classical (collapsed Gibbs)}} \\
+\quad LDA & tomotopy & 50 & 0.69 & 81.16 & 72.43 & 0.9$\times$ \\
+\quad DMR & tomotopy & 25 & 0.76 & 56.06 & 46.14 & 0.8$\times$ \\
+\quad GDMR & tomotopy & 25 & 0.74 & 58.51 & 37.44 & 0.6$\times$ \\
+\quad PA & tomotopy & 50 & 0.69 & 646.30 & 454.68 & 0.7$\times$ \\
+\quad DTM & tomotopy & 25 & 0.52 & 45.67 & 94.74 & 2.1$\times$ \\
+\quad LabeledLDA & tomotopy & 20 & 1.00 & 48.67 & 32.75 & 0.7$\times$ \\
+\quad OnlineLDA & gensim & 50 & 0.44 & 37.08 & 45.70 & 1.2$\times$ \\
+\quad KeyATM & R keyATM & 10 & 0.96 & 87.67 & 98.25 & 1.1$\times$ \\
+\addlinespace
+\multicolumn{7}{l}{\emph{Nonparametric / hierarchical}} \\
+\quad HDP & tomotopy & auto & 0.43 & 10.64 & 60.95 & 5.7$\times$ \\
+\quad HLDA & tomotopy & auto & 0.21 & 304.97 & 0.74 & 0.0$\times$ \\
+\addlinespace
+\multicolumn{7}{l}{\emph{Supervised}} \\
+\quad SupervisedLDA (var) & tomotopy & 25 & 0.76 & 96.69 & 83.55 & 0.9$\times$ \\
+\quad SupervisedLDA (gibbs) & tomotopy & 25 & 0.76 & 231.71 & 96.00 & 0.4$\times$ \\
+\addlinespace
+\multicolumn{7}{l}{\emph{Structural / correlated}} \\
+\quad STM & R stm & 25 & 0.95 & 13.79 & 42.95 & 3.1$\times$ \\
+\quad STM (content/SAGE) & R stm & 25 & 0.89 & 7.67 & 91.23 & 11.9$\times$ \\
+\quad CTM & tomotopy & 50 & 0.47 & 74.78 & 5221.28 & 69.8$\times$ \\
+\addlinespace
+\multicolumn{7}{l}{\emph{Matrix factorization}} \\
+\quad NMF & sklearn & 50 & 0.96 & 17.73 & 41.49 & 2.3$\times$ \\
+\quad LSA & sklearn & 50 & 0.92 & 0.55 & 2.27 & 4.1$\times$ \\
+\addlinespace
+\multicolumn{7}{l}{\emph{Neural / embedding}} \\
+\quad ProdLDA & pytorch-avitm & 10 & 0.47$^\dagger$ & 20.98 & 7.97 & 0.4$\times$ \\
+\quad FASTopic & fastopic & 10 & 0.65$^\dagger$ & 15.91 & 15.61 & 1.0$\times$ \\
+\quad SemanticSignalSeparation & turftopic & 10 & 0.31$^\dagger$ & 0.16 & 2.62 & 16.5$\times$ \\
+\quad BERTopic & bertopic & auto & 0.40$^\dagger$ & 9.59 & 16.41 & 1.7$\times$ \\
+\quad Top2Vec & bertopic & auto & 0.39$^\dagger$ & 2.54 & 5.62 & 2.2$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
