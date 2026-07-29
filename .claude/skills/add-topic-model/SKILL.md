@@ -193,6 +193,31 @@ broken determinism, failing gates, and overclaims are **blockers** — fix and
 name, a shared optimizer) are documented, not "fixed." Use the exact prompts and
 synthesis rule in `references/evaluation-agents.md` (§Gate B, §Synthesis).
 
+## Phase 5.5 — Post-fix reference sanity check
+
+Goal: confirm the Gate-B fixes didn't regress the model, by running the *finished*
+artifact head-to-head against the live reference one more time.
+
+The Phase-4 benchmark measured the model *before* the Gate-B fixes, and those fixes
+change code — so re-verify against the reference after they land, on a **real
+dataset** (not just the synthetic parity fixture — e.g. a 20 Newsgroups subset).
+Fit both topica and the reference implementation on the same corpus and compare,
+side by side:
+
+- **Accuracy / fidelity** — the metric Phase 4 used (topic-aligned cosine, or a
+  discovered-K-appropriate metric like cross-NMI / document-clustering agreement
+  where the two land on different K), against the noise floor.
+- **Speed** — wall-clock for both at a realistic corpus size, so the speed claim in
+  the PR reflects the shipped code, not the pre-fix version.
+
+A regression here — accuracy below the Phase-4 number, or a speed cliff — is a
+**blocker**: the fixes broke something; diagnose and re-verify before the PR. If
+both hold, record the head-to-head accuracy-and-speed numbers in the PR body next
+to the parity result. This is the same comparison `benchmarks/full_model_run.py`
+runs across the roster (reference-ceiling accuracy + timing ratio); add or refresh
+the model's row there if it belongs on the table, capping the corpus where a fit is
+otherwise intractable (as HDP/HLDA do at ~2k docs).
+
 ## Phase 6 — Ship: issue, PR, README, docs
 
 Goal: a merged PR that follows GitHub best practices and leaves the docs current.
