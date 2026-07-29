@@ -1,5 +1,4 @@
-"""Tests for AnchorLDA, the experimental anchor-words spectral estimator
-(Arora et al. 2013)."""
+"""Tests for AnchorLDA, the anchor-words spectral estimator (Arora et al. 2013)."""
 
 import os
 
@@ -7,17 +6,6 @@ import numpy as np
 import pytest
 
 import topica
-
-
-@pytest.fixture(autouse=True)
-def _experimental_on():
-    """AnchorLDA is gated; enable it for these tests and restore the gate after."""
-    was = topica.experimental_enabled()
-    topica.enable_experimental(True)
-    try:
-        yield
-    finally:
-        topica.enable_experimental(was)
 
 
 def _separable_corpus(k=4, words_per_topic=12, n_docs=400, doc_len=40, seed=0):
@@ -36,16 +24,9 @@ def _separable_corpus(k=4, words_per_topic=12, n_docs=400, doc_len=40, seed=0):
     return docs, truth, anchors
 
 
-class TestGate:
-    def test_refused_without_optin(self):
-        topica.enable_experimental(False)
-        try:
-            with pytest.raises(RuntimeError, match="experimental"):
-                topica.AnchorLDA(5)
-        finally:
-            topica.enable_experimental(True)
-
-    def test_constructs_when_enabled(self):
+class TestConstruction:
+    def test_constructs_ungated(self):
+        # AnchorLDA is validated (reference parity); no experimental opt-in needed.
         m = topica.AnchorLDA(5)
         assert m.num_topics == 5
 
@@ -164,10 +145,10 @@ class TestSurface:
 
 
 class TestRegistry:
-    def test_registered_as_experimental(self):
+    def test_registered_on_validated_roster(self):
         info = {m.name: m for m in topica.list_models()}
         assert "AnchorLDA" in info
-        assert info["AnchorLDA"].experimental is True
+        assert info["AnchorLDA"].experimental is False
 
 
 def _overlap_corpus(k=30, block=8, shared=15, n=1500, length=40, seed=0):
@@ -221,15 +202,10 @@ class TestHighKTheory:
 
     @pytest.fixture(scope="class")
     def fits(self):
-        was = topica.experimental_enabled()
-        topica.enable_experimental(True)
-        try:
-            docs, true_anchors, k = _overlap_corpus(k=self.K, seed=0)
-            anchor = topica.AnchorLDA(k, seed=0).fit(docs)
-            lda = topica.LDA(num_topics=k, seed=0)
-            lda.fit(docs, iters=100)
-        finally:
-            topica.enable_experimental(was)
+        docs, true_anchors, k = _overlap_corpus(k=self.K, seed=0)
+        anchor = topica.AnchorLDA(k, seed=0).fit(docs)
+        lda = topica.LDA(num_topics=k, seed=0)
+        lda.fit(docs, iters=100)
         return anchor, lda, true_anchors
 
     def test_anchor_recovers_distinctive_structure(self, fits):

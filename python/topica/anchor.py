@@ -11,9 +11,10 @@ human-readable anchor word.
 Reference: Arora, Ge, Halpern, Mimno, Moitra, Sontag, Wu & Zhu (2013), "A
 Practical Algorithm for Topic Modeling with Provable Guarantees", ICML.
 
-Experimental: this ships before a published paper and a reference-implementation
-parity check (topica's bar for a validated model), so it is gated behind
-:func:`topica.enable_experimental`.
+Validated against the ``anchor-topic`` reference implementation (Arora et al.
+2013): the co-occurrence matrix is bit-identical, the full pipeline agrees to
+mean cosine 1.0 on a separable corpus, and topica reaches a tighter RecoverKL
+optimum than the reference on real text (``parity/anchor_compare.py``).
 """
 
 from __future__ import annotations
@@ -21,17 +22,6 @@ from __future__ import annotations
 import json
 
 import numpy as np
-
-from . import experimental_enabled
-
-
-_GATE_MESSAGE = (
-    "AnchorLDA is experimental and unvalidated: it has no published paper or "
-    "reference-implementation parity yet, topica's bar for a validated model. "
-    "Enable experimental models with `topica.enable_experimental()` or set the "
-    "environment variable TOPICA_EXPERIMENTAL=1. Experimental models may change "
-    "or be removed without a deprecation cycle."
-)
 
 
 def _corpus_to_token_lists(data):
@@ -194,8 +184,8 @@ def _recover_kl(q, anchors, *, iters, eta, tol, check_every=5):
 
 
 class AnchorLDA:
-    """Anchor-words spectral topic model (Arora et al. 2013), an experimental,
-    deterministic, Gibbs-free estimator.
+    """Anchor-words spectral topic model (Arora et al. 2013), a deterministic,
+    Gibbs-free estimator.
 
     Recovers a topic-word matrix from the word co-occurrence statistics by anchor
     selection plus convex recovery — no sampling, no EM, reproducible bit-for-bit.
@@ -204,8 +194,8 @@ class AnchorLDA:
     topic)``; the document-topic matrix is ``p(topic | doc)`` from the per-word
     topic responsibilities.
 
-    Experimental and gated: call :func:`topica.enable_experimental` (or set
-    ``TOPICA_EXPERIMENTAL=1``) before constructing one.
+    Validated against the ``anchor-topic`` reference (Arora et al. 2013): see
+    ``parity/anchor_compare.py``.
 
     Parameters
     ----------
@@ -252,8 +242,6 @@ class AnchorLDA:
                  seed: int = 42, eta: float = 1.0, convergence_tol: float = 1e-5,
                  frex_w: float = 0.5, frequency_temper: float = 0.5,
                  anchor_min_doc_freq: float = 0.01):
-        if not experimental_enabled():
-            raise RuntimeError(_GATE_MESSAGE)
         if num_topics < 2:
             raise ValueError("num_topics must be at least 2")
         if recover not in ("kl", "l2"):
@@ -513,22 +501,13 @@ class AnchorLDA:
             meta = json.loads(str(f["meta"]))
             tw = f["topic_word"]
             dt = f["doc_topic"]
-        was_on = experimental_enabled()
-        if not was_on:
-            from . import enable_experimental
-            enable_experimental(True)
-        try:
-            m = AnchorLDA(meta["num_topics"], recover=meta.get("recover", "l2"),
-                          min_count=meta["min_count"], seed=meta["seed"],
-                          eta=meta.get("eta", 1.0),
-                          convergence_tol=meta.get("convergence_tol", 1e-5),
-                          frex_w=meta.get("frex_w", 0.5),
-                          frequency_temper=meta.get("frequency_temper", 1.0),
-                          anchor_min_doc_freq=meta.get("anchor_min_doc_freq", 0.0))
-        finally:
-            if not was_on:
-                from . import enable_experimental
-                enable_experimental(False)
+        m = AnchorLDA(meta["num_topics"], recover=meta.get("recover", "l2"),
+                      min_count=meta["min_count"], seed=meta["seed"],
+                      eta=meta.get("eta", 1.0),
+                      convergence_tol=meta.get("convergence_tol", 1e-5),
+                      frex_w=meta.get("frex_w", 0.5),
+                      frequency_temper=meta.get("frequency_temper", 1.0),
+                      anchor_min_doc_freq=meta.get("anchor_min_doc_freq", 0.0))
         m._topic_word = tw
         m._doc_topic = dt
         m._vocab = list(meta["vocabulary"])

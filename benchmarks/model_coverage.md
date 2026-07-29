@@ -49,6 +49,7 @@ PT, RTM, Scholar, TBIP, Wordfish, EmbeddingLDA.
 | NMF, LSA | scikit-learn | yes | yes |
 | ProdLDA, ETM, DETM, FASTopic, InfoCTM, Scholar, TBIP | torch (hand-coded ref) | yes | yes |
 | SemanticSignalSeparation | turftopic | yes | (planted) |
+| AnchorLDA | anchor-topic (Arora 2013) | yes | (parity) |
 | BERTopic | bertopic | yes | yes |
 | SupervisedLDA (var/gibbs) | planted oracle | yes | yes |
 | EmbeddingLDA | gensim (as-LDA) | yes | yes |
@@ -85,7 +86,6 @@ by construction.
 | IdealPointSentenceTM | embedding-native; novel to topica |
 | PartyEmbeddings | novel to topica |
 | NarrativeTM | novel to topica |
-| AnchorLDA | internal oracle only |
 | TensorLDA | internal oracle only |
 | PLTM | internal oracle only |
 | PolylingualLDA | internal oracle only |
