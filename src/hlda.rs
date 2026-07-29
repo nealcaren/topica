@@ -112,6 +112,13 @@ pub struct HldaModel {
     paths: Vec<Vec<usize>>,
     /// Per document, per token: the level 0..L it is assigned to.
     levels: Vec<Vec<usize>>,
+    /// Fit-time `log_gamma` lookup tables (see [`HldaModel::build_lgamma_tables`]).
+    /// `lg_eta[k] = log_gamma(k as f64 + eta)`, `lg_veta[k] = log_gamma(k as f64 +
+    /// V*eta)`. Every `level_log_marginal` argument is `integer + eta` or
+    /// `integer + V*eta`, so these replace the dominant `log_gamma` cost with a
+    /// table lookup. Transient (rebuilt each fit, not serialized).
+    lg_eta: Vec<f64>,
+    lg_veta: Vec<f64>,
 }
 
 impl HldaModel {
@@ -287,26 +294,41 @@ impl HldaModel {
     /// per-word increments) added to an existing count vector `nw`/`n` of a node
     /// at one level. `counts` maps word -> how many of the document's level-l
     /// tokens hit that word. Returns log p(new words | existing node counts).
+    /// Tabulate `log_gamma(k + eta)` and `log_gamma(k + V*eta)` for every integer
+    /// `k` a count can reach (bounded by the total token budget plus a document's
+    /// length). `level_log_marginal` then indexes these instead of calling the
+    /// (expensive) `log_gamma` per token per node — the dominant HLDA cost. The root
+    /// node can legitimately hold ~every token, so the tables must span the whole
+    /// budget: fit-time memory is two `f64` per token (~16 bytes/token), linear in
+    /// the corpus size.
+    fn build_lgamma_tables(&mut self, docs: &[Vec<u32>]) {
+        let total: usize = docs.iter().map(|d| d.len()).sum();
+        let max_doc = docs.iter().map(|d| d.len()).max().unwrap_or(0);
+        // A count is at most `total`; a marginal adds at most one document's worth.
+        let cap = total + max_doc + 1;
+        let veta = self.num_types as f64 * self.eta;
+        self.lg_eta = (0..cap).map(|k| log_gamma(k as f64 + self.eta)).collect();
+        self.lg_veta = (0..cap).map(|k| log_gamma(k as f64 + veta)).collect();
+    }
+
     fn level_log_marginal(&self, node: usize, counts: &[(usize, u32)]) -> f64 {
-        let v = self.num_types as f64;
-        let eta = self.eta;
-        let n_existing = self.nodes[node].n as f64;
+        let n_existing = self.nodes[node].n as usize;
         let mut m_total = 0u32;
         let mut logp = 0.0;
         for &(w, m) in counts {
             if m == 0 {
                 continue;
             }
-            let a = self.nodes[node].nw[w] as f64 + eta;
-            // Π_{j=0}^{m-1} (a + j) = Γ(a+m)/Γ(a).
-            logp += log_gamma(a + m as f64) - log_gamma(a);
+            let nkw = self.nodes[node].nw[w] as usize;
+            // log[ Γ(nkw+η+m)/Γ(nkw+η) ] via the precomputed log_gamma(k+η) table.
+            logp += self.lg_eta[nkw + m as usize] - self.lg_eta[nkw];
             m_total += m;
         }
         if m_total == 0 {
             return 0.0;
         }
-        // Denominator Γ(n+Vη)/Γ(n+Vη+m).
-        logp += log_gamma(n_existing + v * eta) - log_gamma(n_existing + v * eta + m_total as f64);
+        // Denominator Γ(n+Vη)/Γ(n+Vη+m) via the log_gamma(k+Vη) table.
+        logp += self.lg_veta[n_existing] - self.lg_veta[n_existing + m_total as usize];
         logp
     }
 
@@ -618,7 +640,13 @@ pub fn fit_hlda<R: Rng + Send>(
         nodes: Vec::new(),
         paths: vec![Vec::new(); docs.len()],
         levels: docs.iter().map(|d| vec![0usize; d.len()]).collect(),
+        lg_eta: Vec::new(),
+        lg_veta: Vec::new(),
     };
+    // Precompute log_gamma lookup tables: every level_log_marginal argument is an
+    // integer count plus eta (word terms) or plus V*eta (denominator), and no count
+    // can exceed the total token budget, so tabulate up to that bound once.
+    model.build_lgamma_tables(docs);
 
     // Initialization: create a root; for each document, build a path by descending
     // the nested CRP (reusing or creating children with the usual γ weight), and
@@ -845,6 +873,50 @@ mod tests {
     }
 
     #[test]
+    fn lgamma_table_matches_direct_computation() {
+        // The log_gamma lookup table computes the same Dirichlet-multinomial
+        // marginal as direct log_gamma. It is NOT bit-identical to the old inline
+        // form: the table argument is `(k+m) as f64 + η` where the old form was
+        // `(k as f64 + η) + m as f64`, and float addition is non-associative, so
+        // the two can differ by a few ULP. Assert numerical agreement (relative
+        // 1e-9) — the marginal is mathematically identical, not bit-equal.
+        for &(eta, v) in &[(0.01_f64, 5000usize), (0.1, 200), (1.0, 50)] {
+            let veta = v as f64 * eta;
+            let cap = 20_000usize;
+            let lg_eta: Vec<f64> = (0..cap).map(|k| log_gamma(k as f64 + eta)).collect();
+            let lg_veta: Vec<f64> = (0..cap).map(|k| log_gamma(k as f64 + veta)).collect();
+            for &nkw in &[0usize, 1, 2, 7, 50, 999, 5000] {
+                for &m in &[1usize, 2, 5, 40, 500] {
+                    if nkw + m >= cap {
+                        continue;
+                    }
+                    let table = lg_eta[nkw + m] - lg_eta[nkw];
+                    let direct =
+                        log_gamma(nkw as f64 + eta + m as f64) - log_gamma(nkw as f64 + eta);
+                    assert!(
+                        (table - direct).abs() <= 1e-9 * direct.abs().max(1.0),
+                        "word term mismatch η={eta} nkw={nkw} m={m}: {table} vs {direct}"
+                    );
+                }
+            }
+            for &n in &[0usize, 3, 60, 1234, 9999] {
+                for &mt in &[1usize, 4, 30, 300] {
+                    if n + mt >= cap {
+                        continue;
+                    }
+                    let table = lg_veta[n] - lg_veta[n + mt];
+                    let direct =
+                        log_gamma(n as f64 + veta) - log_gamma(n as f64 + veta + mt as f64);
+                    assert!(
+                        (table - direct).abs() <= 1e-9 * direct.abs().max(1.0),
+                        "denominator term mismatch η={eta} n={n} mt={mt}: {table} vs {direct}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn deterministic_for_fixed_seed() {
         let mut seed_rng = ChaCha8Rng::seed_from_u64(7);
         let (docs, v, _shared, _blocks) = planted_corpus(&mut seed_rng, 2);
@@ -1020,6 +1092,8 @@ mod tests {
             nodes: Vec::new(),
             paths: Vec::new(),
             levels: Vec::new(),
+            lg_eta: Vec::new(),
+            lg_veta: Vec::new(),
         }
     }
 
