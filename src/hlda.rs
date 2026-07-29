@@ -420,13 +420,29 @@ impl HldaModel {
             })
             .collect();
 
+        // Per-node marginal cache. `level_log_marginal(node, level_words[node.level])`
+        // depends only on the node's counts and the document's (fixed) level-words,
+        // so it is identical for every candidate path passing through that node —
+        // the dominant `log_gamma` cost. Compute it once per node and reuse. A node
+        // in a candidate's existing prefix always sits at its own level, so
+        // `level_words[lev]` is the right multiset. Bit-for-bit identical to scoring
+        // each candidate independently.
+        let mut marg_cache: Vec<Option<f64>> = vec![None; self.nodes.len()];
         let mut log_scores = Vec::with_capacity(cands.len());
         for cand in &cands {
             let mut s = cand.log_prior;
             for lev in 0..l {
                 if lev < cand.new_from {
                     let node = cand.nodes[lev];
-                    s += self.level_log_marginal(node, &level_words[lev]);
+                    let m = match marg_cache[node] {
+                        Some(v) => v,
+                        None => {
+                            let v = self.level_log_marginal(node, &level_words[lev]);
+                            marg_cache[node] = Some(v);
+                            v
+                        }
+                    };
+                    s += m;
                 } else {
                     s += empty_marginal[lev];
                 }
