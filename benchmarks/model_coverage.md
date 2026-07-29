@@ -49,7 +49,7 @@ PT, RTM, Scholar, TBIP, Wordfish, EmbeddingLDA.
 | NMF, LSA | scikit-learn | yes | yes |
 | ProdLDA, ETM, DETM, FASTopic, InfoCTM, Scholar, TBIP | torch (hand-coded ref) | yes | yes |
 | SemanticSignalSeparation | turftopic | yes | (planted) |
-| AnchorLDA | anchor-topic (Arora 2013) | yes | (parity) |
+| AnchorLDA | anchor-topic (RecoverL2, Arora 2013) | yes | (parity) |
 | BERTopic | bertopic | yes | yes |
 | SupervisedLDA (var/gibbs) | planted oracle | yes | yes |
 | EmbeddingLDA | gensim (as-LDA) | yes | yes |

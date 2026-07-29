@@ -11,10 +11,14 @@ human-readable anchor word.
 Reference: Arora, Ge, Halpern, Mimno, Moitra, Sontag, Wu & Zhu (2013), "A
 Practical Algorithm for Topic Modeling with Provable Guarantees", ICML.
 
-Validated against the ``anchor-topic`` reference implementation (Arora et al.
-2013): the co-occurrence matrix is bit-identical, the full pipeline agrees to
-mean cosine 1.0 on a separable corpus, and topica reaches a tighter RecoverKL
-optimum than the reference on real text (``parity/anchor_compare.py``).
+Validated against the ``anchor-topic`` RecoverL2 reference (Arora et al. 2013):
+the co-occurrence matrix agrees to numerical precision, and given the same anchors
+topica's ``recover="l2"`` recovery matches the reference to cosine ~1.0 on planted
+*and* real text. The exact-Arora configuration (``recover="l2"``,
+``frequency_temper=1.0``) also matches end to end on separable data. The constructor
+default ``frequency_temper=0.5`` is a documented topica extension that tempers
+frequent-word dominance for more distinctive topics, not the reference-exact
+inversion (``parity/anchor_compare.py``).
 """
 
 from __future__ import annotations
@@ -194,7 +198,10 @@ class AnchorLDA:
     topic)``; the document-topic matrix is ``p(topic | doc)`` from the per-word
     topic responsibilities.
 
-    Validated against the ``anchor-topic`` reference (Arora et al. 2013): see
+    Validated against the ``anchor-topic`` RecoverL2 reference (Arora et al. 2013):
+    given the same anchors, ``recover="l2"`` matches the reference recovery to
+    cosine ~1.0 on planted and real text. The default ``frequency_temper=0.5`` is a
+    topica extension, not the reference-exact inversion. See
     ``parity/anchor_compare.py``.
 
     Parameters
