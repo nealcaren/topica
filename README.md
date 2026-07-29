@@ -6,7 +6,7 @@
 [![Website](https://img.shields.io/badge/website-get--topica-F5B93A.svg)](https://nealcaren.github.io/get-topica/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-`topica` is a fast, all-purpose topic-modeling library for Python, built for computational social scientists who want to go from a column of text to publishable results in one workflow. It brings together models usually split across JVM tools like MALLET and R packages like `stm`, more than two dozen in all (LDA, STM, CTM, plus neural, dynamic, and embedding-based models), each paired with the validation, covariate-effect, and reporting tools reviewers expect. Where general toolkits like Gensim or BERTopic give you topics, topica is built around the question social scientists ask of them next: how topic prevalence and content relate to covariates, with reference-validated models and reproducible fits. It installs as a single wheel that needs only NumPy and pandas: no JVM, no PyTorch.
+`topica` is a fast, all-purpose topic-modeling library for Python, built for computational social scientists who want to go from a column of text to publishable results in one workflow. It brings together models usually split across JVM tools like MALLET and R packages like `stm`, more than forty in all (LDA, STM, CTM, plus neural, dynamic, and embedding-based models), each paired with the validation, covariate-effect, and reporting tools reviewers expect. Where general toolkits like Gensim or BERTopic give you topics, topica is built around the question social scientists ask of them next: how topic prevalence and content relate to covariates, with reference-validated models and reproducible fits. It installs as a single wheel that needs only NumPy and pandas: no JVM, no PyTorch.
 
 ```bash
 pip install topica
@@ -55,7 +55,7 @@ covariates, **`HDP`** to let the data choose the number of topics, and
 follows.
 
 <details>
-<summary><b>All models</b> (more than two dozen, grouped by what you bring and what you want; click to expand)</summary>
+<summary><b>All models</b> (more than forty, grouped by what you bring and what you want; click to expand)</summary>
 
 Models are organized by **what you bring and what you want**, not by inference
 family. The `from topica import X` namespace is flat; `topica.list_models(group=…,

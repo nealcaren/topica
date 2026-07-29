@@ -5,8 +5,8 @@ version: 0.54.0
 date-released: 2026-07-26
 abstract: >-
   A fast, all-purpose topic-modeling library for Python: a Rust core with a
-  numpy-native API, built for computational social scientists. More than two
-  dozen models (LDA, DMR, CTM, STM, SAGE, HDP, DTM, keyATM, SeededLDA, BERTopic,
+  numpy-native API, built for computational social scientists. More than forty
+  models (LDA, DMR, CTM, STM, SAGE, HDP, DTM, keyATM, SeededLDA, BERTopic,
   Top2Vec, ETM, FASTopic, InfoCTM, and more), each validated against its reference
   implementation.
 type: software
