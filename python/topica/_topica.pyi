@@ -1075,24 +1075,33 @@ class HDP:
         gamma: float = 0.1,
         beta: float = 0.01,
         seed: int = 42,
-        resample_conc: bool = False,
-        concentration_max: float = 2.0,
+        resample_conc: bool = True,
+        concentration_max: float = 1e6,
         eta: Optional[float] = None,
     ) -> None:
-        """alpha/gamma are the document- and corpus-level DP concentrations.
-        gamma is the dominant lever on the inferred topic count (0.1 is
-        conservative; raise it for more topics). resample_conc defaults to False
-        (fixed concentrations -> a stable topic count); set it True to adapt the
-        concentrations to the data, which is capped at concentration_max to avoid
-        the runaway topic count it used to cause (issue #68). beta is the
-        topic-word Dirichlet (base measure). alpha, gamma, beta must be > 0.
+        """alpha/gamma are the document- and corpus-level DP concentrations, used
+        as the initial values. resample_conc defaults to True: the
+        concentration-update equations reproduce those of the reference HDP
+        implementations (blei-lab/hdp's sample_first/second_level_concentration and
+        the Escobar-West/Teh 2006 scheme) with added numeric guards, so the topic
+        count is inferred from the data. resample_conc=False holds the
+        concentrations fixed; at the low defaults that collapses to a few topics
+        with one dominant background topic, so raise gamma if you fix them.
+        Resampling stays deterministic under a fixed seed. beta is the topic-word
+        Dirichlet (base measure). alpha, gamma, beta must be > 0.
 
-        concentration_max (default 2.0) bounds the resampled alpha/gamma when
-        resample_conc=True. It is a divergence backstop, not a statistical prior:
-        a posterior with mass above it is pinned at the cap, biasing the
-        concentrations (and the topic count) downward, so raise it for corpora
-        that legitimately support larger concentrations. No effect when
-        resample_conc=False. Must be finite and > 1e-3.
+        topica follows blei-lab/hdp's exact new-table marginal and finds a similar
+        topic count to blei. tomotopy tends to find fewer, cleaner topics — not
+        from its explicit-table representation (a faithful explicit-table sampler
+        lands in topica's regime) but from a simplified new-table weight (dropping
+        the sum_k m_k*f_k term) that under-weights new tables. Neither is a bug;
+        use tomotopy if you want its coarser result.
+
+        concentration_max (default 1e6) is a divergence backstop on the resampled
+        alpha/gamma, not a statistical prior. On the corpora tested the Escobar-West
+        update equilibrated well below this regardless of the cap, so it does not
+        affect those fits; it only truncates draws on a degenerate corpus (issue
+        #68). No effect when resample_conc=False. Must be finite and > 1e-3.
 
         eta is a deprecated alias for beta."""
         ...

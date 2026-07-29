@@ -1,8 +1,8 @@
 """#433: HDP's resampled-concentration cap was hard-coded at 2.0, pinning any
 posterior with mass above it to a spurious atom (biasing gamma/alpha and K
-downward). The cap is now a configurable `concentration_max` (default 2.0, so
-existing behavior is unchanged) that users can raise for corpora that legitimately
-support larger concentrations."""
+downward). The cap is a configurable `concentration_max`; its default is now a
+high divergence backstop (1e6) rather than the old strangling 2.0, since the
+Escobar-West sampler equilibrates well below it on real corpora."""
 import numpy as np
 import pytest
 import topica
@@ -14,9 +14,11 @@ def _corpus(seed=0):
     return [list(rng.choice(blocks[d % 6], size=12)) for d in range(300)]
 
 
-def test_concentration_max_is_exposed_and_defaults_to_two():
+def test_concentration_max_defaults_to_high_backstop():
+    # The default is now a high divergence backstop (1e6), not the old strangling
+    # 2.0: the Escobar-West sampler equilibrates well below it on real corpora.
     m = topica.HDP(resample_conc=True)
-    assert m.settings["concentration_max"] == 2.0
+    assert m.settings["concentration_max"] == 1e6
 
 
 def test_concentration_max_survives_save_load(tmp_path):
@@ -48,12 +50,12 @@ def test_invalid_concentration_max_is_rejected():
 
 
 def test_runtime_signature_default_matches_the_stub():
-    # The pyo3 signature must render a literal 2.0 (not Ellipsis from a Rust const
-    # expression), so introspection/docs agree with _topica.pyi's `= 2.0`.
+    # The pyo3 signature must render a literal 1e6 (not Ellipsis from a Rust const
+    # expression), so introspection/docs agree with _topica.pyi's `= 1e6`.
     import inspect
 
     default = inspect.signature(topica.HDP).parameters["concentration_max"].default
-    assert default == 2.0, repr(default)
+    assert default == 1e6, repr(default)
 
 
 def test_cap_bounds_alpha_not_only_gamma():

@@ -10209,26 +10209,35 @@ impl HDP {
     /// larger values find more topics (`0.1` is conservative, like tomotopy's
     /// default; raise it for finer granularity).
     ///
-    /// `resample_conc` controls whether `alpha`/`gamma` are resampled each sweep.
-    /// It defaults to ``False`` (fixed concentrations), which gives a stable,
-    /// reproducible topic count. Resampling (`resample_conc=True`) lets the model
-    /// adapt the concentrations to the data, but the corpus-level update is a
-    /// positive-feedback loop, more topics raise gamma, which creates more
-    /// topics, that ran the topic count away to the hundreds on real corpora
-    /// (issue #68). The resampled concentrations are capped at `concentration_max`
-    /// to keep that bounded, but fixed concentrations remain the recommended
-    /// default; set `gamma` to choose the granularity directly.
+    /// `resample_conc` controls whether `alpha`/`gamma` are resampled each sweep
+    /// from the data. It defaults to ``True``: the concentration-update equations
+    /// reproduce those of the reference HDP implementations — blei-lab/hdp's
+    /// `sample_first`/`second_level_concentration` and the Escobar-West/Teh (2006)
+    /// auxiliary-variable scheme — with added numeric-safety guards. Estimating
+    /// the concentrations (rather than holding them at a low fixed value) is what
+    /// lets the topic count be genuinely inferred. `resample_conc=False` holds
+    /// them fixed; at the low defaults that collapses to a handful of topics with
+    /// one dominant background topic, so if you fix them, raise `gamma`. Resampling
+    /// is still fully deterministic under a fixed `seed`.
     ///
-    /// `concentration_max` (default 2.0) is the upper bound applied to the
-    /// resampled `alpha`/`gamma` when `resample_conc=True`. It is a divergence
-    /// backstop, not a statistical prior: a posterior with mass above it is pinned
-    /// at the cap, biasing the concentrations (and K) downward. Corpora that
-    /// legitimately support larger concentrations should raise it; it has no
-    /// effect when `resample_conc=False`.
+    /// topica follows blei-lab/hdp's exact new-table marginal and discovers a
+    /// similar number of topics to blei. tomotopy's HDP tends to find fewer,
+    /// cleaner topics — not because of its explicit-table representation (a
+    /// faithful explicit-table sampler lands in topica's regime) but because it
+    /// uses a simplified new-table weight (dropping the `Σ_k m_k·f_k` term) that
+    /// under-weights new tables and regularises toward fewer topics. Neither is a
+    /// bug; use tomotopy if you want its coarser result.
+    ///
+    /// `concentration_max` (default 1e6) is a divergence backstop on the resampled
+    /// `alpha`/`gamma`, not a statistical prior. On the corpora tested the
+    /// Escobar-West update equilibrated (gamma≈70) well below this regardless of
+    /// the cap, so it does not affect those fits; it only truncates draws on a
+    /// degenerate corpus that would otherwise let the count run away (issue #68).
+    /// It has no effect when `resample_conc=False`.
     /// `beta` is the topic-word Dirichlet smoothing; `seed` seeds the Gibbs RNG.
     #[new]
-    #[pyo3(signature = (*, alpha=0.1, gamma=0.1, beta=0.01, seed=42, resample_conc=false,
-                        concentration_max=2.0, eta=None))]
+    #[pyo3(signature = (*, alpha=0.1, gamma=0.1, beta=0.01, seed=42, resample_conc=true,
+                        concentration_max=1e6, eta=None))]
     fn new(
         py: Python<'_>,
         alpha: f64,

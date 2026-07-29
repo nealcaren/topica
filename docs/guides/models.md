@@ -583,11 +583,35 @@ hdp.fit(docs, iters=300)
 print(hdp.num_topics, "topics inferred")
 ```
 
-`gamma` is the main lever on the inferred count: larger values discover more
-topics (the conservative default `0.1` lands near a handful, like the reference
-implementations). By default the concentrations are held fixed, which gives a
-stable, reproducible topic count; `resample_conc=True` lets the model adapt them
-to the data instead, useful for exploration but more liberal about adding topics.
+By default the concentrations `alpha`/`gamma` are **resampled from the data**
+(`resample_conc=True`): topica's concentration-update equations reproduce those of
+the reference HDP implementations — blei-lab/hdp's
+`sample_first`/`second_level_concentration` and the Escobar-West/Teh (2006) scheme
+— with added numeric guards, so the topic count is genuinely inferred. The
+starting `gamma`/`alpha` seed the sampler but the data moves them; resampling is
+still deterministic under a fixed `seed`.
+
+topica follows **blei-lab/hdp**'s exact new-table marginal, so it discovers a
+similar number of topics to blei on the same data. tomotopy's HDP tends to find
+*fewer, cleaner* topics — and this is **not** because it keeps explicit per-word
+tables (a faithful explicit-table sampler lands in topica's regime; we checked).
+It is because tomotopy uses a **simplified new-table weight** that drops the
+dominant `Σ_k m_k·f_k` term, under-weighting the creation of new tables and so
+regularising toward fewer topics. Neither is a bug — they are different modelling
+choices — but if you want tomotopy's coarser result, use tomotopy; topica stays
+faithful to blei's marginal.
+
+Set `resample_conc=False` to hold the concentrations fixed — but at the low
+defaults that collapses to a few topics dominated by one background topic, so if
+you fix them, raise `gamma` (larger discovers more topics). `concentration_max` is
+a high divergence backstop on the resampled values, not a prior; on the corpora
+tested it does not affect the fit.
+
+Cost note: because the count is inferred, a large heavy-tailed corpus can grow to
+many topics, and each Gibbs step is linear in the current topic count — so the
+inferring default is more expensive per sweep than a small fixed `K`. If a fit
+grows too many topics, lower `concentration_max` to cap the count, or set
+`resample_conc=False` with a chosen `gamma`.
 
 ## Guided topics
 
