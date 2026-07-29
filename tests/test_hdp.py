@@ -24,10 +24,11 @@ def _planted_corpus(n_blocks=5, words_per_block=6, n_docs=250):
 class TestInference:
     def test_infers_reasonable_k(self):
         docs, _, n_blocks = _planted_corpus()
-        # The default concentrations (0.1/0.1) are tuned for real-scale corpora;
-        # this tiny planted corpus needs more concentration to instantiate the
-        # planted topics, so we set them explicitly (cf. the Rust unit test).
-        m = HDP(seed=1, alpha=1.0, gamma=1.0)
+        # This tiny planted corpus needs controlled concentrations to instantiate
+        # exactly the planted topics, so we fix them (resample_conc=False) at a
+        # moderate value rather than let the canonical sampler infer/over-segment
+        # (cf. the Rust unit test).
+        m = HDP(seed=1, alpha=1.0, gamma=1.0, resample_conc=False)
         m.fit(docs, iters=120)
         # Auto-K is approximate and HDP slightly over-segments; it must at least
         # find the planted topics and not explode.
@@ -35,7 +36,8 @@ class TestInference:
 
     def test_recovers_planted_blocks(self):
         docs, vocab, n_blocks = _planted_corpus()
-        m = HDP(seed=1, alpha=1.0, gamma=1.0)
+        # Fixed concentrations for a clean planted recovery (see above).
+        m = HDP(seed=1, alpha=1.0, gamma=1.0, resample_conc=False)
         m.fit(docs, iters=200)
         wps = len(vocab) // n_blocks
         blocks = [
