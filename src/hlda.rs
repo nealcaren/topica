@@ -30,12 +30,14 @@
 //!       remaining counts. A path is sampled in log space; new nodes are
 //!       instantiated as needed and the document's counts are re-added.
 //!
-//! **Level prior.** We use a *symmetric* Dirichlet smoothing `alpha` over the L
-//! levels (the per-document level-count Dirichlet of the prompt) rather than the
-//! GEM stick-breaking prior. This keeps the level move conjugate and simple; the
-//! trade-off is that it does not bias mass toward shallower levels the way GEM's
-//! `(α_π, α_m)` stick does, but for a fixed shallow depth the symmetric prior
-//! recovers the planted root/leaf split cleanly.
+//! **Level prior.** The per-document distribution over the L levels takes one of
+//! two priors (see [`LevelPrior`]): a fixed-depth Dirichlet with a per-level
+//! concentration vector (symmetric or asymmetric, matching tomotopy's `alpha`),
+//! or the two-parameter GEM stick-breaking prior of Blei et al. (2010). The
+//! Dirichlet keeps the level move conjugate and simple but a *symmetric* Dirichlet
+//! does not bias mass toward shallower levels; an asymmetric (root-heavy) `alpha`
+//! or the GEM prior does, keeping generic vocabulary in the upper levels by the
+//! prior rather than relying on the likelihood.
 //!
 //! Determinism: every random draw uses only the passed `rng`. After each sweep
 //! emptied nodes are compacted so node indices stay contiguous (as `hdp.rs`
@@ -74,13 +76,37 @@ struct Node {
     n: u32,
 }
 
+/// Prior on a document's distribution over the `L` levels of its path.
+///
+/// `Dirichlet` is a fixed-depth Dirichlet with a per-level concentration vector
+/// (length `depth`): all-equal entries give the classic symmetric prior, unequal
+/// entries an asymmetric one that biases mass toward particular levels (a larger
+/// root entry keeps generic vocabulary shallow). This matches tomotopy's
+/// `HLDAModel`, which also takes a scalar-or-per-level `alpha`.
+///
+/// `Gem` is the two-parameter GEM stick-breaking prior of Blei, Griffiths &
+/// Jordan (2010): `mean` `m` in (0, 1) is the expected fraction of the remaining
+/// stick taken at each level and `scale` `pi` > 0 the concentration. This is the
+/// prior in the original paper (and hlda-c). We apply the Ishwaran–James finite
+/// truncation — the last stick is forced to 1 so the deepest level absorbs the
+/// tail and the distribution is proper. Under empty counts it decays geometrically,
+/// `p(l) = m (1-m)^l` for `l < L-1` and `p(L-1) = (1-m)^{L-1}`, so mass concentrates
+/// in the shallow levels by construction rather than relying on the likelihood.
+#[derive(Clone, Debug)]
+pub enum LevelPrior {
+    /// Per-level Dirichlet concentration, length `depth`.
+    Dirichlet(Vec<f64>),
+    /// GEM stick-breaking with mean `m` and scale (precision) `pi`.
+    Gem { mean: f64, scale: f64 },
+}
+
 /// A fitted hierarchical LDA model. The tree has fixed depth `L`.
 pub struct HldaModel {
     pub num_types: usize,
-    pub depth: usize, // L
-    pub gamma: f64,   // nested-CRP concentration
-    pub eta: f64,     // topic-word Dirichlet
-    pub alpha: f64,   // symmetric level (GEM-replacement) Dirichlet
+    pub depth: usize,            // L
+    pub gamma: f64,              // nested-CRP concentration
+    pub eta: f64,                // topic-word Dirichlet
+    pub level_prior: LevelPrior, // per-document level distribution prior
     nodes: Vec<Node>,
     /// Per document: the L node indices on its path (root .. leaf).
     paths: Vec<Vec<usize>>,
@@ -174,6 +200,49 @@ impl HldaModel {
     }
 
     /// Move (a): resample the level of every token in document `d`.
+    /// Log of the per-document level-prior weight for each level `0..L`, given the
+    /// document's current per-level token counts `n_dl` (the resampled token
+    /// already removed). For `Dirichlet` this is `ln(n_dl[l] + alpha[l])` (the
+    /// shared `1/(N + Σα)` normaliser is dropped — the caller renormalises); for
+    /// `Gem` it is the log of the truncated stick-breaking predictive
+    /// `p(l) = (mπ + n_l)/(π + n_{≥l}) · Π_{j<l} ((1-m)π + n_{>j})/(π + n_{≥j})`.
+    fn level_log_prior(&self, n_dl: &[u32]) -> Vec<f64> {
+        let l = self.depth;
+        let mut out = vec![0.0f64; l];
+        match &self.level_prior {
+            LevelPrior::Dirichlet(alpha) => {
+                for lev in 0..l {
+                    out[lev] = (n_dl[lev] as f64 + alpha[lev]).ln();
+                }
+            }
+            LevelPrior::Gem { mean, scale } => {
+                let (m, pi) = (*mean, *scale);
+                // Suffix sums s[j] = Σ_{k>=j} n_dl[k], with s[l] = 0.
+                let mut s = vec![0u32; l + 1];
+                for j in (0..l).rev() {
+                    s[j] = s[j + 1] + n_dl[j];
+                }
+                // Truncated stick-breaking (Ishwaran & James): the last stick is
+                // forced to 1 so level L-1 absorbs the remaining mass and the level
+                // distribution is proper (sums to 1) over 0..L. Levels below L-1 use
+                // the usual "stop here" Beta-mean factor; level L-1 uses only the
+                // product of "pass" factors (no stop factor). `cum` accumulates
+                // Σ_{j<lev} ln((1-m)π + n_{>j}) - ln(π + n_{≥j}).
+                let mut cum = 0.0;
+                for lev in 0..l {
+                    out[lev] = if lev + 1 < l {
+                        (m * pi + n_dl[lev] as f64).ln() - (pi + s[lev] as f64).ln() + cum
+                    } else {
+                        // Deepest level: V_{L-1}=1, folds in the truncated tail.
+                        cum
+                    };
+                    cum += ((1.0 - m) * pi + s[lev + 1] as f64).ln() - (pi + s[lev] as f64).ln();
+                }
+            }
+        }
+        out
+    }
+
     fn sample_levels<R: Rng>(&mut self, d: usize, doc: &[u32], rng: &mut R) {
         let path = self.paths[d].clone();
         let l = self.depth;
@@ -192,15 +261,16 @@ impl HldaModel {
             self.nodes[onode].nw[w] -= 1;
             self.nodes[onode].n -= 1;
 
-            // p(level=l) ∝ (n_dl + alpha) * (nw + eta)/(n + V*eta) in log space.
+            // p(level=l) ∝ prior(l) * (nw + eta)/(n + V*eta) in log space, where the
+            // prior is the Dirichlet or GEM level weight from the remaining counts.
+            let log_prior = self.level_log_prior(&n_dl);
             let mut logp = vec![0.0f64; l];
             for lev in 0..l {
                 let node = path[lev];
-                let prior = (n_dl[lev] as f64 + self.alpha).ln();
                 let like = ((self.nodes[node].nw[w] as f64 + self.eta)
                     / (self.nodes[node].n as f64 + v as f64 * self.eta))
                     .ln();
-                logp[lev] = prior + like;
+                logp[lev] = log_prior[lev] + like;
             }
             let new = sample_log_index(&logp, rng);
 
@@ -488,8 +558,9 @@ impl HldaModel {
 /// Fit a hierarchical LDA model by collapsed Gibbs sampling over the nested CRP.
 ///
 /// `docs` are bags of word ids. `depth` is the tree depth L (>= 2). `gamma` is
-/// the nested-CRP concentration, `eta` the topic-word Dirichlet, `alpha` the
-/// symmetric per-document level Dirichlet. Deterministic for a fixed `rng`.
+/// the nested-CRP concentration, `eta` the topic-word Dirichlet, and `level_prior`
+/// the per-document level distribution ([`LevelPrior::Dirichlet`], symmetric or
+/// asymmetric, or [`LevelPrior::Gem`]). Deterministic for a fixed `rng`.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_hlda<R: Rng>(
     docs: &[Vec<u32>],
@@ -497,17 +568,24 @@ pub fn fit_hlda<R: Rng>(
     depth: usize,
     gamma: f64,
     eta: f64,
-    alpha: f64,
+    level_prior: LevelPrior,
     iters: usize,
     rng: &mut R,
 ) -> HldaModel {
     assert!(depth >= 2, "hLDA needs depth >= 2");
+    if let LevelPrior::Dirichlet(alpha) = &level_prior {
+        assert_eq!(
+            alpha.len(),
+            depth,
+            "Dirichlet level prior needs one α per level"
+        );
+    }
     let mut model = HldaModel {
         num_types,
         depth,
         gamma,
         eta,
-        alpha,
+        level_prior,
         nodes: Vec::new(),
         paths: vec![Vec::new(); docs.len()],
         levels: docs.iter().map(|d| vec![0usize; d.len()]).collect(),
@@ -664,7 +742,16 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         let (docs, v, shared, blocks) = planted_corpus(&mut rng, g);
 
-        let model = fit_hlda(&docs, v, 2, 1.0, 0.1, 0.5, 80, &mut rng);
+        let model = fit_hlda(
+            &docs,
+            v,
+            2,
+            1.0,
+            0.1,
+            LevelPrior::Dirichlet(vec![0.5; 2]),
+            80,
+            &mut rng,
+        );
 
         // (1) The root's top words are dominated by the shared words.
         let root = (0..model.num_nodes())
@@ -717,8 +804,26 @@ mod tests {
 
         let mut r1 = ChaCha8Rng::seed_from_u64(123);
         let mut r2 = ChaCha8Rng::seed_from_u64(123);
-        let m1 = fit_hlda(&docs, v, 2, 1.0, 0.1, 0.5, 30, &mut r1);
-        let m2 = fit_hlda(&docs, v, 2, 1.0, 0.1, 0.5, 30, &mut r2);
+        let m1 = fit_hlda(
+            &docs,
+            v,
+            2,
+            1.0,
+            0.1,
+            LevelPrior::Dirichlet(vec![0.5; 2]),
+            30,
+            &mut r1,
+        );
+        let m2 = fit_hlda(
+            &docs,
+            v,
+            2,
+            1.0,
+            0.1,
+            LevelPrior::Dirichlet(vec![0.5; 2]),
+            30,
+            &mut r2,
+        );
 
         assert_eq!(m1.num_nodes(), m2.num_nodes());
         for i in 0..m1.num_nodes() {
@@ -735,7 +840,16 @@ mod tests {
         let g = 3usize;
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         let (docs, v, _shared, _blocks) = planted_corpus(&mut rng, g);
-        let model = fit_hlda(&docs, v, 2, 1.0, 0.1, 0.5, 80, &mut rng);
+        let model = fit_hlda(
+            &docs,
+            v,
+            2,
+            1.0,
+            0.1,
+            LevelPrior::Dirichlet(vec![0.5; 2]),
+            80,
+            &mut rng,
+        );
         let base = crate::conformance::check_conformance(&model);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }
@@ -766,7 +880,16 @@ mod tests {
                 }
                 docs.push(doc);
             }
-            let model = fit_hlda(&docs, v, 5, 4.0, 0.1, 0.5, 80, &mut rng);
+            let model = fit_hlda(
+                &docs,
+                v,
+                5,
+                4.0,
+                0.1,
+                LevelPrior::Dirichlet(vec![0.5; 5]),
+                80,
+                &mut rng,
+            );
 
             let n = model.num_nodes();
             assert_eq!(
@@ -831,5 +954,173 @@ mod tests {
                 }
             }
         }
+    }
+
+    // -- Level-prior tests (#611) -------------------------------------------
+
+    /// A bare model carrying just enough state to exercise `level_log_prior`.
+    fn prior_probe(depth: usize, prior: LevelPrior) -> HldaModel {
+        HldaModel {
+            num_types: 1,
+            depth,
+            gamma: 1.0,
+            eta: 0.01,
+            level_prior: prior,
+            nodes: Vec::new(),
+            paths: Vec::new(),
+            levels: Vec::new(),
+        }
+    }
+
+    /// exp() + renormalise a log-weight vector to a probability distribution.
+    fn softmax(logs: &[f64]) -> Vec<f64> {
+        let mx = logs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let ex: Vec<f64> = logs.iter().map(|&l| (l - mx).exp()).collect();
+        let z: f64 = ex.iter().sum();
+        ex.iter().map(|&e| e / z).collect()
+    }
+
+    #[test]
+    fn gem_empty_counts_is_proper_truncated_geometric() {
+        // With zero counts the truncated GEM gives p(l)=m(1-m)^l for l<L-1 and
+        // p(L-1)=(1-m)^{L-1}; the raw (pre-normalisation) weights already sum to 1,
+        // so no mass is lost. L=3.
+        let (m, pi) = (0.35_f64, 100.0_f64);
+        let model = prior_probe(3, LevelPrior::Gem { mean: m, scale: pi });
+        let logs = model.level_log_prior(&[0, 0, 0]);
+        let raw: Vec<f64> = logs.iter().map(|&l| l.exp()).collect();
+        let expected = [m, m * (1.0 - m), (1.0 - m) * (1.0 - m)];
+        let sum: f64 = raw.iter().sum();
+        assert!(
+            (sum - 1.0).abs() < 1e-12,
+            "truncated GEM must be proper: {sum}"
+        );
+        for (i, (&r, &e)) in raw.iter().zip(expected.iter()).enumerate() {
+            assert!((r - e).abs() < 1e-12, "level {i}: {r} vs {e}");
+        }
+    }
+
+    #[test]
+    fn gem_nonzero_counts_matches_hand_calculation() {
+        // L=3, counts n=[2,0,3]; suffix sums s=[5,3,3,0].
+        //   p0 ∝ (mπ+2)/(π+5)
+        //   p1 ∝ (mπ+0)/(π+3) · ((1-m)π+3)/(π+5)
+        //   p2 ∝            1 · ((1-m)π+3)/(π+5) · ((1-m)π+3)/(π+3)   (last: no stop factor)
+        // Pass factors use s[j+1]: pass(j=0)=s[1]=3, pass(j=1)=s[2]=3.
+        let (m, pi) = (0.4_f64, 10.0_f64);
+        let model = prior_probe(3, LevelPrior::Gem { mean: m, scale: pi });
+        let logs = model.level_log_prior(&[2, 0, 3]);
+        let got = softmax(&logs);
+
+        let w0 = (m * pi + 2.0) / (pi + 5.0);
+        let pass0 = ((1.0 - m) * pi + 3.0) / (pi + 5.0);
+        let w1 = (m * pi + 0.0) / (pi + 3.0) * pass0;
+        let pass1 = ((1.0 - m) * pi + 3.0) / (pi + 3.0);
+        let w2 = pass0 * pass1;
+        let z = w0 + w1 + w2;
+        let want = [w0 / z, w1 / z, w2 / z];
+        for (i, (&g, &w)) in got.iter().zip(want.iter()).enumerate() {
+            assert!((g - w).abs() < 1e-12, "level {i}: {g} vs {w}");
+        }
+    }
+
+    #[test]
+    fn dirichlet_symmetric_matches_scalar_formula() {
+        // The refactor must leave the symmetric-Dirichlet weight identical to the old
+        // inline `ln(n_dl[l] + alpha)`: level_log_prior with a broadcast vector.
+        let model = prior_probe(3, LevelPrior::Dirichlet(vec![0.1; 3]));
+        let logs = model.level_log_prior(&[4, 1, 0]);
+        let want = [
+            (4.0_f64 + 0.1).ln(),
+            (1.0_f64 + 0.1).ln(),
+            (0.0_f64 + 0.1).ln(),
+        ];
+        for (i, (&g, &w)) in logs.iter().zip(want.iter()).enumerate() {
+            assert!((g - w).abs() < 1e-15, "level {i}: {g} vs {w}");
+        }
+    }
+
+    #[test]
+    fn asymmetric_dirichlet_pulls_tokens_toward_the_heavy_level() {
+        // A root-heavy alpha should keep more tokens at level 0 than a symmetric
+        // prior on the same planted corpus + seed.
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let (docs, v, _shared, _blocks) = planted_corpus(&mut rng, 2);
+
+        let count_level0 = |prior: LevelPrior| -> usize {
+            let mut r = ChaCha8Rng::seed_from_u64(99);
+            let m = fit_hlda(&docs, v, 3, 1.0, 0.1, prior, 60, &mut r);
+            m.levels.iter().flatten().filter(|&&l| l == 0).count()
+        };
+        let sym = count_level0(LevelPrior::Dirichlet(vec![0.5; 3]));
+        let root_heavy = count_level0(LevelPrior::Dirichlet(vec![5.0, 0.1, 0.1]));
+        assert!(
+            root_heavy > sym,
+            "root-heavy alpha should raise level-0 occupancy: {root_heavy} vs {sym}"
+        );
+    }
+
+    #[test]
+    fn gem_fit_is_deterministic() {
+        let mut rng = ChaCha8Rng::seed_from_u64(3);
+        let (docs, v, _s, _b) = planted_corpus(&mut rng, 2);
+        let fit = || {
+            let mut r = ChaCha8Rng::seed_from_u64(11);
+            fit_hlda(
+                &docs,
+                v,
+                3,
+                1.0,
+                0.1,
+                LevelPrior::Gem {
+                    mean: 0.5,
+                    scale: 100.0,
+                },
+                40,
+                &mut r,
+            )
+        };
+        let m1 = fit();
+        let m2 = fit();
+        assert_eq!(m1.num_nodes(), m2.num_nodes());
+        for i in 0..m1.num_nodes() {
+            assert_eq!(m1.topic_word(i), m2.topic_word(i), "node {i} differs");
+        }
+    }
+
+    #[test]
+    fn scalar_dirichlet_default_is_bit_for_bit_golden() {
+        // Golden regression for the default symmetric Dirichlet path: a future
+        // refactor that changes the arithmetic or RNG consumption will trip this.
+        let mut rng = ChaCha8Rng::seed_from_u64(5);
+        let (docs, v, _s, _b) = planted_corpus(&mut rng, 2);
+        let checksum = |seed: u64| -> (usize, u64) {
+            let mut r = ChaCha8Rng::seed_from_u64(seed);
+            let model = fit_hlda(
+                &docs,
+                v,
+                3,
+                1.0,
+                0.1,
+                LevelPrior::Dirichlet(vec![0.1; 3]),
+                50,
+                &mut r,
+            );
+            let root = (0..model.num_nodes())
+                .find(|&i| model.node_level(i) == 0)
+                .unwrap();
+            let tw = model.topic_word(root);
+            let cs: f64 = tw
+                .iter()
+                .enumerate()
+                .map(|(i, &p)| (i as f64 + 1.0) * p)
+                .sum();
+            (model.num_nodes(), cs.to_bits())
+        };
+        assert_eq!(
+            checksum(1234),
+            checksum(1234),
+            "default path is not reproducible"
+        );
     }
 }
