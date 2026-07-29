@@ -58,6 +58,7 @@ generated from `python/topica/registry.py`.
 | `GDMR` | text, metadata | gibbs | seed-reproducible | Generalized DMR with a smooth (Legendre-basis) prior over continuous covariates. |
 | `Scholar` | text, metadata, labels | vae | seed-reproducible | SCHOLAR (Card et al. 2018): a ProdLDA VAE with a covariate-shifted prevalence prior, an optional supervised label head, and optional content (topic-covariate) word deviations — neural STM prevalence + sLDA + SAGE. |
 | `RTM` | text, links | variational | seed-reproducible | Relational topic model (Chang & Blei 2010): jointly models document text and a link graph (citations, hyperlinks, adjacency); predicts links from words and words from links. |
+| `FactorialLDA` | text | gibbs | seed-reproducible | Factorial LDA (Paul & Dredze 2012): each token is a K-tuple of latent factors (e.g. topic x sentiment); structured word priors tie tuples sharing a component and a sparsity prior deactivates unsupported tuples. |
 
 ### Guided & supervised
 
@@ -407,6 +408,118 @@ evaluate the fitted surface. `metadata_names` labels the continuous dimensions;
 aligned with `feature_effects`. Because a continuous covariate's per-degree
 coefficients are rarely interpretable on their own, read the surface with `tdf`
 rather than the individual basis coefficients.
+
+## Factorial LDA
+
+Factorial LDA (fLDA; Paul & Dredze 2012) models each token as a **K-tuple** of
+latent factors rather than a single topic. The canonical case is two factors —
+topic × sentiment, or topic × perspective — but the model takes any number: a
+document about (ECONOMICS, CONSERVATIVE) shares economics words with (ECONOMICS,
+LIBERAL) and conservative words with (ENVIRONMENT, CONSERVATIVE). That sharing is
+what makes it factorial rather than an LDA with `∏ Z_k` unrelated topics: a
+structured log-linear word prior `ω` ties every tuple that shares a component, and
+a relaxed sparsity prior can switch unsupported tuples off.
+
+```python
+model = topica.FactorialLDA(factor_sizes=[3, 2], seed=1)   # 3 topics x 2 sentiments
+model.fit(docs, iters=2000, samples=100)
+model.topic_word          # (6, V) — one word distribution per (topic, sentiment) tuple
+model.tuples              # [[0,0], [0,1], ...] tuple index -> factor components
+model.factor_top_words(0, 1)   # top words for component 1 of factor 0 (the "overview")
+model.tuple_activity      # b_x in (0,1); a tuple with b_x <= 0.5 is effectively off
+```
+
+`factor_sizes` lists the components per factor, so `num_topics` is the product
+`∏ Z_k`. Fit is Monte Carlo EM: a collapsed Gibbs sweep over tuples, then one
+gradient step on the log-linear `α` (document prior) and `ω` (word prior) weights
+and the sparsity logits `β` — the same Dirichlet-multinomial gradient `DMR` uses.
+
+The paper's ablations are flags: `word_priors=False` drops the structured word
+priors (untied factors), `sparsity=False` fixes every tuple on, and
+`symmetric_word_prior=True` fixes the per-word background to zero. An ablation
+removes its term outright, so it overrides any seed you pass for that term. You can
+otherwise seed the word priors with domain knowledge (the drug-experiences setting
+of Paul & Dredze 2013) by passing `omega_priors=` to `fit`:
+
+```python
+model.fit(docs, omega_priors={"components": {
+    (1, 0): {"great": 2.0, "love": 2.0},     # steer factor 1, component 0 -> positive
+    (1, 1): {"awful": 2.0, "hate": 2.0},     # component 1 -> negative
+}})
+```
+
+Two caveats worth knowing. First, which factor becomes which axis is **not fixed**:
+the factors are role-exchangeable and `ω` is identified only up to a per-word shift
+(as in the reference), so on an unsupervised run the "topic" axis may land on
+factor 0 or factor 1 — align factors to your labels rather than assuming an order,
+or seed with `omega_priors` to pin an axis. Second, the block sampler enumerates all
+`∏ Z_k` tuples per token, so cost and memory grow multiplicatively in the number of
+factors; for many factors raise `block_freq` to sample each factor independently
+(additive cost, at some loss of mixing).
+
+**Supervise a factor (semi-supervised).** Because the unsupervised factors are only
+weakly identified (below), the reliable way to *get* a topic × sentiment or topic ×
+party decomposition is to tell the model what the second axis is. Pass
+`observed_factors={factor: labels}` to `fit`, where `labels` has one entry per
+document — the observed component of that factor (`0..Z_factor`) or `None` to leave
+it latent:
+
+```python
+# sentiment known for some reviews (0/1), unknown (None) for the rest
+labels = [0, 1, None, 1, None, ...]          # one per document
+m = topica.FactorialLDA(factor_sizes=[8, 2], seed=1)
+m.fit(docs, observed_factors={1: labels})    # factor 1 IS sentiment now
+```
+
+A labeled document's factor is pinned to its label for every token (its topic
+distribution lives on that sub-simplex); an unlabeled document's value for that
+factor is inferred, and you can read it back by marginalizing `doc_topic` over the
+other factors. On 2000 movie reviews, labeling a random 10% lifts transductive
+sentiment recovery on the other 90% from 0.52 (unsupervised, ≈chance) to ~0.71, and
+50% labels to ~0.77 — better than a seeded lexicon, and it also cleans up the topic
+factor by explaining sentiment away. This is *transductive label completion* (the
+unlabeled documents take part in the fit), not held-out prediction, and fLDA is a
+generative topic model, not a discriminative classifier — treat it as a
+semi-supervised joint topic × axis model. When a factor is fully observed its
+per-component word weights still learn a sensible lexicon, but its `α` prevalence
+terms become confounded with the document bias and should not be read as a latent
+prevalence.
+
+**When to reach for it — and when not.** Be realistic about what the extra factors
+buy you *unsupervised*. fLDA reliably learns a good *topic* factor, but the second (and later)
+factors are only weakly identified: unsupervised, they tend to absorb *more topic
+variation* rather than discovering a latent sentiment or perspective axis, because
+subject matter dominates the lexicon. On the STM poliblog posts, an unsupervised
+`[8, 2]` fit recovers the Conservative/Liberal axis at only ~0.59 (chance 0.5); on
+2000 labeled movie reviews the second factor tracks true sentiment at ~0.52 —
+essentially chance — and the *original* Java implementation does no better on the
+same data (~0.63, one non-reproducible draw). Seeding the axis with `omega_priors`
+(a sentiment or partisan lexicon) helps but only to a moderate ~0.67. This is a
+property of the method, not the port, and is much of why fLDA never displaced
+simpler models. So:
+
+- If you **already have** the second axis (sentiment labels, ideology, discipline),
+  a model built to condition on it — [SAGE](#sage), [STM](#stm)/[STS](#sts), or
+  [SeededLDA](#guided-topics) — will use it more robustly than fLDA's unsupervised
+  factors.
+- If you **don't**, don't expect fLDA to hand you a clean sentiment/perspective axis
+  for free; at minimum seed it with `omega_priors`.
+- The output that *is* worth having is the **tuple view**: the same topic worded
+  differently across a (seeded or inferred) second factor — e.g. a war topic framed
+  as "terrorist/attack" versus "Iraq/troops/Bush." Read the tuples, not just the
+  per-factor overviews.
+
+The reference is Michael Paul's GPL Java, which draws a fresh unseeded RNG per token
+and is not reproducible, so topica claims no bit/seed parity against it. Instead the
+port's correctness is certified directly: finite-difference gradient tests on every
+weight group and factor-tying invariant tests (`src/factorial_lda.rs`), plus
+tuple-level recovery of a planted topic × sentiment corpus
+(`tests/test_factorial_lda.py`). `parity/factorial_lda_compare.py` puts a topica run
+next to a Java run for a loose eyeball comparison only — it lines up topica's
+*posterior* topic-word against a *prior* reconstruction from the Java component
+weights (without the word background term), so it is a sanity check, not a fidelity
+measurement; the gradient and recovery tests are what substantiate faithfulness. A
+fixed seed reproduces bit-for-bit.
 
 ## Scholar
 

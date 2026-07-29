@@ -75,6 +75,9 @@ CTOR_FIRST_EXCEPT = {
     "PA": "two-level model: num_super, num_sub",
     "DiscLDA": "structured topic count: num_classes*k_class + k_shared, "
     "num_classes known only at fit",
+    "FactorialLDA": "factorial model: factor_sizes is the leading required input; "
+    "num_topics is the derived tuple count prod(factor_sizes)",
+    "FLDA": "alias of FactorialLDA (same class); factor_sizes is the leading input",
 }
 
 # Models that take a document covariate design matrix. Each must accept a
