@@ -1318,3 +1318,35 @@ literal reproduction.
 
 `PA` (Pachinko Allocation) and `HLDA` (hierarchical, nested-CRP) recover
 super-/sub-topic structure.
+
+### HLDA level prior
+
+`HLDA` places each document on a root-to-leaf path and assigns every token a level
+along it. The per-document distribution over levels has a selectable prior
+(`level_prior=`):
+
+- `"dirichlet"` (default) — a fixed-depth Dirichlet whose concentration `alpha` is
+  either a scalar (symmetric, default `0.1`) or a length-`depth` list. A root-heavy
+  vector such as `alpha=[5.0, 0.5, 0.1]` biases generic vocabulary toward the
+  shallow levels rather than leaving that to the likelihood. This matches
+  tomotopy's `HLDAModel`, which likewise takes a scalar or per-level `alpha`.
+- `"gem"` — the two-parameter GEM stick-breaking prior of Blei, Griffiths & Jordan
+  (2010), with `gem_mean` (`0 < m < 1`, default `0.5`) and `gem_scale` (`> 0`,
+  default `100`). It biases mass toward shallower levels by construction; a smaller
+  `gem_mean` concentrates documents nearer the root (fewer, broader leaf topics).
+  We apply the standard finite (Ishwaran–James) truncation, so the deepest level
+  absorbs the truncated tail and the level distribution is proper.
+
+```python
+import topica
+
+# asymmetric Dirichlet: keep generic words shallow
+m = topica.HLDA(depth=3, alpha=[5.0, 0.5, 0.1]).fit(docs)
+
+# GEM stick-breaking prior (the original paper's prior)
+m = topica.HLDA(depth=3, level_prior="gem", gem_mean=0.35).fit(docs)
+```
+
+The default (`level_prior="dirichlet"`, scalar `alpha=0.1`) is unchanged from
+earlier releases and fits bit-for-bit identically. `beta` (topic-word) stays a
+single scalar and the hyperparameters are held fixed, as before.

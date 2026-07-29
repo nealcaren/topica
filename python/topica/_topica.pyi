@@ -3266,9 +3266,11 @@ class HLDA:
     the nested Chinese Restaurant Process. Each document follows a root-to-leaf
     path; general words sit near the root, specific words near the leaves.
 
-    Simplifies hlda-c: a symmetric level Dirichlet `alpha` (not the GEM stick),
-    a scalar `beta` (not per-level), and fixed hyperparameters; the default
-    `beta=0.01` is a sharp topica calibration. See ``help(HLDA)`` (#496)."""
+    The level prior is selectable (#611): ``level_prior="dirichlet"`` (scalar or
+    per-level ``alpha``, matching tomotopy) or ``level_prior="gem"`` (GEM
+    stick-breaking, ``gem_mean``/``gem_scale``). Still simplifies hlda-c: a scalar
+    ``beta`` (not per-level) and fixed hyperparameters; the default ``beta=0.01`` is
+    a sharp topica calibration. See ``help(HLDA)`` (#496)."""
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,
@@ -3287,14 +3289,22 @@ class HLDA:
         depth: int = 3,
         gamma: float = 1.0,
         beta: float = 0.01,
-        alpha: float = 0.1,
+        alpha: float | Sequence[float] | None = None,
+        level_prior: str = "dirichlet",
+        gem_mean: float = 0.5,
+        gem_scale: float = 100.0,
         seed: int = 42,
         eta: Optional[float] = None,
     ) -> None:
         """depth is the number of levels in the topic tree. gamma is the nCRP
         branching concentration (higher = more nodes). beta is the topic-word
-        Dirichlet base measure. alpha is the symmetric Dirichlet smoothing over the
-        L path levels (the per-document level distribution).
+        Dirichlet base measure.
+
+        level_prior selects the per-document level distribution. "dirichlet"
+        (default) uses alpha, a float (symmetric, default 0.1) or a length-depth
+        list (asymmetric); a root-heavy alpha keeps generic words shallow. "gem"
+        uses the two-parameter GEM stick-breaking prior of Blei et al. (2010) with
+        gem_mean (0<m<1) and gem_scale (>0).
 
         eta is a deprecated alias for beta."""
         ...

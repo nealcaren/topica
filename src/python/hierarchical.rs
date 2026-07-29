@@ -50,6 +50,10 @@ struct HldaState {
     depth: usize,
     gamma: f64,
     eta: f64,
+    // Scalar alpha, retained positionally for old-save compatibility: it stores the
+    // symmetric value (alpha_vec[0]). The full per-level vector lives in the
+    // appended `alpha_vec`; an old save has an empty `alpha_vec` and is broadcast
+    // from this scalar on load.
     alpha: f64,
     seed: u64,
     fitted: bool,
@@ -61,6 +65,19 @@ struct HldaState {
     corpus: Option<corpus::Corpus>,
     #[serde(default)]
     topic_names: Vec<String>,
+    // Level-prior fields (#611). Appended with serde defaults so a self-describing
+    // reader tolerates their absence; the positional bincode save format cannot
+    // actually round-trip a genuine pre-#611 payload (trailing bytes misalign), so
+    // these defaults only help the JSON path — a real old save is reconstructed via
+    // the scalar-alpha fallback in `load`, not by deserializing these fields.
+    #[serde(default)]
+    alpha_vec: Vec<f64>,
+    #[serde(default)]
+    level_prior: Option<String>,
+    #[serde(default)]
+    gem_mean: Option<f64>,
+    #[serde(default)]
+    gem_scale: Option<f64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -548,21 +565,33 @@ impl PA {
 /// Each document follows a root-to-leaf path. Inspect the tree with
 /// `topic_word`/`node_levels`/`node_parents`/`doc_paths`.
 ///
-/// Simplifications vs the hlda-c reference, worth knowing when comparing (#496):
-/// the level prior is a symmetric Dirichlet `alpha`, not the GEM stick-breaking
-/// prior, so there is no built-in bias of general words toward shallower levels
-/// (recovery relies on the likelihood); `beta` is a single scalar topic-word
-/// Dirichlet, not hlda-c's per-level (typically decreasing) vector, so deeper
-/// topics are not sharpened by the prior; the hyperparameters are held fixed (no
-/// per-sweep `eta`/`gamma`/GEM resampling); and the default `beta = 0.01` is
-/// topica's own sharp calibration, below hlda-c's ~0.1-1.0 norm — expect more,
-/// sparser nodes at the default.
+/// The per-document level prior is selectable (issue #611): `level_prior=
+/// "dirichlet"` (default) is a fixed-depth Dirichlet whose `alpha` may be a scalar
+/// (symmetric) or a length-`depth` vector (asymmetric — a larger root entry keeps
+/// generic words shallow), matching tomotopy's `HLDAModel`; `level_prior="gem"` is
+/// the two-parameter GEM stick-breaking prior of Blei, Griffiths & Jordan (2010)
+/// with `gem_mean`/`gem_scale`, which biases mass toward shallower levels by
+/// construction rather than relying on the likelihood.
+///
+/// Remaining simplifications vs the hlda-c reference, worth knowing when comparing
+/// (#496): `beta` is a single scalar topic-word Dirichlet, not hlda-c's per-level
+/// (typically decreasing) vector, so deeper topics are not sharpened by the prior;
+/// the hyperparameters are held fixed (no per-sweep `eta`/`gamma`/GEM resampling);
+/// and the default `beta = 0.01` is topica's own sharp calibration, below hlda-c's
+/// ~0.1-1.0 norm — expect more, sparser nodes at the default.
 #[pyclass(module = "topica")]
 pub struct HLDA {
     depth: usize,
     gamma: f64,
     eta: f64,
-    alpha: f64,
+    /// Per-level Dirichlet concentration, length `depth` (a scalar `alpha=` is
+    /// broadcast). Used when `level_prior == "dirichlet"`.
+    alpha: Vec<f64>,
+    /// `"dirichlet"` (default) or `"gem"`.
+    level_prior: String,
+    /// GEM stick-breaking mean `m` and scale `pi` (used when `level_prior=="gem"`).
+    gem_mean: f64,
+    gem_scale: f64,
     seed: u64,
     fitted: bool,
     num_nodes: usize,
@@ -605,7 +634,12 @@ impl HLDA {
         d.set_item("depth", self.depth)?;
         d.set_item("gamma", self.gamma)?;
         d.set_item("beta", self.eta)?;
-        d.set_item("alpha", self.alpha)?;
+        // `alpha` reports the resolved per-level vector; a symmetric prior echoes as
+        // a length-`depth` list of equal values.
+        d.set_item("alpha", self.alpha.clone())?;
+        d.set_item("level_prior", &self.level_prior)?;
+        d.set_item("gem_mean", self.gem_mean)?;
+        d.set_item("gem_scale", self.gem_scale)?;
         d.set_item("seed", self.seed)?;
         d.set_item("eta", None::<f64>)?;
         Ok(d)
@@ -613,17 +647,25 @@ impl HLDA {
 
     /// Create an unfitted model. `depth` is the (fixed) tree depth; `gamma` is
     /// the nested-CRP concentration (larger => more child topics); `beta` the
-    /// topic-word Dirichlet; `alpha` the per-document level distribution.
-    /// `seed` seeds the Gibbs RNG. `eta` is a deprecated alias for `beta` (kept
-    /// for back-compat; pass `beta` instead).
+    /// topic-word Dirichlet. `level_prior` selects the per-document level prior:
+    /// `"dirichlet"` (default) uses `alpha` — a scalar (symmetric) or a
+    /// length-`depth` list (asymmetric); `"gem"` uses the GEM stick-breaking prior
+    /// with `gem_mean` (`0<m<1`) and `gem_scale` (`>0`). `seed` seeds the Gibbs
+    /// RNG. `eta` is a deprecated alias for `beta` (pass `beta` instead).
     #[new]
-    #[pyo3(signature = (*, depth=3, gamma=1.0, beta=0.01, alpha=0.1, seed=42, eta=None))]
+    #[pyo3(signature = (*, depth=3, gamma=1.0, beta=0.01, alpha=None,
+                        level_prior="dirichlet", gem_mean=0.5, gem_scale=100.0,
+                        seed=42, eta=None))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
         #[pyo3(from_py_with = "py_depth")] depth: usize,
         gamma: f64,
         beta: f64,
-        alpha: f64,
+        alpha: Option<&Bound<'_, PyAny>>,
+        level_prior: &str,
+        gem_mean: f64,
+        gem_scale: f64,
         seed: u64,
         eta: Option<f64>,
     ) -> PyResult<Self> {
@@ -648,14 +690,57 @@ impl HLDA {
         if depth < 2 {
             return Err(PyValueError::new_err("depth must be >= 2"));
         }
-        if !finite_pos(gamma) || !finite_pos(beta) || !finite_pos(alpha) {
-            return Err(PyValueError::new_err("gamma, beta, alpha must be > 0"));
+        if !finite_pos(gamma) || !finite_pos(beta) {
+            return Err(PyValueError::new_err("gamma, beta must be > 0"));
+        }
+        let level_prior = level_prior.to_lowercase();
+        if level_prior != "dirichlet" && level_prior != "gem" {
+            return Err(PyValueError::new_err(
+                "level_prior must be \"dirichlet\" or \"gem\"",
+            ));
+        }
+        // Resolve `alpha` to a length-`depth` vector: a scalar broadcasts, a list
+        // must have length `depth`. Default (None) is the symmetric 0.1.
+        let alpha: Vec<f64> = match alpha {
+            None => vec![0.1; depth],
+            Some(obj) => {
+                if let Ok(scalar) = obj.extract::<f64>() {
+                    vec![scalar; depth]
+                } else {
+                    let v: Vec<f64> = obj.extract().map_err(|_| {
+                        PyValueError::new_err("alpha must be a float or a list of floats")
+                    })?;
+                    if v.len() != depth {
+                        return Err(PyValueError::new_err(format!(
+                            "alpha as a list must have length depth={depth} (got {})",
+                            v.len()
+                        )));
+                    }
+                    v
+                }
+            }
+        };
+        if !alpha.iter().all(|&a| finite_pos(a)) {
+            return Err(PyValueError::new_err("every alpha must be finite and > 0"));
+        }
+        // GEM validation is unconditional so a misconfigured GEM is rejected at
+        // construction even if the model is fitted under the Dirichlet prior first.
+        if !(gem_mean.is_finite() && gem_mean > 0.0 && gem_mean < 1.0) {
+            return Err(PyValueError::new_err(
+                "gem_mean must be strictly between 0 and 1",
+            ));
+        }
+        if !finite_pos(gem_scale) {
+            return Err(PyValueError::new_err("gem_scale must be finite and > 0"));
         }
         Ok(HLDA {
             depth,
             gamma,
             eta: beta,
             alpha,
+            level_prior,
+            gem_mean,
+            gem_scale,
             seed,
             fitted: false,
             num_nodes: 0,
@@ -698,7 +783,15 @@ impl HLDA {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
         let num_types = corpus.num_types();
-        let (depth, gamma, eta, alpha) = (slf.depth, slf.gamma, slf.eta, slf.alpha);
+        let (depth, gamma, eta) = (slf.depth, slf.gamma, slf.eta);
+        let level_prior = if slf.level_prior == "gem" {
+            hlda::LevelPrior::Gem {
+                mean: slf.gem_mean,
+                scale: slf.gem_scale,
+            }
+        } else {
+            hlda::LevelPrior::Dirichlet(slf.alpha.clone())
+        };
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let (model, corpus) = py.allow_threads(move || {
             let m = hlda::fit_hlda(
@@ -707,7 +800,7 @@ impl HLDA {
                 depth,
                 gamma,
                 eta,
-                alpha,
+                level_prior,
                 iters,
                 &mut rng,
             );
@@ -839,7 +932,9 @@ impl HLDA {
                 depth: self.depth,
                 gamma: self.gamma,
                 eta: self.eta,
-                alpha: self.alpha,
+                // Scalar slot keeps the symmetric value for old-reader compat; the
+                // full vector rides in `alpha_vec`.
+                alpha: *self.alpha.first().unwrap_or(&0.1),
                 seed: self.seed,
                 fitted: self.fitted,
                 num_nodes: self.num_nodes,
@@ -849,6 +944,10 @@ impl HLDA {
                 doc_paths: self.doc_paths.clone(),
                 corpus: self.corpus.clone(),
                 topic_names: self.topic_names.clone(),
+                alpha_vec: self.alpha.clone(),
+                level_prior: Some(self.level_prior.clone()),
+                gem_mean: Some(self.gem_mean),
+                gem_scale: Some(self.gem_scale),
             },
         )
     }
@@ -861,11 +960,22 @@ impl HLDA {
         } else {
             s.topic_names
         };
+        // Reconstruct the level prior: a pre-#611 save has an empty `alpha_vec`
+        // and no `level_prior`, so broadcast the scalar `alpha` and default to the
+        // symmetric Dirichlet with the GEM defaults.
+        let alpha = if s.alpha_vec.is_empty() {
+            vec![s.alpha; s.depth]
+        } else {
+            s.alpha_vec
+        };
         Ok(HLDA {
             depth: s.depth,
             gamma: s.gamma,
             eta: s.eta,
-            alpha: s.alpha,
+            alpha,
+            level_prior: s.level_prior.unwrap_or_else(|| "dirichlet".to_string()),
+            gem_mean: s.gem_mean.unwrap_or(0.5),
+            gem_scale: s.gem_scale.unwrap_or(100.0),
             seed: s.seed,
             fitted: s.fitted,
             num_nodes: s.num_nodes,
