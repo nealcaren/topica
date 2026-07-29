@@ -533,19 +533,23 @@ def _register_ctm(k=10, threads=1):
 def _register_hdp():
     """HDP discovers its own K on both sides, so an aligned topic-word cosine over
     two different topic sets is not meaningful (#611). Score by cross-NMI of the
-    per-document dominant-topic assignments — agreement on the document clustering."""
+    per-document dominant-topic assignments — agreement on the document clustering.
+    Run on a capped 2k-doc subset: topica now estimates the DP concentrations by
+    default (#617, faithful to blei-lab/hdp), so it discovers a rich topic set and
+    each Gibbs sweep is O(K) per token — the full corpus is impractical."""
     INIT_K = 10
+    N = 2000
 
     def topica():
         from topica import HDP
-        docs = _ng_docs()
+        docs = _ng_docs_capped(N)
         m = HDP(seed=1)
         m.fit(docs, iters=150)
         return (np.asarray(m.doc_topic).argmax(axis=1).astype(int),)
 
     def ref():
         import tomotopy as tp
-        docs = _ng_docs()
+        docs = _ng_docs_capped(N)
         m = tp.HDPModel(tw=tp.TermWeight.ONE, initial_k=INIT_K, seed=1)
         for d in docs:
             m.add_doc(d)
@@ -555,8 +559,11 @@ def _register_hdp():
         return (np.asarray(assign, dtype=int),)
 
     register("hdp", "HDP", 0, topica, refs={"tomotopy": (_tomo_available, ref)},
-             note="nonparametric; K discovered both sides; cross-NMI of doc "
-                  "assignments (topic-word cosine not comparable)",
+             note=f"nonparametric; K discovered both sides on a {N}-doc subset; "
+                  "cross-NMI of doc assignments (topic-word cosine not comparable). "
+                  "topica estimates the DP concentrations by default (#617); tomotopy "
+                  "finds fewer topics via a simplified new-table weight, so the two "
+                  "clusterings agree only partially.",
              metric_fn=_cross_nmi, corpus="ng")
 
 
