@@ -311,7 +311,7 @@ impl HldaModel {
     }
 
     /// Move (b): resample the whole path of document `d` via the nested CRP.
-    fn sample_path<R: Rng>(&mut self, d: usize, doc: &[u32], rng: &mut R) {
+    fn sample_path<R: Rng>(&mut self, d: usize, doc: &[u32], parallel: bool, rng: &mut R) {
         let l = self.depth;
 
         // 1. Remove the document's word counts from its current path.
@@ -420,29 +420,34 @@ impl HldaModel {
             })
             .collect();
 
-        // Per-node marginal cache. `level_log_marginal(node, level_words[node.level])`
+        // Per-node marginal `level_log_marginal(node, level_words[node.level])`
         // depends only on the node's counts and the document's (fixed) level-words,
         // so it is identical for every candidate path passing through that node —
-        // the dominant `log_gamma` cost. Compute it once per node and reuse. A node
-        // in a candidate's existing prefix always sits at its own level, so
-        // `level_words[lev]` is the right multiset. Bit-for-bit identical to scoring
-        // each candidate independently.
-        let mut marg_cache: Vec<Option<f64>> = vec![None; self.nodes.len()];
+        // the dominant `log_gamma` cost. Every node is reached by the DFS (every node
+        // descends from the root), so precompute the marginal for all nodes and index
+        // into it while scoring candidates. When `parallel`, the precompute runs
+        // across nodes in the current rayon pool; because each entry is a pure,
+        // index-addressed function of read-only state, the result is **bit-for-bit
+        // identical regardless of thread count** (num_threads never changes the fit).
+        let node_count = self.nodes.len();
+        let this: &Self = self;
+        let marg: Vec<f64> = if parallel {
+            use rayon::prelude::*;
+            (0..node_count)
+                .into_par_iter()
+                .map(|node| this.level_log_marginal(node, &level_words[this.nodes[node].level]))
+                .collect()
+        } else {
+            (0..node_count)
+                .map(|node| this.level_log_marginal(node, &level_words[this.nodes[node].level]))
+                .collect()
+        };
         let mut log_scores = Vec::with_capacity(cands.len());
         for cand in &cands {
             let mut s = cand.log_prior;
             for lev in 0..l {
                 if lev < cand.new_from {
-                    let node = cand.nodes[lev];
-                    let m = match marg_cache[node] {
-                        Some(v) => v,
-                        None => {
-                            let v = self.level_log_marginal(node, &level_words[lev]);
-                            marg_cache[node] = Some(v);
-                            v
-                        }
-                    };
-                    s += m;
+                    s += marg[cand.nodes[lev]];
                 } else {
                     s += empty_marginal[lev];
                 }
@@ -576,9 +581,16 @@ impl HldaModel {
 /// `docs` are bags of word ids. `depth` is the tree depth L (>= 2). `gamma` is
 /// the nested-CRP concentration, `eta` the topic-word Dirichlet, and `level_prior`
 /// the per-document level distribution ([`LevelPrior::Dirichlet`], symmetric or
-/// asymmetric, or [`LevelPrior::Gem`]). Deterministic for a fixed `rng`.
+/// asymmetric, or [`LevelPrior::Gem`]). `num_threads > 1` parallelises the
+/// read-only per-node marginal precompute; the document loop and every tree
+/// mutation stay serial, so the result is **bit-for-bit identical for any
+/// `num_threads`**. Deterministic for a fixed `rng`.
+///
+/// `R: Send` is required (the sweep runs inside a rayon pool); all of topica's
+/// RNGs (`ChaCha8Rng`, `Pcg64Mcg`) satisfy it. A non-`Send` RNG cannot be used
+/// even at `num_threads = 1`.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_hlda<R: Rng>(
+pub fn fit_hlda<R: Rng + Send>(
     docs: &[Vec<u32>],
     num_types: usize,
     depth: usize,
@@ -586,6 +598,7 @@ pub fn fit_hlda<R: Rng>(
     eta: f64,
     level_prior: LevelPrior,
     iters: usize,
+    num_threads: usize,
     rng: &mut R,
 ) -> HldaModel {
     assert!(depth >= 2, "hLDA needs depth >= 2");
@@ -658,12 +671,29 @@ pub fn fit_hlda<R: Rng>(
         model.apply_doc_counts(d, doc, 1);
     }
 
-    // Gibbs sweeps: per document, resample its path, then its token levels.
-    for _ in 0..iters {
-        for (d, doc) in docs.iter().enumerate() {
-            model.sample_path(d, doc, rng);
-            model.sample_levels(d, doc, rng);
+    // Gibbs sweeps: per document, resample its path, then its token levels. The
+    // document loop and every tree mutation stay serial; only the read-only
+    // per-node marginal precompute inside `sample_path` runs in parallel (across the
+    // `num_threads` pool). Because that precompute is a set of independent pure
+    // computations, the result is bit-for-bit identical for any `num_threads` — the
+    // fit is deterministic and unchanged by threading.
+    let parallel = num_threads > 1;
+    let sweep = |model: &mut HldaModel, rng: &mut R| {
+        for _ in 0..iters {
+            for (d, doc) in docs.iter().enumerate() {
+                model.sample_path(d, doc, parallel, rng);
+                model.sample_levels(d, doc, rng);
+            }
         }
+    };
+    if parallel {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .expect("failed to build rayon thread pool");
+        pool.install(|| sweep(&mut model, rng));
+    } else {
+        sweep(&mut model, rng);
     }
 
     model
@@ -766,6 +796,7 @@ mod tests {
             0.1,
             LevelPrior::Dirichlet(vec![0.5; 2]),
             80,
+            1,
             &mut rng,
         );
 
@@ -828,6 +859,7 @@ mod tests {
             0.1,
             LevelPrior::Dirichlet(vec![0.5; 2]),
             30,
+            1,
             &mut r1,
         );
         let m2 = fit_hlda(
@@ -838,6 +870,7 @@ mod tests {
             0.1,
             LevelPrior::Dirichlet(vec![0.5; 2]),
             30,
+            1,
             &mut r2,
         );
 
@@ -864,6 +897,7 @@ mod tests {
             0.1,
             LevelPrior::Dirichlet(vec![0.5; 2]),
             80,
+            1,
             &mut rng,
         );
         let base = crate::conformance::check_conformance(&model);
@@ -904,6 +938,7 @@ mod tests {
                 0.1,
                 LevelPrior::Dirichlet(vec![0.5; 5]),
                 80,
+                1,
                 &mut rng,
             );
 
@@ -1065,7 +1100,7 @@ mod tests {
 
         let count_level0 = |prior: LevelPrior| -> usize {
             let mut r = ChaCha8Rng::seed_from_u64(99);
-            let m = fit_hlda(&docs, v, 3, 1.0, 0.1, prior, 60, &mut r);
+            let m = fit_hlda(&docs, v, 3, 1.0, 0.1, prior, 60, 1, &mut r);
             m.levels.iter().flatten().filter(|&&l| l == 0).count()
         };
         let sym = count_level0(LevelPrior::Dirichlet(vec![0.5; 3]));
@@ -1093,6 +1128,7 @@ mod tests {
                     scale: 100.0,
                 },
                 40,
+                1,
                 &mut r,
             )
         };
@@ -1101,6 +1137,54 @@ mod tests {
         assert_eq!(m1.num_nodes(), m2.num_nodes());
         for i in 0..m1.num_nodes() {
             assert_eq!(m1.topic_word(i), m2.topic_word(i), "node {i} differs");
+        }
+    }
+
+    #[test]
+    fn multithreaded_fit_is_bit_for_bit_identical_to_serial() {
+        // The parallel per-node marginal precompute only reorders independent pure
+        // computations, so num_threads must never change the fit.
+        let mut rng = ChaCha8Rng::seed_from_u64(4);
+        let (docs, v, _s, _b) = planted_corpus(&mut rng, 3);
+        let fit = |threads: usize| {
+            let mut r = ChaCha8Rng::seed_from_u64(21);
+            fit_hlda(
+                &docs,
+                v,
+                3,
+                1.0,
+                0.1,
+                LevelPrior::Dirichlet(vec![0.1; 3]),
+                40,
+                threads,
+                &mut r,
+            )
+        };
+        // Canonical fingerprint of the whole fitted state: tree shape, per-node
+        // level/parent, topic-word bits, and every document's path.
+        let fingerprint = |m: &HldaModel| -> Vec<u64> {
+            let mut f = vec![m.num_nodes() as u64];
+            for i in 0..m.num_nodes() {
+                f.push(m.node_level(i) as u64);
+                f.push(m.node_parent(i).map(|p| p as u64 + 1).unwrap_or(0));
+                for x in m.topic_word(i) {
+                    f.push(x.to_bits());
+                }
+            }
+            for d in 0..docs.len() {
+                for &node in &m.doc_path(d) {
+                    f.push(node as u64);
+                }
+            }
+            f
+        };
+        let serial = fingerprint(&fit(1));
+        for threads in [2, 4, 8] {
+            assert_eq!(
+                serial,
+                fingerprint(&fit(threads)),
+                "fit with {threads} threads differs from serial"
+            );
         }
     }
 
@@ -1120,6 +1204,7 @@ mod tests {
                 0.1,
                 LevelPrior::Dirichlet(vec![0.1; 3]),
                 50,
+                1,
                 &mut r,
             );
             let root = (0..model.num_nodes())

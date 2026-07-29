@@ -754,12 +754,17 @@ impl HLDA {
     }
 
     /// Fit by nested-CRP collapsed Gibbs sampling for `iters` sweeps.
-    #[pyo3(signature = (data, *, iters=500))]
+    /// `num_threads` (>1) parallelises the read-only per-node marginal computation
+    /// inside each path resample across that many threads; the document loop and
+    /// every tree mutation stay serial, so the fit is **bit-for-bit identical for any
+    /// `num_threads`** — threading only speeds it up, it never changes the result.
+    #[pyo3(signature = (data, *, iters=500, num_threads=1))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: usize,
+        num_threads: usize,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -802,6 +807,7 @@ impl HLDA {
                 eta,
                 level_prior,
                 iters,
+                num_threads.max(1),
                 &mut rng,
             );
             (m, corpus)
