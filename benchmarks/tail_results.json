@@ -29,7 +29,7 @@
     "corpus": "20NG 1500-doc subset",
     "num_docs": 1500, "k": 20,
     "agree": 0.45, "ceiling": null, "external": true,
-    "note": "aligned topic-word cosine; reference collapsed to 13 live clusters. GSDMM cluster discovery is implementation-variance-sensitive (like HDP), so cross-impl agreement is inherently modest -- its parity gold uses self-consistency for this reason."
+    "note": "aligned topic-word cosine; reference collapsed to 13 live clusters. GSDMM cluster discovery is implementation-variance-sensitive (like HDP), so cross-impl agreement is inherently modest -- its parity gold uses self-consistency for this reason. Coherence-confirmed equal-or-better (#610): on the same corpus topica is more coherent every seed (c_npmi +0.093 vs ref +0.037, c_v 0.626 vs 0.506) and holds 20 meaningful clusters vs the reference's ~13; matched effective-K does not raise agreement, so it is which partition each sampler finds, not K. topica also follows Yin & Wang Eq. 4 exactly where rwalk/gsdmm drops the +j-1 term."
   },
   {
     "model": "ETM (embedded topic model, Dieng et al. 2020)",
@@ -37,7 +37,7 @@
     "corpus": "20NG 1200-doc subset (shared vocab + word2vec)",
     "num_docs": 1200, "k": 20,
     "agree": 0.275, "ceiling": null, "external": true,
-    "note": "aligned topic-word cosine, shared word2vec embeddings. Modest because topica's ETM uses variational-EM inference while the reference uses an amortized VAE -- same model family, different inference, so topic-word distributions diverge more than for exact-algorithm ports."
+    "note": "aligned topic-word cosine, shared word2vec embeddings. Modest because topica's ETM uses variational-EM inference while the reference uses an amortized VAE -- same model family, different inference, so topic-word distributions diverge more than for exact-algorithm ports. Coherence-confirmed equal-or-better (#610): on the same corpus topica's coherence is on par or slightly higher (c_npmi -0.031 vs ref -0.050 winning 2/3 seeds, c_v 0.573 vs 0.527 winning 3/3) -- different topics, comparable quality, not a defect."
   },
   {
     "model": "InfoCTM (Wu et al. 2023, AAAI)",

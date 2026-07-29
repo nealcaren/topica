@@ -69,10 +69,14 @@ LR = 0.002
 GOLD_SEED = 0
 FLOOR_SEED = 1
 # Pass margin below the reference's own seed-to-seed topic-word cosine floor.
-# Wider than the planted-block golds (e.g. CombinedTM's 0.10) because on real
-# MiniLM embeddings the cross-implementation topic-word cosine (~0.61) sits a clear
-# step below the reference's own seed-to-seed self cosine (~0.69) — the PCA/Adam vs
-# autodiff-Sinkhorn gap, not seed noise. The bar must clear that real gap.
+# Wider than the planted-block golds (e.g. CombinedTM's 0.10) because the `fastopic`
+# reference is genuinely unstable across seeds. A 6-seed sweep (#610) puts the
+# reference's own self-cosine at 0.652 (range 0.594–0.699; the frozen 0.694 here is
+# the top of that range, from a 2-seed measurement), while topica-vs-reference is
+# 0.593 — essentially topica's own self-agreement (0.595). So the ~0.61-vs-~0.69
+# step is largely seed noise, not a PCA/Adam-vs-autodiff-Sinkhorn quality gap:
+# topica matches the reference about as well as the reference matches itself, and
+# their coherence is comparable (#610). The margin is set wide to clear that noise.
 MARGIN = 0.15
 
 
