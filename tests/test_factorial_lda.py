@@ -93,6 +93,18 @@ def test_shapes_and_distributions():
     assert m.tuples == [[0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1]]
 
 
+def test_invalid_sample_window_rejected():
+    # iters=0 would run zero Gibbs sweeps, collect no samples, and return all-zero
+    # topic_word/doc_topic (rows not summing to 1) while reporting converged=True.
+    # The sample-collection window must be valid, so these are rejected up front.
+    docs, _ = planted_corpus(n_docs=20, doc_len=15)
+    for kwargs in (dict(iters=0), dict(iters=0, samples=1),
+                   dict(iters=10, samples=0), dict(iters=10, samples=50)):
+        m = topica.FactorialLDA(factor_sizes=[2, 2], seed=1)
+        with pytest.raises(ValueError):
+            m.fit(docs, **kwargs)
+
+
 def test_determinism():
     docs, _ = planted_corpus(n_docs=100, doc_len=25)
     a = topica.FactorialLDA(factor_sizes=[2, 2], seed=7)

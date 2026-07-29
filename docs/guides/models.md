@@ -514,8 +514,12 @@ and is not reproducible, so topica claims no bit/seed parity against it. Instead
 port's correctness is certified directly: finite-difference gradient tests on every
 weight group and factor-tying invariant tests (`src/factorial_lda.rs`), plus
 tuple-level recovery of a planted topic × sentiment corpus
-(`tests/test_factorial_lda.py`), with a qualitative cross-check against the Java in
-`parity/factorial_lda_compare.py`. A fixed seed reproduces bit-for-bit.
+(`tests/test_factorial_lda.py`). `parity/factorial_lda_compare.py` puts a topica run
+next to a Java run for a loose eyeball comparison only — it lines up topica's
+*posterior* topic-word against a *prior* reconstruction from the Java component
+weights (without the word background term), so it is a sanity check, not a fidelity
+measurement; the gradient and recovery tests are what substantiate faithfulness. A
+fixed seed reproduces bit-for-bit.
 
 ## Scholar
 

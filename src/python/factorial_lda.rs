@@ -404,6 +404,22 @@ impl FactorialLDA {
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
+        // Guard the sample-collection window: with iters=0 the Gibbs loop never
+        // runs, no samples are collected, and topic_word/doc_topic would be all
+        // zeros (rows not summing to 1) while reporting converged=True. Require at
+        // least one sweep, at least one collected sample, and enough sweeps to
+        // hold the requested sample tail.
+        if iters < 1 {
+            return Err(PyValueError::new_err("iters must be >= 1"));
+        }
+        if samples < 1 {
+            return Err(PyValueError::new_err("samples must be >= 1"));
+        }
+        if samples > iters {
+            return Err(PyValueError::new_err(
+                "samples must be <= iters (samples are collected from the final sweeps)",
+            ));
+        }
         let priors = match omega_priors {
             Some(obj) => parse_omega_priors(obj, &corpus.id_to_word, &slf.factor_sizes)?,
             None => OmegaPriors::default(),

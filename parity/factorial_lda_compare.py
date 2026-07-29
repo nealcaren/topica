@@ -2,11 +2,18 @@
 
 The reference builds a fresh, unseeded ``java.util.Random`` per token, so it is NOT
 seed-reproducible and NO bit/seed parity is possible; this is a QUALITATIVE check.
-We fit both on the same planted topic x sentiment corpus and confirm both recover
-the same six (topic, sentiment) tuple word-profiles (up to factor/component
-permutation, since the factors are role-exchangeable). topica's own numerical
-correctness is certified independently by the finite-difference gradient and
-factor-tying tests in ``src/factorial_lda.rs`` and ``tests/test_factorial_lda.py``.
+We fit both on the same planted topic x sentiment corpus and eyeball whether both
+recover the same six (topic, sentiment) tuple word-profiles (up to factor/component
+permutation, since the factors are role-exchangeable).
+
+CAVEAT — this is a loose sanity check, not a fidelity measurement, and it is not a
+like-for-like comparison: it lines up topica's *posterior* topic-word against a
+*prior* reconstruction built from the Java component weights only, omitting the
+word-specific background term ``omega_w`` (which does not cancel under
+normalization). Treat any agreement as reassuring, not as evidence of parity.
+topica's numerical correctness is certified independently by the finite-difference
+gradient and factor-tying tests in ``src/factorial_lda.rs`` and
+``tests/test_factorial_lda.py`` — those, not this script, substantiate faithfulness.
 
 The reference source is GPL and is NOT vendored into topica (topica is
 permissively licensed; the port is implemented from the paper's mathematics). This
