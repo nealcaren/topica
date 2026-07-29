@@ -21,14 +21,17 @@ scope the rest honestly:
    reference's L2 recovery to cosine ~1.0 and the same L2 objective -- on planted
    *and* real text. This is the load-bearing faithfulness check: it isolates the
    estimator from anchor-selection differences.
-3. **Exact-Arora config matches end-to-end on separable data.** With
+3. **Untempered config matches end-to-end on the planted fixture.** With
    ``recover="l2", frequency_temper=1.0`` (the exact Arora inversion), the full
-   pipelines agree to mean cosine ~1.0 where the method's guarantee holds.
-4. **The default is a bounded, documented extension.** The constructor default
-   ``frequency_temper=0.5`` tempers frequent-word dominance in the Bayes inversion
-   for more distinctive topics; it deviates from the reference-exact inversion by a
-   small, bounded amount (~0.99 cosine), by design -- it is a topica enhancement,
-   not the reference configuration.
+   pipelines agree to mean cosine ~1.0 on the planted separable corpus. Anchor
+   selection is a substantive pipeline stage the two libraries implement
+   differently, so this end-to-end match is fixture-specific, not general.
+4. **The default tempering measurably changes the output, by design.** The
+   constructor default ``frequency_temper=0.5`` tempers frequent-word dominance in
+   the Bayes inversion for more distinctive topics. Isolating just the exponent
+   (same solver, same anchors), ``0.5`` deviates from the exact ``1.0`` inversion by
+   a corpus-dependent amount (cosine ~0.99 on the planted fixture, ~0.81 on real
+   text) -- a deliberate topica enhancement, not the reference-exact configuration.
 
 Skips cleanly if ``anchor-topic`` is not installed.
 """
@@ -186,24 +189,33 @@ def _recovery_given_anchors_parity(docs):
     return cos, _l2_objective(Qt, Ct, anchors), _l2_objective(Qt, Cr, anchors)
 
 
+def _assert_recovery_parity(docs, label):
+    cos, l2_t, l2_r = _recovery_given_anchors_parity(docs)
+    assert cos > 0.999, f"{label} recovered-topic cosine {cos:.6f}"
+    # Same objective to a tight relative tolerance (0.1%). Two independent solvers
+    # -- topica's NNLS RecoverL2 and the reference's exponentiated gradient -- reach
+    # essentially the same L2 minimum; a materially worse implementation would not.
+    rel = abs(l2_t - l2_r) / max(l2_r, 1e-12)
+    assert rel < 1e-3, f"{label} L2 objective topica {l2_t:.6g} vs reference {l2_r:.6g} (rel {rel:.2e})"
+
+
 def test_recovery_given_anchors_is_reference_exact_planted():
     """Load-bearing: same anchors + Q -> topica RecoverL2 matches the reference."""
     _skip_if_no_reference()
-    cos, kl_t, kl_r = _recovery_given_anchors_parity(_planted())
-    assert cos > 0.999, f"recovered-topic cosine {cos:.4f}"
-    assert abs(kl_t - kl_r) < 1e-4, f"L2 objective topica {kl_t:.6f} vs reference {kl_r:.6f}"
+    _assert_recovery_parity(_planted(), "planted")
 
 
 def test_recovery_given_anchors_is_reference_exact_real_text():
     """The same recovery parity holds on real text (bundled Gadarian survey)."""
     _skip_if_no_reference()
-    cos, _kl_t, _kl_r = _recovery_given_anchors_parity(_gadarian())
-    assert cos > 0.999, f"real-text recovered-topic cosine {cos:.4f}"
+    _assert_recovery_parity(_gadarian(), "real-text")
 
 
-def test_exact_arora_end_to_end_parity_on_separable_data():
-    """Exact config (recover='l2', frequency_temper=1.0) matches the full reference
-    pipeline where the separability guarantee holds."""
+def test_untempered_l2_end_to_end_matches_on_planted_fixture():
+    """On the planted separable fixture, the untempered config (recover='l2',
+    frequency_temper=1.0) matches the full reference pipeline. This is fixture-
+    specific: the two libraries use different greedy anchor selectors, so end-to-end
+    agreement is corpus-dependent (see the module docstring)."""
     _skip_if_no_reference()
     from anchor_topic.topics import model_topics
 
@@ -212,21 +224,26 @@ def test_exact_arora_end_to_end_parity_on_separable_data():
     vocab = list(m.vocabulary)
     A_ref, _Q, _a = model_topics(_dtm_word_doc(docs, vocab), K, THRESHOLD, seed=1)
     cos = _mean_aligned_cosine(m.topic_word, np.asarray(A_ref).T)
-    assert cos > 0.99, f"exact-Arora end-to-end cosine {cos:.3f}"
+    assert cos > 0.99, f"untempered end-to-end cosine on planted fixture {cos:.3f}"
 
 
-def test_default_tempering_is_a_bounded_extension():
-    """The constructor default (frequency_temper=0.5) is a deliberate, bounded
-    deviation from the reference-exact inversion -- not reference-exact, not wild."""
+def _isolated_tempering_cosine(docs):
+    """Effect of frequency_temper alone: same L2 solver, same (seeded) anchors,
+    exponent 1.0 vs 0.5. Aligned topic-word cosine between the two."""
+    exact = _fit(docs, recover="l2", frequency_temper=1.0)
+    tempered = _fit(docs, recover="l2", frequency_temper=0.5)
+    return _mean_aligned_cosine(exact.topic_word, tempered.topic_word)
+
+
+def test_default_tempering_measurably_changes_output():
+    """Isolating just the frequency-temper exponent (same solver, same anchors), the
+    default 0.5 measurably departs from the exact 1.0 inversion -- confirming the
+    default is NOT the reference-exact configuration. The magnitude is corpus-
+    dependent (~0.99 on this planted fixture, lower on real text), so we assert only
+    that it is a real, non-degenerate change, not a bound."""
     _skip_if_no_reference()
-    from anchor_topic.topics import model_topics
-
-    docs = _planted()
-    default = _fit(docs, recover="kl", frequency_temper=0.5)
-    vocab = list(default.vocabulary)
-    A_ref, _Q, _a = model_topics(_dtm_word_doc(docs, vocab), K, THRESHOLD, seed=1)
-    cos = _mean_aligned_cosine(default.topic_word, np.asarray(A_ref).T)
-    assert 0.95 < cos < 1.0, f"default-vs-reference cosine {cos:.4f} (expected a bounded gap)"
+    cos = _isolated_tempering_cosine(_planted())
+    assert 0.5 < cos < 0.999, f"isolated tempering cosine {cos:.4f} (expected a real, non-degenerate change)"
 
 
 if __name__ == "__main__":
@@ -248,12 +265,12 @@ if __name__ == "__main__":
 
     A_ref, _Q, _a = model_topics(_dtm_word_doc(docs, vocab), K, THRESHOLD, seed=1)
     cos_exact = _mean_aligned_cosine(m.topic_word, np.asarray(A_ref).T)
-    default = _fit(docs, recover="kl", frequency_temper=0.5)
-    A_ref2, _Q2, _a2 = model_topics(_dtm_word_doc(docs, list(default.vocabulary)), K, THRESHOLD, seed=1)
-    cos_default = _mean_aligned_cosine(default.topic_word, np.asarray(A_ref2).T)
+    temper_planted = _isolated_tempering_cosine(_planted())
+    temper_real = _isolated_tempering_cosine(_gadarian())
 
-    print(f"(1) Q max|diff| vs reference:            {q_diff:.2e}  (row-normalized, ~precision)")
-    print(f"(2) recovery | same anchors, planted:    cos {cos_p:.4f}  L2 topica {l2t:.5f} / ref {l2r:.5f}")
-    print(f"(2) recovery | same anchors, real text:  cos {cos_r:.4f}")
-    print(f"(3) exact-Arora end-to-end (separable):  cos {cos_exact:.3f}")
-    print(f"(4) default temper=0.5 vs reference:     cos {cos_default:.3f}  (bounded topica extension)")
+    print(f"(1) Q max|diff| vs reference:               {q_diff:.2e}  (row-normalized, ~precision)")
+    print(f"(2) recovery | same anchors, planted:       cos {cos_p:.6f}  L2 topica {l2t:.6g} / ref {l2r:.6g}")
+    print(f"(2) recovery | same anchors, real text:     cos {cos_r:.6f}")
+    print(f"(3) untempered end-to-end (planted fixture): cos {cos_exact:.3f}  (fixture-specific)")
+    print(f"(4) isolated tempering 1.0 vs 0.5:          cos {temper_planted:.3f} planted / {temper_real:.3f} real"
+          f"  (topica extension, corpus-dependent)")

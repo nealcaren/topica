@@ -14,11 +14,14 @@ Practical Algorithm for Topic Modeling with Provable Guarantees", ICML.
 Validated against the ``anchor-topic`` RecoverL2 reference (Arora et al. 2013):
 the co-occurrence matrix agrees to numerical precision, and given the same anchors
 topica's ``recover="l2"`` recovery matches the reference to cosine ~1.0 on planted
-*and* real text. The exact-Arora configuration (``recover="l2"``,
-``frequency_temper=1.0``) also matches end to end on separable data. The constructor
-default ``frequency_temper=0.5`` is a documented topica extension that tempers
-frequent-word dominance for more distinctive topics, not the reference-exact
-inversion (``parity/anchor_compare.py``).
+*and* real text, at the same L2 objective. The two libraries use different (both
+valid) greedy anchor selectors, so end-to-end agreement is corpus-dependent; the
+untempered ``recover="l2", frequency_temper=1.0`` configuration matches the full
+reference pipeline on a planted separable fixture. The constructor default
+``frequency_temper=0.5`` is a documented topica extension that tempers frequent-word
+dominance for more distinctive topics -- a deliberate, corpus-dependent departure
+from the reference-exact inversion, not reference parity
+(``parity/anchor_compare.py``).
 """
 
 from __future__ import annotations
