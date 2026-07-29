@@ -305,6 +305,17 @@ def _ng_docs():
     return _twentyng()[0]
 
 
+def _ng_docs_capped(n=2000):
+    """A fixed, seed-stable subset of the 20NG token lists. HLDA's tree fit is only
+    tractable on a capped corpus (#611); topica and the reference both call this, so
+    they see the same documents in the same order (required by the cross-NMI metric)."""
+    docs = _ng_docs()
+    if _SMOKE or n >= len(docs):
+        return docs
+    idx = np.sort(np.random.default_rng(0).choice(len(docs), n, replace=False))
+    return [docs[i] for i in idx]
+
+
 def _ng_labeled():
     """(docs, per-doc [label], label_names) for LabeledLDA on the 20 newsgroups."""
     docs, labels = _twentyng()
@@ -520,8 +531,9 @@ def _register_ctm(k=10, threads=1):
 
 
 def _register_hdp():
-    """HDP discovers K on both sides; agreement = aligned cosine over matched
-    live topics, so K differs between the two fits (reported as 'auto')."""
+    """HDP discovers its own K on both sides, so an aligned topic-word cosine over
+    two different topic sets is not meaningful (#611). Score by cross-NMI of the
+    per-document dominant-topic assignments — agreement on the document clustering."""
     INIT_K = 10
 
     def topica():
@@ -529,7 +541,7 @@ def _register_hdp():
         docs = _ng_docs()
         m = HDP(seed=1)
         m.fit(docs, iters=150)
-        return np.asarray(m.topic_word), list(m.vocabulary)
+        return (np.asarray(m.doc_topic).argmax(axis=1).astype(int),)
 
     def ref():
         import tomotopy as tp
@@ -539,43 +551,53 @@ def _register_hdp():
             m.add_doc(d)
         m.burn_in = 200
         m.train(1000, workers=1, show_progress=False)
-        live = [t for t in range(m.k) if m.is_live_topic(t)]
-        tw = np.array([m.get_topic_word_dist(t) for t in live])
-        return tw, list(m.used_vocabs)
+        assign = [int(np.asarray(doc.get_topic_dist()).argmax()) for doc in m.docs]
+        return (np.asarray(assign, dtype=int),)
 
     register("hdp", "HDP", 0, topica, refs={"tomotopy": (_tomo_available, ref)},
-             note="nonparametric; K discovered both sides; aligned cosine over live topics",
-             corpus="ng")
+             note="nonparametric; K discovered both sides; cross-NMI of doc "
+                  "assignments (topic-word cosine not comparable)",
+             metric_fn=_cross_nmi, corpus="ng")
 
 
-def _register_hlda():
-    """HLDA is tree-structured; agreement = aligned cosine over the node
-    topic-word distributions (an approximation -- node correspondence across two
-    independently grown trees is not exact)."""
+def _register_hlda(threads=1):
+    """HLDA grows a depth-3 topic tree and discovers its own node count, so an
+    aligned topic-word cosine across two independently grown trees is not
+    meaningful (#611). Score by cross-NMI of the per-document deepest-topic
+    assignments instead — how much the two implementations agree on the document
+    clustering. Run on a capped 2k-doc subset so the tree fit is tractable; HLDA
+    now parallelises via `num_threads`."""
     DEPTH = 3
+    N = 2000
 
     def topica():
         from topica import HLDA
-        docs = _ng_docs()
+        docs = _ng_docs_capped(N)
         m = HLDA(depth=DEPTH, seed=1)
-        m.fit(docs, iters=500)
-        return np.asarray(m.topic_word), list(m.vocabulary)
+        m.fit(docs, iters=150, num_threads=threads)
+        levels = list(m.node_levels)
+        assign = [max(path, key=lambda nd: levels[nd]) for path in m.doc_paths]
+        return (np.asarray(assign, dtype=int),)
 
     def ref():
         import tomotopy as tp
-        docs = _ng_docs()
+        docs = _ng_docs_capped(N)
         m = tp.HLDAModel(tw=tp.TermWeight.ONE, depth=DEPTH, seed=1)
         for d in docs:
             m.add_doc(d)
         m.burn_in = 200
-        m.train(500, workers=1, show_progress=False)
-        live = [t for t in range(m.k) if m.is_live_topic(t)]
-        tw = np.array([m.get_topic_word_dist(t) for t in live])
-        return tw, list(m.used_vocabs)
+        m.train(150, workers=1, show_progress=False)
+        assign = [max(set(doc.topics), key=lambda t: m.level(t)) for doc in m.docs]
+        return (np.asarray(assign, dtype=int),)
 
     register("hlda", "HLDA", 0, topica, refs={"tomotopy": (_tomo_available, ref)},
-             note=f"depth {DEPTH} tree; aligned cosine over live nodes (approximate)",
-             corpus="ng")
+             note=f"depth {DEPTH} tree on {N}-doc subset; cross-NMI of doc "
+                  f"assignments (discovered-K, cosine not comparable). At the sharp "
+                  f"default beta=0.01 topica fits a far finer, higher-posterior tree "
+                  f"than tomotopy (~100x more nodes), so it is slower per fit; raise "
+                  f"beta for a compact reference-scale tree (#615). num_threads speeds "
+                  f"the per-fit work (see the threaded row).",
+             metric_fn=_cross_nmi, threads=threads, corpus="ng")
 
 
 def _register_pt(k=10, threads=1):
@@ -1196,7 +1218,8 @@ for k, t in _configs(KS_NG, False): _register_online_lda(k, t)  # gensim online-
 # Tier-1 additions (external reference runs locally) -- tomotopy family
 for k, t in _configs(KS_NG, False): _register_ctm(k, t)
 _register_hdp()        # K discovered; single config
-_register_hlda()       # K discovered (tree); single config
+for _, t in _configs(KS_NG, True):
+    _register_hlda(t)  # K discovered (tree); 1- and multi-threaded configs
 for k, t in _configs(KS_NG, False): _register_pt(k, t)
 
 
