@@ -274,6 +274,27 @@ MALLET); they skip cleanly when those toolchains are not installed.
 topica is maintained by Neal Caren. Issues and pull requests are triaged on a
 best-effort basis.
 
+## Citation
+
+If you use topica in published work, please cite it. GitHub's **Cite this
+repository** button (top right) generates a formatted reference from
+[`CITATION.cff`](CITATION.cff). A software paper is in preparation; until it
+appears, cite the software release:
+
+```bibtex
+@software{caren_topica,
+  author  = {Caren, Neal},
+  title   = {topica: fast, all-purpose topic modeling for Python},
+  year    = {2026},
+  url     = {https://github.com/nealcaren/topica},
+  version = {0.54.0}
+}
+```
+
+Replace `version` with the release you used. For the individual models and their
+reference implementations, see the [Citing](https://nealcaren.github.io/topica/citing/)
+page.
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).
