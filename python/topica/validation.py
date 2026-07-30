@@ -909,11 +909,14 @@ class SearchKResult(list):
           is the grid edge, the elbow is the more useful pick. Needs at least
           three K values; not defined for the ``"frontier"``.
 
-        ``frontier_metrics`` / ``weights`` customize the ``"frontier"`` composite:
-        by default it is an equal-weight ``z(coherence) + z(exclusivity)``. Pass a
-        different metric list (e.g. ``["coherence", "deveaud"]``) and/or per-metric
-        ``weights`` to reshape the knee. A custom frontier supports ``rule="best"``
-        only (the per-seed ``1se`` band is defined for the default frontier).
+        ``frontier_metrics`` / ``weights`` (only with ``metric="frontier"``)
+        customize the ``"frontier"`` composite: by default it is an equal-weight
+        ``z(coherence) + z(exclusivity)``. Pass a different metric list (e.g.
+        ``["coherence", "deveaud"]``) and/or non-negative per-metric ``weights`` to
+        reshape the knee. A custom frontier supports ``rule="best"`` only, and it
+        z-scores the across-seed *mean* rows; under ``num_seeds>1`` that can differ
+        marginally from the implicit default frontier, which z-scores each seed
+        first (to keep ``rule="1se"`` consistent).
         """
         if rule not in ("best", "1se", "elbow"):
             raise ValueError(f"rule must be 'best', '1se', or 'elbow', got {rule!r}")
@@ -928,6 +931,10 @@ class SearchKResult(list):
                 metric = "frontier"
             else:
                 metric = "coherence"
+        if metric != "frontier" and (frontier_metrics is not None or weights is not None):
+            raise ValueError(
+                "frontier_metrics and weights only apply to metric='frontier'; "
+                f"got metric={metric!r}")
         if metric == "frontier":
             if rule == "elbow":
                 raise ValueError("rule='elbow' is not defined for the frontier; "
@@ -965,9 +972,9 @@ class SearchKResult(list):
                     UserWarning,
                     stacklevel=2,
                 )
-        present = [r for r in self if not np.isnan(r[metric])]
+        present = [r for r in self if np.isfinite(r[metric])]
         if not present:
-            raise ValueError(f"every value for metric {metric!r} is NaN")
+            raise ValueError(f"metric {metric!r} has no finite value")
         maximize = SEARCH_K_DIRECTIONS[metric] == "maximize"
         if rule == "1se":
             return self._one_se_k(present, metric, maximize)
@@ -1015,7 +1022,15 @@ class SearchKResult(list):
         # A diminishing-returns curve bulges above the endpoints chord; its peak
         # is the elbow.
         chord = yn[0] + (yn[-1] - yn[0]) * (xn - xn[0]) / (xn[-1] - xn[0])
-        return int(x[int(np.argmax(yn - chord))])
+        gap = yn - chord
+        if np.max(gap) <= 1e-12:  # convex or straight: no diminishing-returns knee
+            warnings.warn(
+                f"rule='elbow': the {metric!r} curve does not bend toward "
+                "diminishing returns (it is convex or straight), so the elbow is "
+                "not well defined; returning the smallest K.",
+                UserWarning, stacklevel=3)
+            return int(x.min())
+        return int(x[int(np.argmax(gap))])
 
     def _custom_frontier_k(self, frontier_metrics, weights, rule):
         """Frontier over a caller-chosen metric set / weights. Supports
@@ -1037,6 +1052,8 @@ class SearchKResult(list):
             weights = [1.0] * len(metrics)
         if len(weights) != len(metrics):
             raise ValueError("weights must match frontier_metrics in length")
+        if any((not np.isfinite(w)) or w < 0 for w in weights):
+            raise ValueError("weights must be finite and non-negative")
         if len(self) < 2:
             raise ValueError("frontier selection needs at least two K values")
         score = np.zeros(len(self))

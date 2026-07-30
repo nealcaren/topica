@@ -199,7 +199,7 @@ def test_best_k_is_nan_safe():
         assert rows.best_k("coherence") == 10   # not the NaN row (k=2)
     assert rows._frontier_k() == 10             # coherence not silently poisoned
     allnan = SearchKResult([{"k": 2, "coherence": float("nan"), "exclusivity": float("nan")}])
-    with pytest.raises(ValueError, match="NaN"):
+    with pytest.raises(ValueError, match="no finite value"):
         allnan.best_k("exclusivity")
 
 
@@ -446,6 +446,28 @@ def test_best_k_configurable_frontier():
         res.best_k("frontier", weights=(1, 1, 1))
     with pytest.raises(ValueError, match="unknown frontier metric"):
         res.best_k("frontier", frontier_metrics=["coherence", "bogus"])
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        res.best_k("frontier", weights=(-1, 1))
+    # footgun guard: frontier kwargs with a non-frontier metric must raise, not
+    # be silently ignored (including the default metric resolving to a scalar).
+    with pytest.raises(ValueError, match="only apply to metric='frontier'"):
+        res.best_k("coherence", weights=(1, 1))
+
+
+def test_best_k_elbow_warns_on_convex_curve():
+    # An accelerating (convex) curve has no diminishing-returns knee; the elbow
+    # rule warns and falls back to the smallest K rather than inventing one.
+    from topica.validation import SearchKResult
+    convex = SearchKResult([{"k": k, "heldout_loglik": float(k * k)}
+                            for k in (10, 20, 30, 40)])
+    with pytest.warns(UserWarning, match="not well defined"):
+        assert convex.best_k("heldout_loglik", rule="elbow") == 10
+    # inf in a metric is treated as non-finite and dropped, not fed to the elbow
+    withinf = SearchKResult([{"k": 10, "heldout_loglik": float("inf")},
+                             {"k": 20, "heldout_loglik": -5.0},
+                             {"k": 30, "heldout_loglik": -4.0},
+                             {"k": 40, "heldout_loglik": -3.9}])
+    assert withinf.best_k("heldout_loglik") == 40  # inf row ignored, not the max
 
 
 def test_frontier_best_and_1se_share_one_curve():
