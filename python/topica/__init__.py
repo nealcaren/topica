@@ -289,7 +289,7 @@ from .labeling import (  # noqa: E402  LLM topic labeling as plumbing
     topic_label_prompts,
 )
 from .topicgpt import TopicGPT  # noqa: E402  (LLM-driven topic discovery)
-from .anchor import AnchorLDA  # noqa: E402  (experimental anchor-words estimator)
+from .anchor import AnchorLDA  # noqa: E402
 from .embedding import (  # noqa: E402
     EmbeddingLDA,
     embedding_seeds,

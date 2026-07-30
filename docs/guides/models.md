@@ -45,6 +45,7 @@ generated from `python/topica/registry.py`.
 | `HDP` | text | gibbs | seed-reproducible | Hierarchical Dirichlet process: infers the number of topics from the data. |
 | `NMF` | text | matrix-factorization | bit-exact | Non-negative matrix factorization of the document-term matrix via multiplicative updates. |
 | `LSA` | text | svd | seed-reproducible | Latent semantic analysis: a truncated SVD of the weighted document-term matrix. |
+| `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `PolylingualLDA` | text | gibbs | seed-reproducible | Polylingual topic model (Mimno et al. 2009): aligned topics across languages from document tuples that share one topic distribution. |
 
 ### Covariates & structure
@@ -121,7 +122,6 @@ Shipped before a published paper and reference-implementation parity (topica's b
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
-| `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `TensorLDA` | text | svd | seed-reproducible | Online Tensor LDA (Kangaslahti et al. 2026): deterministic method-of-moments topic modeling via second and third-order cumulants. |
 | `NarrativeTM` | text | gibbs | seed-reproducible | Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate. |
@@ -947,17 +947,11 @@ One caveat about stability. FastICA does not reach its convergence tolerance on 
 
 ## AnchorLDA
 
-!!! warning "Experimental"
-    `AnchorLDA` ships before a published paper and a reference-implementation
-    parity check, topica's bar for a validated model. It is gated: call
-    `topica.enable_experimental()` (or set `TOPICA_EXPERIMENTAL=1`) before
-    constructing one. Experimental models may change or be removed without a
-    deprecation cycle.
-
 The anchor-words algorithm ([Arora et al. 2013](https://proceedings.mlr.press/v28/arora13.html)) recovers topics without Gibbs sampling or EM. It rests on a *separability* assumption: each topic has an anchor word that occurs (almost) only in that topic. Given the anchors, every other word's topic distribution is fixed by how it co-occurs with them, so the whole topic-word matrix follows from one convex solve per word. The result is deterministic, fast, and gives each topic a single human-readable anchor word.
 
+`AnchorLDA` is validated against the [`anchor-topic`](https://pypi.org/project/anchor-topic/) RecoverL2 reference: the co-occurrence matrix agrees to numerical precision, and given the same anchors topica's `recover="l2"` recovery matches the reference to cosine ~1.0 on both a planted corpus and real survey text (`parity/anchor_compare.py`). The two libraries use different (both valid) greedy anchor selectors, so end-to-end agreement is corpus-dependent; the untempered configuration matches the full reference pipeline on a planted separable fixture. The default `frequency_temper=0.5` tempers frequent-word dominance for more distinctive topics — a deliberate, corpus-dependent departure from the reference-exact inversion, not reference parity.
+
 ```python
-topica.enable_experimental()
 m = topica.AnchorLDA(num_topics=20, min_count=5, seed=0)
 m.fit(docs)
 m.anchors                # the anchor word identifying each topic
