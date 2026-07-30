@@ -300,6 +300,12 @@ def test_extra_criteria_detect_redundant_topics():
     assert _cao_juan(orth) == pytest.approx(0.0)
     assert _deveaud(same) == pytest.approx(0.0)
     assert _deveaud(orth) == pytest.approx(np.log(2))
+    # Three mutually-disjoint topics: all 3 pairs have JSD ln2, cosine 0. The
+    # criterion is the *mean* over pairs (== ln2 / 0), not the sum (3*ln2 / 0) --
+    # this pins the pair-count normalization for K>2.
+    tri = np.array([[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]])
+    assert _deveaud(tri) == pytest.approx(np.log(2))
+    assert _cao_juan(tri) == pytest.approx(0.0)
     # single topic -> nan (no pairs)
     assert np.isnan(_cao_juan(np.array([[1.0, 0.0]])))
     assert np.isnan(_deveaud(np.array([[1.0, 0.0]])))

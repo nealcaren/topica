@@ -1619,10 +1619,12 @@ def _deveaud(topic_word) -> float:
     k = phi.shape[0]
     if k < 2:
         return float("nan")
-    eps = 1e-12
 
     def _kl(p, q):
-        return float(np.sum(np.where(p > 0, p * np.log((p + eps) / (q + eps)), 0.0)))
+        # The mixture q = (p+q)/2 is strictly positive wherever p > 0, so no
+        # smoothing is needed and the result is an exact Jensen-Shannon term.
+        mask = p > 0
+        return float(np.sum(p[mask] * np.log(p[mask] / q[mask])))
 
     total, pairs = 0.0, 0
     for i in range(k):
