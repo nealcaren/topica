@@ -22,7 +22,14 @@ of granularity answers *your* research question? Start from theory and adjust.
 |--------|------------------|---------|
 | Coherence (c_v / UMass) | Do a topic's top words co-occur? | Higher is better |
 | Exclusivity | Are words distinctive to a topic? | Higher is better |
-| Held-out perplexity | Fit on unseen documents | Lower is better |
+| Held-out log-likelihood | Fit on withheld words | Higher (less negative) is better |
+| Residual dispersion | Is K too small to absorb the variance? | `>> 1` means too small |
+| Deveaud / Cao Juan (`criteria=`) | Are the topics distinct / non-redundant? | Deveaud higher, Cao Juan lower |
+
+`search_k(num_seeds>1)` attaches a standard error to each metric, and
+`res.best_k(metric, rule=...)` turns a curve into a pick: `"best"` (the optimum),
+`"1se"` (the simplest K within one standard error), or `"elbow"` (the
+diminishing-returns knee of a monotone metric like held-out likelihood).
 
 !!! warning "Do not just maximize coherence"
     A model with `K=5` may have higher mean coherence yet miss distinctions that
@@ -38,18 +45,30 @@ artifacts)? Do topics split and merge sensibly as `K` grows?
 
 ```python
 import topica
-import numpy as np
 
-# 1) Scan a theoretically plausible range.
-held_out = test_docs                     # a held-out split for perplexity
+# 1) Scan a theoretically plausible range. num_seeds>1 refits each K several
+#    times so every metric carries a standard error; n_jobs parallelizes the fits.
+held = topica.make_heldout(topica.Corpus.from_documents(train_docs),
+                           prop_docs=0.3, prop_words=0.5, seed=0)
 results = topica.search_k(
-    train_docs, ks=[10, 15, 20, 25, 30],
-    held_out=held_out, iters=800,
+    held.documents, ks=[10, 15, 20, 25, 30],
+    held_out=held, num_seeds=4, n_jobs=-1, iters=800,
 )
 for r in results:
-    print(f"K={r['k']:>3}  coherence={r['coherence']:.3f}  "
-          f"exclusivity={r['exclusivity']:.3f}  perplexity={r.get('perplexity'):.0f}")
+    print(f"K={r['k']:>3}  heldout={r['heldout_loglik']:.1f}±{r['heldout_loglik_se']:.1f}  "
+          f"coherence={r['coherence']:.1f}  exclusivity={r['exclusivity']:.2f}  "
+          f"dispersion={r['dispersion']:.2f}")
+
+# 2) Let each lens name a K -- they encode different goals and often disagree.
+results.best_k()                             # held-out when present, else frontier
+results.best_k("heldout_loglik", rule="elbow")   # diminishing-returns knee
+results.best_k("frontier")                   # coherence/exclusivity knee
+results.best_k("heldout_loglik", rule="1se")     # simplest K within 1 SE (needs num_seeds>1)
 ```
+
+`best_k` reports the K a criterion prefers; `dispersion` (Taddy residual
+dispersion, `>> 1` means K is too small) is a diagnostic column, not a selection
+target. See the worked example below for how to read a disagreement.
 
 Then, for the two or three best candidates, fit the model and **read the
 topics**. Count how many you can label, look at the per-topic
@@ -127,6 +146,102 @@ hdp = topica.HDP(eta=0.3, seed=1)
 hdp.fit(docs, iters=300)
 print("HDP suggests ~", hdp.num_topics, "topics")
 ```
+
+## A worked example: poliblog
+
+The bundled `poliblog` corpus (2,000 political-blog posts from 2008, already
+stemmed and stopworded) shows why no single number is "the" K, and how to read
+`search_k` honestly. We scan a wide range, fit several seeds per K so every
+metric carries a standard error, add a held-out set, and report the extra
+`ldatuning`-style criteria alongside the defaults:
+
+```python
+import topica
+
+docs = load_poliblog()                                  # list[list[str]], ~2000 docs
+held = topica.make_heldout(topica.Corpus.from_documents(docs),
+                           prop_docs=0.3, prop_words=0.5, seed=0)
+
+res = topica.search_k(
+    held.documents, ks=[10, 20, 30, 40, 60, 80, 100, 120],
+    held_out=held,
+    num_seeds=4,                        # each K refit 4 times -> mean +/- SE
+    n_jobs=-1,                          # fit the (K, seed) grid in parallel
+    criteria=["deveaud", "cao_juan"],   # opt-in ldatuning criteria
+    iters=400, seed=11,
+)
+```
+
+The 32 fits (8 values of K by 4 seeds) finish in about 30 seconds on a laptop
+because `n_jobs=-1` runs them across cores. Every metric column now holds the
+across-seed mean with a `<metric>_se`:
+
+| K | held-out | coherence | exclusivity | dispersion | deveaud | cao_juan |
+|---|---|---|---|---|---|---|
+| 10 | −711.8 ± 0.2 | −52.0 | 9.46 | 1.60 | 0.47 | 0.181 |
+| 20 | −707.2 ± 0.3 | −60.7 | 9.72 | 1.47 | 0.56 | 0.096 |
+| 30 | −704.9 ± 0.2 | −65.8 | 9.81 | 1.39 | 0.60 | 0.063 |
+| 40 | −703.6 ± 0.3 | −67.0 | 9.85 | 1.34 | 0.62 | 0.047 |
+| 60 | −702.2 ± 0.2 | −70.8 | 9.90 | 1.27 | 0.65 | 0.030 |
+| 80 | −701.3 ± 0.3 | −75.4 | 9.92 | 1.22 | 0.66 | 0.020 |
+| 100 | −700.9 ± 0.1 | −79.8 | 9.94 | 1.20 | 0.67 | 0.015 |
+| 120 | −700.6 ± 0.2 | −83.8 | 9.95 | 1.18 | 0.67 | 0.011 |
+
+Ask each lens for its pick and they disagree, which is the point:
+
+```python
+res.best_k("heldout_loglik")                    # 120  -- keeps climbing
+res.best_k("heldout_loglik", rule="elbow")      # 40   -- the diminishing-returns knee
+res.best_k("frontier")                          # 40   -- coherence/exclusivity knee
+res.best_k("deveaud")                           # 120
+res.best_k("cao_juan")                          # 120
+res.best_k("coherence")                         # 10   (warns: UMass is monotone in K)
+res.best_k()                                    # 120  -- defaults to held-out here
+```
+
+**Every single-axis metric runs to a grid extreme.** Held-out likelihood,
+exclusivity, and both `ldatuning` criteria improve monotonically, so they point
+at the largest K scanned; bare coherence falls monotonically, so it points at the
+smallest. Selecting on any one of them just returns a grid endpoint, which is why
+`best_k("coherence")` warns. The **frontier** is the only criterion that returns
+an interior value, because it trades coherence against exclusivity:
+`z(coherence) + z(exclusivity)` peaks at K=40.
+
+!!! warning "The frontier is grid-relative"
+    The frontier z-scores each metric *across the K values you scanned*, so its
+    knee moves with the grid. On this corpus the same data returns K=10 for a
+    `[5, 10, 15, 20, 25, 30]` grid and K=40 for `[10, 20, ..., 120]`. Read the
+    whole curve; do not treat the single knee as an oracle.
+
+**Read the held-out curve, not just its argmax.** Held-out likelihood is still
+rising at K=120, so `best_k("heldout_loglik")` returns the grid ceiling. But the
+gains per topic collapse: +7.0 from K=10 to 30, +2.6 from 30 to 60, +1.6 from 60
+to 120. The `rule="elbow"` selector finds the diminishing-returns knee of that
+curve, K=40, where extra topics stop buying much fit. That it agrees with the
+frontier is reassuring: two different constructions land on the same interior K.
+
+**Residual dispersion says you can go higher.** Taddy's residual dispersion falls
+steadily (1.60 → 1.18) but stays well above 1 across the whole grid, evidence
+that even K=120 leaves structure unmodeled. That is consistent with the political
+science literature, which fits poliblog at K≈100 for fine-grained framing topics.
+Dispersion is the one diagnostic here pointing toward more topics.
+
+**Uncertainty is tight, so the 1-SE rule does not bite.** With 2,000 documents
+the standard errors are small (held-out is −700.9 ± 0.1 at K=100), so every
+metric is cleanly separated and `best_k(rule="1se")` returns the same K as
+`rule="best"`. The one-standard-error rule earns its keep on smaller or noisier
+corpora, where neighbouring K values sit within each other's error bars and the
+simplest defensible model is worth preferring.
+
+### What we would report
+
+There is no contradiction to resolve, only a decision to make. For an
+interpretable model of the main partisan themes, K≈30–40 is well supported: it is
+the held-out elbow and the frontier knee, and the topics are readable. For
+fine-grained framing analysis, dispersion and held-out both justify pushing
+toward K≈100, at the cost of more topics to label. We would state the goal, name
+the K, and (per the section below) show the headline result survives a few nearby
+values.
 
 ## Report sensitivity
 
