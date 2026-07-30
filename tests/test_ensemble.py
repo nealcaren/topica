@@ -8,6 +8,8 @@ alternative. Most tests work on hand-built topic-word arrays so the ground truth
 known exactly; a couple exercise the real fitted-model path end to end.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -307,6 +309,16 @@ class TestBootstrapCI:
     def test_negative_n_boot_raises(self):
         with pytest.raises(ValueError, match="n_boot must be"):
             topica.ensemble(self._noisy_runs(), n_boot=-1)
+
+    def test_few_runs_warn(self):
+        # With <4 runs a large fraction of resamples are all-duplicate, so the CI
+        # is unreliable -- warn rather than report a falsely tight interval.
+        with pytest.warns(UserWarning, match="unreliable"):
+            topica.ensemble(self._noisy_runs(m=3), n_boot=50, lambda_=1.0)
+        # enough runs: no small-n warning (lambda_=1.0 avoids the doc-topic note)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            topica.ensemble(self._noisy_runs(m=6), n_boot=50, lambda_=1.0)
 
 
 class TestApiSurface:

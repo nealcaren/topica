@@ -105,11 +105,13 @@ class EnsembleResult:
         ``"cluster"``).
     n_runs : number of fits combined.
     runs : the input fits, in the order given.
-    agreement_ci : ``(lo, hi)`` bootstrap percentile CI for ``agreement``, or
-        ``None`` unless ``ensemble(..., n_boot>0)`` was requested. Resamples the
-        runs with replacement and recomputes the consensus, so it says whether a
-        difference in ``agreement`` across K (or model families) is real or just
-        noise from which runs were combined.
+    agreement_ci : ``(lo, hi)`` 95% bootstrap CI for ``agreement`` (a normal
+        interval centered on the estimate with a half-width from the bootstrap
+        standard error, clipped to ``[0, 1]``), or ``None`` unless
+        ``ensemble(..., n_boot>0)`` was requested. Resamples the runs with
+        replacement and recomputes the consensus, so it says whether a difference
+        in ``agreement`` across K (or model families) is real or just noise from
+        which runs were combined.
     agreement_se : bootstrap standard error of ``agreement`` (``None`` unless
         bootstrapped).
     stability_ci : ``(K, 2)`` per-topic bootstrap CI for ``stability`` (matched
@@ -789,36 +791,48 @@ def _ensemble_stable(runs, betas, thetas, vocab, K, V, *,
 
 def _attach_bootstrap_ci(base, runs, betas, thetas, weights, run_fn, n_boot, boot_seed):
     """Resample the runs with replacement ``n_boot`` times, recompute the
-    consensus each time, and attach percentile CIs for ``agreement`` (and, for the
-    fixed-K methods, per-topic ``stability``). Deterministic given ``boot_seed``."""
+    consensus each time, and attach normal (bootstrap-SE) CIs for ``agreement``
+    (and, for the fixed-K methods, per-topic ``stability``). Deterministic given
+    ``boot_seed``."""
     from .validation import align_topics
 
     if n_boot < 0:
         raise ValueError(f"n_boot must be >= 0, got {n_boot}")
-    rng = np.random.default_rng(boot_seed)
     n = len(runs)
+    if n < 4:
+        warnings.warn(
+            f"bootstrap CI over only {n} runs is unreliable: a large fraction of "
+            "resamples draw duplicate runs (which trivially agree), inflating the "
+            "interval. Combine more runs for a meaningful CI.",
+            UserWarning, stacklevel=3)
+    rng = np.random.default_rng(boot_seed)
     K = base.topic_word.shape[0]
     per_topic = base.method in ("cluster", "align")  # fixed K -> topics are matchable
     w = None if weights is None else np.asarray(weights, dtype=np.float64)
     agrees = []
     stab_samples = [[] for _ in range(K)] if per_topic else None
-    for _ in range(n_boot):
-        idx = rng.integers(0, n, size=n)
-        rs = [runs[i] for i in idx]
-        bs = [betas[i] for i in idx]
-        ts = [thetas[i] for i in idx] if thetas is not None else None
-        ws = None if w is None else w[idx]
-        try:
-            res = run_fn(rs, bs, ts, ws)
-            if np.isfinite(res.agreement):
-                agrees.append(res.agreement)
-            if per_topic and res.topic_word.shape[0] == K:
-                # match each resample topic back to a base topic (Hungarian)
-                for base_i, boot_j, _d in align_topics(
-                        base.topic_word, res.topic_word, metric="cosine"):
-                    stab_samples[base_i].append(float(res.stability[boot_j]))
-        except Exception:
-            continue  # a degenerate resample contributes nothing, not a crash
+    # Warnings from the internal resamples (e.g. a resample that yields a singleton
+    # cluster) are about throwaway resamples, not the user's ensemble; suppress them
+    # so a few hundred bootstraps do not flood the caller.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for _ in range(n_boot):
+            idx = rng.integers(0, n, size=n)
+            rs = [runs[i] for i in idx]
+            bs = [betas[i] for i in idx]
+            ts = [thetas[i] for i in idx] if thetas is not None else None
+            ws = None if w is None else w[idx]
+            try:
+                res = run_fn(rs, bs, ts, ws)
+                if np.isfinite(res.agreement):
+                    agrees.append(res.agreement)
+                if per_topic and res.topic_word.shape[0] == K:
+                    # match each resample topic back to a base topic (Hungarian)
+                    for base_i, boot_j, _d in align_topics(
+                            base.topic_word, res.topic_word, metric="cosine"):
+                        stab_samples[base_i].append(float(res.stability[boot_j]))
+            except Exception:
+                continue  # a degenerate resample contributes nothing, not a crash
 
     # Center each CI on the observed estimate and take its half-width from the
     # bootstrap standard error (the 95% normal interval). Resampling runs with
@@ -826,9 +840,9 @@ def _attach_bootstrap_ci(base, runs, betas, thetas, weights, run_fn, n_boot, boo
     # *distribution* of a clustering agreement upward; the bootstrap SE (its
     # spread) is the trustworthy part, so we use that rather than raw percentiles.
     z = 1.959963984540054  # normal 97.5th percentile
-    if agrees:
+    if len(agrees) > 1:  # need >=2 resamples to estimate a standard error
         a = np.asarray(agrees, dtype=np.float64)
-        se = float(np.std(a, ddof=1)) if len(a) > 1 else 0.0
+        se = float(np.std(a, ddof=1))
         base.agreement_se = se
         base.agreement_ci = (max(0.0, base.agreement - z * se),
                              min(1.0, base.agreement + z * se))
