@@ -281,6 +281,48 @@ def test_search_k_reports_residual_dispersion_and_dedupes_ks():
     assert all(np.isfinite(r["dispersion"]) for r in rows)
 
 
+def test_search_k_num_seeds_reports_se_and_is_backward_compatible():
+    # #632: num_seeds=1 (default) reports no standard-error columns; num_seeds>1
+    # adds <metric>_se for every varying metric and keeps <metric> as the mean.
+    docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12 + \
+           [["red", "blue", "green"]] * 12
+    single = topica.search_k(docs, [2, 3], iters=60, num_samples=1)
+    assert not any(k.endswith("_se") for k in single[0])
+
+    multi = topica.search_k(docs, [2, 3], iters=60, num_samples=1, num_seeds=4)
+    for base in ("coherence", "exclusivity", "dispersion"):
+        assert base + "_se" in multi[0]
+        assert all(r[base + "_se"] >= 0 for r in multi)
+    # dispersion p-value gets no SE (an SE on a p-value is not meaningful)
+    assert "dispersion_pvalue_se" not in multi[0]
+    # means still drive the point-estimate selectors
+    assert isinstance(multi.best_k(), int)
+
+
+def test_search_k_best_k_one_se_rule():
+    # #632: the 1-SE rule needs num_seeds>1 and picks the simplest K within one SE
+    # of the optimum; it must reject a single-seed result.
+    docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12 + \
+           [["red", "blue", "green"]] * 12
+    single = topica.search_k(docs, [2, 3, 4], iters=60, num_samples=1)
+    with pytest.raises(ValueError, match="num_seeds"):
+        single.best_k(rule="1se")
+
+    multi = topica.search_k(docs, [2, 3, 4], iters=60, num_samples=1, num_seeds=4)
+    ks = {r["k"] for r in multi}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # bare coherence warns by design
+        for m in ("frontier", "coherence", "exclusivity"):
+            k = multi.best_k(m, rule="1se") if m != "frontier" else multi.best_k(rule="1se")
+            assert k in ks
+    # 1-SE is never stricter (larger K) than the plain optimum for the frontier:
+    # it can only move toward a simpler (<=) K within the error band.
+    assert multi.best_k(rule="1se") <= multi.best_k()
+
+    with pytest.raises(ValueError, match="rule must be"):
+        multi.best_k(rule="bogus")
+
+
 def test_search_k_best_k_defaults_to_heldout_when_present():
     # #153: with a held-out set, best_k defaults to the held-out log-likelihood
     # (maximize) rather than coherence.
