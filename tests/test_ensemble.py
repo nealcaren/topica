@@ -254,6 +254,61 @@ class TestStableMethod:
             assert results[core].label in stable
 
 
+class TestBootstrapCI:
+    """#627: bootstrap CIs for agreement / stability (SEs-everywhere)."""
+
+    def _noisy_runs(self, m=6, K=4, V=12, noise=0.05, seed=0):
+        rng = np.random.default_rng(seed)
+        protos = np.zeros((K, V))
+        for k in range(K):
+            protos[k, 3 * k:3 * k + 3] = 1.0
+        protos /= protos.sum(1, keepdims=True)
+        runs = []
+        for _ in range(m):
+            b = np.clip(protos + rng.normal(0, noise, protos.shape), 1e-6, None)
+            runs.append(b / b.sum(1, keepdims=True))
+        return runs
+
+    def test_off_by_default(self):
+        res = topica.ensemble(self._noisy_runs())
+        assert res.agreement_ci is None and res.agreement_se is None
+        assert res.stability_ci is None
+
+    @pytest.mark.parametrize("method", ["cluster", "align", "stable"])
+    def test_agreement_ci_is_sane(self, method):
+        runs = self._noisy_runs()
+        res = topica.ensemble(runs, method=method, n_boot=150, boot_seed=1)
+        lo, hi = res.agreement_ci
+        assert 0.0 <= lo <= res.agreement <= hi <= 1.0   # centered, clipped, contains
+        assert res.agreement_se >= 0.0
+
+    def test_per_topic_ci_only_for_fixed_k(self):
+        runs = self._noisy_runs()
+        for method in ("cluster", "align"):
+            res = topica.ensemble(runs, method=method, n_boot=100, boot_seed=2)
+            assert res.stability_ci.shape == (res.topic_word.shape[0], 2)
+            for i in range(len(res.stability)):
+                lo, hi = res.stability_ci[i]
+                if not np.isnan(lo):
+                    assert lo <= res.stability[i] <= hi
+        # stable has a variable topic count, so only the scalar agreement CI
+        assert topica.ensemble(runs, method="stable", n_boot=100).stability_ci is None
+
+    def test_bootstrap_is_deterministic(self):
+        runs = self._noisy_runs()
+        a = topica.ensemble(runs, n_boot=100, boot_seed=7)
+        b = topica.ensemble(runs, n_boot=100, boot_seed=7)
+        assert a.agreement_ci == b.agreement_ci
+        assert np.array_equal(a.stability_ci, b.stability_ci, equal_nan=True)
+        # a different seed generally gives a (slightly) different interval
+        c = topica.ensemble(runs, n_boot=100, boot_seed=8)
+        assert a.agreement_se >= 0 and c.agreement_se >= 0
+
+    def test_negative_n_boot_raises(self):
+        with pytest.raises(ValueError, match="n_boot must be"):
+            topica.ensemble(self._noisy_runs(), n_boot=-1)
+
+
 class TestApiSurface:
     def test_accepts_select_model_result(self):
         runs = [np.eye(3)[[0, 1, 2]] + 0.01, np.eye(3)[[1, 0, 2]] + 0.01]
