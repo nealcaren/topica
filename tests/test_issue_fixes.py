@@ -400,6 +400,54 @@ def test_search_k_one_se_minimize_and_within_band():
     assert perp.best_k("perplexity", rule="1se") == 2      # within 5+1=6
 
 
+def test_best_k_elbow_rule():
+    # #637: the elbow of a diminishing-returns curve, where the plain optimum is
+    # the grid edge. The poliblog held-out curve rises fast then flattens; the
+    # elbow sits well inside the grid, not at the argmax.
+    from topica.validation import SearchKResult
+    ks = [10, 20, 30, 40, 60, 80, 100, 120]
+    ll = [-712.5, -708.2, -705.6, -704.4, -702.9, -701.9, -701.4, -701.1]
+    res = SearchKResult([{"k": k, "heldout_loglik": v} for k, v in zip(ks, ll)])
+    assert res.best_k("heldout_loglik") == 120                 # plain optimum = edge
+    assert res.best_k("heldout_loglik", rule="elbow") == 40    # the knee, interior
+    # a minimize metric (mirror curve) gives the same interior knee
+    perp = SearchKResult([{"k": k, "perplexity": -v} for k, v in zip(ks, ll)])
+    assert perp.best_k("perplexity", rule="elbow") == 40
+    # guards: elbow needs >=3 K, and is undefined for the frontier
+    two = SearchKResult([{"k": 2, "heldout_loglik": 1.0}, {"k": 3, "heldout_loglik": 2.0}])
+    with pytest.raises(ValueError, match="at least three"):
+        two.best_k("heldout_loglik", rule="elbow")
+    with pytest.raises(ValueError, match="not defined for the frontier"):
+        res_ce = SearchKResult([{"k": 2, "coherence": -5.0, "exclusivity": 0.5},
+                                {"k": 3, "coherence": -6.0, "exclusivity": 0.6}])
+        res_ce.best_k("frontier", rule="elbow")
+
+
+def test_best_k_configurable_frontier():
+    # #637: frontier weights/metrics reshape the knee; default is unchanged.
+    from topica.validation import SearchKResult
+    ks = [10, 20, 30, 40, 50, 60]
+    coh = [-8, -5, -6, -7, -9, -11]        # coherence peaks at K=20
+    exc = [0.3, 0.5, 0.6, 0.7, 0.8, 0.9]   # exclusivity peaks at K=60
+    res = SearchKResult([{"k": k, "coherence": c, "exclusivity": e}
+                         for k, c, e in zip(ks, coh, exc)])
+    assert res.best_k("frontier") == 20                          # equal weight
+    assert res.best_k("frontier", weights=(1, 5)) == 60          # exclusivity-heavy
+    assert res.best_k("frontier", weights=(5, 1)) == 20          # coherence-heavy
+    # a different metric set is honored (and directions applied)
+    res2 = SearchKResult([{"k": k, "coherence": c, "exclusivity": e,
+                           "cao_juan": 0.5 - 0.001 * k}
+                          for k, c, e in zip(ks, coh, exc)])
+    assert res2.best_k("frontier", frontier_metrics=["coherence", "cao_juan"]) in set(ks)
+    # a custom frontier is best-only; validation errors are clear
+    with pytest.raises(ValueError, match="rule='best' only"):
+        res.best_k("frontier", weights=(1, 1), rule="1se")
+    with pytest.raises(ValueError, match="length"):
+        res.best_k("frontier", weights=(1, 1, 1))
+    with pytest.raises(ValueError, match="unknown frontier metric"):
+        res.best_k("frontier", frontier_metrics=["coherence", "bogus"])
+
+
 def test_frontier_best_and_1se_share_one_curve():
     # best_k('frontier') and best_k(rule='1se') must band around the SAME frontier
     # curve when seeds are present, so 1se is never stricter than best.

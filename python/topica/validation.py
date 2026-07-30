@@ -875,7 +875,8 @@ class SearchKResult(list):
                                  [r["exclusivity"] for r in self])
         return _argbest_k(self, score)
 
-    def best_k(self, metric: str | None = None, *, rule: str = "best") -> int:
+    def best_k(self, metric: str | None = None, *, rule: str = "best",
+               frontier_metrics=None, weights=None) -> int:
         """Return the ``k`` chosen by ``metric``.
 
         With ``metric=None`` (the default), selection is:
@@ -902,9 +903,20 @@ class SearchKResult(list):
         - ``"1se"`` — the one-standard-error rule: the smallest (simplest) K whose
           metric is within one standard error of the optimum. Needs the per-K
           standard errors from ``search_k(num_seeds>1)``; raises otherwise.
+        - ``"elbow"`` — the diminishing-returns knee of a *scalar* metric's
+          K-curve (Kneedle: the K of maximum distance from the endpoints chord).
+          For monotone-improving metrics like ``"heldout_loglik"`` whose optimum
+          is the grid edge, the elbow is the more useful pick. Needs at least
+          three K values; not defined for the ``"frontier"``.
+
+        ``frontier_metrics`` / ``weights`` customize the ``"frontier"`` composite:
+        by default it is an equal-weight ``z(coherence) + z(exclusivity)``. Pass a
+        different metric list (e.g. ``["coherence", "deveaud"]``) and/or per-metric
+        ``weights`` to reshape the knee. A custom frontier supports ``rule="best"``
+        only (the per-seed ``1se`` band is defined for the default frontier).
         """
-        if rule not in ("best", "1se"):
-            raise ValueError(f"rule must be 'best' or '1se', got {rule!r}")
+        if rule not in ("best", "1se", "elbow"):
+            raise ValueError(f"rule must be 'best', '1se', or 'elbow', got {rule!r}")
         if not self:
             raise ValueError("search_k returned no rows")
         if metric is None:
@@ -917,6 +929,11 @@ class SearchKResult(list):
             else:
                 metric = "coherence"
         if metric == "frontier":
+            if rule == "elbow":
+                raise ValueError("rule='elbow' is not defined for the frontier; "
+                                 "use it on a scalar metric like 'heldout_loglik'")
+            if frontier_metrics is not None or weights is not None:
+                return self._custom_frontier_k(frontier_metrics, weights, rule)
             return self._frontier_k_1se() if rule == "1se" else self._frontier_k()
         if metric not in SEARCH_K_DIRECTIONS:
             raise ValueError(
@@ -954,6 +971,8 @@ class SearchKResult(list):
         maximize = SEARCH_K_DIRECTIONS[metric] == "maximize"
         if rule == "1se":
             return self._one_se_k(present, metric, maximize)
+        if rule == "elbow":
+            return self._elbow_k(present, metric, maximize)
         best = (max if maximize else min)(r[metric] for r in present)
         # Parsimony tie-break: smallest k achieving the best value.
         return int(min(r["k"] for r in present if r[metric] == best))
@@ -976,6 +995,63 @@ class SearchKResult(list):
             thresh = best_row[metric] + se
             within = [r for r in present if r[metric] <= thresh]
         return int(min(r["k"] for r in within))  # simplest K within 1 SE
+
+    def _elbow_k(self, present, metric, maximize):
+        """Diminishing-returns knee of ``metric`` vs K (Kneedle): normalize the
+        curve, orient it so higher = better, and take the K of maximum vertical
+        distance above the chord joining the first and last scanned K."""
+        rows = sorted(present, key=lambda r: r["k"])
+        if len(rows) < 3:
+            raise ValueError("rule='elbow' needs at least three K values")
+        x = np.array([r["k"] for r in rows], dtype=np.float64)
+        y = np.array([r[metric] for r in rows], dtype=np.float64)
+        if not maximize:
+            y = -y  # orient so a better metric is a higher y
+        xr, yr = np.ptp(x), np.ptp(y)
+        if xr == 0 or yr == 0:
+            return int(x[0])  # flat curve -> simplest K
+        xn = (x - x.min()) / xr
+        yn = (y - y.min()) / yr
+        # A diminishing-returns curve bulges above the endpoints chord; its peak
+        # is the elbow.
+        chord = yn[0] + (yn[-1] - yn[0]) * (xn - xn[0]) / (xn[-1] - xn[0])
+        return int(x[int(np.argmax(yn - chord))])
+
+    def _custom_frontier_k(self, frontier_metrics, weights, rule):
+        """Frontier over a caller-chosen metric set / weights. Supports
+        ``rule='best'`` only (the per-seed 1-SE band is the default frontier's)."""
+        if rule != "best":
+            raise ValueError(
+                f"a custom frontier supports rule='best' only, got {rule!r}")
+        metrics = list(frontier_metrics) if frontier_metrics is not None \
+            else ["coherence", "exclusivity"]
+        if len(metrics) < 1:
+            raise ValueError("frontier_metrics must name at least one metric")
+        for m in metrics:
+            if m not in SEARCH_K_DIRECTIONS:
+                raise ValueError(f"unknown frontier metric {m!r}")
+            if m not in self[0]:
+                raise ValueError(f"frontier metric {m!r} not in results "
+                                 f"(present: {sorted(self[0])})")
+        if weights is None:
+            weights = [1.0] * len(metrics)
+        if len(weights) != len(metrics):
+            raise ValueError("weights must match frontier_metrics in length")
+        if len(self) < 2:
+            raise ValueError("frontier selection needs at least two K values")
+        score = np.zeros(len(self))
+        finite = np.ones(len(self), dtype=bool)
+        for w, m in zip(weights, metrics):
+            v = np.array([r[m] for r in self], dtype=np.float64)
+            if SEARCH_K_DIRECTIONS[m] == "minimize":
+                v = -v
+            finite &= np.isfinite(v)
+            sd = np.nanstd(v)
+            if sd > 0:
+                score += float(w) * np.nan_to_num((v - np.nanmean(v)) / sd, nan=0.0)
+        if finite.any():
+            score[~finite] = -np.inf
+        return _argbest_k(self, score)
 
     def _frontier_k_1se(self) -> int:
         """One-standard-error rule on the frontier composite: needs the per-seed
