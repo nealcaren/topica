@@ -97,6 +97,34 @@ def test_cross_ensemble_no_thetas():
     assert res.topic_word.shape == (2, 3)
 
 
+def test_cross_ensemble_singleton_scores_zero_stability():
+    # Two topics are shared by all three models (corroborated); each model also
+    # has one idiosyncratic topic no other model matches. Those land in singleton
+    # clusters, which must score stability 0.0 -- not 1.0 -- so they never look
+    # reliable and do not inflate the headline `agreement`.
+    V = 10
+
+    def topic(*idx):
+        v = np.full(V, 1e-3)
+        for i in idx:
+            v[i] = 1.0
+        return v / v.sum()
+
+    vocab = [f"w{i}" for i in range(V)]
+    shared = [topic(0, 1), topic(2, 3)]
+    uniques = [topic(4, 5), topic(6, 7), topic(8, 9)]
+    models = [DummyModel(np.vstack(shared + [u]), vocabulary=vocab) for u in uniques]
+
+    res = cross_ensemble(models, num_topics=5, lambda_=1.0, topn=2)
+
+    singleton = res.cluster_sizes == 1
+    assert int(singleton.sum()) == 3                        # the three idiosyncratic topics
+    assert np.allclose(res.stability[singleton], 0.0)        # 0.0, not a misleading 1.0
+    assert not res.reliable[singleton].any()                 # a lone topic is never reliable
+    assert int(res.reliable.sum()) == 2                      # only the two corroborated topics
+    assert res.agreement < 0.5                               # singletons no longer inflate it
+
+
 def test_cross_ensemble_validation_guards():
     # Case 1: Less than 2 models
     model = DummyModel([[1.0]], vocabulary=["apple"])

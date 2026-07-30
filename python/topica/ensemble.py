@@ -78,7 +78,9 @@ class EnsembleResult:
         ``"stable"`` it is one minus the mean pairwise distance among the run
         topics that formed the cluster; for ``"align"`` it is the mean top-word
         Jaccard with the matched run topics. 1.0 means every run produced the same
-        topic.
+        topic. For ``"cluster"``, a singleton cluster -- a topic only one run
+        contributed, with nothing to corroborate it -- scores 0.0, so it never
+        looks like a trustworthy consensus.
     support : ``(K,)`` how well-backed each topic is. For ``"cluster"`` and
         ``"stable"`` it is the fraction of runs that contributed a topic to the
         cluster (1.0 = all runs found it); for ``"align"`` it is the match margin
@@ -323,12 +325,15 @@ def _ensemble_cluster(runs, betas, thetas, vocab, K, V, *,
         rows_beta.append(np.average(all_beta[members], axis=0, weights=wm))
         if thetas is not None:
             rows_theta.append(np.average(all_theta[members], axis=0, weights=wm))
-        # Internal consistency: 1 - mean pairwise distance among members.
+        # Internal consistency: 1 - mean pairwise distance among members. A
+        # singleton cluster has no corroborating run to agree with, so its
+        # consistency is 0.0, not 1.0 -- a lone topic is the *least* trustworthy
+        # consensus, and scoring it 1.0 both misreads it and inflates `agreement`.
         if len(members) > 1:
             sub = D[np.ix_(members, members)]
             stab = 1.0 - sub[np.triu_indices(len(members), 1)].mean()
         else:
-            stab = 1.0
+            stab = 0.0
         stability.append(float(stab))
         support.append(len(np.unique(run_of[members])) / m)
         sizes.append(len(members))
@@ -914,12 +919,15 @@ def cross_ensemble(
         if thetas is not None:
             rows_theta.append(np.average(all_theta[members], axis=0, weights=wm))
         
-        # Internal consistency: 1 - mean pairwise distance among members
+        # Internal consistency: 1 - mean pairwise distance among members. A
+        # singleton cluster (one model's topic, no corroboration from the others)
+        # scores 0.0, not 1.0: it is the least trustworthy consensus, and scoring
+        # it 1.0 both misreads it and inflates `agreement`.
         if len(members) > 1:
             sub = D[np.ix_(members, members)]
             stab = 1.0 - sub[np.triu_indices(len(members), 1)].mean()
         else:
-            stab = 1.0
+            stab = 0.0
         stability.append(float(stab))
         support.append(len(np.unique(run_of[members])) / m_runs)
         sizes.append(len(members))
