@@ -763,7 +763,20 @@ SEARCH_K_DIRECTIONS = {
     "exclusivity": "maximize",
     "heldout_loglik": "maximize",
     "perplexity": "minimize",
+    "polarization": "maximize",
 }
+
+
+def _argbest_k(rows, score):
+    """The ``k`` at the maximum score, breaking ties toward the *smallest* ``k``.
+
+    Parsimony tie-break: with two K values equally good, prefer the simpler model.
+    This also makes the pick independent of the order ``ks`` was passed in (a plain
+    ``argmax`` returns the first index, so it would depend on grid ordering)."""
+    score = np.asarray(score, dtype=np.float64)
+    best = np.nanmax(score)
+    tied = [i for i, s in enumerate(score) if s == best]
+    return int(min(rows[i]["k"] for i in tied))
 
 
 class SearchKResult(list):
@@ -808,11 +821,15 @@ class SearchKResult(list):
         score = np.zeros(len(self))
         for m in ("coherence", "exclusivity"):
             v = np.array([r[m] for r in self], dtype=np.float64)
-            sd = v.std()
+            sd = np.nanstd(v)
             if sd > 0:
-                z = (v - v.mean()) / sd
+                z = (v - np.nanmean(v)) / sd
+                # A K whose metric is NaN (a degenerate fit) contributes 0 to the
+                # score for that metric -- treated as average, never poisoning the
+                # argmax as raw NaN comparisons would.
+                z = np.nan_to_num(z, nan=0.0)
                 score += z if SEARCH_K_DIRECTIONS[m] == "maximize" else -z
-        return int(self[int(np.argmax(score))]["k"])
+        return _argbest_k(self, score)
 
     def best_k(self, metric: str | None = None) -> int:
         """Return the ``k`` chosen by ``metric``.
@@ -858,16 +875,33 @@ class SearchKResult(list):
                 f"pass held_out= to get a held-out metric"
             )
         if metric == "coherence" and len(self) >= 2:
-            warnings.warn(
-                "best_k(metric='coherence'): mean UMass coherence is roughly "
-                "monotone-decreasing in K, so this tends to return the smallest "
-                "K in the grid. Prefer metric='frontier' (coherence/exclusivity "
-                "knee) or pass held_out= for held-out log-likelihood.",
-                UserWarning,
-                stacklevel=2,
-            )
-        pick = max if SEARCH_K_DIRECTIONS[metric] == "maximize" else min
-        return int(pick(self, key=lambda r: r[metric])["k"])
+            coh_metric = self[0].get("coherence_metric", "u_mass")
+            if coh_metric == "u_mass":
+                warnings.warn(
+                    "best_k(metric='coherence'): mean UMass coherence is roughly "
+                    "monotone-decreasing in K, so this tends to return the smallest "
+                    "K in the grid. Prefer metric='frontier' (coherence/exclusivity "
+                    "knee) or pass held_out= for held-out log-likelihood.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:
+                warnings.warn(
+                    f"best_k(metric='coherence'): selecting on {coh_metric!r} "
+                    "coherence alone ignores exclusivity and parsimony. Prefer "
+                    "metric='frontier' (coherence/exclusivity knee) or pass "
+                    "held_out= for held-out log-likelihood.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        present = [r for r in self if not np.isnan(r[metric])]
+        if not present:
+            raise ValueError(f"every value for metric {metric!r} is NaN")
+        best = (max if SEARCH_K_DIRECTIONS[metric] == "maximize" else min)(
+            r[metric] for r in present
+        )
+        # Parsimony tie-break: smallest k achieving the best value.
+        return int(min(r["k"] for r in present if r[metric] == best))
 
 
 def search_k(
@@ -893,14 +927,17 @@ def search_k(
     scan K for the model you'll actually report.
 
     Returns a :class:`SearchKResult` (a list of per-K dicts) with ``k``,
-    ``coherence`` (mean of selected coherence type, default ``"u_mass"``),
-    ``exclusivity`` (mean top-word exclusivity), and — when ``held_out`` is
-    supplied — a held-out quality metric. The result also carries
-    ``.directions`` (whether higher or lower is better per metric) and a
-    ``.best_k(metric=...)`` selector. ``best_k`` defaults to the held-out metric
-    when one is supplied, otherwise to a coherence/exclusivity frontier (a knee),
-    because bare UMass coherence is roughly monotone in K and would just return
-    the smallest K scanned.
+    ``coherence`` (mean of the selected coherence type; for ``model="stm"`` with
+    the default ``u_mass`` this is stm's semantic coherence, labelled
+    ``coherence_metric="semcoh"``), ``exclusivity`` (mean top-word exclusivity),
+    ``dispersion`` (residual dispersion, Taddy 2012 — ``>> 1`` means K is too
+    small) with its ``dispersion_pvalue``, and — when ``held_out`` is supplied —
+    a held-out quality metric. The result also carries ``.directions`` (whether
+    higher or lower is better per metric) and a ``.best_k(metric=...)`` selector.
+    ``best_k`` defaults to the held-out metric when one is supplied, otherwise to
+    a coherence/exclusivity frontier (a knee), because bare UMass coherence is
+    roughly monotone in K and would just return the smallest K scanned. Duplicate
+    ``ks`` are dropped; ties in ``best_k`` break toward the smaller (simpler) K.
 
     Two held-out paths are supported, determined by the type of ``held_out``:
 
@@ -959,6 +996,17 @@ def search_k(
             stacklevel=2,
         )
 
+    ks_in = [int(k) for k in ks]
+    ks = list(dict.fromkeys(ks_in))  # de-duplicate, preserving order
+    if len(ks) != len(ks_in):
+        warnings.warn(
+            "search_k: duplicate values in `ks` were dropped so each K is fit "
+            "once (duplicates would also overweight that K in the frontier).",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    ref_docs = _ref_corpus(docs)  # token lists, reused across every K
     rows = []
     for k in ks:
         if model == "stm":
@@ -969,12 +1017,19 @@ def search_k(
             m.fit(docs, iters=iters, num_samples=num_samples,
                   sample_interval=sample_interval)
 
+        coh_label = coherence_type
         if stratified:
             from .content import (stratified_coherence as _strat,
                                   topic_polarization as _pol,
                                   group_exclusivity as _gex)
             coh_val = float(np.mean(_strat(m, docs, content, coherence_type=base_ct,
                                           n=coherence_n)))
+        elif coherence_type == "u_mass" and model == "stm":
+            # stm's searchK reports semantic coherence (semCoh1beta, 0.01
+            # smoothing), not gensim UMass -- use the stm-faithful metric for STM.
+            from .coherence import semantic_coherence
+            coh_val = float(np.mean(semantic_coherence(m, ref_docs, n=coherence_n)))
+            coh_label = "semcoh"
         elif coherence_type == "u_mass" and hasattr(m, "coherence"):
             coh_val = float(np.mean(m.coherence(coherence_n)))
         else:
@@ -982,17 +1037,22 @@ def search_k(
             # m.top_words(coherence_n) returns a list of lists of (word, weight) tuples.
             # Convert to list[list[str]]
             topics = [[w for w, _ in top_list] for top_list in m.top_words(coherence_n)]
-            ref_docs = _ref_corpus(docs)
             scores = external_coherence(topics, ref_docs, coherence_type=base_ct, topn=coherence_n)
             coh_val = float(np.mean(scores))
 
         row = {
             "k": k,
             "coherence": coh_val,
-            "coherence_metric": coherence_type,
+            "coherence_metric": coh_label,
             "exclusivity": (float(np.mean(_gex(m, n=coherence_n))) if stratified
                             else _mean_exclusivity(m.topic_word, coherence_n)),
         }
+        # Residual dispersion (Taddy 2012): dispersion >> 1 is direct evidence K
+        # is too small -- the non-monotone signal stm's searchK reports. Diagnostic
+        # column, not a frontier metric (it keeps falling as K grows).
+        rc = check_residuals(m, ref_docs)
+        row["dispersion"] = float(rc.dispersion)
+        row["dispersion_pvalue"] = float(rc.pvalue)
         if stratified:
             row["polarization"] = float(np.mean(_pol(m)))
         if held_out is not None:

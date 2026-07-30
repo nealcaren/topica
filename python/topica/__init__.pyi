@@ -238,8 +238,15 @@ def find_thoughts(doc_topic: Any, texts: Sequence[str] | None = None, *, topic: 
     ...
 
 
-def search_k(docs: Any, ks: Sequence[int], *, model: str = ..., prevalence: Any | None = ..., content: Any | None = ..., held_out: Any = None, coherence_type: str = ..., **kwargs: Any) -> list[dict]:
-    """Fit an LDA/STM per K; report coherence, exclusivity, and (optional) perplexity."""
+class SearchKResult(list):
+    """List of per-K metric dicts with a direction-aware ``best_k`` selector."""
+    @property
+    def directions(self) -> dict[str, str]: ...
+    def best_k(self, metric: str | None = ...) -> int: ...
+
+
+def search_k(docs: Any, ks: Sequence[int], *, model: str = ..., prevalence: Any | None = ..., content: Any | None = ..., held_out: Any = ..., iters: int = ..., num_samples: int = ..., sample_interval: int = ..., seed: int = ..., coherence_n: int = ..., coherence_type: str = ...) -> SearchKResult:
+    """Fit an LDA/STM per K; report coherence, exclusivity, residual dispersion, and (optional) held-out metric."""
     ...
 
 

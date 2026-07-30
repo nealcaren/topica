@@ -185,6 +185,59 @@ def test_frontier_needs_two_k():
         assert one.best_k() == 5
 
 
+def test_best_k_is_nan_safe():
+    # A degenerate fit can yield NaN coherence. Raw max()/z-score would let the
+    # NaN row win (`x > nan` is always False); selection must ignore NaN rows.
+    from topica.validation import SearchKResult
+    rows = SearchKResult([
+        {"k": 2, "coherence": float("nan"), "exclusivity": 0.1, "coherence_metric": "u_mass"},
+        {"k": 5, "coherence": -10.0, "exclusivity": 0.8, "coherence_metric": "u_mass"},
+        {"k": 10, "coherence": -5.0, "exclusivity": 0.9, "coherence_metric": "u_mass"},
+    ])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        assert rows.best_k("coherence") == 10   # not the NaN row (k=2)
+    assert rows._frontier_k() == 10             # coherence not silently poisoned
+    allnan = SearchKResult([{"k": 2, "coherence": float("nan"), "exclusivity": float("nan")}])
+    with pytest.raises(ValueError, match="NaN"):
+        allnan.best_k("exclusivity")
+
+
+def test_frontier_tie_breaks_toward_smaller_k():
+    # Equal scores must resolve to the smaller (simpler) K regardless of grid order.
+    from topica.validation import SearchKResult
+    for ks in ([50, 10], [10, 50]):
+        rows = SearchKResult([{"k": k, "coherence": -5.0, "exclusivity": 0.5} for k in ks])
+        assert rows._frontier_k() == 10
+
+
+def test_best_k_coherence_warning_matches_coherence_type():
+    # The monotonicity caveat is UMass-specific; for c_v the warning must not claim
+    # UMass monotonicity (c_v is not monotone in K).
+    from topica.validation import SearchKResult
+    cv = SearchKResult([
+        {"k": 2, "coherence": 0.4, "exclusivity": 0.5, "coherence_metric": "c_v"},
+        {"k": 3, "coherence": 0.6, "exclusivity": 0.5, "coherence_metric": "c_v"},
+    ])
+    with pytest.warns(UserWarning, match="'c_v' coherence alone"):
+        cv.best_k("coherence")
+    umass = SearchKResult([
+        {"k": 2, "coherence": -10.0, "exclusivity": 0.5, "coherence_metric": "u_mass"},
+        {"k": 3, "coherence": -12.0, "exclusivity": 0.5, "coherence_metric": "u_mass"},
+    ])
+    with pytest.warns(UserWarning, match="monotone"):
+        umass.best_k("coherence")
+
+
+def test_search_k_reports_residual_dispersion_and_dedupes_ks():
+    docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12
+    with pytest.warns(UserWarning, match="duplicate"):
+        rows = topica.search_k(docs, [2, 2, 3], iters=60, num_samples=1)
+    assert [r["k"] for r in rows] == [2, 3]                # duplicate K dropped
+    assert all("dispersion" in r and "dispersion_pvalue" in r for r in rows)
+    assert all(np.isfinite(r["dispersion"]) for r in rows)
+
+
 def test_search_k_best_k_defaults_to_heldout_when_present():
     # #153: with a held-out set, best_k defaults to the held-out log-likelihood
     # (maximize) rather than coherence.
