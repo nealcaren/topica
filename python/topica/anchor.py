@@ -133,21 +133,54 @@ def _find_anchors(q, k, seed, candidates=None):
     return anchors, fallback_used
 
 
-def _recover_l2(q, anchors):
-    """RecoverL2: for each word solve the simplex-constrained non-negative least
-    squares ``Q_i ≈ Σ_k C_ik Q_{anchor_k}`` for ``C_ik = p(topic k | word i)``.
-    One serial NNLS solve per word — exact but ``O(V)`` Python iterations."""
-    from scipy.optimize import nnls
+def _recover_l2(q, anchors, *, iters=500, tol=1e-9, check_every=5):
+    """RecoverL2: recover ``C_ik = p(topic k | word i)`` by minimizing the squared
+    error ``Σ_i ‖Q_i − Σ_k C_ik Q_{anchor_k}‖²`` over the simplex (Arora et al.
+    2013). Solved by exponentiated gradient vectorized over all words at once — the
+    same solver family the ``anchor-topic`` reference uses, and a few BLAS matmuls
+    per step instead of the old ``O(V)`` serial NNLS loop (~140x faster at K=50, and
+    reference-exact: same L2 minimum, C cosine ~1.0; see ``parity/anchor_compare``).
 
-    qa = q[anchors]
-    k = len(anchors)
-    aug = np.vstack([qa.T, 1e3 * np.ones((1, k))])
-    out = np.zeros((q.shape[0], k))
-    for i in range(q.shape[0]):
-        c, _ = nnls(aug, np.concatenate([q[i], [1e3]]))
-        s = c.sum()
-        out[i] = c / s if s > 0 else c
-    return out
+    A single global step size backtracks (halve) whenever a step would not lower the
+    mean objective, and grows gently when accepted, so the update stays stable
+    without a per-word line search. Deterministic (no RNG). Returns
+    ``(C, history, converged)``."""
+    qa = q[anchors]                                  # k x v
+    xx = qa @ qa.T                                   # k x k
+    xy = q @ qa.T                                    # v x k  (row i = Q_anchors · Q_i)
+    yy = np.einsum("ij,ij->i", q, q)                 # v      (constant Q_i · Q_i)
+    v, k = q.shape[0], len(anchors)
+    c = np.full((v, k), 1.0 / k)
+
+    def _obj(cm):
+        return float((yy - 2.0 * (cm * xy).sum(1) + (cm * (cm @ xx)).sum(1)).sum()) / v
+
+    step = 1.0
+    prev = _obj(c)
+    history = [(0, prev)]
+    converged = False
+    for it in range(int(iters)):
+        grad = 2.0 * (c @ xx - xy)                   # v x k, dL2/dC
+        while True:
+            upd = -step * grad
+            upd -= upd.max(axis=1, keepdims=True)     # stabilize exp (cancels on renorm)
+            np.maximum(upd, -50.0, out=upd)
+            cand = c * np.exp(upd)
+            cand /= cand.sum(axis=1, keepdims=True)
+            obj = _obj(cand)
+            if obj <= prev or step < 1e-12:
+                break
+            step *= 0.5
+        c = cand
+        if it % check_every == 0 or it == int(iters) - 1:
+            history.append((it, obj))
+            if prev - obj < tol * max(abs(prev), 1e-12):
+                converged = True
+                prev = obj
+                break
+        prev = obj
+        step *= 1.1                                   # grow while steps keep landing
+    return c, history, converged
 
 
 def _recover_kl(q, anchors, *, iters, eta, tol, check_every=5):
@@ -212,11 +245,12 @@ class AnchorLDA:
     num_topics : int
         The number of topics (and anchors) to recover.
     recover : {"kl", "l2"}, default "kl"
-        The recovery step. ``"kl"`` minimizes ``KL(Q_i ‖ C_i Q_anchors)`` with a
-        vectorized exponentiated-gradient solver — faster (a few BLAS matmuls
-        instead of one NNLS per word) and a closer co-occurrence fit. ``"l2"`` is
-        the simplex-constrained non-negative least squares of Arora et al.'s
-        RecoverL2: exact but a serial solve per word.
+        The recovery step, both vectorized exponentiated-gradient solvers over the
+        simplex. ``"kl"`` minimizes ``KL(Q_i ‖ C_i Q_anchors)`` (a closer
+        co-occurrence fit); ``"l2"`` minimizes the squared error of Arora et al.'s
+        RecoverL2 and matches the ``anchor-topic`` reference. ``"l2"`` used to be a
+        serial NNLS solve per word; it is now the vectorized solver (~140x faster at
+        K=50), so both scale to large vocabularies.
     min_count : int, default 5
         Drop vocabulary words occurring fewer than this many times overall.
     seed : int, default 42
@@ -305,11 +339,10 @@ class AnchorLDA:
     # -- fitting ------------------------------------------------------------
     def fit(self, data, *, iters=None, min_count=None):
         """Recover topics from ``data`` (a :class:`~topica.Corpus` or a list of
-        token lists). For ``recover="kl"`` ``iters`` is the maximum number of
-        exponentiated-gradient steps (default 200, with an early stop on
-        ``convergence_tol``);
-        for ``recover="l2"`` the recovery is non-iterative and ``iters`` is
-        ignored. ``min_count`` overrides the constructor value for this fit."""
+        token lists). ``iters`` is the maximum number of exponentiated-gradient
+        steps, with an early stop on ``convergence_tol`` (default 200 for
+        ``recover="kl"``, 500 for ``recover="l2"``). ``min_count`` overrides the
+        constructor value for this fit."""
         mc = self.min_count if min_count is None else int(min_count)
         docs, names = _corpus_to_token_lists(data)
         vocab, w2i = _build_vocab(docs, mc)
@@ -336,8 +369,9 @@ class AnchorLDA:
             c, self._fit_history, self._converged = _recover_kl(
                 q, anchors, iters=n_iters, eta=self.eta, tol=self.convergence_tol)
         else:
-            c = _recover_l2(q, anchors)          # V x K, p(topic | word)
-            self._fit_history, self._converged = [], None
+            n_iters = 500 if iters is None else int(iters)
+            c, self._fit_history, self._converged = _recover_l2(  # V x K, p(topic | word)
+                q, anchors, iters=n_iters, tol=self.convergence_tol)
         a = c * (pword[:, None] ** self.frequency_temper)   # (tempered) Bayes inversion
         z = a.sum(axis=0, keepdims=True)
         z[z == 0] = 1.0

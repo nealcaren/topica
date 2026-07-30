@@ -183,7 +183,7 @@ def _recovery_given_anchors_parity(docs):
     token_lists = docs.documents() if hasattr(docs, "documents") else docs
     Qt, _ = TA._build_q(TA._doc_term(token_lists, idx))
 
-    Ct = TA._recover_l2(Qt, anchors)
+    Ct, _hist, _conv = TA._recover_l2(Qt, anchors)
     Cr = _reference_recover_C(Qt, anchors, len(anchors))
     cos = float((_unit(Ct) * _unit(Cr)).sum(axis=1).mean())
     return cos, _l2_objective(Qt, Ct, anchors), _l2_objective(Qt, Cr, anchors)

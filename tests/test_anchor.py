@@ -49,11 +49,13 @@ class TestFit:
         objs = [o for _, o in m.fit_history]
         assert all(b <= a + 1e-9 for a, b in zip(objs, objs[1:]))
 
-    def test_l2_is_noniterative(self):
+    def test_l2_is_iterative(self):
+        # recover="l2" is now a vectorized exponentiated-gradient solve (#622), so
+        # it reports a convergence trace like the KL path.
         docs, _, _ = _separable_corpus()
         m = topica.AnchorLDA(4, recover="l2", min_count=2, seed=0).fit(docs)
-        assert m.fit_history == []
-        assert m.converged is None
+        assert len(m.fit_history) > 0
+        assert m.converged in (True, False)
 
     def test_bad_recover_raises(self):
         with pytest.raises(ValueError, match="recover must be"):
