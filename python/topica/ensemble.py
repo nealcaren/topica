@@ -77,10 +77,11 @@ class EnsembleResult:
     stability : ``(K,)`` per-topic consistency in ``[0, 1]``. For ``"cluster"`` and
         ``"stable"`` it is one minus the mean pairwise distance among the run
         topics that formed the cluster; for ``"align"`` it is the mean top-word
-        Jaccard with the matched run topics. 1.0 means every run produced the same
-        topic. For ``"cluster"``, a singleton cluster -- a topic only one run
-        contributed, with nothing to corroborate it -- scores 0.0, so it never
-        looks like a trustworthy consensus.
+        Jaccard with the matched run topics. 1.0 means the contributing topics are
+        identical -- how many *distinct* runs contributed is recorded separately by
+        ``support``. For ``"cluster"`` and ``"stable"``, a topic only one run
+        contributed, with nothing to corroborate it, scores 0.0 (a lone run is not
+        agreement), so it never looks like a trustworthy consensus.
     support : ``(K,)`` how well-backed each topic is. For ``"cluster"`` and
         ``"stable"`` it is the fraction of runs that contributed a topic to the
         cluster (1.0 = all runs found it); for ``"align"`` it is the match margin
@@ -89,7 +90,8 @@ class EnsembleResult:
     reliable : ``(K,)`` bool — ``stability >= 0.5`` *and* well-supported. An
         unreliable topic is a consensus the individual runs do not agree on; treat
         it with suspicion. (``"stable"`` topics are reproducible by construction,
-        so this is usually all ``True``.)
+        so this is usually all ``True`` -- except a single-run core, reachable when
+        ``min_cores == 1``, which scores 0.0 and is not reliable.)
     agreement : scalar mean of ``stability`` — an overall "how reproducible is this
         K?" number (``nan`` if ``"stable"`` found no topics).
     method : ``"cluster"``, ``"align"``, or ``"stable"``.
@@ -326,16 +328,20 @@ def _ensemble_cluster(runs, betas, thetas, vocab, K, V, *,
         if thetas is not None:
             rows_theta.append(np.average(all_theta[members], axis=0, weights=wm))
         # Internal consistency: 1 - mean pairwise distance among members. A
-        # singleton cluster has no corroborating run to agree with, so its
-        # consistency is 0.0, not 1.0 -- a lone topic is the *least* trustworthy
-        # consensus, and scoring it 1.0 both misreads it and inflates `agreement`.
-        if len(members) > 1:
+        # cluster only one run contributed to has no *other* run corroborating
+        # it, so its consistency is 0.0, not 1.0 -- a lone topic is the *least*
+        # trustworthy consensus, and scoring it 1.0 both misreads it and inflates
+        # `agreement`. We key on the number of distinct contributing runs, not on
+        # member count: two near-identical topics from the *same* run still form
+        # an uncorroborated cluster and must not score as agreement.
+        n_runs_c = len(np.unique(run_of[members]))
+        if n_runs_c > 1:
             sub = D[np.ix_(members, members)]
             stab = 1.0 - sub[np.triu_indices(len(members), 1)].mean()
         else:
             stab = 0.0
         stability.append(float(stab))
-        support.append(len(np.unique(run_of[members])) / m)
+        support.append(n_runs_c / m)
         sizes.append(len(members))
 
     beta_bar = np.vstack(rows_beta)
@@ -343,13 +349,13 @@ def _ensemble_cluster(runs, betas, thetas, vocab, K, V, *,
     support = np.array(support)
     sizes = np.array(sizes, dtype=int)
 
-    n_singletons = int((sizes == 1).sum())
+    n_singletons = int((support <= 1.0 / m).sum())
     if n_singletons:
         warnings.warn(
-            f"{n_singletons} of {len(sizes)} consensus topics are singletons "
-            "(contributed by a single run, with nothing to corroborate them); they "
-            "score 0.0 stability and are not marked reliable. Inspect them before "
-            "trusting them, or drop them with res.reliable.",
+            f"{n_singletons} of {len(sizes)} consensus topics come from a single "
+            "run, with nothing to corroborate them; they score 0.0 stability and "
+            "are not marked reliable. Inspect them before trusting them, or filter "
+            "the result arrays with res.reliable.",
             stacklevel=3,
         )
 
@@ -661,13 +667,19 @@ def _ensemble_stable(runs, betas, thetas, vocab, K, V, *,
         rows_beta.append(ttda[members].mean(axis=0))
         if all_theta is not None:
             rows_theta.append(all_theta[members].mean(axis=0))
-        if len(members) > 1:
+        # A core only one run contributed to (reachable when min_cores == 1) has
+        # no other run corroborating it, so its consistency is 0.0, not the
+        # vacuous 1.0 that "1 - mean pairwise distance" gives with no pair. This
+        # matches the "cluster"/cross_ensemble paths; the gensim-mirroring part is
+        # the clustering above, not this post-hoc score.
+        n_runs_c = len(np.unique(run_of[members]))
+        if n_runs_c > 1:
             sub = D[np.ix_(members, members)]
             stab = 1.0 - sub[~np.eye(len(members), dtype=bool)].mean()
         else:
-            stab = 1.0
+            stab = 0.0
         stability.append(float(stab))
-        support.append(len(np.unique(run_of[members])) / m)
+        support.append(n_runs_c / m)
         sizes.append(len(members))
 
     if not rows_beta:
@@ -907,7 +919,7 @@ def cross_ensemble(
         warnings.warn(
             "Models do not all share document-topic distributions, so document-topic "
             "distance is unavailable; using topic-word distance only (lambda_=1).",
-            stacklevel=3,
+            stacklevel=2,
         )
         lam = 1.0
 
@@ -930,16 +942,19 @@ def cross_ensemble(
             rows_theta.append(np.average(all_theta[members], axis=0, weights=wm))
         
         # Internal consistency: 1 - mean pairwise distance among members. A
-        # singleton cluster (one model's topic, no corroboration from the others)
-        # scores 0.0, not 1.0: it is the least trustworthy consensus, and scoring
-        # it 1.0 both misreads it and inflates `agreement`.
-        if len(members) > 1:
+        # cluster only one model contributed to has no other model corroborating
+        # it, so it scores 0.0, not 1.0: it is the least trustworthy consensus,
+        # and scoring it 1.0 both misreads it and inflates `agreement`. We key on
+        # the number of distinct contributing models, not on member count: two
+        # near-identical topics from the *same* model are not agreement.
+        n_runs_c = len(np.unique(run_of[members]))
+        if n_runs_c > 1:
             sub = D[np.ix_(members, members)]
             stab = 1.0 - sub[np.triu_indices(len(members), 1)].mean()
         else:
             stab = 0.0
         stability.append(float(stab))
-        support.append(len(np.unique(run_of[members])) / m_runs)
+        support.append(n_runs_c / m_runs)
         sizes.append(len(members))
 
     beta_bar = np.vstack(rows_beta)
@@ -947,14 +962,14 @@ def cross_ensemble(
     support = np.array(support)
     sizes = np.array(sizes, dtype=int)
 
-    n_singletons = int((sizes == 1).sum())
+    n_singletons = int((support <= 1.0 / m_runs).sum())
     if n_singletons:
         warnings.warn(
-            f"{n_singletons} of {len(sizes)} consensus topics are singletons "
-            "(contributed by a single model, with nothing to corroborate them); they "
-            "score 0.0 stability and are not marked reliable. Inspect them before "
-            "trusting them, or drop them with res.reliable.",
-            stacklevel=3,
+            f"{n_singletons} of {len(sizes)} consensus topics come from a single "
+            "model, with nothing to corroborate them; they score 0.0 stability and "
+            "are not marked reliable. Inspect them before trusting them, or filter "
+            "the result arrays with res.reliable.",
+            stacklevel=2,
         )
 
     # Order topics by trustworthiness (support first, then consistency)

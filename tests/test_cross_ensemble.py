@@ -115,7 +115,7 @@ def test_cross_ensemble_singleton_scores_zero_stability():
     uniques = [topic(4, 5), topic(6, 7), topic(8, 9)]
     models = [DummyModel(np.vstack(shared + [u]), vocabulary=vocab) for u in uniques]
 
-    with pytest.warns(UserWarning, match="singleton"):
+    with pytest.warns(UserWarning, match="single model"):
         res = cross_ensemble(models, num_topics=5, lambda_=1.0, topn=2)
 
     singleton = res.cluster_sizes == 1
@@ -124,6 +124,42 @@ def test_cross_ensemble_singleton_scores_zero_stability():
     assert not res.reliable[singleton].any()                 # a lone topic is never reliable
     assert int(res.reliable.sum()) == 2                      # only the two corroborated topics
     assert res.agreement < 0.5                               # singletons no longer inflate it
+
+
+def test_cross_ensemble_single_model_multitopic_cluster_scores_zero():
+    # A cluster can hold more than one topic yet come from a *single* model: give
+    # each model two identical copies of its own idiosyncratic topic. Those copies
+    # cluster together (distance 0), so the cluster has 2 members but only 1
+    # contributing model -- vacuous corroboration. Keying stability on member
+    # count would score it 1.0 and mark it reliable; keying on contributing runs
+    # (the fix) scores it 0.0, marks it unreliable, and counts it as a singleton.
+    V = 10
+
+    def topic(*idx):
+        v = np.full(V, 1e-3)
+        for i in idx:
+            v[i] = 1.0
+        return v / v.sum()
+
+    vocab = [f"w{i}" for i in range(V)]
+    shared = topic(0, 1)
+    # Model A: shared + two identical copies of a (4,5) topic; Model B: shared +
+    # two identical copies of a (6,7) topic.
+    model_a = DummyModel(np.vstack([shared, topic(4, 5), topic(4, 5)]), vocabulary=vocab)
+    model_b = DummyModel(np.vstack([shared, topic(6, 7), topic(6, 7)]), vocabulary=vocab)
+
+    with pytest.warns(UserWarning, match="single model"):
+        res = cross_ensemble([model_a, model_b], num_topics=3, lambda_=1.0, topn=2)
+
+    # Every cluster here has two members; what separates the vacuous ones is that
+    # both members come from the *same* model (support 0.5, not 1.0).
+    assert np.all(res.cluster_sizes == 2)
+    same_model = res.support < 1.0                           # the two duplicated idiosyncratic pairs
+    assert int(same_model.sum()) == 2
+    assert np.allclose(res.support[same_model], 0.5)         # one of two models
+    assert np.allclose(res.stability[same_model], 0.0)       # not the misleading 1.0 of identical copies
+    assert not res.reliable[same_model].any()                # one model agreeing with itself is not consensus
+    assert res.reliable[res.support == 1.0].all()            # the genuinely shared topic stays reliable
 
 
 def test_cross_ensemble_validation_guards():
