@@ -769,7 +769,14 @@ SEARCH_K_DIRECTIONS = {
     "heldout_loglik": "maximize",
     "perplexity": "minimize",
     "polarization": "maximize",
+    # Opt-in ldatuning-style criteria (search_k(criteria=...)).
+    "deveaud": "maximize",   # mean pairwise JS divergence between topics
+    "cao_juan": "minimize",  # mean pairwise cosine similarity between topics
 }
+
+# Extra K-selection criteria computable from the topic-word matrix, requested via
+# search_k(criteria=...). Off by default and out of the frontier.
+_SEARCH_K_CRITERIA = ("deveaud", "cao_juan")
 
 
 def _argbest_k(rows, score):
@@ -1044,6 +1051,7 @@ def search_k(
     coherence_type="u_mass",
     n_jobs=1,
     num_seeds=_SEARCH_K_DEFAULT_SEEDS,
+    criteria=(),
 ):
     """Fit a model for each K and report quality metrics (stm's ``searchK``).
 
@@ -1103,6 +1111,13 @@ def search_k(
         column, and ``best_k(rule="1se")`` becomes available (the simplest K within
         one SE of the optimum). The per-K work parallelizes over ``(K, seed)`` via
         ``n_jobs``. A single seed carries no standard errors (backward-compatible).
+    criteria : optional extra K-selection criteria to report as columns (default
+        none). ``"deveaud"`` (Deveaud et al. 2014; mean pairwise Jensen-Shannon
+        divergence between topics, higher = more distinct) and ``"cao_juan"``
+        (Cao Juan et al. 2009; mean pairwise topic cosine, lower = less redundant).
+        Opt-in and out of the frontier, but selectable via ``best_k("deveaud")`` /
+        ``best_k("cao_juan")`` and carry standard errors under ``num_seeds>1`` like
+        any other metric.
     """
     from . import LDA, STM  # local import to avoid a cycle at module load
 
@@ -1112,6 +1127,12 @@ def search_k(
         raise ValueError(f"num_seeds must be >= 1, got {num_seeds!r}")
     if content is not None and model != "stm":
         raise ValueError("content covariates are only supported when model='stm'")
+
+    criteria = tuple(criteria)
+    bad = [c for c in criteria if c not in _SEARCH_K_CRITERIA]
+    if bad:
+        raise ValueError(
+            f"unknown criteria {bad}; choose from {list(_SEARCH_K_CRITERIA)}")
 
     valid_coh = ("u_mass", "c_uci", "c_npmi", "c_v")
     coherence_type = coherence_type.lower()
@@ -1194,6 +1215,9 @@ def search_k(
         rc = check_residuals(m, ref_docs)
         row["dispersion"] = float(rc.dispersion)
         row["dispersion_pvalue"] = float(rc.pvalue)
+        # Opt-in ldatuning-style criteria from the topic-word matrix.
+        for c in criteria:
+            row[c] = _extra_criterion(c, m.topic_word)
         if stratified:
             row["polarization"] = float(np.mean(_pol(m)))
         if held_out is not None:
@@ -1570,6 +1594,47 @@ def plot_topic_discovery(model, *, ax=None):
 def _mean_exclusivity(topic_word, n: int) -> float:
     from .coherence import exclusivity
     return float(np.mean(exclusivity(topic_word, n=n)))
+
+
+def _cao_juan(topic_word) -> float:
+    """Mean pairwise cosine similarity between topic-word distributions
+    (Cao Juan et al. 2009). Lower is better -- redundant topics are similar, so
+    the least-redundant K minimizes it. ``nan`` for a single topic."""
+    phi = np.asarray(topic_word, dtype=np.float64)
+    k = phi.shape[0]
+    if k < 2:
+        return float("nan")
+    norm = np.linalg.norm(phi, axis=1)
+    unit = phi / np.where(norm > 0, norm, 1.0)[:, None]
+    sim = unit @ unit.T
+    return float(sim[np.triu_indices(k, 1)].mean())
+
+
+def _deveaud(topic_word) -> float:
+    """Mean pairwise Jensen-Shannon divergence between topic-word distributions
+    (Deveaud et al. 2014). Higher is better -- distinct topics diverge, so the
+    most-distinct K maximizes it. ``nan`` for a single topic."""
+    phi = np.asarray(topic_word, dtype=np.float64)
+    phi = phi / np.clip(phi.sum(axis=1, keepdims=True), 1e-300, None)
+    k = phi.shape[0]
+    if k < 2:
+        return float("nan")
+    eps = 1e-12
+
+    def _kl(p, q):
+        return float(np.sum(np.where(p > 0, p * np.log((p + eps) / (q + eps)), 0.0)))
+
+    total, pairs = 0.0, 0
+    for i in range(k):
+        for j in range(i + 1, k):
+            mix = 0.5 * (phi[i] + phi[j])
+            total += 0.5 * _kl(phi[i], mix) + 0.5 * _kl(phi[j], mix)
+            pairs += 1
+    return total / pairs
+
+
+def _extra_criterion(name, topic_word) -> float:
+    return {"deveaud": _deveaud, "cao_juan": _cao_juan}[name](topic_word)
 
 
 # ---------------------------------------------------------------------------

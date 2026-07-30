@@ -281,6 +281,58 @@ def test_search_k_reports_residual_dispersion_and_dedupes_ks():
     assert all(np.isfinite(r["dispersion"]) for r in rows)
 
 
+def test_extra_criteria_detect_redundant_topics():
+    # #633: the discriminating behavior the criteria exist for. Four near-orthogonal
+    # topics vs the same four plus a duplicate fifth: the redundant topic must raise
+    # cao_juan (topics more similar) and lower deveaud (topics less distinct).
+    from topica.validation import _cao_juan, _deveaud
+    V = 8
+    base = np.zeros((4, V))
+    for i in range(4):
+        base[i, 2 * i:2 * i + 2] = 0.5
+    dup = np.vstack([base, base[0]])  # 5th topic duplicates the 1st
+    assert _cao_juan(dup) > _cao_juan(base)
+    assert _deveaud(dup) < _deveaud(base)
+    # exact sentinels: identical topics -> cosine 1 / JSD 0; disjoint -> cosine 0
+    same = np.array([[0.5, 0.5, 0.0, 0.0], [0.5, 0.5, 0.0, 0.0]])
+    orth = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
+    assert _cao_juan(same) == pytest.approx(1.0)
+    assert _cao_juan(orth) == pytest.approx(0.0)
+    assert _deveaud(same) == pytest.approx(0.0)
+    assert _deveaud(orth) == pytest.approx(np.log(2))
+    # single topic -> nan (no pairs)
+    assert np.isnan(_cao_juan(np.array([[1.0, 0.0]])))
+    assert np.isnan(_deveaud(np.array([[1.0, 0.0]])))
+
+
+def test_search_k_criteria_are_opt_in_and_selectable():
+    # #633: criteria default off (out of the frontier default) and are added only
+    # when requested; then they are selectable and carry SEs under num_seeds>1.
+    docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12 + \
+           [["red", "blue", "green"]] * 12
+    plain = topica.search_k(docs, [2, 3], iters=60, num_samples=1, num_seeds=1)
+    assert "deveaud" not in plain[0] and "cao_juan" not in plain[0]
+
+    res = topica.search_k(docs, [2, 3, 4], iters=60, num_samples=1, num_seeds=1,
+                          criteria=["deveaud", "cao_juan"])
+    assert all("deveaud" in r and "cao_juan" in r for r in res)
+    assert res.directions["deveaud"] == "maximize"
+    assert res.directions["cao_juan"] == "minimize"
+    assert res.best_k("deveaud") in {r["k"] for r in res}
+    assert res.best_k("cao_juan") in {r["k"] for r in res}
+    # criteria stay out of the default selection (no held-out -> frontier)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert res.best_k() == res.best_k("frontier")
+
+    with pytest.raises(ValueError, match="unknown criteria"):
+        topica.search_k(docs, [2], criteria=["bogus"])
+
+    multi = topica.search_k(docs, [2, 3], iters=60, num_samples=1, num_seeds=3,
+                            criteria=["deveaud"])
+    assert "deveaud_se" in multi[0]
+
+
 def test_search_k_num_seeds_reports_se_and_is_backward_compatible():
     # #632: num_seeds=1 (default) reports no standard-error columns; num_seeds>1
     # adds <metric>_se for every varying metric and keeps <metric> as the mean.
