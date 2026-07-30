@@ -262,14 +262,14 @@ def test_search_k_n_jobs_matches_serial():
            [["red", "blue", "green"]] * 12
     ks = [2, 3, 4]
     serial = topica.search_k(docs, ks, iters=60, num_samples=1, n_jobs=1)
-    for n_jobs in (2, -1):
+    for n_jobs in (2, -1, None):
         par = topica.search_k(docs, ks, iters=60, num_samples=1, n_jobs=n_jobs)
         assert [r["k"] for r in par] == ks                      # order preserved
-        for a, b in zip(serial, par):
-            assert a["coherence"] == b["coherence"]
-            assert a["exclusivity"] == b["exclusivity"]
-            assert a["dispersion"] == b["dispersion"]
+        assert list(par) == list(serial)                        # every key, bit-identical
         assert par.best_k() == serial.best_k()
+    # A single-K grid must behave identically no matter what n_jobs asks for.
+    one = topica.search_k(docs, [3], iters=60, num_samples=1, n_jobs=1)
+    assert list(topica.search_k(docs, [3], iters=60, num_samples=1, n_jobs=8)) == list(one)
 
 
 def test_search_k_reports_residual_dispersion_and_dedupes_ks():

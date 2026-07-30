@@ -785,7 +785,8 @@ def _resolve_workers(n_jobs, n_tasks):
     n_tasks)``. A single-K grid never parallelizes."""
     if n_tasks <= 1:
         return 1
-    if n_jobs is None or n_jobs <= 0:
+    # None / non-positive / non-finite (inf, nan) -> all cores.
+    if n_jobs is None or not np.isfinite(n_jobs) or n_jobs <= 0:
         import os
         n_jobs = os.cpu_count() or 1
     return max(1, min(int(n_jobs), n_tasks))
@@ -985,7 +986,8 @@ def search_k(
     n_jobs : number of worker threads for the per-K fits (default ``1``, serial).
         The fits are independent and each keeps its own fixed ``seed``, so the
         results are identical to the serial run; only the wall-clock changes (the
-        Rust fits release the GIL). ``n_jobs<=0`` (or ``None``) uses all cores.
+        Rust fits release the GIL). ``n_jobs<=0`` (or ``None``) uses all cores,
+        capped at the number of K values scanned.
         Note it multiplies with any intra-fit threading (``num_threads=`` on the
         model), so ``n_jobs`` above the core count can oversubscribe.
     """
