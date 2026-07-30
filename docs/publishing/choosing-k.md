@@ -1,4 +1,4 @@
-# 2. Choose and justify K
+# 3. Choose and justify K
 
 !!! quote "The principle"
     **K is a research decision, not a tuning parameter.** Multiple values of `K`

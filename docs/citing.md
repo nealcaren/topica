@@ -26,7 +26,7 @@ model you use, and, where you rely on a feature ported from a specific package
 | `DMR` | Mimno & McCallum (2008) |
 | `LabeledLDA` | Ramage, Hall, Nallapati & Manning (2009) |
 | `CTM` | Blei & Lafferty (2007) |
-| `STM` | Roberts, Stewart & Tingley (2014, 2019) |
+| `STM` | Roberts, Stewart & Airoldi (2016); Roberts, Stewart & Tingley (2019) |
 | `SAGE` | Eisenstein, Ahmed & Xing (2011) |
 | `HDP` | Teh, Jordan, Beal & Blei (2006) |
 | `DTM` | Blei & Lafferty (2006) |

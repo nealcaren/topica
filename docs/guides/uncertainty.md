@@ -121,6 +121,20 @@ tw = topica.standard_errors(bertopic, corpus, of="top_words",
                             method="bootstrap", refit=refit, n_boot=200)
 ```
 
+## Model selection and consensus
+
+The same "report the error bar, not just the estimate" logic applies to picking K
+and to combining runs. Both are opt-in.
+
+- **Choosing K.** `search_k(..., num_seeds>1)` refits each K over several seeds, so
+  every metric column comes with a `<metric>_se` standard error. `result.best_k(rule="1se")`
+  then prefers the simplest K within one standard error of the optimum instead of
+  chasing a noisy maximum. See [Choose and justify K](../publishing/choosing-k.md).
+- **Combining runs.** `ensemble(runs, n_boot>0)` resamples the runs with
+  replacement and recomputes the consensus, reporting `agreement_ci` and per-topic
+  `stability_ci` — so you can say whether one K (or model family) is *really* more
+  reproducible than another. See [Ensemble](diagnostics.md#ensemble-combining-runs).
+
 ## Which to use
 
 | Quantity | Models | Method |
@@ -129,6 +143,8 @@ tw = topica.standard_errors(bertopic, corpus, of="top_words",
 | Group / overall prevalence | LDA, keyATM, STM, CTM | `composition` |
 | Top words, topic quality | any | `bootstrap` |
 | Anything, embedding models | BERTopic, Top2Vec, ETM, FASTopic | `bootstrap` (with `refit=`) |
+| Choice of K | any | `search_k(num_seeds>1)` + `best_k(rule="1se")` |
+| Consensus reproducibility | any | `ensemble(n_boot>0)` → `agreement_ci` |
 
 Composition is cheaper and avoids the alignment problem, so prefer it where it
 applies. Reach for the bootstrap when you need top-word intervals or you are on a

@@ -1,4 +1,4 @@
-# 3. Validate the topics
+# 4. Validate the topics
 
 This is the step that separates a publishable analysis from a fishing
 expedition. You must show, with evidence, that your topics are (a) **coherent**

@@ -21,7 +21,7 @@ keyword-only argument.
 
 ### Tier 0 — every estimator (the floor)
 
-All 20 estimators in the registry must pass every Tier 0 check.
+Every estimator in the registry must pass every Tier 0 check.
 
 **fit signature**
 
@@ -136,12 +136,12 @@ cluster models) is a tracked gap in `KNOWN_GAPS`, not an exemption.
 
 The Python contract above has a mirror one layer down, in the Rust core. Every
 fitted model struct (`CtmModel`, `TopicModel`, `StsModel`, `HdpModel`, …)
-implements a small trait hierarchy in `src/estimator.rs`, so the uniform surface
+implements a small trait hierarchy in `topica-core/src/estimator.rs`, so the uniform surface
 is testable in `cargo test --lib` with no Python and is the binding point for a
 future R frontend (issue #75). The PyO3 getters become thin forwarders to it.
 
 ```rust
-// src/estimator.rs — the Tier-0 floor, on the fitted *struct*, not the pyclass.
+// topica-core/src/estimator.rs — the Tier-0 floor, on the fitted *struct*, not the pyclass.
 pub trait Estimator {
     fn num_topics(&self) -> usize;
     fn topic_word(&self) -> Vec<Vec<f64>>;       // (K, V); topic_word().len() == num_topics()
@@ -152,12 +152,12 @@ pub trait Estimator {
 }
 
 // Tier-2 family traits — implementing them is what forces the posterior to exist.
-pub trait DirichletModel: Estimator {           // src/estimator.rs
+pub trait DirichletModel: Estimator {           // topica-core/src/estimator.rs
     fn alpha(&self) -> Vec<f64>;                 // length K
     fn theta_draws(&self) -> Vec<Vec<Vec<f64>>>; // (S, D, K); [] if not retained
     fn doc_lengths(&self) -> Vec<usize>;         // length D
 }
-pub trait LogisticNormalModel: Estimator {      // src/variational/mod.rs
+pub trait LogisticNormalModel: Estimator {      // topica-core/src/variational/mod.rs
     fn eta_dim(&self) -> usize;                  // K-1 (STM/CTM), 2K-1 (STS)
     fn eta_mean(&self) -> &[Vec<f64>];           // (D, eta_dim)
     fn eta_cov(&self) -> &[Vec<f64>];            // (D, eta_dim²), row-major
@@ -184,7 +184,7 @@ registry (family + structural exemptions) that mirrors
 `python/topica/conformance.py`; keep the two in lockstep.
 
 **Shared variational kernels.** Logistic-normal models do not re-implement the
-E-step. `src/variational/` holds the reusable pieces: `laplace_estep` (the
+E-step. `topica-core/src/variational/` holds the reusable pieces: `laplace_estep` (the
 parallel, document-order-preserving Laplace E-step driver — CTM, STM, and STS all
 fit through it), `lbfgs_minimize`, `fit_gamma_ridge` (the pooled-ridge Γ M-step),
 and `doc_sparse`. A new logistic-normal model should call `laplace_estep` rather

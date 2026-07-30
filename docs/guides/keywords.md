@@ -8,8 +8,8 @@ let rare words dominate.
 ```python
 import topica
 
-conservative = [tokenize(t) for t in con_texts]
-liberal      = [tokenize(t) for t in lib_texts]
+conservative = [topica.tokenize(t) for t in con_texts]
+liberal      = [topica.tokenize(t) for t in lib_texts]
 
 scored = topica.fighting_words(conservative, liberal, prior=0.05)
 # sorted by z-score: corpus-A markers at the top, corpus-B at the bottom

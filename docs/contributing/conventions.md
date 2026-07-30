@@ -1,10 +1,10 @@
 # API conventions: the shared vocabulary
 
-topica has more than twenty models. They feel like one library only if the same
+topica has more than 40 models. They feel like one library only if the same
 concept wears the same name everywhere: the iteration count is always `iters`,
 the seed is always `seed`, a covariate design matrix is always reachable as
-`covariates=`. This page records that vocabulary so a new model (the most recent
-being `GDMR`) matches by construction rather than by memory.
+`covariates=`. This page records that vocabulary so a newly added model matches
+by construction rather than by memory.
 
 !!! note "The test is the source of truth"
     A hand-maintained style guide drifts. The authority is

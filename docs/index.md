@@ -1,6 +1,6 @@
 # Topica
 
-`topica` is a fast topic-modeling library for Python with more than two dozen
+`topica` is a fast topic-modeling library for Python with more than 40
 models, built for social scientists who want to move from text data to
 publishable results in a single workflow. It brings together models and tools
 usually split across JVM software like MALLET and R packages like `stm`, and

@@ -161,7 +161,7 @@ seeds = {
     "africa":    ["africa", "african", "congo", "liberia", "empire"],
 }
 ka = topica.KeyATM(seeds, num_topics=8, seed=1)
-ka.fit(phrased_docs, iters=800)
+ka.fit(docs, iters=800)
 for t in range(4):
     print(f"{ka.topic_names[t]:10s}", [w for w, _ in ka.top_words(7, topic=t)])
 ```

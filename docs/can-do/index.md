@@ -8,7 +8,7 @@ If your goal is a publishable analysis, pair it with
 
 - :material-shape: **[The models](../guides/models.md)**
 
-    More than a dozen model families, from LDA through STM and its STS
+    More than 40 models, from LDA through STM and its STS
     sentiment-discourse extension, HDP, dynamic and supervised topics, to
     short-text and embedding-based models, all with one consistent API.
 

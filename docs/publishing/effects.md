@@ -1,4 +1,4 @@
-# 4. Measure effects properly
+# 5. Measure effects properly
 
 Most social-science topic-model papers don't stop at "here are the themes."
 They ask **how topic prevalence relates to something**: time, group, treatment,

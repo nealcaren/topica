@@ -106,7 +106,7 @@ topic's top documents with the LLM and scores by **label purity** (the fraction 
 topic's documents sharing the majority label), returning the model with the highest
 mean purity. This is the paper's *working* number-of-topics signal — doc-label purity
 tracks ground-truth cluster quality, where rating the top *words* across `k` does not
-— and complements `search_k`'s coherence/exclusivity/perplexity criteria.
+— and complements `search_k`'s coherence, exclusivity, held-out, and dispersion criteria.
 
 ### A multi-dimensional suite (Tan & D'Souza 2025)
 
@@ -162,12 +162,23 @@ of these numbers.
 ## Stability and model selection
 
 ```python
-topica.search_k(docs, ks=[10, 20, 30], held_out=test)     # coherence/exclusivity/perplexity per K
+topica.search_k(docs, ks=[10, 20, 30], held_out=test)     # coherence, exclusivity, held-out, dispersion per K
 topica.bootstrap_stability(docs, k=20, n_boot=50)         # per-topic stability under resampling
 topica.align_topics(model_a, model_b)                     # one-to-one match across fits
 topica.topic_stability([model_a, model_b], topn=10)       # cross-fit term overlap
 topica.check_residuals(model, docs)                       # Taddy dispersion: is K too small?
 ```
+
+`search_k` returns a `SearchKResult` whose rows carry `coherence`, `exclusivity`,
+residual `dispersion`, and (with `held_out=`) a held-out metric per K, plus
+optional `criteria=("deveaud", "cao_juan")` columns. Fit several seeds per K with
+`num_seeds>1` to get a `<metric>_se` standard error on each (parallelize the fits
+with `n_jobs=-1`). Then let `result.best_k(metric=..., rule=...)` name a K:
+`rule="best"` (the optimum), `"1se"` (the simplest K within one standard error, so
+you don't over-read noise), or `"elbow"` (the diminishing-returns knee of a
+held-out curve). The default `best_k()` picks the coherence/exclusivity *frontier*
+rather than a single monotone metric. The [Choose and justify K](../publishing/choosing-k.md)
+guide works a full example on `poliblog`.
 
 ### Topic alignment
 
@@ -255,7 +266,20 @@ cons = topica.ensemble(runs)                       # combine them
 cons.topic_word.shape       # (20, V)
 cons.stability              # per-topic agreement across runs, in [0, 1]
 cons.reliable               # per-topic: consistent AND well-supported?
+cons.agreement              # scalar: mean stability, "how reproducible is this K?"
 topica.coherence(cons, docs)
+```
+
+`agreement` and `stability` are point estimates. Pass `n_boot>0` to bootstrap
+them — the runs are resampled with replacement, the consensus recomputed, and the
+result gains `agreement_ci` / `agreement_se` and (for `cluster`/`align`) a
+per-topic `stability_ci`. That tells you whether a difference in `agreement`
+across K, or across model families, is real or just noise from which runs you
+happened to combine:
+
+```python
+cons = topica.ensemble(runs, n_boot=300, boot_seed=0)
+cons.agreement, cons.agreement_ci   # e.g. 0.79, (0.74, 0.83)
 ```
 
 Three methods are available:

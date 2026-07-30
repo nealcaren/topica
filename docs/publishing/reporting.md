@@ -1,4 +1,4 @@
-# 5. Report and make reproducible
+# 6. Report and make reproducible
 
 The last step is writing it up so a reader can evaluate your analysis and a
 replicator can rerun it.

@@ -7,10 +7,12 @@ small set of human checks that cannot be made cheap, deterministic CI jobs.
 ## Before creating a tag
 
 - [ ] Start from a clean worktree and an up-to-date `main`.
-- [ ] Choose the release version, update both `pyproject.toml` and `Cargo.toml`,
-      and add a dated changelog entry.
-- [ ] Confirm that the tag will be exactly `v<version>`. CI refuses a tag whose
-      version disagrees with either manifest.
+- [ ] Choose the release version, update `pyproject.toml`, `Cargo.toml`, and
+      `CITATION.cff` (and `Cargo.lock`), and add a dated changelog entry.
+- [ ] Confirm that the tag will be exactly `v<version>`. CI (`test_version_consistency`)
+      refuses a tag whose version disagrees with any of the three
+      (`pyproject.toml`, `Cargo.toml`, `CITATION.cff`); `CITATION.cff` is the one
+      that most often drifts.
 - [ ] Read the open-issue triage: close delivered work, keep deliberate research
       deferrals visible, and do not turn an RFC into a release promise by accident.
 

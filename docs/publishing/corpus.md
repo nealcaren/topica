@@ -118,4 +118,4 @@ removed (right axis). A threshold that removes many documents will corrupt a
 downstream covariate analysis; aim for the elbow where vocabulary shrinks
 rapidly but document loss stays near zero.
 
-→ Next: [Choose and justify K](choosing-k.md).
+→ Next: [Pick the right model](choosing-model.md).
