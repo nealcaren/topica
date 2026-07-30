@@ -18,6 +18,10 @@ Modes:
   --list                   list registry keys
 With no KEY, all registered entries run. Missing reference toolchains SKIP cleanly.
 
+Running a subset of KEYs updates just those rows in the existing table and keeps the
+rest (pass --no-merge to rebuild the table from only the subset instead). A full run
+with no KEYs always rebuilds from scratch.
+
 Output: a markdown table  model | reference | K | accuracy | topica_s | ref_s | speedup | topica_MB / ref_MB
 written to benchmarks/full_model_run.md (+ the raw JSON alongside).
 """
@@ -901,6 +905,50 @@ def _register_lsa(k=10, threads=1):
              threads=threads, corpus="ng")
 
 
+def _anchor_topic_available():
+    try:
+        import anchor_topic  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _register_anchorlda(k=50, threads=1):
+    thr = 0.01
+
+    def topica():
+        import topica
+        docs = _ng_docs()
+        # Matched to the reference's method (Arora RecoverL2, untempered inversion)
+        # for a fair fidelity number; the shipped default is recover="kl" + tempering.
+        m = topica.AnchorLDA(k, recover="l2", frequency_temper=1.0,
+                             min_count=5, anchor_min_doc_freq=thr, seed=42)
+        m.fit(docs)
+        return np.asarray(m.topic_word), list(m.vocabulary)
+
+    def ref():
+        import numpy as _np
+        if not hasattr(_np, "int"):
+            _np.int = int  # anchor-topic 0.1.2 predates the NumPy 1.24 alias removal
+        import scipy.sparse as sp
+        from anchor_topic.topics import model_topics
+        from topica.anchor import _build_vocab
+        docs = _ng_docs()
+        vocab, _ = _build_vocab(docs, 5)                  # identical to topica's kept vocab
+        M = sp.csc_matrix(G.doc_term(docs, vocab).T)      # word x document
+        A, _Q, _anch = model_topics(M, k, thr, seed=1)
+        a = np.asarray(A).T                               # K x V, p(word | topic)
+        return a / a.sum(1, keepdims=True).clip(min=1e-300), vocab
+
+    register("anchorlda", "AnchorLDA", k, topica,
+             refs={"anchor-topic": (_anchor_topic_available, ref)},
+             note="Arora RecoverL2 matched (recover='l2', temper=1.0). The two libs "
+                  "use different greedy anchor selectors, so end-to-end cosine is below "
+                  "the recovery-given-anchors parity (=1.0, parity/anchor_compare.py). "
+                  "topica also pays a heavier O(V^2) Q-build, so it is slower here (#622).",
+             threads=threads, corpus="ng")
+
+
 def _truth_ari(ref_obj, top_obj):
     from sklearn.metrics import adjusted_rand_score
     labels = np.asarray(top_obj[0]).astype(int); truth = np.asarray(top_obj[1]).astype(int)
@@ -1215,6 +1263,7 @@ for k, t in _configs(KS_POLI, False): _register_stm_content(k, t)
 for k, t in _configs(KS_POLI, False): _register_keyatm(k, t)
 for k, t in _configs(KS_NG, False): _register_nmf(k, t)
 for k, t in _configs(KS_NG, False): _register_lsa(k, t)
+for k, t in _configs(KS_NG, False): _register_anchorlda(k, t)
 _register_bertopic()   # K discovered; keep single config
 _register_top2vec()    # K discovered; single config
 _register_s3_real()    # real 20-News/MiniLM vs turftopic (timing; ICA non-convergent)
@@ -1448,6 +1497,10 @@ def main():
     ap.add_argument("--latex", action="store_true",
                     help="re-render the booktabs article table from the existing "
                          "JSON (no refitting) and exit")
+    ap.add_argument("--no-merge", action="store_true",
+                    help="when running a subset of KEYs, rebuild the table from just "
+                         "that subset instead of updating those rows in the existing "
+                         "table (a full run with no KEYs always rebuilds from scratch)")
     args = ap.parse_args()
     if args.list:
         for k, e in REGISTRY.items():
@@ -1466,9 +1519,36 @@ def main():
         mode, keys = "time", args.time
     else:
         mode, keys = "accuracy", (args.accuracy or [])
+    subset = bool(keys)                       # explicit KEYs -> a subset run
     keys = keys or list(REGISTRY)
-    rows = []
-    n = len([k for k in keys if k in REGISTRY])
+    run_keys = {k for k in keys if k in REGISTRY}
+
+    # Merge into the existing table for a subset run (default): keep every row whose
+    # key we are NOT re-running, and splice the fresh rows in at each key's original
+    # position (brand-new keys append at the end). A full run, or --no-merge, starts
+    # clean. See docstring.
+    merge = subset and not args.no_merge and OUT_JSON.exists()
+    prior = json.loads(OUT_JSON.read_text(encoding="utf-8")) if merge else []
+    new_by_key = {}                            # key -> freshly-run rows
+
+    def _assemble():
+        """Prior rows (minus re-run keys) with fresh rows spliced in at position."""
+        out, spliced = [], set()
+        for r in prior:
+            key = r.get("key")
+            if key in run_keys:
+                if key not in spliced:
+                    out.extend(new_by_key.get(key, []))
+                    spliced.add(key)
+            else:
+                out.append(r)
+        for k in keys:                         # new keys not present in prior
+            if k in run_keys and k not in spliced:
+                out.extend(new_by_key.get(k, []))
+                spliced.add(k)
+        return out
+
+    n = len(run_keys)
     i = 0
     for k in keys:
         if k in REGISTRY:
@@ -1476,14 +1556,15 @@ def main():
             print(f"[{i}/{n}] {k} ...", file=sys.stderr, flush=True)
             t0 = time.perf_counter()
             out = run_entry(REGISTRY[k], mode)
-            rows.extend(out)
+            new_by_key[k] = out
             st = "/".join(r.get("status", "ok")[:12] for r in out)
             print(f"[{i}/{n}] {k} done in {time.perf_counter()-t0:.1f}s ({st})",
                   file=sys.stderr, flush=True)
             # incremental save so a later hang never loses completed rows
-            OUT_JSON.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+            OUT_JSON.write_text(json.dumps(_assemble(), indent=2), encoding="utf-8")
+    rows = _assemble()
     md = render(rows)
-    print(f"\n[mode={mode}]\n{md}")
+    print(f"\n[mode={mode}{', merged' if merge else ''}]\n{md}")
     OUT_MD.write_text(md + "\n", encoding="utf-8")
     OUT_JSON.write_text(json.dumps(rows, indent=2), encoding="utf-8")
     OUT_TEX.write_text(render_latex(rows) + "\n", encoding="utf-8")
