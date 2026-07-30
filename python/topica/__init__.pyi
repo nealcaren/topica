@@ -415,6 +415,9 @@ class EnsembleResult:
     reference: int | None
     n_runs: int
     runs: list
+    agreement_ci: tuple[float, float] | None
+    agreement_se: float | None
+    stability_ci: Any
     def __init__(
         self,
         *,
@@ -430,6 +433,9 @@ class EnsembleResult:
         reference: int | None,
         n_runs: int,
         runs: list,
+        agreement_ci: tuple[float, float] | None = ...,
+        agreement_se: float | None = ...,
+        stability_ci: Any = ...,
     ) -> None: ...
 
 
@@ -449,6 +455,8 @@ def ensemble(
     min_cores: int | None = None,
     masking: str = "mass",
     masking_threshold: float | None = None,
+    n_boot: int = 0,
+    boot_seed: int = 0,
 ) -> EnsembleResult:
     """Combine several topic-model fits into one consensus model."""
     ...
