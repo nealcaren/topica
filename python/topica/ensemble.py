@@ -192,6 +192,10 @@ def _normalize_weights(weights, n):
     w = np.asarray(weights, dtype=np.float64)
     if w.shape != (n,):
         raise ValueError(f"weights must have length {n}, got shape {w.shape}")
+    # NaN/inf slip past the sign and sum checks below (NaN compares False, inf
+    # sums to inf), so reject non-finite weights explicitly first.
+    if not np.all(np.isfinite(w)):
+        raise ValueError("weights must all be finite")
     if np.any(w < 0):
         raise ValueError("weights must be non-negative")
     total = w.sum()
@@ -298,6 +302,13 @@ def _ensemble_cluster(runs, betas, thetas, vocab, K, V, *,
     all_beta = np.vstack(betas)                       # (m*K, V)
     run_of = np.repeat(np.arange(m), K)               # which run each pooled topic came from
     w = _normalize_weights(weights, m)
+
+    if nc > all_beta.shape[0]:
+        warnings.warn(
+            f"num_topics={nc} exceeds the {all_beta.shape[0]} pooled topics; "
+            f"returning {all_beta.shape[0]} consensus topics.",
+            stacklevel=3,
+        )
 
     # Each pooled topic also carries its document-topic column, used both for the
     # blended distance and for the averaged Θ output.
@@ -504,7 +515,9 @@ def _rank_mask(a, threshold):
     """Top ``threshold`` fraction of terms by rank (gensim ``rank_masking``)."""
     if threshold is None:
         threshold = 0.11
-    cut = int(len(a) * threshold)
+    # Clamp to the last valid index: threshold == 1.0 (or len(a) * threshold
+    # rounding up to len(a)) would otherwise index one past the sorted array.
+    cut = min(int(len(a) * threshold), len(a) - 1)
     return a > np.sort(a)[::-1][cut]
 
 
@@ -773,6 +786,8 @@ def ensemble(runs, *, method="cluster", num_topics=None, lambda_=0.5,
     """
     runs = _coerce_runs(runs)
     betas, thetas, vocab, K, V = _gather(runs)
+    if K == 0:
+        raise ValueError("runs contain no topics (K == 0); nothing to ensemble")
 
     if method == "cluster":
         if distance not in ("rbo", "jaccard"):
@@ -835,6 +850,10 @@ def cross_ensemble(
         raise ValueError("need at least two models to build an ensemble")
     if method != "cluster":
         raise ValueError("Currently only method='cluster' is supported for cross-model ensembling.")
+    if distance not in ("rbo", "jaccard"):
+        raise ValueError("distance must be 'rbo' or 'jaccard'")
+    if not 0.0 <= lambda_ <= 1.0:
+        raise ValueError(f"lambda_ must be in [0, 1], got {lambda_!r}")
 
     from .coherence import _as_topic_word, _as_doc_topic
 
@@ -903,6 +922,8 @@ def cross_ensemble(
     # 3. Pool topics
     m_runs = len(models)
     K_list = [b.shape[0] for b in betas]
+    if sum(K_list) == 0:
+        raise ValueError("models contain no topics (K == 0); nothing to ensemble")
     all_beta = np.vstack(betas)                       # (N_total, V_common)
     run_of = np.repeat(np.arange(m_runs), K_list)      # which model each pooled topic came from
     w = _normalize_weights(weights, m_runs)
@@ -927,6 +948,12 @@ def cross_ensemble(
     nc = int(num_topics) if num_topics is not None else int(np.median(K_list))
     if nc < 1:
         raise ValueError(f"num_topics must be a positive integer, got {num_topics!r}")
+    if nc > all_beta.shape[0]:
+        warnings.warn(
+            f"num_topics={nc} exceeds the {all_beta.shape[0]} pooled topics; "
+            f"returning {all_beta.shape[0]} consensus topics.",
+            stacklevel=2,
+        )
 
     labels = _agglomerative(D, nc)
 

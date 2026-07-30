@@ -185,3 +185,24 @@ def test_cross_ensemble_validation_guards():
     model_b = DummyModel([[1.0]], vocabulary=["banana"])
     with pytest.raises(ValueError, match="share no common vocabulary terms"):
         cross_ensemble([model_a, model_b])
+
+
+def test_cross_ensemble_input_hardening():
+    # Guards surfaced by the whole-module audit: lambda_ out of range, non-finite
+    # weights, empty (K == 0) models, and num_topics beyond the pooled topics.
+    vocab = ["apple", "banana", "cherry"]
+    a = DummyModel([[0.8, 0.1, 0.1], [0.1, 0.8, 0.1]], vocabulary=vocab)
+    b = DummyModel([[0.7, 0.2, 0.1], [0.1, 0.1, 0.8]], vocabulary=vocab)
+
+    with pytest.raises(ValueError, match=r"lambda_ must be in \[0, 1\]"):
+        cross_ensemble([a, b], lambda_=2.0)
+    with pytest.raises(ValueError, match="weights must all be finite"):
+        cross_ensemble([a, b], weights=[np.nan, 1.0])
+    with pytest.raises(ValueError, match="no topics"):
+        cross_ensemble([DummyModel(np.empty((0, 3)), vocabulary=vocab),
+                        DummyModel(np.empty((0, 3)), vocabulary=vocab)])
+
+    # num_topics beyond the 4 pooled topics warns and returns what exists.
+    with pytest.warns(UserWarning, match="exceeds"):
+        res = cross_ensemble([a, b], num_topics=99, lambda_=1.0)
+    assert res.topic_word.shape[0] == 4
