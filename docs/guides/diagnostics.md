@@ -268,11 +268,13 @@ Three methods are available:
 - `method="align"` is a lighter, fully deterministic alternative: match every
   run's topics one-to-one to a reference run (Hungarian on the topic-word
   distributions) and average the aligned topics.
-- `method="stable"` reimplements gensim's `EnsembleLda` (Brigl 2019). It does not
+- `method="stable"` derives from gensim's `EnsembleLda` (Brigl 2019). It does not
   fix K: it finds dense, reproducible "cores" with Checkback DBSCAN and keeps only
   the clusters with enough cores as stable topics, discarding the rest as noise.
-  Use it to let the data decide how many topics are reproducible. It is validated
-  against gensim to floating-point precision.
+  Use it to let the data decide how many topics are reproducible. On well-separated
+  inputs it matches gensim to floating-point precision; it improves on gensim in two
+  edge cases where gensim degenerates (small-vocabulary rank masking and
+  scan-order-dependent core validation).
 
 ```python
 topica.ensemble(runs, method="align")                  # reference matching

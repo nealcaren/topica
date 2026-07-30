@@ -198,6 +198,61 @@ class TestStableMethod:
         with pytest.raises(ValueError, match="masking must be"):
             topica.ensemble(runs, method="stable", masking="soft")
 
+    def test_rank_masking_keeps_a_term_on_small_vocab(self):
+        # Deliberate divergence from gensim (#626): gensim's rank_masking keeps
+        # int(V * threshold) terms, which is 0 for any V < 10 at the default 0.11,
+        # collapsing every distance to 1.0. topica keeps >= 1 term, so rank masking
+        # still discriminates topics on a small vocabulary.
+        from topica.ensemble import _rank_mask
+
+        a = np.array([0.4, 0.3, 0.1, 0.1, 0.05, 0.03, 0.01, 0.01])  # V = 8
+        assert int(_rank_mask(a, None).sum()) >= 1
+        assert int(_rank_mask(a, 1.0).sum()) >= 1  # threshold 1.0 must not crash
+
+        # ...but keep gensim's strict-greater rule where it is non-empty: a sparse
+        # row (5 nonzero terms in a 100-word vocab) must select the 5 real terms,
+        # not explode to the whole vocabulary on the tie at 0.0.
+        sparse = np.zeros(100)
+        sparse[:5] = 0.2
+        assert int(_rank_mask(sparse, 0.11).sum()) == 5
+
+        # End-to-end: four reproducible prototypes over a 9-term vocab still cluster
+        # under rank masking, where gensim's empty mask would find nothing.
+        rng = np.random.default_rng(0)
+        V = 9
+        protos = np.zeros((4, V))
+        for k in range(4):
+            protos[k, k * 2:k * 2 + 2] = 1.0
+        protos /= protos.sum(1, keepdims=True)
+        runs = []
+        for _ in range(5):
+            b = np.clip(protos + rng.normal(0, 0.01, protos.shape), 1e-6, None)
+            b /= b.sum(1, keepdims=True)
+            runs.append(b)
+        res = topica.ensemble(runs, method="stable", masking="rank")
+        assert res.topic_word.shape[0] >= 1
+
+    def test_isolated_core_is_validated_regardless_of_scan_order(self):
+        # Deliberate divergence from gensim (#628): a core whose neighbors are all
+        # non-core keeps its own label in neighboring_labels, so it is counted as
+        # an isolated core and its cluster is validated -- gensim leaves that set
+        # empty and drops the cluster order-dependently.
+        from topica.ensemble import _cbdbscan, _stable_labels
+
+        # Chain 0-1-2: 0<->1 and 1<->2 within eps, 0<->2 outside. Only topic 1 has
+        # two neighbors, so it is the sole core; both its neighbors are non-core.
+        base = np.array([[0.0, 0.05, 0.20], [0.05, 0.0, 0.05], [0.20, 0.05, 0.0]])
+        # Same graph under every relabeling of the topics: the validated cluster
+        # must not depend on which index seeds the scan.
+        for perm in ([0, 1, 2], [2, 1, 0], [1, 0, 2], [2, 0, 1]):
+            D = base[np.ix_(perm, perm)]
+            results = _cbdbscan(D, eps=0.1, min_samples=2)
+            core = next(i for i, r in enumerate(results) if r.is_core)
+            assert results[core].neighboring_labels == {results[core].label}
+            # The lone core survives cluster validation at min_cores=1.
+            stable = _stable_labels(results, num_models=3, min_cores=1)
+            assert results[core].label in stable
+
 
 class TestApiSurface:
     def test_accepts_select_model_result(self):

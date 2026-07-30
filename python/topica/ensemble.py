@@ -27,13 +27,17 @@ McCoy 2017 / Mäntylä et al. 2018 lineage): align every run's topics one-to-one
 a single reference run (Hungarian matching on the topic-word distributions) and
 average the aligned topics. No clustering, no Θ, no λ.
 
-``method="stable"`` reimplements gensim's ``EnsembleLda`` (Brigl 2019). It does not
+``method="stable"`` derives from gensim's ``EnsembleLda`` (Brigl 2019). It does not
 fix K: it pools the topics, measures an asymmetric masked-cosine distance between
 them, runs Checkback DBSCAN (CBDBSCAN) to find dense, reproducible "cores", and
 keeps only the clusters with enough cores as *stable topics* (averaging their
 members). Unstable topics — those that do not recur densely across runs — are
 discarded as noise rather than averaged in, so the number of consensus topics is
-discovered from the data. Validated against gensim in ``parity/``.
+discovered from the data. On well-separated inputs it agrees with gensim
+bit-for-bit (``parity/ensemblelda_gensim_compare.py``); it diverges deliberately on
+two edge cases where gensim degenerates — small-vocabulary rank masking and
+scan-order-dependent core validation — documented at ``_rank_mask`` and
+``_cbdbscan``.
 
 The result duck-types as a fitted model for the model-neutral analysis surface (it
 exposes ``topic_word``, ``doc_topic``, and ``vocabulary``), so the consensus flows
@@ -490,11 +494,17 @@ def _ensemble_align(runs, betas, thetas, vocab, K, V, *,
 
 
 # ---------------------------------------------------------------------------
-# method="stable" — gensim's EnsembleLda (Brigl 2019): CBDBSCAN stable cores
+# method="stable" — derived from gensim's EnsembleLda (Brigl 2019): CBDBSCAN
+# stable cores
 # ---------------------------------------------------------------------------
-# Reimplemented numpy-native and validated against gensim in parity/. Constants
-# and defaults mirror gensim.models.ensemblelda so the two agree on identical
-# input.
+# Numpy-native, deriving from gensim.models.ensemblelda: constants and defaults
+# mirror it, and on well-separated inputs the two agree bit-for-bit (see
+# parity/ensemblelda_gensim_compare.py). It intentionally diverges from gensim on
+# two edge cases where gensim degenerates, each documented at its call site:
+#   * _rank_mask keeps at least one term (gensim yields an all-False mask, and so
+#     a fully collapsed distance matrix, when int(V * threshold) == 0);
+#   * _cbdbscan seeds each core's own label into its neighboring_labels, so
+#     stable-cluster validation does not depend on topic scan order.
 
 _COSINE_SKIP = 0.05  # gensim's _COSINE_DISTANCE_CALCULATION_THRESHOLD
 
@@ -512,13 +522,26 @@ def _mass_mask(a, threshold):
 
 
 def _rank_mask(a, threshold):
-    """Top ``threshold`` fraction of terms by rank (gensim ``rank_masking``)."""
+    """Top ``threshold`` fraction of terms by rank (derived from gensim
+    ``rank_masking``, which is ``a > sorted_desc[int(len(a) * threshold)]``).
+
+    We keep gensim's exact strict-greater rule wherever it selects at least one
+    term, so on any non-degenerate input the two masks are identical (ties and
+    all). We diverge only when gensim's mask would be empty -- which happens when
+    ``int(V * threshold) == 0`` (e.g. any ``V < 10`` at the default 0.11) or when
+    the cut lands on a run of equal values -- because an empty mask feeds empty
+    vectors into the cosine distance, collapsing every pair to 1.0 and silently
+    breaking the clustering. There we fall back to the top term(s). The index is
+    also clamped so ``threshold == 1.0`` does not run past the array (gensim raises
+    ``IndexError`` there)."""
     if threshold is None:
         threshold = 0.11
-    # Clamp to the last valid index: threshold == 1.0 (or len(a) * threshold
-    # rounding up to len(a)) would otherwise index one past the sorted array.
+    sorted_desc = np.sort(a)[::-1]
     cut = min(int(len(a) * threshold), len(a) - 1)
-    return a > np.sort(a)[::-1][cut]
+    mask = a > sorted_desc[cut]
+    if not mask.any():  # gensim would degenerate to an all-False mask here
+        mask = a >= sorted_desc[0]
+    return mask
 
 
 def _cosine_distance(u, v):
@@ -560,10 +583,23 @@ class _CBDBSCANTopic:
 
 
 def _cbdbscan(D, eps, min_samples):
-    """Checkback DBSCAN (Brigl 2019). Faithful port of gensim's ``CBDBSCAN.fit``:
+    """Checkback DBSCAN (Brigl 2019), derived from gensim's ``CBDBSCAN.fit``:
     grows clusters from the densest topics outward, and the checkback step starts a
     new cluster when a candidate is too far from its parent's neighborhood (<25%
-    close), keeping clusters compact. Returns a list of per-topic results."""
+    close), keeping clusters compact. Returns a list of per-topic results.
+
+    One deliberate divergence from gensim: a core's own label is seeded into its
+    ``neighboring_labels``. In gensim (which fills the self-distance with 1.0, as
+    we do) a topic is never its own neighbor, so a core's own label lands in that
+    set only if some neighbor is *also* a core and adds it back. A core whose
+    neighbors are all non-core then keeps an empty set, and
+    ``_stable_labels``'s isolated-core count (``neighboring_labels == {label}``)
+    misses it -- so whether a boundary cluster is kept depends on which topic
+    happened to seed it first. Seeding the self-label makes that count
+    scan-order-invariant. (The seeded label also enters ``max_nbl``, the
+    ``_stable_labels`` sort key, but only for cores that were otherwise empty; on
+    well-separated inputs, where cores already carry their label via a mutual core
+    neighbor, the whole change is a no-op -- see the parity check.)"""
     import sys
 
     T = D.shape[0]
@@ -587,6 +623,9 @@ def _cbdbscan(D, eps, min_samples):
                     current_label = state["next_label"]
                     state["next_label"] += 1
             results[topic_index].label = current_label
+            # Seed the core's own label (see docstring): scan-order-invariant
+            # isolated-core counting, unlike gensim's reciprocal-only accumulation.
+            results[topic_index].neighboring_labels.add(current_label)
             for nb in neighbors:
                 if results[nb].label is None:
                     ordered.remove(nb)
