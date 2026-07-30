@@ -301,10 +301,12 @@ class TestSearchKHeldout:
 
     def test_existing_coherence_metric_label_intact(self, small_corpus_held_prevalence):
         docs, held, prevalence = small_corpus_held_prevalence
-        for m_type, prev in (("lda", None), ("stm", prevalence)):
+        # LDA reports gensim UMass; STM reports stm's semantic coherence (semCoh1beta),
+        # the metric stm's searchK actually reports -- each labelled honestly.
+        for m_type, prev, expected in (("lda", None, "u_mass"), ("stm", prevalence, "semcoh")):
             rows = topica.search_k(docs, [2], model=m_type, prevalence=prev,
                                    held_out=held, iters=10, seed=0)
-            assert rows[0]["coherence_metric"] == "u_mass"
+            assert rows[0]["coherence_metric"] == expected
 
 
 # ---------------------------------------------------------------------------
