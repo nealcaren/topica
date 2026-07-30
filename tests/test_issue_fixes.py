@@ -203,6 +203,32 @@ def test_best_k_is_nan_safe():
         allnan.best_k("exclusivity")
 
 
+def test_frontier_excludes_degenerate_nan_k():
+    # A NaN in either frontier metric marks a degenerate fit. Even if that K has an
+    # extreme value on the *other* metric, the frontier must not recommend it
+    # (nan_to_num would otherwise give it a neutral z and let the extreme win).
+    from topica.validation import SearchKResult
+    rows = SearchKResult([
+        {"k": 2, "coherence": float("nan"), "exclusivity": 1.0},   # degenerate
+        {"k": 5, "coherence": -5.0, "exclusivity": 0.5},
+        {"k": 10, "coherence": -6.0, "exclusivity": 0.5},
+    ])
+    assert rows._frontier_k() in {5, 10}   # never the NaN row
+    assert rows._frontier_k() == 5         # the knee among the valid Ks
+
+
+def test_dispersion_is_a_diagnostic_not_selectable():
+    # dispersion is reported per K but is not a selection metric (it falls
+    # monotonically with K), so best_k must reject it rather than pick a K by it.
+    from topica.validation import SearchKResult
+    rows = SearchKResult([
+        {"k": 2, "coherence": -5.0, "exclusivity": 0.5, "dispersion": 3.0},
+        {"k": 3, "coherence": -6.0, "exclusivity": 0.5, "dispersion": 1.2},
+    ])
+    with pytest.raises(ValueError, match="unknown metric"):
+        rows.best_k("dispersion")
+
+
 def test_frontier_tie_breaks_toward_smaller_k():
     # Equal scores must resolve to the smaller (simpler) K regardless of grid order.
     from topica.validation import SearchKResult

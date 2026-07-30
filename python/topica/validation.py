@@ -819,16 +819,21 @@ class SearchKResult(list):
                 "scan a wider grid or pass a single metric"
             )
         score = np.zeros(len(self))
+        finite = np.ones(len(self), dtype=bool)
         for m in ("coherence", "exclusivity"):
             v = np.array([r[m] for r in self], dtype=np.float64)
+            finite &= np.isfinite(v)
             sd = np.nanstd(v)
             if sd > 0:
-                z = (v - np.nanmean(v)) / sd
-                # A K whose metric is NaN (a degenerate fit) contributes 0 to the
-                # score for that metric -- treated as average, never poisoning the
-                # argmax as raw NaN comparisons would.
-                z = np.nan_to_num(z, nan=0.0)
+                # nan_to_num keeps a NaN in the *other* metric from poisoning this
+                # metric's z-scores; the row itself is excluded below.
+                z = np.nan_to_num((v - np.nanmean(v)) / sd, nan=0.0)
                 score += z if SEARCH_K_DIRECTIONS[m] == "maximize" else -z
+        # A K with a NaN/inf in either frontier metric is a degenerate fit; never
+        # recommend it (unless *every* K is degenerate, then fall back to the
+        # smallest K via the all-zero score).
+        if finite.any():
+            score[~finite] = -np.inf
         return _argbest_k(self, score)
 
     def best_k(self, metric: str | None = None) -> int:
