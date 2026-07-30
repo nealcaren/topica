@@ -858,6 +858,12 @@ class SearchKResult(list):
                 "frontier selection needs at least two K values to z-score; "
                 "scan a wider grid or pass a single metric"
             )
+        # With multiple seeds, score the *same* per-seed frontier curve the 1-SE
+        # rule bands around (mean of each seed's z(coherence)+z(exclusivity)), so
+        # 'best' and '1se' are consistent. Single seed: frontier of the mean row.
+        mean = getattr(self, "_frontier_mean", None)
+        if mean is not None:
+            return _argbest_k(self, mean)
         score = _frontier_score([r["coherence"] for r in self],
                                  [r["exclusivity"] for r in self])
         return _argbest_k(self, score)
@@ -974,9 +980,12 @@ class SearchKResult(list):
                 "rule='1se' on the frontier needs per-seed scores; "
                 "refit with search_k(num_seeds>1)"
             )
-        best_i = int(np.nanargmax(mean))
+        finite = np.isfinite(mean)
+        if not finite.any():  # every K degenerate -> smallest K, as _frontier_k does
+            return int(min(r["k"] for r in self))
+        best_i = int(np.nanargmax(np.where(finite, mean, np.nan)))
         thresh = mean[best_i] - sem[best_i]
-        within = [i for i in range(len(self)) if np.isfinite(mean[i]) and mean[i] >= thresh]
+        within = [i for i in range(len(self)) if finite[i] and mean[i] >= thresh]
         return int(min(self[i]["k"] for i in within))
 
 
@@ -1099,6 +1108,8 @@ def search_k(
 
     if model not in ("lda", "stm"):
         raise ValueError("model must be 'lda' or 'stm'")
+    if int(num_seeds) < 1:
+        raise ValueError(f"num_seeds must be >= 1, got {num_seeds!r}")
     if content is not None and model != "stm":
         raise ValueError("content covariates are only supported when model='stm'")
 
@@ -1196,7 +1207,7 @@ def search_k(
     # One task per (K, seed). Each fit is independent with its own fixed seed, so
     # results are identical to the serial path (verified). topica's Rust fits
     # release the GIL, so a thread pool parallelizes wall-clock with no pickling.
-    seeds = [seed + s for s in range(max(1, int(num_seeds)))]
+    seeds = [seed + s for s in range(int(num_seeds))]
     tasks = [(k, fs) for k in ks for fs in seeds]
     workers = _resolve_workers(n_jobs, len(tasks))
     if workers == 1:

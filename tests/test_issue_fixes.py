@@ -299,6 +299,64 @@ def test_search_k_num_seeds_reports_se_and_is_backward_compatible():
     assert isinstance(multi.best_k(), int)
 
 
+def test_search_k_num_seeds_se_math_is_correct():
+    # #632: pin the actual SE formula (sample std, ddof=1, over sqrt(n)) and the
+    # mean, by recomputing them from the same per-seed fits search_k runs.
+    docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12 + \
+           [["red", "blue", "green"]] * 12
+    base, nseed = 7, 5
+    res = topica.search_k(docs, [2, 3], seed=base, num_seeds=nseed,
+                          iters=60, num_samples=1)
+    row = next(r for r in res if r["k"] == 2)
+    cohs = []
+    for s in range(nseed):
+        m = topica.LDA(2, seed=base + s)
+        m.fit(docs, iters=60, num_samples=1)
+        cohs.append(float(np.mean(m.coherence(10))))
+    assert row["coherence"] == pytest.approx(float(np.mean(cohs)))
+    assert row["coherence_se"] == pytest.approx(
+        float(np.std(cohs, ddof=1) / np.sqrt(nseed)))
+    # num_seeds must be >= 1
+    with pytest.raises(ValueError, match="num_seeds must be"):
+        topica.search_k(docs, [2], num_seeds=0)
+
+
+def test_search_k_one_se_minimize_and_within_band():
+    # 1se on a minimize metric (perplexity) and exact band membership.
+    from topica.validation import SearchKResult
+    # maximize: optimum k=4 (mean 10, se 1); k=2 within band (>=9), k=3 not (8.5)
+    rows = SearchKResult([
+        {"k": 2, "heldout_loglik": 9.2, "heldout_loglik_se": 0.5},
+        {"k": 3, "heldout_loglik": 8.5, "heldout_loglik_se": 0.5},
+        {"k": 4, "heldout_loglik": 10.0, "heldout_loglik_se": 1.0},
+    ])
+    assert rows.best_k("heldout_loglik") == 4              # plain optimum
+    assert rows.best_k("heldout_loglik", rule="1se") == 2  # simplest within 10-1=9
+    # minimize: optimum k=4 (mean 5, se 1); k=2 within band (<=6), so pick k=2
+    perp = SearchKResult([
+        {"k": 2, "perplexity": 5.8, "perplexity_se": 0.4},
+        {"k": 3, "perplexity": 7.0, "perplexity_se": 0.4},
+        {"k": 4, "perplexity": 5.0, "perplexity_se": 1.0},
+    ])
+    assert perp.best_k("perplexity") == 4
+    assert perp.best_k("perplexity", rule="1se") == 2      # within 5+1=6
+
+
+def test_frontier_best_and_1se_share_one_curve():
+    # best_k('frontier') and best_k(rule='1se') must band around the SAME frontier
+    # curve when seeds are present, so 1se is never stricter than best.
+    docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12 + \
+           [["red", "blue", "green"]] * 12 + [["a", "b", "c"]] * 12
+    res = topica.search_k(docs, [2, 3, 4, 5], iters=60, num_samples=1, num_seeds=4)
+    assert res.best_k(rule="1se") <= res.best_k()   # guaranteed, same curve
+    # an all-degenerate frontier falls back to the smallest K, not a crash
+    from topica.validation import SearchKResult
+    deg = SearchKResult([{"k": 2}, {"k": 3}])
+    deg._frontier_mean = np.array([-np.inf, -np.inf])
+    deg._frontier_se = np.array([np.nan, np.nan])
+    assert deg._frontier_k_1se() == 2
+
+
 def test_search_k_best_k_one_se_rule():
     # #632: the 1-SE rule needs num_seeds>1 and picks the simplest K within one SE
     # of the optimum; it must reject a single-seed result.
