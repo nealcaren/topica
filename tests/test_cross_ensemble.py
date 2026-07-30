@@ -115,7 +115,8 @@ def test_cross_ensemble_singleton_scores_zero_stability():
     uniques = [topic(4, 5), topic(6, 7), topic(8, 9)]
     models = [DummyModel(np.vstack(shared + [u]), vocabulary=vocab) for u in uniques]
 
-    res = cross_ensemble(models, num_topics=5, lambda_=1.0, topn=2)
+    with pytest.warns(UserWarning, match="singleton"):
+        res = cross_ensemble(models, num_topics=5, lambda_=1.0, topn=2)
 
     singleton = res.cluster_sizes == 1
     assert int(singleton.sum()) == 3                        # the three idiosyncratic topics

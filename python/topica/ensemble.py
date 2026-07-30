@@ -343,6 +343,16 @@ def _ensemble_cluster(runs, betas, thetas, vocab, K, V, *,
     support = np.array(support)
     sizes = np.array(sizes, dtype=int)
 
+    n_singletons = int((sizes == 1).sum())
+    if n_singletons:
+        warnings.warn(
+            f"{n_singletons} of {len(sizes)} consensus topics are singletons "
+            "(contributed by a single run, with nothing to corroborate them); they "
+            "score 0.0 stability and are not marked reliable. Inspect them before "
+            "trusting them, or drop them with res.reliable.",
+            stacklevel=3,
+        )
+
     # Order topics by how well-backed they are (support, then consistency), so the
     # most trustworthy consensus topics come first.
     order = np.lexsort((-stability, -support))
@@ -936,6 +946,16 @@ def cross_ensemble(
     stability = np.array(stability)
     support = np.array(support)
     sizes = np.array(sizes, dtype=int)
+
+    n_singletons = int((sizes == 1).sum())
+    if n_singletons:
+        warnings.warn(
+            f"{n_singletons} of {len(sizes)} consensus topics are singletons "
+            "(contributed by a single model, with nothing to corroborate them); they "
+            "score 0.0 stability and are not marked reliable. Inspect them before "
+            "trusting them, or drop them with res.reliable.",
+            stacklevel=3,
+        )
 
     # Order topics by trustworthiness (support first, then consistency)
     order = np.lexsort((-stability, -support))
