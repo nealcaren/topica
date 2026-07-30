@@ -779,6 +779,19 @@ def _argbest_k(rows, score):
     return int(min(rows[i]["k"] for i in tied))
 
 
+def _resolve_workers(n_jobs, n_tasks):
+    """Thread-worker count for a grid of ``n_tasks`` fits. ``n_jobs=1`` stays
+    serial; ``n_jobs<=0`` or ``None`` uses all cores; otherwise ``min(n_jobs,
+    n_tasks)``. A single-K grid never parallelizes."""
+    if n_tasks <= 1:
+        return 1
+    # None / non-positive / non-finite (inf, nan) -> all cores.
+    if n_jobs is None or not np.isfinite(n_jobs) or n_jobs <= 0:
+        import os
+        n_jobs = os.cpu_count() or 1
+    return max(1, min(int(n_jobs), n_tasks))
+
+
 class SearchKResult(list):
     """The :func:`search_k` result: a list of per-K dict rows, with the
     optimization direction stamped in and a safe ``best_k`` selector.
@@ -923,6 +936,7 @@ def search_k(
     seed=42,
     coherence_n=10,
     coherence_type="u_mass",
+    n_jobs=1,
 ):
     """Fit a model for each K and report quality metrics (stm's ``searchK``).
 
@@ -969,6 +983,13 @@ def search_k(
     seed : RNG seed for every fit and transform call.
     coherence_n : top-word count used for coherence and exclusivity.
     coherence_type : one of ``"u_mass"``, ``"c_uci"``, ``"c_npmi"``, ``"c_v"`` (default ``"u_mass"``).
+    n_jobs : number of worker threads for the per-K fits (default ``1``, serial).
+        The fits are independent and each keeps its own fixed ``seed``, so the
+        results are identical to the serial run; only the wall-clock changes (the
+        Rust fits release the GIL). ``n_jobs<=0`` (or ``None``) uses all cores,
+        capped at the number of K values scanned.
+        Note it multiplies with any intra-fit threading (``num_threads=`` on the
+        model), so ``n_jobs`` above the core count can oversubscribe.
     """
     from . import LDA, STM  # local import to avoid a cycle at module load
 
@@ -1012,8 +1033,8 @@ def search_k(
         )
 
     ref_docs = _ref_corpus(docs)  # token lists, reused across every K
-    rows = []
-    for k in ks:
+
+    def _row_for_k(k):
         if model == "stm":
             m = STM(num_topics=k, seed=seed)
             m.fit(docs, prevalence, content=content, iters=iters)
@@ -1066,7 +1087,19 @@ def search_k(
                 row["heldout_loglik"] = float(result.mean_per_doc_loglik)
             else:
                 row["perplexity"] = float(perplexity(m, held_out, seed=seed))
-        rows.append(row)
+        return row
+
+    # Each K is fit independently with its own fixed seed, so results are identical
+    # to the serial path (verified). topica's Rust fits release the GIL, so a thread
+    # pool parallelizes the wall-clock cost with no pickling. n_jobs=1 stays serial;
+    # n_jobs<=0 or None uses all available cores.
+    workers = _resolve_workers(n_jobs, len(ks))
+    if workers == 1:
+        rows = [_row_for_k(k) for k in ks]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            rows = list(pool.map(_row_for_k, ks))  # map preserves ks order
     return SearchKResult(rows)
 
 

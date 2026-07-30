@@ -255,6 +255,23 @@ def test_best_k_coherence_warning_matches_coherence_type():
         umass.best_k("coherence")
 
 
+def test_search_k_n_jobs_matches_serial():
+    # #631: parallel per-K fits (n_jobs>1) must give results identical to the
+    # serial path -- each K keeps its own fixed seed -- and preserve row order.
+    docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12 + \
+           [["red", "blue", "green"]] * 12
+    ks = [2, 3, 4]
+    serial = topica.search_k(docs, ks, iters=60, num_samples=1, n_jobs=1)
+    for n_jobs in (2, -1, None):
+        par = topica.search_k(docs, ks, iters=60, num_samples=1, n_jobs=n_jobs)
+        assert [r["k"] for r in par] == ks                      # order preserved
+        assert list(par) == list(serial)                        # every key, bit-identical
+        assert par.best_k() == serial.best_k()
+    # A single-K grid must behave identically no matter what n_jobs asks for.
+    one = topica.search_k(docs, [3], iters=60, num_samples=1, n_jobs=1)
+    assert list(topica.search_k(docs, [3], iters=60, num_samples=1, n_jobs=8)) == list(one)
+
+
 def test_search_k_reports_residual_dispersion_and_dedupes_ks():
     docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12
     with pytest.warns(UserWarning, match="duplicate"):
