@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-07-29
+
 ### Added
 
 - **`topica.FactorialLDA` — Factorial LDA (fLDA)** (#606). A port of Paul & Dredze
@@ -22,6 +24,34 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   The reference Java is non-reproducible, so correctness is certified by
   finite-difference gradient and factor-tying tests plus planted topic × sentiment
   recovery rather than by seed parity.
+- **`HLDA` selectable level prior** (#613). The per-level topic prior is now
+  selectable between an asymmetric Dirichlet and a GEM stick-breaking construction,
+  matching the hLDA literature's two standard formulations.
+- **`AnchorLDA` promoted to the validated roster** (#290). The anchor-words spectral
+  estimator (Arora et al. 2013) is now a validated, un-gated model. It is validated
+  against the `anchor-topic` reference implementation: the co-occurrence matrix
+  agrees to numerical precision and, given the same anchors, the RecoverL2 recovery
+  matches the reference on both planted and real text (`parity/anchor_compare.py`).
+  It no longer requires `topica.enable_experimental()`.
+
+### Changed
+
+- **`HDP` estimates the Dirichlet-process concentrations by default** (#617). The
+  top- and document-level concentrations are now inferred rather than fixed, which
+  fixes a degenerate collapse to too few topics on some corpora. Pass explicit
+  concentrations to restore the previous behavior.
+
+### Performance
+
+- **`AnchorLDA` `recover="l2"` is ~140× faster** (#622). The RecoverL2 step was a
+  per-word serial NNLS loop; it is now a vectorized exponentiated-gradient solve of
+  the same squared-error objective (the solver family the reference uses), reaching
+  the same L2 minimum. On 20 Newsgroups at K=50 the recovery drops from ~356s to
+  ~2.6s; the fit is bit-for-bit reproducible.
+- **`HLDA` fits substantially faster** (#611). Per-node marginals are memoized in the
+  nested-CRP path move (#614), the per-node marginal precompute is multi-threaded via
+  `num_threads=` (#616), and the log-gamma terms are tabulated in that precompute for
+  a further ~15× on the marginal step (#619).
 
 ## [0.54.0] - 2026-07-28
 
