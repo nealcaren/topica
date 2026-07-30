@@ -758,6 +758,11 @@ def find_thoughts(doc_topic, texts=None, *, topic, n=3):
 
 # Whether a higher or lower value of each metric is better. Coherence here is
 # mean UMass (negative; less-negative is better), so "maximize".
+# Default number of seeds per K in search_k. Flip this one value to make
+# confidence intervals (num_seeds>1) the default; every downstream path already
+# handles both cases.
+_SEARCH_K_DEFAULT_SEEDS = 1
+
 SEARCH_K_DIRECTIONS = {
     "coherence": "maximize",
     "exclusivity": "maximize",
@@ -782,7 +787,7 @@ def _argbest_k(rows, score):
 def _resolve_workers(n_jobs, n_tasks):
     """Thread-worker count for a grid of ``n_tasks`` fits. ``n_jobs=1`` stays
     serial; ``n_jobs<=0`` or ``None`` uses all cores; otherwise ``min(n_jobs,
-    n_tasks)``. A single-K grid never parallelizes."""
+    n_tasks)``. A single-task grid never parallelizes."""
     if n_tasks <= 1:
         return 1
     # None / non-positive / non-finite (inf, nan) -> all cores.
@@ -790,6 +795,28 @@ def _resolve_workers(n_jobs, n_tasks):
         import os
         n_jobs = os.cpu_count() or 1
     return max(1, min(int(n_jobs), n_tasks))
+
+
+def _frontier_score(coherence, exclusivity):
+    """``z(coherence) + z(exclusivity)`` across a K-grid, both maximized.
+
+    Each metric is z-scored across the scanned K values (comparable scales) and
+    summed. A zero-variance metric contributes nothing; a NaN in the *other*
+    metric is neutralized before scoring, but a K with a non-finite value in
+    *either* metric is marked degenerate (``-inf``) so it is never recommended --
+    unless every K is degenerate, in which case the all-zero score falls back to
+    the smallest K. Shared by the aggregate frontier and the per-seed frontier so
+    the two use identical logic."""
+    score = np.zeros(len(coherence))
+    finite = np.ones(len(coherence), dtype=bool)
+    for v in (np.asarray(coherence, np.float64), np.asarray(exclusivity, np.float64)):
+        finite &= np.isfinite(v)
+        sd = np.nanstd(v)
+        if sd > 0:
+            score += np.nan_to_num((v - np.nanmean(v)) / sd, nan=0.0)
+    if finite.any():
+        score[~finite] = -np.inf
+    return score
 
 
 class SearchKResult(list):
@@ -831,25 +858,17 @@ class SearchKResult(list):
                 "frontier selection needs at least two K values to z-score; "
                 "scan a wider grid or pass a single metric"
             )
-        score = np.zeros(len(self))
-        finite = np.ones(len(self), dtype=bool)
-        for m in ("coherence", "exclusivity"):
-            v = np.array([r[m] for r in self], dtype=np.float64)
-            finite &= np.isfinite(v)
-            sd = np.nanstd(v)
-            if sd > 0:
-                # nan_to_num keeps a NaN in the *other* metric from poisoning this
-                # metric's z-scores; the row itself is excluded below.
-                z = np.nan_to_num((v - np.nanmean(v)) / sd, nan=0.0)
-                score += z if SEARCH_K_DIRECTIONS[m] == "maximize" else -z
-        # A K with a NaN/inf in either frontier metric is a degenerate fit; never
-        # recommend it (unless *every* K is degenerate, then fall back to the
-        # smallest K via the all-zero score).
-        if finite.any():
-            score[~finite] = -np.inf
+        # With multiple seeds, score the *same* per-seed frontier curve the 1-SE
+        # rule bands around (mean of each seed's z(coherence)+z(exclusivity)), so
+        # 'best' and '1se' are consistent. Single seed: frontier of the mean row.
+        mean = getattr(self, "_frontier_mean", None)
+        if mean is not None:
+            return _argbest_k(self, mean)
+        score = _frontier_score([r["coherence"] for r in self],
+                                 [r["exclusivity"] for r in self])
         return _argbest_k(self, score)
 
-    def best_k(self, metric: str | None = None) -> int:
+    def best_k(self, metric: str | None = None, *, rule: str = "best") -> int:
         """Return the ``k`` chosen by ``metric``.
 
         With ``metric=None`` (the default), selection is:
@@ -868,7 +887,17 @@ class SearchKResult(list):
           ``"heldout_loglik"``, ``"perplexity"``), optimized in its correct
           direction. Asking for bare ``"coherence"`` on a multi-K grid warns,
           because UMass coherence is roughly monotone in K.
+
+        ``rule`` chooses how the optimum is turned into a pick:
+
+        - ``"best"`` (default) — the K that optimizes the metric, ties broken
+          toward the smaller K.
+        - ``"1se"`` — the one-standard-error rule: the smallest (simplest) K whose
+          metric is within one standard error of the optimum. Needs the per-K
+          standard errors from ``search_k(num_seeds>1)``; raises otherwise.
         """
+        if rule not in ("best", "1se"):
+            raise ValueError(f"rule must be 'best' or '1se', got {rule!r}")
         if not self:
             raise ValueError("search_k returned no rows")
         if metric is None:
@@ -881,7 +910,7 @@ class SearchKResult(list):
             else:
                 metric = "coherence"
         if metric == "frontier":
-            return self._frontier_k()
+            return self._frontier_k_1se() if rule == "1se" else self._frontier_k()
         if metric not in SEARCH_K_DIRECTIONS:
             raise ValueError(
                 f"unknown metric {metric!r}; choose 'frontier' or one of "
@@ -915,11 +944,88 @@ class SearchKResult(list):
         present = [r for r in self if not np.isnan(r[metric])]
         if not present:
             raise ValueError(f"every value for metric {metric!r} is NaN")
-        best = (max if SEARCH_K_DIRECTIONS[metric] == "maximize" else min)(
-            r[metric] for r in present
-        )
+        maximize = SEARCH_K_DIRECTIONS[metric] == "maximize"
+        if rule == "1se":
+            return self._one_se_k(present, metric, maximize)
+        best = (max if maximize else min)(r[metric] for r in present)
         # Parsimony tie-break: smallest k achieving the best value.
         return int(min(r["k"] for r in present if r[metric] == best))
+
+    def _one_se_k(self, present, metric, maximize):
+        """One-standard-error rule on a scalar ``metric``: the smallest K whose
+        mean is within one SE of the optimum (in the metric's direction)."""
+        se_key = metric + "_se"
+        if se_key not in present[0]:
+            raise ValueError(
+                f"rule='1se' needs per-K standard errors for {metric!r}; "
+                "refit with search_k(num_seeds>1)"
+            )
+        best_row = (max if maximize else min)(present, key=lambda r: r[metric])
+        se = best_row[se_key]
+        if maximize:
+            thresh = best_row[metric] - se
+            within = [r for r in present if r[metric] >= thresh]
+        else:
+            thresh = best_row[metric] + se
+            within = [r for r in present if r[metric] <= thresh]
+        return int(min(r["k"] for r in within))  # simplest K within 1 SE
+
+    def _frontier_k_1se(self) -> int:
+        """One-standard-error rule on the frontier composite: needs the per-seed
+        frontier scores stored by ``search_k(num_seeds>1)``."""
+        mean = getattr(self, "_frontier_mean", None)
+        sem = getattr(self, "_frontier_se", None)
+        if mean is None or sem is None:
+            raise ValueError(
+                "rule='1se' on the frontier needs per-seed scores; "
+                "refit with search_k(num_seeds>1)"
+            )
+        finite = np.isfinite(mean)
+        if not finite.any():  # every K degenerate -> smallest K, as _frontier_k does
+            return int(min(r["k"] for r in self))
+        best_i = int(np.nanargmax(np.where(finite, mean, np.nan)))
+        thresh = mean[best_i] - sem[best_i]
+        within = [i for i in range(len(self)) if finite[i] and mean[i] >= thresh]
+        return int(min(self[i]["k"] for i in within))
+
+
+def _aggregate_over_seeds(ks, seeds, tasks, fitted):
+    """Collapse per-``(K, seed)`` fits into one row per K carrying each metric's
+    mean and a ``<metric>_se`` (standard error), and stash the per-seed frontier
+    scores on the result so ``best_k(rule='1se')`` works on the composite too."""
+    by_k = {k: [] for k in ks}
+    for (k, _fs), row in zip(tasks, fitted):
+        by_k[k].append(row)
+    n = len(seeds)
+    keep_scalar = {"k", "coherence_metric"}
+    no_se = {"dispersion_pvalue"}  # an SE on a p-value is not meaningful
+    rows, coh_by_k, exc_by_k = [], [], []
+    for k in ks:
+        seed_rows = by_k[k]
+        agg = {"k": k}
+        if "coherence_metric" in seed_rows[0]:
+            agg["coherence_metric"] = seed_rows[0]["coherence_metric"]
+        for key in seed_rows[0]:
+            if key in keep_scalar:
+                continue
+            vals = np.array([r[key] for r in seed_rows], dtype=np.float64)
+            agg[key] = float(np.mean(vals))
+            if key not in no_se:
+                agg[key + "_se"] = float(np.std(vals, ddof=1) / np.sqrt(n))
+        rows.append(agg)
+        coh_by_k.append([r["coherence"] for r in seed_rows])
+        exc_by_k.append([r["exclusivity"] for r in seed_rows])
+
+    result = SearchKResult(rows)
+    # Per-seed frontier: z-score within each seed across K (via the shared helper),
+    # then mean / SE over seeds. Lets the 1-SE rule apply to the frontier composite.
+    coh = np.asarray(coh_by_k, np.float64)  # (nK, n_seeds)
+    exc = np.asarray(exc_by_k, np.float64)
+    fs = np.vstack([_frontier_score(coh[:, s], exc[:, s]) for s in range(n)])  # (n, nK)
+    with np.errstate(invalid="ignore"):
+        result._frontier_mean = fs.mean(axis=0)
+        result._frontier_se = fs.std(axis=0, ddof=1) / np.sqrt(n)
+    return result
 
 
 def search_k(
@@ -937,6 +1043,7 @@ def search_k(
     coherence_n=10,
     coherence_type="u_mass",
     n_jobs=1,
+    num_seeds=_SEARCH_K_DEFAULT_SEEDS,
 ):
     """Fit a model for each K and report quality metrics (stm's ``searchK``).
 
@@ -983,18 +1090,26 @@ def search_k(
     seed : RNG seed for every fit and transform call.
     coherence_n : top-word count used for coherence and exclusivity.
     coherence_type : one of ``"u_mass"``, ``"c_uci"``, ``"c_npmi"``, ``"c_v"`` (default ``"u_mass"``).
-    n_jobs : number of worker threads for the per-K fits (default ``1``, serial).
-        The fits are independent and each keeps its own fixed ``seed``, so the
-        results are identical to the serial run; only the wall-clock changes (the
-        Rust fits release the GIL). ``n_jobs<=0`` (or ``None``) uses all cores,
-        capped at the number of K values scanned.
-        Note it multiplies with any intra-fit threading (``num_threads=`` on the
-        model), so ``n_jobs`` above the core count can oversubscribe.
+    n_jobs : number of worker threads for the per-fit work (default ``1``, serial).
+        The fits are independent and each keeps its own fixed seed, so the results
+        are identical to the serial run; only the wall-clock changes (the Rust fits
+        release the GIL). ``n_jobs<=0`` (or ``None``) uses all cores, capped at the
+        number of fits. Note it multiplies with any intra-fit threading
+        (``num_threads=`` on the model), so ``n_jobs`` above the core count can
+        oversubscribe.
+    num_seeds : number of seeds fit per K (default ``1``). With ``num_seeds>1``,
+        each K is refit over seeds ``seed, seed+1, ...``; every metric column then
+        holds the across-seed mean and gains a ``<metric>_se`` standard-error
+        column, and ``best_k(rule="1se")`` becomes available (the simplest K within
+        one SE of the optimum). The per-K work parallelizes over ``(K, seed)`` via
+        ``n_jobs``. A single seed carries no standard errors (backward-compatible).
     """
     from . import LDA, STM  # local import to avoid a cycle at module load
 
     if model not in ("lda", "stm"):
         raise ValueError("model must be 'lda' or 'stm'")
+    if int(num_seeds) < 1:
+        raise ValueError(f"num_seeds must be >= 1, got {num_seeds!r}")
     if content is not None and model != "stm":
         raise ValueError("content covariates are only supported when model='stm'")
 
@@ -1034,12 +1149,12 @@ def search_k(
 
     ref_docs = _ref_corpus(docs)  # token lists, reused across every K
 
-    def _row_for_k(k):
+    def _fit_row(k, fit_seed):
         if model == "stm":
-            m = STM(num_topics=k, seed=seed)
+            m = STM(num_topics=k, seed=fit_seed)
             m.fit(docs, prevalence, content=content, iters=iters)
         else:
-            m = LDA(num_topics=k, seed=seed)
+            m = LDA(num_topics=k, seed=fit_seed)
             m.fit(docs, iters=iters, num_samples=num_samples,
                   sample_interval=sample_interval)
 
@@ -1083,24 +1198,28 @@ def search_k(
             row["polarization"] = float(np.mean(_pol(m)))
         if held_out is not None:
             if isinstance(held_out, Heldout):
-                result = eval_heldout(m, held_out, seed=seed)
+                result = eval_heldout(m, held_out, seed=fit_seed)
                 row["heldout_loglik"] = float(result.mean_per_doc_loglik)
             else:
-                row["perplexity"] = float(perplexity(m, held_out, seed=seed))
+                row["perplexity"] = float(perplexity(m, held_out, seed=fit_seed))
         return row
 
-    # Each K is fit independently with its own fixed seed, so results are identical
-    # to the serial path (verified). topica's Rust fits release the GIL, so a thread
-    # pool parallelizes the wall-clock cost with no pickling. n_jobs=1 stays serial;
-    # n_jobs<=0 or None uses all available cores.
-    workers = _resolve_workers(n_jobs, len(ks))
+    # One task per (K, seed). Each fit is independent with its own fixed seed, so
+    # results are identical to the serial path (verified). topica's Rust fits
+    # release the GIL, so a thread pool parallelizes wall-clock with no pickling.
+    seeds = [seed + s for s in range(int(num_seeds))]
+    tasks = [(k, fs) for k in ks for fs in seeds]
+    workers = _resolve_workers(n_jobs, len(tasks))
     if workers == 1:
-        rows = [_row_for_k(k) for k in ks]
+        fitted = [_fit_row(k, fs) for (k, fs) in tasks]
     else:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            rows = list(pool.map(_row_for_k, ks))  # map preserves ks order
-    return SearchKResult(rows)
+            fitted = list(pool.map(lambda t: _fit_row(*t), tasks))  # preserves order
+
+    if len(seeds) == 1:
+        return SearchKResult(fitted)  # one row per K, no standard errors
+    return _aggregate_over_seeds(ks, seeds, tasks, fitted)
 
 
 # ---------------------------------------------------------------------------
