@@ -39,6 +39,8 @@ tracks recovery, where coherence can mislead.
 
 ::: topica.label_topics
 
+::: topica.topics_for_term
+
 ::: topica.llm_topic_labels
 
 ::: topica.llm_backend

@@ -675,6 +675,179 @@ def topic_table(model, *, n=7):
     ]
 
 
+def topics_for_term(topic_word, terms, vocabulary=None, *, top_n=5, per_term=False,
+                    normalize=False, with_labels=False, label_n=5):
+    """The inverse of "top words for a topic": the top topics for a term.
+
+    Given the topic-word matrix φ, rank topics by the weight they place on a
+    queried term (or terms) — "which topics is ``'immigration'`` important in, and
+    how strongly?". Where :func:`label_topics` / :func:`frex` go *topic → words*,
+    this goes *word → topics*, which is handy for corpus exploration and for
+    checking where a seed/anchor word actually landed after fitting.
+
+    Parameters
+    ----------
+    topic_word : a fitted model (uses its ``topic_word`` and ``vocabulary``) or a
+        ``(K, V)`` array, in which case pass ``vocabulary``.
+    terms : str or sequence of str
+        A single term, or several. Terms are matched against ``vocabulary``
+        exactly — a topic model's vocabulary is its *processed* tokens (usually
+        lowercased, often stemmed), so query the stored form (``"immigr"``), not
+        the surface word (``"Immigration"``). A term absent from the vocabulary is
+        dropped with a warning; if *every* term is absent a ``ValueError`` is
+        raised. Duplicate terms are collapsed to their first occurrence.
+    vocabulary : sequence of str, optional
+        Required only when ``topic_word`` is a bare array with no vocabulary.
+    top_n : int or None, default 5
+        How many topics to return, highest-weighted first. ``None`` returns all
+        topics ranked. Ties are broken by ascending topic id.
+    per_term : bool, default False
+        Ignored for a single term. For several terms, ``False`` (the default)
+        pools the terms — topics are ranked by the **summed** weight across the
+        queried terms — and returns one ranked list. ``True`` instead returns a
+        ``dict`` mapping each (found) term to its own ranked list, in the order
+        the terms were given.
+    normalize : bool, default False
+        How each term's per-topic weight is defined. ``False`` uses the raw φ
+        entry, ``P(word | topic)`` — directly "what share of this topic's mass is
+        this word". Because φ columns are not comparable across words (a frequent
+        word carries more mass everywhere), raw weights and the raw pooled sum are
+        dominated by the most frequent term. ``True`` instead column-normalizes
+        each term to ``P(topic | word) = φ[:, w] / Σ_t φ[t, w]`` — "what share of
+        *this word* lives in each topic" — which is comparable across terms and
+        frequency-robust, so pooling weights terms equally. This is a distribution
+        only for a nonnegative φ; on a signed-axis model (S³, an ideal-point model)
+        ``normalize=True`` raises rather than return meaningless ratios, so leave it
+        off there.
+    with_labels : bool, default False
+        When ``True``, each ranked entry gains a third element: the topic's
+        ``label_n`` highest-probability words (from φ), so the result reads on its
+        own without a manual join back to :func:`label_topics`. Entries become
+        ``(topic_id, weight, top_words)`` where ``top_words`` is a ``list[str]``.
+    label_n : int, default 5
+        How many words to attach per topic when ``with_labels=True``.
+
+    Returns
+    -------
+    For a single term, or several terms with ``per_term=False``: a list of
+    ``(topic_id, weight)`` pairs sorted by descending weight. With several terms
+    and ``per_term=True``: a ``dict`` ``{term: [(topic_id, weight), ...]}``. When
+    ``with_labels=True`` every pair is instead a ``(topic_id, weight, top_words)``
+    triple.
+
+    Examples
+    --------
+    >>> topics_for_term(model, "immigr", top_n=5)
+    [(12, 0.031), (4, 0.018), ...]
+    >>> topics_for_term(model, ["immigr", "border"], per_term=True)
+    {"immigr": [...], "border": [...]}
+    >>> topics_for_term(model, "immigr", top_n=2, with_labels=True)
+    [(12, 0.031, ["immigr", "border", "illeg", ...]), (4, 0.018, [...])]
+    """
+    single = isinstance(terms, str)
+    term_list = [terms] if single else list(terms)
+    if not term_list:
+        raise ValueError("terms is empty; pass a term or a non-empty list of terms")
+    if not all(isinstance(t, str) for t in term_list):
+        raise ValueError("terms must be a string or a sequence of strings")
+    # Collapse to plain str, first occurrence wins. This keeps the pooled sum from
+    # double-counting a repeated term and the per_term dict from silently dropping
+    # one (dict keys are unique), so both modes see the same term set.
+    term_list = list(dict.fromkeys(str(t) for t in term_list))
+    # bool is an int subclass; reject it so top_n=True isn't silently read as 1.
+    if top_n is not None and (
+        isinstance(top_n, bool) or not isinstance(top_n, (int, np.integer)) or top_n < 1
+    ):
+        raise ValueError(f"top_n must be a positive integer or None, got {top_n!r}")
+    if with_labels and (
+        isinstance(label_n, bool) or not isinstance(label_n, (int, np.integer))
+        or label_n < 1
+    ):
+        raise ValueError(f"label_n must be a positive integer, got {label_n!r}")
+
+    vocabulary = _vocabulary_of(topic_word, vocabulary)
+    phi = _as_topic_word(topic_word)
+    if phi.ndim != 2 or phi.shape[0] == 0:
+        raise ValueError(
+            "the model has no topics (empty topic_word). For BERTopic/Top2Vec this "
+            "means clustering found no clusters — lower min_cluster_size, add data, "
+            "or check the scale of your embeddings."
+        )
+    K, V = phi.shape
+    if len(vocabulary) != V:
+        raise ValueError(
+            f"vocabulary length ({len(vocabulary)}) does not match the number of "
+            f"topic_word columns ({V}); pass the vocabulary aligned to this φ."
+        )
+    # normalize forms P(topic | word) = φ[:, w] / Σ_t φ[t, w], which is a
+    # distribution only for a nonnegative φ. On a signed-axis surface (S³, an
+    # ideal-point model) the column sum can be near zero or negative, so the ratio
+    # silently returns negative / >1 / enormous "weights". Reject it up front rather
+    # than hand back nonsense. Tolerate float-noise negatives (e.g. an LSA/NMF
+    # surface reconstructing to ~-1e-16); genuine signed axes carry values of order
+    # 0.1–1, far past this floor.
+    signed_tol = -1e-8 * max(1.0, float(np.abs(phi).max())) if phi.size else 0.0
+    if normalize and phi.size and phi.min() < signed_tol:
+        raise ValueError(
+            "normalize=True forms P(topic | word) = φ[:, w] / Σ_t φ[t, w], which "
+            "assumes a nonnegative topic-word matrix; this φ has negative entries "
+            "(a signed-axis model like S³ or an ideal-point model). Leave normalize "
+            "off for signed models, or pass a nonnegative φ."
+        )
+    index = {w: i for i, w in enumerate(vocabulary)}
+
+    found = [(t, index[t]) for t in term_list if t in index]
+    missing = [t for t in term_list if t not in index]
+    if missing:
+        if not found:
+            raise ValueError(
+                f"none of the requested terms are in the vocabulary: {missing!r}. "
+                "The vocabulary holds the model's processed tokens (usually "
+                "lowercased, often stemmed) — query that form, not the surface word."
+            )
+        warnings.warn(
+            f"terms not in the vocabulary, dropped: {missing!r}",
+            stacklevel=2,
+        )
+
+    limit = K if top_n is None else min(int(top_n), K)
+
+    # Each topic's top-probability words, only when labels are asked for. Built
+    # once (K is small) and shared across every ranked list. Match label_topics's
+    # "prob" ordering exactly (np.argsort ascending, then reversed) so the attached
+    # words agree with label_topics(...)[t]["prob"] word-for-word, ties included.
+    labels = None
+    if with_labels:
+        labels = [
+            [vocabulary[i] for i in np.argsort(phi[t])[::-1][:label_n]]
+            for t in range(K)
+        ]
+
+    def _col(j):
+        col = phi[:, j]
+        if normalize:
+            total = col.sum()
+            return col / total if total != 0 else np.zeros_like(col)
+        return col
+
+    def _rank(weights):
+        # Descending by weight; np.argsort is stable, so equal weights keep
+        # ascending topic-id order — a deterministic tie-break.
+        order = np.argsort(-weights, kind="stable")[:limit]
+        if with_labels:
+            return [(int(t), float(weights[t]), labels[t]) for t in order]
+        return [(int(t), float(weights[t])) for t in order]
+
+    if single:
+        return _rank(_col(found[0][1]))
+    if per_term:
+        return {t: _rank(_col(j)) for t, j in found}
+    # Pool the terms: rank topics by their summed (per-term normalized, if asked)
+    # weight over the queried terms.
+    pooled = np.sum([_col(j) for _, j in found], axis=0)
+    return _rank(pooled)
+
+
 # ---------------------------------------------------------------------------
 # topicCorr: topic-correlation network
 # ---------------------------------------------------------------------------
@@ -2927,6 +3100,7 @@ __all__ = [
     "frex",
     "mmr",
     "label_topics",
+    "topics_for_term",
     "topic_correlation",
     "TopicCorrelation",
     "find_thoughts",
