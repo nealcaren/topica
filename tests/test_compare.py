@@ -38,6 +38,22 @@ def _onehot_topics(k, v, seed=0, noise=0.0):
 
 # --- alignment basics ---------------------------------------------------------
 
+def test_compare_self_alignment_invariant_correlated():
+    # Issue #642: comparing a correlated-topic fit (STM/CTM, where off-diagonal cosine
+    # is high) with itself must report full stability — K matched, nothing split, merged,
+    # vanished, or appeared — not near-total instability.
+    tw = np.random.default_rng(7).random((10, 60)) + 0.5  # high off-diagonal cosine
+    a, b = DummyModel(tw), DummyModel(tw)
+    cmp = topica.compare(a, b)
+    assert len(cmp.aligned) == 10
+    assert len(cmp.splits) == 0
+    assert len(cmp.merges) == 0
+    assert not cmp.unmatched_a and not cmp.unmatched_b
+    # matched pairs are the identity, at distance ~0
+    assert {p.topic_a: p.topic_b for p in cmp.aligned} == {i: i for i in range(10)}
+    assert max(p.distance for p in cmp.aligned) < 1e-9
+
+
 def test_compare_matches_permuted_topics():
     phi = _onehot_topics(4, 16, seed=1)
     a = DummyModel(phi)

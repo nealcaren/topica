@@ -192,16 +192,24 @@ It supports several distance metrics:
 
 If the models have different vocabularies, `align_topics` automatically intersects them, projects the distributions, and re-normalizes them.
 
-You can inspect relationship classifications (e.g. splits, merges, and unaligned topics) based on a similarity threshold:
+You can inspect relationship classifications (matches, splits, merges, and unaligned topics):
 ```python
 result = topica.align_topics(model_a, model_b, metric="cosine", threshold=0.3)
 
-result.matches     # clean 1-to-1 matches
-result.splits      # topic in A splitting to multiple in B
-result.merges      # topic in B merging from multiple in A
+result.matches     # Hungarian 1-to-1 pairs whose similarity clears `threshold`
+result.splits      # topic in A splitting to multiple in B (overlay on the matches)
+result.merges      # topic in B merging from multiple in A (overlay on the matches)
 result.unaligned_a # topics in A with no match above threshold
 result.unaligned_b # topics in B with no match above threshold
 ```
+
+`threshold` sets the one-to-one match cut. Splits and merges are an *overlay*: an extra
+partner is flagged only when it is close to a topic's own best match *relative to this
+fit's cross-topic similarity floor*, so a matched topic that also has a close extra
+partner shows up in both `matches` and `splits`/`merges`. Because the overlay calibrates
+to each fit, correlated-topic families (STM/CTM) — whose off-diagonal cosines are high —
+are no longer mislabelled as near-total splits/merges, and `align_topics(tw, tw)` returns
+K matches with zero splits/merges for any model (issue #642).
 
 ## Topic structure and document outliers
 

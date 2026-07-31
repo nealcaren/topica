@@ -2191,12 +2191,19 @@ class AlignmentResult(list):
 
     Behaves as a list of ``(topic_a, topic_b, distance)`` tuples for backward
     compatibility, but exposes additional attributes for advanced analysis:
-    - ``matches``: List of 1-to-1 matched pairs ``(topic_a, topic_b, similarity)``
+    - ``matches``: List of 1-to-1 matched pairs ``(topic_a, topic_b, similarity)`` — the
+      Hungarian assignment restricted to pairs that clear ``threshold``.
     - ``splits``: Dictionary mapping ``topic_a -> list of (topic_b, similarity)``
     - ``merges``: Dictionary mapping ``topic_b -> list of (topic_a, similarity)``
     - ``unaligned_a``: List of unmatched topics in Model A
     - ``unaligned_b``: List of unmatched topics in Model B
     - ``similarity_matrix``: Raw pairwise similarity matrix of shape ``(K_A, K_B)``
+
+    ``splits``/``merges`` are a background-relative overlay on the match/unaligned
+    partition (issue #642), so a matched topic that also has an extra close partner
+    appears in both ``matches`` and ``splits``/``merges``. Comparing a fit with itself
+    yields K matches and no splits/merges for any model, including correlated-topic
+    families (STM/CTM) whose off-diagonal similarities are high.
     """
     def __init__(
         self,
@@ -2331,6 +2338,123 @@ def _emd_similarity(p_a, p_b, top_idx_a, top_idx_b, word_embeddings, depth):
     return float(similarity)
 
 
+# Split/merge overlay calibration (issue #642). ``_SPLIT_GAP`` is the fraction of the
+# gap between a topic's own best match and the model's cross-topic background that a
+# second partner must close to count as a genuine split/merge; ``_SPLIT_BG_QUANTILE``
+# is the quantile of off-target similarities used as that background. Both ride the
+# model's own similarity scale, so a fixed pair works across metrics (cosine/js/rbo/
+# emd/jaccard) — see the module tests' per-metric self-alignment invariant.
+_SPLIT_GAP = 0.25
+_SPLIT_BG_QUANTILE = 0.9
+
+
+def _split_background(M, argmax, split_gap, bg_quantile):
+    """Robust background level of *off-target* similarities for one direction.
+
+    ``M`` is ``(lines × candidates)`` and ``argmax`` each line's best candidate. Pools
+    every non-argmax similarity (the model's own cross-topic floor, matched signal
+    removed) and takes its ``bg_quantile`` quantile, then recomputes once after dropping
+    provisional outliers so a genuine co-partner cannot inflate the very floor that would
+    then reject it (this matters at small K, where the pool is tiny)."""
+    n_lines, n_cand = M.shape
+    if n_cand < 2:
+        return 0.0
+    rows = np.arange(n_lines)
+    off = np.ones(M.shape, dtype=bool)
+    off[rows, argmax] = False
+    pool = M[off]
+    if pool.size == 0:
+        return 0.0
+    q = float(np.quantile(pool, bg_quantile))
+    best = M[rows, argmax]
+    cut = best - split_gap * (best - q)
+    kept = off & (M < cut[:, None])
+    pool2 = M[kept]
+    if pool2.size >= max(4, n_cand):
+        q = float(np.quantile(pool2, bg_quantile))
+    return q
+
+
+def _co_partners(M, threshold, split_gap, bg_quantile):
+    """One-to-many partners per line, calibrated to the model's own similarity scale.
+
+    Returns ``{line: [(candidate, sim), ...]}`` (best first) for every line that keeps at
+    least one *extra* candidate beyond its own best match. A candidate ``k`` qualifies
+    when ``M[i, k] >= best_i - split_gap * (best_i - q)``, where ``q`` is the off-target
+    background quantile: the bar is a gap measured against *this model's* cross-topic
+    floor, never a fixed absolute threshold, so correlated-topic families do not
+    manufacture partners. A line whose own best match is a diffuse near-background value
+    (``best_i <= q``) gets a bar at or above ``best_i`` and so never splits; a line whose
+    best match is itself below ``threshold`` (no real primary) is skipped entirely."""
+    n_lines, n_cand = M.shape
+    result: dict[int, list] = {}
+    if n_cand < 2:
+        return result
+    rows = np.arange(n_lines)
+    argmax = np.argmax(M, axis=1)
+    best = M[rows, argmax]
+    q = _split_background(M, argmax, split_gap, bg_quantile)
+    cut = best - split_gap * (best - q)
+    for i in range(n_lines):
+        if best[i] < threshold:
+            continue
+        ci = cut[i]
+        extra = [
+            (int(k), float(M[i, k]))
+            for k in range(n_cand)
+            if k != argmax[i] and M[i, k] >= ci
+        ]
+        if extra:
+            targets = [(int(argmax[i]), float(best[i]))] + extra
+            targets.sort(key=lambda t: t[1], reverse=True)
+            result[int(i)] = targets
+    return result
+
+
+def _classify_alignment(
+    similarity_matrix,
+    hungarian_pairs,
+    threshold,
+    *,
+    split_gap=_SPLIT_GAP,
+    bg_quantile=_SPLIT_BG_QUANTILE,
+):
+    """Hungarian-anchored match / split / merge classification (issue #642).
+
+    ``matches`` are the Hungarian 1-to-1 pairs that clear ``threshold`` — the correct,
+    correlation-insensitive headline: a self-alignment recovers the diagonal at
+    similarity 1.0, so ``align_topics(tw, tw)`` returns K matches for *any* model,
+    including correlated-topic families (STM/CTM) whose off-diagonal cosines are high.
+    ``splits``/``merges`` are a background-relative *overlay* (see :func:`_co_partners`)
+    that stays empty on such a self-alignment instead of the old fixed-``threshold``
+    adjacency, which reported near-total instability for identical inputs.
+
+    Returns ``(matches, splits, merges, unaligned_a, unaligned_b)`` in the historical
+    shapes — ``matches`` a list of ``(i, j, sim)``, ``splits`` ``{i: [(j, sim), ...]}``,
+    ``merges`` ``{j: [(i, sim), ...]}``. ``matches`` and ``splits``/``merges`` may
+    overlap: a cleanly matched topic that *also* has an extra partner appears in both,
+    the match giving its 1-to-1 counterpart and the split/merge naming the extra."""
+    S = np.asarray(similarity_matrix, dtype=np.float64)
+    na, nb = S.shape
+
+    matches = []
+    matched_a: set[int] = set()
+    matched_b: set[int] = set()
+    for i, j in hungarian_pairs:
+        s = float(S[i, j])
+        if s >= threshold:
+            matches.append((int(i), int(j), s))
+            matched_a.add(int(i))
+            matched_b.add(int(j))
+    unaligned_a = [i for i in range(na) if i not in matched_a]
+    unaligned_b = [j for j in range(nb) if j not in matched_b]
+
+    splits = _co_partners(S, threshold, split_gap, bg_quantile)
+    merges = _co_partners(S.T, threshold, split_gap, bg_quantile)
+
+    return matches, splits, merges, unaligned_a, unaligned_b
+
+
 def align_topics(
     a,
     b,
@@ -2352,6 +2476,13 @@ def align_topics(
     Returns an `AlignmentResult` object which behaves as a list of ``(topic_a, topic_b, distance)``
     tuples sorted by ``topic_a``, but exposes additional attributes: ``matches``, ``splits``,
     ``merges``, ``unaligned_a``, ``unaligned_b``, and ``similarity_matrix``.
+
+    ``matches`` is the Hungarian assignment restricted to pairs above ``threshold``;
+    ``splits``/``merges`` are a background-relative overlay calibrated to the fit's own
+    cross-topic similarity, so ``align_topics(tw, tw)`` returns K matches and no
+    splits/merges for any model — including correlated-topic families (STM/CTM) whose
+    off-diagonal cosines are high (issue #642). ``threshold`` sets the one-to-one match
+    cut; the split/merge overlay self-calibrates and does not depend on it.
     """
     A = _as_topic_word(a)
     B = _as_topic_word(b)
@@ -2456,45 +2587,14 @@ def align_topics(
             legacy_dist = float(1.0 - similarity_matrix[i, j])
         legacy_pairs.append((i, j, legacy_dist))
 
-    # 5. Threshold-based classification (splits, merges, matches, unaligned)
-    matches = []
-    splits = {}
-    merges = {}
-    unaligned_a = []
-    unaligned_b = []
-    
-    adj_a = {i: [] for i in range(A.shape[0])}
-    adj_b = {j: [] for j in range(B.shape[0])}
-    
-    for i in range(A.shape[0]):
-        for j in range(B.shape[0]):
-            sim = float(similarity_matrix[i, j])
-            if sim >= threshold:
-                adj_a[i].append((j, sim))
-                adj_b[j].append((i, sim))
-                
-    for i in adj_a:
-        adj_a[i].sort(key=lambda x: x[1], reverse=True)
-    for j in adj_b:
-        adj_b[j].sort(key=lambda x: x[1], reverse=True)
-        
-    for i in range(A.shape[0]):
-        targets = adj_a[i]
-        if len(targets) == 0:
-            unaligned_a.append(i)
-        elif len(targets) == 1:
-            j, sim = targets[0]
-            if len(adj_b[j]) == 1:
-                matches.append((i, j, sim))
-        else:
-            splits[i] = targets
-            
-    for j in range(B.shape[0]):
-        sources = adj_b[j]
-        if len(sources) == 0:
-            unaligned_b.append(j)
-        elif len(sources) > 1:
-            merges[j] = sources
+    # 5. Hungarian-anchored classification (issue #642). Matches are the Hungarian
+    #    1-to-1 pairs above threshold; splits/merges are a background-relative overlay
+    #    that stays empty on a correlated-topic self-alignment. The old fixed-threshold
+    #    adjacency mislabelled correlated models (STM/CTM) as near-total splits/merges.
+    hungarian_pairs = [(i, j) for (i, j, _d) in legacy_pairs]
+    matches, splits, merges, unaligned_a, unaligned_b = _classify_alignment(
+        similarity_matrix, hungarian_pairs, threshold
+    )
 
     return AlignmentResult(
         legacy_pairs,
