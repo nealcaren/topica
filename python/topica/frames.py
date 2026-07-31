@@ -8,6 +8,7 @@ prevalence regression. These helpers keep text and metadata bound together.
 
 from __future__ import annotations
 
+import warnings
 from typing import Sequence
 
 from . import Corpus, tokenize
@@ -86,6 +87,35 @@ def from_dataframe(
         ]
     else:
         docs = [tokenizer(t if isinstance(t, str) else "") for t in texts]
+
+    # max_doc_fraction removes the highest document-frequency terms — which on a
+    # focused corpus can be the very words it is about (e.g. "immigration" in an
+    # immigration corpus). The pruning happens in the Rust core with no feedback, so
+    # surface the dropped high-frequency terms here before they vanish silently.
+    if max_doc_fraction < 1.0 and docs and vocabulary is None:
+        from collections import Counter
+
+        n_docs = len(docs)
+        doc_freq: Counter = Counter()
+        for d in docs:
+            doc_freq.update(set(d))
+        thresh = max_doc_fraction * n_docs
+        dropped = sorted(
+            (w for w, c in doc_freq.items() if c > thresh),
+            key=lambda w: doc_freq[w],
+            reverse=True,
+        )
+        if dropped:
+            shown = ", ".join(f"{w!r} ({doc_freq[w] / n_docs:.0%})" for w in dropped[:8])
+            more = "" if len(dropped) <= 8 else f", +{len(dropped) - 8} more"
+            warnings.warn(
+                f"max_doc_fraction={max_doc_fraction} drops {len(dropped)} very "
+                f"common term(s) from the vocabulary: {shown}{more}. On a focused "
+                "corpus these can be the words it is about; raise max_doc_fraction "
+                "(or leave it at 1.0) to keep them.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     corpus = Corpus.from_documents(
         docs,

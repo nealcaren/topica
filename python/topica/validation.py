@@ -1155,7 +1155,24 @@ class SearchKResult(list):
             return self._elbow_k(present, metric, maximize)
         best = (max if maximize else min)(r[metric] for r in present)
         # Parsimony tie-break: smallest k achieving the best value.
-        return int(min(r["k"] for r in present if r[metric] == best))
+        pick = int(min(r["k"] for r in present if r[metric] == best))
+        # Boundary guard: held-out log-likelihood and perplexity usually improve
+        # with K on real corpora, so rule='best' tends to return the largest K
+        # scanned — a grid artifact, not a real optimum. Warn (symmetric to the
+        # coherence path) so a user doesn't publish the grid endpoint unexamined.
+        if metric in ("heldout_loglik", "perplexity") and len(present) >= 2:
+            k_max = max(r["k"] for r in present)
+            if pick == k_max:
+                warnings.warn(
+                    f"best_k(metric={metric!r}) selected K={pick}, the largest K "
+                    "scanned: this metric tends to keep improving with K, so the "
+                    "optimum is at the grid boundary and the real best K may lie "
+                    "beyond it. Widen ks=, or use rule='elbow' (diminishing-returns "
+                    "knee) or metric='frontier' (coherence/exclusivity knee).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        return pick
 
     def _one_se_k(self, present, metric, maximize):
         """One-standard-error rule on a scalar ``metric``: the smallest K whose
@@ -1770,7 +1787,14 @@ def plot_search_k(rows, *, metrics=("coherence", "exclusivity"), ax=None):
     :func:`search_k`; ``metrics`` selects which of its keys to draw (any of
     ``"coherence"``, ``"exclusivity"``, ``"perplexity"``, ``"heldout_loglik"``).
     Only metrics present in the rows are drawn; absent keys are silently skipped.
-    Returns the primary matplotlib ``Axes``. Requires matplotlib.
+
+    Returns the primary matplotlib ``Axes`` (consistent with topica's other
+    ``plot_*`` helpers). To save the figure, go through the axes' figure::
+
+        ax = topica.plot_search_k(rows)
+        ax.figure.savefig("search_k.png", dpi=150, bbox_inches="tight")
+
+    Requires matplotlib.
     """
     try:
         import matplotlib.pyplot as plt

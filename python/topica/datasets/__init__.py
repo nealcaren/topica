@@ -270,7 +270,7 @@ def load_poliblog(*, return_path: bool = False):
 
 
 def load_dubois(*, return_path: bool = False):
-    """Load Du Bois-era articles from The Crisis, 1910-1922 (704 documents).
+    """Load Du Bois-era articles from The Crisis, 1910-1934 (704 documents).
 
     Raw text in the ``text`` column; covariates ``year``, ``decade``,
     ``volume``, ``issue``, ``author``, ``subjects``. Build a corpus with
@@ -281,7 +281,9 @@ def load_dubois(*, return_path: bool = False):
             df, text_col="text", stopwords=topica.ENGLISH_STOPWORDS
         )
 
-    Downloaded once and cached. Pass ``return_path=True`` for the CSV path.
+    The corpus holds a few (3) exact-duplicate articles reprinted across issues;
+    drop them with ``df.drop_duplicates("text")`` if a fit should not double-count
+    them. Downloaded once and cached. Pass ``return_path=True`` for the CSV path.
     """
     return _load("dubois", return_path)
 

@@ -192,7 +192,8 @@ class TestEstimateEffect:
         )
         df = effects[0].to_frame()
         assert list(df.columns) == [
-            "topic", "feature", "coef", "se", "z", "ci_low", "ci_high", "r_squared"
+            "topic", "feature", "coef", "se", "z", "pvalue", "ci_low", "ci_high",
+            "r_squared"
         ]
         assert len(df) == len(effects[0].feature_names)  # intercept + x
         assert set(df["feature"]) == {"intercept", "x"}
