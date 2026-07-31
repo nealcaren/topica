@@ -223,6 +223,53 @@ def test_non_embedding_model_has_no_embeddings_input(fitted):
     assert "embeddings" not in record_fit(model, corpus, embeddings=None).inputs
 
 
+def test_word_embedding_model_gets_no_doc_embeddings_marker():
+    # A word-embedding model (ETM: fit(data, word_embeddings, vocabulary)) is NOT
+    # determined by document embeddings, so it must not be marked "fit from document
+    # embeddings" — the detection reads the fit signature, not a coarse registry flag.
+    import numpy as np
+    topica.enable_experimental()
+    rng = np.random.default_rng(0)
+    toks = [[f"w{rng.integers(6)}" for _ in range(8)] for _ in range(40)]
+    corpus = topica.Corpus.from_documents(toks)
+    et = topica.ETM(2, seed=0)
+    et.fit(toks, rng.normal(size=(len(corpus.vocabulary), 5)), list(corpus.vocabulary), iters=5)
+    assert "embeddings" not in record_fit(et, corpus).inputs
+
+
+def test_doc_embedding_detection_is_by_fit_signature():
+    # Detection reads the fit signature, so it covers custom/unregistered models and
+    # excludes word-embedding ones — independent of the registry.
+    from topica.manifest import _fit_uses_doc_embeddings
+
+    class DocEmb:  # a custom, unregistered document-embedding model
+        def fit(self, data, doc_embeddings=None):
+            ...
+
+    class WordEmb:
+        def fit(self, data, word_embeddings, vocabulary):
+            ...
+
+    class Counts:
+        def fit(self, data):
+            ...
+
+    assert _fit_uses_doc_embeddings(DocEmb())
+    assert not _fit_uses_doc_embeddings(WordEmb())
+    assert not _fit_uses_doc_embeddings(Counts())
+
+
+def test_embeddings_shape_is_validated():
+    m, corpus, emb = _bertopic()
+    import numpy as np
+    with pytest.raises(ValueError, match="2-D"):
+        record_fit(m, corpus, embeddings=emb[:, 0])          # 1-D
+    with pytest.raises(ValueError, match="rows but the corpus"):
+        record_fit(m, corpus, embeddings=np.zeros((0, emb.shape[1])))   # empty
+    with pytest.raises(ValueError, match="rows but the corpus"):
+        record_fit(m, corpus, embeddings=emb[:2])            # wrong row count
+
+
 def test_manifest_diff_detects_embedding_change():
     m, corpus, emb = _bertopic()
     a = record_fit(m, corpus, embeddings=emb)
