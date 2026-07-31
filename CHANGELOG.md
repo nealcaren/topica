@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`topica.coherence` / `coherence_ci` / `semantic_coherence` no longer silently
+  mis-score raw-string input** (#648). Passing a list of document *strings* (as the
+  docs' own examples do) was iterated character-by-character, so no top word ever
+  matched the vocabulary and the score degenerated silently — e.g. `c_v == 1.0` for
+  every topic. These functions now normalize their reference corpus the same way
+  `diagnostics` does (a `Corpus`, raw strings split on whitespace, or already-tokenized
+  documents all work), so string input is tokenized rather than shredded.
+
 ### Added
 
 - **`topica.compare` now compares two `AnalysisManifest`s without refitting** (#415).
