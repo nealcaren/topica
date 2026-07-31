@@ -599,6 +599,13 @@ def estimate_effect(
     standard errors include the topic-estimation uncertainty, not just OLS
     sampling error. Get draws with :func:`posterior_theta_samples`.
 
+    A **point** θ gives OLS standard errors that treat the topic proportions as
+    fixed and so *understate* uncertainty. For a model with a θ posterior, prefer
+    draws (or pass the model with ``nsims=``). For a cluster/embedding model with no
+    posterior (e.g. BERTopic), method-of-composition is unavailable; pass the model
+    (not just its ``doc_topic`` array) so this is flagged, and use
+    ``standard_errors(..., method="bootstrap")`` to quantify uncertainty.
+
     For paper-grade inference two extras matter:
 
     - ``cluster`` — a length-``num_docs`` array of group labels (e.g. speaker,
@@ -714,12 +721,30 @@ def estimate_effect(
     # standard errors (no hand-wiring a sampler); without it, the point theta is
     # used for plain OLS.
     if hasattr(doc_topic, "doc_topic") and not isinstance(doc_topic, np.ndarray):
-        from .effects import composition_theta
+        from .effects import composition_theta, model_family
 
         _model = doc_topic
         if nsims:
             doc_topic = composition_theta(_model, corpus, nsims=nsims, seed=seed)
         else:
+            # A model with no posterior over theta (a cluster/embedding model such as
+            # BERTopic) has no method-of-composition path, so this is plain OLS on a
+            # point estimate: the topic proportions are treated as fixed and the SEs
+            # understate uncertainty. standard_errors()/effect_plot refuse in this
+            # case; warn here too rather than returning confident-looking CIs. (A
+            # posterior model used at its point theta is the documented OLS baseline
+            # and can upgrade via nsims=, so it is not warned.)
+            if model_family(_model) == "none":
+                warnings.warn(
+                    f"{type(_model).__name__} has no posterior over topic "
+                    "proportions, so these standard errors are ordinary least "
+                    "squares on a point estimate: they treat the proportions as "
+                    "fixed and understate uncertainty. Method-of-composition "
+                    "intervals are unavailable for this model; use "
+                    "standard_errors(model, corpus, of='effect', method='bootstrap') "
+                    "to quantify uncertainty.",
+                    stacklevel=2,
+                )
             doc_topic = np.asarray(_model.doc_topic, dtype=np.float64)
 
     theta = np.asarray(doc_topic, dtype=np.float64)
@@ -1546,6 +1571,24 @@ def posterior_theta_samples(model, nsims=25, seed=0):
 
     Returns an array of shape ``(nsims, num_docs, num_topics)``.
     """
+    # This is the logistic-normal (STM/CTM) sampler. Refuse other families cleanly
+    # rather than failing with an AttributeError on the missing ``eta_mean`` getter
+    # (issue #651): point at the right path for each family.
+    from .effects import model_family
+
+    fam = model_family(model)
+    if fam != "logistic_normal":
+        if fam == "dirichlet":
+            raise ValueError(
+                f"{type(model).__name__} has a Dirichlet (not logistic-normal) "
+                "posterior; use topica.composition_theta(model, corpus) to draw "
+                "theta for method-of-composition, not posterior_theta_samples."
+            )
+        raise ValueError(
+            f"{type(model).__name__} has no posterior over topic proportions, so "
+            "theta cannot be sampled. Use standard_errors(model, corpus, "
+            "of='effect', method='bootstrap') for uncertainty on this model."
+        )
     lam = np.asarray(model.eta_mean, dtype=np.float64)  # (D, K-1)
     try:
         cov = np.asarray(model.eta_cov, dtype=np.float64)   # (D, K-1, K-1)

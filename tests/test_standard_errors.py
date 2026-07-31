@@ -204,6 +204,49 @@ def test_composition_top_words_is_rejected():
         topica.standard_errors(m, corpus, of="top_words", method="composition")
 
 
+def _fitted_bertopic():
+    """A tiny BERTopic on synthetic, well-separated embeddings (no download)."""
+    rng = np.random.default_rng(0)
+    emb = np.vstack([rng.normal(c, 0.1, size=(20, 8)) for c in (-3.0, 0.0, 3.0)])
+    toks = [[f"w{rng.integers(10)}" for _ in range(8)] for _ in range(60)]
+    m = topica.BERTopic(num_clusters=3, clusterer="kmeans", seed=0).fit(toks, emb)
+    return m
+
+
+def test_estimate_effect_warns_on_no_posterior_model_point_theta():
+    # estimate_effect(model) on a cluster/embedding model falls to point-theta OLS
+    # (no method-of-composition possible). It must warn, consistent with
+    # standard_errors/effect_plot refusing — not return confident-looking CIs.
+    m = _fitted_bertopic()
+    n = np.asarray(m.doc_topic).shape[0]
+    X = np.random.default_rng(1).random((n, 1))
+    with pytest.warns(UserWarning, match="no posterior"):
+        topica.estimate_effect(m, X, feature_names=["x"])
+
+
+def test_estimate_effect_point_theta_paths_do_not_falsely_warn():
+    import warnings as _w
+
+    # A raw point-theta ARRAY is the documented OLS baseline (no provenance to judge)
+    # and a posterior model used at its point theta can upgrade via nsims=; neither
+    # should emit the no-posterior warning.
+    m, corpus, x = _planted()
+    X = x[:, None]
+    with _w.catch_warnings():
+        _w.simplefilter("error")
+        topica.estimate_effect(m.doc_topic, X, feature_names=["x"])  # raw array
+        topica.estimate_effect(m, X, feature_names=["x"])            # LDA has a posterior
+
+
+def test_posterior_theta_samples_refuses_non_logistic_normal_cleanly():
+    # A clean, guiding ValueError per family — never an AttributeError on eta_mean.
+    m, corpus, _ = _planted()  # LDA -> dirichlet
+    with pytest.raises(ValueError, match="Dirichlet"):
+        topica.stm.posterior_theta_samples(m)
+    with pytest.raises(ValueError, match="no posterior"):
+        topica.stm.posterior_theta_samples(_fitted_bertopic())
+
+
 def test_topic_correlation_ci_well_shaped_and_coherent():
     # CTM/STM topic-correlation credible interval from the logistic-normal posterior:
     # K x K, symmetric, unit diagonal, ci_low <= estimate <= ci_high in every cell,
