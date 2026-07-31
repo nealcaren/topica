@@ -46,6 +46,49 @@ class TestCoherenceRanksTopics:
         assert s.shape == (3,)
 
 
+class TestCoherenceAcceptsInputForms:
+    """Raw strings and a Corpus must score identically to token lists — never
+    silently iterated character-by-character to a degenerate constant (issue #648).
+    """
+
+    def test_raw_strings_match_token_lists(self, reference):
+        strings = [" ".join(d) for d in reference]
+        for ct in ALL_TYPES:
+            tok = topica.coherence([COHERENT, INCOHERENT], reference, coherence_type=ct, topn=3)
+            s = topica.coherence([COHERENT, INCOHERENT], strings, coherence_type=ct, topn=3)
+            np.testing.assert_allclose(s, tok, err_msg=ct)
+
+    def test_raw_strings_are_not_a_degenerate_constant(self, reference):
+        # The bug returned 1.0 for every topic (chars never match the vocab).
+        strings = [" ".join(d) for d in reference]
+        s = topica.coherence([COHERENT, INCOHERENT], strings, coherence_type="c_v", topn=3)
+        assert not np.allclose(s, 1.0)
+        assert s[0] > s[1]  # coherent still beats incoherent
+
+    def test_corpus_reference_matches_token_lists(self, reference):
+        corpus = topica.Corpus.from_documents(reference, min_doc_freq=1)
+        tok = topica.coherence([COHERENT, INCOHERENT], reference, coherence_type="c_npmi", topn=3)
+        c = topica.coherence([COHERENT, INCOHERENT], corpus, coherence_type="c_npmi", topn=3)
+        np.testing.assert_allclose(c, tok)
+
+    def test_coherence_ci_accepts_strings(self, reference):
+        strings = [" ".join(d) for d in reference]
+        tok = topica.coherence_ci([COHERENT, INCOHERENT], reference,
+                                  coherence_type="c_npmi", topn=3, n_boot=50, seed=0)
+        s = topica.coherence_ci([COHERENT, INCOHERENT], strings,
+                                coherence_type="c_npmi", topn=3, n_boot=50, seed=0)
+        np.testing.assert_allclose(s.estimate, tok.estimate)
+
+    def test_semantic_coherence_accepts_strings(self, reference):
+        corpus = topica.Corpus.from_documents(reference, min_doc_freq=1)
+        m = topica.LDA(3, seed=0).fit(corpus, iters=30)
+        strings = [" ".join(d) for d in reference]
+        np.testing.assert_allclose(
+            topica.semantic_coherence(m, strings),
+            topica.semantic_coherence(m, [list(d) for d in reference]),
+        )
+
+
 class TestCoherenceCI:
     def test_shape_and_estimate_matches_point(self, reference):
         r = topica.coherence_ci(

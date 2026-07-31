@@ -310,6 +310,23 @@ def _occurrences(texts, vocab, tops, window):
 # Public API
 # ---------------------------------------------------------------------------
 
+def _as_reference(texts):
+    """Normalize a coherence reference corpus to ``list[list[str]]``.
+
+    Accepts a Corpus, raw strings (split on whitespace), or already-tokenized
+    documents. Without this, a list of raw strings would be iterated character by
+    character, so every top word misses the vocabulary and the score silently
+    degenerates — e.g. ``c_v == 1.0`` for every topic (issue #648). Mirrors
+    ``validation._ref_corpus`` so ``coherence`` and ``diagnostics`` agree on input.
+    """
+    if hasattr(texts, "documents"):
+        return texts.documents()
+    texts = list(texts)
+    if texts and isinstance(texts[0], str):
+        return [t.split() for t in texts]
+    return [list(t) for t in texts]
+
+
 def coherence(topics, texts, *, coherence_type="c_v", topn=10, window_size=None, epsilon=1e-12):
     """Per-topic coherence against a reference corpus.
 
@@ -317,8 +334,11 @@ def coherence(topics, texts, *, coherence_type="c_v", topn=10, window_size=None,
     ----------
     topics : a fitted model, or a list of topics (each a list of words, or of
         ``(word, prob)`` pairs).
-    texts : list of tokenized documents (``list[list[str]]``) — the reference
-        corpus. Pass your training documents, or an external corpus.
+    texts : the reference corpus, as a :class:`Corpus`, a list of raw-string
+        documents (split on whitespace), or already-tokenized documents
+        (``list[list[str]]``). Pass your training documents, or an external corpus.
+        (Raw strings are tokenized for you — passing them is not silently scored
+        character-by-character; see issue #648.)
     coherence_type : one of ``"u_mass"``, ``"c_uci"``, ``"c_npmi"``, ``"c_v"``
         (default ``"c_v"``).
     topn : number of top words per topic to score (default 10).
@@ -336,10 +356,10 @@ def coherence(topics, texts, *, coherence_type="c_v", topn=10, window_size=None,
         raise ValueError(f"coherence_type must be one of {_VALID}, got {coherence_type!r}")
     if not isinstance(topn, (int, np.integer)) or topn < 1:
         raise ValueError(f"topn must be a positive integer, got {topn!r}")
+    texts = _as_reference(texts)
     if len(texts) == 0:
         raise ValueError("texts is empty; pass the reference corpus as list[list[str]]")
     tops = _extract_topics(topics, topn)
-    texts = [list(d) for d in texts]
     relevant = sorted({w for t in tops for w in t})
     vocab = {w: i for i, w in enumerate(relevant)}
 
@@ -404,7 +424,8 @@ def coherence_ci(
     ----------
     topics : a fitted model, or a list of topics (each a list of words / ``(word,
         prob)`` pairs). The top words are extracted once and held fixed.
-    texts : list of tokenized documents — the reference corpus to resample.
+    texts : the reference corpus to resample — a :class:`Corpus`, raw-string
+        documents, or tokenized documents (as in :func:`coherence`).
     coherence_type, topn, window_size, epsilon : as in :func:`coherence`.
     n_boot : number of bootstrap resamples (each recomputes co-occurrence, so this
         is O(n_boot x corpus size); the windowed measures (``c_v`` etc.) are the
@@ -417,12 +438,12 @@ def coherence_ci(
     CoherenceCI
         ``(estimate, se, ci_low, ci_high)``, each ``(num_topics,)``.
     """
+    texts = _as_reference(texts)
     if len(texts) == 0:
         raise ValueError("texts is empty; pass the reference corpus as list[list[str]]")
     # Fix the top words once; pass them as the `topics` argument on every resample
     # so the coherence is recomputed for the same words against new corpora.
     tops = _extract_topics(topics, topn)
-    texts = [list(d) for d in texts]
     common = dict(coherence_type=coherence_type, topn=topn, window_size=window_size, epsilon=epsilon)
     estimate = coherence(tops, texts, **common)
 
@@ -592,7 +613,8 @@ def semantic_coherence(model_or_phi, texts, vocabulary=None, *, n=10):
 
     `model_or_phi` is a fitted model (uses its ``topic_word`` / ``vocabulary``) or a
     ``(K, V)`` array (then pass ``vocabulary``). ``texts`` is the reference corpus:
-    a :class:`topica.Corpus`, or a list of token lists (the words per document).
+    a :class:`topica.Corpus`, raw-string documents, or a list of token lists (raw
+    strings are tokenized, not scored character-by-character; see issue #648).
     """
     from ._topica import inspect_semantic_coherence
 
@@ -603,7 +625,7 @@ def semantic_coherence(model_or_phi, texts, vocabulary=None, *, n=10):
         vocabulary = list(texts.vocabulary)
     vocab_list = _vocabulary_of(model_or_phi, vocabulary)
     vocab = {w: i for i, w in enumerate(vocab_list)}
-    docs = texts.documents() if hasattr(texts, "documents") else texts
+    docs = _as_reference(texts)  # Corpus / raw strings / token lists -> token lists (#648)
     docs_ids = [[vocab[w] for w in d if w in vocab] for d in docs]
     return np.asarray(
         inspect_semantic_coherence(phi.tolist(), docs_ids, int(n)), dtype=np.float64
