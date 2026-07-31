@@ -699,7 +699,10 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
         (model output, but content nonetheless), so like ``content_fingerprint``
         this is an explicit opt-in and is off at every privacy level. A manifest
         recorded with ``topic_words_n=0`` cannot be topic-compared (a clear error
-        is raised).
+        is raised). Retain enough words for the comparison to resolve: ``compare``
+        aligns manifests by top-word *set* overlap, which is coarser than the live
+        cosine, so ``~25`` is a safer floor than ``10`` for seed-varying (e.g.
+        Gibbs) fits whose top-word lists churn between runs.
     fit_settings : the fit arguments you passed (``iters=``, …), recorded as
         provenance. Only JSON-serialisable values are kept; others are dropped
         with a note.

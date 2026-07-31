@@ -341,19 +341,25 @@ remain, `compare` can still align them — as long as each fit was recorded with
 top words retained:
 
 ```python
-ra = topica.record_fit(fit_a, corpus_a, topic_words_n=10)   # opt-in: top words are content
-rb = topica.record_fit(fit_b, corpus_b, topic_words_n=10)
+ra = topica.record_fit(fit_a, corpus_a, topic_words_n=25)   # opt-in: top words are content
+rb = topica.record_fit(fit_b, corpus_b, topic_words_n=25)
 cmp = topica.compare(ra, rb)                                 # same CompareResult, no refit
 ```
 
 Manifests store only each topic's top-N words and mean prevalence, so the manifest
 path aligns by **Jaccard overlap of the top-word sets** (`metric="jaccard"`, with a
 default threshold matched to that scale — lower than cosine's) and yields the same
-matched / vanished / appeared / split / merge structure. On a real corpus where the
-vocabulary is far larger than the top-N window, this recovers the same matching the
-live cosine path finds. Two caveats follow from having only top words: there is no
-prevalence-shift uncertainty (no posterior is stored), and a manifest cannot be
-refit — so drift is judged only against a `baseline=` floor, not a reseed null.
-Mixing a live model with a manifest is refused. Retaining top words is off by default
-(`topic_words_n=0`) because they are corpus-derived content; a manifest recorded
-without them raises a clear error rather than comparing on nothing.
+matched / vanished / appeared / split / merge structure. With enough words retained,
+this recovers the matching the live cosine path finds — but top-word set overlap is
+**coarser** than the full-distribution cosine: seed-varying fits (e.g. Gibbs LDA)
+churn their top-word lists between runs, so a genuinely-stable topic can share too few
+of its top-10 words to clear the threshold and be mislabelled *vanished + appeared*.
+Retain generously (`topic_words_n≈25`, not 10) so real matches sit well above the
+noise; `compare` also **flags a "near-miss"** on any vanished/appeared topic whose
+best cross-similarity sits just under the threshold, so a false disappearance is
+surfaced rather than silent. Two further caveats follow from having only top words:
+there is no prevalence-shift uncertainty (no posterior is stored), and a manifest
+cannot be refit — so drift is judged only against a `baseline=` floor, not a reseed
+null. Mixing a live model with a manifest is refused. Retaining top words is off by
+default (`topic_words_n=0`) because they are corpus-derived content; a manifest
+recorded without them raises a clear error rather than comparing on nothing.

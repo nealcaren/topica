@@ -302,6 +302,51 @@ def test_compare_manifests_render_and_dict():
     assert d["metric"] == "jaccard" and len(d["aligned"]) == 2
 
 
+def test_compare_manifests_card_footer_omits_refit_options():
+    # A manifest cannot be refit, so the "no null" card must advertise only
+    # baseline= — never refit=/reseed_fits=, which would raise (real-user finding).
+    cmp = topica.compare(_manifest([["a", "b"], ["c", "d"]]),
+                         _manifest([["a", "b"], ["c", "d"]]))
+    html = cmp.render()
+    assert "baseline=" in html and "refit=" not in html and "reseed_fits=" not in html
+    # The live path still offers all three.
+    live = topica.compare(DummyModel(_onehot_topics(2, 8, seed=1)),
+                          DummyModel(_onehot_topics(2, 8, seed=1)))
+    assert "refit=" in live.render()
+
+
+def test_compare_manifests_flags_near_miss_disappearance():
+    # A stable topic whose top words churned enough to fall just under threshold is
+    # reported vanished+appeared, but flagged near-miss so it is not silently false.
+    a = [["w0", "w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8", "w9"],
+         ["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9"]]
+    b = [["w0", "w1", "q0", "q1", "q2", "q3", "q4", "q5", "q6", "q7"],  # shares 2/10 → J=0.111
+         ["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9"]]
+    cmp = topica.compare(_manifest(a), _manifest(b))  # default jaccard threshold 0.12
+    assert not any(p.topic_a == 0 for p in cmp.aligned)  # topic 0 fell below threshold
+    va = next(u for u in cmp.unmatched_a if u.topic == 0)
+    ap = next(u for u in cmp.unmatched_b if u.topic == 0)
+    assert va.near_miss and ap.near_miss
+    assert va.best_similarity == pytest.approx(2 / 18, abs=1e-6)
+    assert "near-miss" in cmp.render() and "near-miss" in cmp.to_markdown()
+    # A genuinely-disjoint vanished topic is NOT a near-miss.
+    c = topica.compare(_manifest([["a", "b", "c"]]), _manifest([["x", "y", "z"]]))
+    assert c.unmatched_a[0].best_similarity == 0.0
+    assert not c.unmatched_a[0].near_miss
+
+
+def test_compare_manifests_prevalence_length_mismatch_is_clear_error():
+    from topica import AnalysisManifest
+
+    bad = AnalysisManifest(
+        topica_version="t", environment={},
+        model={"class": "X", "num_topics": 3,
+               "top_words": [["a"], ["b"], ["c"]], "topic_prevalence": [0.5, 0.5]},
+        corpus={})
+    with pytest.raises(ValueError, match="prevalence values but 3 topics"):
+        topica.compare(bad, _manifest([["a"], ["b"], ["c"]]))
+
+
 @pytest.mark.slow
 def test_compare_manifests_agrees_with_live_on_real_lda():
     rng = np.random.default_rng(0)

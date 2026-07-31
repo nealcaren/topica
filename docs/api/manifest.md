@@ -82,9 +82,14 @@ models, record each fit with its top words retained and pass the two manifests t
 [`topica.compare`](../guides/model-comparison.md#comparing-two-manifests-without-the-models):
 
 ```python
-ra = topica.record_fit(model_a, corpus_a, topic_words_n=10)   # opt-in; off by default
+ra = topica.record_fit(model_a, corpus_a, topic_words_n=25)   # opt-in; off by default
 cmp = topica.compare(ra, rb)                                  # Jaccard top-word alignment
 ```
+
+Retain generously (`topic_words_n≈25`, not 10): top-word *set* overlap is coarser
+than the live cosine, and seed-varying fits churn their top-word lists, so too small
+a window can mislabel a stable topic as vanished/appeared (`compare` flags such
+near-misses).
 
 Top words are retained only when you ask (`topic_words_n>0`): they are
 human-readable tokens drawn from the corpus vocabulary, so — like

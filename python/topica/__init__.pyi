@@ -356,6 +356,9 @@ class UnmatchedTopic:
     status: str
     top_words: list[str]
     prevalence: float
+    best_similarity: float | None
+    @property
+    def near_miss(self) -> bool: ...
     def as_dict(self) -> dict[str, Any]: ...
 
 

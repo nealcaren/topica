@@ -18,6 +18,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   model with a manifest is refused. Retaining top words is opt-in (`topic_words_n=0`
   by default) because they are corpus-derived content, consistent with the manifest's
   fingerprints-not-content privacy contract.
+- **`compare` flags "near-miss" appeared/vanished topics** (both the live and manifest
+  paths). An unmatched topic now records its `best_similarity` to the other side and,
+  when that sits just under the match threshold, a `near_miss` flag surfaced in the
+  HTML/Markdown cards — so a stable topic mislabelled *vanished + appeared* by
+  top-word churn is called out rather than passing silently. Retain generously
+  (`topic_words_n≈25`) on the manifest path, since top-word set overlap is coarser
+  than the live cosine.
 
 ## [0.55.0] - 2026-07-29
 
