@@ -333,3 +333,27 @@ and use it as a **library regression test** — refit a canonical corpus across 
 versions and flag when a "harmless" refactor silently moves the topics. It describes
 and tests *difference*; it does not build a consensus model (that is
 `ensemble`).
+
+### Comparing two manifests, without the models
+
+When the models themselves are gone but their [analysis manifests](../api/manifest.md)
+remain, `compare` can still align them — as long as each fit was recorded with its
+top words retained:
+
+```python
+ra = topica.record_fit(fit_a, corpus_a, topic_words_n=10)   # opt-in: top words are content
+rb = topica.record_fit(fit_b, corpus_b, topic_words_n=10)
+cmp = topica.compare(ra, rb)                                 # same CompareResult, no refit
+```
+
+Manifests store only each topic's top-N words and mean prevalence, so the manifest
+path aligns by **Jaccard overlap of the top-word sets** (`metric="jaccard"`, with a
+default threshold matched to that scale — lower than cosine's) and yields the same
+matched / vanished / appeared / split / merge structure. On a real corpus where the
+vocabulary is far larger than the top-N window, this recovers the same matching the
+live cosine path finds. Two caveats follow from having only top words: there is no
+prevalence-shift uncertainty (no posterior is stored), and a manifest cannot be
+refit — so drift is judged only against a `baseline=` floor, not a reseed null.
+Mixing a live model with a manifest is refused. Retaining top words is off by default
+(`topic_words_n=0`) because they are corpus-derived content; a manifest recorded
+without them raises a clear error rather than comparing on nothing.

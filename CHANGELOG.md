@@ -6,6 +6,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **`topica.compare` now compares two `AnalysisManifest`s without refitting** (#415).
+  When both fits were recorded with `record_fit(..., topic_words_n=N)`, `compare`
+  aligns their topics by Jaccard overlap of the retained top-word sets
+  (`metric="jaccard"`, with a default threshold matched to that scale) and reports the
+  same matched/vanished/appeared/split/merge outcomes and prevalence shifts as the
+  live path — useful when the models are gone but their provenance records remain. A
+  manifest cannot be refit, so only `baseline=` provides a drift null; mixing a live
+  model with a manifest is refused. Retaining top words is opt-in (`topic_words_n=0`
+  by default) because they are corpus-derived content, consistent with the manifest's
+  fingerprints-not-content privacy contract.
+
 ## [0.55.0] - 2026-07-29
 
 ### Added
