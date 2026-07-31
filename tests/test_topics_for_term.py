@@ -113,6 +113,42 @@ class TestNormalize:
         assert [w for _, w in out] == [0.0, 0.0]
 
 
+class TestWithLabels:
+    def test_single_term_returns_triples_with_top_words(self):
+        out = topica.topics_for_term(PHI, "a", VOCAB, top_n=2, with_labels=True)
+        assert len(out[0]) == 3
+        topic, weight, words = out[0]
+        assert topic == 0 and weight == pytest.approx(0.7)
+        # topic 0's highest-prob words, in order: a (0.7) then b/c/d (all 0.1,
+        # tie-break ascending index -> b, c, ...).
+        assert words[0] == "a"
+        assert all(isinstance(w, str) for w in words)
+
+    def test_label_n_controls_word_count(self):
+        out = topica.topics_for_term(PHI, "a", VOCAB, with_labels=True, label_n=2)
+        assert all(len(words) == 2 for _, _, words in out)
+
+    def test_labels_match_phi_top_words(self):
+        out = topica.topics_for_term(PHI, "a", VOCAB, top_n=None, with_labels=True)
+        for topic, _, words in out:
+            expected = [VOCAB[i] for i in np.argsort(-PHI[topic], kind="stable")[:5]]
+            assert words == expected
+
+    def test_per_term_carries_labels(self):
+        out = topica.topics_for_term(PHI, ["a", "b"], VOCAB, per_term=True,
+                                     with_labels=True, label_n=1)
+        assert all(len(entry) == 3 for lst in out.values() for entry in lst)
+
+    def test_default_still_returns_pairs(self):
+        out = topica.topics_for_term(PHI, "a", VOCAB)
+        assert all(len(entry) == 2 for entry in out)
+
+    @pytest.mark.parametrize("bad", [0, -1, True])
+    def test_bad_label_n_raises(self, bad):
+        with pytest.raises(ValueError, match="label_n"):
+            topica.topics_for_term(PHI, "a", VOCAB, with_labels=True, label_n=bad)
+
+
 class TestVocabularyGuard:
     def test_vocab_longer_than_phi_raises_clearly(self):
         with pytest.raises(ValueError, match="does not match"):

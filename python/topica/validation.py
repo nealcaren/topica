@@ -676,7 +676,7 @@ def topic_table(model, *, n=7):
 
 
 def topics_for_term(topic_word, terms, vocabulary=None, *, top_n=5, per_term=False,
-                    normalize=False):
+                    normalize=False, with_labels=False, label_n=5):
     """The inverse of "top words for a topic": the top topics for a term.
 
     Given the topic-word matrix φ, rank topics by the weight they place on a
@@ -717,12 +717,21 @@ def topics_for_term(topic_word, terms, vocabulary=None, *, top_n=5, per_term=Fal
         *this word* lives in each topic" — which is comparable across terms and
         frequency-robust, so pooling weights terms equally. Assumes nonnegative φ
         (leave it off for signed-axis models like S³).
+    with_labels : bool, default False
+        When ``True``, each ranked entry gains a third element: the topic's
+        ``label_n`` highest-probability words (from φ), so the result reads on its
+        own without a manual join back to :func:`label_topics`. Entries become
+        ``(topic_id, weight, top_words)`` where ``top_words`` is a ``list[str]``.
+    label_n : int, default 5
+        How many words to attach per topic when ``with_labels=True``.
 
     Returns
     -------
     For a single term, or several terms with ``per_term=False``: a list of
     ``(topic_id, weight)`` pairs sorted by descending weight. With several terms
-    and ``per_term=True``: a ``dict`` ``{term: [(topic_id, weight), ...]}``.
+    and ``per_term=True``: a ``dict`` ``{term: [(topic_id, weight), ...]}``. When
+    ``with_labels=True`` every pair is instead a ``(topic_id, weight, top_words)``
+    triple.
 
     Examples
     --------
@@ -730,6 +739,8 @@ def topics_for_term(topic_word, terms, vocabulary=None, *, top_n=5, per_term=Fal
     [(12, 0.031), (4, 0.018), ...]
     >>> topics_for_term(model, ["immigr", "border"], per_term=True)
     {"immigr": [...], "border": [...]}
+    >>> topics_for_term(model, "immigr", top_n=2, with_labels=True)
+    [(12, 0.031, ["immigr", "border", "illeg", ...]), (4, 0.018, [...])]
     """
     single = isinstance(terms, str)
     term_list = [terms] if single else list(terms)
@@ -746,6 +757,11 @@ def topics_for_term(topic_word, terms, vocabulary=None, *, top_n=5, per_term=Fal
         isinstance(top_n, bool) or not isinstance(top_n, (int, np.integer)) or top_n < 1
     ):
         raise ValueError(f"top_n must be a positive integer or None, got {top_n!r}")
+    if with_labels and (
+        isinstance(label_n, bool) or not isinstance(label_n, (int, np.integer))
+        or label_n < 1
+    ):
+        raise ValueError(f"label_n must be a positive integer, got {label_n!r}")
 
     vocabulary = _vocabulary_of(topic_word, vocabulary)
     phi = _as_topic_word(topic_word)
@@ -779,6 +795,16 @@ def topics_for_term(topic_word, terms, vocabulary=None, *, top_n=5, per_term=Fal
 
     limit = K if top_n is None else min(int(top_n), K)
 
+    # Each topic's top-probability words, only when labels are asked for. Built
+    # once (K is small) and shared across every ranked list; the same stable
+    # descending sort as the ranking, for a deterministic tie-break.
+    labels = None
+    if with_labels:
+        labels = [
+            [vocabulary[i] for i in np.argsort(-phi[t], kind="stable")[:label_n]]
+            for t in range(K)
+        ]
+
     def _col(j):
         col = phi[:, j]
         if normalize:
@@ -790,6 +816,8 @@ def topics_for_term(topic_word, terms, vocabulary=None, *, top_n=5, per_term=Fal
         # Descending by weight; np.argsort is stable, so equal weights keep
         # ascending topic-id order — a deterministic tie-break.
         order = np.argsort(-weights, kind="stable")[:limit]
+        if with_labels:
+            return [(int(t), float(weights[t]), labels[t]) for t in order]
         return [(int(t), float(weights[t])) for t in order]
 
     if single:
