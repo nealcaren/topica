@@ -1224,14 +1224,19 @@ pub(crate) fn batch_forward(
     let (logit, c_dec, mean_dec, var_dec) = bn_dec.forward_train(&logit_raw);
 
     // Reconstruction (softmax over the vocabulary) and KL.
-    let mut recon = vec![vec![0.0; v]; n];
+    // The per-document softmax over the vocabulary is the expensive O(N·V) `exp`
+    // pass and is purely per-document, so produce `recon` as a rayon parallel,
+    // order-preserving map (issue #378). The loss/KL accumulation stays byte-for-byte
+    // serial below: folding per-document loss partials would re-associate the float
+    // sum and break bit-identity (and the golden fixtures), so only the `recon` rows
+    // are computed in parallel; the sum reads them back in document order.
+    let recon: Vec<Vec<f64>> = (0..n).into_par_iter().map(|i| softmax(&logit[i])).collect();
     let mut loss = 0.0;
     for i in 0..n {
-        let r = softmax(&logit[i]);
+        let r = &recon[i];
         for &(word, c) in batch.counts[i] {
             loss -= c * (r[word] + 1e-10).ln();
         }
-        recon[i] = r;
         if dirichlet {
             // KL( Weibull(kw, lam) || Gamma(alpha, 1) ), summed over topics
             // (Zhang et al. 2018). A Dirichlet(alpha) prior on theta factorizes into
@@ -1372,17 +1377,20 @@ pub(crate) fn batch_backward(
     let stick = opts.prior == Prior::StickBreaking;
 
     // --- Decoder: loss -> logit -> BN -> logit_raw -> (theta_do, beta). ---
-    // d loss / d logit_iv = total_i * recon_iv - count_iv.
-    let mut dlogit = vec![vec![0.0; v]; n];
-    for i in 0..n {
-        let total = batch.totals[i];
-        for j in 0..v {
-            dlogit[i][j] = total * c.recon[i][j];
-        }
-        for &(word, cnt) in batch.counts[i] {
-            dlogit[i][word] -= cnt;
-        }
-    }
+    // d loss / d logit_iv = total_i * recon_iv - count_iv. Per-document and
+    // independent (each row reads only its own recon/counts), so build it as a rayon
+    // parallel, order-preserving map (issue #378) — the O(N·V) elementwise pass.
+    let dlogit: Vec<Vec<f64>> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let total = batch.totals[i];
+            let mut row: Vec<f64> = c.recon[i].iter().map(|&r| total * r).collect();
+            for &(word, cnt) in batch.counts[i] {
+                row[word] -= cnt;
+            }
+            row
+        })
+        .collect();
     let dlogit_raw = BatchNorm::backward(&dlogit, &c.bn_dec);
 
     let (content_fwd, content_grad): (Option<&ContentFwd>, Option<&mut ContentGrad>) = match content
