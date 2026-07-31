@@ -72,6 +72,56 @@ class TestMultipleTerms:
         assert isinstance(out, list)
         assert [t for t, _ in out] == [0, 2, 1]
 
+    def test_duplicate_terms_are_collapsed_pooled(self):
+        # A repeated term must not double-count and flip the pooled ranking; the
+        # result matches querying each unique term once.
+        dup = topica.topics_for_term(PHI, ["a", "a", "b"], VOCAB)
+        uniq = topica.topics_for_term(PHI, ["a", "b"], VOCAB)
+        assert dup == uniq
+
+    def test_duplicate_terms_collapsed_per_term(self):
+        # per_term must not silently drop a requested term to dict-key uniqueness;
+        # ["a", "a"] collapses to a single "a" entry, same as ["a"].
+        out = topica.topics_for_term(PHI, ["a", "a"], VOCAB, per_term=True)
+        assert set(out) == {"a"}
+
+    def test_numpy_array_terms_give_plain_str_keys(self):
+        out = topica.topics_for_term(PHI, np.array(["a", "b"]), VOCAB, per_term=True)
+        assert all(type(k) is str for k in out)
+
+
+class TestNormalize:
+    def test_single_term_is_conditional_topic_distribution(self):
+        # normalize=True returns P(topic | word) = column / column-sum.
+        col = PHI[:, VOCAB.index("a")]
+        expected = col / col.sum()
+        out = topica.topics_for_term(PHI, "a", VOCAB, top_n=None, normalize=True)
+        got = {t: w for t, w in out}
+        for t in range(PHI.shape[0]):
+            assert got[t] == pytest.approx(expected[t])
+        assert sum(w for _, w in out) == pytest.approx(1.0)
+
+    def test_pooling_weights_terms_equally(self):
+        # Raw pooling is dominated by the higher-mass term; normalized pooling
+        # adds two per-word distributions, so each term contributes total mass 1.
+        out = topica.topics_for_term(PHI, ["a", "b"], VOCAB, top_n=None, normalize=True)
+        assert sum(w for _, w in out) == pytest.approx(2.0)
+
+    def test_all_zero_column_does_not_divide_by_zero(self):
+        phi = np.array([[0.0, 1.0], [0.0, 1.0]])
+        out = topica.topics_for_term(phi, "x", ["x", "y"], normalize=True)
+        assert [w for _, w in out] == [0.0, 0.0]
+
+
+class TestVocabularyGuard:
+    def test_vocab_longer_than_phi_raises_clearly(self):
+        with pytest.raises(ValueError, match="does not match"):
+            topica.topics_for_term(PHI, "a", VOCAB + ["extra"])
+
+    def test_vocab_shorter_than_phi_raises_clearly(self):
+        with pytest.raises(ValueError, match="does not match"):
+            topica.topics_for_term(PHI, "a", VOCAB[:-1])
+
 
 class TestMissingTerms:
     def test_single_missing_term_raises(self):
@@ -97,10 +147,14 @@ class TestValidation:
         with pytest.raises(ValueError, match="string"):
             topica.topics_for_term(PHI, [1, 2], VOCAB)
 
-    @pytest.mark.parametrize("bad", [0, -1, 2.5])
+    @pytest.mark.parametrize("bad", [0, -1, 2.5, True, False])
     def test_bad_top_n_raises(self, bad):
+        # True/False are ints in Python; they must be rejected, not read as 1/0.
         with pytest.raises(ValueError, match="top_n"):
             topica.topics_for_term(PHI, "a", VOCAB, top_n=bad)
+
+    def test_numpy_integer_top_n_is_accepted(self):
+        assert len(topica.topics_for_term(PHI, "a", VOCAB, top_n=np.int64(2))) == 2
 
 
 class TestModelPath:

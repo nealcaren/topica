@@ -235,6 +235,7 @@ def topics_for_term(
     *,
     top_n: int | None = 5,
     per_term: bool = False,
+    normalize: bool = False,
 ) -> list[tuple[int, float]] | dict[str, list[tuple[int, float]]]:
     """Inverse lookup: top topics (by φ weight) for a term or terms."""
     ...
