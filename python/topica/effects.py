@@ -123,14 +123,29 @@ def _is_model(obj):
     return hasattr(obj, "doc_topic") and not isinstance(obj, np.ndarray)
 
 
+# Two models whose attribute *shape* fools the structural check below and so must
+# be pinned by name:
+#   - DETM exposes an ``alpha``, but it is a (time, topic, embedding-dim) topic
+#     trajectory, not a Dirichlet concentration — it has no Dirichlet-composition
+#     posterior over theta, so it must be ``"none"`` (Dirichlet composition on it
+#     would fabricate intervals).
+#   - EmbeddingLDA is a Python-layer wrapper that delegates a real Dirichlet
+#     posterior (``theta_draws`` / ``doc_topic``, from an inner SeededLDA) through
+#     ``__getattr__``, which a *class*-level attribute check cannot see.
+_FAMILY_OVERRIDES = {"DETM": "none", "EmbeddingLDA": "dirichlet"}
+
+
 def model_family(model):
     """Which method-of-composition theta sampler suits ``model``.
 
     ``"logistic_normal"`` for STM/CTM (a variational ``eta`` posterior),
     ``"dirichlet"`` for the collapsed-Gibbs models (LDA, keyATM, SeededLDA, ...),
-    or ``"none"`` for models with no posterior over theta (the embedding models),
-    which need ``method="bootstrap"``.
+    or ``"none"`` for models with no posterior over theta (the embedding/cluster
+    models), which need ``method="bootstrap"``.
     """
+    override = _FAMILY_OVERRIDES.get(type(model).__name__)
+    if override is not None:
+        return override
     # Check the class, not the instance: a PyO3 getter on an unfitted model raises
     # "not fitted" rather than being absent, so ``hasattr(model, ...)`` would lie.
     cls = type(model)

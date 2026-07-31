@@ -27,6 +27,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 - **`posterior_theta_samples` refuses non-logistic-normal models cleanly** (#651):
   a guiding `ValueError` per family (Dirichlet → use `composition_theta`; no posterior
   → use bootstrap) instead of an `AttributeError` on the missing `eta_mean`.
+- **`model_family` no longer misclassifies DETM or EmbeddingLDA** (#651). DETM's
+  `alpha` is a topic-embedding trajectory (not a Dirichlet concentration), so it was
+  wrongly treated as Dirichlet — fabricating composition intervals with no warning;
+  it is now `"none"` (warns / uses bootstrap). EmbeddingLDA delegates a real Dirichlet
+  posterior to an inner SeededLDA, which the class-level check missed, so it was
+  wrongly `"none"` and over-warned; it is now `"dirichlet"` and composes correctly.
 
 ### Changed
 
@@ -49,18 +55,6 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
     `(doc_index, proportion, text)` triple; `plot_search_k` documents the
     `ax.figure.savefig(...)` save path; the `load_dubois` docstring corrects its
     date range to 1910–1934 and notes the 3 exact-duplicate articles.
-=======
-- **`estimate_effect` now flags naive standard errors on models with no θ posterior**
-  (#651). Passing a cluster/embedding model (e.g. BERTopic) fell back to ordinary
-  least squares on its point θ and returned confident-looking CIs with no warning,
-  while `standard_errors`/`effect_plot` correctly refuse for the same models. It now
-  emits a warning (method-of-composition is unavailable; use `method="bootstrap"`),
-  keyed on `model_family` like the other effect tools. A raw point-θ *array* (the
-  documented OLS baseline) and a posterior model used at its point θ are unchanged.
-- **`posterior_theta_samples` refuses non-logistic-normal models cleanly** (#651):
-  a guiding `ValueError` per family (Dirichlet → use `composition_theta`; no posterior
-  → use bootstrap) instead of an `AttributeError` on the missing `eta_mean`.
->>>>>>> f6daf1a (fix(effects): flag naive SEs on no-posterior models; clean posterior_theta_samples refusal (#651))
 
 ### Added
 

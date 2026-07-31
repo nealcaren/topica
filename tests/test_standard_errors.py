@@ -247,6 +247,56 @@ def test_posterior_theta_samples_refuses_non_logistic_normal_cleanly():
         topica.stm.posterior_theta_samples(_fitted_bertopic())
 
 
+def _detm_and_embeddinglda():
+    """A tiny DETM and EmbeddingLDA on synthetic word embeddings (no download).
+
+    Both fool the structural ``model_family`` check: DETM exposes a non-Dirichlet
+    ``alpha`` (a topic-embedding trajectory), EmbeddingLDA delegates a real
+    Dirichlet posterior through ``__getattr__``.
+    """
+    topica.enable_experimental()
+    rng = np.random.default_rng(0)
+    vocab = [f"w{i}" for i in range(8)]
+    wemb = rng.normal(size=(8, 5))
+    docs = [[vocab[rng.integers(8)] for _ in range(10)] for _ in range(40)]
+    detm = topica.DETM(num_topics=2, seed=0)
+    detm.fit(docs, wemb, vocab, timestamps=[int(i >= 20) for i in range(40)], iters=15)
+    elda = topica.EmbeddingLDA(num_topics=2, embeddings=wemb, vocabulary=vocab, seed=0)
+    elda.fit(docs, iters=30)
+    return detm, elda
+
+
+def test_detm_is_not_dirichlet_and_is_guarded():
+    # DETM's `alpha` is a topic-embedding trajectory, not a Dirichlet concentration.
+    # It must classify as "none" so estimate_effect warns (not fabricates composition
+    # intervals) and posterior_theta_samples refuses cleanly — the review blocker.
+    detm, _ = _detm_and_embeddinglda()
+    assert topica.model_family(detm) == "none"
+    X = np.random.default_rng(1).random((np.asarray(detm.doc_topic).shape[0], 1))
+    with pytest.warns(UserWarning, match="no posterior"):
+        topica.estimate_effect(detm, X, feature_names=["x"])
+    with pytest.raises(ValueError, match="no posterior"):
+        topica.stm.posterior_theta_samples(detm)
+
+
+def test_embeddinglda_is_dirichlet_via_delegated_posterior():
+    # EmbeddingLDA wraps a SeededLDA (Dirichlet) and delegates theta_draws/doc_topic.
+    # It must classify as "dirichlet": no false no-posterior warning, and composition
+    # actually works through the delegate.
+    _, elda = _detm_and_embeddinglda()
+    assert topica.model_family(elda) == "dirichlet"
+    n, k = np.asarray(elda.doc_topic).shape
+    X = np.random.default_rng(2).random((n, 1))
+    import warnings as _w
+    with _w.catch_warnings():
+        _w.simplefilter("error")  # must NOT emit the no-posterior warning
+        topica.estimate_effect(elda, X, feature_names=["x"])
+    draws = topica.effects.composition_theta(elda, nsims=3)
+    assert draws.shape == (3, n, k)
+    with pytest.raises(ValueError, match="Dirichlet"):
+        topica.stm.posterior_theta_samples(elda)
+
+
 def test_topic_correlation_ci_well_shaped_and_coherent():
     # CTM/STM topic-correlation credible interval from the logistic-normal posterior:
     # K x K, symmetric, unit diagonal, ci_low <= estimate <= ci_high in every cell,
