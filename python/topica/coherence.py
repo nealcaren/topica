@@ -318,10 +318,25 @@ def _as_reference(texts):
     character, so every top word misses the vocabulary and the score silently
     degenerates — e.g. ``c_v == 1.0`` for every topic (issue #648). Mirrors
     ``validation._ref_corpus`` so ``coherence`` and ``diagnostics`` agree on input.
+
+    A fitted model passed as the reference (the usual ``topics``/``texts`` argument
+    slip) is rejected with a directive error rather than a cryptic failure.
     """
     if hasattr(texts, "documents"):
         return texts.documents()
-    texts = list(texts)
+    if hasattr(texts, "topic_word") or hasattr(texts, "doc_topic"):
+        raise TypeError(
+            "texts looks like a fitted model, not a reference corpus. Pass the model "
+            "as the first argument (topics/model) and the corpus — a topica.Corpus, "
+            "raw-string documents, or list[list[str]] — as texts."
+        )
+    try:
+        texts = list(texts)
+    except TypeError as e:
+        raise TypeError(
+            "texts must be a topica.Corpus, raw-string documents, or a list of "
+            f"tokenized documents (list[list[str]]); got {type(texts).__name__}"
+        ) from e
     if texts and isinstance(texts[0], str):
         return [t.split() for t in texts]
     return [list(t) for t in texts]
@@ -425,7 +440,9 @@ def coherence_ci(
     topics : a fitted model, or a list of topics (each a list of words / ``(word,
         prob)`` pairs). The top words are extracted once and held fixed.
     texts : the reference corpus to resample — a :class:`Corpus`, raw-string
-        documents, or tokenized documents (as in :func:`coherence`).
+        documents, or tokenized documents (as in :func:`coherence`). A fitted model
+        passed here (the ``topics``/``texts`` arguments swapped) is rejected with a
+        clear error.
     coherence_type, topn, window_size, epsilon : as in :func:`coherence`.
     n_boot : number of bootstrap resamples (each recomputes co-occurrence, so this
         is O(n_boot x corpus size); the windowed measures (``c_v`` etc.) are the

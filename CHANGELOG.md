@@ -14,7 +14,31 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   matched the vocabulary and the score degenerated silently — e.g. `c_v == 1.0` for
   every topic. These functions now normalize their reference corpus the same way
   `diagnostics` does (a `Corpus`, raw strings split on whitespace, or already-tokenized
-  documents all work), so string input is tokenized rather than shredded.
+  documents all work), so string input is tokenized rather than shredded. A fitted
+  model accidentally passed as the reference corpus (arguments swapped) is now
+  rejected with a directive error (#647).
+
+### Changed
+
+- **Reviewer-safety fixes from a sample-user LDA-workflow audit (#647).** A batch
+  of usability/correctness improvements to the analysis path a first-time user
+  walks:
+  - `estimate_effect` results gain a `.pvalue` (two-sided, from the Wald `z`) and
+    name-keyed accessors `.effect_of(name)` / `.by_feature`, plus a `pvalue` column
+    in `.to_frame()`. With the default `add_intercept=True`, `coef[0]` is the
+    intercept, so reading effects by name avoids silently reporting the baseline
+    constant instead of a covariate.
+  - `best_k()` now warns when a monotone metric (`heldout_loglik`/`perplexity`)
+    selects the largest K scanned — the optimum is at the grid boundary, so the real
+    best K may lie beyond it (symmetric to the existing coherence warning).
+  - `from_dataframe(..., max_doc_fraction<1.0)` warns when it drops very high
+    document-frequency terms — on a focused corpus these can be the words it is
+    about.
+  - Docs: a "Covariate effects on a plain LDA model (not only STM)" section in the
+    covariates guide; `find_thoughts`' stub return type tightened to the real
+    `(doc_index, proportion, text)` triple; `plot_search_k` documents the
+    `ax.figure.savefig(...)` save path; the `load_dubois` docstring corrects its
+    date range to 1910–1934 and notes the 3 exact-duplicate articles.
 
 ### Added
 

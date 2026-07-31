@@ -41,7 +41,16 @@ import numpy as np
 
 @dataclass
 class TopicEffect:
-    """OLS of one topic's proportion on the covariates."""
+    """OLS of one topic's proportion on the covariates.
+
+    ``coef``/``se``/``z``/``ci_low``/``ci_high``/``pvalue`` are aligned to
+    ``feature_names`` **positionally**. With ``add_intercept=True`` (the
+    :func:`~topica.estimate_effect` default) ``feature_names[0]`` is ``"intercept"``,
+    so ``coef[0]`` is the baseline constant, *not* your covariate — a common way to
+    accidentally report the wrong number. Prefer name-keyed access
+    (:meth:`effect_of`, :attr:`by_feature`, :meth:`to_frame`) over positional
+    indexing.
+    """
 
     topic: int
     feature_names: list[str]
@@ -54,7 +63,62 @@ class TopicEffect:
     vcov: np.ndarray = None  # full (p, p) coefficient covariance (Rubin-pooled)
     varcomp: dict = None  # random-effect variance components (sd), when random= is set
 
+    @property
+    def pvalue(self) -> np.ndarray:
+        """Two-sided normal p-value per feature, from the Wald statistic ``z``.
+
+        ``P(|Z| > |z|) = erfc(|z| / sqrt(2))``; ``nan`` only where ``z`` is ``nan``
+        (e.g. an unreliable bootstrap SE). An infinite ``z`` (a nonzero coefficient
+        with a zero SE) gives ``0.0``, consistent with the formula. Aligned to
+        :attr:`feature_names`."""
+        import math
+
+        z = np.atleast_1d(np.asarray(self.z, dtype=float))
+        out = np.full(z.shape, np.nan)
+        valid = ~np.isnan(z)  # inf is valid -> erfc(inf)=0.0; only nan stays nan
+        out[valid] = [math.erfc(abs(v) / math.sqrt(2.0)) for v in z[valid]]
+        return out.reshape(np.shape(self.z))
+
+    def effect_of(self, feature: str) -> dict:
+        """Named-feature accessor: the row for ``feature`` as a dict of ``coef``,
+        ``se``, ``z``, ``ci_low``, ``ci_high``, ``pvalue``. Raises ``KeyError`` with
+        the available names if ``feature`` is not a covariate, or ``ValueError`` if
+        the name is not unique (ambiguous) — the safe alternative to guessing a
+        positional index (see the class note on the intercept)."""
+        names = list(self.feature_names)
+        if feature not in names:
+            raise KeyError(
+                f"{feature!r} is not a covariate of this effect; available: {names}"
+            )
+        if names.count(feature) > 1:
+            raise ValueError(
+                f"{feature!r} appears {names.count(feature)} times in feature_names, "
+                "so named access is ambiguous; read the row positionally via "
+                ".coef/.se/... or .to_frame() instead."
+            )
+        j = names.index(feature)
+        coef = np.atleast_1d(self.coef)
+        se = np.atleast_1d(self.se)
+        ci_low = np.atleast_1d(self.ci_low)
+        ci_high = np.atleast_1d(self.ci_high)
+        pval = np.atleast_1d(self.pvalue)
+        return {
+            "coef": float(coef[j]),
+            "se": float(se[j]),
+            "z": float(np.atleast_1d(self.z)[j]),
+            "ci_low": float(ci_low[j]),
+            "ci_high": float(ci_high[j]),
+            "pvalue": float(pval[j]),
+        }
+
+    @property
+    def by_feature(self) -> dict:
+        """``{feature_name: effect_of(name)}`` — every covariate keyed by name, so a
+        result reads without positional indexing."""
+        return {name: self.effect_of(name) for name in self.feature_names}
+
     def as_dict(self) -> dict:
+        pval = self.pvalue
         return {
             "topic": self.topic,
             **{
@@ -62,6 +126,7 @@ class TopicEffect:
                     "coef": float(self.coef[j]),
                     "se": float(self.se[j]),
                     "z": float(self.z[j]),
+                    "pvalue": float(pval[j]),
                     "ci": (float(self.ci_low[j]), float(self.ci_high[j])),
                 }
                 for j, name in enumerate(self.feature_names)
@@ -72,9 +137,11 @@ class TopicEffect:
     def to_frame(self):
         """Return a tidy pandas DataFrame, one row per feature.
 
-        Columns are ``topic``, ``feature``, ``coef``, ``se``, ``z``, ``ci_low``,
-        ``ci_high``, and ``r_squared`` (the topic's value, repeated). Because the
-        ``topic`` column is included, concatenating the frames from a whole
+        Columns are ``topic``, ``feature``, ``coef``, ``se``, ``z``, ``pvalue``,
+        ``ci_low``, ``ci_high``, and ``r_squared`` (the topic's value, repeated).
+        The named ``feature`` column is the safe way to read a specific covariate's
+        effect — an ``intercept`` row is present when ``add_intercept=True``. Because
+        the ``topic`` column is included, concatenating the frames from a whole
         :func:`estimate_effect` call gives one row per (topic, feature)::
 
             import pandas as pd
@@ -90,6 +157,7 @@ class TopicEffect:
                 "coef": np.asarray(self.coef, dtype=float),
                 "se": np.asarray(self.se, dtype=float),
                 "z": np.asarray(self.z, dtype=float),
+                "pvalue": np.asarray(self.pvalue, dtype=float),
                 "ci_low": np.asarray(self.ci_low, dtype=float),
                 "ci_high": np.asarray(self.ci_high, dtype=float),
                 "r_squared": self.r_squared,

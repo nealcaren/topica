@@ -8,6 +8,7 @@ prevalence regression. These helpers keep text and metadata bound together.
 
 from __future__ import annotations
 
+import warnings
 from typing import Sequence
 
 from . import Corpus, tokenize
@@ -86,6 +87,40 @@ def from_dataframe(
         ]
     else:
         docs = [tokenizer(t if isinstance(t, str) else "") for t in texts]
+
+    # max_doc_fraction removes the highest document-frequency terms — which on a
+    # focused corpus can be the very words it is about (e.g. "immigration" in an
+    # immigration corpus). The pruning happens in the Rust core with no feedback, so
+    # surface the dropped high-frequency terms here before they vanish silently.
+    if max_doc_fraction < 1.0 and docs and vocabulary is None:
+        import math
+        from collections import Counter
+
+        n_docs = len(docs)
+        doc_freq: Counter = Counter()
+        for d in docs:
+            doc_freq.update(w for w in set(d) if w)  # ignore empty tokens, as the core does
+        # Match the Rust core's cutoff exactly: a term is dropped iff its document
+        # frequency exceeds ceil(n_docs * max_doc_fraction) (mod.rs `max_df`). Using
+        # the un-rounded product would over-report on a non-integral threshold.
+        max_df = math.ceil(n_docs * max_doc_fraction)
+        # Frequency-descending, then alphabetical, so the sampled list is
+        # deterministic under any hash seed.
+        dropped = sorted(
+            (w for w, c in doc_freq.items() if c > max_df),
+            key=lambda w: (-doc_freq[w], w),
+        )
+        if dropped:
+            shown = ", ".join(f"{w!r} ({doc_freq[w] / n_docs:.0%})" for w in dropped[:8])
+            more = "" if len(dropped) <= 8 else f", +{len(dropped) - 8} more"
+            warnings.warn(
+                f"max_doc_fraction={max_doc_fraction} drops {len(dropped)} very "
+                f"common term(s) from the vocabulary: {shown}{more}. On a focused "
+                "corpus these can be the words it is about; raise max_doc_fraction "
+                "(or leave it at 1.0) to keep them.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     corpus = Corpus.from_documents(
         docs,

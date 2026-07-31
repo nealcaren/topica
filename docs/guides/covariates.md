@@ -127,6 +127,39 @@ Build non-linear and interaction terms with `topica.spline` and
 `topica.interaction`. Full detail and the journal-grade treatment are in the
 [Publishing](../publishing/effects.md) track.
 
+### On a plain LDA model (not only STM)
+
+You do **not** have to switch to `STM` to get covariate effects with honest
+uncertainty. `estimate_effect` takes any fitted model (or its `doc_topic`) — a plain
+`LDA` works — and propagates topic-estimation uncertainty via the method of
+composition. STM additionally embeds the prevalence covariates in the prior *during*
+estimation (so the topics themselves are informed by the covariates); reach for it
+when that is the goal, but for "how does topic prevalence differ by group, with a
+CI?" on an already-fitted LDA, `estimate_effect(model, X=..., corpus=corpus)` is the
+direct path.
+
+```python
+model = topica.LDA(num_topics=20, seed=1)
+model.fit(corpus, iters=1000)
+
+X, names = topica.one_hot(corpus.metadata["rating"], prefix="rating_")
+effects = topica.estimate_effect(model, X=X, feature_names=names, corpus=corpus, nsims=50)
+```
+
+**Read effects by name, not by position.** `add_intercept=True` is the default, so
+each result's `feature_names` is `["intercept", "rating_Liberal", ...]` and `coef[0]`
+is the baseline **intercept**, not your covariate. Reading `coef[0]` as "the effect"
+is a common way to publish the wrong number. Use the name-keyed accessors:
+
+```python
+e = effects[topic]
+e.effect_of("rating_Liberal")   # {'coef':..., 'se':..., 'z':..., 'pvalue':..., 'ci_low':..., 'ci_high':...}
+e.by_feature                    # every covariate keyed by name
+e.to_frame()                    # tidy rows with a named `feature` column and a pvalue
+```
+
+`e.pvalue` (two-sided, from the Wald `z`) is available for significance reporting.
+
 ### Random intercepts for nested data
 
 When documents are nested in units — states, outlets, authors — whose baseline

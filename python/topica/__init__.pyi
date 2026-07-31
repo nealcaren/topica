@@ -248,8 +248,8 @@ def topic_correlation(doc_topic: Any, *, threshold: float = 0.05) -> Any:
     ...
 
 
-def find_thoughts(doc_topic: Any, texts: Sequence[str] | None = None, *, topic: int, n: int = 3) -> list:
-    """The n documents most associated with a topic."""
+def find_thoughts(doc_topic: Any, texts: Sequence[Any] | None = None, *, topic: int, n: int = 3) -> list[tuple[int, float, Any]]:
+    """The n documents most associated with a topic, as (doc_index, proportion, text) triples."""
     ...
 
 
