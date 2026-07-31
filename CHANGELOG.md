@@ -24,7 +24,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   HTML/Markdown cards — so a stable topic mislabelled *vanished + appeared* by
   top-word churn is called out rather than passing silently. Retain generously
   (`topic_words_n≈25`) on the manifest path, since top-word set overlap is coarser
-  than the live cosine.
+  than the live cosine. When the two manifests were recorded with *different*
+  `topic_words_n`, `compare` warns and falls back to the common window (unequal set
+  sizes otherwise depress Jaccard and manufacture spurious drift); the `near_miss`
+  flag is robust to a NumPy-scalar `threshold`; and a manifest whose recorded
+  `num_topics` disagrees with its retained rows is rejected.
 
 ## [0.55.0] - 2026-07-29
 

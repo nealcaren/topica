@@ -1,10 +1,12 @@
 """Tests for ``topica.compare`` — statistical two-fit topic comparison (#415)."""
 
+import warnings
+
 import numpy as np
 import pytest
 
 import topica
-from topica.compare import CompareResult, MatchedPair, UnmatchedTopic
+from topica.compare import CompareResult, MatchedPair, UnmatchedTopic, _unmatched
 
 
 class DummyModel:
@@ -345,6 +347,52 @@ def test_compare_manifests_prevalence_length_mismatch_is_clear_error():
         corpus={})
     with pytest.raises(ValueError, match="prevalence values but 3 topics"):
         topica.compare(bad, _manifest([["a"], ["b"], ["c"]]))
+
+
+def test_compare_manifests_num_topics_row_mismatch_is_clear_error():
+    # A record whose num_topics disagrees with its retained top-word rows is
+    # internally inconsistent; comparing it must raise, not silently drop topics.
+    from topica import AnalysisManifest
+
+    bad = AnalysisManifest(
+        topica_version="t", environment={},
+        model={"class": "X", "num_topics": 3, "top_words": [["a", "b"], ["c", "d"]]},
+        corpus={})
+    with pytest.raises(ValueError, match="num_topics=3 but retained 2"):
+        topica.compare(bad, _manifest([["a", "b"], ["c", "d"]]))
+
+
+def test_compare_manifests_mismatched_window_warns_and_recovers():
+    # Two records of the SAME topics retained at different topic_words_n (10 vs 5).
+    # Unequal set sizes depress Jaccard (a 5-in-10 nesting caps at 0.5) and could
+    # manufacture vanished/appeared/splits; comparing on the common window must warn
+    # and still recover the clean 1:1 identity.
+    tw = [["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+          ["k", "l", "m", "n", "o", "p", "q", "r", "s", "t"]]
+    a = _manifest(tw)                       # 10 words/topic
+    b = _manifest([row[:5] for row in tw])  # 5 words/topic, same ranking
+    with pytest.warns(UserWarning, match="different numbers of top words"):
+        cmp = topica.compare(a, b)
+    assert {p.topic_a: p.topic_b for p in cmp.aligned} == {0: 0, 1: 1}
+    assert all(p.similarity == 1.0 for p in cmp.aligned)  # truncation recovers J=1
+    assert not cmp.unmatched_a and not cmp.unmatched_b
+
+    # Equal windows must NOT warn.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        topica.compare(_manifest(tw), _manifest(tw))
+
+
+def test_near_miss_survives_a_numpy_scalar_threshold():
+    # threshold can arrive as np.float64 (e.g. from a computed array); the flag is
+    # then set from a numpy comparison, and `np.True_ is True` is False. bool()
+    # coercion in the property must keep near_miss truthful.
+    sim = np.array([[0.10]])  # best 0.10, in [0.8*0.12, 0.12) → a near-miss
+    u_py = _unmatched(0, "a", "vanished", ["w"], 0.5, sim, 0.12, axis=0)
+    u_np = _unmatched(0, "a", "vanished", ["w"], 0.5, sim, np.float64(0.12), axis=0)
+    assert u_py.near_miss is True
+    assert u_np.near_miss is True
+    assert u_np.as_dict()["near_miss"] is True
 
 
 @pytest.mark.slow

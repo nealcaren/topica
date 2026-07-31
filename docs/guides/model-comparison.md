@@ -363,3 +363,8 @@ cannot be refit — so drift is judged only against a `baseline=` floor, not a r
 null. Mixing a live model with a manifest is refused. Retaining top words is off by
 default (`topic_words_n=0`) because they are corpus-derived content; a manifest
 recorded without them raises a clear error rather than comparing on nothing.
+
+Record both manifests with the **same** `topic_words_n`. Jaccard over sets of
+different sizes is systematically depressed (a 10-word set nested in a 25-word one
+scores at most `10/25 = 0.4`), so if the two windows differ `compare` warns and
+falls back to the common top-N rather than reporting spurious drift.

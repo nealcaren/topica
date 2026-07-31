@@ -830,9 +830,13 @@ def _retained_top_words(model, n: int) -> list[list[str]] | None:
     topic-word surface."""
     from .compare import _top_words
 
+    # Only "no usable topic-word surface" should degrade to None (a missing
+    # attribute, or a non-array model that will not coerce). Let an unexpected
+    # failure propagate rather than silently record an unusable manifest that
+    # later reports "no retained top words" — a misdirection re-recording can't fix.
     try:
         return _top_words(model, n)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         return None
 
 
@@ -842,9 +846,11 @@ def _retained_prevalence(model) -> list[float] | None:
     the model has no doc-topic surface (mirrors the live NaN/None guard)."""
     from .coherence import _as_doc_topic
 
+    # As in _retained_top_words: degrade to None only for a genuinely absent
+    # doc-topic surface, not for an unexpected failure.
     try:
         return [float(x) for x in np.asarray(_as_doc_topic(model)).mean(axis=0)]
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         return None
 
 

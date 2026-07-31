@@ -163,6 +163,20 @@ def test_topic_words_retention_is_deterministic(fitted):
     assert a == b
 
 
+def test_topic_words_retention_propagates_unexpected_errors(fitted):
+    # A model that HAS a topic surface but whose ranking raises an unrelated error
+    # must not silently record None (which would later misreport "no retained top
+    # words" — a misdirection re-recording can't fix). The error must surface.
+    from topica.manifest import _retained_top_words
+
+    class Exploding:
+        def top_words(self, n):
+            raise RuntimeError("unrelated ranking failure")
+
+    with pytest.raises(RuntimeError, match="unrelated ranking failure"):
+        _retained_top_words(Exploding(), 5)
+
+
 # -- deterministic serialization + round trip ------------------------------
 
 

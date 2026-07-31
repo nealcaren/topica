@@ -52,6 +52,7 @@ refit). Mixing a live model with a manifest is refused.
 from __future__ import annotations
 
 import html as _html
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
 
@@ -197,10 +198,14 @@ class UnmatchedTopic:
         """``True`` when this topic's best cross-similarity is close to (but under)
         the match threshold — a hint that it is the same topic seen through churned
         top words, not a genuine appearance/disappearance."""
-        return self._near_miss is True
+        # bool(): the flag may be set from a numpy comparison (np.bool_), and
+        # ``np.True_ is True`` is False, which would silently drop the flag.
+        return bool(self._near_miss)
 
-    #: Set by :func:`compare` once the threshold is known.
-    _near_miss: bool | None = None
+    #: Set by :func:`compare` once the threshold is known — a post-construction
+    #: flag, not a constructor input (``init=False``), and kept out of ``repr`` /
+    #: equality so two topics compare on their data, not on this derived hint.
+    _near_miss: bool | None = field(default=None, init=False, repr=False, compare=False)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -377,6 +382,16 @@ def _manifest_top_words(m, side: str) -> list[list[str]]:
             "(top words are opt-in because they are corpus-derived content; ~25 is a "
             "safer floor than 10 for seed-varying fits), or compare the live models."
         )
+    # The retained rows are the topics we align on; if the record's own num_topics
+    # disagrees, the manifest is internally inconsistent — flag it rather than
+    # silently comparing on a truncated/padded topic set.
+    recorded_k = m.model.get("num_topics")
+    if recorded_k is not None and recorded_k != len(words):
+        raise ValueError(
+            f"manifest {side} records num_topics={recorded_k} but retained "
+            f"{len(words)} top-word rows; the record is inconsistent and cannot be "
+            "compared."
+        )
     return [list(row) for row in words]
 
 
@@ -496,6 +511,27 @@ def _compare_manifests(
     ka, kb = len(words_a), len(words_b)
     prev_a = _manifest_prevalence(a, ka)
     prev_b = _manifest_prevalence(b, kb)
+
+    # Jaccard of two top-word sets of different sizes is systematically depressed
+    # (a 10-word set nested in a 25-word one scores at most 10/25 = 0.4), which can
+    # push a genuine match under the threshold and manufacture spurious
+    # vanished/appeared/split/merge. Two manifests recorded with different
+    # topic_words_n are only comparable on their common window, so truncate both to
+    # the smaller retained size (rows are ranked, so this keeps the top words) and
+    # warn — silently comparing mismatched windows is the real trap.
+    n_a = max((len(r) for r in words_a), default=0)
+    n_b = max((len(r) for r in words_b), default=0)
+    if n_a != n_b and n_a and n_b:
+        common = min(n_a, n_b)
+        warnings.warn(
+            f"the two manifests retained different numbers of top words per topic "
+            f"({n_a} vs {n_b}); comparing on the common top {common} so the Jaccard "
+            "overlap is not systematically depressed. Re-record both with the same "
+            "topic_words_n to use the full window.",
+            stacklevel=3,
+        )
+        words_a = [r[:common] for r in words_a]
+        words_b = [r[:common] for r in words_b]
 
     sim = _jaccard_matrix(words_a, words_b)
     al = _classify_similarity(sim, thr)
@@ -814,12 +850,21 @@ def _render_html(r: CompareResult, *, title: str | None) -> str:
             )
         note = ""
         if any(u.near_miss for u in r.unmatched_a + r.unmatched_b):
+            # The remedy differs by path: the manifest/Jaccard path is coarse and
+            # improves with a wider top-word window (or the live models); the live
+            # path is already the fine-grained comparison, so point at the threshold.
+            fix = (
+                "Retaining more top words (higher <code>topic_words_n</code>) or "
+                "comparing the live models resolves it."
+                if r.metric == "jaccard"
+                else "Lowering <code>threshold</code> would match it, if the overlap "
+                "is real."
+            )
             note = (
                 f"<p class='note'>A <em>near-miss</em> sits just under the match "
                 f"threshold ({r.threshold:.2f}) — likely the same topic seen through "
                 f"churned top words rather than a real appearance/disappearance. "
-                f"Retaining more top words (higher <code>topic_words_n</code>) or "
-                f"comparing the live models resolves it.</p>"
+                f"{fix}</p>"
             )
         parts.append(f"<h2>Unmatched</h2><table>{''.join(urows)}</table>{note}")
     if r.splits:
