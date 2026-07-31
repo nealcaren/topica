@@ -36,11 +36,23 @@ Design commitments:
   still reported but ``drifted`` is ``None`` (honestly "unknown").
 - **Not an ensemble.** This describes and tests *difference*; it does not build a
   consensus model (that is :func:`topica.ensemble`).
+
+Manifests, not just live models
+-------------------------------
+``compare`` also accepts two :class:`~topica.AnalysisManifest` records recorded with
+``record_fit(..., topic_words_n>0)``, so two fits can be compared *without refitting*
+— useful when the models themselves are gone but their provenance records remain.
+A manifest stores only each topic's top-N words and mean prevalence, so the manifest
+path aligns by **Jaccard overlap of the top-word sets** (``metric="jaccard"``) with a
+threshold tuned to that scale, carries no prevalence-shift uncertainty (no posterior
+is stored), and admits only ``baseline=`` as a drift null (a manifest cannot be
+refit). Mixing a live model with a manifest is refused.
 """
 
 from __future__ import annotations
 
 import html as _html
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
 
@@ -49,6 +61,19 @@ import numpy as np
 from .validation import align_topics
 
 __all__ = ["compare", "CompareResult", "MatchedPair", "UnmatchedTopic"]
+
+# Cosine on distributions and Jaccard on top-word sets live on different scales, so
+# the manifest path needs its own default. Cosine's 0.3 is permissive (shared common
+# words inflate cross-topic cosine); Jaccard of two top-10 sets is 0.33 at 5 shared
+# words, 0.18 at 3 — so a Jaccard default must be *lower* to stay comparably
+# permissive. ~0.12 ≈ "share roughly 2 of 10 top words" as the floor for a match.
+_LIVE_DEFAULT_THRESHOLD = 0.3
+_MANIFEST_DEFAULT_THRESHOLD = 0.12
+
+# An unmatched topic whose best cross-similarity reaches this fraction of the match
+# threshold is flagged a "near-miss": likely the same topic seen through churned top
+# words (esp. on the coarse-grained manifest/Jaccard path), not a real vanish/appear.
+_NEAR_MISS_FRACTION = 0.8
 
 
 def _esc(x: Any) -> str:
@@ -162,6 +187,25 @@ class UnmatchedTopic:
     status: str  # "vanished" (a-only) or "appeared" (b-only)
     top_words: list[str]
     prevalence: float
+    #: This topic's best similarity to *any* topic on the other side (necessarily
+    #: below ``threshold`` — that is why it is unmatched). When it sits just under
+    #: the threshold the "disappearance" may be top-word churn rather than a real
+    #: vanish/appear (see :attr:`near_miss`); ``None`` if the other side is empty.
+    best_similarity: float | None = None
+
+    @property
+    def near_miss(self) -> bool:
+        """``True`` when this topic's best cross-similarity is close to (but under)
+        the match threshold — a hint that it is the same topic seen through churned
+        top words, not a genuine appearance/disappearance."""
+        # bool(): the flag may be set from a numpy comparison (np.bool_), and
+        # ``np.True_ is True`` is False, which would silently drop the flag.
+        return bool(self._near_miss)
+
+    #: Set by :func:`compare` once the threshold is known — a post-construction
+    #: flag, not a constructor input (``init=False``), and kept out of ``repr`` /
+    #: equality so two topics compare on their data, not on this derived hint.
+    _near_miss: bool | None = field(default=None, init=False, repr=False, compare=False)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -170,6 +214,8 @@ class UnmatchedTopic:
             "status": self.status,
             "prevalence": self.prevalence,
             "top_words": self.top_words,
+            "best_similarity": self.best_similarity,
+            "near_miss": self.near_miss,
         }
 
 
@@ -306,12 +352,251 @@ def _reseed_null(
     return {ta: float(min(vals)) for ta, vals in per_topic.items() if vals}
 
 
+def _is_manifest(x) -> bool:
+    from .manifest import AnalysisManifest
+
+    return isinstance(x, AnalysisManifest)
+
+
+def _unmatched(
+    idx, side, status, words, prev, sim, threshold, *, axis
+) -> UnmatchedTopic:
+    """Build an :class:`UnmatchedTopic`, recording its best similarity to the other
+    side and flagging a near-miss (best sim just under ``threshold``). ``axis=0``
+    reads a row of ``sim`` (an A-topic vs all B); ``axis=1`` reads a column."""
+    row = sim[idx, :] if axis == 0 else sim[:, idx]
+    best = float(row.max()) if row.size else None
+    u = UnmatchedTopic(int(idx), side, status, words, float(prev), best_similarity=best)
+    u._near_miss = best is not None and best >= _NEAR_MISS_FRACTION * threshold
+    return u
+
+
+def _manifest_top_words(m, side: str) -> list[list[str]]:
+    """Retained top words from a manifest, or a clear error if it was recorded
+    without them (``topic_words_n=0``, the default, or an older manifest)."""
+    words = m.model.get("top_words")
+    if not words:
+        raise ValueError(
+            f"manifest {side} carries no retained top words, so its topics cannot "
+            "be compared. Re-record it with record_fit(..., topic_words_n=25) "
+            "(top words are opt-in because they are corpus-derived content; ~25 is a "
+            "safer floor than 10 for seed-varying fits), or compare the live models."
+        )
+    # The retained rows are the topics we align on; if the record's own num_topics
+    # disagrees, the manifest is internally inconsistent — flag it rather than
+    # silently comparing on a truncated/padded topic set.
+    recorded_k = m.model.get("num_topics")
+    if recorded_k is not None and recorded_k != len(words):
+        raise ValueError(
+            f"manifest {side} records num_topics={recorded_k} but retained "
+            f"{len(words)} top-word rows; the record is inconsistent and cannot be "
+            "compared."
+        )
+    return [list(row) for row in words]
+
+
+def _manifest_prevalence(m, k: int) -> np.ndarray:
+    """Retained per-topic prevalence, or NaN when the recorder stored none (a model
+    with no doc-topic surface) — mirroring the live path's NaN guard."""
+    prev = m.model.get("topic_prevalence")
+    if prev is None:
+        return np.full(k, np.nan)
+    arr = np.asarray(prev, dtype=np.float64)
+    if arr.shape[0] != k:
+        raise ValueError(
+            f"manifest stores {arr.shape[0]} prevalence values but {k} topics "
+            "(top-word rows); the record is inconsistent and cannot be compared."
+        )
+    return arr
+
+
+def _jaccard_matrix(words_a: list[list[str]], words_b: list[list[str]]) -> np.ndarray:
+    """``|A∩B| / |A∪B|`` over each pair of top-word sets. Two empty sets score 0.0
+    (undefined 0/0 → "no overlap", never a spurious match)."""
+    sets_a = [set(w) for w in words_a]
+    sets_b = [set(w) for w in words_b]
+    m = np.zeros((len(sets_a), len(sets_b)))
+    for i, sa in enumerate(sets_a):
+        for j, sb in enumerate(sets_b):
+            union = len(sa | sb)
+            m[i, j] = (len(sa & sb) / union) if union else 0.0
+    return m
+
+
+class _Alignment:
+    """The subset of :class:`~topica.validation.AlignmentResult` that :func:`compare`
+    consumes, produced from a precomputed similarity matrix. Kept local (rather than
+    refactoring ``align_topics``) so the shipped Hungarian/``js`` paths and their
+    consumers are untouched."""
+
+    def __init__(self, matches, splits, merges, unaligned_a, unaligned_b):
+        self.matches = matches
+        self.splits = splits
+        self.merges = merges
+        self.unaligned_a = unaligned_a
+        self.unaligned_b = unaligned_b
+
+
+def _classify_similarity(sim: np.ndarray, threshold: float) -> _Alignment:
+    """Mutual-best classification from a similarity matrix, identical in semantics to
+    :func:`align_topics` step 5 (``validation.py``): a pair matches only when each
+    topic is the other's *unique* above-``threshold`` partner; one-to-many is a
+    split/merge; no partner is *unaligned*."""
+    na, nb = sim.shape
+    adj_a: dict[int, list[tuple[int, float]]] = {i: [] for i in range(na)}
+    adj_b: dict[int, list[tuple[int, float]]] = {j: [] for j in range(nb)}
+    for i in range(na):
+        for j in range(nb):
+            s = float(sim[i, j])
+            if s >= threshold:
+                adj_a[i].append((j, s))
+                adj_b[j].append((i, s))
+    for i in adj_a:
+        adj_a[i].sort(key=lambda x: x[1], reverse=True)
+    for j in adj_b:
+        adj_b[j].sort(key=lambda x: x[1], reverse=True)
+
+    matches: list[tuple[int, int, float]] = []
+    splits: dict[int, list[tuple[int, float]]] = {}
+    merges: dict[int, list[tuple[int, float]]] = {}
+    unaligned_a: list[int] = []
+    unaligned_b: list[int] = []
+    for i in range(na):
+        targets = adj_a[i]
+        if len(targets) == 0:
+            unaligned_a.append(i)
+        elif len(targets) == 1:
+            j, s = targets[0]
+            if len(adj_b[j]) == 1:
+                matches.append((i, j, s))
+        else:
+            splits[i] = targets
+    for j in range(nb):
+        sources = adj_b[j]
+        if len(sources) == 0:
+            unaligned_b.append(j)
+        elif len(sources) > 1:
+            merges[j] = sources
+    return _Alignment(matches, splits, merges, unaligned_a, unaligned_b)
+
+
+def _compare_manifests(
+    a,
+    b,
+    *,
+    metric: str | None,
+    threshold: float | None,
+    refit,
+    reseed_fits,
+    baseline: float | None,
+) -> CompareResult:
+    """Topic-for-topic comparison of two manifests via Jaccard overlap of their
+    retained top-word sets — no refitting. See :func:`compare`."""
+    if refit is not None or reseed_fits is not None:
+        raise ValueError(
+            "a manifest cannot be refit, so refit=/reseed_fits= are unavailable on "
+            "the manifest path; pass baseline= for a drift null, or compare the "
+            "live models."
+        )
+    if metric not in (None, "jaccard"):
+        raise ValueError(
+            f"manifest comparison aligns by top-word overlap only; metric must be "
+            f"'jaccard' (got {metric!r}). Compare the live models for cosine/js/rbo/emd."
+        )
+    metric = "jaccard"
+    thr = _MANIFEST_DEFAULT_THRESHOLD if threshold is None else float(threshold)
+
+    words_a = _manifest_top_words(a, "a")
+    words_b = _manifest_top_words(b, "b")
+    ka, kb = len(words_a), len(words_b)
+    prev_a = _manifest_prevalence(a, ka)
+    prev_b = _manifest_prevalence(b, kb)
+
+    # Jaccard of two top-word sets of different sizes is systematically depressed
+    # (a 10-word set nested in a 25-word one scores at most 10/25 = 0.4), which can
+    # push a genuine match under the threshold and manufacture spurious
+    # vanished/appeared/split/merge. Two manifests recorded with different
+    # topic_words_n are only comparable on their common window, so truncate both to
+    # the smaller retained size (rows are ranked, so this keeps the top words) and
+    # warn — silently comparing mismatched windows is the real trap.
+    n_a = max((len(r) for r in words_a), default=0)
+    n_b = max((len(r) for r in words_b), default=0)
+    if n_a != n_b and n_a and n_b:
+        common = min(n_a, n_b)
+        warnings.warn(
+            f"the two manifests retained different numbers of top words per topic "
+            f"({n_a} vs {n_b}); comparing on the common top {common} so the Jaccard "
+            "overlap is not systematically depressed. Re-record both with the same "
+            "topic_words_n to use the full window.",
+            stacklevel=3,
+        )
+        words_a = [r[:common] for r in words_a]
+        words_b = [r[:common] for r in words_b]
+
+    sim = _jaccard_matrix(words_a, words_b)
+    al = _classify_similarity(sim, thr)
+
+    baseline_info: dict[str, Any] = (
+        {"kind": "baseline", "similarity_floor": float(baseline)}
+        if baseline is not None
+        else {"kind": "none"}
+    )
+
+    def _floor_for(_ta: int) -> float | None:
+        return float(baseline) if baseline is not None else None
+
+    aligned: list[MatchedPair] = []
+    for (ta, tb, s) in al.matches:
+        floor = _floor_for(ta)
+        aligned.append(
+            MatchedPair(
+                topic_a=int(ta),
+                topic_b=int(tb),
+                similarity=float(s),
+                distance=float(1.0 - s),
+                drifted=None if floor is None else bool(s < floor),
+                null_similarity=floor,
+                top_words_a=words_a[ta],
+                top_words_b=words_b[tb],
+                prevalence_a=float(prev_a[ta]),
+                prevalence_b=float(prev_b[tb]),
+                prevalence_shift=float(prev_b[tb] - prev_a[ta]),
+                prevalence_shift_se=None,  # no posterior retained in a manifest
+            )
+        )
+    aligned.sort(key=lambda p: p.topic_a)
+
+    unmatched_a = [
+        _unmatched(t, "a", "vanished", words_a[t], prev_a[t], sim, thr, axis=0)
+        for t in sorted(al.unaligned_a)
+    ]
+    unmatched_b = [
+        _unmatched(t, "b", "appeared", words_b[t], prev_b[t], sim, thr, axis=1)
+        for t in sorted(al.unaligned_b)
+    ]
+    splits = {int(k): [int(j) for (j, _s) in v] for k, v in al.splits.items()}
+    merges = {int(k): [int(i) for (i, _s) in v] for k, v in al.merges.items()}
+
+    return CompareResult(
+        aligned=aligned,
+        unmatched_a=unmatched_a,
+        unmatched_b=unmatched_b,
+        splits=splits,
+        merges=merges,
+        metric=metric,
+        threshold=thr,
+        num_topics_a=ka,
+        num_topics_b=kb,
+        baseline=baseline_info,
+    )
+
+
 def compare(
     a,
     b,
     *,
-    metric: str = "cosine",
-    threshold: float = 0.3,
+    metric: str | None = None,
+    threshold: float | None = None,
     refit: Callable[[int], Any] | None = None,
     reseed_fits: Sequence[Any] | None = None,
     n_reseed: int = 4,
@@ -324,14 +609,21 @@ def compare(
 ) -> CompareResult:
     """Compare two fitted topic models statistically.
 
-    ``a``, ``b`` are two fitted models (or ``K×V`` topic-word arrays). Topics are
-    matched one-to-one when each is the other's *unique* above-``threshold`` partner
-    (:func:`align_topics`, a mutual-best rule — never force-paired); topics
-    with no honest counterpart are reported as *vanished* (only in ``a``) or
-    *appeared* (only in ``b``), and one-to-many relationships as *splits* / *merges*.
-    ``threshold=0.3`` is permissive for ``metric="cosine"`` on real corpora (shared
-    common words push cross-topic cosine up), so raise it if you see spurious
-    splits/merges.
+    ``a``, ``b`` are two fitted models (or ``K×V`` topic-word arrays), **or** two
+    :class:`~topica.AnalysisManifest` records recorded with ``topic_words_n>0`` — in
+    which case topics are aligned by Jaccard overlap of the retained top-word sets
+    without refitting (see the module docstring; mixing a model with a manifest is
+    refused). Topics are matched one-to-one when each is the other's *unique*
+    above-``threshold`` partner (:func:`align_topics`, a mutual-best rule — never
+    force-paired); topics with no honest counterpart are reported as *vanished* (only
+    in ``a``) or *appeared* (only in ``b``), and one-to-many relationships as
+    *splits* / *merges*.
+
+    ``metric``/``threshold`` default per path: live fits use ``metric="cosine"`` with
+    ``threshold=0.3`` (permissive on real corpora, where shared common words push
+    cross-topic cosine up — raise it if you see spurious splits/merges); manifests use
+    ``metric="jaccard"`` with a lower default (~0.12) matched to the Jaccard scale of
+    top-word sets. Pass ``threshold=`` to override either.
 
     **Drift needs a null.** Pass exactly one reseed source to judge whether a matched
     pair moved beyond the self-agreement A shows across reseeds (a heuristic band —
@@ -356,8 +648,10 @@ def compare(
     independent — correct for two genuinely distinct fits, and conservative (it
     cannot go to zero) as the two fits approach identical.
 
-    ``metric`` is passed to :func:`align_topics` (``"cosine"``, ``"js"``, ``"rbo"``,
-    ``"emd"``); ``threshold`` is the minimum similarity for an honest match.
+    On the live path ``metric`` is passed to :func:`align_topics` (``"cosine"``,
+    ``"js"``, ``"rbo"``, ``"emd"``); ``threshold`` is the minimum similarity for an
+    honest match. On the manifest path only ``metric="jaccard"`` and ``baseline=``
+    (not ``refit=``/``reseed_fits=``) are available.
 
     Returns a :class:`CompareResult` (see ``.aligned``, ``.unmatched_a/b``,
     ``.splits``, ``.merges``, ``.drift``, ``.prevalence_shift``, ``.render()``).
@@ -367,6 +661,23 @@ def compare(
         raise ValueError(
             "pass at most one drift null: refit=, reseed_fits=, or baseline="
         )
+
+    # Manifest-native path (issue #415): compare two provenance records directly.
+    a_man, b_man = _is_manifest(a), _is_manifest(b)
+    if a_man != b_man:
+        raise TypeError(
+            "cannot compare a live model/array with an AnalysisManifest; pass two "
+            "manifests (recorded with topic_words_n>0) or two live models."
+        )
+    if a_man and b_man:
+        return _compare_manifests(
+            a, b, metric=metric, threshold=threshold,
+            refit=refit, reseed_fits=reseed_fits, baseline=baseline,
+        )
+
+    # Live path: resolve the documented cosine defaults from the None sentinels.
+    metric = "cosine" if metric is None else metric
+    threshold = _LIVE_DEFAULT_THRESHOLD if threshold is None else threshold
 
     al = align_topics(a, b, metric=metric, threshold=threshold)
     words_a = _top_words(a, top_n)
@@ -429,12 +740,13 @@ def compare(
         )
     aligned.sort(key=lambda p: p.topic_a)
 
+    sim_mat = np.asarray(al.similarity_matrix)
     unmatched_a = [
-        UnmatchedTopic(int(t), "a", "vanished", words_a[t], float(prev_a[t]))
+        _unmatched(t, "a", "vanished", words_a[t], prev_a[t], sim_mat, threshold, axis=0)
         for t in sorted(al.unaligned_a)
     ]
     unmatched_b = [
-        UnmatchedTopic(int(t), "b", "appeared", words_b[t], float(prev_b[t]))
+        _unmatched(t, "b", "appeared", words_b[t], prev_b[t], sim_mat, threshold, axis=1)
         for t in sorted(al.unaligned_b)
     ]
     splits = {int(k): [int(j) for (j, _s) in v] for k, v in al.splits.items()}
@@ -490,11 +802,17 @@ def _render_html(r: CompareResult, *, title: str | None) -> str:
     parts.append(f"<h1>{_esc(title)}</h1><p class='sub'>{_esc(sub)}</p>")
     kind = r.baseline.get("kind", "none")
     if kind == "none":
+        # A manifest cannot be refit, so only baseline= is available there; advertise
+        # what the path actually accepts rather than options that would raise.
+        how = (
+            "Pass <code>baseline=</code> to test drift against a similarity floor."
+            if r.metric == "jaccard"
+            else "Pass <code>refit=</code>, <code>reseed_fits=</code>, or "
+            "<code>baseline=</code> to test drift against reseed noise."
+        )
         parts.append(
-            "<p class='note'>No reseed baseline supplied, so drift is reported as a "
-            "raw distance only (<em>drifted = unknown</em>). Pass <code>refit=</code>, "
-            "<code>reseed_fits=</code>, or <code>baseline=</code> to test drift "
-            "against reseed noise.</p>"
+            "<p class='note'>No drift baseline supplied, so drift is reported as a "
+            f"raw distance only (<em>drifted = unknown</em>). {how}</p>"
         )
     else:
         parts.append(f"<p class='note'>Drift null: {_esc(kind)} ({_esc(drift_txt)}).</p>")
@@ -518,14 +836,37 @@ def _render_html(r: CompareResult, *, title: str | None) -> str:
 
     # Unmatched / split / merge.
     if r.unmatched_a or r.unmatched_b:
-        urows = ["<tr><th>side</th><th>topic</th><th>status</th><th>prevalence</th><th>top words</th></tr>"]
+        urows = ["<tr><th>side</th><th>topic</th><th>status</th><th>prevalence</th>"
+                 "<th>best sim</th><th>top words</th></tr>"]
         for u in r.unmatched_a + r.unmatched_b:
+            best = "—" if u.best_similarity is None else f"{u.best_similarity:.3f}"
+            if u.near_miss:
+                best += " <span class='tag unk'>near-miss</span>"
             urows.append(
                 f"<tr><td>{_esc(u.side.upper())}</td><td class='num'>{u.topic}</td>"
                 f"<td>{_esc(u.status)}</td><td class='num'>{u.prevalence:.3f}</td>"
+                f"<td class='num'>{best}</td>"
                 f"<td class='words'>{_esc(', '.join(u.top_words[:8]))}</td></tr>"
             )
-        parts.append(f"<h2>Unmatched</h2><table>{''.join(urows)}</table>")
+        note = ""
+        if any(u.near_miss for u in r.unmatched_a + r.unmatched_b):
+            # The remedy differs by path: the manifest/Jaccard path is coarse and
+            # improves with a wider top-word window (or the live models); the live
+            # path is already the fine-grained comparison, so point at the threshold.
+            fix = (
+                "Retaining more top words (higher <code>topic_words_n</code>) or "
+                "comparing the live models resolves it."
+                if r.metric == "jaccard"
+                else "Lowering <code>threshold</code> would match it, if the overlap "
+                "is real."
+            )
+            note = (
+                f"<p class='note'>A <em>near-miss</em> sits just under the match "
+                f"threshold ({r.threshold:.2f}) — likely the same topic seen through "
+                f"churned top words rather than a real appearance/disappearance. "
+                f"{fix}</p>"
+            )
+        parts.append(f"<h2>Unmatched</h2><table>{''.join(urows)}</table>{note}")
     if r.splits:
         parts.append(
             "<h2>Splits (A → many B)</h2><p class='words'>"
@@ -564,8 +905,11 @@ def _render_markdown(r: CompareResult) -> str:
     if r.unmatched_a or r.unmatched_b:
         lines += ["", "## Unmatched", ""]
         for u in r.unmatched_a + r.unmatched_b:
+            flag = ""
+            if u.near_miss:
+                flag = f" _(near-miss: best sim {u.best_similarity:.3f}, just under {r.threshold:.2f})_"
             lines.append(f"- **{u.side.upper()} topic {u.topic}** ({u.status}): "
-                         f"{', '.join(u.top_words[:8])}")
+                         f"{', '.join(u.top_words[:8])}{flag}")
     if r.splits:
         lines += ["", "## Splits (A → many B)", ""]
         lines += [f"- {k} → {v}" for k, v in r.splits.items()]

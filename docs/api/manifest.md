@@ -76,6 +76,26 @@ b = topica.AnalysisManifest.load("run-b.json")
 print(a.compare(b).summary())
 ```
 
+`a.compare(b)` is a *provenance* diff (same corpus/model/inputs?). To compare the
+**topics themselves** — which are stable, which drifted, which are new — without the
+models, record each fit with its top words retained and pass the two manifests to
+[`topica.compare`](../guides/model-comparison.md#comparing-two-manifests-without-the-models):
+
+```python
+ra = topica.record_fit(model_a, corpus_a, topic_words_n=25)   # opt-in; off by default
+cmp = topica.compare(ra, rb)                                  # Jaccard top-word alignment
+```
+
+Retain generously (`topic_words_n≈25`, not 10): top-word *set* overlap is coarser
+than the live cosine, and seed-varying fits churn their top-word lists, so too small
+a window can mislabel a stable topic as vanished/appeared (`compare` flags such
+near-misses).
+
+Top words are retained only when you ask (`topic_words_n>0`): they are
+human-readable tokens drawn from the corpus vocabulary, so — like
+`content_fingerprint` — they are an explicit opt-in and are off at every privacy
+level, keeping the default manifest fingerprints-not-content.
+
 ## Bundling the analysis
 
 `record.bundle(path, model=model, corpus=corpus)` writes a self-contained,

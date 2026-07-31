@@ -333,3 +333,38 @@ and use it as a **library regression test** — refit a canonical corpus across 
 versions and flag when a "harmless" refactor silently moves the topics. It describes
 and tests *difference*; it does not build a consensus model (that is
 `ensemble`).
+
+### Comparing two manifests, without the models
+
+When the models themselves are gone but their [analysis manifests](../api/manifest.md)
+remain, `compare` can still align them — as long as each fit was recorded with its
+top words retained:
+
+```python
+ra = topica.record_fit(fit_a, corpus_a, topic_words_n=25)   # opt-in: top words are content
+rb = topica.record_fit(fit_b, corpus_b, topic_words_n=25)
+cmp = topica.compare(ra, rb)                                 # same CompareResult, no refit
+```
+
+Manifests store only each topic's top-N words and mean prevalence, so the manifest
+path aligns by **Jaccard overlap of the top-word sets** (`metric="jaccard"`, with a
+default threshold matched to that scale — lower than cosine's) and yields the same
+matched / vanished / appeared / split / merge structure. With enough words retained,
+this recovers the matching the live cosine path finds — but top-word set overlap is
+**coarser** than the full-distribution cosine: seed-varying fits (e.g. Gibbs LDA)
+churn their top-word lists between runs, so a genuinely-stable topic can share too few
+of its top-10 words to clear the threshold and be mislabelled *vanished + appeared*.
+Retain generously (`topic_words_n≈25`, not 10) so real matches sit well above the
+noise; `compare` also **flags a "near-miss"** on any vanished/appeared topic whose
+best cross-similarity sits just under the threshold, so a false disappearance is
+surfaced rather than silent. Two further caveats follow from having only top words:
+there is no prevalence-shift uncertainty (no posterior is stored), and a manifest
+cannot be refit — so drift is judged only against a `baseline=` floor, not a reseed
+null. Mixing a live model with a manifest is refused. Retaining top words is off by
+default (`topic_words_n=0`) because they are corpus-derived content; a manifest
+recorded without them raises a clear error rather than comparing on nothing.
+
+Record both manifests with the **same** `topic_words_n`. Jaccard over sets of
+different sizes is systematically depressed (a 10-word set nested in a 25-word one
+scores at most `10/25 = 0.4`), so if the two windows differ `compare` warns and
+falls back to the common top-N rather than reporting spurious drift.

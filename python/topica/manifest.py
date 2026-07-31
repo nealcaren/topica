@@ -671,6 +671,7 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
                privacy: str = "minimal", content_fingerprint: bool = False,
                fingerprint_key: bytes | None = None, thread_count: int | None = None,
                diagnostics=None, diagnostics_n: int = 10,
+               topic_words_n: int = 0,
                **fit_settings) -> AnalysisManifest:
     """Record a fitted ``model`` on ``corpus`` as an :class:`AnalysisManifest`.
 
@@ -690,6 +691,18 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
         ``"exclusivity"``). Each is recorded as computed evidence (its mean over
         topics), or ``value=None`` with a note if it is not defined for this model.
     diagnostics_n : the top-N words each diagnostic uses (default 10).
+    topic_words_n : opt-in, **content**. When ``> 0``, retains each topic's top-N
+        words and its mean prevalence (``doc_topic.mean(0)``) in the model block, so
+        two manifests can later be compared topic-for-topic by
+        :func:`topica.compare` *without refitting*. Default ``0`` retains nothing —
+        top words are human-readable tokens drawn from the corpus vocabulary
+        (model output, but content nonetheless), so like ``content_fingerprint``
+        this is an explicit opt-in and is off at every privacy level. A manifest
+        recorded with ``topic_words_n=0`` cannot be topic-compared (a clear error
+        is raised). Retain enough words for the comparison to resolve: ``compare``
+        aligns manifests by top-word *set* overlap, which is coarser than the live
+        cosine, so ``~25`` is a safer floor than ``10`` for seed-varying (e.g.
+        Gibbs) fits whose top-word lists churn between runs.
     fit_settings : the fit arguments you passed (``iters=``, …), recorded as
         provenance. Only JSON-serialisable values are kept; others are dropped
         with a note.
@@ -735,6 +748,14 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
         "fit_settings": _allowlist_kwargs(fit_settings),
         "output_fingerprints": _output_fingerprints(model),
     }
+
+    # Opt-in topic identity for manifest-native comparison (issue #415). Off by
+    # default (top words are corpus-derived content); when enabled, retain the
+    # exact same top words and prevalence point estimate the live compare path
+    # uses, so manifest-vs-live comparisons agree.
+    if topic_words_n > 0:
+        model_block["top_words"] = _retained_top_words(model, topic_words_n)
+        model_block["topic_prevalence"] = _retained_prevalence(model)
 
     corpus_block = _corpus_block(corpus, privacy, content_fingerprint, fingerprint_key)
 
@@ -801,6 +822,36 @@ def _output_fingerprints(model) -> dict[str, Any]:
         if arr is not None:
             out[name] = fingerprint_array(arr)
     return out
+
+
+def _retained_top_words(model, n: int) -> list[list[str]] | None:
+    """Each topic's top-``n`` words, reusing the exact ranking ``topica.compare``
+    reads (so manifest-vs-live comparisons agree). ``None`` if the model exposes no
+    topic-word surface."""
+    from .compare import _top_words
+
+    # Only "no usable topic-word surface" should degrade to None (a missing
+    # attribute, or a non-array model that will not coerce). Let an unexpected
+    # failure propagate rather than silently record an unusable manifest that
+    # later reports "no retained top words" — a misdirection re-recording can't fix.
+    try:
+        return _top_words(model, n)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _retained_prevalence(model) -> list[float] | None:
+    """Each topic's mean prevalence, ``doc_topic.mean(0)`` — the same point estimate
+    the live compare path uses (:func:`topica.compare._prevalence`). ``None`` when
+    the model has no doc-topic surface (mirrors the live NaN/None guard)."""
+    from .coherence import _as_doc_topic
+
+    # As in _retained_top_words: degrade to None only for a genuinely absent
+    # doc-topic surface, not for an unexpected failure.
+    try:
+        return [float(x) for x in np.asarray(_as_doc_topic(model)).mean(axis=0)]
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 def _corpus_block(corpus, privacy, content_fingerprint, key) -> dict[str, Any]:

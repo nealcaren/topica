@@ -118,6 +118,65 @@ def test_content_fingerprint_is_opt_in(fitted):
     assert rec.corpus["fingerprint"]["spec"] == FINGERPRINT_SPEC
 
 
+# -- opt-in topic-identity retention (issue #415, manifest-native compare) ---
+
+
+def test_topic_words_off_by_default(fitted):
+    # Default retains nothing; top words are corpus-derived content (#415), so
+    # they must be opt-in like content_fingerprint and leak no tokens by default.
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50)
+    assert "top_words" not in rec.model
+    assert "topic_prevalence" not in rec.model
+    js = rec.to_json()
+    for token in {t for doc in DOCS for t in doc}:
+        assert token not in js
+
+
+def test_topic_words_opt_in_retains_words_and_prevalence(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50, topic_words_n=5)
+    tw = rec.model["top_words"]
+    assert len(tw) == model.num_topics and all(len(row) == 5 for row in tw)
+    prev = rec.model["topic_prevalence"]
+    assert len(prev) == model.num_topics
+    # Prevalence is the same point estimate the live compare path uses.
+    assert np.allclose(prev, np.asarray(model.doc_topic).mean(axis=0))
+    # Retained words are the model's actual top words (content, deliberately).
+    assert tw[0][0] in model.vocabulary
+
+
+def test_topic_words_retention_round_trips(tmp_path, fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, iters=50, topic_words_n=8)
+    p = tmp_path / "r.topica.json"
+    rec.save(str(p))
+    back = AnalysisManifest.load(str(p))
+    assert back.model["top_words"] == rec.model["top_words"]
+    assert back.model["topic_prevalence"] == rec.model["topic_prevalence"]
+
+
+def test_topic_words_retention_is_deterministic(fitted):
+    corpus, model = fitted
+    a = record_fit(model, corpus, iters=50, topic_words_n=10).to_json()
+    b = record_fit(model, corpus, iters=50, topic_words_n=10).to_json()
+    assert a == b
+
+
+def test_topic_words_retention_propagates_unexpected_errors(fitted):
+    # A model that HAS a topic surface but whose ranking raises an unrelated error
+    # must not silently record None (which would later misreport "no retained top
+    # words" — a misdirection re-recording can't fix). The error must surface.
+    from topica.manifest import _retained_top_words
+
+    class Exploding:
+        def top_words(self, n):
+            raise RuntimeError("unrelated ranking failure")
+
+    with pytest.raises(RuntimeError, match="unrelated ranking failure"):
+        _retained_top_words(Exploding(), 5)
+
+
 # -- deterministic serialization + round trip ------------------------------
 
 

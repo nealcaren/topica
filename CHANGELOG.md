@@ -6,6 +6,30 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **`topica.compare` now compares two `AnalysisManifest`s without refitting** (#415).
+  When both fits were recorded with `record_fit(..., topic_words_n=N)`, `compare`
+  aligns their topics by Jaccard overlap of the retained top-word sets
+  (`metric="jaccard"`, with a default threshold matched to that scale) and reports the
+  same matched/vanished/appeared/split/merge outcomes and prevalence shifts as the
+  live path — useful when the models are gone but their provenance records remain. A
+  manifest cannot be refit, so only `baseline=` provides a drift null; mixing a live
+  model with a manifest is refused. Retaining top words is opt-in (`topic_words_n=0`
+  by default) because they are corpus-derived content, consistent with the manifest's
+  fingerprints-not-content privacy contract.
+- **`compare` flags "near-miss" appeared/vanished topics** (both the live and manifest
+  paths). An unmatched topic now records its `best_similarity` to the other side and,
+  when that sits just under the match threshold, a `near_miss` flag surfaced in the
+  HTML/Markdown cards — so a stable topic mislabelled *vanished + appeared* by
+  top-word churn is called out rather than passing silently. Retain generously
+  (`topic_words_n≈25`) on the manifest path, since top-word set overlap is coarser
+  than the live cosine. When the two manifests were recorded with *different*
+  `topic_words_n`, `compare` warns and falls back to the common window (unequal set
+  sizes otherwise depress Jaccard and manufacture spurious drift); the `near_miss`
+  flag is robust to a NumPy-scalar `threshold`; and a manifest whose recorded
+  `num_topics` disagrees with its retained rows is rejected.
+
 ## [0.55.0] - 2026-07-29
 
 ### Added

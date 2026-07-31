@@ -371,6 +371,9 @@ class UnmatchedTopic:
     status: str
     top_words: list[str]
     prevalence: float
+    best_similarity: float | None
+    @property
+    def near_miss(self) -> bool: ...
     def as_dict(self) -> dict[str, Any]: ...
 
 
@@ -400,8 +403,8 @@ def compare(
     a: Any,
     b: Any,
     *,
-    metric: str = "cosine",
-    threshold: float = 0.3,
+    metric: str | None = None,
+    threshold: float | None = None,
     refit: Any = None,
     reseed_fits: Any = None,
     n_reseed: int = 4,
