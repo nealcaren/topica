@@ -112,6 +112,21 @@ class TestNormalize:
         out = topica.topics_for_term(phi, "x", ["x", "y"], normalize=True)
         assert [w for _, w in out] == [0.0, 0.0]
 
+    def test_signed_phi_is_rejected(self):
+        # normalize forms P(topic|word) = column / column-sum, which is a
+        # distribution only for nonnegative φ. On a signed matrix the ratio would
+        # silently return negative / >1 / enormous weights; reject it instead.
+        phi = np.array([[0.9, -0.4], [-0.8, 0.5], [0.1, 0.2]])
+        with pytest.raises(ValueError, match="nonnegative"):
+            topica.topics_for_term(phi, "w0", ["w0", "w1"], normalize=True)
+
+    def test_signed_phi_is_fine_without_normalize(self):
+        # The guard only fires for normalize=True; raw weights are meaningful on
+        # signed axes, so the default path still works.
+        phi = np.array([[0.9, -0.4], [-0.8, 0.5], [0.1, 0.2]])
+        out = topica.topics_for_term(phi, "w0", ["w0", "w1"], top_n=None)
+        assert [t for t, _ in out] == [0, 2, 1]
+
 
 class TestWithLabels:
     def test_single_term_returns_triples_with_top_words(self):
@@ -119,8 +134,7 @@ class TestWithLabels:
         assert len(out[0]) == 3
         topic, weight, words = out[0]
         assert topic == 0 and weight == pytest.approx(0.7)
-        # topic 0's highest-prob words, in order: a (0.7) then b/c/d (all 0.1,
-        # tie-break ascending index -> b, c, ...).
+        # topic 0's highest-prob word is "a" (0.7); the rest tie at 0.1.
         assert words[0] == "a"
         assert all(isinstance(w, str) for w in words)
 
@@ -128,11 +142,14 @@ class TestWithLabels:
         out = topica.topics_for_term(PHI, "a", VOCAB, with_labels=True, label_n=2)
         assert all(len(words) == 2 for _, _, words in out)
 
-    def test_labels_match_phi_top_words(self):
+    def test_labels_match_label_topics_prob(self):
+        # The attached words must agree with label_topics(...)[t]["prob"]
+        # word-for-word, ties included, so the result is a faithful stand-in for a
+        # manual join back to label_topics.
         out = topica.topics_for_term(PHI, "a", VOCAB, top_n=None, with_labels=True)
+        prob = topica.label_topics(PHI, VOCAB, n=5)
         for topic, _, words in out:
-            expected = [VOCAB[i] for i in np.argsort(-PHI[topic], kind="stable")[:5]]
-            assert words == expected
+            assert words == [w for w, _ in prob[topic]["prob"]]
 
     def test_per_term_carries_labels(self):
         out = topica.topics_for_term(PHI, ["a", "b"], VOCAB, per_term=True,

@@ -715,8 +715,10 @@ def topics_for_term(topic_word, terms, vocabulary=None, *, top_n=5, per_term=Fal
         dominated by the most frequent term. ``True`` instead column-normalizes
         each term to ``P(topic | word) = φ[:, w] / Σ_t φ[t, w]`` — "what share of
         *this word* lives in each topic" — which is comparable across terms and
-        frequency-robust, so pooling weights terms equally. Assumes nonnegative φ
-        (leave it off for signed-axis models like S³).
+        frequency-robust, so pooling weights terms equally. This is a distribution
+        only for a nonnegative φ; on a signed-axis model (S³, an ideal-point model)
+        ``normalize=True`` raises rather than return meaningless ratios, so leave it
+        off there.
     with_labels : bool, default False
         When ``True``, each ranked entry gains a third element: the topic's
         ``label_n`` highest-probability words (from φ), so the result reads on its
@@ -777,6 +779,21 @@ def topics_for_term(topic_word, terms, vocabulary=None, *, top_n=5, per_term=Fal
             f"vocabulary length ({len(vocabulary)}) does not match the number of "
             f"topic_word columns ({V}); pass the vocabulary aligned to this φ."
         )
+    # normalize forms P(topic | word) = φ[:, w] / Σ_t φ[t, w], which is a
+    # distribution only for a nonnegative φ. On a signed-axis surface (S³, an
+    # ideal-point model) the column sum can be near zero or negative, so the ratio
+    # silently returns negative / >1 / enormous "weights". Reject it up front rather
+    # than hand back nonsense. Tolerate float-noise negatives (e.g. an LSA/NMF
+    # surface reconstructing to ~-1e-16); genuine signed axes carry values of order
+    # 0.1–1, far past this floor.
+    signed_tol = -1e-8 * max(1.0, float(np.abs(phi).max())) if phi.size else 0.0
+    if normalize and phi.size and phi.min() < signed_tol:
+        raise ValueError(
+            "normalize=True forms P(topic | word) = φ[:, w] / Σ_t φ[t, w], which "
+            "assumes a nonnegative topic-word matrix; this φ has negative entries "
+            "(a signed-axis model like S³ or an ideal-point model). Leave normalize "
+            "off for signed models, or pass a nonnegative φ."
+        )
     index = {w: i for i, w in enumerate(vocabulary)}
 
     found = [(t, index[t]) for t in term_list if t in index]
@@ -796,12 +813,13 @@ def topics_for_term(topic_word, terms, vocabulary=None, *, top_n=5, per_term=Fal
     limit = K if top_n is None else min(int(top_n), K)
 
     # Each topic's top-probability words, only when labels are asked for. Built
-    # once (K is small) and shared across every ranked list; the same stable
-    # descending sort as the ranking, for a deterministic tie-break.
+    # once (K is small) and shared across every ranked list. Match label_topics's
+    # "prob" ordering exactly (np.argsort ascending, then reversed) so the attached
+    # words agree with label_topics(...)[t]["prob"] word-for-word, ties included.
     labels = None
     if with_labels:
         labels = [
-            [vocabulary[i] for i in np.argsort(-phi[t], kind="stable")[:label_n]]
+            [vocabulary[i] for i in np.argsort(phi[t])[::-1][:label_n]]
             for t in range(K)
         ]
 
