@@ -6,6 +6,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **`from_dataframe` accepts scikit-learn's `min_df` / `max_df` aliases** (#647), so
+  an sklearn/gensim preprocessing habit works unchanged. Following sklearn's
+  convention, an `int` is an absolute document count and a `float` in `[0, 1]` is a
+  proportion: `min_df=5` → `min_doc_freq=5`, `max_df=0.5` → `max_doc_fraction=0.5`.
+  Passing both an alias and its native argument raises.
+
+### Changed
+
+- **The `topica` module docstring is an accurate "start here"** (#647): it now
+  describes the full model roster and a one-glance LDA workflow with the main entry
+  points grouped by task, instead of the stale "fast SparseLDA" one-liner. The
+  dynamic-keyATM `time_prevalence_ci` docstring now points LDA/STM users at
+  `predicted_prevalence` for prevalence over a time covariate.
+
 ### Fixed
 
 - **`topica.coherence` / `coherence_ci` / `semantic_coherence` no longer silently

@@ -218,6 +218,13 @@ def visualize_keywords(docs, keywords):
 def time_prevalence_ci(model, timestamps, *, ci=0.95, normalize=True):
     """Per-period topic prevalence with credible intervals from the dynamic keyATM posterior.
 
+    .. note::
+       This is **dynamic-keyATM only** — it reads that model's retained MCMC draws.
+       For prevalence over a time covariate on any other model (LDA, STM, …), use
+       :func:`topica.predicted_prevalence` with a continuous ``year`` (optionally a
+       :func:`topica.spline`), which gives the same over-time curve with intervals
+       via the method of composition.
+
     For a dynamic :class:`~topica.KeyATM` (fit with ``timestamps=`` and
     ``keep_theta_draws=True``), this computes per-period prevalence uncertainty
     directly from the retained MCMC ``theta_draws``. For each posterior draw and
