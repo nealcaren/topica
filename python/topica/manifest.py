@@ -668,6 +668,7 @@ def _cmp_fp(a: dict | None, b: dict | None) -> str:
 
 
 def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
+               embeddings=None,
                privacy: str = "minimal", content_fingerprint: bool = False,
                fingerprint_key: bytes | None = None, thread_count: int | None = None,
                diagnostics=None, diagnostics_n: int = 10,
@@ -690,6 +691,14 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
         evidence: any of :data:`BUILTIN_DIAGNOSTICS` (``"coherence"``,
         ``"exclusivity"``). Each is recorded as computed evidence (its mean over
         topics), or ``value=None`` with a note if it is not defined for this model.
+    embeddings : the document embeddings an embedding-based model (e.g. BERTopic)
+        was fit on. These *determine* the topics but are not retained on the fitted
+        model, so ``record_fit`` cannot see them unless you pass them here; when you
+        do, an order-sensitive fingerprint is recorded (as ``inputs["embeddings"]``)
+        so the fit is verifiable and two manifests are comparable. For an
+        embedding-based model, omitting them is recorded honestly (a marker noting
+        the determining input was not captured), rather than leaving the manifest
+        silently implying completeness.
     diagnostics_n : the top-N words each diagnostic uses (default 10).
     topic_words_n : opt-in, **content**. When ``> 0``, retains each topic's top-N
         words and its mean prevalence (``doc_topic.mean(0)``) in the model block, so
@@ -764,6 +773,29 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
         inputs["prevalence"] = {
             "kind": "design_matrix",
             **fingerprint_design(prevalence, prevalence_names, key=fingerprint_key),
+        }
+
+    # Document embeddings determine an embedding-based model's topics but are not
+    # retained on the fitted model, so record_fit cannot recover them (issue #649).
+    # Fingerprint them when supplied; otherwise, if the registry says this model is
+    # fit from embeddings, record that the determining input was not captured rather
+    # than letting the manifest read as a complete reproducibility record.
+    needs_embeddings = (
+        reg is not None and cls in reg.REGISTRY
+        and "embeddings" in reg.REGISTRY[cls].brings
+    )
+    if embeddings is not None:
+        inputs["embeddings"] = {
+            "kind": "doc_embeddings",
+            **fingerprint_array(embeddings, key=fingerprint_key),
+        }
+    elif needs_embeddings:
+        inputs["embeddings"] = {
+            "kind": "doc_embeddings",
+            "recorded": False,
+            "note": "this model is fit from document embeddings, which determine the "
+                    "topics but were not passed to record_fit; pass embeddings= to "
+                    "fingerprint them for verification and reproducibility.",
         }
 
     manifest = AnalysisManifest(

@@ -33,6 +33,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   it is now `"none"` (warns / uses bootstrap). EmbeddingLDA delegates a real Dirichlet
   posterior to an inner SeededLDA, which the class-level check missed, so it was
   wrongly `"none"` and over-warned; it is now `"dirichlet"` and composes correctly.
+- **`record_fit` now records the document embeddings for embedding-based models**
+  (#649). BERTopic (and other models the registry marks as fit from `embeddings`)
+  are determined by their document embeddings, which the fitted model does not
+  retain — so the manifest previously had `inputs: {}` and no way to verify or
+  compare the fit, while still reading as a complete record. `record_fit` gains an
+  `embeddings=` argument that records an order-sensitive fingerprint of them
+  (`inputs["embeddings"]`); when an embedding-based model's embeddings are not
+  passed, their absence is recorded honestly (a marker noting the determining input
+  was not captured) instead of being silently omitted.
 
 ### Changed
 
@@ -55,6 +64,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
     `(doc_index, proportion, text)` triple; `plot_search_k` documents the
     `ax.figure.savefig(...)` save path; the `load_dubois` docstring corrects its
     date range to 1910–1934 and notes the 3 exact-duplicate articles.
+=======
+- **`record_fit` now records the document embeddings for embedding-based models**
+  (#649). BERTopic (and other models the registry marks as fit from `embeddings`)
+  are determined by their document embeddings, which the fitted model does not
+  retain — so the manifest previously had `inputs: {}` and no way to verify or
+  compare the fit, while still reading as a complete record. `record_fit` gains an
+  `embeddings=` argument that records an order-sensitive fingerprint of them
+  (`inputs["embeddings"]`); when an embedding-based model's embeddings are not
+  passed, their absence is recorded honestly (a marker noting the determining input
+  was not captured) instead of being silently omitted.
+>>>>>>> 5f2959d (fix(manifest): record document embeddings for embedding-based models (#649))
 
 ### Added
 
