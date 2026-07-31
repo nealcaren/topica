@@ -67,34 +67,48 @@ class TopicEffect:
     def pvalue(self) -> np.ndarray:
         """Two-sided normal p-value per feature, from the Wald statistic ``z``.
 
-        ``P(|Z| > |z|) = erfc(|z| / sqrt(2))``; ``nan`` where ``z`` is ``nan`` (e.g.
-        an unreliable bootstrap SE). Aligned to :attr:`feature_names`."""
+        ``P(|Z| > |z|) = erfc(|z| / sqrt(2))``; ``nan`` only where ``z`` is ``nan``
+        (e.g. an unreliable bootstrap SE). An infinite ``z`` (a nonzero coefficient
+        with a zero SE) gives ``0.0``, consistent with the formula. Aligned to
+        :attr:`feature_names`."""
         import math
 
-        z = np.asarray(self.z, dtype=float)
+        z = np.atleast_1d(np.asarray(self.z, dtype=float))
         out = np.full(z.shape, np.nan)
-        finite = np.isfinite(z)
-        out[finite] = [math.erfc(abs(v) / math.sqrt(2.0)) for v in z[finite]]
-        return out
+        valid = ~np.isnan(z)  # inf is valid -> erfc(inf)=0.0; only nan stays nan
+        out[valid] = [math.erfc(abs(v) / math.sqrt(2.0)) for v in z[valid]]
+        return out.reshape(np.shape(self.z))
 
     def effect_of(self, feature: str) -> dict:
         """Named-feature accessor: the row for ``feature`` as a dict of ``coef``,
         ``se``, ``z``, ``ci_low``, ``ci_high``, ``pvalue``. Raises ``KeyError`` with
-        the available names if ``feature`` is not a covariate — the safe alternative
-        to guessing a positional index (see the class note on the intercept)."""
+        the available names if ``feature`` is not a covariate, or ``ValueError`` if
+        the name is not unique (ambiguous) — the safe alternative to guessing a
+        positional index (see the class note on the intercept)."""
         names = list(self.feature_names)
         if feature not in names:
             raise KeyError(
                 f"{feature!r} is not a covariate of this effect; available: {names}"
             )
+        if names.count(feature) > 1:
+            raise ValueError(
+                f"{feature!r} appears {names.count(feature)} times in feature_names, "
+                "so named access is ambiguous; read the row positionally via "
+                ".coef/.se/... or .to_frame() instead."
+            )
         j = names.index(feature)
+        coef = np.atleast_1d(self.coef)
+        se = np.atleast_1d(self.se)
+        ci_low = np.atleast_1d(self.ci_low)
+        ci_high = np.atleast_1d(self.ci_high)
+        pval = np.atleast_1d(self.pvalue)
         return {
-            "coef": float(self.coef[j]),
-            "se": float(self.se[j]),
-            "z": float(self.z[j]),
-            "ci_low": float(self.ci_low[j]),
-            "ci_high": float(self.ci_high[j]),
-            "pvalue": float(self.pvalue[j]),
+            "coef": float(coef[j]),
+            "se": float(se[j]),
+            "z": float(np.atleast_1d(self.z)[j]),
+            "ci_low": float(ci_low[j]),
+            "ci_high": float(ci_high[j]),
+            "pvalue": float(pval[j]),
         }
 
     @property

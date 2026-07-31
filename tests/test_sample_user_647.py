@@ -55,6 +55,37 @@ def test_effect_pvalue_is_nan_where_z_is_nan():
     assert np.isnan(e.pvalue[1])
 
 
+def test_effect_pvalue_infinite_z_is_zero():
+    # A nonzero coef with a zero SE gives z=+/-inf; under erfc(|z|/sqrt2) that is p=0,
+    # not nan (only nan z stays nan).
+    from topica.stm import TopicEffect
+
+    e = TopicEffect(
+        topic=0, feature_names=["a", "b", "c"],
+        coef=np.ones(3), se=np.ones(3),
+        z=np.array([np.inf, -np.inf, np.nan]),
+        ci_low=np.zeros(3), ci_high=np.ones(3), r_squared=0.0,
+    )
+    assert e.pvalue[0] == 0.0 and e.pvalue[1] == 0.0
+    assert np.isnan(e.pvalue[2])
+
+
+def test_effect_named_access_rejects_duplicate_feature_names():
+    # Named access must not silently return only the first of two identically named
+    # covariates (it is advertised as the *safe* path).
+    from topica.stm import TopicEffect
+
+    e = TopicEffect(
+        topic=0, feature_names=["x", "x"],
+        coef=np.array([1.0, 2.0]), se=np.ones(2), z=np.ones(2),
+        ci_low=np.zeros(2), ci_high=np.ones(2), r_squared=0.0,
+    )
+    with pytest.raises(ValueError, match="appears 2 times"):
+        e.effect_of("x")
+    with pytest.raises(ValueError, match="appears 2 times"):
+        _ = e.by_feature
+
+
 # --- best_k: boundary warning on a monotone metric ------------------------------
 
 def test_best_k_warns_at_grid_boundary_for_heldout():
@@ -120,3 +151,34 @@ def test_from_dataframe_no_warning_without_upper_pruning():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         topica.from_dataframe(_frame(), text_col="text", min_doc_freq=1)
+
+
+def test_from_dataframe_warning_matches_rust_ceil_cutoff():
+    # The core keeps terms with doc_freq <= ceil(n_docs * max_doc_fraction). On a
+    # non-integral threshold the warning must use the SAME ceil cutoff, or it warns
+    # about terms the core actually kept. 3 docs, "common" in 2, fraction 0.5:
+    # ceil(1.5)=2, so "common" (df 2) is KEPT and must NOT be warned.
+    df = pd.DataFrame({"text": ["common a", "common b", "c d"]})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any warning fails the test
+        corpus = topica.from_dataframe(df, text_col="text", max_doc_fraction=0.5)
+    assert "common" in corpus.vocabulary  # the core kept it; the warning agreed by staying silent
+
+
+def test_from_dataframe_warned_terms_are_actually_dropped():
+    # Every term the warning names must be absent from the resulting vocabulary
+    # (no false alarms). 6 docs, "shared" in all (df 6 > ceil(0.5*6)=3 -> dropped);
+    # "a"/"b" in 3 each (df 3 == cutoff -> kept); unique fillers keep docs non-empty.
+    df = pd.DataFrame({"text": [
+        "shared alpha filla", "shared alpha fillb", "shared alpha fillc",
+        "shared beta filld", "shared beta fille", "shared beta fillf",
+    ]})
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        corpus = topica.from_dataframe(df, text_col="text", max_doc_fraction=0.5)
+    msgs = [str(x.message) for x in w if "max_doc_fraction" in str(x.message)]
+    assert msgs and "shared" in msgs[0]
+    vocab = set(corpus.vocabulary)
+    assert "shared" not in vocab                 # warned -> genuinely dropped
+    assert {"alpha", "beta"} <= vocab            # at-cutoff terms (df 3) kept, not warned
+    assert "alpha" not in msgs[0] and "beta" not in msgs[0]

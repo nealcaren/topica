@@ -93,17 +93,22 @@ def from_dataframe(
     # immigration corpus). The pruning happens in the Rust core with no feedback, so
     # surface the dropped high-frequency terms here before they vanish silently.
     if max_doc_fraction < 1.0 and docs and vocabulary is None:
+        import math
         from collections import Counter
 
         n_docs = len(docs)
         doc_freq: Counter = Counter()
         for d in docs:
-            doc_freq.update(set(d))
-        thresh = max_doc_fraction * n_docs
+            doc_freq.update(w for w in set(d) if w)  # ignore empty tokens, as the core does
+        # Match the Rust core's cutoff exactly: a term is dropped iff its document
+        # frequency exceeds ceil(n_docs * max_doc_fraction) (mod.rs `max_df`). Using
+        # the un-rounded product would over-report on a non-integral threshold.
+        max_df = math.ceil(n_docs * max_doc_fraction)
+        # Frequency-descending, then alphabetical, so the sampled list is
+        # deterministic under any hash seed.
         dropped = sorted(
-            (w for w, c in doc_freq.items() if c > thresh),
-            key=lambda w: doc_freq[w],
-            reverse=True,
+            (w for w, c in doc_freq.items() if c > max_df),
+            key=lambda w: (-doc_freq[w], w),
         )
         if dropped:
             shown = ", ".join(f"{w!r} ({doc_freq[w] / n_docs:.0%})" for w in dropped[:8])
