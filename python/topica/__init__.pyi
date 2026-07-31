@@ -228,6 +228,18 @@ def label_topics(topic_word: Any, vocabulary: Sequence[str] | None = None, *, n:
     ...
 
 
+def topics_for_term(
+    topic_word: Any,
+    terms: str | Sequence[str],
+    vocabulary: Sequence[str] | None = None,
+    *,
+    top_n: int | None = 5,
+    per_term: bool = False,
+) -> list[tuple[int, float]] | dict[str, list[tuple[int, float]]]:
+    """Inverse lookup: top topics (by φ weight) for a term or terms."""
+    ...
+
+
 def topic_correlation(doc_topic: Any, *, threshold: float = 0.05) -> Any:
     """Topic-correlation network (.cor, .adjacency, .edges)."""
     ...
@@ -674,6 +686,7 @@ __all__ = [
     "document_intrusion",
     "frex",
     "label_topics",
+    "topics_for_term",
     "topic_correlation",
     "find_thoughts",
     "search_k",

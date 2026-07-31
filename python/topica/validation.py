@@ -675,6 +675,98 @@ def topic_table(model, *, n=7):
     ]
 
 
+def topics_for_term(topic_word, terms, vocabulary=None, *, top_n=5, per_term=False):
+    """The inverse of "top words for a topic": the top topics for a term.
+
+    Given the topic-word matrix φ, rank topics by the weight they place on a
+    queried term (or terms) — "which topics is ``'immigration'`` important in, and
+    how strongly?". Where :func:`label_topics` / :func:`frex` go *topic → words*,
+    this goes *word → topics*, which is handy for corpus exploration and for
+    checking where a seed/anchor word actually landed after fitting.
+
+    Parameters
+    ----------
+    topic_word : a fitted model (uses its ``topic_word`` and ``vocabulary``) or a
+        ``(K, V)`` array, in which case pass ``vocabulary``.
+    terms : str or sequence of str
+        A single term, or several. Terms are matched against ``vocabulary``
+        exactly (topic models store already-tokenized/lowercased vocab, so match
+        the vocabulary's casing). A term absent from the vocabulary is dropped
+        with a warning; if *every* term is absent a ``ValueError`` is raised.
+    vocabulary : sequence of str, optional
+        Required only when ``topic_word`` is a bare array with no vocabulary.
+    top_n : int or None, default 5
+        How many topics to return, highest-weighted first. ``None`` returns all
+        topics ranked. Ties are broken by ascending topic id.
+    per_term : bool, default False
+        Ignored for a single term. For several terms, ``False`` (the default)
+        pools the terms — topics are ranked by the **summed** weight across the
+        queried terms — and returns one ranked list. ``True`` instead returns a
+        ``dict`` mapping each (found) term to its own ranked list, in the order
+        the terms were given.
+
+    Returns
+    -------
+    For a single term, or several terms with ``per_term=False``: a list of
+    ``(topic_id, weight)`` pairs sorted by descending weight. With several terms
+    and ``per_term=True``: a ``dict`` ``{term: [(topic_id, weight), ...]}``.
+
+    Examples
+    --------
+    >>> topics_for_term(model, "immigration", top_n=5)
+    [(12, 0.031), (4, 0.018), ...]
+    >>> topics_for_term(model, ["immigration", "border"], per_term=True)
+    {"immigration": [...], "border": [...]}
+    """
+    single = isinstance(terms, str)
+    term_list = [terms] if single else list(terms)
+    if not term_list:
+        raise ValueError("terms is empty; pass a term or a non-empty list of terms")
+    if not all(isinstance(t, str) for t in term_list):
+        raise ValueError("terms must be a string or a sequence of strings")
+    if top_n is not None and (not isinstance(top_n, (int, np.integer)) or top_n < 1):
+        raise ValueError(f"top_n must be a positive integer or None, got {top_n!r}")
+
+    vocabulary = _vocabulary_of(topic_word, vocabulary)
+    phi = _as_topic_word(topic_word)
+    if phi.ndim != 2 or phi.shape[0] == 0:
+        raise ValueError(
+            "the model has no topics (empty topic_word). For BERTopic/Top2Vec this "
+            "means clustering found no clusters — lower min_cluster_size, add data, "
+            "or check the scale of your embeddings."
+        )
+    K = phi.shape[0]
+    index = {w: i for i, w in enumerate(vocabulary)}
+
+    found = [(t, index[t]) for t in term_list if t in index]
+    missing = [t for t in term_list if t not in index]
+    if missing:
+        if not found:
+            raise ValueError(
+                f"none of the requested terms are in the vocabulary: {missing!r}"
+            )
+        warnings.warn(
+            f"terms not in the vocabulary, dropped: {missing!r}",
+            stacklevel=2,
+        )
+
+    limit = K if top_n is None else min(int(top_n), K)
+
+    def _rank(weights):
+        # Descending by weight; np.argsort is stable, so equal weights keep
+        # ascending topic-id order — a deterministic tie-break.
+        order = np.argsort(-weights, kind="stable")[:limit]
+        return [(int(t), float(weights[t])) for t in order]
+
+    if single:
+        return _rank(phi[:, found[0][1]])
+    if per_term:
+        return {t: _rank(phi[:, j]) for t, j in found}
+    # Pool the terms: rank topics by their summed weight over the queried terms.
+    pooled = phi[:, [j for _, j in found]].sum(axis=1)
+    return _rank(pooled)
+
+
 # ---------------------------------------------------------------------------
 # topicCorr: topic-correlation network
 # ---------------------------------------------------------------------------
@@ -2927,6 +3019,7 @@ __all__ = [
     "frex",
     "mmr",
     "label_topics",
+    "topics_for_term",
     "topic_correlation",
     "TopicCorrelation",
     "find_thoughts",
