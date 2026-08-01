@@ -139,6 +139,13 @@ every topic can be labeled. Count the junk topics. Then let the researcher
 choose, and report sensitivity to that choice. `topica.viz.search_k(rows)` and
 `quality_frontier` make the trade-off legible.
 
+`rows.best_k()` exists, but treat it as one input, not the decision: with a
+`held_out=` set it defaults to the held-out metric, which is roughly monotone in
+K and so tends to return the **largest K you scanned** (it warns when it does).
+Without held-out it defaults to the coherence/exclusivity frontier (a knee). Read
+it as "the K this criterion prefers," report the criterion, and still hand the
+choice to the researcher — never present `best_k()` as the answer.
+
 > **Handoff.** Present the curves and the labeled topics at two or three values
 > of K. The researcher picks K; you report why.
 
