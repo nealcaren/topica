@@ -10,14 +10,14 @@ This page covers the count-based models. The embedding-based models
 
 ## Finding a model
 
-Not sure which class you want? Start from the [decision matrix](../can-do/index.md),
-or filter the roster in code with `topica.list_models()`. Each filter narrows the
-result; combine them freely.
+To pick a class, start from the [decision matrix](../can-do/index.md), or filter
+the roster in code with `topica.list_models()`. Each filter narrows the result,
+and they combine.
 
 ```python
 import topica
 
-topica.list_models(tier=1)              # the recommended starting points
+topica.list_models(common_start=True)   # the common openings
 topica.list_models(group="short-text")  # a purpose group
 topica.list_models(brings="metadata")   # models that accept covariates
 topica.list_models(inference="gibbs")   # by inference engine
@@ -25,9 +25,9 @@ topica.list_models(experimental=False)  # only the validated roster
 ```
 
 Each result is a `ModelInfo` with `name`, `group`, `brings`, `inference`,
-`determinism`, `tags`, `tier`, and `experimental`. The `name` resolves directly:
-`getattr(topica, m.name)`. See the [model catalog](../guides/models.md) for the
-full grouped table.
+`determinism`, `tags`, `common_start`, and `experimental`. The `name` resolves
+directly: `getattr(topica, m.name)`. See the [model catalog](../guides/models.md)
+for the full grouped table.
 
 ::: topica.list_models
 

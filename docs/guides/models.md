@@ -34,9 +34,11 @@ generated from `python/topica/registry.py`.
 
 <!-- BEGIN MODEL TABLE (generated from topica.registry; edit registry.py, not this block) -->
 
-### Recommended starting points
+*Every model below is validated against a reference implementation.* The groupings are about **fit to your research design**, not quality: a specialized model is the right first choice when your data calls for it.
 
-The models most social scientists reach for first, one per common goal. Every other model below is equally validated; these are the fastest defensible defaults. `BERTopic` is the exception in kind: it clusters document embeddings rather than fitting a posterior, so topic-proportion uncertainty and covariate-effect estimation behave differently than for the others.
+### Common starting points
+
+One per common goal, where most social scientists begin. `BERTopic` works differently from the others: it clusters document embeddings rather than fitting a posterior, so topic-proportion uncertainty and covariate-effect estimation do not carry over directly.
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
@@ -47,7 +49,11 @@ The models most social scientists reach for first, one per common goal. Every ot
 | `GSDMM` | text | gibbs | seed-reproducible | Gibbs-sampling Dirichlet mixture: one topic per short document. |
 | `BERTopic` | text, embeddings | clustering | seed-reproducible | Cluster document embeddings; label topics by class-based TF-IDF. |
 
-### General-purpose
+### Specialized approaches
+
+The right first choice when your design calls for one: short text, change over time, document networks, multiple languages, ideological scaling, and more.
+
+#### General-purpose
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
@@ -59,7 +65,7 @@ The models most social scientists reach for first, one per common goal. Every ot
 | `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `PolylingualLDA` | text | gibbs | seed-reproducible | Polylingual topic model (Mimno et al. 2009): aligned topics across languages from document tuples that share one topic distribution. |
 
-### Covariates & structure
+#### Covariates & structure
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
@@ -71,7 +77,7 @@ The models most social scientists reach for first, one per common goal. Every ot
 | `RTM` | text, links | variational | seed-reproducible | Relational topic model (Chang & Blei 2010): jointly models document text and a link graph (citations, hyperlinks, adjacency); predicts links from words and words from links. |
 | `FactorialLDA` | text | gibbs | seed-reproducible | Factorial LDA (Paul & Dredze 2012): each token is a K-tuple of latent factors (e.g. topic x sentiment); structured word priors tie tuples sharing a component and a sparsity prior deactivates unsupported tuples. |
 
-### Guided & supervised
+#### Guided & supervised
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
@@ -80,14 +86,14 @@ The models most social scientists reach for first, one per common goal. Every ot
 | `SupervisedLDA` | text, labels | variational | seed-reproducible | Supervised LDA: topics shaped to predict a per-document real-valued response. |
 | `DiscLDA` | text, labels | gibbs | seed-reproducible | Discriminative LDA (Lacoste-Julien et al. 2008): topics split into per-class and shared blocks; reads how classes talk differently. |
 
-### Short text
+#### Short text
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
 | `PT` | text | gibbs | seed-reproducible | Pseudo-document topic model: pool short texts into pseudo-documents. |
 | `BTM` | text | gibbs | seed-reproducible | Biterm topic model: learns topics from corpus-level word co-occurrence (biterms). |
 
-### Dynamic & hierarchical
+#### Dynamic & hierarchical
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
@@ -96,7 +102,7 @@ The models most social scientists reach for first, one per common goal. Every ot
 | `HLDA` | text | gibbs | seed-reproducible | Hierarchical LDA (nested CRP): a learned tree of super- and sub-topics. |
 | `PA` | text | gibbs | seed-reproducible | Pachinko allocation: a DAG of super- and sub-topics. |
 
-### Embedding-based
+#### Embedding-based
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
@@ -109,7 +115,7 @@ The models most social scientists reach for first, one per common goal. Every ot
 | `ZeroShotTM` | text, embeddings | vae | seed-reproducible | Contextualized ProdLDA: encoder reads the document embedding alone, enabling cross-lingual transfer. |
 | `InfoCTM` | text, dictionary | vae | seed-reproducible | Cross-lingual: two ProdLDA models aligned by a bilingual dictionary through a mutual-information term. |
 
-### Ideal point
+#### Ideal point
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
@@ -117,7 +123,7 @@ The models most social scientists reach for first, one per common goal. Every ot
 | `TBIP` | text | variational | seed-reproducible | Text-Based Ideal Points (Vafa, Naidu & Blei 2020): a Poisson factorization whose neutral topic-word intensities are rescaled by a per-word ideological factor exp(x_s * eta_kv), with the author position x_s latent. Fit by the paper's mean-field variational inference (reparameterized SVI). Recovers ideological scales from unlabeled text. |
 | `PartyEmbeddings` | text, metadata | neural-embedding | seed-reproducible | Party embeddings (Rheault & Cochrane 2020): a PV-DM paragraph-vector model trained by negative sampling with party-period metadata tags; the leading principal components of the learned party vectors give the ideological scale, and words share the space so a party's language can be read off by proximity. The corpus-trained word-embedding member of the ideal-point family. |
 
-### LLM-based
+#### LLM-based
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|

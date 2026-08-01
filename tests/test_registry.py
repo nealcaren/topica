@@ -138,21 +138,21 @@ def test_readme_and_docs_roster_in_sync_with_registry():
             f"{rel} roster is stale; run scripts/gen_model_tables.py")
 
 
-def test_tier_is_a_small_int_and_tier1_is_the_recommended_set():
-    # tier is a presentation band, orthogonal to experimental. The tier-1 set is
-    # the front-door recommendation; keep it small and validated (never gated).
-    for m in REGISTRY.values():
-        assert m.tier in (1, 2), f"{m.name}: unexpected tier {m.tier}"
-    tier1 = {m.name for m in list_models(tier=1)}
-    assert tier1 == {"LDA", "NMF", "STM", "KeyATM", "GSDMM", "BERTopic"}
-    assert not any(m.experimental for m in list_models(tier=1)), (
-        "a recommended starting point must not be experimental/gated")
+def test_common_start_is_the_editorial_opening_set():
+    # common_start is an editorial flag (where newcomers begin), orthogonal to
+    # experimental. Keep the set small and validated (never gated).
+    common = {m.name for m in list_models(common_start=True)}
+    assert common == {"LDA", "NMF", "STM", "KeyATM", "GSDMM", "BERTopic"}
+    assert not any(m.experimental for m in list_models(common_start=True)), (
+        "a common starting point must not be experimental/gated")
 
 
 def test_chooser_references_only_real_models():
     # Every model a chooser row names must exist in the registry (the drift guard
-    # that lets the matrix be generated safely) and must not be experimental.
+    # that lets the matrix be generated safely) and must not be experimental. Every
+    # row is in a known section.
     for r in CHOOSER:
+        assert r.section in ("common", "specialized"), f"{r.goal!r}: bad section"
         for name in (r.primary, *( (r.also,) if r.also else () )):
             assert name in REGISTRY, f"chooser row {r.goal!r} names unknown {name!r}"
             assert not REGISTRY[name].experimental, (

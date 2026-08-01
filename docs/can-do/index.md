@@ -6,12 +6,14 @@ If your goal is a publishable analysis, pair it with
 
 ## Choose an approach
 
-Arrive with a research goal, leave with a model. Find your goal in the left
-column. Every model is validated against a reference implementation, so these
-are the fastest defensible defaults rather than the only valid choices; the
-[full roster](../guides/models.md) lists the deep bench for each goal.
+Find your goal in the left column. Every model is validated against a reference
+implementation, so the choice is about fit to your research design, not quality.
+A specialized model is often the right first choice when your data calls for it.
+The [full roster](../guides/models.md) lists every model for each goal.
 
 <!-- BEGIN CHOOSER (generated from topica.registry CHOOSER; edit registry.py, not this block) -->
+
+**Common openings**
 
 | If your goal is… | Start with | Also consider | First calls | Note |
 |---|---|---|---|---|
@@ -20,10 +22,19 @@ are the fastest defensible defaults rather than the only valid choices; the
 | Measure concepts you can name in advance | `KeyATM` | `SeededLDA` | `fit(docs, keywords=…)`, `.keywords` | Anchor named topics with a few seed words each. |
 | Very short documents: tweets, headlines, survey answers | `GSDMM` | `PT` | `fit()` | One topic per document; standard LDA over-fragments short text. |
 | Cluster by meaning using embeddings | `BERTopic` | `ETM` | `fit(docs, embeddings=…)` | Clustering, not a posterior: topic-proportion uncertainty and effect estimation behave differently than the models above. |
-| How tone or sentiment varies with metadata | `STS` | — | `estimate_effect()` | A heavier, specialized model; reach for it when sentiment-discourse is the question, not general themes. |
+
+**Specialized approaches.** Start here when your design calls for one.
+
+| If your data or goal is… | Start with | Also consider | First calls | Note |
+|---|---|---|---|---|
+| Topics shift over time slices | `DTM` | `DETM` | `fit(docs, timestamps=…)` | Prevalence and content evolve across periods; `DETM` adds embeddings. |
+| Documents linked in a network (citations, replies) | `RTM` | — | `fit(docs, links=…)` | Models the text and the link graph jointly. |
+| Documents in more than one language | `PolylingualLDA` | — | `fit(doc_tuples)` | Aligned topics across languages from translation-linked tuples. |
+| Place authors or actors on an ideological scale | `Wordfish` | `TBIP` | `fit(docs)` | Scaling from word usage; `TBIP` adds a text-based ideal-point prior. |
+| How tone or sentiment varies with metadata | `STS` | — | `estimate_effect()` | Sentiment-discourse decomposition; reach for it when tone is the question. |
 <!-- END CHOOSER -->
 
-In code, `topica.list_models(tier=1)` returns the recommended set and
+In code, `topica.list_models(common_start=True)` returns the common openings and
 `list_models(group=…, brings=…)` filters the rest.
 
 ## Tour
