@@ -79,26 +79,11 @@ extra_javascript:
 
 nav:
   - Home: index.md
-  - Getting started:
+  - Start here:
       - Installation: getting-started/installation.md
       - Quickstart: getting-started/quickstart.md
-  - What you can do:
-      - Overview: can-do/index.md
-      - The models: guides/models.md
-      - Comparing the models: guides/model-comparison.md
-      - Preprocessing: guides/preprocessing.md
-      - Covariates & STM: guides/covariates.md
-      - Diagnostics & validation: guides/diagnostics.md
-      - Reporting uncertainty: guides/uncertainty.md
-      - Visualization: guides/visualization.md
-      - Distinguishing words: guides/keywords.md
-      - Guided topics (seed words): guides/guided.md
-      - Short text: guides/short-text.md
-      - Embedding topics: guides/embedding.md
-      - LLM-based topics: guides/llm.md
-      - Held-out inference: guides/transform.md
-  - Benchmarks: benchmarks.md
-  - Best-practice workflow:
+      - Choose an approach: can-do/index.md
+  - From corpus to credible result:
       - Overview: publishing/index.md
       - 1. Build a defensible corpus: publishing/corpus.md
       - 2. Pick the right model: publishing/choosing-model.md
@@ -106,6 +91,22 @@ nav:
       - 4. Validate the topics: publishing/validation.md
       - 5. Measure effects properly: publishing/effects.md
       - 6. Report and make reproducible: publishing/reporting.md
+  - Methods & models:
+      - The model catalog: guides/models.md
+      - Comparing the models: guides/model-comparison.md
+      - Covariates & STM: guides/covariates.md
+      - Guided topics (seed words): guides/guided.md
+      - Short text: guides/short-text.md
+      - Embedding topics: guides/embedding.md
+      - LLM-based topics: guides/llm.md
+  - Analyze & validate:
+      - Preprocessing: guides/preprocessing.md
+      - Diagnostics & validation: guides/diagnostics.md
+      - Reporting uncertainty: guides/uncertainty.md
+      - Visualization: guides/visualization.md
+      - Distinguishing words: guides/keywords.md
+      - Held-out inference: guides/transform.md
+  - Benchmarks: benchmarks.md
   - Examples:
       - Du Bois in The Crisis: examples/dubois.md
       - Gadarian (STM vignette): examples/gadarian.md
