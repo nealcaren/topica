@@ -2200,10 +2200,13 @@ class AlignmentResult(list):
     - ``similarity_matrix``: Raw pairwise similarity matrix of shape ``(K_A, K_B)``
 
     ``splits``/``merges`` are a background-relative overlay on the match/unaligned
-    partition (issue #642), so a matched topic that also has an extra close partner
-    appears in both ``matches`` and ``splits``/``merges``. Comparing a fit with itself
-    yields K matches and no splits/merges for any model, including correlated-topic
-    families (STM/CTM) whose off-diagonal similarities are high.
+    partition (issue #642), so a topic that has an extra close partner appears in both
+    ``matches`` (or ``unaligned``) and ``splits``/``merges``. Comparing a fit with
+    itself yields K matches and no splits/merges for any model whose topics are
+    distinct — including correlated-topic families (STM/CTM) whose off-diagonal
+    similarities are high. (Two *identical* topics are genuinely interchangeable, so a
+    self-alignment of a model that contains exact-duplicate topics reports them as a
+    split/merge — an honest signal that the topics cannot be told apart.)
     """
     def __init__(
         self,
@@ -2385,7 +2388,20 @@ def _co_partners(M, threshold, split_gap, bg_quantile):
     floor, never a fixed absolute threshold, so correlated-topic families do not
     manufacture partners. A line whose own best match is a diffuse near-background value
     (``best_i <= q``) gets a bar at or above ``best_i`` and so never splits; a line whose
-    best match is itself below ``threshold`` (no real primary) is skipped entirely."""
+    best match is itself below ``threshold`` (no real primary) is skipped entirely.
+
+    A line need not have taken a one-to-one match to be a split/merge key: a genuine
+    merge target (one topic that absorbs two, whose two sources each matched a cleaner
+    counterpart elsewhere) is itself *unaligned*, so this overlay is intentionally not
+    gated to matched lines — it can name a topic that also appears in
+    ``unaligned_a``/``unaligned_b`` (a genuine many-to-one that is also "appeared").
+
+    ``split_gap`` deliberately favors precision: a second partner must close a solid
+    fraction of the gap from the background floor up to the best match, so a merely
+    correlated neighbour is usually not called a split. This is a heuristic — a well-
+    separated but weaker second partner can be missed, and on a heavily correlated draw
+    an unrelated topic can occasionally be named; use the raw ``similarity_matrix`` when
+    you need the exact one-to-many picture."""
     n_lines, n_cand = M.shape
     result: dict[int, list] = {}
     if n_cand < 2:
@@ -2480,9 +2496,11 @@ def align_topics(
     ``matches`` is the Hungarian assignment restricted to pairs above ``threshold``;
     ``splits``/``merges`` are a background-relative overlay calibrated to the fit's own
     cross-topic similarity, so ``align_topics(tw, tw)`` returns K matches and no
-    splits/merges for any model — including correlated-topic families (STM/CTM) whose
-    off-diagonal cosines are high (issue #642). ``threshold`` sets the one-to-one match
-    cut; the split/merge overlay self-calibrates and does not depend on it.
+    splits/merges for any model with distinct topics — including correlated-topic
+    families (STM/CTM) whose off-diagonal cosines are high (issue #642); exact-duplicate
+    topics are the honest exception (they report as a split/merge, being interchangeable).
+    ``threshold`` sets the one-to-one match cut; the split/merge overlay self-calibrates
+    and does not depend on it.
     """
     A = _as_topic_word(a)
     B = _as_topic_word(b)

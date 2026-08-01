@@ -182,6 +182,36 @@ def test_align_topics_self_alignment_invariant_correlated():
         assert max(d for _, _, d in al) < 1e-9, metric
 
 
+def test_align_topics_self_alignment_invariant_small_k():
+    # The K/0/0 self-alignment invariant must hold at small K too (K=1,2,3), not just
+    # the K=10 case — small pools are where the background quantile is most fragile.
+    for k in (1, 2, 3):
+        tw = _correlated_tw(k, seed=7 + k)
+        for metric in ("cosine", "js", "rbo", "emd"):
+            al = align_topics(tw, tw, metric=metric)
+            assert len(al.matches) == k, (k, metric)
+            assert len(al.splits) == 0 and len(al.merges) == 0, (k, metric)
+            assert not al.unaligned_a and not al.unaligned_b, (k, metric)
+
+
+def test_align_topics_genuine_split_still_detected():
+    # Symmetric counterpart to the merge test: an A-topic that is split into two
+    # well-separated B-topics is still reported as a split (the overlay is not so
+    # precision-biased that it never fires).
+    phi_a = np.array([
+        [10.0, 10.0, 0.0, 0.0, 0.0, 0.0],   # A0 on w0,w1 (will split)
+        [0.0, 0.0, 0.0, 0.0, 10.0, 10.0],   # A1 on w4,w5
+    ])
+    phi_b = np.array([
+        [10.0, 1.0, 0.0, 0.0, 0.0, 0.0],    # B0 ~ A0
+        [1.0, 10.0, 0.0, 0.0, 0.0, 0.0],    # B1 ~ A0 (the split partner)
+        [0.0, 0.0, 0.0, 0.0, 10.0, 10.0],   # B2 ~ A1
+    ])
+    al = align_topics(phi_a, phi_b, threshold=0.3)
+    assert 0 in al.splits
+    assert {j for j, _ in al.splits[0]} >= {0, 1}
+
+
 def test_align_topics_correlated_extra_topic_not_spurious_split():
     # Unequal K in the correlated regime: an extra B-topic that is broadly similar to
     # every A-topic must NOT turn every A-topic into a spurious split/merge (a naive

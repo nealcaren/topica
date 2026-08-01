@@ -189,10 +189,13 @@ class UnmatchedTopic:
     status: str  # "vanished" (a-only) or "appeared" (b-only)
     top_words: list[str]
     prevalence: float
-    #: This topic's best similarity to *any* topic on the other side (necessarily
-    #: below ``threshold`` — that is why it is unmatched). When it sits just under
-    #: the threshold the "disappearance" may be top-word churn rather than a real
-    #: vanish/appear (see :attr:`near_miss`); ``None`` if the other side is empty.
+    #: This topic's best similarity to *any* topic on the other side. Usually below
+    #: ``threshold`` (which is why the topic is unmatched), but not always: the
+    #: Hungarian-anchored classifier can leave a topic unmatched with a best
+    #: similarity at or above ``threshold`` — a split/merge child that lost the
+    #: one-to-one assignment (named in ``splits``/``merges``). When it sits *just
+    #: under* the threshold the "disappearance" may be top-word churn rather than a
+    #: real vanish/appear (see :attr:`near_miss`); ``None`` if the other side is empty.
     best_similarity: float | None = None
 
     @property
@@ -369,7 +372,15 @@ def _unmatched(
     row = sim[idx, :] if axis == 0 else sim[:, idx]
     best = float(row.max()) if row.size else None
     u = UnmatchedTopic(int(idx), side, status, words, float(prev), best_similarity=best)
-    u._near_miss = best is not None and best >= _NEAR_MISS_FRACTION * threshold
+    # A near-miss is a topic that *almost* matched: its best cross-similarity sits
+    # just under the match threshold. The upper bound matters since the (#642)
+    # Hungarian-anchored classifier can leave a topic unmatched with a best
+    # similarity at or ABOVE threshold — a split/merge child that lost the 1-to-1
+    # assignment. That is a strong partner, not a churn near-miss, and the
+    # splits/merges overlay already names it, so it must not be flagged here.
+    u._near_miss = (
+        best is not None and _NEAR_MISS_FRACTION * threshold <= best < threshold
+    )
     return u
 
 

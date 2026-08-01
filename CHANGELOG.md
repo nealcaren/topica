@@ -123,11 +123,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   extra partner is flagged only when it sits close to a topic's own best match
   *relative to the fit's own cross-topic similarity floor*, not against a fixed
   constant. As a result `align_topics(tw, tw)` and `compare(tw, tw)` return K matches /
-  0 splits / 0 merges for any model (verified on a real STM/poliblog fit across the
-  cosine, JS, RBO and EMD metrics), while genuine one-to-many relationships — including
-  a B-topic that is a real blend of two A-topics, at equal or unequal K — are still
-  detected. The Hungarian list interface (used by `ensemble`, `topic_stability`, and
-  `viz/health`) was already correct and is unchanged.
+  0 splits / 0 merges for any model with distinct topics (verified on a real
+  STM/poliblog fit across the cosine, JS, RBO and EMD metrics), while genuine
+  one-to-many relationships — including a B-topic that is a real blend of two A-topics,
+  at equal or unequal K — are still detected. The Hungarian list interface (used by
+  `ensemble`, `topic_stability`, and `viz/health`) was already correct and is unchanged.
+  A `compare` card no longer mislabels a high-similarity split/merge child (a topic
+  left unmatched by the 1-to-1 assignment though its best similarity is at or above
+  the threshold) as a "near-miss just under the threshold": the `near_miss` flag now
+  requires the best similarity to sit strictly below the match cut.
 
 ## [0.55.0] - 2026-07-29
 
