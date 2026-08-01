@@ -26,7 +26,13 @@ access), not a DataFrame.
 ```python
 b = topica.datasets.load_ng20_minilm()
 docs = [t.split() for t in b.texts]
-bt = topica.BERTopic(reducer="umap", n_components=5).fit(docs, b.doc_embeddings)
+# The default HDBSCAN clusterer over UMAP collapses this subset to ~2 topics
+# (it fires a UserWarning when it does). A fixed-K clusterer with reduce_frequent
+# recovers the newsgroups cleanly. See docs/guides/embedding.md, "Avoiding the
+# `-1` noise bucket", for why.
+bt = topica.BERTopic(
+    clusterer="kmeans", num_clusters=5, reduce_frequent=True, seed=1,
+).fit(docs, b.doc_embeddings)
 ```
 
 ::: topica.datasets.load_gadarian

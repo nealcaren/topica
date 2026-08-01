@@ -114,6 +114,17 @@ Start minimal and add preprocessing only when topics show artifacts; do not
 pile on cleaning preemptively. Inspect the corpus (document count, length
 distribution, vocabulary size) and report it before modeling.
 
+**This preprocessing advice is for bag-of-words models (LDA, STM, NMF, …).**
+For embedding + cluster models (`BERTopic`, `Top2Vec`), the topics are driven by
+the document *embeddings*, so token cleaning does **not** change the model — the
+same clusters emerge with or without stopword removal. There it only affects the
+c-TF-IDF *labels* on already-formed clusters. So preprocess to get readable
+labels, but do not present stopword/frequency choices as shaping the topics, and
+note that the K-selection tools below (`search_k`) are LDA/STM-only. See the
+[embedding-models guide](https://nealcaren.github.io/topica/guides/embedding/)
+for the embedding-model workflow, including how to sweep K and avoid the `-1`
+noise bucket.
+
 > **Handoff.** Stopword lists and frequency cutoffs change what topics can
 > exist. Surface them; do not bury them in a default.
 
@@ -145,6 +156,14 @@ K and so tends to return the **largest K you scanned** (it warns when it does).
 Without held-out it defaults to the coherence/exclusivity frontier (a knee). Read
 it as "the K this criterion prefers," report the criterion, and still hand the
 choice to the researcher — never present `best_k()` as the answer.
+
+`search_k` covers LDA and STM only (`model="lda"`/`"stm"`); it raises for
+embedding + cluster models. For `BERTopic` / `Top2Vec` there is no held-out
+likelihood — sweep the K knob yourself (`num_clusters` for a fixed-K clusterer,
+or `min_cluster_size` for HDBSCAN) and score each fit by coherence and topic
+diversity, picking the same way (a knee, not a maximum). The
+[embedding-models guide](https://nealcaren.github.io/topica/guides/embedding/)
+works this through.
 
 > **Handoff.** Present the curves and the labeled topics at two or three values
 > of K. The researcher picks K; you report why.
