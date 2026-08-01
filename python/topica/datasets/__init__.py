@@ -116,7 +116,7 @@ _REGISTRY = {
     "ng20_minilm": {
         "remote": "examples/ng20_minilm.npz",
         "filename": "ng20_minilm.npz",
-        "sha256": "aa4afb4c88af8692b8639ae4ea62025139643b63e706de6412dace1df63a8518",
+        "sha256": "5da3914f8df512d617d0707d8b4e60755d1a041874f87e725f4b41a42d1b84a4",
         "n_docs": 2594,
         "summary": (
             "20-Newsgroups (5 groups) with precomputed MiniLM sentence embeddings "

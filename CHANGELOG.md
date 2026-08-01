@@ -24,6 +24,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Fixed
 
+- **`load_ng20_minilm()` labels are aligned with the documents again** (#660). The
+  bundled example dataset shipped with `labels` under a fixed class-name permutation
+  (baseball documents labeled `sci.space`, space labeled `comp.graphics`, and so on),
+  so any purity/confusion/covariate table built against it was silently wrong while
+  the topics themselves were correct. The labels were recovered from the original
+  20-Newsgroups source by token matching (a clean, verified 5-class bijection) and
+  corrected in the artifact; `texts`, `doc_embeddings`, `vocab`, and `word_embeddings`
+  are unchanged. Two regression tests now pin the artifact checksum and assert that
+  labels agree with document content.
 - **`topica.coherence` / `coherence_ci` / `semantic_coherence` no longer silently
   mis-score raw-string input** (#648). Passing a list of document *strings* (as the
   docs' own examples do) was iterated character-by-character, so no top word ever

@@ -213,3 +213,60 @@ def test_ng20_minilm_loads_bunch(tmp_path, monkeypatch):
     # second call hits the cache; return_path yields the cached .npz
     p = datasets.load_ng20_minilm(return_path=True)
     assert p.name == "ng20_minilm.npz" and p.exists()
+
+
+# ---------------------------------------------------------------------------
+# ng20_minilm data-integrity regression (issue #660)
+# ---------------------------------------------------------------------------
+# The shipped .npz once carried `labels` misaligned with `texts`/`doc_embeddings`
+# (a fixed class-name permutation: baseball docs labeled "sci.space", etc.), so
+# every covariate/purity table built against it was silently wrong. These guard
+# the committed artifact so the scramble cannot come back unnoticed.
+
+import numpy as np  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+_NG20_NPZ = Path(__file__).resolve().parents[1] / "examples" / "ng20_minilm.npz"
+
+# Distinctive, single-newsgroup keywords used to read a document's *content*
+# class independently of its stored label.
+_NG20_CONTENT_KW = {
+    "rec.sport.baseball": {"baseball", "inning", "pitcher", "batting", "mlb", "hitter"},
+    "sci.space": {"orbit", "nasa", "shuttle", "spacecraft", "astronaut", "lunar", "satellite"},
+    "comp.graphics": {"jpeg", "pixel", "polygon", "rendering", "opengl", "texture", "raster"},
+    "sci.med": {"patient", "disease", "clinical", "symptom", "physician", "diagnosis"},
+    "talk.politics.guns": {"firearm", "handgun", "nra", "gun", "rifle", "militia"},
+}
+
+
+@pytest.mark.skipif(not _NG20_NPZ.exists(), reason="source-tree examples/ not present")
+def test_ng20_minilm_artifact_checksum_matches_registry():
+    """The committed .npz must hash to the pinned registry checksum, so the file
+    the loader fetches is exactly the one under test here (and a silent re-scramble
+    that changes the bytes fails CI)."""
+    assert datasets._sha256(_NG20_NPZ) == datasets._REGISTRY["ng20_minilm"]["sha256"]
+
+
+@pytest.mark.skipif(not _NG20_NPZ.exists(), reason="source-tree examples/ not present")
+def test_ng20_minilm_labels_agree_with_content():
+    """`labels` must align with `texts`: documents whose text carries an
+    unambiguous single-newsgroup keyword should mostly carry that newsgroup's
+    label. The pre-fix scramble scored ~3% here; the corrected artifact ~97%."""
+    with np.load(_NG20_NPZ, allow_pickle=True) as d:
+        texts = [str(x) for x in d["texts"]]
+        labels = [str(x) for x in d["labels"]]
+
+    def content_class(text):
+        toks = set(text.split())
+        hits = [g for g, kw in _NG20_CONTENT_KW.items() if toks & kw]
+        return hits[0] if len(hits) == 1 else None  # unambiguous only
+
+    checked = agree = 0
+    for text, label in zip(texts, labels):
+        c = content_class(text)
+        if c is not None:
+            checked += 1
+            agree += c == label
+    assert checked >= 300, f"too few strong-signal docs to judge ({checked})"
+    frac = agree / checked
+    assert frac >= 0.85, f"labels disagree with content ({frac:.1%}); scramble regressed?"
