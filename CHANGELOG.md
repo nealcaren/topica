@@ -161,7 +161,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   embedding-models section (preprocessing changes only labels not clusters; K is a
   clusterer setting; a worked coherence/diversity sweep), the analysis skill branches
   for these models, and the `datasets.md` BERTopic example switches from the HDBSCAN
-  default (which collapses `load_ng20_minilm` to ~2 topics) to a
+  default (which collapses `load_ng20_minilm` to a degenerate handful of topics,
+  most documents in one bucket) to a
   `kmeans`/`num_clusters=5`/`reduce_frequent=True` fit that recovers the newsgroups.
 
 ## [0.55.0] - 2026-07-29

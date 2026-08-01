@@ -279,7 +279,7 @@ Pick the knee of the coherence/diversity trade-off, not the maximum of either.
 With HDBSCAN, sweep `min_cluster_size` instead and watch how much of the corpus
 falls into the `-1` noise bucket; a fixed-K clusterer with `reduce_frequent=True`
 avoids that bucket and, on this dataset, recovers the newsgroups where the
-HDBSCAN default collapses to ~2 topics. The
+HDBSCAN default collapses to a degenerate handful (most documents in one topic). The
 [embedding-models guide](../guides/embedding.md) covers the clusterer choices and
 the noise-bucket problem in depth.
 
