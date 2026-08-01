@@ -746,6 +746,11 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
         raise ValueError(
             f"privacy must be 'minimal' or 'aggregate' (got {privacy!r}); "
             f"'full' (raw values) is intentionally not available in V1")
+    if diagnostics is not None and not isinstance(diagnostics, (list, tuple)):
+        choices = "{" + ", ".join(repr(d) for d in sorted(BUILTIN_DIAGNOSTICS)) + "}"
+        raise TypeError(
+            f"diagnostics must be a list of diagnostic names (any of {choices}); "
+            f"got {diagnostics!r}")
     for name in diagnostics or ():
         if name not in BUILTIN_DIAGNOSTICS:
             raise ValueError(

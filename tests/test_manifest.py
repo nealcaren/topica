@@ -599,6 +599,19 @@ def test_unknown_diagnostic_rejected(fitted):
         record_fit(model, corpus, diagnostics=["not_a_diagnostic"])
 
 
+def test_diagnostics_true_rejected_with_helpful_message(fitted):
+    corpus, model = fitted
+    # diagnostics=True is a natural mistake; it should raise a clear message
+    # naming the valid options rather than a raw "bool is not iterable".
+    with pytest.raises(TypeError, match=r"diagnostics must be a list of diagnostic names"):
+        record_fit(model, corpus, diagnostics=True)
+    with pytest.raises(TypeError, match=r"'coherence', 'exclusivity'"):
+        record_fit(model, corpus, diagnostics=True)
+    # A bare string is likewise not a valid list of names.
+    with pytest.raises(TypeError, match="diagnostics must be a list"):
+        record_fit(model, corpus, diagnostics="coherence")
+
+
 def test_builtin_diagnostics_is_stable():
     assert BUILTIN_DIAGNOSTICS == ("coherence", "exclusivity")
 
