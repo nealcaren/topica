@@ -157,9 +157,21 @@ model.fit(docs, prevalence=X, prevalence_names=names)   # content=... for SAGE
 A plain LDA fit is `topica.LDA(num_topics=20, seed=42).fit(docs, iters=1000)`.
 Check that the fit converged (the EM models expose a bound / `converged` flag;
 the Gibbs models expose log-likelihood history). A model that did not converge is
-not a result. Read topics off `top_words`, `label_topics` (prob / FREX / lift /
-score), and `find_thoughts` (the highest-θ documents for a topic) together: top
-words alone underdetermine what a topic is.
+not a result. Read topics off several surfaces together — top words alone
+underdetermine what a topic is:
+
+- `model.top_words(n)` returns per-topic `(word, weight)` tuples, not bare
+  strings; take just the words with `[w for w, _ in row]`.
+- `label_topics`, `frex`, `relevance`, `find_thoughts`, `topic_table` and
+  `summary` are **module-level functions, not model methods**, and take the
+  model's matrices as the first argument — e.g.
+  `topica.label_topics(model.topic_word, model.vocabulary)` and
+  `topica.find_thoughts(model.doc_topic, texts, topic=t)` (the highest-θ
+  documents for a topic).
+- `label_topics` has no `method=` selector: it reports probability and FREX
+  side by side. For FREX- or relevance-ranked words specifically, call the
+  separate `topica.frex(model.topic_word, model.vocabulary)` or
+  `topica.relevance(model.topic_word, model.vocabulary)`.
 
 ### Phase 4: validate (not optional)
 
@@ -260,8 +272,10 @@ with the diagnostics to defend each one.
   and the README table; consult it rather than relying on any hardcoded list here.
   Common starting points: `LDA`, `STM`, `CTM`, `STS` (sentiment), `DMR`, `HDP`,
   `KeyATM`, `SeededLDA`, `BERTopic`, `GSDMM` (short text)
-- **Read topics:** `top_words`, `label_topics`, `frex`, `relevance`,
-  `find_thoughts`, `topic_table`, `summary`
+- **Read topics:** `model.top_words(n)` (method → `(word, weight)` tuples) plus
+  the module functions `topica.label_topics`, `frex`, `relevance`,
+  `find_thoughts`, `topic_table`, `summary` (first arg is the model's
+  `topic_word` / `doc_topic` matrix, or the model)
 - **Choose K:** `search_k`, `quality_frontier`, `topica.viz.search_k`
 - **Validate:** `coherence`, `exclusivity`, `topic_diversity`,
   `bootstrap_stability`, `word_intrusion`, `document_intrusion`, `diagnostics`
