@@ -1,8 +1,38 @@
-"""topica: fast SparseLDA topic modeling (MALLET's algorithm) in Rust.
+"""topica: fast, all-purpose topic modeling for Python, with a Rust core.
 
-The heavy lifting lives in the compiled extension ``topica._topica``;
-this module just re-exports its public surface so ``import topica`` works
-and editors/type-checkers see a stable namespace.
+More than a dozen models — LDA, STM, CTM, DMR, keyATM, SAGE, HDP, BERTopic,
+ProdLDA, and more — behind one numpy-native API, each validated against its
+reference implementation. Built for computational social scientists who need a
+defensible, reviewer-ready analysis, not just topics.
+
+Start here (a full LDA workflow is only a few lines)::
+
+    import topica
+
+    corpus = topica.from_dataframe(df, text_col="text")   # build + prune vocab
+    res = topica.search_k(corpus, ks=[10, 20, 30])         # choose K defensibly
+    model = topica.LDA(num_topics=res.best_k()).fit(corpus)
+    topica.topic_table(model)                              # publication-ready labels
+    topica.estimate_effect(model, X=X, corpus=corpus)      # covariate effects + CIs
+
+The main entry points, by task:
+
+- **Corpus**: :func:`from_dataframe`, :class:`Corpus`, :func:`tokenize`.
+- **Models**: :class:`LDA` and the wider family (:class:`STM`, :class:`CTM`,
+  :class:`DMR`, :class:`KeyATM`, :class:`SAGE`, :class:`HDP`, :class:`BERTopic`,
+  …); ``model.fit(corpus)`` then read ``model.topic_word`` / ``model.doc_topic``.
+- **Choosing K**: :func:`search_k` (+ ``.best_k()``), :func:`plot_search_k`.
+- **Interpretation**: :func:`label_topics`, :func:`topic_table`, :func:`frex`,
+  :func:`find_thoughts`, :func:`topics_for_term`.
+- **Validation**: :func:`coherence`, :func:`coherence_ci`, :func:`exclusivity`,
+  :func:`topic_diversity`, :func:`ensemble`, :func:`topic_stability`.
+- **Covariate effects**: :func:`estimate_effect`, :func:`predicted_prevalence`,
+  :func:`one_hot`, :func:`design_matrix`, :func:`spline`.
+- **Provenance**: :func:`record_fit` → :class:`AnalysisManifest`.
+
+The heavy lifting lives in the compiled extension ``topica._topica``; this module
+re-exports its public surface so ``import topica`` works and editors/type-checkers
+see a stable namespace.
 """
 
 from ._topica import (

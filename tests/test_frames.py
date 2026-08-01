@@ -80,3 +80,67 @@ def test_metadata_is_settable():
     assert c.metadata is None
     c.metadata = pd.DataFrame({"k": [1, 2, 3]})
     assert list(c.metadata["k"]) == [1, 2, 3]
+
+
+# -- scikit-learn min_df / max_df aliases (issue #647 discoverability) -----------
+
+
+def _alias_frame():
+    # 8 docs; "common" in all 8, "rare" in 1, plus per-doc fillers.
+    rows = [f"common tok{i} tok{(i + 1) % 8} extra{i}" for i in range(8)]
+    rows[0] += " rare"
+    return pd.DataFrame({"text": rows})
+
+
+class TestDfAliases:
+    def test_int_min_df_equals_min_doc_freq(self):
+        df = _alias_frame()
+        a = topica.from_dataframe(df, text_col="text", min_df=2)
+        b = topica.from_dataframe(df, text_col="text", min_doc_freq=2)
+        assert sorted(a.vocabulary) == sorted(b.vocabulary)
+        assert "rare" not in a.vocabulary  # df 1 < 2 -> dropped
+
+    def test_float_max_df_equals_max_doc_fraction(self):
+        df = _alias_frame()
+        with pytest.warns(UserWarning):  # "common" is in all 8 docs
+            a = topica.from_dataframe(df, text_col="text", max_df=0.5)
+        with pytest.warns(UserWarning):
+            b = topica.from_dataframe(df, text_col="text", max_doc_fraction=0.5)
+        assert sorted(a.vocabulary) == sorted(b.vocabulary)
+        assert "common" not in a.vocabulary
+
+    def test_float_min_df_is_a_proportion(self):
+        df = _alias_frame()  # 8 docs; 0.25 -> ceil(2) docs
+        a = topica.from_dataframe(df, text_col="text", min_df=0.25)
+        b = topica.from_dataframe(df, text_col="text", min_doc_freq=2)
+        assert sorted(a.vocabulary) == sorted(b.vocabulary)
+
+    def test_int_max_df_is_an_absolute_count(self):
+        df = _alias_frame()  # 8 docs; max_df=4 -> fraction 0.5
+        with pytest.warns(UserWarning):
+            a = topica.from_dataframe(df, text_col="text", max_df=4)
+        with pytest.warns(UserWarning):
+            b = topica.from_dataframe(df, text_col="text", max_doc_fraction=0.5)
+        assert sorted(a.vocabulary) == sorted(b.vocabulary)
+
+    def test_conflicting_min_aliases_raise(self):
+        df = _alias_frame()
+        with pytest.raises(ValueError, match="min_df or min_doc_freq"):
+            topica.from_dataframe(df, text_col="text", min_df=2, min_doc_freq=2)
+
+    def test_conflicting_max_aliases_raise(self):
+        df = _alias_frame()
+        with pytest.raises(ValueError, match="max_df or max_doc_fraction"):
+            topica.from_dataframe(df, text_col="text", max_df=0.5, max_doc_fraction=0.5)
+
+    @pytest.mark.parametrize("bad", [1.5, -0.1])
+    def test_out_of_range_float_max_df_raises(self, bad):
+        df = _alias_frame()
+        with pytest.raises(ValueError, match=r"in \[0, 1\]"):
+            topica.from_dataframe(df, text_col="text", max_df=bad)
+
+    def test_bool_min_df_is_rejected(self):
+        # bool is an int subclass; True must not be read as min_df=1.
+        df = _alias_frame()
+        with pytest.raises(ValueError, match="min_df must be an int or a float"):
+            topica.from_dataframe(df, text_col="text", min_df=True)

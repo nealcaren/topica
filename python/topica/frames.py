@@ -20,6 +20,51 @@ def _is_polars(obj) -> bool:
     return type(obj).__module__.split(".", 1)[0] == "polars"
 
 
+def _resolve_df_aliases(min_df, max_df, min_doc_freq, max_doc_fraction, n_docs):
+    """Map scikit-learn ``min_df`` / ``max_df`` onto topica's ``min_doc_freq`` /
+    ``max_doc_fraction``, using sklearn's convention (int = absolute document count,
+    float in ``[0, 1]`` = proportion). Raises if an alias collides with its native
+    argument or is out of range."""
+    import math
+
+    def _is_int(v):
+        return isinstance(v, int) and not isinstance(v, bool)
+
+    def _is_float(v):
+        return isinstance(v, float) and not isinstance(v, bool)
+
+    if min_df is not None:
+        if min_doc_freq != 1:
+            raise ValueError("pass either min_df or min_doc_freq, not both")
+        if _is_float(min_df):
+            if not 0.0 <= min_df <= 1.0:
+                raise ValueError(f"float min_df must be in [0, 1], got {min_df!r}")
+            min_doc_freq = max(1, math.ceil(min_df * n_docs))
+        elif _is_int(min_df):
+            if min_df < 1:
+                raise ValueError(f"int min_df must be >= 1, got {min_df!r}")
+            min_doc_freq = min_df
+        else:
+            raise ValueError(f"min_df must be an int or a float, got {min_df!r}")
+
+    if max_df is not None:
+        if max_doc_fraction != 1.0:
+            raise ValueError("pass either max_df or max_doc_fraction, not both")
+        if _is_float(max_df):
+            if not 0.0 <= max_df <= 1.0:
+                raise ValueError(f"float max_df must be in [0, 1], got {max_df!r}")
+            max_doc_fraction = max_df
+        elif _is_int(max_df):
+            if max_df < 1:
+                raise ValueError(f"int max_df must be >= 1, got {max_df!r}")
+            # Absolute doc-count cap -> the fraction the core prunes on.
+            max_doc_fraction = min(1.0, max_df / n_docs)
+        else:
+            raise ValueError(f"max_df must be an int or a float, got {max_df!r}")
+
+    return min_doc_freq, max_doc_fraction
+
+
 def from_dataframe(
     df,
     *,
@@ -34,6 +79,8 @@ def from_dataframe(
     rm_top=0,
     max_features=None,
     vocabulary=None,
+    min_df=None,
+    max_df=None,
 ):
     """Build a :class:`Corpus` from a pandas or Polars DataFrame, keeping
     per-document metadata aligned to the documents that survive pruning.
@@ -77,6 +124,14 @@ def from_dataframe(
         Pin the vocabulary to this fixed, ordered term list (scikit-learn's
         ``vocabulary=``). Mutually exclusive with the frequency-pruning arguments
         and ``max_features``; see :meth:`Corpus.from_documents`.
+    min_df, max_df : scikit-learn ``CountVectorizer`` aliases for the two document-
+        frequency pruning cutoffs, so an sklearn/gensim habit works unchanged.
+        Following sklearn's convention, an ``int`` is an absolute document count and
+        a ``float`` in ``[0, 1]`` is a proportion of documents: ``min_df=5`` keeps
+        terms in at least 5 documents (topica's ``min_doc_freq``); ``max_df=0.5``
+        drops terms in more than half the documents (topica's ``max_doc_fraction``).
+        Pass at most one of each pair — ``min_df`` or ``min_doc_freq``, ``max_df`` or
+        ``max_doc_fraction`` — not both.
     """
     texts = list(df[text_col])  # pandas Series and Polars Series both iterate to values
     if tokenizer is None:
@@ -87,6 +142,11 @@ def from_dataframe(
         ]
     else:
         docs = [tokenizer(t if isinstance(t, str) else "") for t in texts]
+
+    # scikit-learn min_df/max_df aliases -> topica's min_doc_freq/max_doc_fraction.
+    min_doc_freq, max_doc_fraction = _resolve_df_aliases(
+        min_df, max_df, min_doc_freq, max_doc_fraction, len(docs)
+    )
 
     # max_doc_fraction removes the highest document-frequency terms — which on a
     # focused corpus can be the very words it is about (e.g. "immigration" in an
