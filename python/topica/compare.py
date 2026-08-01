@@ -18,11 +18,13 @@ Three uses, one tool:
 Design commitments:
 
 - **Alignment is reused, not reinvented.** Matching runs through
-  :func:`topica.align_topics`, which pairs two topics only when each is the other's
-  *unique* above-``threshold`` partner (a mutual-best rule that never force-pairs),
-  and reports splits, merges, and unaligned topics. (The reseed null below instead
-  reads the Hungarian self-assignment :func:`align_topics` also exposes, so a topic
-  always has a self-match to measure wander against.)
+  :func:`topica.align_topics`, which pairs two topics by the Hungarian 1-to-1
+  assignment and keeps a pair when its similarity clears ``threshold``, then reports
+  splits, merges, and unaligned topics. Splits/merges are a background-relative overlay
+  (an extra partner close to a topic's own best match relative to the fit's cross-topic
+  floor), so correlated-topic models are not mislabelled as unstable (issue #642). (The
+  reseed null below reads the same Hungarian self-assignment, so a topic always has a
+  self-match to measure wander against.)
 - **The "unmatched" bucket is honest.** A topic with no good counterpart is reported
   as *appeared* / *vanished*, never paired to its least-bad neighbor; a split (one
   topic in A → two in B) is a named outcome. This matters most across different K.
@@ -58,7 +60,7 @@ from typing import Any, Callable, Sequence
 
 import numpy as np
 
-from .validation import align_topics
+from .validation import _classify_alignment, _hungarian, align_topics
 
 __all__ = ["compare", "CompareResult", "MatchedPair", "UnmatchedTopic"]
 
@@ -187,10 +189,13 @@ class UnmatchedTopic:
     status: str  # "vanished" (a-only) or "appeared" (b-only)
     top_words: list[str]
     prevalence: float
-    #: This topic's best similarity to *any* topic on the other side (necessarily
-    #: below ``threshold`` — that is why it is unmatched). When it sits just under
-    #: the threshold the "disappearance" may be top-word churn rather than a real
-    #: vanish/appear (see :attr:`near_miss`); ``None`` if the other side is empty.
+    #: This topic's best similarity to *any* topic on the other side. Usually below
+    #: ``threshold`` (which is why the topic is unmatched), but not always: the
+    #: Hungarian-anchored classifier can leave a topic unmatched with a best
+    #: similarity at or above ``threshold`` — a split/merge child that lost the
+    #: one-to-one assignment (named in ``splits``/``merges``). When it sits *just
+    #: under* the threshold the "disappearance" may be top-word churn rather than a
+    #: real vanish/appear (see :attr:`near_miss`); ``None`` if the other side is empty.
     best_similarity: float | None = None
 
     @property
@@ -367,7 +372,15 @@ def _unmatched(
     row = sim[idx, :] if axis == 0 else sim[:, idx]
     best = float(row.max()) if row.size else None
     u = UnmatchedTopic(int(idx), side, status, words, float(prev), best_similarity=best)
-    u._near_miss = best is not None and best >= _NEAR_MISS_FRACTION * threshold
+    # A near-miss is a topic that *almost* matched: its best cross-similarity sits
+    # just under the match threshold. The upper bound matters since the (#642)
+    # Hungarian-anchored classifier can leave a topic unmatched with a best
+    # similarity at or ABOVE threshold — a split/merge child that lost the 1-to-1
+    # assignment. That is a strong partner, not a churn near-miss, and the
+    # splits/merges overlay already names it, so it must not be flagged here.
+    u._near_miss = (
+        best is not None and _NEAR_MISS_FRACTION * threshold <= best < threshold
+    )
     return u
 
 
@@ -438,45 +451,16 @@ class _Alignment:
 
 
 def _classify_similarity(sim: np.ndarray, threshold: float) -> _Alignment:
-    """Mutual-best classification from a similarity matrix, identical in semantics to
-    :func:`align_topics` step 5 (``validation.py``): a pair matches only when each
-    topic is the other's *unique* above-``threshold`` partner; one-to-many is a
-    split/merge; no partner is *unaligned*."""
-    na, nb = sim.shape
-    adj_a: dict[int, list[tuple[int, float]]] = {i: [] for i in range(na)}
-    adj_b: dict[int, list[tuple[int, float]]] = {j: [] for j in range(nb)}
-    for i in range(na):
-        for j in range(nb):
-            s = float(sim[i, j])
-            if s >= threshold:
-                adj_a[i].append((j, s))
-                adj_b[j].append((i, s))
-    for i in adj_a:
-        adj_a[i].sort(key=lambda x: x[1], reverse=True)
-    for j in adj_b:
-        adj_b[j].sort(key=lambda x: x[1], reverse=True)
-
-    matches: list[tuple[int, int, float]] = []
-    splits: dict[int, list[tuple[int, float]]] = {}
-    merges: dict[int, list[tuple[int, float]]] = {}
-    unaligned_a: list[int] = []
-    unaligned_b: list[int] = []
-    for i in range(na):
-        targets = adj_a[i]
-        if len(targets) == 0:
-            unaligned_a.append(i)
-        elif len(targets) == 1:
-            j, s = targets[0]
-            if len(adj_b[j]) == 1:
-                matches.append((i, j, s))
-        else:
-            splits[i] = targets
-    for j in range(nb):
-        sources = adj_b[j]
-        if len(sources) == 0:
-            unaligned_b.append(j)
-        elif len(sources) > 1:
-            merges[j] = sources
+    """Hungarian-anchored classification from a precomputed similarity matrix, using the
+    same shared classifier as :func:`align_topics` (``validation._classify_alignment``,
+    issue #642): matches are the Hungarian 1-to-1 pairs above ``threshold``, and
+    splits/merges are a background-relative overlay that stays empty on a correlated
+    self-alignment. Used by the manifest path, which has only a Jaccard matrix (no live
+    ``align_topics`` call) to classify."""
+    pairs = _hungarian(1.0 - sim)
+    matches, splits, merges, unaligned_a, unaligned_b = _classify_alignment(
+        sim, pairs, threshold
+    )
     return _Alignment(matches, splits, merges, unaligned_a, unaligned_b)
 
 
@@ -613,15 +597,19 @@ def compare(
     :class:`~topica.AnalysisManifest` records recorded with ``topic_words_n>0`` — in
     which case topics are aligned by Jaccard overlap of the retained top-word sets
     without refitting (see the module docstring; mixing a model with a manifest is
-    refused). Topics are matched one-to-one when each is the other's *unique*
-    above-``threshold`` partner (:func:`align_topics`, a mutual-best rule — never
-    force-paired); topics with no honest counterpart are reported as *vanished* (only
-    in ``a``) or *appeared* (only in ``b``), and one-to-many relationships as
-    *splits* / *merges*.
+    refused). Topics are matched one-to-one by the Hungarian assignment
+    (:func:`align_topics`), keeping a pair when its similarity clears ``threshold``;
+    topics with no honest counterpart are reported as *vanished* (only in ``a``) or
+    *appeared* (only in ``b``). One-to-many relationships (*splits* / *merges*) are an
+    overlay on top of that matching, flagged only when an extra partner is close to a
+    topic's own best match *relative to this fit's cross-topic similarity floor* — so
+    correlated-topic families (STM/CTM), whose off-diagonal cosines are high, are no
+    longer reported as near-total splits/merges, and comparing a fit with itself yields
+    K matched / 0 split / 0 merged regardless of correlation (issue #642).
 
     ``metric``/``threshold`` default per path: live fits use ``metric="cosine"`` with
-    ``threshold=0.3`` (permissive on real corpora, where shared common words push
-    cross-topic cosine up — raise it if you see spurious splits/merges); manifests use
+    ``threshold=0.3`` (the minimum similarity for a one-to-one match; splits/merges
+    self-calibrate to the fit and do not depend on it); manifests use
     ``metric="jaccard"`` with a lower default (~0.12) matched to the Jaccard scale of
     top-word sets. Pass ``threshold=`` to override either.
 

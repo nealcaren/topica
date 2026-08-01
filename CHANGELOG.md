@@ -109,6 +109,30 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   flag is robust to a NumPy-scalar `threshold`; and a manifest whose recorded
   `num_topics` disagrees with its retained rows is rejected.
 
+### Fixed
+
+- **`align_topics` / `compare` no longer mis-classify correlated-topic models as
+  unstable** (#642). The split/merge classifier used a fixed absolute cosine threshold
+  (default `0.3`): for correlated-topic families (STM, CTM, …) a large fraction of
+  *off-diagonal* topic pairs clear `0.3`, so almost every topic was labelled a
+  split/merge — `align_topics(tw, tw)` on identical STM topics reported 1 match / 19
+  splits / 19 merges instead of 20 / 0 / 0, and `compare` inherited the same error,
+  reporting a bit-identical fit as near-totally unstable. Matches are now the Hungarian
+  1-to-1 assignment restricted to pairs above `threshold` (already correct underneath,
+  and correlation-insensitive), and splits/merges are a background-relative overlay: an
+  extra partner is flagged only when it sits close to a topic's own best match
+  *relative to the fit's own cross-topic similarity floor*, not against a fixed
+  constant. As a result `align_topics(tw, tw)` and `compare(tw, tw)` return K matches /
+  0 splits / 0 merges for any model with distinct topics (verified on a real
+  STM/poliblog fit across the cosine, JS, RBO and EMD metrics), while genuine
+  one-to-many relationships — including a B-topic that is a real blend of two A-topics,
+  at equal or unequal K — are still detected. The Hungarian list interface (used by
+  `ensemble`, `topic_stability`, and `viz/health`) was already correct and is unchanged.
+  A `compare` card no longer mislabels a high-similarity split/merge child (a topic
+  left unmatched by the 1-to-1 assignment though its best similarity is at or above
+  the threshold) as a "near-miss just under the threshold": the `near_miss` flag now
+  requires the best similarity to sit strictly below the match cut.
+
 ## [0.55.0] - 2026-07-29
 
 ### Added

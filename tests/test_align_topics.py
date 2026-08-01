@@ -157,6 +157,94 @@ def test_align_topics_vocab_intersection():
     assert res[1][0] == 1 and res[1][1] == 1
 
 
+def _correlated_tw(k, v=60, seed=0):
+    """Topic-word rows that all share common vocabulary mass, so their off-diagonal
+    cosine is high — the STM/CTM regime that broke the old fixed-threshold classifier
+    (issue #642)."""
+    return np.random.default_rng(seed).random((k, v)) + 0.5
+
+
+def test_align_topics_self_alignment_invariant_correlated():
+    # The regression invariant from issue #642: align_topics(tw, tw) must yield
+    # K matches / 0 splits / 0 merges for ANY valid tw, including correlated-topic
+    # models where a large fraction of off-diagonal cosines clear the old 0.3 threshold.
+    tw = _correlated_tw(10, seed=42)
+    an = tw / np.linalg.norm(tw, axis=1, keepdims=True)
+    off = (an @ an.T)[~np.eye(10, dtype=bool)]
+    assert np.median(off) > 0.5  # genuinely correlated — the regime that used to break
+    for metric in ("cosine", "js", "rbo", "emd"):
+        al = align_topics(tw, tw, metric=metric)
+        assert len(al.matches) == 10, metric
+        assert len(al.splits) == 0, metric
+        assert len(al.merges) == 0, metric
+        assert not al.unaligned_a and not al.unaligned_b, metric
+        # The Hungarian pairing underneath still recovers the diagonal exactly.
+        assert max(d for _, _, d in al) < 1e-9, metric
+
+
+def test_align_topics_self_alignment_invariant_small_k():
+    # The K/0/0 self-alignment invariant must hold at small K too (K=1,2,3), not just
+    # the K=10 case — small pools are where the background quantile is most fragile.
+    for k in (1, 2, 3):
+        tw = _correlated_tw(k, seed=7 + k)
+        for metric in ("cosine", "js", "rbo", "emd"):
+            al = align_topics(tw, tw, metric=metric)
+            assert len(al.matches) == k, (k, metric)
+            assert len(al.splits) == 0 and len(al.merges) == 0, (k, metric)
+            assert not al.unaligned_a and not al.unaligned_b, (k, metric)
+
+
+def test_align_topics_genuine_split_still_detected():
+    # Symmetric counterpart to the merge test: an A-topic that is split into two
+    # well-separated B-topics is still reported as a split (the overlay is not so
+    # precision-biased that it never fires).
+    phi_a = np.array([
+        [10.0, 10.0, 0.0, 0.0, 0.0, 0.0],   # A0 on w0,w1 (will split)
+        [0.0, 0.0, 0.0, 0.0, 10.0, 10.0],   # A1 on w4,w5
+    ])
+    phi_b = np.array([
+        [10.0, 1.0, 0.0, 0.0, 0.0, 0.0],    # B0 ~ A0
+        [1.0, 10.0, 0.0, 0.0, 0.0, 0.0],    # B1 ~ A0 (the split partner)
+        [0.0, 0.0, 0.0, 0.0, 10.0, 10.0],   # B2 ~ A1
+    ])
+    al = align_topics(phi_a, phi_b, threshold=0.3)
+    assert 0 in al.splits
+    assert {j for j, _ in al.splits[0]} >= {0, 1}
+
+
+def test_align_topics_correlated_extra_topic_not_spurious_split():
+    # Unequal K in the correlated regime: an extra B-topic that is broadly similar to
+    # every A-topic must NOT turn every A-topic into a spurious split/merge (a naive
+    # leftover-threshold rule would re-introduce the #642 bug). The extra is surfaced
+    # as an unaligned/appeared topic instead.
+    a = _correlated_tw(8, seed=1)
+    b = np.vstack([a, _correlated_tw(1, seed=2)])
+    al = align_topics(a, b)
+    assert len(al.matches) == 8
+    assert len(al.splits) == 0
+    assert len(al.merges) == 0
+    assert al.unaligned_b == [8]
+
+
+def test_align_topics_genuine_merge_still_detected():
+    # The calibration must not "pass" by never splitting/merging: a B-topic that is a
+    # genuine blend of two well-separated A-topics is still reported as a merge.
+    phi_a = np.array([
+        [10.0, 10.0, 0.0, 0.0, 0.0, 0.0],   # A0 on w0,w1
+        [0.0, 0.0, 0.0, 0.0, 10.0, 10.0],   # A1 on w4,w5
+    ])
+    phi_b = np.array([
+        [10.0, 1.0, 0.0, 0.0, 0.0, 0.0],    # B0 ~ A0
+        [1.0, 1.0, 0.0, 0.0, 1.0, 1.0],     # B1 blends A0 and A1  -> genuine merge
+        [0.0, 0.0, 0.0, 0.0, 10.0, 1.0],    # B2 ~ A1
+    ])
+    al = align_topics(phi_a, phi_b, threshold=0.3)
+    # B1 (index 1) merges sources A0 and A1.
+    assert 1 in al.merges
+    sources = {i for i, _ in al.merges[1]}
+    assert {0, 1} <= sources
+
+
 def test_align_topics_splits_merges_unaligned():
     # We construct a scenario with splits, merges, and unaligned topics
     # Model A has 3 topics, Model B has 3 topics

@@ -38,6 +38,22 @@ def _onehot_topics(k, v, seed=0, noise=0.0):
 
 # --- alignment basics ---------------------------------------------------------
 
+def test_compare_self_alignment_invariant_correlated():
+    # Issue #642: comparing a correlated-topic fit (STM/CTM, where off-diagonal cosine
+    # is high) with itself must report full stability — K matched, nothing split, merged,
+    # vanished, or appeared — not near-total instability.
+    tw = np.random.default_rng(7).random((10, 60)) + 0.5  # high off-diagonal cosine
+    a, b = DummyModel(tw), DummyModel(tw)
+    cmp = topica.compare(a, b)
+    assert len(cmp.aligned) == 10
+    assert len(cmp.splits) == 0
+    assert len(cmp.merges) == 0
+    assert not cmp.unmatched_a and not cmp.unmatched_b
+    # matched pairs are the identity, at distance ~0
+    assert {p.topic_a: p.topic_b for p in cmp.aligned} == {i: i for i in range(10)}
+    assert max(p.distance for p in cmp.aligned) < 1e-9
+
+
 def test_compare_matches_permuted_topics():
     phi = _onehot_topics(4, 16, seed=1)
     a = DummyModel(phi)
@@ -393,6 +409,34 @@ def test_near_miss_survives_a_numpy_scalar_threshold():
     assert u_py.near_miss is True
     assert u_np.near_miss is True
     assert u_np.as_dict()["near_miss"] is True
+
+
+def test_near_miss_not_flagged_when_best_at_or_above_threshold():
+    # The #642 Hungarian-anchored classifier can leave a topic unmatched with a best
+    # similarity AT or ABOVE threshold (a split/merge child that lost the 1-to-1
+    # assignment). That is a strong partner, not a churn near-miss — it must not be
+    # flagged (the old rule `best >= 0.8*threshold` had no upper bound and produced a
+    # self-contradictory "near-miss: best sim 1.000, just under 0.30" card).
+    sim = np.array([[0.999]])  # best ~1.0, well above threshold 0.3
+    u = _unmatched(0, "b", "appeared", ["w"], 0.5, sim, 0.3, axis=0)
+    assert u.best_similarity > 0.3
+    assert u.near_miss is False
+
+
+def test_compare_split_child_is_not_a_near_miss():
+    # End to end: a genuine split (A0 -> {B0, B1}) leaves one split-child unmatched
+    # with best sim ~1.0. Its card must not read as a "near-miss just under threshold".
+    def _norm(x):
+        x = np.atleast_2d(x)
+        return x / x.sum(1, keepdims=True)
+    V = 40
+    A = _norm(np.array([np.eye(V)[k * 10:(k + 1) * 10].sum(0) for k in range(4)]))
+    B = _norm(np.vstack([A[0], A[0] + np.eye(V)[0] * 0.01, A[1], A[2], A[3]]))
+    cmp = topica.compare(A, B)
+    hi = [u for u in cmp.unmatched_b if (u.best_similarity or 0) >= cmp.threshold]
+    assert hi, "expected an unmatched split-child with best sim above threshold"
+    assert all(not u.near_miss for u in hi)
+    assert "just under" not in cmp.to_markdown()
 
 
 @pytest.mark.slow
