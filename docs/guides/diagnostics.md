@@ -176,8 +176,12 @@ optional `criteria=("deveaud", "cao_juan")` columns. Fit several seeds per K wit
 with `n_jobs=-1`). Then let `result.best_k(metric=..., rule=...)` name a K:
 `rule="best"` (the optimum), `"1se"` (the simplest K within one standard error, so
 you don't over-read noise), or `"elbow"` (the diminishing-returns knee of a
-held-out curve). The default `best_k()` picks the coherence/exclusivity *frontier*
-rather than a single monotone metric. The [Choose and justify K](../publishing/choosing-k.md)
+held-out curve). Bare `best_k()` defaults to the held-out metric when a
+`held_out=` set is present and to the coherence/exclusivity *frontier* otherwise —
+and because held-out log-likelihood is roughly monotone in K, the held-out default
+tends to land on the largest K you scanned (it warns when it does). Treat that as
+one input, not the answer: `best_k` names the K a criterion prefers, it does not
+make the research decision for you. The [Choose and justify K](../publishing/choosing-k.md)
 guide works a full example on `poliblog`.
 
 ### Topic alignment

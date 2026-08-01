@@ -243,6 +243,46 @@ toward K≈100, at the cost of more topics to label. We would state the goal, na
 the K, and (per the section below) show the headline result survives a few nearby
 values.
 
+## Embedding + cluster models (BERTopic, Top2Vec)
+
+Everything above fits LDA or STM. `search_k` does too — it **raises for
+embedding + cluster models** (`search_k(..., model="bertopic")` →
+`ValueError: model must be 'lda' or 'stm'`). Two things differ for these models:
+
+- **Preprocessing does not change the topics.** Clusters are formed from the
+  document *embeddings*, so stopword and frequency choices only affect the
+  c-TF-IDF *labels* on already-formed clusters, not which documents cluster
+  together. Removing stopwords leaves the topics identical. Preprocess for
+  readable labels, but do not report token cleaning as shaping the model.
+- **K is a clusterer setting, not a scan.** Use `num_clusters` for a fixed-K
+  clusterer (`kmeans`, `gmm`, `agglomerative`) or `min_cluster_size` for HDBSCAN.
+  There is no held-out likelihood.
+
+There is no built-in sweep, so score the K knob yourself with the same
+coherence-vs-diversity judgment used for the frontier above:
+
+```python
+import numpy as np, topica
+
+b = topica.datasets.load_ng20_minilm()
+docs = [t.split() for t in b.texts]
+
+for k in [4, 5, 6, 8, 10]:
+    m = topica.BERTopic(clusterer="kmeans", num_clusters=k,
+                        reduce_frequent=True, seed=1).fit(docs, b.doc_embeddings)
+    cv  = float(np.mean(topica.coherence(m, docs, coherence_type="c_v")))
+    div = topica.topic_diversity(m, topn=25)
+    print(f"K={k:>2}  c_v={cv:.3f}  diversity={div:.2f}  topics={m.num_topics}")
+```
+
+Pick the knee of the coherence/diversity trade-off, not the maximum of either.
+With HDBSCAN, sweep `min_cluster_size` instead and watch how much of the corpus
+falls into the `-1` noise bucket; a fixed-K clusterer with `reduce_frequent=True`
+avoids that bucket and, on this dataset, recovers the newsgroups where the
+HDBSCAN default collapses to a degenerate handful (most documents in one topic). The
+[embedding-models guide](../guides/embedding.md) covers the clusterer choices and
+the noise-bucket problem in depth.
+
 ## Report sensitivity
 
 Pick the `K` that balances metrics, interpretability, and theory, then **show

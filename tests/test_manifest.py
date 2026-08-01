@@ -599,6 +599,43 @@ def test_unknown_diagnostic_rejected(fitted):
         record_fit(model, corpus, diagnostics=["not_a_diagnostic"])
 
 
+def test_diagnostics_true_rejected_with_helpful_message(fitted):
+    corpus, model = fitted
+    # diagnostics=True is a natural mistake; it should raise a clear message
+    # naming the valid options rather than a raw "bool is not iterable".
+    with pytest.raises(TypeError, match=r"diagnostics must be a list of diagnostic names"):
+        record_fit(model, corpus, diagnostics=True)
+    with pytest.raises(TypeError, match=r"'coherence', 'exclusivity'"):
+        record_fit(model, corpus, diagnostics=True)
+    # A bare string is likewise not a valid list of names.
+    with pytest.raises(TypeError, match="diagnostics must be a list"):
+        record_fit(model, corpus, diagnostics="coherence")
+
+
+def test_count_arguments_reject_natural_mistakes(fitted):
+    corpus, model = fitted
+    # bool is an int subclass, so diagnostics_n=True / topic_words_n=True would
+    # otherwise pass silently as 1; a string crashes opaquely at the > / slice.
+    for bad in (True, "5", 1.5):
+        with pytest.raises(TypeError, match="diagnostics_n must be an int"):
+            record_fit(model, corpus, diagnostics=["coherence"], diagnostics_n=bad)
+        with pytest.raises(TypeError, match="topic_words_n must be an int"):
+            record_fit(model, corpus, topic_words_n=bad)
+    # Right type, out-of-range value -> ValueError naming the bound.
+    with pytest.raises(ValueError, match="diagnostics_n must be >= 1"):
+        record_fit(model, corpus, diagnostics=["coherence"], diagnostics_n=0)
+    with pytest.raises(ValueError, match="topic_words_n must be >= 0"):
+        record_fit(model, corpus, topic_words_n=-1)
+
+
+def test_prevalence_names_without_prevalence_rejected(fitted):
+    corpus, model = fitted
+    # Passing names but no design matrix silently dropped the names before;
+    # that lost provenance, so it must raise instead.
+    with pytest.raises(ValueError, match="prevalence_names given without prevalence"):
+        record_fit(model, corpus, prevalence_names=["a", "b"])
+
+
 def test_builtin_diagnostics_is_stable():
     assert BUILTIN_DIAGNOSTICS == ("coherence", "exclusivity")
 
