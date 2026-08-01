@@ -62,6 +62,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   `doc_embeddings`/`embeddings` parameter), so word-embedding models (ETM, DETM) and
   count-only fits are not mislabeled, and a custom/unregistered subclass is handled
   the same way.
+- **`record_fit` validates its arguments up front with clear messages** (#646).
+  `diagnostics=True` (a natural mistake, since `diagnostics=` wants a list of names)
+  raised an opaque `'bool' object is not iterable`; it now names the valid options.
+  The sibling top-N arguments are hardened the same way: `diagnostics_n` /
+  `topic_words_n` reject a non-integer (a bare `"5"` crashed at the `> 0` gate) and a
+  `bool` (silently treated as `1`), and out-of-range values; numpy integers are still
+  accepted. `prevalence_names` passed without `prevalence` — which silently dropped
+  the names — now raises instead of losing that provenance.
 
 ### Changed
 
@@ -132,6 +140,29 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   left unmatched by the 1-to-1 assignment though its best similarity is at or above
   the threshold) as a "near-miss just under the threshold": the `near_miss` flag now
   requires the best similarity to sit strictly below the match cut.
+
+### Documentation
+
+- **`topica-analysis` guide: topic-reading API corrected** (#643). The guide implied
+  `top_words(n)` returns strings and that `label_topics`/`frex`/`find_thoughts`/
+  `topic_table`/`summary` are model methods with a `label_topics(method=...)` selector.
+  It now shows `top_words(n)` returning `(word, weight)` tuples, presents the others as
+  module functions taking the model's `topic_word`/`doc_topic` matrix, and points to
+  the separate `frex`/`relevance` functions instead of a non-existent selector.
+- **`best_k()` default behavior documented consistently** (#645). `best_k()` defaults
+  to the held-out metric when a `held_out=` set is present, which is roughly monotone
+  in K and tends to land on the largest K scanned (it already warns when it does).
+  `docs/guides/diagnostics.md` wrongly stated the default is always the frontier;
+  corrected, with a caution added to the analysis guide that `best_k()` is one input,
+  not the research decision. No behavior change.
+- **BERTopic K-selection is documented** (#650). `search_k`/`best_k` are LDA/STM-only
+  and the analysis guidance was bag-of-words-centric, leaving embedding + cluster
+  models (BERTopic, Top2Vec) without a path. The choosing-K guide gains an
+  embedding-models section (preprocessing changes only labels not clusters; K is a
+  clusterer setting; a worked coherence/diversity sweep), the analysis skill branches
+  for these models, and the `datasets.md` BERTopic example switches from the HDBSCAN
+  default (which collapses `load_ng20_minilm` to ~2 topics) to a
+  `kmeans`/`num_clusters=5`/`reduce_frequent=True` fit that recovers the newsgroups.
 
 ## [0.55.0] - 2026-07-29
 
