@@ -177,6 +177,116 @@ def test_topic_words_retention_propagates_unexpected_errors(fitted):
         _retained_top_words(Exploding(), 5)
 
 
+# -- embedding provenance (issue #649) -------------------------------------
+
+
+def _bertopic():
+    """A tiny BERTopic fit on synthetic, well-separated embeddings (no download)."""
+    rng = np.random.default_rng(0)
+    emb = np.vstack([rng.normal(c, 0.1, size=(20, 8)) for c in (-3.0, 0.0, 3.0)])
+    toks = [[f"w{rng.integers(10)}" for _ in range(8)] for _ in range(60)]
+    corpus = topica.Corpus.from_documents(toks)
+    m = topica.BERTopic(num_clusters=3, clusterer="kmeans", seed=0).fit(toks, emb)
+    return m, corpus, emb
+
+
+def test_embeddings_fingerprinted_when_passed():
+    m, corpus, emb = _bertopic()
+    e = record_fit(m, corpus, embeddings=emb).inputs["embeddings"]
+    assert e["kind"] == "doc_embeddings"
+    assert e["spec"] == FINGERPRINT_SPEC and e["digest"]
+    assert "note" not in e  # a real fingerprint, not the absence marker
+
+
+def test_missing_embeddings_marked_honestly():
+    # An embedding-based model whose embeddings were not passed must not read as a
+    # complete record: record the determining input's absence, don't omit it silently.
+    m, corpus, _ = _bertopic()
+    e = record_fit(m, corpus).inputs["embeddings"]
+    assert e["recorded"] is False and "note" in e and "digest" not in e
+
+
+def test_embedding_fingerprint_is_order_sensitive():
+    m, corpus, emb = _bertopic()
+    d1 = record_fit(m, corpus, embeddings=emb).inputs["embeddings"]["digest"]
+    swapped = emb.copy()
+    swapped[[0, 1]] = swapped[[1, 0]]
+    d2 = record_fit(m, corpus, embeddings=swapped).inputs["embeddings"]["digest"]
+    assert d1 != d2
+    # ...and stable for the same input.
+    assert d1 == record_fit(m, corpus, embeddings=emb).inputs["embeddings"]["digest"]
+
+
+def test_non_embedding_model_has_no_embeddings_input(fitted):
+    corpus, model = fitted  # LDA: not embedding-based
+    assert "embeddings" not in record_fit(model, corpus).inputs
+    assert "embeddings" not in record_fit(model, corpus, embeddings=None).inputs
+
+
+def test_word_embedding_model_gets_no_doc_embeddings_marker():
+    # A word-embedding model (ETM: fit(data, word_embeddings, vocabulary)) is NOT
+    # determined by document embeddings, so it must not be marked "fit from document
+    # embeddings" — the detection reads the fit signature, not a coarse registry flag.
+    import numpy as np
+    topica.enable_experimental()
+    rng = np.random.default_rng(0)
+    toks = [[f"w{rng.integers(6)}" for _ in range(8)] for _ in range(40)]
+    corpus = topica.Corpus.from_documents(toks)
+    et = topica.ETM(2, seed=0)
+    et.fit(toks, rng.normal(size=(len(corpus.vocabulary), 5)), list(corpus.vocabulary), iters=5)
+    assert "embeddings" not in record_fit(et, corpus).inputs
+
+
+def test_doc_embedding_detection_is_by_fit_signature():
+    # Detection reads the fit signature, so it covers custom/unregistered models and
+    # excludes word-embedding ones — independent of the registry.
+    from topica.manifest import _fit_uses_doc_embeddings
+
+    class DocEmb:  # a custom, unregistered document-embedding model
+        def fit(self, data, doc_embeddings=None):
+            ...
+
+    class WordEmb:
+        def fit(self, data, word_embeddings, vocabulary):
+            ...
+
+    class Counts:
+        def fit(self, data):
+            ...
+
+    assert _fit_uses_doc_embeddings(DocEmb())
+    assert not _fit_uses_doc_embeddings(WordEmb())
+    assert not _fit_uses_doc_embeddings(Counts())
+
+
+def test_embeddings_shape_is_validated():
+    m, corpus, emb = _bertopic()
+    import numpy as np
+    with pytest.raises(ValueError, match="2-D"):
+        record_fit(m, corpus, embeddings=emb[:, 0])          # 1-D
+    with pytest.raises(ValueError, match="rows but the corpus"):
+        record_fit(m, corpus, embeddings=np.zeros((0, emb.shape[1])))   # empty
+    with pytest.raises(ValueError, match="rows but the corpus"):
+        record_fit(m, corpus, embeddings=emb[:2])            # wrong row count
+
+
+def test_manifest_diff_detects_embedding_change():
+    m, corpus, emb = _bertopic()
+    a = record_fit(m, corpus, embeddings=emb)
+    swapped = emb.copy()
+    swapped[[0, 1]] = swapped[[1, 0]]
+    b = record_fit(m, corpus, embeddings=swapped)
+    assert a.compare(b).fields["input_embeddings"] == "changed"
+
+
+def test_embedding_manifest_round_trips(tmp_path):
+    m, corpus, emb = _bertopic()
+    rec = record_fit(m, corpus, embeddings=emb)
+    p = tmp_path / "e.topica.json"
+    rec.save(str(p))
+    assert AnalysisManifest.load(str(p)).inputs["embeddings"] == rec.inputs["embeddings"]
+
+
 # -- deterministic serialization + round trip ------------------------------
 
 

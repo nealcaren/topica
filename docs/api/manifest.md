@@ -62,6 +62,22 @@ model. You can also attach your own with `record.add_diagnostic(name, value)` an
 interpretive notes with `record.add_decision(key, note)`; both are stored as
 visibly researcher-authored, never as tool-verified conclusions.
 
+## Embedding-based models
+
+An embedding+cluster model such as `BERTopic` is determined by the document
+embeddings it was fit on, but the fitted model does not retain them, so `record_fit`
+cannot see them on its own. Pass them so the fit stays verifiable and reproducible:
+
+```python
+model = topica.BERTopic(num_clusters=20, seed=0).fit(tokens, embeddings)
+record = topica.record_fit(model, corpus, embeddings=embeddings)   # fingerprints them
+```
+
+The embeddings are recorded as an order-sensitive fingerprint under
+`inputs["embeddings"]` (a hash, not the vectors). If you omit them for an
+embedding-based model, their absence is recorded honestly — the manifest marks that
+the determining input was not captured, rather than reading as a complete record.
+
 ## Comparing two fits
 
 `a.compare(b)` diffs two manifests directly, with no corpus or model needed, and

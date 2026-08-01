@@ -33,6 +33,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   it is now `"none"` (warns / uses bootstrap). EmbeddingLDA delegates a real Dirichlet
   posterior to an inner SeededLDA, which the class-level check missed, so it was
   wrongly `"none"` and over-warned; it is now `"dirichlet"` and composes correctly.
+- **`record_fit` now records the document embeddings for document-embedding models**
+  (#649). BERTopic (and the other models fit *from document embeddings*) are
+  determined by those embeddings, which the fitted model does not retain — so the
+  manifest previously had `inputs: {}` and no way to verify or compare the fit, while
+  still reading as a complete record. `record_fit` gains an `embeddings=` argument
+  that records an order-sensitive fingerprint of them (`inputs["embeddings"]`, a hash
+  + shape, never the vectors) and validates their shape; when a document-embedding
+  model's embeddings are not passed, their absence is recorded honestly (a marker
+  noting the determining input was not captured) instead of being silently omitted.
+  Which models count is read from the model's `fit` signature (a
+  `doc_embeddings`/`embeddings` parameter), so word-embedding models (ETM, DETM) and
+  count-only fits are not mislabeled, and a custom/unregistered subclass is handled
+  the same way.
 
 ### Changed
 

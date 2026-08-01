@@ -49,6 +49,7 @@ brute-forced. ``privacy="full"`` (raw values) is intentionally not in V1.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import platform
 import struct
@@ -667,7 +668,28 @@ def _cmp_fp(a: dict | None, b: dict | None) -> str:
 # --------------------------------------------------------------------------
 
 
+def _fit_uses_doc_embeddings(model) -> bool:
+    """Whether ``model`` is fit *from document embeddings* (which determine its
+    topics but are not retained), detected from its ``fit`` signature.
+
+    A parameter named ``doc_embeddings`` or ``embeddings`` marks a document-embedding
+    model (BERTopic, Top2Vec, S³, FASTopic, CombinedTM, …). This deliberately excludes
+    ``word_embeddings`` / ``vocab_embeddings`` models (ETM, DETM, IdealPointTM), whose
+    embeddings are the vocabulary's, not the documents', so a "document embeddings not
+    captured" marker would misdescribe them. Reading the signature (not a registry
+    flag) means a custom or unregistered subclass is handled the same way."""
+    fit = getattr(type(model), "fit", None)
+    if fit is None:
+        return False
+    try:
+        params = inspect.signature(fit).parameters
+    except (TypeError, ValueError):
+        return False
+    return any(name in ("doc_embeddings", "embeddings") for name in params)
+
+
 def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
+               embeddings=None,
                privacy: str = "minimal", content_fingerprint: bool = False,
                fingerprint_key: bytes | None = None, thread_count: int | None = None,
                diagnostics=None, diagnostics_n: int = 10,
@@ -690,6 +712,19 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
         evidence: any of :data:`BUILTIN_DIAGNOSTICS` (``"coherence"``,
         ``"exclusivity"``). Each is recorded as computed evidence (its mean over
         topics), or ``value=None`` with a note if it is not defined for this model.
+    embeddings : the ``(num_docs, dim)`` document embeddings a document-embedding
+        model (e.g. BERTopic, Top2Vec) was fit on. These *determine* the topics but
+        are not retained on the fitted model, so ``record_fit`` cannot see them
+        unless you pass them here; when you do, an order-sensitive fingerprint is
+        recorded (as ``inputs["embeddings"]``) so the fit is verifiable and two
+        manifests are comparable. The array is validated (2-D, one row per document);
+        a mis-shaped array raises rather than fingerprinting the wrong thing. For a
+        document-embedding model, omitting them is recorded honestly (a marker noting
+        the determining input was not captured), rather than leaving the manifest
+        silently implying completeness. Which models count is read from the model's
+        ``fit`` signature (a ``doc_embeddings``/``embeddings`` parameter), so
+        word-embedding models (ETM, DETM) are not mislabeled. A model that also
+        consumes vocabulary embeddings (e.g. S³) records only the document ones here.
     diagnostics_n : the top-N words each diagnostic uses (default 10).
     topic_words_n : opt-in, **content**. When ``> 0``, retains each topic's top-N
         words and its mean prevalence (``doc_topic.mean(0)``) in the model block, so
@@ -764,6 +799,38 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
         inputs["prevalence"] = {
             "kind": "design_matrix",
             **fingerprint_design(prevalence, prevalence_names, key=fingerprint_key),
+        }
+
+    # Document embeddings determine an embedding-cluster model's topics but are not
+    # retained on the fitted model, so record_fit cannot recover them (issue #649).
+    # Fingerprint them when supplied; otherwise, if this model is fit *from document
+    # embeddings*, record that the determining input was not captured rather than
+    # letting the manifest read as a complete reproducibility record.
+    if embeddings is not None:
+        emb = np.asarray(embeddings)
+        if emb.ndim != 2:
+            raise ValueError(
+                f"embeddings must be a 2-D (num_docs, dim) array; got {emb.ndim}-D "
+                f"with shape {emb.shape}. Pass the document embeddings the model was "
+                "fit on."
+            )
+        if emb.shape[0] != corpus.num_docs:
+            raise ValueError(
+                f"embeddings has {emb.shape[0]} rows but the corpus has "
+                f"{corpus.num_docs} documents; pass the document embeddings the model "
+                "was fit on (one row per document, same order)."
+            )
+        inputs["embeddings"] = {
+            "kind": "doc_embeddings",
+            **fingerprint_array(emb, key=fingerprint_key),
+        }
+    elif _fit_uses_doc_embeddings(model):
+        inputs["embeddings"] = {
+            "kind": "doc_embeddings",
+            "recorded": False,
+            "note": "this model is fit from document embeddings, which determine the "
+                    "topics but were not passed to record_fit; pass embeddings= to "
+                    "fingerprint them for verification and reproducibility.",
         }
 
     manifest = AnalysisManifest(
