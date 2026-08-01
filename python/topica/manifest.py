@@ -51,6 +51,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import numbers
 import platform
 import struct
 from dataclasses import dataclass, field
@@ -688,6 +689,21 @@ def _fit_uses_doc_embeddings(model) -> bool:
     return any(name in ("doc_embeddings", "embeddings") for name in params)
 
 
+def _require_count(value, name: str, *, minimum: int) -> None:
+    """Validate a top-N count argument up front with a clear message.
+
+    ``bool`` is a subclass of ``int``, so ``name=True`` would otherwise pass
+    silently as ``1`` (the same class of mistake as ``diagnostics=True``); a
+    non-int (e.g. ``"5"``) would crash opaquely at the ``> 0`` / slicing site.
+    """
+    # numbers.Integral so numpy integers (np.int64, …) are accepted like plain
+    # ints; bool is Integral too, so it is excluded explicitly.
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        raise TypeError(f"{name} must be an int (got {value!r})")
+    if value < minimum:
+        raise ValueError(f"{name} must be >= {minimum} (got {value})")
+
+
 def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
                embeddings=None,
                privacy: str = "minimal", content_fingerprint: bool = False,
@@ -755,6 +771,13 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
         if name not in BUILTIN_DIAGNOSTICS:
             raise ValueError(
                 f"unknown diagnostic {name!r}; choose from {sorted(BUILTIN_DIAGNOSTICS)}")
+    _require_count(diagnostics_n, "diagnostics_n", minimum=1)
+    _require_count(topic_words_n, "topic_words_n", minimum=0)
+    if prevalence is None and prevalence_names is not None:
+        raise ValueError(
+            "prevalence_names given without prevalence; pass the design matrix as "
+            "prevalence= (prevalence_names only labels its columns), or drop "
+            "prevalence_names")
 
     import topica
 
