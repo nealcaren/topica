@@ -3656,8 +3656,9 @@ class SeededLDA:
     def log_likelihood_history(self) -> list[tuple[int, float]]:
         """Per-iteration ``(iteration, log_likelihood)`` trace recorded every
         ``check_every`` sweeps during :meth:`fit`. The value is the MALLET-formula
-        collapsed marginal log P(w, z) (negative, rising toward 0), the same
-        quantity LDA reports. Empty when ``check_every=0``."""
+        collapsed marginal log P(w, z) (negative; rises during burn-in, then
+        fluctuates around a plateau), the same quantity LDA reports. Empty when
+        ``check_every=0``."""
         ...
     @property
     def fit_history(self) -> list[tuple[int, float]]:

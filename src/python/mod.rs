@@ -13567,8 +13567,9 @@ impl SeededLDA {
     }
     /// Per-iteration log-likelihood trace: ``(iteration, log_likelihood)`` pairs
     /// recorded every ``check_every`` sweeps during :meth:`fit`. The value is the
-    /// MALLET-formula collapsed marginal log P(w, z) (negative, rising toward 0),
-    /// the same quantity LDA reports. Non-empty after fitting.
+    /// MALLET-formula collapsed marginal log P(w, z) (negative; rises during
+    /// burn-in, then fluctuates around a plateau), the same quantity LDA reports.
+    /// Non-empty after fitting.
     #[getter]
     fn log_likelihood_history(&self) -> PyResult<Vec<(usize, f64)>> {
         self.require_fitted()?;

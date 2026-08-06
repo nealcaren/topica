@@ -48,7 +48,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   marginal log P(w, z) needs `log_gamma`, so the trace was a positive surrogate that
   *fell* over iterations. It is now the MALLET-formula log-likelihood LDA reports:
   negative and rising toward 0, matching the plain-LDA trace. **The `fit_history`
-  values change** (positive to negative) as a result. `SeededLDA` also gains the standard `log_likelihood_history`
+  values change** (positive to negative) as a result. When a per-document prior is
+  in effect (the `EmbeddingLDA` doc-embedding mode), the trace uses that same
+  `α_{d,k}`, not the symmetric `α`, so it matches the prior the sampler used. `SeededLDA` also gains the standard `log_likelihood_history`
   and `log_likelihood()` accessors (previously only `fit_history`), so it matches
   LDA's convergence surface; both are available on `EmbeddingLDA` via delegation.
 - **`record_fit(model, docs)` accepts token lists** (#661). `fit` takes a sequence
