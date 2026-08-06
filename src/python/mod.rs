@@ -13565,8 +13565,17 @@ impl SeededLDA {
     fn num_topics(&self) -> usize {
         self.num_topics_val()
     }
-    /// Per-iteration log-likelihood trace. Each entry is ``(iteration, log_likelihood)``
-    /// recorded every ``check_every`` sweeps during :meth:`fit`. Non-empty after fitting.
+    /// Per-iteration log-likelihood trace: ``(iteration, log_likelihood)`` pairs
+    /// recorded every ``check_every`` sweeps during :meth:`fit`. The value is the
+    /// MALLET-formula collapsed marginal log P(w, z) (negative, rising toward 0),
+    /// the same quantity LDA reports. Non-empty after fitting.
+    #[getter]
+    fn log_likelihood_history(&self) -> PyResult<Vec<(usize, f64)>> {
+        self.require_fitted()?;
+        Ok(self.log_likelihood_history.clone())
+    }
+    /// Uniform convergence trace: ``(iteration, log_likelihood)`` pairs. Equivalent
+    /// to :attr:`log_likelihood_history` (kept for the cross-model shared surface).
     #[getter]
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
         self.require_fitted()?;
@@ -13578,6 +13587,19 @@ impl SeededLDA {
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
         Ok(self.converged)
+    }
+    /// MALLET-formula collapsed marginal log-likelihood of the fitted model: the
+    /// final recorded trace value (the log-likelihood at the last checkpoint, which
+    /// is the final sweep when ``check_every`` divides ``iters``). Raises if no
+    /// trace was recorded (``check_every=0``).
+    fn log_likelihood(&self) -> PyResult<f64> {
+        self.require_fitted()?;
+        self.log_likelihood_history
+            .last()
+            .map(|&(_, ll)| ll)
+            .ok_or_else(|| {
+                PyRuntimeError::new_err("no log-likelihood was recorded (fit with check_every > 0)")
+            })
     }
     /// The symmetric document-topic Dirichlet prior α, broadcast to
     /// ``(num_topics,)``. Marks SeededLDA as a Dirichlet model for

@@ -388,14 +388,16 @@ Two conventions to keep straight:
 **Convergence.** The fit is a collapsed Gibbs sampler, so `converged` reports
 whether *early stopping* fired, not whether the chain mixed. It stays `False` under
 the default `convergence_tol=0.0` (the fit runs the full `iters`). Every
-`check_every` sweeps the log-likelihood is recorded, so `model.fit_history` holds
-the `(iteration, log_likelihood)` trace to check for a plateau; pass a tolerance to
-stop early once it flattens:
+`check_every` sweeps the collapsed marginal log-likelihood (the same MALLET-formula
+quantity LDA reports: negative, rising toward 0) is recorded, so `fit_history` /
+`log_likelihood_history` hold the `(iteration, log_likelihood)` trace to check for a
+plateau; pass a tolerance to stop early once it flattens:
 
 ```python
 model.fit(docs, iters=1000, convergence_tol=1e-4, check_every=25)
-model.converged          # True if the trace flattened before iters
-model.fit_history[-1]    # (last iteration run, log_likelihood)
+model.converged            # True if the trace flattened before iters
+model.log_likelihood()     # final recorded log-likelihood
+model.log_likelihood_history[-1]   # (last iteration run, log_likelihood)
 ```
 
 **Saving.** `save(path)` writes the SeededLDA core to `path` **and** a companion
