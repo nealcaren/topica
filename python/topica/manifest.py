@@ -781,6 +781,8 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
 
     import topica
 
+    corpus = _as_corpus(corpus)
+
     cls = type(model).__name__
     settings, settings_coverage = _capture_settings(model)
 
@@ -947,6 +949,31 @@ def _retained_prevalence(model) -> list[float] | None:
         return [float(x) for x in np.asarray(_as_doc_topic(model)).mean(axis=0)]
     except (AttributeError, TypeError, ValueError):
         return None
+
+
+def _as_corpus(corpus):
+    """Coerce ``record_fit``'s ``corpus`` argument to a :class:`Corpus`.
+
+    ``fit`` accepts pre-tokenised documents (a sequence of token lists), so a
+    natural first call is ``record_fit(model, docs)`` with the same value. A
+    ``Corpus`` is passed through untouched; anything without ``num_docs`` is
+    built via :meth:`Corpus.from_documents`, and if that fails we raise a clear
+    error naming the constructor rather than the opaque
+    ``'list' object has no attribute 'num_docs'`` from downstream.
+    """
+    import topica
+
+    if hasattr(corpus, "num_docs"):
+        return corpus
+    try:
+        return topica.Corpus.from_documents(corpus)
+    except Exception as exc:
+        raise TypeError(
+            "record_fit's corpus must be a topica.Corpus or a sequence of "
+            "token lists (the same documents you passed to fit); building a "
+            f"Corpus from the given value failed ({exc}). Construct one "
+            "explicitly with topica.Corpus.from_documents(docs)."
+        ) from exc
 
 
 def _corpus_block(corpus, privacy, content_fingerprint, key) -> dict[str, Any]:

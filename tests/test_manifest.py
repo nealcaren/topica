@@ -636,6 +636,23 @@ def test_prevalence_names_without_prevalence_rejected(fitted):
         record_fit(model, corpus, prevalence_names=["a", "b"])
 
 
+def test_record_fit_accepts_token_lists(fitted):
+    # #661: fit() takes token lists, so record_fit(model, docs) is a natural call.
+    # It must coerce them to a Corpus, not crash with 'list has no num_docs'.
+    _, model = fitted
+    rec = record_fit(model, DOCS, iters=50)
+    assert rec.corpus["num_docs"] == len(DOCS)
+    # Same documents as an explicit Corpus give the same corpus block.
+    corpus = topica.Corpus.from_documents(DOCS)
+    assert record_fit(model, corpus).corpus == rec.corpus
+
+
+def test_record_fit_rejects_non_corpus_with_clear_message(fitted):
+    _, model = fitted
+    with pytest.raises(TypeError, match="Corpus.from_documents"):
+        record_fit(model, 5)
+
+
 def test_builtin_diagnostics_is_stable():
     assert BUILTIN_DIAGNOSTICS == ("coherence", "exclusivity")
 

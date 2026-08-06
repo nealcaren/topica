@@ -1405,7 +1405,14 @@ def search_k(
     from . import LDA, STM  # local import to avoid a cycle at module load
 
     if model not in ("lda", "stm"):
-        raise ValueError("model must be 'lda' or 'stm'")
+        raise ValueError(
+            f"search_k fits an LDA or STM per K; model must be 'lda' or 'stm' "
+            f"(got {model!r}). Other models are not scanned here: embedding-guided "
+            f"models (EmbeddingLDA) need embeddings/vocabulary search_k cannot "
+            f"infer, and embedding+cluster models (BERTopic, Top2Vec) set K by the "
+            f"clusterer, not by refitting. Sweep K for those by hand: fit each K "
+            f"and compare topica.coherence(...).mean(); see the 'Embedding + cluster "
+            f"models' section of docs/publishing/choosing-k.md.")
     if int(num_seeds) < 1:
         raise ValueError(f"num_seeds must be >= 1, got {num_seeds!r}")
     if content is not None and model != "stm":

@@ -268,6 +268,16 @@ class EmbeddingLDA:
     (``topic_word``, ``doc_topic``, ``top_words``, ``coherence``, ...) is
     delegated to the underlying SeededLDA.
 
+    .. note::
+       The ``vocabulary=`` you pass here aligns the **embedding** rows; it is not
+       the fitted output vocabulary. After :meth:`fit`, ``topic_word`` columns are
+       indexed by ``model.vocabulary``, the vocabulary the underlying SeededLDA
+       rebuilds from the corpus you fit on, which is typically a *subset in a
+       different order* (only words that survived tokenisation/pruning). Do not
+       index ``topic_word`` (or build coherence) with the ``vocabulary=`` you
+       passed; use ``model.vocabulary``, or the helpers that already pair them:
+       ``top_words()`` and ``label_topics(model.topic_word, model.vocabulary)``.
+
     No embedder of your own? :func:`~topica.llm_embed` builds the ``embeddings``
     matrix (OpenAI, or offline ``sentence-transformers``).
 

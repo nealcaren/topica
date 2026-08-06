@@ -293,6 +293,78 @@ Sinkhorn (every gradient checked against finite differences) and steps with Adam
 `dt_alpha`/`tw_alpha` are the inverse entropic regularizations for the two
 transport problems (reference defaults 3.0 and 2.0); larger is sharper.
 
+## EmbeddingLDA
+
+`EmbeddingLDA` is a fixed-K, every-document LDA anchored by embeddings on **both
+sides**. The *word* embeddings define the topics: k-means clusters them into
+`num_topics` groups and seeds each topic with the `top_m` words nearest its
+centroid (a prior on the topic-word side, via [`SeededLDA`](models.md#guided-topics)).
+Optionally, *document* embeddings in the same space bias each document's topic
+mixture toward the topics it is closest to (a per-document prior on the
+document-topic side). Both are priors: the Gibbs sampler reconciles them with word
+co-occurrence and can override either. Unlike BERTopic/Top2Vec there is no noise
+bucket (every document is modeled), and unlike them K is set in advance.
+
+Everything here runs offline. The bundled `load_ng20_minilm` dataset carries a
+word-embedding matrix with its aligned vocabulary, so no embedder is needed:
+
+```python
+import topica
+import numpy as np
+
+ng = topica.datasets.load_ng20_minilm()   # documents + labels + MiniLM embeddings
+docs = [t.split() for t in ng["texts"]]
+
+# Word-seed mode: the vocabulary embeddings anchor the topics.
+model = topica.EmbeddingLDA(
+    num_topics=5,
+    embeddings=ng["word_embeddings"],      # (vocab, E), one row per word
+    vocabulary=ng["vocab"],                # aligned to the embedding rows
+    seed=0,
+)
+model.fit(docs, iters=1000)
+for topic in model.top_words(8):
+    print([word for word, _ in topic])
+```
+
+`vocabulary=` aligns the **embedding** rows; it is not the fitted output
+vocabulary. After `fit`, `topic_word` columns are indexed by `model.vocabulary`,
+the vocabulary the underlying SeededLDA rebuilds from the corpus, which holds the
+same words in a **different order**. Index `topic_word` with `model.vocabulary`,
+never with the `vocabulary=` you passed, or use the helpers that already pair them:
+`model.top_words(n)` and `topica.label_topics(model.topic_word, model.vocabulary)`.
+
+**Document-embedding prior.** Pass `doc_embeddings=` (one row per document, same
+space as the words) to `fit` to add the document-topic prior. `doc_anchor` sets its
+strength: `α_{d,k} = alpha + doc_anchor * max(cos(doc_d, centroid_k), 0)`. Inspect
+it before fitting with `document_topic_prior`:
+
+```python
+prior = model.document_topic_prior(ng["doc_embeddings"])   # (num_docs, num_topics)
+model.fit(docs, doc_embeddings=ng["doc_embeddings"], iters=1000)
+```
+
+The fitted surface (`topic_word`, `doc_topic`, `top_words`, `estimate_effect`, …)
+is delegated to the underlying SeededLDA, so the full [effects](../publishing/effects.md)
+and reporting stack applies. Two conventions to keep straight:
+
+- `coherence(n)` returns a **per-topic** vector (UMass here, so more-negative is
+  worse); average it for the single number `topic_table`/`search_k` report:
+  `float(model.coherence(10).mean())`.
+- `search_k` does not accept `EmbeddingLDA` (it fits LDA/STM per K and cannot infer
+  the embeddings). Sweep K by hand: fit each K and compare
+  `model.coherence(10).mean()`; see the "Embedding + cluster models" section of
+  [choosing K](../publishing/choosing-k.md).
+
+**Saving.** `save(path)` writes the SeededLDA core to `path` **and** a companion
+`<path>.embedding.npz` sidecar (centroids, seeds, hyperparameters). Both files are
+needed to reload; ship both when replicating, or `load` raises `FileNotFoundError`.
+
+```python
+model.save("elda.topica")                 # also writes elda.topica.embedding.npz
+reloaded = topica.EmbeddingLDA.load("elda.topica")
+```
+
 ## CombinedTM
 
 CombinedTM (Bianchi, Terragni & Hovy 2021) is [`ProdLDA`](models.md#prodlda) with
@@ -485,10 +557,10 @@ somewhere. Two ways out:
   labels = theta.argmax(1)          # == model.labels
   ```
 
-- **Use a fixed-K, every-document model.** `EmbeddingLDA`, `FASTopic`, and `ETM`
-  are embedding-driven but give every document a full topic distribution `θ` with
-  no noise bucket. In our testing `EmbeddingLDA` gave the best recovery when the
-  `-1` bucket was the problem.
+- **Use a fixed-K, every-document model.** [`EmbeddingLDA`](#embeddinglda),
+  `FASTopic`, and `ETM` are embedding-driven but give every document a full topic
+  distribution `θ` with no noise bucket. In our testing `EmbeddingLDA` gave the
+  best recovery when the `-1` bucket was the problem.
 
 `reduce_outliers()` (below) is the third option: keep HDBSCAN, then reassign the
 `-1` documents after the fact.

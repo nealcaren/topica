@@ -24,6 +24,26 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Fixed
 
+- **`record_fit(model, docs)` accepts token lists** (#661). `fit` takes a sequence
+  of token lists, so passing the same value to `record_fit` is a natural first call;
+  it previously crashed with `'list' object has no attribute 'num_docs'`. The corpus
+  argument is now coerced via `Corpus.from_documents`, and a value that is neither a
+  `Corpus` nor tokenized documents raises a clear error naming the constructor.
+- **`search_k`'s unsupported-model error explains the alternative** (#661). Passing
+  `model="EmbeddingLDA"` (or any embedding model) raised a bare `model must be 'lda'
+  or 'stm'`. The message now says why (`search_k` fits an LDA/STM per K and cannot
+  infer the embeddings) and points at the by-hand K sweep in the choosing-K guide.
+
+### Documentation
+
+- **`EmbeddingLDA` has a dedicated guide section** (#661). `docs/guides/embedding.md`
+  gained a full worked example that runs offline on `load_ng20_minilm`, covering the
+  word-seed and `doc_embeddings=` prior modes, `document_topic_prior`, the
+  `.embedding.npz` save sidecar, and two easy-to-miss conventions: `topic_word` is
+  indexed by `model.vocabulary` (same words, different order from the `vocabulary=`
+  you pass, which only aligns the embedding rows), and `coherence(n)` returns a
+  per-topic vector to average. The class docstring documents the vocabulary caveat.
+
 - **`topica.coherence` / `coherence_ci` / `semantic_coherence` no longer silently
   mis-score raw-string input** (#648). Passing a list of document *strings* (as the
   docs' own examples do) was iterated character-by-character, so no top word ever
