@@ -375,14 +375,38 @@ class EmbeddingLDA:
         sim = (de / norms) @ self._centroids.T
         return self.alpha + self.doc_anchor * np.maximum(sim, 0.0)
 
-    def fit(self, data, *, doc_embeddings=None, iters: int = 1000) -> "EmbeddingLDA":
+    def fit(
+        self,
+        data,
+        *,
+        doc_embeddings=None,
+        iters: int = 1000,
+        convergence_tol: float = 0.0,
+        check_every: int = 10,
+    ) -> "EmbeddingLDA":
         """Fit on ``data`` (a Corpus or list of token lists). If ``doc_embeddings``
         is given (one row per document, same embedding space as the vocabulary),
         each document's topic mixture is biased toward the topics its embedding is
         nearest, as a prior the sampler can still override. ``iters`` is the number
-        of Gibbs sweeps for the underlying SeededLDA fit."""
+        of Gibbs sweeps for the underlying SeededLDA fit.
+
+        Convergence signal. Every ``check_every`` sweeps the collapsed
+        log-likelihood is recorded, so after fitting :attr:`fit_history` holds the
+        ``(iteration, log_likelihood)`` trace to eyeball (or plot) for a plateau.
+        ``convergence_tol`` (default ``0.0``, off) enables early stopping: once the
+        relative change in that log-likelihood falls below it the sweep loop stops
+        and :attr:`converged` is ``True``. With the default ``0.0`` the fit always
+        runs the full ``iters`` and :attr:`converged` stays ``False`` (it means
+        "early-stopping never triggered", not "did not mix"); set e.g.
+        ``convergence_tol=1e-4`` to get a genuine verdict and a shorter fit."""
         prior = self.document_topic_prior(doc_embeddings) if doc_embeddings is not None else None
-        self._model.fit(data, iters=iters, doc_topic_prior=prior)
+        self._model.fit(
+            data,
+            iters=iters,
+            doc_topic_prior=prior,
+            convergence_tol=convergence_tol,
+            check_every=check_every,
+        )
         return self
 
     @property

@@ -965,9 +965,22 @@ def _as_corpus(corpus):
 
     if hasattr(corpus, "num_docs"):
         return corpus
+    # Most likely mistake: raw document strings instead of token lists. Caught
+    # here because from_documents' Rust error ("Can't extract 'str' to 'Vec'") is
+    # opaque, and iterating a str would otherwise tokenise character-by-character.
+    if isinstance(corpus, (list, tuple)) and corpus and isinstance(corpus[0], str):
+        raise TypeError(
+            "record_fit's corpus looks like raw document strings; it needs "
+            "tokenised documents (a list of token lists) or a topica.Corpus. "
+            "Tokenise first, e.g. [topica.tokenize(t) for t in texts], or build "
+            "the corpus with topica.Corpus.from_documents(...).")
     try:
         return topica.Corpus.from_documents(corpus)
-    except Exception as exc:
+    except TypeError as exc:
+        # Wrong element type (e.g. a scalar, or non-token items). A ValueError from
+        # from_documents (empty corpus, all-stopword docs) is a clear semantic error
+        # about the corpus itself, so let it propagate unchanged rather than
+        # relabelling it a type problem.
         raise TypeError(
             "record_fit's corpus must be a topica.Corpus or a sequence of "
             "token lists (the same documents you passed to fit); building a "

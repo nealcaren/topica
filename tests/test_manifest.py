@@ -641,16 +641,24 @@ def test_record_fit_accepts_token_lists(fitted):
     # It must coerce them to a Corpus, not crash with 'list has no num_docs'.
     _, model = fitted
     rec = record_fit(model, DOCS, iters=50)
+    # Assert the concretely-correct counts (not a tautological equality with a
+    # Corpus built the same way): DOCS has no pruning, so tokens are all retained.
     assert rec.corpus["num_docs"] == len(DOCS)
-    # Same documents as an explicit Corpus give the same corpus block.
-    corpus = topica.Corpus.from_documents(DOCS)
-    assert record_fit(model, corpus).corpus == rec.corpus
+    assert rec.corpus["total_tokens"] == sum(len(d) for d in DOCS)
 
 
 def test_record_fit_rejects_non_corpus_with_clear_message(fitted):
     _, model = fitted
     with pytest.raises(TypeError, match="Corpus.from_documents"):
         record_fit(model, 5)
+
+
+def test_record_fit_flags_raw_strings_not_token_lists(fitted):
+    # The likely mistake is passing raw document strings; give a targeted hint
+    # instead of the opaque "Can't extract 'str' to 'Vec'" from downstream.
+    _, model = fitted
+    with pytest.raises(TypeError, match="raw document strings"):
+        record_fit(model, ["a whole document as one string", "another one"])
 
 
 def test_builtin_diagnostics_is_stable():

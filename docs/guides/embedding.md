@@ -305,8 +305,9 @@ document-topic side). Both are priors: the Gibbs sampler reconciles them with wo
 co-occurrence and can override either. Unlike BERTopic/Top2Vec there is no noise
 bucket (every document is modeled), and unlike them K is set in advance.
 
-Everything here runs offline. The bundled `load_ng20_minilm` dataset carries a
-word-embedding matrix with its aligned vocabulary, so no embedder is needed:
+No embedder needed here. The `load_ng20_minilm` dataset (downloaded and cached on
+first use, no `sentence-transformers`/`torch` install) carries a word-embedding
+matrix with its aligned vocabulary, so nothing calls an embedding model:
 
 ```python
 import topica
@@ -329,8 +330,11 @@ for topic in model.top_words(8):
 
 `vocabulary=` aligns the **embedding** rows; it is not the fitted output
 vocabulary. After `fit`, `topic_word` columns are indexed by `model.vocabulary`,
-the vocabulary the underlying SeededLDA rebuilds from the corpus, which holds the
-same words in a **different order**. Index `topic_word` with `model.vocabulary`,
+the vocabulary the underlying SeededLDA rebuilds from the corpus. That is generally
+a **subset in a different order**: only corpus words that survived tokenisation and
+pruning (on the fully-covered `load_ng20_minilm` demo it is the same 3521 words,
+just reordered, but a real corpus with externally-sourced embeddings will drop
+words). Index `topic_word` with `model.vocabulary`,
 never with the `vocabulary=` you passed, or use the helpers that already pair them:
 `model.top_words(n)` and `topica.label_topics(model.topic_word, model.vocabulary)`.
 
@@ -349,12 +353,26 @@ is delegated to the underlying SeededLDA, so the full [effects](../publishing/ef
 and reporting stack applies. Two conventions to keep straight:
 
 - `coherence(n)` returns a **per-topic** vector (UMass here, so more-negative is
-  worse); average it for the single number `topic_table`/`search_k` report:
-  `float(model.coherence(10).mean())`.
+  worse); average it for a single model-level score comparable to `search_k`'s
+  coherence column: `float(model.coherence(10).mean())`. (`topic_table` reports
+  prevalence/prob/frex per topic, not coherence.)
 - `search_k` does not accept `EmbeddingLDA` (it fits LDA/STM per K and cannot infer
   the embeddings). Sweep K by hand: fit each K and compare
-  `model.coherence(10).mean()`; see the "Embedding + cluster models" section of
+  `model.coherence(10).mean()`; see the "Fixed-K embedding models" section of
   [choosing K](../publishing/choosing-k.md).
+
+**Convergence.** The fit is a collapsed Gibbs sampler, so `converged` reports
+whether *early stopping* fired, not whether the chain mixed. It stays `False` under
+the default `convergence_tol=0.0` (the fit runs the full `iters`). Every
+`check_every` sweeps the log-likelihood is recorded, so `model.fit_history` holds
+the `(iteration, log_likelihood)` trace to check for a plateau; pass a tolerance to
+stop early once it flattens:
+
+```python
+model.fit(docs, iters=1000, convergence_tol=1e-4, check_every=25)
+model.converged          # True if the trace flattened before iters
+model.fit_history[-1]    # (last iteration run, log_likelihood)
+```
 
 **Saving.** `save(path)` writes the SeededLDA core to `path` **and** a companion
 `<path>.embedding.npz` sidecar (centroids, seeds, hyperparameters). Both files are

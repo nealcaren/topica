@@ -1411,8 +1411,9 @@ def search_k(
             f"models (EmbeddingLDA) need embeddings/vocabulary search_k cannot "
             f"infer, and embedding+cluster models (BERTopic, Top2Vec) set K by the "
             f"clusterer, not by refitting. Sweep K for those by hand: fit each K "
-            f"and compare topica.coherence(...).mean(); see the 'Embedding + cluster "
-            f"models' section of docs/publishing/choosing-k.md.")
+            f"and compare the mean coherence; see the 'Fixed-K embedding models' "
+            f"(EmbeddingLDA) and 'Embedding + cluster models' (BERTopic/Top2Vec) "
+            f"sections of docs/publishing/choosing-k.md.")
     if int(num_seeds) < 1:
         raise ValueError(f"num_seeds must be >= 1, got {num_seeds!r}")
     if content is not None and model != "stm":
