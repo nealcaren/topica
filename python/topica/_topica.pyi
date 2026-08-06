@@ -4443,7 +4443,9 @@ class CombinedTM:
     adapt_bert linear projection into vocabulary space before being concatenated
     with the raw bag-of-words counts (first layer Linear(2V, hidden)). The
     product-of-experts decoder still reconstructs the bag of words. Bring the
-    embeddings at fit() as a (num_docs, E) array, aligned to the documents.
+    embeddings at fit() as a (num_docs, E) array, aligned to the documents: these
+    are document (sentence) embeddings, one row per document, NOT the word
+    embeddings that ETM/EmbeddingLDA take.
     Reference implementation: contextualized-topic-models (Bianchi et al., MIT)."""
     @property
     def settings(self) -> dict:
@@ -4550,7 +4552,9 @@ class ZeroShotTM:
     a multilingual encoder maps to the trained topics without any bag of words,
     enabling cross-lingual transfer: fit on one language, transform documents in
     another. Bring the embeddings at fit() as a (num_docs, E) array, aligned to the
-    documents. Reference implementation: contextualized-topic-models (Bianchi et
+    documents: these are document (sentence) embeddings, one row per document, NOT
+    the word embeddings that ETM/EmbeddingLDA take.
+    Reference implementation: contextualized-topic-models (Bianchi et
     al., MIT)."""
     @property
     def settings(self) -> dict:

@@ -2624,14 +2624,31 @@ fn u8_to_mode(m: u8) -> prodlda::InputMode {
 }
 
 /// Parse `doc_embeddings` into dense rows and check the row count matches the
-/// document count.
-fn parse_doc_embeddings(data: &Bound<'_, PyAny>, num_docs: usize) -> PyResult<Vec<Vec<f64>>> {
+/// document count. `vocab_size` is used only to detect the common mistake of
+/// passing WORD embeddings (one row per vocabulary word) to these
+/// document-embedding models, and add a targeted hint to the error.
+fn parse_doc_embeddings(
+    data: &Bound<'_, PyAny>,
+    num_docs: usize,
+    vocab_size: usize,
+) -> PyResult<Vec<Vec<f64>>> {
     let embs = parse_features(data)?;
     if embs.len() != num_docs {
+        // A matrix with one row per vocabulary word is almost certainly word
+        // embeddings passed by mistake: CombinedTM/ZeroShotTM take document
+        // (sentence) embeddings, one row per document, unlike ETM/EmbeddingLDA.
+        let hint = if embs.len() == vocab_size {
+            " (this equals the vocabulary size -- did you pass WORD embeddings? \
+             CombinedTM and ZeroShotTM take document/sentence embeddings, one row \
+             per document, not the word embeddings ETM/EmbeddingLDA use)"
+        } else {
+            ""
+        };
         return Err(PyValueError::new_err(format!(
-            "doc_embeddings has {} rows but corpus has {} documents",
+            "doc_embeddings has {} rows but corpus has {} documents{}",
             embs.len(),
-            num_docs
+            num_docs,
+            hint
         )));
     }
     check_all_finite_2d("doc_embeddings", &embs)?;
@@ -2702,10 +2719,12 @@ macro_rules! ctm_embedding_model {
             /// Create an unfitted model. `alpha` is the symmetric Dirichlet prior
             /// concentration (reference 1.0); `hidden_size` is the encoder width
             /// (reference 100); `dropout` is the dropout rate on the hidden layer
-            /// and on `theta`; `batch_size`/`lr` drive Adam (reference 200/0.002,
-            /// with `beta1 = 0.99`); `convergence_tol > 0` stops early on the
-            /// relative change in the epoch ELBO (0 runs all epochs). Pass `iters`
-            /// to :meth:`fit` to set the number of epochs.
+            /// and on `theta`; `batch_size`/`lr` drive Adam (`lr` reference 0.002,
+            /// `beta1 = 0.99`; the `batch_size` default 200 is the ProdLDA/AVITM
+            /// figure, larger than the CTM package's 64); `convergence_tol > 0`
+            /// stops early on the relative change in the epoch ELBO (0 runs all
+            /// epochs). Pass `iters` to :meth:`fit` to set the number of epochs
+            /// (default 200; the CTM package uses 100).
             ///
             /// `num_topics` is the number of topics K; `seed` seeds the RNG. `contrastive`
             /// adds an InfoNCE contrastive term on the topic vectors, scaled by
@@ -2814,7 +2833,8 @@ macro_rules! ctm_embedding_model {
                         "vocabulary must have at least num_topics words",
                     ));
                 }
-                let embs = parse_doc_embeddings(doc_embeddings, corpus.num_docs())?;
+                let embs =
+                    parse_doc_embeddings(doc_embeddings, corpus.num_docs(), num_types)?;
                 let emb_dim = embs.first().map(|r| r.len()).unwrap_or(0);
                 if emb_dim == 0 {
                     return Err(PyValueError::new_err(
@@ -2987,8 +3007,10 @@ macro_rules! ctm_embedding_model {
                 doc_embeddings: &Bound<'py, PyAny>,
             ) -> PyResult<Bound<'py, PyArray2<f64>>> {
                 let m = self.fitted_model()?;
-                let docs = docs_to_ids(data, &self.corpus.as_ref().unwrap().id_to_word)?;
-                let embs = parse_doc_embeddings(doc_embeddings, docs.len())?;
+                let corpus = self.corpus.as_ref().unwrap();
+                let docs = docs_to_ids(data, &corpus.id_to_word)?;
+                let embs =
+                    parse_doc_embeddings(doc_embeddings, docs.len(), corpus.id_to_word.len())?;
                 Ok(vecs_to_arr2(&m.transform_with_emb(&docs, &embs)).to_pyarray_bound(py))
             }
 
@@ -3170,8 +3192,10 @@ through a learned `adapt_bert` linear projection into vocabulary space before it
 is concatenated with the raw bag-of-words counts, so the encoder's first layer is \
 `Linear(2V, hidden)`. Mixing contextual embeddings into the encoder yields more \
 coherent topics than bag-of-words ProdLDA. Bring the embeddings at :meth:`fit` as \
-a `(num_docs, E)` array, aligned to the documents. The reference implementation is \
-`contextualized-topic-models` (Bianchi et al., MIT)."
+a `(num_docs, E)` array, aligned to the documents. These are *document* (sentence) \
+embeddings, one row per document, NOT the word embeddings that ETM/EmbeddingLDA \
+take. The reference implementation is `contextualized-topic-models` (Bianchi et \
+al., MIT)."
 );
 
 ctm_embedding_model!(
@@ -3186,6 +3210,8 @@ the bag of words. Because topics are inferred from the embedding alone, a \
 document embedded with a multilingual encoder maps to the trained topics without \
 any bag of words at all, which enables cross-lingual transfer: fit on one \
 language, :meth:`transform` documents in another. Bring the embeddings at \
-:meth:`fit` as a `(num_docs, E)` array, aligned to the documents. The reference \
-implementation is `contextualized-topic-models` (Bianchi et al., MIT)."
+:meth:`fit` as a `(num_docs, E)` array, aligned to the documents. These are \
+*document* (sentence) embeddings, one row per document, NOT the word embeddings \
+that ETM/EmbeddingLDA take. The reference implementation is \
+`contextualized-topic-models` (Bianchi et al., MIT)."
 );
