@@ -156,6 +156,25 @@ def test_v1_mode_unchanged_without_doc_embeddings():
     assert np.array_equal(a.topic_word, b.topic_word)
 
 
+def test_convergence_signal_passthrough():
+    # #661: EmbeddingLDA.fit forwards convergence_tol/check_every to SeededLDA, so
+    # fit_history is populated and `converged` becomes a real early-stop verdict.
+    vocab, emb, blocks = _blocks()
+    docs = _corpus(blocks, n_docs=400)
+
+    # Default: full run, no early stop, but the trace is still recorded.
+    m = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=3)
+    m.fit(docs, iters=200, check_every=25)
+    assert m.converged is False
+    assert m.fit_history and m.fit_history[-1][0] == 200
+
+    # A tolerance turns on early stopping: it must converge before iters here.
+    m2 = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=3)
+    m2.fit(docs, iters=2000, convergence_tol=1e-4, check_every=25)
+    assert m2.converged is True
+    assert m2.fit_history[-1][0] < 2000
+
+
 def test_doc_embeddings_dim_validation():
     vocab, emb, blocks = _blocks()
     m = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=1)

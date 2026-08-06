@@ -283,6 +283,33 @@ HDBSCAN default collapses to a degenerate handful (most documents in one topic).
 [embedding-models guide](../guides/embedding.md) covers the clusterer choices and
 the noise-bucket problem in depth.
 
+## Fixed-K embedding models (EmbeddingLDA, ETM, FASTopic)
+
+`EmbeddingLDA`, `ETM`, and `FASTopic` are embedding-driven but are **not**
+clusterers: K is a model setting you fix in advance and every document gets a full
+topic distribution, so unlike BERTopic/Top2Vec you sweep K the ordinary way, by
+**refitting per K**. `search_k` still raises for them (it only fits LDA/STM, and
+`EmbeddingLDA` needs embeddings/vocabulary it cannot infer), so run the same
+coherence-vs-diversity sweep by hand:
+
+```python
+import numpy as np, topica
+
+b = topica.datasets.load_ng20_minilm()
+docs = [t.split() for t in b.texts]
+
+for k in [4, 5, 6, 8, 10]:
+    m = topica.EmbeddingLDA(num_topics=k, embeddings=b.word_embeddings,
+                            vocabulary=b.vocab, seed=1).fit(docs, iters=1000)
+    coh = float(m.coherence(10).mean())     # per-topic UMass vector -> mean
+    div = topica.topic_diversity(m, topn=25)
+    print(f"K={k:>2}  coherence={coh:.1f}  diversity={div:.2f}")
+```
+
+Pick the knee, not the maximum. Note the sign convention differs from the c_v sweep
+above: `EmbeddingLDA.coherence` is per-topic UMass (more-negative is worse), so
+average it and compare on that scale.
+
 ## Report sensitivity
 
 Pick the `K` that balances metrics, interpretability, and theory, then **show

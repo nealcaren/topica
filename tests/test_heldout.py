@@ -308,6 +308,14 @@ class TestSearchKHeldout:
                                    held_out=held, iters=10, seed=0)
             assert rows[0]["coherence_metric"] == expected
 
+    def test_unsupported_model_error_names_the_manual_path(self):
+        # #661: search_k only fits LDA/STM. EmbeddingLDA and the embedding+cluster
+        # models are rejected, but the message must say why and point at the
+        # by-hand K sweep, not just "model must be 'lda' or 'stm'".
+        with pytest.raises(ValueError, match="EmbeddingLDA") as exc:
+            topica.search_k([["a", "b"]], [2], model="EmbeddingLDA")
+        assert "choosing-k" in str(exc.value)
+
 
 # ---------------------------------------------------------------------------
 # Issue #55: search_k(held_out=Heldout) used to raise TypeError

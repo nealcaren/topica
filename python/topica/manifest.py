@@ -781,6 +781,8 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
 
     import topica
 
+    corpus = _as_corpus(corpus)
+
     cls = type(model).__name__
     settings, settings_coverage = _capture_settings(model)
 
@@ -947,6 +949,44 @@ def _retained_prevalence(model) -> list[float] | None:
         return [float(x) for x in np.asarray(_as_doc_topic(model)).mean(axis=0)]
     except (AttributeError, TypeError, ValueError):
         return None
+
+
+def _as_corpus(corpus):
+    """Coerce ``record_fit``'s ``corpus`` argument to a :class:`Corpus`.
+
+    ``fit`` accepts pre-tokenised documents (a sequence of token lists), so a
+    natural first call is ``record_fit(model, docs)`` with the same value. A
+    ``Corpus`` is passed through untouched; anything without ``num_docs`` is
+    built via :meth:`Corpus.from_documents`, and if that fails we raise a clear
+    error naming the constructor rather than the opaque
+    ``'list' object has no attribute 'num_docs'`` from downstream.
+    """
+    import topica
+
+    if hasattr(corpus, "num_docs"):
+        return corpus
+    # Most likely mistake: raw document strings instead of token lists. Caught
+    # here because from_documents' Rust error ("Can't extract 'str' to 'Vec'") is
+    # opaque, and iterating a str would otherwise tokenise character-by-character.
+    if isinstance(corpus, (list, tuple)) and corpus and isinstance(corpus[0], str):
+        raise TypeError(
+            "record_fit's corpus looks like raw document strings; it needs "
+            "tokenised documents (a list of token lists) or a topica.Corpus. "
+            "Tokenise first, e.g. [topica.tokenize(t) for t in texts], or build "
+            "the corpus with topica.Corpus.from_documents(...).")
+    try:
+        return topica.Corpus.from_documents(corpus)
+    except TypeError as exc:
+        # Wrong element type (e.g. a scalar, or non-token items). A ValueError from
+        # from_documents (empty corpus, all-stopword docs) is a clear semantic error
+        # about the corpus itself, so let it propagate unchanged rather than
+        # relabelling it a type problem.
+        raise TypeError(
+            "record_fit's corpus must be a topica.Corpus or a sequence of "
+            "token lists (the same documents you passed to fit); building a "
+            f"Corpus from the given value failed ({exc}). Construct one "
+            "explicitly with topica.Corpus.from_documents(docs)."
+        ) from exc
 
 
 def _corpus_block(corpus, privacy, content_fingerprint, key) -> dict[str, Any]:
