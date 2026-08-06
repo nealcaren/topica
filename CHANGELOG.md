@@ -16,6 +16,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Changed
 
+- **`EmbeddingLDA`'s default `weight` is now `0.1`** (was `1.0`) (#663). The
+  embedding-cluster seed words are semantically grouped but do not necessarily
+  co-occur, so anchoring them at 100 pseudocounts/seed pulled topics away from
+  corpus co-occurrence and lowered topic coherence, increasingly at larger K: at the
+  old default, coherence fell well below plain LDA on the 20-newsgroup benchmark.
+  Coherence rises monotonically as `weight` falls and the effect on document-mixture
+  (theta) recovery is small, so the light `0.1` default recovers most of the lost
+  coherence at little cost. **This changes fitted output at the default** (the
+  planted gold was regenerated); pass `weight=1.0` to restore the previous behavior.
+  Root cause established by an ablation grid across several benchmarks (a stronger
+  embedder and co-occurrence-aware seed selection were both ruled out as the fix).
 - **The `topica` module docstring is an accurate "start here"** (#647): it now
   describes the full model roster and a one-glance LDA workflow with the main entry
   points grouped by task, instead of the stale "fast SparseLDA" one-liner. The
