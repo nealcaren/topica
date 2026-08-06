@@ -39,15 +39,17 @@ def test_recovers_embedding_clusters():
         assert prefixes.count(dominant) >= 5, f"topic {t} mixes blocks: {prefixes}"
 
 
-def test_default_weight_is_balanced():
-    # #663: the default seed weight is 0.5, not 1.0. Anchoring the (non-co-occurring)
-    # embedding seeds at 1.0 tanks coherence below plain LDA; 0.5 balances topic-word
-    # coherence against document-mixture recovery. `settings` and the underlying
-    # SeededLDA must both report it.
+def test_default_weight_is_light_and_forwarded():
+    # #663: the default seed weight is a light 0.1, not 1.0 -- anchoring the
+    # (non-co-occurring) embedding seeds hard lowers coherence (a dataset/K-dependent
+    # effect verified in the benchmarks, not unit-tested here). Pin the default and
+    # confirm it is forwarded to the underlying SeededLDA; a passed value overrides.
     vocab, emb, _ = _blocks()
     m = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=1)
-    assert m.settings["weight"] == 0.5
-    assert m.model.settings["weight"] == 0.5
+    assert m.settings["weight"] == 0.1
+    assert m.model.settings["weight"] == 0.1
+    m2 = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, weight=1.0, seed=1)
+    assert m2.model.settings["weight"] == 1.0
 
 
 def test_seeds_disjoint_and_sized():

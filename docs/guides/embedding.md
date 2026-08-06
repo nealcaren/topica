@@ -305,6 +305,15 @@ document-topic side). Both are priors: the Gibbs sampler reconciles them with wo
 co-occurrence and can override either. Unlike BERTopic/Top2Vec there is no noise
 bucket (every document is modeled), and unlike them K is set in advance.
 
+**When to reach for it.** `EmbeddingLDA` is worth it when you want *both* mixed
+membership (a full topic distribution per document) *and* the semantic nudge of
+embeddings, most of all on short or ambiguous documents where the
+`doc_embeddings=` prior injects outside knowledge that bag-of-words co-occurrence
+lacks. On normal-length text, plain [`LDA`](models.md) is simpler and about as good;
+if you only need hard cluster assignments on well-separated documents, `BERTopic`
+usually recovers them better. In our benchmarks `EmbeddingLDA`'s consistent edge is
+topic-word *coherence*, not cluster recovery.
+
 No embedder needed here. The `load_ng20_minilm` dataset (downloaded and cached on
 first use, no `sentence-transformers`/`torch` install) carries a word-embedding
 matrix with its aligned vocabulary, so nothing calls an embedding model:
@@ -329,13 +338,13 @@ for topic in model.top_words(8):
 ```
 
 **Seed strength (`weight`).** The embedding-cluster seed words are *semantically*
-grouped but do not necessarily *co-occur* in the corpus, so anchoring them too hard
-pulls topics away from co-occurrence. The default is `weight=0.5` (was `1.0`). At
-`weight=1.0` (100 pseudocounts per seed) topic coherence fell below plain LDA on the
-20-newsgroup benchmarks. The knob is a tradeoff: *lower* `weight` (toward `0.1`)
-maximizes topic-word coherence, while *higher* `weight` slightly helps
-document-mixture (`theta`) recovery on genuinely multi-topic corpora. `0.5` balances
-the two; tune it for your goal.
+grouped but do not necessarily *co-occur* in the corpus, so anchoring them hard
+pulls topics away from co-occurrence and lowers coherence, increasingly at larger
+K. At `weight=1.0` (100 pseudocounts per seed) topic coherence fell well below plain
+LDA on the 20-newsgroup benchmark. Coherence rises monotonically as `weight` falls,
+and the effect on document-mixture (`theta`) recovery is small, so the default is a
+light `weight=0.1` (was `1.0`), which recovers most of the lost coherence at little
+cost. Raise it toward `1.0` only when you want the embedding grouping to dominate.
 
 `vocabulary=` aligns the **embedding** rows; it is not the fitted output
 vocabulary. After `fit`, `topic_word` columns are indexed by `model.vocabulary`,
@@ -357,13 +366,19 @@ prior = model.document_topic_prior(ng["doc_embeddings"])   # (num_docs, num_topi
 model.fit(docs, doc_embeddings=ng["doc_embeddings"], iters=1000)
 ```
 
-The fitted surface (`topic_word`, `doc_topic`, `top_words`, `estimate_effect`, …)
-is delegated to the underlying SeededLDA, so the full [effects](../publishing/effects.md)
-and reporting stack applies. Two conventions to keep straight:
+The fitted-model *attributes and methods* (`topic_word`, `doc_topic`,
+`top_words()`, `coherence()`, `document_topic_prior()`) are delegated to the
+underlying SeededLDA. The [effects](../publishing/effects.md) and reporting stack
+are **module functions** that take the fitted model as their first argument, not
+methods on it. Call `topica.estimate_effect(model, ...)`, `topica.topic_table(model)`,
+`topica.report(model)`, `topica.label_topics(model.topic_word, model.vocabulary)`.
+Two conventions to keep straight:
 
 - `coherence(n)` returns a **per-topic** vector (UMass here, so more-negative is
-  worse); average it for a single model-level score comparable to `search_k`'s
-  coherence column: `float(model.coherence(10).mean())`. (`topic_table` reports
+  worse); average it for a single model-level score: `float(model.coherence(10).mean())`.
+  Read it against a plain-LDA baseline on the same corpus, e.g. on `load_ng20_minilm`
+  at K=5 EmbeddingLDA scores about `-70` versus roughly `-80` for `topica.LDA`; a
+  negative number is not bad on its own, so always compare. (`topic_table` reports
   prevalence/prob/frex per topic, not coherence.)
 - `search_k` does not accept `EmbeddingLDA` (it fits LDA/STM per K and cannot infer
   the embeddings). Sweep K by hand: fit each K and compare

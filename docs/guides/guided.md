@@ -147,15 +147,18 @@ vocab = sorted({w for d in docs for w in d})
 emb = SentenceTransformer("all-MiniLM-L6-v2").encode(vocab)
 
 model = topica.EmbeddingLDA(num_topics=10, embeddings=emb, vocabulary=vocab,
-                            top_m=20, weight=1.0)
+                            top_m=20)   # weight defaults to a light 0.1
 model.fit(docs, iters=1000)
 for i, words in enumerate(model.top_words(8)):
     print(f"Topic {i}:", ", ".join(w for w, _ in words))
 ```
 
 `top_m` sets how many of each cluster's nearest words become seeds, and `weight`
-how hard they anchor (a seed gets `weight * 100` prior pseudocounts; raise it to
-hold topics closer to their semantic cluster, lower it to let the data lead).
+how hard they anchor (a seed gets `weight * 100` prior pseudocounts). The default
+is a light `weight=0.1`: the embedding seeds are semantically grouped but do not
+necessarily co-occur, so anchoring them hard lowers topic coherence (see the
+[embedding-models guide](embedding.md#embeddinglda)). Raise it toward `1.0` only to
+hold topics closer to their semantic cluster.
 The whole fitted-model surface (`topic_word`, `doc_topic`, `top_words`,
 `coherence`, ...) is delegated to the underlying `SeededLDA`, and `model.seeds`
 holds the embedding-derived seed sets. `topica.embedding_seeds(...)` exposes just
