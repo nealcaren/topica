@@ -2,7 +2,7 @@
   "corpus": "planted K=4 block corpus, 300 docs + planted block-axis word embeddings (frozen in npz)",
   "cosine_bar": 0.99,
   "coverage_bar": 4,
-  "date": "2026-06-22",
+  "date": "2026-08-06",
   "eff_paths_bar": null,
   "kind": "PLANTED self-consistency gold (NO external reference exists for EmbeddingLDA (embedding-guided LDA)). Locks topica's own fixed-seed output: a refit must reproduce the frozen topic-word matrix in cosine, the planted block structure must be recovered, and the validity invariants must hold; non-vacuous via the shuffle check.",
   "model": "EmbeddingLDA (embedding-guided LDA)",

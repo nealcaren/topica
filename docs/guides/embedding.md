@@ -328,6 +328,15 @@ for topic in model.top_words(8):
     print([word for word, _ in topic])
 ```
 
+**Seed strength (`weight`).** The embedding-cluster seed words are *semantically*
+grouped but do not necessarily *co-occur* in the corpus, so anchoring them too hard
+pulls topics away from co-occurrence. The default is `weight=0.5` (was `1.0`). At
+`weight=1.0` (100 pseudocounts per seed) topic coherence fell below plain LDA on the
+20-newsgroup benchmarks. The knob is a tradeoff: *lower* `weight` (toward `0.1`)
+maximizes topic-word coherence, while *higher* `weight` slightly helps
+document-mixture (`theta`) recovery on genuinely multi-topic corpora. `0.5` balances
+the two; tune it for your goal.
+
 `vocabulary=` aligns the **embedding** rows; it is not the fitted output
 vocabulary. After `fit`, `topic_word` columns are indexed by `model.vocabulary`,
 the vocabulary the underlying SeededLDA rebuilds from the corpus. That is generally

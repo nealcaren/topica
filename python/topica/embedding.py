@@ -293,7 +293,14 @@ class EmbeddingLDA:
         How many of each cluster's nearest words to use as seeds.
     weight : float
         Seed strength: a seed word gets ``weight * 100`` extra prior pseudocounts
-        in its topic. Higher anchors the topic-word side harder.
+        in its topic. Higher anchors the topic-word side harder. Default ``0.5``
+        (was ``1.0``). The embedding-cluster seed words are semantically grouped but
+        do not necessarily co-occur, so anchoring them too hard pulls topics away
+        from corpus co-occurrence: at ``1.0`` (100 pseudocounts/seed) topic
+        coherence fell below plain LDA on the 20-newsgroup benchmarks. The value
+        trades off two things (#663): *lower* weight (toward ``0.1``) maximizes
+        topic-word coherence, while *higher* weight slightly helps document-mixture
+        (theta) recovery; ``0.5`` is a balanced default. Tune it for your goal.
     doc_anchor : float
         Strength of the document-embedding prior used when ``doc_embeddings`` is
         passed to :meth:`fit`. ``α_{d,k} = alpha + doc_anchor * max(cos, 0)``.
@@ -310,7 +317,7 @@ class EmbeddingLDA:
         embeddings,
         vocabulary: Sequence[str],
         top_m: int = 20,
-        weight: float = 1.0,
+        weight: float = 0.5,
         doc_anchor: float = 1.0,
         alpha: float = 0.1,
         beta: float = 0.01,
