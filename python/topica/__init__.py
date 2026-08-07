@@ -191,6 +191,12 @@ from .narrative import NarrativeTM  # noqa: E402  (pure-Python NarrativeTM wrapp
 PLTM = PolylingualLDA  # noqa: E402
 from . import stm  # noqa: E402  (stm imports names defined above)
 from .stm import align_corpus, spline, interaction, topic_correlation_ci, TopicCorrelationCI  # noqa: E402  (general covariate-design helpers)
+from .embedding_regression import (  # noqa: E402  (conText embedding regression: covariate effects on meaning)
+    embedding_regression,
+    EmbeddingRegression,
+    alc_embeddings,
+    compute_transform,
+)
 from . import keyatm  # noqa: E402  (keyATM-specific workflow helpers)
 from . import effects  # noqa: E402  (model-neutral prevalence analysis)
 from . import validation  # noqa: E402  (post-hoc topic diagnostics surface)
@@ -460,6 +466,10 @@ __all__ = [
     "topic_label_prompts",
     "TopicGPT",
     "estimate_effect",
+    "embedding_regression",
+    "EmbeddingRegression",
+    "alc_embeddings",
+    "compute_transform",
     "by_strata",
     "prevalence_ci",
     "top_topics",

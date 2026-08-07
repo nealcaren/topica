@@ -285,3 +285,92 @@ approaches or exceeds the number of documents.
 
 Use `search_k`, the coherence×exclusivity frontier, and an `HDP` sanity check.
 See [Choose and justify K](../publishing/choosing-k.md).
+
+## Covariate effects on meaning: embedding regression
+
+The covariates above act on topic *prevalence* (how much a group discusses a
+theme) and, through content covariates, on the *words* a group uses for a topic.
+Neither sees a difference in *meaning* that is not a word swap. When two groups
+use the same words but frame a term differently, or use different words for the
+same idea, the difference lives in a pretrained embedding space, not in counts.
+
+`embedding_regression` implements the à la carte on text (conText) embedding
+regression of Rodriguez, Spirling and Stewart (2023). It asks the native
+embedding-and-covariate question: *does a covariate shift what a word or theme
+means?* Its canonical use is "do Republicans and Democrats mean different things
+by `immigration`?". It is a **text-as-data analysis tool, not a topic model** (it
+produces no topics and needs no `enable_experimental`), and it is a drop-in for the
+R `conText` package: `parity/embedding_regression_context.py` checks topica against
+conText on conText's own bundled data and reproduces its à la carte embeddings,
+squared coefficient norm, and HC1-deflated norm to numerical precision.
+
+The method regresses à la carte embeddings on your covariates. An à la carte
+embedding of a focal term is the (transformed) count-weighted mean of its context
+words' pretrained vectors, so it captures how *that* mention is used. For a focal
+term the unit of analysis is one row per mention (`aggregate="instance"`, conText's
+default; each mention is treated as an independent observation, matching conText's
+default with no within-document clustering correction); with `target=None` it embeds
+whole documents. The effect size for a covariate is the squared Euclidean norm of its
+coefficient, deflated for small-sample bias (`statistic="squared_deflated"`, the
+default and conText's headline: a value near zero means no detectable shift), with a
+permutation p-value and a confidence interval (a leave-one-out jackknife t-interval
+under the default `inference="context"`).
+
+```python
+# You bring pretrained word embeddings as {word: vector} (GloVe, word2vec, ...).
+fit = topica.embedding_regression(
+    docs,                       # tokenized documents (word order matters)
+    covariates=party,           # numeric (N,)/(N, p), or category labels (dummy-coded)
+    pre_trained=glove,          # {word: vector} or (matrix, vocab)
+    names=["party"],
+    target="immigration",       # focal term; omit to embed whole documents
+    window=6,
+    transform="estimate",       # learn the ALC matrix, pass one, or "additive" (identity)
+    permutations=100,
+    bootstrap=100,
+)
+
+print(fit.summary())            # covariate, effect size, CI, permutation p
+fit.nearest_neighbors({"party_R": 1}, n=10)          # what "immigration" means to R
+fit.nns_ratio({"party_R": 1}, {"party_R": 0}, n=10)  # R-vs-D contrast
+```
+
+The `transform` argument controls the à la carte step. The default `"additive"`
+(identity) is the count-weighted average of the context words' pretrained vectors
+with no learned transform: fast, always defined, and the right choice when you are
+comparing groups in a fixed pretrained space. `"estimate"` learns the ALC transform
+`A` from your corpus (Khodak et al. 2018), which sharpens rare-word embeddings but
+needs a corpus with at least `D` distinct words above `min_count`; on a small or
+high-dimensional corpus it is rank-deficient and `embedding_regression` warns and
+may return distorted effect sizes -- prefer `"additive"` there, or pass a
+precomputed matrix (a conText matrix transposed, see below). Both are validated
+against conText; the parity check uses a supplied `A`.
+
+Categorical covariates are dummy-coded (first level dropped as the reference), so a
+`party` column of `"D"`/`"R"` becomes a `party_R` coefficient. `summary()` prints
+which level is the reference. The
+`nearest_neighbors` at a covariate value, and the `nns_ratio` contrast between two
+values, are how you read *what* the shift is: they rank pretrained vocabulary words
+near the predicted embedding, so a partisan split in the meaning of `immigration`
+shows up as different neighbor words for each party.
+
+Inference follows the current conText package by default (`inference="context"`): a
+Freedman-Lane residual-permutation p-value and a leave-one-out jackknife t-interval,
+so a reviewer re-running conText gets the same procedure. The estimates and the
+jackknife interval match conText to numerical precision; the permutation p-value uses
+the selected `statistic` with a `(1 + #ge) / (1 + permutations)` smoothing, so it
+will not be bit-identical to conText's unsmoothed count (and floors near
+`1 / permutations` -- raise `permutations` to resolve small p-values). The jackknife
+interval is centered on the estimate; the original article's method
+(`inference="paper"`) uses a covariate permutation and a bootstrap over the resampled
+rows instead, whose interval sits above the point estimate because the coefficient
+norm is biased upward (prefer `squared_deflated`, which removes that bias).
+
+One more note for conText users: its published transform matrices (for example
+`cr_transform`) are the transpose of what :func:`compute_transform` returns, so pass
+an external conText matrix as `transform=cr_transform.T`.
+
+This also sidesteps the trap of putting a document's own embedding on the covariate
+side of a topic model (see [Embedding topics](embedding.md)): here the embedding
+*is* the outcome being described, and the covariate is external metadata, exactly as
+in a regression.
