@@ -784,12 +784,37 @@ def test_compare_localizes_a_changed_input(fitted):
     assert diff.fields["model_topic_word"] == "same"
 
 
-def test_compare_only_in_one(fitted):
+def test_compare_one_sided_fingerprint_is_incomparable_not_a_difference(fitted):
+    # One run fingerprinted the corpus, the other (default privacy) did not. That
+    # is an absence of evidence, not a difference: an identical corpus must not read
+    # as changed, symmetric with verify's `unverifiable`.
     corpus, model = fitted
     with_fp = record_fit(model, corpus, content_fingerprint=True, iters=50)
     without = record_fit(model, corpus, iters=50)
-    assert with_fp.compare(without).fields["corpus_fingerprint"] == "only_in_a"
-    assert without.compare(with_fp).fields["corpus_fingerprint"] == "only_in_b"
+    ab = with_fp.compare(without)
+    ba = without.compare(with_fp)
+    assert ab.fields["corpus_fingerprint"] == "incomparable"
+    assert ba.fields["corpus_fingerprint"] == "incomparable"
+    # ... so it lands in .incomparable, not .differences, and the headline does not
+    # cry "differences found" for two runs of the same corpus.
+    assert "corpus_fingerprint" in ab.incomparable
+    assert "corpus_fingerprint" not in ab.differences
+    assert not ab.same  # but incomparable still never reads as a match
+
+
+def test_compare_one_sided_input_is_a_real_difference(fitted):
+    # Inputs are recorded unconditionally, so conditioning on a covariate in one run
+    # and not the other is a genuine difference, not an absence-of-evidence: it must
+    # stay only_in_*, unlike the privacy-gated corpus fingerprint above.
+    corpus, model = fitted
+    with_cov = record_fit(model, corpus, prevalence=X, iters=50)
+    without = record_fit(model, corpus, iters=50)
+    ab = with_cov.compare(without)
+    ba = without.compare(with_cov)
+    assert ab.fields["input_prevalence"] == "only_in_a"
+    assert ba.fields["input_prevalence"] == "only_in_b"
+    assert "input_prevalence" in ab.differences
+    assert "input_prevalence" not in ab.incomparable
 
 
 def test_compare_incomparable_across_specs(fitted):

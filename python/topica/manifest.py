@@ -264,15 +264,21 @@ class ManifestDiff:
 
     Compares two manifests directly (no corpus or model needed), so it answers
     "did these two runs differ, and where?". ``fields`` maps each field to
-    ``same``, ``changed``, ``only_in_a`` / ``only_in_b`` (recorded in one but not
-    the other), or ``incomparable`` (e.g. fingerprints from different specs, or a
-    keyed digest). ``same`` is a convenience for "every field same"; the summary
-    always shows the breakdown.
+    ``same``, ``changed``, ``only_in_a`` / ``only_in_b`` (a recorded value present
+    in one run but not the other), or ``incomparable`` (fingerprints from different
+    specs, a keyed digest, or a fingerprint recorded on only one side). ``same`` is
+    a convenience for "every field same"; the summary always shows the breakdown.
 
     As in :class:`VerifyResult`, ``incomparable`` is an *inability to tell* rather
-    than a mismatch, and is reported apart from real differences (``changed`` and
-    the ``only_in_*`` statuses, which are genuine: one run recorded a field the
-    other did not).
+    than a mismatch, and is reported apart from real differences. ``changed`` and
+    the ``only_in_*`` statuses are genuine differences: one run recorded a plain
+    value (a count, a setting) the other did not. A one-sided *corpus/model*
+    fingerprint is not a difference, though: it is an absence of evidence (a
+    ``privacy="minimal"`` run records no corpus content fingerprint), so it is
+    reported ``incomparable``, not ``only_in_*``. Inputs are the exception: they are
+    recorded unconditionally, so a one-sided ``input_*`` fingerprint (one run
+    conditioned on a covariate the other did not) is a genuine ``only_in_*``
+    difference.
     """
 
     fields: dict[str, str]
@@ -503,7 +509,11 @@ class AnalysisManifest:
             self.corpus.get("fingerprint"), other.corpus.get("fingerprint"))
 
         for name in sorted(set(self.inputs) | set(other.inputs)):
-            f[f"input_{name}"] = _cmp_fp(self.inputs.get(name), other.inputs.get(name))
+            # Inputs are recorded unconditionally, so a one-sided input fingerprint
+            # is a genuine difference (one run conditioned on an input the other did
+            # not), not a privacy absence-of-evidence like corpus_fingerprint.
+            f[f"input_{name}"] = _cmp_fp(
+                self.inputs.get(name), other.inputs.get(name), one_sided_is_difference=True)
         return ManifestDiff(f)
 
     # -- rendering (V2): a human-facing "analysis card" ---------------------
@@ -711,13 +721,25 @@ def _read_bundle_manifest(zf) -> dict:
     return d
 
 
-def _cmp_fp(a: dict | None, b: dict | None) -> str:
+def _cmp_fp(a: dict | None, b: dict | None, *, one_sided_is_difference: bool = False) -> str:
     if a is None and b is None:
         return "same"
-    if a is None:
-        return "only_in_b"
-    if b is None:
-        return "only_in_a"
+    if a is None or b is None:
+        # A fingerprint on only one side is, by default, an *absence of evidence*
+        # rather than a difference: a `privacy="minimal"` run records no corpus
+        # content fingerprint, so comparing it with a `content_fingerprint=True` run
+        # gives nothing to check the content against (report `incomparable`,
+        # symmetric with `verify`'s `unverifiable`; an identical corpus must not read
+        # as changed just because one run chose not to fingerprint it).
+        #
+        # `one_sided_is_difference` flips this for fields that are recorded
+        # *unconditionally*, where absence is a real structural choice, not a privacy
+        # opt-out: an `input_*` fingerprint is written whenever that input was passed
+        # to `record_fit`, so one run conditioning on a covariate the other did not
+        # is a genuine `only_in_*` difference, not an inability to tell.
+        if one_sided_is_difference:
+            return "only_in_a" if a is not None else "only_in_b"
+        return "incomparable"
     # Different fingerprint specs, or a keyed digest, cannot be compared for
     # equality of content -- do not guess.
     if a.get("spec") != b.get("spec") or a.get("keyed") or b.get("keyed"):
