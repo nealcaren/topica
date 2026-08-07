@@ -659,7 +659,7 @@ CHOOSER: tuple[ChooserRow, ...] = (
     ),
     ChooserRow(
         "Measure concepts you can name in advance",
-        "KeyATM", "SeededLDA", "`fit(docs, keywords=…)`, `.keywords`",
+        "KeyATM", "SeededLDA", "`KeyATM(keywords=…)`, `.keyword_rate`",
         "Anchor named topics with a few seed words each.",
     ),
     ChooserRow(
@@ -669,14 +669,14 @@ CHOOSER: tuple[ChooserRow, ...] = (
     ),
     ChooserRow(
         "Cluster by meaning using embeddings",
-        "BERTopic", "ETM", "`fit(docs, embeddings=…)`",
+        "BERTopic", "ETM", "`fit(docs, doc_embeddings=…)`",
         "Clustering, not a posterior: topic-proportion uncertainty and effect "
         "estimation behave differently than the models above.",
     ),
     # --- Specialized: the right first choice when your design calls for it ------
     ChooserRow(
         "Topics shift over time slices",
-        "DTM", "DETM", "`fit(docs, timestamps=…)`",
+        "DTM", "DETM", "`fit(docs, times=…)`",
         "Prevalence and content evolve across periods; `DETM` adds embeddings.",
         section="specialized",
     ),

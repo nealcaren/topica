@@ -61,15 +61,15 @@ A specialized model is often the right first choice when your data calls for it.
 |---|---|---|---|---|
 | Explore themes with no prior structure | `LDA` | `NMF` | `search_k()`, `topic_table()` | The default first pass. `NMF` is a fast, deterministic alternative. |
 | Relate topics to metadata (author, date, party) | `STM` | `DMR` | `estimate_effect()`, `one_hot()`, `spline()` | `STM` gives covariate effects with uncertainty; `DMR` is a lighter Gibbs prior. |
-| Measure concepts you can name in advance | `KeyATM` | `SeededLDA` | `fit(docs, keywords=…)`, `.keywords` | Anchor named topics with a few seed words each. |
+| Measure concepts you can name in advance | `KeyATM` | `SeededLDA` | `KeyATM(keywords=…)`, `.keyword_rate` | Anchor named topics with a few seed words each. |
 | Very short documents: tweets, headlines, survey answers | `GSDMM` | `PT` | `fit()` | One topic per document; standard LDA over-fragments short text. |
-| Cluster by meaning using embeddings | `BERTopic` | `ETM` | `fit(docs, embeddings=…)` | Clustering, not a posterior: topic-proportion uncertainty and effect estimation behave differently than the models above. |
+| Cluster by meaning using embeddings | `BERTopic` | `ETM` | `fit(docs, doc_embeddings=…)` | Clustering, not a posterior: topic-proportion uncertainty and effect estimation behave differently than the models above. |
 
 **Specialized approaches.** Start here when your design calls for one.
 
 | If your data or goal is… | Start with | Also consider | First calls | Note |
 |---|---|---|---|---|
-| Topics shift over time slices | `DTM` | `DETM` | `fit(docs, timestamps=…)` | Prevalence and content evolve across periods; `DETM` adds embeddings. |
+| Topics shift over time slices | `DTM` | `DETM` | `fit(docs, times=…)` | Prevalence and content evolve across periods; `DETM` adds embeddings. |
 | Documents linked in a network (citations, replies) | `RTM` | — | `fit(docs, links=…)` | Models the text and the link graph jointly. |
 | Documents in more than one language | `PolylingualLDA` | — | `fit(doc_tuples)` | Aligned topics across languages from translation-linked tuples. |
 | Place authors or actors on an ideological scale | `Wordfish` | `TBIP` | `fit(docs)` | Scaling from word usage; `TBIP` adds a text-based ideal-point prior. |
