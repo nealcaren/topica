@@ -3653,15 +3653,27 @@ class SeededLDA:
     @staticmethod
     def load(path: str) -> "SeededLDA": ...
     @property
+    def log_likelihood_history(self) -> list[tuple[int, float]]:
+        """Per-iteration ``(iteration, log_likelihood)`` trace recorded every
+        ``check_every`` sweeps during :meth:`fit`. The value is the MALLET-formula
+        collapsed marginal log P(w, z) (negative; rises during burn-in, then
+        fluctuates around a plateau), the same quantity LDA reports. Empty when
+        ``check_every=0``."""
+        ...
+    @property
     def fit_history(self) -> list[tuple[int, float]]:
-        """Per-iteration ``(iteration, objective)`` trace recorded every
-        ``check_every`` sweeps during :meth:`fit` (empty when ``check_every=0``)."""
+        """Uniform convergence trace aliasing :attr:`log_likelihood_history`."""
         ...
     @property
     def converged(self) -> bool:
         """True if fit early-stopped because the relative change in the objective
         fell below ``convergence_tol``; False when the full ``iters`` ran (the
         default, opt-in early stopping)."""
+        ...
+    def log_likelihood(self) -> float:
+        """MALLET-formula collapsed marginal log-likelihood of the fitted model:
+        the final recorded trace value. Raises if no trace was recorded
+        (``check_every=0``)."""
         ...
     def __repr__(self) -> str: ...
 

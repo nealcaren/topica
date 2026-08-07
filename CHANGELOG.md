@@ -43,6 +43,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   the likely cause. The class docstrings and the embedding guide state the
   document-embedding requirement explicitly, and the guide's CombinedTM/ZeroShotTM
   examples now run offline on `load_ng20_minilm`.
+- **`SeededLDA` / `EmbeddingLDA` report a real log-likelihood trace** (#663). Their
+  `fit_history` used `digamma` (the derivative of `log_gamma`) where the collapsed
+  marginal log P(w, z) needs `log_gamma`, so the trace was a positive surrogate that
+  *fell* over iterations. It is now the MALLET-formula log-likelihood LDA reports:
+  negative and rising toward 0, matching the plain-LDA trace. **The `fit_history`
+  values change** (positive to negative) as a result. When a per-document prior is
+  in effect (the `EmbeddingLDA` doc-embedding mode), the trace uses that same
+  `α_{d,k}`, not the symmetric `α`, so it matches the prior the sampler used. `SeededLDA` also gains the standard `log_likelihood_history`
+  and `log_likelihood()` accessors (previously only `fit_history`), so it matches
+  LDA's convergence surface; both are available on `EmbeddingLDA` via delegation.
 - **`record_fit(model, docs)` accepts token lists** (#661). `fit` takes a sequence
   of token lists, so passing the same value to `record_fit` is a natural first call;
   it previously crashed with `'list' object has no attribute 'num_docs'`. The corpus

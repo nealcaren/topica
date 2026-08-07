@@ -129,25 +129,39 @@ impl SeededModel {
     // Public accessors
     // -----------------------------------------------------------------------
 
-    /// Collapsed Gibbs log-likelihood (same formula as LDA / MALLET) using the
-    /// seeded asymmetric β_{k,w} prior.  Cheap to call; does not allocate.
+    /// Collapsed Gibbs marginal log-likelihood log P(w, z | α, β), the same
+    /// MALLET formula as LDA (`output::model_log_likelihood`) but with the seeded
+    /// asymmetric β_{k,w} prior. Negative; it rises toward 0 during burn-in, then
+    /// fluctuates around a plateau (collapsed Gibbs is a sampler, not an optimizer).
+    /// Uses the shared `output::log_gamma` (the MALLET-parity log Gamma the
+    /// canonical LDA log-likelihood uses); an earlier version used `digamma` (the
+    /// derivative of `log_gamma`), which is not a log-likelihood and moved the
+    /// wrong way. Cheap to call; does not allocate.
     pub fn log_likelihood(&self, docs: &[Vec<u32>]) -> f64 {
-        use crate::optimize::digamma;
+        use crate::output::log_gamma;
         let k = self.num_topics;
         let v = self.num_types;
         let mut ll = 0.0f64;
 
-        // Document-topic contribution.
-        let k_alpha = k as f64 * self.alpha;
+        // Document-topic contribution. Uses the per-document asymmetric prior
+        // α_{d,k} when set (e.g. an embedding-anchored doc prior), matching the
+        // prior the sampler actually used; otherwise the symmetric α.
         for (d, doc) in docs.iter().enumerate() {
             let n_d = doc.len() as f64;
+            let alpha_dt = |t: usize| match &self.doc_alpha {
+                Some(da) => da[d][t],
+                None => self.alpha,
+            };
+            let mut k_alpha = 0.0f64;
             for t in 0..k {
+                let a = alpha_dt(t);
+                k_alpha += a;
                 let n_dt = self.ndk[d][t] as f64;
                 if n_dt > 0.0 {
-                    ll += digamma(self.alpha + n_dt) - digamma(self.alpha);
+                    ll += log_gamma(a + n_dt) - log_gamma(a);
                 }
             }
-            ll -= digamma(k_alpha + n_d) - digamma(k_alpha);
+            ll -= log_gamma(k_alpha + n_d) - log_gamma(k_alpha);
         }
 
         // Topic-word contribution.
@@ -157,10 +171,10 @@ impl SeededModel {
                 let n_tw = self.nkw[t][w] as f64;
                 if n_tw > 0.0 {
                     let beta_tw = self.beta_kw(t, w);
-                    ll += digamma(beta_tw + n_tw) - digamma(beta_tw);
+                    ll += log_gamma(beta_tw + n_tw) - log_gamma(beta_tw);
                 }
             }
-            ll -= digamma(beta_sum_t + self.nk[t] as f64) - digamma(beta_sum_t);
+            ll -= log_gamma(beta_sum_t + self.nk[t] as f64) - log_gamma(beta_sum_t);
         }
 
         ll
@@ -640,18 +654,26 @@ pub fn fit_seeded_lda<R: Rng>(
     // Build a temporary SeededModel view for LL computation (borrows nkw/nk/ndk).
     // We compute LL inline using the same formula as SeededModel::log_likelihood.
     let compute_ll = |nkw: &[Vec<u32>], nk: &[u32], ndk: &[Vec<u32>]| -> f64 {
-        use crate::optimize::digamma;
-        let k_alpha = k as f64 * alpha;
+        use crate::output::log_gamma;
         let mut ll = 0.0f64;
         for (d, doc) in docs.iter().enumerate() {
             let n_d = doc.len() as f64;
+            // Per-document asymmetric α_{d,k} when a doc prior is in effect,
+            // matching the sampler; otherwise the symmetric α.
+            let alpha_dt = |t: usize| match &doc_alpha {
+                Some(da) => da[d][t],
+                None => alpha,
+            };
+            let mut k_alpha = 0.0f64;
             for t in 0..k {
+                let a = alpha_dt(t);
+                k_alpha += a;
                 let n_dt = ndk[d][t] as f64;
                 if n_dt > 0.0 {
-                    ll += digamma(alpha + n_dt) - digamma(alpha);
+                    ll += log_gamma(a + n_dt) - log_gamma(a);
                 }
             }
-            ll -= digamma(k_alpha + n_d) - digamma(k_alpha);
+            ll -= log_gamma(k_alpha + n_d) - log_gamma(k_alpha);
         }
         for t in 0..k {
             let beta_sum_t = beta_sum_k[t];
@@ -659,10 +681,10 @@ pub fn fit_seeded_lda<R: Rng>(
                 let n_tw = nkw[t][w] as f64;
                 if n_tw > 0.0 {
                     let beta_tw = beta + mass_map[t].get(&w).copied().unwrap_or(0.0);
-                    ll += digamma(beta_tw + n_tw) - digamma(beta_tw);
+                    ll += log_gamma(beta_tw + n_tw) - log_gamma(beta_tw);
                 }
             }
-            ll -= digamma(beta_sum_t + nk[t] as f64) - digamma(beta_sum_t);
+            ll -= log_gamma(beta_sum_t + nk[t] as f64) - log_gamma(beta_sum_t);
         }
         ll
     };
@@ -937,6 +959,107 @@ mod tests {
                 "doc_topic row {d} sums to {s:.12}, expected 1.0"
             );
         }
+    }
+
+    /// The recorded log-likelihood trace must be a genuine (negative) collapsed
+    /// marginal that rises toward 0 as sampling improves, not the old digamma
+    /// surrogate, which was positive and fell. Locks in the log_gamma fix (#663).
+    #[test]
+    fn log_likelihood_is_negative_and_rises() {
+        let mut setup_rng = ChaCha8Rng::seed_from_u64(9);
+        let (docs, v) = synthetic_corpus(3, 10, 40, 8, 2, &mut setup_rng);
+        let seeds = vec![vec![0usize, 1usize], vec![10usize, 11usize], vec![]];
+        let masses = uniform_masses(&seeds, 10.0);
+
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        let (model, ll_history, _) = fit_seeded_lda(
+            &docs,
+            v,
+            3,
+            &seeds,
+            0.1,
+            0.01,
+            &masses,
+            false,
+            None,
+            200,
+            crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            20, // check_every: record the trace
+            1,
+            &mut rng,
+        );
+
+        assert!(
+            ll_history.len() >= 2,
+            "trace should have several checkpoints"
+        );
+        for &(_, ll) in &ll_history {
+            // The old digamma surrogate was large-POSITIVE; a real collapsed
+            // marginal is negative. This alone distinguishes the fix.
+            assert!(
+                ll < 0.0,
+                "collapsed log-likelihood must be negative, got {ll}"
+            );
+        }
+        // It rises during burn-in then plateaus (collapsed Gibbs is stochastic, so
+        // it is not strictly monotone once converged): the final checkpoint is no
+        // worse than the first beyond a small plateau tolerance.
+        let first = ll_history.first().unwrap().1;
+        let last = ll_history.last().unwrap().1;
+        assert!(
+            last >= first - first.abs() * 0.05,
+            "log-likelihood should not fall meaningfully: {first} -> {last}",
+        );
+        // Direct accessor agrees in sign.
+        assert!(model.log_likelihood(&docs) < 0.0);
+    }
+
+    /// With a per-document asymmetric prior (the EmbeddingLDA doc-embedding mode),
+    /// the log-likelihood must still be a finite, negative marginal, computed with
+    /// that same α_{d,k}, not the symmetric α (#663 / #664 review).
+    #[test]
+    fn log_likelihood_uses_doc_alpha() {
+        let mut setup_rng = ChaCha8Rng::seed_from_u64(11);
+        let (docs, v) = synthetic_corpus(3, 10, 30, 8, 2, &mut setup_rng);
+        let seeds = vec![vec![0usize, 1usize], vec![10usize, 11usize], vec![]];
+        let masses = uniform_masses(&seeds, 10.0);
+        // A non-uniform per-doc prior: bias each doc toward one topic.
+        let doc_alpha: Vec<Vec<f64>> = (0..docs.len())
+            .map(|d| {
+                let mut a = vec![0.1; 3];
+                a[d % 3] += 1.0;
+                a
+            })
+            .collect();
+
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        let (model, ll_history, _) = fit_seeded_lda(
+            &docs,
+            v,
+            3,
+            &seeds,
+            0.1,
+            0.01,
+            &masses,
+            false,
+            Some(doc_alpha),
+            150,
+            crate::keyatm::ThetaDrawOpts::new(false, 0, 0),
+            0.0,
+            25,
+            1,
+            &mut rng,
+        );
+
+        assert!(!ll_history.is_empty());
+        for &(_, ll) in &ll_history {
+            assert!(
+                ll.is_finite() && ll < 0.0,
+                "LL must be finite & negative: {ll}"
+            );
+        }
+        assert!(model.log_likelihood(&docs).is_finite());
     }
 
     /// Two fits with the same RNG seed must produce bit-for-bit identical results.

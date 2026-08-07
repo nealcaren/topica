@@ -188,6 +188,28 @@ def test_convergence_signal_passthrough():
     assert m2.fit_history[-1][0] < 2000
 
 
+def test_log_likelihood_trace_is_a_real_negative_marginal():
+    # #663: the fit_history is the MALLET collapsed marginal (negative, rising
+    # toward 0), matching LDA, not the old digamma surrogate (positive, falling).
+    # EmbeddingLDA delegates to SeededLDA, so the accessors appear on both.
+    vocab, emb, blocks = _blocks()
+    docs = _corpus(blocks, n_docs=400)
+    m = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=3)
+    m.fit(docs, iters=200, check_every=25)
+
+    hist = m.fit_history
+    vals = [v for _, v in hist]
+    assert vals, "trace should be recorded"
+    # Negativity is the property that distinguishes the fix (the old digamma
+    # surrogate was large-positive). Collapsed Gibbs is stochastic, so the trace
+    # rises during burn-in then plateaus rather than being strictly monotone.
+    assert all(v < 0 for v in vals), f"log-likelihood must be negative: {vals}"
+    assert vals[-1] >= vals[0] - abs(vals[0]) * 0.05, f"should not fall: {vals}"
+    # The standard accessors are present and consistent with fit_history.
+    assert m.log_likelihood_history == hist
+    assert m.log_likelihood() == vals[-1]
+
+
 def test_doc_embeddings_dim_validation():
     vocab, emb, blocks = _blocks()
     m = topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab, seed=1)
