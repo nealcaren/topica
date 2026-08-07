@@ -479,7 +479,7 @@ class TopicGPT:
         removes the last topic.
     temperature : float, default 0.0
         Forwarded to :func:`topica.llm_backend` when ``model`` is given.
-    seed : int, default 42
+    seed : int, default 13
         Forwarded to the backend where supported; records intent, not a guarantee
         (the determinism is ``llm-bounded``).
     prompts : dict, optional
@@ -515,7 +515,7 @@ class TopicGPT:
         max_topics: Optional[int] = None,
         min_topic_count: int = 1,
         temperature: float = 0.0,
-        seed: int = 42,
+        seed: int = 13,
         prompts: Optional[dict] = None,
     ) -> None:
         if backend is not None and model is not None:

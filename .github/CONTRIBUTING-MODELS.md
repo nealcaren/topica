@@ -77,7 +77,7 @@ generated from `python/topica/registry.py` (edit `IMPL` there, not the table).
 6. **Prose is in the house register.** README, `docs/`, and docstrings use no em
    dashes, an agent-led "we", concrete claims over hedging, and no LLM filler.
 7. **Names follow the shared vocabulary.** The iteration count is `iters`, the
-   seed is `seed=42`, counts are `num_*`, a covariate design is reachable as
+   seed is `seed=13`, counts are `num_*`, a covariate design is reachable as
    `covariates=`, and so on. See
    [`docs/contributing/conventions.md`](../docs/contributing/conventions.md); the
    contract is enforced by `tests/test_naming_conventions.py`, which fails when a
@@ -421,7 +421,7 @@ impl MyModel {
 #[pymethods]
 impl MyModel {
     #[new]
-    #[pyo3(signature = (num_topics, *, /* hyperparams with defaults */ seed=42))]
+    #[pyo3(signature = (num_topics, *, /* hyperparams with defaults */ seed=13))]
     fn new(#[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
            /* ... */ seed: u64) -> PyResult<Self> {
         if num_topics < 1 {

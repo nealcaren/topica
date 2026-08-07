@@ -108,7 +108,7 @@ def embedding_seeds(
     num_topics: int,
     *,
     top_m: int = 20,
-    seed: int = 42,
+    seed: int = 13,
 ) -> dict[str, list[str]]:
     """Turn word embeddings into per-topic seed-word sets.
 
@@ -323,7 +323,7 @@ class EmbeddingLDA:
         doc_anchor: float = 1.0,
         alpha: float = 0.1,
         beta: float = 0.01,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None:
         from . import SeededLDA
 

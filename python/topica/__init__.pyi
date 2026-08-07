@@ -455,7 +455,7 @@ def effects_across_k(
     reference: Any = None,
     nsims: int | None = None,
     corpus: Any = None,
-    seed: int = 42,
+    seed: int = 13,
     fits: Sequence[Any] | None = None,
 ) -> RobustnessResult:
     """Is a covariate effect robust to the number of topics? Refits per K, aligns

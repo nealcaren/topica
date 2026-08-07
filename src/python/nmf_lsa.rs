@@ -140,7 +140,7 @@ impl NMF {
     /// reconstruction-error decrease. `seed` affects only `init="random"`.
     #[new]
     #[pyo3(signature = (num_topics, *, beta_loss="frobenius", init="nndsvd",
-                        weighting="count", convergence_tol=1e-4, seed=42))]
+                        weighting="count", convergence_tol=1e-4, seed=13))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         beta_loss: &str,
@@ -511,7 +511,7 @@ impl LSA {
     /// vocabulary size)). `weighting` is `"tfidf"` (default, classic LSI) or
     /// `"count"` (raw term counts). `seed` seeds the randomized-SVD sketch.
     #[new]
-    #[pyo3(signature = (num_topics, *, weighting="tfidf", seed=42))]
+    #[pyo3(signature = (num_topics, *, weighting="tfidf", seed=13))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         weighting: &str,

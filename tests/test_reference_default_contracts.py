@@ -205,7 +205,7 @@ def test_mallet_default_mismatches_are_explicit_contracts() -> None:
 
     # Java MALLET's seed=0 means clock seed. topica's default is reproducible.
     assert int(mallet["random-seed"]) == 0
-    assert init_defaults["seed"] == 42
+    assert init_defaults["seed"] == 13
 
     # Java MALLET has a fixed alpha sum default. topica defaults to K, so it is
     # only equal to MALLET when the caller chooses K equal to MALLET's alpha sum.

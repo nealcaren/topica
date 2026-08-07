@@ -284,7 +284,7 @@ class GDMR:
         beta: float = 0.01,
         optimize_interval: int = 50,
         burn_in: int = 200,
-        seed: int = 42,
+        seed: int = 13,
         sigma: float = 1.0,
         sigma0: float = 3.0,
         decay: float = 0.0,

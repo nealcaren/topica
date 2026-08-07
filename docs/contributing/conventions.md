@@ -21,7 +21,7 @@ by construction rather than by memory.
 |---|---|---|
 | Iteration count | `iters` | `iterations`, `n_iter`, `max_iter`, `epochs` |
 | Secondary iteration count | `<thing>_iters` (`var_iters`, `lbfgs_iters`) | — |
-| RNG seed | `seed=42` | `random_state`, `random_seed` |
+| RNG seed | `seed=13` | `random_state`, `random_seed` |
 | Counts | `num_*` (`num_topics`, `num_samples`, `num_threads`, `num_theta_draws`) | `n_*`, `n` |
 | Tolerance | `convergence_tol` (and `em_tol` for EM/variational models) | `tol` |
 | Periodic cadence | `*_interval` (`optimize_interval`, `sample_interval`, `progress_interval`) | — |
@@ -31,7 +31,7 @@ by construction rather than by memory.
 ## Structural rules
 
 1. **`num_topics` is the first positional argument** of the constructor;
-   everything else in `__init__` is keyword-only (after `*`). `seed=42` is always
+   everything else in `__init__` is keyword-only (after `*`). `seed=13` is always
    present. The exceptions are principled and recorded in the test: models that
    discover K (`HDP`, `BERTopic`, `Top2Vec`), models whose leading required input
    is something else (`KeyATM` keywords, `SeededLDA` seed words, `LabeledLDA`
@@ -109,7 +109,7 @@ them, adding only its own model-specific knobs.
 
 ```python
 DMR.__init__(num_topics, *, beta=0.01, optimize_interval=50, burn_in=200,
-             seed=42, prior_variance=1.0, lbfgs_iters=20, sampler='sparse')
+             seed=13, prior_variance=1.0, lbfgs_iters=20, sampler='sparse')
 DMR.fit(data, features=None, *, feature_names=None, iters=1000,
         num_samples=5, sample_interval=25, progress=None, progress_interval=50,
         keep_theta_draws=True, num_theta_draws=25, convergence_tol=0.0,
@@ -131,7 +131,7 @@ function. So GDMR follows the rules where they apply and takes the documented
 "computation can be unique" carve-out where the model genuinely differs:
 
 - **Outer shape matches DMR.** `num_topics` first positional; keyword-only rest;
-  `seed=42`. `fit(data, features=None, *, iters=1000, ...)` with the same
+  `seed=13`. `fit(data, features=None, *, iters=1000, ...)` with the same
   keyword block.
 - **Cross-model alias honored.** `features` is the native primary; `covariates=`
   works (universal alias); `metadata=` works (tomotopy migration alias).

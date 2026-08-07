@@ -66,7 +66,7 @@ def main():
     topic_model = topica.BERTopic(
         reducer="umap", n_neighbors=15, n_components=5,  # UMAP(n_neighbors=15, n_components=5)
         min_cluster_size=150,                            # HDBSCAN(min_cluster_size=150)
-        seed=42,
+        seed=13,
     )
     theta = topic_model.fit_transform(docs, embeddings)  # like topics, probs = fit_transform(...)
     print(f"discovered {topic_model.num_topics} topics; doc-topic matrix {theta.shape}")

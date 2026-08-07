@@ -99,7 +99,7 @@ impl TBIP {
     /// the schedule). `min_count` drops words below that corpus frequency.
     #[new]
     #[pyo3(signature = (num_topics, *, a_gamma=0.3, b_gamma=0.3, iters=7000,
-                        batch_size=512, learning_rate=0.05, min_count=1, seed=42))]
+                        batch_size=512, learning_rate=0.05, min_count=1, seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,

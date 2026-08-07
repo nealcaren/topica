@@ -312,7 +312,7 @@ def effects_across_k(
     reference=None,
     nsims=None,
     corpus=None,
-    seed=42,
+    seed=13,
     fits=None,
 ):
     """Is a covariate effect robust to the number of topics?

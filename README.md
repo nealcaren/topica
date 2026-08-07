@@ -24,7 +24,7 @@ corpus = topica.from_dataframe(
     df, text_col="open.ended.response", stopwords=topica.ENGLISH_STOPWORDS
 )
 
-model = topica.LDA(num_topics=5, seed=42)
+model = topica.LDA(num_topics=5, seed=13)
 model.fit(corpus)                             # sensible defaults; no tuning required
 print(topica.summary(model))                  # top words per topic
 ```
@@ -34,7 +34,7 @@ print(topica.summary(model))                  # top words per topic
 ```python
 prevalence = corpus.metadata[["treatment"]]   # a numeric DataFrame goes straight in
 
-stm = topica.STM(num_topics=5, seed=42)
+stm = topica.STM(num_topics=5, seed=13)
 stm.fit(corpus, prevalence, prevalence_names=["treatment"])
 
 draws  = topica.posterior_theta_samples(stm, nsims=30, seed=0)

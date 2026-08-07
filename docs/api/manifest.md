@@ -14,7 +14,7 @@ records only what it observes and marks the rest.
 import topica
 
 corpus = topica.Corpus.from_documents(tokens)
-model = topica.STM(num_topics=20, seed=42)
+model = topica.STM(num_topics=20, seed=13)
 model.fit(corpus, prevalence=X, iters=1000)
 
 record = topica.record_fit(model, corpus, prevalence=X, prevalence_names=names, iters=1000)

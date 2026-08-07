@@ -131,7 +131,7 @@ impl BTM {
     /// `1` is the exact serial path. `fit(num_threads=)` overrides it per call.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=None, beta=0.01, iters=1000,
-                        window=15, background=false, seed=42, num_threads=1))]
+                        window=15, background=false, seed=13, num_threads=1))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         num_topics: usize,

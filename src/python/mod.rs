@@ -1190,7 +1190,7 @@ impl LDA {
     /// coherence at larger K).
     #[new]
     #[pyo3(signature = (num_topics, *, alpha_sum=None, beta=0.01,
-                        optimize_interval=50, burn_in=200, seed=42, num_threads=1,
+                        optimize_interval=50, burn_in=200, seed=13, num_threads=1,
                         sampler="sparse", mh_steps=2, use_symmetric_alpha=false,
                         init="random"))]
     #[allow(clippy::too_many_arguments)]
@@ -2122,7 +2122,7 @@ impl LDA {
             beta,
             optimize_interval: 50,
             burn_in: 200,
-            seed: 42,
+            seed: 13,
             num_threads: 1,
             light: false,
             warp: false,
@@ -3961,7 +3961,7 @@ impl DMR {
     /// affect the baseline concentration.
     #[new]
     #[pyo3(signature = (num_topics, *, beta=0.01, optimize_interval=50,
-                        burn_in=200, seed=42, alpha=0.1, prior_variance=1.0,
+                        burn_in=200, seed=13, alpha=0.1, prior_variance=1.0,
                         alpha_epsilon=1e-10, lbfgs_iters=20,
                         sampler="sparse", num_threads=1))]
     #[allow(clippy::too_many_arguments)]
@@ -5174,7 +5174,7 @@ impl LabeledLDA {
     /// exact serial path. It is ignored by the cvb0 backend. `fit(num_threads=)`
     /// overrides it per call.
     #[new]
-    #[pyo3(signature = (*, alpha=0.1, beta=0.01, seed=42, sampler="sparse", num_threads=1))]
+    #[pyo3(signature = (*, alpha=0.1, beta=0.01, seed=13, sampler="sparse", num_threads=1))]
     fn new(alpha: f64, beta: f64, seed: u64, sampler: &str, num_threads: usize) -> PyResult<Self> {
         if !finite_pos(alpha) {
             return Err(PyValueError::new_err("alpha must be > 0"));
@@ -5975,7 +5975,7 @@ impl SAGE {
     /// for the sparse priors).
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=0.1, prior="laplace", prior_variance=1.0,
-                        optimize_interval=50, burn_in=200, seed=42, lbfgs_iters=20))]
+                        optimize_interval=50, burn_in=200, seed=13, lbfgs_iters=20))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
@@ -6925,7 +6925,7 @@ impl CTM {
     /// off-diagonal posterior covariance — topic-correlation/SE precision is lower).
     /// `num_topics` is the number of topics K.
     #[new]
-    #[pyo3(signature = (num_topics, *, sigma_shrink=0.0, seed=42, init="spectral", variational="laplace"))]
+    #[pyo3(signature = (num_topics, *, sigma_shrink=0.0, seed=13, init="spectral", variational="laplace"))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         sigma_shrink: f64,
@@ -7739,7 +7739,7 @@ impl STM {
     /// off-diagonal posterior covariance — topic-correlation/SE precision is lower).
     /// `num_topics` is the number of topics K.
     #[new]
-    #[pyo3(signature = (num_topics, *, sigma_shrink=0.0, seed=42, init="spectral", variational="laplace"))]
+    #[pyo3(signature = (num_topics, *, sigma_shrink=0.0, seed=13, init="spectral", variational="laplace"))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         sigma_shrink: f64,
@@ -9311,7 +9311,7 @@ impl STS {
     /// anchor-word β init) or ``"random"`` (seeded).
     /// `num_topics` is the number of topics K; `seed` seeds the RNG.
     #[new]
-    #[pyo3(signature = (num_topics, *, seed=42, init="spectral"))]
+    #[pyo3(signature = (num_topics, *, seed=13, init="spectral"))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         seed: u64,
@@ -10238,7 +10238,7 @@ impl HDP {
     /// It has no effect when `resample_conc=False`.
     /// `beta` is the topic-word Dirichlet smoothing; `seed` seeds the Gibbs RNG.
     #[new]
-    #[pyo3(signature = (*, alpha=0.1, gamma=0.1, beta=0.01, seed=42, resample_conc=true,
+    #[pyo3(signature = (*, alpha=0.1, gamma=0.1, beta=0.01, seed=13, resample_conc=true,
                         concentration_max=1e6, eta=None))]
     fn new(
         py: Python<'_>,
@@ -10845,7 +10845,7 @@ impl DTM {
     /// ``"spectral"`` when you want a single deterministic fit.
     /// `num_topics` is the number of topics K, shared across all time slices.
     #[new]
-    #[pyo3(signature = (num_topics, *, alpha=0.01, chain_variance=0.005, obs_variance=0.5, seed=42, init="random"))]
+    #[pyo3(signature = (num_topics, *, alpha=0.01, chain_variance=0.005, obs_variance=0.5, seed=13, init="random"))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         alpha: f64,
@@ -11348,7 +11348,7 @@ impl SupervisedLDA {
     /// the original Blei & McAuliffe (2007) variational EM; ``"gibbs"`` is the
     /// collapsed Gibbs sampler used by \pkg{tomotopy}.
     #[new]
-    #[pyo3(signature = (num_topics, *, alpha=0.1, seed=42, inference="variational"))]
+    #[pyo3(signature = (num_topics, *, alpha=0.1, seed=13, inference="variational"))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         alpha: f64,
@@ -12012,7 +12012,7 @@ impl PT {
     /// deterministic for a fixed `num_threads`+`seed`); `1` is the exact serial
     /// path. `fit(num_threads=)` overrides it per call.
     #[new]
-    #[pyo3(signature = (num_topics, *, num_pseudo=100, alpha=0.1, beta=0.01, pseudo_doc_prior=0.1, seed=42, num_threads=1))]
+    #[pyo3(signature = (num_topics, *, num_pseudo=100, alpha=0.1, beta=0.01, pseudo_doc_prior=0.1, seed=13, num_threads=1))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         #[pyo3(from_py_with = "py_num_pseudo")] num_pseudo: usize,
@@ -12506,7 +12506,7 @@ impl GSDMM {
     /// unacceptable dependence for a headline structural output. Passing
     /// `num_threads > 1` raises `ValueError`.
     #[new]
-    #[pyo3(signature = (num_topics, *, alpha=0.1, beta=0.1, seed=42, num_threads=1))]
+    #[pyo3(signature = (num_topics, *, alpha=0.1, beta=0.1, seed=13, num_threads=1))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         alpha: f64,
@@ -13188,7 +13188,7 @@ impl SeededLDA {
     /// ICU/stringi: common syntax (alternation, anchors, classes) matches
     /// identically, but backreferences and lookaround are unsupported.
     #[new]
-    #[pyo3(signature = (seed_words, *, residual=0, alpha=0.5, beta=0.1, weight=0.01, seed=42,
+    #[pyo3(signature = (seed_words, *, residual=0, alpha=0.5, beta=0.1, weight=0.01, seed=13,
                         seed_prior="frequency", sampler="sparse", seed_match="fixed",
                         case_insensitive=false, num_threads=1))]
     #[allow(clippy::too_many_arguments)]
@@ -14125,7 +14125,7 @@ impl FASTopic {
     /// deprecated alias for `convergence_tol`.
     #[new]
     #[pyo3(signature = (num_topics, *, lr=0.002, dt_alpha=3.0, tw_alpha=2.0,
-                        theta_temp=1.0, convergence_tol=1e-6, sinkhorn_iters=5000, sinkhorn_tol=5e-3, seed=42, em_tol=None))]
+                        theta_temp=1.0, convergence_tol=1e-6, sinkhorn_iters=5000, sinkhorn_tol=5e-3, seed=13, em_tol=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
@@ -14609,7 +14609,7 @@ impl KeyATM {
     /// parallel Gibbs (AD-LDA-style), overridable per-call in `fit`. `seed` seeds
     /// the RNG.
     #[new]
-    #[pyo3(signature = (keywords, *, num_topics=None, alpha=None, beta=0.01, beta_keyword=0.1, gamma1=1.0, gamma2=1.0, seed=42, estimate_alpha=true, sampler="sparse", num_threads=1))]
+    #[pyo3(signature = (keywords, *, num_topics=None, alpha=None, beta=0.01, beta_keyword=0.1, gamma1=1.0, gamma2=1.0, seed=13, estimate_alpha=true, sampler="sparse", num_threads=1))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         keywords: &Bound<'_, PyDict>,
@@ -14701,7 +14701,7 @@ impl KeyATM {
     /// Dirichlet prior (the estimated asymmetric α starts here), `beta` the
     /// topic-word Dirichlet smoothing; `seed` seeds the Gibbs RNG.
     #[staticmethod]
-    #[pyo3(signature = (num_topics, *, alpha=0.1, beta=0.01, seed=42))]
+    #[pyo3(signature = (num_topics, *, alpha=0.1, beta=0.01, seed=13))]
     fn weighted_lda(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         alpha: f64,

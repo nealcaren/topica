@@ -246,7 +246,7 @@ impl ETM {
     #[pyo3(signature = (num_topics, *, inference="em", convergence_tol=1e-4,
                         sigma_shrink=0.0, prior_variance=1e6, max_inner=25,
                         hidden_size=800, batch_size=1000, lr=0.005,
-                        wdecay=1.2e-6, seed=42, prior="laplace".to_string(),
+                        wdecay=1.2e-6, seed=13, prior="laplace".to_string(),
                         contrastive=false, contrastive_weight=0.5, contrastive_temp=0.5,
                         em_tol=None))]
     #[allow(clippy::too_many_arguments)]
@@ -924,7 +924,7 @@ impl DETM {
     #[new]
     #[pyo3(signature = (num_topics, *, delta=0.005, hidden_size=800,
                         eta_hidden_size=200, eta_nlayers=3, batch_size=1000,
-                        lr=0.005, wdecay=1.2e-6, grad_clip=None, convergence_tol=0.0, seed=42))]
+                        lr=0.005, wdecay=1.2e-6, grad_clip=None, convergence_tol=0.0, seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
@@ -1559,7 +1559,7 @@ impl InfoCTM {
     #[new]
     #[pyo3(signature = (num_topics, *, mi_weight=30.0, mi_temperature=0.2,
                         pos_threshold=0.4, hidden_size=100, dropout=0.0, lr=0.002,
-                        convergence_tol=0.0, seed=42, languages=None))]
+                        convergence_tol=0.0, seed=13, languages=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
@@ -2090,7 +2090,7 @@ impl ProdLDA {
     /// is a deprecated alias for `convergence_tol`.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=1.0, hidden_size=100, dropout=0.2,
-                        batch_size=200, lr=0.002, convergence_tol=0.0, seed=42,
+                        batch_size=200, lr=0.002, convergence_tol=0.0, seed=13,
                         prior="laplace".to_string(), contrastive=false,
                         contrastive_weight=0.5, contrastive_temp=0.5, em_tol=None))]
     #[allow(clippy::too_many_arguments)]
@@ -2731,7 +2731,7 @@ macro_rules! ctm_embedding_model {
             /// `contrastive_weight` with InfoNCE temperature `contrastive_temp`.
             #[new]
             #[pyo3(signature = (num_topics, *, alpha=1.0, hidden_size=100, dropout=0.2,
-                                        batch_size=200, lr=0.002, convergence_tol=0.0, seed=42,
+                                        batch_size=200, lr=0.002, convergence_tol=0.0, seed=13,
                                         prior="laplace".to_string(), contrastive=false,
                                         contrastive_weight=0.5, contrastive_temp=0.5))]
             #[allow(clippy::too_many_arguments)]

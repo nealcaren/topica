@@ -343,7 +343,7 @@ def effective_determinism(model, *, fit_settings: dict | None = None) -> dict:
 
         {"effective": "seed-reproducible",     # the config-aware class
          "registry_class": "bit-exact",        # the coarse per-class tag
-         "replay_requires": {"seed": 42},      # machine-readable replay conditions
+         "replay_requires": {"seed": 13},      # machine-readable replay conditions
          "notes": ["..."]}                     # human-readable caveats
 
     ``replay_requires`` carries the conditions an exact replay needs — always the

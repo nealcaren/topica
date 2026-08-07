@@ -186,7 +186,7 @@ impl OnlineLDA {
     #[new]
     #[pyo3(signature = (num_topics, *, alpha_sum=None, beta=0.01, tau=1.0, kappa=0.7,
                         batch_size=256, inner_iters=100, mean_change_tol=1e-3,
-                        total_docs=None, seed=42))]
+                        total_docs=None, seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,

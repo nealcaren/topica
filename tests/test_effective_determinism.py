@@ -54,7 +54,7 @@ def test_nmf_init_conditional():
     assert bit["replay_requires"] == {}
     rnd = effective_determinism(topica.NMF(3, init="random"))
     assert rnd["effective"] == "seed-reproducible"
-    assert rnd["replay_requires"].get("seed") == 42
+    assert rnd["replay_requires"].get("seed") == 13
 
 
 def test_ctm_stm_init_and_svi():
@@ -146,7 +146,7 @@ def test_manifest_records_effective_determinism():
     assert rec.model["determinism"] == "seed-reproducible"
     detail = rec.model["determinism_detail"]
     assert detail["registry_class"] == "bit-exact"
-    assert detail["replay_requires"].get("seed") == 42
+    assert detail["replay_requires"].get("seed") == 13
 
 
 def test_manifest_cvb0_detail_has_no_thread_requirement():

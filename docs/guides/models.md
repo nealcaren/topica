@@ -150,7 +150,7 @@ multi-threaded training.
 
 ```python
 import topica
-model = topica.LDA(num_topics=20, seed=42)
+model = topica.LDA(num_topics=20, seed=13)
 model.fit(docs, iters=1000)
 model.top_words(10)
 ```
@@ -217,12 +217,12 @@ already-fitted model with `partial_fit`.
 import topica
 
 # Batch online-VB fit (passes over the whole corpus in minibatches).
-model = topica.OnlineLDA(num_topics=20, batch_size=256, seed=42)
+model = topica.OnlineLDA(num_topics=20, batch_size=256, seed=13)
 model.fit(docs, iters=10)          # iters = passes over the corpus
 model.top_words(10)
 
 # Streaming: fit an initial batch, then fold in later minibatches.
-model = topica.OnlineLDA(num_topics=20, batch_size=1024, total_docs=1_000_000, seed=42)
+model = topica.OnlineLDA(num_topics=20, batch_size=1024, total_docs=1_000_000, seed=13)
 model.fit(first_chunk, iters=1)
 for chunk in later_chunks:         # each chunk a list[list[str]]
     theta_chunk = model.partial_fit(chunk)   # (len(chunk), num_topics)
@@ -295,7 +295,7 @@ without holding the whole count matrix; see the
 
 ```python
 topica.enable_experimental()
-m = topica.TensorLDA(num_topics=20, n_eigenvec=20, seed=42)
+m = topica.TensorLDA(num_topics=20, n_eigenvec=20, seed=13)
 m.fit(docs)
 print(m.top_words(10))
 ```
@@ -656,7 +656,7 @@ its topic-word estimates, `top_words`, and `coherence` behave exactly as GDMR's.
 
 ```python
 topica.enable_experimental()               # NarrativeTM is experimental and gated
-m = topica.NarrativeTM(num_topics=10, degree=3, segment_by="sentence", seed=42)
+m = topica.NarrativeTM(num_topics=10, degree=3, segment_by="sentence", seed=13)
 m.fit(docs, iters=1000)
 
 m.top_words(10)                            # topics, read like any GDMR/LDA fit

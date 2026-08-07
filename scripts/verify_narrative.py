@@ -44,7 +44,7 @@ def main():
         degree=3,
         segment_by="chunk",
         chunk_size=15,
-        seed=42,
+        seed=13,
         optimize_interval=10,
         burn_in=20,
     )

@@ -17,7 +17,7 @@ pip install topica
 import topica
 
 docs = [["cat", "dog", "fish"]] * 15 + [["planet", "star", "moon"]] * 15
-model = topica.LDA(num_topics=2, seed=42)
+model = topica.LDA(num_topics=2, seed=13)
 model.fit(docs, iters=1000)
 
 for i, words in enumerate(model.top_words(5)):

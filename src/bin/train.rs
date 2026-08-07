@@ -75,7 +75,7 @@ impl Default for Args {
             doc_topic_output: "doc_topic.tsv".to_string(),
             alpha_sum: None,
             beta: 0.01,
-            seed: 42,
+            seed: 13,
             show_topics_interval: 50,
             words_per_topic: 7,
         }

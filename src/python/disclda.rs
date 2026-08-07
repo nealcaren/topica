@@ -249,7 +249,7 @@ impl DiscLDA {
     /// which is normalised.
     #[new]
     #[pyo3(signature = (k_class, k_shared, *, alpha=None, beta=0.01, iters=1000,
-                        infer_sweeps=100, class_prior=None, seed=42))]
+                        infer_sweeps=100, class_prior=None, seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         k_class: usize,

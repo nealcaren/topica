@@ -39,7 +39,7 @@ print()
 
 # The simple way: sensible defaults, no tuning required.
 print("Training …")
-model = LDA(num_topics=2, seed=42)   # seed -> deterministic, reproducible fit
+model = LDA(num_topics=2, seed=13)   # seed -> deterministic, reproducible fit
 model.fit(documents)
 print()
 
@@ -53,7 +53,7 @@ print()
 #
 # model = LDA(
 #     num_topics=2,
-#     seed=42,
+#     seed=13,
 #     alpha_sum=2.0,         # document-topic prior concentration (default: num_topics)
 #     beta=0.01,             # topic-word smoothing
 #     optimize_interval=50,  # re-optimize alpha/beta every 50 iters after burn-in

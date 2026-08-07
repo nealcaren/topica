@@ -145,7 +145,7 @@ impl TensorLDA {
     #[new]
     #[pyo3(signature = (num_topics, *, alpha_0=1.0, n_iter_train=100, n_iter_test=30,
                         learning_rate=0.01, batch_size=10, smoothing=0.01,
-                        theta=1.0, n_eigenvec=None, pca_batch_size=128, seed=42))]
+                        theta=1.0, n_eigenvec=None, pca_batch_size=128, seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         num_topics: usize,

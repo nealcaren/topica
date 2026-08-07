@@ -102,7 +102,7 @@ struct S3State {
 #[pymethods]
 impl SemanticSignalSeparation {
     #[new]
-    #[pyo3(signature = (num_topics, *, feature_importance="combined".to_string(), iters=200, convergence_tol=1e-4, seed=42))]
+    #[pyo3(signature = (num_topics, *, feature_importance="combined".to_string(), iters=200, convergence_tol=1e-4, seed=13))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         feature_importance: String,

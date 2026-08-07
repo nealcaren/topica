@@ -89,7 +89,7 @@ impl IdealPointSentenceTM {
     /// `convergence_tol` stops EM on the relative change in the log-likelihood.
     #[new]
     #[pyo3(signature = (num_topics, *, num_dims=1, convergence_tol=1e-4,
-                        x_prior_variance=1.0, seed=42))]
+                        x_prior_variance=1.0, seed=13))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         num_dims: usize,

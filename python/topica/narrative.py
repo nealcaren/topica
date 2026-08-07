@@ -25,7 +25,7 @@ class NarrativeTM:
         beta: float = 0.01,
         optimize_interval: int = 50,
         burn_in: int = 200,
-        seed: int = 42,
+        seed: int = 13,
         decay: float = 0.0,
         sigma: float = 1.0,
         sigma0: float = 3.0,
