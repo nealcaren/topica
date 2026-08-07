@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Fixed
 
+- **`compare` no longer reports a one-sided fingerprint as a difference** (#672
+  follow-up). Comparing a `content_fingerprint=True` run with a default
+  `privacy="minimal"` run (which records no content fingerprint) reported the
+  `corpus_fingerprint` field as `only_in_a` / `only_in_b`, so two runs of the *same*
+  corpus read as "differences found". A fingerprint present on only one side is an
+  absence of evidence, not a mismatch, so it is now `incomparable` (symmetric with
+  `verify`'s `unverifiable`): it lands in `ManifestDiff.incomparable`, not
+  `.differences`. `only_in_*` still flags a genuinely recorded plain value (a count,
+  a setting) present in one run but not the other.
+
 - **`verify` no longer reports a clean re-verification as "differences found"**
   (#649 follow-up). At the default `privacy="minimal"` no content fingerprint is
   recorded, so a perfect re-check leaves `corpus_fingerprint` `unverifiable` — an

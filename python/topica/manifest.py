@@ -264,15 +264,18 @@ class ManifestDiff:
 
     Compares two manifests directly (no corpus or model needed), so it answers
     "did these two runs differ, and where?". ``fields`` maps each field to
-    ``same``, ``changed``, ``only_in_a`` / ``only_in_b`` (recorded in one but not
-    the other), or ``incomparable`` (e.g. fingerprints from different specs, or a
-    keyed digest). ``same`` is a convenience for "every field same"; the summary
-    always shows the breakdown.
+    ``same``, ``changed``, ``only_in_a`` / ``only_in_b`` (a recorded value present
+    in one run but not the other), or ``incomparable`` (fingerprints from different
+    specs, a keyed digest, or a fingerprint recorded on only one side). ``same`` is
+    a convenience for "every field same"; the summary always shows the breakdown.
 
     As in :class:`VerifyResult`, ``incomparable`` is an *inability to tell* rather
-    than a mismatch, and is reported apart from real differences (``changed`` and
-    the ``only_in_*`` statuses, which are genuine: one run recorded a field the
-    other did not).
+    than a mismatch, and is reported apart from real differences. ``changed`` and
+    the ``only_in_*`` statuses are genuine differences: one run recorded a plain
+    value (a count, a setting) the other did not. A *fingerprint* present on only
+    one side is not a difference, though: it is an absence of evidence (a
+    ``privacy="minimal"`` run records none), so it is reported ``incomparable``, not
+    ``only_in_*``.
     """
 
     fields: dict[str, str]
@@ -714,10 +717,14 @@ def _read_bundle_manifest(zf) -> dict:
 def _cmp_fp(a: dict | None, b: dict | None) -> str:
     if a is None and b is None:
         return "same"
-    if a is None:
-        return "only_in_b"
-    if b is None:
-        return "only_in_a"
+    # A fingerprint recorded on only one side is an *absence of evidence*, not a
+    # difference: a `privacy="minimal"` run records no content fingerprint, so
+    # comparing it with a `content_fingerprint=True` run gives nothing to check the
+    # content against. Report it as incomparable (symmetric with `verify`'s
+    # `unverifiable`), never as a difference -- an identical corpus must not read as
+    # changed just because one run chose not to fingerprint it.
+    if a is None or b is None:
+        return "incomparable"
     # Different fingerprint specs, or a keyed digest, cannot be compared for
     # equality of content -- do not guess.
     if a.get("spec") != b.get("spec") or a.get("keyed") or b.get("keyed"):
