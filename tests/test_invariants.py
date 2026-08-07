@@ -223,8 +223,13 @@ def test_extreme_covariate_scale_stays_finite(name, scale):
     model = _MODELS[name]["build"](3)
     try:
         model.fit(docs, _covariate_extreme(len(docs), scale), iters=_ITERS)
-    except (ValueError, OverflowError):
-        return  # a clean rejection of a pathological design satisfies the invariant
+    except ValueError as exc:
+        # A clean, explained rejection of a pathological design satisfies the
+        # invariant; a bare/unrelated error does not, so require it to name the cause.
+        assert any(w in str(exc).lower() for w in
+                   ("covariate", "scale", "feature", "overflow", "finite", "design")), \
+            f"{name} raised an unexplained ValueError at scale {scale:g}: {exc}"
+        return
     _assert_valid_distributions(model)
     assert np.isfinite(np.asarray(model.feature_effects)).all(), (
         f"{name} feature_effects went non-finite at covariate scale {scale:g}"
@@ -255,22 +260,39 @@ def _build_threaded(name: str, k: int, num_threads: int):
     return builders[name]()
 
 
+def _planted_docs(n: int = 60, seed: int = 0) -> list[list[str]]:
+    """Two clearly-separated word blocks, so a correct fit recovers two distinct,
+    concentrated topics. Unlike the uniform-random ``_docs``, this has real structure
+    to recover, which is what makes the threaded-vs-serial comparison a merge-
+    correctness signal rather than a smoke test."""
+    rng = np.random.default_rng(seed)
+    block_a, block_b = ["a", "b", "c", "d"], ["p", "q", "r", "s"]
+    return [list(rng.choice(block_a if i % 2 == 0 else block_b, 8)) for i in range(n)]
+
+
 @pytest.mark.parametrize("name", _ALL)
-def test_multithread_path_stays_valid(name):
-    # The approximate parallel (AD-LDA-style) sampler is a non-parity path: parity
-    # always runs single-thread. Its count-table merge must still produce finite,
-    # normalized, non-collapsed topics -- a merge bug shows up as NaN or a degenerate
-    # single-topic result, not as a parity drift.
-    docs = _docs(48)
+def test_multithread_matches_singlethread(name):
+    # The approximate parallel (AD-LDA-style) sampler is a non-parity path -- parity
+    # always runs single-thread -- so its count-table merge is otherwise untested. On
+    # well-separated planted data the deterministic parallel merge (fixed sweep seed +
+    # partition) recovers the SAME topics as the serial path, so the two topic-word
+    # matrices must align to near-zero distance. A merge bug that corrupts counts
+    # moves them apart (or NaNs them) without touching any parity fixture.
     try:
-        model = _build_threaded(name, 3, num_threads=2)
+        parallel = _build_threaded(name, 2, num_threads=2)
     except TypeError:
         pytest.skip(f"{name} takes no num_threads")
-    _MODELS[name]["fit"](model, docs)
-    _assert_valid_distributions(model)
-    # not collapsed to a single topic (a classic parallel-merge failure mode):
-    # more than one topic carries appreciable mean mass across documents.
-    mean_theta = np.asarray(model.doc_topic).mean(axis=0)
-    assert int((mean_theta > 0.01).sum()) > 1, (
-        f"{name} multithread fit collapsed to ~1 used topic"
+    docs = _planted_docs()
+    serial = _MODELS[name]["build"](2)  # registry build defaults to single-thread
+    _MODELS[name]["fit"](serial, docs)
+    _MODELS[name]["fit"](parallel, docs)
+    _assert_valid_distributions(parallel)
+    max_dist = max(
+        d for _, _, d in topica.align_topics(
+            np.asarray(serial.topic_word), np.asarray(parallel.topic_word))
+    )
+    assert max_dist < 0.05, (
+        f"{name} 2-thread topics diverge from single-thread (max aligned distance "
+        f"{max_dist:.3f}); the approximate-parallel merge should recover the same "
+        f"topics on well-separated data"
     )
