@@ -108,6 +108,58 @@ mean purity. This is the paper's *working* number-of-topics signal — doc-label
 tracks ground-truth cluster quality, where rating the top *words* across `k` does not
 — and complements `search_k`'s coherence, exclusivity, held-out, and dispersion criteria.
 
+### Ranking whole models: `llm.judge` (Zheng et al. 2025)
+
+`llm.coherence` scores words *within* a topic; `llm.judge` scores how well a model's
+topics fit a *document*, and ranks whole models against each other:
+
+```python
+result = topica.llm.judge(
+    {"lda": lda, "stm": stm, "bertopic": bt},   # fitted on the SAME docs, same order
+    docs, backend=backend,
+    n_comparisons=100, representation="summary",  # or "words"
+)
+result.elo            # {"lda": 1487, "stm": 1533, ...} — Bradley-Terry, rescaled to Elo
+result.summary()      # leaderboard with bootstrap CIs
+result.comparisons    # raw (doc, A, B, choice, reasoning) records, re-aggregatable
+```
+
+For each model pair it samples documents, shows the judge each model's top topics for
+that document (as one-sentence summaries, so models with *different* vocabularies —
+words vs. embeddings vs. features — compare fairly), asks which set better captures the
+document, and aggregates the wins with a Bradley-Terry model rescaled to Elo (mean
+1500) with bootstrap CIs. This is the paper's flagship metric: it is the one signal
+that compares different model *families* on topic-*document* fit rather than intra-topic
+word relatedness, so it is the natural way to rank a set of fitted models on one corpus.
+`seed` fixes the document sampling and A/B order (the LLM itself stays `llm-bounded`).
+
+Three things to keep in mind:
+
+- **Cost.** A run makes `n_comparisons × M(M-1)/2` LLM calls for `M` models (plus, in
+  `summary` mode, one cached call per surfaced topic). The default `n_comparisons=100`
+  follows the paper and is hundreds of calls for a few models — at a rough ~2-3s per
+  call that is ~10-15 min for a 3-model paper-sized run. Preview the exact count with
+  `judge(..., dry_run=True)` (returns the plan, makes no calls), and start smaller
+  while exploring.
+- **Read the CIs.** With few comparisons the bootstrap intervals overlap and the
+  ranking does not actually separate the models; treat overlapping CIs as *no
+  decision* (`summary()` flags every adjacent pair whose CIs overlap) and raise
+  `n_comparisons` before reporting an Elo table. The paper uses 100 *per pair*.
+- **Representation.** Use `representation="summary"` to compare *different families*
+  fairly; `representation="words"` is cheaper (no summary calls) and fine for a
+  same-family sweep such as LDA at several `k`. Summaries are themselves LLM calls, so
+  `summary` mode trades a vocabulary-style bias for a (usually smaller) summarizer
+  bias — use a capable model.
+- **Same corpus, same order.** Every model must be fit on the same `docs` in the same
+  order — judge aligns `doc_topic` row `d` to `docs[d]`. It warns when the models'
+  vocabularies disagree (which catches different corpora, or the same corpus in a
+  different order), but that is only a proxy and cannot catch a misalignment under a
+  shared fixed vocabulary, so ensure the alignment yourself. A/B presentation order is
+  randomized (fixed by `seed`) specifically to cancel the judge's position bias, so a
+  lopsided A-vs-B count in `.comparisons` is expected and does not bias the Elo. Each
+  record also keeps the exact topic-set text shown to the judge, so a run is fully
+  re-auditable.
+
 ### A multi-dimensional suite (Tan & D'Souza 2025)
 
 Coherence rating answers one question — *are these words related?* — but a topic can

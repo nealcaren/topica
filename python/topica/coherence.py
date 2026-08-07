@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import math
 import re
+import warnings
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from itertools import combinations
@@ -832,11 +833,31 @@ ALIGN_MISSING_PROMPT = (
     "that are NOT captured by the topic words. Reply with a comma-separated list of "
     'the missing themes, or "none".\n\nDocument:\n{document}\n\nTopic words: {words}'
 )
+# Zheng et al. (2025, "Model Directions, Not Words", arXiv:2507.23220) wrap their
+# topic models in model-agnostic LLM tools. The topic *judge* (App. G) is the
+# flagship: a Chatbot-Arena-style pairwise comparison that scores topic-document fit
+# across models with *different* vocabularies (words vs summaries vs features). The
+# summary rendering (F.2) is a uniform one-sentence topic description so that
+# comparison is apples-to-apples regardless of a model's native representation.
+JUDGE_PROMPT = (
+    "You are a helpful assistant comparing two topic models by how well their topics "
+    "describe a document. {dataset}Below is a document, then two sets of topics (A and "
+    "B) that two models assigned to it. Decide which set better captures the "
+    "document's main themes. Reply with \"A\", \"B\", or \"tie\" on the first line, then "
+    "one sentence of reasoning.\n\nDocument:\n{document}\n\nTopic set A:\n{set_a}\n\n"
+    "Topic set B:\n{set_b}"
+)
+SUMMARY_PROMPT = (
+    "You are a helpful assistant summarizing a topic from a topic model. {dataset}"
+    "Given the topic's top words, describe its central theme in a single short "
+    "sentence. Reply with only that sentence.\n\n{words}"
+)
 LLM_EVAL_PROMPTS: dict[str, str] = {
     "rating": RATING_PROMPT, "intrusion": INTRUSION_PROMPT, "label": LABEL_PROMPT,
     "outlier": OUTLIER_PROMPT, "repetitive_rate": REPETITIVE_RATE_PROMPT,
     "duplicate": DUPLICATE_PROMPT, "diversity": DIVERSITY_PROMPT,
     "align_irrelevant": ALIGN_IRRELEVANT_PROMPT, "align_missing": ALIGN_MISSING_PROMPT,
+    "judge": JUDGE_PROMPT, "summary": SUMMARY_PROMPT,
 }
 
 
@@ -1300,3 +1321,386 @@ def llm_alignment(model, docs, *, backend, n_words=10, n_docs=5,
                     "irrelevant": float(np.mean(irr)) if irr else float("nan"),
                     "missing": float(np.mean(mis)) if mis else float("nan")})
     return out
+
+
+# ---------------------------------------------------------------------------
+# Topic judge: pairwise document-topic evaluation -> Bradley-Terry -> Elo
+# (Zheng et al. 2025, "Model Directions, Not Words", App. G)
+# ---------------------------------------------------------------------------
+
+
+def _top_topics_for_doc(theta_row, q, p):
+    """A document's top topics: the top ``q`` by weight, or the fewest topics whose
+    cumulative weight reaches fraction ``p`` of the row, whichever is *fewer*
+    (Zheng et al. 2025, §5.1). Always at least one topic."""
+    order = np.argsort(theta_row)[::-1]
+    if order.size == 0:
+        return []
+    csum = np.cumsum(theta_row[order])
+    total = csum[-1]
+    n_p = int(np.searchsorted(csum, p * total) + 1) if total > 0 else order.size
+    n = min(int(q), n_p) if q else n_p
+    n = max(1, min(n, order.size))
+    return [int(i) for i in order[:n]]
+
+
+def _render_topic_set(model, topic_ids, representation, backend, ds, n_words,
+                      summary_tmpl, cache):
+    """Render a model's topics for one document as text: a word list per topic, or a
+    one-sentence LLM summary per topic (cached per ``(model, topic)`` so a topic is
+    summarized once no matter how many comparisons reuse it)."""
+    from .analysis import _top_words
+
+    lines = []
+    for t in topic_ids:
+        words = _top_words(model, int(t), n_words)
+        if representation == "summary":
+            key = (id(model), int(t))
+            if key not in cache:
+                reply = backend(summary_tmpl.format(dataset=ds, words=", ".join(words)))
+                cache[key] = " ".join(str(reply).strip().split()) or ", ".join(words)
+            lines.append(f"- {cache[key]}")
+        else:
+            lines.append(f"- {', '.join(words)}")
+    return "\n".join(lines)
+
+
+def _parse_judge_choice(reply):
+    """Parse an ``A`` / ``B`` / ``tie`` verdict from the judge's reply. Returns
+    ``"a"``, ``"b"``, ``"tie"``, or ``None`` when nothing is recognisable (treated as
+    a tie by the caller). The prompt asks for the verdict on the first line, so that
+    is read first; a mention of "tie" then beats a bare stray ``a``/``b`` (e.g. the
+    English article "a" in "it is a tie") so a verbose tie is not misread as an
+    A-win."""
+    r = str(reply).strip().lower()
+    first = re.sub(r"[^a-z]", " ", r.split("\n", 1)[0]).split()
+    if first and first[0] in ("a", "b", "tie"):
+        return first[0]
+    if re.search(r"\btie\b", r):
+        return "tie"
+    m = re.search(r"\b([ab])\b", r)
+    return m.group(1) if m else None
+
+
+def _bradley_terry(win, *, smoothing=1.0, iters=1000, tol=1e-10):
+    """Bradley-Terry strengths from a win-credit matrix by the MM algorithm (Hunter
+    2004). ``win[i, j]`` is the credit model ``i`` earned against ``j`` (a win = 1, a
+    tie = 0.5 each). ``smoothing`` adds a phantom tie to every ordered pair so a model
+    that always or never wins still gets a finite strength. Strengths are normalised
+    to geometric mean 1."""
+    W = np.asarray(win, dtype=float).copy()
+    M = W.shape[0]
+    if smoothing:
+        off = (np.ones((M, M)) - np.eye(M)) * (0.5 * smoothing)
+        W = W + off
+    n = W + W.T  # games played between i and j
+    w = W.sum(axis=1)  # total win-credit for i
+    p = np.ones(M)
+    for _ in range(iters):
+        p_new = np.empty(M)
+        for i in range(M):
+            denom = 0.0
+            for j in range(M):
+                if i != j:
+                    s = p[i] + p[j]
+                    if s > 0:
+                        denom += n[i, j] / s
+            p_new[i] = (w[i] / denom) if denom > 0 else p[i]
+        p_new = np.maximum(p_new, 1e-300)
+        p_new /= np.exp(np.mean(np.log(p_new)))
+        if np.max(np.abs(p_new - p)) < tol:
+            p = p_new
+            break
+        p = p_new
+    return p
+
+
+def _bt_to_elo(strengths, base=1500.0, scale=400.0):
+    """Rescale Bradley-Terry strengths to Elo (default mean 1500): a 400-point gap is
+    a 10:1 predicted win ratio, matching ``P(i beats j) = p_i / (p_i + p_j)``."""
+    logp = np.log10(np.maximum(np.asarray(strengths, dtype=float), 1e-300))
+    return scale * (logp - logp.mean()) + base
+
+
+@dataclass
+class JudgeResult:
+    """Result of :func:`llm_judge`: an Elo ranking of the compared models.
+
+    Attributes
+    ----------
+    elo : dict[str, float]
+        Bradley-Terry strengths rescaled to Elo (mean 1500); higher is better.
+    win_matrix : numpy.ndarray
+        ``(M, M)`` win-credit matrix (``[i, j]`` = credit model ``i`` earned against
+        ``j``; a tie adds 0.5 each way), in ``names`` order.
+    bootstrap_ci : dict[str, tuple[float, float]]
+        Per-model percentile CI on Elo from resampling the comparisons.
+    comparisons : list[dict]
+        The raw audit records: ``doc``, ``model_a`` / ``model_b`` (as presented),
+        ``set_a`` / ``set_b`` (the exact rendered topic-set text the judge saw),
+        ``choice``, ``winner``, and ``reasoning``. Storing the rendered sets makes a
+        run fully re-auditable and re-aggregatable without re-calling the LLM.
+    names : list[str]
+        Model names, the order of ``win_matrix`` rows/columns.
+    representation : str
+        ``"summary"`` or ``"words"`` -- how each topic set was rendered to the judge.
+    """
+
+    elo: dict
+    win_matrix: np.ndarray
+    bootstrap_ci: dict
+    comparisons: list
+    names: list
+    representation: str
+
+    def ranking(self) -> list:
+        """Model names best-to-worst by Elo."""
+        return sorted(self.names, key=lambda k: -self.elo[k])
+
+    def to_frame(self):
+        """A pandas DataFrame: one row per model with ``elo``, ``ci_low``,
+        ``ci_high``, sorted best-first (raises if pandas is absent)."""
+        import pandas as pd
+
+        rows = [{"model": nm, "elo": self.elo[nm],
+                 "ci_low": self.bootstrap_ci.get(nm, (float("nan"),) * 2)[0],
+                 "ci_high": self.bootstrap_ci.get(nm, (float("nan"),) * 2)[1]}
+                for nm in self.ranking()]
+        return pd.DataFrame(rows)
+
+    def summary(self) -> str:
+        """A short text leaderboard (model, Elo, CI), best-first. Flags every pair of
+        *adjacent* models whose bootstrap CIs overlap -- with few comparisons they
+        usually do, and an overlap means the ranking does not separate that pair
+        (treat as no decision there, and raise ``n_comparisons``)."""
+        rank = self.ranking()
+        lines = [f"LLM topic judge ({self.representation}, {len(self.comparisons)} "
+                 f"comparisons, Elo mean 1500)"]
+        for nm in rank:
+            lo, hi = self.bootstrap_ci.get(nm, (float("nan"), float("nan")))
+            lines.append(f"  {nm:<20s} {self.elo[nm]:7.1f}  [{lo:7.1f}, {hi:7.1f}]")
+        overlaps = []
+        for hi_nm, lo_nm in zip(rank, rank[1:]):
+            hi_lo = self.bootstrap_ci.get(hi_nm, (float("nan"),) * 2)[0]
+            lo_hi = self.bootstrap_ci.get(lo_nm, (float("nan"),) * 2)[1]
+            if not math.isnan(hi_lo) and not math.isnan(lo_hi) and hi_lo <= lo_hi:
+                overlaps.append(f"{hi_nm}~{lo_nm}")
+        if overlaps:
+            lines.append("  note: overlapping CIs (not separated at this "
+                         f"n_comparisons): {', '.join(overlaps)}; raise n_comparisons.")
+        return "\n".join(lines)
+
+
+def llm_judge(models, docs, *, backend, n_comparisons=100, q=2, p=0.75,
+              representation="summary", n_words=10, dataset_description=None,
+              bootstrap=100, confidence_level=0.95, bt_smoothing=1.0, max_chars=1500,
+              seed=0, dry_run=False, prompts=None):
+    """Rank topic models by an LLM's pairwise topic-document judgments (Zheng et al.
+    2025, App. G) -- the paper's flagship, vocabulary-agnostic evaluation.
+
+    For each unordered model pair and each of ``n_comparisons`` rounds: sample a
+    document, take each model's top topics for it (top ``q``, or the topics under
+    cumulative mass ``p``, whichever fewer), render each set as text, and ask the LLM
+    which set better captures the document. Outcomes (wins, ties as half-wins) are
+    aggregated with a Bradley-Terry model and rescaled to Elo (mean 1500), with a
+    bootstrap CI over the comparisons.
+
+    Unlike :func:`llm_coherence` (intra-topic word relatedness), this scores
+    topic-*document* fit and compares models with *different* vocabularies fairly
+    (words vs. one-sentence summaries), so it is the natural engine for ranking a set
+    of fitted models on the same corpus. ``llm-bounded``: the LLM is not
+    bit-reproducible, but ``seed`` fixes the document sampling and presentation order,
+    so the comparison *design* is reproducible.
+
+    Cost: judge makes ``n_comparisons * M*(M-1)/2`` LLM calls for ``M`` models, plus
+    (for ``representation="summary"``) up to one cached summary call per surfaced
+    ``(model, topic)``. The default ``n_comparisons=100`` follows the paper and can be
+    hundreds of calls; lower it (and read the CIs) while exploring. With few
+    comparisons the bootstrap CIs overlap and the ranking does not separate the
+    models -- :meth:`JudgeResult.summary` flags that -- so scale ``n_comparisons`` up
+    before reporting an Elo table.
+
+    Parameters
+    ----------
+    models : dict[str, fitted model]
+        Two or more fitted models, all fit on the same ``docs`` in the same order.
+        judge aligns each model's ``doc_topic`` row ``d`` to ``docs[d]`` and cannot
+        verify the correspondence beyond the row count, so models fit on different
+        documents produce a silently invalid ranking. It warns when the models'
+        vocabularies disagree, which catches the common case (different corpora, or the
+        same corpus in a different order), but that is only a *proxy*: a misalignment
+        under a shared fixed vocabulary is not caught, so ensure yourself that every
+        model was fit on the same documents in the same order.
+    docs : Corpus | list of str | list of token lists
+        The documents, in the order the models were fit on (their ``doc_topic`` rows).
+    backend : callable ``str -> str`` or model-name str
+        The LLM judge (see :func:`llm_coherence`); use ``temperature=0``.
+    n_comparisons : int
+        Comparisons per model pair (paper: 100).
+    q : int
+        Cap on the number of top topics shown per document per model (``0`` = no
+        cap, use ``p`` alone).
+    p : float
+        Cumulative-probability cap on top topics (the smaller of ``q`` / ``p`` wins).
+    representation : {"summary", "words"}
+        Render each topic as a one-sentence LLM summary (paper default; use it to
+        compare *different model families* fairly) or as its top-``n_words`` word list
+        ("words" is cheaper -- no summary calls -- and fine for a same-family sweep,
+        e.g. LDA at several K).
+    n_words : int
+        Top words shown per topic in ``"words"`` mode, and summarized per topic in
+        ``"summary"`` mode.
+    dataset_description : optional str
+        A one-line corpus description added to every prompt (e.g. "Usenet posts about
+        computing and politics"), which can sharpen the judge and the summaries.
+    bootstrap : int
+        Resamples for the per-model Elo CI; 0 skips (CIs come back NaN).
+    confidence_level : float
+        Central mass of the bootstrap percentile interval (default 0.95).
+    bt_smoothing : float
+        Phantom-tie pseudocount per pair for a finite Elo when a model always/never
+        wins.
+    max_chars : int
+        Truncate each document to this many characters in the judge prompt.
+    seed : int
+        Seeds document sampling and A/B presentation order (the LLM is still bounded).
+    dry_run : bool
+        If ``True``, make no LLM calls and return a plan dict instead
+        (``{"models", "pairs", "n_comparisons", "judge_calls", "max_summary_calls",
+        "representation"}``) so you can preview the cost before paying for a run.
+    prompts : optional dict
+        Override the editable templates (keys ``"judge"``, ``"summary"``); defaults to
+        :data:`LLM_EVAL_PROMPTS`.
+
+    Returns
+    -------
+    JudgeResult
+        The Elo ranking, bootstrap CIs, win matrix, and the raw comparison records
+        (see :class:`JudgeResult`). If ``dry_run=True``, a plan ``dict`` instead.
+    """
+    if not isinstance(models, dict):
+        raise TypeError("models must be a dict {name: fitted_model}")
+    names = list(models)
+    if len(names) < 2:
+        raise ValueError("judge needs at least two models to compare")
+    if representation not in ("summary", "words"):
+        raise ValueError("representation must be 'summary' or 'words'")
+    backend = _resolve_llm_call(backend)
+    P = prompts or LLM_EVAL_PROMPTS
+    judge_tmpl, summary_tmpl = P["judge"], P["summary"]
+    ds = _dataset_clause(dataset_description)
+    texts = _doc_texts(docs)
+    D = len(texts)
+    thetas = {}
+    for nm, m in models.items():
+        th = np.asarray(m.doc_topic, dtype=float)
+        if th.shape[0] != D:
+            raise ValueError(
+                f"model {nm!r} has {th.shape[0]} doc-topic rows but there are {D} "
+                "documents; every model must be fit on the same docs, in order")
+        thetas[nm] = th
+
+    # judge aligns doc_topic row d to docs[d] and cannot otherwise verify that every
+    # model saw the same documents in the same order. The row-count check above only
+    # catches a length mismatch, not two models fit on *different* same-length slices
+    # (a silently invalid ranking). Differing vocabularies are a strong signal of
+    # that mistake, so warn on it -- the cheapest guard short of a stored corpus hash.
+    vocabs = {}
+    for nm, m in models.items():
+        try:
+            vocabs[nm] = tuple(m.vocabulary)
+        except Exception:
+            pass
+    if len(set(vocabs.values())) > 1:
+        warnings.warn(
+            "the models have different vocabularies (different words, or the same "
+            "words in a different order), which usually means they were fit on "
+            "different corpora or the same corpus in a different order; judge assumes "
+            "every model was fit on the same documents in the same order (it aligns "
+            "doc_topic row d to docs[d]) and the ranking is invalid otherwise. Re-fit "
+            "all models on one corpus, in one order. (This vocabulary check is a "
+            "proxy: it cannot catch a misalignment where the vocabularies happen to "
+            "match, e.g. a shared fixed vocabulary.)",
+            stacklevel=2)
+
+    M = len(names)
+    n_pairs = M * (M - 1) // 2
+    judge_calls = max(1, n_comparisons) * n_pairs
+    if dry_run:
+        # Return the plan without calling the LLM, so a user can preview the cost of a
+        # (potentially hundreds-of-calls) run before paying for it.
+        max_summary_calls = 0
+        if representation == "summary":
+            for m in models.values():
+                max_summary_calls += int(getattr(m, "num_topics", 0))
+        return {"models": M, "pairs": n_pairs, "n_comparisons": max(1, n_comparisons),
+                "judge_calls": judge_calls, "max_summary_calls": max_summary_calls,
+                "representation": representation}
+
+    idx = {nm: i for i, nm in enumerate(names)}
+    win = np.zeros((M, M))
+    cache: dict = {}
+    comparisons: list = []
+    rng = np.random.RandomState(seed)
+
+    for a, b in combinations(names, 2):
+        for _ in range(max(1, n_comparisons)):
+            d = int(rng.randint(D))
+            flip = bool(rng.randint(2))  # randomize A/B slot to blunt position bias
+            first, second = (b, a) if flip else (a, b)
+            set_a = _render_topic_set(models[first],
+                                      _top_topics_for_doc(thetas[first][d], q, p),
+                                      representation, backend, ds, n_words,
+                                      summary_tmpl, cache)
+            set_b = _render_topic_set(models[second],
+                                      _top_topics_for_doc(thetas[second][d], q, p),
+                                      representation, backend, ds, n_words,
+                                      summary_tmpl, cache)
+            reply = backend(judge_tmpl.format(
+                dataset=ds, document=str(texts[d])[:max_chars],
+                set_a=set_a, set_b=set_b))
+            choice = _parse_judge_choice(reply)
+            if choice == "a":
+                winner = first
+            elif choice == "b":
+                winner = second
+            else:
+                winner = None  # tie / unparseable -> split credit
+            comparisons.append({"doc": d, "model_a": first, "model_b": second,
+                                "set_a": set_a, "set_b": set_b,
+                                "choice": choice, "winner": winner,
+                                "reasoning": str(reply).strip()})
+            if winner == a:
+                win[idx[a], idx[b]] += 1.0
+            elif winner == b:
+                win[idx[b], idx[a]] += 1.0
+            else:
+                win[idx[a], idx[b]] += 0.5
+                win[idx[b], idx[a]] += 0.5
+
+    elo_arr = _bt_to_elo(_bradley_terry(win, smoothing=bt_smoothing))
+    elo = {nm: float(elo_arr[i]) for i, nm in enumerate(names)}
+
+    ci = {nm: (float("nan"), float("nan")) for nm in names}
+    if bootstrap and bootstrap > 0 and comparisons:
+        C = len(comparisons)
+        boot = np.empty((bootstrap, M))
+        for bi in range(bootstrap):
+            bw = np.zeros((M, M))
+            for k in rng.randint(0, C, size=C):
+                rec = comparisons[k]
+                w, ma, mb = rec["winner"], rec["model_a"], rec["model_b"]
+                if w is None:
+                    bw[idx[ma], idx[mb]] += 0.5
+                    bw[idx[mb], idx[ma]] += 0.5
+                else:
+                    loser = mb if w == ma else ma
+                    bw[idx[w], idx[loser]] += 1.0
+            boot[bi] = _bt_to_elo(_bradley_terry(bw, smoothing=bt_smoothing))
+        alpha = (1.0 - confidence_level) / 2.0
+        lo, hi = np.quantile(boot, alpha, axis=0), np.quantile(boot, 1 - alpha, axis=0)
+        ci = {nm: (float(lo[i]), float(hi[i])) for i, nm in enumerate(names)}
+
+    return JudgeResult(elo=elo, win_matrix=win, bootstrap_ci=ci,
+                       comparisons=comparisons, names=names,
+                       representation=representation)

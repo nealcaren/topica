@@ -35,6 +35,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`topica.llm.judge` — rank whole topic models by pairwise topic-document fit**
+  (#583). A model-agnostic port of the *topic judge* from Zheng et al. (2025,
+  "Model Directions, Not Words", App. G): for each model pair it samples documents,
+  shows an LLM each model's top topics for a document (as one-sentence summaries, so
+  models with different vocabularies compare fairly, or as word lists), asks which set
+  better captures the document, and aggregates the wins with a Bradley-Terry model
+  rescaled to Elo (mean 1500) with bootstrap CIs. Unlike `llm.coherence` (intra-topic
+  word relatedness) it scores topic-*document* fit across model families, so it is the
+  natural engine for ranking fitted models on one corpus. Returns a `JudgeResult`
+  (`.elo`, `.bootstrap_ci`, `.win_matrix`, `.ranking()`, `.summary()`, `.to_frame()`,
+  and the raw `.comparisons` for audit). Adds a `representation="summary"` topic
+  rendering shared with the judge. `llm-bounded`: the LLM is not bit-reproducible, but
+  `seed` fixes the document sampling and A/B order. First of the model-agnostic LLM
+  pipeline tools from the paper (`refine`, human-agreement helper to follow).
+
 - **`topica.embedding_regression` — covariate effects on word meaning** (#669). A
   numpy-native port of the à la carte on text (conText) embedding regression of
   Rodriguez, Spirling and Stewart (2023), validated bit-exact against the R `conText`
