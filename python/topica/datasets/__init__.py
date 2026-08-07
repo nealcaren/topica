@@ -71,7 +71,7 @@ class Bunch(dict):
 # Immutable commit that holds the dataset files. Pinned (not ``main``) so a
 # given topica version always fetches the same bytes; override with the
 # TOPICA_DATA_REF environment variable for local development against a branch.
-_DATA_REF = "094185fadaba90104ffef93aae689f5ffa958c21"
+_DATA_REF = "90f9c75423d99651f873cee69495ebea23942c2c"
 _RAW_BASE = "https://raw.githubusercontent.com/nealcaren/topica"
 
 # name -> dataset record. ``vendored`` files ship in the wheel; the rest carry a
@@ -116,7 +116,7 @@ _REGISTRY = {
     "ng20_minilm": {
         "remote": "examples/ng20_minilm.npz",
         "filename": "ng20_minilm.npz",
-        "sha256": "aa4afb4c88af8692b8639ae4ea62025139643b63e706de6412dace1df63a8518",
+        "sha256": "e1c1971fab4d1af1f6693577a9d7b7c37049f57aa0f81757b044208102787a86",
         "n_docs": 2594,
         "summary": (
             "20-Newsgroups (5 groups) with precomputed MiniLM sentence embeddings "
