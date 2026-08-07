@@ -13,6 +13,7 @@ The namespace collects the suite so it reads as a family and signals the shared
     topica.llm.coherence(model, backend=backend)        # per-topic 1-3 rating (Stammbach et al. 2023)
     topica.llm.intrusion(model, backend=backend)        # LLM picks the planted intruder -> accuracy
     topica.llm.select_k(models, docs, backend=backend)  # number of topics by doc-label purity
+    topica.llm.judge({"lda": lda, "ctm": ctm}, docs, backend=backend)  # Elo ranking by doc-topic fit
     # Tan & D'Souza (2025) multi-dimensional suite:
     topica.llm.outlier(model, backend=backend)          # unsupervised semantic-outlier words
     topica.llm.repetitiveness(model, backend=backend)   # is coherence just redundancy?
@@ -33,16 +34,18 @@ from .coherence import (
     llm_coherence as coherence,
     llm_intrusion as intrusion,
     llm_select_k as select_k,
+    llm_judge as judge,
     llm_outlier as outlier,
     llm_repetitiveness as repetitiveness,
     llm_diversity as diversity,
     llm_adversarial as adversarial,
     llm_alignment as alignment,
+    JudgeResult,
     LLM_EVAL_PROMPTS as PROMPTS,
 )
 from .labeling import llm_backend as backend
 
 __all__ = [
-    "coherence", "intrusion", "select_k", "outlier", "repetitiveness",
-    "diversity", "adversarial", "alignment", "backend", "PROMPTS",
+    "coherence", "intrusion", "select_k", "judge", "outlier", "repetitiveness",
+    "diversity", "adversarial", "alignment", "backend", "JudgeResult", "PROMPTS",
 ]

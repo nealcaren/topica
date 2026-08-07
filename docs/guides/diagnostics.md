@@ -108,6 +108,31 @@ mean purity. This is the paper's *working* number-of-topics signal — doc-label
 tracks ground-truth cluster quality, where rating the top *words* across `k` does not
 — and complements `search_k`'s coherence, exclusivity, held-out, and dispersion criteria.
 
+### Ranking whole models: `llm.judge` (Zheng et al. 2025)
+
+`llm.coherence` scores words *within* a topic; `llm.judge` scores how well a model's
+topics fit a *document*, and ranks whole models against each other:
+
+```python
+result = topica.llm.judge(
+    {"lda": lda, "stm": stm, "bertopic": bt},   # fitted on the SAME docs, same order
+    docs, backend=backend,
+    n_comparisons=100, representation="summary",  # or "words"
+)
+result.elo            # {"lda": 1487, "stm": 1533, ...} — Bradley-Terry, rescaled to Elo
+result.summary()      # leaderboard with bootstrap CIs
+result.comparisons    # raw (doc, A, B, choice, reasoning) records, re-aggregatable
+```
+
+For each model pair it samples documents, shows the judge each model's top topics for
+that document (as one-sentence summaries, so models with *different* vocabularies —
+words vs. embeddings vs. features — compare fairly), asks which set better captures the
+document, and aggregates the wins with a Bradley-Terry model rescaled to Elo (mean
+1500) with bootstrap CIs. This is the paper's flagship metric: it is the one signal
+that compares different model *families* on topic-*document* fit rather than intra-topic
+word relatedness, so it is the natural way to rank a set of fitted models on one corpus.
+`seed` fixes the document sampling and A/B order (the LLM itself stays `llm-bounded`).
+
 ### A multi-dimensional suite (Tan & D'Souza 2025)
 
 Coherence rating answers one question — *are these words related?* — but a topic can
