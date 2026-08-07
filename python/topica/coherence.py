@@ -1367,13 +1367,15 @@ def _render_topic_set(model, topic_ids, representation, backend, ds, n_words,
 def _parse_judge_choice(reply):
     """Parse an ``A`` / ``B`` / ``tie`` verdict from the judge's reply. Returns
     ``"a"``, ``"b"``, ``"tie"``, or ``None`` when nothing is recognisable (treated as
-    a tie by the caller)."""
+    a tie by the caller). The prompt asks for the verdict on the first line, so that
+    is read first; a mention of "tie" then beats a bare stray ``a``/``b`` (e.g. the
+    English article "a" in "it is a tie") so a verbose tie is not misread as an
+    A-win."""
     r = str(reply).strip().lower()
-    head = re.sub(r"[^a-z ]", " ", r[:40]).split()
-    for tok in head:
-        if tok in ("a", "b", "tie"):
-            return tok
-    if "tie" in r:
+    first = re.sub(r"[^a-z]", " ", r.split("\n", 1)[0]).split()
+    if first and first[0] in ("a", "b", "tie"):
+        return first[0]
+    if re.search(r"\btie\b", r):
         return "tie"
     m = re.search(r"\b([ab])\b", r)
     return m.group(1) if m else None
@@ -1506,7 +1508,8 @@ def llm_judge(models, docs, *, backend, n_comparisons=100, q=2, p=0.75,
     n_comparisons : int
         Comparisons per model pair (paper: 100).
     q : int
-        Cap on top topics shown per document per model.
+        Cap on the number of top topics shown per document per model (``0`` = no
+        cap, use ``p`` alone).
     p : float
         Cumulative-probability cap on top topics (the smaller of ``q`` / ``p`` wins).
     representation : {"summary", "words"}

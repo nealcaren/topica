@@ -12,7 +12,9 @@ import pytest
 
 import topica
 import topica.llm as L
-from topica.coherence import _bradley_terry, _bt_to_elo, _top_topics_for_doc
+from topica.coherence import (
+    _bradley_terry, _bt_to_elo, _parse_judge_choice, _top_topics_for_doc,
+)
 
 
 # Two clear themes; a model with a dedicated topic per theme should beat one that
@@ -162,6 +164,19 @@ def test_bradley_terry_finite_for_undefeated():
     win = np.array([[0.0, 10.0], [0.0, 0.0]])
     p = _bradley_terry(win, smoothing=1.0)
     assert np.all(np.isfinite(p)) and np.all(p > 0)
+
+
+@pytest.mark.parametrize("reply,expected", [
+    ("A", "a"), ("B\nbecause ...", "b"), ("tie", "tie"),
+    ("A. Set A better captures the document", "a"),
+    ("The answer is B", "b"),
+    # a verbose tie must not be misread as an A-win via the article "a"
+    ("It is a tie between them", "tie"),
+    ("Both are equal, a tie", "tie"),
+    ("neither is clearly better", None),
+])
+def test_parse_judge_choice(reply, expected):
+    assert _parse_judge_choice(reply) == expected
 
 
 def test_top_topics_for_doc_takes_the_fewer_of_q_and_p():
