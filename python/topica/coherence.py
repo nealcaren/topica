@@ -1774,3 +1774,61 @@ def llm_judge(models, docs, *, backend, n_comparisons=100, q=2, p=0.75,
     return JudgeResult(elo=elo, win_matrix=win, bootstrap_ci=ci,
                        comparisons=comparisons, names=names,
                        representation=representation)
+
+
+# ---------------------------------------------------------------------------
+# LLM-vs-human agreement (Zheng et al. 2025 Fig. 2; Stammbach et al. 2023):
+# does an LLM metric track human judgment on *your* data?
+# ---------------------------------------------------------------------------
+
+
+def llm_human_agreement(llm_scores, human_scores, *, method="spearman"):
+    """Correlate an LLM metric with human ratings -- the paper's Fig. 2 validation.
+
+    The LLM metrics here (:func:`llm_coherence`, :func:`llm_intrusion`, ...) are
+    ``llm-bounded``: they are only trustworthy insofar as they track human judgment.
+    This is the honesty knob: pass a per-item LLM metric (e.g. the per-topic array
+    from :func:`llm_coherence`) and a matching vector of human ratings, and it reports
+    how well they agree. Following Stammbach et al. (2023) and Zheng et al. (2025), the
+    default is Spearman rank correlation (their headline: an LLM tracks human topic
+    *rankings*).
+
+    Purely numeric -- it makes no LLM call and is deterministic. Item pairs where
+    either score is NaN (e.g. an LLM rating that failed to parse) are dropped, and the
+    number actually used is reported.
+
+    Parameters
+    ----------
+    llm_scores, human_scores : array-like
+        Matching per-item vectors (same length, same order): the LLM metric and the
+        human ratings to validate it against.
+    method : {"spearman", "pearson", "kendall"}
+        Correlation coefficient. ``"spearman"`` (default) and ``"kendall"`` are rank
+        correlations (track ordering); ``"pearson"`` is linear.
+
+    Returns
+    -------
+    dict
+        ``{"correlation", "pvalue", "n", "method"}`` -- the coefficient, its two-sided
+        p-value, the number of item pairs used (after dropping NaNs), and the method.
+    """
+    funcs = {"spearman": "spearmanr", "pearson": "pearsonr", "kendall": "kendalltau"}
+    if method not in funcs:
+        raise ValueError(f"method must be one of {sorted(funcs)}; got {method!r}")
+    a = np.asarray(llm_scores, dtype=float).ravel()
+    b = np.asarray(human_scores, dtype=float).ravel()
+    if a.shape != b.shape:
+        raise ValueError(
+            f"llm_scores and human_scores must be the same length; got {a.size} and "
+            f"{b.size}. Pass matching per-item vectors (e.g. the per-topic "
+            "llm_coherence array and one human rating per topic).")
+    keep = np.isfinite(a) & np.isfinite(b)
+    n = int(keep.sum())
+    if n < 2:
+        raise ValueError(
+            f"need at least 2 non-NaN item pairs to correlate; got {n}.")
+    from scipy import stats
+
+    corr, pvalue = getattr(stats, funcs[method])(a[keep], b[keep])
+    return {"correlation": float(corr), "pvalue": float(pvalue), "n": n,
+            "method": method}

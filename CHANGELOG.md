@@ -35,6 +35,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`topica.llm.human_agreement` — validate an LLM metric against human ratings**
+  (#583). The Spearman (default; also Pearson / Kendall) rank correlation between a
+  per-item LLM metric (e.g. the `llm.coherence` array) and a matching vector of human
+  ratings — the paper's Fig. 2 / Stammbach et al. (2023) validation move. Purely
+  numeric (no LLM call), drops NaN pairs, and reports the correlation, p-value, and n
+  used. It is the honesty knob for the `llm-bounded` metrics: a high rank correlation
+  on a labeled subset is what lets you report the LLM metric on the rest. Completes the
+  model-agnostic LLM pipeline tools of #583 (`judge`, `refine`, human-agreement); the
+  existing `llm.coherence` (3-point scale) and `llm.intrusion` (top-5 + 1 intruder)
+  already match the paper's §5.2 / App. F.3 rating and intrusion protocol.
+
 - **`topica.llm.refine` — LLM-cleaned top words per topic** (#583). Ports the
   top-word refinement of Zheng et al. (2025, App. A.2 / F.1): for each topic it shows
   the LLM the top ``n + m`` words, drops up to ``m`` that are oddly specific or out of

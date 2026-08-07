@@ -21,6 +21,7 @@ The namespace collects the suite so it reads as a family and signals the shared
     topica.llm.diversity(model, backend=backend)        # pairwise cross-topic distinctiveness
     topica.llm.alignment(model, docs, backend=backend)  # irrelevant words / missing themes vs docs
     topica.llm.adversarial(model, backend=backend)      # gold-free capability self-check
+    topica.llm.human_agreement(llm_scores, human_scores)  # does the LLM metric track humans? (Spearman)
 
 The implementations live in :mod:`topica.coherence` (the metrics) and
 :mod:`topica.labeling` (the backend); this module is the curated public surface.
@@ -42,6 +43,7 @@ from .coherence import (
     llm_diversity as diversity,
     llm_adversarial as adversarial,
     llm_alignment as alignment,
+    llm_human_agreement as human_agreement,
     JudgeResult,
     LLM_EVAL_PROMPTS as PROMPTS,
 )
@@ -49,6 +51,6 @@ from .labeling import llm_backend as backend
 
 __all__ = [
     "coherence", "intrusion", "select_k", "judge", "outlier", "refine",
-    "repetitiveness", "diversity", "adversarial", "alignment", "backend",
-    "JudgeResult", "PROMPTS",
+    "repetitiveness", "diversity", "adversarial", "alignment", "human_agreement",
+    "backend", "JudgeResult", "PROMPTS",
 ]
