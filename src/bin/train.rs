@@ -21,7 +21,7 @@ Sampling:
   --num-topics <k>            Number of topics (default: 10)
   --iterations <n>            Number of Gibbs iterations (default: 1000)
   --burn-in <n>               Iterations before hyperparameter optimization begins (default: 200)
-  --seed <n>                  Random seed (default: 42)
+  --seed <n>                  Random seed (default: 13)
 
 Hyperparameter optimization:
   --optimize-interval <n>     Optimize alpha and beta every N iterations after burn-in
