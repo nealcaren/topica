@@ -156,10 +156,14 @@ topica.effects_across_seeds(docs, [1, 2, 3], num_topics=20,
 ```
 
 Topics are matched by [`align_topics`](../api/diagnostics.md)' one-to-one assignment,
-so a topic is compared with its actual counterpart rather than by index — and where
-K differs, a reference topic with no counterpart is reported as `unmatched` rather
-than dropped, so the table cannot overstate coverage. Pass `fits=` to reuse models
-you have already fit, and `nsims=` to use method-of-composition intervals per fit.
+so a topic is compared with its actual counterpart rather than by index. A counterpart
+counts only if its similarity clears `min_similarity` (default `0.3`, `align_topics`'
+own match threshold): a reference topic with no counterpart — because K differs, or
+because the closest topic is too dissimilar to trust — is reported as `unmatched`
+rather than force-matched to a leftover topic, so the table cannot overstate coverage.
+Read the `similarity` column to judge borderline cases; lower `min_similarity` to keep
+every Hungarian pairing. Pass `fits=` to reuse models you have already fit, and
+`nsims=` to use method-of-composition intervals per fit.
 
 Read the verdicts as description, not inference: "the sign held across K ∈ {15, 20,
 25}" is the honest claim. It is not a significance test and applies no

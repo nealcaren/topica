@@ -203,3 +203,34 @@ class TestApi:
         r = topica.effects_across_k(docs, [3, 4], feature="groupB", prevalence=X,
                                     feature_names=names, model=factory)
         assert len(r) == 3 * 2
+
+
+# --- review follow-ups (#671): honest coverage + clearer STM error ------------
+class TestReviewFollowups:
+    def test_min_similarity_gate_marks_weak_matches_unmatched(self):
+        """The coverage promise: a below-threshold Hungarian pairing must not be
+        reported as a confident match. With an impossibly strict threshold every
+        non-reference fit fails to match, so no topic can be called stable."""
+        docs, X, names = _planted()
+        r = topica.effects_across_k(docs, [4, 5], feature="groupB", prevalence=X,
+                                    feature_names=names, iters=50, min_similarity=1.0)
+        # Reference fit still self-matches at similarity 1.0; the other fit does not.
+        assert r.unmatched == r.topics
+        assert r.stable == [] and r.flipped == []
+        non_ref = [row for row in r if row["k"] != r.reference]
+        assert non_ref and all(not row["matched"] and row["coef"] is None
+                               for row in non_ref)
+
+    def test_loose_gate_keeps_every_pairing(self):
+        """min_similarity=0.0 restores force-matching (every reference topic keeps a
+        counterpart), so the gate is opt-out, not mandatory."""
+        docs, X, names = _planted()
+        r = topica.effects_across_k(docs, [4, 5], feature="groupB", prevalence=X,
+                                    feature_names=names, iters=50, min_similarity=0.0)
+        assert not r.unmatched  # K equal + no gate => all matched
+
+    def test_stm_x_only_raises_clear_error(self):
+        docs, X, names = _planted()
+        with pytest.raises(ValueError, match="prevalence"):
+            topica.effects_across_k(docs, [3, 4], feature="groupB", X=X,
+                                    feature_names=names, model="stm", iters=50)

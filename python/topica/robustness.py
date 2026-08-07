@@ -176,13 +176,16 @@ def _match_map(reference, fit, metric):
 
 
 def _effect_rows(fit, match, *, setting_name, setting_value, X, feature_names,
-                 feature, ref_topics, ci, nsims, corpus, seed):
+                 feature, ref_topics, ci, nsims, corpus, seed, min_similarity):
     """One row per reference topic for a single fit."""
     from .stm import estimate_effect
 
     kwargs = dict(X=X, feature_names=feature_names, ci=ci)
     if nsims:
-        effects = estimate_effect(fit, nsims=nsims, corpus=corpus, seed=seed, **kwargs)
+        # method-of-composition needs a concrete RNG seed; the seed helper varies
+        # the *fit* seed (and passes None here), so fall back to a fixed 0.
+        effects = estimate_effect(fit, nsims=nsims, corpus=corpus,
+                                  seed=(0 if seed is None else seed), **kwargs)
     else:
         effects = estimate_effect(fit, **kwargs)
     by_topic = {e.topic: e for e in effects}
@@ -191,11 +194,15 @@ def _effect_rows(fit, match, *, setting_name, setting_value, X, feature_names,
     for t in ref_topics:
         base = {"reference_topic": int(t), setting_name: setting_value}
         hit = match.get(int(t))
-        if hit is None or hit[0] not in by_topic:
-            # No counterpart in this fit (K differs, or the assignment left it out).
-            # Reported, never dropped: coverage must not be overstated.
+        # A counterpart counts only if the Hungarian assignment produced one AND it
+        # clears ``min_similarity``. Without the similarity gate a larger fit
+        # force-matches every reference topic to some leftover topic regardless of
+        # quality, which would let the table report a junk pairing as robust. The
+        # near-miss similarity is still recorded so a borderline case is visible.
+        if hit is None or hit[0] not in by_topic or hit[1] < min_similarity:
             rows.append({**base, "matched_topic": None, "matched": False,
-                         "similarity": None, "coef": None, "se": None,
+                         "similarity": (None if hit is None else hit[1]),
+                         "coef": None, "se": None,
                          "ci_low": None, "ci_high": None, "pvalue": None,
                          "sign": None, "significant": None})
             continue
@@ -223,6 +230,7 @@ def _effect_rows(fit, match, *, setting_name, setting_value, X, feature_names,
 def _robustness(
     docs, settings, *, varied, num_topics, model, prevalence, content, feature,
     feature_names, X, iters, ci, metric, reference, nsims, corpus, seed, fits,
+    min_similarity,
 ):
     """Shared driver for the across-K and across-seed helpers."""
     if not len(settings):
@@ -232,6 +240,16 @@ def _robustness(
         raise ValueError(
             "pass the covariate design (prevalence= for an STM fit, or X= to "
             "regress on a design the model was not fit with)"
+        )
+    # STM must be fit *with* its prevalence design, so an X-only call cannot refit
+    # it. (fits= sidesteps this by reusing models you fit yourself; lda/callable
+    # models are fit without a design and take X= for the effects step.)
+    if (fits is None and isinstance(model, str) and model.lower() == "stm"
+            and prevalence is None):
+        raise ValueError(
+            "model='stm' is fit with its prevalence design, so pass prevalence= "
+            "(optionally with X= for a different effects design). X= alone applies "
+            "to model='lda' or a callable, or pass fits= to reuse fitted models."
         )
 
     # Fit (or accept) one model per setting.
@@ -271,6 +289,7 @@ def _robustness(
             fit, match, setting_name=varied, setting_value=s, X=design,
             feature_names=feature_names, feature=feature, ref_topics=ref_topics,
             ci=ci, nsims=nsims, corpus=corpus, seed=seed,
+            min_similarity=min_similarity,
         ))
     return RobustnessResult(rows, feature=feature, varied=varied,
                             reference=ref_value, ci=ci)
@@ -289,6 +308,7 @@ def effects_across_k(
     iters=500,
     ci=0.95,
     metric="cosine",
+    min_similarity=0.3,
     reference=None,
     nsims=None,
     corpus=None,
@@ -305,17 +325,23 @@ def effects_across_k(
     topic counts to scan. ``feature`` is the covariate whose coefficient is tracked,
     by name (as in ``feature_names``, e.g. ``"rating[T.Liberal]"``).
 
-    Pass the covariate design as ``prevalence=`` (it is used both to fit each STM
-    and as the effects design) or, to regress on a design the model was not fit
-    with, as ``X=``. ``model`` is ``"stm"`` (default), ``"lda"``, or a callable
-    ``(num_topics, seed) -> fitted model`` for any other family. ``fits=`` reuses
-    models you already fit (one per K, in order) instead of refitting.
+    The default ``model="stm"`` is fit with its prevalence design, so pass
+    ``prevalence=`` (it is used both to fit each STM and as the effects design). Use
+    ``X=`` to regress the effect on a design the model was *not* fit with — alongside
+    ``prevalence=`` for STM, or on its own for ``model="lda"`` or a callable
+    ``(num_topics, seed) -> fitted model`` (which are fit without a design). ``fits=``
+    reuses models you already fit (one per K, in order) instead of refitting.
 
     Topics are matched by :func:`~topica.align_topics`' one-to-one assignment, so a
-    topic is compared with its actual counterpart, not its index. Where K differs,
-    reference topics with no counterpart are reported with ``matched=False`` rather
-    than dropped. With ``nsims`` the per-fit effects use method-of-composition
-    intervals (pass ``corpus=`` for a Gibbs model); without it, point-θ OLS.
+    topic is compared with its actual counterpart, not its index. A counterpart
+    counts only if its similarity clears ``min_similarity`` (default ``0.3``,
+    :func:`~topica.align_topics`' own match threshold); a reference topic with no
+    counterpart — because K differs, or because the best pairing is below that
+    threshold — is reported with ``matched=False`` and verdict ``unmatched`` rather
+    than dropped or counted robust. Read the ``similarity`` column to judge
+    borderline matches; lower ``min_similarity`` to ``0.0`` to keep every Hungarian
+    pairing. With ``nsims`` the per-fit effects use method-of-composition intervals
+    (pass ``corpus=`` for a Gibbs model); without it, point-θ OLS.
 
     Returns a :class:`RobustnessResult`: iterate it as rows, or read ``.stable`` /
     ``.flipped`` / ``.unmatched`` and ``.summary()``. Those verdicts are
@@ -326,6 +352,7 @@ def effects_across_k(
         prevalence=prevalence, content=content, feature=feature,
         feature_names=feature_names, X=X, iters=iters, ci=ci, metric=metric,
         reference=reference, nsims=nsims, corpus=corpus, seed=seed, fits=fits,
+        min_similarity=min_similarity,
     )
 
 
@@ -343,6 +370,7 @@ def effects_across_seeds(
     iters=500,
     ci=0.95,
     metric="cosine",
+    min_similarity=0.3,
     reference=None,
     nsims=None,
     corpus=None,
@@ -366,4 +394,5 @@ def effects_across_seeds(
         prevalence=prevalence, content=content, feature=feature,
         feature_names=feature_names, X=X, iters=iters, ci=ci, metric=metric,
         reference=reference, nsims=nsims, corpus=corpus, seed=None, fits=fits,
+        min_similarity=min_similarity,
     )
