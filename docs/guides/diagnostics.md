@@ -99,7 +99,24 @@ topica.llm.select_k(models, docs, backend=backend, n_docs=10)   # number-of-topi
 `llm.coherence` is the one to lead with: in the paper it beats NPMI/c_v at tracking
 human topic *rankings* (and on the Hoyle 2021 gold, `parity/llm_coherence_compare.py`
 reproduces that here). `llm.intrusion` matches human accuracy on the *task* but is a
-weaker ranking signal, so report it alongside, not instead.
+weaker ranking signal, so report it alongside, not instead. Both follow the same
+protocol Zheng et al. (2025, §5.2 / App. F.3) use: a 3-point relatedness scale
+(`scale=(1, 3)`) for `coherence`, and a top-5-words-plus-one-intruder task
+(`n_words=5`, the default) for `intrusion`, at `temperature=0`.
+
+Because these are `llm-bounded`, validate them on *your* data before trusting them:
+
+```python
+llm = topica.llm.coherence(model, backend=backend)         # per-topic LLM ratings
+agree = topica.llm.human_agreement(llm, human_ratings)     # human_ratings: one per topic
+agree["correlation"], agree["pvalue"], agree["n"]          # Spearman rho by default
+```
+
+`llm.human_agreement` is the paper's Fig. 2 check (Stammbach et al. 2023): the Spearman
+rank correlation between an LLM metric and a matching vector of human ratings. It makes
+no LLM call (purely numeric), drops NaN pairs, and takes `method="spearman"` (default),
+`"pearson"`, or `"kendall"`. A high rank correlation on a labeled subset is the evidence
+that lets you report the LLM metric on the rest.
 
 `llm.select_k` chooses the number of topics: for each candidate model it labels each
 topic's top documents with the LLM and scores by **label purity** (the fraction of a
