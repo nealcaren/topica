@@ -29,6 +29,7 @@ _DATA_ARGS: dict[str, set[str]] = {
     "KeyATM": {"keywords"},
     "SeededLDA": {"seed_words"},
     "Scholar": {"covariates", "content"},
+    "ContextualSTM": {"covariates"},
     "EmbeddingLDA": {"embeddings", "vocabulary"},
     "TopicGPT": {"backend"},
 }
@@ -71,6 +72,7 @@ _FACTORIES: dict[str, object] = {
     "SemanticSignalSeparation": lambda: topica.SemanticSignalSeparation(2),
     "PolylingualLDA": lambda: topica.PolylingualLDA(2),
     "Scholar": lambda: topica.Scholar(2),
+    "ContextualSTM": lambda: topica.ContextualSTM(2),
     "RTM": lambda: topica.RTM(2),
     "TensorLDA": lambda: topica.TensorLDA(2),
     "TBIP": lambda: topica.TBIP(2),

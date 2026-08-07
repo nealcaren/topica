@@ -61,6 +61,7 @@ pub(crate) const MODEL_TAG_INFOCTM: u8 = 43;
 pub(crate) const MODEL_TAG_ONLINE_LDA: u8 = 44;
 pub(crate) const MODEL_TAG_S3: u8 = 45;
 pub(crate) const MODEL_TAG_FLDA: u8 = 46;
+pub(crate) const MODEL_TAG_CONTEXTUAL_STM: u8 = 47;
 
 pub(crate) fn model_tag_name(tag: u8) -> &'static str {
     match tag {
@@ -107,6 +108,7 @@ pub(crate) fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_INFOCTM => "InfoCTM",
         MODEL_TAG_ONLINE_LDA => "OnlineLDA",
         MODEL_TAG_S3 => "SemanticSignalSeparation",
+        MODEL_TAG_CONTEXTUAL_STM => "ContextualSTM",
         _ => "unknown",
     }
 }

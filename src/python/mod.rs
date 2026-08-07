@@ -69,6 +69,7 @@ mod arrays;
 mod error;
 // Model legs (one pyclass family per file; each does `use super::*`).
 mod btm;
+mod contextual_stm;
 mod disclda;
 mod embedding_cluster;
 mod factorial_lda;
@@ -91,6 +92,7 @@ mod tlda;
 mod wordfish;
 use arrays::*;
 use btm::BTM;
+use contextual_stm::ContextualSTM;
 use disclda::DiscLDA;
 use embedding_cluster::{BERTopic, Top2Vec};
 use error::*;
@@ -15743,6 +15745,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PolylingualLDA>()?;
     m.add_class::<DiscLDA>()?;
     m.add_class::<Scholar>()?;
+    m.add_class::<ContextualSTM>()?;
     m.add_class::<RTM>()?;
     m.add_class::<SeededLDA>()?;
     m.add_class::<KeyATM>()?;

@@ -156,6 +156,7 @@ Shipped before a published paper and reference-implementation parity (topica's b
 |---|---|---|---|---|
 | `TensorLDA` | text | svd | seed-reproducible | Online Tensor LDA (Kangaslahti et al. 2026): deterministic method-of-moments topic modeling via second and third-order cumulants. |
 | `NarrativeTM` | text | gibbs | seed-reproducible | Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text. |
+| `ContextualSTM` | text, embeddings, metadata | vae | seed-reproducible | Contextual STM (experimental): CombinedTM/ZeroShotTM's sentence-embedding encoder with SCHOLAR's prevalence-covariate prior — covariate effects on topic prevalence estimated inside the fit for an embedding-based model. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate. |
 | `IdealPointSentenceTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The sentence-embedding sibling of IdealPointTM, fit by EM. |
 

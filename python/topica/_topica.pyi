@@ -4435,6 +4435,84 @@ class Scholar:
     def __repr__(self) -> str: ...
 
 
+class ContextualSTM:
+    """ContextualSTM (experimental): a contextual sentence-embedding topic model with
+    STM/SCHOLAR-style prevalence covariates. CombinedTM/ZeroShotTM's embedding encoder
+    with SCHOLAR's covariate-shifted prior mean, so a covariate that co-occurs with a
+    topic raises its prevalence. ``covariate_effects`` is a point estimate on the
+    standardized-logit scale; for proportion-scale effects use
+    ``topica.estimate_effect(model.doc_topic, X=covariates)``. Enable with
+    ``topica.enable_experimental()``."""
+    @property
+    def settings(self) -> dict: ...
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        encoder: str = "combined",
+        covariate_mode: str = "encoder_prior",
+        covariates: object | None = None,
+        covariate_names: list[str] | None = None,
+        alpha: float = 1.0,
+        hidden_size: int = 100,
+        dropout: float = 0.2,
+        batch_size: int = 200,
+        lr: float = 0.002,
+        l2_prior_reg: float = 0.0,
+        convergence_tol: float = 0.0,
+        seed: int = 42,
+    ) -> None:
+        """``encoder`` is ``"combined"`` or ``"zeroshot"``; ``covariate_mode`` is
+        ``"encoder_prior"`` (default) or ``"prior_only"``. ``covariates`` may be given
+        here or at fit(); they are standardized internally."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: object,
+        *,
+        covariates: object | None = None,
+        iters: int | None = None,
+        convergence_tol: Optional[float] = None,
+    ) -> "ContextualSTM":
+        """Fit on a Corpus or list of token lists with document (sentence)
+        ``doc_embeddings`` and prevalence ``covariates``."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def covariate_effects(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Covariate-by-topic prevalence effects, shape (n_covars, num_topics)."""
+        ...
+    @property
+    def covariate_names(self) -> list[str]: ...
+    @property
+    def bound(self) -> float: ...
+    @property
+    def fit_history(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    def transform(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: object,
+        *,
+        covariates: object | None = None,
+    ) -> numpy.typing.NDArray[numpy.float64]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> ContextualSTM: ...
+    def __repr__(self) -> str: ...
+
+
 class CombinedTM:
     """CombinedTM (Bianchi, Terragni & Hovy 2021), a contextualized topic model.
     ProdLDA whose encoder reads the bag of words concatenated with a

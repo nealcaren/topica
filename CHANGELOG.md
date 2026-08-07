@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`ContextualSTM` (experimental): a contextual topic model with covariates** (#667).
+  Combines CombinedTM/ZeroShotTM's sentence-embedding encoder with SCHOLAR's
+  prevalence-covariate prior, so covariate effects on topic prevalence are estimated
+  inside the fit for an embedding-based model — a gap no existing implementation fills.
+  `encoder=` selects the contextual encoder (`"combined"`/`"zeroshot"`);
+  `covariate_mode=` selects how covariates flow (`"encoder_prior"` default, or
+  `"prior_only"`). `covariate_effects` is a point estimate on the standardized-logit
+  scale; for proportion-scale effects use `estimate_effect(model.doc_topic, X=…)`.
+  Gated behind `enable_experimental()`; covariates are standardized and checked for
+  constant/collinear columns.
 - **`from_dataframe` accepts scikit-learn's `min_df` / `max_df` aliases** (#647), so
   an sklearn/gensim preprocessing habit works unchanged. Following sklearn's
   convention, an `int` is an absolute document count and a `float` in `[0, 1]` is a

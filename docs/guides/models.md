@@ -124,6 +124,7 @@ Shipped before a published paper and reference-implementation parity (topica's b
 |---|---|---|---|---|
 | `TensorLDA` | text | svd | seed-reproducible | Online Tensor LDA (Kangaslahti et al. 2026): deterministic method-of-moments topic modeling via second and third-order cumulants. |
 | `NarrativeTM` | text | gibbs | seed-reproducible | Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text. |
+| `ContextualSTM` | text, embeddings, metadata | vae | seed-reproducible | Contextual STM (experimental): CombinedTM/ZeroShotTM's sentence-embedding encoder with SCHOLAR's prevalence-covariate prior — covariate effects on topic prevalence estimated inside the fit for an embedding-based model. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate. |
 | `IdealPointSentenceTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The sentence-embedding sibling of IdealPointTM, fit by EM. |
 
@@ -617,6 +618,65 @@ supervised head, and the content deviations together.
 post-hoc; Scholar's added value is putting the metadata *into* the fit, which better
 identifies the topics and exposes `covariate_effects` / `content_effects` as
 first-class outputs.
+
+## ContextualSTM
+
+!!! warning "Experimental — unvalidated"
+    ContextualSTM ships before a reference-implementation parity check (no existing
+    implementation combines a contextual encoder with covariates), topica's bar for
+    a validated model. It is a topica-original composition of two individually
+    validated halves — CombinedTM/ZeroShotTM and Scholar. It is **gated**: call
+    `topica.enable_experimental()` (or set `TOPICA_EXPERIMENTAL=1`) before
+    constructing or loading it, or construction raises. Treat its results as
+    provisional, and expect that it may change or be removed without a deprecation
+    cycle.
+
+ContextualSTM fills a real gap: no contextual sentence-embedding topic model
+supports STM-style built-in covariates. The contextual models
+(`CombinedTM` / `ZeroShotTM`) have no covariate mechanism; [`Scholar`](#scholar) has
+covariates but reads the bag of words, not a document embedding. ContextualSTM
+combines them: the contextual **encoder** of
+CombinedTM (`encoder="combined"`) or ZeroShotTM (`encoder="zeroshot"`) drives
+inference from the document embedding, while Scholar's prevalence-covariate prior
+shifts each document's topic-prior mean `μ₀ = W·covariates`. The fitted `W` is the
+covariate-by-topic prevalence effect (`covariate_effects`), estimated *inside* the
+fit.
+
+```python
+topica.enable_experimental()               # ContextualSTM is experimental and gated
+m = topica.ContextualSTM(num_topics=20, encoder="combined",
+                         covariate_names=["year", "treatment"], seed=1)
+m.fit(docs, doc_embeddings=E, covariates=X)   # E is (num_docs, emb_dim); X (num_docs, n_cov)
+m.covariate_effects                        # (n_covariates, num_topics), logit-scale point effect
+```
+
+`covariate_mode` chooses how covariates flow. `"encoder_prior"` (default) feeds them
+to the prior *and* the encoder, following Scholar — this anchors the covariate
+weights to the data likelihood and recovers effects most reliably. `"prior_only"` is
+the STM-purist reading: covariates shift only the prior, the encoder reads the
+embedding alone, and `doc_topic` is `q(θ|embedding)` — not covariate-adjusted. With
+`encoder="combined"`, covariates in `encoder_prior` mode pass through the
+`adapt_bert` projection alongside the embedding; with `encoder="zeroshot"` they
+concatenate raw (exactly Scholar-style). Covariates are **standardized** internally,
+so effects are on the standardized scale; a constant covariate is rejected, and
+collinear covariates (e.g. full dummy coding) are rejected unless you set
+`l2_prior_reg > 0`.
+
+!!! note "What `covariate_effects` is — and is not"
+    `covariate_effects` is a **point** estimate of `W` (no uncertainty), on the
+    standardized-logit latent scale: a partial effect on the log-prior mean, **not a
+    proportion change**, and magnitudes are not directly comparable across topics
+    (the affine-free batch norm fixes the latent to unit variance per topic). For a
+    proportion-scale prevalence effect — the number STM users read — run the shared
+    estimator on the fitted `θ`:
+
+    ```python
+    topica.estimate_effect(m.doc_topic, X=X)   # proportion-scale effect per topic
+    ```
+
+    ContextualSTM has no `θ` posterior, so pass the **model** to `estimate_effect`
+    for honest (bootstrap) standard errors; a point `θ` gives OLS errors that
+    understate uncertainty. Honest joint uncertainty over `W` is future work.
 
 ## NarrativeTM
 
