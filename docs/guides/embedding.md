@@ -739,8 +739,30 @@ For statistically-selected phrases instead of every bigram, use
     `BERTopic` recover comparable topic structure to the Python `BERTopic`
     package. topica's in-house UMAP reducer matches `umap-learn`'s cluster quality
     on real sentence embeddings (measured by adjusted Rand index against gold
-    labels); because topica uses a different HDBSCAN implementation, exact cluster
-    assignments still differ from the `umap-learn` + `hdbscan` reference, but the
-    recovered topics agree. The payoff is the dependency footprint: topica runs the
-    whole pipeline in Rust with none of `torch`, `umap-learn`, or `hdbscan`
-    installed.
+    labels), and its in-house HDBSCAN reproduces the reference `hdbscan` package
+    exactly — adjusted Rand index 1.00 against all three of the reference's exact
+    minimum-spanning-tree algorithms (`generic`, `prims_kdtree`, and
+    `boruvka_kdtree` run exactly) on a frozen real 20-Newsgroups projection. The
+    payoff is the dependency footprint: topica runs the whole pipeline in Rust with
+    none of `torch`, `umap-learn`, or `hdbscan` installed.
+
+!!! note "Why `bertopic` sometimes reports more topics than topica"
+    On *borderline* data — a projection where one dense region only just holds
+    together, typically at a large `min_samples` — the `bertopic` package can find
+    noticeably more topics than `topica.BERTopic` from the same embeddings. This is
+    not a topica bug, and it is worth knowing which side to trust.
+
+    `hdbscan`'s default is `approx_min_span_tree=True`, under which its Boruvka
+    clusterer takes a documented shortcut and returns a spanning tree that is *not
+    minimal*. On topica's frozen hard case that tree weighs 767.05 against the exact
+    766.38, and those few extra-heavy edges are enough to break one 2-topic solution
+    into 13. Pass `approx_min_span_tree=False` to the reference and it returns the
+    exact tree, 2 topics, and agrees with topica exactly. topica always computes the
+    exact tree.
+
+    So topica is reporting what HDBSCAN actually implies for your data. If that is
+    fewer topics than you want, treat it as a signal about the projection rather
+    than a discrepancy to reconcile: lower `min_cluster_size`/`min_samples`, or
+    switch to `clusterer="louvain"`/`"leiden"`, which discover a topic count without
+    a noise bucket. Evidence and the regeneration script:
+    `parity/hdbscan_mst_parity_603.py` (issue #603).

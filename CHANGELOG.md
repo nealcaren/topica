@@ -8,6 +8,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **HDBSCAN parity against every exact MST algorithm the reference offers** (#603).
+  New committed gold (`parity/hdbscan_mst_parity_603.py`, run in CI as
+  `tests/test_hdbscan_boruvka_parity.py`) shows topica's clusterer matching the
+  `hdbscan` package's `generic`, `prims_kdtree`, *and* `boruvka_kdtree` at adjusted
+  Rand index 1.00 on the frozen 20-Newsgroups hard case. This settles why the
+  `bertopic` package can report more topics from the same embeddings: `hdbscan`
+  defaults to `approx_min_span_tree=True`, under which Boruvka returns a *non-minimal*
+  spanning tree (767.05 vs the exact 766.38 on that fixture), and those extra-heavy
+  edges split a 2-topic solution into 13. Run the reference with
+  `approx_min_span_tree=False` and it agrees with topica exactly. topica computes the
+  exact tree and does not reproduce the approximation; the embedding guide now says
+  so and points at the knobs to reach for when you want a finer split.
+
 - **`from_dataframe` accepts scikit-learn's `min_df` / `max_df` aliases** (#647), so
   an sklearn/gensim preprocessing habit works unchanged. Following sklearn's
   convention, an `int` is an absolute document count and a `float` in `[0, 1]` is a
@@ -15,6 +28,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   Passing both an alias and its native argument raises.
 
 ### Changed
+
+- **The embedding clusterer no longer needs `O(n²)` memory** (#603). HDBSCAN's
+  pairwise-distance matrix is now cached only while it is small (n ≤ 4096, 128 MB)
+  and recomputed on demand above that, so clustering a large corpus is slow rather
+  than impossible — the dense matrix alone would have been 20 GB at 50k documents.
+  The core-distance pass is also parallelized across rows. Both paths compute the
+  same distances, so **fitted output is unchanged** at every corpus size.
 
 - **`EmbeddingLDA`'s default `weight` is now `0.1`** (was `1.0`) (#663). The
   embedding-cluster seed words are semantically grouped but do not necessarily

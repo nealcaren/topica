@@ -1,7 +1,8 @@
 //! Density clustering for the embedding-model branch (Top2Vec, BERTopic).
 //!
-//! A thin wrapper over `petal-clustering`'s HDBSCAN so the rest of topica keeps
-//! working in plain `Vec<Vec<f64>>` and never sees `ndarray` directly. HDBSCAN
+//! A thin wrapper over topica's in-house HDBSCAN* (`crate::hdbscan`) so the rest
+//! of topica keeps working in plain `Vec<Vec<f64>>`, plus the alternative
+//! clusterers (k-means, GMM, agglomerative, Louvain/Leiden). HDBSCAN
 //! is the clustering stage both Top2Vec and BERTopic run after reducing the
 //! document embeddings: it finds clusters of varying density and leaves sparse
 //! points unassigned (the "outlier" topic, conventionally label `-1`).

@@ -1,0 +1,86 @@
+{
+  "boruvka_approx_mcs10": {
+    "algorithm": "boruvka_kdtree",
+    "approx_min_span_tree": true,
+    "mst_total_weight": 630.8212562510258,
+    "n_clusters": 3,
+    "n_noise": 8
+  },
+  "boruvka_approx_mcs15": {
+    "algorithm": "boruvka_kdtree",
+    "approx_min_span_tree": true,
+    "mst_total_weight": 767.0492829487268,
+    "n_clusters": 13,
+    "n_noise": 269
+  },
+  "boruvka_approx_mcs20": {
+    "algorithm": "boruvka_kdtree",
+    "approx_min_span_tree": true,
+    "mst_total_weight": 883.7429619867671,
+    "n_clusters": 6,
+    "n_noise": 164
+  },
+  "boruvka_exact_mcs10": {
+    "algorithm": "boruvka_kdtree",
+    "approx_min_span_tree": false,
+    "mst_total_weight": 630.3770826062554,
+    "n_clusters": 3,
+    "n_noise": 8
+  },
+  "boruvka_exact_mcs15": {
+    "algorithm": "boruvka_kdtree",
+    "approx_min_span_tree": false,
+    "mst_total_weight": 766.38384995207,
+    "n_clusters": 2,
+    "n_noise": 0
+  },
+  "boruvka_exact_mcs20": {
+    "algorithm": "boruvka_kdtree",
+    "approx_min_span_tree": false,
+    "mst_total_weight": 883.1612990302149,
+    "n_clusters": 2,
+    "n_noise": 0
+  },
+  "generic_mcs10": {
+    "algorithm": "generic",
+    "approx_min_span_tree": false,
+    "mst_total_weight": 630.3770826062207,
+    "n_clusters": 3,
+    "n_noise": 8
+  },
+  "generic_mcs15": {
+    "algorithm": "generic",
+    "approx_min_span_tree": false,
+    "mst_total_weight": 766.3838499520409,
+    "n_clusters": 2,
+    "n_noise": 0
+  },
+  "generic_mcs20": {
+    "algorithm": "generic",
+    "approx_min_span_tree": false,
+    "mst_total_weight": 883.1612990301932,
+    "n_clusters": 2,
+    "n_noise": 0
+  },
+  "prims_mcs10": {
+    "algorithm": "prims_kdtree",
+    "approx_min_span_tree": false,
+    "mst_total_weight": 630.3770826062554,
+    "n_clusters": 3,
+    "n_noise": 8
+  },
+  "prims_mcs15": {
+    "algorithm": "prims_kdtree",
+    "approx_min_span_tree": false,
+    "mst_total_weight": 766.38384995207,
+    "n_clusters": 2,
+    "n_noise": 0
+  },
+  "prims_mcs20": {
+    "algorithm": "prims_kdtree",
+    "approx_min_span_tree": false,
+    "mst_total_weight": 883.1612990302149,
+    "n_clusters": 2,
+    "n_noise": 0
+  }
+}

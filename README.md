@@ -282,7 +282,7 @@ As such, Topica stands on a generation of open topic-modeling research and code.
 - [**Neural variational topic models with alternative priors**](https://arxiv.org/abs/1706.00359) (Miao, Grefenstette & Blunsom, 2017; Nalisnick & Smyth, 2017) — the Gaussian stick-breaking prior offered by `prior="stick_breaking"` on the VAE models
 - [**TopicGPT**](https://github.com/chtmp223/topicGPT) (Pham et al., NAACL 2024, MIT) — `TopicGPT`: the generate / refine / assign prompt flow for LLM-driven topic discovery
 
-The embedding-native models build on two pure-Rust crates: [**petal-clustering**](https://github.com/petabi/petal-clustering) for HDBSCAN and [**umap-rs**](https://github.com/wilsonzlin/umap-rs) for the optional UMAP reducer, both BLAS-free.
+The embedding-native models cluster with an in-house, BLAS-free HDBSCAN (Campello, Moulavi & Sander, 2013), validated against the reference [**hdbscan**](https://github.com/scikit-learn-contrib/hdbscan) package at adjusted Rand index 1.00 on a real 20-Newsgroups projection under each of its exact minimum-spanning-tree algorithms. The optional UMAP reducer builds on [**umap-rs**](https://github.com/wilsonzlin/umap-rs), also BLAS-free.
 
 Full citations for every model and reference implementation, and how to cite topica, are on the [Citing](https://nealcaren.github.io/topica/citing/) page.
 

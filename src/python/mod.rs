@@ -9023,10 +9023,10 @@ fn warn_stochastic(py: Python<'_>, method: &str) -> PyResult<()> {
     Ok(())
 }
 
-/// Debug harness (issue #555): cluster `data` (a 2D float array / list of lists)
-/// directly with topica's in-house HDBSCAN (`petal-clustering`), returning the
-/// per-row integer labels (`-1` = noise). Bypasses every reducer/normalization so
-/// petal's cluster selection can be compared 1:1 against the reference `hdbscan`
+/// Debug harness (issues #555, #603): cluster `data` (a 2D float array / list of
+/// lists) directly with topica's in-house HDBSCAN* (`crate::hdbscan`), returning
+/// the per-row integer labels (`-1` = noise). Bypasses every reducer/normalization
+/// so the cluster selection can be compared 1:1 against the reference `hdbscan`
 /// package on an identical point set. `min_samples=0` means "use min_cluster_size".
 #[pyfunction]
 #[pyo3(signature = (data, min_cluster_size=15, min_samples=0))]

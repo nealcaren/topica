@@ -6,15 +6,117 @@
 //! (`min_cluster_size`), excess-of-mass cluster selection (`allow_single_cluster =
 //! false`), then leaf labelling with a `-1` noise bucket.
 //!
-//! Distances/core distances/MST are dense `O(n^2)` (Prim), which is fine for the
-//! embedding-clustering corpus sizes topica targets; the reference accelerates this
-//! with space trees, but the extracted clustering is identical. `min_samples`
-//! controls the core-distance density estimate; `min_cluster_size` the smallest
-//! group that counts as a cluster.
+//! The MST is a dense `O(n^2)` Prim rather than the reference's space-tree
+//! acceleration, but the extracted clustering is identical — verified against
+//! *all three* of the reference's exact MST algorithms (`generic`, `prims_kdtree`,
+//! and `boruvka_kdtree` with `approx_min_span_tree=False`) at ARI 1.00 on the
+//! frozen 20NG hard case, `parity/hdbscan_mst_parity_603.py`. The reference's
+//! *default* (`boruvka_kdtree` with `approx_min_span_tree=True`, what the
+//! `bertopic` package runs) deliberately returns a **non-minimal** spanning tree —
+//! 767.05 against the exact 766.38 on that fixture — which is the entire residual
+//! topic-count difference against upstream `bertopic` on tie-heavy data (issue
+//! #603). topica returns the exact tree and does not reproduce that approximation.
+//!
+//! Memory is `O(n)`, not `O(n^2)`: the pairwise distances are cached in a dense
+//! matrix only while it stays small, and recomputed on demand above that (see
+//! `Distances`), so large corpora are slow rather than impossible.
+//! `min_samples` controls the core-distance density estimate; `min_cluster_size`
+//! the smallest group that counts as a cluster.
+
+use rayon::prelude::*;
+
+/// Cache the dense `n x n` distance matrix while it costs at most this many
+/// `f64`s (2^24 = 128 MB, i.e. n <= 4096); above that recompute distances on
+/// demand. At n = 50k the matrix alone would be 20 GB.
+const DENSE_MAX_ELEMS: usize = 1 << 24;
+
+/// Euclidean distance. The single definition both `Distances` variants use, so
+/// the cached and recomputed paths are bit-identical.
+#[inline]
+fn euclidean(a: &[f64], b: &[f64]) -> f64 {
+    debug_assert_eq!(
+        a.len(),
+        b.len(),
+        "all points must share the same dimensionality"
+    );
+    let mut s = 0.0;
+    for d in 0..a.len() {
+        let df = a[d] - b[d];
+        s += df * df;
+    }
+    s.sqrt()
+}
+
+/// Pairwise distances for the core-distance and MST stages: precomputed for
+/// corpora small enough that the dense matrix is cheap (the common case), else
+/// recomputed on demand so memory stays `O(n)`. Both variants return the same
+/// values, so the clustering never depends on which one is in play.
+enum Distances<'a> {
+    Dense { n: usize, buf: Vec<f64> },
+    OnDemand { points: &'a [Vec<f64>] },
+}
+
+impl<'a> Distances<'a> {
+    fn new(points: &'a [Vec<f64>]) -> Self {
+        let n = points.len();
+        if n.checked_mul(n)
+            .is_some_and(|elems| elems <= DENSE_MAX_ELEMS)
+        {
+            let mut buf = vec![0.0f64; n * n];
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    let v = euclidean(&points[i], &points[j]);
+                    buf[i * n + j] = v;
+                    buf[j * n + i] = v;
+                }
+            }
+            Distances::Dense { n, buf }
+        } else {
+            Distances::OnDemand { points }
+        }
+    }
+
+    #[inline]
+    fn at(&self, i: usize, j: usize) -> f64 {
+        match self {
+            Distances::Dense { n, buf } => buf[i * n + j],
+            Distances::OnDemand { points } => euclidean(&points[i], &points[j]),
+        }
+    }
+
+    /// Write the distances from `i` to every point into `out` (length `n`).
+    fn row_into(&self, i: usize, out: &mut [f64]) {
+        match self {
+            Distances::Dense { n, buf } => out.copy_from_slice(&buf[i * n..i * n + n]),
+            Distances::OnDemand { points } => {
+                for (j, o) in out.iter_mut().enumerate() {
+                    *o = euclidean(&points[i], &points[j]);
+                }
+            }
+        }
+    }
+}
 
 /// HDBSCAN* labels for `points` (row-major). Returns one `i64` per point: a dense
 /// cluster id `0..k`, or `-1` for noise. Deterministic.
 pub fn labels(points: &[Vec<f64>], min_cluster_size: usize, min_samples: usize) -> Vec<i64> {
+    // 1. Pairwise Euclidean distances (cached or on demand, see `Distances`).
+    labels_with(
+        points,
+        min_cluster_size,
+        min_samples,
+        &Distances::new(points),
+    )
+}
+
+/// `labels` over a caller-supplied `Distances`, so the cached and on-demand
+/// variants can be tested against each other on the same points.
+fn labels_with(
+    points: &[Vec<f64>],
+    min_cluster_size: usize,
+    min_samples: usize,
+    dist: &Distances<'_>,
+) -> Vec<i64> {
     let n = points.len();
     if n == 0 {
         return Vec::new();
@@ -25,37 +127,27 @@ pub fn labels(points: &[Vec<f64>], min_cluster_size: usize, min_samples: usize) 
     if n <= mcs || n <= ms {
         return vec![-1i64; n];
     }
-    let dim = points[0].len();
-
-    // 1. Dense pairwise Euclidean distances.
-    let mut dist = vec![0.0f64; n * n];
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let mut s = 0.0;
-            for d in 0..dim {
-                let df = points[i][d] - points[j][d];
-                s += df * df;
-            }
-            let v = s.sqrt();
-            dist[i * n + j] = v;
-            dist[j * n + i] = v;
-        }
-    }
 
     // 2. Core distance = the `min_samples`-th smallest distance in the row (self
     //    counts as index 0, matching `np.partition(D, min_samples)[min_samples]`).
+    //    Rows are independent, so this parallelizes; `map_init` hands each worker
+    //    one reusable row buffer instead of allocating n of them.
+    let k = ms.min(n - 1);
     let core: Vec<f64> = (0..n)
-        .map(|i| {
-            let mut row: Vec<f64> = (0..n).map(|j| dist[i * n + j]).collect();
-            let k = ms.min(n - 1);
-            row.select_nth_unstable_by(k, |a, b| a.partial_cmp(b).unwrap());
-            row[k]
-        })
+        .into_par_iter()
+        .map_init(
+            || vec![0.0f64; n],
+            |row, i| {
+                dist.row_into(i, row);
+                row.select_nth_unstable_by(k, |a, b| a.partial_cmp(b).unwrap());
+                row[k]
+            },
+        )
         .collect();
 
     // 3. Mutual-reachability MST via Prim's algorithm (dense). mreach(i,j) =
     //    max(core[i], core[j], dist(i,j)). Edges are (a, b, weight).
-    let mreach = |i: usize, j: usize| core[i].max(core[j]).max(dist[i * n + j]);
+    let mreach = |i: usize, j: usize| core[i].max(core[j]).max(dist.at(i, j));
     let mut in_tree = vec![false; n];
     let mut best = vec![f64::INFINITY; n];
     let mut best_from = vec![usize::MAX; n];
@@ -452,6 +544,22 @@ mod tests {
             k, 3,
             "three well-separated blobs must give three clusters: {lab:?}"
         );
+    }
+
+    #[test]
+    fn cached_and_on_demand_distances_agree() {
+        // The dense cache is only a memory/speed choice: above DENSE_MAX_ELEMS the
+        // same run recomputes distances instead, and must land on the same labels.
+        let mut seed = 7u64;
+        let mut pts = Vec::new();
+        pts.extend(blob(0.0, 0.0, 40, &mut seed));
+        pts.extend(blob(6.0, 0.0, 40, &mut seed));
+        pts.extend(blob(3.0, 6.0, 40, &mut seed));
+        let cached = labels_with(&pts, 10, 10, &Distances::new(&pts));
+        let on_demand = labels_with(&pts, 10, 10, &Distances::OnDemand { points: &pts });
+        assert!(matches!(Distances::new(&pts), Distances::Dense { .. }));
+        assert_eq!(cached, on_demand, "distance caching changed the clustering");
+        assert_eq!(cached, labels(&pts, 10, 10));
     }
 
     #[test]
