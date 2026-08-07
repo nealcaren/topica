@@ -852,12 +852,21 @@ SUMMARY_PROMPT = (
     "Given the topic's top words, describe its central theme in a single short "
     "sentence. Reply with only that sentence.\n\n{words}"
 )
+# Post-training top-word cleanup (Zheng et al. 2025, App. A.2 / F.1): flag up to m
+# oddly-specific / out-of-place words and drop them, keeping the top n. Applied
+# uniformly to every model so coherence is not biased toward any one family.
+REFINE_PROMPT = (
+    "You are a helpful assistant cleaning up the top words of a topic model output "
+    "for a given topic. {dataset}Below are the topic's top words. Identify up to {m} "
+    "words that are oddly specific or clearly out of place relative to the rest of the "
+    'list. Reply with a comma-separated list of only those words, or "none".\n\n{words}'
+)
 LLM_EVAL_PROMPTS: dict[str, str] = {
     "rating": RATING_PROMPT, "intrusion": INTRUSION_PROMPT, "label": LABEL_PROMPT,
     "outlier": OUTLIER_PROMPT, "repetitive_rate": REPETITIVE_RATE_PROMPT,
     "duplicate": DUPLICATE_PROMPT, "diversity": DIVERSITY_PROMPT,
     "align_irrelevant": ALIGN_IRRELEVANT_PROMPT, "align_missing": ALIGN_MISSING_PROMPT,
-    "judge": JUDGE_PROMPT, "summary": SUMMARY_PROMPT,
+    "judge": JUDGE_PROMPT, "summary": SUMMARY_PROMPT, "refine": REFINE_PROMPT,
 }
 
 
@@ -1191,6 +1200,67 @@ def llm_outlier(model, *, backend, n_words=10, n_samples=5, threshold=3,
             votes.update(set(flagged))
         outliers = [w for w, c in votes.items() if c >= threshold]
         out.append({"topic": t, "outliers": outliers, "count": len(outliers)})
+    return out
+
+
+def llm_refine(model, *, backend, n=10, m=2, protect=1, n_samples=1,
+               dataset_description=None, seed=0, prompts=None):
+    """LLM top-word refinement (Zheng et al. 2025, App. A.2 / F.1): a *suggested*
+    cleanup of each topic's top words, for review.
+
+    For each topic it shows the LLM the top ``n + m`` words, asks it to flag up to
+    ``m`` that are oddly specific or clearly out of place, drops those, and keeps the
+    top ``n`` of what remains. Where :func:`llm_outlier` *detects* incoherent words,
+    ``refine`` returns the pruned list plus the words it ``dropped`` per topic. The
+    paper applies it uniformly to every model (``n=10``, ``m=2``) so coherence is not
+    biased toward any one family. ``llm-bounded``; see :func:`llm_coherence` for
+    ``backend`` / ``n_samples`` semantics.
+
+    **Treat the output as a suggestion to review, not an automatic cleaner.** On peaky
+    or small topics the LLM can flag a *defining* term as "out of place" and weaken the
+    topic, so inspect ``dropped`` per topic (show the raw top words beside it) rather
+    than applying it blind. ``protect`` (default 1) refuses to drop the top-``protect``
+    most-probable words, which prevents the worst case (deleting a topic's anchor word);
+    raise it to protect more, or set 0 to disable.
+
+    Cost: ``num_topics * n_samples`` LLM calls (one prompt per topic per sample).
+
+    With ``n_samples > 1`` a word is dropped only if flagged in at least half the runs
+    (``ceil(n_samples / 2)``; tames the LLM's per-call variation). Fewer than ``m``
+    flagged keeps more of the original top words (truncated to ``n``); more than ``m``
+    flagged drops only the ``m`` highest-ranked of them, so exactly ``n`` words come
+    back when the topic has at least ``n + m``. Only the top ``n + m`` words are shown
+    to the LLM, so an intruder ranked below that window is never screened (this matches
+    the paper's protocol).
+
+    Returns
+    -------
+    list[dict]
+        One dict per topic: ``topic``, ``words`` (the cleaned top-``n`` list), and
+        ``dropped`` (the removed words, in rank order; may be fewer than ``m``).
+    """
+    backend = _resolve_llm_call(backend)
+    tmpl = (prompts or LLM_EVAL_PROMPTS)["refine"]
+    ds = _dataset_clause(dataset_description)
+    thresh = (max(1, n_samples) + 1) // 2  # majority of the samples
+    out = []
+    for t, words in enumerate(_extract_topics(model, n + m)):
+        allowed = {w.lower() for w in words}
+        # Never drop the top-`protect` words: the most-probable word(s) are usually the
+        # topic's anchor, and the LLM sometimes flags the single dominant term as "out
+        # of place" and guts the topic (e.g. dropping "gun" from a gun-control topic).
+        protected = {w.lower() for w in words[:max(0, protect)]}
+        votes = Counter()
+        for _ in range(max(1, n_samples)):
+            reply = backend(tmpl.format(dataset=ds, words=", ".join(words), m=m))
+            votes.update(set(_parse_word_list(reply, allowed)))
+        # flagged words in the topic's own rank order, capped to at most m dropped.
+        flagged = [w for w in words
+                   if votes[w.lower()] >= thresh and w.lower() not in protected]
+        dropped = flagged[:m]
+        dropped_lower = {w.lower() for w in dropped}
+        kept = [w for w in words if w.lower() not in dropped_lower][:n]
+        out.append({"topic": t, "words": kept, "dropped": dropped})
     return out
 
 
