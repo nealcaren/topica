@@ -178,6 +178,17 @@ topica.llm.adversarial(model, backend=backend)                        # gold-fre
 `llm.outlier` is the unsupervised sibling of `llm.intrusion`: no planted answer, just a
 5-runs vote on *which* top words don't belong (kept when flagged in `threshold` of
 `n_samples` runs), so it surfaces the specific words making a topic incoherent.
+`llm.refine` is its actionable counterpart (Zheng et al. 2025): it shows the LLM the top
+`n + m` words, drops up to `m` that are out of place, and returns the cleaned top-`n`
+list per topic (plus which words it `dropped`) — a de-noised representation you can feed
+to `label_topics`, `llm.judge`, or a report:
+
+```python
+cleaned = topica.llm.refine(model, backend=backend, n=10, m=2)
+cleaned[0]["words"]     # topic 0's top 10 with up to 2 intruders removed
+cleaned[0]["dropped"]   # the words it removed
+```
+
 `llm.repetitiveness` checks the failure coherence rating misses — a topic of near-synonyms
 scores high on relatedness but is uninformative; it returns a 1-3 rate (3 = distinctive)
 plus the duplicate word pairs. `llm.diversity` rates every topic *pair* for thematic
