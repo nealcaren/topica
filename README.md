@@ -1,4 +1,4 @@
-# Topica: fast, all-purpose topic modeling for Python
+# Topica: fast, all-in-one topic modeling for Python
 
 [![PyPI](https://img.shields.io/pypi/v/topica.svg)](https://pypi.org/project/topica/)
 [![CI](https://github.com/nealcaren/topica/actions/workflows/CI.yml/badge.svg)](https://github.com/nealcaren/topica/actions/workflows/CI.yml)
@@ -6,7 +6,7 @@
 [![Website](https://img.shields.io/badge/website-get--topica-F5B93A.svg)](https://nealcaren.github.io/get-topica/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-`topica` is a fast, all-purpose topic-modeling library for Python, built for computational social scientists who want to go from a column of text to publishable results in one workflow. It brings together models usually split across JVM tools like MALLET and R packages like `stm`, more than forty in all (LDA, STM, CTM, plus neural, dynamic, and embedding-based models), each paired with the validation, covariate-effect, and reporting tools reviewers expect. Where general toolkits like Gensim or BERTopic give you topics, topica is built around the question social scientists ask of them next: how topic prevalence and content relate to covariates, with reference-validated models and reproducible fits. It installs as a single wheel that needs only NumPy and pandas: no JVM, no PyTorch.
+`topica` is a fast, memory-efficient, all-in-one topic-modeling library for Python, built for social scientists. It brings together more than forty models usually split across JVM tools like MALLET and R packages like `stm`, including LDA, STM, CTM, keyATM, BERTopic, and neural, dynamic, short-text, and embedding-based models, all under one NumPy-native API. Every model is validated against its reference implementation and reproducible from a fixed seed, and they share one set of diagnostics, labeling, validation, and covariate-effect tools, so you learn a single workflow and it applies across the roster. It installs as a single wheel that needs only NumPy and pandas: no JVM, no PyTorch.
 
 ```bash
 pip install topica
@@ -29,7 +29,7 @@ model.fit(corpus)                             # sensible defaults; no tuning req
 print(topica.summary(model))                  # top words per topic
 ```
 
-`from_dataframe` keeps your metadata aligned to the documents that survive pruning, so the same corpus feeds a structural topic model that relates topic prevalence to a covariate, with a well-calibrated hypothesis test:
+`from_dataframe` keeps your metadata aligned to the documents that survive pruning, so the same corpus feeds a structural topic model that relates topic prevalence to a covariate and reports the effect with uncertainty:
 
 ```python
 prevalence = corpus.metadata[["treatment"]]   # a numeric DataFrame goes straight in
@@ -43,7 +43,7 @@ effect = topica.estimate_effect(draws, prevalence, feature_names=["treatment"])
 
 Your own data is one line away: pass `pandas.read_csv("yours.csv")` to `from_dataframe`. See the [getting-started guide](https://nealcaren.github.io/topica/getting-started/quickstart/) and the [worked examples](https://nealcaren.github.io/topica/examples/dubois/) for analyses end to end.
 
-Fits are reproducible and validated: the variational models are identical to the bit, the samplers reproduce from a fixed seed and thread count, and every model is checked against its reference implementation (R `stm`, MALLET, keyATM, and more).
+Fits are reproducible and validated: the variational models are bit-exact against their references, the samplers reproduce from a fixed seed and thread count, and every model is checked against its reference implementation (R `stm`, MALLET, keyATM, and more).
 
 The core needs only NumPy and pandas. Optional extras add features without weighing it down: `topica[viz]` (matplotlib plots), `topica[formula]` (R-style formulas), `topica[polars]` (Polars frames), and `topica[llm]` (LLM labels and embeddings, OpenAI or local via ollama).
 
@@ -219,7 +219,7 @@ See [diagnostics](https://nealcaren.github.io/topica/guides/diagnostics/) and [c
 
 ## Performance
 
-topica runs on a parallel Rust core. It is several times faster than R `stm` — the single-threaded field standard — for the structural and other variational models, and it matches the hand-tuned compiled samplers core for core: parity with Java MALLET on plain LDA and with the C++ `keyATM` on keyword models. Fit to convergence (both at the same `emtol`, spectral start), on real corpora:
+topica runs on a parallel Rust core, so the whole roster is fast and every fit is reproducible from a fixed seed. Core for core it matches the hand-tuned compiled samplers: parity with Java MALLET on plain LDA and with the C++ `keyATM` on keyword models. For the structural and other variational models it is several times faster than R `stm`, the single-threaded field standard. Fit to convergence (both at the same `emtol`, spectral start), on real corpora:
 
 | Model | Reference | topica speedup (to convergence) |
 |-------|-----------|----------------|

@@ -22,6 +22,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`topica.embedding_regression` — covariate effects on word meaning** (#669). A
+  numpy-native port of the à la carte on text (conText) embedding regression of
+  Rodriguez, Spirling and Stewart (2023), validated bit-exact against the R `conText`
+  package (à la carte embeddings, squared coefficient norm, HC1-deflated norm). It
+  answers the question the prevalence models cannot: does a covariate shift what a
+  word or theme *means* ("do Republicans and Democrats mean different things by
+  `immigration`?"). Pipeline: `compute_transform`, `alc_embeddings`,
+  `embedding_regression`, and `EmbeddingRegression.nearest_neighbors` / `nns_ratio`
+  to read what the shift is. `inference="context"` (default) matches the current
+  conText package; `inference="paper"` follows the article. It is a text-as-data tool,
+  not a topic model, so it needs no `enable_experimental` and produces no topics.
+
 - **`topica.effects_across_k` / `topica.effects_across_seeds` — effect robustness in
   one call** (#644). The table a reviewer asks for first ("does this effect survive a
   different K, or a different seed?") previously had to be hand-rolled: refit, match
