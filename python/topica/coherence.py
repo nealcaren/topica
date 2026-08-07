@@ -1436,9 +1436,10 @@ class JudgeResult:
     bootstrap_ci : dict[str, tuple[float, float]]
         Per-model percentile CI on Elo from resampling the comparisons.
     comparisons : list[dict]
-        The raw audit records (``doc``, ``model_a``, ``model_b`` as presented,
-        ``choice``, ``winner``, ``reasoning``), so a run is re-aggregatable without
-        re-calling the LLM.
+        The raw audit records: ``doc``, ``model_a`` / ``model_b`` (as presented),
+        ``set_a`` / ``set_b`` (the exact rendered topic-set text the judge saw),
+        ``choice``, ``winner``, and ``reasoning``. Storing the rendered sets makes a
+        run fully re-auditable and re-aggregatable without re-calling the LLM.
     names : list[str]
         Model names, the order of ``win_matrix`` rows/columns.
     representation : str
@@ -1468,29 +1469,32 @@ class JudgeResult:
         return pd.DataFrame(rows)
 
     def summary(self) -> str:
-        """A short text leaderboard (model, Elo, CI), best-first. Flags when the top
-        two models' bootstrap CIs overlap -- with few comparisons they usually do,
-        and an overlap means the ranking does not separate them (treat as no
-        decision, and raise ``n_comparisons``)."""
+        """A short text leaderboard (model, Elo, CI), best-first. Flags every pair of
+        *adjacent* models whose bootstrap CIs overlap -- with few comparisons they
+        usually do, and an overlap means the ranking does not separate that pair
+        (treat as no decision there, and raise ``n_comparisons``)."""
         rank = self.ranking()
         lines = [f"LLM topic judge ({self.representation}, {len(self.comparisons)} "
                  f"comparisons, Elo mean 1500)"]
         for nm in rank:
             lo, hi = self.bootstrap_ci.get(nm, (float("nan"), float("nan")))
             lines.append(f"  {nm:<20s} {self.elo[nm]:7.1f}  [{lo:7.1f}, {hi:7.1f}]")
-        if len(rank) >= 2:
-            (lo0, hi0), (lo1, hi1) = (self.bootstrap_ci.get(rank[0], (float("nan"),) * 2),
-                                      self.bootstrap_ci.get(rank[1], (float("nan"),) * 2))
-            if not math.isnan(lo0) and not math.isnan(hi1) and lo0 <= hi1:
-                lines.append("  note: the top two CIs overlap -- not a decision at "
-                             "this n_comparisons; raise it to separate the models.")
+        overlaps = []
+        for hi_nm, lo_nm in zip(rank, rank[1:]):
+            hi_lo = self.bootstrap_ci.get(hi_nm, (float("nan"),) * 2)[0]
+            lo_hi = self.bootstrap_ci.get(lo_nm, (float("nan"),) * 2)[1]
+            if not math.isnan(hi_lo) and not math.isnan(lo_hi) and hi_lo <= lo_hi:
+                overlaps.append(f"{hi_nm}~{lo_nm}")
+        if overlaps:
+            lines.append("  note: overlapping CIs (not separated at this "
+                         f"n_comparisons): {', '.join(overlaps)}; raise n_comparisons.")
         return "\n".join(lines)
 
 
 def llm_judge(models, docs, *, backend, n_comparisons=100, q=2, p=0.75,
               representation="summary", n_words=10, dataset_description=None,
               bootstrap=100, confidence_level=0.95, bt_smoothing=1.0, max_chars=1500,
-              seed=0, prompts=None):
+              seed=0, dry_run=False, prompts=None):
     """Rank topic models by an LLM's pairwise topic-document judgments (Zheng et al.
     2025, App. G) -- the paper's flagship, vocabulary-agnostic evaluation.
 
@@ -1522,8 +1526,11 @@ def llm_judge(models, docs, *, backend, n_comparisons=100, q=2, p=0.75,
         Two or more fitted models, all fit on the same ``docs`` in the same order.
         judge aligns each model's ``doc_topic`` row ``d`` to ``docs[d]`` and cannot
         verify the correspondence beyond the row count, so models fit on different
-        documents produce a silently invalid ranking (it warns when their
-        vocabularies disagree). Same corpus, same order.
+        documents produce a silently invalid ranking. It warns when the models'
+        vocabularies disagree, which catches the common case (different corpora, or the
+        same corpus in a different order), but that is only a *proxy*: a misalignment
+        under a shared fixed vocabulary is not caught, so ensure yourself that every
+        model was fit on the same documents in the same order.
     docs : Corpus | list of str | list of token lists
         The documents, in the order the models were fit on (their ``doc_topic`` rows).
     backend : callable ``str -> str`` or model-name str
@@ -1557,6 +1564,10 @@ def llm_judge(models, docs, *, backend, n_comparisons=100, q=2, p=0.75,
         Truncate each document to this many characters in the judge prompt.
     seed : int
         Seeds document sampling and A/B presentation order (the LLM is still bounded).
+    dry_run : bool
+        If ``True``, make no LLM calls and return a plan dict instead
+        (``{"models", "pairs", "n_comparisons", "judge_calls", "max_summary_calls",
+        "representation"}``) so you can preview the cost before paying for a run.
     prompts : optional dict
         Override the editable templates (keys ``"judge"``, ``"summary"``); defaults to
         :data:`LLM_EVAL_PROMPTS`.
@@ -1565,7 +1576,7 @@ def llm_judge(models, docs, *, backend, n_comparisons=100, q=2, p=0.75,
     -------
     JudgeResult
         The Elo ranking, bootstrap CIs, win matrix, and the raw comparison records
-        (see :class:`JudgeResult`).
+        (see :class:`JudgeResult`). If ``dry_run=True``, a plan ``dict`` instead.
     """
     if not isinstance(models, dict):
         raise TypeError("models must be a dict {name: fitted_model}")
@@ -1602,14 +1613,31 @@ def llm_judge(models, docs, *, backend, n_comparisons=100, q=2, p=0.75,
             pass
     if len(set(vocabs.values())) > 1:
         warnings.warn(
-            "the models have different vocabularies, which usually means they were "
-            "fit on different corpora; judge assumes every model was fit on the same "
-            "documents in the same order (it aligns doc_topic row d to docs[d]) and "
-            "the ranking is invalid otherwise. Re-fit all models on one corpus.",
+            "the models have different vocabularies (different words, or the same "
+            "words in a different order), which usually means they were fit on "
+            "different corpora or the same corpus in a different order; judge assumes "
+            "every model was fit on the same documents in the same order (it aligns "
+            "doc_topic row d to docs[d]) and the ranking is invalid otherwise. Re-fit "
+            "all models on one corpus, in one order. (This vocabulary check is a "
+            "proxy: it cannot catch a misalignment where the vocabularies happen to "
+            "match, e.g. a shared fixed vocabulary.)",
             stacklevel=2)
 
-    idx = {nm: i for i, nm in enumerate(names)}
     M = len(names)
+    n_pairs = M * (M - 1) // 2
+    judge_calls = max(1, n_comparisons) * n_pairs
+    if dry_run:
+        # Return the plan without calling the LLM, so a user can preview the cost of a
+        # (potentially hundreds-of-calls) run before paying for it.
+        max_summary_calls = 0
+        if representation == "summary":
+            for m in models.values():
+                max_summary_calls += int(getattr(m, "num_topics", 0))
+        return {"models": M, "pairs": n_pairs, "n_comparisons": max(1, n_comparisons),
+                "judge_calls": judge_calls, "max_summary_calls": max_summary_calls,
+                "representation": representation}
+
+    idx = {nm: i for i, nm in enumerate(names)}
     win = np.zeros((M, M))
     cache: dict = {}
     comparisons: list = []
@@ -1639,6 +1667,7 @@ def llm_judge(models, docs, *, backend, n_comparisons=100, q=2, p=0.75,
             else:
                 winner = None  # tie / unparseable -> split credit
             comparisons.append({"doc": d, "model_a": first, "model_b": second,
+                                "set_a": set_a, "set_b": set_b,
                                 "choice": choice, "winner": winner,
                                 "reasoning": str(reply).strip()})
             if winner == a:

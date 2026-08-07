@@ -107,9 +107,28 @@ def test_comparisons_are_auditable(models):
     res = L.judge(models, DOCS, backend=j, n_comparisons=5, representation="words",
                   bootstrap=0, seed=0)
     rec = res.comparisons[0]
-    assert set(rec) == {"doc", "model_a", "model_b", "choice", "winner", "reasoning"}
+    assert set(rec) == {"doc", "model_a", "model_b", "set_a", "set_b",
+                        "choice", "winner", "reasoning"}
     assert rec["model_a"] in models and rec["model_b"] in models
     assert rec["winner"] in (rec["model_a"], rec["model_b"], None)
+    # the exact rendered topic sets the judge saw are retained (re-auditable)
+    assert isinstance(rec["set_a"], str) and isinstance(rec["set_b"], str)
+    assert rec["set_a"] and rec["set_b"]
+
+
+def test_dry_run_previews_cost_without_calling(models):
+    class Boom:
+        def __call__(self, prompt):
+            raise AssertionError("dry_run must not call the backend")
+    plan = L.judge(models, DOCS, backend=Boom(), n_comparisons=10,
+                   representation="words", dry_run=True)
+    assert plan["models"] == 3 and plan["pairs"] == 3
+    assert plan["judge_calls"] == 10 * 3  # n_comparisons * M(M-1)/2
+    assert plan["max_summary_calls"] == 0  # words mode
+    # summary mode reports a nonzero summary-call ceiling
+    plan2 = L.judge(models, DOCS, backend=Boom(), n_comparisons=5,
+                    representation="summary", dry_run=True)
+    assert plan2["max_summary_calls"] == sum(m.num_topics for m in models.values())
 
 
 def test_design_is_reproducible_for_fixed_seed(models):
