@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import math
 import re
+import warnings
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from itertools import combinations
@@ -1467,12 +1468,22 @@ class JudgeResult:
         return pd.DataFrame(rows)
 
     def summary(self) -> str:
-        """A short text leaderboard (model, Elo, CI), best-first."""
+        """A short text leaderboard (model, Elo, CI), best-first. Flags when the top
+        two models' bootstrap CIs overlap -- with few comparisons they usually do,
+        and an overlap means the ranking does not separate them (treat as no
+        decision, and raise ``n_comparisons``)."""
+        rank = self.ranking()
         lines = [f"LLM topic judge ({self.representation}, {len(self.comparisons)} "
                  f"comparisons, Elo mean 1500)"]
-        for nm in self.ranking():
+        for nm in rank:
             lo, hi = self.bootstrap_ci.get(nm, (float("nan"), float("nan")))
             lines.append(f"  {nm:<20s} {self.elo[nm]:7.1f}  [{lo:7.1f}, {hi:7.1f}]")
+        if len(rank) >= 2:
+            (lo0, hi0), (lo1, hi1) = (self.bootstrap_ci.get(rank[0], (float("nan"),) * 2),
+                                      self.bootstrap_ci.get(rank[1], (float("nan"),) * 2))
+            if not math.isnan(lo0) and not math.isnan(hi1) and lo0 <= hi1:
+                lines.append("  note: the top two CIs overlap -- not a decision at "
+                             "this n_comparisons; raise it to separate the models.")
         return "\n".join(lines)
 
 
@@ -1497,10 +1508,22 @@ def llm_judge(models, docs, *, backend, n_comparisons=100, q=2, p=0.75,
     bit-reproducible, but ``seed`` fixes the document sampling and presentation order,
     so the comparison *design* is reproducible.
 
+    Cost: judge makes ``n_comparisons * M*(M-1)/2`` LLM calls for ``M`` models, plus
+    (for ``representation="summary"``) up to one cached summary call per surfaced
+    ``(model, topic)``. The default ``n_comparisons=100`` follows the paper and can be
+    hundreds of calls; lower it (and read the CIs) while exploring. With few
+    comparisons the bootstrap CIs overlap and the ranking does not separate the
+    models -- :meth:`JudgeResult.summary` flags that -- so scale ``n_comparisons`` up
+    before reporting an Elo table.
+
     Parameters
     ----------
     models : dict[str, fitted model]
         Two or more fitted models, all fit on the same ``docs`` in the same order.
+        judge aligns each model's ``doc_topic`` row ``d`` to ``docs[d]`` and cannot
+        verify the correspondence beyond the row count, so models fit on different
+        documents produce a silently invalid ranking (it warns when their
+        vocabularies disagree). Same corpus, same order.
     docs : Corpus | list of str | list of token lists
         The documents, in the order the models were fit on (their ``doc_topic`` rows).
     backend : callable ``str -> str`` or model-name str
@@ -1513,19 +1536,36 @@ def llm_judge(models, docs, *, backend, n_comparisons=100, q=2, p=0.75,
     p : float
         Cumulative-probability cap on top topics (the smaller of ``q`` / ``p`` wins).
     representation : {"summary", "words"}
-        Render each topic as a one-sentence LLM summary (paper default, fair across
-        vocabularies) or as its top-``n_words`` word list.
+        Render each topic as a one-sentence LLM summary (paper default; use it to
+        compare *different model families* fairly) or as its top-``n_words`` word list
+        ("words" is cheaper -- no summary calls -- and fine for a same-family sweep,
+        e.g. LDA at several K).
+    n_words : int
+        Top words shown per topic in ``"words"`` mode, and summarized per topic in
+        ``"summary"`` mode.
+    dataset_description : optional str
+        A one-line corpus description added to every prompt (e.g. "Usenet posts about
+        computing and politics"), which can sharpen the judge and the summaries.
     bootstrap : int
-        Resamples for the per-model Elo CI; 0 skips.
+        Resamples for the per-model Elo CI; 0 skips (CIs come back NaN).
+    confidence_level : float
+        Central mass of the bootstrap percentile interval (default 0.95).
     bt_smoothing : float
         Phantom-tie pseudocount per pair for a finite Elo when a model always/never
         wins.
+    max_chars : int
+        Truncate each document to this many characters in the judge prompt.
     seed : int
         Seeds document sampling and A/B presentation order (the LLM is still bounded).
+    prompts : optional dict
+        Override the editable templates (keys ``"judge"``, ``"summary"``); defaults to
+        :data:`LLM_EVAL_PROMPTS`.
 
     Returns
     -------
     JudgeResult
+        The Elo ranking, bootstrap CIs, win matrix, and the raw comparison records
+        (see :class:`JudgeResult`).
     """
     if not isinstance(models, dict):
         raise TypeError("models must be a dict {name: fitted_model}")
@@ -1548,6 +1588,25 @@ def llm_judge(models, docs, *, backend, n_comparisons=100, q=2, p=0.75,
                 f"model {nm!r} has {th.shape[0]} doc-topic rows but there are {D} "
                 "documents; every model must be fit on the same docs, in order")
         thetas[nm] = th
+
+    # judge aligns doc_topic row d to docs[d] and cannot otherwise verify that every
+    # model saw the same documents in the same order. The row-count check above only
+    # catches a length mismatch, not two models fit on *different* same-length slices
+    # (a silently invalid ranking). Differing vocabularies are a strong signal of
+    # that mistake, so warn on it -- the cheapest guard short of a stored corpus hash.
+    vocabs = {}
+    for nm, m in models.items():
+        try:
+            vocabs[nm] = tuple(m.vocabulary)
+        except Exception:
+            pass
+    if len(set(vocabs.values())) > 1:
+        warnings.warn(
+            "the models have different vocabularies, which usually means they were "
+            "fit on different corpora; judge assumes every model was fit on the same "
+            "documents in the same order (it aligns doc_topic row d to docs[d]) and "
+            "the ranking is invalid otherwise. Re-fit all models on one corpus.",
+            stacklevel=2)
 
     idx = {nm: i for i, nm in enumerate(names)}
     M = len(names)

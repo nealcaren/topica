@@ -13,7 +13,7 @@ import pytest
 import topica
 import topica.llm as L
 from topica.coherence import (
-    _bradley_terry, _bt_to_elo, _parse_judge_choice, _top_topics_for_doc,
+    JudgeResult, _bradley_terry, _bt_to_elo, _parse_judge_choice, _top_topics_for_doc,
 )
 
 
@@ -127,6 +127,34 @@ def test_bootstrap_skipped_when_zero(models):
     res = L.judge(models, DOCS, backend=WaterJudge(), n_comparisons=5,
                   representation="words", bootstrap=0, seed=0)
     assert all(np.isnan(res.bootstrap_ci[nm][0]) for nm in res.names)
+
+
+# -- guards from the sample-user review ------------------------------------
+
+def test_warns_when_models_fit_on_different_corpora(models):
+    # Two models fit on DIFFERENT documents of the same length pass the row-count
+    # check but yield a silently invalid ranking; differing vocabularies catch it.
+    other_docs = [["alpha", "beta", "gamma", "delta"],
+                  ["epsilon", "zeta", "eta", "theta"]] * 16
+    assert len(other_docs) == len(DOCS)  # same length -> row check can't catch it
+    good = models["good"]
+    elsewhere = topica.LDA(3, seed=5); elsewhere.fit(other_docs, iters=40)
+    with pytest.warns(UserWarning, match="different vocabularies"):
+        L.judge({"good": good, "elsewhere": elsewhere}, DOCS, backend=WaterJudge(),
+                n_comparisons=2, representation="words", bootstrap=0, seed=0)
+
+
+def test_summary_flags_overlapping_top_cis():
+    overlap = JudgeResult(
+        elo={"a": 1550.0, "b": 1450.0}, win_matrix=np.zeros((2, 2)),
+        bootstrap_ci={"a": (1400.0, 1700.0), "b": (1300.0, 1600.0)},  # overlap
+        comparisons=[{}], names=["a", "b"], representation="words")
+    assert "overlap" in overlap.summary().lower()
+    clear = JudgeResult(
+        elo={"a": 1800.0, "b": 1200.0}, win_matrix=np.zeros((2, 2)),
+        bootstrap_ci={"a": (1750.0, 1850.0), "b": (1150.0, 1250.0)},  # disjoint
+        comparisons=[{}], names=["a", "b"], representation="words")
+    assert "overlap" not in clear.summary().lower()
 
 
 # -- errors ----------------------------------------------------------------

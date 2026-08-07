@@ -133,6 +133,24 @@ that compares different model *families* on topic-*document* fit rather than int
 word relatedness, so it is the natural way to rank a set of fitted models on one corpus.
 `seed` fixes the document sampling and A/B order (the LLM itself stays `llm-bounded`).
 
+Three things to keep in mind:
+
+- **Cost.** A run makes `n_comparisons × M(M-1)/2` LLM calls for `M` models (plus, in
+  `summary` mode, one cached call per surfaced topic). The default `n_comparisons=100`
+  follows the paper and is hundreds of calls for a few models; start smaller while
+  exploring.
+- **Read the CIs.** With few comparisons the bootstrap intervals overlap and the
+  ranking does not actually separate the models; treat overlapping CIs as *no
+  decision* (`summary()` flags when the top two overlap) and raise `n_comparisons`
+  before reporting an Elo table. The paper uses 100 *per pair*.
+- **Representation.** Use `representation="summary"` to compare *different families*
+  fairly; `representation="words"` is cheaper (no summary calls) and fine for a
+  same-family sweep such as LDA at several `k`.
+
+- **Same corpus, same order.** Every model must be fit on the same `docs` in the same
+  order — judge aligns `doc_topic` row `d` to `docs[d]` and cannot verify more than the
+  row count (it warns when the models' vocabularies disagree, a sign they were not).
+
 ### A multi-dimensional suite (Tan & D'Souza 2025)
 
 Coherence rating answers one question — *are these words related?* — but a topic can
