@@ -202,3 +202,75 @@ def test_se_emitted_at_the_optimum_has_no_infinity(name):
     se = np.asarray(se)
     assert not np.isinf(se).any(), f"{name} SE contains an infinity"
     assert np.isfinite(np.asarray(m.feature_effects)).all(), f"{name} feature_effects not finite"
+
+
+# --- Extreme-covariate tail (the unbounded exp) ----------------------------
+
+
+def _covariate_extreme(n: int, scale: float) -> np.ndarray:
+    """One continuous covariate column at a large magnitude, to stress the DMR/GDMR
+    prior's ``exp(x . lambda)`` toward overflow (#419)."""
+    return np.array([[scale * np.sin(i)] for i in range(n)], dtype=float)
+
+
+@pytest.mark.parametrize("name", _COVARIATE)
+@pytest.mark.parametrize("scale", [1e2, 1e4, 1e6])
+def test_extreme_covariate_scale_stays_finite(name, scale):
+    # A large-magnitude covariate pushes exp(x . lambda) toward inf; the prior must
+    # stay finite and produce valid topics (or reject the design cleanly), never a
+    # silent NaN. Parity fixtures are curated and never hit this regime (#419).
+    docs = _docs()
+    model = _MODELS[name]["build"](3)
+    try:
+        model.fit(docs, _covariate_extreme(len(docs), scale), iters=_ITERS)
+    except (ValueError, OverflowError):
+        return  # a clean rejection of a pathological design satisfies the invariant
+    _assert_valid_distributions(model)
+    assert np.isfinite(np.asarray(model.feature_effects)).all(), (
+        f"{name} feature_effects went non-finite at covariate scale {scale:g}"
+    )
+    se = model.feature_effect_se
+    if se is not None:
+        assert not np.isinf(np.asarray(se)).any(), (
+            f"{name} SE contains an infinity at covariate scale {scale:g}"
+        )
+
+
+# --- Multithread (approximate parallel) path -------------------------------
+
+
+def _build_threaded(name: str, k: int, num_threads: int):
+    """Rebuild a model like its registry entry but with ``num_threads`` set. Raises
+    TypeError if the constructor has no such argument (the caller skips)."""
+    builders = {
+        "LDA": lambda: topica.LDA(k, seed=1, num_threads=num_threads),
+        "DMR": lambda: topica.DMR(k, seed=1, optimize_interval=10, burn_in=10,
+                                  num_threads=num_threads),
+        "keyATM": lambda: topica.KeyATM({"g": ["a"]}, num_topics=k, seed=1,
+                                        num_threads=num_threads),
+        "GDMR": lambda: topica.GDMR(k, degrees=[2], seed=1, optimize_interval=10,
+                                    burn_in=10, num_threads=num_threads),
+        "SAGE": lambda: topica.SAGE(k, seed=1, num_threads=num_threads),
+    }
+    return builders[name]()
+
+
+@pytest.mark.parametrize("name", _ALL)
+def test_multithread_path_stays_valid(name):
+    # The approximate parallel (AD-LDA-style) sampler is a non-parity path: parity
+    # always runs single-thread. Its count-table merge must still produce finite,
+    # normalized, non-collapsed topics -- a merge bug shows up as NaN or a degenerate
+    # single-topic result, not as a parity drift.
+    docs = _docs(48)
+    try:
+        model = _build_threaded(name, 3, num_threads=2)
+    except TypeError:
+        pytest.skip(f"{name} takes no num_threads")
+    _MODELS[name]["fit"](model, docs)
+    _assert_valid_distributions(model)
+    # not collapsed to a single topic (a classic parallel-merge failure mode):
+    # more than one topic carries appreciable mean mass across documents.
+    mean_theta = np.asarray(model.doc_topic).mean(axis=0)
+    assert int((mean_theta > 0.01).sum()) > 1, (
+        f"{name} multithread fit collapsed to ~1 used topic"
+    )
