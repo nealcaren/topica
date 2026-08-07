@@ -41,6 +41,14 @@ class ModelInfo:
         *validated* model). Experimental models are gated at construction (see
         :func:`topica.enable_experimental`) and listed apart from the validated
         roster; they may change or be removed without a deprecation cycle.
+    common_start : ``True`` for a *common starting point*: one of the handful of
+        models most social scientists reach for first, chosen by contemporary
+        popularity and applied usefulness. This is an editorial suggestion about
+        where a newcomer commonly begins, NOT a quality ranking: every model here
+        is equally reference-validated, and a specialized model (short text, over
+        time, networks, multiple languages, ideological scaling) is the correct
+        first choice for its own design. Orthogonal to ``experimental``, which is
+        a validation status.
     """
 
     name: str
@@ -52,6 +60,7 @@ class ModelInfo:
     summary: str
     doc: str
     experimental: bool = False
+    common_start: bool = False
 
 
 # Purpose groups, in display order. Organized by what the user brings and wants,
@@ -77,7 +86,7 @@ REGISTRY: dict[str, ModelInfo] = {
         # ---- General-purpose ------------------------------------------------
         _m("LDA", "general-purpose", ("text",), "gibbs", "seed-reproducible", (),
            "Classic latent Dirichlet allocation via a fast SparseLDA collapsed-Gibbs sampler.",
-           "guides/models.md#lda"),
+           "guides/models.md#lda", common_start=True),
         _m("OnlineLDA", "general-purpose", ("text",), "variational", "seed-reproducible", ("streaming",),
            "Online (streaming) variational-Bayes LDA (Hoffman et al. 2010): minibatch stochastic VB with a decaying learning rate and a streaming partial_fit; the gensim LdaModel analogue for very large or streaming corpora.",
            "guides/models.md#onlinelda"),
@@ -92,7 +101,7 @@ REGISTRY: dict[str, ModelInfo] = {
            "guides/models.md#hdp"),
         _m("NMF", "general-purpose", ("text",), "matrix-factorization", "bit-exact", (),
            "Non-negative matrix factorization of the document-term matrix via multiplicative updates.",
-           "guides/models.md#nmf"),
+           "guides/models.md#nmf", common_start=True),
         _m("LSA", "general-purpose", ("text",), "svd", "seed-reproducible", (),
            "Latent semantic analysis: a truncated SVD of the weighted document-term matrix.",
            "guides/models.md#lsa"),
@@ -108,7 +117,7 @@ REGISTRY: dict[str, ModelInfo] = {
         # ---- Covariates & structure ----------------------------------------
         _m("STM", "covariates", ("text", "metadata"), "variational", "bit-exact", (),
            "Structural topic model: relate topic prevalence and content to covariates.",
-           "guides/models.md#stm"),
+           "guides/models.md#stm", common_start=True),
         _m("STS", "covariates", ("text", "metadata"), "variational", "bit-exact", (),
            "Structural topic-and-sentiment model over document metadata.",
            "guides/models.md#sts"),
@@ -136,7 +145,7 @@ REGISTRY: dict[str, ModelInfo] = {
         # ---- Guided & supervised -------------------------------------------
         _m("KeyATM", "guided", ("text", "seeds"), "gibbs", "seed-reproducible", (),
            "Keyword-assisted topics: anchor named topics with a few seed words each.",
-           "guides/guided.md"),
+           "guides/guided.md", common_start=True),
         _m("SeededLDA", "guided", ("text", "seeds"), "gibbs", "seed-reproducible", (),
            "Seeded LDA: steer named topics toward supplied seed words.",
            "guides/guided.md"),
@@ -152,7 +161,7 @@ REGISTRY: dict[str, ModelInfo] = {
         # ---- Short text -----------------------------------------------------
         _m("GSDMM", "short-text", ("text",), "gibbs", "seed-reproducible", ("short-text",),
            "Gibbs-sampling Dirichlet mixture: one topic per short document.",
-           "guides/short-text.md"),
+           "guides/short-text.md", common_start=True),
         _m("PT", "short-text", ("text",), "gibbs", "seed-reproducible", ("short-text",),
            "Pseudo-document topic model: pool short texts into pseudo-documents.",
            "guides/short-text.md"),
@@ -176,7 +185,7 @@ REGISTRY: dict[str, ModelInfo] = {
         # ---- Embedding-based ------------------------------------------------
         _m("BERTopic", "embedding", ("text", "embeddings"), "clustering", "seed-reproducible", (),
            "Cluster document embeddings; label topics by class-based TF-IDF.",
-           "guides/embedding.md"),
+           "guides/embedding.md", common_start=True),
         _m("Top2Vec", "embedding", ("text", "embeddings"), "clustering", "seed-reproducible", (),
            "Topics as dense regions in a joint document-word embedding space.",
            "guides/embedding.md"),
@@ -481,6 +490,7 @@ def list_models(
     determinism: str | None = None,
     tag: str | None = None,
     experimental: bool | None = None,
+    common_start: bool | None = None,
 ) -> list[ModelInfo]:
     """Return the registered models matching every supplied filter.
 
@@ -495,6 +505,10 @@ def list_models(
     - ``tag`` — a cross-cutting tag (e.g. ``"short-text"``, ``"nonparametric"``).
     - ``experimental`` — ``True`` for only the experimental (unvalidated) models,
       ``False`` for only the validated roster; the default ``None`` returns both.
+    - ``common_start`` — ``True`` for only the common starting points (the models
+      most social scientists reach for first). This is an editorial suggestion,
+      not a quality ranking: every validated model is equally reference-checked,
+      and a specialized model is the right first choice for its own design.
 
     Examples
     --------
@@ -503,6 +517,8 @@ def list_models(
     ['BERTopic', 'Top2Vec', 'ETM', 'FASTopic', 'EmbeddingLDA']
     >>> [m.name for m in topica.list_models(group="short-text")]
     ['GSDMM', 'PT']
+    >>> [m.name for m in topica.list_models(common_start=True)]
+    ['LDA', 'NMF', 'STM', 'KeyATM', 'GSDMM', 'BERTopic']
     """
     if group is not None and group not in GROUPS:
         raise ValueError(f"unknown group {group!r}; choose from {sorted(GROUPS)}")
@@ -519,6 +535,8 @@ def list_models(
         if tag is not None and tag not in m.tags:
             continue
         if experimental is not None and m.experimental != experimental:
+            continue
+        if common_start is not None and m.common_start != common_start:
             continue
         out.append(m)
     return out
@@ -542,14 +560,47 @@ def markdown_table(by_group: bool = True) -> str:
 
     lines: list[str] = []
     if by_group:
-        # Validated models, grouped by purpose. Experimental models are held out
-        # and listed in their own section below so the roster above is exactly
-        # the paper-backed, parity-checked set.
+        # Every validated model is reference-checked; state that once, up front, so
+        # the grouping below cannot be read as a validity gradient. The "common
+        # starting points" band is an editorial convenience (where newcomers most
+        # often begin), not a ranking — a specialized model is the right first
+        # choice for its own design.
+        lines.append(
+            "*Every model below is validated against a reference implementation.* "
+            "The groupings are about **fit to your research design**, not quality: "
+            "a specialized model is the right first choice when your data calls "
+            "for it.\n"
+        )
+        # Common starting points: the handful of models most social scientists
+        # reach for first, surfaced at the top so a newcomer is not met with 40-odd
+        # equal-weight rows.
+        common = [m for m in REGISTRY.values() if m.common_start and not m.experimental]
+        if common:
+            lines.append("### Common starting points\n")
+            lines.append(
+                "One per common goal, where most social scientists begin. "
+                "`BERTopic` works differently from the others: it clusters "
+                "document embeddings rather than fitting a posterior, so "
+                "topic-proportion uncertainty and covariate-effect estimation do "
+                "not carry over directly.\n"
+            )
+            lines += _rows(common)
+            lines.append("")
+        # Specialized approaches, grouped by purpose. Common-start models appear
+        # only in the band above (not repeated here). Experimental models are held
+        # out and listed in their own section below.
+        lines.append("### Specialized approaches\n")
+        lines.append(
+            "The right first choice when your design calls for one: short text, "
+            "change over time, document networks, multiple languages, ideological "
+            "scaling, and more.\n"
+        )
         for key, label in GROUPS.items():
-            models = [m for m in REGISTRY.values() if m.group == key and not m.experimental]
+            models = [m for m in REGISTRY.values()
+                      if m.group == key and not m.experimental and not m.common_start]
             if not models:
                 continue
-            lines.append(f"### {label}\n")
+            lines.append(f"#### {label}\n")
             lines += _rows(models)
             lines.append("")
         experimental = [m for m in REGISTRY.values() if m.experimental]
@@ -572,6 +623,115 @@ def markdown_table(by_group: bool = True) -> str:
                 f"| `{m.name}` | {GROUPS[m.group]} | {brings} | {m.inference} | "
                 f"{m.determinism} | {m.summary} |"
             )
+    return "\n".join(lines)
+
+
+# The front-door chooser: research goal -> the model to reach for first. Two
+# sections, so a newcomer sees both the common openings and an explicit route into
+# each specialized family (rather than reading "specialized" as second-rate). Each
+# row's ``primary`` is where to start for that goal; ``also`` names a close
+# alternative. Model names are checked against REGISTRY at render time (see
+# :func:`chooser_markdown_table`), so a renamed or removed model fails loudly in
+# ``gen_model_tables.py`` rather than drifting silently in the docs.
+@dataclass(frozen=True)
+class ChooserRow:
+    """One row of the front-door decision matrix."""
+
+    goal: str  # the researcher's question, in their terms
+    primary: str  # the model to start with (a REGISTRY key)
+    also: str  # a close alternative (a REGISTRY key), or "" for none
+    calls: str  # the first functions to call, as inline code
+    note: str  # one why/watch-out line
+    section: str = "common"  # "common" or "specialized"
+
+
+CHOOSER: tuple[ChooserRow, ...] = (
+    # --- Common openings -------------------------------------------------------
+    ChooserRow(
+        "Explore themes with no prior structure",
+        "LDA", "NMF", "`search_k()`, `topic_table()`",
+        "The default first pass. `NMF` is a fast, deterministic alternative.",
+    ),
+    ChooserRow(
+        "Relate topics to metadata (author, date, party)",
+        "STM", "DMR", "`estimate_effect()`, `one_hot()`, `spline()`",
+        "`STM` gives covariate effects with uncertainty; `DMR` is a lighter Gibbs prior.",
+    ),
+    ChooserRow(
+        "Measure concepts you can name in advance",
+        "KeyATM", "SeededLDA", "`KeyATM(keywords=…)`, `.keyword_rate`",
+        "Anchor named topics with a few seed words each.",
+    ),
+    ChooserRow(
+        "Very short documents: tweets, headlines, survey answers",
+        "GSDMM", "PT", "`fit()`",
+        "One topic per document; standard LDA over-fragments short text.",
+    ),
+    ChooserRow(
+        "Cluster by meaning using embeddings",
+        "BERTopic", "ETM", "`fit(docs, doc_embeddings=…)`",
+        "Clustering, not a posterior: topic-proportion uncertainty and effect "
+        "estimation behave differently than the models above.",
+    ),
+    # --- Specialized: the right first choice when your design calls for it ------
+    ChooserRow(
+        "Topics shift over time slices",
+        "DTM", "DETM", "`fit(docs, times=…)`",
+        "Prevalence and content evolve across periods; `DETM` adds embeddings.",
+        section="specialized",
+    ),
+    ChooserRow(
+        "Documents linked in a network (citations, replies)",
+        "RTM", "", "`fit(docs, links=…)`",
+        "Models the text and the link graph jointly.",
+        section="specialized",
+    ),
+    ChooserRow(
+        "Documents in more than one language",
+        "PolylingualLDA", "", "`fit(doc_tuples)`",
+        "Aligned topics across languages from translation-linked tuples.",
+        section="specialized",
+    ),
+    ChooserRow(
+        "Place authors or actors on an ideological scale",
+        "Wordfish", "TBIP", "`fit(docs)`",
+        "Scaling from word usage; `TBIP` adds a text-based ideal-point prior.",
+        section="specialized",
+    ),
+    ChooserRow(
+        "How tone or sentiment varies with metadata",
+        "STS", "", "`estimate_effect()`",
+        "Sentiment-discourse decomposition; reach for it when tone is the question.",
+        section="specialized",
+    ),
+)
+
+
+def chooser_markdown_table() -> str:
+    """Render the front-door decision matrix (:data:`CHOOSER`) as Markdown.
+
+    Two sub-tables, ``common`` then ``specialized``, so each specialist family has
+    an explicit "start here when…" route rather than being buried in the catalog.
+    Raises ``KeyError`` if a row names a model absent from :data:`REGISTRY`, which
+    is the drift guard: the table cannot ship a model that has been renamed or
+    removed.
+    """
+    def _table(header: str, rows: tuple[ChooserRow, ...]) -> list[str]:
+        out = [header, "|---|---|---|---|---|"]
+        for r in rows:
+            REGISTRY[r.primary]  # KeyError if the model no longer exists
+            also = f"`{REGISTRY[r.also].name}`" if r.also else "—"
+            out.append(
+                f"| {r.goal} | `{REGISTRY[r.primary].name}` | {also} | {r.calls} | {r.note} |"
+            )
+        return out
+
+    common = tuple(r for r in CHOOSER if r.section == "common")
+    special = tuple(r for r in CHOOSER if r.section == "specialized")
+    lines = ["**Common openings**", ""]
+    lines += _table("| If your goal is… | Start with | Also consider | First calls | Note |", common)
+    lines += ["", "**Specialized approaches.** Start here when your design calls for one.", ""]
+    lines += _table("| If your data or goal is… | Start with | Also consider | First calls | Note |", special)
     return "\n".join(lines)
 
 

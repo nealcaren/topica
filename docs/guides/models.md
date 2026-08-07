@@ -34,25 +34,41 @@ generated from `python/topica/registry.py`.
 
 <!-- BEGIN MODEL TABLE (generated from topica.registry; edit registry.py, not this block) -->
 
-### General-purpose
+*Every model below is validated against a reference implementation.* The groupings are about **fit to your research design**, not quality: a specialized model is the right first choice when your data calls for it.
+
+### Common starting points
+
+One per common goal, where most social scientists begin. `BERTopic` works differently from the others: it clusters document embeddings rather than fitting a posterior, so topic-proportion uncertainty and covariate-effect estimation do not carry over directly.
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
 | `LDA` | text | gibbs | seed-reproducible | Classic latent Dirichlet allocation via a fast SparseLDA collapsed-Gibbs sampler. |
+| `NMF` | text | matrix-factorization | bit-exact | Non-negative matrix factorization of the document-term matrix via multiplicative updates. |
+| `STM` | text, metadata | variational | bit-exact | Structural topic model: relate topic prevalence and content to covariates. |
+| `KeyATM` | text, seeds | gibbs | seed-reproducible | Keyword-assisted topics: anchor named topics with a few seed words each. |
+| `GSDMM` | text | gibbs | seed-reproducible | Gibbs-sampling Dirichlet mixture: one topic per short document. |
+| `BERTopic` | text, embeddings | clustering | seed-reproducible | Cluster document embeddings; label topics by class-based TF-IDF. |
+
+### Specialized approaches
+
+The right first choice when your design calls for one: short text, change over time, document networks, multiple languages, ideological scaling, and more.
+
+#### General-purpose
+
+| Model | Brings | Inference | Reproducibility | Summary |
+|---|---|---|---|---|
 | `OnlineLDA` | text | variational | seed-reproducible | Online (streaming) variational-Bayes LDA (Hoffman et al. 2010): minibatch stochastic VB with a decaying learning rate and a streaming partial_fit; the gensim LdaModel analogue for very large or streaming corpora. |
 | `CTM` | text | variational | bit-exact | Correlated topic model: a logistic-normal prior that lets topics co-occur. |
 | `ProdLDA` | text | vae | seed-reproducible | Product-of-experts LDA (AVITM) for sharper, more coherent topics; hand-coded VAE. |
 | `HDP` | text | gibbs | seed-reproducible | Hierarchical Dirichlet process: infers the number of topics from the data. |
-| `NMF` | text | matrix-factorization | bit-exact | Non-negative matrix factorization of the document-term matrix via multiplicative updates. |
 | `LSA` | text | svd | seed-reproducible | Latent semantic analysis: a truncated SVD of the weighted document-term matrix. |
 | `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `PolylingualLDA` | text | gibbs | seed-reproducible | Polylingual topic model (Mimno et al. 2009): aligned topics across languages from document tuples that share one topic distribution. |
 
-### Covariates & structure
+#### Covariates & structure
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
-| `STM` | text, metadata | variational | bit-exact | Structural topic model: relate topic prevalence and content to covariates. |
 | `STS` | text, metadata | variational | bit-exact | Structural topic-and-sentiment model over document metadata. |
 | `SAGE` | text, metadata | gibbs | seed-reproducible | Sparse additive generative model: the same topic worded differently across groups. |
 | `DMR` | text, metadata | gibbs | seed-reproducible | Dirichlet-multinomial regression: a document-metadata prior on topic proportions. |
@@ -61,25 +77,23 @@ generated from `python/topica/registry.py`.
 | `RTM` | text, links | variational | seed-reproducible | Relational topic model (Chang & Blei 2010): jointly models document text and a link graph (citations, hyperlinks, adjacency); predicts links from words and words from links. |
 | `FactorialLDA` | text | gibbs | seed-reproducible | Factorial LDA (Paul & Dredze 2012): each token is a K-tuple of latent factors (e.g. topic x sentiment); structured word priors tie tuples sharing a component and a sparsity prior deactivates unsupported tuples. |
 
-### Guided & supervised
+#### Guided & supervised
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
-| `KeyATM` | text, seeds | gibbs | seed-reproducible | Keyword-assisted topics: anchor named topics with a few seed words each. |
 | `SeededLDA` | text, seeds | gibbs | seed-reproducible | Seeded LDA: steer named topics toward supplied seed words. |
 | `LabeledLDA` | text, labels | gibbs | seed-reproducible | Labeled LDA: each document label is a topic; tokens are restricted to its labels. |
 | `SupervisedLDA` | text, labels | variational | seed-reproducible | Supervised LDA: topics shaped to predict a per-document real-valued response. |
 | `DiscLDA` | text, labels | gibbs | seed-reproducible | Discriminative LDA (Lacoste-Julien et al. 2008): topics split into per-class and shared blocks; reads how classes talk differently. |
 
-### Short text
+#### Short text
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
-| `GSDMM` | text | gibbs | seed-reproducible | Gibbs-sampling Dirichlet mixture: one topic per short document. |
 | `PT` | text | gibbs | seed-reproducible | Pseudo-document topic model: pool short texts into pseudo-documents. |
 | `BTM` | text | gibbs | seed-reproducible | Biterm topic model: learns topics from corpus-level word co-occurrence (biterms). |
 
-### Dynamic & hierarchical
+#### Dynamic & hierarchical
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
@@ -88,11 +102,10 @@ generated from `python/topica/registry.py`.
 | `HLDA` | text | gibbs | seed-reproducible | Hierarchical LDA (nested CRP): a learned tree of super- and sub-topics. |
 | `PA` | text | gibbs | seed-reproducible | Pachinko allocation: a DAG of super- and sub-topics. |
 
-### Embedding-based
+#### Embedding-based
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
-| `BERTopic` | text, embeddings | clustering | seed-reproducible | Cluster document embeddings; label topics by class-based TF-IDF. |
 | `Top2Vec` | text, embeddings | clustering | seed-reproducible | Topics as dense regions in a joint document-word embedding space. |
 | `SemanticSignalSeparation` | text, embeddings | ica | seed-reproducible | Topics as independent axes of semantic space (S3, Kardos et al. 2025): FastICA over the document embeddings, with each word's importance read off by projecting the vocabulary embeddings onto each axis. Signed poles. |
 | `ETM` | text, embeddings | variational | seed-reproducible | Embedded topic model: topic-word distributions factored through word embeddings. |
@@ -102,7 +115,7 @@ generated from `python/topica/registry.py`.
 | `ZeroShotTM` | text, embeddings | vae | seed-reproducible | Contextualized ProdLDA: encoder reads the document embedding alone, enabling cross-lingual transfer. |
 | `InfoCTM` | text, dictionary | vae | seed-reproducible | Cross-lingual: two ProdLDA models aligned by a bilingual dictionary through a mutual-information term. |
 
-### Ideal point
+#### Ideal point
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
@@ -110,7 +123,7 @@ generated from `python/topica/registry.py`.
 | `TBIP` | text | variational | seed-reproducible | Text-Based Ideal Points (Vafa, Naidu & Blei 2020): a Poisson factorization whose neutral topic-word intensities are rescaled by a per-word ideological factor exp(x_s * eta_kv), with the author position x_s latent. Fit by the paper's mean-field variational inference (reparameterized SVI). Recovers ideological scales from unlabeled text. |
 | `PartyEmbeddings` | text, metadata | neural-embedding | seed-reproducible | Party embeddings (Rheault & Cochrane 2020): a PV-DM paragraph-vector model trained by negative sampling with party-period metadata tags; the leading principal components of the learned party vectors give the ideological scale, and words share the space so a party's language can be read off by proximity. The corpus-trained word-embedding member of the ideal-point family. |
 
-### LLM-based
+#### LLM-based
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|

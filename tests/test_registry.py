@@ -6,10 +6,12 @@ import pytest
 
 import topica
 from topica.registry import (
+    CHOOSER,
     GROUPS,
     IMPL,
     REGISTRY,
     ModelInfo,
+    chooser_markdown_table,
     impl_markdown_table,
     list_models,
     markdown_table,
@@ -134,3 +136,45 @@ def test_readme_and_docs_roster_in_sync_with_registry():
         assert i != -1 and j != -1, f"{rel}: marker comments missing"
         assert text[i:j + len(END)] == expected, (
             f"{rel} roster is stale; run scripts/gen_model_tables.py")
+
+
+def test_common_start_is_the_editorial_opening_set():
+    # common_start is an editorial flag (where newcomers begin), orthogonal to
+    # experimental. Keep the set small and validated (never gated).
+    common = {m.name for m in list_models(common_start=True)}
+    assert common == {"LDA", "NMF", "STM", "KeyATM", "GSDMM", "BERTopic"}
+    assert not any(m.experimental for m in list_models(common_start=True)), (
+        "a common starting point must not be experimental/gated")
+
+
+def test_chooser_references_only_real_models():
+    # Every model a chooser row names must exist in the registry (the drift guard
+    # that lets the matrix be generated safely) and must not be experimental. Every
+    # row is in a known section.
+    for r in CHOOSER:
+        assert r.section in ("common", "specialized"), f"{r.goal!r}: bad section"
+        for name in (r.primary, *( (r.also,) if r.also else () )):
+            assert name in REGISTRY, f"chooser row {r.goal!r} names unknown {name!r}"
+            assert not REGISTRY[name].experimental, (
+                f"chooser row {r.goal!r} points at gated model {name!r}")
+    table = chooser_markdown_table()
+    for r in CHOOSER:
+        assert f"`{r.primary}`" in table
+
+
+def test_chooser_page_in_sync_with_registry():
+    # The generated CHOOSER block in README.md and docs/can-do/index.md must match
+    # the render; regenerate with scripts/gen_model_tables.py if this fails.
+    import pathlib
+
+    BEGIN = ("<!-- BEGIN CHOOSER (generated from topica.registry CHOOSER; "
+             "edit registry.py, not this block) -->")
+    END = "<!-- END CHOOSER -->"
+    expected = f"{BEGIN}\n\n{chooser_markdown_table()}\n{END}"
+    root = pathlib.Path(__file__).resolve().parent.parent
+    for rel in ("README.md", "docs/can-do/index.md"):
+        text = (root / rel).read_text(encoding="utf-8")
+        i, j = text.find(BEGIN), text.find(END)
+        assert i != -1 and j != -1, f"{rel}: chooser marker comments missing"
+        assert text[i:j + len(END)] == expected, (
+            f"{rel} chooser is stale; run scripts/gen_model_tables.py")
