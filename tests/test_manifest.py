@@ -802,6 +802,21 @@ def test_compare_one_sided_fingerprint_is_incomparable_not_a_difference(fitted):
     assert not ab.same  # but incomparable still never reads as a match
 
 
+def test_compare_one_sided_input_is_a_real_difference(fitted):
+    # Inputs are recorded unconditionally, so conditioning on a covariate in one run
+    # and not the other is a genuine difference, not an absence-of-evidence: it must
+    # stay only_in_*, unlike the privacy-gated corpus fingerprint above.
+    corpus, model = fitted
+    with_cov = record_fit(model, corpus, prevalence=X, iters=50)
+    without = record_fit(model, corpus, iters=50)
+    ab = with_cov.compare(without)
+    ba = without.compare(with_cov)
+    assert ab.fields["input_prevalence"] == "only_in_a"
+    assert ba.fields["input_prevalence"] == "only_in_b"
+    assert "input_prevalence" in ab.differences
+    assert "input_prevalence" not in ab.incomparable
+
+
 def test_compare_incomparable_across_specs(fitted):
     corpus, model = fitted
     a = record_fit(model, corpus, content_fingerprint=True, iters=50)
