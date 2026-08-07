@@ -191,6 +191,28 @@ class Corpus:
         ...
 
     @staticmethod
+    def from_feature_matrix(
+        feature_names: list[str],
+        indptr: list[int],
+        indices: list[int],
+        data: list[int],
+        *,
+        doc_names: list[str] | None = None,
+        doc_labels: list[str] | None = None,
+    ) -> Corpus:
+        """Build a Corpus from a document x feature count matrix in CSR form.
+
+        The low-level constructor behind :func:`topica.from_feature_matrix` (which
+        accepts a dense array or SciPy sparse matrix and is the ergonomic entry
+        point). ``feature_names`` is the ordered column vocabulary; ``indptr`` /
+        ``indices`` / ``data`` are the standard CSR arrays of non-negative integer
+        counts. Counts are expanded into the sampler's token stream inside Rust, so
+        a wide feature space never materializes densely in Python (issue #575). No
+        vocabulary pruning is applied.
+        """
+        ...
+
+    @staticmethod
     def from_text_file(
         path: str,
         *,

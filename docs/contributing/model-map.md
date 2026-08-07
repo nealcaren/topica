@@ -99,6 +99,7 @@ Column meanings:
 | `Top2Vec` | `src/top2vec.rs` | `src/python/embedding_cluster.rs` | embedding clustering (cluster.rs, reduce.rs) | `embeddings` | `parity/top2vec_gold.py`, `parity/top2vec_compare.py` |
 | `SemanticSignalSeparation` | `src/semantic_signal_separation.rs` | `src/python/semantic_signal_separation.rs` | FastICA over document embeddings + vocabulary projection (reduce.rs) | `embeddings` | `parity/s3_compare.py`, `tests/test_semantic_signal_separation.py` |
 | `ETM` | `src/etm.rs` | `src/python/neural.rs` | variational EM over word embeddings (ctm.rs) | default | `parity/etm_gold.py` |
+| `MechanisticLDA` | `python/topica/mechanistic.py` | — _(Python)_ | SparseLDA collapsed Gibbs over a feature-count corpus (features.py -> Corpus.from_feature_matrix -> src/model.rs) | default | `tests/test_mechanistic.py` |
 | `IdealPointTM` | `src/idealpoint.rs` | `src/python/idealpoint.rs` | variational EM + ideal-point head | default | `tests/test_idealpoint.py`, `tests/test_idealpoint_counts.py` |
 | `IdealPointSentenceTM` | `src/sentence_ideal.rs` | `src/python/sentence_ideal.rs` | Gaussian-cluster EM over embeddings | default | `tests/test_sentence_ideal.py` |
 | `FASTopic` | `src/fastopic.rs` | `src/python/mod.rs` | reverse-mode Sinkhorn optimal transport | default | `parity/fastopic_gold.py`, `parity/fastopic_compare.py` |

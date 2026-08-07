@@ -156,6 +156,79 @@ impl Corpus {
         })
     }
 
+    /// Build a corpus directly from a document x feature count matrix in
+    /// compressed sparse-row (CSR) form.
+    ///
+    /// This is the low-level constructor behind :func:`topica.from_feature_matrix`;
+    /// most callers should use that helper, which accepts a dense NumPy array or a
+    /// SciPy sparse matrix and converts it to the CSR arrays this method needs.
+    ///
+    /// `feature_names` is the ordered vocabulary, one name per matrix column.
+    /// `indptr` (length ``num_docs + 1``), `indices`, and `data` are the standard
+    /// CSR arrays: for document ``d`` the stored columns are
+    /// ``indices[indptr[d]..indptr[d+1]]`` with counts ``data[...]``. Counts are
+    /// non-negative integers and are expanded once, in Rust, into the token-stream
+    /// representation the samplers consume — so a dense feature dimension never
+    /// inflates memory on the Python side (topica issue #575). No vocabulary
+    /// pruning is applied; filter columns before building.
+    #[staticmethod]
+    #[pyo3(signature = (feature_names, indptr, indices, data, *,
+                        doc_names=None, doc_labels=None))]
+    fn from_feature_matrix(
+        feature_names: Vec<String>,
+        indptr: Vec<usize>,
+        indices: Vec<u32>,
+        data: Vec<u32>,
+        doc_names: Option<Vec<String>>,
+        doc_labels: Option<Vec<String>>,
+    ) -> PyResult<Self> {
+        if indptr.is_empty() {
+            return Err(PyValueError::new_err(
+                "indptr must have at least one element (num_docs + 1)",
+            ));
+        }
+        if indices.len() != data.len() {
+            return Err(PyValueError::new_err(format!(
+                "indices ({}) and data ({}) must have the same length",
+                indices.len(),
+                data.len()
+            )));
+        }
+        let nnz = data.len();
+        let num_docs = indptr.len() - 1;
+        let mut rows: Vec<Vec<(u32, u32)>> = Vec::with_capacity(num_docs);
+        for d in 0..num_docs {
+            let (start, end) = (indptr[d], indptr[d + 1]);
+            if start > end || end > nnz {
+                return Err(PyValueError::new_err(format!(
+                    "indptr is not a valid, monotonically non-decreasing CSR pointer at document {d}"
+                )));
+            }
+            let mut row: Vec<(u32, u32)> = Vec::with_capacity(end - start);
+            for k in start..end {
+                row.push((indices[k], data[k]));
+            }
+            rows.push(row);
+        }
+
+        let inner = corpus::Corpus::from_counts(feature_names, rows, doc_names, doc_labels)
+            .map_err(PyValueError::new_err)?;
+        let num_docs = inner.num_docs();
+        Ok(Corpus {
+            inner,
+            kept_indices: (0..num_docs).collect(),
+            metadata: None,
+            preprocessing: Some(PrepInfo {
+                min_doc_freq: 1,
+                max_doc_fraction: 1.0,
+                min_cf: 0,
+                rm_top: 0,
+                max_features: None,
+                vocabulary: true,
+            }),
+        })
+    }
+
     /// Vectorize new documents against this corpus's vocabulary.
     ///
     /// The returned corpus shares this one's vocabulary exactly (same terms, same

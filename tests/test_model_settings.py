@@ -81,6 +81,7 @@ _FACTORIES: dict[str, object] = {
     # Pure-Python wrapper models.
     "GDMR": lambda: topica.GDMR(2, degrees=[2]),
     "NarrativeTM": lambda: topica.NarrativeTM(2),
+    "MechanisticLDA": lambda: topica.MechanisticLDA(2),
     "AnchorLDA": lambda: topica.AnchorLDA(2),
     "EmbeddingLDA": lambda: topica.EmbeddingLDA(
         2, embeddings=[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], vocabulary=["a", "b", "c"]

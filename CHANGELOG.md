@@ -6,6 +6,27 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **`MechanisticLDA` — the Mechanistic Topic Model (mLDA) over sparse-autoencoder
+  features** (Zheng et al. 2025, arXiv:2507.23220; #575, **experimental**). Models
+  topics as distributions over interpretable SAE features instead of words, so
+  each topic is described by feature concepts (`top_features`, `topic_feature`)
+  rather than a word list. Following topica's "you bring the features" pattern, the
+  SAE feature-extraction pipeline stays outside the core: you supply a document ×
+  feature count matrix and mLDA models it, reusing the validated SparseLDA
+  collapsed-Gibbs sampler (the fit is bit-identical to `LDA` on the equivalent
+  bag-of-words corpus). Gated behind `topica.enable_experimental()` pending an
+  end-to-end parity check against the reference's Gemma-2-9b pipeline; the paper's
+  mETM/mBERTopic variants and topic steering are tracked as follow-ups on #575.
+- **`topica.from_feature_matrix(counts, feature_names=…)`** builds a `Corpus`
+  directly from a document × feature count matrix (dense array or SciPy sparse) —
+  the count-matrix analogue of `Corpus.from_documents`. Any bag-of-features
+  representation (SAE activations, concept counts, dictionary hits) can now feed a
+  count-based topica model. The counts are expanded into the sampler's token stream
+  inside Rust, so a wide, sparse feature space never materializes densely in Python
+  (new `Corpus.from_feature_matrix` CSR binding).
+
 ### Fixed
 
 - **`compare` no longer reports a one-sided fingerprint as a difference** (#672

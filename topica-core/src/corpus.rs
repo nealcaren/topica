@@ -48,6 +48,102 @@ impl Corpus {
     pub fn has_labels(&self) -> bool {
         self.doc_labels.iter().any(|l| !l.is_empty())
     }
+
+    /// Build a corpus directly from a document x feature count matrix given in
+    /// compressed sparse-row form.
+    ///
+    /// `feature_names` is the ordered vocabulary: one name per matrix column
+    /// (these become `id_to_word`). Each element of `rows` holds one document's
+    /// `(feature_id, count)` pairs, where every `feature_id < feature_names.len()`
+    /// and `count` is a non-negative activation count. Counts are expanded into
+    /// the flat token-stream representation the collapsed-Gibbs samplers consume,
+    /// in ascending `feature_id` order so a fixed input yields a byte-identical
+    /// corpus. The expansion happens once here in Rust rather than across the
+    /// Python boundary, so a dense feature dimension does not inflate the caller's
+    /// memory (see topica issue #575).
+    ///
+    /// This is the count-matrix analogue of `from_documents`: it lets any
+    /// bag-of-features count matrix (e.g. sparse-autoencoder feature activations)
+    /// feed a count-based topic model exactly as a bag-of-words corpus would. No
+    /// vocabulary pruning is applied — filter columns before calling.
+    pub fn from_counts(
+        feature_names: Vec<String>,
+        rows: Vec<Vec<(u32, u32)>>,
+        doc_names: Option<Vec<String>>,
+        doc_labels: Option<Vec<String>>,
+    ) -> Result<Corpus, String> {
+        let num_types = feature_names.len();
+        let num_docs = rows.len();
+
+        if let Some(names) = &doc_names {
+            if names.len() != num_docs {
+                return Err(format!(
+                    "doc_names has {} entries but there are {} documents",
+                    names.len(),
+                    num_docs
+                ));
+            }
+        }
+        if let Some(labels) = &doc_labels {
+            if labels.len() != num_docs {
+                return Err(format!(
+                    "doc_labels has {} entries but there are {} documents",
+                    labels.len(),
+                    num_docs
+                ));
+            }
+        }
+
+        let mut docs: Vec<Vec<u32>> = Vec::with_capacity(num_docs);
+        let mut total_freqs = vec![0u32; num_types];
+        let mut doc_freqs = vec![0u32; num_types];
+
+        for row in rows {
+            // Sort by feature id so the emitted token stream is deterministic
+            // regardless of the order the caller supplied the pairs.
+            let mut pairs = row;
+            pairs.sort_unstable_by_key(|&(col, _)| col);
+
+            let n_tokens: usize = pairs.iter().map(|&(_, c)| c as usize).sum();
+            let mut token_ids: Vec<u32> = Vec::with_capacity(n_tokens);
+            let mut prev_col: Option<u32> = None;
+            for (col, count) in pairs {
+                let cid = col as usize;
+                if cid >= num_types {
+                    return Err(format!(
+                        "feature id {} is out of range (vocabulary has {} features)",
+                        col, num_types
+                    ));
+                }
+                if Some(col) == prev_col {
+                    return Err(format!("feature id {} appears twice in one document", col));
+                }
+                prev_col = Some(col);
+                if count == 0 {
+                    continue;
+                }
+                total_freqs[cid] += count;
+                doc_freqs[cid] += 1;
+                for _ in 0..count {
+                    token_ids.push(col);
+                }
+            }
+            docs.push(token_ids);
+        }
+
+        let doc_names =
+            doc_names.unwrap_or_else(|| (0..num_docs).map(|i| format!("doc_{i}")).collect());
+        let doc_labels = doc_labels.unwrap_or_else(|| vec![String::new(); num_docs]);
+
+        Ok(Corpus {
+            id_to_word: feature_names,
+            docs,
+            doc_names,
+            doc_labels,
+            doc_freqs,
+            total_freqs,
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -643,5 +739,55 @@ mod from_texts_tests {
         assert!(c.id_to_word.contains(&"alpha".to_string()));
         assert!(c.id_to_word.contains(&"beta".to_string()));
         assert!(!c.id_to_word.contains(&"gamma".to_string()), "gamma pruned");
+    }
+}
+
+#[cfg(test)]
+mod from_counts_tests {
+    use super::*;
+
+    #[test]
+    fn expands_counts_to_token_stream() {
+        let feats = vec!["f0".to_string(), "f1".to_string(), "f2".to_string()];
+        // doc0: f0 x2, f2 x1 ; doc1: f1 x3
+        let rows = vec![vec![(2u32, 1u32), (0u32, 2u32)], vec![(1u32, 3u32)]];
+        let c = Corpus::from_counts(feats, rows, None, None).unwrap();
+
+        assert_eq!(c.num_docs(), 2);
+        assert_eq!(c.num_types(), 3);
+        // doc0 expands in ascending feature order: [0, 0, 2].
+        assert_eq!(c.docs[0], vec![0u32, 0, 2]);
+        assert_eq!(c.docs[1], vec![1u32, 1, 1]);
+        // total and document frequencies.
+        assert_eq!(c.total_freqs, vec![2, 3, 1]);
+        assert_eq!(c.doc_freqs, vec![1, 1, 1]);
+        assert_eq!(c.doc_names, vec!["doc_0".to_string(), "doc_1".to_string()]);
+        assert_eq!(c.total_tokens(), 6);
+    }
+
+    #[test]
+    fn zero_counts_and_empty_docs_are_kept() {
+        let feats = vec!["f0".to_string(), "f1".to_string()];
+        let rows = vec![vec![(0u32, 0u32)], vec![]];
+        let c = Corpus::from_counts(feats, rows, None, None).unwrap();
+        assert_eq!(c.num_docs(), 2, "empty rows are retained (no pruning)");
+        assert!(c.docs[0].is_empty());
+        assert!(c.docs[1].is_empty());
+        assert_eq!(c.total_freqs, vec![0, 0]);
+    }
+
+    #[test]
+    fn rejects_out_of_range_feature_id() {
+        let feats = vec!["f0".to_string()];
+        let rows = vec![vec![(5u32, 1u32)]];
+        assert!(Corpus::from_counts(feats, rows, None, None).is_err());
+    }
+
+    #[test]
+    fn rejects_mismatched_doc_names() {
+        let feats = vec!["f0".to_string()];
+        let rows = vec![vec![(0u32, 1u32)]];
+        let names = Some(vec!["a".to_string(), "b".to_string()]);
+        assert!(Corpus::from_counts(feats, rows, names, None).is_err());
     }
 }

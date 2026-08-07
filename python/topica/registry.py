@@ -24,8 +24,9 @@ class ModelInfo:
     name : the exported class name (``"LDA"`` resolves as ``topica.LDA``).
     group : the purpose group (one of :data:`GROUPS`).
     brings : what the user supplies beyond raw text — any of ``"text"``,
-        ``"embeddings"``, ``"metadata"``, ``"seeds"``, ``"labels"``, ``"times"``,
-        ``"links"`` (a document graph).
+        ``"embeddings"``, ``"features"`` (a precomputed document x feature count
+        matrix, e.g. sparse-autoencoder activations), ``"metadata"``, ``"seeds"``,
+        ``"labels"``, ``"times"``, ``"links"`` (a document graph).
     inference : the inference engine — ``"gibbs"``, ``"variational"``, ``"vae"``,
         ``"optimal-transport"``, ``"clustering"``, ``"neural-embedding"``
         (word2vec/doc2vec-style SGD) (more as models are added).
@@ -195,6 +196,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("ETM", "embedding", ("text", "embeddings"), "variational", "seed-reproducible", (),
            "Embedded topic model: topic-word distributions factored through word embeddings.",
            "guides/embedding.md"),
+        _m("MechanisticLDA", "embedding", ("text", "features"), "gibbs", "seed-reproducible", (),
+           "Mechanistic Topic Model (mLDA, Zheng et al. 2025): LDA over interpretable sparse-autoencoder features instead of words, so topics are described by feature concepts. You bring the feature matrix (topica.from_feature_matrix); inference reuses the validated SparseLDA sampler.",
+           "guides/models.md#mechanisticlda", experimental=True),
         _m("IdealPointTM", "embedding", ("text", "embeddings"), "variational", "seed-reproducible", (),
            "Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate.",
            "guides/models.md#idealpointtm", experimental=True),
@@ -293,6 +297,7 @@ IMPL: dict[str, ImplInfo] = {
     "Scholar": _i("src/scholar.rs", "src/python/scholar.rs", "ProdLDA VAE + covariate prior (prodlda.rs)", "", "tests/test_scholar.py"),
     "RTM": _i("src/rtm.rs", "src/python/rtm.rs", "variational EM + link head (optimize.rs digamma)", "", "parity/rtm_compare.py, parity/rtm_reference.py, tests/test_rtm.py"),
     "NarrativeTM": _i("python/topica/narrative.py", "", "intra-document trajectory over Gibbs core (Python)", "", "tests/test_content_trajectory.py"),
+    "MechanisticLDA": _i("python/topica/mechanistic.py", "", "SparseLDA collapsed Gibbs over a feature-count corpus (features.py -> Corpus.from_feature_matrix -> src/model.rs)", "", "tests/test_mechanistic.py"),
     "KeyATM": _i("src/keyatm.rs", "src/python/mod.rs", "collapsed Gibbs + keyword index", "", "parity/keyatm_gold.py, parity/keyatm_r_compare.py"),
     "SeededLDA": _i("src/seeded.rs", "src/python/mod.rs", "collapsed Gibbs (model.rs, sampler.rs)", "", "parity/seededlda_gold.py"),
     "LabeledLDA": _i("src/labeled.rs", "src/python/mod.rs", "collapsed Gibbs (model.rs, sampler.rs)", "", "parity/labeledlda_gold.py"),

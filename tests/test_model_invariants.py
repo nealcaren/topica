@@ -495,6 +495,22 @@ def _fit_etm(iters=80):
     return m.doc_topic, m.topic_word, K
 
 
+def _fit_mechanistic_lda(iters=200):
+    # mLDA (experimental): LDA over a supplied document x feature count matrix.
+    # The planted blocks become a block-structured feature matrix, so a healthy
+    # fit spreads K topics over the K feature blocks.
+    docs, vocab = _planted_blocks(k=K, block=8, seed=0)
+    index = {w: i for i, w in enumerate(vocab)}
+    counts = np.zeros((len(docs), len(vocab)), dtype=np.int64)
+    for d, doc in enumerate(docs):
+        for tok in doc:
+            counts[d, index[tok]] += 1
+    topica.enable_experimental()
+    features = topica.from_feature_matrix(counts, vocab)
+    m = topica.MechanisticLDA(num_topics=K, seed=1).fit(features, iters=iters)
+    return m.doc_topic, m.topic_feature, K
+
+
 def _fit_idealpoint(iters=40):
     # IdealPointTM is experimental and gated. Topic model with a latent ideal-point
     # head; documents grouped into authors that carry a position. The default fit
@@ -645,6 +661,7 @@ FIT_ADAPTERS = {
     "HLDA": _fit_hlda,
     "PA": _fit_pa,
     "BERTopic": _fit_bertopic,
+    "MechanisticLDA": _fit_mechanistic_lda,
     "Top2Vec": _fit_top2vec,
     "SemanticSignalSeparation": _fit_semanticsignalseparation,
     "ETM": _fit_etm,

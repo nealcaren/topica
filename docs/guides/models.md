@@ -137,6 +137,7 @@ Shipped before a published paper and reference-implementation parity (topica's b
 |---|---|---|---|---|
 | `TensorLDA` | text | svd | seed-reproducible | Online Tensor LDA (Kangaslahti et al. 2026): deterministic method-of-moments topic modeling via second and third-order cumulants. |
 | `NarrativeTM` | text | gibbs | seed-reproducible | Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text. |
+| `MechanisticLDA` | text, features | gibbs | seed-reproducible | Mechanistic Topic Model (mLDA, Zheng et al. 2025): LDA over interpretable sparse-autoencoder features instead of words, so topics are described by feature concepts. You bring the feature matrix (topica.from_feature_matrix); inference reuses the validated SparseLDA sampler. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate. |
 | `IdealPointSentenceTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The sentence-embedding sibling of IdealPointTM, fit by EM. |
 
@@ -681,6 +682,92 @@ the θ from a plain document-level fit and flows into the usual diagnostics.
 `save`/`load` persist the model (the inner GDMR is written alongside);
 `scripts/verify_narrative.py` fits it on a synthetic corpus with planted
 beginning-middle-end structure and reports the recovered trajectory.
+
+## Feature corpora
+
+Most models start from text, which [`from_dataframe`](../getting-started/quickstart.md)
+and `Corpus.from_documents` turn into a bag-of-words count matrix. Some inputs are
+*already* a document × feature count matrix — sparse-autoencoder (SAE) feature
+activations, concept counts, dictionary hits, or any bag-of-features
+representation. `topica.from_feature_matrix` builds a `Corpus` directly from such a
+matrix, the count-matrix analogue of `Corpus.from_documents`:
+
+```python
+corpus = topica.from_feature_matrix(
+    counts,                     # (num_docs, num_features) dense array or scipy.sparse
+    feature_names,              # one label per column; defaults to feature_0, feature_1, …
+    doc_ids=None, doc_labels=None, metadata=None,
+)
+```
+
+Each column becomes a fixed-vocabulary "feature" and each cell its non-negative
+integer count; the counts are expanded into the sampler's token stream inside
+Rust, so a wide, sparse feature space never materializes densely in Python. The
+resulting corpus feeds any count-based topica model — most directly
+[`MechanisticLDA`](#mechanisticlda). No vocabulary pruning is applied; filter
+columns beforehand.
+
+## MechanisticLDA
+
+!!! warning "Experimental — validation in progress"
+    `MechanisticLDA` is **gated**: call `topica.enable_experimental()` (or set the
+    `TOPICA_EXPERIMENTAL=1` environment variable) before constructing or loading
+    it. The topic model *over a supplied feature matrix* reduces to topica's
+    reference-validated LDA (the fit is bit-identical to `LDA` on the equivalent
+    bag-of-words corpus), but the end-to-end pipeline has no parity check against
+    the authors' Gemma-2-9b implementation yet, so it ships experimental. The
+    feature-extraction pipeline and the paper's mETM / mBERTopic variants and
+    topic steering are tracked as follow-ups on
+    [#575](https://github.com/nealcaren/topica/issues/575).
+
+A **Mechanistic Topic Model** (mLDA; Zheng, Beltran-Velez, Karlekar, Shi, Nazaret,
+Mallik, Feder & Blei, *"Model Directions, Not Words: Mechanistic Topic Models
+Using Sparse Autoencoders"*, 2025, [arXiv:2507.23220](https://arxiv.org/abs/2507.23220))
+represents each document not as a bag of **words** but as a bag of **interpretable
+features** from a sparse autoencoder (SAE) trained on an LLM's activations, and
+then fits a topic model over that feature space. Topics become distributions over
+feature *concepts* — richer, more abstract descriptions than a word list — and the
+paper's mLDA variant is, mathematically, ordinary LDA with SAE features
+substituted for words. topica therefore implements it as a thin, feature-aware
+wrapper over the same [`LDA`](#lda) SparseLDA collapsed-Gibbs sampler; it
+introduces no new inference.
+
+This follows topica's **"you bring the features"** pattern — the same split the
+embedding-cluster models use (`Top2Vec`/`BERTopic`/`ETM` take a precomputed
+embedding matrix; `topica.llm_embed` builds one). Producing the SAE feature matrix
+(LLM activations → pretrained SAE → feature counts) is heavy and model-specific,
+so it stays outside the core: you supply a document × feature count matrix, and
+`MechanisticLDA` models it. Any bag-of-features count matrix works — SAE feature
+activations, concept counts, dictionary hits — via
+[`topica.from_feature_matrix`](#feature-corpora), which turns a dense or SciPy-sparse
+count matrix into a `Corpus`.
+
+```python
+import numpy as np
+import topica
+
+# counts: (num_docs, num_features) non-negative integer SAE activation counts;
+# feature_labels: one human-readable description per SAE feature.
+features = topica.from_feature_matrix(counts, feature_labels)   # or a scipy.sparse matrix
+
+topica.enable_experimental()                    # MechanisticLDA is experimental and gated
+m = topica.MechanisticLDA(num_topics=20, seed=13)
+m.fit(features, iters=1000)
+
+print(topica.summary(m))                        # topics described by their top features
+m.top_features(10)                              # [(feature description, weight), …] per topic
+m.topic_feature                                 # (K, num_features) topic × feature distribution
+m.doc_topic                                     # (D, K) document × topic mixtures
+```
+
+The fitted surface is `LDA`'s, with feature-named aliases layered on top:
+`topic_feature` / `top_features(n)` / `feature_names` are the primary names, while
+`topic_word` / `top_words(n)` / `vocabulary` remain as compatibility aliases (the
+"vocabulary" *is* the feature descriptions). Because the underlying corpus is a
+plain count corpus, the whole shared workflow applies unchanged — `coherence`,
+labeling, `estimate_effect` on `doc_topic`, and `save`/`load` (the inner LDA is
+written alongside). You can also skip the explicit corpus and pass a raw count
+matrix straight to `fit(counts, feature_names=…)`.
 
 ## DTM
 

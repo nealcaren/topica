@@ -343,6 +343,8 @@ from .preprocess import split_documents  # noqa: E402
 from .stopwords import ENGLISH_STOPWORDS, stopwords, stopword_languages  # noqa: E402
 from .phrases import learn_phrases, apply_phrases, add_ngrams, Phrases  # noqa: E402
 from .frames import from_dataframe, align, prep_documents, plot_removed  # noqa: E402
+from .features import from_feature_matrix  # noqa: E402  (count-matrix corpus: SAE/feature inputs, #575)
+from .mechanistic import MechanisticLDA  # noqa: E402  (mLDA over SAE features, experimental, #575)
 from .formulas import design_matrix  # noqa: E402
 from .scaling import bimodality, polarization, polarization_ci, split_half_reliability, position_intervals  # noqa: E402  (intrinsic ideal-point diagnostics)
 from . import datasets  # noqa: E402  (bundled + fetch-on-demand example datasets)
@@ -357,6 +359,7 @@ __all__ = [
     "DMR",
     "GDMR",
     "NarrativeTM",
+    "MechanisticLDA",
     "LabeledLDA",
     "SAGE",
     "CTM",
@@ -504,6 +507,7 @@ __all__ = [
     "stopwords",
     "stopword_languages",
     "from_dataframe",
+    "from_feature_matrix",
     "align",
     "prep_documents",
     "plot_removed",
