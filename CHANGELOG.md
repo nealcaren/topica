@@ -38,11 +38,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 - **`topica.llm.refine` — LLM-cleaned top words per topic** (#583). Ports the
   top-word refinement of Zheng et al. (2025, App. A.2 / F.1): for each topic it shows
   the LLM the top ``n + m`` words, drops up to ``m`` that are oddly specific or out of
-  place, and returns the cleaned top-``n`` list (plus the ``dropped`` words). Where
-  `llm.outlier` *detects* incoherent words, `refine` *produces* the de-noised
-  representation to feed to `label_topics`, `llm.judge`, or a report. `n_samples > 1`
-  drops a word only on a majority vote. `llm-bounded`. Second of the model-agnostic
-  LLM pipeline tools from the paper (after `llm.judge`).
+  place, and returns the cleaned top-``n`` list (plus the ``dropped`` words) for
+  review. Where `llm.outlier` *detects* incoherent words, `refine` *proposes* a pruned
+  list. It is a suggestion to review, not an automatic cleaner: on peaky topics the LLM
+  can flag a defining word, so ``protect`` (default 1) refuses to drop the
+  top-most-probable word(s). Cost is ``num_topics * n_samples`` calls; ``n_samples > 1``
+  drops a word only when flagged in at least half the runs. `llm-bounded`. Second of
+  the model-agnostic LLM pipeline tools from the paper (after `llm.judge`).
 
 - **`topica.llm.judge` — rank whole topic models by pairwise topic-document fit**
   (#583). A model-agnostic port of the *topic judge* from Zheng et al. (2025,

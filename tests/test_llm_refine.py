@@ -79,6 +79,18 @@ def test_dropped_preserves_rank_order():
     assert res[0]["dropped"] == ["banana", "guitar"]
 
 
+def test_protect_keeps_the_anchor_word():
+    # The LLM flags the topic's #1 word (the "gut the topic" failure). protect=1
+    # (default) refuses to drop it; protect=0 lets it go.
+    topic = [["gun", "guns", "law", "policy", "control", "right", "banana", "state"]]
+    flag_gun = lambda p: "gun" if "gun" in p.lower() else "none"
+    default = llm_refine(topic, backend=flag_gun, n=6, m=2)          # protect=1
+    assert "gun" not in default[0]["dropped"]
+    assert "gun" in default[0]["words"]
+    unprotected = llm_refine(topic, backend=flag_gun, n=6, m=2, protect=0)
+    assert "gun" in unprotected[0]["dropped"]
+
+
 def test_majority_vote_over_samples():
     # A flaky backend flags the intruder only half the time; majority of 4 needs >=2.
     calls = {"n": 0}
