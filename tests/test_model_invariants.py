@@ -573,6 +573,18 @@ def _fit_zeroshottm(iters=120):
     return _fit_contextual(topica.ZeroShotTM, iters=iters)
 
 
+def _fit_contextual_stm(iters=120):
+    topica.enable_experimental()
+    docs, vocab = _planted_blocks(k=K, block=8, n=200, length=15, seed=0)
+    doc_emb = _doc_embeddings(docs, k=K, block=8, seed=0)
+    # A single non-redundant covariate (the block level) — a one-hot over K levels
+    # would be collinear and (correctly) rejected by ContextualSTM's guard.
+    levels = np.array([[float(doc[0].split("w")[0][1:])] for doc in docs])
+    m = topica.ContextualSTM(num_topics=K, batch_size=60, lr=0.01, dropout=0.0, seed=1)
+    m.fit(docs, doc_emb, covariates=levels, iters=iters)
+    return m.doc_topic, m.topic_word, K
+
+
 def _fit_infoctm(iters=120):
     rng = np.random.default_rng(0)
     blocks = K
@@ -655,6 +667,7 @@ FIT_ADAPTERS = {
     "EmbeddingLDA": _fit_embeddinglda,
     "CombinedTM": _fit_combinedtm,
     "ZeroShotTM": _fit_zeroshottm,
+    "ContextualSTM": _fit_contextual_stm,
     "InfoCTM": _fit_infoctm,
 }
 
