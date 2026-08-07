@@ -137,7 +137,7 @@ impl PartyEmbeddings {
     /// The fit is single-threaded and reproducible from `seed`.
     #[new]
     #[pyo3(signature = (num_dims=2, *, vector_size=200, window=20, min_count=5,
-                        negative=5, sample=1e-4, learning_rate=0.025, seed=42))]
+                        negative=5, sample=1e-4, learning_rate=0.025, seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         num_dims: usize,

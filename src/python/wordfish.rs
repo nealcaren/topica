@@ -90,7 +90,7 @@ impl Wordfish {
     /// `seed` is accepted for API uniformity — the fit is deterministic.
     #[new]
     #[pyo3(signature = (*, beta_prior_sd=3.0, theta_prior_sd=1.0, min_count=1,
-                        convergence_tol=1e-6, seed=42))]
+                        convergence_tol=1e-6, seed=13))]
     fn new(
         beta_prior_sd: f64,
         theta_prior_sd: f64,

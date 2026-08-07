@@ -9,7 +9,7 @@ than silently degrading the toolkit.
 ## Constructor
 
 ```python
-Model(num_topics, *, seed=42, **hyperparameters)
+Model(num_topics, *, seed=13, **hyperparameters)
 ```
 
 Every estimator takes `seed` in its constructor (not in `fit`). If the model

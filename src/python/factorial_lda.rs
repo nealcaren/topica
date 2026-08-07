@@ -276,7 +276,7 @@ impl FactorialLDA {
         word_priors=true,
         sparsity=true,
         symmetric_word_prior=false,
-        seed=42
+        seed=13
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(

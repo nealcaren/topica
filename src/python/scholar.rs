@@ -288,7 +288,7 @@ impl Scholar {
     #[pyo3(signature = (num_topics, *, covariates=None, covariate_names=None, content=None,
                         content_names=None, interactions=false, alpha=1.0, hidden_size=100,
                         dropout=0.2, batch_size=200, lr=0.002, l2_prior_reg=0.0,
-                        l1_content_reg=0.0, convergence_tol=0.0, seed=42))]
+                        l1_content_reg=0.0, convergence_tol=0.0, seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,

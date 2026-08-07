@@ -369,7 +369,7 @@ impl IdealPointTM {
     #[new]
     #[pyo3(signature = (num_topics, *, num_dims=1, convergence_tol=1e-4,
                         sigma_shrink=0.0, prior_variance=1e6, w_prior_variance=10.0,
-                        x_prior_variance=1.0, max_inner=15, min_count=1, seed=42))]
+                        x_prior_variance=1.0, max_inner=15, min_count=1, seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,

@@ -166,7 +166,7 @@ impl PA {
     /// deterministic for a fixed `num_threads`+`seed`); `1` is the exact serial
     /// path. `fit(num_threads=)` overrides it per call.
     #[new]
-    #[pyo3(signature = (num_super, num_sub, *, alpha=0.1, beta=0.01, seed=42, num_threads=1))]
+    #[pyo3(signature = (num_super, num_sub, *, alpha=0.1, beta=0.01, seed=13, num_threads=1))]
     fn new(
         #[pyo3(from_py_with = "py_num_super")] num_super: usize,
         #[pyo3(from_py_with = "py_num_sub")] num_sub: usize,
@@ -655,7 +655,7 @@ impl HLDA {
     #[new]
     #[pyo3(signature = (*, depth=3, gamma=1.0, beta=0.01, alpha=None,
                         level_prior="dirichlet", gem_mean=0.5, gem_scale=100.0,
-                        seed=42, eta=None))]
+                        seed=13, eta=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,

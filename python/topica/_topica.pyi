@@ -304,7 +304,7 @@ class DMR:
         beta: float = 0.01,
         optimize_interval: int = 50,
         burn_in: int = 200,
-        seed: int = 42,
+        seed: int = 13,
         alpha: float = 0.1,
         prior_variance: float = 1.0,
         alpha_epsilon: float = 1e-10,
@@ -511,7 +511,7 @@ class CTM:
         num_topics: int,
         *,
         sigma_shrink: float = 0.0,
-        seed: int = 42,
+        seed: int = 13,
         init: str = "spectral",
         variational: str = "laplace",
     ) -> None:
@@ -683,7 +683,7 @@ class STM:
         num_topics: int,
         *,
         sigma_shrink: float = 0.0,
-        seed: int = 42,
+        seed: int = 13,
         init: str = "spectral",
         variational: str = "laplace",
     ) -> None:
@@ -908,7 +908,7 @@ class STS:
         self,
         num_topics: int,
         *,
-        seed: int = 42,
+        seed: int = 13,
         init: str = "spectral",
     ) -> None:
         """init is "spectral" (default; deterministic anchor-word init) or
@@ -1074,7 +1074,7 @@ class HDP:
         alpha: float = 0.1,
         gamma: float = 0.1,
         beta: float = 0.01,
-        seed: int = 42,
+        seed: int = 13,
         resample_conc: bool = True,
         concentration_max: float = 1e6,
         eta: Optional[float] = None,
@@ -1259,7 +1259,7 @@ class DTM:
         alpha: float = 0.01,
         chain_variance: float = 0.005,
         obs_variance: float = 0.5,
-        seed: int = 42,
+        seed: int = 13,
         init: str = "random",
     ) -> None:
         """num_topics >= 2. chain_variance controls how much a topic may drift
@@ -1380,7 +1380,7 @@ class DETM:
         wdecay: float = 1.2e-6,
         grad_clip: float | None = None,
         convergence_tol: float = 0.0,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None:
         """num_topics >= 2. delta is the random-walk variance knob on the
         topic-embedding and topic-prior trajectories (the prior variance for a step
@@ -1524,7 +1524,7 @@ class SupervisedLDA:
         num_topics: int,
         *,
         alpha: float = 0.1,
-        seed: int = 42,
+        seed: int = 13,
         inference: str = "variational",
     ) -> None:
         """num_topics >= 2. alpha is the Dirichlet concentration on doc-topic
@@ -1694,7 +1694,7 @@ class SAGE:
         prior_variance: float = 1.0,
         optimize_interval: int = 50,
         burn_in: int = 200,
-        seed: int = 42,
+        seed: int = 13,
         lbfgs_iters: int = 20,
     ) -> None: ...
     @property
@@ -1859,7 +1859,7 @@ class LabeledLDA:
         ...
 
     def __init__(
-        self, *, alpha: float = 0.1, beta: float = 0.01, seed: int = 42,
+        self, *, alpha: float = 0.1, beta: float = 0.01, seed: int = 13,
         sampler: str = "sparse", num_threads: int = 1,
     ) -> None:
         """Create an unfitted model. alpha is the symmetric per-topic prior.
@@ -2038,7 +2038,7 @@ class OnlineLDA:
         inner_iters: int = 100,
         mean_change_tol: float = 1e-3,
         total_docs: float | None = None,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None:
         """Create an unfitted OnlineLDA model.
 
@@ -2207,7 +2207,7 @@ class LDA:
         beta: float = 0.01,
         optimize_interval: int = 50,
         burn_in: int = 200,
-        seed: int = 42,
+        seed: int = 13,
         num_threads: int = 1,
         sampler: str = "sparse",
         mh_steps: int = 2,
@@ -2530,7 +2530,7 @@ class PT:
         alpha: float = 0.1,
         beta: float = 0.01,
         pseudo_doc_prior: float = 0.1,
-        seed: int = 42,
+        seed: int = 13,
         num_threads: int = 1,
     ) -> None:
         """pseudo_doc_prior (lambda) is the symmetric Dirichlet prior on the
@@ -2643,7 +2643,7 @@ class GSDMM:
         *,
         alpha: float = 0.1,
         beta: float = 0.1,
-        seed: int = 42,
+        seed: int = 13,
         num_threads: int = 1,
     ) -> None:
         """num_threads must be 1. Unlike the other collapsed-Gibbs count models
@@ -2762,7 +2762,7 @@ class BTM:
         iters: int = 1000,
         window: int = 15,
         background: bool = False,
-        seed: int = 42,
+        seed: int = 13,
         num_threads: int = 1,
     ) -> None:
         """num_threads > 1 runs the biterm Gibbs sweep as MALLET-style
@@ -2860,7 +2860,7 @@ class FactorialLDA:
         word_priors: bool = True,
         sparsity: bool = True,
         symmetric_word_prior: bool = False,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None:
         """``factor_sizes`` lists the components per factor, e.g. ``[20, 2]`` for 20
         topics x 2 sentiments. ``word_priors``/``sparsity`` toggle the paper's
@@ -2989,7 +2989,7 @@ class PolylingualLDA:
         optimize_alpha: bool = True,
         optimize_interval: int = 10,
         optimize_burn_in: int = 200,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None: ...
     def fit(
         self,
@@ -3083,7 +3083,7 @@ class DiscLDA:
         iters: int = 1000,
         infer_sweeps: int = 100,
         class_prior: str | Sequence[float] | None = None,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None:
         """class_prior sets the prior the direct classifier combines with each
         document's plug-in likelihood: "empirical" (default) uses the observed
@@ -3198,7 +3198,7 @@ class RTM:
         rho: float | None = None,
         negative_ratio: float = 1.0,
         ridge: float = 1.0,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None:
         """`inference` selects the backend: "variational" (default, the shipped
         variational EM) or "gibbs" (collapsed Gibbs matching R lda's `rtm.em` /
@@ -3306,7 +3306,7 @@ class PA:
         *,
         alpha: float = 0.1,
         beta: float = 0.01,
-        seed: int = 42,
+        seed: int = 13,
         num_threads: int = 1,
     ) -> None:
         """num_threads > 1 runs the collapsed-Gibbs sweep as MALLET-style
@@ -3440,7 +3440,7 @@ class HLDA:
         level_prior: str = "dirichlet",
         gem_mean: float = 0.5,
         gem_scale: float = 100.0,
-        seed: int = 42,
+        seed: int = 13,
         eta: Optional[float] = None,
     ) -> None:
         """depth is the number of levels in the topic tree. gamma is the nCRP
@@ -3528,7 +3528,7 @@ class SeededLDA:
         alpha: float = 0.5,
         beta: float = 0.1,
         weight: float = 0.01,
-        seed: int = 42,
+        seed: int = 13,
         seed_prior: str = "frequency",
         sampler: str = "sparse",
         seed_match: str = "fixed",
@@ -3718,7 +3718,7 @@ class Top2Vec:
         negative_sample_rate: int = 5,
         repulsion_strength: float = 1.0,
         metric: str = "cosine",
-        seed: int = 42,
+        seed: int = 13,
     ) -> None: ...
     def fit(
         self,
@@ -3856,7 +3856,7 @@ class BERTopic:
         negative_sample_rate: int = 5,
         repulsion_strength: float = 1.0,
         metric: str = "cosine",
-        seed: int = 42,
+        seed: int = 13,
     ) -> None: ...
     def fit(
         self,
@@ -3949,7 +3949,7 @@ class SemanticSignalSeparation:
         feature_importance: str = "combined",
         iters: int = 200,
         convergence_tol: float = 1e-4,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None: ...
     def fit(
         self,
@@ -4048,7 +4048,7 @@ class ETM:
         batch_size: int = 1000,
         lr: float = 0.005,
         wdecay: float = 1.2e-6,
-        seed: int = 42,
+        seed: int = 13,
         prior: str = "laplace",
         contrastive: bool = False,
         contrastive_weight: float = 0.5,
@@ -4162,7 +4162,7 @@ class InfoCTM:
         dropout: float = 0.0,
         lr: float = 0.002,
         convergence_tol: float = 0.0,
-        seed: int = 42,
+        seed: int = 13,
         languages: tuple[str, str] | None = None,
     ) -> None:
         """``mi_weight`` scales the alignment term (reference 30-50);
@@ -4242,7 +4242,7 @@ class ProdLDA:
         batch_size: int = 200,
         lr: float = 0.002,
         convergence_tol: float = 0.0,
-        seed: int = 42,
+        seed: int = 13,
         prior: str = "laplace",
         contrastive: bool = False,
         contrastive_weight: float = 0.5,
@@ -4351,7 +4351,7 @@ class Scholar:
         l2_prior_reg: float = 0.0,
         l1_content_reg: float = 0.0,
         convergence_tol: float = 0.0,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None:
         """``covariates`` (prevalence) and ``content`` (topic-covariate) numeric
         matrices may be given here or at fit(). ``interactions`` adds topic-covariate
@@ -4481,7 +4481,7 @@ class CombinedTM:
         batch_size: int = 200,
         lr: float = 0.002,
         convergence_tol: float = 0.0,
-        seed: int = 42,
+        seed: int = 13,
         prior: str = "laplace",
         contrastive: bool = False,
         contrastive_weight: float = 0.5,
@@ -4590,7 +4590,7 @@ class ZeroShotTM:
         batch_size: int = 200,
         lr: float = 0.002,
         convergence_tol: float = 0.0,
-        seed: int = 42,
+        seed: int = 13,
         prior: str = "laplace",
         contrastive: bool = False,
         contrastive_weight: float = 0.5,
@@ -4698,7 +4698,7 @@ class NMF:
         init: str = "nndsvd",
         weighting: str = "count",
         convergence_tol: float = 1e-4,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None:
         """beta_loss is 'frobenius' or 'kullback-leibler' (alias 'kl'); init is
         'nndsvd' or 'random'; weighting is 'count' or 'tfidf'. seed affects only
@@ -4781,7 +4781,7 @@ class LSA:
         num_topics: int,
         *,
         weighting: str = "tfidf",
-        seed: int = 42,
+        seed: int = 13,
     ) -> None:
         """weighting is 'tfidf' (default, classic LSI) or 'count'. seed seeds the
         randomized-SVD sketch."""
@@ -4869,7 +4869,7 @@ class TensorLDA:
         theta: float = 1.0,
         n_eigenvec: int | None = None,
         pca_batch_size: int = 128,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None: ...
     def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int | None = None) -> "TensorLDA": ...
     def partial_fit(
@@ -4947,7 +4947,7 @@ class FASTopic:
         convergence_tol: float = 1e-6,
         sinkhorn_iters: int = 5000,
         sinkhorn_tol: float = 5e-3,
-        seed: int = 42,
+        seed: int = 13,
         em_tol: Optional[float] = None,
     ) -> None:
         """em_tol is a deprecated alias for convergence_tol."""
@@ -5045,7 +5045,7 @@ class KeyATM:
         beta_keyword: float = 0.1,
         gamma1: float = 1.0,
         gamma2: float = 1.0,
-        seed: int = 42,
+        seed: int = 13,
         estimate_alpha: bool = True,
         sampler: str = "sparse",
         num_threads: int = 1,
@@ -5073,7 +5073,7 @@ class KeyATM:
         *,
         alpha: float = 0.1,
         beta: float = 0.01,
-        seed: int = 42,
+        seed: int = 13,
     ) -> "KeyATM":
         """keyATM's weightedLDA: a keyword-free model (no keyword topics) — plain
         LDA fit with keyATM's token weighting and estimated asymmetric alpha. Fit
@@ -5333,7 +5333,7 @@ class IdealPointTM:
         x_prior_variance: float = 1.0,
         max_inner: int = 15,
         min_count: int = 1,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None:
         """num_dims is the dimensionality d of the latent ideal point. For
         num_dims > 1 the positions are identified only up to an orthogonal rotation
@@ -5483,7 +5483,7 @@ class Wordfish:
         theta_prior_sd: float = 1.0,
         min_count: int = 1,
         convergence_tol: float = 1e-6,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None:
         """beta_prior_sd / theta_prior_sd are the standard deviations of the weak
         Gaussian priors regularizing word discriminations and positions (pass
@@ -5566,7 +5566,7 @@ class IdealPointSentenceTM:
         num_dims: int = 1,
         convergence_tol: float = 1e-4,
         x_prior_variance: float = 1.0,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None: ...
     def fit(
         self,
@@ -5656,7 +5656,7 @@ class TBIP:
         batch_size: int = 512,
         learning_rate: float = 0.05,
         min_count: int = 1,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None: ...
     def fit(
         self,
@@ -5751,7 +5751,7 @@ class PartyEmbeddings:
         negative: int = 5,
         sample: float = 1e-4,
         learning_rate: float = 0.025,
-        seed: int = 42,
+        seed: int = 13,
     ) -> None:
         """num_dims is the number of placement dimensions returned in
         author_positions (leading principal components of the party vectors).

@@ -171,7 +171,7 @@ impl PolylingualLDA {
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=None, beta=0.01, iters=1000,
                         optimize_alpha=true, optimize_interval=10,
-                        optimize_burn_in=200, seed=42))]
+                        optimize_burn_in=200, seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         num_topics: usize,

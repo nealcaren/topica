@@ -55,6 +55,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Changed
 
+- **The default random `seed` is now `13`** (was `42`), across every model
+  constructor and the seeded helpers. A fit that relied on the default seed will
+  produce different (still fully reproducible) topics; pass `seed=42` to reproduce
+  earlier default-seed runs. Reference-parity, benchmark, and paper reproduction
+  scripts pin their own explicit seeds and are unaffected.
+
 - **`EmbeddingLDA`'s default `weight` is now `0.1`** (was `1.0`) (#663). The
   embedding-cluster seed words are semantically grouped but do not necessarily
   co-occur, so anchoring them at 100 pseudocounts/seed pulled topics away from

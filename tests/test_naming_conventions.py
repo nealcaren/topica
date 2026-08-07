@@ -114,13 +114,13 @@ def test_no_forbidden_synonyms(name, cls):
 
 
 @pytest.mark.parametrize("name,cls", MODELS, ids=MODEL_IDS)
-def test_seed_is_named_seed_and_defaults_to_42(name, cls):
-    """The RNG seed is always ``seed`` and always defaults to 42."""
+def test_seed_is_named_seed_and_defaults_to_13(name, cls):
+    """The RNG seed is always ``seed`` and always defaults to 13."""
     params = {p.name: p for p in _ctor_params(cls)}
     if "seed" not in params:
         return  # a model with no seed is its own (rare) case
-    assert params["seed"].default == 42, (
-        f"{name}: seed default is {params['seed'].default!r}, expected 42"
+    assert params["seed"].default == 13, (
+        f"{name}: seed default is {params['seed'].default!r}, expected 13"
     )
 
 

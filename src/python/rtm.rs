@@ -137,7 +137,7 @@ impl RTM {
     #[new]
     #[pyo3(signature = (num_topics, *, link=None, inference="variational",
                         alpha=None, beta=0.1, rho=None,
-                        negative_ratio=1.0, ridge=1.0, seed=42))]
+                        negative_ratio=1.0, ridge=1.0, seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,

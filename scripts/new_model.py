@@ -176,7 +176,7 @@ impl __NAME__ {
 #[pymethods]
 impl __NAME__ {
     #[new]
-    #[pyo3(signature = (num_topics, *, seed=42))]
+    #[pyo3(signature = (num_topics, *, seed=13))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         // SCAFFOLD(__NAME__): add keyword-only hyperparameters with defaults.

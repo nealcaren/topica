@@ -253,7 +253,7 @@ class AnchorLDA:
         K=50), so both scale to large vocabularies.
     min_count : int, default 5
         Drop vocabulary words occurring fewer than this many times overall.
-    seed : int, default 42
+    seed : int, default 13
         Affects only the degenerate-anchor fallback; recovery is otherwise
         deterministic.
     eta : float, default 1.0
@@ -283,7 +283,7 @@ class AnchorLDA:
     """
 
     def __init__(self, num_topics: int, *, recover: str = "kl", min_count: int = 5,
-                 seed: int = 42, eta: float = 1.0, convergence_tol: float = 1e-5,
+                 seed: int = 13, eta: float = 1.0, convergence_tol: float = 1e-5,
                  frex_w: float = 0.5, frequency_temper: float = 0.5,
                  anchor_min_doc_freq: float = 0.01):
         if num_topics < 2:

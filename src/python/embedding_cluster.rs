@@ -231,7 +231,7 @@ impl Top2Vec {
                         num_clusters=None, resolution=1.0, knn_neighbors=15,
                         diagnostics=true, min_dist=0.0, spread=1.0, n_epochs=0,
                         negative_sample_rate=5, repulsion_strength=1.0, metric="cosine",
-                        seed=42))]
+                        seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         n_components: usize,
@@ -1147,7 +1147,7 @@ impl BERTopic {
                         num_clusters=None, resolution=1.0, knn_neighbors=15,
                         diagnostics=true, min_dist=0.0, spread=1.0, n_epochs=0,
                         negative_sample_rate=5, repulsion_strength=1.0, metric="cosine",
-                        seed=42))]
+                        seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         n_components: usize,
