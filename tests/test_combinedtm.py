@@ -138,6 +138,20 @@ def test_rejects_wrong_embedding_rows(cls):
 
 
 @pytest.mark.parametrize("cls", MODELS, ids=MODEL_IDS)
+def test_word_embedding_mistake_gives_targeted_hint(cls):
+    # #663 review: passing WORD embeddings (one row per vocab word) to these
+    # document-embedding models is the classic mistake. When the row count equals
+    # the vocabulary size (and not the document count), the error must name the
+    # likely cause instead of just reporting a row mismatch.
+    docs, embs, vocab = _planted(n=60)
+    assert len(vocab) != len(docs)  # so the vocab-sized matrix hits the mismatch path
+    wrong = np.zeros((len(vocab), embs.shape[1]))  # one row per vocabulary word
+    m = _model(cls, seed=1)
+    with pytest.raises(ValueError, match="WORD embeddings"):
+        m.fit(docs, wrong, iters=10)
+
+
+@pytest.mark.parametrize("cls", MODELS, ids=MODEL_IDS)
 def test_rejects_k_below_two(cls):
     with pytest.raises(ValueError):
         cls(1)

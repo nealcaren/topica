@@ -419,19 +419,43 @@ unchanged from ProdLDA. Mixing the contextual signal into the encoder yields mor
 coherent topics than the bag of words alone. You bring the per-document
 embeddings at `fit`, one row per document, in corpus order.
 
+!!! note "Document embeddings, not word embeddings"
+    CombinedTM and ZeroShotTM (like BERTopic and FASTopic) take **document
+    (sentence) embeddings**, one row per *document*. This is the opposite of
+    [`EmbeddingLDA`](#embeddinglda), `ETM`, and `Top2Vec`, which take **word
+    embeddings** (one row per *vocabulary word*). The bundled `load_ng20_minilm`
+    carries both (`doc_embeddings` and `word_embeddings`); pass `doc_embeddings`
+    here. Passing word embeddings is caught only when the vocabulary and document
+    counts differ, so mind the argument.
+
+**When to reach for it.** CombinedTM is the pick when you want a **mixed-membership**
+topic model (a full θ per document) that also leans hard on a document embedding:
+it pairs BERTopic's semantic signal with LDA's soft assignments. Prefer it over
+[`EmbeddingLDA`](#embeddinglda) when the embedding should *drive* inference rather
+than lightly seed it, and over `BERTopic` when you need per-document mixtures
+instead of one hard cluster per document. `doc_topic` rows are proper distributions
+(they sum to 1), unlike BERTopic's hard labels.
+
+Everything below runs offline on the bundled dataset (no encoder needed):
+
 ```python
 import topica
 
-doc_emb = embed(docs)                    # (num_docs, E), your encoder of choice
+ng = topica.datasets.load_ng20_minilm()
+docs = [t.split() for t in ng["texts"]]
 
 model = topica.CombinedTM(num_topics=20, seed=1)
-model.fit(docs, doc_emb, iters=150)
+model.fit(docs, ng["doc_embeddings"], iters=150)   # document embeddings, one row/doc
 
 model.topic_word                         # (num_topics, vocab) softmax(beta_k)
-model.doc_topic                          # (num_docs, num_topics) theta
+model.doc_topic                          # (num_docs, num_topics) theta, rows sum to 1
 model.top_words(8, topic=0)
 model.bound, model.converged             # the ELBO at the final epoch
 ```
+
+CombinedTM's encoder first layer is `Linear(2V, hidden)`, so it is markedly slower
+than ZeroShotTM (whose encoder reads only the embedding); budget accordingly at the
+default `iters=200`.
 
 `transform` maps new documents the same way, so it needs both the tokens and
 their embeddings:
@@ -456,15 +480,25 @@ ZeroShotTM (Bianchi, Nozza & Hovy 2021) takes the same idea one step further: th
 encoder reads *only* the contextual document embedding, with no bag of words at
 all. The decoder still reconstructs the bag of words, so topics remain proper
 word distributions, but topic proportions are inferred from the embedding alone.
-The constructor and surface match CombinedTM.
+The constructor and surface match CombinedTM (and it likewise takes **document**
+embeddings, not word embeddings). Because the encoder reads only the embedding, it
+is faster than CombinedTM.
+
+**When to reach for it.** ZeroShotTM's niche is **cross-lingual / zero-shot** work
+(below) and cases where you want the topics inferred purely from a strong document
+embedder. When lexical co-occurrence carries real signal, CombinedTM (which also
+reads the bag of words) is usually the safer choice.
 
 ```python
 import topica
 
+ng = topica.datasets.load_ng20_minilm()
+docs = [t.split() for t in ng["texts"]]
+
 model = topica.ZeroShotTM(num_topics=20, seed=1)
-model.fit(docs, embed(docs), iters=150)
+model.fit(docs, ng["doc_embeddings"], iters=150)   # document embeddings only
 model.topic_word
-model.doc_topic
+model.doc_topic                                    # theta, rows sum to 1
 ```
 
 Dropping the bag of words from the encoder is what enables **cross-lingual

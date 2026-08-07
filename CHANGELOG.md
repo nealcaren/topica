@@ -35,6 +35,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Fixed
 
+- **`CombinedTM` / `ZeroShotTM` flag the word-vs-document embedding mistake** (#663).
+  These models take *document* (sentence) embeddings, one row per document, unlike
+  `ETM`/`EmbeddingLDA` which take *word* embeddings. Passing word embeddings by
+  mistake was previously caught only as a bare row-count mismatch. When the row
+  count equals the vocabulary size (and not the document count), the error now names
+  the likely cause. The class docstrings and the embedding guide state the
+  document-embedding requirement explicitly, and the guide's CombinedTM/ZeroShotTM
+  examples now run offline on `load_ng20_minilm`.
 - **`record_fit(model, docs)` accepts token lists** (#661). `fit` takes a sequence
   of token lists, so passing the same value to `record_fit` is a natural first call;
   it previously crashed with `'list' object has no attribute 'num_docs'`. The corpus

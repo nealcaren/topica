@@ -1974,7 +1974,7 @@ pub fn fit_prodlda<R: Rng>(
 /// `emb_dim`; pass empty rows and `emb_dim == 0` for the bow-only path). The
 /// decoder, prior, KL, reparameterization, batchnorm, Adam, and BoW reconstruction
 /// loss are identical across modes; only the layer-1 input differs. CombinedTM is
-/// [`InputMode::BowEmb`], ZeroShotTM is [`InputMode::EmbOnly`].
+/// [`InputMode::BowEmbAdapt`], ZeroShotTM is [`InputMode::EmbOnly`].
 #[allow(clippy::too_many_arguments)]
 pub fn fit_avitm<R: Rng>(
     docs: &[Vec<u32>],
