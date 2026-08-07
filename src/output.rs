@@ -17,7 +17,11 @@ const HALF_LOG_TWO_PI: f64 = 0.9189385332046727;
 /// reverse pass evaluate `ln(0.0) = -inf`, returning +inf. The lift keeps every
 /// normal-range result bit-identical to the previous version (so MALLET parity is
 /// unchanged) and only makes the degenerate tail finite.
-fn log_gamma(z: f64) -> f64 {
+///
+/// `pub(crate)` so the seeded collapsed-Gibbs log-likelihood (src/seeded.rs) can
+/// share the exact same MALLET-parity log Gamma as the canonical model
+/// log-likelihood, rather than a separate approximation.
+pub(crate) fn log_gamma(z: f64) -> f64 {
     if z < 1e-10 {
         return log_gamma(z + 1.0) - z.ln();
     }

@@ -133,11 +133,12 @@ impl SeededModel {
     /// MALLET formula as LDA (`output::model_log_likelihood`) but with the seeded
     /// asymmetric β_{k,w} prior. Negative; it rises toward 0 during burn-in, then
     /// fluctuates around a plateau (collapsed Gibbs is a sampler, not an optimizer).
-    /// Uses `log_gamma`; an earlier version used `digamma` (the
+    /// Uses the shared `output::log_gamma` (the MALLET-parity log Gamma the
+    /// canonical LDA log-likelihood uses); an earlier version used `digamma` (the
     /// derivative of `log_gamma`), which is not a log-likelihood and moved the
     /// wrong way. Cheap to call; does not allocate.
     pub fn log_likelihood(&self, docs: &[Vec<u32>]) -> f64 {
-        use crate::mathfun::log_gamma;
+        use crate::output::log_gamma;
         let k = self.num_topics;
         let v = self.num_types;
         let mut ll = 0.0f64;
@@ -653,7 +654,7 @@ pub fn fit_seeded_lda<R: Rng>(
     // Build a temporary SeededModel view for LL computation (borrows nkw/nk/ndk).
     // We compute LL inline using the same formula as SeededModel::log_likelihood.
     let compute_ll = |nkw: &[Vec<u32>], nk: &[u32], ndk: &[Vec<u32>]| -> f64 {
-        use crate::mathfun::log_gamma;
+        use crate::output::log_gamma;
         let mut ll = 0.0f64;
         for (d, doc) in docs.iter().enumerate() {
             let n_d = doc.len() as f64;
