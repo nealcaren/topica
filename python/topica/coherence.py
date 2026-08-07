@@ -1811,6 +1811,8 @@ def llm_human_agreement(llm_scores, human_scores, *, method="spearman"):
     dict
         ``{"correlation", "pvalue", "n", "method"}`` -- the coefficient, its two-sided
         p-value, the number of item pairs used (after dropping NaNs), and the method.
+        ``correlation`` is ``nan`` if either vector is constant (no ranking to
+        correlate). Requires SciPy (``pip install topica[viz]``).
     """
     funcs = {"spearman": "spearmanr", "pearson": "pearsonr", "kendall": "kendalltau"}
     if method not in funcs:
@@ -1827,8 +1829,16 @@ def llm_human_agreement(llm_scores, human_scores, *, method="spearman"):
     if n < 2:
         raise ValueError(
             f"need at least 2 non-NaN item pairs to correlate; got {n}.")
-    from scipy import stats
+    try:
+        from scipy import stats
+    except ImportError:
+        raise ImportError(
+            "SciPy is required for llm.human_agreement. Install it via "
+            "`pip install scipy` or `pip install topica[viz]`."
+        )
 
+    # A constant vector (e.g. every topic rated identically) has no ranking to
+    # correlate, so scipy returns nan (with a ConstantInputWarning); passed through.
     corr, pvalue = getattr(stats, funcs[method])(a[keep], b[keep])
     return {"correlation": float(corr), "pvalue": float(pvalue), "n": n,
             "method": method}
