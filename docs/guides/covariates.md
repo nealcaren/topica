@@ -340,13 +340,17 @@ values, are how you read *what* the shift is: they rank pretrained vocabulary wo
 near the predicted embedding, so a partisan split in the meaning of `immigration`
 shows up as different neighbor words for each party.
 
-Two notes for conText users. topica follows the method of Rodriguez, Spirling &
-Stewart (2023); its inference differs from the current conText package in form
-(covariate permutation and a document bootstrap here, vs. residual permutation and a
-jackknife there), though the point estimates and deflated norms match. And conText's
-published transform matrices (for example `cr_transform`) are the transpose of what
-:func:`compute_transform` returns, so pass an external conText matrix as
-`transform=cr_transform.T`.
+Inference matches the current conText package by default (`inference="context"`): a
+Freedman-Lane residual-permutation p-value and a leave-one-out jackknife t-interval,
+so a reviewer re-running conText gets the same procedure. The jackknife interval is
+centered on the estimate; the original article's method (`inference="paper"`) uses a
+covariate permutation and a document bootstrap instead, whose interval sits above the
+point estimate because the coefficient norm is biased upward (prefer
+`squared_deflated`, which removes that bias).
+
+One more note for conText users: its published transform matrices (for example
+`cr_transform`) are the transpose of what :func:`compute_transform` returns, so pass
+an external conText matrix as `transform=cr_transform.T`.
 
 This also sidesteps the trap of putting a document's own embedding on the covariate
 side of a topic model (see [Embedding topics](embedding.md)): here the embedding

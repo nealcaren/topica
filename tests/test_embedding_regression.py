@@ -207,6 +207,33 @@ def test_squared_deflated_is_default_and_centered_under_null():
     assert abs(r.normed_estimate[0]) < 0.2   # deflated null ~ 0 (not a positive floor)
 
 
+def test_context_inference_ci_brackets_estimate():
+    """The default 'context' inference uses a jackknife t-interval centered on the
+    estimate, so the CI brackets it (unlike the paper bootstrap on a biased norm)."""
+    docs, g, pre = _planted()
+    r = topica.embedding_regression(docs, g, pre, names=["group"], inference="context",
+                                    permutations=50, seed=1)
+    assert r.normed_ci[0, 0] <= r.normed_estimate[0] <= r.normed_ci[0, 1]
+    assert r.p_value[0] < 0.05
+
+
+def test_paper_and_context_inference_both_run():
+    docs, g, pre = _planted()
+    rc = topica.embedding_regression(docs, g, pre, inference="context", permutations=50,
+                                     bootstrap=0, seed=1)
+    rp = topica.embedding_regression(docs, g, pre, inference="paper", permutations=50,
+                                     bootstrap=50, seed=1)
+    # same point estimate, different inference machinery
+    assert np.isclose(rc.normed_estimate[0], rp.normed_estimate[0])
+    assert rc.p_value[0] < 0.1 and rp.p_value[0] < 0.1
+
+
+def test_invalid_inference_raises():
+    docs, g, pre = _planted(n=40)
+    with pytest.raises(ValueError, match="inference"):
+        topica.embedding_regression(docs, g, pre, inference="bogus", permutations=0)
+
+
 def test_multiple_covariates():
     docs, g, pre = _planted()
     rng = np.random.default_rng(5)

@@ -463,6 +463,42 @@ def _effect_size(B, X, Y, XtX_inv, statistic):
     raise ValueError("statistic must be 'norm', 'squared' or 'squared_deflated'")
 
 
+def _residual_permutation_p(X, Y, B, est, statistic, n_perm, rng):
+    """Freedman-Lane residual permutation p-value (conText's procedure): permute the
+    rows of the fitted residuals, refit, and compare the effect size to ``est``."""
+    resid = Y - X @ B
+    N = X.shape[0]
+    p = B.shape[0] - 1
+    ge = np.zeros(p)
+    for _ in range(n_perm):
+        rp = resid[rng.permutation(N)]
+        Bp, inv_p = _ols(X, rp)
+        ge += (_effect_size(Bp, X, rp, inv_p, statistic) >= est)
+    return (1.0 + ge) / (1.0 + n_perm)
+
+
+def _jackknife_ci(X, Y, statistic, est, confidence_level):
+    """Leave-one-out jackknife SE and t-interval for the effect size (conText's
+    default CI). Returns ``(ci (p,2), se (p,))``."""
+    from scipy.stats import t as _t
+
+    N, k = X.shape
+    p = k - 1
+    thetas = np.empty((N, p))
+    keep = np.ones(N, dtype=bool)
+    for i in range(N):
+        keep[i] = False
+        Xi, Yi = X[keep], Y[keep]
+        Bi, inv_i = _ols(Xi, Yi)
+        thetas[i] = _effect_size(Bi, Xi, Yi, inv_i, statistic)
+        keep[i] = True
+    theta_bar = thetas.mean(axis=0)
+    se = np.sqrt((N - 1) / N * np.sum((thetas - theta_bar) ** 2, axis=0))
+    tcrit = _t.ppf(1 - (1 - confidence_level) / 2, N - 1)
+    ci = np.column_stack([est - tcrit * se, est + tcrit * se])
+    return ci, se
+
+
 def embedding_regression(
     docs,
     covariates,
@@ -474,6 +510,7 @@ def embedding_regression(
     window=6,
     aggregate=None,
     statistic="squared_deflated",
+    inference="context",
     permutations=100,
     bootstrap=100,
     confidence_level=0.95,
@@ -506,11 +543,19 @@ def embedding_regression(
         Effect size. ``"squared_deflated"`` is conText's headline (squared norm minus
         HC1 bias; centered at ~0 under the null). ``"norm"`` is the paper's Euclidean
         norm (biased upward). ``"squared"`` is the raw squared norm.
+    inference : {"context", "paper"}, default "context"
+        How the p-value and confidence interval are computed. ``"context"`` matches
+        the current R ``conText`` package: a Freedman-Lane residual-permutation
+        p-value and a leave-one-out jackknife t-interval (the interval is centered on
+        the estimate). ``"paper"`` is the original article's method: a covariate
+        permutation p-value and a document bootstrap percentile interval (the norm's
+        upward bias makes that interval sit above the point estimate).
     permutations : int, default 100
-        Covariate permutations for the p-value; 0 skips. p is smoothed as
+        Permutations for the p-value; 0 skips. p is smoothed as
         ``(1 + #{perm >= obs}) / (1 + permutations)``.
     bootstrap : int, default 100
-        Document bootstrap resamples for the CI; 0 skips.
+        Bootstrap resamples for the ``"paper"`` CI; 0 skips. Ignored for ``"context"``
+        (which uses the jackknife).
     confidence_level : float, default 0.95
     case_insensitive : bool, default True
     seed : int, default 0
@@ -550,21 +595,29 @@ def embedding_regression(
     p = Xraw.shape[1]
     N = Xraw.shape[0]
     X = np.column_stack([np.ones(N), Xraw])
+    if inference not in ("context", "paper"):
+        raise ValueError("inference must be 'context' or 'paper'")
     B, XtX_inv = _ols(X, Y)
     est = _effect_size(B, X, Y, XtX_inv, statistic)
 
-    if permutations and permutations > 0:
+    # p-value
+    if not permutations or permutations <= 0:
+        p_value = np.full(p, np.nan)
+    elif inference == "context":
+        p_value = _residual_permutation_p(X, Y, B, est, statistic, permutations, rng)
+    else:  # paper: permute the covariate
         ge = np.zeros(p)
         for _ in range(permutations):
             perm = rng.permutation(N)
             Xp = np.column_stack([np.ones(N), Xraw[perm]])
             Bp, inv_p = _ols(Xp, Y)
             ge += (_effect_size(Bp, Xp, Y, inv_p, statistic) >= est)
-        p_value = (1.0 + ge) / (1.0 + permutations)  # Phipson-Smyth smoothing
-    else:
-        p_value = np.full(p, np.nan)
+        p_value = (1.0 + ge) / (1.0 + permutations)
 
-    if bootstrap and bootstrap > 0:
+    # confidence interval
+    if inference == "context":
+        ci, _se = _jackknife_ci(X, Y, statistic, est, confidence_level)
+    elif bootstrap and bootstrap > 0:
         boot = np.empty((bootstrap, p))
         for b in range(bootstrap):
             idx = rng.integers(0, N, size=N)
