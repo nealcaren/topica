@@ -285,3 +285,54 @@ approaches or exceeds the number of documents.
 
 Use `search_k`, the coherence×exclusivity frontier, and an `HDP` sanity check.
 See [Choose and justify K](../publishing/choosing-k.md).
+
+## Covariate effects on meaning: embedding regression
+
+The covariates above act on topic *prevalence* (how much a group discusses a
+theme) and, through content covariates, on the *words* a group uses for a topic.
+Neither sees a difference in *meaning* that is not a word swap. When two groups
+use the same words but frame a term differently, or use different words for the
+same idea, the difference lives in a pretrained embedding space, not in counts.
+
+`embedding_regression` is topica's port of the à la carte on text (conText)
+embedding regression of Rodriguez, Spirling and Stewart (2023). It asks the
+native embedding-and-covariate question: *does a covariate shift what a word or
+theme means?* Its canonical use is "do Republicans and Democrats mean different
+things by `immigration`?".
+
+The method regresses per-document à la carte embeddings on your covariates. An à
+la carte embedding of a focal term in a document is the (transformed) average of
+its context words' pretrained vectors, so it captures how *that* instance of the
+term is used. The effect size for a covariate is the Euclidean norm of its
+coefficient (a larger norm means the covariate moves the term's meaning more),
+with a permutation p-value and a bootstrap confidence interval.
+
+```python
+# You bring pretrained word embeddings as {word: vector} (GloVe, word2vec, ...).
+fit = topica.embedding_regression(
+    docs,                       # tokenized documents (word order matters)
+    covariates=party,           # (N,) or (N, p); no intercept column
+    pre_trained=glove,          # {word: vector} or (matrix, vocab)
+    names=["republican"],
+    target="immigration",       # focal term; omit to embed whole documents
+    window=6,
+    transform="estimate",       # learn the ALC matrix from docs, or pass one, or "additive"
+    permutations=100,
+    bootstrap=100,
+)
+
+print(fit.summary())            # covariate, effect size, CI, permutation p
+fit.nearest_neighbors({"republican": 1}, n=10)   # what "immigration" means to R
+fit.nns_ratio({"republican": 1}, {"republican": 0}, n=10)  # R-vs-D contrast
+```
+
+The `nearest_neighbors` at a covariate value, and the `nns_ratio` contrast
+between two values, are how you read *what* the shift is: they rank pretrained
+vocabulary words near the predicted embedding, so a partisan split in the meaning
+of `immigration` shows up as different neighbor words for each party.
+
+Unlike an STM prevalence covariate, this is a description of meaning, not a
+generative topic model, so it does not need `enable_experimental`. It also sidesteps
+the trap of putting a document's own embedding on the covariate side of a topic
+model (see [Embedding topics](embedding.md)): here the embedding *is* the outcome
+being described, and the covariate is external metadata, exactly as in a regression.
