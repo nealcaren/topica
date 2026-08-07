@@ -8,6 +8,12 @@ post-hoc diagnostics (labeling, alignment, pyLDAvis, …) are on the
 
 ::: topica.stm.estimate_effect
 
+::: topica.effects_across_k
+
+::: topica.effects_across_seeds
+
+::: topica.RobustnessResult
+
 ::: topica.stm.average_marginal_effects
 
 ::: topica.stm.MarginalEffect

@@ -295,6 +295,11 @@ from .compare import (  # noqa: E402  (statistical two-fit topic-drift compariso
     MatchedPair,
     UnmatchedTopic,
 )
+from .robustness import (  # noqa: E402  (effect robustness across K / seeds, #644)
+    effects_across_k,
+    effects_across_seeds,
+    RobustnessResult,
+)
 from .analysis import (  # noqa: E402  (model-neutral fitted-model analysis surface)
     topic_info,
     topic_sizes,
@@ -442,6 +447,9 @@ __all__ = [
     "CompareResult",
     "MatchedPair",
     "UnmatchedTopic",
+    "effects_across_k",
+    "effects_across_seeds",
+    "RobustnessResult",
     "ensemble",
     "EnsembleResult",
     "cross_ensemble",

@@ -130,4 +130,43 @@ table = pd.DataFrame(rows)
 Report point estimates, (clustered) standard errors, and confidence intervals,
 and say plainly which effects clear conventional thresholds and which don't.
 
+## Show the effect survives K and the seed
+
+The first question a reviewer asks about a topic-model effect is whether it is an
+artifact of the K you picked or the seed you drew. `effects_across_k` and
+`effects_across_seeds` answer it directly: they refit, align each fit's topics back
+to a reference fit, re-estimate the effect, and return one row per (reference topic,
+setting).
+
+```python
+rob = topica.effects_across_k(
+    docs, [15, 20, 25], feature="rating[T.Liberal]",
+    prevalence=X, feature_names=names, iters=500,
+)
+rob.stable      # topics whose effect sign held at every K
+rob.flipped     # topics whose sign moved — report these as not robust
+rob.unmatched   # topics with no counterpart at some K: undetermined, not confirmed
+print(rob.summary())
+rob.to_frame()  # tidy table for the paper
+
+# the seed-wander counterpart
+topica.effects_across_seeds(docs, [1, 2, 3], num_topics=20,
+                            feature="rating[T.Liberal]", prevalence=X,
+                            feature_names=names)
+```
+
+Topics are matched by [`align_topics`](../api/diagnostics.md)' one-to-one assignment,
+so a topic is compared with its actual counterpart rather than by index. A counterpart
+counts only if its similarity clears `min_similarity` (default `0.3`, `align_topics`'
+own match threshold): a reference topic with no counterpart — because K differs, or
+because the closest topic is too dissimilar to trust — is reported as `unmatched`
+rather than force-matched to a leftover topic, so the table cannot overstate coverage.
+Read the `similarity` column to judge borderline cases; lower `min_similarity` to keep
+every Hungarian pairing. Pass `fits=` to reuse models you have already fit, and
+`nsims=` to use method-of-composition intervals per fit.
+
+Read the verdicts as description, not inference: "the sign held across K ∈ {15, 20,
+25}" is the honest claim. It is not a significance test and applies no
+multiple-comparison correction.
+
 → Next: [Report and make reproducible](reporting.md).
