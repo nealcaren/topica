@@ -221,13 +221,25 @@ def alc_embeddings(docs, pre_trained, *, transform=None, target=None, window=6,
     -------
     (numpy.ndarray, numpy.ndarray)
         ``embeddings`` of shape ``(n_rows, D)`` and ``doc_ids`` -- the source
-        document index for each row (for clustering). In document mode there is one
-        row per surviving document; in instance mode one row per surviving mention.
+        document index for each row, used to align covariates to the surviving rows.
+        In document mode there is one row per surviving document; in instance mode
+        one row per surviving mention (each mention is an independent observation --
+        within-document clustering is not corrected for, matching conText's default).
     """
     if aggregate not in ("document", "instance"):
         raise ValueError("aggregate must be 'document' or 'instance'")
     if target is not None and window < 1:
         raise ValueError("window must be >= 1 when a target is given")
+    # A raw string is iterable, so a document passed as text (rather than a token
+    # list) would silently be treated as a sequence of single characters -- none in
+    # vocabulary -- and surface later as the opaque "no context" error. Catch it
+    # here with the actual fix.
+    docs = list(docs)
+    if docs and isinstance(docs[0], str):
+        raise ValueError(
+            "docs must be a sequence of token lists, not raw strings; tokenize "
+            "first (e.g. [t.split() for t in docs])"
+        )
     _, matrix, index = _as_lookup(pre_trained, case_insensitive)
     D = matrix.shape[1]
     A = np.eye(D) if transform is None else np.asarray(transform, dtype=np.float64)
@@ -265,9 +277,16 @@ def alc_embeddings(docs, pre_trained, *, transform=None, target=None, window=6,
                     embs.append(v)
                     doc_ids.append(d)
     if not embs:
+        if target is not None:
+            raise ValueError(
+                f"no context produced an embedding for target {target!r}: it does "
+                "not occur in the corpus, or every window around it is entirely "
+                "out-of-vocabulary. Check the term is present and lowercased to "
+                "match the pretrained vocabulary."
+            )
         raise ValueError(
-            "no context produced an embedding (target not in vocabulary, or all "
-            "contexts out-of-vocabulary)"
+            "no document produced an embedding: every document is entirely "
+            "out-of-vocabulary against the pretrained embeddings"
         )
     return np.asarray(embs), np.asarray(doc_ids, dtype=int)
 
@@ -281,6 +300,11 @@ def _build_design(covariates, names):
     arr = np.asarray(covariates, dtype=object) if _is_categorical(covariates) else None
     if arr is not None:
         cats = sorted(set(arr.tolist()))
+        if len(cats) < 2:
+            raise ValueError(
+                f"categorical covariate has a single level ({cats[0]!r}); a "
+                "regression needs at least two groups to contrast"
+            )
         ref, levels = cats[0], cats[1:]
         Xraw = np.array([[1.0 if v == lv else 0.0 for lv in levels] for v in arr])
         base = names[0] if names else "x"
@@ -325,7 +349,9 @@ class EmbeddingRegression:
     p_value : numpy.ndarray
         ``(n_covariates,)`` permutation p-values.
     normed_ci : numpy.ndarray
-        ``(n_covariates, 2)`` bootstrap percentile CI for the effect size.
+        ``(n_covariates, 2)`` confidence interval for the effect size: a
+        leave-one-out jackknife t-interval under ``inference="context"`` (the
+        default), a bootstrap percentile interval under ``inference="paper"``.
     intercept : numpy.ndarray
         The ``(D,)`` intercept (reference-level ALC embedding).
     statistic : str
@@ -397,12 +423,17 @@ class EmbeddingRegression:
         """A compact text table of covariate, effect size, CI and p-value."""
         lines = [f"Embedding regression ({self.statistic}, "
                  f"{int(self.confidence_level * 100)}% CI, n={self.n_obs})"]
+        if self.reference_level is not None:
+            lines.append(f"reference level: {self.reference_level}")
         if self.statistic == "squared_deflated":
             lines.append("(deflated = squared norm - HC1 bias; can be <=0 under the null)")
-        lines.append(f"{'covariate':<20s} {'estimate':>10s} {'ci_low':>9s} "
+        # Widen the covariate column to the longest name so dummy names like
+        # ``party_rec.sport.baseball`` do not push the numeric columns out of line.
+        w = max(20, *(len(n) for n in self.names)) if self.names else 20
+        lines.append(f"{'covariate':<{w}s} {'estimate':>10s} {'ci_low':>9s} "
                      f"{'ci_high':>9s} {'p':>7s}")
         for i, nm in enumerate(self.names):
-            lines.append(f"{nm:<20s} {self.normed_estimate[i]:10.4f} "
+            lines.append(f"{nm:<{w}s} {self.normed_estimate[i]:10.4f} "
                          f"{self.normed_ci[i, 0]:9.4f} {self.normed_ci[i, 1]:9.4f} "
                          f"{self.p_value[i]:7.3f}")
         return "\n".join(lines)
@@ -544,11 +575,16 @@ def embedding_regression(
         HC1 bias; centered at ~0 under the null). ``"norm"`` is the paper's Euclidean
         norm (biased upward). ``"squared"`` is the raw squared norm.
     inference : {"context", "paper"}, default "context"
-        How the p-value and confidence interval are computed. ``"context"`` matches
-        the current R ``conText`` package: a Freedman-Lane residual-permutation
-        p-value and a leave-one-out jackknife t-interval (the interval is centered on
-        the estimate). ``"paper"`` is the original article's method: a covariate
-        permutation p-value and a document bootstrap percentile interval (the norm's
+        How the p-value and confidence interval are computed. ``"context"`` follows
+        the current R ``conText`` package's procedure: a Freedman-Lane
+        residual-permutation p-value and a leave-one-out jackknife t-interval (the
+        interval is centered on the estimate and matches conText's to numerical
+        precision). The permutation p-value uses the selected ``statistic`` and the
+        validity-preserving ``(1 + #ge) / (1 + permutations)`` smoothing, so it will
+        not be bit-identical to conText's unsmoothed count (conText also permutes the
+        uncorrected norm); the effect-size estimates and the jackknife interval are.
+        ``"paper"`` is the original article's method: a covariate permutation p-value
+        and a bootstrap percentile interval over the resampled rows (the norm's
         upward bias makes that interval sit above the point estimate).
     permutations : int, default 100
         Permutations for the p-value; 0 skips. p is smoothed as

@@ -243,3 +243,41 @@ def test_multiple_covariates():
     assert r.coefficients.shape[0] == 2
     assert r.p_value[0] < 0.05  # real covariate
     assert r.p_value[1] > 0.1   # noise covariate
+
+
+# --- review follow-ups (#669): clearer errors and summary ---------------------
+def test_raw_strings_rejected_with_actionable_error():
+    """Passing raw strings (not token lists) is the most natural beginner mistake;
+    it must fail with the real cause, not the opaque 'no context' message."""
+    _docs, g, pre = _planted()
+    strings = ["this is a document as a raw string"] * len(g)
+    with pytest.raises(ValueError, match="token lists"):
+        topica.embedding_regression(strings, covariates=g, pre_trained=pre,
+                                    permutations=0)
+
+
+def test_missing_target_names_the_term():
+    docs, g, pre = _planted()
+    with pytest.raises(ValueError, match="notaword"):
+        topica.embedding_regression(docs, covariates=g, pre_trained=pre,
+                                    target="notaword", permutations=0)
+
+
+def test_single_level_categorical_rejected():
+    docs, _g, pre = _planted()
+    labels = ["only"] * len(docs)
+    with pytest.raises(ValueError, match="single level"):
+        topica.embedding_regression(docs, covariates=labels, pre_trained=pre,
+                                    permutations=0)
+
+
+def test_summary_reports_reference_level_and_aligns():
+    docs, _g, pre = _planted()
+    labels = ["dem" if i % 2 else "gop" for i in range(len(docs))]
+    fit = topica.embedding_regression(docs, covariates=labels, pre_trained=pre,
+                                      names=["party"], permutations=0)
+    text = fit.summary()
+    assert fit.reference_level == "dem"          # sorted-first level
+    assert "reference level: dem" in text
+    # the numeric columns line up: every data row's header offsets match
+    assert "party_gop" in text
