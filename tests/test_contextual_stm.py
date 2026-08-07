@@ -161,6 +161,34 @@ def test_collinear_covariates_allowed_with_ridge():
     assert m.covariate_effects.shape == (2, 2)
 
 
+# --- input guards -----------------------------------------------------------
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+def test_nonfinite_covariates_rejected(bad):
+    docs, embs, X = _corpus(n_per_group=10)
+    X = X.astype(float)
+    X[3, 0] = bad
+    m = topica.ContextualSTM(2, seed=0, l2_prior_reg=0.1)  # ridge would skip collinear guard
+    with pytest.raises(ValueError, match="covariates contains non-finite"):
+        m.fit(docs, embs, covariates=X, iters=5)
+
+
+def test_nonfinite_embeddings_rejected():
+    docs, embs, X = _corpus(n_per_group=10)
+    embs = embs.copy()
+    embs[2, 1] = np.nan
+    m = topica.ContextualSTM(2, seed=0)
+    with pytest.raises(ValueError, match="doc_embeddings contains non-finite"):
+        m.fit(docs, embs, covariates=X, iters=5)
+
+
+def test_string_input_gives_targeted_error():
+    _, embs, X = _corpus(n_per_group=1)
+    m = topica.ContextualSTM(2, seed=0)
+    with pytest.raises(ValueError, match="list of strings"):
+        m.fit(["hello world", "foo bar"], embs, covariates=X)
+
+
 # --- constructor guards -----------------------------------------------------
 
 def test_invalid_encoder_rejected():

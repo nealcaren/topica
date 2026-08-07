@@ -678,6 +678,12 @@ collinear covariates (e.g. full dummy coding) are rejected unless you set
     for honest (bootstrap) standard errors; a point `θ` gives OLS errors that
     understate uncertainty. Honest joint uncertainty over `W` is future work.
 
+    One caveat on the default `encoder_prior` mode: there the covariate feeds the
+    encoder, so `doc_topic` is already `q(θ|embedding, covariates)` and regressing it
+    back on the same covariate is partly circular (it recovers an effect the model
+    baked in). For a clean `estimate_effect` read, fit with `covariate_mode="prior_only"`,
+    where `doc_topic = q(θ|embedding)` carries no covariate information.
+
 ## NarrativeTM
 
 !!! warning "Experimental — unvalidated"

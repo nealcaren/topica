@@ -280,7 +280,15 @@ impl ContextualSTM {
             c.inner
         } else {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
-                PyValueError::new_err("fit() expects a Corpus or a list of token lists")
+                if data.extract::<Vec<String>>().is_ok() {
+                    PyValueError::new_err(
+                        "fit() got a list of strings; it expects a list of token lists. \
+                         Split each document into tokens (e.g. [t.split() for t in texts]) \
+                         or preprocess with topica.Corpus.from_documents.",
+                    )
+                } else {
+                    PyValueError::new_err("fit() expects a Corpus or a list of token lists")
+                }
             })?;
             build_corpus_from_docs(
                 docs,
@@ -324,9 +332,14 @@ impl ContextualSTM {
                 "all doc_embeddings rows must have the same width",
             ));
         }
+        check_all_finite_2d("doc_embeddings", &embs)?;
 
         // Covariates: validate, guard against constant/collinear columns, standardize.
         let raw_cov = slf.resolve_covariates(covariates, num_docs)?;
+        // Reject non-finite covariates up front, before the constant/collinear guards
+        // (whose comparisons are false for NaN, so a NaN would otherwise either slip
+        // through under l2_prior_reg > 0 or be mislabelled "collinear").
+        check_all_finite_2d("covariates", &raw_cov)?;
         let n_covariates = raw_cov[0].len();
         let (mean, std) = crate::contextual_stm::column_stats(&raw_cov);
         let names = match &slf.covariate_names {
@@ -413,8 +426,16 @@ impl ContextualSTM {
         Ok(vecs_to_arr2(&self.fitted_model()?.topic_word()).to_pyarray_bound(py))
     }
 
-    /// Document-topic proportions theta (num_docs, num_topics); rows sum to 1. This is
-    /// ``q(theta | embedding)`` and is not covariate-adjusted.
+    /// Document-topic proportions theta (num_docs, num_topics); rows sum to 1.
+    ///
+    /// What theta conditions on depends on ``covariate_mode``. Under ``prior_only`` the
+    /// encoder sees only the embedding, so theta is ``q(theta | embedding)`` and carries
+    /// no covariate information: ``estimate_effect(model.doc_topic, X=cov)`` recovers the
+    /// covariate-topic relationship the model did not itself use. Under the default
+    /// ``encoder_prior`` the covariates enter both the prior mean and the encoder, so
+    /// theta is ``q(theta | embedding, covariates)`` and is already covariate-adjusted;
+    /// regressing it back on the same covariates is partly circular. Prefer
+    /// ``covariate_effects`` for the model's own prevalence estimates in that mode.
     #[getter]
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(&self.fitted_model()?.base.doc_topic).to_pyarray_bound(py))
@@ -471,7 +492,15 @@ impl ContextualSTM {
             c.inner
         } else {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
-                PyValueError::new_err("transform() expects a Corpus or a list of token lists")
+                if data.extract::<Vec<String>>().is_ok() {
+                    PyValueError::new_err(
+                        "transform() got a list of strings; it expects a list of token \
+                         lists. Split each document into tokens (e.g. [t.split() for t in \
+                         texts]) or preprocess with topica.Corpus.from_documents.",
+                    )
+                } else {
+                    PyValueError::new_err("transform() expects a Corpus or a list of token lists")
+                }
             })?;
             build_corpus_from_docs(
                 docs,
@@ -493,7 +522,9 @@ impl ContextualSTM {
                 embs.len()
             )));
         }
+        check_all_finite_2d("doc_embeddings", &embs)?;
         let raw_cov = self.resolve_covariates(covariates, num_docs)?;
+        check_all_finite_2d("covariates", &raw_cov)?;
         if raw_cov[0].len() != m.n_covariates {
             return Err(PyValueError::new_err(format!(
                 "covariates has {} columns but the model was fit with {}",
