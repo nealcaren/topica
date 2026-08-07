@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`verify` no longer reports a clean re-verification as "differences found"**
+  (#649 follow-up). At the default `privacy="minimal"` no content fingerprint is
+  recorded, so a perfect re-check leaves `corpus_fingerprint` `unverifiable` — an
+  *absence of evidence*, not a mismatch — yet the summary announced "differences
+  found", reading a successful reproduction as a failure on the default path. The
+  headline is now honest ("no differences found (1 field unverifiable)"), and
+  `VerifyResult.differences` / `.unverifiable` expose the distinction
+  programmatically. `ok` is unchanged (still strict: an unverifiable field never
+  reads as a pass), and a real mismatch still reports "differences found".
+  `ManifestDiff` gains the same treatment for `incomparable`, with `.differences` /
+  `.incomparable`.
+
 ### Added
 
 - **`from_dataframe` accepts scikit-learn's `min_df` / `max_df` aliases** (#647), so

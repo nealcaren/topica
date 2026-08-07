@@ -46,6 +46,28 @@ class says it may still replay), or `unverifiable` (nothing recorded to check
 against, a bounded component, or a fingerprint from a spec this build does not
 recognise).
 
+An `unverifiable` field is an **absence of evidence, not a mismatch**, and the two
+are kept apart. `result.differences` lists the fields that actually changed;
+`result.unverifiable` lists the ones nothing could be checked against. This matters
+on the default path: at `privacy="minimal"` no content fingerprint is recorded, so a
+perfect re-verification still leaves `corpus_fingerprint` unverifiable. `ok` stays
+`False` there — nothing is claimed as verified that was not — but the summary says
+plainly that no differences were found, rather than reporting a clean reproduction as
+a failure:
+
+```
+verify: no differences found (1 field unverifiable)
+  environment         exact
+  corpus_counts       exact
+  corpus_fingerprint  unverifiable
+  model_topic_word    exact
+  model_doc_topic     exact
+```
+
+`ManifestDiff` draws the same distinction: `incomparable` (different fingerprint
+specs, or a keyed digest) is an inability to tell, reported apart from the genuine
+`changed` / `only_in_a` / `only_in_b` differences.
+
 The determinism the manifest records is **config-aware** (issue #401), not the
 coarse per-class registry tag: a `cvb0` sampler or an `init="random"` fit is
 recorded as `seed-reproducible` even when the model class is nominally `bit-exact`,

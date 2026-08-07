@@ -205,17 +205,51 @@ class VerifyResult:
     ``unverifiable`` (nothing to check against, or a bounded/unknown component).
     ``ok`` is a convenience for "every field exact"; the summary always shows the
     full breakdown -- the statuses are never collapsed into one flag.
+
+    ``unverifiable`` is an *absence of evidence*, not a mismatch, and the two are
+    reported separately: :attr:`differences` lists fields that actually changed,
+    :attr:`unverifiable` lists fields nothing could be checked against. This
+    matters at the default ``privacy="minimal"``, where no content fingerprint is
+    recorded: a perfect re-verification leaves ``corpus_fingerprint`` unverifiable,
+    so ``ok`` is ``False`` (nothing is claimed as verified that was not) while the
+    summary still says plainly that no differences were found.
     """
 
     fields: dict[str, str]
 
     @property
     def ok(self) -> bool:
+        """Every field verified exactly. ``False`` when anything changed *or* could
+        not be checked -- an unverifiable field never reads as a pass."""
         return all(v == "exact" for v in self.fields.values())
+
+    @property
+    def differences(self) -> dict[str, str]:
+        """Fields that actually differ (a mismatch), excluding the merely
+        unverifiable. Empty means nothing checkable came back changed."""
+        return {k: v for k, v in self.fields.items()
+                if v not in ("exact", "unverifiable")}
+
+    @property
+    def unverifiable(self) -> dict[str, str]:
+        """Fields nothing could be checked against (e.g. no content fingerprint
+        was recorded at ``privacy="minimal"``, or an unrecognised spec)."""
+        return {k: v for k, v in self.fields.items() if v == "unverifiable"}
+
+    def _headline(self) -> str:
+        if self.ok:
+            return "all exact"
+        if self.differences:
+            return "differences found"
+        # Nothing differs; some fields simply had nothing to check against. Saying
+        # "differences found" here would report a clean re-verification as a
+        # failure -- the common case at the default privacy="minimal".
+        n = len(self.unverifiable)
+        return f"no differences found ({n} field{'s' if n != 1 else ''} unverifiable)"
 
     def summary(self) -> str:
         width = max((len(k) for k in self.fields), default=0)
-        lines = [f"verify: {'all exact' if self.ok else 'differences found'}"]
+        lines = [f"verify: {self._headline()}"]
         for name, status in self.fields.items():
             lines.append(f"  {name.ljust(width)}  {status}")
         return "\n".join(lines)
@@ -234,17 +268,44 @@ class ManifestDiff:
     the other), or ``incomparable`` (e.g. fingerprints from different specs, or a
     keyed digest). ``same`` is a convenience for "every field same"; the summary
     always shows the breakdown.
+
+    As in :class:`VerifyResult`, ``incomparable`` is an *inability to tell* rather
+    than a mismatch, and is reported apart from real differences (``changed`` and
+    the ``only_in_*`` statuses, which are genuine: one run recorded a field the
+    other did not).
     """
 
     fields: dict[str, str]
 
     @property
     def same(self) -> bool:
+        """Every field identical. ``False`` when anything differs *or* could not be
+        compared -- an incomparable field never reads as a match."""
         return all(v == "same" for v in self.fields.values())
+
+    @property
+    def differences(self) -> dict[str, str]:
+        """Fields that genuinely differ, excluding the merely incomparable."""
+        return {k: v for k, v in self.fields.items()
+                if v not in ("same", "incomparable")}
+
+    @property
+    def incomparable(self) -> dict[str, str]:
+        """Fields that could not be compared (fingerprints from different specs, or
+        a keyed digest)."""
+        return {k: v for k, v in self.fields.items() if v == "incomparable"}
+
+    def _headline(self) -> str:
+        if self.same:
+            return "identical"
+        if self.differences:
+            return "differences found"
+        n = len(self.incomparable)
+        return f"no differences found ({n} field{'s' if n != 1 else ''} incomparable)"
 
     def summary(self) -> str:
         width = max((len(k) for k in self.fields), default=0)
-        lines = [f"compare: {'identical' if self.same else 'differences found'}"]
+        lines = [f"compare: {self._headline()}"]
         for name, status in self.fields.items():
             lines.append(f"  {name.ljust(width)}  {status}")
         return "\n".join(lines)

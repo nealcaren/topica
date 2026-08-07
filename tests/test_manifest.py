@@ -385,6 +385,63 @@ def test_verify_unrecorded_fingerprint_is_unverifiable_not_pass(fitted):
     assert res.fields["corpus_fingerprint"] == "unverifiable"
 
 
+def test_verify_does_not_call_an_absence_a_difference(fitted):
+    # At the default privacy="minimal" nothing is recorded to check the corpus
+    # content against, so a *perfect* re-verification leaves one field
+    # unverifiable. It must not be reported as "differences found" — that reads a
+    # clean reproduction as a failure, on the default path.
+    corpus, model = fitted
+    res = record_fit(model, corpus, iters=50).verify(corpus, model)
+    assert res.differences == {}                      # nothing actually differs
+    assert set(res.unverifiable) == {"corpus_fingerprint"}
+    head = res.summary().splitlines()[0]
+    assert "no differences found" in head and "unverifiable" in head
+    # ...while an unverifiable field still never reads as a pass.
+    assert not res.ok
+
+
+def test_verify_still_reports_a_real_difference(fitted):
+    corpus, model = fitted
+    rec = record_fit(model, corpus, content_fingerprint=True, iters=50)
+    changed = topica.Corpus.from_documents([DOCS[0][::-1]] + DOCS[1:])
+    res = rec.verify(changed, model)
+    assert res.differences  # a genuine mismatch, not an absence
+    assert "differences found" in res.summary().splitlines()[0]
+    assert not res.ok
+
+
+def test_verify_all_exact_headline(fitted):
+    corpus, model = fitted
+    res = record_fit(model, corpus, content_fingerprint=True, iters=50).verify(corpus, model)
+    assert res.ok and not res.differences and not res.unverifiable
+    assert "all exact" in res.summary().splitlines()[0]
+
+
+def test_compare_does_not_call_an_incomparable_field_a_difference(fitted):
+    # The ManifestDiff counterpart: a fingerprint from an unknown spec cannot be
+    # compared, which is not the same as the two runs differing.
+    corpus, model = fitted
+    a = record_fit(model, corpus, content_fingerprint=True, iters=50)
+    b = record_fit(model, corpus, content_fingerprint=True, iters=50)
+    b.corpus["fingerprint"]["spec"] = "fp99"
+    diff = a.compare(b)
+    assert diff.fields["corpus_fingerprint"] == "incomparable"
+    assert diff.differences == {}
+    assert set(diff.incomparable) == {"corpus_fingerprint"}
+    assert "no differences found" in diff.summary().splitlines()[0]
+    assert not diff.same  # incomparable still never reads as a match
+
+
+def test_compare_still_reports_a_real_difference(fitted):
+    corpus, model = fitted
+    a = record_fit(model, corpus, iters=50)
+    other = topica.LDA(4, seed=7)
+    other.fit(corpus, iters=50)
+    diff = a.compare(record_fit(other, corpus, iters=50))
+    assert "num_topics" in diff.differences
+    assert "differences found" in diff.summary().splitlines()[0]
+
+
 def test_verify_result_never_a_bare_bool(fitted):
     corpus, model = fitted
     res = record_fit(model, corpus, iters=50).verify(corpus, model)
