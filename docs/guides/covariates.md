@@ -294,45 +294,61 @@ Neither sees a difference in *meaning* that is not a word swap. When two groups
 use the same words but frame a term differently, or use different words for the
 same idea, the difference lives in a pretrained embedding space, not in counts.
 
-`embedding_regression` is topica's port of the à la carte on text (conText)
-embedding regression of Rodriguez, Spirling and Stewart (2023). It asks the
-native embedding-and-covariate question: *does a covariate shift what a word or
-theme means?* Its canonical use is "do Republicans and Democrats mean different
-things by `immigration`?".
+`embedding_regression` implements the à la carte on text (conText) embedding
+regression of Rodriguez, Spirling and Stewart (2023). It asks the native
+embedding-and-covariate question: *does a covariate shift what a word or theme
+means?* Its canonical use is "do Republicans and Democrats mean different things
+by `immigration`?". It is a **text-as-data analysis tool, not a topic model** (it
+produces no topics and needs no `enable_experimental`), and it is a drop-in for the
+R `conText` package: `parity/embedding_regression_context.py` checks topica against
+conText on conText's own bundled data and reproduces its à la carte embeddings,
+squared coefficient norm, and HC1-deflated norm to numerical precision.
 
-The method regresses per-document à la carte embeddings on your covariates. An à
-la carte embedding of a focal term in a document is the (transformed) average of
-its context words' pretrained vectors, so it captures how *that* instance of the
-term is used. The effect size for a covariate is the Euclidean norm of its
-coefficient (a larger norm means the covariate moves the term's meaning more),
-with a permutation p-value and a bootstrap confidence interval.
+The method regresses à la carte embeddings on your covariates. An à la carte
+embedding of a focal term is the (transformed) count-weighted mean of its context
+words' pretrained vectors, so it captures how *that* mention is used. For a focal
+term the unit of analysis is one row per mention (`aggregate="instance"`, conText's
+default); with `target=None` it embeds whole documents. The effect size for a
+covariate is the squared Euclidean norm of its coefficient, deflated for
+small-sample bias (`statistic="squared_deflated"`, the default and conText's
+headline: a value near zero means no detectable shift), with a permutation p-value
+and a bootstrap confidence interval.
 
 ```python
 # You bring pretrained word embeddings as {word: vector} (GloVe, word2vec, ...).
 fit = topica.embedding_regression(
     docs,                       # tokenized documents (word order matters)
-    covariates=party,           # (N,) or (N, p); no intercept column
+    covariates=party,           # numeric (N,)/(N, p), or category labels (dummy-coded)
     pre_trained=glove,          # {word: vector} or (matrix, vocab)
-    names=["republican"],
+    names=["party"],
     target="immigration",       # focal term; omit to embed whole documents
     window=6,
-    transform="estimate",       # learn the ALC matrix from docs, or pass one, or "additive"
+    transform="estimate",       # learn the ALC matrix, pass one, or "additive" (identity)
     permutations=100,
     bootstrap=100,
 )
 
 print(fit.summary())            # covariate, effect size, CI, permutation p
-fit.nearest_neighbors({"republican": 1}, n=10)   # what "immigration" means to R
-fit.nns_ratio({"republican": 1}, {"republican": 0}, n=10)  # R-vs-D contrast
+fit.nearest_neighbors({"party_R": 1}, n=10)          # what "immigration" means to R
+fit.nns_ratio({"party_R": 1}, {"party_R": 0}, n=10)  # R-vs-D contrast
 ```
 
-The `nearest_neighbors` at a covariate value, and the `nns_ratio` contrast
-between two values, are how you read *what* the shift is: they rank pretrained
-vocabulary words near the predicted embedding, so a partisan split in the meaning
-of `immigration` shows up as different neighbor words for each party.
+Categorical covariates are dummy-coded (first level dropped as the reference), so a
+`party` column of `"D"`/`"R"` becomes a `party_R` coefficient. The
+`nearest_neighbors` at a covariate value, and the `nns_ratio` contrast between two
+values, are how you read *what* the shift is: they rank pretrained vocabulary words
+near the predicted embedding, so a partisan split in the meaning of `immigration`
+shows up as different neighbor words for each party.
 
-Unlike an STM prevalence covariate, this is a description of meaning, not a
-generative topic model, so it does not need `enable_experimental`. It also sidesteps
-the trap of putting a document's own embedding on the covariate side of a topic
-model (see [Embedding topics](embedding.md)): here the embedding *is* the outcome
-being described, and the covariate is external metadata, exactly as in a regression.
+Two notes for conText users. topica follows the method of Rodriguez, Spirling &
+Stewart (2023); its inference differs from the current conText package in form
+(covariate permutation and a document bootstrap here, vs. residual permutation and a
+jackknife there), though the point estimates and deflated norms match. And conText's
+published transform matrices (for example `cr_transform`) are the transpose of what
+:func:`compute_transform` returns, so pass an external conText matrix as
+`transform=cr_transform.T`.
+
+This also sidesteps the trap of putting a document's own embedding on the covariate
+side of a topic model (see [Embedding topics](embedding.md)): here the embedding
+*is* the outcome being described, and the covariate is external metadata, exactly as
+in a regression.

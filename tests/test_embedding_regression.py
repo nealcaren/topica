@@ -174,6 +174,39 @@ def test_names_length_mismatch_raises():
                                     bootstrap=0)
 
 
+def test_instance_mode_one_row_per_mention():
+    words, emb = _pretrained(V=30, D=8)
+    # doc 0 mentions the target twice, doc 1 once
+    docs = [["a", "tgt", "b", "tgt", "c"], ["d", "tgt", "e"]]
+    words2 = words + ["tgt", "a", "b", "c", "d", "e"]
+    emb2 = np.vstack([emb, np.random.default_rng(0).normal(size=(6, 8))])
+    Y, doc_ids = alc_embeddings(docs, (emb2, words2), target="tgt", window=1,
+                                aggregate="instance")
+    assert Y.shape[0] == 3          # 2 mentions in doc 0 + 1 in doc 1
+    assert list(doc_ids) == [0, 0, 1]
+    Yd, did = alc_embeddings(docs, (emb2, words2), target="tgt", window=1,
+                             aggregate="document")
+    assert Yd.shape[0] == 2         # pooled per document
+    assert list(did) == [0, 1]
+
+
+def test_categorical_covariate_dummy_coded():
+    docs, g, pre = _planted()
+    party = np.array(["D" if gi == 0 else "R" for gi in g])
+    r = topica.embedding_regression(docs, party, pre, names=["party"],
+                                    permutations=100, bootstrap=0, seed=1)
+    assert r.names == ["party_R"]     # first level D dropped as reference
+    assert r.reference_level == "D"
+    assert r.p_value[0] < 0.05
+
+
+def test_squared_deflated_is_default_and_centered_under_null():
+    docs, g, pre = _null()
+    r = topica.embedding_regression(docs, g, pre, permutations=100, bootstrap=0, seed=1)
+    assert r.statistic == "squared_deflated"
+    assert abs(r.normed_estimate[0]) < 0.2   # deflated null ~ 0 (not a positive floor)
+
+
 def test_multiple_covariates():
     docs, g, pre = _planted()
     rng = np.random.default_rng(5)
