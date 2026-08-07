@@ -155,7 +155,7 @@ topica.effects_across_seeds(docs, [1, 2, 3], num_topics=20,
                             feature_names=names)
 ```
 
-Topics are matched by [`align_topics`](../api/validation.md)' one-to-one assignment,
+Topics are matched by [`align_topics`](../api/diagnostics.md)' one-to-one assignment,
 so a topic is compared with its actual counterpart rather than by index — and where
 K differs, a reference topic with no counterpart is reported as `unmatched` rather
 than dropped, so the table cannot overstate coverage. Pass `fits=` to reuse models
