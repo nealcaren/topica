@@ -8,6 +8,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`topica.effects_across_k` / `topica.effects_across_seeds` — effect robustness in
+  one call** (#644). The table a reviewer asks for first ("does this effect survive a
+  different K, or a different seed?") previously had to be hand-rolled: refit, match
+  topics across fits, pull one coefficient from each, assemble. These helpers do it —
+  refitting per setting, aligning every fit's topics back to a reference fit via
+  `align_topics`' one-to-one assignment (so topics are compared with their actual
+  counterparts, not by index), re-estimating the effect, and returning a
+  `RobustnessResult`: one tidy row per (reference topic, setting) plus `.stable` /
+  `.flipped` / `.unmatched` verdicts, `.summary()`, and `.to_frame()`. Reference
+  topics with no counterpart at some setting are reported as `unmatched` rather than
+  dropped, and the verdicts are documented as descriptive ("the sign held across the
+  settings scanned"), not a significance test. `fits=` reuses models you already have.
+
 - **`from_dataframe` accepts scikit-learn's `min_df` / `max_df` aliases** (#647), so
   an sklearn/gensim preprocessing habit works unchanged. Following sklearn's
   convention, an `int` is an absolute document count and a `float` in `[0, 1]` is a

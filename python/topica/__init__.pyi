@@ -420,6 +420,72 @@ def compare(
     ...
 
 
+class RobustnessResult(list):
+    feature: str
+    varied: str
+    reference: Any
+    ci: float
+    @property
+    def topics(self) -> list[int]: ...
+    @property
+    def stable(self) -> list[int]: ...
+    @property
+    def flipped(self) -> list[int]: ...
+    @property
+    def unmatched(self) -> list[int]: ...
+    def verdicts(self) -> dict[int, str]: ...
+    def to_frame(self) -> Any: ...
+    def summary(self) -> str: ...
+
+
+def effects_across_k(
+    docs: Any,
+    ks: Sequence[int],
+    *,
+    feature: str,
+    prevalence: Any = None,
+    X: Any = None,
+    feature_names: Sequence[str] | None = None,
+    model: Any = "stm",
+    content: Any = None,
+    iters: int = 500,
+    ci: float = 0.95,
+    metric: str = "cosine",
+    reference: Any = None,
+    nsims: int | None = None,
+    corpus: Any = None,
+    seed: int = 42,
+    fits: Sequence[Any] | None = None,
+) -> RobustnessResult:
+    """Is a covariate effect robust to the number of topics? Refits per K, aligns
+    topics back to a reference fit, and reports the effect per (topic, K)."""
+    ...
+
+
+def effects_across_seeds(
+    docs: Any,
+    seeds: Sequence[int],
+    *,
+    num_topics: int,
+    feature: str,
+    prevalence: Any = None,
+    X: Any = None,
+    feature_names: Sequence[str] | None = None,
+    model: Any = "stm",
+    content: Any = None,
+    iters: int = 500,
+    ci: float = 0.95,
+    metric: str = "cosine",
+    reference: Any = None,
+    nsims: int | None = None,
+    corpus: Any = None,
+    fits: Sequence[Any] | None = None,
+) -> RobustnessResult:
+    """Is a covariate effect robust to the seed? The seed-wander counterpart of
+    effects_across_k."""
+    ...
+
+
 class EnsembleResult:
     topic_word: Any
     doc_topic: Any
