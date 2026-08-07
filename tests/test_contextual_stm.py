@@ -161,6 +161,28 @@ def test_collinear_covariates_allowed_with_ridge():
     assert m.covariate_effects.shape == (2, 2)
 
 
+def test_covariate_effects_proportion_shape_and_closure():
+    """Proportion-scale effects have the same shape as W and sum to ~0 across topics
+    (softmax closure: a covariate cannot raise every topic's prevalence at once)."""
+    docs, embs, X = _corpus()
+    m = topica.ContextualSTM(2, seed=1)
+    m.fit(docs, embs, covariates=X, iters=30)
+    prop = m.covariate_effects_proportion
+    assert prop.shape == m.covariate_effects.shape
+    assert np.allclose(prop.sum(axis=1), 0.0, atol=1e-9)
+
+
+def test_covariate_effects_proportion_direction_matches_logit():
+    """Proportion and logit effects agree in sign on the topic each covariate moves most."""
+    docs, embs, X = _corpus()
+    m = topica.ContextualSTM(2, seed=1)
+    m.fit(docs, embs, covariates=X, iters=40)
+    w = m.covariate_effects[0]
+    prop = m.covariate_effects_proportion[0]
+    t = int(np.argmax(np.abs(w)))
+    assert np.sign(prop[t]) == np.sign(w[t])
+
+
 # --- input guards -----------------------------------------------------------
 
 @pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])

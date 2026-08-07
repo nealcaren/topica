@@ -34,8 +34,8 @@ fn parse_covariate_mode(s: &str) -> PyResult<CovariateMode> {
 /// per-document logistic-normal prior mean, so a covariate that co-occurs with a topic
 /// raises its prevalence — the neural analog of STM/DMR prevalence covariates,
 /// estimated inside the fit rather than post-hoc. `covariate_effects` is a *point*
-/// estimate on the standardized-logit scale (no uncertainty); for proportion-scale
-/// prevalence effects run ``topica.estimate_effect(model.doc_topic, X=covariates)``.
+/// estimate on the standardized-logit scale (no uncertainty); for the proportion-scale
+/// reading use ``covariate_effects_proportion``.
 /// Experimental: enable with ``topica.enable_experimental()``.
 #[pyclass(module = "topica")]
 pub struct ContextualSTM {
@@ -435,7 +435,8 @@ impl ContextualSTM {
     /// ``encoder_prior`` the covariates enter both the prior mean and the encoder, so
     /// theta is ``q(theta | embedding, covariates)`` and is already covariate-adjusted;
     /// regressing it back on the same covariates is partly circular. Prefer
-    /// ``covariate_effects`` for the model's own prevalence estimates in that mode.
+    /// ``covariate_effects_proportion`` for the model's own prevalence estimates: it is
+    /// derived from `W` and is neither circular nor attenuated.
     #[getter]
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(&self.fitted_model()?.base.doc_topic).to_pyarray_bound(py))
@@ -445,11 +446,55 @@ impl ContextualSTM {
     /// is how much (standardized) covariate `c` shifts the log-prior mean of topic `t`;
     /// positive raises that topic's prevalence for documents high on covariate `c`. A
     /// *point* estimate on the standardized-logit latent scale — not a proportion
-    /// change, and magnitudes are not directly comparable across topics. For
-    /// proportion-scale effects use ``topica.estimate_effect(model.doc_topic, X=cov)``.
+    /// change, and magnitudes are not directly comparable across topics. For a
+    /// proportion-scale reading use ``covariate_effects_proportion`` (derived from this
+    /// same `W`), not a regression of `doc_topic` on the covariate.
     #[getter]
     fn covariate_effects<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(&self.fitted_model()?.covariate_effects()).to_pyarray_bound(py))
+    }
+
+    /// Proportion-scale prevalence effects `(n_covars, num_topics)`: the marginal effect
+    /// at the mean, ``dE[theta_t]/dx_c``, obtained by pushing the logit-scale `W` through
+    /// the softmax Jacobian evaluated at the mean topic proportions ``p``. Entry ``[c][t]``
+    /// reads as "a one-standard-deviation increase in covariate `c` shifts topic `t`'s
+    /// expected prevalence by this many proportion points". This is derived directly from
+    /// `W`, so unlike ``estimate_effect(doc_topic, X=cov)`` it is neither circular under
+    /// the default ``encoder_prior`` (where `doc_topic` already conditions on the
+    /// covariate) nor attenuated under ``prior_only``. It is a *point* estimate: it
+    /// carries no uncertainty. For standard errors, bootstrap the fit.
+    #[getter]
+    fn covariate_effects_proportion<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let m = self.fitted_model()?;
+        let w = m.covariate_effects(); // (n_cov, K) logit-scale
+                                       // p = mean topic proportions across documents (the "at-mean" evaluation point).
+        let dt = &m.base.doc_topic;
+        let k = w.first().map(|r| r.len()).unwrap_or(0);
+        let mut p = vec![0.0f64; k];
+        for row in dt {
+            for (t, &v) in row.iter().enumerate() {
+                p[t] += v;
+            }
+        }
+        let n = dt.len().max(1) as f64;
+        for pt in p.iter_mut() {
+            *pt /= n;
+        }
+        // Softmax MEM per covariate row: dp_t/dx_c = p_t (W[c,t] - sum_j p_j W[c,j]).
+        let prop: Vec<Vec<f64>> = w
+            .iter()
+            .map(|wc| {
+                let dot: f64 = wc.iter().zip(&p).map(|(&wj, &pj)| wj * pj).sum();
+                wc.iter()
+                    .zip(&p)
+                    .map(|(&wt, &pt)| pt * (wt - dot))
+                    .collect()
+            })
+            .collect();
+        Ok(vecs_to_arr2(&prop).to_pyarray_bound(py))
     }
 
     /// The covariate column names, in the order of `covariate_effects` rows.

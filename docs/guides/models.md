@@ -663,26 +663,31 @@ collinear covariates (e.g. full dummy coding) are rejected unless you set
 `l2_prior_reg > 0`.
 
 !!! note "What `covariate_effects` is — and is not"
-    `covariate_effects` is a **point** estimate of `W` (no uncertainty), on the
+    `covariate_effects` (`W`) is a **point** estimate (no uncertainty) on the
     standardized-logit latent scale: a partial effect on the log-prior mean, **not a
     proportion change**, and magnitudes are not directly comparable across topics
-    (the affine-free batch norm fixes the latent to unit variance per topic). For a
-    proportion-scale prevalence effect — the number STM users read — run the shared
-    estimator on the fitted `θ`:
+    (the affine-free batch norm fixes the latent to unit variance per topic). For the
+    number STM users read, use the proportion-scale companion:
 
     ```python
-    topica.estimate_effect(m.doc_topic, X=X)   # proportion-scale effect per topic
+    m.covariate_effects_proportion   # (n_covariates, num_topics), proportion points per 1 SD
     ```
 
-    ContextualSTM has no `θ` posterior, so pass the **model** to `estimate_effect`
-    for honest (bootstrap) standard errors; a point `θ` gives OLS errors that
-    understate uncertainty. Honest joint uncertainty over `W` is future work.
+    This is the marginal effect at the mean: `W` pushed through the softmax Jacobian at
+    the mean topic proportions. It is derived from `W` directly, so it avoids two traps
+    of the obvious alternative, `estimate_effect(m.doc_topic, X=X)`. In the default
+    `encoder_prior` mode the covariate feeds the encoder, so `doc_topic` is already
+    `q(θ|embedding, covariates)` and regressing it back on the same covariate is partly
+    circular. In `prior_only` mode `doc_topic = q(θ|embedding)` is honest but the effect
+    is attenuated (the weak prior nudge is swamped by the embedding likelihood). On a
+    planted-effect corpus (true `dprop/dx = 0.261`), `covariate_effects_proportion`
+    recovered 0.92–1.16× the truth while `estimate_effect(θ)` gave 0.76× (prior_only,
+    attenuated) or leaked +0.05 under a shuffled-covariate placebo (encoder_prior,
+    circular).
 
-    One caveat on the default `encoder_prior` mode: there the covariate feeds the
-    encoder, so `doc_topic` is already `q(θ|embedding, covariates)` and regressing it
-    back on the same covariate is partly circular (it recovers an effect the model
-    baked in). For a clean `estimate_effect` read, fit with `covariate_mode="prior_only"`,
-    where `doc_topic = q(θ|embedding)` carries no covariate information.
+    Both `covariate_effects` and `covariate_effects_proportion` are point estimates.
+    ContextualSTM has no `θ` posterior; honest (bootstrap) standard errors are future
+    work.
 
 ## NarrativeTM
 
