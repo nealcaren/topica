@@ -553,7 +553,10 @@ def _embedding_lookup(word_embeddings, vocabulary):
     """Normalize either supported ``word_embeddings`` form to a
     ``{word: unit_vector}`` dict. Accepts a ``dict {word: vector}`` (matched by
     word, robust to any `topics` form) or a ``(V, E)`` matrix aligned to
-    `vocabulary`."""
+    `vocabulary`. A word whose vector is non-finite (NaN/inf) or has zero norm
+    carries no usable direction, so it is *dropped* — the cosine metrics then
+    treat it exactly like an out-of-vocabulary word, rather than silently
+    reading it as cosine ~0 against everything."""
     if isinstance(word_embeddings, dict):
         items = word_embeddings.items()
     else:
@@ -569,33 +572,51 @@ def _embedding_lookup(word_embeddings, vocabulary):
                 f"{len(vocabulary)} words"
             )
         items = zip(vocabulary, mat)
-    return {w: np.asarray(v, dtype=np.float64)
-            / (np.linalg.norm(v) + 1e-12) for w, v in items}
+    lookup = {}
+    for w, v in items:
+        v = np.asarray(v, dtype=np.float64)
+        norm = np.linalg.norm(v)
+        if not np.isfinite(norm) or norm == 0.0:
+            continue  # no usable direction — drop, don't corrupt
+        lookup[w] = v / norm
+    return lookup
 
 
 def embedding_coherence(topics, word_embeddings, vocabulary=None, *,
                         topn=10, method="pairwise"):
-    """Per-topic coherence measured in a word-embedding space (OCTIS
-    ``we_pairwise`` / ``we_centroid``; Ding, Nallapati & Xiang 2018). For each
-    topic's top-`topn` words, either the mean pairwise cosine similarity
-    (``method="pairwise"``) or the mean cosine to the topic's word centroid
-    (``method="centroid"``). Higher means the top words sit closer together in
-    embedding space, i.e. more semantically coherent. Unlike :func:`coherence`
-    it needs no reference corpus, and unlike :func:`topica.llm.coherence` it
-    needs no LLM.
+    """Per-topic coherence measured as top-word proximity in a word-embedding
+    space. For each topic's top-`topn` words, either the mean pairwise cosine
+    similarity (``method="pairwise"``, OCTIS ``we_pairwise``; Belford & Greene
+    2019) or the mean cosine to the topic's word centroid (``method="centroid"``,
+    the centroid coherence of Ding, Nallapati & Xiang 2018). **Higher = more
+    coherent** for both methods. Unlike :func:`coherence` it needs no reference
+    corpus, and unlike :func:`topica.llm.coherence` it needs no LLM.
 
     `topics` is a fitted model, a ``(K, V)`` topic_word (with `vocabulary`), or
     a list of word lists. `word_embeddings` is either a ``dict {word: vector}``
     (matched by word, robust to any `topics` form) or a ``(V, E)`` matrix
-    aligned to `vocabulary`. Words with no embedding are dropped from a topic;
-    a topic left with fewer than two embedded words scores ``nan``.
+    aligned to `vocabulary`; vectors need not be unit length. No embedder of
+    your own? :func:`~topica.llm_embed` builds one::
 
-    Returns a ``(num_topics,)`` array; aggregate with ``.mean()``.
+        emb = topica.llm_embed(model.vocabulary)          # (V, E) matrix
+        topica.embedding_coherence(model, emb, model.vocabulary)
 
-    Note: for models that learn their own word embeddings (ETM, DETM,
-    IdealPointTM), scoring against *those* vectors is circular — the model is
-    graded in the space it optimized. Pass an *external* embedding (GloVe,
-    fastText, a sentence-transformer word table) for an honest number.
+    Words with no embedding — including any whose vector is NaN/inf or all-zero —
+    are dropped from a topic; a topic left with fewer than two embedded words
+    scores ``nan`` and raises a warning naming its coverage. This is a small
+    divergence from OCTIS, which instead divides by the fixed ``topn`` count so
+    missing words pull the score toward 0; here a partly-covered topic is scored
+    on the words it does have.
+
+    Returns a ``(num_topics,)`` array. Aggregate with ``np.nanmean`` (plain
+    ``.mean()`` propagates a single ``nan`` topic to the whole corpus score).
+
+    Interpretation: the number is only comparable *across models scored on the
+    same embedding* — there is no absolute "good" threshold, and it is not
+    centered at 0 (random all-positive vectors already score high). For models
+    that learn their own word embeddings (ETM, DETM, IdealPointTM), scoring
+    against *those* vectors is circular — the model is graded in the space it
+    optimized, so pass an *external* embedding for an honest number.
     """
     if not isinstance(topn, (int, np.integer)) or topn < 2:
         raise ValueError(f"topn must be an integer >= 2, got {topn!r}")
@@ -606,9 +627,11 @@ def embedding_coherence(topics, word_embeddings, vocabulary=None, *,
     tops = _extract_topics(topics, topn)
     lookup = _embedding_lookup(word_embeddings, vocabulary)
     out = np.full(len(tops), np.nan)
+    uncovered = []
     for k, words in enumerate(tops):
         vecs = [lookup[w] for w in words[:topn] if w in lookup]
         if len(vecs) < 2:
+            uncovered.append((k, len(vecs), min(topn, len(words))))
             continue
         mat = np.asarray(vecs)  # rows already unit-normed
         if method == "centroid":
@@ -619,6 +642,16 @@ def embedding_coherence(topics, word_embeddings, vocabulary=None, *,
             sims = mat @ mat.T
             iu = np.triu_indices(len(mat), k=1)
             out[k] = float(sims[iu].mean())
+    if uncovered:
+        detail = ", ".join(f"topic {k}: {n}/{d} top words embedded"
+                           for k, n, d in uncovered)
+        warnings.warn(
+            f"embedding_coherence: {len(uncovered)} topic(s) scored nan for "
+            f"lack of embedded top words ({detail}). Check that the embedding "
+            "covers the vocabulary (case, tokenization); aggregate with "
+            "np.nanmean.",
+            stacklevel=2,
+        )
     return out
 
 

@@ -27,7 +27,27 @@ qf = topica.quality_frontier(model, n=10)                 # coherence, exclusivi
 unique word *pairs* (Wu, Nguyen & Luu 2024). We reach for the pair version when
 single-word overlap understates redundancy: two topics can share few exact words
 yet co-locate the same word pairs, and a pair pins down word sense without any
-embeddings. Both range over `[0, 1]`, and higher means more diverse.
+embeddings. `inverted_rbo` is the third diversity lens: instead of asking *which*
+words overlap, it asks *at what rank* — two topics sharing their #1-#2 words are
+penalized far more than two sharing their #9-#10 (OCTIS `InvertedRBO`; Bianchi,
+Terragni & Hovy 2021). Reach for it when the *ordering* of top words matters, not
+just their presence. All three range over `[0, 1]` and higher means more diverse.
+
+One gotcha when you compare them side by side: `inverted_rbo` defaults to
+`topn=10` (its OCTIS default) while `topic_diversity` / `topic_semantic_diversity`
+default to `topn=25`. On a small vocabulary the wider window forces overlap and
+reads as a misleadingly low diversity, so set `topn` explicitly when comparing.
+
+`embedding_coherence` scores a topic by how close its top words sit in a
+word-embedding space — the intrinsic middle ground between corpus-based
+`coherence` and LLM-based `topica.llm.coherence`. Bring your own embedding (it is
+only comparable across models scored on the *same* one, with no absolute
+threshold); `topica.llm_embed` builds one:
+
+```python
+emb = topica.llm_embed(model.vocabulary)                 # (V, E) word table
+topica.embedding_coherence(model, emb, model.vocabulary) # per-topic, higher = better
+```
 
 !!! tip "Coherence is fast, even at large K"
     `topica.coherence` runs its co-occurrence counting in the Rust core, scoring only

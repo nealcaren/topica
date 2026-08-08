@@ -316,10 +316,60 @@ class TestEmbeddingCoherence:
         assert out[0] == pytest.approx(1.0)
 
     def test_missing_words_dropped_then_nan(self):
-        # Only one of the two top words has an embedding → < 2 → nan.
+        # Only one of the two top words has an embedding → < 2 → nan (+warns).
         emb = {"a": [1.0, 0.0]}
-        out = topica.embedding_coherence([["a", "zzz"]], emb, topn=2)
+        with pytest.warns(UserWarning, match="top words embedded"):
+            out = topica.embedding_coherence([["a", "zzz"]], emb, topn=2)
         assert np.isnan(out[0])
+
+    def test_zero_vector_is_dropped_not_corrupted(self):
+        # A zero-vector word carries no direction: it must be DROPPED (treated
+        # like OOV), not silently read as cosine ~0. Here 'a' is zero, so only
+        # 'b' survives → < 2 → nan, exactly as if 'a' were absent.
+        with pytest.warns(UserWarning):
+            zeroed = topica.embedding_coherence(
+                [["a", "b"]], {"a": [0.0, 0.0], "b": [1.0, 0.0]}, topn=2
+            )
+        with pytest.warns(UserWarning):
+            absent = topica.embedding_coherence(
+                [["a", "b"]], {"b": [1.0, 0.0]}, topn=2
+            )
+        assert np.isnan(zeroed[0]) and np.isnan(absent[0])
+
+    def test_nan_and_inf_vectors_are_dropped(self):
+        # A single NaN/inf coordinate makes the word undirected → dropped, so a
+        # good sibling word is unaffected rather than the whole topic → nan.
+        emb = {"a": [np.nan, 0.0], "b": [1.0, 0.0], "c": [1.0, 0.0]}
+        out = topica.embedding_coherence([["a", "b", "c"]], emb, topn=3)
+        assert out[0] == pytest.approx(1.0)  # b,c survive, cos=1
+        emb_inf = {"a": [np.inf, 0.0], "b": [1.0, 0.0], "c": [1.0, 0.0]}
+        out_inf = topica.embedding_coherence([["a", "b", "c"]], emb_inf, topn=3)
+        assert out_inf[0] == pytest.approx(1.0)
+
+    def test_tiny_vector_normalized_to_unit(self):
+        # A tiny-but-nonzero vector still has a direction; it must renormalize to
+        # unit length (parallel tiny + unit vector → cosine 1.0), not read as
+        # near-zero magnitude.
+        emb = {"a": [1e-15, 0.0], "b": [1.0, 0.0]}
+        out = topica.embedding_coherence([["a", "b"]], emb, topn=2)
+        assert out[0] == pytest.approx(1.0)
+
+    def test_does_not_mutate_caller_embeddings(self):
+        vecs = {"a": np.array([2.0, 0.0]), "b": np.array([0.0, 3.0])}
+        before = {w: v.copy() for w, v in vecs.items()}
+        topica.embedding_coherence([["a", "b"]], vecs, topn=2)
+        for w in vecs:
+            np.testing.assert_array_equal(vecs[w], before[w])
+
+    def test_partial_coverage_uses_nanmean(self):
+        # Corpus score over a partly-covered model: .mean() poisons to nan, but
+        # np.nanmean gives the covered topics' mean (documented aggregation).
+        emb = {"a": [1.0, 0.0], "b": [0.0, 1.0], "c": [1.0, 1.0]}
+        topics = [["a", "b", "c"], ["rare1", "rare2", "c"]]  # topic 2 uncovered
+        with pytest.warns(UserWarning):
+            out = topica.embedding_coherence(topics, emb, topn=3)
+        assert np.isnan(out[1]) and np.isnan(np.mean(out))
+        assert not np.isnan(np.nanmean(out))
 
     def test_matrix_without_vocabulary_raises(self):
         mat = np.array([[1.0, 0.0], [0.0, 1.0]])

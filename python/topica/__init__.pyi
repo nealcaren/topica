@@ -150,12 +150,15 @@ def embedding_coherence(
     topn: int = 10,
     method: str = "pairwise",
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """Per-topic coherence in a word-embedding space (OCTIS we_pairwise /
-    we_centroid; Ding, Nallapati & Xiang 2018), shape (num_topics,).
-    `word_embeddings` is a ``{word: vector}`` dict or a ``(V, E)`` matrix aligned
-    to `vocabulary`. ``method`` is ``"pairwise"`` (mean pairwise cosine of top
-    words) or ``"centroid"`` (mean cosine to the top-word centroid). Higher =
-    more coherent; use an *external* embedding to avoid circularity."""
+    """Per-topic coherence as top-word proximity in a word-embedding space,
+    shape (num_topics,). ``method="pairwise"`` = mean pairwise cosine of top
+    words (OCTIS we_pairwise; Belford & Greene 2019); ``method="centroid"`` =
+    mean cosine to the top-word centroid (Ding, Nallapati & Xiang 2018). Higher
+    = more coherent for both. `word_embeddings` is a ``{word: vector}`` dict or a
+    ``(V, E)`` matrix aligned to `vocabulary` (e.g. ``topica.llm_embed(vocab)``).
+    Words with no / non-finite / zero embedding are dropped (nan when a topic
+    keeps < 2); aggregate with ``np.nanmean``. Use an *external* embedding to
+    avoid circularity."""
     ...
 
 
