@@ -202,3 +202,97 @@ def test_se_emitted_at_the_optimum_has_no_infinity(name):
     se = np.asarray(se)
     assert not np.isinf(se).any(), f"{name} SE contains an infinity"
     assert np.isfinite(np.asarray(m.feature_effects)).all(), f"{name} feature_effects not finite"
+
+
+# --- Extreme-covariate tail (the unbounded exp) ----------------------------
+
+
+def _covariate_extreme(n: int, scale: float) -> np.ndarray:
+    """One continuous covariate column at a large magnitude, to stress the DMR/GDMR
+    prior's ``exp(x . lambda)`` toward overflow (#419)."""
+    return np.array([[scale * np.sin(i)] for i in range(n)], dtype=float)
+
+
+@pytest.mark.parametrize("name", _COVARIATE)
+@pytest.mark.parametrize("scale", [1e2, 1e4, 1e6])
+def test_extreme_covariate_scale_stays_finite(name, scale):
+    # A large-magnitude covariate pushes exp(x . lambda) toward inf; the prior must
+    # stay finite and produce valid topics (or reject the design cleanly), never a
+    # silent NaN. Parity fixtures are curated and never hit this regime (#419).
+    docs = _docs()
+    model = _MODELS[name]["build"](3)
+    try:
+        model.fit(docs, _covariate_extreme(len(docs), scale), iters=_ITERS)
+    except ValueError as exc:
+        # A clean, explained rejection of a pathological design satisfies the
+        # invariant; a bare/unrelated error does not, so require it to name the cause.
+        assert any(w in str(exc).lower() for w in
+                   ("covariate", "scale", "feature", "overflow", "finite", "design")), \
+            f"{name} raised an unexplained ValueError at scale {scale:g}: {exc}"
+        return
+    _assert_valid_distributions(model)
+    assert np.isfinite(np.asarray(model.feature_effects)).all(), (
+        f"{name} feature_effects went non-finite at covariate scale {scale:g}"
+    )
+    se = model.feature_effect_se
+    if se is not None:
+        assert not np.isinf(np.asarray(se)).any(), (
+            f"{name} SE contains an infinity at covariate scale {scale:g}"
+        )
+
+
+# --- Multithread (approximate parallel) path -------------------------------
+
+
+def _build_threaded(name: str, k: int, num_threads: int):
+    """Rebuild a model like its registry entry but with ``num_threads`` set. Raises
+    TypeError if the constructor has no such argument (the caller skips)."""
+    builders = {
+        "LDA": lambda: topica.LDA(k, seed=1, num_threads=num_threads),
+        "DMR": lambda: topica.DMR(k, seed=1, optimize_interval=10, burn_in=10,
+                                  num_threads=num_threads),
+        "keyATM": lambda: topica.KeyATM({"g": ["a"]}, num_topics=k, seed=1,
+                                        num_threads=num_threads),
+        "GDMR": lambda: topica.GDMR(k, degrees=[2], seed=1, optimize_interval=10,
+                                    burn_in=10, num_threads=num_threads),
+        "SAGE": lambda: topica.SAGE(k, seed=1, num_threads=num_threads),
+    }
+    return builders[name]()
+
+
+def _planted_docs(n: int = 60, seed: int = 0) -> list[list[str]]:
+    """Two clearly-separated word blocks, so a correct fit recovers two distinct,
+    concentrated topics. Unlike the uniform-random ``_docs``, this has real structure
+    to recover, which is what makes the threaded-vs-serial comparison a merge-
+    correctness signal rather than a smoke test."""
+    rng = np.random.default_rng(seed)
+    block_a, block_b = ["a", "b", "c", "d"], ["p", "q", "r", "s"]
+    return [list(rng.choice(block_a if i % 2 == 0 else block_b, 8)) for i in range(n)]
+
+
+@pytest.mark.parametrize("name", _ALL)
+def test_multithread_matches_singlethread(name):
+    # The approximate parallel (AD-LDA-style) sampler is a non-parity path -- parity
+    # always runs single-thread -- so its count-table merge is otherwise untested. On
+    # well-separated planted data the deterministic parallel merge (fixed sweep seed +
+    # partition) recovers the SAME topics as the serial path, so the two topic-word
+    # matrices must align to near-zero distance. A merge bug that corrupts counts
+    # moves them apart (or NaNs them) without touching any parity fixture.
+    try:
+        parallel = _build_threaded(name, 2, num_threads=2)
+    except TypeError:
+        pytest.skip(f"{name} takes no num_threads")
+    docs = _planted_docs()
+    serial = _MODELS[name]["build"](2)  # registry build defaults to single-thread
+    _MODELS[name]["fit"](serial, docs)
+    _MODELS[name]["fit"](parallel, docs)
+    _assert_valid_distributions(parallel)
+    max_dist = max(
+        d for _, _, d in topica.align_topics(
+            np.asarray(serial.topic_word), np.asarray(parallel.topic_word))
+    )
+    assert max_dist < 0.05, (
+        f"{name} 2-thread topics diverge from single-thread (max aligned distance "
+        f"{max_dist:.3f}); the approximate-parallel merge should recover the same "
+        f"topics on well-separated data"
+    )
