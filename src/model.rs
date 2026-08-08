@@ -447,9 +447,11 @@ mod tests {
     /// Rebuild the count tables from the token assignments and assert they exactly
     /// equal the incrementally-maintained ones. The packed `type_topic_counts` and
     /// `tokens_per_topic` are updated in place every token; `doc_topics` is the
-    /// ground-truth assignment. A packed-count or increment/decrement bug corrupts
-    /// the tables while `doc_topics` stays correct, so it moves φ/θ only slightly and
-    /// slips past parity's central-tendency thresholds -- this catches it exactly.
+    /// consistency reference (this checks the tables stay consistent with the
+    /// assignments, not that the assignments are a correct posterior draw). A
+    /// packed-count or increment/decrement bug corrupts the tables while `doc_topics`
+    /// stays intact, so it moves φ/θ only slightly and slips past parity's
+    /// central-tendency thresholds -- this catches it exactly.
     fn assert_counts_reconstruct(m: &TopicModel, corpus: &Corpus, sweep: usize) {
         let (k, v) = (m.num_topics, m.num_types);
         let mut dense = vec![vec![0u32; k]; v];
@@ -469,10 +471,31 @@ mod tests {
         // every real entry must have an in-range topic, the rebuilt count, and no
         // duplicate slot; every nonzero rebuilt count must have a packed entry.
         for w in 0..v {
+            let entries = &m.type_topic_counts[w];
+            // Structural invariant the sparse readers depend on (they break at the
+            // first zero): nonzero entries are descending and all zeros are trailing.
+            // A stranded nonzero after a zero would make production silently drop that
+            // topic's mass, so guard it explicitly rather than skipping past zeros.
+            let mut zero_seen = false;
+            for i in 0..entries.len() {
+                if entries[i] == 0 {
+                    zero_seen = true;
+                } else {
+                    assert!(
+                        !zero_seen,
+                        "sweep {sweep}: word {w} has a nonzero packed entry after a \
+                         zero slot (broken zeros-at-tail)"
+                    );
+                    assert!(
+                        i == 0 || entries[i - 1] >= entries[i],
+                        "sweep {sweep}: word {w} packed entries are not descending"
+                    );
+                }
+            }
             let mut seen = vec![false; k];
-            for &entry in &m.type_topic_counts[w] {
+            for &entry in entries {
                 if entry == 0 {
-                    continue; // emptied slot (decrement sinks zeros to the tail)
+                    break; // matches the sparse readers: zeros are trailing (asserted)
                 }
                 let t = (entry & m.topic_mask) as usize;
                 let c = entry >> m.topic_bits;
