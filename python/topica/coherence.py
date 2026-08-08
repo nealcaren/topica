@@ -551,12 +551,17 @@ def topic_semantic_diversity(topics, topn=25):
 
 def _embedding_lookup(word_embeddings, vocabulary):
     """Normalize either supported ``word_embeddings`` form to a
-    ``{word: unit_vector}`` dict. Accepts a ``dict {word: vector}`` (matched by
+    ``{word: raw_vector}`` dict. Accepts a ``dict {word: vector}`` (matched by
     word, robust to any `topics` form) or a ``(V, E)`` matrix aligned to
     `vocabulary`. A word whose vector is non-finite (NaN/inf) or has zero norm
     carries no usable direction, so it is *dropped* — the cosine metrics then
     treat it exactly like an out-of-vocabulary word, rather than silently
-    reading it as cosine ~0 against everything."""
+    reading it as cosine ~0 against everything.
+
+    Vectors are returned *raw* (not unit-normalized): pairwise cosine normalizes
+    per word (scale-invariant either way), but the centroid variant sums the raw
+    vectors before normalizing — matching OCTIS ``we_centroid`` — so magnitudes
+    must survive to that point."""
     if isinstance(word_embeddings, dict):
         items = word_embeddings.items()
     else:
@@ -578,7 +583,7 @@ def _embedding_lookup(word_embeddings, vocabulary):
         norm = np.linalg.norm(v)
         if not np.isfinite(norm) or norm == 0.0:
             continue  # no usable direction — drop, don't corrupt
-        lookup[w] = v / norm
+        lookup[w] = v
     return lookup
 
 
@@ -588,9 +593,16 @@ def embedding_coherence(topics, word_embeddings, vocabulary=None, *,
     space. For each topic's top-`topn` words, either the mean pairwise cosine
     similarity (``method="pairwise"``, OCTIS ``we_pairwise``; Belford & Greene
     2019) or the mean cosine to the topic's word centroid (``method="centroid"``,
-    the centroid coherence of Ding, Nallapati & Xiang 2018). **Higher = more
+    OCTIS ``we_centroid``; Ding, Nallapati & Xiang 2018). **Higher = more
     coherent** for both methods. Unlike :func:`coherence` it needs no reference
     corpus, and unlike :func:`topica.llm.coherence` it needs no LLM.
+
+    Both variants reproduce OCTIS at full top-word coverage. OCTIS reports
+    ``we_centroid`` as a cosine *distance* (lower = better); we report the cosine
+    *similarity* ``1 - distance`` so the two methods share one direction — the
+    centroid itself is built from the raw (un-normalized) top-word vectors,
+    exactly as OCTIS builds it, so ``embedding_coherence(..., method="centroid")``
+    equals ``1 - OCTIS_we_centroid``.
 
     `topics` is a fitted model, a ``(K, V)`` topic_word (with `vocabulary`), or
     a list of word lists. `word_embeddings` is either a ``dict {word: vector}``
@@ -633,14 +645,15 @@ def embedding_coherence(topics, word_embeddings, vocabulary=None, *,
         if len(vecs) < 2:
             uncovered.append((k, len(vecs), min(topn, len(words))))
             continue
-        mat = np.asarray(vecs)  # rows already unit-normed
+        raw = np.asarray(vecs)                       # raw (un-normalized) rows
+        unit = raw / np.linalg.norm(raw, axis=1, keepdims=True)
         if method == "centroid":
-            c = mat.mean(0)
-            c /= np.linalg.norm(c) + 1e-12
-            out[k] = float((mat @ c).mean())
+            c = raw.sum(0)                           # centroid of RAW vectors...
+            c /= np.linalg.norm(c) + 1e-12           # ...then unit (OCTIS we_centroid)
+            out[k] = float((unit @ c).mean())        # = 1 - OCTIS cosine distance
         else:
-            sims = mat @ mat.T
-            iu = np.triu_indices(len(mat), k=1)
+            sims = unit @ unit.T
+            iu = np.triu_indices(len(unit), k=1)
             out[k] = float(sims[iu].mean())
     if uncovered:
         detail = ", ".join(f"topic {k}: {n}/{d} top words embedded"

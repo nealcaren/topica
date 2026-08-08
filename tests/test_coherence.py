@@ -300,6 +300,26 @@ class TestEmbeddingCoherence:
         )
         assert out[0] == pytest.approx(1.0 / np.sqrt(2.0))
 
+    def test_centroid_is_octis_we_centroid_complement(self):
+        # Faithfulness pin (non-unit vectors, so raw-sum vs unit-avg centroids
+        # differ): topica's centroid similarity == 1 - OCTIS we_centroid, where
+        # OCTIS = mean cosine DISTANCE to the centroid of the RAW vectors.
+        vecs = {"a": np.array([1.0, 0.0]), "b": np.array([3.0, 3.0])}
+        words = ["a", "b"]
+        raw = np.array([vecs[w] for w in words])
+        centroid = raw.sum(0)
+        centroid = centroid / np.linalg.norm(centroid)      # OCTIS: raw sum, normed
+        unit = raw / np.linalg.norm(raw, axis=1, keepdims=True)
+        octis_distance = np.mean([1.0 - u @ centroid for u in unit])
+        out = topica.embedding_coherence([words], vecs, topn=2, method="centroid")
+        assert out[0] == pytest.approx(1.0 - octis_distance)
+        # And it must differ from the naive unit-average centroid (guards the
+        # raw-sum construction from silently regressing).
+        unit_centroid = unit.mean(0)
+        unit_centroid = unit_centroid / np.linalg.norm(unit_centroid)
+        naive = float((unit @ unit_centroid).mean())
+        assert not np.isclose(out[0], naive)
+
     def test_matrix_form_matches_dict_form(self):
         vocab = ["a", "b", "c"]
         mat = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])

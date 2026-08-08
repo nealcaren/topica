@@ -153,8 +153,9 @@ def embedding_coherence(
     """Per-topic coherence as top-word proximity in a word-embedding space,
     shape (num_topics,). ``method="pairwise"`` = mean pairwise cosine of top
     words (OCTIS we_pairwise; Belford & Greene 2019); ``method="centroid"`` =
-    mean cosine to the top-word centroid (Ding, Nallapati & Xiang 2018). Higher
-    = more coherent for both. `word_embeddings` is a ``{word: vector}`` dict or a
+    mean cosine to the top-word centroid (OCTIS we_centroid = 1 - this; Ding,
+    Nallapati & Xiang 2018). Higher = more coherent for both. `word_embeddings`
+    is a ``{word: vector}`` dict or a
     ``(V, E)`` matrix aligned to `vocabulary` (e.g. ``topica.llm_embed(vocab)``).
     Words with no / non-finite / zero embedding are dropped (nan when a topic
     keeps < 2); aggregate with ``np.nanmean``. Use an *external* embedding to
