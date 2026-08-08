@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use numpy::PyReadonlyArray2;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -49,6 +50,12 @@ pub struct Corpus {
     metadata: Option<PyObject>,
     // The preprocessing parameters Topica applied, when known (None after load).
     preprocessing: Option<PrepInfo>,
+    // Original column indices kept by `from_matrix` (None elsewhere, where the
+    // vocabulary is derived from the data rather than supplied by the caller).
+    kept_features: Option<Vec<usize>>,
+    // True per-document token counts when the caller supplied them
+    // (`from_matrix`). Distinct from the row sum for thresholded feature counts.
+    n_tokens: Option<Vec<u64>>,
 }
 
 // Manual Clone: PyObject needs the GIL to bump its refcount, so it can't derive.
@@ -59,6 +66,8 @@ impl Clone for Corpus {
             kept_indices: self.kept_indices.clone(),
             metadata: self.metadata.as_ref().map(|m| m.clone_ref(py)),
             preprocessing: self.preprocessing.clone(),
+            kept_features: self.kept_features.clone(),
+            n_tokens: self.n_tokens.clone(),
         })
     }
 }
@@ -153,7 +162,190 @@ impl Corpus {
                 max_features,
                 vocabulary: used_fixed_vocab,
             }),
+            kept_features: None,
+            n_tokens: None,
         })
+    }
+
+    /// Build a corpus from a document x term **count matrix** (issue #575).
+    ///
+    /// The entry point for data that is already vectorized: a scikit-learn /
+    /// gensim document-term matrix, or the SAE feature counts a Mechanistic Topic
+    /// Model is fit on. `counts` is `(num_docs, num_terms)` of non-negative
+    /// integers; `feature_names` names the columns (default ``f0 … f{V-1}``).
+    ///
+    /// Unlike :meth:`from_documents`, which derives and frequency-sorts the
+    /// vocabulary from the data, this preserves the **caller's column contract**,
+    /// because those indices are usually load-bearing (an SAE feature id, an
+    /// external vectorizer's vocabulary):
+    ///
+    /// * column **order** is preserved — term `j` keeps index `j`, so a fitted
+    ///   model's ``topic_word[:, j]`` lines up with the caller's column `j`;
+    /// * **all-zero columns are kept**, so the width is always `counts.shape[1]`;
+    /// * **empty rows are kept** — a document whose counts are all zero stays in
+    ///   the corpus, so `doc_topic` rows stay aligned with external metadata and
+    ///   `kept_indices` is the identity.
+    ///
+    /// `max_doc_fraction` optionally drops terms occurring in more than that
+    /// fraction of documents (the ubiquitous-term filter). It is the one operation
+    /// that changes the width; the surviving original column indices are then
+    /// reported in `kept_features`.
+    ///
+    /// `n_tokens` optionally records the true per-document token count. For
+    /// *thresholded* feature counts the row sum is a count of feature activations,
+    /// not of tokens, so a model needing the true length must read it from here
+    /// rather than assume the row sum.
+    #[staticmethod]
+    #[pyo3(signature = (counts, *, feature_names=None, doc_names=None,
+                        doc_labels=None, max_doc_fraction=1.0, n_tokens=None))]
+    fn from_matrix(
+        counts: PyReadonlyArray2<i64>,
+        feature_names: Option<Vec<String>>,
+        doc_names: Option<Vec<String>>,
+        doc_labels: Option<Vec<String>>,
+        max_doc_fraction: f64,
+        n_tokens: Option<Vec<u64>>,
+    ) -> PyResult<Self> {
+        let arr = counts.as_array();
+        let (n_docs, n_terms) = (arr.shape()[0], arr.shape()[1]);
+        if n_docs == 0 || n_terms == 0 {
+            return Err(PyValueError::new_err(
+                "counts must have at least one document and one term",
+            ));
+        }
+        if !(0.0..=1.0).contains(&max_doc_fraction) {
+            return Err(PyValueError::new_err(
+                "max_doc_fraction must be in [0.0, 1.0]",
+            ));
+        }
+        let names = match feature_names {
+            Some(v) => {
+                if v.len() != n_terms {
+                    return Err(PyValueError::new_err(format!(
+                        "feature_names has {} entries but counts has {} columns",
+                        v.len(),
+                        n_terms
+                    )));
+                }
+                v
+            }
+            None => (0..n_terms).map(|j| format!("f{j}")).collect(),
+        };
+        for (label, given) in [("doc_names", &doc_names), ("doc_labels", &doc_labels)] {
+            if let Some(v) = given {
+                if v.len() != n_docs {
+                    return Err(PyValueError::new_err(format!(
+                        "{label} has {} entries but counts has {} rows",
+                        v.len(),
+                        n_docs
+                    )));
+                }
+            }
+        }
+        if let Some(t) = &n_tokens {
+            if t.len() != n_docs {
+                return Err(PyValueError::new_err(format!(
+                    "n_tokens has {} entries but counts has {} rows",
+                    t.len(),
+                    n_docs
+                )));
+            }
+        }
+
+        let mut doc_freqs_full = vec![0u32; n_terms];
+        for d in 0..n_docs {
+            for j in 0..n_terms {
+                let c = arr[[d, j]];
+                if c < 0 {
+                    return Err(PyValueError::new_err(format!(
+                        "counts must be non-negative (got {c} at row {d}, column {j})"
+                    )));
+                }
+                if c > 0 {
+                    doc_freqs_full[j] += 1;
+                }
+            }
+        }
+        let limit = max_doc_fraction * n_docs as f64;
+        let kept_features: Vec<usize> = (0..n_terms)
+            .filter(|&j| max_doc_fraction >= 1.0 || (doc_freqs_full[j] as f64) <= limit)
+            .collect();
+        if kept_features.is_empty() {
+            return Err(PyValueError::new_err(
+                "max_doc_fraction pruned every term; raise it",
+            ));
+        }
+
+        let mut id_to_word = Vec::with_capacity(kept_features.len());
+        let mut doc_freqs = Vec::with_capacity(kept_features.len());
+        let mut total_freqs = Vec::with_capacity(kept_features.len());
+        for &j in &kept_features {
+            id_to_word.push(names[j].clone());
+            doc_freqs.push(doc_freqs_full[j]);
+            let mut tot: u64 = 0;
+            for d in 0..n_docs {
+                tot += arr[[d, j]] as u64;
+            }
+            total_freqs.push(u32::try_from(tot).map_err(|_| {
+                PyValueError::new_err(format!(
+                    "term '{}' occurs {} times, which overflows the u32 count type",
+                    names[j], tot
+                ))
+            })?);
+        }
+
+        // Expand counts into token-id sequences; empty rows are retained as empty.
+        let mut docs: Vec<Vec<u32>> = Vec::with_capacity(n_docs);
+        for d in 0..n_docs {
+            let len: usize = kept_features.iter().map(|&j| arr[[d, j]] as usize).sum();
+            let mut row = Vec::with_capacity(len);
+            for (new_j, &j) in kept_features.iter().enumerate() {
+                for _ in 0..arr[[d, j]] {
+                    row.push(new_j as u32);
+                }
+            }
+            docs.push(row);
+        }
+
+        let inner = corpus::Corpus {
+            id_to_word,
+            docs,
+            doc_names: doc_names
+                .unwrap_or_else(|| (0..n_docs).map(|d| format!("doc{d}")).collect()),
+            doc_labels: doc_labels.unwrap_or_else(|| vec![String::new(); n_docs]),
+            doc_freqs,
+            total_freqs,
+        };
+        Ok(Corpus {
+            inner,
+            kept_indices: (0..n_docs).collect(),
+            metadata: None,
+            preprocessing: Some(PrepInfo {
+                min_doc_freq: 0,
+                max_doc_fraction,
+                min_cf: 0,
+                rm_top: 0,
+                max_features: None,
+                vocabulary: true,
+            }),
+            kept_features: Some(kept_features),
+            n_tokens,
+        })
+    }
+
+    /// Original column indices kept by :meth:`from_matrix` (``None`` for corpora
+    /// built any other way). Identity unless `max_doc_fraction` pruned terms.
+    #[getter]
+    fn kept_features(&self) -> Option<Vec<usize>> {
+        self.kept_features.clone()
+    }
+
+    /// True per-document token counts, when supplied to :meth:`from_matrix`.
+    /// ``None`` otherwise — do not fall back to the row sum, which counts feature
+    /// activations rather than tokens for thresholded counts.
+    #[getter]
+    fn n_tokens(&self) -> Option<Vec<u64>> {
+        self.n_tokens.clone()
     }
 
     /// Vectorize new documents against this corpus's vocabulary.
@@ -201,6 +393,8 @@ impl Corpus {
                 max_features: None,
                 vocabulary: true,
             }),
+            kept_features: None,
+            n_tokens: None,
         })
     }
 
@@ -266,6 +460,8 @@ impl Corpus {
                 max_features: None,
                 vocabulary: false,
             }),
+            kept_features: None,
+            n_tokens: None,
         })
     }
 
@@ -281,6 +477,8 @@ impl Corpus {
             metadata: None,
             // Not persisted in the corpus save format; unknown after load.
             preprocessing: None,
+            kept_features: None,
+            n_tokens: None,
         })
     }
 

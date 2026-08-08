@@ -35,6 +35,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`Corpus.from_matrix` — build a corpus from a document x term count matrix**
+  (#575). The entry point for data that is already vectorized: a scikit-learn or
+  gensim document-term matrix, or the sparse-autoencoder feature counts a
+  Mechanistic Topic Model is fit on. Unlike `from_documents`, which derives and
+  frequency-sorts the vocabulary from the data, this preserves the caller's column
+  contract, because those indices are usually load-bearing (a feature id, an
+  external vectorizer's vocabulary): column order is kept, so `topic_word[:, j]`
+  lines up with the caller's column `j`; all-zero columns are kept, so the width is
+  always `counts.shape[1]`; and empty rows are kept, so `doc_topic` rows stay
+  aligned with external metadata and `kept_indices` is the identity.
+  `max_doc_fraction` is the one operation that may change the width, and reports
+  the surviving original column indices in the new `Corpus.kept_features`. The new
+  `Corpus.n_tokens` optionally records the true per-document token count, which for
+  *thresholded* counts differs from the row sum (the row sum counts feature
+  activations, not tokens); both properties are `None` for corpora built any other
+  way.
+
 - **`topica.llm.human_agreement` — validate an LLM metric against human ratings**
   (#583). The Spearman (default; also Pearson / Kendall) rank correlation between a
   per-item LLM metric (e.g. the `llm.coherence` array) and a matching vector of human
