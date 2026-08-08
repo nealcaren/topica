@@ -15,8 +15,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   rather than a word list. Following topica's "you bring the features" pattern, the
   SAE feature-extraction pipeline stays outside the core: you supply a document ×
   feature count matrix and mLDA models it, reusing the validated SparseLDA
-  collapsed-Gibbs sampler (the fit is bit-identical to `LDA` on the equivalent
-  bag-of-words corpus). Gated behind `topica.enable_experimental()` pending an
+  collapsed-Gibbs sampler (for a corpus with no empty documents the fit is
+  bit-identical to `LDA` on the equivalent bag-of-words corpus). Gated behind
+  `topica.enable_experimental()` pending an
   end-to-end parity check against the reference's Gemma-2-9b pipeline; the paper's
   mETM/mBERTopic variants and topic steering are tracked as follow-ups on #575.
 - **`topica.from_feature_matrix(counts, feature_names=…)`** builds a `Corpus`

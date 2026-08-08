@@ -704,8 +704,10 @@ Each column becomes a fixed-vocabulary "feature" and each cell its non-negative
 integer count; the counts are expanded into the sampler's token stream inside
 Rust, so a wide, sparse feature space never materializes densely in Python. The
 resulting corpus feeds any count-based topica model — most directly
-[`MechanisticLDA`](#mechanisticlda). No vocabulary pruning is applied; filter
-columns beforehand.
+[`MechanisticLDA`](#mechanisticlda). No vocabulary pruning is applied (filter
+columns beforehand), and an all-zero row is **retained** as an empty document so
+the corpus rows stay aligned to your metadata — unlike `Corpus.from_documents`,
+which drops empty documents.
 
 ## MechanisticLDA
 
@@ -713,9 +715,10 @@ columns beforehand.
     `MechanisticLDA` is **gated**: call `topica.enable_experimental()` (or set the
     `TOPICA_EXPERIMENTAL=1` environment variable) before constructing or loading
     it. The topic model *over a supplied feature matrix* reduces to topica's
-    reference-validated LDA (the fit is bit-identical to `LDA` on the equivalent
-    bag-of-words corpus), but the end-to-end pipeline has no parity check against
-    the authors' Gemma-2-9b implementation yet, so it ships experimental. The
+    reference-validated LDA (for a corpus with no empty documents the fit is
+    bit-identical to `LDA` on the equivalent bag-of-words corpus), but the
+    end-to-end pipeline has no parity check against the authors' Gemma-2-9b
+    implementation yet, so it ships experimental. The
     feature-extraction pipeline and the paper's mETM / mBERTopic variants and
     topic steering are tracked as follow-ups on
     [#575](https://github.com/nealcaren/topica/issues/575).

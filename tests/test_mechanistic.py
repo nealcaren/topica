@@ -78,6 +78,9 @@ def test_doc_ids_and_metadata():
         np.array([[1, -1]]),          # negative
         np.array([[1.5, 0.0]]),       # non-integer
         np.array([1, 2, 3]),          # not 2-D
+        np.array([[np.inf, 0.0]]),    # not finite
+        np.array([[1e30, 0.0]]),      # exceeds u32 (and would wrap on int cast)
+        [[1, None]],                  # non-numeric -> ValueError, not TypeError
     ],
 )
 def test_from_feature_matrix_rejects_bad_counts(bad):
@@ -182,3 +185,18 @@ def test_save_load_roundtrip(tmp_path):
     np.testing.assert_array_equal(loaded.topic_feature, m.topic_feature)
     assert loaded.vocabulary == m.vocabulary
     assert loaded.settings == m.settings
+
+
+def test_save_load_is_relocatable(tmp_path):
+    topica.enable_experimental()
+    m = topica.MechanisticLDA(2, seed=13).fit(from_feature_matrix(_counts(), FEATURES), iters=100)
+    src = tmp_path / "a"
+    src.mkdir()
+    m.save(str(src / "mlda.bin"))
+    # Move the pair (wrapper + inner LDA) to a new directory and load from there.
+    dst = tmp_path / "b"
+    dst.mkdir()
+    for f in src.iterdir():
+        f.rename(dst / f.name)
+    loaded = topica.MechanisticLDA.load(str(dst / "mlda.bin"))
+    np.testing.assert_array_equal(loaded.topic_feature, m.topic_feature)

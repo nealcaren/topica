@@ -23,7 +23,11 @@ features; ``MechanisticLDA`` models them.
 This is an **experimental** model: it ships before an end-to-end
 reference-parity check against the authors' pipeline (which requires a Gemma-2-9b
 SAE), so it is gated behind :func:`topica.enable_experimental`. The topic model
-*over a supplied feature matrix* reduces to topica's reference-validated LDA; the
+*over a supplied feature matrix* reduces to topica's reference-validated LDA: for
+a corpus with no empty documents, the fit is bit-identical to :class:`topica.LDA`
+on the equivalent bag-of-words corpus (an all-zero row is retained here but
+dropped by ``Corpus.from_documents``, which shifts the sampler's RNG stream, so
+parity is exact only when every document has at least one active feature). The
 feature-extraction pipeline and the paper's mETM / mBERTopic variants and topic
 steering are tracked as follow-ups on #575.
 """
@@ -239,12 +243,20 @@ class MechanisticLDA:
 
     # -- persistence ------------------------------------------------------
 
+    # The inner LDA is written next to the wrapper file with this suffix. Only the
+    # suffix is stored (not an absolute path), so the pair can be moved together
+    # and still load.
+    _INNER_SUFFIX = "._inner_lda"
+
     def save(self, path: str) -> None:
-        """Persist the fitted model (inner LDA + wrapper config) to ``path``."""
+        """Persist the fitted model to ``path``.
+
+        The inner LDA is written alongside as ``path + "._inner_lda"``; move or copy
+        the two files together to relocate a saved model.
+        """
         lda = self._require_fitted()
-        inner_path = path + "._inner_lda"
-        lda.save(inner_path)
-        state = {**self.settings, "inner_path": inner_path}
+        lda.save(path + self._INNER_SUFFIX)
+        state = {**self.settings, "inner_suffix": self._INNER_SUFFIX}
         with open(path, "wb") as f:
             pickle.dump(state, f)
 
@@ -253,6 +265,13 @@ class MechanisticLDA:
         """Load a model saved by :meth:`save`. Requires experimental mode."""
         with open(path, "rb") as f:
             state = pickle.load(f)
+        # Resolve the inner LDA relative to this file so a moved pair still loads.
+        # Fall back to the legacy absolute "inner_path" for models saved earlier.
+        inner_path = (
+            state["inner_path"]
+            if "inner_path" in state
+            else path + state.get("inner_suffix", MechanisticLDA._INNER_SUFFIX)
+        )
         model = MechanisticLDA(
             state["num_topics"],
             alpha_sum=state["alpha_sum"],
@@ -263,7 +282,7 @@ class MechanisticLDA:
             num_threads=state["num_threads"],
             sampler=state["sampler"],
         )
-        model._lda = LDA.load(state["inner_path"])
+        model._lda = LDA.load(inner_path)
         return model
 
     def __repr__(self) -> str:

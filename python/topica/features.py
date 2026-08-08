@@ -28,6 +28,25 @@ __all__ = ["from_feature_matrix"]
 _MAX_COUNT = 2**32 - 1
 
 
+def _validate_counts(data: np.ndarray) -> None:
+    """Validate a finite, non-negative, whole-number, in-range float count array.
+
+    Runs on the float array *before* any integer cast, so a value too large for
+    the u32 core (or one that would wrap on cast to int64) is rejected with a
+    clear message rather than an opaque overflow deeper down."""
+    if not np.all(np.isfinite(data)):
+        raise ValueError("feature counts must be finite")
+    if np.any(data < 0):
+        raise ValueError("feature counts must be non-negative")
+    if not np.all(np.equal(np.mod(data, 1.0), 0.0)):
+        raise ValueError(
+            "feature counts must be whole numbers (activation counts); "
+            "threshold or round your activations before building a corpus"
+        )
+    if data.size and float(data.max()) > _MAX_COUNT:
+        raise ValueError(f"feature counts must be <= {_MAX_COUNT}")
+
+
 def _to_csr(counts):
     """Return (num_docs, num_features, indptr, indices, data) as plain Python
     lists of non-negative ``int`` counts, from a dense array, a nested sequence,
@@ -38,19 +57,9 @@ def _to_csr(counts):
         m.sum_duplicates()
         m.sort_indices()
         num_docs, num_features = m.shape
-        data = m.data
-        if not np.all(np.isfinite(data)):
-            raise ValueError("feature counts must be finite")
-        if np.any(data < 0):
-            raise ValueError("feature counts must be non-negative")
-        if not np.all(np.equal(np.mod(data, 1.0), 0.0)):
-            raise ValueError(
-                "feature counts must be whole numbers (activation counts); "
-                "threshold or round your activations before building a corpus"
-            )
+        data = np.asarray(m.data, dtype=np.float64)
+        _validate_counts(data)  # range-checks on the float array, before the cast
         data_i = data.astype(np.int64)
-        if data_i.size and int(data_i.max()) > _MAX_COUNT:
-            raise ValueError(f"feature counts must be <= {_MAX_COUNT}")
         return (
             int(num_docs),
             int(num_features),
@@ -59,23 +68,16 @@ def _to_csr(counts):
             [int(x) for x in data_i],
         )
 
-    arr = np.asarray(counts)
+    try:
+        arr = np.asarray(counts, dtype=np.float64)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"feature counts must be numeric: {e}") from e
     if arr.ndim != 2:
         raise ValueError(
             f"counts must be a 2-D (num_docs, num_features) matrix, got {arr.ndim}-D"
         )
-    if not np.all(np.isfinite(arr)):
-        raise ValueError("feature counts must be finite")
-    if np.any(arr < 0):
-        raise ValueError("feature counts must be non-negative")
-    if not np.all(np.equal(np.mod(arr, 1.0), 0.0)):
-        raise ValueError(
-            "feature counts must be whole numbers (activation counts); "
-            "threshold or round your activations before building a corpus"
-        )
+    _validate_counts(arr)
     arr = arr.astype(np.int64)
-    if arr.size and int(arr.max()) > _MAX_COUNT:
-        raise ValueError(f"feature counts must be <= {_MAX_COUNT}")
 
     num_docs, num_features = arr.shape
     indptr = [0]
@@ -130,7 +132,9 @@ def from_feature_matrix(
     Corpus
         A corpus whose ``vocabulary`` is ``feature_names`` and whose token counts
         are the supplied activations. No vocabulary pruning is applied — filter
-        columns beforehand.
+        columns beforehand. An all-zero row is retained as an empty document so the
+        corpus rows stay aligned to ``metadata`` / ``doc_ids`` (unlike
+        :meth:`Corpus.from_documents`, which drops empty documents).
     """
     num_docs, num_features, indptr, indices, data = _to_csr(counts)
 
