@@ -235,6 +235,118 @@ class TestSemanticDiversity:
             topica.topic_semantic_diversity([["a", "b", "c"]], topn=1)
 
 
+class TestInvertedRBO:
+    """inverted_rbo (OCTIS InvertedRBO; Bianchi, Terragni & Hovy 2021):
+    ``1 - mean pairwise RBO`` over top-word rankings."""
+
+    def test_disjoint_is_one(self):
+        # No shared words at any rank → RBO 0 → diversity 1.0.
+        assert topica.inverted_rbo(
+            [["a", "b", "c"], ["d", "e", "f"]], topn=3
+        ) == pytest.approx(1.0)
+
+    def test_identical_is_zero(self):
+        # Identical rankings → RBO 1 → diversity 0.0.
+        assert topica.inverted_rbo(
+            [["a", "b", "c"], ["a", "b", "c"]], topn=3
+        ) == pytest.approx(0.0)
+
+    def test_rank_sensitivity(self):
+        # Both pairs share {a,b} as a set, so topic_diversity is identical (0.5)
+        # for either. RBO instead punishes sharing them at the TOP ranks: the
+        # aligned pair overlaps more than the reversed pair, so diversity is
+        # strictly lower when the shared words sit at matching ranks.
+        aligned = topica.inverted_rbo([["a", "b"], ["a", "b"]], topn=2)
+        reversed_ = topica.inverted_rbo([["a", "b"], ["b", "a"]], topn=2)
+        assert aligned < reversed_
+
+    def test_single_topic_is_nan(self):
+        assert np.isnan(topica.inverted_rbo([["a", "b", "c"]], topn=3))
+
+    def test_accepts_model(self):
+        docs = [["cat", "dog", "pet"]] * 20 + [["star", "moon", "sky"]] * 20
+        m = LDA(num_topics=2, seed=1)
+        m.fit(docs, iters=300)
+        d = topica.inverted_rbo(m, topn=3)
+        assert 0.0 <= d <= 1.0
+
+    def test_bad_p_raises(self):
+        with pytest.raises(ValueError):
+            topica.inverted_rbo([["a", "b"], ["c", "d"]], p=1.0)
+
+
+class TestEmbeddingCoherence:
+    """embedding_coherence (OCTIS we_pairwise / we_centroid; Ding, Nallapati &
+    Xiang 2018): top-word proximity in an embedding space."""
+
+    def test_pairwise_identical_vectors_is_one(self):
+        # All three words map to the same unit vector → every cosine is 1.
+        emb = {"a": [1.0, 0.0], "b": [1.0, 0.0], "c": [1.0, 0.0]}
+        out = topica.embedding_coherence([["a", "b", "c"]], emb, topn=3)
+        assert out.shape == (1,)
+        assert out[0] == pytest.approx(1.0)
+
+    def test_pairwise_orthogonal_is_zero(self):
+        emb = {"a": [1.0, 0.0], "b": [0.0, 1.0]}
+        out = topica.embedding_coherence([["a", "b"]], emb, topn=2)
+        assert out[0] == pytest.approx(0.0)
+
+    def test_centroid_matches_hand_computed(self):
+        # Two orthogonal unit vectors: centroid is (1,1)/sqrt2; each word's
+        # cosine to it is 1/sqrt2, so the mean is 1/sqrt2.
+        emb = {"a": [1.0, 0.0], "b": [0.0, 1.0]}
+        out = topica.embedding_coherence(
+            [["a", "b"]], emb, topn=2, method="centroid"
+        )
+        assert out[0] == pytest.approx(1.0 / np.sqrt(2.0))
+
+    def test_matrix_form_matches_dict_form(self):
+        vocab = ["a", "b", "c"]
+        mat = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+        emb = dict(zip(vocab, mat))
+        topics = [["a", "b", "c"]]
+        from_mat = topica.embedding_coherence(topics, mat, vocab, topn=3)
+        from_dict = topica.embedding_coherence(topics, emb, topn=3)
+        np.testing.assert_allclose(from_mat, from_dict)
+
+    def test_unnormalized_vectors_are_normalized(self):
+        # Scaling a vector must not change cosine — parallel vectors → 1.0.
+        emb = {"a": [2.0, 0.0], "b": [5.0, 0.0]}
+        out = topica.embedding_coherence([["a", "b"]], emb, topn=2)
+        assert out[0] == pytest.approx(1.0)
+
+    def test_missing_words_dropped_then_nan(self):
+        # Only one of the two top words has an embedding → < 2 → nan.
+        emb = {"a": [1.0, 0.0]}
+        out = topica.embedding_coherence([["a", "zzz"]], emb, topn=2)
+        assert np.isnan(out[0])
+
+    def test_matrix_without_vocabulary_raises(self):
+        mat = np.array([[1.0, 0.0], [0.0, 1.0]])
+        with pytest.raises(ValueError):
+            topica.embedding_coherence([["a", "b"]], mat, topn=2)
+
+    def test_matrix_vocab_mismatch_raises(self):
+        mat = np.array([[1.0, 0.0], [0.0, 1.0]])
+        with pytest.raises(ValueError):
+            topica.embedding_coherence([["a", "b"]], mat, ["a", "b", "c"], topn=2)
+
+    def test_bad_method_raises(self):
+        emb = {"a": [1.0, 0.0], "b": [0.0, 1.0]}
+        with pytest.raises(ValueError):
+            topica.embedding_coherence([["a", "b"]], emb, topn=2, method="cosine")
+
+    def test_accepts_model(self):
+        docs = [["cat", "dog", "pet"]] * 20 + [["star", "moon", "sky"]] * 20
+        m = LDA(num_topics=2, seed=1)
+        m.fit(docs, iters=300)
+        rng = np.random.default_rng(0)
+        emb = {w: rng.standard_normal(8) for w in m.vocabulary}
+        out = topica.embedding_coherence(m, emb, topn=3)
+        assert out.shape == (2,)
+        assert np.all((out >= -1.0 - 1e-9) & (out <= 1.0 + 1e-9))
+
+
 class TestAnalysisContract:
     """Any object exposing the analysis contract -- ``topic_word`` /
     ``doc_topic`` / ``vocabulary`` -- works with the model-agnostic diagnostics,

@@ -16,6 +16,8 @@ topica.coherence(model, texts, coherence_type="c_v")      # windowed, human-alig
 topica.exclusivity(model, n=10)                           # per topic
 topica.topic_diversity(model, topn=25)                    # fraction of unique top words
 topica.topic_semantic_diversity(model, topn=25)           # fraction of unique top-word *pairs*
+topica.inverted_rbo(model, topn=10)                       # rank-weighted diversity (RBO)
+topica.embedding_coherence(model, word_embeddings, topn=10)  # top-word proximity in embedding space
 
 qf = topica.quality_frontier(model, n=10)                 # coherence, exclusivity, prevalence
 # qf["coherence"], qf["exclusivity"] -> the canonical STM quality scatter

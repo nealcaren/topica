@@ -541,6 +541,135 @@ def topic_semantic_diversity(topics, topn=25):
 
 
 # ---------------------------------------------------------------------------
+# Embedding-space coherence + rank-biased-overlap diversity
+#
+# Two metrics that need neither a reference corpus (unlike the PMI measures
+# above) nor an LLM (unlike topica.llm.*): coherence measured as top-word
+# proximity in a word-embedding space, and diversity measured as rank-weighted
+# overlap between topics' top-word rankings.
+# ---------------------------------------------------------------------------
+
+def _embedding_lookup(word_embeddings, vocabulary):
+    """Normalize either supported ``word_embeddings`` form to a
+    ``{word: unit_vector}`` dict. Accepts a ``dict {word: vector}`` (matched by
+    word, robust to any `topics` form) or a ``(V, E)`` matrix aligned to
+    `vocabulary`."""
+    if isinstance(word_embeddings, dict):
+        items = word_embeddings.items()
+    else:
+        if vocabulary is None:
+            raise ValueError(
+                "a (V, E) word_embeddings matrix requires vocabulary= to align "
+                "its rows to words; pass a {word: vector} dict to avoid this."
+            )
+        mat = np.asarray(word_embeddings, dtype=np.float64)
+        if mat.shape[0] != len(vocabulary):
+            raise ValueError(
+                f"word_embeddings has {mat.shape[0]} rows but vocabulary has "
+                f"{len(vocabulary)} words"
+            )
+        items = zip(vocabulary, mat)
+    return {w: np.asarray(v, dtype=np.float64)
+            / (np.linalg.norm(v) + 1e-12) for w, v in items}
+
+
+def embedding_coherence(topics, word_embeddings, vocabulary=None, *,
+                        topn=10, method="pairwise"):
+    """Per-topic coherence measured in a word-embedding space (OCTIS
+    ``we_pairwise`` / ``we_centroid``; Ding, Nallapati & Xiang 2018). For each
+    topic's top-`topn` words, either the mean pairwise cosine similarity
+    (``method="pairwise"``) or the mean cosine to the topic's word centroid
+    (``method="centroid"``). Higher means the top words sit closer together in
+    embedding space, i.e. more semantically coherent. Unlike :func:`coherence`
+    it needs no reference corpus, and unlike :func:`topica.llm.coherence` it
+    needs no LLM.
+
+    `topics` is a fitted model, a ``(K, V)`` topic_word (with `vocabulary`), or
+    a list of word lists. `word_embeddings` is either a ``dict {word: vector}``
+    (matched by word, robust to any `topics` form) or a ``(V, E)`` matrix
+    aligned to `vocabulary`. Words with no embedding are dropped from a topic;
+    a topic left with fewer than two embedded words scores ``nan``.
+
+    Returns a ``(num_topics,)`` array; aggregate with ``.mean()``.
+
+    Note: for models that learn their own word embeddings (ETM, DETM,
+    IdealPointTM), scoring against *those* vectors is circular — the model is
+    graded in the space it optimized. Pass an *external* embedding (GloVe,
+    fastText, a sentence-transformer word table) for an honest number.
+    """
+    if not isinstance(topn, (int, np.integer)) or topn < 2:
+        raise ValueError(f"topn must be an integer >= 2, got {topn!r}")
+    if method not in ("pairwise", "centroid"):
+        raise ValueError(
+            f"method must be 'pairwise' or 'centroid', got {method!r}"
+        )
+    tops = _extract_topics(topics, topn)
+    lookup = _embedding_lookup(word_embeddings, vocabulary)
+    out = np.full(len(tops), np.nan)
+    for k, words in enumerate(tops):
+        vecs = [lookup[w] for w in words[:topn] if w in lookup]
+        if len(vecs) < 2:
+            continue
+        mat = np.asarray(vecs)  # rows already unit-normed
+        if method == "centroid":
+            c = mat.mean(0)
+            c /= np.linalg.norm(c) + 1e-12
+            out[k] = float((mat @ c).mean())
+        else:
+            sims = mat @ mat.T
+            iu = np.triu_indices(len(mat), k=1)
+            out[k] = float(sims[iu].mean())
+    return out
+
+
+def _rbo(s, t, p, depth):
+    """Rank-Biased Overlap (Webber, Moffat & Zobel 2010) between two ranked
+    word lists, truncated to `depth`. `p` is the persistence in ``(0, 1)``."""
+    s = s[:depth]
+    t = t[:depth]
+    h = min(len(s), len(t), depth)
+    if h == 0:
+        return 0.0
+
+    s_set = set()
+    t_set = set()
+    rbo_sum = 0.0
+    for d in range(1, h + 1):
+        s_set.add(s[d - 1])
+        t_set.add(t[d - 1])
+        overlap = len(s_set.intersection(t_set))
+        rbo_sum += (p ** (d - 1)) * (overlap / d)
+
+    overlap_h = len(s_set.intersection(t_set))
+    return (1.0 - p) * rbo_sum + (p ** h) * (overlap_h / h)
+
+
+def inverted_rbo(topics, *, topn=10, p=0.9):
+    """Rank-biased-overlap diversity across topics (Bianchi, Terragni & Hovy
+    2021, used in OCTIS as ``InvertedRBO``). ``1 - mean pairwise RBO`` over
+    every topic pair's top-`topn` word *rankings*. Where :func:`topic_diversity`
+    treats top words as an unordered set, RBO weights agreement by rank: two
+    topics sharing their #1-#2 words are penalized more than two sharing their
+    #9-#10 words. `p` is the RBO persistence (``0 < p < 1``; higher weights
+    deeper ranks more). 1.0 means maximally diverse (no rank-weighted overlap);
+    lower means topics recycle high-rank words.
+
+    `topics` is a fitted model or a list of word lists. Returns a float, or
+    ``nan`` when there are fewer than two topics.
+    """
+    if not isinstance(topn, (int, np.integer)) or topn < 1:
+        raise ValueError(f"topn must be a positive integer, got {topn!r}")
+    if not 0.0 < p < 1.0:
+        raise ValueError(f"p must be in (0, 1), got {p!r}")
+    tops = [t[:topn] for t in _extract_topics(topics, topn)]
+    if len(tops) < 2:
+        return float("nan")
+    sims = [_rbo(tops[i], tops[j], p, topn)
+            for i, j in combinations(range(len(tops)), 2)]
+    return 1.0 - (sum(sims) / len(sims))
+
+
+# ---------------------------------------------------------------------------
 # Exclusivity + human-validation intrusion tests
 #
 # These are general topic-model diagnostics — they operate on any fitted

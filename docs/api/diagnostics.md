@@ -19,9 +19,13 @@ and in the `topica.validation` module.
 
 ::: topica.semantic_coherence
 
+::: topica.embedding_coherence
+
 ::: topica.topic_diversity
 
 ::: topica.topic_semantic_diversity
+
+::: topica.inverted_rbo
 
 ::: topica.exclusivity
 
