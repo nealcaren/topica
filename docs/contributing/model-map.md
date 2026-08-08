@@ -97,6 +97,8 @@ Column meanings:
 |---|---|---|---|---|---|
 | `BERTopic` | `src/bertopic.rs` | `src/python/embedding_cluster.rs` | embedding clustering (cluster.rs, reduce.rs, represent.rs) | `embeddings` | `parity/bertopic_gold.py` |
 | `Top2Vec` | `src/top2vec.rs` | `src/python/embedding_cluster.rs` | embedding clustering (cluster.rs, reduce.rs) | `embeddings` | `parity/top2vec_gold.py`, `parity/top2vec_compare.py` |
+| `MechanisticLDA` | `python/topica/mtm.py` | — _(Python)_ | SAE featurization (Python) over the SparseLDA collapsed-Gibbs core | default | `tests/test_mtm.py` |
+| `MechanisticBERTopic` | `python/topica/mtm.py` | — _(Python)_ | SAE featurization (Python) over the embedding-clustering core (cluster.rs, reduce.rs) | `embeddings` | `tests/test_mtm.py` |
 | `SemanticSignalSeparation` | `src/semantic_signal_separation.rs` | `src/python/semantic_signal_separation.rs` | FastICA over document embeddings + vocabulary projection (reduce.rs) | `embeddings` | `parity/s3_compare.py`, `tests/test_semantic_signal_separation.py` |
 | `ETM` | `src/etm.rs` | `src/python/neural.rs` | variational EM over word embeddings (ctm.rs) | default | `parity/etm_gold.py` |
 | `IdealPointTM` | `src/idealpoint.rs` | `src/python/idealpoint.rs` | variational EM + ideal-point head | default | `tests/test_idealpoint.py`, `tests/test_idealpoint_counts.py` |

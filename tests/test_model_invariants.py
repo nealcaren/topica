@@ -460,6 +460,42 @@ def _fit_bertopic(iters=None):
     return m.doc_topic, m.topic_word, m.num_topics
 
 
+def _planted_activations(k=K, block=8, n=300, tokens=24, seed=0):
+    """Per-document SAE activations where document d fires only feature block d % k.
+
+    The mechanistic analogue of _planted_blocks: same disjoint-block structure, but
+    at the activation level, since MTM featurizes rather than tokenizes.
+    """
+    rng = np.random.default_rng(seed)
+    num_features = k * block
+    docs = []
+    for d in range(n):
+        b = d % k
+        a = rng.random((tokens, num_features)) * 0.5
+        a[:, b * block:(b + 1) * block] += 0.8
+        docs.append(a)
+    return docs, num_features
+
+
+def _fit_mechanisticlda(iters=300):
+    topica.enable_experimental()
+    acts, _ = _planted_activations(seed=0)
+    counts = topica.mtm.featurize(acts, topica.mtm.feature_thresholds(acts, q=0.8))
+    m = topica.MechanisticLDA(K, seed=1, burn_in=50).fit(counts, iters=iters)
+    return m.doc_topic, m.topic_word, K
+
+
+def _fit_mechanisticbertopic(iters=None):
+    topica.enable_experimental()
+    acts, num_features = _planted_activations(seed=0)
+    counts = topica.mtm.featurize(acts, topica.mtm.feature_thresholds(acts, q=0.8))
+    directions = np.random.default_rng(1).normal(size=(num_features, 16))
+    m = topica.MechanisticBERTopic(seed=1).fit(counts, directions=directions)
+    if m.num_topics == 0:
+        pytest.skip("MechanisticBERTopic found no clusters at this min_cluster_size")
+    return m.doc_topic, m.topic_word, m.num_topics
+
+
 def _fit_top2vec(iters=None):
     docs, vocab = _planted_blocks(k=K, block=8, n=300, seed=0)
     doc_emb = _doc_embeddings(docs, k=K, block=8, seed=0)
@@ -646,6 +682,8 @@ FIT_ADAPTERS = {
     "PA": _fit_pa,
     "BERTopic": _fit_bertopic,
     "Top2Vec": _fit_top2vec,
+    "MechanisticLDA": _fit_mechanisticlda,
+    "MechanisticBERTopic": _fit_mechanisticbertopic,
     "SemanticSignalSeparation": _fit_semanticsignalseparation,
     "ETM": _fit_etm,
     "IdealPointTM": _fit_idealpoint,

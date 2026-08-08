@@ -68,6 +68,11 @@ from .topicgpt import TopicGPT as TopicGPT
 from .anchor import AnchorLDA as AnchorLDA
 from .gdmr import GDMR as GDMR
 from .narrative import NarrativeTM as NarrativeTM
+from . import mtm as mtm
+from .mtm import (
+    MechanisticLDA as MechanisticLDA,
+    MechanisticBERTopic as MechanisticBERTopic,
+)
 
 __citation__: str
 ENGLISH_STOPWORDS: frozenset[str]
@@ -796,6 +801,9 @@ __all__ = [
     "AnchorLDA",
     "GDMR",
     "NarrativeTM",
+    "mtm",
+    "MechanisticLDA",
+    "MechanisticBERTopic",
     "align_corpus",
     "spline",
     "interaction",

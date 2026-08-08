@@ -137,6 +137,8 @@ Shipped before a published paper and reference-implementation parity (topica's b
 |---|---|---|---|---|
 | `TensorLDA` | text | svd | seed-reproducible | Online Tensor LDA (Kangaslahti et al. 2026): deterministic method-of-moments topic modeling via second and third-order cumulants. |
 | `NarrativeTM` | text | gibbs | seed-reproducible | Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text. |
+| `MechanisticLDA` | text, embeddings | gibbs | seed-reproducible | mLDA (Zheng et al. 2025): collapsed-Gibbs LDA over thresholded sparse-autoencoder feature counts instead of words, so topics are distributions over model-internal directions you can steer, not vocabulary. |
+| `MechanisticBERTopic` | text, embeddings | clustering | seed-reproducible | mBERTopic (Zheng et al. 2025): BERTopic run twice-over on sparse-autoencoder features — documents embedded by weighting SAE decoder directions, topics named by class-based TF-IDF over features. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate. |
 | `IdealPointSentenceTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The sentence-embedding sibling of IdealPointTM, fit by EM. |
 
@@ -983,6 +985,120 @@ One quirk needs handling: the exact Bayes inversion sets `beta ∝ p(topic | wor
 - `top_words` then defaults to a **FREX** ranking (`method="frex"`, the frequency/exclusivity balance topica's `frex`/`label_topics` use; `"lift"` and `"prob"` are also available), refining the display further — top-word diversity ~0.88 and c_v ~0.49 at K=50 with both defaults.
 
 The underlying topics were always there; these two knobs keep frequent words from masking them. `AnchorLDA` is a strong fast first pass and a deterministic baseline; for a final model on real text, compare against `LDA` or `STM`.
+
+## MechanisticLDA
+
+!!! warning "Experimental — unvalidated"
+    `MechanisticLDA` and `MechanisticBERTopic` ship before a reference-implementation
+    parity check, topica's bar for a validated model: the recipe and the priors below
+    are read off the authors' source, but no end-to-end numeric comparison has been
+    run, because that needs their Gemma-2 activations and sparse autoencoder. They are
+    **gated**: call `topica.enable_experimental()` (or set `TOPICA_EXPERIMENTAL=1`)
+    before constructing one. Treat results as provisional.
+
+A **Mechanistic Topic Model** ([Zheng et al. 2025](https://arxiv.org/abs/2507.23220))
+replaces the bag of words with a bag of **sparse-autoencoder features**. An SAE
+decomposes a language model's residual stream into a large set of sparse, roughly
+monosemantic directions; count how often each direction fires in a document and you
+have a document-term matrix whose "terms" are things the *model* represents. Topics
+over those are claims about model internals, and — unlike a topic over words — you can
+intervene on one by steering the corresponding direction.
+
+MTM is a family, not a single model: featurize once, then run whatever topic model you
+would otherwise have run. `MechanisticLDA` is the paper's §4.2.1 (LDA over the feature
+counts); `MechanisticBERTopic` is §4.2.3.
+
+You supply the SAE activations — topica does not run the language model. Everything
+downstream is `topica.mtm`:
+
+```python
+topica.enable_experimental()
+
+# activations: one (num_tokens, num_features) array per document, from your SAE.
+thresholds = topica.mtm.feature_thresholds(activations, q=0.8)
+counts = topica.mtm.featurize(activations, thresholds)     # eq. 5
+
+m = topica.MechanisticLDA(50, seed=13).fit(counts, feature_names=feature_ids)
+m.top_words(10, topic=0)        # SAE feature ids, not words
+```
+
+`featurize` is eq. 5, `c̃[d,i] = Σ_j 1{α_i(a_dj) > q_i}`: how many of document `d`'s
+tokens fire feature `i` above its threshold. Two details are transcribed from the
+reference rather than inferred — the comparison is **strictly greater** (an SAE emits
+many exact zeros, and `>=` would count every silent token as a firing), and each
+document's **first token is dropped** (the SAE was not trained on the BOS position).
+
+`feature_thresholds` is a convenience with a real caveat: the paper takes `q_i` from
+the SAE's *training* data, so pooling over your own corpus — which is what this
+function does — is a different, corpus-dependent estimator. Pass training-data
+quantiles straight to `featurize` when you have them, and say which you used.
+
+It returns a `FeatureCounts` carrying two vectors that are easy to conflate.
+`counts.sum(axis=1)` (exposed as `n_sae`) counts **feature activations**; `n_tokens`
+counts **tokens**. A token may fire many features or none, so these differ, and the
+paper's equations do not use them interchangeably — eq. 8 wants `N_sae`, eqs. 12 and 14
+want `N_tok`. topica keeps both rather than recomputing one from the other; on the
+fitted model, `doc_lengths` is `N_sae` and `model.corpus.n_tokens` is `N_tok`.
+
+Defaults follow the reference implementation, not topica's usual LDA defaults:
+`alpha_sum=5.0` (a *sum* over topics, MALLET's convention, so K topics get `5/K` each),
+`beta=0.01`, `optimize_interval=10`. `max_doc_fraction=0.9` is the paper's App. A.1
+filter, which it calls crucial: a few SAE features fire on nearly every token and swamp
+every topic if kept. `model.corpus.kept_features` reports which of your original feature
+columns survived it — the indices you need to slice an SAE decoder matrix to match.
+
+Column order is the caller's throughout. `topic_word[:, j]` is your feature `j`, because
+the corpus is built by [`Corpus.from_matrix`](preprocessing.md), which preserves column
+order and keeps all-zero columns rather than frequency-sorting the way `from_documents`
+does. That matters here: a silently dropped or reordered column would reindex every
+feature id and make the topics unreadable.
+
+The one real ergonomic cost: top "words" are feature ids. Reading them as a topic needs
+the SAE's feature descriptions — the paper uses Neuronpedia's, or an LLM summary of a
+feature's top-activating text.
+
+## MechanisticBERTopic
+
+The same featurization, with BERTopic on top (§4.2.3) — mechanistic on both sides.
+Documents are embedded by weighting SAE **decoder directions** by feature activations
+(eq. 14, `ẽ_d = (1/N_tok) Σ_i c̃[d,i] w_i`), so clustering happens in the language
+model's own residual-stream space; and the class-based TF-IDF that names each cluster
+runs over features rather than words (eq. 15), so topics come out as feature ids.
+
+```python
+m = topica.MechanisticBERTopic(seed=13).fit(counts, directions=sae_decoder)
+m.labels            # hard cluster per document; -1 is the outlier cluster
+m.doc_embeddings    # (num_docs, d_model), the eq. 14 vectors it clustered
+```
+
+`directions` is the SAE decoder matrix, `(num_features, d_model)`, in your original
+feature-column order; it is sliced to `kept_features` for you. Pass `doc_embeddings=`
+instead to supply vectors you built yourself with `topica.mtm.document_embeddings` —
+which is how you reproduce the reference's *default*, since that weights the same
+directions by **mean continuous** activations rather than by thresholded counts. The
+authors' hyperparameter sweep tunes that binary, so neither setting is canonically
+"the" method.
+
+`1/N_tok` is a positive per-document scalar, so under cosine distance — UMAP's metric
+on both sides — it cancels entirely. It matters under euclidean, and it matters if you
+use the embeddings for anything else.
+
+Three divergences from the reference, none of them silent:
+
+- **`nr_topics` counts differently.** The reference passes its `num_topics` to upstream
+  BERTopic and then treats the last slot as the `-1` outlier topic, so its K *includes*
+  the outlier cluster; topica's `nr_topics` counts real topics only. To ask for the
+  reference's K, pass `K - 1`.
+- **c-TF-IDF excludes outliers.** topica computes tf/df over clustered documents only,
+  where upstream includes the `-1` cluster; and topica uses raw `tf` — literally eq. 15
+  — where upstream L1-normalizes it first.
+- **`doc_topic` is a different estimand.** The reference reports HDBSCAN soft membership
+  with outlier mass as a final column; topica reports its sliding-window c-TF-IDF
+  approximation. Compare cluster *labels* across the two implementations, not topic
+  probabilities.
+
+`min_cluster_size` defaults to 10 here — the reference's `min_topic_size` — where
+topica's own `BERTopic` defaults to 15.
 
 ## IdealPointTM
 

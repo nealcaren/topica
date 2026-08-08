@@ -86,6 +86,8 @@ _FACTORIES: dict[str, object] = {
         2, embeddings=[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], vocabulary=["a", "b", "c"]
     ),
     "TopicGPT": lambda: topica.TopicGPT(backend=lambda p: ""),
+    "MechanisticLDA": lambda: topica.MechanisticLDA(2),
+    "MechanisticBERTopic": lambda: topica.MechanisticBERTopic(min_cluster_size=5),
 }
 
 # Every public registry model (Rust aliases collapse to one qualname).

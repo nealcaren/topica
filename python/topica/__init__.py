@@ -346,6 +346,8 @@ from .frames import from_dataframe, align, prep_documents, plot_removed  # noqa:
 from .formulas import design_matrix  # noqa: E402
 from .scaling import bimodality, polarization, polarization_ci, split_half_reliability, position_intervals  # noqa: E402  (intrinsic ideal-point diagnostics)
 from . import datasets  # noqa: E402  (bundled + fetch-on-demand example datasets)
+from . import mtm  # noqa: E402  (Mechanistic Topic Models: SAE-feature featurization, #575)
+from .mtm import MechanisticLDA, MechanisticBERTopic  # noqa: E402
 
 __all__ = [
     "list_models",
@@ -542,6 +544,9 @@ __all__ = [
     "Phrases",
     "align_corpus",
     "datasets",
+    "mtm",
+    "MechanisticLDA",
+    "MechanisticBERTopic",
     "DEFAULT_TOKEN_REGEX",
     "__version__",
     "__citation__",
