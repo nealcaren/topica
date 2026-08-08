@@ -541,6 +541,181 @@ def topic_semantic_diversity(topics, topn=25):
 
 
 # ---------------------------------------------------------------------------
+# Embedding-space coherence + rank-biased-overlap diversity
+#
+# Two metrics that need neither a reference corpus (unlike the PMI measures
+# above) nor an LLM (unlike topica.llm.*): coherence measured as top-word
+# proximity in a word-embedding space, and diversity measured as rank-weighted
+# overlap between topics' top-word rankings.
+# ---------------------------------------------------------------------------
+
+def _embedding_lookup(word_embeddings, vocabulary):
+    """Normalize either supported ``word_embeddings`` form to a
+    ``{word: raw_vector}`` dict. Accepts a ``dict {word: vector}`` (matched by
+    word, robust to any `topics` form) or a ``(V, E)`` matrix aligned to
+    `vocabulary`. A word whose vector is non-finite (NaN/inf) or has zero norm
+    carries no usable direction, so it is *dropped* — the cosine metrics then
+    treat it exactly like an out-of-vocabulary word, rather than silently
+    reading it as cosine ~0 against everything.
+
+    Vectors are returned *raw* (not unit-normalized): pairwise cosine normalizes
+    per word (scale-invariant either way), but the centroid variant sums the raw
+    vectors before normalizing — matching OCTIS ``we_centroid`` — so magnitudes
+    must survive to that point."""
+    if isinstance(word_embeddings, dict):
+        items = word_embeddings.items()
+    else:
+        if vocabulary is None:
+            raise ValueError(
+                "a (V, E) word_embeddings matrix requires vocabulary= to align "
+                "its rows to words; pass a {word: vector} dict to avoid this."
+            )
+        mat = np.asarray(word_embeddings, dtype=np.float64)
+        if mat.shape[0] != len(vocabulary):
+            raise ValueError(
+                f"word_embeddings has {mat.shape[0]} rows but vocabulary has "
+                f"{len(vocabulary)} words"
+            )
+        items = zip(vocabulary, mat)
+    lookup = {}
+    for w, v in items:
+        v = np.asarray(v, dtype=np.float64)
+        norm = np.linalg.norm(v)
+        if not np.isfinite(norm) or norm == 0.0:
+            continue  # no usable direction — drop, don't corrupt
+        lookup[w] = v
+    return lookup
+
+
+def embedding_coherence(topics, word_embeddings, vocabulary=None, *,
+                        topn=10, method="pairwise"):
+    """Per-topic coherence measured as top-word proximity in a word-embedding
+    space. For each topic's top-`topn` words, either the mean pairwise cosine
+    similarity (``method="pairwise"``, OCTIS ``we_pairwise``; Belford & Greene
+    2019) or the mean cosine to the topic's word centroid (``method="centroid"``,
+    OCTIS ``we_centroid``; Ding, Nallapati & Xiang 2018). **Higher = more
+    coherent** for both methods. Unlike :func:`coherence` it needs no reference
+    corpus, and unlike :func:`topica.llm.coherence` it needs no LLM.
+
+    Both variants reproduce OCTIS at full top-word coverage. OCTIS reports
+    ``we_centroid`` as a cosine *distance* (lower = better); we report the cosine
+    *similarity* ``1 - distance`` so the two methods share one direction — the
+    centroid itself is built from the raw (un-normalized) top-word vectors,
+    exactly as OCTIS builds it, so ``embedding_coherence(..., method="centroid")``
+    equals ``1 - OCTIS_we_centroid``.
+
+    `topics` is a fitted model, a ``(K, V)`` topic_word (with `vocabulary`), or
+    a list of word lists. `word_embeddings` is either a ``dict {word: vector}``
+    (matched by word, robust to any `topics` form) or a ``(V, E)`` matrix
+    aligned to `vocabulary`; vectors need not be unit length. No embedder of
+    your own? :func:`~topica.llm_embed` builds one::
+
+        emb = topica.llm_embed(model.vocabulary)          # (V, E) matrix
+        topica.embedding_coherence(model, emb, model.vocabulary)
+
+    Words with no embedding — including any whose vector is NaN/inf or all-zero —
+    are dropped from a topic; a topic left with fewer than two embedded words
+    scores ``nan`` and raises a warning naming its coverage. This is a small
+    divergence from OCTIS, which instead divides by the fixed ``topn`` count so
+    missing words pull the score toward 0; here a partly-covered topic is scored
+    on the words it does have.
+
+    Returns a ``(num_topics,)`` array. Aggregate with ``np.nanmean`` (plain
+    ``.mean()`` propagates a single ``nan`` topic to the whole corpus score).
+
+    Interpretation: the number is only comparable *across models scored on the
+    same embedding* — there is no absolute "good" threshold, and it is not
+    centered at 0 (random all-positive vectors already score high). For models
+    that learn their own word embeddings (ETM, DETM, IdealPointTM), scoring
+    against *those* vectors is circular — the model is graded in the space it
+    optimized, so pass an *external* embedding for an honest number.
+    """
+    if not isinstance(topn, (int, np.integer)) or topn < 2:
+        raise ValueError(f"topn must be an integer >= 2, got {topn!r}")
+    if method not in ("pairwise", "centroid"):
+        raise ValueError(
+            f"method must be 'pairwise' or 'centroid', got {method!r}"
+        )
+    tops = _extract_topics(topics, topn)
+    lookup = _embedding_lookup(word_embeddings, vocabulary)
+    out = np.full(len(tops), np.nan)
+    uncovered = []
+    for k, words in enumerate(tops):
+        vecs = [lookup[w] for w in words[:topn] if w in lookup]
+        if len(vecs) < 2:
+            uncovered.append((k, len(vecs), min(topn, len(words))))
+            continue
+        raw = np.asarray(vecs)                       # raw (un-normalized) rows
+        unit = raw / np.linalg.norm(raw, axis=1, keepdims=True)
+        if method == "centroid":
+            c = raw.sum(0)                           # centroid of RAW vectors...
+            c /= np.linalg.norm(c) + 1e-12           # ...then unit (OCTIS we_centroid)
+            out[k] = float((unit @ c).mean())        # = 1 - OCTIS cosine distance
+        else:
+            sims = unit @ unit.T
+            iu = np.triu_indices(len(unit), k=1)
+            out[k] = float(sims[iu].mean())
+    if uncovered:
+        detail = ", ".join(f"topic {k}: {n}/{d} top words embedded"
+                           for k, n, d in uncovered)
+        warnings.warn(
+            f"embedding_coherence: {len(uncovered)} topic(s) scored nan for "
+            f"lack of embedded top words ({detail}). Check that the embedding "
+            "covers the vocabulary (case, tokenization); aggregate with "
+            "np.nanmean.",
+            stacklevel=2,
+        )
+    return out
+
+
+def _rbo(s, t, p, depth):
+    """Rank-Biased Overlap (Webber, Moffat & Zobel 2010) between two ranked
+    word lists, truncated to `depth`. `p` is the persistence in ``(0, 1)``."""
+    s = s[:depth]
+    t = t[:depth]
+    h = min(len(s), len(t), depth)
+    if h == 0:
+        return 0.0
+
+    s_set = set()
+    t_set = set()
+    rbo_sum = 0.0
+    for d in range(1, h + 1):
+        s_set.add(s[d - 1])
+        t_set.add(t[d - 1])
+        overlap = len(s_set.intersection(t_set))
+        rbo_sum += (p ** (d - 1)) * (overlap / d)
+
+    overlap_h = len(s_set.intersection(t_set))
+    return (1.0 - p) * rbo_sum + (p ** h) * (overlap_h / h)
+
+
+def inverted_rbo(topics, *, topn=10, p=0.9):
+    """Rank-biased-overlap diversity across topics (Bianchi, Terragni & Hovy
+    2021, used in OCTIS as ``InvertedRBO``). ``1 - mean pairwise RBO`` over
+    every topic pair's top-`topn` word *rankings*. Where :func:`topic_diversity`
+    treats top words as an unordered set, RBO weights agreement by rank: two
+    topics sharing their #1-#2 words are penalized more than two sharing their
+    #9-#10 words. `p` is the RBO persistence (``0 < p < 1``; higher weights
+    deeper ranks more). 1.0 means maximally diverse (no rank-weighted overlap);
+    lower means topics recycle high-rank words.
+
+    `topics` is a fitted model or a list of word lists. Returns a float, or
+    ``nan`` when there are fewer than two topics.
+    """
+    if not isinstance(topn, (int, np.integer)) or topn < 1:
+        raise ValueError(f"topn must be a positive integer, got {topn!r}")
+    if not 0.0 < p < 1.0:
+        raise ValueError(f"p must be in (0, 1), got {p!r}")
+    tops = [t[:topn] for t in _extract_topics(topics, topn)]
+    if len(tops) < 2:
+        return float("nan")
+    sims = [_rbo(tops[i], tops[j], p, topn)
+            for i, j in combinations(range(len(tops)), 2)]
+    return 1.0 - (sum(sims) / len(sims))
+
+
+# ---------------------------------------------------------------------------
 # Exclusivity + human-validation intrusion tests
 #
 # These are general topic-model diagnostics — they operate on any fitted

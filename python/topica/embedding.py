@@ -196,8 +196,9 @@ def llm_embed(texts, model="text-embedding-3-small", *, key=None, batch=True, ca
     ``(n, dim)`` float array.
 
     The embedding models in topica (``BERTopic``, ``Top2Vec``, ``ETM``,
-    ``FASTopic``) and :func:`embedding_seeds` all take embeddings you supply; this
-    is one way to produce them. ``model`` names any embedding model
+    ``FASTopic``), :func:`embedding_seeds`, and :func:`embedding_coherence` (pass
+    ``llm_embed(model.vocabulary)`` as its word table) all take embeddings you
+    supply; this is one way to produce them. ``model`` names any embedding model
     `llm <https://llm.datasette.io/>`_ can reach — OpenAI's
     ``"text-embedding-3-small"`` / ``"3-large"`` (needs an API key), or a local
     model such as ``"sentence-transformers/all-MiniLM-L6-v2"`` via the

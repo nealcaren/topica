@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .coherence import (
-    _as_topic_word, _as_doc_topic, _vocabulary_of,
+    _as_topic_word, _as_doc_topic, _vocabulary_of, _rbo,
     coherence as _coherence, exclusivity as _exclusivity,
 )
 
@@ -2241,29 +2241,6 @@ class AlignmentResult(list):
             f"splits={len(self.splits)}, merges={len(self.merges)}, "
             f"unaligned_a={len(self.unaligned_a)}, unaligned_b={len(self.unaligned_b)})"
         )
-
-
-def _rbo(s, t, p, depth):
-    """Calculate Rank-Biased Overlap (RBO) between two lists of words."""
-    s = s[:depth]
-    t = t[:depth]
-    h = min(len(s), len(t), depth)
-    if h == 0:
-        return 0.0
-    
-    s_set = set()
-    t_set = set()
-    rbo_sum = 0.0
-    
-    for d in range(1, h + 1):
-        s_set.add(s[d - 1])
-        t_set.add(t[d - 1])
-        overlap = len(s_set.intersection(t_set))
-        rbo_sum += (p ** (d - 1)) * (overlap / d)
-        
-    overlap_h = len(s_set.intersection(t_set))
-    rbo_val = (1.0 - p) * rbo_sum + (p ** h) * (overlap_h / h)
-    return rbo_val
 
 
 def _emd_similarity(p_a, p_b, top_idx_a, top_idx_b, word_embeddings, depth):
