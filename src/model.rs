@@ -444,6 +444,85 @@ mod tests {
         assert!(dir.is_empty(), "check_dirichlet: {:?}", dir);
     }
 
+    /// Rebuild the count tables from the token assignments and assert they exactly
+    /// equal the incrementally-maintained ones. The packed `type_topic_counts` and
+    /// `tokens_per_topic` are updated in place every token; `doc_topics` is the
+    /// ground-truth assignment. A packed-count or increment/decrement bug corrupts
+    /// the tables while `doc_topics` stays correct, so it moves φ/θ only slightly and
+    /// slips past parity's central-tendency thresholds -- this catches it exactly.
+    fn assert_counts_reconstruct(m: &TopicModel, corpus: &Corpus, sweep: usize) {
+        let (k, v) = (m.num_topics, m.num_types);
+        let mut dense = vec![vec![0u32; k]; v];
+        let mut tpt = vec![0u32; k];
+        for (doc, topics) in corpus.docs.iter().zip(m.doc_topics.iter()) {
+            assert_eq!(
+                doc.len(),
+                topics.len(),
+                "sweep {sweep}: doc/assignment length mismatch"
+            );
+            for (&w, &t) in doc.iter().zip(topics.iter()) {
+                dense[w as usize][t as usize] += 1;
+                tpt[t as usize] += 1;
+            }
+        }
+        // Decode the packed table directly (entry = (count << topic_bits) | topic):
+        // every real entry must have an in-range topic, the rebuilt count, and no
+        // duplicate slot; every nonzero rebuilt count must have a packed entry.
+        for w in 0..v {
+            let mut seen = vec![false; k];
+            for &entry in &m.type_topic_counts[w] {
+                if entry == 0 {
+                    continue; // emptied slot (decrement sinks zeros to the tail)
+                }
+                let t = (entry & m.topic_mask) as usize;
+                let c = entry >> m.topic_bits;
+                assert!(
+                    t < k,
+                    "sweep {sweep}: word {w} packed entry topic {t} >= K={k}"
+                );
+                assert!(
+                    !seen[t],
+                    "sweep {sweep}: word {w} has two packed entries for topic {t}"
+                );
+                seen[t] = true;
+                assert_eq!(
+                    c, dense[w][t],
+                    "sweep {sweep}: type_topic_counts[{w}][{t}] = {c} != rebuilt {}",
+                    dense[w][t]
+                );
+            }
+            for t in 0..k {
+                assert!(
+                    seen[t] || dense[w][t] == 0,
+                    "sweep {sweep}: word {w} topic {t} has rebuilt count {} but no packed entry",
+                    dense[w][t]
+                );
+            }
+        }
+        assert_eq!(
+            m.tokens_per_topic, tpt,
+            "sweep {sweep}: tokens_per_topic drifted"
+        );
+    }
+
+    #[test]
+    fn counts_reconstruct_from_assignments_every_sweep() {
+        // Both packing regimes: K=4 (power of two -> exact-width mask) and K=5
+        // (not -> the ceil-log2 mask), across init and 15 sweeps.
+        for &k in &[4usize, 5usize] {
+            let mut rng = ChaCha8Rng::seed_from_u64(42);
+            let corpus = small_corpus();
+            let v = corpus.num_types();
+            let mut m = TopicModel::new(k, k as f64 * 0.1, 0.1, v);
+            m.initialize(&corpus, &mut rng);
+            assert_counts_reconstruct(&m, &corpus, 0);
+            for sweep in 1..=15 {
+                run_iteration(&mut m, &corpus, &mut rng);
+                assert_counts_reconstruct(&m, &corpus, sweep);
+            }
+        }
+    }
+
     #[test]
     fn max_packable_count_matches_the_high_bit_width() {
         // Count occupies the high (32 - topic_bits) bits.
