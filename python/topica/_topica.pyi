@@ -4902,6 +4902,137 @@ class GuidedNMF:
     def load(path: str) -> GuidedNMF: ...
     def __repr__(self) -> str: ...
 
+class CorEx:
+    """CorEx, information-theoretic topic modeling by Correlation Explanation
+    (Gallagher, Reing, Kale & Ver Steeg, "Anchored Correlation Explanation," TACL
+    2017). NOT generative and NOT a factorization: it learns num_topics BINARY latent
+    topics that maximize the total correlation they explain about the words, with
+    optional anchor words for semi-supervision. Reference: the corextopic package
+    (Apache-2.0). Because topics are independent binary factors rather than a mixture,
+    doc_topic is a matrix of per-topic probabilities whose rows do NOT sum to 1, and
+    topic_word is alpha*mis (mutual information weighted by membership), not a
+    probability distribution."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict, keyword-named
+        to match ``__init__`` (issue #400). ``anchor_words`` is guidance data, not a
+        hyperparameter, so it is not reported."""
+        ...
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
+    def __init__(
+        self,
+        num_topics: int = 2,
+        *,
+        anchor_words: dict[str, Sequence[str]] | None = None,
+        anchor_strength: float = 1.0,
+        count: str = "binarize",
+        convergence_tol: float = 1e-5,
+        seed_match: str = "fixed",
+        case_insensitive: bool = False,
+        seed: int = 13,
+    ) -> None:
+        """num_topics is the number of binary latent topics. anchor_words is
+        {topic_name: [words]} — one anchored topic per group, in insertion order
+        (#groups <= num_topics); anchor_strength (default 1.0) is the membership
+        written for anchored (word, topic) pairs (higher pins harder).
+        count="binarize" (default) treats counts >1 as presence ("fraction" is not
+        yet implemented). convergence_tol is the total-correlation change signalling
+        convergence. seed_match ("fixed"/"glob"/"regex") and case_insensitive control
+        anchor-word matching exactly as in SeededLDA."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        *,
+        iters: int | None = None,
+        convergence_tol: Optional[float] = None,
+        num_threads: int | None = None,
+    ) -> "CorEx":
+        """Fit on a Corpus or a list of token lists. `iters` is the maximum number of
+        update iterations (default 200). convergence_tol overrides the constructor
+        value for this run; num_threads caps the worker pool (output is deterministic
+        regardless of worker count)."""
+        ...
+    def transform(
+        self, data: Corpus | Sequence[Sequence[str]]
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Label held-out documents: p(y_j=1 | doc) for each topic, shape
+        (n_docs, num_topics), using the fitted alpha/theta/priors."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_topics, vocab) = alpha*mis: mutual information weighted by membership.
+        NOT a probability distribution; rows do not sum to 1."""
+        ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_docs, num_topics) = p(y_j=1|doc): independent per-topic probabilities.
+        Rows do NOT sum to 1 (topics are not a mixture)."""
+        ...
+    @property
+    def mis(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Raw mutual-information matrix (num_topics, vocab), in bits."""
+        ...
+    @property
+    def alpha(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Word->topic soft membership (num_topics, vocab)."""
+        ...
+    @property
+    def labels(self) -> numpy.typing.NDArray[numpy.int64]:
+        """Binary topic labels per document (num_docs, num_topics), p(y|x) > 0.5."""
+        ...
+    @property
+    def clusters(self) -> list[int]:
+        """Word cluster = argmax topic of alpha, one per vocabulary word."""
+        ...
+    @property
+    def topic_tc(self) -> list[float]:
+        """Per-topic total correlation (nats)."""
+        ...
+    @property
+    def total_correlation(self) -> float:
+        """Total correlation explained (sum of per-topic TC), nats."""
+        ...
+    @property
+    def tc_history(self) -> list[float]:
+        """Sum total-correlation per iteration (nats); the convergence trace."""
+        ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """Per-iteration (iter, total_tc) pairs."""
+        ...
+    @property
+    def converged(self) -> bool:
+        """True only if the total-correlation early stop fired before the iter budget."""
+        ...
+    @property
+    def iters_run(self) -> int: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]:
+        """Top (word, alpha*mis) pairs per topic, ranked by membership-weighted MI."""
+        ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> CorEx: ...
+    def __repr__(self) -> str: ...
+
 class LSA:
     """LSA / LSI, latent semantic analysis (Deerwester et al. 1990; randomized
     truncated SVD per Halko et al. 2011). A truncated SVD of the weighted

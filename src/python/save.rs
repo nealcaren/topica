@@ -62,6 +62,7 @@ pub(crate) const MODEL_TAG_ONLINE_LDA: u8 = 44;
 pub(crate) const MODEL_TAG_S3: u8 = 45;
 pub(crate) const MODEL_TAG_FLDA: u8 = 46;
 pub(crate) const MODEL_TAG_GUIDED_NMF: u8 = 47;
+pub(crate) const MODEL_TAG_COREX: u8 = 48;
 
 pub(crate) fn model_tag_name(tag: u8) -> &'static str {
     match tag {
@@ -88,6 +89,7 @@ pub(crate) fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_HLDA => "HLDA",
         MODEL_TAG_NMF => "NMF",
         MODEL_TAG_GUIDED_NMF => "GuidedNMF",
+        MODEL_TAG_COREX => "CorEx",
         MODEL_TAG_LSA => "LSA",
         MODEL_TAG_COMBINEDTM => "CombinedTM",
         MODEL_TAG_ZEROSHOTTM => "ZeroShotTM",

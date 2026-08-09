@@ -49,6 +49,7 @@ Column meanings:
 | `AnchorLDA` | `python/topica/anchor.py` | — _(Python)_ | spectral anchor-word recovery (Python over Rust primitives) | default | `tests/test_anchor.py` |
 | `TensorLDA` | `src/tlda.rs` | `src/python/tlda.rs` | method-of-moments cumulants (linalg, spectral) | default | `parity/tlda_gold.py`, `parity/tlda_compare.py` |
 | `PolylingualLDA` | `src/pltm.rs` | `src/python/pltm.rs` | collapsed Gibbs (model.rs, sampler.rs) | default | `parity/pltm_compare.py` |
+| `CorEx` | `src/cor_ex.rs` | `src/python/cor_ex.rs` | total-correlation info-theoretic optimizer | default | `parity/corex_gold.py` |
 
 ### Covariates & structure
 

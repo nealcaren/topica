@@ -23,7 +23,8 @@ _NON_MODEL_CLASSES = {"Heldout", "HeldoutResult", "Corpus", "ModelInfo"}
 
 _BRINGS = {"text", "embeddings", "metadata", "seeds", "labels", "times", "llm", "dictionary", "links"}
 _INFERENCE = {"gibbs", "variational", "vae", "optimal-transport", "clustering",
-              "matrix-factorization", "svd", "ica", "prompting", "em", "neural-embedding"}
+              "matrix-factorization", "svd", "ica", "prompting", "em", "neural-embedding",
+              "information-theoretic"}
 _DETERMINISM = {"bit-exact", "seed-reproducible", "llm-bounded"}
 
 
