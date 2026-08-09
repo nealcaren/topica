@@ -39,6 +39,7 @@ pub mod etm_vae;
 pub mod factorial_lda;
 pub mod gemm;
 pub mod gsdmm;
+pub mod guided_nmf;
 pub mod hdp;
 pub mod hlda;
 pub mod idealpoint;

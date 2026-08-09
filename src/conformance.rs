@@ -248,6 +248,12 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::None_,
         exempt: &[],
     },
+    // GuidedNMF: seed-word-guided semi-supervised NMF (same factorization family).
+    RegistryEntry {
+        name: "GuidedNMF",
+        family: ModelFamily::None_,
+        exempt: &[],
+    },
     // LSA/LSI: doc_topic is signed coordinates (U Sigma), not a (D,K) simplex;
     // the SVD is a direct solve, so there is no fit_history trajectory.
     RegistryEntry {
@@ -340,11 +346,10 @@ mod registry_tests {
             }
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
-        // Estimator-backed Rust struct). Bumped to 30 when FactorialLDA (fLDA)
-        // was added.
+        // Estimator-backed Rust struct). Bumped to 31 when GuidedNMF was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            30,
+            31,
             "registry size drifted from the Python REGISTRY"
         );
     }

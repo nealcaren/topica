@@ -87,6 +87,25 @@ impl Mat {
     pub(crate) fn row(&self, r: usize) -> &[f64] {
         &self.data[r * self.cols..(r + 1) * self.cols]
     }
+    /// Build a dense matrix from row vectors (each of equal length). Used by
+    /// GuidedNMF's explicit-init path and to wrap a caller-supplied seed matrix.
+    pub(crate) fn from_rows(rows: &[Vec<f64>]) -> Self {
+        let nr = rows.len();
+        let nc = rows.first().map_or(0, |r| r.len());
+        let mut data = Vec::with_capacity(nr * nc);
+        for r in rows {
+            data.extend_from_slice(r);
+        }
+        Mat {
+            rows: nr,
+            cols: nc,
+            data,
+        }
+    }
+    /// Copy out the rows as owned vectors (raw-factor accessors).
+    pub(crate) fn rows_vec(&self) -> Vec<Vec<f64>> {
+        (0..self.rows).map(|r| self.row(r).to_vec()).collect()
+    }
 }
 
 // The three matmuls are rayon-parallelized over INDEPENDENT output rows: each
@@ -103,7 +122,7 @@ impl Mat {
 /// `brow`, which LLVM auto-vectorizes (FMA). Each `orow[j]` still accumulates over
 /// `k` in increasing order, so the per-cell summation order is identical to a
 /// naive ijk kernel and the result is bit-identical and thread-count-independent.
-fn matmul(a: &Mat, b: &Mat) -> Mat {
+pub(crate) fn matmul(a: &Mat, b: &Mat) -> Mat {
     debug_assert_eq!(a.cols, b.rows);
     let (m, k, n) = (a.rows, a.cols, b.cols);
     let mut out = Mat::zeros(m, n);
@@ -136,7 +155,7 @@ fn matmul(a: &Mat, b: &Mat) -> Mat {
 /// `A[i,p]` is a strided scalar load (broadcast), but the inner `j`-loop stays
 /// contiguous over `orow` and `brow` so it auto-vectorizes. `i`-order preserved,
 /// so the result is bit-identical and thread-count-independent.
-fn matmul_at(a: &Mat, b: &Mat) -> Mat {
+pub(crate) fn matmul_at(a: &Mat, b: &Mat) -> Mat {
     debug_assert_eq!(a.rows, b.rows);
     let (m, k, n) = (a.rows, a.cols, b.cols);
     let mut out = Mat::zeros(k, n);
@@ -163,7 +182,7 @@ fn matmul_at(a: &Mat, b: &Mat) -> Mat {
 /// Each cell `(i,j)` is a dot product over contiguous rows `A[i,:]` and `B[j,:]`,
 /// summed in increasing `k` into a local accumulator `s`, which lets LLVM emit
 /// FMA / vectorize. `k`-order preserved (bit-identical, thread-count-independent).
-fn matmul_bt(a: &Mat, b: &Mat) -> Mat {
+pub(crate) fn matmul_bt(a: &Mat, b: &Mat) -> Mat {
     debug_assert_eq!(a.cols, b.cols);
     let (m, k, n) = (a.rows, a.cols, b.rows);
     let mut out = Mat::zeros(m, n);
@@ -249,7 +268,7 @@ fn sp_xt_b(x: &SpMat, b: &Mat) -> Mat {
 /// `X . B^T` for sparse `X (m x cols)` and dense `B (n x cols)`, giving `(m x n)`.
 /// Parallel over independent output rows `i`; each cell `(i,j)` sums over the
 /// nonzeros of `X` row `i` in ascending-column order (fixed).
-fn sp_x_bt(x: &SpMat, b: &Mat) -> Mat {
+pub(crate) fn sp_x_bt(x: &SpMat, b: &Mat) -> Mat {
     debug_assert_eq!(x.cols, b.cols);
     let n = b.rows;
     let k = b.cols;
@@ -295,7 +314,7 @@ fn sp_x_b(x: &SpMat, b: &Mat) -> Mat {
 
 /// `A^T . X` for dense `A (m x r)` and sparse `X (m x cols)`, giving `(r x cols)`.
 /// Sequential over rows `i` ascending so each output cell's sum order is fixed.
-fn sp_at_x(a: &Mat, x: &SpMat) -> Mat {
+pub(crate) fn sp_at_x(a: &Mat, x: &SpMat) -> Mat {
     debug_assert_eq!(a.rows, x.rows);
     let r = a.cols;
     let mut out = Mat::zeros(r, x.cols);
@@ -524,7 +543,7 @@ pub(crate) fn randomized_svd_seeded(x: &SpMat, k: usize, seed: u64) -> (Mat, Vec
 /// the truncated SVD returns fewer than `k` triplets and the loops below index
 /// out of bounds. The `NMF` binding enforces this for `init="nndsvd"` (#448);
 /// direct Rust callers must respect it too.
-fn nndsvd_init(x: &SpMat, k: usize) -> (Mat, Mat) {
+pub(crate) fn nndsvd_init(x: &SpMat, k: usize) -> (Mat, Mat) {
     let (d, v) = (x.rows, x.cols);
     let (u, s, vt) = randomized_svd(x, k);
 
@@ -654,7 +673,7 @@ fn wh_cell(wrow: &[f64], h: &Mat, j: usize, k: usize) -> f64 {
 /// Frobenius reconstruction error `0.5 ||X - WH||_F^2` WITHOUT forming dense WH:
 /// `0.5(||X||_F^2 - 2 <X,WH>_nnz + tr((W^T W)(H H^T)))`. The cross term touches
 /// only nnz(X); the `tr` term is `O(d k + k^2 + k v)` via the small Gram matrices.
-fn frobenius_error(x: &SpMat, w: &Mat, h: &Mat) -> f64 {
+pub(crate) fn frobenius_error(x: &SpMat, w: &Mat, h: &Mat) -> f64 {
     let k = w.cols;
     let v = h.cols;
     // Cross term <X, WH> over nonzeros, parallel over independent rows i. We
@@ -851,7 +870,7 @@ impl NmfModel {
 }
 
 /// Normalize each row to sum 1; an all-zero row becomes uniform.
-fn normalize_rows(m: &Mat) -> Vec<Vec<f64>> {
+pub(crate) fn normalize_rows(m: &Mat) -> Vec<Vec<f64>> {
     (0..m.rows)
         .map(|r| {
             let row = m.row(r);

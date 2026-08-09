@@ -149,6 +149,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("SeededLDA", "guided", ("text", "seeds"), "gibbs", "seed-reproducible", (),
            "Seeded LDA: steer named topics toward supplied seed words.",
            "guides/guided.md"),
+        _m("GuidedNMF", "guided", ("text", "seeds"), "matrix-factorization", "seed-reproducible", (),
+           "Guided NMF: seed-word-guided semi-supervised NMF; the matrix-factorization analogue of SeededLDA.",
+           "guides/models.md#guidednmf"),
         _m("LabeledLDA", "guided", ("text", "labels"), "gibbs", "seed-reproducible", (),
            "Labeled LDA: each document label is a topic; tokens are restricted to its labels.",
            "guides/models.md#labeledlda"),
@@ -281,6 +284,7 @@ IMPL: dict[str, ImplInfo] = {
     "ProdLDA": _i("src/prodlda.rs", "src/python/neural.rs", "hand-coded batched VAE (prodlda.rs)", "", "parity/prodlda_gold.py, parity/prodlda_compare.py"),
     "HDP": _i("src/hdp.rs", "src/python/mod.rs", "collapsed Gibbs (model.rs, sampler.rs)", "", "parity/hdp_gold.py"),
     "NMF": _i("src/nmf.rs", "src/python/nmf_lsa.rs", "multiplicative-update matrix factorization", "", "parity/nmf_vs_sklearn.py"),
+    "GuidedNMF": _i("src/guided_nmf.rs", "src/python/guided_nmf.rs", "supervised multiplicative-update matrix factorization", "", "parity/guidednmf_gold.py"),
     "LSA": _i("src/lsa.rs", "src/python/nmf_lsa.rs", "truncated SVD (linalg)", "", "parity/lsa_vs_sklearn.py"),
     "AnchorLDA": _i("python/topica/anchor.py", "", "spectral anchor-word recovery (Python over Rust primitives)", "", "tests/test_anchor.py"),
     "TensorLDA": _i("src/tlda.rs", "src/python/tlda.rs", "method-of-moments cumulants (linalg, spectral)", "", "parity/tlda_gold.py, parity/tlda_compare.py"),
@@ -408,6 +412,15 @@ def effective_determinism(model, *, fit_settings: dict | None = None) -> dict:
             notes.append(
                 "init='random' draws both factors from the seeded RNG; bit-exact "
                 "only with init='nndsvd'"
+            )
+    elif cls == "GuidedNMF":
+        # Default init='random' is seed-reproducible; the deterministic inits
+        # ('nndsvd', caller-supplied 'none') are bit-exact.
+        if init in ("nndsvd", "none"):
+            effective = "bit-exact"
+            notes.append(
+                f"init='{init}' is deterministic (no RNG draws), so the fit is "
+                "bit-exact across runs"
             )
     elif cls in ("CTM", "STM", "STS"):
         if inference == "svi":
