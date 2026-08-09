@@ -229,6 +229,13 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::Dirichlet,
         exempt: &[],
     },
+    // Author-Topic: collapsed Gibbs; doc_topic is a per-document empirical topic
+    // simplex (like LDA), author_topic is the model-defining per-author theta.
+    RegistryEntry {
+        name: "AuthorTopic",
+        family: ModelFamily::Dirichlet,
+        exempt: &[],
+    },
     // Neural / embedding / nonparametric — no theta posterior.
     RegistryEntry {
         name: "ProdLDA",
@@ -354,10 +361,10 @@ mod registry_tests {
             }
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
-        // Estimator-backed Rust struct). Bumped to 32 when CorEx was added.
+        // Estimator-backed Rust struct). Bumped to 33 when AuthorTopic was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            32,
+            33,
             "registry size drifted from the Python REGISTRY"
         );
     }

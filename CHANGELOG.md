@@ -35,6 +35,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`AuthorTopic` — the Author-Topic Model** (Rosen-Zvi, Griffiths, Steyvers & Smyth,
+  UAI 2004). Conditions topics on authors rather than documents: each author has a
+  topic distribution, and a document mixes its authors (`fit(docs, authors)` where
+  `authors` is one author list per document). Collapsed Gibbs reusing topica's LDA
+  count machinery plus an author-topic table; exposes `author_topic` (the
+  model-defining per-author θ), `authors`, `top_authors(topic, n)`, and a
+  content-based empirical `doc_topic`. `alpha` defaults to the paper's `50/K`, `beta`
+  to `0.01`. Validated against gensim's `AuthorTopicModel` in
+  `parity/author_topic_gold.py` (topic-aligned cosine 0.99 / author-topic correlation
+  0.997, at gensim's own seed-to-seed floor). Closes #687.
+
 - **`CorEx` — information-theoretic Correlation Explanation topic model** (Gallagher,
   Reing, Kale & Ver Steeg, TACL 2017). A non-generative, non-factorization paradigm:
   it learns binary latent topics that maximize the total correlation they explain

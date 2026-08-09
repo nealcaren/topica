@@ -317,6 +317,15 @@ def _fit_labeledlda(iters=300):
     return m.doc_topic, m.topic_word, m.num_topics
 
 
+def _fit_author_topic(iters=300):
+    # One unique author per block, so each author owns one topic; doc_topic is the
+    # empirical per-document topic simplex (rows sum to 1), like LDA.
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    authors = [[f"a{d % K}"] for d in range(len(docs))]
+    m = topica.AuthorTopic(K, seed=1).fit(docs, authors=authors, iters=iters)
+    return m.doc_topic, m.topic_word, m.num_topics
+
+
 def _fit_disclda(iters=300):
     # Class label = the planted block; each class gets a class-specific topic plus a
     # shared block, so a healthy fit spreads mass across the class+shared topics.
@@ -656,6 +665,7 @@ FIT_ADAPTERS = {
     "KeyATM": _fit_keyatm,
     "SeededLDA": _fit_seededlda,
     "LabeledLDA": _fit_labeledlda,
+    "AuthorTopic": _fit_author_topic,
     "SupervisedLDA": _fit_supervisedlda,
     "DiscLDA": _fit_disclda,
     "RTM": _fit_rtm,

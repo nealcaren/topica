@@ -68,6 +68,7 @@ use crate::{
 mod arrays;
 mod error;
 // Model legs (one pyclass family per file; each does `use super::*`).
+mod author_topic;
 mod btm;
 mod cor_ex;
 mod disclda;
@@ -92,6 +93,7 @@ mod tbip;
 mod tlda;
 mod wordfish;
 use arrays::*;
+use author_topic::AuthorTopic;
 use btm::BTM;
 use cor_ex::CorEx;
 use disclda::DiscLDA;
@@ -15791,6 +15793,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NMF>()?;
     m.add_class::<GuidedNMF>()?;
     m.add_class::<CorEx>()?;
+    m.add_class::<AuthorTopic>()?;
     m.add_class::<LSA>()?;
     m.add_class::<CombinedTM>()?;
     m.add_class::<ZeroShotTM>()?;
