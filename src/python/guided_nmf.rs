@@ -127,8 +127,13 @@ impl GuidedNMF {
 
     /// Create an unfitted model. ``num_topics`` is K. ``seed_words`` is
     /// ``{group_name: [words]}`` — one guided topic per group (G groups, G <= K).
-    /// ``guidance`` (alias ``lam``) is the supervision weight lambda (the reference
-    /// default 20 is tuned for TF-IDF; scale it down for count weighting).
+    /// ``guidance`` (alias ``lam``) is the supervision weight lambda. topica
+    /// defaults to 3.0, lower than the reference's rarely-used 20: at 20 the guided
+    /// topics are pinned so tightly to their seed words that they carry near-zero
+    /// document prevalence (their `doc_topic` share collapses), while 3 keeps the
+    /// same on-theme top words with interpretable prevalence. Raise it toward 20 to
+    /// reproduce the reference / hold topics closer to the seeds; lower it for more
+    /// data-driven topics. With count weighting, scale it down further.
     /// ``seed_weight`` is the value written into the seed matrix at each matched
     /// seed word. ``init`` is ``"random"`` (default, seeded Uniform[0,1], matching
     /// the reference), ``"nndsvd"`` (deterministic SVD init for A,S — a topica
@@ -140,7 +145,7 @@ impl GuidedNMF {
     /// decrease. ``seed_match``/``case_insensitive`` control seed-word matching
     /// exactly as in :class:`SeededLDA`. ``seed`` affects only ``init="random"``.
     #[new]
-    #[pyo3(signature = (num_topics, seed_words, *, guidance=20.0, lam=None,
+    #[pyo3(signature = (num_topics, seed_words, *, guidance=3.0, lam=None,
                         seed_weight=1.0, init="random", weighting="tfidf",
                         convergence_tol=0.0, seed_match="fixed", case_insensitive=false,
                         init_a=None, init_s=None, init_b=None, seed=13))]
@@ -431,11 +436,17 @@ impl GuidedNMF {
     fn reconstruction_error(&self) -> PyResult<f64> {
         Ok(self.fitted_model()?.reconstruction_error)
     }
-    /// Per-iteration objective (||X-AS||_F^2 + lambda ||Y-BS||_F^2); initial first.
+    /// Per-iteration value of the FULL objective
+    /// ``||X - A S||_F^2 + guidance * ||Y - B S||_F^2`` (reconstruction plus the
+    /// guidance term), initial value (before any update) first.
     #[getter]
     fn error_history(&self) -> PyResult<Vec<f64>> {
         Ok(self.fitted_model()?.error_history.clone())
     }
+    /// True only if an early stop fired (relative objective decrease <
+    /// ``convergence_tol``). With the default ``convergence_tol=0.0`` there is no
+    /// early stop, so a completed fit reports ``False`` — it means "ran the full
+    /// iters budget", not a failure.
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         Ok(self.fitted_model()?.converged)
@@ -482,6 +493,10 @@ impl GuidedNMF {
         self.fitted_model()?;
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
+    /// Top ``n`` (word, weight) pairs per topic. With ``topic=None`` returns one
+    /// list per topic (a list of lists); with ``topic=k`` returns the single list
+    /// for topic k. Each item is a (word, weight) tuple — print with
+    /// ``[w for w, _ in m.top_words(...)]``.
     #[pyo3(signature = (n=10, *, topic=None))]
     fn top_words<'py>(
         &self,
@@ -499,6 +514,8 @@ impl GuidedNMF {
             topic,
         )
     }
+    /// UMass coherence per topic (length K, aligned to topic index) computed from
+    /// the top ``n`` words; higher (less negative) is more coherent.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word);

@@ -91,7 +91,7 @@ def test_explicit_init_matches_reference_math():
     B0 = rng.rand(2, 3)
     corpus = topica.Corpus.from_documents(docs, vocabulary=list(m0.vocabulary))
     m = topica.GuidedNMF(
-        3, SEEDS, weighting="count", init="none",
+        3, SEEDS, guidance=20.0, weighting="count", init="none",
         init_a=A0, init_s=S0, init_b=B0, convergence_tol=0.0,
     ).fit(corpus, iters=1)
     # Reference one-update in ssnmf's order (A, B, then S), eps = 1e-10.
@@ -205,6 +205,16 @@ def test_zero_topic_row_stays_zero():
     tw = np.asarray(m.topic_word)
     assert not np.isnan(tw).any()
     assert np.allclose(tw[1], 0.0)  # extinct topic stays zero, not 1/V
+
+
+def test_convergence_tol_does_not_stop_prematurely():
+    """A modest convergence_tol must not report `converged` after a handful of
+    under-converged iterations (sample-user finding: normalizing the relative
+    decrease by the initial objective tripped at ~iter 4). The relative decrease is
+    measured against the previous objective, like NMF."""
+    docs = _planted_docs(reps=10)
+    m = topica.GuidedNMF(3, SEEDS, weighting="count", convergence_tol=1e-5, seed=0).fit(docs, iters=100)
+    assert m.iters_run > 10, f"stopped too early at iter {m.iters_run}"
 
 
 def test_tfidf_default_runs():

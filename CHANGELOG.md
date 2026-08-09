@@ -41,6 +41,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   designated topics toward user-supplied seed-word groups. Reuses SeededLDA's seed
   matcher (`seed_match`, `case_insensitive`), reports scale-corrected `doc_topic` and
   `seed_topic_indices`, and exposes the raw factors (`factor_a`/`factor_s`/`factor_b`).
+  `guidance` (λ) defaults to 3.0, deliberately below the reference's rarely-used 20:
+  at 20 the guided topics are pinned so tightly to their seeds that they carry
+  near-zero document prevalence; 3.0 keeps the same on-theme words with interpretable
+  prevalence (raise it toward 20 to reproduce the reference).
   Validated against the `ssnmf` package (`parity/guidednmf_gold.py`): fed the same
   init, topica reproduces ssnmf's supervised-Frobenius update to floating-point noise
   (one-step max |Δ| ≈ 1e-15; 50-iteration aligned cosine 1.000).

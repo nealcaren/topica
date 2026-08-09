@@ -175,7 +175,6 @@ pub fn fit_guided_nmf<R: Rng>(
     let mut error_history = Vec::with_capacity(iters + 1);
     let mut prev = objective(&a, &s, &b);
     error_history.push(prev);
-    let initial = prev;
     let mut converged = false;
     let mut iters_run = 0usize;
 
@@ -215,9 +214,12 @@ pub fn fit_guided_nmf<R: Rng>(
         let err = objective(&a, &s, &b);
         error_history.push(err);
         // Opt-in early stop (ssnmf 0.0.2 has none: default tol = 0.0 runs the full
-        // budget). Relative decrease against the initial objective, as ssnmf's
-        // newer builds and topica's NMF do.
-        let rel = (prev - err).abs() / (initial.abs() + 1e-12);
+        // budget). Relative decrease against the PREVIOUS objective, matching
+        // topica's NMF. Normalizing by the initial objective instead trips almost
+        // immediately (the first update dwarfs later ones), so a modest tol like
+        // 1e-5 would report `converged` after a handful of under-converged
+        // iterations -- a reassuring flag on a bad fit (sample-user finding).
+        let rel = (prev - err).abs() / (prev.abs() + 1e-12);
         prev = err;
         if convergence_tol > 0.0 && rel < convergence_tol {
             converged = true;

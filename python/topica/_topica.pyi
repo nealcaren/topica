@@ -4780,7 +4780,7 @@ class GuidedNMF:
         num_topics: int,
         seed_words: dict[str, Sequence[str]],
         *,
-        guidance: float = 20.0,
+        guidance: float = 3.0,
         lam: float | None = None,
         seed_weight: float = 1.0,
         init: str = "random",
@@ -4795,8 +4795,10 @@ class GuidedNMF:
     ) -> None:
         """num_topics is K. seed_words is {group_name: [words]} (G groups, G <= K);
         one guided topic per group. guidance (alias lam) is the supervision weight
-        lambda (the reference default 20 is tuned for TF-IDF; scale it down for
-        count weighting). seed_weight is the value written into the seed matrix at
+        lambda; topica defaults to 3.0 (lower than the reference's rarely-used 20,
+        which pins guided topics so tightly they carry near-zero document
+        prevalence). Raise toward 20 to reproduce the reference; scale down further
+        for count weighting. seed_weight is the value written into the seed matrix at
         each matched seed word. init is "random" (default, seeded Uniform[0,1],
         matching the reference), "nndsvd" (deterministic SVD init for A,S -- a
         topica extension that ignores the seeds and may settle a different basin),
@@ -4851,14 +4853,27 @@ class GuidedNMF:
     @property
     def guidance(self) -> float: ...
     @property
-    def reconstruction_error(self) -> float: ...
+    def reconstruction_error(self) -> float:
+        """Final ``||X - A S||_F`` (the reconstruction part of the objective only,
+        not the guidance term)."""
+        ...
     @property
-    def error_history(self) -> list[float]: ...
+    def error_history(self) -> list[float]:
+        """Per-iteration value of the FULL objective
+        ``||X - A S||_F^2 + guidance * ||Y - B S||_F^2`` (reconstruction plus
+        guidance), with the initial value (before any update) first."""
+        ...
     @property
-    def converged(self) -> bool: ...
+    def converged(self) -> bool:
+        """True only if an early stop fired (relative objective decrease <
+        ``convergence_tol``). With the default ``convergence_tol=0.0`` there is no
+        early stop, so a completed fit reports ``False`` — this means "ran the full
+        iters budget", not a failure."""
+        ...
     @property
     def fit_history(self) -> list[tuple[int, float]]:
-        """Per-iteration objective trace: list of (iter, objective) pairs."""
+        """Per-iteration objective trace: list of (iter, objective) pairs; the first
+        entry (iter=1) is the initial objective before any update."""
         ...
     @property
     def iters_run(self) -> int: ...
@@ -4872,8 +4887,16 @@ class GuidedNMF:
     def doc_names(self) -> list[str]: ...
     def top_words(
         self, n: int = 10, *, topic: int | None = None
-    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
-    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]:
+        """Top ``n`` (word, weight) pairs. With ``topic=None`` returns one such list
+        per topic (a list of lists); with ``topic=k`` returns the single list for
+        topic k. Note each item is a (word, weight) tuple, so print with
+        ``[w for w, _ in m.top_words(...)]``."""
+        ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]:
+        """UMass coherence per topic (length K, aligned to topic index); higher (less
+        negative) is more coherent."""
+        ...
     def save(self, path: str) -> None: ...
     @staticmethod
     def load(path: str) -> GuidedNMF: ...

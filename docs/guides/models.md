@@ -920,11 +920,22 @@ where `B` (G x K) expresses each seed group as a non-negative combination of the
 
 ```python
 seeds = {"economy": ["tax", "market", "jobs"], "health": ["disease", "clinic", "patient"]}
-m = topica.GuidedNMF(num_topics=10, seed_words=seeds, guidance=20.0, seed=1)
+m = topica.GuidedNMF(num_topics=10, seed_words=seeds, seed=1)  # guidance defaults to 3.0
 m.fit(docs)
 m.seed_topic_indices     # which learned topic each seed group steered
-m.top_words(10, topic=m.seed_topic_indices[0])
+dict(zip(m.seed_group_names, m.seed_topic_indices))   # group name -> topic index
+[w for w, _ in m.top_words(10, topic=m.seed_topic_indices[0])]   # top_words gives (word, weight) pairs
 ```
+
+A caveat before you report document prevalence: `guidance` (λ) controls how tightly
+the guided topics adhere to their seed words. topica defaults to `guidance=3`, lower
+than the reference's rarely-used `20`, because at `20` the guided topics are so narrow
+they rarely dominate a document — their `doc_topic` share and `argmax` counts can be
+near zero even when the theme is clearly present (the topic-*word* content stays
+faithful either way). Raise `guidance` toward `20` to reproduce the reference; state
+the λ you used when reporting prevalence. `convergence_tol` defaults to `0.0` (run the
+full `iters` budget, as the reference does), so a normal fit ends with
+`converged=False` — the "ran the whole budget" state, not a failure.
 
 Seed groups are matched to the vocabulary with the same `seed_match` (`"fixed"`/`"glob"`/`"regex"`) and `case_insensitive` machinery as SeededLDA. The number of seed groups may not exceed `num_topics`. `init` defaults to `"random"` (seeded Uniform[0,1], matching the reference, so the guidance term shapes the topics from a blank slate); `"nndsvd"` is a deterministic SVD start, and `"none"` takes caller-supplied factors (`init_a`/`init_s`/`init_b`). `weighting` defaults to `"tfidf"`, the regime the reference `λ` is tuned for; on raw counts scale `λ` down, since the data term grows with the counts while the seed matrix does not. `convergence_tol` defaults to `0.0`, so a fit runs the full `iters` budget (the reference has no early stop); set it above zero to stop on the relative objective decrease. Because NMF is invariant to rescaling a topic's row of `S` against its columns of `A` and `B`, the reported `doc_topic` and `seed_topic_indices` are scale-corrected (weighted by `‖Sₖ‖₁`); the raw factors are available as `factor_a`, `factor_s`, and `factor_b`. The Rust core reuses NMF's BLAS-free rayon-parallel products, so fits are bit-identical regardless of thread count.
 
