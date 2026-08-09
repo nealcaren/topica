@@ -5085,17 +5085,27 @@ class AuthorTopic:
     @property
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
         """(num_docs, num_topics): the empirical proportions of each document's
-        sampled token->topic assignments (content-based, as in LDA). Rows sum to 1.
-        For the generative per-author mixtures see ``author_topic``."""
+        sampled token->topic assignments in the terminal Gibbs draw (content-based,
+        as in LDA -- NOT the prior average of the document's authors' distributions).
+        Rows sum to 1. For the per-author mixtures see ``author_topic``."""
         ...
     @property
     def author_topic(self) -> numpy.typing.NDArray[numpy.float64]:
         """(num_authors, num_topics): each author's topic distribution, the
-        model-defining output. Rows ordered by ``authors``; each row sums to 1."""
+        model-defining output. Rows ordered by ``authors``; each row sums to 1.
+        An author's row is only as reliable as ``author_doc_counts`` behind it: a
+        prolific author's row is pulled toward uniform by the alpha prior, a
+        one-document author's is near-deterministic and unstable across seeds."""
         ...
     @property
     def authors(self) -> list[str]:
         """The sorted author vocabulary indexing the rows of ``author_topic``."""
+        ...
+    @property
+    def author_doc_counts(self) -> numpy.typing.NDArray[numpy.int64]:
+        """(num_authors,) number of documents each author appears on, aligned to
+        ``authors``. Report these alongside ``author_topic`` -- an author's topic
+        profile is only as trustworthy as its document count."""
         ...
     @property
     def vocabulary(self) -> list[str]: ...
@@ -5107,10 +5117,16 @@ class AuthorTopic:
     def doc_names(self) -> list[str]: ...
     @property
     def fit_history(self) -> list[tuple[int, float]]:
-        """(iter, held-in log-likelihood) trace, a convergence diagnostic."""
+        """(iter, held-in log-likelihood) trace recorded every stride; a convergence
+        diagnostic, not an early-stop criterion. Collapsed Gibbs runs the full
+        ``iters`` budget, so ``converged`` is always False (there is no tolerance
+        test) -- watch this trace flatten to judge mixing."""
         ...
     @property
-    def converged(self) -> bool: ...
+    def converged(self) -> bool:
+        """Always False: collapsed Gibbs runs the full ``iters`` budget with no
+        early-stop tolerance. Inspect ``fit_history`` to judge convergence."""
+        ...
     def top_words(
         self, n: int = 10, *, topic: int | None = None
     ) -> list | list[list]:
@@ -5118,9 +5134,14 @@ class AuthorTopic:
         ...
     def top_authors(self, topic: int, n: int = 10) -> list[tuple[str, float]]:
         """Top (author, probability) pairs for a topic, ranked by author_topic[:,
-        topic]: the authors most associated with that topic."""
+        topic]. Note the ranking is dominated by low-document-count authors, whose
+        smoothed rows are peakier than a prolific author's; cross-check
+        ``author_doc_counts``."""
         ...
-    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-topic UMass coherence over the top ``n`` words, shape (num_topics,)
+        (not a scalar). Take ``.mean()`` for a single corpus-level number."""
+        ...
     def save(self, path: str) -> None: ...
     @staticmethod
     def load(path: str) -> AuthorTopic: ...

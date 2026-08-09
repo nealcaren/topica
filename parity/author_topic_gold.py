@@ -251,9 +251,20 @@ def compare():
         if a in ta_idx:
             theta_t[ai] = at[ta_idx[a]]
 
+    # Align topica topics to the gold by the TOPIC-WORD (phi) matrix, and reuse that
+    # SAME permutation for the author-topic (theta) correlation. The theta columns are
+    # the same topics as phi, so a second, independent alignment (as a generic
+    # doc_topic_correlation would do) could mask a phi/theta topic-labelling
+    # disagreement. Enforcing the shared permutation is the real contract.
     cos, perm = harness.align_cosine(phi_t, phi_g)
     theta_t_aligned = theta_t[:, perm]
-    theta_r = harness.doc_topic_correlation(theta_t_aligned, theta_g)
+    per_topic = []
+    for kk in range(K):
+        a, b = theta_t_aligned[:, kk], theta_g[:, kk]
+        if np.std(a) < 1e-12 or np.std(b) < 1e-12:
+            continue
+        per_topic.append(float(np.corrcoef(a, b)[0, 1]))
+    theta_r = float(np.mean(per_topic)) if per_topic else float("nan")
 
     # planted recovery: each author's dominant topica topic, grouped by planted topic.
     planted_topic = planted.argmax(axis=1)
@@ -267,10 +278,12 @@ def compare():
     distinct = len({next(iter(s)) for s in groups.values()}) == len(groups)
 
     print(f"[{NAME}] phi aligned cosine   = {cos:.3f}  (gensim floor {floor_cos:.3f})")
-    print(f"[{NAME}] theta corr (aligned) = {theta_r:.3f}  (gensim floor {floor_theta:.3f})")
+    print(f"[{NAME}] theta corr (phi-perm)= {theta_r:.3f}  (gensim floor {floor_theta:.3f})")
     print(f"[{NAME}] planted recovery: clean-groups={clean} distinct-topics={distinct}")
 
-    ok = cos >= floor_cos - 0.10 and clean and distinct
+    # Bars: phi within 0.05 of gensim's seed-to-seed cosine, author-topic correlation
+    # >= 0.90 under the SAME topic permutation, and exact planted recovery.
+    ok = cos >= floor_cos - 0.05 and theta_r >= 0.90 and clean and distinct
     print(f"[{NAME}] PARITY {'OK' if ok else 'CHECK'}")
 
 

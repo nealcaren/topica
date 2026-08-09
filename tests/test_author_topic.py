@@ -62,6 +62,19 @@ def test_determinism():
     assert np.array_equal(a.doc_topic, b.doc_topic)
 
 
+def test_author_doc_counts():
+    docs, authors = _planted()
+    m = topica.AuthorTopic(3, seed=0).fit(docs, authors, iters=50)
+    adc = np.asarray(m.author_doc_counts)
+    assert adc.shape == (3,)
+    # auth0 wrote 30 solo + 10 co-authored = 40; auth1 30 + 10 = 40; auth2 30.
+    counts = dict(zip(m.authors, adc.tolist()))
+    assert counts["auth0"] == 40
+    assert counts["auth1"] == 40
+    assert counts["auth2"] == 30
+    assert int(adc.sum()) == sum(len(set(a)) for a in authors)
+
+
 def test_top_authors():
     docs, authors = _planted()
     m = topica.AuthorTopic(3, seed=0).fit(docs, authors, iters=300)
@@ -125,6 +138,7 @@ def test_settings_and_save_load(tmp_path):
     L = topica.AuthorTopic.load(p)
     assert np.array_equal(L.topic_word, m.topic_word)
     assert np.array_equal(L.author_topic, m.author_topic)
+    assert np.array_equal(np.asarray(L.author_doc_counts), np.asarray(m.author_doc_counts))
     assert list(L.authors) == list(m.authors)
     assert L.settings == m.settings
 

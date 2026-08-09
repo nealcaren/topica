@@ -284,6 +284,13 @@ def load_dubois(*, return_path: bool = False):
     The corpus holds a few (3) exact-duplicate articles reprinted across issues;
     drop them with ``df.drop_duplicates("text")`` if a fit should not double-count
     them. Downloaded once and cached. Pass ``return_path=True`` for the CSV path.
+
+    Note on ``author`` for :class:`~topica.AuthorTopic`: this field is dominated by
+    Du Bois (about 675 of 704 articles) and contains delimited composites
+    (``"Du Bois; Gruening"``) and name/initial variants (``"Du Bois"`` vs
+    ``"Du Bois, W.E.B."``). Split composites (``[s.split("; ") for s in df.author]``)
+    and normalize variants before using it as an author-topic input, or a co-authored
+    article becomes a phantom author and one person splits across several rows.
     """
     return _load("dubois", return_path)
 

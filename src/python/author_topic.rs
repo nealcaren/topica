@@ -47,6 +47,7 @@ struct AuthorTopicState {
     topic_word: Option<Vec<Vec<f64>>>,
     doc_topic: Option<Vec<Vec<f64>>>,
     author_topic: Option<Vec<Vec<f64>>>,
+    author_doc_counts: Option<Vec<u32>>,
     fit_history: Option<Vec<(usize, f64)>>,
     converged: Option<bool>,
 }
@@ -236,10 +237,11 @@ impl AuthorTopic {
         Ok(vecs_to_arr2(&self.fitted_model()?.topic_word).to_pyarray_bound(py))
     }
 
-    /// Document-topic matrix θ_d (num_docs, num_topics): the empirical proportions
-    /// of each document's sampled token→topic assignments (content-based, as in
-    /// LDA). Each row sums to 1. This reflects the words a document actually
-    /// contains; for the generative per-author mixtures see :attr:`author_topic`.
+    /// Document-topic matrix θ_d (num_docs, num_topics): the empirical proportions of
+    /// each document's sampled token→topic assignments in the terminal Gibbs draw
+    /// (content-based, as in LDA — NOT the prior average of the document's authors'
+    /// distributions). Each row sums to 1. This reflects the words a document actually
+    /// contains; for the per-author mixtures see :attr:`author_topic`.
     #[getter]
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(&self.fitted_model()?.doc_topic).to_pyarray_bound(py))
@@ -258,6 +260,22 @@ impl AuthorTopic {
     fn authors(&self) -> PyResult<Vec<String>> {
         self.fitted_model()?;
         Ok(self.author_names.clone())
+    }
+
+    /// Number of documents each author appears on (length num_authors), aligned to
+    /// :attr:`authors`. Report these alongside `author_topic`: an author's row is
+    /// only as reliable as the documents behind it — a prolific author's row is
+    /// pulled toward uniform by the alpha prior, while a one-document author's row is
+    /// near-deterministic in that single document and unstable across seeds.
+    #[getter]
+    fn author_doc_counts<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<i64>>> {
+        let c: Vec<i64> = self
+            .fitted_model()?
+            .author_doc_counts
+            .iter()
+            .map(|&x| x as i64)
+            .collect();
+        Ok(Array1::from(c).to_pyarray_bound(py))
     }
 
     #[getter]
@@ -372,6 +390,7 @@ impl AuthorTopic {
                 topic_word: Some(m.topic_word.clone()),
                 doc_topic: Some(m.doc_topic.clone()),
                 author_topic: Some(m.author_topic.clone()),
+                author_doc_counts: Some(m.author_doc_counts.clone()),
                 fit_history: Some(m.fit_history.clone()),
                 converged: Some(m.converged),
             },
@@ -392,6 +411,7 @@ impl AuthorTopic {
                 topic_word: s.topic_word.unwrap_or_default(),
                 doc_topic: s.doc_topic.unwrap_or_default(),
                 author_topic: s.author_topic.unwrap_or_default(),
+                author_doc_counts: s.author_doc_counts.unwrap_or_default(),
                 fit_history: s.fit_history.unwrap_or_default(),
                 converged: s.converged.unwrap_or(false),
             })

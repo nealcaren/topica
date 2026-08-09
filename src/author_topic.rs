@@ -41,13 +41,19 @@ pub struct AuthorTopicModel {
     pub beta: f64,
     /// Topic-word point estimate φ (K×V).
     pub topic_word: Vec<Vec<f64>>,
-    /// Document-topic point estimate θ_d (D×K): the *empirical posterior*, i.e. the
-    /// proportions of each document's sampled token→topic assignments (content
-    /// based, exactly as LDA reports it). Each row sums to 1.
+    /// Document-topic point estimate θ_d (D×K): the empirical proportions of each
+    /// document's sampled token→topic assignments in the terminal Gibbs draw
+    /// (content-based, exactly as LDA reports it — not the prior average of the
+    /// document's authors' θ rows). Each row sums to 1.
     pub doc_topic: Vec<Vec<f64>>,
     /// Author-topic point estimate θ_a (A×K): (C^{AT}_{a,t} + α_t)/(n_{a·} + Σα).
     /// The model-defining output. Each row sums to 1.
     pub author_topic: Vec<Vec<f64>>,
+    /// Number of documents each author appears on (length A), aligned to the author
+    /// index. An author's θ_a row is only as reliable as this count: a prolific
+    /// author's row is pulled toward uniform by the α prior, while a one-document
+    /// author's row is near-deterministic in that document and unstable across seeds.
+    pub author_doc_counts: Vec<u32>,
     /// Held-in log-likelihood trace `(iter, ll)` recorded every stride — a
     /// convergence diagnostic, not an early-stop criterion.
     pub fit_history: Vec<(usize, f64)>,
@@ -97,6 +103,13 @@ pub fn fit<R: Rng>(
     // Author-topic side (author-major, indexed [a][t]).
     let mut author_topic_counts = vec![vec![0u32; k]; num_authors];
     let mut author_totals = vec![0u32; num_authors];
+    // Documents per author (each doc contributes 1 to each of its distinct authors).
+    let mut author_doc_counts = vec![0u32; num_authors];
+    for authors in doc_authors {
+        for &a in authors {
+            author_doc_counts[a as usize] += 1;
+        }
+    }
     // Per-token author assignment, parallel to wt.doc_topics.
     let mut token_authors: Vec<Vec<u32>> = docs.iter().map(|d| vec![0u32; d.len()]).collect();
 
@@ -232,6 +245,7 @@ pub fn fit<R: Rng>(
         topic_word,
         doc_topic,
         author_topic,
+        author_doc_counts,
         fit_history,
         converged: false,
     }
