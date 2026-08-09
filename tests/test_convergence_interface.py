@@ -28,7 +28,7 @@ _TOY    = [list(_ANIMAL) for _ in range(15)] + [list(_SPACE) for _ in range(15)]
 # "x"/"y"; a keyATM keyword topic whose seeds are all out-of-vocabulary now raises
 # (#418), so those two models fit on a corpus that contains x/y. Scoped to the seed
 # models so the shared _TOY (and every other model's behavior) is untouched.
-_SEED_MODELS = {"KeyATM", "SeededLDA"}
+_SEED_MODELS = {"KeyATM", "SeededLDA", "GuidedNMF"}
 _TOY_SEEDED = _TOY + [["x", "y", "cat", "planet"] for _ in range(10)]
 
 # Cluster models: fit_history == [] and converged is None by design (not a gap).

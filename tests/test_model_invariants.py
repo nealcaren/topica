@@ -287,6 +287,14 @@ def _fit_seededlda(iters=400):
     return m.doc_topic, m.topic_word, m.num_topics
 
 
+def _fit_guided_nmf(iters=100):
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    seeds = _block_keywords(vocab, k=K)
+    m = topica.GuidedNMF(K, seeds, guidance=20.0, weighting="count", seed=1)
+    m.fit(docs, iters=iters)
+    return m.doc_topic, m.topic_word, m.num_topics
+
+
 def _fit_labeledlda(iters=300):
     docs, vocab = _planted_blocks(k=K, seed=0)
     labels = [[f"t{int(doc[0].split('w')[0][1:])}"] for doc in docs]
@@ -619,6 +627,7 @@ FIT_ADAPTERS = {
     "ProdLDA": _fit_prodlda,
     "HDP": _fit_hdp,
     "NMF": _fit_nmf,
+    "GuidedNMF": _fit_guided_nmf,
     "LSA": _fit_lsa,
     "AnchorLDA": _fit_anchorlda,
     "TensorLDA": _fit_tensorlda,

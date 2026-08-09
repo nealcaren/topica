@@ -1,0 +1,34 @@
+{
+  "corpus": "planted 80-doc / 4-topic corpus (seed 271)",
+  "date": "2026-08-08",
+  "eps": 1e-10,
+  "iters": 50,
+  "lam": 20.0,
+  "margin": 0.15,
+  "model": "GuidedNMF (jvendrow/GuidedNMF on ssnmf==0.0.2, model 2 Frobenius)",
+  "num_docs": 80,
+  "num_seeded": 3,
+  "num_topics": 4,
+  "pass_bar": "explicit-init topica S ~= ssnmf S (max|\u0394| small) AND default-init topica topic-word cosine >= ssnmf_self - margin",
+  "reference": "ssnmf 0.0.2",
+  "seed_weight": 1.0,
+  "seeds": {
+    "alpha": [
+      "t0_w0",
+      "t0_w1",
+      "t0_w2"
+    ],
+    "beta": [
+      "t1_w0",
+      "t1_w1",
+      "t1_w2"
+    ],
+    "gamma": [
+      "t2_w0",
+      "t2_w1",
+      "t2_w2"
+    ]
+  },
+  "ssnmf_self_topic_cosine": 0.9999999978981975,
+  "vocab_size": 32
+}

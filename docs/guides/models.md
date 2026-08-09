@@ -82,6 +82,7 @@ The right first choice when your design calls for one: short text, change over t
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
 | `SeededLDA` | text, seeds | gibbs | seed-reproducible | Seeded LDA: steer named topics toward supplied seed words. |
+| `GuidedNMF` | text, seeds | matrix-factorization | seed-reproducible | Guided NMF: seed-word-guided semi-supervised NMF; the matrix-factorization analogue of SeededLDA. |
 | `LabeledLDA` | text, labels | gibbs | seed-reproducible | Labeled LDA: each document label is a topic; tokens are restricted to its labels. |
 | `SupervisedLDA` | text, labels | variational | seed-reproducible | Supervised LDA: topics shaped to predict a per-document real-valued response. |
 | `DiscLDA` | text, labels | gibbs | seed-reproducible | Discriminative LDA (Lacoste-Julien et al. 2008): topics split into per-class and shared blocks; reads how classes talk differently. |
@@ -908,6 +909,26 @@ m.top_words(10)
 `beta_loss` selects the divergence: `"frobenius"` (default, the squared error `½‖X − WH‖²`) or `"kullback-leibler"` (the generalized-KL loss, equivalent to pLSA on counts). `init` selects the start: `"nndsvd"` (default, a deterministic NNDSVDa initialization seeded by a from-scratch randomized truncated SVD) or `"random"` (seeded). `weighting` builds `X` from raw counts (default) or topica's own TF-IDF. The Rust core is BLAS-free: the dense products are rayon-parallel and the document-term products exploit `X`'s sparsity, so fits are bit-identical regardless of thread count.
 
 Validated against `sklearn.decomposition.NMF` in `parity/nmf_vs_sklearn.py`. On a planted-block corpus topica matches sklearn to aligned topic-word cosine 1.000 for both divergences. On the political-blog corpus (poliblog5k, 5,000 documents) topica reproduces sklearn's topics at K=10 (aligned cosine 0.999, both divergences); at larger K, where the NMF objective is multimodal, topica reaches an equal-quality alternate optimum (reconstruction loss within about 0.1% of sklearn, sometimes lower) rather than sklearn's exact factorization, as expected for a non-convex problem whose solutions are not unique. On speed, the KL path runs several times faster than sklearn at scale, and the Frobenius path is competitive on the sparse document-term matrices typical of text, with the gap to BLAS-backed sklearn appearing only on near-dense inputs.
+
+## GuidedNMF
+
+Guided NMF ([Vendrow, Haddock, Rebrova & Needell 2021](https://arxiv.org/abs/2010.11365)) is the seed-word-guided cousin of NMF, and the matrix-factorization analogue of [SeededLDA](guided.md). When a corpus is biased toward a dominant theme, plain NMF often spends several components on it and returns redundant or off-theme topics. GuidedNMF lets you name a few seed words for each theme you expect and steers designated topics toward them. We factor the same non-negative document-term matrix `X ≈ A S` (`A` document-topic, `S` topic-word), but add a supervision term that ties the topics to a seed matrix `Y` (one row per seed group, marking that group's words):
+
+$$\min_{A,S,B \ge 0}\; \lVert X - A S\rVert_F^2 \;+\; \lambda\,\lVert Y - B S\rVert_F^2,$$
+
+where `B` (G x K) expresses each seed group as a non-negative combination of the learned topics. The guidance weight `λ` (`guidance=`, alias `lam=`) trades reconstruction against adherence to the seeds.
+
+```python
+seeds = {"economy": ["tax", "market", "jobs"], "health": ["disease", "clinic", "patient"]}
+m = topica.GuidedNMF(num_topics=10, seed_words=seeds, guidance=20.0, seed=1)
+m.fit(docs)
+m.seed_topic_indices     # which learned topic each seed group steered
+m.top_words(10, topic=m.seed_topic_indices[0])
+```
+
+Seed groups are matched to the vocabulary with the same `seed_match` (`"fixed"`/`"glob"`/`"regex"`) and `case_insensitive` machinery as SeededLDA. The number of seed groups may not exceed `num_topics`. `init` defaults to `"random"` (seeded Uniform[0,1], matching the reference, so the guidance term shapes the topics from a blank slate); `"nndsvd"` is a deterministic SVD start, and `"none"` takes caller-supplied factors (`init_a`/`init_s`/`init_b`). `weighting` defaults to `"tfidf"`, the regime the reference `λ` is tuned for; on raw counts scale `λ` down, since the data term grows with the counts while the seed matrix does not. `convergence_tol` defaults to `0.0`, so a fit runs the full `iters` budget (the reference has no early stop); set it above zero to stop on the relative objective decrease. Because NMF is invariant to rescaling a topic's row of `S` against its columns of `A` and `B`, the reported `doc_topic` and `seed_topic_indices` are scale-corrected (weighted by `‖Sₖ‖₁`); the raw factors are available as `factor_a`, `factor_s`, and `factor_b`. The Rust core reuses NMF's BLAS-free rayon-parallel products, so fits are bit-identical regardless of thread count.
+
+Validated against the `ssnmf` package (the engine the reference repository uses, pinned `ssnmf==0.0.2`, supervised Frobenius mode) in `parity/guidednmf_gold.py`. Fed the same document-term matrix and the same initial factors, topica reproduces ssnmf's multiplicative update to floating-point noise: after one update the raw factors agree to a maximum absolute difference of about 1e-15, and after the full 50-iteration run the aligned topic-word cosine is 1.000. On a planted corpus with a known seed structure, each seed group steers the topic that carries its planted block. Guidance is a semi-supervised extension of NMF, so this is faithful reproduction of the reference decomposition, not a probabilistic-recovery claim.
 
 ## LSA
 

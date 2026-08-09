@@ -248,6 +248,12 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::None_,
         exempt: &[],
     },
+    // GuidedNMF: seed-word-guided semi-supervised NMF (same factorization family).
+    RegistryEntry {
+        name: "GuidedNMF",
+        family: ModelFamily::None_,
+        exempt: &[],
+    },
     // LSA/LSI: doc_topic is signed coordinates (U Sigma), not a (D,K) simplex;
     // the SVD is a direct solve, so there is no fit_history trajectory.
     RegistryEntry {

@@ -35,6 +35,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`GuidedNMF` — seed-word-guided semi-supervised NMF** (Vendrow, Haddock, Rebrova &
+  Needell, ICASSP 2021). The matrix-factorization analogue of `SeededLDA`: it factors
+  the document-term matrix `X ≈ A S` while a supervision term `λ‖Y − B S‖²` steers
+  designated topics toward user-supplied seed-word groups. Reuses SeededLDA's seed
+  matcher (`seed_match`, `case_insensitive`), reports scale-corrected `doc_topic` and
+  `seed_topic_indices`, and exposes the raw factors (`factor_a`/`factor_s`/`factor_b`).
+  Validated against the `ssnmf` package (`parity/guidednmf_gold.py`): fed the same
+  init, topica reproduces ssnmf's supervised-Frobenius update to floating-point noise
+  (one-step max |Δ| ≈ 1e-15; 50-iteration aligned cosine 1.000).
 - **`topica.llm.human_agreement` — validate an LLM metric against human ratings**
   (#583). The Spearman (default; also Pearson / Kendall) rank correlation between a
   per-item LLM metric (e.g. the `llm.coherence` array) and a matching vector of human

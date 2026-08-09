@@ -28,6 +28,7 @@ topica.enable_experimental()
 _DATA_ARGS: dict[str, set[str]] = {
     "KeyATM": {"keywords"},
     "SeededLDA": {"seed_words"},
+    "GuidedNMF": {"seed_words", "lam", "init_a", "init_s", "init_b"},
     "Scholar": {"covariates", "content"},
     "EmbeddingLDA": {"embeddings", "vocabulary"},
     "TopicGPT": {"backend"},
@@ -65,6 +66,7 @@ _FACTORIES: dict[str, object] = {
     "FASTopic": lambda: topica.FASTopic(2),
     "InfoCTM": lambda: topica.InfoCTM(2),
     "NMF": lambda: topica.NMF(2),
+    "GuidedNMF": lambda: topica.GuidedNMF(2, {"a": ["x"], "b": ["y"]}),
     "LSA": lambda: topica.LSA(2),
     "BERTopic": lambda: topica.BERTopic(min_cluster_size=5),
     "Top2Vec": lambda: topica.Top2Vec(),

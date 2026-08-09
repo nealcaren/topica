@@ -4753,6 +4753,132 @@ class NMF:
     def load(path: str) -> NMF: ...
     def __repr__(self) -> str: ...
 
+class GuidedNMF:
+    """GuidedNMF, seed-word-guided semi-supervised NMF (Vendrow, Haddock, Rebrova &
+    Needell, ICASSP 2021). Factors the non-negative document-term matrix X (D x V)
+    as X ~ A S (A document-topic, S topic-word) while a supervision term
+    guidance * ||Y - B S||_F^2 steers designated topics toward user-supplied
+    seed-word groups (Y is the seed matrix, one row per group; B is a nonnegative
+    mixing matrix). It is the NMF analogue of SeededLDA. The reference is the ssnmf
+    package (MIT) in supervised Frobenius mode. topic_word is each row of S
+    normalized to sum 1; doc_topic is the scale-corrected A (theta_dk proportional
+    to A_dk * ||S_k||_1) normalized to sum 1."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict, keyword-named
+        to match ``__init__`` (issue #400). ``seed_words`` is guidance data, not a
+        hyperparameter, so it is not reported."""
+        ...
+
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
+    def __init__(
+        self,
+        num_topics: int,
+        seed_words: dict[str, Sequence[str]],
+        *,
+        guidance: float = 20.0,
+        lam: float | None = None,
+        seed_weight: float = 1.0,
+        init: str = "random",
+        weighting: str = "tfidf",
+        convergence_tol: float = 0.0,
+        seed_match: str = "fixed",
+        case_insensitive: bool = False,
+        init_a: numpy.typing.NDArray[numpy.float64] | None = None,
+        init_s: numpy.typing.NDArray[numpy.float64] | None = None,
+        init_b: numpy.typing.NDArray[numpy.float64] | None = None,
+        seed: int = 13,
+    ) -> None:
+        """num_topics is K. seed_words is {group_name: [words]} (G groups, G <= K);
+        one guided topic per group. guidance (alias lam) is the supervision weight
+        lambda (the reference default 20 is tuned for TF-IDF; scale it down for
+        count weighting). seed_weight is the value written into the seed matrix at
+        each matched seed word. init is "random" (default, seeded Uniform[0,1],
+        matching the reference), "nndsvd" (deterministic SVD init for A,S -- a
+        topica extension that ignores the seeds and may settle a different basin),
+        or "none" (supply init_a/init_s/init_b, shapes (D,K)/(K,V)/(G,K), all
+        nonnegative). weighting is "tfidf" (default, the reference regime) or
+        "count". convergence_tol defaults to 0.0 (no early stop, matching the
+        reference's fixed budget); set it > 0 to stop on the relative objective
+        decrease. seed_match ("fixed"/"glob"/"regex") and case_insensitive control
+        seed-word matching exactly as in SeededLDA. seed affects only
+        init="random"."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        *,
+        iters: int | None = None,
+        convergence_tol: Optional[float] = None,
+        num_threads: int | None = None,
+    ) -> "GuidedNMF":
+        """Fit on a Corpus or a list of token lists. `iters` is the number of
+        multiplicative-update iterations (default 50, the reference budget).
+        convergence_tol overrides the constructor value for this run; num_threads
+        caps the worker pool (output is deterministic regardless of worker count)."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def factor_a(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Raw factor A (num_docs, num_topics), before scale correction."""
+        ...
+    @property
+    def factor_s(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Raw factor S (num_topics, vocab), before row normalization."""
+        ...
+    @property
+    def factor_b(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Raw mixing factor B (num_groups, num_topics)."""
+        ...
+    @property
+    def seed_topic_indices(self) -> list[int]:
+        """For each seed group (in constructor order), the learned topic it most
+        steers: argmax_k B_gk ||S_k||_1."""
+        ...
+    @property
+    def seed_group_names(self) -> list[str]:
+        """The seed-group names, ordered to index seed_topic_indices."""
+        ...
+    @property
+    def guidance(self) -> float: ...
+    @property
+    def reconstruction_error(self) -> float: ...
+    @property
+    def error_history(self) -> list[float]: ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """Per-iteration objective trace: list of (iter, objective) pairs."""
+        ...
+    @property
+    def iters_run(self) -> int: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> GuidedNMF: ...
+    def __repr__(self) -> str: ...
+
 class LSA:
     """LSA / LSI, latent semantic analysis (Deerwester et al. 1990; randomized
     truncated SVD per Halko et al. 2011). A truncated SVD of the weighted
