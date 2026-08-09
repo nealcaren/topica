@@ -69,6 +69,7 @@ mod arrays;
 mod error;
 // Model legs (one pyclass family per file; each does `use super::*`).
 mod btm;
+mod cor_ex;
 mod disclda;
 mod embedding_cluster;
 mod factorial_lda;
@@ -92,6 +93,7 @@ mod tlda;
 mod wordfish;
 use arrays::*;
 use btm::BTM;
+use cor_ex::CorEx;
 use disclda::DiscLDA;
 use embedding_cluster::{BERTopic, Top2Vec};
 use error::*;
@@ -15788,6 +15790,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<HLDA>()?;
     m.add_class::<NMF>()?;
     m.add_class::<GuidedNMF>()?;
+    m.add_class::<CorEx>()?;
     m.add_class::<LSA>()?;
     m.add_class::<CombinedTM>()?;
     m.add_class::<ZeroShotTM>()?;

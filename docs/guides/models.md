@@ -64,6 +64,7 @@ The right first choice when your design calls for one: short text, change over t
 | `LSA` | text | svd | seed-reproducible | Latent semantic analysis: a truncated SVD of the weighted document-term matrix. |
 | `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `PolylingualLDA` | text | gibbs | seed-reproducible | Polylingual topic model (Mimno et al. 2009): aligned topics across languages from document tuples that share one topic distribution. |
+| `CorEx` | text | information-theoretic | seed-reproducible | Correlation Explanation: information-theoretic topic model that maximizes total correlation; supports anchor words. |
 
 #### Covariates & structure
 
@@ -957,6 +958,24 @@ LSA is not a probabilistic topic model, and its outputs reflect that. `topic_wor
 The SVD is unique only up to a per-component sign, so we fix the sign with the `svd_flip` convention scikit-learn uses: for each component we flip the `(u, v)` pair together so the largest-magnitude entry of the right singular vector is positive. That makes the fit deterministic and directly comparable to the reference. `weighting` builds `X` from topica's own TF-IDF (default, classic LSI) or from raw counts. The Rust core reuses NMF's BLAS-free randomized truncated SVD (rayon-parallel dense products, sparse document-term products), so fits are bit-identical regardless of thread count. The SVD is a direct solve, so there is no `iters` argument, `fit_history` is empty, and `converged` is `None`.
 
 We validate against `sklearn.decomposition.TruncatedSVD` (`algorithm='randomized'`) in `parity/lsa_vs_sklearn.py`. On the same document-term matrix, after applying `svd_flip` on both sides, topica reproduces sklearn's solution exactly: per-component right-singular-vector cosine 1.000000, singular values agreeing to a maximum relative error of 1.5e-9, and document-coordinate correlation 1.000000. Because the truncated SVD is well-posed (a unique solution up to sign when the singular values are distinct), this is a match-the-solution result, not agreement within a noise band.
+
+## CorEx
+
+CorEx ([Correlation Explanation; Gallagher, Reing, Kale & Ver Steeg 2017](https://arxiv.org/abs/1611.10277); Ver Steeg & Galstyan [2014](https://arxiv.org/abs/1406.1222)/[2015](https://arxiv.org/abs/1410.7404)) is the odd one out in topica: it is neither generative nor a factorization. It learns `num_topics` **binary** latent topics that maximize the **total correlation** (the multivariate mutual information) they explain about the words. Each topic is on or off per document, and in tree mode the words are softly partitioned so each word informs one topic. It is fast, deterministic, and — through **anchor words** — semi-supervisable with minimal domain knowledge, which is why it is a staple in computational social science.
+
+```python
+m = topica.CorEx(num_topics=10, seed=1).fit(docs)
+m.total_correlation        # bits/nats of dependence the topics explain
+m.top_words(10, topic=0)   # words ranked by membership-weighted mutual information
+# anchored (semi-supervised):
+anchors = {"economy": ["tax", "market", "jobs"], "health": ["clinic", "patient"]}
+ma = topica.CorEx(10, anchor_words=anchors, anchor_strength=2.0, seed=1).fit(docs)
+ma.clusters                # each vocabulary word's topic; anchored words land in theirs
+```
+
+Its outputs reflect the different paradigm and should be read with that in mind. `topic_word` (K x V) is `alpha * mis`: the mutual information between each word and topic, weighted by the word's soft membership. It is non-negative but **not a probability distribution** (rows do not sum to 1); `top_words` ranks by it, and the raw `mis` and membership `alpha` are exposed separately. `doc_topic` (D x K) is `p(y_j = 1 | doc)`, the probability each topic is *on* for a document; because topics are independent binary factors rather than a mixture, **its rows do not sum to 1** (a document can turn on several topics or none). `labels` is the hard `p > 0.5` version, `clusters` is each word's argmax topic, and `topic_tc` / `total_correlation` report the correlation explained per topic and overall. `transform` labels held-out documents. Anchor words are matched to the vocabulary with the same `seed_match`/`case_insensitive` machinery as [SeededLDA](guided.md), and the number of anchor groups may not exceed `num_topics`. `count` is `"binarize"` (presence/absence; `"fraction"` is not yet implemented). The Rust core reuses NMF's BLAS-free sparse products, so fits are bit-identical regardless of thread count.
+
+Validated against the `corextopic` package (the reference implementation, Apache-2.0) in `parity/corex_gold.py`. On a planted binary corpus with a known block structure, topica reproduces corextopic to the reference's own seed-to-seed floor: aligned topic-word mutual-information cosine 1.000, total correlation matching to three decimals (5.272 vs 5.272), and identical word clusters; the anchored fit places each anchor group's words in their assigned topic. Because CorEx is non-convex and its topics are not identified up to a fixed labelling, this is topic-aligned agreement plus objective (total-correlation) parity, not a bit-for-bit reproduction of the reference's specific factors.
 
 ## SemanticSignalSeparation
 

@@ -30,6 +30,7 @@ pub mod btm;
 pub mod cli; // argument helpers for the CLI binaries (not part of the public API)
 pub mod coherence;
 pub mod conformance;
+pub mod cor_ex;
 pub mod detm;
 pub mod disclda;
 pub mod dmr;

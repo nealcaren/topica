@@ -287,6 +287,20 @@ def _fit_seededlda(iters=400):
     return m.doc_topic, m.topic_word, m.num_topics
 
 
+def _fit_corex(iters=200):
+    # CorEx doc_topic is independent per-topic probabilities (rows do not sum to 1);
+    # topic_word is alpha*mis (nonneg, not a distribution). Row-normalize both for
+    # the health check so a topic collapse would still show as mass piling on one
+    # component.
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    m = topica.CorEx(K, seed=1).fit(docs, iters=iters)
+    dt = np.asarray(m.doc_topic)
+    dt = dt / dt.sum(axis=1, keepdims=True).clip(1e-12)
+    tw = np.asarray(m.topic_word)
+    tw = tw / tw.sum(axis=1, keepdims=True).clip(1e-12)
+    return dt, tw, K
+
+
 def _fit_guided_nmf(iters=100):
     docs, vocab = _planted_blocks(k=K, seed=0)
     seeds = _block_keywords(vocab, k=K)
@@ -628,6 +642,7 @@ FIT_ADAPTERS = {
     "HDP": _fit_hdp,
     "NMF": _fit_nmf,
     "GuidedNMF": _fit_guided_nmf,
+    "CorEx": _fit_corex,
     "LSA": _fit_lsa,
     "AnchorLDA": _fit_anchorlda,
     "TensorLDA": _fit_tensorlda,

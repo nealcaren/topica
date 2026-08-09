@@ -261,6 +261,14 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::None_,
         exempt: &["fit_history"],
     },
+    // CorEx: information-theoretic. doc_topic is per-topic Bernoulli probabilities
+    // (rows do NOT sum to 1); topic_word is alpha*mis (nonneg, not a distribution).
+    // ModelFamily::None_ already skips the simplex check, so no exemptions needed.
+    RegistryEntry {
+        name: "CorEx",
+        family: ModelFamily::None_,
+        exempt: &[],
+    },
     RegistryEntry {
         name: "ETM",
         family: ModelFamily::None_,
@@ -346,10 +354,10 @@ mod registry_tests {
             }
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
-        // Estimator-backed Rust struct). Bumped to 31 when GuidedNMF was added.
+        // Estimator-backed Rust struct). Bumped to 32 when CorEx was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            31,
+            32,
             "registry size drifted from the Python REGISTRY"
         );
     }

@@ -246,7 +246,7 @@ impl SpMat {
 /// the loop: scatter each nonzero into the corresponding output row. To keep
 /// output rows independent (and the per-cell sum order fixed) we accumulate into
 /// a per-output-row layout sequentially over rows `i` ascending.
-fn sp_xt_b(x: &SpMat, b: &Mat) -> Mat {
+pub(crate) fn sp_xt_b(x: &SpMat, b: &Mat) -> Mat {
     debug_assert_eq!(x.rows, b.rows);
     let n = b.cols;
     let mut out = Mat::zeros(x.cols, n);
@@ -293,7 +293,7 @@ pub(crate) fn sp_x_bt(x: &SpMat, b: &Mat) -> Mat {
 /// `X . B` for sparse `X (m x cols)` and dense `B (cols x n)`, giving `(m x n)`.
 /// Parallel over independent output rows `i`; cell `(i,j)` sums over the nonzeros
 /// of `X` row `i` in ascending-column order (fixed).
-fn sp_x_b(x: &SpMat, b: &Mat) -> Mat {
+pub(crate) fn sp_x_b(x: &SpMat, b: &Mat) -> Mat {
     debug_assert_eq!(x.cols, b.rows);
     let n = b.cols;
     let mut out = Mat::zeros(x.rows, n);

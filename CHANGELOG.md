@@ -35,6 +35,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`CorEx` — information-theoretic Correlation Explanation topic model** (Gallagher,
+  Reing, Kale & Ver Steeg, TACL 2017). A non-generative, non-factorization paradigm:
+  it learns binary latent topics that maximize the total correlation they explain
+  about the words, with optional anchor words for semi-supervision (`anchor_words`,
+  `anchor_strength`, reusing SeededLDA's matcher). `topic_word` is `alpha*mis`
+  (membership-weighted mutual information, not a distribution) and `doc_topic` rows do
+  not sum to 1 (independent binary topics); exposes `mis`, `alpha`, `clusters`,
+  `labels`, `topic_tc`, `total_correlation`, and held-out `transform`. Validated
+  against the `corextopic` package (`parity/corex_gold.py`): aligned MI cosine 1.000,
+  total correlation matching to three decimals, identical clusters, anchors honored.
 - **`GuidedNMF` — seed-word-guided semi-supervised NMF** (Vendrow, Haddock, Rebrova &
   Needell, ICASSP 2021). The matrix-factorization analogue of `SeededLDA`: it factors
   the document-term matrix `X ≈ A S` while a supervision term `λ‖Y − B S‖²` steers
