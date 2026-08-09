@@ -186,6 +186,12 @@ def _fit_model(name: str, factory):
         model.fit(_TOY)
         return model
 
+    # AuthorTopic: positional `authors` is a per-document author-label list.
+    if name == "AuthorTopic":
+        authors = [["a0"]] * (len(_TOY) // 2) + [["a1"]] * (len(_TOY) - len(_TOY) // 2)
+        model.fit(_TOY, authors, iters=10)
+        return model
+
     # Seed models: their factory keywords ("x"/"y") must be in the vocabulary.
     if name in _SEED_MODELS:
         model.fit(_TOY_SEEDED, iters=10)

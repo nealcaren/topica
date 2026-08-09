@@ -82,6 +82,7 @@ REGISTRY: list[tuple[str, object, str]] = [
     ("NMF",          lambda: _topica.NMF(2),                                     "none"),
     ("GuidedNMF",    lambda: _topica.GuidedNMF(2, {"a": ["x"], "b": ["y"]}),     "none"),
     ("CorEx",        lambda: _topica.CorEx(2),                                   "none"),
+    ("AuthorTopic",  lambda: _topica.AuthorTopic(2),                             "none"),
     ("LSA",          lambda: _topica.LSA(2),                                     "none"),
     # embedding-cluster — no generative word distribution
     ("BERTopic",     lambda: _topica.BERTopic(min_cluster_size=5),               "none"),
