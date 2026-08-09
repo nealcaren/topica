@@ -12,6 +12,7 @@ sees whether the finished code honored it.
 |------|------|---------|----------|
 | **Reviewer A** | **Faithful / full parity.** Checks the port against the method as published and as implemented in the reference, given the paper and (where the license allows) the reference code. Is the generative model, inference, defaults, and output set a true and *complete* reproduction? | **Codex** (`codex` skill) | Claude subagent (Agent tool, model `opus`) |
 | **Reviewer B** | **Adversarial.** Assumes the port is subtly wrong and tries to prove it: silent deviations, dropped terms, off defaults, determinism holes, overclaimed parity, speed traps, untested edge cases. | **Gemini / Antigravity** (`antigravity` skill) | Claude subagent (Agent tool, model `opus`) |
+| **Reviewer C** (**Gate B only**) | **Comparative.** Places the finished model against its topica siblings (the same-family models already in the roster) and evaluates it on **accuracy, speed, and memory** — is it competitive, where does it win/lose, and are the PR's comparative claims honest? Not a fidelity check (that is A/B); a "how does it stack up in the library" check. | Claude subagent (Agent tool, model `opus`, isolated worktree so it can build + run) | — |
 
 Rules:
 
@@ -39,7 +40,10 @@ Rules:
 - **Gate B — pre-PR review** (after implementation, benchmarking, and gates pass,
   *before* opening the PR). Inputs: the implementation diff, the spec, the
   Phase-4 benchmark/parity results, and the paper/reference. This is the
-  fidelity-of-the-artifact review.
+  fidelity-of-the-artifact review. **Gate B runs three reviewers**: A (faithful) +
+  B (adversarial) + **C (comparative — accuracy/speed/memory vs the topica
+  siblings)**. Reviewer C is Gate-B-only; Gate A is A+B (there is no artifact to
+  benchmark yet).
 
 At each gate: run both reviewers, **synthesize** into one reconciled findings list
 (see below), act on blockers, then move forward. Do not proceed on a single
@@ -143,6 +147,38 @@ Fill the `<…>` slots. At Gate A, "the port" is the *plan*; at Gate B it is the
 > Deliverable: a numbered list of specific findings, each with how to reproduce or
 > where in the plan/code it lives, marked **blocker** or **nit**. Rank the blockers.
 > If you genuinely cannot break it, say so and name what you probed.
+
+### Reviewer C — comparative prompt (Gate B only)
+
+Run as a Claude subagent (model `opus`, isolated worktree at a pinned SHA, background)
+so it can build the model and run its own timings. Give it the diff, the spec, the
+Phase-4 numbers, and the names of the same-family topica models already in the roster.
+
+> You are a comparative reviewer for a newly added model **`<method>`** in the
+> `topica` topic-modeling library. It is faithful to its reference (that is checked
+> elsewhere). Your job: judge how it **stacks up against its topica siblings** —
+> `<list the same-family models, e.g. LDA, LabeledLDA, KeyATM, SeededLDA>` — on three
+> axes, and whether the PR's comparative claims are honest.
+>
+> Build the model (`references/conventions.md` has the worktree venv recipe) and,
+> on a shared realistic corpus (e.g. a 20-Newsgroups subset, or the model's natural
+> data), measure and compare against the most relevant 2-3 siblings:
+> 1. **Accuracy / quality** — topic coherence, and task fit where one exists
+>    (clustering agreement, held-out likelihood, the model's own diagnostic). Is it
+>    competitive, better, or worse than the siblings, and *at what*?
+> 2. **Speed** — fit wall-clock at small/medium/large sizes, single- and
+>    multi-threaded where applicable. Where does it sit in the family's speed order?
+> 3. **Memory** — peak RSS during fit at a realistic size vs the siblings.
+>
+> Deliverable: a compact table (model × {accuracy, speed, memory}) + a verdict:
+> where this model wins, where it loses, and whether anything in the PR body
+> overstates its standing. Flag any regression a user would hit by picking it over a
+> sibling. Mark real problems **blocker**, tradeoffs **note**.
+
+Reviewer C's findings feed the same synthesis. A genuine, reproducible regression
+(e.g. 10x slower than the equivalent sibling with no upside, or a memory blowup) is a
+**blocker**; an honest tradeoff (slower but more faithful, heavier but richer output)
+is documented in the PR body, not "fixed."
 
 ## Phase-4 benchmark — the empirical substrate for Gate B
 

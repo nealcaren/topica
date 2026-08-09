@@ -184,6 +184,11 @@ to the **same two fixed reviewers**, in the **same roles** as Gate A:
 2. **Reviewer B (adversarial — Gemini)** via the `antigravity` skill: silent
    deviations, correctness bugs, determinism holes, overclaimed parity/speed,
    untested edge cases.
+3. **Reviewer C (comparative — Claude subagent, `opus`, isolated worktree)**:
+   how the finished model stacks up against its same-family topica siblings on
+   **accuracy, speed, and memory**, and whether the PR's comparative claims are
+   honest. Gate B only (needs the built artifact to benchmark). Prompt in
+   `references/evaluation-agents.md` (§Reviewer C).
 
 Fall back per-slot to a Claude subagent (model `opus`, isolated worktree,
 background) only if the external model is unavailable — same role, do not swap.
