@@ -999,6 +999,8 @@ Inference is collapsed Gibbs from the paper: the per-token pair *(author, topic)
 
 **Any grouping variable can play the role of "author."** The `authors` argument is just a per-document set of group labels, so a well-populated categorical — year, decade, outlet, party — often makes a better ATM than a sparse author field, and turns `author_topic` into a per-group topic profile. Using decade as the group on The Crisis corpus (`topica.datasets.load_dubois()`) gives a lightweight over-time view: the 1910s rows load on lynching and the anti-lynching campaign, the 1920s on the Harlem Renaissance, the 1930s on Depression-era labor and economics — each row backed by dozens–hundreds of documents (`author_doc_counts`), so it is stable in a way a one-article author is not.
 
+When every document has exactly **one** author/group, ATM is essentially equivalent to concatenating each group's documents into a single document and running LDA (the per-author counts `C^AT_{a,·}` are exactly that group's pooled token→topic counts) — convenient, but not a distinct model. Its non-reducible advantage is **multi-author documents**: ATM treats the author of each *token* as latent and infers the attribution from the words, so a co-authored document informs every co-author's profile without double-counting and while keeping per-document `doc_topic`. Reach for ATM (over concatenate-then-LDA) when documents genuinely share authors/groups.
+
 ```python
 df = topica.datasets.load_dubois().drop_duplicates("text")
 corpus = topica.from_dataframe(df, text_col="text", stopwords=topica.ENGLISH_STOPWORDS)
