@@ -141,6 +141,32 @@ def topic_semantic_diversity(topics: Any, topn: int = 25) -> float:
     """Fraction of unique top-word *pairs* across all topics (Wu, Nguyen & Luu 2024)."""
     ...
 
+def inverted_rbo(topics: Any, *, topn: int = 10, p: float = 0.9) -> float:
+    """Rank-biased-overlap diversity across topics (OCTIS InvertedRBO; Bianchi,
+    Terragni & Hovy 2021): ``1 - mean pairwise RBO`` over top-`topn` word
+    rankings. 1.0 = maximally diverse; lower = topics recycle high-rank words."""
+    ...
+
+def embedding_coherence(
+    topics: Any,
+    word_embeddings: Any,
+    vocabulary: list[str] | None = None,
+    *,
+    topn: int = 10,
+    method: str = "pairwise",
+) -> numpy.typing.NDArray[numpy.float64]:
+    """Per-topic coherence as top-word proximity in a word-embedding space,
+    shape (num_topics,). ``method="pairwise"`` = mean pairwise cosine of top
+    words (OCTIS we_pairwise; Belford & Greene 2019); ``method="centroid"`` =
+    mean cosine to the top-word centroid (OCTIS we_centroid = 1 - this; Ding,
+    Nallapati & Xiang 2018). Higher = more coherent for both. `word_embeddings`
+    is a ``{word: vector}`` dict or a
+    ``(V, E)`` matrix aligned to `vocabulary` (e.g. ``topica.llm_embed(vocab)``).
+    Words with no / non-finite / zero embedding are dropped (nan when a topic
+    keeps < 2); aggregate with ``np.nanmean``. Use an *external* embedding to
+    avoid circularity."""
+    ...
+
 
 def exclusivity(model_or_phi: Any, *, n: int = 10, w: float = 0.7) -> numpy.typing.NDArray[numpy.float64]:
     """Per-topic exclusivity (stm's FREX summary over the top-n words), shape
