@@ -52,6 +52,7 @@ pub mod labeled;
 pub mod lightlda;
 pub mod lsa;
 pub mod mathfun;
+pub mod mg_lda;
 pub mod mh;
 pub mod model;
 pub mod nmf;

@@ -317,6 +317,20 @@ def _fit_labeledlda(iters=300):
     return m.doc_topic, m.topic_word, m.num_topics
 
 
+def _fit_mglda(iters=300):
+    # Sentence-segmented planted blocks: each doc = 4 sentences, each sentence is one
+    # block's words (so the model has a valid multi-sentence structure). doc_topic is
+    # the empirical prevalence over [global | local] (rows sum to 1).
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    sent_docs = []
+    for d in docs:
+        q = max(1, len(d) // 4)
+        sents = [d[i : i + q] for i in range(0, len(d), q)] or [d]
+        sent_docs.append(sents)
+    m = topica.MGLDA(2, K, window=3, seed=1).fit(sent_docs, iters=iters)
+    return m.doc_topic, m.topic_word, m.num_topics
+
+
 def _fit_author_topic(iters=300):
     # One unique author per block, so each author owns one topic; doc_topic is the
     # empirical per-document topic simplex (rows sum to 1), like LDA.
@@ -666,6 +680,7 @@ FIT_ADAPTERS = {
     "SeededLDA": _fit_seededlda,
     "LabeledLDA": _fit_labeledlda,
     "AuthorTopic": _fit_author_topic,
+    "MGLDA": _fit_mglda,
     "SupervisedLDA": _fit_supervisedlda,
     "DiscLDA": _fit_disclda,
     "RTM": _fit_rtm,

@@ -73,6 +73,7 @@ CTOR_FIRST_EXCEPT = {
     "KeyATM": "keyword dict is the leading required input",
     "SeededLDA": "seed-word dict is the leading required input",
     "PA": "two-level model: num_super, num_sub",
+    "MGLDA": "two-grain model: num_global_topics, num_local_topics",
     "DiscLDA": "structured topic count: num_classes*k_class + k_shared, "
     "num_classes known only at fit",
     "FactorialLDA": "factorial model: factor_sizes is the leading required input; "

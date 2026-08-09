@@ -35,6 +35,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`MGLDA` — Multi-Grain LDA** (Titov & McDonald, WWW 2008). The aspect model for
+  reviews: learns GLOBAL (document-level) and LOCAL (sliding-window aspect) topics
+  simultaneously with a per-token grain switch. Collapsed Gibbs over the
+  `(window, grain, topic)` triple; sentence-segmented input
+  (`list[list[list[str]]]`, with a guard that rejects a flat `list[list[str]]`).
+  Exposes `global_topic_word`, `local_topic_word`, combined `topic_word`, empirical
+  `doc_topic`, `global_doc_topic`, and `global_fraction`. Defaults follow the
+  reference (tomotopy): `window=3`, alphas 0.1, betas 0.01, `gamma` 0.1. Validated
+  against tomotopy's `MGLDAModel` (MIT) in `parity/mglda_gold.py`: global topic-word
+  cosine 1.000 (at tomotopy's seed floor); the local grain is noisy for the reference
+  itself and topica matches that band. The local-topic numerator follows the
+  reference (unsmoothed), which — with the rest of the conditional identical to
+  tomotopy — is what separates the two grains. Closes #690.
+
 - **`AuthorTopic` — the Author-Topic Model** (Rosen-Zvi, Griffiths, Steyvers & Smyth,
   UAI 2004). Conditions topics on authors rather than documents: each author has a
   topic distribution, and a document mixes its authors (`fit(docs, authors)` where

@@ -50,6 +50,7 @@ Column meanings:
 | `TensorLDA` | `src/tlda.rs` | `src/python/tlda.rs` | method-of-moments cumulants (linalg, spectral) | default | `parity/tlda_gold.py`, `parity/tlda_compare.py` |
 | `PolylingualLDA` | `src/pltm.rs` | `src/python/pltm.rs` | collapsed Gibbs (model.rs, sampler.rs) | default | `parity/pltm_compare.py` |
 | `CorEx` | `src/cor_ex.rs` | `src/python/cor_ex.rs` | total-correlation info-theoretic optimizer | default | `parity/corex_gold.py` |
+| `MGLDA` | `src/mg_lda.rs` | `src/python/mg_lda.rs` | two-grain collapsed Gibbs over sliding sentence windows | default | `parity/mglda_gold.py` |
 
 ### Covariates & structure
 
