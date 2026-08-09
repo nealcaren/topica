@@ -997,6 +997,17 @@ Inference is collapsed Gibbs from the paper: the per-token pair *(author, topic)
 
 **Reading author profiles honestly.** An author's `author_topic` row is only as reliable as the number of documents behind it, which is why `author_doc_counts` sits next to it. A *prolific* author's row is pulled toward uniform by the `alpha` prior (lots of tokens, but spread across topics), so it can look uninformative; a *one-document* author's row is near-deterministic in that single article and unstable across seeds — and because those rows are the peakiest, they dominate `top_authors`. Report `author_doc_counts` alongside any author-topic table, and check seed stability (refit at a second `seed` and compare the permutation-invariant author-author similarity structure) before publishing an "authors are similar" or "author X writes about Y" claim. Lowering `alpha` sharpens prolific authors' rows at the cost of the rare ones. If your author field is a delimited string (e.g. `"Smith; Jones"`), split it into a real list — `authors = [s.split("; ") for s in raw]` — so a co-authored document credits both authors; a single composite string becomes a phantom third author and defeats the point of the model. Normalize name/initial variants for the same reason.
 
+**Any grouping variable can play the role of "author."** The `authors` argument is just a per-document set of group labels, so a well-populated categorical — year, decade, outlet, party — often makes a better ATM than a sparse author field, and turns `author_topic` into a per-group topic profile. Using decade as the group on The Crisis corpus (`topica.datasets.load_dubois()`) gives a lightweight over-time view: the 1910s rows load on lynching and the anti-lynching campaign, the 1920s on the Harlem Renaissance, the 1930s on Depression-era labor and economics — each row backed by dozens–hundreds of documents (`author_doc_counts`), so it is stable in a way a one-article author is not.
+
+```python
+df = topica.datasets.load_dubois().drop_duplicates("text")
+corpus = topica.from_dataframe(df, text_col="text", stopwords=topica.ENGLISH_STOPWORDS)
+decade = [[f"{int(y) // 10 * 10}s"] for y in df.year]      # grouping variable as "author"
+m = topica.AuthorTopic(12, seed=13).fit(corpus, decade, iters=500)
+dict(zip(m.authors, m.author_doc_counts))                 # docs behind each decade
+[w for w, _ in m.top_words(6, topic=int(m.author_topic[i].argmax()))]  # a decade's theme
+```
+
 Validated against gensim's `AuthorTopicModel` (the reference implementation; gensim is LGPL, so topica implements the paper's collapsed Gibbs and uses gensim only as a black-box oracle) in `parity/author_topic_gold.py`. On a synthetic corpus with a planted author→topic structure and overlapping topics, topica matches gensim about as closely as two gensim runs with different seeds match each other: aligned topic-word cosine 0.99 (one gensim seed pair: 0.999) and aligned author-topic correlation 0.997 (seed pair: 1.000), with each author's dominant topic recovered cleanly and distinctly. Because ATM is stochastic and gensim's inference is variational while topica's is Gibbs, this is topic-aligned agreement near the reference's seed-to-seed noise, not a bit-for-bit match. On fit speed, topica is faster than gensim at matched full-corpus sweeps (roughly 2x on a small corpus, ~7x on a larger one; the exact multiplier depends on how gensim's online passes are configured).
 
 ## SemanticSignalSeparation
