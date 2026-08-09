@@ -13,6 +13,7 @@ sees whether the finished code honored it.
 | **Reviewer A** | **Faithful / full parity.** Checks the port against the method as published and as implemented in the reference, given the paper and (where the license allows) the reference code. Is the generative model, inference, defaults, and output set a true and *complete* reproduction? | **Codex** (`codex` skill) | Claude subagent (Agent tool, model `opus`) |
 | **Reviewer B** | **Adversarial.** Assumes the port is subtly wrong and tries to prove it: silent deviations, dropped terms, off defaults, determinism holes, overclaimed parity, speed traps, untested edge cases. | **Gemini / Antigravity** (`antigravity` skill) | Claude subagent (Agent tool, model `opus`) |
 | **Reviewer C** (**Gate B only**) | **Comparative.** Places the finished model against its topica siblings (the same-family models already in the roster) and evaluates it on **accuracy, speed, and memory** — is it competitive, where does it win/lose, and are the PR's comparative claims honest? Not a fidelity check (that is A/B); a "how does it stack up in the library" check. | Claude subagent (Agent tool, model `opus`, isolated worktree so it can build + run) | — |
+| **Reviewer D** (**Gate B only**) | **Sample-user on real data.** A first-time computational social scientist ("a random sociologist") who takes the finished model through the whole paper-writing workflow on a **real bundled dataset** — docs/docstrings only, no source — and reports the friction, ranked, with the Tier-1 analytical traps (a default or shape that puts a wrong number in a published table) first. This is the usability/acceptance half of the gate, run per-model at Gate B (not deferred post-merge). Use the `sample-user` skill's rules and tiers. | Claude subagent (Agent tool, `general-purpose`, executes against the dev venv) | — |
 
 Rules:
 
@@ -40,10 +41,11 @@ Rules:
 - **Gate B — pre-PR review** (after implementation, benchmarking, and gates pass,
   *before* opening the PR). Inputs: the implementation diff, the spec, the
   Phase-4 benchmark/parity results, and the paper/reference. This is the
-  fidelity-of-the-artifact review. **Gate B runs three reviewers**: A (faithful) +
+  fidelity-of-the-artifact review. **Gate B runs four reviewers**: A (faithful) +
   B (adversarial) + **C (comparative — accuracy/speed/memory vs the topica
-  siblings)**. Reviewer C is Gate-B-only; Gate A is A+B (there is no artifact to
-  benchmark yet).
+  siblings)** + **D (sample-user — a first-time researcher taking the model through
+  the whole workflow on a real dataset)**. C and D are Gate-B-only (they need the
+  built artifact); Gate A is A+B (there is no artifact to benchmark or use yet).
 
 At each gate: run both reviewers, **synthesize** into one reconciled findings list
 (see below), act on blockers, then move forward. Do not proceed on a single
@@ -179,6 +181,29 @@ Reviewer C's findings feed the same synthesis. A genuine, reproducible regressio
 (e.g. 10x slower than the equivalent sibling with no upside, or a memory blowup) is a
 **blocker**; an honest tradeoff (slower but more faithful, heavier but richer output)
 is documented in the PR body, not "fixed."
+
+### Reviewer D — sample-user prompt (Gate B only)
+
+Run as a `general-purpose` Claude subagent that *executes* against the dev venv. It
+is a named first-time computational social scientist ("a random sociologist") who
+takes the finished model through the whole paper workflow on a **real bundled
+dataset** (`topica.datasets.load_*` — pick one whose metadata suits the model, e.g.
+`load_dubois()` for an author field), using only docs/docstrings/`help`, never the
+source. Give it the `sample-user` skill's rules, the eight-step workflow (adapted to
+the model family), and the tiered deliverable.
+
+> [role + hard rules from the `sample-user` skill]. Take `topica.<Model>` from raw
+> real data (`<dataset>`) to the table you'd put in a paper. Deliver a verdict + a
+> severity-ranked friction log — **Tier 1 analytical traps** (a default or shape that
+> puts a WRONG number in a published table) first, then Tier 2 broken/opaque APIs,
+> Tier 3 return-shape surprises, Tier 4 discoverability/docs/defaults — plus what
+> delighted you and the top-5 fixes. Reproduce findings before reporting.
+
+Reviewer D's Tier-1 findings are **blockers** (a silent wrong-number path is exactly
+what this gate exists to catch); Tier 2-3 are usually blockers too; Tier 4 items are
+docs/DX follow-ups (fix now if cheap, else file). This is the same instrument as the
+standalone `sample-user` audit, run here as the acceptance half of Gate B rather than
+deferred post-merge.
 
 ## Phase-4 benchmark — the empirical substrate for Gate B
 
