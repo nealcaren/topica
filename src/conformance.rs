@@ -346,11 +346,10 @@ mod registry_tests {
             }
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
-        // Estimator-backed Rust struct). Bumped to 30 when FactorialLDA (fLDA)
-        // was added.
+        // Estimator-backed Rust struct). Bumped to 31 when GuidedNMF was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            30,
+            31,
             "registry size drifted from the Python REGISTRY"
         );
     }
