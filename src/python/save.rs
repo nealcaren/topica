@@ -66,6 +66,7 @@ pub(crate) const MODEL_TAG_COREX: u8 = 48;
 pub(crate) const MODEL_TAG_AUTHOR_TOPIC: u8 = 49;
 pub(crate) const MODEL_TAG_MGLDA: u8 = 50;
 pub(crate) const MODEL_TAG_TOPICS_OVER_TIME: u8 = 51;
+pub(crate) const MODEL_TAG_GAUSSIAN_LDA: u8 = 52;
 
 pub(crate) fn model_tag_name(tag: u8) -> &'static str {
     match tag {
@@ -96,6 +97,7 @@ pub(crate) fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_AUTHOR_TOPIC => "AuthorTopic",
         MODEL_TAG_MGLDA => "MGLDA",
         MODEL_TAG_TOPICS_OVER_TIME => "TopicsOverTime",
+        MODEL_TAG_GAUSSIAN_LDA => "GaussianLDA",
         MODEL_TAG_LSA => "LSA",
         MODEL_TAG_COMBINEDTM => "CombinedTM",
         MODEL_TAG_ZEROSHOTTM => "ZeroShotTM",

@@ -39,6 +39,7 @@ pub mod dtm;
 pub mod etm;
 pub mod etm_vae;
 pub mod factorial_lda;
+pub mod gaussian_lda;
 pub mod gemm;
 pub mod gsdmm;
 pub mod guided_nmf;
