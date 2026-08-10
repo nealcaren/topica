@@ -251,27 +251,30 @@ impl MGLDA {
             .collect();
         let num_types = corpus.num_types();
 
-        // Map each doc's sentences to word ids on the SAME vocabulary; drop OOV tokens
-        // and empty sentences; keep only documents with >= 1 non-empty sentence.
-        let mut id_docs: Vec<Vec<Vec<u32>>> = Vec::new();
+        // Map each doc's sentences to word ids on the SAME vocabulary, dropping only
+        // out-of-vocabulary tokens. Sentence boundaries and document positions are
+        // PRESERVED (empty sentences and empty documents are kept), so the returned
+        // doc_topic / global_doc_topic rows align 1:1 with the input documents and the
+        // window structure (S + T - 1 windows per doc) reflects the caller's sentences.
+        let mut id_docs: Vec<Vec<Vec<u32>>> = Vec::with_capacity(sent_docs.len());
+        let mut total_tokens = 0usize;
         for sents in &sent_docs {
-            let mut mapped: Vec<Vec<u32>> = Vec::new();
-            for sent in sents {
-                let ids: Vec<u32> = sent
-                    .iter()
-                    .filter_map(|w| word_to_id.get(w.as_str()).copied())
-                    .collect();
-                if !ids.is_empty() {
-                    mapped.push(ids);
-                }
-            }
-            if !mapped.is_empty() {
-                id_docs.push(mapped);
-            }
+            let mapped: Vec<Vec<u32>> = sents
+                .iter()
+                .map(|sent| {
+                    let ids: Vec<u32> = sent
+                        .iter()
+                        .filter_map(|w| word_to_id.get(w.as_str()).copied())
+                        .collect();
+                    total_tokens += ids.len();
+                    ids
+                })
+                .collect();
+            id_docs.push(mapped);
         }
-        if id_docs.is_empty() {
+        if total_tokens == 0 {
             return Err(PyValueError::new_err(
-                "every document was empty after tokenization",
+                "corpus has no in-vocabulary tokens after tokenization",
             ));
         }
 
@@ -291,6 +294,26 @@ impl MGLDA {
                 &id_docs, num_types, kg, kl, t, ag, al, amg, aml, bg, bl, g, iters, &mut rng,
             )
         });
+
+        // Warn when the local grain barely fired: the grain switch routed almost every
+        // token to the global grain, so `local_topic_word` is dominated by the prior and
+        // its topics are NOT identified. This is common on text without within-document
+        // aspect locality (MG-LDA's local grain earns its keep on reviews / opinion
+        // text). Surfaced at fit time so a noisy local table is not silently published.
+        if kl > 0 && model.global_fraction > 0.98 {
+            let warnings = py.import_bound("warnings")?;
+            warnings.call_method1(
+                "warn",
+                (format!(
+                    "MGLDA: global_fraction={:.3} — the local grain captured almost no \
+                     tokens, so local_topic_word is prior-dominated and its topics are not \
+                     identified. Treat local topics as unreliable here; the local grain \
+                     needs text with within-document aspect locality (e.g. reviews). The \
+                     global topics are unaffected.",
+                    model.global_fraction
+                ),),
+            )?;
+        }
 
         slf.vocab = corpus.id_to_word.clone();
         slf.corpus = Some(corpus);
@@ -409,6 +432,11 @@ impl MGLDA {
             topic,
         )
     }
+    /// Per-topic UMass coherence over the top `n` words (negative; closer to 0 is
+    /// better), shape (num_topics,). Rows are combined-indexed: global topics first
+    /// (0..num_global_topics), then local. Local topics typically score much lower —
+    /// on text without aspect locality that reflects a prior-dominated local grain
+    /// (see `global_fraction`), not a fixable defect.
     #[pyo3(signature = (n=10))]
     fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let k = self.num_global_topics + self.num_local_topics;

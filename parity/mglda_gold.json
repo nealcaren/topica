@@ -5407,7 +5407,7 @@
   "floor_global_cosine": 0.9997376980644316,
   "floor_local_cosine": 0.888898327095189,
   "floor_seed": 43,
-  "generated": "2026-08-09T19:27:42.132575+00:00",
+  "generated": "2026-08-09T23:54:37.265185+00:00",
   "global_words": {
     "0": [
       "phone",
@@ -5450,6 +5450,8 @@
   "n_docs": 120,
   "reference": "tomotopy.MGLDAModel",
   "sents_per_doc": 6,
+  "tomotopy_global_fraction": 0.9972222222222222,
+  "tomotopy_global_fraction_seed2": 0.9841666666666666,
   "tomotopy_version": "0.13.0",
   "vocab": [
     "android",

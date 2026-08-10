@@ -5231,7 +5231,10 @@ class MGLDA:
     @property
     def global_fraction(self) -> float:
         """Share of tokens assigned to the global grain. Near 1.0 means the local grain
-        carried little (common without strong within-document aspect locality)."""
+        carried almost nothing and `local_topic_word` is prior-dominated (its topics are
+        NOT identified) — common on text without within-document aspect locality. `fit`
+        warns above 0.98; treat local topics as unreliable above ~0.9 and report only the
+        global grain."""
         ...
     @property
     def vocabulary(self) -> list[str]: ...

@@ -96,6 +96,29 @@ def test_handles_short_and_single_sentence_docs():
     assert m.doc_topic.shape[0] == 3
 
 
+def test_doc_alignment_preserved_with_empty_docs():
+    # An all-empty (or all-OOV) document must NOT be dropped: doc_topic keeps a 1:1 row
+    # correspondence with the input so downstream metadata joins stay aligned.
+    docs = [
+        [["phone", "android"], ["battery", "power"]],
+        [[], []],                       # entirely empty document (kept as a uniform row)
+        [["laptop", "keyboard"], ["price", "cheap"]],
+    ]
+    m = topica.MGLDA(2, 2, window=2, seed=0).fit(docs, iters=20)
+    assert m.doc_topic.shape[0] == 3, "empty document must not shift row alignment"
+    assert np.allclose(m.doc_topic.sum(axis=1), 1.0)
+    # the empty doc's row is the uniform fallback
+    assert np.allclose(m.doc_topic[1], 1.0 / 4)
+
+
+def test_warns_when_local_grain_collapses():
+    # On text without within-document aspect locality the grain switch routes ~all
+    # tokens global; fit must warn so a prior-dominated local table isn't taken as signal.
+    docs = _planted()  # synthetic, global-dominant
+    with pytest.warns(UserWarning, match="local grain"):
+        topica.MGLDA(2, 3, seed=0).fit(docs, iters=200)
+
+
 def test_window_one():
     docs = _planted(reps=20)
     m = topica.MGLDA(2, 3, window=1, seed=0).fit(docs, iters=40)

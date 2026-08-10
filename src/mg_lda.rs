@@ -140,12 +140,17 @@ pub fn fit<R: Rng>(
         .collect();
 
     // --- initialize ---
+    // Initialize the grain proportionally to the grain-switch prior (not a flat 50/50),
+    // so an asymmetric alpha_mix starts from the right support. Because the local-topic
+    // numerator is unsmoothed (reference form), a window-local topic with zero count is
+    // effectively unreachable, so the initial grain balance matters.
+    let p_loc_init = alpha_mix_loc / (alpha_mix_gl + alpha_mix_loc);
     for di in 0..d {
         for (s, sent) in docs[di].iter().enumerate() {
             for (pos, &w) in sent.iter().enumerate() {
                 let j = rng.gen_range(0..t);
                 let win = s + j;
-                let is_loc = rng.gen::<bool>();
+                let is_loc = rng.gen::<f64>() < p_loc_init;
                 if is_loc {
                     let z = rng.gen_range(0..k_loc);
                     asg[di][s][pos] = (j as u8, true, z as u32);
@@ -243,16 +248,24 @@ pub fn fit<R: Rng>(
                         }
                     }
 
-                    // sample a flat candidate index
-                    let mut r = rng.gen::<f64>() * total;
-                    let mut choice = t * kk - 1;
-                    for (i, &sc) in scores.iter().enumerate().take(t * kk) {
-                        r -= sc;
-                        if r <= 0.0 {
-                            choice = i;
-                            break;
+                    // sample a flat candidate index. total > 0 always holds for
+                    // beta>0 (every phi term is positive), but guard the degenerate
+                    // total==0 case with a uniform draw rather than deterministically
+                    // picking index 0.
+                    let choice = if total > 0.0 {
+                        let mut r = rng.gen::<f64>() * total;
+                        let mut c = t * kk - 1;
+                        for (i, &sc) in scores.iter().enumerate().take(t * kk) {
+                            r -= sc;
+                            if r <= 0.0 {
+                                c = i;
+                                break;
+                            }
                         }
-                    }
+                        c
+                    } else {
+                        rng.gen_range(0..t * kk)
+                    };
                     let j = choice / kk;
                     let rem = choice % kk;
                     let win = s + j;
@@ -448,10 +461,16 @@ fn held_in_loglik(
                             (n_gl_zw[z][w] as f64 + beta_gl) / (n_gl_z[z] as f64 + beta_gl_sum);
                         gl_sum += theta * phi;
                     }
+                    // For the likelihood we use the PROPER smoothed local theta
+                    // (n_loc + alpha_loc)/(n_loc_tot + K_loc*alpha_loc) so the local
+                    // mixture component is a valid distribution summing to 1. (The Gibbs
+                    // *sampler* deliberately uses the reference's unsmoothed numerator;
+                    // that is a sampling choice, not a probability model, and must not
+                    // leak mass in a reported log-likelihood.)
                     let loc_denom = g_loc + k_loc as f64 * alpha_loc;
                     let mut loc_sum = 0.0f64;
                     for z in 0..k_loc {
-                        let theta = (n_loc_dvz[di][win][z] as f64) / loc_denom;
+                        let theta = (n_loc_dvz[di][win][z] as f64 + alpha_loc) / loc_denom;
                         let phi =
                             (n_loc_zw[z][w] as f64 + beta_loc) / (n_loc_z[z] as f64 + beta_loc_sum);
                         loc_sum += theta * phi;
