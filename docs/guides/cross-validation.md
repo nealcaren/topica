@@ -55,6 +55,48 @@ For each fold, on the **held-out** test documents:
 `result.aggregate` gives the macro mean ± std of each metric across folds;
 `result.per_fold` is the per-fold detail.
 
+## Supervised models (out-of-fold prediction)
+
+For a supervised/measurement model with a numeric response — `SupervisedLDA` — pass
+`y=` and `cross_validate` switches to the out-of-fold path: fit on each training fold,
+predict the held-out response, assemble the out-of-fold (OOF) prediction vector, and
+report regression error, calibration, and interval coverage.
+
+```python
+result = topica.cross_validate(
+    lambda seed: topica.SupervisedLDA(10, seed=seed),
+    docs,
+    y=response,                 # per-document numeric response, length n_docs
+    folds=5, seed=13,
+    fit_kwargs={"iters": 25},
+)
+print(result.summary())
+result.oof_predictions          # assembled OOF y-hat (NaN where a doc wasn't scored)
+```
+
+What you get:
+
+- **Pooled RMSE / MAE / R²** over every out-of-fold prediction (`aggregate["rmse_pooled"]`,
+  etc.), plus per-fold `*_macro` summaries (`{mean, std, n_valid_folds}`).
+- **Interval coverage** (`coverage_90`, `coverage_95`): does a nominal 90% interval
+  cover ~90% of held-out truths? The interval uses the model's predictive standard
+  deviation from `predict(return_std=True)`, which propagates the document's topic
+  uncertainty *plus* the residual σ². This is a **conditional Gaussian** interval built
+  from the *training* σ², so out-of-fold coverage tends to sit a little **below**
+  nominal — that is partly the approximation, not proof the model is miscalibrated.
+- **Calibration**: `calibration_intercept` / `calibration_slope` (ideal 0 and 1) from
+  regressing observed on predicted, plus a `result.calibration_table` reliability table.
+
+The authoritative evaluated population is `result.scored_mask`. A test document that is
+empty after per-fold vocabulary pruning, or that falls in a temporal initial-training
+window, is **NaN** in `oof_predictions` and excluded from every metric — never scored as
+a fabricated 0. Folds are independent, so `n_jobs>1` runs them on a thread pool
+(deterministic; the result is identical to `n_jobs=1`).
+
+Classification metrics are not offered: no model in the roster exposes `predict_proba`.
+An unsupervised model passed with `y=` (or a model with no `predict`) raises a clear
+error rather than fabricating a score.
+
 ## Fold strategies
 
 `make_folds` (called for you, or usable directly) offers three ways to split, and it
