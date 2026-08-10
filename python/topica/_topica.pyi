@@ -5192,9 +5192,10 @@ class MGLDA:
         iters: int = 1000,
     ) -> "MGLDA":
         """Fit on sentence-segmented documents (list[list[list[str]]]: doc ->
-        sentences -> tokens). A flat list[list[str]] is rejected. Empty sentences and
-        out-of-vocabulary tokens are dropped. iters is the number of collapsed-Gibbs
-        sweeps (default 1000, a topica default)."""
+        sentences -> tokens). A flat list[list[str]] is rejected. Out-of-vocabulary
+        tokens are dropped, but sentence boundaries and document positions are preserved
+        (empty sentences and empty documents kept), so output rows align 1:1 with the
+        input documents. iters is the number of collapsed-Gibbs sweeps (default 1000)."""
         ...
     @property
     def num_topics(self) -> int:
@@ -5233,7 +5234,7 @@ class MGLDA:
         """Share of tokens assigned to the global grain. Near 1.0 means the local grain
         carried almost nothing and `local_topic_word` is prior-dominated (its topics are
         NOT identified) — common on text without within-document aspect locality. `fit`
-        warns above 0.98; treat local topics as unreliable above ~0.9 and report only the
+        warns above 0.9; treat local topics as unreliable there and report only the
         global grain."""
         ...
     @property
@@ -5246,8 +5247,10 @@ class MGLDA:
     def doc_names(self) -> list[str]: ...
     @property
     def fit_history(self) -> list[tuple[int, float]]:
-        """(iter, held-in log-likelihood) trace; a convergence diagnostic. converged is
-        always False (collapsed Gibbs runs the full iters budget)."""
+        """(iter, held-in log-likelihood) trace, logged periodically (roughly every
+        iters/25 sweeps), NOT per-iteration — so its length is ~25, not `iters`; column 0
+        carries the true iteration number. A convergence diagnostic; converged is always
+        False (collapsed Gibbs runs the full iters budget)."""
         ...
     @property
     def converged(self) -> bool: ...

@@ -213,9 +213,11 @@ impl MGLDA {
     }
 
     /// Fit on sentence-segmented `data` (`list[list[list[str]]]`: doc → sentences →
-    /// tokens). Empty sentences and out-of-vocabulary tokens are dropped; a document
-    /// must have >= 1 non-empty sentence. `iters` is the number of collapsed-Gibbs
-    /// sweeps (default 1000, a topica default).
+    /// tokens). Out-of-vocabulary tokens are dropped, but sentence boundaries and
+    /// document positions are preserved: empty sentences and empty documents are kept,
+    /// so the output rows (`doc_topic`, `global_doc_topic`) align 1:1 with the input
+    /// documents (an empty document gets a uniform row). `iters` is the number of
+    /// collapsed-Gibbs sweeps (default 1000, a topica default).
     #[pyo3(signature = (data, *, iters=1000))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -300,7 +302,9 @@ impl MGLDA {
         // its topics are NOT identified. This is common on text without within-document
         // aspect locality (MG-LDA's local grain earns its keep on reviews / opinion
         // text). Surfaced at fit time so a noisy local table is not silently published.
-        if kl > 0 && model.global_fraction > 0.98 {
+        // The 0.9 threshold matches the interpretation rule in the docs (treat local
+        // topics as unidentified above ~0.9).
+        if kl > 0 && model.global_fraction > 0.9 {
             let warnings = py.import_bound("warnings")?;
             warnings.call_method1(
                 "warn",
