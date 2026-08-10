@@ -35,6 +35,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`TopicsOverTime` — Topics over Time** (Wang & McCallum, KDD 2006). LDA plus a
+  per-topic Beta density over continuous document timestamps: each topic carries a
+  word distribution *and* a temporal profile, and the timestamp influences topic
+  assignment jointly with the words. Collapsed Gibbs (the LDA conditional times a
+  per-topic Beta time factor, evaluated in a per-document linear form that keeps the
+  per-token loop free of transcendentals); per-topic Beta parameters estimated by
+  method of moments once per sweep. `fit(docs, times=…)` (any numeric scale;
+  `timestamps=` alias) min-max normalizes time internally and reports peaks/means back
+  in the input units. Exposes `topic_word`, `doc_topic`, `topic_time` (K×2 Beta ψ),
+  `topic_time_peak` (Beta mode, `NaN` for a U-shaped/no-signal topic), `topic_time_mean`,
+  and `time_range`. Defaults follow the paper: `alpha=50/K`, `beta=0.1`. Descriptive
+  continuous-time prevalence — distinct from DTM/DETM (discrete-slice vocabulary drift)
+  and STM-with-splines (covariate effects). Validated by planted continuous-time
+  recovery plus independent numpy-MoM and `scipy.stats.beta` numerical checks
+  (`parity/tot_gold.py`); no maintained reference library exists. (#694)
+
 - **`MGLDA` — Multi-Grain LDA** (Titov & McDonald, WWW 2008). The aspect model for
   reviews: learns GLOBAL (document-level) and LOCAL (sliding-window aspect) topics
   simultaneously with a per-token grain switch. Collapsed Gibbs over the

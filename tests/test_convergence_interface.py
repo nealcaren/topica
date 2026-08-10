@@ -53,7 +53,7 @@ _NO_TRACE_MODELS = _CLUSTER_MODELS | _DIRECT_SOLVE_MODELS | _LLM_MODELS
 # HDP and GSDMM discover their topic/cluster counts, so a log-likelihood plateau
 # is not a convergence signal; DTM and HLDA expose no flat per-iteration objective.
 # (keyATM is NOT here: it supports opt-in convergence_tol early-stopping.)
-_CONVERGED_FALSE_ALWAYS = {"HDP", "GSDMM", "DTM", "HLDA"}
+_CONVERGED_FALSE_ALWAYS = {"HDP", "GSDMM", "DTM", "HLDA", "TopicsOverTime"}
 
 # Models that converge by DEFAULT: their stopping rule is intrinsic, not an opt-in
 # convergence_tol early-stop. S³'s FastICA fixed-point always runs to its native
@@ -197,6 +197,12 @@ def _fit_model(name: str, factory):
     if name == "MGLDA":
         sent_docs = [[d[: len(d) // 2 or 1], d[len(d) // 2 :] or d] for d in _TOY]
         model.fit(sent_docs, iters=10)
+        return model
+
+    # TopicsOverTime: requires per-document numeric times.
+    if name == "TopicsOverTime":
+        times = [float(i % 3) for i in range(len(_TOY))]
+        model.fit(_TOY, times=times, iters=10)
         return model
 
     # Seed models: their factory keywords ("x"/"y") must be in the vocabulary.

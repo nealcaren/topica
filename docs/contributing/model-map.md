@@ -92,6 +92,7 @@ Column meanings:
 |---|---|---|---|---|---|
 | `DTM` | `src/dtm.rs` | `src/python/mod.rs` | variational Kalman over time slices | default | `parity/dtm_gold.py` |
 | `DETM` | `src/detm.rs` | `src/python/neural.rs` | embedding VAE + LSTM q(eta) (etm_vae.rs) | default | `parity/detm_gold.py` |
+| `TopicsOverTime` | `src/topics_over_time.rs` | `src/python/topics_over_time.rs` | collapsed Gibbs (LDA + per-topic Beta time factor, method-of-moments psi) | default | `parity/tot_gold.py` |
 | `HLDA` | `src/hlda.rs` | `src/python/hierarchical.rs` | nested-CRP collapsed Gibbs | default | `parity/hlda_gold.py` |
 | `PA` | `src/pa.rs` | `src/python/hierarchical.rs` | collapsed Gibbs over a topic DAG | default | `parity/pa_gold.py` |
 
