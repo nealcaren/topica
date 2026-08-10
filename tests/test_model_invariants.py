@@ -340,6 +340,15 @@ def _fit_author_topic(iters=300):
     return m.doc_topic, m.topic_word, m.num_topics
 
 
+def _fit_tot(iters=300):
+    # Topics over Time: planted blocks, each block clustered in a distinct time window
+    # so the temporal factor is informative. doc_topic is the standard LDA simplex.
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    times = [float(d % K) for d in range(len(docs))]
+    m = topica.TopicsOverTime(K, seed=1).fit(docs, times=times, iters=iters)
+    return m.doc_topic, m.topic_word, m.num_topics
+
+
 def _fit_disclda(iters=300):
     # Class label = the planted block; each class gets a class-specific topic plus a
     # shared block, so a healthy fit spreads mass across the class+shared topics.
@@ -681,6 +690,7 @@ FIT_ADAPTERS = {
     "LabeledLDA": _fit_labeledlda,
     "AuthorTopic": _fit_author_topic,
     "MGLDA": _fit_mglda,
+    "TopicsOverTime": _fit_tot,
     "SupervisedLDA": _fit_supervisedlda,
     "DiscLDA": _fit_disclda,
     "RTM": _fit_rtm,

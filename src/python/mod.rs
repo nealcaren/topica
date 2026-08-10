@@ -92,6 +92,7 @@ mod semantic_signal_separation;
 mod sentence_ideal;
 mod tbip;
 mod tlda;
+mod topics_over_time;
 mod wordfish;
 use arrays::*;
 use author_topic::AuthorTopic;
@@ -118,6 +119,7 @@ use semantic_signal_separation::SemanticSignalSeparation;
 use sentence_ideal::IdealPointSentenceTM;
 use tbip::TBIP;
 use tlda::TensorLDA;
+use topics_over_time::TopicsOverTime;
 use wordfish::Wordfish;
 
 /// Run `f` on a rayon pool of `num_threads` workers, or on the global pool (all
@@ -15797,6 +15799,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CorEx>()?;
     m.add_class::<AuthorTopic>()?;
     m.add_class::<MGLDA>()?;
+    m.add_class::<TopicsOverTime>()?;
     m.add_class::<LSA>()?;
     m.add_class::<CombinedTM>()?;
     m.add_class::<ZeroShotTM>()?;

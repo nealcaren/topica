@@ -5267,6 +5267,117 @@ class MGLDA:
     def load(path: str) -> MGLDA: ...
     def __repr__(self) -> str: ...
 
+class TopicsOverTime:
+    """TopicsOverTime (ToT; Wang & McCallum, "Topics over Time: A Non-Markov
+    Continuous-Time Model of Topical Trends," KDD 2006). LDA with a per-topic Beta
+    density over each document's (normalized) timestamp: a topic carries both a word
+    distribution and a temporal profile, and the timestamp influences topic assignment
+    jointly with the words. Collapsed Gibbs (LDA conditional times a per-topic Beta
+    time-likelihood, computed in log space); the per-topic Beta parameters are estimated
+    by method of moments from the timestamps of each topic's assigned tokens, once per
+    sweep. Unlike DTM/DETM (discrete time slices, drifting vocabulary), the topic
+    vocabulary is fixed and time is continuous — this is descriptive continuous-time
+    prevalence. No single maintained reference library; validated by planted
+    continuous-time recovery and a numerical Beta reference."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict (issue #400)."""
+        ...
+    @property
+    def seed(self) -> int: ...
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha: float | None = None,
+        beta: float = 0.1,
+        seed: int = 13,
+    ) -> None:
+        """num_topics is K. alpha is the symmetric doc-topic Dirichlet concentration
+        (default 50/K, the paper's value); beta is the symmetric topic-word Dirichlet
+        (default 0.1, the paper's value). seed is the RNG seed."""
+        ...
+    def fit(
+        self,
+        data: Sequence[Sequence[str]] | Corpus,
+        times: Sequence[float] | None = None,
+        *,
+        timestamps: Sequence[float] | None = None,
+        iters: int = 1000,
+    ) -> "TopicsOverTime":
+        """Fit on documents plus per-document numeric timestamps. times is the canonical
+        argument (any numeric scale — year, decade, ordinal date, unix time); timestamps
+        is an accepted alias (pass exactly one). Timestamps are min-max normalized to
+        [0,1] internally; the original range is kept so peaks/means report in the input
+        units. A constant-timestamp corpus reduces to LDA (the Beta collapses to uniform,
+        with a warning). iters is the number of collapsed-Gibbs sweeps (default 1000)."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_topics, vocab) topic-word matrix. Rows sum to 1."""
+        ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_docs, num_topics) document-topic matrix, smoothed. Rows sum to 1."""
+        ...
+    @property
+    def topic_time(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_topics, 2) per-topic Beta parameters (psi1, psi2) over normalized [0,1]
+        time. Both psi>1: a single interior peak. Exactly one psi<1: a monotone
+        rising/falling topic (peak at a boundary). Both psi<1: a U-shaped topic with mass
+        at both ends and NO single peak (topic_time_peak is NaN). psi1=psi2=1 is the
+        explicit uniform fallback for a topic with no usable temporal signal."""
+        ...
+    @property
+    def topic_time_peak(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_topics,) per-topic peak time in the ORIGINAL timestamp units: the Beta
+        mode where one exists (both psi>1), the earliest/latest date for a monotone
+        (rising/falling) topic, and NaN for a U-shaped or uniform topic with no single
+        peak. Prefer this over the mean for "when did this topic peak"."""
+        ...
+    @property
+    def topic_time_mean(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_topics,) per-topic Beta mean psi1/(psi1+psi2) in the ORIGINAL timestamp
+        units. Always defined (a uniform/no-signal topic falls back to the range
+        midpoint). IMPORTANT: when topic_time_peak is NaN, this mean is NOT a peak — do
+        not report it as when the topic peaked; inspect topic_time and the topic's
+        document dates. For a skewed but single-peaked topic, prefer topic_time_peak."""
+        ...
+    @property
+    def time_range(self) -> tuple[float, float]:
+        """The (min, max) of the input timestamps, the range peaks/means report on."""
+        ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, names: Sequence[str]) -> None: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """List of (iteration, held-in log-likelihood) pairs — column 0 is the sweep
+        number, column 1 the log-likelihood — logged roughly every iters/25 sweeps
+        (length ~25, not iters). converged is always False (Gibbs runs the full budget)."""
+        ...
+    @property
+    def converged(self) -> bool: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list | list[list]:
+        """Top (word, prob) pairs per topic."""
+        ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-topic UMass coherence over the top n words, shape (num_topics,)."""
+        ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> TopicsOverTime: ...
+    def __repr__(self) -> str: ...
+
 class LSA:
     """LSA / LSI, latent semantic analysis (Deerwester et al. 1990; randomized
     truncated SVD per Halko et al. 2011). A truncated SVD of the weighted

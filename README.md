@@ -160,6 +160,7 @@ The right first choice when your design calls for one: short text, change over t
 |---|---|---|---|---|
 | `DTM` | text, times | variational | seed-reproducible | Dynamic topic model: a fixed topic set whose word distributions drift across time slices. |
 | `DETM` | text, embeddings, times | vae | seed-reproducible | Dynamic embedded topic model: embedding-factored topics that drift across time slices, fit as an amortized VAE. |
+| `TopicsOverTime` | text, times | gibbs | seed-reproducible | Topics over Time: LDA with a per-topic Beta density over continuous timestamps; each topic has a temporal peak. Descriptive continuous-time prevalence (not vocabulary drift). |
 | `HLDA` | text | gibbs | seed-reproducible | Hierarchical LDA (nested CRP): a learned tree of super- and sub-topics. |
 | `PA` | text | gibbs | seed-reproducible | Pachinko allocation: a DAG of super- and sub-topics. |
 

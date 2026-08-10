@@ -244,6 +244,14 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::None_,
         exempt: &[],
     },
+    // TopicsOverTime: LDA with a per-topic Beta density over time. doc_topic is the
+    // standard Dirichlet-posterior simplex (the temporal factor lives in topic_time),
+    // so the Dirichlet family/contract applies as for LDA.
+    RegistryEntry {
+        name: "TopicsOverTime",
+        family: ModelFamily::Dirichlet,
+        exempt: &[],
+    },
     // Neural / embedding / nonparametric — no theta posterior.
     RegistryEntry {
         name: "ProdLDA",
@@ -369,10 +377,10 @@ mod registry_tests {
             }
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
-        // Estimator-backed Rust struct). Bumped to 34 when MGLDA was added.
+        // Estimator-backed Rust struct). Bumped to 35 when TopicsOverTime was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            34,
+            35,
             "registry size drifted from the Python REGISTRY"
         );
     }
