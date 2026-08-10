@@ -475,3 +475,35 @@ class TestUMassExternalCorpus:
                                  coherence_type="u_mass", topn=3)[0]
         assert np.isfinite(score)
         assert score < 0.1
+
+
+class TestModelCoherenceMethodConsistency:
+    """The model .coherence() method is consistent with the standalone (#686):
+    same `n` name, and `coherence_type=` routes through the same implementation."""
+
+    def _fit(self):
+        docs = [["a", "b", "c", "x"], ["a", "b", "b", "x"],
+                ["c", "c", "d", "y"], ["d", "e", "f", "y"]] * 12
+        return topica.LDA(3, seed=13).fit(docs, iters=40), docs
+
+    def test_default_is_umass_backcompat(self):
+        m, _ = self._fit()
+        assert np.allclose(m.coherence(), m.coherence(coherence_type="u_mass"))
+
+    def test_coherence_type_matches_standalone(self):
+        m, docs = self._fit()
+        for ct in ("u_mass", "c_v", "c_npmi", "c_uci"):
+            method = m.coherence(n=4, coherence_type=ct)
+            standalone = topica.coherence(m, docs, coherence_type=ct, n=4)
+            assert np.allclose(method, standalone, equal_nan=True), ct
+
+    def test_explicit_texts(self):
+        m, _ = self._fit()
+        ext = [["a", "b", "c"]] * 30
+        got = m.coherence(n=3, coherence_type="u_mass", texts=ext)
+        assert got.shape == (3,)
+
+    def test_standalone_n_aliases_topn(self):
+        m, docs = self._fit()
+        assert np.allclose(topica.coherence(m, docs, n=5, coherence_type="u_mass"),
+                           topica.coherence(m, docs, topn=5, coherence_type="u_mass"))
