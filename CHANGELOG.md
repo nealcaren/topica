@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Changed
+
+- **Dataset loaders now offer a uniform shape** (#686). Text-table loaders
+  (`load_gadarian`/`load_poliblog`/`load_dubois`) still return a pandas DataFrame by
+  default, but accept `as_bunch=True` to return a `Bunch` whose `.df` is the table —
+  the same shape `load_ng20_minilm` returns (now with a `.df` view alongside its
+  embedding arrays). So `load_X(as_bunch=True).df` is one idiom across the roster. The
+  two-shape contract is documented in every loader's docstring and the module.
+- **`topic_table` is now polymorphic** (#686). It accepts either a fitted model or a
+  bare `(K, V)` topic-word array plus `vocabulary`, matching its siblings `frex` /
+  `relevance` (the previous model-only signature crashed on the natural matrix guess).
+  Pass `doc_topic=` with a bare array to get the prevalence column; otherwise it is
+  `None`. The model form is unchanged.
+
 ### Fixed
 
 - **`compare` no longer reports a one-sided fingerprint as a difference** (#672

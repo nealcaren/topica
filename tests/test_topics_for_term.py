@@ -244,3 +244,26 @@ class TestModelPath:
         j = list(m.vocabulary).index("cat")
         expected = int(np.argmax(phi[:, j]))
         assert topica.topics_for_term(m, "cat")[0][0] == expected
+
+
+class TestTopicTablePolymorphic:
+    """topic_table accepts a model OR bare matrices, matching frex/relevance (#686)."""
+
+    def test_matrix_form_no_prevalence(self):
+        rows = topica.topic_table(PHI, VOCAB, n=2)
+        assert len(rows) == 3
+        assert rows[0]["prevalence"] is None  # bare matrix carries no doc-topic
+        assert set(rows[0]) == {"topic", "prevalence", "prob", "frex"}
+        assert "a" in rows[0]["prob"]  # topic 0 loves "a"
+
+    def test_matrix_with_doc_topic_gives_prevalence(self):
+        doc_topic = np.array([[0.8, 0.1, 0.1], [0.2, 0.7, 0.1]])
+        rows = topica.topic_table(PHI, VOCAB, doc_topic=doc_topic, n=2)
+        assert rows[0]["prevalence"] == pytest.approx(0.5)  # mean of col 0
+
+    def test_model_form_unchanged(self):
+        docs = [["a", "b", "c"], ["a", "a", "b"], ["c", "d", "d"], ["d", "c", "c"]] * 6
+        m = topica.LDA(3, seed=13).fit(docs, iters=40)
+        rows = topica.topic_table(m, n=3)
+        assert len(rows) == 3
+        assert isinstance(rows[0]["prevalence"], float)
