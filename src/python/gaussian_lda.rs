@@ -394,7 +394,7 @@ impl GaussianLDA {
     /// The reference `avgLL` diagnostic per sweep: mean per-token Gaussian log-density
     /// at the current topic assignment (covariance Psi_k/(nu_k - E)). NOT the model
     /// evidence (drops the Dirichlet term) and not guaranteed monotone. Length iters+1
-    /// (entry 0 is the post-initialization value).
+    /// (the first entry, iteration 1, is the post-initialization value).
     #[getter]
     fn log_likelihood_history(&self) -> PyResult<Vec<f64>> {
         Ok(self

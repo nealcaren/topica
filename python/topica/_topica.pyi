@@ -5479,7 +5479,7 @@ class GaussianLDA:
         """The reference `avgLL` diagnostic per sweep: mean per-token Gaussian log-density
         at the current topic assignment (covariance Psi_k/(nu_k - E)). NOT the model
         evidence (drops the Dirichlet term), not guaranteed monotone. Length iters+1
-        (entry 0 is the post-initialization value)."""
+        (the first entry, iteration 1, is the post-initialization value)."""
         ...
     @property
     def fit_history(self) -> list[tuple[int, float]]:

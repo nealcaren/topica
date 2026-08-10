@@ -130,6 +130,20 @@ def _fit_model(name: str, factory):
         model.fit(_TOY, word_emb, vocab, iters=5)
         return model
 
+    # GaussianLDA: positional word_embeddings and vocabulary (like ETM). The toy
+    # corpus may mode-collapse (that is fine here — we only check `converged`); ignore
+    # the collapse warning.
+    if name == "GaussianLDA":
+        import warnings
+
+        vocab = list({w for doc in _TOY for w in doc})
+        rng = np.random.default_rng(42)
+        word_emb = rng.standard_normal((len(vocab), 8))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model.fit(_TOY, word_emb, vocab, iters=5)
+        return model
+
     # DETM: requires word_embeddings, vocabulary, and per-document times
     if name == "DETM":
         vocab = list({w for doc in _TOY for w in doc})

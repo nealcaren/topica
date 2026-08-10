@@ -549,6 +549,17 @@ def _fit_etm(iters=80):
     return m.doc_topic, m.topic_word, K
 
 
+def _fit_gaussian_lda(iters=100):
+    # Gaussian LDA: topics are Gaussians over word embeddings. The planted block
+    # embeddings are well-separated and low-dimensional, the regime the model suits,
+    # so it recovers cleanly (no mode collapse).
+    docs, vocab = _planted_blocks(k=K, block=8, n=240, length=12, seed=0)
+    _, word_emb = _planted_embeddings(k=K, block=8, seed=0)
+    m = topica.GaussianLDA(num_topics=K, seed=1)
+    m.fit(docs, word_emb, vocab, iters=iters)
+    return m.doc_topic, m.topic_word, K
+
+
 def _fit_idealpoint(iters=40):
     # IdealPointTM is experimental and gated. Topic model with a latent ideal-point
     # head; documents grouped into authors that carry a position. The default fit
@@ -707,6 +718,7 @@ FIT_ADAPTERS = {
     "Top2Vec": _fit_top2vec,
     "SemanticSignalSeparation": _fit_semanticsignalseparation,
     "ETM": _fit_etm,
+    "GaussianLDA": _fit_gaussian_lda,
     "IdealPointTM": _fit_idealpoint,
     "IdealPointSentenceTM": _fit_sentence_ideal,
     "TBIP": _fit_tbip,

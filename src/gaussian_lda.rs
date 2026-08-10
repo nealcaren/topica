@@ -37,7 +37,7 @@ pub struct GaussianLDAModel {
     pub topic_counts: Vec<usize>,  // N_k
     pub kappa0: f64,
     pub nu0: f64,
-    pub fit_history: Vec<(usize, f64)>, // (iter, avgLL); iter 0 = post-init
+    pub fit_history: Vec<(usize, f64)>, // (iteration, avgLL); iteration 1 = post-init (1-based)
     pub converged: bool,
 }
 
@@ -524,9 +524,12 @@ pub fn fit<R: Rng>(
         topic_add(&mut topics[k], &embeddings[token_emb[i]], &prior);
     }
 
+    // Trace is 1-based (topica convention: fit_history iterations are positive). The
+    // first point (iteration 1) is the post-initialization avgLL; point s+1 is the avgLL
+    // after sweep s. iters+1 points total, matching the reference's init + per-sweep log.
     let mut fit_history: Vec<(usize, f64)> = Vec::with_capacity(iters + 1);
     fit_history.push((
-        0,
+        1,
         avg_ll(&topics, &token_emb, &token_topic, embeddings, &prior),
     ));
 
@@ -580,7 +583,7 @@ pub fn fit<R: Rng>(
             topic_add(&mut topics[newk], &emb_i, &prior);
         }
         fit_history.push((
-            it + 1,
+            it + 2, // 1-based: point 1 is post-init, so sweep `it` (0-based) is point it+2
             avg_ll(&topics, &token_emb, &token_topic, embeddings, &prior),
         ));
     }
