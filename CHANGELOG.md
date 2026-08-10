@@ -35,6 +35,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`GaussianLDA` — Gaussian LDA** (Das, Zaheer & Dyer, ACL 2015). LDA where each
+  topic is a Gaussian over the word-embedding space (Normal-Inverse-Wishart prior)
+  instead of a categorical over the vocabulary, so topics generalize over semantically
+  similar and unseen words. Collapsed Gibbs with a multivariate Student-t posterior
+  predictive and rank-1 Cholesky up/downdates of each topic's scale matrix. You supply
+  word embeddings, as with ETM; `topic_means`/`topic_covariances` are native outputs and
+  `topic_word` is derived by scoring the vocabulary under each topic. Defaults to
+  `init="kmeans"` (the paper's initialization); `init="random"` reproduces the reference
+  Cholesky sampler. Best suited to low-dimensional, well-separated word embeddings
+  (word2vec/GloVe); on dense contextual embeddings (sentence-transformer/BERT) it
+  mode-collapses like the reference — standardize embeddings per dimension first, and
+  `fit` warns and exposes `n_effective_topics` when a fit collapses. Ported from the
+  authors' Apache-2.0 reference and validated by planted recovery, an incremental-vs-batch
+  NIW state test, a Student-t-density-vs-numpy check, and a Java-oracle parity fixture
+  (`parity/gaussian_lda_gold.py`).
 - **`TopicsOverTime` — Topics over Time** (Wang & McCallum, KDD 2006). LDA plus a
   per-topic Beta density over continuous document timestamps: each topic carries a
   word distribution *and* a temporal profile, and the timestamp influences topic

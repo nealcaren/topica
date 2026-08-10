@@ -85,6 +85,7 @@ REGISTRY: list[tuple[str, object, str]] = [
     ("AuthorTopic",  lambda: _topica.AuthorTopic(2),                             "none"),
     ("MGLDA",        lambda: _topica.MGLDA(2, 3),                                "none"),
     ("TopicsOverTime", lambda: _topica.TopicsOverTime(2),                        "none"),
+    ("GaussianLDA",  lambda: _topica.GaussianLDA(2),                             "none"),
     ("LSA",          lambda: _topica.LSA(2),                                     "none"),
     # embedding-cluster — no generative word distribution
     ("BERTopic",     lambda: _topica.BERTopic(min_cluster_size=5),               "none"),

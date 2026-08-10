@@ -5378,6 +5378,145 @@ class TopicsOverTime:
     def load(path: str) -> TopicsOverTime: ...
     def __repr__(self) -> str: ...
 
+class GaussianLDA:
+    """Gaussian LDA (Das, Zaheer & Dyer, "Gaussian LDA for Topic Models with Word
+    Embeddings," ACL 2015). LDA where each topic is a **Gaussian over the word-embedding
+    space** instead of a categorical over the vocabulary: a token is generated from its
+    topic's multivariate Gaussian on the word's embedding, under a Normal-Inverse-Wishart
+    conjugate prior. Inference is collapsed Gibbs with the multivariate Student-t
+    posterior predictive, using rank-1 Cholesky up/downdates of each topic's NIW scale
+    matrix as tokens move. You bring the word embeddings (like ETM); topics generalize
+    over semantically similar words. `topic_word` is DERIVED by scoring each vocabulary
+    word under each topic's Gaussian (topics are densities, not multinomials). Ported
+    from the authors' Apache-2.0 reference; validated by planted recovery and a Java-oracle
+    parity fixture (the reference is unseeded, so parity is topic-aligned, not bit-exact)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict, keyword-named to
+        match ``__init__`` (issue #400)."""
+        ...
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha: Optional[float] = None,
+        kappa: float = 0.1,
+        nu: Optional[float] = None,
+        psi_scale: float = 3.0,
+        init: str = "kmeans",
+        seed: int = 13,
+    ) -> None:
+        """NIW prior follows the reference defaults (Das et al.): ``alpha`` is the
+        symmetric document-topic Dirichlet concentration (default ``1/K``); ``kappa`` is
+        the prior mean concentration kappa_0 (default 0.1); ``nu`` is the prior degrees of
+        freedom nu_0 (default the embedding dimension E, always clamped to >= E);
+        ``psi_scale`` sets the prior scale matrix ``Psi_0 = psi_scale * E * I`` (default
+        3.0). ``init`` selects topic initialization: ``"kmeans"`` (default; k-means over
+        the vocabulary embeddings, the paper's approach that avoids the mode-collapse of
+        random init) or ``"random"`` (per-token uniform, the reference Cholesky sampler's
+        behavior). ``seed`` is the RNG seed."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        word_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]],
+        vocabulary: Sequence[str],
+        *,
+        iters: int | None = None,
+    ) -> "GaussianLDA":
+        """Fit on token documents plus word embeddings (len(vocabulary) x E) and the
+        aligned vocabulary, which defines the word ids. Tokens outside the vocabulary are
+        dropped. `iters` sets the number of Gibbs sweeps (default 100)."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Derived (num_topics, vocab) matrix: each vocabulary word scored under each
+        topic's Student-t density, softmax-normalized over the vocabulary."""
+        ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def topic_means(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-topic Gaussian means (num_topics, E)."""
+        ...
+    @property
+    def topic_scale_matrices(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-topic NIW scale matrices Psi_k (num_topics, E, E) — what the reference
+        writes. This is the scale matrix, NOT the covariance; see `topic_covariances`."""
+        ...
+    @property
+    def topic_covariances(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-topic covariances (num_topics, E, E): the Inverse-Wishart posterior-mean
+        Sigma_k = Psi_k / (nu_k - E - 1). This exists only when nu_k > E + 1; for an
+        empty or singleton topic the matrix is filled with NaN (no posterior-mean
+        covariance is defined). Use `topic_scale_matrices` for the always-defined Psi_k."""
+        ...
+    @property
+    def topic_counts(self) -> list[int]:
+        """Number of tokens assigned to each topic (num_topics,)."""
+        ...
+    @property
+    def n_effective_topics(self) -> int:
+        """Number of non-empty topics after the fit. Less than ``num_topics`` means the
+        fit mode-collapsed (empty topics are prior-only duplicates); ``fit`` also warns."""
+        ...
+    @property
+    def effective_alpha(self) -> float:
+        """The document-topic Dirichlet concentration actually used (``alpha`` or ``1/K``)."""
+        ...
+    @property
+    def effective_nu(self) -> float:
+        """The NIW degrees of freedom nu_0 actually used (``nu`` clamped to >= E, or E)."""
+        ...
+    @property
+    def log_likelihood_history(self) -> list[float]:
+        """The reference `avgLL` diagnostic per sweep: mean per-token Gaussian log-density
+        at the current topic assignment (covariance Psi_k/(nu_k - E)). NOT the model
+        evidence (drops the Dirichlet term), not guaranteed monotone. Length iters+1
+        (the first entry, iteration 1, is the post-initialization value)."""
+        ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """Per-sweep ``(iteration, avgLL)`` trace (see ``log_likelihood_history``)."""
+        ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, value: list[str]) -> None: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def transform(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        word_embeddings: numpy.typing.NDArray[numpy.float64] | Sequence[Sequence[float]] | None = None,
+        *,
+        iters: int = 50,
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Topic proportions for new documents (closed-vocabulary): tokens are scored
+        under the fitted topic Gaussians via the fitted vocabulary's embeddings, then
+        `iters` Gibbs sweeps run with the topics held fixed. `word_embeddings` is accepted
+        for API symmetry but ignored; out-of-vocabulary words are dropped. Shape
+        (num_docs, num_topics)."""
+        ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> GaussianLDA: ...
+    def __repr__(self) -> str: ...
+
 class LSA:
     """LSA / LSI, latent semantic analysis (Deerwester et al. 1990; randomized
     truncated SVD per Halko et al. 2011). A truncated SVD of the weighted
