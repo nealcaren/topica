@@ -192,6 +192,13 @@ def _fit_model(name: str, factory):
         model.fit(_TOY, authors, iters=10)
         return model
 
+    # MGLDA: sentence-segmented input (list[list[list[str]]]); wrap each toy doc into
+    # two sentences.
+    if name == "MGLDA":
+        sent_docs = [[d[: len(d) // 2 or 1], d[len(d) // 2 :] or d] for d in _TOY]
+        model.fit(sent_docs, iters=10)
+        return model
+
     # Seed models: their factory keywords ("x"/"y") must be in the vocabulary.
     if name in _SEED_MODELS:
         model.fit(_TOY_SEEDED, iters=10)

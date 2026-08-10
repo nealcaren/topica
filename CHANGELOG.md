@@ -35,6 +35,26 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`MGLDA` — Multi-Grain LDA** (Titov & McDonald, WWW 2008). The aspect model for
+  reviews: learns GLOBAL (document-level) and LOCAL (sliding-window aspect) topics
+  simultaneously with a per-token grain switch. Collapsed Gibbs over the
+  `(window, grain, topic)` triple; sentence-segmented input
+  (`list[list[list[str]]]`, with a guard that rejects a flat `list[list[str]]`).
+  Exposes `global_topic_word`, `local_topic_word`, combined `topic_word`, empirical
+  `doc_topic`, `global_doc_topic`, and `global_fraction`. Defaults follow the
+  reference (tomotopy): `window=3`, alphas 0.1, betas 0.01, `gamma` 0.1. Document rows
+  align 1:1 with the input (empty docs kept); `fit` warns when `global_fraction > 0.98`
+  (the local grain then carries no signal). Validated against tomotopy's `MGLDAModel`
+  (MIT; 0.13.0, since 0.14.0 ignores `k_g`/`k_l`) in `parity/mglda_gold.py`: on the
+  planted fixture, global topic-word cosine 1.000 at tomotopy's seed floor, exact
+  planted theme recovery, and matching grain dynamics (`global_fraction` 0.997 vs
+  0.997). The local grain collapses to the prior for the reference itself on synthetic
+  data (not a fidelity target there); it needs real aspect-local text. The local-topic
+  numerator follows the reference (unsmoothed) — with the rest of the conditional
+  identical to tomotopy, that is what separates the two grains. Speed: topica's
+  per-token window×grain×topic grid runs ~1.5–1.6x slower than tomotopy single-threaded
+  on realistic long-document corpora. Closes #690.
+
 - **`AuthorTopic` — the Author-Topic Model** (Rosen-Zvi, Griffiths, Steyvers & Smyth,
   UAI 2004). Conditions topics on authors rather than documents: each author has a
   topic distribution, and a document mixes its authors (`fit(docs, authors)` where

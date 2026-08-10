@@ -5147,6 +5147,126 @@ class AuthorTopic:
     def load(path: str) -> AuthorTopic: ...
     def __repr__(self) -> str: ...
 
+class MGLDA:
+    """MGLDA, Multi-Grain LDA (Titov & McDonald, "Modeling Online Reviews with
+    Multi-Grain Topic Models," WWW 2008). Learns GLOBAL topics (the document-level
+    subject) and LOCAL topics (rateable aspects over a sliding sentence window)
+    simultaneously, with a per-token global/local grain switch. Input is
+    sentence-segmented (list[list[list[str]]]: doc -> sentences -> tokens). Collapsed
+    Gibbs over the (window, grain, topic) triple. Reference: tomotopy MGLDAModel (MIT).
+    The local-topic Gibbs numerator follows the reference (unsmoothed window count);
+    see the model docs for the paper-vs-reference note. MG-LDA is often global-dominant
+    and the local grain is data-dependent (it carries signal on text with genuine
+    within-document aspect locality, e.g. reviews)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict (issue #400)."""
+        ...
+    @property
+    def seed(self) -> int: ...
+    def __init__(
+        self,
+        num_global_topics: int,
+        num_local_topics: int,
+        *,
+        window: int = 3,
+        alpha_global: float = 0.1,
+        alpha_local: float = 0.1,
+        alpha_mix_global: float = 0.1,
+        alpha_mix_local: float = 0.1,
+        beta_global: float = 0.01,
+        beta_local: float = 0.01,
+        gamma: float = 0.1,
+        seed: int = 13,
+    ) -> None:
+        """num_global_topics / num_local_topics are the grain sizes K_gl / K_loc.
+        window is T, sentences per sliding window (default 3). Hyperparameters default
+        to the reference (tomotopy) values: alpha_global/alpha_local (doc-global /
+        window-local topic) 0.1, alpha_mix_global/alpha_mix_local (grain switch) 0.1,
+        beta_global/beta_local (topic-word) 0.01, gamma (sentence-window) 0.1."""
+        ...
+    def fit(
+        self,
+        data: Sequence[Sequence[Sequence[str]]],
+        *,
+        iters: int = 1000,
+    ) -> "MGLDA":
+        """Fit on sentence-segmented documents (list[list[list[str]]]: doc ->
+        sentences -> tokens). A flat list[list[str]] is rejected. Out-of-vocabulary
+        tokens are dropped, but sentence boundaries and document positions are preserved
+        (empty sentences and empty documents kept), so output rows align 1:1 with the
+        input documents. iters is the number of collapsed-Gibbs sweeps (default 1000)."""
+        ...
+    @property
+    def num_topics(self) -> int:
+        """num_global_topics + num_local_topics."""
+        ...
+    @property
+    def num_global_topics(self) -> int: ...
+    @property
+    def num_local_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_global+num_local, vocab): global topics first, then local. Rows sum to 1."""
+        ...
+    @property
+    def global_topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_global, vocab) global topic-word matrix."""
+        ...
+    @property
+    def local_topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_local, vocab) local topic-word matrix."""
+        ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_docs, num_global+num_local): empirical topic prevalence over the
+        combined [global | local] set (proportions of each doc's token assignments).
+        Rows sum to 1 but this is NOT a single generative Dirichlet theta (global is
+        document-level, local is window-level); see global_doc_topic for the doc-level
+        global distribution."""
+        ...
+    @property
+    def global_doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_docs, num_global) document-level global topic distribution, smoothed."""
+        ...
+    @property
+    def global_fraction(self) -> float:
+        """Share of tokens assigned to the global grain. Near 1.0 means the local grain
+        carried almost nothing and `local_topic_word` is prior-dominated (its topics are
+        NOT identified) — common on text without within-document aspect locality. `fit`
+        warns above 0.9; treat local topics as unreliable there and report only the
+        global grain."""
+        ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, names: Sequence[str]) -> None: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """(iter, held-in log-likelihood) trace, logged periodically (roughly every
+        iters/25 sweeps), NOT per-iteration — so its length is ~25, not `iters`; column 0
+        carries the true iteration number. A convergence diagnostic; converged is always
+        False (collapsed Gibbs runs the full iters budget)."""
+        ...
+    @property
+    def converged(self) -> bool: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None
+    ) -> list | list[list]:
+        """Top (word, prob) pairs per combined topic (global first, then local)."""
+        ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-topic UMass coherence over the top n words, shape (num_topics,)."""
+        ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> MGLDA: ...
+    def __repr__(self) -> str: ...
+
 class LSA:
     """LSA / LSI, latent semantic analysis (Deerwester et al. 1990; randomized
     truncated SVD per Halko et al. 2011). A truncated SVD of the weighted

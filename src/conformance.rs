@@ -236,6 +236,14 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::Dirichlet,
         exempt: &[],
     },
+    // MG-LDA: two-grain collapsed Gibbs. doc_topic is an empirical prevalence over
+    // [global|local] topics (rows sum to 1 but not one Dirichlet posterior — global is
+    // doc-level, local window-level), so None_ (skips the Dirichlet/simplex contract).
+    RegistryEntry {
+        name: "MGLDA",
+        family: ModelFamily::None_,
+        exempt: &[],
+    },
     // Neural / embedding / nonparametric — no theta posterior.
     RegistryEntry {
         name: "ProdLDA",
@@ -361,10 +369,10 @@ mod registry_tests {
             }
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
-        // Estimator-backed Rust struct). Bumped to 33 when AuthorTopic was added.
+        // Estimator-backed Rust struct). Bumped to 34 when MGLDA was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            33,
+            34,
             "registry size drifted from the Python REGISTRY"
         );
     }

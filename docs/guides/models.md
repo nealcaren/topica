@@ -65,6 +65,7 @@ The right first choice when your design calls for one: short text, change over t
 | `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `PolylingualLDA` | text | gibbs | seed-reproducible | Polylingual topic model (Mimno et al. 2009): aligned topics across languages from document tuples that share one topic distribution. |
 | `CorEx` | text | information-theoretic | seed-reproducible | Correlation Explanation: information-theoretic topic model that maximizes total correlation; supports anchor words. |
+| `MGLDA` | text | gibbs | seed-reproducible | Multi-Grain LDA: global (document-level) + local (sliding-window aspect) topics with a per-token grain switch. For reviews / aspect extraction. |
 
 #### Covariates & structure
 
@@ -1011,6 +1012,44 @@ dict(zip(m.authors, m.author_doc_counts))                 # docs behind each dec
 ```
 
 Validated against gensim's `AuthorTopicModel` (the reference implementation; gensim is LGPL, so topica implements the paper's collapsed Gibbs and uses gensim only as a black-box oracle) in `parity/author_topic_gold.py`. On a synthetic corpus with a planted author→topic structure and overlapping topics, topica matches gensim about as closely as two gensim runs with different seeds match each other: aligned topic-word cosine 0.99 (one gensim seed pair: 0.999) and aligned author-topic correlation 0.997 (seed pair: 1.000), with each author's dominant topic recovered cleanly and distinctly. Because ATM is stochastic and gensim's inference is variational while topica's is Gibbs, this is topic-aligned agreement near the reference's seed-to-seed noise, not a bit-for-bit match. On fit speed, topica is faster than gensim at matched full-corpus sweeps (roughly 2x on a small corpus, ~7x on a larger one; the exact multiplier depends on how gensim's online passes are configured).
+
+## MGLDA
+
+Multi-Grain LDA ([Titov & McDonald 2008](https://arxiv.org/abs/0801.1063)) is the aspect model for reviews and opinion text. It learns two grains of topic at once: **global** topics that describe a document's overall subject (which product, which brand), and **local** topics that describe the rateable aspects discussed sentence-by-sentence (battery, screen, price). Each token first picks one of the sliding windows covering its sentence, then a global-vs-local grain, then a topic from the appropriate distribution. This separates "what is this document about" from "what aspects does it discuss," which single-grain models (LDA, GSDMM, BTM) conflate.
+
+Input is **sentence-segmented** — `list[list[list[str]]]` (document → sentences → tokens) — because the local grain is defined over sliding *sentence* windows and a bag-of-words `Corpus` cannot carry sentence boundaries.
+
+```python
+docs = [
+    [["great", "phone", "apple"], ["battery", "dies", "fast"], ["screen", "is", "bright"]],
+    [["cheap", "laptop"], ["keyboard", "feels", "mushy"], ["good", "value", "price"]],
+]
+m = topica.MGLDA(num_global_topics=5, num_local_topics=10, window=3, seed=13).fit(docs)
+m.global_topic_word    # (5, V)  document-level themes
+m.local_topic_word     # (10, V) rateable aspects
+m.global_fraction      # share of tokens the model routed to the global grain
+m.top_words(10, topic=0)          # global topic 0 (topics 0..4 global, 5..14 local)
+```
+
+**Preparing sentence-segmented input from raw text.** `Corpus` cannot carry sentence boundaries, so build the nested lists yourself: split each document into sentences, then tokenize (lowercase, drop stopwords) each sentence. MG-LDA does its own vocabulary building from the tokens you pass; prune rare words yourself if you want a smaller vocabulary.
+
+```python
+import re
+raw = topica.datasets.load_dubois()["text"]
+stop = topica.ENGLISH_STOPWORDS
+def to_sentences(text):
+    sents = [re.findall(r"[a-z]+", s.lower()) for s in re.split(r"[.!?]", text)]
+    sents = [[w for w in s if w not in stop and len(w) > 2] for s in sents]
+    return [s for s in sents if s]                       # drop sentences emptied by pruning
+docs = [to_sentences(t) for t in raw]
+m = topica.MGLDA(8, 12, window=3, seed=13).fit(docs)     # rows align 1:1 with `raw`
+```
+
+Inference is collapsed Gibbs over the `(window, grain, topic)` triple, with the sliding-window (`S+T−1` windows for `S` sentences), the per-window grain switch, and the per-sentence window selection all sampled jointly. Hyperparameters default to the reference (tomotopy) values: `window=3`, `alpha_global`/`alpha_local`/`alpha_mix_global`/`alpha_mix_local` = 0.1, `beta_global`/`beta_local` = 0.01, `gamma` = 0.1. `topic_word` stacks the two grains (global rows first, then local); `doc_topic` is the per-document empirical prevalence over the combined `[global | local]` set (rows sum to 1) — a content-based prevalence, not a single generative θ, since global topics are document-level and local topics window-level; `global_doc_topic` is the true doc-level global distribution. Document rows (`doc_topic`, `global_doc_topic`) align 1:1 with your input list, including empty documents. Fits are deterministic from a fixed `seed` (single-threaded); `converged` is always `False` — collapsed Gibbs runs the full `iters` budget with no early-stop test, so watch `fit_history` (an `(iter, held-in log-likelihood)` trace) flatten to judge mixing.
+
+Two honest caveats. First, MG-LDA is often **global-dominant**: on text without strong within-document aspect locality (the same aspect recurring in adjacent sentences), the grain switch routes almost every token global, `global_fraction` approaches 1.0, and `local_topic_word` is then **prior-dominated — its "aspects" are noise, not signal**. `fit` emits a warning when `global_fraction > 0.9`; as a rule of thumb, treat local topics as unidentified above ~0.9 and report only the global grain. The local grain earns its keep on genuine review/opinion text. Second, a **paper-vs-reference discrepancy**: the paper writes the local-topic Gibbs numerator as `(n^loc + α_loc)`, but the canonical implementation (tomotopy) omits the `+α_loc` (raw window-local count), and topica follows the reference — with the rest of the conditional provably identical to tomotopy, the smoothed `+α_loc` variant does not track the reference and stalls the grain switch, so the reference's unsmoothed numerator is what actually separates the two grains. (The `fit_history` log-likelihood diagnostic does use the proper smoothed form so it stays a valid probability.)
+
+Validated against `tomotopy`'s `MGLDAModel` (the reference implementation, MIT; tomotopy 0.13.0, since 0.14.0 has a bug that ignores `k_g`/`k_l`) in `parity/mglda_gold.py`. On a planted corpus with global product themes and local aspects, topica reproduces tomotopy's **global** topics to the reference's own seed-to-seed floor (aligned global topic-word cosine 1.000 on the planted fixture; global themes recovered exactly) **and its grain dynamics** (topica `global_fraction` 0.997 vs tomotopy 0.997 — both route the synthetic corpus almost entirely global). The 1.000 is a planted-fixture figure with disjoint theme vocabularies; on real prose, free-run global topics from two different collapsed-Gibbs RNGs (topica vs tomotopy, and topica vs LDA) align at ~0.6 best-match cosine — related and coherent, not identical, as expected for a stochastic model. The **local** grain is *not* a fidelity target on synthetic data: it collapses to the prior for the reference itself here (tomotopy `global_fraction` ~1.0, its own seed-to-seed local cosine only ~0.89), so there is no local signal to match; local topics become identifiable only on real text with aspect locality. On speed, topica's per-token `T×(K_gl+K_loc)` grid makes it grow with sentences-per-document: roughly **1.5–1.6× slower than tomotopy single-threaded** on realistic long-document corpora (faster than GSDMM, slower than plain LDA by construction).
 
 ## SemanticSignalSeparation
 

@@ -71,6 +71,7 @@ _FACTORIES: dict[str, object] = {
     "GuidedNMF": lambda: topica.GuidedNMF(2, {"a": ["x"], "b": ["y"]}),
     "CorEx": lambda: topica.CorEx(2),
     "AuthorTopic": lambda: topica.AuthorTopic(2),
+    "MGLDA": lambda: topica.MGLDA(2, 3),
     "LSA": lambda: topica.LSA(2),
     "BERTopic": lambda: topica.BERTopic(min_cluster_size=5),
     "Top2Vec": lambda: topica.Top2Vec(),
