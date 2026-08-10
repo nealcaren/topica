@@ -287,11 +287,65 @@ def _fit_seededlda(iters=400):
     return m.doc_topic, m.topic_word, m.num_topics
 
 
+def _fit_corex(iters=200):
+    # CorEx doc_topic is independent per-topic probabilities (rows do not sum to 1);
+    # topic_word is alpha*mis (nonneg, not a distribution). Row-normalize both for
+    # the health check so a topic collapse would still show as mass piling on one
+    # component.
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    m = topica.CorEx(K, seed=1).fit(docs, iters=iters)
+    dt = np.asarray(m.doc_topic)
+    dt = dt / dt.sum(axis=1, keepdims=True).clip(1e-12)
+    tw = np.asarray(m.topic_word)
+    tw = tw / tw.sum(axis=1, keepdims=True).clip(1e-12)
+    return dt, tw, K
+
+
+def _fit_guided_nmf(iters=100):
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    seeds = _block_keywords(vocab, k=K)
+    m = topica.GuidedNMF(K, seeds, guidance=20.0, weighting="count", seed=1)
+    m.fit(docs, iters=iters)
+    return m.doc_topic, m.topic_word, m.num_topics
+
+
 def _fit_labeledlda(iters=300):
     docs, vocab = _planted_blocks(k=K, seed=0)
     labels = [[f"t{int(doc[0].split('w')[0][1:])}"] for doc in docs]
     m = topica.LabeledLDA(alpha=0.1, seed=1)
     m.fit(docs, labels, iters=iters, num_samples=2, sample_interval=10)
+    return m.doc_topic, m.topic_word, m.num_topics
+
+
+def _fit_mglda(iters=300):
+    # Sentence-segmented planted blocks: each doc = 4 sentences, each sentence is one
+    # block's words (so the model has a valid multi-sentence structure). doc_topic is
+    # the empirical prevalence over [global | local] (rows sum to 1).
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    sent_docs = []
+    for d in docs:
+        q = max(1, len(d) // 4)
+        sents = [d[i : i + q] for i in range(0, len(d), q)] or [d]
+        sent_docs.append(sents)
+    m = topica.MGLDA(2, K, window=3, seed=1).fit(sent_docs, iters=iters)
+    return m.doc_topic, m.topic_word, m.num_topics
+
+
+def _fit_author_topic(iters=300):
+    # One unique author per block, so each author owns one topic; doc_topic is the
+    # empirical per-document topic simplex (rows sum to 1), like LDA.
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    authors = [[f"a{d % K}"] for d in range(len(docs))]
+    m = topica.AuthorTopic(K, seed=1).fit(docs, authors=authors, iters=iters)
+    return m.doc_topic, m.topic_word, m.num_topics
+
+
+def _fit_tot(iters=300):
+    # Topics over Time: planted blocks, each block clustered in a distinct time window
+    # so the temporal factor is informative. doc_topic is the standard LDA simplex.
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    times = [float(d % K) for d in range(len(docs))]
+    m = topica.TopicsOverTime(K, seed=1).fit(docs, times=times, iters=iters)
     return m.doc_topic, m.topic_word, m.num_topics
 
 
@@ -531,6 +585,17 @@ def _fit_etm(iters=80):
     return m.doc_topic, m.topic_word, K
 
 
+def _fit_gaussian_lda(iters=100):
+    # Gaussian LDA: topics are Gaussians over word embeddings. The planted block
+    # embeddings are well-separated and low-dimensional, the regime the model suits,
+    # so it recovers cleanly (no mode collapse).
+    docs, vocab = _planted_blocks(k=K, block=8, n=240, length=12, seed=0)
+    _, word_emb = _planted_embeddings(k=K, block=8, seed=0)
+    m = topica.GaussianLDA(num_topics=K, seed=1)
+    m.fit(docs, word_emb, vocab, iters=iters)
+    return m.doc_topic, m.topic_word, K
+
+
 def _fit_idealpoint(iters=40):
     # IdealPointTM is experimental and gated. Topic model with a latent ideal-point
     # head; documents grouped into authors that carry a position. The default fit
@@ -655,6 +720,8 @@ FIT_ADAPTERS = {
     "ProdLDA": _fit_prodlda,
     "HDP": _fit_hdp,
     "NMF": _fit_nmf,
+    "GuidedNMF": _fit_guided_nmf,
+    "CorEx": _fit_corex,
     "LSA": _fit_lsa,
     "AnchorLDA": _fit_anchorlda,
     "TensorLDA": _fit_tensorlda,
@@ -668,6 +735,9 @@ FIT_ADAPTERS = {
     "KeyATM": _fit_keyatm,
     "SeededLDA": _fit_seededlda,
     "LabeledLDA": _fit_labeledlda,
+    "AuthorTopic": _fit_author_topic,
+    "MGLDA": _fit_mglda,
+    "TopicsOverTime": _fit_tot,
     "SupervisedLDA": _fit_supervisedlda,
     "DiscLDA": _fit_disclda,
     "RTM": _fit_rtm,
@@ -686,6 +756,7 @@ FIT_ADAPTERS = {
     "MechanisticBERTopic": _fit_mechanisticbertopic,
     "SemanticSignalSeparation": _fit_semanticsignalseparation,
     "ETM": _fit_etm,
+    "GaussianLDA": _fit_gaussian_lda,
     "IdealPointTM": _fit_idealpoint,
     "IdealPointSentenceTM": _fit_sentence_ideal,
     "TBIP": _fit_tbip,

@@ -184,6 +184,18 @@ to the **same two fixed reviewers**, in the **same roles** as Gate A:
 2. **Reviewer B (adversarial — Gemini)** via the `antigravity` skill: silent
    deviations, correctness bugs, determinism holes, overclaimed parity/speed,
    untested edge cases.
+3. **Reviewer C (comparative — Claude subagent, `opus`, isolated worktree)**:
+   how the finished model stacks up against its same-family topica siblings on
+   **accuracy, speed, and memory**, and whether the PR's comparative claims are
+   honest. Gate B only (needs the built artifact to benchmark). Prompt in
+   `references/evaluation-agents.md` (§Reviewer C).
+4. **Reviewer D (sample-user on real data — Claude `general-purpose` subagent)**:
+   a first-time computational social scientist ("a random sociologist") who takes the
+   model through the whole paper workflow on a **real bundled dataset**, docs-only,
+   and reports ranked friction (Tier-1 analytical traps first). Gate B only. Uses the
+   `sample-user` skill; prompt in `references/evaluation-agents.md` (§Reviewer D).
+
+Gate B is thus **four reviewers** (A+B+C+D); Gate A is two (A+B).
 
 Fall back per-slot to a Claude subagent (model `opus`, isolated worktree,
 background) only if the external model is unavailable — same role, do not swap.

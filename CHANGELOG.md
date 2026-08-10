@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Changed
+
+- **Dataset loaders now offer a uniform shape** (#686). Text-table loaders
+  (`load_gadarian`/`load_poliblog`/`load_dubois`) still return a pandas DataFrame by
+  default, but accept `as_bunch=True` to return a `Bunch` whose `.df` is the table —
+  the same shape `load_ng20_minilm` returns (now with a `.df` view alongside its
+  embedding arrays). So `load_X(as_bunch=True).df` is one idiom across the roster. The
+  two-shape contract is documented in every loader's docstring and the module.
+- **`topic_table` is now polymorphic** (#686). It accepts either a fitted model or a
+  bare `(K, V)` topic-word array plus `vocabulary`, matching its siblings `frex` /
+  `relevance` (the previous model-only signature crashed on the natural matrix guess).
+  Pass `doc_topic=` with a bare array to get the prevalence column; otherwise it is
+  `None`. The model form is unchanged.
+
 ### Fixed
 
 - **`compare` no longer reports a one-sided fingerprint as a difference** (#672
@@ -74,6 +88,92 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   activations, not tokens); both properties are `None` for corpora built any other
   way.
 
+- **`GaussianLDA` — Gaussian LDA** (Das, Zaheer & Dyer, ACL 2015). LDA where each
+  topic is a Gaussian over the word-embedding space (Normal-Inverse-Wishart prior)
+  instead of a categorical over the vocabulary, so topics generalize over semantically
+  similar and unseen words. Collapsed Gibbs with a multivariate Student-t posterior
+  predictive and rank-1 Cholesky up/downdates of each topic's scale matrix. You supply
+  word embeddings, as with ETM; `topic_means`/`topic_covariances` are native outputs and
+  `topic_word` is derived by scoring the vocabulary under each topic. Defaults to
+  `init="kmeans"` (the paper's initialization); `init="random"` reproduces the reference
+  Cholesky sampler. Best suited to low-dimensional, well-separated word embeddings
+  (word2vec/GloVe); on dense contextual embeddings (sentence-transformer/BERT) it
+  mode-collapses like the reference — standardize embeddings per dimension first, and
+  `fit` warns and exposes `n_effective_topics` when a fit collapses. Ported from the
+  authors' Apache-2.0 reference and validated by planted recovery, an incremental-vs-batch
+  NIW state test, a Student-t-density-vs-numpy check, and a Java-oracle parity fixture
+  (`parity/gaussian_lda_gold.py`).
+- **`TopicsOverTime` — Topics over Time** (Wang & McCallum, KDD 2006). LDA plus a
+  per-topic Beta density over continuous document timestamps: each topic carries a
+  word distribution *and* a temporal profile, and the timestamp influences topic
+  assignment jointly with the words. Collapsed Gibbs (the LDA conditional times a
+  per-topic Beta time factor, evaluated in a per-document linear form that keeps the
+  per-token loop free of transcendentals); per-topic Beta parameters estimated by
+  method of moments once per sweep. `fit(docs, times=…)` (any numeric scale;
+  `timestamps=` alias) min-max normalizes time internally and reports peaks/means back
+  in the input units. Exposes `topic_word`, `doc_topic`, `topic_time` (K×2 Beta ψ),
+  `topic_time_peak` (Beta mode, `NaN` for a U-shaped/no-signal topic), `topic_time_mean`,
+  and `time_range`. Defaults follow the paper: `alpha=50/K`, `beta=0.1`. Descriptive
+  continuous-time prevalence — distinct from DTM/DETM (discrete-slice vocabulary drift)
+  and STM-with-splines (covariate effects). Validated by planted continuous-time
+  recovery plus independent numpy-MoM and `scipy.stats.beta` numerical checks
+  (`parity/tot_gold.py`); no maintained reference library exists. (#694)
+
+- **`MGLDA` — Multi-Grain LDA** (Titov & McDonald, WWW 2008). The aspect model for
+  reviews: learns GLOBAL (document-level) and LOCAL (sliding-window aspect) topics
+  simultaneously with a per-token grain switch. Collapsed Gibbs over the
+  `(window, grain, topic)` triple; sentence-segmented input
+  (`list[list[list[str]]]`, with a guard that rejects a flat `list[list[str]]`).
+  Exposes `global_topic_word`, `local_topic_word`, combined `topic_word`, empirical
+  `doc_topic`, `global_doc_topic`, and `global_fraction`. Defaults follow the
+  reference (tomotopy): `window=3`, alphas 0.1, betas 0.01, `gamma` 0.1. Document rows
+  align 1:1 with the input (empty docs kept); `fit` warns when `global_fraction > 0.98`
+  (the local grain then carries no signal). Validated against tomotopy's `MGLDAModel`
+  (MIT; 0.13.0, since 0.14.0 ignores `k_g`/`k_l`) in `parity/mglda_gold.py`: on the
+  planted fixture, global topic-word cosine 1.000 at tomotopy's seed floor, exact
+  planted theme recovery, and matching grain dynamics (`global_fraction` 0.997 vs
+  0.997). The local grain collapses to the prior for the reference itself on synthetic
+  data (not a fidelity target there); it needs real aspect-local text. The local-topic
+  numerator follows the reference (unsmoothed) — with the rest of the conditional
+  identical to tomotopy, that is what separates the two grains. Speed: topica's
+  per-token window×grain×topic grid runs ~1.5–1.6x slower than tomotopy single-threaded
+  on realistic long-document corpora. Closes #690.
+
+- **`AuthorTopic` — the Author-Topic Model** (Rosen-Zvi, Griffiths, Steyvers & Smyth,
+  UAI 2004). Conditions topics on authors rather than documents: each author has a
+  topic distribution, and a document mixes its authors (`fit(docs, authors)` where
+  `authors` is one author list per document). Collapsed Gibbs reusing topica's LDA
+  count machinery plus an author-topic table; exposes `author_topic` (the
+  model-defining per-author θ), `authors`, `author_doc_counts` (documents behind each
+  author's row), `top_authors(topic, n)`, and a content-based empirical `doc_topic`.
+  `alpha` defaults to the paper's `50/K`, `beta` to `0.01`. Single-threaded. Validated
+  against gensim's `AuthorTopicModel` in `parity/author_topic_gold.py`: topic-aligned
+  cosine 0.99 / author-topic correlation 0.997, matching gensim about as closely as
+  two gensim seeds match each other. Closes #687.
+
+- **`CorEx` — information-theoretic Correlation Explanation topic model** (Gallagher,
+  Reing, Kale & Ver Steeg, TACL 2017). A non-generative, non-factorization paradigm:
+  it learns binary latent topics that maximize the total correlation they explain
+  about the words, with optional anchor words for semi-supervision (`anchor_words`,
+  `anchor_strength`, reusing SeededLDA's matcher). `topic_word` is `alpha*mis`
+  (membership-weighted mutual information, not a distribution) and `doc_topic` rows do
+  not sum to 1 (independent binary topics); exposes `mis`, `alpha`, `clusters`,
+  `labels`, `topic_tc`, `total_correlation`, and held-out `transform`. Validated
+  against the `corextopic` package (`parity/corex_gold.py`): aligned MI cosine 1.000,
+  total correlation matching to three decimals, identical clusters, anchors honored.
+- **`GuidedNMF` — seed-word-guided semi-supervised NMF** (Vendrow, Haddock, Rebrova &
+  Needell, ICASSP 2021). The matrix-factorization analogue of `SeededLDA`: it factors
+  the document-term matrix `X ≈ A S` while a supervision term `λ‖Y − B S‖²` steers
+  designated topics toward user-supplied seed-word groups. Reuses SeededLDA's seed
+  matcher (`seed_match`, `case_insensitive`), reports scale-corrected `doc_topic` and
+  `seed_topic_indices`, and exposes the raw factors (`factor_a`/`factor_s`/`factor_b`).
+  `guidance` (λ) defaults to 3.0, deliberately below the reference's rarely-used 20:
+  at 20 the guided topics are pinned so tightly to their seeds that they carry
+  near-zero document prevalence; 3.0 keeps the same on-theme words with interpretable
+  prevalence (raise it toward 20 to reproduce the reference).
+  Validated against the `ssnmf` package (`parity/guidednmf_gold.py`): fed the same
+  init, topica reproduces ssnmf's supervised-Frobenius update to floating-point noise
+  (one-step max |Δ| ≈ 1e-15; 50-iteration aligned cosine 1.000).
 - **`topica.llm.human_agreement` — validate an LLM metric against human ratings**
   (#583). The Spearman (default; also Pearson / Kendall) rank correlation between a
   per-item LLM metric (e.g. the `llm.coherence` array) and a matching vector of human

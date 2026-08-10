@@ -28,7 +28,7 @@ _TOY    = [list(_ANIMAL) for _ in range(15)] + [list(_SPACE) for _ in range(15)]
 # "x"/"y"; a keyATM keyword topic whose seeds are all out-of-vocabulary now raises
 # (#418), so those two models fit on a corpus that contains x/y. Scoped to the seed
 # models so the shared _TOY (and every other model's behavior) is untouched.
-_SEED_MODELS = {"KeyATM", "SeededLDA"}
+_SEED_MODELS = {"KeyATM", "SeededLDA", "GuidedNMF"}
 _TOY_SEEDED = _TOY + [["x", "y", "cat", "planet"] for _ in range(10)]
 
 # Cluster models: fit_history == [] and converged is None by design (not a gap).
@@ -53,7 +53,7 @@ _NO_TRACE_MODELS = _CLUSTER_MODELS | _DIRECT_SOLVE_MODELS | _LLM_MODELS
 # HDP and GSDMM discover their topic/cluster counts, so a log-likelihood plateau
 # is not a convergence signal; DTM and HLDA expose no flat per-iteration objective.
 # (keyATM is NOT here: it supports opt-in convergence_tol early-stopping.)
-_CONVERGED_FALSE_ALWAYS = {"HDP", "GSDMM", "DTM", "HLDA"}
+_CONVERGED_FALSE_ALWAYS = {"HDP", "GSDMM", "DTM", "HLDA", "TopicsOverTime"}
 
 # Models that converge by DEFAULT: their stopping rule is intrinsic, not an opt-in
 # convergence_tol early-stop. S³'s FastICA fixed-point always runs to its native
@@ -130,6 +130,20 @@ def _fit_model(name: str, factory):
         model.fit(_TOY, word_emb, vocab, iters=5)
         return model
 
+    # GaussianLDA: positional word_embeddings and vocabulary (like ETM). The toy
+    # corpus may mode-collapse (that is fine here — we only check `converged`); ignore
+    # the collapse warning.
+    if name == "GaussianLDA":
+        import warnings
+
+        vocab = list({w for doc in _TOY for w in doc})
+        rng = np.random.default_rng(42)
+        word_emb = rng.standard_normal((len(vocab), 8))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model.fit(_TOY, word_emb, vocab, iters=5)
+        return model
+
     # DETM: requires word_embeddings, vocabulary, and per-document times
     if name == "DETM":
         vocab = list({w for doc in _TOY for w in doc})
@@ -184,6 +198,25 @@ def _fit_model(name: str, factory):
     if name in _LLM_MODELS:
         model._backend_arg = lambda prompt: "{}"
         model.fit(_TOY)
+        return model
+
+    # AuthorTopic: positional `authors` is a per-document author-label list.
+    if name == "AuthorTopic":
+        authors = [["a0"]] * (len(_TOY) // 2) + [["a1"]] * (len(_TOY) - len(_TOY) // 2)
+        model.fit(_TOY, authors, iters=10)
+        return model
+
+    # MGLDA: sentence-segmented input (list[list[list[str]]]); wrap each toy doc into
+    # two sentences.
+    if name == "MGLDA":
+        sent_docs = [[d[: len(d) // 2 or 1], d[len(d) // 2 :] or d] for d in _TOY]
+        model.fit(sent_docs, iters=10)
+        return model
+
+    # TopicsOverTime: requires per-document numeric times.
+    if name == "TopicsOverTime":
+        times = [float(i % 3) for i in range(len(_TOY))]
+        model.fit(_TOY, times=times, iters=10)
         return model
 
     # Seed models: their factory keywords ("x"/"y") must be in the vocabulary.

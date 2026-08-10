@@ -301,17 +301,13 @@ class TestMechanisticBERTopic:
         assert mtm.MechanisticBERTopic().settings["min_cluster_size"] == 10
 
     def test_recovers_planted_clusters(self):
-        from sklearn.metrics import adjusted_rand_score
-
         docs, labels = _planted()
         fc = mtm.featurize(docs, mtm.feature_thresholds(docs, q=0.8))
         W = np.random.default_rng(31).normal(size=(fc.num_features, 16))
         m = mtm.MechanisticBERTopic(min_cluster_size=5, seed=13).fit(fc, directions=W)
-        assert adjusted_rand_score(labels, m.labels) > 0.9
+        assert topica.agreement(m.labels, labels)["ari"] > 0.9
 
     def test_the_null_does_not_recover_clusters(self):
-        from sklearn.metrics import adjusted_rand_score
-
         rng = np.random.default_rng(13)
         docs = [rng.random((40, 30)) for _ in range(60)]
         labels = [d % 3 for d in range(60)]      # labels unrelated to the data
@@ -319,7 +315,7 @@ class TestMechanisticBERTopic:
         W = rng.normal(size=(30, 16))
         m = mtm.MechanisticBERTopic(min_cluster_size=5, seed=13,
                                     max_doc_fraction=1.0).fit(fc, directions=W)
-        assert adjusted_rand_score(labels, m.labels) < 0.2
+        assert topica.agreement(m.labels, labels)["ari"] < 0.2
 
     def test_directions_and_doc_embeddings_agree(self):
         docs, _ = _planted()

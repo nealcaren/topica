@@ -1,0 +1,31 @@
+{
+  "anchor_strength": 2.0,
+  "anchors": {
+    "g0": [
+      "w0"
+    ],
+    "g1": [
+      "w8"
+    ],
+    "g2": [
+      "w16"
+    ],
+    "g3": [
+      "w24"
+    ]
+  },
+  "corex_self_mis_cosine": 0.9999999999352238,
+  "corpus": "planted binary 200-doc / 4-block (seed 271)",
+  "count": "binarize",
+  "date": "2026-08-09",
+  "eps": 1e-05,
+  "iters": 200,
+  "margin": 0.15,
+  "model": "CorEx (gregversteeg/corex_topic, tree/binarize)",
+  "num_docs": 200,
+  "num_topics": 4,
+  "pass_bar": "topica mis cosine >= corex_self - margin; anchored words in their assigned topics; tc within tolerance",
+  "reference": "corextopic 1.1",
+  "total_correlation": 5.272468738860899,
+  "vocab_size": 32
+}

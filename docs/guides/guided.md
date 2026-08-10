@@ -164,11 +164,50 @@ The whole fitted-model surface (`topic_word`, `doc_topic`, `top_words`,
 holds the embedding-derived seed sets. `topica.embedding_seeds(...)` exposes just
 the clustering step if you want to inspect or edit the seeds before fitting.
 
+## GuidedNMF
+
+`GuidedNMF` is the matrix-factorization member of this family: seed-word-guided
+semi-supervised NMF (Vendrow et al. 2021). Where `SeededLDA` biases a Dirichlet
+prior, `GuidedNMF` adds a supervision term to the NMF objective that pulls
+designated topics toward your seed words. Same `{name: [words]}` seed dictionary and
+the same `seed_match`/`case_insensitive` matcher as `SeededLDA`.
+
+```python
+seeds = {"economy": ["tax", "market", "jobs"], "foreign": ["war", "troops"]}
+m = topica.GuidedNMF(num_topics=10, seed_words=seeds, seed=1).fit(docs)  # guidance defaults to 3.0
+m.seed_topic_indices           # which learned topic each group steered
+dict(zip(m.seed_group_names, m.seed_topic_indices))   # name -> topic
+m.top_words(10, topic=m.seed_topic_indices[0])
+```
+
+The full model reference and its ssnmf validation are in
+[models.md#guidednmf](models.md#guidednmf). Two things to know before you report
+numbers:
+
+!!! note "`guidance` (λ) and document prevalence"
+    `guidance` trades reconstruction against seed adherence. topica defaults to
+    `guidance=3`, deliberately lower than the reference's rarely-used `20`: at `20`
+    the guided topics are pinned so tightly to their seed words that they rarely
+    *dominate* a document, so their `doc_topic` share and `argmax` counts collapse
+    toward zero even when the theme is clearly present. At `3` the top words are the
+    same but document prevalence is interpretable. Raise `guidance` toward `20` to
+    reproduce the reference or hold topics closer to the seeds; lower it for more
+    data-driven topics. The topic-*word* content is faithful across λ; it is the
+    document side that shifts, so state the λ you used when you report prevalence.
+
+`convergence_tol` defaults to `0.0` (run the full `iters` budget, matching the
+reference), so a normal fit ends with `converged=False` — that is the "ran the whole
+budget" state, not a failure. Set `convergence_tol > 0` for a relative-decrease early
+stop.
+
 ## Which to use
 
 - **`KeyATM`** is the better-validated choice and the one with the political-
   science following; prefer it for new work.
 - **`SeededLDA`** is simpler and maps directly onto the `seededlda` workflow.
+- **`GuidedNMF`** is the fast, deterministic matrix-factorization option: no priors,
+  seconds to fit, and topic-word content faithful to `ssnmf`; mind the prevalence
+  caveat above.
 - **`EmbeddingLDA`** when you have embeddings but no hand-picked seed list, and
   want the topic structure anchored to semantic similarity.
 

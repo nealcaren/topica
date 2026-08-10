@@ -149,6 +149,18 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("SeededLDA", "guided", ("text", "seeds"), "gibbs", "seed-reproducible", (),
            "Seeded LDA: steer named topics toward supplied seed words.",
            "guides/guided.md"),
+        _m("GuidedNMF", "guided", ("text", "seeds"), "matrix-factorization", "seed-reproducible", (),
+           "Guided NMF: seed-word-guided semi-supervised NMF; the matrix-factorization analogue of SeededLDA.",
+           "guides/models.md#guidednmf"),
+        _m("CorEx", "general-purpose", ("text",), "information-theoretic", "seed-reproducible", (),
+           "Correlation Explanation: information-theoretic topic model that maximizes total correlation; supports anchor words.",
+           "guides/models.md#corex"),
+        _m("AuthorTopic", "covariates", ("text", "metadata"), "gibbs", "seed-reproducible", (),
+           "Author-Topic Model: each author has a topic distribution; documents mix their authors. Answers what an author writes about.",
+           "guides/models.md#authortopic"),
+        _m("MGLDA", "general-purpose", ("text",), "gibbs", "seed-reproducible", (),
+           "Multi-Grain LDA: global (document-level) + local (sliding-window aspect) topics with a per-token grain switch. For reviews / aspect extraction.",
+           "guides/models.md#mglda"),
         _m("LabeledLDA", "guided", ("text", "labels"), "gibbs", "seed-reproducible", (),
            "Labeled LDA: each document label is a topic; tokens are restricted to its labels.",
            "guides/models.md#labeledlda"),
@@ -176,6 +188,10 @@ REGISTRY: dict[str, ModelInfo] = {
            ("temporal",),
            "Dynamic embedded topic model: embedding-factored topics that drift across time slices, fit as an amortized VAE.",
            "guides/embedding.md"),
+        _m("TopicsOverTime", "dynamic-hierarchical", ("text", "times"), "gibbs", "seed-reproducible",
+           ("temporal",),
+           "Topics over Time: LDA with a per-topic Beta density over continuous timestamps; each topic has a temporal peak. Descriptive continuous-time prevalence (not vocabulary drift).",
+           "guides/models.md#topicsovertime"),
         _m("HLDA", "dynamic-hierarchical", ("text",), "gibbs", "seed-reproducible", ("hierarchical",),
            "Hierarchical LDA (nested CRP): a learned tree of super- and sub-topics.",
            "guides/models.md#hierarchy-models"),
@@ -201,6 +217,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("ETM", "embedding", ("text", "embeddings"), "variational", "seed-reproducible", (),
            "Embedded topic model: topic-word distributions factored through word embeddings.",
            "guides/embedding.md"),
+        _m("GaussianLDA", "embedding", ("text", "embeddings"), "gibbs", "seed-reproducible", (),
+           "Gaussian LDA (Das, Zaheer & Dyer 2015): each topic is a Gaussian over the word-embedding space (Normal-Inverse-Wishart prior), so topics generalize over semantically similar words. Collapsed Gibbs with a Student-t posterior predictive and rank-1 Cholesky up/downdates.",
+           "guides/models.md#gaussianlda"),
         _m("IdealPointTM", "embedding", ("text", "embeddings"), "variational", "seed-reproducible", (),
            "Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate.",
            "guides/models.md#idealpointtm", experimental=True),
@@ -287,6 +306,11 @@ IMPL: dict[str, ImplInfo] = {
     "ProdLDA": _i("src/prodlda.rs", "src/python/neural.rs", "hand-coded batched VAE (prodlda.rs)", "", "parity/prodlda_gold.py, parity/prodlda_compare.py"),
     "HDP": _i("src/hdp.rs", "src/python/mod.rs", "collapsed Gibbs (model.rs, sampler.rs)", "", "parity/hdp_gold.py"),
     "NMF": _i("src/nmf.rs", "src/python/nmf_lsa.rs", "multiplicative-update matrix factorization", "", "parity/nmf_vs_sklearn.py"),
+    "GuidedNMF": _i("src/guided_nmf.rs", "src/python/guided_nmf.rs", "supervised multiplicative-update matrix factorization", "", "parity/guidednmf_gold.py"),
+    "CorEx": _i("src/cor_ex.rs", "src/python/cor_ex.rs", "total-correlation info-theoretic optimizer", "", "parity/corex_gold.py"),
+    "AuthorTopic": _i("src/author_topic.rs", "src/python/author_topic.rs", "collapsed Gibbs (author×topic + word×topic counts)", "", "parity/author_topic_gold.py"),
+    "MGLDA": _i("src/mg_lda.rs", "src/python/mg_lda.rs", "two-grain collapsed Gibbs over sliding sentence windows", "", "parity/mglda_gold.py"),
+    "TopicsOverTime": _i("src/topics_over_time.rs", "src/python/topics_over_time.rs", "collapsed Gibbs (LDA + per-topic Beta time factor, method-of-moments psi)", "", "parity/tot_gold.py"),
     "LSA": _i("src/lsa.rs", "src/python/nmf_lsa.rs", "truncated SVD (linalg)", "", "parity/lsa_vs_sklearn.py"),
     "AnchorLDA": _i("python/topica/anchor.py", "", "spectral anchor-word recovery (Python over Rust primitives)", "", "tests/test_anchor.py"),
     "TensorLDA": _i("src/tlda.rs", "src/python/tlda.rs", "method-of-moments cumulants (linalg, spectral)", "", "parity/tlda_gold.py, parity/tlda_compare.py"),
@@ -318,6 +342,7 @@ IMPL: dict[str, ImplInfo] = {
     "MechanisticBERTopic": _i("python/topica/mtm.py", "", "SAE featurization (Python) over the embedding-clustering core (cluster.rs, reduce.rs)", "embeddings", "tests/test_mtm.py"),
     "SemanticSignalSeparation": _i("src/semantic_signal_separation.rs", "src/python/semantic_signal_separation.rs", "FastICA over document embeddings + vocabulary projection (reduce.rs)", "embeddings", "parity/s3_compare.py, tests/test_semantic_signal_separation.py"),
     "ETM": _i("src/etm.rs", "src/python/neural.rs", "variational EM over word embeddings (ctm.rs)", "", "parity/etm_gold.py"),
+    "GaussianLDA": _i("src/gaussian_lda.rs", "src/python/gaussian_lda.rs", "collapsed Gibbs (NIW-Gaussian topics, Student-t predictive, rank-1 Cholesky up/downdates)", "", "parity/gaussian_lda_gold.py"),
     "IdealPointTM": _i("src/idealpoint.rs", "src/python/idealpoint.rs", "variational EM + ideal-point head", "", "tests/test_idealpoint.py, tests/test_idealpoint_counts.py"),
     "Wordfish": _i("src/wordfish.rs", "src/python/wordfish.rs", "Poisson-scaling EM", "", "parity/wordfish_r_compare.py, tests/test_wordfish.py"),
     "IdealPointSentenceTM": _i("src/sentence_ideal.rs", "src/python/sentence_ideal.rs", "Gaussian-cluster EM over embeddings", "", "tests/test_sentence_ideal.py"),
@@ -416,6 +441,15 @@ def effective_determinism(model, *, fit_settings: dict | None = None) -> dict:
             notes.append(
                 "init='random' draws both factors from the seeded RNG; bit-exact "
                 "only with init='nndsvd'"
+            )
+    elif cls == "GuidedNMF":
+        # Default init='random' is seed-reproducible; the deterministic inits
+        # ('nndsvd', caller-supplied 'none') are bit-exact.
+        if init in ("nndsvd", "none"):
+            effective = "bit-exact"
+            notes.append(
+                f"init='{init}' is deterministic (no RNG draws), so the fit is "
+                "bit-exact across runs"
             )
     elif cls in ("CTM", "STM", "STS"):
         if inference == "svi":

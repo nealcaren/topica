@@ -64,6 +64,8 @@ The right first choice when your design calls for one: short text, change over t
 | `LSA` | text | svd | seed-reproducible | Latent semantic analysis: a truncated SVD of the weighted document-term matrix. |
 | `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `PolylingualLDA` | text | gibbs | seed-reproducible | Polylingual topic model (Mimno et al. 2009): aligned topics across languages from document tuples that share one topic distribution. |
+| `CorEx` | text | information-theoretic | seed-reproducible | Correlation Explanation: information-theoretic topic model that maximizes total correlation; supports anchor words. |
+| `MGLDA` | text | gibbs | seed-reproducible | Multi-Grain LDA: global (document-level) + local (sliding-window aspect) topics with a per-token grain switch. For reviews / aspect extraction. |
 
 #### Covariates & structure
 
@@ -76,12 +78,14 @@ The right first choice when your design calls for one: short text, change over t
 | `Scholar` | text, metadata, labels | vae | seed-reproducible | SCHOLAR (Card et al. 2018): a ProdLDA VAE with a covariate-shifted prevalence prior, an optional supervised label head, and optional content (topic-covariate) word deviations — neural STM prevalence + sLDA + SAGE. |
 | `RTM` | text, links | variational | seed-reproducible | Relational topic model (Chang & Blei 2010): jointly models document text and a link graph (citations, hyperlinks, adjacency); predicts links from words and words from links. |
 | `FactorialLDA` | text | gibbs | seed-reproducible | Factorial LDA (Paul & Dredze 2012): each token is a K-tuple of latent factors (e.g. topic x sentiment); structured word priors tie tuples sharing a component and a sparsity prior deactivates unsupported tuples. |
+| `AuthorTopic` | text, metadata | gibbs | seed-reproducible | Author-Topic Model: each author has a topic distribution; documents mix their authors. Answers what an author writes about. |
 
 #### Guided & supervised
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
 | `SeededLDA` | text, seeds | gibbs | seed-reproducible | Seeded LDA: steer named topics toward supplied seed words. |
+| `GuidedNMF` | text, seeds | matrix-factorization | seed-reproducible | Guided NMF: seed-word-guided semi-supervised NMF; the matrix-factorization analogue of SeededLDA. |
 | `LabeledLDA` | text, labels | gibbs | seed-reproducible | Labeled LDA: each document label is a topic; tokens are restricted to its labels. |
 | `SupervisedLDA` | text, labels | variational | seed-reproducible | Supervised LDA: topics shaped to predict a per-document real-valued response. |
 | `DiscLDA` | text, labels | gibbs | seed-reproducible | Discriminative LDA (Lacoste-Julien et al. 2008): topics split into per-class and shared blocks; reads how classes talk differently. |
@@ -99,6 +103,7 @@ The right first choice when your design calls for one: short text, change over t
 |---|---|---|---|---|
 | `DTM` | text, times | variational | seed-reproducible | Dynamic topic model: a fixed topic set whose word distributions drift across time slices. |
 | `DETM` | text, embeddings, times | vae | seed-reproducible | Dynamic embedded topic model: embedding-factored topics that drift across time slices, fit as an amortized VAE. |
+| `TopicsOverTime` | text, times | gibbs | seed-reproducible | Topics over Time: LDA with a per-topic Beta density over continuous timestamps; each topic has a temporal peak. Descriptive continuous-time prevalence (not vocabulary drift). |
 | `HLDA` | text | gibbs | seed-reproducible | Hierarchical LDA (nested CRP): a learned tree of super- and sub-topics. |
 | `PA` | text | gibbs | seed-reproducible | Pachinko allocation: a DAG of super- and sub-topics. |
 
@@ -109,6 +114,7 @@ The right first choice when your design calls for one: short text, change over t
 | `Top2Vec` | text, embeddings | clustering | seed-reproducible | Topics as dense regions in a joint document-word embedding space. |
 | `SemanticSignalSeparation` | text, embeddings | ica | seed-reproducible | Topics as independent axes of semantic space (S3, Kardos et al. 2025): FastICA over the document embeddings, with each word's importance read off by projecting the vocabulary embeddings onto each axis. Signed poles. |
 | `ETM` | text, embeddings | variational | seed-reproducible | Embedded topic model: topic-word distributions factored through word embeddings. |
+| `GaussianLDA` | text, embeddings | gibbs | seed-reproducible | Gaussian LDA (Das, Zaheer & Dyer 2015): each topic is a Gaussian over the word-embedding space (Normal-Inverse-Wishart prior), so topics generalize over semantically similar words. Collapsed Gibbs with a Student-t posterior predictive and rank-1 Cholesky up/downdates. |
 | `FASTopic` | text, embeddings | optimal-transport | seed-reproducible | Topics from optimal-transport plans between document, topic, and word embeddings. |
 | `EmbeddingLDA` | text, embeddings, seeds | gibbs | seed-reproducible | Seeded LDA whose seed sets are expanded with nearest neighbors in an embedding space. |
 | `CombinedTM` | text, embeddings | vae | seed-reproducible | Contextualized ProdLDA: encoder reads the bag of words plus a document embedding. |
@@ -911,6 +917,37 @@ m.top_words(10)
 
 Validated against `sklearn.decomposition.NMF` in `parity/nmf_vs_sklearn.py`. On a planted-block corpus topica matches sklearn to aligned topic-word cosine 1.000 for both divergences. On the political-blog corpus (poliblog5k, 5,000 documents) topica reproduces sklearn's topics at K=10 (aligned cosine 0.999, both divergences); at larger K, where the NMF objective is multimodal, topica reaches an equal-quality alternate optimum (reconstruction loss within about 0.1% of sklearn, sometimes lower) rather than sklearn's exact factorization, as expected for a non-convex problem whose solutions are not unique. On speed, the KL path runs several times faster than sklearn at scale, and the Frobenius path is competitive on the sparse document-term matrices typical of text, with the gap to BLAS-backed sklearn appearing only on near-dense inputs.
 
+## GuidedNMF
+
+Guided NMF ([Vendrow, Haddock, Rebrova & Needell 2021](https://arxiv.org/abs/2010.11365)) is the seed-word-guided cousin of NMF, and the matrix-factorization analogue of [SeededLDA](guided.md). When a corpus is biased toward a dominant theme, plain NMF often spends several components on it and returns redundant or off-theme topics. GuidedNMF lets you name a few seed words for each theme you expect and steers designated topics toward them. We factor the same non-negative document-term matrix `X ≈ A S` (`A` document-topic, `S` topic-word), but add a supervision term that ties the topics to a seed matrix `Y` (one row per seed group, marking that group's words):
+
+$$\min_{A,S,B \ge 0}\; \lVert X - A S\rVert_F^2 \;+\; \lambda\,\lVert Y - B S\rVert_F^2,$$
+
+where `B` (G x K) expresses each seed group as a non-negative combination of the learned topics. The guidance weight `λ` (`guidance=`, alias `lam=`) trades reconstruction against adherence to the seeds.
+
+```python
+seeds = {"economy": ["tax", "market", "jobs"], "health": ["disease", "clinic", "patient"]}
+m = topica.GuidedNMF(num_topics=10, seed_words=seeds, seed=1)  # guidance defaults to 3.0
+m.fit(docs)
+m.seed_topic_indices     # which learned topic each seed group steered
+dict(zip(m.seed_group_names, m.seed_topic_indices))   # group name -> topic index
+[w for w, _ in m.top_words(10, topic=m.seed_topic_indices[0])]   # top_words gives (word, weight) pairs
+```
+
+A caveat before you report document prevalence: `guidance` (λ) controls how tightly
+the guided topics adhere to their seed words. topica defaults to `guidance=3`, lower
+than the reference's rarely-used `20`, because at `20` the guided topics are so narrow
+they rarely dominate a document — their `doc_topic` share and `argmax` counts can be
+near zero even when the theme is clearly present (the topic-*word* content stays
+faithful either way). Raise `guidance` toward `20` to reproduce the reference; state
+the λ you used when reporting prevalence. `convergence_tol` defaults to `0.0` (run the
+full `iters` budget, as the reference does), so a normal fit ends with
+`converged=False` — the "ran the whole budget" state, not a failure.
+
+Seed groups are matched to the vocabulary with the same `seed_match` (`"fixed"`/`"glob"`/`"regex"`) and `case_insensitive` machinery as SeededLDA. The number of seed groups may not exceed `num_topics`. `init` defaults to `"random"` (seeded Uniform[0,1], matching the reference, so the guidance term shapes the topics from a blank slate); `"nndsvd"` is a deterministic SVD start, and `"none"` takes caller-supplied factors (`init_a`/`init_s`/`init_b`). `weighting` defaults to `"tfidf"`, the regime the reference `λ` is tuned for; on raw counts scale `λ` down, since the data term grows with the counts while the seed matrix does not. `convergence_tol` defaults to `0.0`, so a fit runs the full `iters` budget (the reference has no early stop); set it above zero to stop on the relative objective decrease. Because NMF is invariant to rescaling a topic's row of `S` against its columns of `A` and `B`, the reported `doc_topic` and `seed_topic_indices` are scale-corrected (weighted by `‖Sₖ‖₁`); the raw factors are available as `factor_a`, `factor_s`, and `factor_b`. The Rust core reuses NMF's BLAS-free rayon-parallel products, so fits are bit-identical regardless of thread count.
+
+Validated against the `ssnmf` package (the engine the reference repository uses, pinned `ssnmf==0.0.2`, supervised Frobenius mode) in `parity/guidednmf_gold.py`. Fed the same document-term matrix and the same initial factors, topica reproduces ssnmf's multiplicative update to floating-point noise: after one update the raw factors agree to a maximum absolute difference of about 1e-15, and after the full 50-iteration run the aligned topic-word cosine is 1.000. On a planted corpus with a known seed structure, each seed group steers the topic that carries its planted block. Guidance is a semi-supervised extension of NMF, so this is faithful reproduction of the reference decomposition, not a probabilistic-recovery claim.
+
 ## LSA
 
 Latent semantic analysis ([Deerwester et al. 1990](https://onlinelibrary.wiley.com/doi/10.1002/(SICI)1097-4571(199009)41:6%3C391::AID-ASI1%3E3.0.CO;2-9)), also called latent semantic indexing, takes a truncated SVD of the weighted document-term matrix `X` (D x V): `X ≈ U_k Σ_k V_kᵀ`. It is the original distributional-semantics method and the classic baseline behind scikit-learn's `TruncatedSVD`. There is no sampling and no prior, just a direct linear-algebra solve.
@@ -927,6 +964,152 @@ LSA is not a probabilistic topic model, and its outputs reflect that. `topic_wor
 The SVD is unique only up to a per-component sign, so we fix the sign with the `svd_flip` convention scikit-learn uses: for each component we flip the `(u, v)` pair together so the largest-magnitude entry of the right singular vector is positive. That makes the fit deterministic and directly comparable to the reference. `weighting` builds `X` from topica's own TF-IDF (default, classic LSI) or from raw counts. The Rust core reuses NMF's BLAS-free randomized truncated SVD (rayon-parallel dense products, sparse document-term products), so fits are bit-identical regardless of thread count. The SVD is a direct solve, so there is no `iters` argument, `fit_history` is empty, and `converged` is `None`.
 
 We validate against `sklearn.decomposition.TruncatedSVD` (`algorithm='randomized'`) in `parity/lsa_vs_sklearn.py`. On the same document-term matrix, after applying `svd_flip` on both sides, topica reproduces sklearn's solution exactly: per-component right-singular-vector cosine 1.000000, singular values agreeing to a maximum relative error of 1.5e-9, and document-coordinate correlation 1.000000. Because the truncated SVD is well-posed (a unique solution up to sign when the singular values are distinct), this is a match-the-solution result, not agreement within a noise band.
+
+## CorEx
+
+CorEx ([Correlation Explanation; Gallagher, Reing, Kale & Ver Steeg 2017](https://arxiv.org/abs/1611.10277); Ver Steeg & Galstyan [2014](https://arxiv.org/abs/1406.1222)/[2015](https://arxiv.org/abs/1410.7404)) is the odd one out in topica: it is neither generative nor a factorization. It learns `num_topics` **binary** latent topics that maximize the **total correlation** (the multivariate mutual information) they explain about the words. Each topic is on or off per document, and in tree mode the words are softly partitioned so each word informs one topic. It is fast, deterministic, and — through **anchor words** — semi-supervisable with minimal domain knowledge, which is why it is a staple in computational social science.
+
+```python
+m = topica.CorEx(num_topics=10, seed=1).fit(docs)
+m.total_correlation        # bits/nats of dependence the topics explain
+m.top_words(10, topic=0)   # words ranked by membership-weighted mutual information
+# anchored (semi-supervised):
+anchors = {"economy": ["tax", "market", "jobs"], "health": ["clinic", "patient"]}
+ma = topica.CorEx(10, anchor_words=anchors, anchor_strength=2.0, seed=1).fit(docs)
+ma.clusters                # each vocabulary word's topic; anchored words land in theirs
+```
+
+Its outputs reflect the different paradigm and should be read with that in mind. `topic_word` (K x V) is `alpha * mis`: the mutual information between each word and topic, weighted by the word's soft membership. It is non-negative but **not a probability distribution** (rows do not sum to 1); `top_words` ranks by it, and the raw `mis` and membership `alpha` are exposed separately. `doc_topic` (D x K) is `p(y_j = 1 | doc)`, the probability each topic is *on* for a document; because topics are independent binary factors rather than a mixture, **its rows do not sum to 1** (a document can turn on several topics or none). `labels` is the hard `p > 0.5` version, `clusters` is each word's argmax topic, and `topic_tc` / `total_correlation` report the correlation explained per topic and overall. `transform` labels held-out documents. Anchor words are matched to the vocabulary with the same `seed_match`/`case_insensitive` machinery as [SeededLDA](guided.md), and the number of anchor groups may not exceed `num_topics`. `count` is `"binarize"` (presence/absence; `"fraction"` is not yet implemented). The Rust core reuses NMF's BLAS-free sparse products, so fits are bit-identical regardless of thread count.
+
+Validated against the `corextopic` package (the reference implementation, Apache-2.0) in `parity/corex_gold.py`. On a planted binary corpus with a known block structure, topica reproduces corextopic to the reference's own seed-to-seed floor: aligned topic-word mutual-information cosine 1.000, total correlation matching to three decimals (5.272 vs 5.272), and identical word clusters; the anchored fit places each anchor group's words in their assigned topic. Because CorEx is non-convex and its topics are not identified up to a fixed labelling, this is topic-aligned agreement plus objective (total-correlation) parity, not a bit-for-bit reproduction of the reference's specific factors.
+
+## AuthorTopic
+
+The Author-Topic Model ([Rosen-Zvi, Griffiths, Steyvers & Smyth 2004](https://arxiv.org/abs/1207.4169)) conditions topics on **authors** instead of documents. Each author has a topic distribution `θ_a`; a document's tokens are generated by drawing one of the document's authors uniformly, then a topic from that author's distribution, then a word. This handles multi-author documents and answers two questions the document-level models cannot: what does a given author write about, and which authors are close in topic space. LDA is the special case where every document has exactly one unique author.
+
+```python
+docs = [["deep", "learning", "networks"], ["survey", "methods", "sampling"], ...]
+authors = [["Bengio", "LeCun"], ["Gelman"], ...]   # one author list per document
+m = topica.AuthorTopic(num_topics=20, seed=13).fit(docs, authors)
+m.author_topic          # (num_authors, K) each author's topic distribution
+m.authors               # author names, indexing the rows above
+m.author_doc_counts     # (num_authors,) documents behind each author's row
+m.top_authors(3, n=10)  # the authors most associated with topic 3
+m.doc_topic             # (num_docs, K) per-document empirical topic proportions
+```
+
+Inference is collapsed Gibbs from the paper: the per-token pair *(author, topic)* is resampled jointly, reusing topica's LDA count machinery for the word-topic side and adding an author-topic count table. `alpha` is the symmetric author-topic Dirichlet (default `50/K`, the paper's value); `beta` is the topic-word Dirichlet (default `0.01`). `author_topic` is the model-defining output — the smoothed per-author topic distribution. `doc_topic` is the document's *empirical* topic mix (the proportions of its sampled token assignments in the terminal draw, content-based exactly as in LDA), not the prior average of its authors' distributions; it reflects the words a document actually contains. This is a single-chain, terminal-state estimator (as with topica's other collapsed-Gibbs models); multi-chain averaging and held-out perplexity are out of scope. Fits are deterministic from a fixed `seed`. ATM is **single-threaded** (no `num_threads`): each token samples over an `|authors| x K` grid, so unlike LDA/LabeledLDA/DMR it does not take the AD-LDA parallel path. It is still fast — a 700-document corpus fits in a few seconds — and about as fast as its Gibbs siblings single-threaded, with the lowest memory of the family.
+
+**Reading author profiles honestly.** An author's `author_topic` row is only as reliable as the number of documents behind it, which is why `author_doc_counts` sits next to it. A *prolific* author's row is pulled toward uniform by the `alpha` prior (lots of tokens, but spread across topics), so it can look uninformative; a *one-document* author's row is near-deterministic in that single article and unstable across seeds — and because those rows are the peakiest, they dominate `top_authors`. Report `author_doc_counts` alongside any author-topic table, and check seed stability (refit at a second `seed` and compare the permutation-invariant author-author similarity structure) before publishing an "authors are similar" or "author X writes about Y" claim. Lowering `alpha` sharpens prolific authors' rows at the cost of the rare ones. If your author field is a delimited string (e.g. `"Smith; Jones"`), split it into a real list — `authors = [s.split("; ") for s in raw]` — so a co-authored document credits both authors; a single composite string becomes a phantom third author and defeats the point of the model. Normalize name/initial variants for the same reason.
+
+**Any grouping variable can play the role of "author."** The `authors` argument is just a per-document set of group labels, so a well-populated categorical — year, decade, outlet, party — often makes a better ATM than a sparse author field, and turns `author_topic` into a per-group topic profile. Using decade as the group on The Crisis corpus (`topica.datasets.load_dubois()`) gives a lightweight over-time view: the 1910s rows load on lynching and the anti-lynching campaign, the 1920s on the Harlem Renaissance, the 1930s on Depression-era labor and economics — each row backed by dozens–hundreds of documents (`author_doc_counts`), so it is stable in a way a one-article author is not.
+
+When every document has exactly **one** author/group, ATM is essentially equivalent to concatenating each group's documents into a single document and running LDA (the per-author counts `C^AT_{a,·}` are exactly that group's pooled token→topic counts) — convenient, but not a distinct model. Its non-reducible advantage is **multi-author documents**: ATM treats the author of each *token* as latent and infers the attribution from the words, so a co-authored document informs every co-author's profile without double-counting and while keeping per-document `doc_topic`. Reach for ATM (over concatenate-then-LDA) when documents genuinely share authors/groups.
+
+```python
+df = topica.datasets.load_dubois().drop_duplicates("text")
+corpus = topica.from_dataframe(df, text_col="text", stopwords=topica.ENGLISH_STOPWORDS)
+decade = [[f"{int(y) // 10 * 10}s"] for y in df.year]      # grouping variable as "author"
+m = topica.AuthorTopic(12, seed=13).fit(corpus, decade, iters=500)
+dict(zip(m.authors, m.author_doc_counts))                 # docs behind each decade
+[w for w, _ in m.top_words(6, topic=int(m.author_topic[i].argmax()))]  # a decade's theme
+```
+
+Validated against gensim's `AuthorTopicModel` (the reference implementation; gensim is LGPL, so topica implements the paper's collapsed Gibbs and uses gensim only as a black-box oracle) in `parity/author_topic_gold.py`. On a synthetic corpus with a planted author→topic structure and overlapping topics, topica matches gensim about as closely as two gensim runs with different seeds match each other: aligned topic-word cosine 0.99 (one gensim seed pair: 0.999) and aligned author-topic correlation 0.997 (seed pair: 1.000), with each author's dominant topic recovered cleanly and distinctly. Because ATM is stochastic and gensim's inference is variational while topica's is Gibbs, this is topic-aligned agreement near the reference's seed-to-seed noise, not a bit-for-bit match. On fit speed, topica is faster than gensim at matched full-corpus sweeps (roughly 2x on a small corpus, ~7x on a larger one; the exact multiplier depends on how gensim's online passes are configured).
+
+## MGLDA
+
+Multi-Grain LDA ([Titov & McDonald 2008](https://arxiv.org/abs/0801.1063)) is the aspect model for reviews and opinion text. It learns two grains of topic at once: **global** topics that describe a document's overall subject (which product, which brand), and **local** topics that describe the rateable aspects discussed sentence-by-sentence (battery, screen, price). Each token first picks one of the sliding windows covering its sentence, then a global-vs-local grain, then a topic from the appropriate distribution. This separates "what is this document about" from "what aspects does it discuss," which single-grain models (LDA, GSDMM, BTM) conflate.
+
+Input is **sentence-segmented** — `list[list[list[str]]]` (document → sentences → tokens) — because the local grain is defined over sliding *sentence* windows and a bag-of-words `Corpus` cannot carry sentence boundaries.
+
+```python
+docs = [
+    [["great", "phone", "apple"], ["battery", "dies", "fast"], ["screen", "is", "bright"]],
+    [["cheap", "laptop"], ["keyboard", "feels", "mushy"], ["good", "value", "price"]],
+]
+m = topica.MGLDA(num_global_topics=5, num_local_topics=10, window=3, seed=13).fit(docs)
+m.global_topic_word    # (5, V)  document-level themes
+m.local_topic_word     # (10, V) rateable aspects
+m.global_fraction      # share of tokens the model routed to the global grain
+m.top_words(10, topic=0)          # global topic 0 (topics 0..4 global, 5..14 local)
+```
+
+**Preparing sentence-segmented input from raw text.** `Corpus` cannot carry sentence boundaries, so build the nested lists yourself: split each document into sentences, then tokenize (lowercase, drop stopwords) each sentence. MG-LDA does its own vocabulary building from the tokens you pass; prune rare words yourself if you want a smaller vocabulary.
+
+```python
+import re
+raw = topica.datasets.load_dubois()["text"]
+stop = topica.ENGLISH_STOPWORDS
+def to_sentences(text):
+    sents = [re.findall(r"[a-z]+", s.lower()) for s in re.split(r"[.!?]", text)]
+    sents = [[w for w in s if w not in stop and len(w) > 2] for s in sents]
+    return [s for s in sents if s]                       # drop sentences emptied by pruning
+docs = [to_sentences(t) for t in raw]
+m = topica.MGLDA(8, 12, window=3, seed=13).fit(docs)     # rows align 1:1 with `raw`
+```
+
+Inference is collapsed Gibbs over the `(window, grain, topic)` triple, with the sliding-window (`S+T−1` windows for `S` sentences), the per-window grain switch, and the per-sentence window selection all sampled jointly. Hyperparameters default to the reference (tomotopy) values: `window=3`, `alpha_global`/`alpha_local`/`alpha_mix_global`/`alpha_mix_local` = 0.1, `beta_global`/`beta_local` = 0.01, `gamma` = 0.1. `topic_word` stacks the two grains (global rows first, then local); `doc_topic` is the per-document empirical prevalence over the combined `[global | local]` set (rows sum to 1) — a content-based prevalence, not a single generative θ, since global topics are document-level and local topics window-level; `global_doc_topic` is the true doc-level global distribution. Document rows (`doc_topic`, `global_doc_topic`) align 1:1 with your input list, including empty documents. Fits are deterministic from a fixed `seed` (single-threaded); `converged` is always `False` — collapsed Gibbs runs the full `iters` budget with no early-stop test, so watch `fit_history` (an `(iter, held-in log-likelihood)` trace) flatten to judge mixing.
+
+Two honest caveats. First, MG-LDA is often **global-dominant**: on text without strong within-document aspect locality (the same aspect recurring in adjacent sentences), the grain switch routes almost every token global, `global_fraction` approaches 1.0, and `local_topic_word` is then **prior-dominated — its "aspects" are noise, not signal**. `fit` emits a warning when `global_fraction > 0.9`; as a rule of thumb, treat local topics as unidentified above ~0.9 and report only the global grain. The local grain earns its keep on genuine review/opinion text. Second, a **paper-vs-reference discrepancy**: the paper writes the local-topic Gibbs numerator as `(n^loc + α_loc)`, but the canonical implementation (tomotopy) omits the `+α_loc` (raw window-local count), and topica follows the reference — with the rest of the conditional provably identical to tomotopy, the smoothed `+α_loc` variant does not track the reference and stalls the grain switch, so the reference's unsmoothed numerator is what actually separates the two grains. (The `fit_history` log-likelihood diagnostic does use the proper smoothed form so it stays a valid probability.)
+
+Validated against `tomotopy`'s `MGLDAModel` (the reference implementation, MIT; tomotopy 0.13.0, since 0.14.0 has a bug that ignores `k_g`/`k_l`) in `parity/mglda_gold.py`. On a planted corpus with global product themes and local aspects, topica reproduces tomotopy's **global** topics to the reference's own seed-to-seed floor (aligned global topic-word cosine 1.000 on the planted fixture; global themes recovered exactly) **and its grain dynamics** (topica `global_fraction` 0.997 vs tomotopy 0.997 — both route the synthetic corpus almost entirely global). The 1.000 is a planted-fixture figure with disjoint theme vocabularies; on real prose, free-run global topics from two different collapsed-Gibbs RNGs (topica vs tomotopy, and topica vs LDA) align at ~0.6 best-match cosine — related and coherent, not identical, as expected for a stochastic model. The **local** grain is *not* a fidelity target on synthetic data: it collapses to the prior for the reference itself here (tomotopy `global_fraction` ~1.0, its own seed-to-seed local cosine only ~0.89), so there is no local signal to match; local topics become identifiable only on real text with aspect locality. On speed, topica's per-token `T×(K_gl+K_loc)` grid makes it grow with sentences-per-document: roughly **1.5–1.6× slower than tomotopy single-threaded** on realistic long-document corpora (faster than GSDMM, slower than plain LDA by construction).
+
+## TopicsOverTime
+
+Topics over Time ([Wang & McCallum 2006](https://dl.acm.org/doi/10.1145/1150402.1150450)) is LDA with a sense of *when*. Each topic keeps a word distribution, as in LDA, and additionally a **Beta density over continuous time**: the years (or any numeric timestamp) at which the topic is prevalent. The timestamp is not just a covariate read off after fitting — it shapes the fit. A token's topic is drawn jointly from the words around it and the document's date, so a topic is pulled to be coherent in time as well as in vocabulary, and each topic ends up with a peak year and a rise-and-fall profile.
+
+This is **descriptive continuous-time prevalence**, and that is what distinguishes it from topica's other temporal models. DTM/DETM slice time into discrete bins and let each topic's *vocabulary drift* across the bins; STM with a spline on a `year` covariate models the *effect* of time on prevalence with uncertainty. ToT instead asks a simpler, complementary question — "when did this topic peak?" — with a fixed vocabulary and a smooth continuous density, no binning and no covariate design.
+
+```python
+d = topica.datasets.load_dubois()
+docs = [t.lower().split() for t in d["text"]]     # tokenize however you like
+years = d["year"]                                 # one numeric timestamp per document
+
+m = topica.TopicsOverTime(num_topics=10, seed=13).fit(docs, times=years)
+m.topic_time_peak       # (K,) peak year per topic, in your input units
+m.topic_time_mean       # (K,) mean year per topic
+m.topic_time            # (K, 2) raw Beta (psi1, psi2) over normalized [0,1] time
+m.time_range            # (min_year, max_year) the peaks/means are reported on
+m.top_words(10, topic=int(m.topic_time_peak.argmax()))   # words of the latest-peaking topic
+```
+
+`times` is the canonical argument; `timestamps=` is an accepted alias. Any numeric scale works (year, decade, ordinal date, unix time) — timestamps are min-max normalized to `[0,1]` internally, and peaks/means are mapped back to your original units for reporting (`time_range` records the range). Inference is collapsed Gibbs: the LDA conditional multiplied by each topic's Beta time-likelihood of the document's date. The per-topic Beta parameters are re-estimated by method of moments from the timestamps of each topic's assigned tokens, once per sweep. This is the canonical **unit-weight** ToT conditional; the paper also describes an optional exponent that rebalances the word and time modalities, which topica does not implement. Hyperparameters follow the paper: `alpha` defaults to `50/K`, `beta` to `0.1`. Fits are deterministic from a fixed `seed` (single-threaded); `converged` is always `False` (Gibbs runs the full `iters` budget — watch `fit_history`, a list of `(iteration, log-likelihood)` pairs, flatten). ToT shares LDA's word model, so **choose `K` with `search_k(..., model="lda")`** — there is no ToT-specific selector.
+
+Read the temporal outputs with two cautions. **Use `topic_time_peak`, not the mean, for "when did this topic peak"**: the Beta is often skewed, so its mode (peak) and mean differ, and the peak is the interpretable one. The peak is the Beta *mode* when the density is single-humped (both `psi > 1`); for a topic that only rises or only falls across the whole range it is reported at the boundary (earliest/latest date), and for a U-shaped or flat/uniform topic — which has *no* single peak — it is `NaN` by design rather than a misleading midpoint. A topic with no usable temporal signal (its token dates too dispersed to fit a concentrated Beta, or a corpus where every document shares one timestamp, which `fit` warns about) falls back to a uniform Beta (`topic_time` row `[1, 1]`, `NaN` peak, mean at the range midpoint) and the model reduces to LDA on that topic. **When a topic's `topic_time_peak` is `NaN`, its `topic_time_mean` is not a peak** — do not report it as when the topic peaked; inspect `topic_time` and the topic's document dates. Second, ToT weights the time factor once per token, so a very long document contributes its date many times; that is faithful to the paper but means a few long documents can dominate a topic's estimated timeline.
+
+Validated by **planted continuous-time recovery** plus **independent numerical checks** in `parity/tot_gold.py`: there is no maintained reference library (the one public port is GPL and unmaintained), so on a fixed-seed corpus whose topics have disjoint word blocks *and* known early/middle/late Beta time densities, topica recovers both the word blocks (topic-word cosine 0.998) and their temporal ordering exactly (recovered peak years correlate 0.995 with the planted centers); the fitted Beta parameters are recomputed from scratch by a numpy method-of-moments fit (agreement within 5%) and cross-checked against `scipy.stats.beta` (each `psi` is a proper density, the analytic mean matches `topic_time_mean`, and the analytic mode matches `topic_time_peak`). That the Beta time factor *causally* drives assignment — not just the words — is shown by a separate discriminating test (ambiguous vocabulary plus a time-blind control fit): the time factor lifts era recovery far above the time-blind baseline. On speed, ToT is a classic dense collapsed-Gibbs sampler plus a per-document Beta factor, so it runs at roughly **1.3–3× topica's (sparse) LDA**, the ratio growing with `K` because the baseline sampler is sublinear in `K` while ToT scans all topics per token.
+
+## GaussianLDA
+
+Gaussian LDA ([Das, Zaheer & Dyer 2015](https://aclanthology.org/P15-1077/)) moves LDA off the vocabulary and into the embedding space. A topic is no longer a categorical distribution over words but a **Gaussian over the word-embedding space**: each topic has a mean and a covariance, and a token is generated by drawing its word's embedding from its topic's Gaussian. Because topics live in the continuous space, they generalize over semantically similar words: a topic centered near *budget*, *deficit*, and *appropriations* also assigns high density to a related word it never co-occurred with, and to words unseen at training time. You bring the word embeddings, as with ETM; topica fits the per-topic Gaussians.
+
+```python
+vocab = [...]                                   # your vocabulary
+rho = topica.llm_embed(vocab, model=...)        # (len(vocab), E) word embeddings
+rho = (rho - rho.mean(0)) / rho.std(0)          # standardize: avoids mode collapse on
+                                                # dense contextual embeddings (see below)
+m = topica.GaussianLDA(num_topics=10, seed=13).fit(docs, rho, vocab)
+assert m.n_effective_topics == m.num_topics     # guard against a collapsed fit
+m.topic_means           # (K, E) per-topic Gaussian means
+m.topic_covariances     # (K, E, E) posterior covariance Psi_k / (nu_k - E - 1)
+m.top_words(10, topic=0)
+```
+
+Inference is collapsed Gibbs with a **Normal-Inverse-Wishart** conjugate prior on each topic's `(mean, covariance)`. Integrating the Gaussian parameters out leaves a **multivariate Student-t** posterior predictive: a token's topic is drawn from the LDA document term times each topic's Student-t density at the word's embedding. The cost center is that as a token joins or leaves a topic, the topic's covariance changes by a rank-one update, and topica maintains the Cholesky factor of each topic's scale matrix with rank-1 Cholesky up- and downdates rather than refactoring from scratch. Because topics are densities, `topic_word` (the K x V matrix the rest of topica expects) is **derived**, not sampled: we score every vocabulary word's embedding under each topic's Student-t and softmax over the vocabulary. `topic_means` and `topic_covariances` are the native outputs; `topic_scale_matrices` exposes the raw NIW scale matrix `Psi_k` (what the reference writes), and `topic_covariances` is the posterior-mean covariance `Psi_k / (nu_k - E - 1)`.
+
+The NIW prior follows the reference defaults, which the paper leaves unstated: `kappa` (mean concentration) `0.1`, `nu` (degrees of freedom) the embedding dimension `E` and always clamped to at least `E`, `psi_scale` setting the prior scale matrix to `psi_scale * E * I` with `psi_scale = 3.0`, and `alpha = 1/K` on the document-topic Dirichlet. The prior mean is the mean of your vocabulary embeddings. `log_likelihood_history` reproduces the reference's `avgLL` diagnostic exactly (the mean per-token Gaussian log-density at the current assignment, with covariance `Psi_k / (nu_k - E)`); note that this is a diagnostic, not the model evidence, and it is not guaranteed to increase monotonically. Fits are deterministic from a fixed `seed` (single-threaded). `transform` infers topic proportions for new documents over the fitted vocabulary, holding the topic Gaussians fixed.
+
+**Mind the embedding type — this is the model's sharpest edge.** Gaussian LDA is prone to **mode collapse**: one topic absorbs every token and the rest come back empty. Whether it collapses depends mostly on the embeddings, not the initialization. On **low-dimensional, well-separated** word vectors — the regime the paper targets (word2vec / GloVe, ~50–300d) — it recovers clusters cleanly. On **dense, anisotropic contextual embeddings** (sentence-transformer / BERT / MiniLM vectors) it collapses to a single topic, and so does the original Java reference (both give the same one-topic result on the bundled `load_ng20_minilm` vectors). The cause is anisotropy: a few embedding dimensions carry most of the variance, so one broad Gaussian explains the whole corpus.
+
+There are two practical fixes, and topica helps you catch the failure:
+
+- **Standardize the embeddings per dimension before fitting** — `rho = (rho - rho.mean(0)) / rho.std(0)`. This removes the anisotropy that drives the collapse; on the same MiniLM vectors it turns one degenerate topic into distinct, coherent topics (family/health, computing/graphics, sports). Reducing `E` (e.g. PCA to ~50) also helps speed but does **not** by itself cure the collapse on contextual embeddings — standardize.
+- **`fit` warns on collapse** and sets `converged=False`; read `n_effective_topics` (non-empty topics) and `topic_counts` to check. The empty topics' `top_words`/`coherence` are prior-only duplicates, so a degenerate fit is easy to mistake for K real topics if you don't look — the warning is there so you do.
+
+Initialization is the secondary knob. topica **defaults to `init="kmeans"`** (seeded k-means over the vocabulary embeddings), the paper's approach, which prevents collapse on separable data where per-token random init is seed-fragile. Pass `init="random"` to reproduce the reference sampler exactly. On dense contextual embeddings neither init prevents collapse — standardize first.
+
+We validate in `parity/gaussian_lda_gold.py` against the authors' Apache-2.0 Java reference. The reference initializes from an unseeded RNG, so it is not reproducible run to run and the target is topic-aligned agreement, not bit-exactness: on a fixed-seed planted-cluster corpus, topica's per-topic means (fit with `init="random"` for a like-for-like comparison) align to the reference's at cosine 0.94, above the reference's own two-run floor. The core equation is pinned two ways that do not depend on the reference's RNG: a Rust unit test asserts the incrementally maintained per-topic mean and Cholesky factor equal the batch Normal-Inverse-Wishart sufficient statistics after a sequence of adds and removes (including the rank-1 downdate and its positive-definite-failure rebuild path), and the Student-t density matches a direct numpy computation to ~1e-14 (odd and even `E`). On the k-means default, topica recovers planted cluster centers at cosine 1.0. Gaussian LDA is a dense Gibbs sampler with a per-topic `O(K·E^2)` density evaluation, so cost grows with the embedding dimension (a 384-d fit is minutes where a 50-d fit is seconds — prefer `E ≲ 100`). `topic_means` and `topic_covariances` are the native Gaussian outputs (`topic_covariances` is NaN for an empty or singleton topic, where the Inverse-Wishart posterior-mean covariance is undefined; `topic_scale_matrices` gives the always-defined Ψ_k). It is the right tool for topics that reason in a separable, low-dimensional embedding space, and ETM or the count-based models otherwise.
 
 ## SemanticSignalSeparation
 

@@ -25,11 +25,13 @@ pub use topica_core::{corpus, ctm, cvb0, estimator, linalg, spectral, variationa
 // because `TopicModel` stays in `topica`).
 pub mod cvb0_ext;
 
+pub mod author_topic;
 pub mod btm;
 #[doc(hidden)]
 pub mod cli; // argument helpers for the CLI binaries (not part of the public API)
 pub mod coherence;
 pub mod conformance;
+pub mod cor_ex;
 pub mod detm;
 pub mod disclda;
 pub mod dmr;
@@ -37,8 +39,10 @@ pub mod dtm;
 pub mod etm;
 pub mod etm_vae;
 pub mod factorial_lda;
+pub mod gaussian_lda;
 pub mod gemm;
 pub mod gsdmm;
+pub mod guided_nmf;
 pub mod hdp;
 pub mod hlda;
 pub mod idealpoint;
@@ -49,6 +53,7 @@ pub mod labeled;
 pub mod lightlda;
 pub mod lsa;
 pub mod mathfun;
+pub mod mg_lda;
 pub mod mh;
 pub mod model;
 pub mod nmf;
@@ -71,6 +76,7 @@ pub mod slda;
 pub mod sts;
 pub mod tbip;
 pub mod tlda;
+pub mod topics_over_time;
 pub mod warplda;
 pub mod wordfish;
 

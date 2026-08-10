@@ -74,6 +74,7 @@ CTOR_FIRST_EXCEPT = {
     "KeyATM": "keyword dict is the leading required input",
     "SeededLDA": "seed-word dict is the leading required input",
     "PA": "two-level model: num_super, num_sub",
+    "MGLDA": "two-grain model: num_global_topics, num_local_topics",
     "DiscLDA": "structured topic count: num_classes*k_class + k_shared, "
     "num_classes known only at fit",
     "FactorialLDA": "factorial model: factor_sizes is the leading required input; "
@@ -89,7 +90,7 @@ COVARIATE_MODELS = {"DMR", "GDMR", "STM", "STS", "KeyATM"}
 # Models that take a per-document time index. Each must accept a ``times=``
 # keyword (the canonical cross-model name). KeyATM keeps ``timestamps=`` as an
 # accepted alias.
-TEMPORAL_MODELS = {"DTM", "DETM", "KeyATM"}
+TEMPORAL_MODELS = {"DTM", "DETM", "KeyATM", "TopicsOverTime"}
 
 # Tracked drift: (model, param) -> reason. These are known and intentionally not
 # yet aligned; remove an entry once the drift is fixed. The test treats them as

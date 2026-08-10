@@ -121,6 +121,8 @@ The right first choice when your design calls for one: short text, change over t
 | `LSA` | text | svd | seed-reproducible | Latent semantic analysis: a truncated SVD of the weighted document-term matrix. |
 | `AnchorLDA` | text | matrix-factorization | bit-exact | Anchor-words spectral recovery (Arora et al. 2013): deterministic, Gibbs-free topics from the word co-occurrence matrix. |
 | `PolylingualLDA` | text | gibbs | seed-reproducible | Polylingual topic model (Mimno et al. 2009): aligned topics across languages from document tuples that share one topic distribution. |
+| `CorEx` | text | information-theoretic | seed-reproducible | Correlation Explanation: information-theoretic topic model that maximizes total correlation; supports anchor words. |
+| `MGLDA` | text | gibbs | seed-reproducible | Multi-Grain LDA: global (document-level) + local (sliding-window aspect) topics with a per-token grain switch. For reviews / aspect extraction. |
 
 #### Covariates & structure
 
@@ -133,12 +135,14 @@ The right first choice when your design calls for one: short text, change over t
 | `Scholar` | text, metadata, labels | vae | seed-reproducible | SCHOLAR (Card et al. 2018): a ProdLDA VAE with a covariate-shifted prevalence prior, an optional supervised label head, and optional content (topic-covariate) word deviations — neural STM prevalence + sLDA + SAGE. |
 | `RTM` | text, links | variational | seed-reproducible | Relational topic model (Chang & Blei 2010): jointly models document text and a link graph (citations, hyperlinks, adjacency); predicts links from words and words from links. |
 | `FactorialLDA` | text | gibbs | seed-reproducible | Factorial LDA (Paul & Dredze 2012): each token is a K-tuple of latent factors (e.g. topic x sentiment); structured word priors tie tuples sharing a component and a sparsity prior deactivates unsupported tuples. |
+| `AuthorTopic` | text, metadata | gibbs | seed-reproducible | Author-Topic Model: each author has a topic distribution; documents mix their authors. Answers what an author writes about. |
 
 #### Guided & supervised
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
 | `SeededLDA` | text, seeds | gibbs | seed-reproducible | Seeded LDA: steer named topics toward supplied seed words. |
+| `GuidedNMF` | text, seeds | matrix-factorization | seed-reproducible | Guided NMF: seed-word-guided semi-supervised NMF; the matrix-factorization analogue of SeededLDA. |
 | `LabeledLDA` | text, labels | gibbs | seed-reproducible | Labeled LDA: each document label is a topic; tokens are restricted to its labels. |
 | `SupervisedLDA` | text, labels | variational | seed-reproducible | Supervised LDA: topics shaped to predict a per-document real-valued response. |
 | `DiscLDA` | text, labels | gibbs | seed-reproducible | Discriminative LDA (Lacoste-Julien et al. 2008): topics split into per-class and shared blocks; reads how classes talk differently. |
@@ -156,6 +160,7 @@ The right first choice when your design calls for one: short text, change over t
 |---|---|---|---|---|
 | `DTM` | text, times | variational | seed-reproducible | Dynamic topic model: a fixed topic set whose word distributions drift across time slices. |
 | `DETM` | text, embeddings, times | vae | seed-reproducible | Dynamic embedded topic model: embedding-factored topics that drift across time slices, fit as an amortized VAE. |
+| `TopicsOverTime` | text, times | gibbs | seed-reproducible | Topics over Time: LDA with a per-topic Beta density over continuous timestamps; each topic has a temporal peak. Descriptive continuous-time prevalence (not vocabulary drift). |
 | `HLDA` | text | gibbs | seed-reproducible | Hierarchical LDA (nested CRP): a learned tree of super- and sub-topics. |
 | `PA` | text | gibbs | seed-reproducible | Pachinko allocation: a DAG of super- and sub-topics. |
 
@@ -166,6 +171,7 @@ The right first choice when your design calls for one: short text, change over t
 | `Top2Vec` | text, embeddings | clustering | seed-reproducible | Topics as dense regions in a joint document-word embedding space. |
 | `SemanticSignalSeparation` | text, embeddings | ica | seed-reproducible | Topics as independent axes of semantic space (S3, Kardos et al. 2025): FastICA over the document embeddings, with each word's importance read off by projecting the vocabulary embeddings onto each axis. Signed poles. |
 | `ETM` | text, embeddings | variational | seed-reproducible | Embedded topic model: topic-word distributions factored through word embeddings. |
+| `GaussianLDA` | text, embeddings | gibbs | seed-reproducible | Gaussian LDA (Das, Zaheer & Dyer 2015): each topic is a Gaussian over the word-embedding space (Normal-Inverse-Wishart prior), so topics generalize over semantically similar words. Collapsed Gibbs with a Student-t posterior predictive and rank-1 Cholesky up/downdates. |
 | `FASTopic` | text, embeddings | optimal-transport | seed-reproducible | Topics from optimal-transport plans between document, topic, and word embeddings. |
 | `EmbeddingLDA` | text, embeddings, seeds | gibbs | seed-reproducible | Seeded LDA whose seed sets are expanded with nearest neighbors in an embedding space. |
 | `CombinedTM` | text, embeddings | vae | seed-reproducible | Contextualized ProdLDA: encoder reads the bag of words plus a document embedding. |

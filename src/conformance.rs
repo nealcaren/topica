@@ -229,6 +229,29 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::Dirichlet,
         exempt: &[],
     },
+    // Author-Topic: collapsed Gibbs; doc_topic is a per-document empirical topic
+    // simplex (like LDA), author_topic is the model-defining per-author theta.
+    RegistryEntry {
+        name: "AuthorTopic",
+        family: ModelFamily::Dirichlet,
+        exempt: &[],
+    },
+    // MG-LDA: two-grain collapsed Gibbs. doc_topic is an empirical prevalence over
+    // [global|local] topics (rows sum to 1 but not one Dirichlet posterior — global is
+    // doc-level, local window-level), so None_ (skips the Dirichlet/simplex contract).
+    RegistryEntry {
+        name: "MGLDA",
+        family: ModelFamily::None_,
+        exempt: &[],
+    },
+    // TopicsOverTime: LDA with a per-topic Beta density over time. doc_topic is the
+    // standard Dirichlet-posterior simplex (the temporal factor lives in topic_time),
+    // so the Dirichlet family/contract applies as for LDA.
+    RegistryEntry {
+        name: "TopicsOverTime",
+        family: ModelFamily::Dirichlet,
+        exempt: &[],
+    },
     // Neural / embedding / nonparametric — no theta posterior.
     RegistryEntry {
         name: "ProdLDA",
@@ -248,12 +271,26 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::None_,
         exempt: &[],
     },
+    // GuidedNMF: seed-word-guided semi-supervised NMF (same factorization family).
+    RegistryEntry {
+        name: "GuidedNMF",
+        family: ModelFamily::None_,
+        exempt: &[],
+    },
     // LSA/LSI: doc_topic is signed coordinates (U Sigma), not a (D,K) simplex;
     // the SVD is a direct solve, so there is no fit_history trajectory.
     RegistryEntry {
         name: "LSA",
         family: ModelFamily::None_,
         exempt: &["fit_history"],
+    },
+    // CorEx: information-theoretic. doc_topic is per-topic Bernoulli probabilities
+    // (rows do NOT sum to 1); topic_word is alpha*mis (nonneg, not a distribution).
+    // ModelFamily::None_ already skips the simplex check, so no exemptions needed.
+    RegistryEntry {
+        name: "CorEx",
+        family: ModelFamily::None_,
+        exempt: &[],
     },
     RegistryEntry {
         name: "ETM",
@@ -340,11 +377,10 @@ mod registry_tests {
             }
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
-        // Estimator-backed Rust struct). Bumped to 30 when FactorialLDA (fLDA)
-        // was added.
+        // Estimator-backed Rust struct). Bumped to 35 when TopicsOverTime was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            30,
+            35,
             "registry size drifted from the Python REGISTRY"
         );
     }

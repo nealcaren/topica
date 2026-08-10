@@ -2,19 +2,32 @@
 
 Small datasets ship inside the wheel and load instantly, offline. Larger ones
 are downloaded once from GitHub on first use and cached locally, so the wheel
-stays lean. Every loader returns a :mod:`pandas` DataFrame ready for
-:func:`topica.from_dataframe`::
+stays lean.
+
+**Return shapes.** There are two, by dataset kind:
+
+- **Text-table loaders** (:func:`load_gadarian`, :func:`load_poliblog`,
+  :func:`load_dubois`) return a :mod:`pandas` DataFrame by default.
+- **The embedding loader** (:func:`load_ng20_minilm`) returns a :class:`Bunch`
+  (attribute-access dict) because it carries embedding arrays alongside the text.
+
+For a **uniform shape across the roster**, pass ``as_bunch=True`` to a text-table
+loader: every loader then returns a :class:`Bunch`, and **every Bunch exposes a
+``.df``** DataFrame view (plus any extra arrays). So ``load_X(as_bunch=True).df``
+and ``load_ng20_minilm().df`` are the same idiom everywhere::
 
     import topica
 
-    df = topica.datasets.load_gadarian()           # vendored, instant, offline
+    df = topica.datasets.load_gadarian()                    # DataFrame (default)
+    b = topica.datasets.load_gadarian(as_bunch=True)         # Bunch; b.df is the table
+    b = topica.datasets.load_ng20_minilm()                  # Bunch; b.df + b.doc_embeddings
+
     corpus = topica.from_dataframe(
         df, text_col="open.ended.response", stopwords=topica.ENGLISH_STOPWORDS
     )
     model = topica.STM(num_topics=10).fit(corpus, prevalence=corpus.metadata[["treatment"]])
 
-Pass ``return_path=True`` to get the cached CSV path instead of a DataFrame
-(no pandas required).
+Pass ``return_path=True`` to get the cached file path instead (no pandas required).
 
 The cache lives under ``~/.cache/topica/datasets`` by default; set the
 ``TOPICA_DATA_HOME`` environment variable to relocate it. Downloads are pinned
@@ -46,6 +59,10 @@ class Bunch(dict):
     Returned by loaders that carry more than a text table — e.g.
     :func:`load_ng20_minilm`, which bundles documents, labels, and precomputed
     embedding arrays. ``b["texts"]`` and ``b.texts`` are the same thing.
+
+    Every loader can return a Bunch (``as_bunch=True`` for the text-table
+    loaders; :func:`load_ng20_minilm` always does), and every Bunch exposes a
+    ``.df`` DataFrame view for a uniform shape across the roster.
     """
 
     def __getattr__(self, key):
@@ -227,14 +244,17 @@ def _read_csv(path: Path):
     return pd.read_csv(path)
 
 
-def _load(name: str, return_path: bool):
+def _load(name: str, return_path: bool, as_bunch: bool = False):
     path = _resolve(name)
     if return_path:
         return path
-    return _read_csv(path)
+    df = _read_csv(path)
+    if as_bunch:
+        return Bunch(df=df)
+    return df
 
 
-def load_gadarian(*, return_path: bool = False):
+def load_gadarian(*, return_path: bool = False, as_bunch: bool = False):
     """Load the Gadarian & Albertson immigration experiment (341 documents).
 
     The canonical ``stm`` prevalence example. Open-ended survey responses with
@@ -248,12 +268,14 @@ def load_gadarian(*, return_path: bool = False):
         )
 
     This dataset is bundled in the wheel and loads offline. Pass
-    ``return_path=True`` for the CSV path instead of a DataFrame.
+    ``return_path=True`` for the CSV path instead of a DataFrame, or
+    ``as_bunch=True`` for a :class:`Bunch` whose ``.df`` is this table (the
+    uniform shape shared with :func:`load_ng20_minilm`).
     """
-    return _load("gadarian", return_path)
+    return _load("gadarian", return_path, as_bunch)
 
 
-def load_poliblog(*, return_path: bool = False):
+def load_poliblog(*, return_path: bool = False, as_bunch: bool = False):
     """Load the CMU 2008 political blog corpus (a 2,000-document sample).
 
     The text in the ``text`` column is already tokenized and stemmed
@@ -264,12 +286,13 @@ def load_poliblog(*, return_path: bool = False):
         corpus = topica.from_dataframe(df, text_col="text")
 
     Covariates: ``rating`` (Liberal/Conservative), ``day``, ``blog``. Downloaded
-    once and cached. Pass ``return_path=True`` for the CSV path.
+    once and cached. Pass ``return_path=True`` for the CSV path, or
+    ``as_bunch=True`` for a :class:`Bunch` whose ``.df`` is this table.
     """
-    return _load("poliblog", return_path)
+    return _load("poliblog", return_path, as_bunch)
 
 
-def load_dubois(*, return_path: bool = False):
+def load_dubois(*, return_path: bool = False, as_bunch: bool = False):
     """Load Du Bois-era articles from The Crisis, 1910-1934 (704 documents).
 
     Raw text in the ``text`` column; covariates ``year``, ``decade``,
@@ -284,8 +307,19 @@ def load_dubois(*, return_path: bool = False):
     The corpus holds a few (3) exact-duplicate articles reprinted across issues;
     drop them with ``df.drop_duplicates("text")`` if a fit should not double-count
     them. Downloaded once and cached. Pass ``return_path=True`` for the CSV path.
+
+    Note on ``author`` for :class:`~topica.AuthorTopic`: this field is dominated by
+    Du Bois (about 675 of 704 articles) and contains delimited composites
+    (``"Du Bois; Gruening"``) and name/initial variants (``"Du Bois"`` vs
+    ``"Du Bois, W.E.B."``). Split composites (``[s.split("; ") for s in df.author]``)
+    and normalize variants before using it as an author-topic input, or a co-authored
+    article becomes a phantom author and one person splits across several rows.
+
+    Pass ``return_path=True`` for the CSV path, or ``as_bunch=True`` for a
+    :class:`Bunch` whose ``.df`` is this table (the uniform shape shared with
+    :func:`load_ng20_minilm`).
     """
-    return _load("dubois", return_path)
+    return _load("dubois", return_path, as_bunch)
 
 
 def load_ng20_minilm(*, return_path: bool = False):
@@ -327,11 +361,22 @@ def load_ng20_minilm(*, return_path: bool = False):
     import numpy as np
 
     with np.load(path, allow_pickle=True) as npz:
-        return Bunch(
-            texts=list(npz["texts"]),
-            labels=npz["labels"],
+        texts = list(npz["texts"])
+        labels = npz["labels"]
+        bunch = Bunch(
+            texts=texts,
+            labels=labels,
             doc_embeddings=npz["doc_embeddings"],
             vocab=list(npz["vocab"]),
             word_embeddings=npz["word_embeddings"],
             meta=str(npz["meta"]),
         )
+    # `.df` gives the uniform DataFrame view every loader's Bunch exposes (the
+    # per-document text table; the embedding arrays stay as attributes).
+    try:
+        import pandas as pd
+
+        bunch["df"] = pd.DataFrame({"text": texts, "label": labels})
+    except ImportError:  # pandas optional; the arrays are still available
+        pass
+    return bunch

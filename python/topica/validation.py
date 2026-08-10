@@ -648,7 +648,7 @@ def label_topics(topic_word, vocabulary=None, *, n=10, word_counts=None, corpus=
     return out
 
 
-def topic_table(model, *, n=7):
+def topic_table(model, vocabulary=None, *, doc_topic=None, n=7):
     """A publication-ready topic table: one row per topic with its prevalence and
     its top probability and FREX words.
 
@@ -657,17 +657,30 @@ def topic_table(model, *, n=7):
     usually the better label). Hand it to ``pandas.DataFrame`` for the table that
     goes in a results section.
 
-    `model` is any fitted model exposing ``topic_word``, ``doc_topic``, and
-    ``vocabulary``.
+    Accepts either a **fitted model** (uses its ``topic_word``, ``doc_topic``, and
+    ``vocabulary``) or a bare ``(K, V)`` **topic-word array**, matching the sibling
+    helpers :func:`frex` / :func:`relevance`::
+
+        topic_table(model)                      # from a fitted model
+        topic_table(model.topic_word, vocab)    # from matrices
+
+    With a bare array, pass ``vocabulary``; prevalence needs the document-topic
+    matrix, so pass ``doc_topic=`` to get it, otherwise the ``prevalence`` column
+    is ``None``.
     """
     phi = _as_topic_word(model)
-    prevalence = _as_doc_topic(model).mean(axis=0)
-    vocab = list(model.vocabulary)
+    vocab = _vocabulary_of(model, vocabulary)
+    if doc_topic is not None:
+        prevalence = np.asarray(doc_topic, dtype=np.float64).mean(axis=0)
+    elif hasattr(model, "doc_topic") and not isinstance(model, np.ndarray):
+        prevalence = _as_doc_topic(model).mean(axis=0)
+    else:
+        prevalence = None  # a bare topic-word array carries no prevalence
     labels = label_topics(phi, vocab, n=n)
     return [
         {
             "topic": t,
-            "prevalence": float(prevalence[t]),
+            "prevalence": float(prevalence[t]) if prevalence is not None else None,
             "prob": [w for w, _ in labels[t]["prob"]],
             "frex": [w for w, _ in labels[t]["frex"]],
         }

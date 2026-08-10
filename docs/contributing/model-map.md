@@ -49,6 +49,8 @@ Column meanings:
 | `AnchorLDA` | `python/topica/anchor.py` | — _(Python)_ | spectral anchor-word recovery (Python over Rust primitives) | default | `tests/test_anchor.py` |
 | `TensorLDA` | `src/tlda.rs` | `src/python/tlda.rs` | method-of-moments cumulants (linalg, spectral) | default | `parity/tlda_gold.py`, `parity/tlda_compare.py` |
 | `PolylingualLDA` | `src/pltm.rs` | `src/python/pltm.rs` | collapsed Gibbs (model.rs, sampler.rs) | default | `parity/pltm_compare.py` |
+| `CorEx` | `src/cor_ex.rs` | `src/python/cor_ex.rs` | total-correlation info-theoretic optimizer | default | `parity/corex_gold.py` |
+| `MGLDA` | `src/mg_lda.rs` | `src/python/mg_lda.rs` | two-grain collapsed Gibbs over sliding sentence windows | default | `parity/mglda_gold.py` |
 
 ### Covariates & structure
 
@@ -63,6 +65,7 @@ Column meanings:
 | `NarrativeTM` | `python/topica/narrative.py` | — _(Python)_ | intra-document trajectory over Gibbs core (Python) | default | `tests/test_content_trajectory.py` |
 | `RTM` | `src/rtm.rs` | `src/python/rtm.rs` | variational EM + link head (optimize.rs digamma) | default | `parity/rtm_compare.py`, `parity/rtm_reference.py`, `tests/test_rtm.py` |
 | `FactorialLDA` | `src/factorial_lda.rs` | `src/python/factorial_lda.rs` | collapsed Gibbs over tuples + MCEM gradient ascent on log-linear priors | default | `parity/factorial_lda_compare.py`, `tests/test_factorial_lda.py` |
+| `AuthorTopic` | `src/author_topic.rs` | `src/python/author_topic.rs` | collapsed Gibbs (author×topic + word×topic counts) | default | `parity/author_topic_gold.py` |
 
 ### Guided & supervised
 
@@ -70,6 +73,7 @@ Column meanings:
 |---|---|---|---|---|---|
 | `KeyATM` | `src/keyatm.rs` | `src/python/mod.rs` | collapsed Gibbs + keyword index | default | `parity/keyatm_gold.py`, `parity/keyatm_r_compare.py` |
 | `SeededLDA` | `src/seeded.rs` | `src/python/mod.rs` | collapsed Gibbs (model.rs, sampler.rs) | default | `parity/seededlda_gold.py` |
+| `GuidedNMF` | `src/guided_nmf.rs` | `src/python/guided_nmf.rs` | supervised multiplicative-update matrix factorization | default | `parity/guidednmf_gold.py` |
 | `LabeledLDA` | `src/labeled.rs` | `src/python/mod.rs` | collapsed Gibbs (model.rs, sampler.rs) | default | `parity/labeledlda_gold.py` |
 | `SupervisedLDA` | `src/slda.rs` | `src/python/mod.rs` | variational EM + Gaussian response head | default | `parity/supervisedlda_gold.py` |
 | `DiscLDA` | `src/disclda.rs` | `src/python/disclda.rs` | collapsed Gibbs + class transform | default | `parity/disclda_20ng.py`, `tests/test_disclda.py` |
@@ -88,6 +92,7 @@ Column meanings:
 |---|---|---|---|---|---|
 | `DTM` | `src/dtm.rs` | `src/python/mod.rs` | variational Kalman over time slices | default | `parity/dtm_gold.py` |
 | `DETM` | `src/detm.rs` | `src/python/neural.rs` | embedding VAE + LSTM q(eta) (etm_vae.rs) | default | `parity/detm_gold.py` |
+| `TopicsOverTime` | `src/topics_over_time.rs` | `src/python/topics_over_time.rs` | collapsed Gibbs (LDA + per-topic Beta time factor, method-of-moments psi) | default | `parity/tot_gold.py` |
 | `HLDA` | `src/hlda.rs` | `src/python/hierarchical.rs` | nested-CRP collapsed Gibbs | default | `parity/hlda_gold.py` |
 | `PA` | `src/pa.rs` | `src/python/hierarchical.rs` | collapsed Gibbs over a topic DAG | default | `parity/pa_gold.py` |
 
@@ -101,6 +106,7 @@ Column meanings:
 | `MechanisticBERTopic` | `python/topica/mtm.py` | — _(Python)_ | SAE featurization (Python) over the embedding-clustering core (cluster.rs, reduce.rs) | `embeddings` | `tests/test_mtm.py` |
 | `SemanticSignalSeparation` | `src/semantic_signal_separation.rs` | `src/python/semantic_signal_separation.rs` | FastICA over document embeddings + vocabulary projection (reduce.rs) | `embeddings` | `parity/s3_compare.py`, `tests/test_semantic_signal_separation.py` |
 | `ETM` | `src/etm.rs` | `src/python/neural.rs` | variational EM over word embeddings (ctm.rs) | default | `parity/etm_gold.py` |
+| `GaussianLDA` | `src/gaussian_lda.rs` | `src/python/gaussian_lda.rs` | collapsed Gibbs (NIW-Gaussian topics, Student-t predictive, rank-1 Cholesky up/downdates) | default | `parity/gaussian_lda_gold.py` |
 | `IdealPointTM` | `src/idealpoint.rs` | `src/python/idealpoint.rs` | variational EM + ideal-point head | default | `tests/test_idealpoint.py`, `tests/test_idealpoint_counts.py` |
 | `IdealPointSentenceTM` | `src/sentence_ideal.rs` | `src/python/sentence_ideal.rs` | Gaussian-cluster EM over embeddings | default | `tests/test_sentence_ideal.py` |
 | `FASTopic` | `src/fastopic.rs` | `src/python/mod.rs` | reverse-mode Sinkhorn optimal transport | default | `parity/fastopic_gold.py`, `parity/fastopic_compare.py` |
