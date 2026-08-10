@@ -30,6 +30,18 @@ def test_load_gadarian_dataframe():
         assert col in df.columns
 
 
+def test_load_gadarian_as_bunch_uniform_df():
+    # as_bunch gives the uniform shape: a Bunch whose .df is the table (#686).
+    import pandas as pd
+
+    b = datasets.load_gadarian(as_bunch=True)
+    assert isinstance(b, datasets.Bunch)
+    assert isinstance(b.df, pd.DataFrame)
+    assert len(b.df) == 341
+    # default is still a bare DataFrame (non-breaking)
+    assert isinstance(datasets.load_gadarian(), pd.DataFrame)
+
+
 def test_load_gadarian_return_path():
     path = datasets.load_gadarian(return_path=True)
     assert path.exists()
