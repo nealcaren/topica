@@ -718,13 +718,20 @@ impl Top2Vec {
         Ok(m.search_documents_by_vector(num_docs, &q))
     }
 
-    /// Soft topic membership for new documents from their embeddings (cosine to
-    /// each topic vector, normalized). `data` is accepted for API symmetry but
-    /// Top2Vec assigns by embedding only. Returns `(num_docs, num_topics)`.
-    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
-    /// of top words per topic scored.
-    #[pyo3(signature = (n=10))]
-    fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
+    /// Scores each topic's top-``n`` words. ``coherence_type`` selects the measure
+    /// (``"u_mass"`` default, or ``"c_v"`` / ``"c_uci"`` / ``"c_npmi"``); ``texts``
+    /// supplies the reference corpus for the windowed measures (defaults to the
+    /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
+    /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
+    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    fn coherence<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        coherence_type: String,
+        texts: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let m = self.fitted_model()?;
         let phi = vecs_to_arr2(&m.topic_word);
         let tops = top_word_ids_phi(&phi, m.num_topics, n);
@@ -762,7 +769,7 @@ impl Top2Vec {
                 tf
             },
         };
-        Ok(Array1::from(umass_coherence(&corpus, &tops)).to_pyarray_bound(py))
+        coherence_dispatch(py, &corpus, &tops, n, &coherence_type, texts)
     }
 
     /// Assign new documents to the nearest topic by cosine distance.
@@ -1393,9 +1400,20 @@ impl BERTopic {
         topic_words_helper(py, &phi, &self.id_to_word, m.num_topics, n, topic)
     }
 
-    /// UMass coherence for each topic's top-`n` words, over the training corpus.
-    #[pyo3(signature = (n=10))]
-    fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
+    /// Scores each topic's top-``n`` words. ``coherence_type`` selects the measure
+    /// (``"u_mass"`` default, or ``"c_v"`` / ``"c_uci"`` / ``"c_npmi"``); ``texts``
+    /// supplies the reference corpus for the windowed measures (defaults to the
+    /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
+    /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
+    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    fn coherence<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        coherence_type: String,
+        texts: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let m = self.fitted_model()?;
         let phi = vecs_to_arr2(&m.topic_word);
         let tops = top_word_ids_phi(&phi, m.num_topics, n);
@@ -1433,7 +1451,7 @@ impl BERTopic {
                 tf
             },
         };
-        Ok(Array1::from(umass_coherence(&corpus, &tops)).to_pyarray_bound(py))
+        coherence_dispatch(py, &corpus, &tops, n, &coherence_type, texts)
     }
 
     /// The soft topic distribution for `data` (Corpus or token lists), as
