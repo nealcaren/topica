@@ -20,9 +20,13 @@ from topica import mtm
 
 @pytest.fixture(scope="module", autouse=True)
 def _experimental():
+    # Restore whatever the process was in, rather than forcing the gate back on.
+    # `enable_experimental` is process-global and other modules turn it on at
+    # import time, so a hard reset here breaks them depending on file order.
+    previous = topica.experimental_enabled()
     topica.enable_experimental(True)
     yield
-    topica.enable_experimental(False)
+    topica.enable_experimental(previous)
 
 
 def _planted(num_docs=60, num_tokens=40, num_features=30, num_blocks=3, seed=13):
