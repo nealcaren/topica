@@ -405,21 +405,33 @@ fn kmeans_words<R: Rng>(
                 }
             }
         }
-        // re-seed any empty cluster from the point farthest from its own center
-        for c in 0..k {
-            if counts[c] == 0 {
-                let mut worst = 0;
-                let mut wd = -1.0;
-                for (i, p) in embeddings.iter().enumerate() {
-                    let d = sqdist(p, &centers[assign[i]]);
-                    if d > wd {
-                        wd = d;
-                        worst = i;
-                    }
+        // Re-seed empty clusters. Each empty cluster steals the point farthest from
+        // its own center among clusters that still have >1 member, and `counts` is
+        // updated on every move, so a reseed can never empty another cluster or reuse
+        // the same point (guaranteeing all k clusters non-empty when n >= k distinct
+        // points exist).
+        while let Some(c) = (0..k).find(|&c| counts[c] == 0) {
+            let mut worst: Option<usize> = None;
+            let mut wd = -1.0;
+            for (i, p) in embeddings.iter().enumerate() {
+                if counts[assign[i]] <= 1 {
+                    continue;
                 }
-                centers[c] = embeddings[worst].clone();
-                assign[worst] = c;
-                changed = true;
+                let d = sqdist(p, &centers[assign[i]]);
+                if d > wd {
+                    wd = d;
+                    worst = Some(i);
+                }
+            }
+            match worst {
+                Some(i) => {
+                    counts[assign[i]] -= 1;
+                    assign[i] = c;
+                    counts[c] = 1;
+                    centers[c] = embeddings[i].clone();
+                    changed = true;
+                }
+                None => break, // not enough distinct points to fill k clusters
             }
         }
         if !changed {
@@ -627,7 +639,9 @@ pub fn fit<R: Rng>(
         kappa0,
         nu0,
         fit_history,
-        converged: true,
+        // A collapsed-Gibbs sampler runs its full sweep budget; it never declares
+        // convergence (watch log_likelihood_history and n_effective_topics instead).
+        converged: false,
     }
 }
 
@@ -848,6 +862,113 @@ mod tests {
             &mut ChaCha8Rng::seed_from_u64(0),
         );
         assert!(crate::conformance::check_conformance(&m).is_empty());
+    }
+
+    #[test]
+    fn downdate_rejects_non_pd_and_leaves_l_untouched() {
+        // L = chol(4 I) = 2 I; downdating by x=[3,0] would need 4 - 9 < 0 -> not PD.
+        let e = 2;
+        let mut l = vec![2.0, 0.0, 0.0, 2.0];
+        let before = l.clone();
+        let mut x = vec![3.0, 0.0];
+        assert!(!chol_rank1_downdate(&mut l, &mut x, e));
+        assert_eq!(l, before, "L must be untouched when the downdate is not PD");
+        // a valid downdate (x small) succeeds and changes L
+        let mut x2 = vec![1.0, 0.0];
+        assert!(chol_rank1_downdate(&mut l, &mut x2, e));
+        assert!((l[0] - 3.0f64.sqrt()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn rebuild_chol_matches_batch_excluding_token() {
+        // rebuild_chol must reconstruct chol(Psi_k) = chol(Psi0 + scatter + shrinkage)
+        // over a topic's members, excluding the token being removed.
+        let e = 3;
+        let mut rng = ChaCha8Rng::seed_from_u64(9);
+        let embeddings: Vec<Vec<f64>> = (0..6)
+            .map(|_| (0..e).map(|_| rng.gen::<f64>() * 3.0).collect())
+            .collect();
+        // tokens 0..5 all in topic 0; we exclude token 5 -> members are 0..4
+        let token_topic = vec![0usize; 6];
+        let token_emb: Vec<usize> = (0..6).collect();
+        let mut mu0 = vec![0.0f64; e];
+        for p in &embeddings {
+            for i in 0..e {
+                mu0[i] += p[i];
+            }
+        }
+        for m in mu0.iter_mut() {
+            *m /= embeddings.len() as f64;
+        }
+        let mut chol_psi0 = vec![0.0f64; e * e];
+        for i in 0..e {
+            chol_psi0[i * e + i] = (3.0 * e as f64).sqrt();
+        }
+        let prior = Prior {
+            mu0: mu0.clone(),
+            kappa0: 0.1,
+            nu0: e as f64,
+            e,
+            chol_psi0,
+        };
+        let l = rebuild_chol(0, 5, &token_emb, &token_topic, &embeddings, &prior);
+        // batch Psi over members 0..4
+        let members = &embeddings[0..5];
+        let n = members.len() as f64;
+        let mut xbar = vec![0.0f64; e];
+        for p in members {
+            for i in 0..e {
+                xbar[i] += p[i];
+            }
+        }
+        for x in xbar.iter_mut() {
+            *x /= n;
+        }
+        let mut psi = vec![0.0f64; e * e];
+        for i in 0..e {
+            psi[i * e + i] = 3.0 * e as f64;
+        }
+        for p in members {
+            for i in 0..e {
+                for j in 0..e {
+                    psi[i * e + j] += (p[i] - xbar[i]) * (p[j] - xbar[j]);
+                }
+            }
+        }
+        let c = prior.kappa0 * n / (prior.kappa0 + n);
+        for i in 0..e {
+            for j in 0..e {
+                psi[i * e + j] += c * (xbar[i] - mu0[i]) * (xbar[j] - mu0[j]);
+            }
+        }
+        let batch = cholesky_lower(&psi, e);
+        for i in 0..e {
+            for j in 0..=i {
+                assert!((l[i * e + j] - batch[i * e + j]).abs() < 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn kmeans_reseed_fills_all_clusters_with_duplicates() {
+        // Many duplicate embeddings but >= k distinct points: every cluster must be
+        // non-empty (Codex B6 — reseed must not leave a cluster empty).
+        let e = 2;
+        let mut emb: Vec<Vec<f64>> = Vec::new();
+        for _ in 0..20 {
+            emb.push(vec![0.0, 0.0]); // a big cluster of identical points
+        }
+        emb.push(vec![10.0, 0.0]);
+        emb.push(vec![0.0, 10.0]);
+        emb.push(vec![10.0, 10.0]);
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let k = 4;
+        let assign = kmeans_words(&emb, k, e, &mut rng, 50);
+        let mut used = vec![0usize; k];
+        for &a in &assign {
+            used[a] += 1;
+        }
+        assert!(used.iter().all(|&c| c > 0), "some cluster empty: {used:?}");
     }
 
     /// Gate A finding B5: the incremental per-topic state (mean + chol(Psi_k)) must

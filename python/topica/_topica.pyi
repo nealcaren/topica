@@ -5453,11 +5453,26 @@ class GaussianLDA:
     @property
     def topic_covariances(self) -> numpy.typing.NDArray[numpy.float64]:
         """Per-topic covariances (num_topics, E, E): the Inverse-Wishart posterior-mean
-        Sigma_k = Psi_k / (nu_k - E - 1)."""
+        Sigma_k = Psi_k / (nu_k - E - 1). This exists only when nu_k > E + 1; for an
+        empty or singleton topic the matrix is filled with NaN (no posterior-mean
+        covariance is defined). Use `topic_scale_matrices` for the always-defined Psi_k."""
         ...
     @property
     def topic_counts(self) -> list[int]:
         """Number of tokens assigned to each topic (num_topics,)."""
+        ...
+    @property
+    def n_effective_topics(self) -> int:
+        """Number of non-empty topics after the fit. Less than ``num_topics`` means the
+        fit mode-collapsed (empty topics are prior-only duplicates); ``fit`` also warns."""
+        ...
+    @property
+    def effective_alpha(self) -> float:
+        """The document-topic Dirichlet concentration actually used (``alpha`` or ``1/K``)."""
+        ...
+    @property
+    def effective_nu(self) -> float:
+        """The NIW degrees of freedom nu_0 actually used (``nu`` clamped to >= E, or E)."""
         ...
     @property
     def log_likelihood_history(self) -> list[float]:

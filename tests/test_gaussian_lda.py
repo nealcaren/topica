@@ -84,9 +84,14 @@ def test_recovers_planted_topics_kmeans():
 
 
 def test_random_init_option():
-    # The reference Cholesky sampler's random-init path is available and runs.
+    # The reference Cholesky sampler's random-init path is available and runs. (Random
+    # init is collapse-prone on small data, so a collapse warning here is expected.)
+    import warnings
+
     docs, emb, vocab, _ = _planted(seed=3)
-    m = topica.GaussianLDA(3, init="random", seed=0).fit(docs, emb, vocab, iters=30)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        m = topica.GaussianLDA(3, init="random", seed=0).fit(docs, emb, vocab, iters=30)
     assert m.doc_topic.shape == (len(docs), 3)
     assert m.settings["init"] == "random"
 
@@ -135,6 +140,72 @@ def test_settings_keys():
     assert s["psi_scale"] == 2.0
     assert s["init"] == "kmeans"
     assert s["seed"] == 9
+
+
+def test_student_t_density_matches_numpy():
+    # topic_word must equal a direct multivariate Student-t computation from the exposed
+    # mu_k / Psi_k / N_k. Odd E exercises the real 0.5*E normalizer (Java int-div bug).
+    from scipy.special import gammaln
+
+    for E in (7, 8):  # odd and even
+        docs, emb, vocab, _ = _planted(k=3, e=E, words_per_topic=10, n_docs=40, seed=E)
+        m = topica.GaussianLDA(3, seed=0).fit(docs, emb, vocab, iters=25)
+        mu = np.asarray(m.topic_means)
+        psi = np.asarray(m.topic_scale_matrices)
+        N = np.array(m.topic_counts)
+        nu0 = float(E)
+        kappa0 = 0.1
+
+        def logt(x, k):
+            kn, nun = kappa0 + N[k], nu0 + N[k]
+            nu = nu0 + N[k] - E + 1
+            s = (kn + 1) / (kn * (nun - E + 1))
+            L = np.linalg.cholesky(s * psi[k])
+            y = np.linalg.solve(L, x - mu[k])
+            val = y @ y
+            logdet = 2 * np.log(np.diag(L)).sum()
+            return gammaln((nu + E) / 2) - (
+                gammaln(nu / 2) + 0.5 * E * (np.log(nu) + np.log(np.pi))
+                + 0.5 * logdet + (nu + E) / 2 * np.log(1 + val / nu)
+            )
+
+        V = len(vocab)
+        tw = np.zeros((3, V))
+        for k in range(3):
+            lg = np.array([logt(emb[w], k) for w in range(V)])
+            tw[k] = np.exp(lg - lg.max())
+            tw[k] /= tw[k].sum()
+        assert np.abs(tw - np.asarray(m.topic_word)).max() < 1e-10
+
+
+def test_collapse_warning_and_diagnostics():
+    # A degenerate fit (K far exceeding the number of separable clusters on tiny data)
+    # collapses; the model must WARN and surface it via n_effective_topics, not silently.
+    rng = np.random.default_rng(0)
+    # 2 tight clusters but ask for 6 topics -> guaranteed empties
+    emb = np.vstack([rng.normal(0, 0.05, (10, 4)) + [9, 0, 0, 0],
+                     rng.normal(0, 0.05, (10, 4)) + [0, 9, 0, 0]])
+    vocab = [f"w{i}" for i in range(20)]
+    docs = [[vocab[int(rng.integers(0, 10)) + (0 if d % 2 else 10)] for _ in range(15)]
+            for d in range(40)]
+    with pytest.warns(UserWarning, match="collapsed"):
+        m = topica.GaussianLDA(6, seed=0).fit(docs, emb, vocab, iters=30)
+    assert m.n_effective_topics < 6
+    assert m.converged is False
+    # empty topics have NaN covariance (no posterior mean), finite scale matrix
+    cov = np.asarray(m.topic_covariances)
+    scale = np.asarray(m.topic_scale_matrices)
+    for t in range(6):
+        if m.topic_counts[t] == 0:
+            assert np.isnan(cov[t]).all()
+            assert np.isfinite(scale[t]).all()
+
+
+def test_effective_hyperparams():
+    docs, emb, vocab, _ = _planted(seed=2)
+    m = topica.GaussianLDA(3, seed=0).fit(docs, emb, vocab, iters=10)
+    assert m.effective_alpha == pytest.approx(1.0 / 3.0)
+    assert m.effective_nu == emb.shape[1]  # nu=None -> E
 
 
 def test_rejects_bad_params():

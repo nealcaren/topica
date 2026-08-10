@@ -44,6 +44,24 @@ struct GaussianLDAState {
 /// Student-t posterior predictive (rank-1 Cholesky up/downdates as tokens move). You
 /// bring the word embeddings; topics generalize over semantically similar words.
 /// `topic_word` is derived by scoring each vocabulary word under each topic Gaussian.
+///
+/// fit(data, word_embeddings, vocabulary, *, iters=100).
+///
+/// Constructor: GaussianLDA(num_topics, *, alpha=None (->1/K), kappa=0.1, nu=None (->E),
+/// psi_scale=3.0, init="kmeans", seed=13). `init` is "kmeans" (default; k-means over
+/// the vocabulary embeddings) or "random" (per-token, the reference Cholesky sampler).
+/// Read the resolved priors back with `effective_alpha` / `effective_nu`.
+///
+/// IMPORTANT — where it works. Gaussian LDA suits **low-dimensional, well-separated**
+/// word embeddings (word2vec / GloVe, ~50-300d), where words form Gaussian clusters. On
+/// **dense, anisotropic contextual embeddings** (sentence-transformer / BERT / MiniLM
+/// vectors) it MODE-COLLAPSES — one topic absorbs everything and the rest come back
+/// empty — and so does the original reference. Two practical fixes: (1) **standardize
+/// the embeddings per dimension** before fitting, `emb = (emb - emb.mean(0)) /
+/// emb.std(0)`, which removes the anisotropy that drives the collapse and gives distinct
+/// topics; (2) reduce E (e.g. PCA to ~50). `fit` WARNS on collapse; check
+/// `n_effective_topics` and `topic_counts`. Cost is O(K * E^2) per token, so large E
+/// (e.g. 384) is slow — prefer E <= ~100.
 #[pyclass(module = "topica")]
 pub struct GaussianLDA {
     num_topics: usize,
@@ -242,8 +260,26 @@ impl GaussianLDA {
             total_freqs: tf,
         });
         slf.topic_names = (0..num_topics).map(|i| format!("topic_{i}")).collect();
+        // Warn on mode collapse: if fewer than K topics ended up non-empty, the fit
+        // degenerated (empty topics are prior-only duplicates). This is a known failure
+        // mode of Gaussian LDA on dense/anisotropic embeddings (the reference collapses
+        // the same way); standardizing the embeddings per dimension usually fixes it.
+        let n_eff = model.topic_counts.iter().filter(|&&c| c > 0).count();
         slf.model = Some(model);
         slf.fitted = true;
+        if n_eff < num_topics {
+            let warnings = py.import_bound("warnings")?;
+            let msg = format!(
+                "GaussianLDA collapsed to {n_eff} of {num_topics} topics: {} topic(s) are \
+                 empty and their top_words/coherence are prior-only duplicates. Gaussian LDA \
+                 mode-collapses on dense/anisotropic embeddings (e.g. sentence-transformer \
+                 vectors); try standardizing embeddings per dimension \
+                 ((x - x.mean(0)) / x.std(0)) before fitting, reducing E, or a different K. \
+                 Check `n_effective_topics` / `topic_counts`.",
+                num_topics - n_eff
+            );
+            warnings.call_method1("warn", (msg,))?;
+        }
         Ok(slf.into())
     }
 
@@ -329,6 +365,31 @@ impl GaussianLDA {
     #[getter]
     fn topic_counts(&self) -> PyResult<Vec<usize>> {
         Ok(self.fitted_model()?.topic_counts.clone())
+    }
+    /// Number of NON-EMPTY topics after the fit. Gaussian LDA can mode-collapse (merge
+    /// clusters, leaving topics empty), especially on dense/anisotropic embeddings;
+    /// when this is less than ``num_topics`` the fit degenerated and the extra topic
+    /// rows are prior-only duplicates. `fit` also emits a warning in that case.
+    #[getter]
+    fn n_effective_topics(&self) -> PyResult<usize> {
+        Ok(self
+            .fitted_model()?
+            .topic_counts
+            .iter()
+            .filter(|&&c| c > 0)
+            .count())
+    }
+    /// The effective document-topic Dirichlet concentration used at fit time
+    /// (``alpha`` if set, else ``1/K``).
+    #[getter]
+    fn effective_alpha(&self) -> f64 {
+        self.eff_alpha()
+    }
+    /// The effective NIW degrees of freedom nu_0 used at fit time (``nu`` if set and
+    /// >= E, else the embedding dimension E). Available after `fit`.
+    #[getter]
+    fn effective_nu(&self) -> PyResult<f64> {
+        Ok(self.fitted_model()?.nu0)
     }
     /// The reference `avgLL` diagnostic per sweep: mean per-token Gaussian log-density
     /// at the current topic assignment (covariance Psi_k/(nu_k - E)). NOT the model
@@ -521,13 +582,23 @@ impl GaussianLDA {
         let mut out = vec![0.0f64; k * e * e];
         for t in 0..k {
             let l = &m.topic_scale_chol[t];
+            // The Inverse-Wishart posterior-mean covariance Psi_k/(nu_k - E - 1) only
+            // exists when nu_k > E + 1. For an empty or singleton topic (nu_k <= E + 1)
+            // there is no posterior-mean covariance, so we return NaN rather than a
+            // spuriously huge matrix. (topic_scale_matrices, as_cov=false, is always
+            // the well-defined Psi_k.)
             let denom = if as_cov {
-                (m.nu0 + m.topic_counts[t] as f64 - e as f64 - 1.0).max(1e-12)
+                m.nu0 + m.topic_counts[t] as f64 - e as f64 - 1.0
             } else {
                 1.0
             };
+            let undefined = as_cov && denom <= 0.0;
             for i in 0..e {
                 for j in 0..e {
+                    if undefined {
+                        out[t * e * e + i * e + j] = f64::NAN;
+                        continue;
+                    }
                     // (L Lᵀ)_{ij} = sum_{c<=min(i,j)} L_ic L_jc
                     let mut s = 0.0;
                     for c in 0..=i.min(j) {

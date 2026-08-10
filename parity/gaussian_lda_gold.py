@@ -220,15 +220,16 @@ def compare():
         import topica
     except ImportError:
         print(f"[{NAME}] topica not importable; skipping compare.")
-        return
+        return True
     if not hasattr(topica, "GaussianLDA"):
         print(f"[{NAME}] topica.GaussianLDA not built yet; gold is ready. Skipping.")
-        return
+        return True
 
-    # Compare against the reference's random-init behavior (init="random"): the port is
-    # bit-faithful to the Cholesky sampler here. (The shipped default is init="kmeans",
-    # the paper's approach, which avoids the mode-collapse both implementations show with
-    # random init — see the module docstring and docs.)
+    # Compare against the reference's random-init behavior (init="random"): the port
+    # matches the Cholesky sampler at the DISTRIBUTION level, not bit-for-bit -- the
+    # reference uses an unseeded RNG, so its own two runs differ (see floors below). The
+    # shipped DEFAULT is init="kmeans" (the paper's approach); random init is used here
+    # only for a like-for-like comparison against the reference sampler.
     m = topica.GaussianLDA(meta["K"], init="random", seed=13).fit(
         docs, embeddings, vocab, iters=iters
     )
@@ -238,15 +239,54 @@ def compare():
     cmean, _ = harness.align_cosine(ref_means, tp_means)
     cdt = harness.doc_topic_correlation(ref_dt, tp_dt)
 
-    # planted recovery: each topic's mean should be nearest the planted cluster center
+    # Independent NIW density check: topica's derived topic_word must equal a direct
+    # multivariate Student-t computation from the exposed mu_k / Psi_k / N_k (this is the
+    # real fidelity guard on the sampler's core equation; the frozen ref_scale_chol /
+    # ref_avgll are provenance from the oracle's own -- differently seeded -- run, not
+    # directly comparable across modes).
+    dens_err = _student_t_selfcheck(m, embeddings, meta["K"], meta["E"])
+
     print(f"[{NAME}] topic-mean aligned cosine = {cmean:.3f}  (reference floor {floor_mean:.3f})")
     print(f"[{NAME}] doc-topic correlation      = {cdt:.3f}  (reference floor {floor_dt:.3f})")
-    ok = cmean >= floor_mean - 0.05 and cdt >= floor_dt - 0.10
-    print(f"[{NAME}] PARITY {'OK' if ok else 'CHECK'}")
+    print(f"[{NAME}] student-t density vs numpy  = {dens_err:.2e} (max abs diff)")
+    ok = (cmean >= floor_mean - 0.05 and cdt >= floor_dt - 0.10 and dens_err < 1e-9)
+    print(f"[{NAME}] PARITY {'OK' if ok else 'FAIL'}")
+    return ok
+
+
+def _student_t_selfcheck(m, embeddings, K, E):
+    """Max abs diff between topica's topic_word and a numpy Student-t recomputation."""
+    from scipy.special import gammaln
+
+    mu = np.asarray(m.topic_means)
+    psi = np.asarray(m.topic_scale_matrices)
+    N = np.array(m.topic_counts)
+    nu0, kappa0 = float(E), 0.1
+    V = len(embeddings)
+
+    def logt(x, k):
+        kn, nun = kappa0 + N[k], nu0 + N[k]
+        nu = nu0 + N[k] - E + 1
+        s = (kn + 1) / (kn * (nun - E + 1))
+        L = np.linalg.cholesky(s * psi[k])
+        y = np.linalg.solve(L, x - mu[k])
+        val = y @ y
+        logdet = 2 * np.log(np.diag(L)).sum()
+        return gammaln((nu + E) / 2) - (
+            gammaln(nu / 2) + 0.5 * E * (np.log(nu) + np.log(np.pi))
+            + 0.5 * logdet + (nu + E) / 2 * np.log(1 + val / nu))
+
+    tw = np.zeros((K, V))
+    for k in range(K):
+        lg = np.array([logt(embeddings[w], k) for w in range(V)])
+        tw[k] = np.exp(lg - lg.max())
+        tw[k] /= tw[k].sum()
+    return float(np.abs(tw - np.asarray(m.topic_word)).max())
 
 
 if __name__ == "__main__":
     if "--regenerate" in sys.argv:
         regenerate()
     else:
-        compare()
+        ok = compare()
+        sys.exit(0 if ok else 1)
