@@ -262,12 +262,186 @@ def test_manifest_records_content_and_model():
     assert cv["metric_params"]["topn"] == 10
 
 
-def test_supervised_y_not_yet_supported():
-    docs, labels = _synthetic_corpus()
-    with pytest.raises(NotImplementedError, match="PR2"):
-        topica.cross_validate(
-            lambda s: topica.LDA(2, seed=s), docs, y=labels, folds=4
+def _supervised_corpus(n_docs=80, seed=0):
+    """Two topics whose response means are far apart, so a fit predicts y well."""
+    rng = np.random.default_rng(seed)
+    ta = ["cat", "dog", "pet", "fur", "paw", "tail"]
+    tb = ["bank", "loan", "money", "rate", "cash", "debt"]
+    docs, y = [], []
+    for i in range(n_docs):
+        if i % 2 == 0:
+            docs.append(list(rng.choice(ta, size=rng.integers(8, 16))))
+            y.append(rng.normal(2.0, 0.5))
+        else:
+            docs.append(list(rng.choice(tb, size=rng.integers(8, 16))))
+            y.append(rng.normal(8.0, 0.5))
+    return docs, np.array(y)
+
+
+def test_supervised_oof_basic():
+    docs, y = _supervised_corpus()
+    result = topica.cross_validate(
+        lambda s: topica.SupervisedLDA(2, seed=s), docs, y=y, folds=4,
+        seed=13, fit_kwargs={"iters": 20},
+    )
+    assert result.kind == "supervised"
+    assert result.oof_predictions.shape == (len(docs),)
+    assert result.scored_mask.all()  # kfold, no drops on this dense corpus
+    # Topics separate the two response regimes -> strong OOF R2.
+    assert result.aggregate["r2_pooled"] > 0.5
+    assert 0.0 <= result.aggregate["coverage_90"] <= 1.0
+    assert "R2" in result.summary()
+
+
+def test_supervised_deterministic():
+    docs, y = _supervised_corpus()
+    make = lambda: topica.cross_validate(
+        lambda s: topica.SupervisedLDA(2, seed=s), docs, y=y, folds=4,
+        seed=13, fit_kwargs={"iters": 20},
+    )
+    a, b = make(), make()
+    np.testing.assert_array_equal(
+        np.nan_to_num(a.oof_predictions), np.nan_to_num(b.oof_predictions)
+    )
+
+
+def test_supervised_empty_doc_not_polluting_metrics():
+    """The Gate A blocker: SupervisedLDA.predict returns (0.0, sigma2) for an empty/
+    all-OOV doc. Predicting on the transformed corpus must DROP those docs, not score
+    a fabricated 0.0 against a response near 8."""
+    docs, y = _supervised_corpus(n_docs=80)
+    # Make several docs empty; they must be excluded from the OOF metrics, not scored 0.
+    for i in (1, 3, 5, 7):
+        docs[i] = []
+    with pytest.warns(UserWarning, match="dropped from out-of-fold"):
+        result = topica.cross_validate(
+            lambda s: topica.SupervisedLDA(2, seed=s), docs, y=y, folds=4,
+            seed=13, fit_kwargs={"iters": 20},
         )
+    # The empty docs are NaN in the OOF vector (never a fabricated 0.0).
+    for i in (1, 3, 5, 7):
+        assert np.isnan(result.oof_predictions[i])
+    assert not result.scored_mask[[1, 3, 5, 7]].any()
+    # And the pooled RMSE is still sane (a 0.0-vs-8 leak would blow it up).
+    assert result.aggregate["rmse_pooled"] < 2.0
+
+
+def test_supervised_y_length_assert():
+    docs, y = _supervised_corpus(n_docs=80)
+    with pytest.raises(ValueError, match="expected n_docs"):
+        topica.cross_validate(
+            lambda s: topica.SupervisedLDA(2, seed=s), docs, y=y[:70], folds=4
+        )
+
+
+def test_supervised_y_nonfinite_rejected():
+    docs, y = _supervised_corpus(n_docs=80)
+    y = y.copy()
+    y[2] = np.nan
+    with pytest.raises(ValueError, match="finite"):
+        topica.cross_validate(
+            lambda s: topica.SupervisedLDA(2, seed=s), docs, y=y, folds=4
+        )
+
+
+def test_supervised_needs_predict():
+    docs, y = _supervised_corpus(n_docs=60)
+    with pytest.raises(ValueError, match="no predict"):
+        topica.cross_validate(
+            lambda s: topica.LDA(2, seed=s), docs, y=y, folds=4, fit_kwargs={"iters": 20}
+        )
+
+
+def test_supervised_n_jobs_bit_identical_to_serial():
+    docs, y = _supervised_corpus(n_docs=80)
+    serial = topica.cross_validate(
+        lambda s: topica.SupervisedLDA(2, seed=s), docs, y=y, folds=4,
+        seed=13, fit_kwargs={"iters": 20}, n_jobs=1,
+    )
+    parallel = topica.cross_validate(
+        lambda s: topica.SupervisedLDA(2, seed=s), docs, y=y, folds=4,
+        seed=13, fit_kwargs={"iters": 20}, n_jobs=3,
+    )
+    # Thread pool must be bit-identical to serial, not merely close.
+    np.testing.assert_array_equal(
+        np.nan_to_num(serial.oof_predictions), np.nan_to_num(parallel.oof_predictions)
+    )
+    np.testing.assert_array_equal(
+        np.nan_to_num(serial.oof_std), np.nan_to_num(parallel.oof_std)
+    )
+    assert serial.aggregate["rmse_pooled"] == parallel.aggregate["rmse_pooled"]
+
+
+def test_supervised_constant_y_fold_keeps_rmse_mae():
+    """A constant-response fold has a valid RMSE/MAE (only R2 is undefined); those
+    folds must stay in the macro population (Gate B)."""
+    from topica.crossval import _supervised_aggregate
+
+    # Two folds' worth of per-fold records: one normal, one constant-y (r2 NaN).
+    per_fold = [
+        {"fold": 0, "rmse": 1.0, "mae": 0.8, "r2": 0.5},
+        {"fold": 1, "rmse": 2.0, "mae": 1.6, "r2": float("nan")},
+    ]
+    y = np.array([1.0, 2.0, 3.0, 4.0])
+    oof = np.array([1.1, 2.1, 2.9, 4.2])
+    std = np.full(4, 0.5)
+    mask = np.ones(4, bool)
+    agg, _ = _supervised_aggregate(y, oof, std, mask, per_fold, (0.9,))
+    # Both folds contribute to macro RMSE/MAE; only R2 drops the constant fold.
+    assert agg["rmse_macro"]["n_valid_folds"] == 2
+    assert agg["mae_macro"]["n_valid_folds"] == 2
+    assert agg["r2_macro"]["n_valid_folds"] == 1
+
+
+def test_supervised_calibration_well_calibrated():
+    """On a clean linear-response synthetic, calibration slope ~ 1, intercept ~ 0."""
+    docs, y = _supervised_corpus(n_docs=120)
+    result = topica.cross_validate(
+        lambda s: topica.SupervisedLDA(2, seed=s), docs, y=y, folds=5,
+        seed=13, fit_kwargs={"iters": 25},
+    )
+    assert 0.7 < result.aggregate["calibration_slope"] < 1.3
+    assert abs(result.aggregate["calibration_intercept"]) < 2.0
+    assert result.calibration_table is not None
+    assert set(result.calibration_table.columns) >= {"bin", "n", "mean_pred", "mean_obs"}
+
+
+def test_supervised_manifest_records_settings_and_replayable():
+    docs, y = _supervised_corpus(n_docs=60)
+    result = topica.cross_validate(
+        lambda s: topica.SupervisedLDA(2, seed=s), docs, y=y, folds=4,
+        fit_kwargs={"iters": 20},
+    )
+    cv = result.manifest.cv
+    assert cv["model"]["settings"] is not None       # full constructor settings
+    assert cv["replayable"] is True                  # settings captured, no callback
+    assert "coverage_z" in cv["supervised"]          # exact Gaussian quantiles
+    assert "calibration_rule" in cv["supervised"]
+
+
+def test_supervised_manifest_records_response():
+    docs, y = _supervised_corpus(n_docs=60)
+    result = topica.cross_validate(
+        lambda s: topica.SupervisedLDA(2, seed=s), docs, y=y, folds=4,
+        fit_kwargs={"iters": 20},
+    )
+    cv = result.manifest.cv
+    assert cv["path"] == "supervised"
+    assert cv["supervised"]["response_shape"] == [60]
+    assert "response_hash" in cv["supervised"]
+    assert cv["supervised"]["coverage_levels"] == [0.90, 0.95]
+
+
+def test_supervised_temporal_oof_mask_excluded():
+    docs, y = _supervised_corpus(n_docs=80)
+    times = np.arange(80)
+    result = topica.cross_validate(
+        lambda s: topica.SupervisedLDA(2, seed=s), docs, y=y,
+        strategy="temporal", times=times, folds=5, fit_kwargs={"iters": 20},
+    )
+    # Initial-window docs are never tested -> NaN OOF, excluded from scored_mask.
+    assert not result.scored_mask.all()
+    assert np.isnan(result.oof_predictions[0])
 
 
 def test_fit_fn_requires_score_fn():

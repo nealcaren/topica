@@ -132,12 +132,25 @@ def _validate_folds_obj(fold_obj, n_docs):
         )
     for train, test in fold_obj.splits:
         _validate_split(np.asarray(train), np.asarray(test), n_docs)
-    if fold_obj.strategy in ("kfold", "grouped"):
-        tested = np.concatenate([np.asarray(test) for _, test in fold_obj.splits])
-        if np.unique(tested).size != n_docs or tested.size != n_docs:
-            raise ValueError(
-                f"{fold_obj.strategy} Folds must test every document exactly once"
-            )
+    tested = np.concatenate([np.asarray(test) for _, test in fold_obj.splits])
+    # Every strategy needs test indices unique ACROSS folds: a document tested in two
+    # folds would make the out-of-fold scatter overwrite one prediction (temporal is
+    # the sneaky case — its blocks are disjoint when generated, but a supplied Folds
+    # could overlap them).
+    if np.unique(tested).size != tested.size:
+        raise ValueError(
+            "a document is a test document in more than one fold; test blocks must be "
+            "disjoint across folds (out-of-fold assembly needs one prediction per doc)"
+        )
+    if fold_obj.strategy in ("kfold", "grouped") and np.unique(tested).size != n_docs:
+        raise ValueError(
+            f"{fold_obj.strategy} Folds must test every document exactly once"
+        )
+    # oof_mask must equal the set of tested documents.
+    expected = np.zeros(n_docs, dtype=bool)
+    expected[np.unique(tested)] = True
+    if not np.array_equal(np.asarray(fold_obj.oof_mask, dtype=bool), expected):
+        raise ValueError("Folds.oof_mask does not match the union of test indices")
 
 
 def _make_kfold(n_docs, folds, rng):
@@ -389,6 +402,19 @@ class CrossValResult:
     """Cross-fold topic stability (mean +/- std matched-topic cosine over all fold
     pairs), computed vocabulary-aware via align_topics since fold vocabularies
     differ. None when there are too few comparable fits."""
+    kind: str = "topic"
+    """"topic" (held-out completion) or "supervised" (out-of-fold prediction)."""
+    oof_predictions: Any = None
+    """Supervised path: assembled out-of-fold y-hat, length n_docs, NaN off the
+    scored population."""
+    oof_std: Any = None
+    """Supervised path: per-doc predictive std from predict(return_std=True)."""
+    scored_mask: Any = None
+    """Supervised path: bool array (n_docs) — the authoritative evaluated population
+    (tested AND survived per-fold pruning). Drives every pooled metric, calibration,
+    and coverage identically."""
+    calibration_table: Any = None
+    """Supervised path: reliability table (DataFrame) of binned predicted vs observed."""
 
     def to_frame(self):
         """Per-fold metrics as a pandas DataFrame (a results-appendix table)."""
@@ -397,6 +423,8 @@ class CrossValResult:
         return pd.DataFrame(self.per_fold)
 
     def summary(self) -> str:
+        if self.kind == "supervised":
+            return self._supervised_summary()
         lines = [
             f"cross_validate: {len(self.per_fold)} folds, "
             f"strategy={self.folds.strategy}, vocab={self.vocab}",
@@ -430,6 +458,39 @@ class CrossValResult:
             lines.append(
                 "  (perplexity is per-fold; vocabularies differ so it is not pooled)"
             )
+        return "\n".join(lines)
+
+    def _supervised_summary(self) -> str:
+        a = self.aggregate
+        n = int(self.scored_mask.sum()) if self.scored_mask is not None else 0
+        lines = [
+            f"cross_validate (supervised): {len(self.per_fold)} folds, "
+            f"strategy={self.folds.strategy}, {n} out-of-fold predictions",
+            f"  RMSE (pooled): {a.get('rmse_pooled', float('nan')):.4g}   "
+            f"MAE: {a.get('mae_pooled', float('nan')):.4g}   "
+            f"R2: {a.get('r2_pooled', float('nan')):.4g}",
+        ]
+        if "rmse_macro" in a:
+            m = a["rmse_macro"]
+            lines.append(
+                f"  RMSE (per-fold): {m['mean']:.4g} +/- {m['std']:.4g} "
+                f"over {m['n_valid_folds']} folds"
+            )
+        if "coverage_90" in a:
+            lines.append(
+                f"  interval coverage: 90% -> {a['coverage_90']:.3f}, "
+                f"95% -> {a.get('coverage_95', float('nan')):.3f}"
+            )
+        if "calibration_slope" in a:
+            lines.append(
+                f"  calibration: intercept {a['calibration_intercept']:.3g}, "
+                f"slope {a['calibration_slope']:.3g} (ideal 0, 1)"
+            )
+        lines.append(
+            "  (coverage uses a conditional Gaussian interval with in-sample sigma^2; "
+            "out-of-fold coverage below nominal is partly expected, not proof of "
+            "miscalibration)"
+        )
         return "\n".join(lines)
 
     def __repr__(self) -> str:
@@ -631,6 +692,9 @@ def cross_validate(
     score_fn=None,
     coherence_type="c_v",
     topn=10,
+    coverage_levels=(0.90, 0.95),
+    predict_kwargs=None,
+    n_jobs=1,
     manifest=True,
     preprocessing=None,
 ):
@@ -648,7 +712,11 @@ def cross_validate(
     docs : list[list[str]] or a Corpus.
     covariates : dict ``{fit_kwarg: array}`` of per-document covariates (length
         n_docs), e.g. ``{"prevalence": X}`` for STM. Sub-indexed per fold.
-    y : supervised response (reserved for PR2; unsupported here).
+    y : per-document numeric response (length n_docs). When given, runs the
+        supervised out-of-fold path (regression): fit on each training fold, predict
+        the held-out response, assemble an out-of-fold vector, and report pooled +
+        per-fold RMSE/MAE/R2, interval coverage, and calibration. The model must
+        expose ``predict(docs, return_std=True)`` (e.g. SupervisedLDA).
     folds, strategy, groups, times, window, seed : see :func:`make_folds`. ``folds``
         may also be a prebuilt :class:`Folds` object (takes precedence).
     vocab : "per_fold" (default, leakage-free; perplexity not pooled) or "fixed"
@@ -667,15 +735,13 @@ def cross_validate(
     """
     import warnings
 
-    if y is not None:
-        raise NotImplementedError(
-            "the supervised out-of-fold path (y=) lands in PR2; PR1 covers the "
-            "topic-model held-out path"
-        )
     if metrics is not None:
         raise NotImplementedError(
-            "custom metric selection (metrics=) lands in PR2; PR1 reports the default "
-            "held-out perplexity + fold coherence/exclusivity/stability"
+            "custom metric selection (metrics=) is not implemented. The topic path "
+            "reports held-out perplexity + fold coherence/exclusivity/stability; the "
+            "supervised path (y=) reports regression RMSE/MAE/R2, interval coverage, "
+            "and calibration. Classification metrics (accuracy/F1/log-loss) are not "
+            "available: no model in the roster exposes predict_proba."
         )
     if fit_fn is not None and score_fn is None:
         raise ValueError("fit_fn requires a matching score_fn (test-time inference)")
@@ -704,10 +770,25 @@ def cross_validate(
 
     cov = _resolve_covariates(covariates, n_docs)
     fit_kwargs = dict(fit_kwargs or {})
+    predict_kwargs = dict(predict_kwargs or {})
     preprocessing = dict(preprocessing or {})
     for k in cov:
         if k in fit_kwargs:
             raise ValueError(f"covariate {k!r} collides with a fit_kwargs key")
+
+    # Validate the supervised response up front (it bypasses _resolve_covariates, so a
+    # truncated/off-by-one y would otherwise slip through — the classic covariate-CV
+    # bug PR1 guards for covariates).
+    if y is not None:
+        y = np.asarray(y, dtype=np.float64)
+        if y.ndim != 1:
+            raise ValueError(f"y must be 1-D, got shape {y.shape}")
+        if y.shape[0] != n_docs:
+            raise ValueError(f"y has length {y.shape[0]}, expected n_docs={n_docs}")
+        if not np.all(np.isfinite(y)):
+            raise ValueError("y contains NaN or inf; the response must be finite")
+        if fit_fn is not None:
+            raise ValueError("the supervised path (y=) does not use fit_fn/score_fn")
 
     if vocab not in ("per_fold", "fixed"):
         raise ValueError("vocab must be 'per_fold' or 'fixed'")
@@ -747,6 +828,13 @@ def cross_validate(
     fixed_corpus = None
     if vocab == "fixed":
         fixed_corpus = Corpus.from_documents(doc_lists, **preprocessing)
+
+    # Supervised out-of-fold path (PR2) — a separate loop + aggregation.
+    if y is not None:
+        return _supervised_cv(
+            factory, doc_lists, y, cov, fold_obj, vocab, fixed_corpus, Corpus,
+            fit_kwargs, predict_kwargs, preprocessing, coverage_levels, n_jobs, manifest,
+        )
 
     per_fold = []
     fold_models = []
@@ -887,6 +975,262 @@ def _cross_fold_stability(models):
     return {"mean": float(sims.mean()), "std": float(sims.std()), "n_pairs": int(sims.size)}
 
 
+# ---------------------------------------------------------------------------
+# Supervised out-of-fold path (PR2)
+# ---------------------------------------------------------------------------
+
+
+def _fit_predict_fold(factory, seed_fold, train_docs, test_docs, y, train_idx,
+                      test_idx, cov, vocab, fixed_corpus, Corpus, fit_kwargs,
+                      predict_kwargs, preprocessing):
+    """One supervised fold: fit on the pruned train corpus, predict on the pruned
+    test corpus, return (destination_indices, yhat, std, y_test, per_fold_record).
+
+    Predicting on the TRANSFORMED test corpus (not raw docs) is the correctness
+    crux: SupervisedLDA.predict returns a fabricated (0.0, sigma2) for an empty/
+    all-OOV doc, so those docs must be dropped BEFORE predict, never scored. The
+    survivor map (Corpus.transform kept_indices) gives the scatter destination."""
+    model = factory(seed_fold)
+    name = type(model).__name__
+
+    if vocab == "per_fold":
+        train_corpus = Corpus.from_documents(train_docs, **preprocessing)
+    else:
+        train_corpus = fixed_corpus.transform(train_docs)
+    train_keep = np.asarray(train_corpus.kept_indices, dtype=np.int64)
+    y_train = y[train_idx[train_keep]]
+
+    canon = _canonical_family_cov(cov, name)
+    fit_cov = {k: v[train_idx][train_keep] for k, v in canon.items()}
+
+    if not hasattr(model, "predict"):
+        raise ValueError(
+            f"{name} has no predict(); the supervised out-of-fold path needs a "
+            "response model such as SupervisedLDA. For unsupervised held-out "
+            "evaluation, omit y=."
+        )
+    model.fit(train_corpus, y_train, **fit_cov, **fit_kwargs)
+
+    # Drop zero-in-vocab test docs via the shared vocabulary, then predict only on
+    # survivors so no fabricated 0.0 prediction can enter the OOF vector.
+    test_corpus = train_corpus.transform(test_docs)
+    test_keep = np.asarray(test_corpus.kept_indices, dtype=np.int64)
+    destination = test_idx[test_keep]
+    out = model.predict(test_corpus, return_std=True, **predict_kwargs)
+    yhat, std = out
+    yhat = np.asarray(yhat, dtype=np.float64)
+    std = np.asarray(std, dtype=np.float64)
+    if not (len(yhat) == len(std) == len(destination)):
+        raise ValueError(
+            f"supervised fold length mismatch: {len(yhat)} predictions for "
+            f"{len(destination)} surviving test docs"
+        )
+    y_test = y[destination]
+    rec = {
+        "model_class": name,
+        "n_train": int(train_idx.size),
+        "n_test": int(test_idx.size),
+        "n_oof": int(destination.size),
+        "yhat_std": float(np.std(yhat)) if yhat.size else float("nan"),
+    }
+    if destination.size >= 1:
+        # RMSE/MAE are valid even for a constant response; only R2 is undefined when
+        # the response has no variance to explain (ss_tot == 0).
+        rec["rmse"] = float(np.sqrt(np.mean((y_test - yhat) ** 2)))
+        rec["mae"] = float(np.mean(np.abs(y_test - yhat)))
+        ss_res = float(np.sum((y_test - yhat) ** 2))
+        ss_tot = float(np.sum((y_test - np.mean(y_test)) ** 2))
+        rec["r2"] = float("nan") if ss_tot == 0 else 1.0 - ss_res / ss_tot
+    else:
+        rec["rmse"] = rec["mae"] = rec["r2"] = float("nan")
+    return destination, yhat, std, rec
+
+
+def _supervised_cv(factory, doc_lists, y, cov, fold_obj, vocab, fixed_corpus, Corpus,
+                   fit_kwargs, predict_kwargs, preprocessing, coverage_levels, n_jobs,
+                   manifest):
+    import warnings
+
+    n_docs = len(doc_lists)
+    oof_pred = np.full(n_docs, np.nan)
+    oof_std = np.full(n_docs, np.nan)
+
+    jobs = []
+    for (train_idx, test_idx), seed_fold in zip(fold_obj.splits, fold_obj.fold_seeds):
+        train_docs = [doc_lists[i] for i in train_idx]
+        test_docs = [doc_lists[i] for i in test_idx]
+        jobs.append((seed_fold, train_docs, test_docs, train_idx, test_idx))
+
+    def run(job):
+        seed_fold, train_docs, test_docs, train_idx, test_idx = job
+        return _fit_predict_fold(
+            factory, seed_fold, train_docs, test_docs, y, train_idx, test_idx, cov,
+            vocab, fixed_corpus, Corpus, fit_kwargs, predict_kwargs, preprocessing,
+        )
+
+    # Folds are independent. A thread pool parallelizes them (the Rust fit releases
+    # the GIL); results scatter by destination index, so completion order can't change
+    # the OOF vector — determinism holds. A process pool is not used: it can't pickle
+    # the documented lambda factory.
+    if n_jobs and n_jobs != 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=n_jobs) as ex:
+            results = list(ex.map(run, jobs))
+    else:
+        results = [run(job) for job in jobs]
+
+    per_fold = []
+    for f, (destination, yhat, std, rec) in enumerate(results):
+        oof_pred[destination] = yhat
+        oof_std[destination] = std
+        per_fold.append({"fold": f, "seed_fold": int(fold_obj.fold_seeds[f]), **rec})
+
+    scored_mask = ~np.isnan(oof_pred)
+    aggregate, calibration_table = _supervised_aggregate(
+        y, oof_pred, oof_std, scored_mask, per_fold, coverage_levels
+    )
+
+    dropped = int(fold_obj.oof_mask.sum() - scored_mask.sum())
+    if dropped > 0:
+        warnings.warn(
+            f"{dropped} tested documents were dropped from out-of-fold scoring "
+            "(empty after per-fold vocabulary pruning); they are NaN in "
+            "oof_predictions and excluded from every metric.",
+            stacklevel=3,
+        )
+
+    mani = None
+    if manifest:
+        # Probe the factory (unfitted) for the full constructor settings, not just the
+        # class — so the manifest can actually reconstruct the model.
+        model_spec = None
+        try:
+            probe = factory(int(fold_obj.fold_seeds[0]))
+            model_spec = {
+                "class": type(probe).__name__,
+                "settings": getattr(probe, "settings", None),
+            }
+        except Exception:
+            if per_fold:
+                model_spec = {"class": per_fold[0].get("model_class"), "settings": None}
+        from statistics import NormalDist
+
+        _nd = NormalDist()
+        mani = _record_cv_manifest(
+            fold_obj, doc_lists, cov, fit_kwargs, preprocessing, vocab, False,
+            model_spec, None, None, supervised={
+                "response_hash": _hash_array(y),
+                "response_shape": list(np.shape(y)),
+                "response_dtype": str(np.asarray(y).dtype),
+                "covariate_hashes": {k: _hash_array(v) for k, v in cov.items()},
+                "coverage_levels": list(coverage_levels),
+                "coverage_z": {str(lvl): _nd.inv_cdf((1.0 + lvl) / 2.0)
+                               for lvl in coverage_levels},
+                "predict_kwargs": {k: repr(v) for k, v in predict_kwargs.items()},
+                "calibration_rule": "up-to-10 quantile bins, deduped edges; "
+                                    "OLS intercept/slope when >=10 scored rows",
+                "n_jobs": n_jobs,
+                "backend": "thread" if (n_jobs and n_jobs != 1) else "serial",
+                "scored_mask": scored_mask.tolist(),
+            },
+        )
+
+    return CrossValResult(
+        per_fold=per_fold,
+        aggregate=aggregate,
+        folds=fold_obj,
+        manifest=mani,
+        vocab=vocab,
+        kind="supervised",
+        oof_predictions=oof_pred,
+        oof_std=oof_std,
+        scored_mask=scored_mask,
+        calibration_table=calibration_table,
+    )
+
+
+def _supervised_aggregate(y, oof_pred, oof_std, scored_mask, per_fold, coverage_levels):
+    """Pooled + macro regression metrics, calibration table, and interval coverage,
+    all over the single `scored_mask` population."""
+    yt = y[scored_mask]
+    yp = oof_pred[scored_mask]
+    ys = oof_std[scored_mask]
+    agg = {}
+    if yt.size:
+        agg["rmse_pooled"] = float(np.sqrt(np.mean((yt - yp) ** 2)))
+        agg["mae_pooled"] = float(np.mean(np.abs(yt - yp)))
+        ss_tot = float(np.sum((yt - np.mean(yt)) ** 2))
+        ss_res = float(np.sum((yt - yp) ** 2))
+        agg["r2_pooled"] = float("nan") if ss_tot == 0 else 1.0 - ss_res / ss_tot
+
+    # Macro over per-fold values (ddof=1), skipping NaN (constant-y or tiny folds).
+    for metric in ("rmse", "mae", "r2"):
+        vals = np.array([r[metric] for r in per_fold
+                         if isinstance(r.get(metric), float) and np.isfinite(r[metric])])
+        if vals.size:
+            agg[f"{metric}_macro"] = {
+                "mean": float(vals.mean()),
+                # ddof=1 sample std; undefined (NaN) for a single valid fold — NOT 0.0,
+                # which would read as "zero variance".
+                "std": float(vals.std(ddof=1)) if vals.size > 1 else float("nan"),
+                "n_valid_folds": int(vals.size),
+            }
+
+    # Interval coverage from the predictive std (includes sigma^2). Two-sided
+    # Gaussian z for a central level lvl: z = Phi^-1((1 + lvl) / 2).
+    from statistics import NormalDist
+
+    _nd = NormalDist()
+    for lvl in coverage_levels:
+        z = _nd.inv_cdf((1.0 + lvl) / 2.0)
+        if yt.size:
+            covered = np.abs(yt - yp) <= z * ys
+            agg[f"coverage_{int(round(lvl * 100))}"] = float(np.mean(covered))
+
+    # Calibration. The OLS intercept/slope need >= min_calib points and varying
+    # predictions to be identifiable; the reliability TABLE is independent of that
+    # threshold and is built whenever predictions vary over >= 2 scored rows.
+    min_calib = 10
+    calibration_table = None
+    if yt.size >= 2 and np.var(yp) > 0:
+        calibration_table = _calibration_table(yp, yt)
+    if yt.size >= min_calib and np.var(yp) > 0:
+        b, a = np.polyfit(yp, yt, 1)
+        agg["calibration_intercept"] = float(a)
+        agg["calibration_slope"] = float(b)
+    else:
+        # Undefined: too few scored rows or a constant predictor (no identifiable slope).
+        agg["calibration_intercept"] = float("nan")
+        agg["calibration_slope"] = float("nan")
+    return agg, calibration_table
+
+
+def _calibration_table(yp, yt):
+    """Up-to-10 quantile bins of y_hat with deduplicated edges; columns bin, n,
+    mean_pred, mean_obs."""
+    try:
+        import pandas as pd
+    except Exception:
+        return None
+    edges = np.unique(np.quantile(yp, np.linspace(0, 1, 11)))
+    if edges.size < 2:
+        return None
+    bin_idx = np.clip(np.digitize(yp, edges[1:-1]), 0, edges.size - 2)
+    rows = []
+    for b in range(edges.size - 1):
+        m = bin_idx == b
+        if not m.any():
+            continue
+        rows.append({
+            "bin": b,
+            "n": int(m.sum()),
+            "mean_pred": float(yp[m].mean()),
+            "mean_obs": float(yt[m].mean()),
+        })
+    return pd.DataFrame(rows)
+
+
 @dataclass
 class CVManifest:
     """A reproducibility record for one :func:`cross_validate` run (Gate A-A13).
@@ -915,7 +1259,7 @@ class CVManifest:
 
 def _record_cv_manifest(
     fold_obj, doc_lists, cov, fit_kwargs, preprocessing, vocab, callback,
-    model_spec, coherence_type, topn,
+    model_spec, coherence_type, topn, supervised=None,
 ):
     """Record fold assignments + seeds + splitter params + fit/metric config so a
     rerun reproduces the folds and fits (Gate A-A13)."""
@@ -954,9 +1298,17 @@ def _record_cv_manifest(
         "model": model_spec,
         "metric_params": {"coherence_type": coherence_type, "topn": topn,
                           "completion_split": "even_odd_deterministic"},
-        # Bit-for-bit reproducibility is claimed only without opaque user callbacks
-        # AND only for a factory whose model determinism contract supports it.
-        "replayable": not callback,
+        # Replayable only when there is no opaque user callback AND the model's full
+        # constructor settings were captured (so the factory can be reconstructed).
+        # A factory whose settings we could not read is recorded not-replayable.
+        "replayable": (not callback) and bool(
+            model_spec and model_spec.get("settings") is not None
+        ),
         "callback": "fit_fn/score_fn" if callback else None,
     }
+    if supervised is not None:
+        cv_section["path"] = "supervised"
+        cv_section["supervised"] = supervised
+    else:
+        cv_section["path"] = "topic"
     return CVManifest(cv=cv_section)
