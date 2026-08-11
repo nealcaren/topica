@@ -102,6 +102,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   activations, not tokens); both properties are `None` for corpora built any other
   way.
 
+- **`TopicalNGrams` — joint topic and phrase discovery** (Wang, McCallum & Wei,
+  ICDM 2007). An LDA extension that learns topic-specific multiword phrases during
+  fitting: a per-token bigram-status indicator, sampled jointly with the topic in a
+  collapsed Gibbs sweep, decides whether each token continues a phrase from the
+  previous word given its topic. `fit(docs, iters=)` on ordered token lists; exposes
+  `top_phrases()` (globally and per topic) alongside the standard `top_words`,
+  `topic_word`, `doc_topic`, coherence, and save/load. Seed-reproducible. Unlike
+  `learn_phrases()`/`apply_phrases()` (a fixed phrase vocabulary built before
+  fitting), phrase structure is discovered during fitting. Defaults to a balanced
+  bigram-status prior (`delta1=delta2=1.0`) that recovers discrete collocations;
+  MALLET's `0.2/1000` (pass explicitly to reproduce) forces whole-document runs.
+  Validated against Java MALLET's `TopicalNGrams` (#696).
 - **`Wordshoal` — multi-domain political-text scaling** (Lauderdale & Herzog,
   Political Analysis 2016). The multi-domain extension of `Wordfish`: it scales each
   debate/domain separately with Wordfish (stage 1), then combines the within-domain

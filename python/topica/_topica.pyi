@@ -6259,6 +6259,84 @@ class IdealPointTM:
     def __repr__(self) -> str: ...
 
 
+class TopicalNGrams:
+    """Topical N-Grams (Wang, McCallum & Wei 2007): an LDA extension that jointly
+    discovers topics and topic-specific multiword phrases. A per-token bigram-status
+    indicator, sampled jointly with the topic in a collapsed Gibbs sweep, decides
+    whether each token continues a phrase from the previous word conditional on the
+    topic, so phrases are learned during fitting. Exposes top_phrases alongside the
+    standard topic surface. Faithful to MALLET's TopicalNGrams
+    (parity/tng_mallet_compare.py); the bigram-status prior defaults to a balanced
+    delta1=delta2=1.0 (MALLET's 0.2/1000 forces nearly every token into a phrase)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha_sum: float = 50.0,
+        beta: float = 0.01,
+        gamma: float = 0.01,
+        delta1: float = 1.0,
+        delta2: float = 1.0,
+        min_count: int = 1,
+        seed: int = 13,
+    ) -> None:
+        """alpha_sum is the total doc-topic Dirichlet mass (per-topic alpha =
+        alpha_sum/num_topics); beta the unigram topic-word prior; gamma the bigram
+        topic-word prior; delta1/delta2 the Beta pseudocounts for a token's
+        unigram/bigram status (balanced by default). min_count drops rare words; a
+        dropped word breaks a phrase across it."""
+        ...
+    def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int = 1000) -> "TopicalNGrams":
+        """Token ORDER matters. When data is a list of token lists, a word pruned by
+        min_count breaks the adjacency of its neighbours (so a phrase never spans a
+        dropped stopword/punctuation); a pre-built Corpus has already discarded such
+        gaps."""
+        ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def num_phrases(self) -> int: ...
+    def top_words(self, n: int = 10, *, topic: int | None = None) -> object: ...
+    def top_phrases(
+        self, n: int = 10, *, topic: int | None = None, max_len: int | None = None
+    ) -> list[tuple[str, float]]: ...
+    def coherence(
+        self,
+        n: int = 10,
+        *,
+        coherence_type: str = "u_mass",
+        texts: object | None = None,
+    ) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> TopicalNGrams: ...
+    def __repr__(self) -> str: ...
+
+
 class Wordfish:
     """Wordfish (Slapin & Proksch 2008): a word-frequency ideal-point scaler with
     no topics and no embeddings. Counts are modeled as

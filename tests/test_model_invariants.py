@@ -124,6 +124,12 @@ def _fit_lda(iters=200):
     return m.doc_topic, m.topic_word, K
 
 
+def _fit_topical_ngrams(iters=200):
+    docs, _ = _planted_blocks(seed=0)
+    m = topica.TopicalNGrams(num_topics=K, seed=1).fit(docs, iters=iters)
+    return m.doc_topic, m.topic_word, K
+
+
 def _fit_online_lda(iters=80):
     docs, _ = _planted_blocks(seed=0)
     m = topica.OnlineLDA(num_topics=K, batch_size=32, tau=1.0, kappa=0.7, seed=1)
@@ -715,6 +721,7 @@ def _fit_pltm(iters=400):
 
 FIT_ADAPTERS = {
     "LDA": _fit_lda,
+    "TopicalNGrams": _fit_topical_ngrams,
     "OnlineLDA": _fit_online_lda,
     "CTM": _fit_ctm,
     "ProdLDA": _fit_prodlda,

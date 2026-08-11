@@ -51,6 +51,7 @@ Column meanings:
 | `PolylingualLDA` | `src/pltm.rs` | `src/python/pltm.rs` | collapsed Gibbs (model.rs, sampler.rs) | default | `parity/pltm_compare.py` |
 | `CorEx` | `src/cor_ex.rs` | `src/python/cor_ex.rs` | total-correlation info-theoretic optimizer | default | `parity/corex_gold.py` |
 | `MGLDA` | `src/mg_lda.rs` | `src/python/mg_lda.rs` | two-grain collapsed Gibbs over sliding sentence windows | default | `parity/mglda_gold.py` |
+| `TopicalNGrams` | `src/topical_ngrams.rs` | `src/python/topical_ngrams.rs` | collapsed Gibbs over token sequences (joint topic + bigram-status) | default | `parity/tng_mallet_compare.py`, `tests/test_topical_ngrams.py` |
 
 ### Covariates & structure
 
