@@ -435,6 +435,20 @@ class CrossValResult:
 
         return pd.DataFrame(self.per_fold)
 
+    def covariate_stability_frame(self):
+        """Per-feature covariate-effect stability as a pandas DataFrame (one row per
+        covariate: feature, sign_agreement, magnitude_correlation, n). None when this
+        run has no covariate-effect stability (see :attr:`covariate_stability`)."""
+        if self.covariate_stability is None:
+            return None
+        import pandas as pd
+
+        rows = [
+            {"feature": name, **stat}
+            for name, stat in self.covariate_stability["per_feature"].items()
+        ]
+        return pd.DataFrame(rows)
+
     def summary(self) -> str:
         if self.kind == "supervised":
             return self._supervised_summary()
@@ -472,9 +486,20 @@ class CrossValResult:
             lines.append(
                 f"  covariate-effect stability: sign-agreement "
                 f"{cs['sign_agreement']:.3f}, magnitude corr "
-                f"{cs['magnitude_correlation']:.3f} (aligned lambda over "
-                f"{cs['n_pairs']} fold pairs; NOT predictive coverage)"
+                f"{cs['magnitude_correlation']:.3f} (feature-macro over "
+                f"{cs['n_features']} covariate(s), {cs['n_pairs']} fold pairs; "
+                f"NOT predictive coverage; effects are learned per fold — this is "
+                f"unaffected by any marginal held-out fallback)"
             )
+            if cs.get("partial_alignment"):
+                tc = cs["topics_compared"]
+                lines.append(
+                    f"    (partial alignment: some fold pairs compared as few as "
+                    f"{tc['min']}/{cs['n_topics']} topics — unaligned topics are "
+                    f"excluded, which can bias stability upward)"
+                )
+            if cs.get("caveat"):
+                lines.append(f"    (caveat: {cs['caveat']})")
         if self.vocab == "per_fold":
             lines.append(
                 "  (perplexity is per-fold; vocabularies differ so it is not pooled)"
@@ -936,7 +961,7 @@ def cross_validate(
             )
 
     stability = _cross_fold_stability(fold_models)
-    covariate_stability = _covariate_effect_stability(fold_models)
+    covariate_stability = _covariate_effect_stability(fold_models, cov)
 
     # Capture the fitted model's class + settings for the manifest (constant across
     # folds; the factory itself is an opaque callable).
@@ -998,7 +1023,19 @@ def _cross_fold_stability(models):
     return {"mean": float(sims.mean()), "std": float(sims.std()), "n_pairs": int(sims.size)}
 
 
-def _covariate_effect_stability(models):
+def _placeholder_names(cov_names):
+    """True when the model handed back positional placeholders (keyATM emits
+    ``feature_0``/``feature_1``/... for the covariate columns when the covariate
+    arrives as a bare matrix), so the caller should substitute a kwarg label instead.
+    ``cov_names`` is the covariate columns only (intercept already dropped)."""
+    import re
+
+    return bool(cov_names) and all(
+        re.fullmatch(r"feature_\d+", str(nm)) for nm in cov_names
+    )
+
+
+def _covariate_effect_stability(models, cov=None):
     """Covariate-effect fold-stability for models with a learned lambda (keyATM
     covariate, DMR, GDMR).
 
@@ -1010,12 +1047,25 @@ def _covariate_effect_stability(models):
       agree on the sign of the effect, and
     - **magnitude correlation**: the Pearson correlation of the matched effects.
 
+    Both headline numbers are **macro-averaged over features** (mean of the per-feature
+    statistics), not pooled over raw cells: pooling one Pearson correlation across
+    features of different scales lets the highest-variance covariate dominate and hide
+    instability in a smaller or null one (adversarial review, #705). Per-feature detail
+    is in ``per_feature``.
+
+    Partial topic alignment is disclosed, not hidden: ``align_topics`` may match fewer
+    than K topics (an unstable topic whose word distribution also drifts can fall below
+    the alignment threshold), and comparing only the topics that happened to align would
+    bias stability upward. ``topics_compared``/``n_topics`` report the coverage so a
+    reader can see when a fold pair dropped topics.
+
     The intercept column (0) is excluded — it is a per-topic baseline, not a covariate
     effect. This is NOT predictive coverage (lambda has no per-doc truth), and the
     caller must never fold it into a ``coverage_*`` field.
 
-    Returns a dict (pooled + per-feature) or None when fewer than two fold models expose
-    ``feature_effects`` or the folds disagree on the number of covariate columns.
+    Returns a dict (macro headline + per-feature) or None when fewer than two fold
+    models expose ``feature_effects`` or the folds disagree on the number of covariate
+    columns.
     """
     import warnings
 
@@ -1048,19 +1098,44 @@ def _covariate_effect_stability(models):
 
     from .validation import align_topics
 
-    # Covariate columns are 1..F (drop the intercept at 0). Feature names, when present,
-    # are aligned to the effect columns ('intercept' first), so name the covariate cols.
+    # Covariate columns are 1..F (drop the intercept at 0). Prefer the model's own
+    # feature names; when it hands back positional placeholders (keyATM with a bare
+    # covariate matrix), fall back to the covariate kwarg the user actually passed, so
+    # a two-covariate model is not reported as feature_0/feature_1 (usability, #705).
     n_feat = usable[0][1].shape[1] - 1
     ref_names = usable[0][2]
-    feat_names = (
-        ref_names[1:] if len(ref_names) == n_feat + 1
-        else [f"feature_{j}" for j in range(n_feat)]
-    )
+    cov_names = list(ref_names[1:]) if len(ref_names) == n_feat + 1 else []
+    if cov_names and not _placeholder_names(cov_names):
+        feat_names = cov_names
+    else:
+        # A single covariate kwarg maps to the whole F-column matrix; label columns
+        # kwarg[0..F-1]. With 0 or >1 kwargs, keep the neutral feature_j.
+        keys = list(cov.keys()) if cov else []
+        prefix = keys[0] if len(keys) == 1 else None
+        feat_names = (
+            [f"{prefix}[{j}]" for j in range(n_feat)] if prefix is not None
+            else [f"feature_{j}" for j in range(n_feat)]
+        )
 
-    # Accumulate matched (fold_a, fold_b) coefficient values per feature over all pairs.
+    # GDMR coefficients are Legendre-basis terms whose affine map depends on each fold's
+    # own covariate range (metadata_range=None infers it per fold), so column j means a
+    # different function in different folds. The diagnostic still runs, but say so.
+    caveat = None
+    if any(type(m).__name__ == "GDMR" for m, _, _ in usable):
+        caveat = (
+            "GDMR coefficients are basis-expansion terms on a per-fold covariate range; "
+            "aligning column j across folds compares different basis functions unless "
+            "metadata_range= is fixed. Interpret magnitude correlation cautiously."
+        )
+        warnings.warn("covariate-effect stability: " + caveat, stacklevel=3)
+
+    # Accumulate matched (fold_a, fold_b) coefficient values per feature over all pairs,
+    # and track how many of K topics each pair actually compared.
+    n_topics = int(usable[0][1].shape[0])
     per_feat_a = [[] for _ in range(n_feat)]
     per_feat_b = [[] for _ in range(n_feat)]
     n_pairs = 0
+    topics_compared = []
     for i in range(len(usable)):
         for j in range(i + 1, len(usable)):
             (mi, fei, _), (mj, fej, _) = usable[i], usable[j]
@@ -1075,6 +1150,7 @@ def _covariate_effect_stability(models):
             if not matches:
                 continue
             n_pairs += 1
+            topics_compared.append(len(matches))
             for ta, tb, _sim in matches:
                 for f in range(n_feat):
                     per_feat_a[f].append(fei[ta, f + 1])
@@ -1087,8 +1163,10 @@ def _covariate_effect_stability(models):
         a, b = np.asarray(a), np.asarray(b)
         if a.size == 0:
             return float("nan")
-        # A coefficient at exactly 0 has no sign to agree on; count agreement only where
-        # both are nonzero, and treat a lone zero as a disagreement (conservative).
+        # np.sign(0)==np.sign(0) is True, so two exactly-zero coefficients count as
+        # agreement (they agree there is no effect); a lone zero (0 vs nonzero) is a
+        # disagreement. For continuous lambda exact zeros are vanishingly rare, so this
+        # reduces to "do the two folds agree on the direction of the effect".
         return float(np.mean(np.sign(a) == np.sign(b)))
 
     def _corr(a, b):
@@ -1098,25 +1176,38 @@ def _covariate_effect_stability(models):
         return float(np.corrcoef(a, b)[0, 1])
 
     per_feature = {}
-    all_a, all_b = [], []
     for f in range(n_feat):
         a, b = per_feat_a[f], per_feat_b[f]
-        all_a.extend(a)
-        all_b.extend(b)
         per_feature[feat_names[f]] = {
             "sign_agreement": _sign_agree(a, b),
             "magnitude_correlation": _corr(a, b),
             "n": int(len(a)),
         }
 
+    # Macro headline: mean of the per-feature statistics (equal weight per covariate),
+    # NOT a single correlation over pooled raw cells. Skip NaN per-feature values
+    # (constant columns) so one degenerate covariate does not blank the headline.
+    sa = np.array([v["sign_agreement"] for v in per_feature.values()], dtype=np.float64)
+    mc = np.array([v["magnitude_correlation"] for v in per_feature.values()],
+                  dtype=np.float64)
+    sa = sa[np.isfinite(sa)]
+    mc = mc[np.isfinite(mc)]
+    tc = np.array(topics_compared, dtype=np.float64)
+
     return {
-        "sign_agreement": _sign_agree(all_a, all_b),
-        "magnitude_correlation": _corr(all_a, all_b),
+        "sign_agreement": float(sa.mean()) if sa.size else float("nan"),
+        "magnitude_correlation": float(mc.mean()) if mc.size else float("nan"),
         "n_pairs": int(n_pairs),
         "n_features": int(n_feat),
+        "n_topics": n_topics,
+        "topics_compared": {
+            "mean": float(tc.mean()), "min": int(tc.min()), "max": int(tc.max()),
+        },
+        "partial_alignment": bool(tc.min() < n_topics),
         "per_feature": per_feature,
-        "note": "covariate-effect fold-stability (sign-agreement + magnitude "
-                "correlation of aligned lambda); NOT predictive coverage",
+        "caveat": caveat,
+        "note": "covariate-effect fold-stability (feature-macro sign-agreement + "
+                "magnitude correlation of aligned lambda); NOT predictive coverage",
     }
 
 

@@ -69,15 +69,38 @@ class CrossValidationPlot(Panel):
         return out
 
     # --- layout -------------------------------------------------------------
+    def _has_covariate(self):
+        return getattr(self._result, "covariate_stability", None) is not None
+
     def _figsize(self):
         if self._kind == "supervised":
             return (9.0, 4.0)
         n = max(1, len(self._topic_metric_values()))
-        return (3.6 * n, 4.0)
+        h = 4.0 + (3.0 if self._has_covariate() else 0.0)
+        return (3.6 * n, h)
+
+    def _figure(self, *, figsize=None, **kwargs):
+        # The covariate band uses subfigures with differing column counts, where
+        # figure.tight_layout() cannot solve and warns. Use the constrained-layout
+        # engine for that case (subfigure-aware); the plain paths keep tight_layout.
+        if self._kind != "supervised" and self._has_covariate():
+            from .base import _require
+
+            plt = _require("matplotlib.pyplot", "viz")
+            fig = plt.figure(figsize=figsize or self._figsize(), layout="constrained")
+            self._draw(fig, **kwargs)
+            return fig
+        return super()._figure(figsize=figsize, **kwargs)
 
     def _draw(self, fig, **kwargs):
         if self._kind == "supervised":
             self._draw_supervised(fig)
+        elif self._has_covariate():
+            # Two stacked bands: the held-out metric distributions on top, the
+            # covariate-effect stability below (the reason a covariate model was run).
+            top, bottom = fig.subfigures(2, 1, height_ratios=[4.0, 3.0])
+            self._draw_topic(top)
+            self._draw_covariate(bottom)
         else:
             self._draw_topic(fig)
         fig.suptitle(
@@ -116,6 +139,60 @@ class CrossValidationPlot(Panel):
             ax.set_ylabel(label, fontsize=8)
             ax.tick_params(labelsize=7)
             ax.legend(fontsize=7, loc="best")
+
+    # --- covariate-effect stability (keyATM / DMR / GDMR) -------------------
+    def _draw_covariate(self, fig):
+        import numpy as np
+
+        cs = self._result.covariate_stability
+        per = cs["per_feature"]
+        names = list(per.keys())
+        sign = [per[n]["sign_agreement"] for n in names]
+        corr = [per[n]["magnitude_correlation"] for n in names]
+
+        axes = fig.subplots(1, 2, squeeze=False)[0]
+        y = np.arange(len(names))
+
+        # (1) sign-agreement — a probability in [0, 1]; 0.5 is chance (dashed line).
+        ax = axes[0]
+        ax.barh(y, np.nan_to_num(sign, nan=0.0), color=_C_POINT, alpha=0.85,
+                edgecolor="white")
+        ax.axvline(0.5, color=_C_REF, ls="--", lw=1.0, label="chance (0.5)")
+        ax.set_xlim(0, 1)
+        ax.set_yticks(y)
+        ax.set_yticklabels(names, fontsize=7)
+        ax.invert_yaxis()
+        ax.set_xlabel("sign-agreement", fontsize=8)
+        ax.set_title("Covariate-effect sign-agreement", fontsize=8)
+        ax.tick_params(labelsize=7)
+        ax.legend(fontsize=6, loc="lower right")
+
+        # (2) magnitude correlation — Pearson r in [-1, 1]; 0 (no relation) at center.
+        ax = axes[1]
+        vals = np.nan_to_num(corr, nan=0.0)
+        colors = [_C_MEAN if v < 0 else "#55A868" for v in vals]
+        ax.barh(y, vals, color=colors, alpha=0.85, edgecolor="white")
+        ax.axvline(0.0, color=_C_REF, lw=1.0)
+        # A NaN correlation (a covariate whose lambda has no variance) has no bar; say so.
+        for yi, c in zip(y, corr):
+            if not np.isfinite(c):
+                ax.text(0.02, yi, "n/a (no variance)", fontsize=6, va="center",
+                        color=_C_REF)
+        ax.set_xlim(-1, 1)
+        ax.set_yticks(y)
+        ax.set_yticklabels(names, fontsize=7)
+        ax.invert_yaxis()
+        ax.set_xlabel("magnitude correlation (Pearson r)", fontsize=8)
+        ax.set_title("Covariate-effect magnitude correlation", fontsize=8)
+        ax.tick_params(labelsize=7)
+
+        sub = (f"covariate-effect stability (NOT predictive coverage) - "
+               f"{cs['n_pairs']} fold pairs, feature-macro headline "
+               f"{cs['sign_agreement']:.2f} / {cs['magnitude_correlation']:.2f}")
+        if cs.get("partial_alignment"):
+            sub += f"  (partial: min {cs['topics_compared']['min']}/{cs['n_topics']} topics)"
+        # Caption below the band (a suptitle here would collide with the metric row).
+        fig.supxlabel(sub, fontsize=7.5)
 
     # --- supervised path ----------------------------------------------------
     def _draw_supervised(self, fig):

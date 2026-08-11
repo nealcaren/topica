@@ -67,14 +67,30 @@ coefficients (λ) two ways:
   agree on the sign of the effect, and
 - **magnitude correlation** — the Pearson correlation of the aligned coefficients.
 
-Both are reported pooled and per covariate (`result.covariate_stability["per_feature"]`).
+Both headline numbers are **macro-averaged over covariates** (the mean of the
+per-covariate statistics in `result.covariate_stability["per_feature"]`), not pooled
+over raw coefficient cells: one Pearson correlation over pooled cells is dominated by
+the highest-variance covariate and would hide instability in a smaller or null one. Get
+the per-covariate table with `result.covariate_stability_frame()`.
+
+**Reading the numbers.** Sign-agreement near **0.5 is chance** (the folds disagree on
+direction as often as not); values toward **1.0** mean the folds consistently recover the
+same sign. Magnitude correlation near **0 (or negative)** means the folds do *not* recover
+consistent effect *sizes*; toward **1.0** means they do. A genuinely null covariate will
+often show ~0.5 sign-agreement and ~0 magnitude correlation — that is the diagnostic
+correctly reporting "no stable effect," not a bug. The statistics are computed over few
+cells (topics × fold pairs), so at small `K` or few folds treat them as directional, not
+precise; `result.covariate_stability["topics_compared"]` reports how many topics each
+pair actually compared, and `partial_alignment` flags when unaligned topics were dropped
+(which can bias stability upward).
 
 This is deliberately **not** a predictive-coverage statistic, and it is never stored in
 a `coverage_*` field. λ has no per-document ground truth, and the conditional
 `feature_effect_se` is under-dispersed, so a ±2·SE-overlap "stability" would read as
-spuriously stable. Sign-agreement and magnitude correlation ask the honest question
-instead: do the folds recover effects of the same direction and relative size? Do not
-report this number as if it were held-out predictive accuracy for the covariate.
+spuriously stable. The effects are learned per fold at *fit* time, so this diagnostic is
+unaffected by the marginal held-out fallback that keyATM's perplexity is subject to (a
+separate concern — see the conditioning flag above). Do not report this number as if it
+were held-out predictive accuracy for the covariate.
 
 ## Supervised models (out-of-fold prediction)
 
@@ -226,6 +242,11 @@ viz.plot_cv(result).to_png("cv.pdf")   # or .to_frame() for the numbers
 - **Supervised path** — the out-of-fold reliability plot (binned observed vs predicted
   with the 45° line, from `result.calibration_table`) beside the per-fold RMSE / R²
   spread.
+
+When the run carries covariate-effect stability (keyATM / DMR / GDMR), the topic-path
+figure adds a second band: per-covariate sign-agreement bars (with the 0.5 chance line)
+and magnitude-correlation bars (centered at 0). `import topica.viz` is required before
+`topica.viz.plot_cv` (a bare `import topica` does not pull in the submodule).
 
 Like every `topica.viz` panel it also exposes `.to_frame()` (the per-fold table) and
 `.to_png(path)` / `.to_pdf(path)`.
