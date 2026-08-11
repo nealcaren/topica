@@ -86,6 +86,7 @@ _FACTORIES: dict[str, object] = {
     "TBIP": lambda: topica.TBIP(2),
     "IdealPointTM": lambda: topica.IdealPointTM(2),
     "IdealPointSentenceTM": lambda: topica.IdealPointSentenceTM(2),
+    "KeyNMF": lambda: topica.KeyNMF(2),
     "Wordfish": lambda: topica.Wordfish(),
     "Wordshoal": lambda: topica.Wordshoal(),
     "PartyEmbeddings": lambda: topica.PartyEmbeddings(),

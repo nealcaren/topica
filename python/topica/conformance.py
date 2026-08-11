@@ -82,6 +82,7 @@ REGISTRY: list[tuple[str, object, str]] = [
     # matrix-factorization — no theta posterior
     ("NMF",          lambda: _topica.NMF(2),                                     "none"),
     ("GuidedNMF",    lambda: _topica.GuidedNMF(2, {"a": ["x"], "b": ["y"]}),     "none"),
+    ("KeyNMF",       lambda: _topica.KeyNMF(2),                                  "none"),
     ("CorEx",        lambda: _topica.CorEx(2),                                   "none"),
     ("AuthorTopic",  lambda: _topica.AuthorTopic(2),                             "none"),
     ("MGLDA",        lambda: _topica.MGLDA(2, 3),                                "none"),

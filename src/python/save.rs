@@ -69,6 +69,7 @@ pub(crate) const MODEL_TAG_TOPICS_OVER_TIME: u8 = 51;
 pub(crate) const MODEL_TAG_GAUSSIAN_LDA: u8 = 52;
 pub(crate) const MODEL_TAG_WORDSHOAL: u8 = 53;
 pub(crate) const MODEL_TAG_TOPICAL_NGRAMS: u8 = 54;
+pub(crate) const MODEL_TAG_KEYNMF: u8 = 55;
 
 pub(crate) fn model_tag_name(tag: u8) -> &'static str {
     match tag {
@@ -102,6 +103,7 @@ pub(crate) fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_GAUSSIAN_LDA => "GaussianLDA",
         MODEL_TAG_WORDSHOAL => "Wordshoal",
         MODEL_TAG_TOPICAL_NGRAMS => "TopicalNGrams",
+        MODEL_TAG_KEYNMF => "KeyNMF",
         MODEL_TAG_LSA => "LSA",
         MODEL_TAG_COMBINEDTM => "CombinedTM",
         MODEL_TAG_ZEROSHOTTM => "ZeroShotTM",
