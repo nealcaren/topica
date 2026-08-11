@@ -9,6 +9,24 @@ use pyo3::types::PyDict;
 use crate::wordshoal::{self, WordshoalModel};
 use std::collections::HashMap;
 
+/// Coerce a per-document label column to `Vec<String>`, accepting a list of strings
+/// or of any Python objects (ints, floats, ...) by `str()`-ing each — a researcher
+/// naturally passes an integer id / day column, and an opaque `TypeError` there is a
+/// bad first-run experience (Gate-B sample-user T4-a).
+fn coerce_labels(obj: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<String>> {
+    if let Ok(v) = obj.extract::<Vec<String>>() {
+        return Ok(v);
+    }
+    let seq = obj
+        .iter()
+        .map_err(|_| PyValueError::new_err(format!("{name} must be a sequence of labels")))?;
+    let mut out = Vec::new();
+    for item in seq {
+        out.push(item?.str()?.extract::<String>()?);
+    }
+    Ok(out)
+}
+
 #[pyclass(module = "topica")]
 pub struct Wordshoal {
     theta_prior_sd: f64,
@@ -53,6 +71,8 @@ struct WordshoalState {
     domain_word_beta: Option<Vec<Vec<f64>>>,
     psi: Option<Vec<f64>>,
     num_components: Option<usize>,
+    #[serde(default)]
+    author_components: Option<Vec<usize>>,
 }
 
 impl Wordshoal {
@@ -153,12 +173,14 @@ impl Wordshoal {
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
-        speakers: Vec<String>,
-        domains: Vec<String>,
+        speakers: &Bound<'_, PyAny>,
+        domains: &Bound<'_, PyAny>,
         anchors: Option<HashMap<String, f64>>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
     ) -> PyResult<Py<Self>> {
+        let speakers = coerce_labels(speakers, "speakers")?;
+        let domains = coerce_labels(domains, "domains")?;
         let docs_str: Vec<Vec<String>> = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
                 .docs
@@ -378,7 +400,9 @@ impl Wordshoal {
         self.fitted_model()?;
         Ok(self.author_names.clone())
     }
-    /// The domain labels, in the row order of `domain_scales` (sorted).
+    /// The domain labels, in the row order of `domain_scales`. Sorted
+    /// **lexicographically as strings** (e.g. `"10"` before `"9"`), not numerically —
+    /// cast a numeric key to a zero-padded string first if you need numeric/time order.
     #[getter]
     fn domain_names(&self) -> PyResult<Vec<String>> {
         self.fitted_model()?;
@@ -461,12 +485,26 @@ impl Wordshoal {
     fn iters_run(&self) -> PyResult<usize> {
         Ok(self.fitted_model()?.iters_run)
     }
-    /// The number of connected components of the speaker-domain bipartite graph.
-    /// `1` means every actor's position is comparable; `> 1` means the scale is not
-    /// identified across components (a warning is emitted at fit time).
+    /// The number of connected components of the speaker-domain bipartite graph
+    /// (edges only through domains that scaled). `1` means every actor's position is
+    /// comparable; `> 1` means the scale is not identified across components (a
+    /// warning is emitted at fit time).
     #[getter]
     fn num_components(&self) -> PyResult<usize> {
         Ok(self.fitted_model()?.num_components)
+    }
+    /// Component label of each actor (num_authors,), aligned to `author_names` /
+    /// `author_positions`. Actors with different labels are on **non-comparable**
+    /// scales — group by this before comparing positions when `num_components > 1`.
+    #[getter]
+    fn author_components<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<i64>>> {
+        let c: Vec<i64> = self
+            .fitted_model()?
+            .author_components
+            .iter()
+            .map(|&x| x as i64)
+            .collect();
+        Ok(Array1::from(c).to_pyarray_bound(py))
     }
 
     fn save(&self, path: &str) -> PyResult<()> {
@@ -501,6 +539,7 @@ impl Wordshoal {
                 domain_word_beta: m.map(|m| m.domain_word_beta.clone()),
                 psi: m.map(|m| m.psi.clone()),
                 num_components: m.map(|m| m.num_components),
+                author_components: m.map(|m| m.author_components.clone()),
             },
         )
     }
@@ -525,6 +564,9 @@ impl Wordshoal {
                 domain_word_beta: s.domain_word_beta.unwrap_or_default(),
                 psi: s.psi.unwrap_or_default(),
                 num_components: s.num_components.unwrap_or(1),
+                author_components: s
+                    .author_components
+                    .unwrap_or_else(|| vec![0usize; s.num_authors.unwrap_or(0)]),
             })
         } else {
             None

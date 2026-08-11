@@ -65,7 +65,11 @@ while((lp-lastlp)>abs(tol)){
     mu<-A%*%t(X)%*%X%*%co; tau[i]<-(priortau+0.5*length(Y))/(priortau+0.5*(sum(Y^2)-mu*(priortheta^(-2))*mu))}
   lastlp<-lp; lp<-lp_of()
 }
-write_json(list(theta=theta, speakers=levels(authors)), args[2], auto_unbox=TRUE, digits=10)
+thetaSE<-rep(NA_real_,N)
+for(i in 1:N){locs<-which(iVec==i); X<-matrix(beta[jVec[locs]],ncol=1)
+  thetaSE[i]<-sqrt(solve(t(X)%*%X+priortheta^(-2))/tau[i])}
+write_json(list(theta=theta, se=thetaSE, tau=tau, speakers=levels(authors)),
+           args[2], auto_unbox=TRUE, digits=10)
 """
 
 
@@ -117,6 +121,7 @@ def main() -> int:
     docs, speakers, domains, theta_true = _planted()
     m = topica.Wordshoal(seed=13).fit(docs, speakers=speakers, domains=domains)
     pos = dict(zip(m.author_names, m.author_positions[:, 0]))
+    se = dict(zip(m.author_names, m.position_se))
 
     with tempfile.TemporaryDirectory() as td:
         infile = Path(td) / "corpus.json"
@@ -133,22 +138,43 @@ def main() -> int:
         orc = json.load(open(outfile))
 
     r_theta = dict(zip(orc["speakers"], orc["theta"]))
+    r_se = dict(zip(orc["speakers"], orc["se"]))
     who = sorted(set(pos) & set(r_theta))
-    t_topica = [pos[s] for s in who]
-    t_oracle = [r_theta[s] for s in who]
-    planted = [theta_true[int(s[1:])] for s in who]
+    t_topica = np.array([pos[s] for s in who])
+    t_oracle = np.array([r_theta[s] for s in who])
+    planted = np.array([theta_true[int(s[1:])] for s in who])
 
     r_vs_oracle = _pearson(t_topica, t_oracle)
     r_topica_truth = _pearson(t_topica, planted)
     r_oracle_truth = _pearson(t_oracle, planted)
 
+    # Full-vector agreement, not just correlation: sign-align topica to the oracle
+    # (both are identified only up to sign), then compare the actual position VALUES
+    # and the standard errors. A faithful two-stage fit reproduces the oracle's whole
+    # theta / se vector, not merely its rank order.
+    sign = 1.0 if np.corrcoef(t_topica, t_oracle)[0, 1] >= 0 else -1.0
+    dtheta = np.abs(sign * t_topica - t_oracle)
+    se_topica = np.array([se[s] for s in who])
+    se_oracle = np.array([r_se[s] for s in who])
+    se_reldiff = np.abs(se_topica - se_oracle) / np.maximum(np.abs(se_oracle), 1e-9)
+
     print(f"topica Wordshoal vs R oracle       : |r| = {r_vs_oracle:.4f}")
     print(f"topica   vs planted truth          : |r| = {r_topica_truth:.4f}")
     print(f"R oracle vs planted truth          : |r| = {r_oracle_truth:.4f}")
+    print(f"theta value agreement (sign-aligned): max|d|={dtheta.max():.2e} "
+          f"mean|d|={dtheta.mean():.2e}")
+    print(f"position_se agreement              : max rel diff={se_reldiff.max():.2e}")
 
     failures = []
     if r_vs_oracle < 0.95:
         failures.append(f"topica-vs-oracle |r|={r_vs_oracle:.4f} < 0.95")
+    # Full-vector parity: the sign-aligned positions and the SEs should match the
+    # oracle's, not merely correlate. Loose absolute bars accommodate residual
+    # stage-1 Wordfish tolerance differences between Rust and quanteda.
+    if dtheta.max() > 0.05:
+        failures.append(f"theta value max|d|={dtheta.max():.3f} > 0.05 (not full parity)")
+    if se_reldiff.max() > 0.10:
+        failures.append(f"position_se max rel diff={se_reldiff.max():.3f} > 0.10")
     # topica should recover the planted scale about as well as the oracle does.
     if r_topica_truth < r_oracle_truth - 0.05:
         failures.append(

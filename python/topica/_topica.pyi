@@ -6350,8 +6350,8 @@ class Wordshoal:
         self,
         data: Corpus | Sequence[Sequence[str]],
         *,
-        speakers: Sequence[str],
-        domains: Sequence[str],
+        speakers: Sequence,
+        domains: Sequence,
         anchors: dict[str, float] | None = None,
         iters: int | None = None,
         convergence_tol: float | None = None,
@@ -6392,6 +6392,8 @@ class Wordshoal:
     def iters_run(self) -> int: ...
     @property
     def num_components(self) -> int: ...
+    @property
+    def author_components(self) -> numpy.typing.NDArray[numpy.int64]: ...
     def save(self, path: str) -> None: ...
     @staticmethod
     def load(path: str) -> Wordshoal: ...

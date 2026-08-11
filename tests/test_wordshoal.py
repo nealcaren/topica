@@ -144,6 +144,31 @@ def test_disconnected_graph_warns():
         m = topica.Wordshoal(seed=13).fit(docs, speakers=speakers, domains=domains)
     assert m.num_components == 2
     assert any("disconnected" in str(w.message) for w in caught)
+    # author_components segregates the two blocs (aligned to author_names/positions)
+    comp = dict(zip(m.author_names, m.author_components))
+    assert comp["s00"] != comp["s10"], "different blocs share a component label"
+    assert comp["s00"] == comp["s09"], "same bloc split across components"
+    assert len(set(m.author_components)) == 2
+
+
+def test_connected_design_single_component():
+    docs, speakers, domains, _ = _planted(seed=8)
+    m = topica.Wordshoal(seed=13).fit(docs, speakers=speakers, domains=domains)
+    assert m.num_components == 1
+    assert set(m.author_components) == {0}
+    assert m.author_components.shape == (m.num_authors,)
+
+
+def test_non_string_labels_are_coerced():
+    # A researcher naturally passes integer id/day columns; they must be accepted,
+    # not rejected with an opaque TypeError (Gate-B sample-user T4-a).
+    docs, speakers, domains, _ = _planted(seed=9)
+    int_speakers = [int(s[1:]) for s in speakers]  # ints
+    int_domains = [int(d[1:]) for d in domains]
+    m = topica.Wordshoal(seed=13).fit(docs, speakers=int_speakers, domains=int_domains)
+    assert m.num_authors == 36
+    # labels are the str() of the ints, sorted lexicographically
+    assert all(isinstance(a, str) for a in m.author_names)
 
 
 def test_settings_keys():

@@ -54,9 +54,14 @@ pub struct WordshoalModel {
     pub domain_word_beta: Vec<Vec<f64>>,
     /// Stage-1 within-domain position of each document (length S), in input order.
     pub psi: Vec<f64>,
-    /// Number of connected components of the speaker-domain bipartite graph. > 1
-    /// means the scale is not identified across components (the binding warns).
+    /// Number of connected components of the speaker-domain bipartite graph
+    /// (edges only through domains that successfully scaled). > 1 means the scale is
+    /// not identified across components (the binding warns).
     pub num_components: usize,
+    /// Component label (0-based, in ascending first-appearance order) of each actor,
+    /// aligned to `theta`. Actors in different components are on non-comparable
+    /// scales; this lets a caller segregate them instead of comparing across.
+    pub author_components: Vec<usize>,
 }
 
 /// Fit Wordshoal. `docs` are `S` documents as sparse global-word-id counts;
@@ -140,12 +145,15 @@ pub fn fit_wordshoal(
             })
             .collect();
         // Wordfish with hardwired quanteda-default priors; no anchors (arbitrary
-        // within-domain orientation, absorbed by the stage-2 loading).
+        // within-domain orientation, absorbed by the stage-2 loading). The reference
+        // leaves stage-1 Wordfish tolerance-bound (`textmodel_wordfish(tol=c(tol,
+        // 1e-8))`), so we pass a high iteration cap and let `convergence_tol` stop
+        // it, rather than a fixed count that could truncate a slow domain.
         let wf = fit_wordfish(
             &local_counts,
             present.len(),
             &[],
-            100,
+            1000,
             convergence_tol,
             3.0,
             1.0,
@@ -291,7 +299,17 @@ pub fn fit_wordshoal(
     // psi = alpha + beta*theta and the SE are invariant.
     orient(&mut theta, &mut beta, anchors);
 
-    let num_components = connected_components(speaker, domain, n, m);
+    // Bridge speakers only through domains that actually scaled: a failed/degenerate
+    // domain (empty word set, zero-filled psi, beta_j pinned near 0) gives no
+    // cross-domain constraint, so it must not join two speaker groups.
+    let scaled: Vec<bool> = domain_word_ids.iter().map(|ids| !ids.is_empty()).collect();
+    let author_components = connected_components(speaker, domain, &scaled, n, m);
+    let num_components = {
+        let mut distinct = author_components.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        distinct.len()
+    };
 
     WordshoalModel {
         num_authors: n,
@@ -309,6 +327,7 @@ pub fn fit_wordshoal(
         domain_word_beta,
         psi,
         num_components,
+        author_components,
     }
 }
 
@@ -352,10 +371,18 @@ fn orient(theta: &mut [f64], beta: &mut [f64], anchors: &[(usize, f64)]) {
 }
 
 /// Connected components of the bipartite speaker-domain graph (union-find over
-/// `N + M` nodes: speakers `0..N`, domains `N..N+M`). One component means every
-/// actor's scale is comparable; more than one means the axis is not identified
-/// across components.
-fn connected_components(speaker: &[usize], domain: &[usize], n: usize, m: usize) -> usize {
+/// `N + M` nodes: speakers `0..N`, domains `N..N+M`), bridging speakers **only
+/// through domains that successfully scaled** (`scaled[j]`) — a failed domain
+/// carries no cross-domain constraint, so it must not join two speaker groups.
+/// Returns a component label per actor (0-based, in ascending first-appearance
+/// order over actor index); actors sharing a label are on one comparable scale.
+fn connected_components(
+    speaker: &[usize],
+    domain: &[usize],
+    scaled: &[bool],
+    n: usize,
+    m: usize,
+) -> Vec<usize> {
     let mut parent: Vec<usize> = (0..n + m).collect();
     fn find(parent: &mut [usize], x: usize) -> usize {
         let mut r = x;
@@ -371,20 +398,26 @@ fn connected_components(speaker: &[usize], domain: &[usize], n: usize, m: usize)
         r
     }
     for (&i, &j) in speaker.iter().zip(domain.iter()) {
+        if !scaled[j] {
+            continue; // a failed domain is not an edge
+        }
         let a = find(&mut parent, i);
         let b = find(&mut parent, n + j);
         if a != b {
             parent[a] = b;
         }
     }
-    // Count roots among nodes that actually appear (all speakers and domains do,
-    // since every index derives from a document).
-    let mut roots = std::collections::HashSet::new();
-    for x in 0..n + m {
-        let r = find(&mut parent, x);
-        roots.insert(r);
+    // Label each actor by its root, over actor nodes only (domain nodes must not
+    // count as components — an isolated failed domain is not a scale). Relabel to
+    // dense 0-based ids in ascending actor-index order for a stable, comparable id.
+    let mut label_of: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut out = vec![0usize; n];
+    for (i, o) in out.iter_mut().enumerate() {
+        let r = find(&mut parent, i);
+        let next = label_of.len();
+        *o = *label_of.entry(r).or_insert(next);
     }
-    roots.len()
+    out
 }
 
 /// log N(x | mean, sd).
@@ -612,5 +645,63 @@ mod tests {
             1.0,
         );
         assert_eq!(model.num_components, 2, "should detect 2 components");
+        // author_components: the two blocks carry distinct labels.
+        assert_eq!(model.author_components.len(), n);
+        assert_ne!(
+            model.author_components[0],
+            model.author_components[n - 1],
+            "actors in different blocks share a component label"
+        );
+    }
+
+    #[test]
+    fn failed_bridge_domain_does_not_connect() {
+        // Two speaker blocks bridged ONLY by a domain that fails to scale (a single
+        // repeated word -> <2 local words). That domain carries no cross-domain
+        // constraint, so the two blocks must remain separate components.
+        let n = 8usize;
+        let m = 3usize; // domain 0: block A; domain 1: block B; domain 2: the bad bridge
+        let v = 5usize;
+        let mut docs: Vec<Vec<(u32, f64)>> = Vec::new();
+        let mut speaker: Vec<usize> = Vec::new();
+        let mut domain: Vec<usize> = Vec::new();
+        // Block A (speakers 0..4) in domain 0, block B (4..8) in domain 1.
+        for i in 0..4 {
+            docs.push(vec![(0, 3.0), (1, 2.0), (2, 1.0)]);
+            speaker.push(i);
+            domain.push(0);
+        }
+        for i in 4..8 {
+            docs.push(vec![(0, 1.0), (1, 3.0), (2, 2.0)]);
+            speaker.push(i);
+            domain.push(1);
+        }
+        // Bridge domain 2: two speakers, one from each block, but only a single
+        // repeated word -> fails the <2-local-word guard, so psi is zero-filled.
+        for &i in &[0usize, 7usize] {
+            docs.push(vec![(0, 4.0)]);
+            speaker.push(i);
+            domain.push(2);
+        }
+        let model = fit_wordshoal(
+            &docs,
+            v,
+            &speaker,
+            n,
+            &domain,
+            m,
+            &[],
+            50,
+            1e-3,
+            1.0,
+            0.5,
+            0.5,
+            1.0,
+        );
+        // The bad bridge must not merge the blocks.
+        assert_eq!(
+            model.num_components, 2,
+            "a failed bridge domain must not connect the two blocks"
+        );
     }
 }
