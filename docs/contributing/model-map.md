@@ -101,6 +101,7 @@ Column meanings:
 
 | Model | Source | Binding | Core / family | Feature | Validation |
 |---|---|---|---|---|---|
+| `KeyNMF` | `src/keynmf.rs` | `src/python/keynmf.rs` | embedding-keyword extraction + multiplicative-update NMF (nmf.rs) | default | `parity/keynmf_compare.py`, `tests/test_keynmf.py` |
 | `BERTopic` | `src/bertopic.rs` | `src/python/embedding_cluster.rs` | embedding clustering (cluster.rs, reduce.rs, represent.rs) | `embeddings` | `parity/bertopic_gold.py` |
 | `Top2Vec` | `src/top2vec.rs` | `src/python/embedding_cluster.rs` | embedding clustering (cluster.rs, reduce.rs) | `embeddings` | `parity/top2vec_gold.py`, `parity/top2vec_compare.py` |
 | `SemanticSignalSeparation` | `src/semantic_signal_separation.rs` | `src/python/semantic_signal_separation.rs` | FastICA over document embeddings + vocabulary projection (reduce.rs) | `embeddings` | `parity/s3_compare.py`, `tests/test_semantic_signal_separation.py` |

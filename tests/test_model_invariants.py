@@ -520,6 +520,15 @@ def _fit_bertopic(iters=None):
     return m.doc_topic, m.topic_word, m.num_topics
 
 
+def _fit_keynmf(iters=None):
+    docs, vocab = _planted_blocks(k=K, block=8, n=300, seed=0)
+    doc_emb = _doc_embeddings(docs, k=K, block=8, seed=0)
+    _, word_emb = _planted_embeddings(k=K, block=8, seed=0)
+    m = topica.KeyNMF(num_topics=K, top_n=8, seed=1)
+    m.fit(docs, doc_emb, word_embeddings=word_emb, vocabulary=vocab)
+    return m.doc_topic, m.topic_word, K
+
+
 def _fit_top2vec(iters=None):
     docs, vocab = _planted_blocks(k=K, block=8, n=300, seed=0)
     doc_emb = _doc_embeddings(docs, k=K, block=8, seed=0)
@@ -686,6 +695,7 @@ def _fit_pltm(iters=400):
 FIT_ADAPTERS = {
     "LDA": _fit_lda,
     "TopicalNGrams": _fit_topical_ngrams,
+    "KeyNMF": _fit_keynmf,
     "OnlineLDA": _fit_online_lda,
     "CTM": _fit_ctm,
     "ProdLDA": _fit_prodlda,

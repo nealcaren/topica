@@ -49,6 +49,7 @@ pub mod idealpoint;
 pub mod idealpoint_lda;
 pub mod infoctm;
 pub mod keyatm;
+pub mod keynmf;
 pub mod labeled;
 pub mod lightlda;
 pub mod lsa;

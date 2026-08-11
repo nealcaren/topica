@@ -981,13 +981,39 @@ pub fn fit_nmf(
     convergence_tol: f64,
     seed: u64,
 ) -> NmfModel {
-    let k = num_topics;
     let x = if weighting_tfidf {
         tfidf_matrix(docs, num_types)
     } else {
         count_matrix(docs, num_types)
     };
+    fit_nmf_on_matrix(
+        x,
+        num_topics,
+        num_types,
+        beta_loss,
+        init,
+        iters,
+        convergence_tol,
+        seed,
+    )
+}
 
+/// The NMF solver on a pre-built nonnegative sparse matrix `x` (D x V). Shared by
+/// [`fit_nmf`] (which builds `x` from document counts/tf-idf) and by KeyNMF (which
+/// builds `x` from embedding-derived keyword importances). NNDSVD or random init,
+/// multiplicative updates in the requested beta-loss, deterministic.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fit_nmf_on_matrix(
+    x: SpMat,
+    num_topics: usize,
+    num_types: usize,
+    beta_loss: BetaLoss,
+    init: Init,
+    iters: usize,
+    convergence_tol: f64,
+    seed: u64,
+) -> NmfModel {
+    let k = num_topics;
     let (mut w, mut h) = match init {
         Init::Nndsvd => nndsvd_init(&x, k),
         Init::Random => {

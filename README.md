@@ -169,6 +169,7 @@ The right first choice when your design calls for one: short text, change over t
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
+| `KeyNMF` | text, embeddings | matrix-factorization | bit-exact | KeyNMF (Kristensen-McLachlan et al. 2024): NMF over an embedding-derived keyword-importance matrix. For each document it scores its words by the similarity between the document embedding and the word embedding, keeps the top-N positive, and factors that sparse doc-word matrix. The bridge between the count-based NMF family and the embedding backend; sparse, readable topics robust to short/noisy text. |
 | `Top2Vec` | text, embeddings | clustering | seed-reproducible | Topics as dense regions in a joint document-word embedding space. |
 | `SemanticSignalSeparation` | text, embeddings | ica | seed-reproducible | Topics as independent axes of semantic space (S3, Kardos et al. 2025): FastICA over the document embeddings, with each word's importance read off by projecting the vocabulary embeddings onto each axis. Signed poles. |
 | `ETM` | text, embeddings | variational | seed-reproducible | Embedded topic model: topic-word distributions factored through word embeddings. |

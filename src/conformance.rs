@@ -271,6 +271,12 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::None_,
         exempt: &[],
     },
+    // KeyNMF: embedding-keyword NMF; the fitted struct wraps an NmfModel.
+    RegistryEntry {
+        name: "KeyNMF",
+        family: ModelFamily::None_,
+        exempt: &[],
+    },
     // GuidedNMF: seed-word-guided semi-supervised NMF (same factorization family).
     RegistryEntry {
         name: "GuidedNMF",
@@ -382,10 +388,10 @@ mod registry_tests {
             }
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
-        // Estimator-backed Rust struct). Bumped to 36 when TopicalNGrams was added.
+        // Estimator-backed Rust struct). Bumped to 37 when KeyNMF was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            36,
+            37,
             "registry size drifted from the Python REGISTRY"
         );
     }

@@ -176,6 +176,16 @@ def _fit_model(name: str, factory):
         model.fit(_TOY, doc_emb, vocab_emb, vocabulary=vocab)
         return model
 
+    # KeyNMF: requires doc_embeddings plus keyword word_embeddings aligned to an
+    # explicit vocabulary. num_topics=2 <= min(D, V) holds for the toy corpus.
+    if name == "KeyNMF":
+        rng = np.random.default_rng(42)
+        vocab = sorted({w for doc in _TOY for w in doc})
+        doc_emb = rng.standard_normal((len(_TOY), 8))
+        word_emb = rng.standard_normal((len(vocab), 8))
+        model.fit(_TOY, doc_emb, word_embeddings=word_emb, vocabulary=vocab, iters=10)
+        return model
+
     # Embedding models (FASTopic, BERTopic, Top2Vec): require doc_embeddings
     if name in ("FASTopic", "BERTopic", "Top2Vec"):
         rng = np.random.default_rng(42)

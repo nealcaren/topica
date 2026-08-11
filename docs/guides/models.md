@@ -112,6 +112,7 @@ The right first choice when your design calls for one: short text, change over t
 
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
+| `KeyNMF` | text, embeddings | matrix-factorization | bit-exact | KeyNMF (Kristensen-McLachlan et al. 2024): NMF over an embedding-derived keyword-importance matrix. For each document it scores its words by the similarity between the document embedding and the word embedding, keeps the top-N positive, and factors that sparse doc-word matrix. The bridge between the count-based NMF family and the embedding backend; sparse, readable topics robust to short/noisy text. |
 | `Top2Vec` | text, embeddings | clustering | seed-reproducible | Topics as dense regions in a joint document-word embedding space. |
 | `SemanticSignalSeparation` | text, embeddings | ica | seed-reproducible | Topics as independent axes of semantic space (S3, Kardos et al. 2025): FastICA over the document embeddings, with each word's importance read off by projecting the vocabulary embeddings onto each axis. Signed poles. |
 | `ETM` | text, embeddings | variational | seed-reproducible | Embedded topic model: topic-word distributions factored through word embeddings. |
@@ -968,6 +969,34 @@ full `iters` budget, as the reference does), so a normal fit ends with
 Seed groups are matched to the vocabulary with the same `seed_match` (`"fixed"`/`"glob"`/`"regex"`) and `case_insensitive` machinery as SeededLDA. The number of seed groups may not exceed `num_topics`. `init` defaults to `"random"` (seeded Uniform[0,1], matching the reference, so the guidance term shapes the topics from a blank slate); `"nndsvd"` is a deterministic SVD start, and `"none"` takes caller-supplied factors (`init_a`/`init_s`/`init_b`). `weighting` defaults to `"tfidf"`, the regime the reference `λ` is tuned for; on raw counts scale `λ` down, since the data term grows with the counts while the seed matrix does not. `convergence_tol` defaults to `0.0`, so a fit runs the full `iters` budget (the reference has no early stop); set it above zero to stop on the relative objective decrease. Because NMF is invariant to rescaling a topic's row of `S` against its columns of `A` and `B`, the reported `doc_topic` and `seed_topic_indices` are scale-corrected (weighted by `‖Sₖ‖₁`); the raw factors are available as `factor_a`, `factor_s`, and `factor_b`. The Rust core reuses NMF's BLAS-free rayon-parallel products, so fits are bit-identical regardless of thread count.
 
 Validated against the `ssnmf` package (the engine the reference repository uses, pinned `ssnmf==0.0.2`, supervised Frobenius mode) in `parity/guidednmf_gold.py`. Fed the same document-term matrix and the same initial factors, topica reproduces ssnmf's multiplicative update to floating-point noise: after one update the raw factors agree to a maximum absolute difference of about 1e-15, and after the full 50-iteration run the aligned topic-word cosine is 1.000. On a planted corpus with a known seed structure, each seed group steers the topic that carries its planted block. Guidance is a semi-supervised extension of NMF, so this is faithful reproduction of the reference decomposition, not a probabilistic-recovery claim.
+
+## KeyNMF
+
+`KeyNMF` ([Kristensen-McLachlan et al. 2024](https://aclanthology.org/2024.nlperspectives-1.1/)) is the NMF family's bridge to the embedding backend. Where `NMF` factors a document-term *count* matrix, KeyNMF factors an **embedding-derived keyword-importance** matrix: for each document, every word it contains is scored by the similarity between the document's embedding and the word's embedding, and only the top-N most similar (positive) words are kept. NMF over that sparse doc-word matrix yields sparse, readable topics — the semantics come from the embedding space rather than raw frequency, which is what makes KeyNMF robust on short or noisy text. On real medium-length documents (e.g. 20 Newsgroups) KeyNMF clearly beats a raw-count NMF on coherence and diversity and roughly matches a well-tuned TF-IDF NMF; its advantage widens as the documents get shorter, where term counts alone carry little signal.
+
+```python
+# you bring the embeddings (e.g. from sentence-transformers) and the aligned vocabulary
+m = topica.KeyNMF(num_topics=10, top_n=25, seed=13)
+m.fit(docs, doc_embeddings, word_embeddings=word_embeddings, vocabulary=vocab)
+m.top_words(10)          # per-topic top words
+m.keywords(doc=0, n=10)  # the (word, importance) keywords extracted for a document
+m.topic_word, m.doc_topic  # (D x K) / (K x V) arrays; doc_topic rows are L1-normalized
+m.coherence()              # one u_mass score per topic
+```
+
+The **vocabulary you supply is the model's vocabulary** (aligned to `word_embeddings`); a document's candidate words are its tokens that appear in that vocabulary, so you control tokenization, stopwords, and `min_count` upstream with topica's `Corpus` preprocessing. Token order does not matter (a document is a set of words here). `num_topics` must be at most `min(num_docs, len(vocabulary))`, an NNDSVD-initialization requirement. The fit is deterministic.
+
+!!! warning "`vocabulary[i]` must be the word embedded in `word_embeddings[i]`"
+    The `i`-th row of `word_embeddings` is taken to be the embedding of `vocabulary[i]`.
+    topica checks that the two have the same length, but it cannot check the *order*: if
+    you build the vocabulary and the embedding matrix in two separate passes (a `set()`
+    here, a `model.encode(...)` there), a row-order mismatch fits without error and returns
+    clean-looking but meaningless topics. Build them together, and spot-check with
+    `m.keywords(doc=0)` — those words should be recognizably about document 0. If a Corpus
+    is passed to `fit`, its own vocabulary is not used for alignment; the `vocabulary=`
+    argument is authoritative.
+
+Two things differ from the reference `turftopic` implementation, both deliberate and documented. First, topica implements the keyword extraction **correctly**: turftopic's extractor has bugs — it zips the top-N words against a separately positive-filtered similarity list, which scrambles the word-to-importance mapping whenever a selected similarity is non-positive, and an off-by-one that silently drops a keyword (returning nothing for a one-word document). topica keeps each word paired with its own similarity. Second, the factorization uses topica's own NMF backend (NNDSVD init, Frobenius multiplicative updates) rather than turftopic's sklearn coordinate-descent solver; NMF is non-convex, so the two are compared on the reconstruction objective and aligned topics, not the specific decomposition. We validate at two levels (`parity/keynmf_compare.py`): topica's extracted keywords match a correct cosine/top-N/positive computation on every document, and on a MiniLM-embedded corpus topica's topics align with turftopic's at cosine ~0.98. Auto-`K` (BIC), dynamic, online, and cross-lingual matching from turftopic are not ported.
 
 ## LSA
 
