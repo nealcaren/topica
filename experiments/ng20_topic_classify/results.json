@@ -1,0 +1,129 @@
+{
+  "n_docs": 2594,
+  "embed_dim": 384,
+  "n_true_newsgroups": 5,
+  "K": 5,
+  "seed": 13,
+  "lda_top_words": {
+    "0": [
+      "space",
+      "nasa",
+      "launch",
+      "earth",
+      "data",
+      "research",
+      "center",
+      "orbit",
+      "satellite",
+      "shuttle"
+    ],
+    "1": [
+      "year",
+      "game",
+      "team",
+      "good",
+      "games",
+      "hit",
+      "runs",
+      "baseball",
+      "players",
+      "better"
+    ],
+    "2": [
+      "edu",
+      "image",
+      "graphics",
+      "com",
+      "file",
+      "software",
+      "ftp",
+      "available",
+      "jpeg",
+      "files"
+    ],
+    "3": [
+      "don",
+      "just",
+      "like",
+      "people",
+      "think",
+      "know",
+      "time",
+      "good",
+      "way",
+      "does"
+    ],
+    "4": [
+      "gun",
+      "guns",
+      "file",
+      "law",
+      "people",
+      "firearms",
+      "weapons",
+      "control",
+      "government",
+      "state"
+    ]
+  },
+  "lda_cluster_map_to_newsgroup": {
+    "0": "sci.space",
+    "1": "rec.sport.baseball",
+    "2": "comp.graphics",
+    "3": "sci.med",
+    "4": "talk.politics.guns"
+  },
+  "lda_vs_true": {
+    "ari": 0.32278016161875583,
+    "nmi": 0.47373291495369474,
+    "best_map_accuracy": 0.6626831148804935
+  },
+  "embed_recovers_lda_cluster": {
+    "cv_accuracy": 0.8496530454895914,
+    "n_disagree": 390,
+    "frac_disagree": 0.15034695451040864
+  },
+  "disagreement_profile": {
+    "mean_entropy_agree": 0.41537669870637245,
+    "mean_entropy_disagree": 0.5759081116443889,
+    "mean_maxtheta_agree": 0.737206778868809,
+    "mean_maxtheta_disagree": 0.5553371590787585
+  },
+  "external_referee_true_newsgroup": {
+    "on_disagreements_lda_matches_true": 0.4256410256410256,
+    "on_disagreements_embed_matches_true": 0.4794871794871795,
+    "overall_lda_matches_true": 0.6626831148804935,
+    "overall_embed_matches_true": 0.6707787201233616
+  },
+  "controls": {
+    "embed_recovers_true_newsgroup_cv_acc": 0.8986121819583655,
+    "embed_recovers_shuffled_cluster_cv_acc": 0.43407864302235927,
+    "base_rate": 0.4533538936006168
+  },
+  "k_sweep": [
+    {
+      "K": 5,
+      "cv_recovery_acc": 0.8496530454895914,
+      "frac_disagree": 0.15034695451040864,
+      "ari_to_true": 0.32278016161875583
+    },
+    {
+      "K": 8,
+      "cv_recovery_acc": 0.7791056283731689,
+      "frac_disagree": 0.22089437162683115,
+      "ari_to_true": 0.23962430017131736
+    },
+    {
+      "K": 10,
+      "cv_recovery_acc": 0.7540478026214341,
+      "frac_disagree": 0.2459521973785659,
+      "ari_to_true": 0.19184073932473364
+    },
+    {
+      "K": 15,
+      "cv_recovery_acc": 0.7023901310717039,
+      "frac_disagree": 0.29760986892829605,
+      "ari_to_true": 0.20246523209700568
+    }
+  ]
+}
