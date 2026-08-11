@@ -584,7 +584,7 @@ def test_covariate_effect_stability_keyatm():
             docs,
             covariates={"covariates": X},
             folds=3,
-            fit_kwargs={"iters": 40},
+            fit_kwargs={"iters": 300},
         )
     cs = result.covariate_stability
     assert cs is not None
@@ -616,7 +616,7 @@ def test_covariate_effect_stability_self_pair_agrees():
     keywords = {"animals": ["cat", "dog", "pet"], "finance": ["bank", "loan", "money"]}
     X = labels.reshape(-1, 1).astype(float)
     m = topica.KeyATM(keywords, num_topics=2, seed=1)
-    m.fit(topica.Corpus.from_documents(docs), covariates=X, iters=60)
+    m.fit(topica.Corpus.from_documents(docs), covariates=X, iters=300)
     cs = _covariate_effect_stability([m, m])
     assert cs is not None
     assert cs["sign_agreement"] == 1.0
@@ -634,7 +634,7 @@ def test_covariate_effect_stability_headline_is_feature_macro():
     with pytest.warns(UserWarning):
         result = topica.cross_validate(
             lambda s: topica.KeyATM(keywords, num_topics=2, seed=s),
-            docs, covariates={"covariates": X}, folds=3, fit_kwargs={"iters": 40},
+            docs, covariates={"covariates": X}, folds=3, fit_kwargs={"iters": 300},
         )
     cs = result.covariate_stability
     per = cs["per_feature"]
@@ -648,6 +648,61 @@ def test_covariate_effect_stability_headline_is_feature_macro():
         assert cs["magnitude_correlation"] == pytest.approx(float(np.mean(mc)))
 
 
+def test_covariate_effect_stability_near_zero_is_undefined():
+    """An under-trained keyATM learns all-zero effects; the diagnostic must report
+    UNDEFINED, not a spurious sign-agreement of 1.0 (the fresh-user trap, #705)."""
+    from topica.crossval import _covariate_effect_stability
+
+    docs, labels = _synthetic_corpus(n_docs=60)
+    keywords = {"animals": ["cat", "dog", "pet"], "finance": ["bank", "loan", "money"]}
+    X = labels.reshape(-1, 1).astype(float)
+    # A tiny number of iterations leaves keyATM's feature_effects at exactly 0.
+    models = []
+    for s in (1, 2):
+        m = topica.KeyATM(keywords, num_topics=2, seed=s)
+        m.fit(topica.Corpus.from_documents(docs), covariates=X, iters=5)
+        models.append(m)
+    if not all(np.all(m.feature_effects[:, 1:] == 0) for m in models):
+        pytest.skip("keyATM warmed up faster than expected; not the near-zero regime")
+    cs = _covariate_effect_stability(models)
+    assert cs["effects_near_zero"] is True
+    assert np.isnan(cs["sign_agreement"])  # NOT 1.0
+    assert "WARNING" in cs["note"] and "more fit iterations" in cs["note"]
+
+
+def test_covariate_effect_stability_names_and_labels():
+    """covariate_names= flows into the per-feature table and wins over placeholders."""
+    docs, labels = _synthetic_corpus(n_docs=90)
+    keywords = {"animals": ["cat", "dog", "pet"], "finance": ["bank", "loan", "money"]}
+    X = np.column_stack([labels.astype(float), (1 - labels).astype(float)])
+    with pytest.warns(UserWarning):
+        result = topica.cross_validate(
+            lambda s: topica.KeyATM(keywords, num_topics=2, seed=s),
+            docs, covariates={"covariates": X}, covariate_names=["party", "not_party"],
+            folds=3, fit_kwargs={"iters": 300},
+        )
+    assert list(result.covariate_stability["per_feature"].keys()) == ["party", "not_party"]
+
+
+def test_covariate_names_length_mismatch_errors():
+    from topica.crossval import _resolve_covariate_names
+
+    with pytest.raises(ValueError, match="must match|learned"):
+        _resolve_covariate_names(["a", "b", "c"], {"covariates": None}, 2)
+
+
+def test_covariate_tuple_gives_clear_error():
+    """Passing the (matrix, names) tuple from one_hot straight through is caught with
+    an actionable message, not a raw numpy error (fresh-user docs trap, #705)."""
+    docs, labels = _synthetic_corpus(n_docs=40)
+    tup = (labels.reshape(-1, 1).astype(float), ["x"])
+    with pytest.raises(ValueError, match="unpack one_hot|is a tuple"):
+        topica.cross_validate(
+            lambda s: topica.STM(2, seed=s), docs,
+            covariates={"prevalence": tup}, folds=3, fit_kwargs={"iters": 20},
+        )
+
+
 def test_covariate_effect_stability_reports_topics_compared():
     """topics_compared / n_topics / partial_alignment expose how many of K topics each
     fold pair actually compared (so a silent topic-drop can't inflate stability)."""
@@ -657,7 +712,7 @@ def test_covariate_effect_stability_reports_topics_compared():
     with pytest.warns(UserWarning):
         result = topica.cross_validate(
             lambda s: topica.KeyATM(keywords, num_topics=3, seed=s),
-            docs, covariates={"covariates": X}, folds=3, fit_kwargs={"iters": 40},
+            docs, covariates={"covariates": X}, folds=3, fit_kwargs={"iters": 300},
         )
     cs = result.covariate_stability
     assert cs["n_topics"] == 3
@@ -676,7 +731,7 @@ def test_covariate_stability_frame_and_labels():
     with pytest.warns(UserWarning):
         result = topica.cross_validate(
             lambda s: topica.KeyATM(keywords, num_topics=2, seed=s),
-            docs, covariates={"covariates": X}, folds=3, fit_kwargs={"iters": 40},
+            docs, covariates={"covariates": X}, folds=3, fit_kwargs={"iters": 300},
         )
     frame = result.covariate_stability_frame()
     assert isinstance(frame, pd.DataFrame)
@@ -746,7 +801,7 @@ def test_plot_cv_covariate_panel():
     with pytest.warns(UserWarning):
         result = topica.cross_validate(
             lambda s: topica.KeyATM(keywords, num_topics=2, seed=s),
-            docs, covariates={"covariates": X}, folds=3, fit_kwargs={"iters": 40},
+            docs, covariates={"covariates": X}, folds=3, fit_kwargs={"iters": 300},
         )
     panel = viz.plot_cv(result)
     assert panel._has_covariate() is True

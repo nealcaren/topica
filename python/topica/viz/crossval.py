@@ -145,6 +145,14 @@ class CrossValidationPlot(Panel):
         import numpy as np
 
         cs = self._result.covariate_stability
+        if cs.get("effects_near_zero"):
+            ax = fig.subplots(1, 1)
+            ax.text(0.5, 0.5,
+                    "covariate-effect stability undefined:\nlearned effects are ~0 "
+                    "(the model likely needs more fit iterations)",
+                    ha="center", va="center", fontsize=9, color=_C_MEAN)
+            ax.set_axis_off()
+            return
         per = cs["per_feature"]
         names = list(per.keys())
         sign = [per[n]["sign_agreement"] for n in names]

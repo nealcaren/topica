@@ -73,12 +73,45 @@ over raw coefficient cells: one Pearson correlation over pooled cells is dominat
 the highest-variance covariate and would hide instability in a smaller or null one. Get
 the per-covariate table with `result.covariate_stability_frame()`.
 
+A covariate model needs enough fit iterations before its coefficients mean anything: an
+under-trained keyATM returns effects of ~0 for every topic, which is not a stable effect
+but the *absence* of one. When the largest learned effect is ~0, `cross_validate` reports
+`covariate_stability["effects_near_zero"] = True` and `summary()` prints
+`covariate-effect stability: UNDEFINED` rather than a spurious sign-agreement of 1.0.
+keyATM covariate effects typically need several hundred iterations to warm up
+(`fit_kwargs={"iters": 800}` or more), well above the ~200 that suffices for the topic
+assignments — check `covariate_stability["max_effect_magnitude"]` if in doubt.
+
+A worked keyATM factory (the first argument is a keyword dict, so it does not match the
+plain `topica.LDA(K, seed=s)` pattern):
+
+```python
+keywords = {"econ": ["market", "tax"], "social": ["family", "church"]}
+X, names = topica.one_hot(df["rating"])   # (matrix, names) — unpack it
+result = topica.cross_validate(
+    lambda s: topica.KeyATM(keywords, num_topics=10, seed=s),
+    docs,
+    covariates={"covariates": X},         # D x F numeric matrix
+    covariate_names=names,                # label the effect table/plot
+    folds=5, fit_kwargs={"iters": 800},
+)
+print(result.covariate_stability_frame())
+```
+
+Pass `covariate_names=` (a flat list, or a dict keyed by the covariate kwarg) so the
+per-covariate table and the plot show your column names instead of positional
+`covariates[0]` / `covariates[1]` placeholders — keyATM does not preserve covariate
+names on its own.
+
 **Reading the numbers.** Sign-agreement near **0.5 is chance** (the folds disagree on
 direction as often as not); values toward **1.0** mean the folds consistently recover the
 same sign. Magnitude correlation near **0 (or negative)** means the folds do *not* recover
 consistent effect *sizes*; toward **1.0** means they do. A genuinely null covariate will
 often show ~0.5 sign-agreement and ~0 magnitude correlation — that is the diagnostic
-correctly reporting "no stable effect," not a bug. The statistics are computed over few
+correctly reporting "no stable effect," not a bug. A magnitude correlation of **`NaN`**
+(shown as `n/a (no variance)` in `summary()` and the plot) means that covariate's learned
+effect had no variance across the compared cells, so there is nothing to correlate — not
+an error. The statistics are computed over few
 cells (topics × fold pairs), so at small `K` or few folds treat them as directional, not
 precise; `result.covariate_stability["topics_compared"]` reports how many topics each
 pair actually compared, and `partial_alignment` flags when unaligned topics were dropped
@@ -162,8 +195,9 @@ on the fold's *test* covariates, so the evaluation is leakage-free. Pass them as
 dict keyed by the model's fit keyword:
 
 ```python
-# Covariates must be a numeric matrix. Encode a categorical column first:
-X = topica.one_hot(df["rating"])            # or topica.design_matrix(...)
+# Covariates must be a numeric matrix. Encode a categorical column first.
+# one_hot returns (matrix, names) — unpack it; passing the tuple raises.
+X, names = topica.one_hot(df["rating"])     # or topica.design_matrix(...)
 
 result = topica.cross_validate(
     lambda seed: topica.STM(10, seed=seed),
