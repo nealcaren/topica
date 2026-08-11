@@ -16,6 +16,15 @@
 //! distribution `sigma` (x=1). Deterministic from a fixed seed (single-threaded,
 //! fixed visitation order).
 //!
+//! We replicate MALLET's exact count-update order, including two quirks it shares
+//! with the paper's sampler: the joint update omits the next token's status term
+//! (a mean-field-style simplification), and the current token's *outgoing* status
+//! count is removed before the incoming status prior is read, so for a repeated
+//! word in the same topic (`w_i == w_{i-1}`, `z_i == z_{i-1}`) the conditional
+//! depends weakly on the current assignment. Both are immaterial on real corpora
+//! (they touch only repeated adjacent tokens) and are kept for bit-level fidelity
+//! to MALLET rather than "corrected".
+//!
 //! Documented deviations (Gate A): the bigram-status prior defaults to a balanced
 //! `delta1 = delta2 = 1.0` rather than MALLET's `0.2 / 1000` (empirically the tamer
 //! prior recovers real collocations while MALLET's default forces ~all tokens into
@@ -139,8 +148,12 @@ pub fn fit_tng<R: Rng>(
 
     let mut weights = vec![0.0f64; 2 * k];
     let mut uni_weights = vec![0.0f64; k];
+    // Convergence trace: the total number of tokens currently generated as bigrams
+    // after each sweep. It has no strict monotonicity but stabilizes as the phrase
+    // structure settles, giving users a signal for "have I run enough iters".
+    let mut fit_history: Vec<(usize, f64)> = Vec::with_capacity(iters);
 
-    for _it in 0..iters {
+    for it in 0..iters {
         for (di, doc) in docs.iter().enumerate() {
             let len = doc.len();
             for i in 0..len {
@@ -235,6 +248,8 @@ pub fn fit_tng<R: Rng>(
                 }
             }
         }
+        let bi: usize = token_gram.iter().flatten().filter(|&&g| g == 1).count();
+        fit_history.push((it + 1, bi as f64));
     }
 
     // Unigram topic-word phi (K, V): a proper simplex per topic.
@@ -268,22 +283,29 @@ pub fn fit_tng<R: Rng>(
         token_gram,
         doc_lengths,
         alpha,
-        fit_history: Vec::new(),
+        fit_history,
         converged: false,
     }
 }
 
 /// Sample an index in `0..n` proportional to `weights[0..n]` (already summing to
-/// `sum`), using one uniform draw. Deterministic given the RNG stream.
+/// `sum`), using one uniform draw. Deterministic given the RNG stream. On a
+/// roundoff fall-through (float addition is not associative, so the sequential
+/// subtraction can leave `r` marginally positive) it returns the LAST index with
+/// positive weight, never a zero-weight tail element.
 fn sample<R: Rng>(weights: &[f64], n: usize, sum: f64, rng: &mut R) -> usize {
     let mut r = rng.gen::<f64>() * sum;
+    let mut last_positive = 0;
     for (i, &w) in weights.iter().enumerate().take(n) {
+        if w > 0.0 {
+            last_positive = i;
+        }
         r -= w;
-        if r <= 0.0 {
+        if r < 0.0 {
             return i;
         }
     }
-    n - 1
+    last_positive
 }
 
 impl Estimator for TopicalNGramsModel {
@@ -351,8 +373,15 @@ pub fn extract_phrases(model: &TopicalNGramsModel, docs: &[Vec<Token>]) -> Vec<P
             count,
         })
         .collect();
-    // Deterministic order: count desc, then word-id sequence asc.
-    phrases.sort_by(|a, b| b.count.cmp(&a.count).then(a.words.cmp(&b.words)));
+    // Deterministic order: count desc, then word-id sequence asc, then topic asc
+    // (the last key resolves ties between the same phrase learned under different
+    // topics, so the serialized order does not depend on HashMap iteration).
+    phrases.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then(a.words.cmp(&b.words))
+            .then(a.topic.cmp(&b.topic))
+    });
     phrases
 }
 

@@ -100,6 +100,35 @@ def test_tamer_default_vs_mallet_prior():
     assert mallet_len > tame_len, f"mallet {mallet_len} not longer than tame {tame_len}"
 
 
+def test_max_len_filters_long_phrases():
+    docs, _ = _planted(seed=8)
+    m = topica.TopicalNGrams(num_topics=6, seed=13).fit(docs, iters=200)
+    short = m.top_phrases(20, max_len=2)
+    assert all(len(p.split()) <= 2 for p, _ in short)
+    assert len(short) > 0
+
+
+def test_fit_history_records_convergence():
+    docs, _ = _planted(seed=9)
+    m = topica.TopicalNGrams(num_topics=5, seed=13).fit(docs, iters=50)
+    hist = m.fit_history
+    assert len(hist) == 50
+    # each entry is (iter, bigram-token-count), 1-based iteration index
+    assert hist[0][0] == 1 and hist[-1][0] == 50
+    assert all(c >= 0 for _, c in hist)
+
+
+def test_warns_on_sorted_bag_of_words():
+    import warnings
+    # documents already in sorted order (a bag-of-words corpus) -> warn
+    docs = [sorted([f"w{i}" for i in np.random.default_rng(s).integers(0, 30, 40)])
+            for s in range(40)]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        topica.TopicalNGrams(num_topics=3, seed=13).fit(docs, iters=20)
+    assert any("sorted token order" in str(w.message) for w in caught)
+
+
 def test_save_load_round_trip(tmp_path):
     docs, _ = _planted(seed=6)
     m = topica.TopicalNGrams(num_topics=5, seed=13).fit(docs, iters=100)

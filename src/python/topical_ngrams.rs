@@ -184,6 +184,30 @@ impl TopicalNGrams {
             return Err(PyValueError::new_err("data contains no documents"));
         }
 
+        // Guard the core assumption that token order encodes co-occurrence. Some
+        // bundled corpora (e.g. a bag-of-words export) arrive alphabetically sorted
+        // per document, which turns "adjacent" into "alphabetically consecutive" and
+        // makes TNG manufacture phrases that are ordering artifacts, not real
+        // collocations. Warn when most multi-token documents are already sorted.
+        {
+            let multi: Vec<&Vec<String>> = docs_str.iter().filter(|d| d.len() >= 2).collect();
+            if !multi.is_empty() {
+                let sorted = multi
+                    .iter()
+                    .filter(|d| d.windows(2).all(|w| w[0] <= w[1]))
+                    .count();
+                if sorted * 2 > multi.len() {
+                    let warnings = py.import_bound("warnings")?;
+                    let msg = "most documents are already in sorted token order, so word \
+                        order may have been lost (e.g. a bag-of-words corpus). TopicalNGrams \
+                        assumes token order encodes co-occurrence; its learned phrases may be \
+                        alphabetical-adjacency artifacts rather than real collocations. Pass \
+                        order-preserving token lists.";
+                    warnings.call_method1("warn", (msg,))?;
+                }
+            }
+        }
+
         // Vocabulary: corpus frequency >= min_count, ordered by descending frequency
         // then word (deterministic).
         let mut freq: HashMap<&str, usize> = HashMap::new();
@@ -362,8 +386,16 @@ impl TopicalNGrams {
     /// pools phrases across topics ranked by raw count, probability = count / all
     /// phrase occurrences. A phrase is a head word plus its learned continuations,
     /// e.g. "machine learning". Kept separate from `top_words` (never merged).
-    #[pyo3(signature = (n=10, *, topic=None))]
-    fn top_phrases(&self, n: usize, topic: Option<usize>) -> PyResult<Vec<(String, f64)>> {
+    /// `max_len` optionally caps a phrase's word count — e.g. `max_len=3` drops the
+    /// long whole-document runs that appear on corpora without real phrase structure,
+    /// so only the tight collocations remain.
+    #[pyo3(signature = (n=10, *, topic=None, max_len=None))]
+    fn top_phrases(
+        &self,
+        n: usize,
+        topic: Option<usize>,
+        max_len: Option<usize>,
+    ) -> PyResult<Vec<(String, f64)>> {
         self.fitted_model()?;
         let vocab = &self.corpus.as_ref().unwrap().id_to_word;
         let render = |words: &[u32]| -> String {
@@ -373,44 +405,29 @@ impl TopicalNGrams {
                 .collect::<Vec<_>>()
                 .join(" ")
         };
-        match topic {
-            Some(k) => {
-                // Per topic: one entry per phrase, already sorted (count desc, words
-                // asc); prob = count / topic k's total phrase occurrences.
-                let selected: Vec<&StoredPhrase> =
-                    self.phrases.iter().filter(|p| p.topic == k).collect();
-                let total: usize = selected.iter().map(|p| p.count).sum();
-                if total == 0 {
-                    return Ok(Vec::new());
-                }
-                Ok(selected
-                    .iter()
-                    .take(n)
-                    .map(|p| (render(&p.words), p.count as f64 / total as f64))
-                    .collect())
+        let keep = |words: &[u32]| max_len.is_none_or(|m| words.len() <= m);
+        // Aggregate to (rendered phrase, count) over the requested scope, so the
+        // user-facing tie-break can be alphabetical on the phrase STRING (the stored
+        // word-id order is frequency-based, not lexical).
+        let mut merged: HashMap<String, usize> = HashMap::new();
+        for p in &self.phrases {
+            if topic.is_some_and(|k| p.topic != k) || !keep(&p.words) {
+                continue;
             }
-            None => {
-                // Global: the SAME phrase can occur under several topics; pool it by
-                // summing counts so each phrase appears once. prob = count / all
-                // phrase occurrences.
-                let mut merged: HashMap<&Vec<u32>, usize> = HashMap::new();
-                for p in &self.phrases {
-                    *merged.entry(&p.words).or_insert(0) += p.count;
-                }
-                let total: usize = merged.values().sum();
-                if total == 0 {
-                    return Ok(Vec::new());
-                }
-                let mut pooled: Vec<(&Vec<u32>, usize)> = merged.into_iter().collect();
-                // Deterministic: count desc, then word-id sequence asc.
-                pooled.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-                Ok(pooled
-                    .iter()
-                    .take(n)
-                    .map(|(words, count)| (render(words), *count as f64 / total as f64))
-                    .collect())
-            }
+            *merged.entry(render(&p.words)).or_insert(0) += p.count;
         }
+        let total: usize = merged.values().sum();
+        if total == 0 {
+            return Ok(Vec::new());
+        }
+        let mut pooled: Vec<(String, usize)> = merged.into_iter().collect();
+        // Deterministic: count desc, then phrase string asc.
+        pooled.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        Ok(pooled
+            .into_iter()
+            .take(n)
+            .map(|(phrase, count)| (phrase, count as f64 / total as f64))
+            .collect())
     }
 
     /// The number of distinct phrase types learned (across all topics).
