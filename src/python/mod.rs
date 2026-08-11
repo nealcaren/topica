@@ -95,6 +95,7 @@ mod tbip;
 mod tlda;
 mod topics_over_time;
 mod wordfish;
+mod wordshoal;
 use arrays::*;
 use author_topic::AuthorTopic;
 use btm::BTM;
@@ -123,6 +124,7 @@ use tbip::TBIP;
 use tlda::TensorLDA;
 use topics_over_time::TopicsOverTime;
 use wordfish::Wordfish;
+use wordshoal::Wordshoal;
 
 /// Run `f` on a rayon pool of `num_threads` workers, or on the global pool (all
 /// cores) when `num_threads` is `None`/0. The variational fits are deterministic
@@ -16040,6 +16042,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TBIP>()?;
     m.add_class::<TensorLDA>()?;
     m.add_class::<Wordfish>()?;
+    m.add_class::<Wordshoal>()?;
     m.add_class::<PartyEmbeddings>()?;
     m.add_class::<ProdLDA>()?;
     m.add_class::<InfoCTM>()?;

@@ -6309,6 +6309,95 @@ class Wordfish:
     def __repr__(self) -> str: ...
 
 
+class Wordshoal:
+    """Wordshoal (Lauderdale & Herzog 2016): two-stage one-dimensional scaling of
+    actor (speaker) positions from texts grouped into externally-known debate
+    domains. Stage 1 scales each domain with Wordfish; stage 2 combines the
+    within-domain positions into one cross-domain actor scale via a linear factor
+    model psi = alpha_j + beta_j * theta_i + N(0, tau_i^-1). The multi-domain
+    extension of Wordfish. The fit is deterministic. Faithful to the kbenoit/wordshoal
+    R package (parity/wordshoal_r_compare.py)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
+    def __init__(
+        self,
+        *,
+        theta_prior_sd: float = 1.0,
+        loading_prior_sd: float = 0.5,
+        intercept_prior_sd: float = 0.5,
+        tau_prior: float = 1.0,
+        min_count: int = 1,
+        convergence_tol: float = 1e-3,
+        seed: int = 13,
+    ) -> None:
+        """The prior standard deviations are the stage-2 cross-domain factor-model
+        priors: theta_prior_sd on actor positions (also the actor-update ridge),
+        loading_prior_sd on domain loadings, intercept_prior_sd on domain intercepts;
+        tau_prior is the Gamma(shape=rate) prior on per-actor precisions. min_count
+        drops words with corpus frequency below it. Stage-1 Wordfish priors are
+        hardwired to the quanteda defaults. seed is accepted for API uniformity; the
+        fit is deterministic."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        *,
+        speakers: Sequence[str],
+        domains: Sequence[str],
+        anchors: dict[str, float] | None = None,
+        iters: int | None = None,
+        convergence_tol: float | None = None,
+    ) -> "Wordshoal":
+        """speakers and domains are per-document label lists (length num_docs): each
+        document belongs to one actor and one externally-observed debate domain.
+        anchors ({speaker_label: value}) orients the sign of the axis. iters caps the
+        stage-2 coordinate ascent."""
+        ...
+    @property
+    def num_authors(self) -> int: ...
+    @property
+    def num_domains(self) -> int: ...
+    @property
+    def author_positions(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def position_se(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def author_names(self) -> list[str]: ...
+    @property
+    def domain_names(self) -> list[str]: ...
+    @property
+    def domain_scales(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def author_precision(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    def word_scores(
+        self, domain: str, n: int | None = None
+    ) -> list[tuple[str, float]]: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def log_likelihood(self) -> float: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def converged(self) -> bool | None: ...
+    @property
+    def iters_run(self) -> int: ...
+    @property
+    def num_components(self) -> int: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> Wordshoal: ...
+    def __repr__(self) -> str: ...
+
+
 class IdealPointSentenceTM:
     """IdealPointSentenceTM, a continuous ideal-point topic model over sentence or
     document embeddings (EXPERIMENTAL). Topics are Gaussian clusters in embedding
