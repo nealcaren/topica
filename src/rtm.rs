@@ -28,7 +28,6 @@
 //!
 //! Pure Rust, no PyO3. Fitted state stores matrices as `Vec<Vec<f64>>`.
 
-use crate::corpus::Corpus;
 use crate::estimator::{Estimator, ModelFamily};
 use crate::mathfun::log_gamma as lgamma;
 use crate::optimize::digamma;
@@ -915,12 +914,8 @@ impl Estimator for RTMModel {
     }
 }
 
-// A thin wrapper matching the scaffold's `fit(corpus, ...)` shape is intentionally
-// omitted: RTM needs the link graph, so the binding calls `fit_rtm` directly.
-#[allow(dead_code)]
-pub fn fit<R: Rng>(_corpus: &Corpus, _num_topics: usize, _iters: usize, _rng: &mut R) -> RTMModel {
-    unreachable!("RTM is fit via fit_rtm(docs, edges, params, rng)")
-}
+// RTM needs the link graph, so there is no `fit(corpus, ...)` wrapper matching the
+// scaffold shape: the binding calls `fit_rtm(docs, edges, params, rng)` directly.
 
 #[cfg(test)]
 mod tests {

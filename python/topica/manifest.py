@@ -16,8 +16,9 @@ them by path + digest rather than embedding them.
 Scope: the manifest, the fingerprint-v1 contract below, ``record_fit`` for the
 count-based and structural models, ``verify`` with a textual report, and (V2) an
 HTML / Markdown *analysis card* via :meth:`AnalysisManifest.render` /
-:meth:`~AnalysisManifest.to_markdown`. Generic diagnostic auto-capture and
-manifest comparison remain future work.
+:meth:`~AnalysisManifest.to_markdown` plus manifest-to-manifest comparison via
+:meth:`AnalysisManifest.compare`. Generic diagnostic auto-capture remains future
+work.
 
 Fingerprint-v1 contract ("fp1")
 -------------------------------
