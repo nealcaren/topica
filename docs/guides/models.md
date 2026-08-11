@@ -1241,6 +1241,26 @@ The one real ergonomic cost: top "words" are feature ids. Reading them as a topi
 the SAE's feature descriptions — the paper uses Neuronpedia's, or an LLM summary of a
 feature's top-activating text.
 
+### Producing the activations
+
+topica starts from the count matrix, so the question of *which* activations to feed it is
+yours to answer, and the choices matter more than the counting does. Running the language
+model, caching its residual stream at some layer, and pushing it through an SAE is a
+per-model, per-layer, per-checkpoint job: with Gemma-2 and [Gemma Scope](https://arxiv.org/abs/2408.05147)
+SAEs, that is a `transformer_lens`/`sae_lens` (or `nnsight`) forward pass over the whole
+corpus, the GPU-and-storage half of the pipeline that this port deliberately leaves out.
+
+For how to make those choices well, [Gallifant et al. 2025 (MOSAIC)](https://arxiv.org/abs/2502.11367)
+is the useful reference. It sweeps the same knobs a MechanisticLDA user faces — which
+model and layer, SAE width, and how to pool token activations into a document — and
+finds that **binarizing** the continuous activations matches or beats using them
+directly. That is independent support for `featurize`'s thresholded counts over the
+continuous-activation weighting mBERTopic's reference uses by default, and its
+layer/width findings are the closest thing to guidance on producing activations worth
+topic-modeling. Reproducibility is the catch either way: the counts are pinned to an
+exact base model, layer, and SAE checkpoint, and cannot be regenerated without all three
+— which is why both models ship experimental.
+
 ## MechanisticBERTopic
 
 The same featurization, with BERTopic on top (§4.2.3) — mechanistic on both sides.
