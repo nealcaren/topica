@@ -323,6 +323,11 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         exempt: &[],
     },
     RegistryEntry {
+        name: "TopicalNGrams",
+        family: ModelFamily::None_,
+        exempt: &[],
+    },
+    RegistryEntry {
         name: "BERTopic",
         family: ModelFamily::None_,
         exempt: &[],
@@ -377,10 +382,10 @@ mod registry_tests {
             }
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
-        // Estimator-backed Rust struct). Bumped to 35 when TopicsOverTime was added.
+        // Estimator-backed Rust struct). Bumped to 36 when TopicalNGrams was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            35,
+            36,
             "registry size drifted from the Python REGISTRY"
         );
     }

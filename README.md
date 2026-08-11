@@ -123,6 +123,7 @@ The right first choice when your design calls for one: short text, change over t
 | `PolylingualLDA` | text | gibbs | seed-reproducible | Polylingual topic model (Mimno et al. 2009): aligned topics across languages from document tuples that share one topic distribution. |
 | `CorEx` | text | information-theoretic | seed-reproducible | Correlation Explanation: information-theoretic topic model that maximizes total correlation; supports anchor words. |
 | `MGLDA` | text | gibbs | seed-reproducible | Multi-Grain LDA: global (document-level) + local (sliding-window aspect) topics with a per-token grain switch. For reviews / aspect extraction. |
+| `TopicalNGrams` | text | gibbs | seed-reproducible | Topical N-Grams (Wang, McCallum & Wei 2007): an LDA extension that jointly discovers topics and topic-specific multiword phrases. A per-token bigram-status indicator, sampled with the topic, decides whether a token continues a phrase from the previous word given its topic, so phrase structure is learned during fitting rather than fixed beforehand. Exposes top_phrases alongside top_words. |
 
 #### Covariates & structure
 

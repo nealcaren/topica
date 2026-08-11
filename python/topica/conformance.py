@@ -67,6 +67,7 @@ REGISTRY: list[tuple[str, object, str]] = [
     ("KeyATM",       lambda: _topica.KeyATM({"a": ["x"]}, num_topics=2),         "dirichlet"),
     ("SeededLDA",    lambda: _topica.SeededLDA({"a": ["x"], "b": ["y"]}),        "dirichlet"),
     ("GSDMM",        lambda: _topica.GSDMM(num_topics=5),                        "none"),
+    ("TopicalNGrams",lambda: _topica.TopicalNGrams(2),                           "none"),
     # logistic-normal (variational eta posterior)
     ("STM",          lambda: _topica.STM(2),                                     "logistic_normal"),
     ("CTM",          lambda: _topica.CTM(2),                                     "logistic_normal"),

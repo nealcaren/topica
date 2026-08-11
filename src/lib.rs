@@ -76,6 +76,7 @@ pub mod slda;
 pub mod sts;
 pub mod tbip;
 pub mod tlda;
+pub mod topical_ngrams;
 pub mod topics_over_time;
 pub mod warplda;
 pub mod wordfish;

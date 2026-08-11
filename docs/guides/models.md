@@ -66,6 +66,7 @@ The right first choice when your design calls for one: short text, change over t
 | `PolylingualLDA` | text | gibbs | seed-reproducible | Polylingual topic model (Mimno et al. 2009): aligned topics across languages from document tuples that share one topic distribution. |
 | `CorEx` | text | information-theoretic | seed-reproducible | Correlation Explanation: information-theoretic topic model that maximizes total correlation; supports anchor words. |
 | `MGLDA` | text | gibbs | seed-reproducible | Multi-Grain LDA: global (document-level) + local (sliding-window aspect) topics with a per-token grain switch. For reviews / aspect extraction. |
+| `TopicalNGrams` | text | gibbs | seed-reproducible | Topical N-Grams (Wang, McCallum & Wei 2007): an LDA extension that jointly discovers topics and topic-specific multiword phrases. A per-token bigram-status indicator, sampled with the topic, decides whether a token continues a phrase from the previous word given its topic, so phrase structure is learned during fitting rather than fixed beforehand. Exposes top_phrases alongside top_words. |
 
 #### Covariates & structure
 
@@ -208,6 +209,25 @@ model.fit(docs, iters=300)
 All four target the same model. Use the default `"sparse"` up to a couple
 hundred topics; `"warp"` for large-`K` (`K ≳ 500`) work where speed matters; and
 `"cvb0"` when you want the cleanest topics and can spend the compute.
+
+## TopicalNGrams
+
+`TopicalNGrams` ([Wang, McCallum and Wei 2007](https://doi.org/10.1109/ICDM.2007.86)) extends LDA to discover topics *and* the multiword phrases that belong to them, in one fit. Alongside a topic, every token gets a binary bigram-status: does it continue a phrase from the previous word, given that word's topic? A run of continuations is a phrase — "machine learning", "supreme court" — and because the status is topic-conditioned, the same word can head different phrases in different topics. Phrases are learned *during* fitting, so a word's role as a collocation is discovered, not fixed in advance.
+
+```python
+model = topica.TopicalNGrams(num_topics=20, seed=13)
+model.fit(docs, iters=1000)          # docs are token lists; ORDER matters
+model.top_words(10)                  # per-topic unigrams (the usual topic view)
+model.top_phrases(10)                # the top multiword phrases, pooled across topics
+model.top_phrases(topic=3, n=20)     # topic 3's phrases, as (phrase, probability)
+model.topic_word                     # (K, V) unigram topic-word, and doc_topic, coherence, save/load
+```
+
+Inference is a collapsed Gibbs sampler that draws the `(topic, bigram-status)` pair jointly for each token: a token is emitted either from its topic's unigram distribution or, when it continues a phrase, from a topic-and-previous-word bigram distribution, with the status governed by a small Beta prior. The fit is seed-reproducible. Because token order carries the phrases, a word dropped by `min_count` breaks the adjacency of its neighbours — "New \<stopword\> York" never becomes "New_York" — so pass raw token lists (not a pre-pruned corpus) when boundary breaks matter.
+
+The one deliberate departure from the MALLET reference is the bigram-status prior. MALLET defaults to `delta1=0.2, delta2=1000`, which forces almost every token into a phrase, so its "phrases" degrade into whole-document runs; topica defaults to a balanced `delta1=delta2=1.0`, which recovers discrete, interpretable collocations. (Pass `delta1=0.2, delta2=1000.0` to reproduce MALLET exactly — the parity harness does, on both sides.) We validate against Java MALLET's `TopicalNGrams` on a planted-collocation corpus: the two recover the same topics (unigram topic-word aligned within MALLET's own seed-to-seed noise floor) and the same planted collocations as phrases (`parity/tng_mallet_compare.py`).
+
+This is not a replacement for phrase preprocessing. topica's [`learn_phrases()` / `apply_phrases()`](preprocessing.md) build a fixed phrase vocabulary *before* fitting and remain the simpler, often preferable workflow; reach for `TopicalNGrams` when topic-specific collocations are themselves the object of study, not merely a way to tidy topic labels.
 
 ## OnlineLDA
 

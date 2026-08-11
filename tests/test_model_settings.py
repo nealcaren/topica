@@ -73,6 +73,7 @@ _FACTORIES: dict[str, object] = {
     "AuthorTopic": lambda: topica.AuthorTopic(2),
     "MGLDA": lambda: topica.MGLDA(2, 3),
     "TopicsOverTime": lambda: topica.TopicsOverTime(2),
+    "TopicalNGrams": lambda: topica.TopicalNGrams(2),
     "GaussianLDA": lambda: topica.GaussianLDA(2),
     "LSA": lambda: topica.LSA(2),
     "BERTopic": lambda: topica.BERTopic(min_cluster_size=5),
