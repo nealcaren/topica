@@ -19,14 +19,9 @@ Two independent axes:
 Fresh side-by-side fit is possible, so these carry both an agreement number and a
 wall-clock speedup.
 
-**Wired now (the table's current rows):** LDA, DMR, GDMR, PA, DTM, LabeledLDA,
-OnlineLDA, KeyATM, STM, STM/content, SupervisedLDA (var), SupervisedLDA (gibbs),
-NMF, LSA, FASTopic, ProdLDA, BERTopic, SemanticSignalSeparation.
-
-**Being added (this pass):** CTM, HDP*, HLDA*, SeededLDA.  (*K discovered.)
-
-**Runnable locally but not yet wired (candidates to add):** ETM, DETM, InfoCTM,
-PT, RTM, Scholar, TBIP, Wordfish, EmbeddingLDA.
+The table below is the list of wired models — it is the single source of truth, so
+new rows do not need a second edit here. HDP and HLDA discover K rather than
+taking it as input.
 
 | Model | Reference | Local? | Frozen gold |
 |---|---|:--:|:--:|

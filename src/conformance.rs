@@ -1,7 +1,7 @@
 //! Rust-side estimator conformance — the analog of `python/topica/conformance.py`.
 //! Catches contract gaps in `cargo test --lib`, at the source, before the Python
-//! layer or a release. The full multi-model registry and EXEMPT set are populated
-//! in a later step; this file establishes the check.
+//! layer or a release. The multi-model registry and its structural exemptions
+//! live in `RUST_ESTIMATORS` below.
 
 use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 use crate::variational::LogisticNormalModel;

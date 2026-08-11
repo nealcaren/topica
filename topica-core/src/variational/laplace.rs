@@ -1,6 +1,6 @@
 //! The parallel Laplace variational E-step driver shared by the logistic-normal
-//! models (CTM/STM, and STS in a later step). It owns only the parallel iteration
-//! and ordering: per-document inference is independent, so it runs under rayon,
+//! models (CTM/STM and STS). It owns only the parallel iteration and ordering:
+//! per-document inference is independent, so it runs under rayon,
 //! but results are collected in DOCUMENT ORDER and returned that way, so the
 //! caller's serial sufficient-statistic reduce sums in the exact same order as a
 //! single-threaded loop would — the fit stays bit-for-bit deterministic

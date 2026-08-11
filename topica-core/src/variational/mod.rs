@@ -1,8 +1,7 @@
 //! Shared kernels for the logistic-normal variational family (CTM/STM/STS/ETM):
-//! L-BFGS, the Laplace E-step driver, the Σ/Γ M-step, and sparse-doc prep. In
-//! later steps the submodules `lbfgs`, `laplace`, `mstep`, `sparse` are added and
-//! the model fits are rewired through them; for now this module only declares the
-//! family trait.
+//! L-BFGS, the Laplace E-step driver, the Σ/Γ M-step, and sparse-doc prep. The
+//! submodules `lbfgs`, `laplace`, `mstep`, `sparse` and `svi` own those kernels;
+//! this module re-exports them and declares the family trait.
 
 pub mod lbfgs;
 pub use lbfgs::{lbfgs_minimize, lbfgs_minimize_status, lbfgs_minimize_status_capped};
