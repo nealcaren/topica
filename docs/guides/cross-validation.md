@@ -55,6 +55,27 @@ For each fold, on the **held-out** test documents:
 `result.aggregate` gives the macro mean ± std of each metric across folds;
 `result.per_fold` is the per-fold detail.
 
+### Covariate-effect stability (keyATM, DMR, GDMR)
+
+For a model that learns covariate coefficients (keyATM covariate, DMR, GDMR),
+`cross_validate` also reports whether those effects hold up across folds, in
+`result.covariate_stability`. After aligning topics across every fold pair
+(vocabulary-aware, since fold vocabularies differ), it compares the fold-aligned
+coefficients (λ) two ways:
+
+- **sign-agreement rate** — the fraction of (topic, covariate) cells where two folds
+  agree on the sign of the effect, and
+- **magnitude correlation** — the Pearson correlation of the aligned coefficients.
+
+Both are reported pooled and per covariate (`result.covariate_stability["per_feature"]`).
+
+This is deliberately **not** a predictive-coverage statistic, and it is never stored in
+a `coverage_*` field. λ has no per-document ground truth, and the conditional
+`feature_effect_se` is under-dispersed, so a ±2·SE-overlap "stability" would read as
+spuriously stable. Sign-agreement and magnitude correlation ask the honest question
+instead: do the folds recover effects of the same direction and relative size? Do not
+report this number as if it were held-out predictive accuracy for the covariate.
+
 ## Supervised models (out-of-fold prediction)
 
 For a supervised/measurement model with a numeric response — `SupervisedLDA` — pass
@@ -148,7 +169,9 @@ condition on your covariate, so the reported perplexity does not reflect it.
 `cross_validate` warns at run time when this happens, `result.summary()` prints a
 `covariates:` status line, and every fold carries `covariate_conditioned` in
 `result.to_frame()`. STM `prevalence` conditions correctly (`covariate_conditioned=True`);
-do not report a keyATM-covariate CV as if it conditioned on the covariate.
+do not report a keyATM-covariate CV as if it conditioned on the covariate. For keyATM
+(and DMR/GDMR) the fold-stability of the learned effect itself is reported separately in
+`result.covariate_stability` — see [Covariate-effect stability](#covariate-effect-stability-keyatm-dmr-gdmr).
 
 For anything the named routing does not cover, supply both an
 `fit_fn(train_docs, train_idx, seed_fold) -> model` and a
@@ -185,6 +208,27 @@ you pass a pre-pruned `Corpus` on the `per_fold` path.
 An unrecognized covariate key is a hard error, not a silent drop: passing
 `covariates={"prevalence": X}` to a model that has no prevalence covariate (an LDA,
 say) raises with the list of keys that model does accept.
+
+## Plotting
+
+`topica.viz.plot_cv(result)` turns a run into a figure, switching on the path:
+
+```python
+import topica.viz as viz
+
+result = topica.cross_validate(lambda s: topica.LDA(10, seed=s), docs, folds=5)
+viz.plot_cv(result).to_png("cv.pdf")   # or .to_frame() for the numbers
+```
+
+- **Topic path** — the per-fold distribution of each held-out metric (perplexity,
+  coherence, exclusivity): each fold is a point, with the macro mean and ±1 std
+  overlaid, so the fold-to-fold spread the aggregate hides is visible.
+- **Supervised path** — the out-of-fold reliability plot (binned observed vs predicted
+  with the 45° line, from `result.calibration_table`) beside the per-fold RMSE / R²
+  spread.
+
+Like every `topica.viz` panel it also exposes `.to_frame()` (the per-fold table) and
+`.to_png(path)` / `.to_pdf(path)`.
 
 ## Reproducibility
 

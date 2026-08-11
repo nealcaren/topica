@@ -31,6 +31,7 @@ from .inspector import DocumentInspector
 from .content import ContentCovariate
 from .dashboard import Dashboard, dashboard
 from .permtest import PermutationTestPlot
+from .crossval import CrossValidationPlot
 
 
 def coherence_frontier(model, texts=None, *, n=10, coherence_type=None) -> CoherenceFrontier:
@@ -112,6 +113,16 @@ def permutation_test_plot(results, *, covariate_name=None) -> PermutationTestPlo
     return PermutationTestPlot(results, covariate_name=covariate_name)
 
 
+def plot_cv(result) -> CrossValidationPlot:
+    """Cross-validation results as a figure.
+
+    Pass the output of :func:`topica.cross_validate`. Renders the per-fold metric
+    distribution for the topic path, or the out-of-fold calibration scatter plus
+    per-fold RMSE/R2 spread for the supervised path.
+    """
+    return CrossValidationPlot(result)
+
+
 __all__ = [
     "Panel",
     "Capabilities",
@@ -147,4 +158,6 @@ __all__ = [
     "dashboard",
     "PermutationTestPlot",
     "permutation_test_plot",
+    "CrossValidationPlot",
+    "plot_cv",
 ]

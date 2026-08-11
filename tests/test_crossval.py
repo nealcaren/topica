@@ -565,3 +565,102 @@ def test_to_frame():
     df = result.to_frame()
     assert len(df) == 4
     assert "perplexity" in df.columns
+
+
+# ---------------------------------------------------------------------------
+# Covariate-effect fold-stability (#705) — keyATM covariate lambda
+# ---------------------------------------------------------------------------
+
+
+def test_covariate_effect_stability_keyatm():
+    """keyATM covariate lambda gets a sign-agreement + magnitude-correlation surface,
+    NOT predictive coverage, and never lands in a coverage_ field."""
+    docs, labels = _synthetic_corpus(n_docs=90)
+    keywords = {"animals": ["cat", "dog", "pet"], "finance": ["bank", "loan", "money"]}
+    X = labels.reshape(-1, 1).astype(float)
+    with pytest.warns(UserWarning):  # the marginal-covariate warning still fires
+        result = topica.cross_validate(
+            lambda s: topica.KeyATM(keywords, num_topics=2, seed=s),
+            docs,
+            covariates={"covariates": X},
+            folds=3,
+            fit_kwargs={"iters": 40},
+        )
+    cs = result.covariate_stability
+    assert cs is not None
+    assert -1.0 <= cs["sign_agreement"] <= 1.0
+    assert cs["n_pairs"] == 3  # 3 fold pairs from 3 folds
+    assert "per_feature" in cs and len(cs["per_feature"]) == cs["n_features"]
+    # It is explicitly NOT coverage and must not leak into any coverage_ field.
+    assert "not predictive coverage" in cs["note"].lower()
+    assert not any(k.startswith("coverage_") for k in result.aggregate)
+    assert not any(k.startswith("coverage") for k in cs)
+    assert "covariate-effect stability" in result.summary()
+    assert "NOT predictive coverage" in result.summary()
+
+
+def test_covariate_effect_stability_none_without_covariates():
+    """Plain LDA has no lambda, so there is nothing to report."""
+    docs, _ = _synthetic_corpus(n_docs=40)
+    result = topica.cross_validate(
+        lambda s: topica.LDA(2, seed=s), docs, folds=3, fit_kwargs={"iters": 30}
+    )
+    assert result.covariate_stability is None
+
+
+def test_covariate_effect_stability_self_pair_agrees():
+    """Identical covariate fits must have perfect sign-agreement and magnitude corr."""
+    from topica.crossval import _covariate_effect_stability
+
+    docs, labels = _synthetic_corpus(n_docs=60)
+    keywords = {"animals": ["cat", "dog", "pet"], "finance": ["bank", "loan", "money"]}
+    X = labels.reshape(-1, 1).astype(float)
+    m = topica.KeyATM(keywords, num_topics=2, seed=1)
+    m.fit(topica.Corpus.from_documents(docs), covariates=X, iters=60)
+    cs = _covariate_effect_stability([m, m])
+    assert cs is not None
+    assert cs["sign_agreement"] == 1.0
+    # A self-pair is a perfect line; corr is 1.0 (or NaN only if lambda is constant).
+    assert np.isnan(cs["magnitude_correlation"]) or cs["magnitude_correlation"] > 0.99
+
+
+# ---------------------------------------------------------------------------
+# plot_cv (#705) — the viz panel
+# ---------------------------------------------------------------------------
+
+
+def test_plot_cv_topic_path():
+    pytest.importorskip("matplotlib")
+    import topica.viz as viz
+
+    docs, _ = _synthetic_corpus()
+    result = topica.cross_validate(
+        lambda s: topica.LDA(2, seed=s), docs, folds=4, fit_kwargs={"iters": 30}
+    )
+    panel = viz.plot_cv(result)
+    df = panel.to_frame()
+    assert len(df) == 4
+    fig = panel.to_png()
+    assert fig is not None
+    import matplotlib.pyplot as plt
+
+    plt.close(fig)
+
+
+def test_plot_cv_supervised_path():
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("pandas")
+    import topica.viz as viz
+
+    docs, y = _supervised_corpus(n_docs=80)
+    result = topica.cross_validate(
+        lambda s: topica.SupervisedLDA(2, seed=s), docs, y=y, folds=4,
+        fit_kwargs={"iters": 25},
+    )
+    panel = viz.plot_cv(result)
+    assert panel._kind == "supervised"
+    fig = panel.to_png()
+    assert fig is not None
+    import matplotlib.pyplot as plt
+
+    plt.close(fig)
