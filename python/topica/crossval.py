@@ -402,6 +402,19 @@ class CrossValResult:
     """Cross-fold topic stability (mean +/- std matched-topic cosine over all fold
     pairs), computed vocabulary-aware via align_topics since fold vocabularies
     differ. None when there are too few comparable fits."""
+    covariate_stability: dict | None = None
+    """Covariate-effect fold-stability for models that learn covariate coefficients
+    (keyATM covariate, DMR, GDMR): after aligning topics across every fold pair,
+    the sign-agreement rate and magnitude (Pearson) correlation of the fold-aligned
+    covariate effects (lambda), per feature and pooled.
+
+    This is deliberately NOT a predictive-coverage statistic and is never stored in
+    a ``coverage_*`` field: lambda has no per-document ground truth, and the
+    conditional ``feature_effect_se`` is under-dispersed, so a +/-2*SE-overlap
+    "stability" would read as spuriously stable. Sign-agreement + magnitude
+    correlation ask the honest question instead — do the folds recover effects of
+    the same direction and relative size? None when fewer than two fold models
+    expose ``feature_effects``."""
     kind: str = "topic"
     """"topic" (held-out completion) or "supervised" (out-of-fold prediction)."""
     oof_predictions: Any = None
@@ -421,6 +434,20 @@ class CrossValResult:
         import pandas as pd
 
         return pd.DataFrame(self.per_fold)
+
+    def covariate_stability_frame(self):
+        """Per-feature covariate-effect stability as a pandas DataFrame (one row per
+        covariate: feature, sign_agreement, magnitude_correlation, n). None when this
+        run has no covariate-effect stability (see :attr:`covariate_stability`)."""
+        if self.covariate_stability is None:
+            return None
+        import pandas as pd
+
+        rows = [
+            {"feature": name, **stat}
+            for name, stat in self.covariate_stability["per_feature"].items()
+        ]
+        return pd.DataFrame(rows)
 
     def summary(self) -> str:
         if self.kind == "supervised":
@@ -454,6 +481,33 @@ class CrossValResult:
                 f"  stability (cross-fold cosine): {self.stability['mean']:.4g} "
                 f"+/- {self.stability['std']:.4g}"
             )
+        if self.covariate_stability is not None:
+            cs = self.covariate_stability
+            if cs.get("effects_near_zero"):
+                lines.append(
+                    "  covariate-effect stability: UNDEFINED — the learned effects "
+                    "are ~0 (the model likely needs more fit iterations before its "
+                    "covariate effects mean anything)"
+                )
+            else:
+                mc = cs["magnitude_correlation"]
+                mc_str = ("n/a (no variance)" if not np.isfinite(mc) else f"{mc:.3f}")
+                lines.append(
+                    f"  covariate-effect stability: sign-agreement "
+                    f"{cs['sign_agreement']:.3f}, magnitude corr {mc_str} "
+                    f"(feature-macro over {cs['n_features']} covariate(s), "
+                    f"{cs['n_pairs']} fold pairs; NOT predictive coverage; effects are "
+                    f"learned per fold — unaffected by any marginal held-out fallback)"
+                )
+            if cs.get("partial_alignment"):
+                tc = cs["topics_compared"]
+                lines.append(
+                    f"    (partial alignment: some fold pairs compared as few as "
+                    f"{tc['min']}/{cs['n_topics']} topics — unaligned topics are "
+                    f"excluded, which can bias stability upward)"
+                )
+            if cs.get("caveat"):
+                lines.append(f"    (caveat: {cs['caveat']})")
         if self.vocab == "per_fold":
             lines.append(
                 "  (perplexity is per-fold; vocabularies differ so it is not pooled)"
@@ -575,7 +629,22 @@ def _resolve_covariates(covariates, n_docs):
         raise ValueError("covariates must be a dict {kwarg_name: array}")
     out = {}
     for key, arr in covariates.items():
+        # topica.one_hot / design_matrix return (matrix, names); a common first-timer
+        # mistake is to pass that tuple straight through. np.asarray on it yields a
+        # ragged object array and a cryptic downstream error — catch it here.
+        if isinstance(arr, tuple):
+            raise ValueError(
+                f"covariate {key!r} is a tuple, not an array — did you forget to "
+                f"unpack one_hot()/design_matrix()? They return (matrix, names); pass "
+                f"the matrix, e.g. `X, names = topica.one_hot(...)` then "
+                f"`covariates={{'{key}': X}}`"
+            )
         a = np.asarray(arr)
+        if a.dtype == object or not np.issubdtype(a.dtype, np.number):
+            raise ValueError(
+                f"covariate {key!r} must be a numeric array, got dtype {a.dtype}; "
+                "encode categoricals with topica.one_hot(...) first"
+            )
         if a.shape[0] != n_docs:
             raise ValueError(
                 f"covariate {key!r} has length {a.shape[0]}, expected n_docs={n_docs}"
@@ -679,6 +748,7 @@ def cross_validate(
     *,
     y=None,
     covariates=None,
+    covariate_names=None,
     folds=5,
     strategy="kfold",
     groups=None,
@@ -712,6 +782,11 @@ def cross_validate(
     docs : list[list[str]] or a Corpus.
     covariates : dict ``{fit_kwarg: array}`` of per-document covariates (length
         n_docs), e.g. ``{"prevalence": X}`` for STM. Sub-indexed per fold.
+    covariate_names : optional names for the covariate columns, used to label the
+        covariate-effect stability table/plot (keyATM/DMR/GDMR). A flat sequence
+        (``["Liberal", "day_z"]``) or a dict keyed by the covariate kwarg. Length must
+        equal the number of covariate effects (intercept excluded); handy because
+        ``one_hot`` returns the names separately from the matrix.
     y : per-document numeric response (length n_docs). When given, runs the
         supervised out-of-fold path (regression): fit on each training fold, predict
         the held-out response, assemble an out-of-fold vector, and report pooled +
@@ -915,6 +990,7 @@ def cross_validate(
             )
 
     stability = _cross_fold_stability(fold_models)
+    covariate_stability = _covariate_effect_stability(fold_models, cov, covariate_names)
 
     # Capture the fitted model's class + settings for the manifest (constant across
     # folds; the factory itself is an opaque callable).
@@ -941,6 +1017,7 @@ def cross_validate(
         manifest=mani,
         vocab=vocab,
         stability=stability,
+        covariate_stability=covariate_stability,
     )
 
 
@@ -973,6 +1050,248 @@ def _cross_fold_stability(models):
         return None
     sims = np.array(sims, dtype=np.float64)
     return {"mean": float(sims.mean()), "std": float(sims.std()), "n_pairs": int(sims.size)}
+
+
+def _placeholder_names(cov_names):
+    """True when the model handed back positional placeholders (keyATM emits
+    ``feature_0``/``feature_1``/... for the covariate columns when the covariate
+    arrives as a bare matrix), so the caller should substitute a kwarg label instead.
+    ``cov_names`` is the covariate columns only (intercept already dropped)."""
+    import re
+
+    return bool(cov_names) and all(
+        re.fullmatch(r"feature_\d+", str(nm)) for nm in cov_names
+    )
+
+
+def _resolve_covariate_names(covariate_names, cov, n_feat):
+    """Turn the user's ``covariate_names=`` into a length-``n_feat`` list, or None.
+
+    Accepts a flat sequence (``["Liberal", "day_z"]``) or a dict keyed by the covariate
+    kwarg (``{"covariates": ["Liberal", "day_z"]}``). Any other length is a hard error —
+    a silent mismatch would mislabel effects."""
+    if covariate_names is None:
+        return None
+    names = covariate_names
+    if isinstance(covariate_names, dict):
+        keys = list(cov.keys()) if cov else []
+        if len(keys) == 1 and keys[0] in covariate_names:
+            names = covariate_names[keys[0]]
+        elif len(covariate_names) == 1:
+            names = next(iter(covariate_names.values()))
+        else:
+            raise ValueError(
+                "covariate_names as a dict must key the single covariate kwarg "
+                f"(got keys {list(covariate_names)} vs covariates {list(cov or [])})"
+            )
+    names = list(names)
+    if len(names) != n_feat:
+        raise ValueError(
+            f"covariate_names has {len(names)} names but the model learned {n_feat} "
+            "covariate effect(s); they must match (intercept is not named)"
+        )
+    return [str(x) for x in names]
+
+
+def _covariate_effect_stability(models, cov=None, covariate_names=None):
+    """Covariate-effect fold-stability for models with a learned lambda (keyATM
+    covariate, DMR, GDMR).
+
+    For every pair of fold models, align their topics (vocabulary-aware, since fold
+    vocabularies differ), reorder the second fold's ``feature_effects`` rows onto the
+    first's topics, then compare the matched covariate coefficients two ways:
+
+    - **sign-agreement**: the fraction of (topic, covariate) cells where the two folds
+      agree on the sign of the effect, and
+    - **magnitude correlation**: the Pearson correlation of the matched effects.
+
+    Both headline numbers are **macro-averaged over features** (mean of the per-feature
+    statistics), not pooled over raw cells: pooling one Pearson correlation across
+    features of different scales lets the highest-variance covariate dominate and hide
+    instability in a smaller or null one (adversarial review, #705). Per-feature detail
+    is in ``per_feature``.
+
+    Partial topic alignment is disclosed, not hidden: ``align_topics`` may match fewer
+    than K topics (an unstable topic whose word distribution also drifts can fall below
+    the alignment threshold), and comparing only the topics that happened to align would
+    bias stability upward. ``topics_compared``/``n_topics`` report the coverage so a
+    reader can see when a fold pair dropped topics.
+
+    The intercept column (0) is excluded — it is a per-topic baseline, not a covariate
+    effect. This is NOT predictive coverage (lambda has no per-doc truth), and the
+    caller must never fold it into a ``coverage_*`` field.
+
+    Returns a dict (macro headline + per-feature) or None when fewer than two fold
+    models expose ``feature_effects`` or the folds disagree on the number of covariate
+    columns.
+    """
+    import warnings
+
+    usable = []
+    for m in models:
+        if m is None or not hasattr(m, "topic_word"):
+            continue
+        try:
+            fe = np.asarray(m.feature_effects, dtype=np.float64)
+        except Exception:
+            continue  # not a covariate model (feature_effects raises without covariates)
+        if fe.ndim != 2 or fe.shape[1] < 2:
+            continue  # need at least one covariate column beyond the intercept
+        names = list(getattr(m, "feature_names", []))
+        usable.append((m, fe, names))
+    if len(usable) < 2:
+        return None
+
+    # All folds must share the covariate design (same coefficient columns); otherwise
+    # aligning effects across folds compares different quantities.
+    ncols = {fe.shape[1] for _, fe, _ in usable}
+    if len(ncols) != 1:
+        warnings.warn(
+            "covariate-effect stability skipped: fold models have different numbers "
+            f"of covariate coefficients ({sorted(ncols)}); the covariate design must "
+            "match across folds to compare effects.",
+            stacklevel=3,
+        )
+        return None
+
+    from .validation import align_topics
+
+    # Covariate columns are 1..F (drop the intercept at 0). Prefer the model's own
+    # feature names; when it hands back positional placeholders (keyATM with a bare
+    # covariate matrix), fall back to the covariate kwarg the user actually passed, so
+    # a two-covariate model is not reported as feature_0/feature_1 (usability, #705).
+    n_feat = usable[0][1].shape[1] - 1
+    ref_names = usable[0][2]
+    cov_names = list(ref_names[1:]) if len(ref_names) == n_feat + 1 else []
+    user_names = _resolve_covariate_names(covariate_names, cov, n_feat)
+    if user_names is not None:
+        feat_names = user_names  # explicit names win over anything the model reports
+    elif cov_names and not _placeholder_names(cov_names):
+        feat_names = cov_names
+    else:
+        # A single covariate kwarg maps to the whole F-column matrix; label columns
+        # kwarg[0..F-1]. With 0 or >1 kwargs, keep the neutral feature_j.
+        keys = list(cov.keys()) if cov else []
+        prefix = keys[0] if len(keys) == 1 else None
+        feat_names = (
+            [f"{prefix}[{j}]" for j in range(n_feat)] if prefix is not None
+            else [f"feature_{j}" for j in range(n_feat)]
+        )
+
+    # GDMR coefficients are Legendre-basis terms whose affine map depends on each fold's
+    # own covariate range (metadata_range=None infers it per fold), so column j means a
+    # different function in different folds. The diagnostic still runs, but say so.
+    caveat = None
+    if any(type(m).__name__ == "GDMR" for m, _, _ in usable):
+        caveat = (
+            "GDMR coefficients are basis-expansion terms on a per-fold covariate range; "
+            "aligning column j across folds compares different basis functions unless "
+            "metadata_range= is fixed. Interpret magnitude correlation cautiously."
+        )
+        warnings.warn("covariate-effect stability: " + caveat, stacklevel=3)
+
+    # Accumulate matched (fold_a, fold_b) coefficient values per feature over all pairs,
+    # and track how many of K topics each pair actually compared.
+    n_topics = int(usable[0][1].shape[0])
+    per_feat_a = [[] for _ in range(n_feat)]
+    per_feat_b = [[] for _ in range(n_feat)]
+    n_pairs = 0
+    topics_compared = []
+    for i in range(len(usable)):
+        for j in range(i + 1, len(usable)):
+            (mi, fei, _), (mj, fej, _) = usable[i], usable[j]
+            try:
+                matches = align_topics(mi, mj, metric="cosine").matches
+            except Exception as exc:
+                warnings.warn(
+                    f"covariate-effect stability skipped a fold pair ({exc})",
+                    stacklevel=3,
+                )
+                continue
+            if not matches:
+                continue
+            n_pairs += 1
+            topics_compared.append(len(matches))
+            for ta, tb, _sim in matches:
+                for f in range(n_feat):
+                    per_feat_a[f].append(fei[ta, f + 1])
+                    per_feat_b[f].append(fej[tb, f + 1])
+
+    if n_pairs == 0:
+        return None
+
+    # "Near zero" tolerance, relative to the largest learned effect anywhere: an
+    # unconverged keyATM returns lambda == 0 for every topic (it has not warmed up),
+    # and a zero coefficient has no sign to agree on. Scoring sign(0)==sign(0) as
+    # agreement would report an all-zero (learned-nothing) model as perfectly stable
+    # — the exact trap a first-time user hit (#705). Exclude ~0 cells instead.
+    _all = np.array(
+        [v for f in range(n_feat) for v in (per_feat_a[f] + per_feat_b[f])],
+        dtype=np.float64,
+    )
+    scale = float(np.max(np.abs(_all))) if _all.size else 0.0
+    tol = max(1e-12, 1e-8 * scale)
+    effects_near_zero = scale <= tol  # the model learned essentially no covariate effect
+
+    def _sign_agree(a, b):
+        a, b = np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64)
+        # A coefficient at (or near) 0 has no sign to agree on; count agreement only over
+        # cells where at least one fold learned a nonzero effect. No such cell -> undefined.
+        mask = (np.abs(a) > tol) | (np.abs(b) > tol)
+        if not mask.any():
+            return float("nan")
+        return float(np.mean(np.sign(a[mask]) == np.sign(b[mask])))
+
+    def _corr(a, b):
+        a, b = np.asarray(a), np.asarray(b)
+        if a.size < 2 or np.std(a) == 0 or np.std(b) == 0:
+            return float("nan")  # a constant column has no magnitude to correlate
+        return float(np.corrcoef(a, b)[0, 1])
+
+    per_feature = {}
+    for f in range(n_feat):
+        a, b = per_feat_a[f], per_feat_b[f]
+        mag = np.abs(np.concatenate([a, b])) if a else np.array([])
+        per_feature[feat_names[f]] = {
+            "sign_agreement": _sign_agree(a, b),
+            "magnitude_correlation": _corr(a, b),
+            "effect_magnitude": float(mag.mean()) if mag.size else float("nan"),
+            "n": int(len(a)),
+        }
+
+    # Macro headline: mean of the per-feature statistics (equal weight per covariate),
+    # NOT a single correlation over pooled raw cells. Skip NaN per-feature values
+    # (constant/near-zero columns) so one degenerate covariate does not blank the headline.
+    sa = np.array([v["sign_agreement"] for v in per_feature.values()], dtype=np.float64)
+    mc = np.array([v["magnitude_correlation"] for v in per_feature.values()],
+                  dtype=np.float64)
+    sa = sa[np.isfinite(sa)]
+    mc = mc[np.isfinite(mc)]
+    tc = np.array(topics_compared, dtype=np.float64)
+
+    note = ("covariate-effect fold-stability (feature-macro sign-agreement + "
+            "magnitude correlation of aligned lambda); NOT predictive coverage")
+    if effects_near_zero:
+        note += (". WARNING: the learned covariate effects are ~0, so stability is "
+                 "undefined — the model likely needs more fit iterations before its "
+                 "covariate effects mean anything")
+
+    return {
+        "sign_agreement": float(sa.mean()) if sa.size else float("nan"),
+        "magnitude_correlation": float(mc.mean()) if mc.size else float("nan"),
+        "effects_near_zero": bool(effects_near_zero),
+        "max_effect_magnitude": scale,
+        "n_pairs": int(n_pairs),
+        "n_features": int(n_feat),
+        "n_topics": n_topics,
+        "topics_compared": {
+            "mean": float(tc.mean()), "min": int(tc.min()), "max": int(tc.max()),
+        },
+        "partial_alignment": bool(tc.min() < n_topics),
+        "per_feature": per_feature,
+        "caveat": caveat,
+        "note": note,
+    }
 
 
 # ---------------------------------------------------------------------------
