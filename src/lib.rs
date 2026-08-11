@@ -79,6 +79,7 @@ pub mod tlda;
 pub mod topics_over_time;
 pub mod warplda;
 pub mod wordfish;
+pub mod wordshoal;
 
 // Embedding-native model branch (Top2Vec/BERTopic/...): clustering pipeline over
 // user-supplied embeddings. Behind the `embeddings` feature (implied by `python`).

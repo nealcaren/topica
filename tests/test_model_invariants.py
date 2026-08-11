@@ -734,6 +734,9 @@ SKIP_MODELS = {
     "TopicGPT": "needs an LLM / external API",
     "Wordfish": "a pure ideal-point scaler with no topic/doc-topic distribution; "
     "validated by its own recovery test in tests/test_wordfish.py",
+    "Wordshoal": "a two-stage ideal-point scaler with no topic/doc-topic "
+    "distribution; validated by its own recovery test (tests/test_wordshoal.py) and "
+    "R-oracle parity (parity/wordshoal_r_compare.py)",
     "PartyEmbeddings": "a learned-embedding ideal-point scaler with no "
     "topic/doc-topic distribution; validated by its own recovery + parity tests "
     "(tests/test_party_embeddings.py, parity/party_embeddings_compare.py)",

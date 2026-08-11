@@ -63,6 +63,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`Wordshoal` — multi-domain political-text scaling** (Lauderdale & Herzog,
+  Political Analysis 2016). The multi-domain extension of `Wordfish`: it scales each
+  debate/domain separately with Wordfish (stage 1), then combines the within-domain
+  speaker positions into one cross-domain actor scale via a linear factor model
+  (stage 2, `psi = alpha_j + beta_j * theta_i`), so the recovered scale reflects
+  ideology rather than the agenda of each debate. `fit(docs, speakers=, domains=)`
+  with externally-known debate labels; exposes `author_positions`, `position_se`,
+  `domain_scales`, `author_precision`, and `word_scores(domain)`. Deterministic
+  (bit-reproducible); single-document domains error and disconnected speaker-domain
+  graphs warn (`num_components`). Validated against an R reference oracle
+  (`quanteda.textmodels` Wordfish + the paper's stage-2 ascent) at correlation 1.00
+  (#695).
 - **`GaussianLDA` — Gaussian LDA** (Das, Zaheer & Dyer, ACL 2015). LDA where each
   topic is a Gaussian over the word-embedding space (Normal-Inverse-Wishart prior)
   instead of a categorical over the vocabulary, so topics generalize over semantically

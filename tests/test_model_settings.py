@@ -86,6 +86,7 @@ _FACTORIES: dict[str, object] = {
     "IdealPointTM": lambda: topica.IdealPointTM(2),
     "IdealPointSentenceTM": lambda: topica.IdealPointSentenceTM(2),
     "Wordfish": lambda: topica.Wordfish(),
+    "Wordshoal": lambda: topica.Wordshoal(),
     "PartyEmbeddings": lambda: topica.PartyEmbeddings(),
     # Pure-Python wrapper models.
     "GDMR": lambda: topica.GDMR(2, degrees=[2]),

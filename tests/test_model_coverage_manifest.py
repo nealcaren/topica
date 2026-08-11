@@ -25,6 +25,9 @@ INVARIANT_EXEMPT = {
     "TopicGPT": "needs an LLM / external API",
     "Wordfish": "a pure ideal-point scaler with no topic/doc-topic distribution; "
     "the topic-health invariants do not apply (covered by tests/test_wordfish.py)",
+    "Wordshoal": "a two-stage ideal-point scaler with no topic/doc-topic "
+    "distribution; the topic-health invariants do not apply (covered by "
+    "tests/test_wordshoal.py and parity/wordshoal_r_compare.py)",
     "PartyEmbeddings": "a learned-embedding ideal-point scaler with no "
     "topic/doc-topic distribution; the topic-health invariants do not apply "
     "(covered by tests/test_party_embeddings.py and "
