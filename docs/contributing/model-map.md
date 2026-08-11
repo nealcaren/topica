@@ -120,6 +120,7 @@ Column meanings:
 | Model | Source | Binding | Core / family | Feature | Validation |
 |---|---|---|---|---|---|
 | `Wordfish` | `src/wordfish.rs` | `src/python/wordfish.rs` | Poisson-scaling EM | default | `parity/wordfish_r_compare.py`, `tests/test_wordfish.py` |
+| `Wordshoal` | `src/wordshoal.rs` | `src/python/wordshoal.rs` | per-domain Wordfish + cross-domain linear factor EM | default | `parity/wordshoal_r_compare.py`, `tests/test_wordshoal.py` |
 | `TBIP` | `src/tbip.rs` | `src/python/tbip.rs` | Poisson-factorization mean-field SVI | default | `parity/tbip_parity.py`, `tests/test_tbip.py` |
 | `PartyEmbeddings` | `src/party_embeddings.rs` | `src/python/party_embeddings.rs` | PV-DM paragraph vectors (negative sampling) | default | `parity/party_embeddings_compare.py`, `tests/test_party_embeddings.py` |
 

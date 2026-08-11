@@ -556,14 +556,29 @@ impl ETM {
         let phi = vecs_to_arr2(self.surf_beta()?);
         topic_words_helper(py, &phi, &self.id_to_word, self.num_topics, n, topic)
     }
-    /// UMass coherence for each topic's top-`n` words, over the training corpus.
-    #[pyo3(signature = (n=10))]
-    fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
+    /// Scores each topic's top-``n`` words. ``coherence_type`` selects the measure
+    /// (``"u_mass"`` default, or ``"c_v"`` / ``"c_uci"`` / ``"c_npmi"``); ``texts``
+    /// supplies the reference corpus for the windowed measures (defaults to the
+    /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
+    /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
+    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    fn coherence<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        coherence_type: String,
+        texts: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let phi = vecs_to_arr2(self.surf_beta()?);
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
-        Ok(
-            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
-                .to_pyarray_bound(py),
+        coherence_dispatch(
+            py,
+            self.corpus.as_ref().unwrap(),
+            &tops,
+            n,
+            &coherence_type,
+            texts,
         )
     }
 
@@ -1337,15 +1352,29 @@ impl DETM {
         topic_words_helper(py, &phi, &self.id_to_word, self.num_topics, n, topic)
     }
 
-    /// UMass coherence for each topic's top-`n` words (time-collapsed topic_word),
-    /// over the training corpus.
-    #[pyo3(signature = (n=10))]
-    fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
+    /// Scores each topic's top-``n`` words. ``coherence_type`` selects the measure
+    /// (``"u_mass"`` default, or ``"c_v"`` / ``"c_uci"`` / ``"c_npmi"``); ``texts``
+    /// supplies the reference corpus for the windowed measures (defaults to the
+    /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
+    /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
+    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    fn coherence<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        coherence_type: String,
+        texts: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word_mean());
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
-        Ok(
-            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
-                .to_pyarray_bound(py),
+        coherence_dispatch(
+            py,
+            self.corpus.as_ref().unwrap(),
+            &tops,
+            n,
+            &coherence_type,
+            texts,
         )
     }
 
@@ -2345,15 +2374,29 @@ impl ProdLDA {
             topic,
         )
     }
-    /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
-    /// of top words per topic scored.
-    #[pyo3(signature = (n=10))]
-    fn coherence<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
+    /// Scores each topic's top-``n`` words. ``coherence_type`` selects the measure
+    /// (``"u_mass"`` default, or ``"c_v"`` / ``"c_uci"`` / ``"c_npmi"``); ``texts``
+    /// supplies the reference corpus for the windowed measures (defaults to the
+    /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
+    /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
+    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    fn coherence<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        coherence_type: String,
+        texts: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
-        Ok(
-            Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
-                .to_pyarray_bound(py),
+        coherence_dispatch(
+            py,
+            self.corpus.as_ref().unwrap(),
+            &tops,
+            n,
+            &coherence_type,
+            texts,
         )
     }
 
@@ -2976,20 +3019,23 @@ macro_rules! ctm_embedding_model {
                     topic,
                 )
             }
-            /// UMass topic coherence per topic, shape ``(num_topics,)``. `n` is the number
-            /// of top words per topic scored.
-            #[pyo3(signature = (n=10))]
+            /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
+            /// Scores each topic's top-``n`` words. ``coherence_type`` selects the measure
+            /// (``"u_mass"`` default, or ``"c_v"`` / ``"c_uci"`` / ``"c_npmi"``); ``texts``
+            /// supplies the reference corpus for the windowed measures (defaults to the
+            /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
+            /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
+            #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
             fn coherence<'py>(
                 &self,
                 py: Python<'py>,
                 n: usize,
+                coherence_type: String,
+                texts: Option<&Bound<'py, PyAny>>,
             ) -> PyResult<Bound<'py, PyArray1<f64>>> {
                 let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
                 let tops = top_word_ids_phi(&phi, self.num_topics, n);
-                Ok(
-                    Array1::from(umass_coherence(self.corpus.as_ref().unwrap(), &tops))
-                        .to_pyarray_bound(py),
-                )
+                coherence_dispatch(py, self.corpus.as_ref().unwrap(), &tops, n, &coherence_type, texts)
             }
 
             /// Held-out topic proportions for new documents: one encoder forward

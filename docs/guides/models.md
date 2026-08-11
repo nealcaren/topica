@@ -126,6 +126,7 @@ The right first choice when your design calls for one: short text, change over t
 | Model | Brings | Inference | Reproducibility | Summary |
 |---|---|---|---|---|
 | `Wordfish` | text | em | bit-exact | Poisson scaling (Slapin & Proksch 2008): an unsupervised one-dimensional ideal-point estimate from word frequencies alone, no topics. The word-frequency baseline companion to IdealPointTM. |
+| `Wordshoal` | text, metadata | em | bit-exact | Multi-domain scaling (Lauderdale & Herzog 2016): scales each debate/domain with Wordfish, then combines the within-domain positions into one cross-domain actor scale via a linear factor model. The multi-domain extension of Wordfish, for speeches carrying trusted debate labels. |
 | `TBIP` | text | variational | seed-reproducible | Text-Based Ideal Points (Vafa, Naidu & Blei 2020): a Poisson factorization whose neutral topic-word intensities are rescaled by a per-word ideological factor exp(x_s * eta_kv), with the author position x_s latent. Fit by the paper's mean-field variational inference (reparameterized SVI). Recovers ideological scales from unlabeled text. |
 | `PartyEmbeddings` | text, metadata | neural-embedding | seed-reproducible | Party embeddings (Rheault & Cochrane 2020): a PV-DM paragraph-vector model trained by negative sampling with party-period metadata tags; the leading principal components of the learned party vectors give the ideological scale, and words share the space so a party's language can be read off by proximity. The corpus-trained word-embedding member of the ideal-point family. |
 
@@ -1450,6 +1451,28 @@ m.control_word_offsets    # (num_levels, vocab): the absorbed per-level word eff
 On a corpus where a control-aligned nuisance axis dominates, plain Wordfish recovers the ideological scale at essentially zero correlation while `control=` restores it (in our planted test, `|r|` with the true scale rises from ~0.03 to ~0.8). The initialization is residualized by level too, so `theta` does not start on the nuisance axis. With no `control` the fit is exactly the historical Wordfish, bit-for-bit.
 
 As a scaling model Wordfish has no topics, so it cannot tell you what is being talked about or how language differs within a topic. When you want the scale and the topics together, reach for [`IdealPointTM`](#idealpointtm) (word embeddings). On clean messaging text the two are comparable on the scale itself; IdealPointTM adds the per-topic framing Wordfish structurally cannot produce.
+
+## Wordshoal
+
+`Wordshoal` ([Lauderdale and Herzog 2016](https://doi.org/10.1093/pan/mpw017)) is the multi-domain extension of [`Wordfish`](#wordfish). A single Wordfish fit over an entire corpus of legislative speech is dominated by *what* each debate is about, not *where* a speaker sits ideologically: the biggest axis of word variation is the topic of the day, so the recovered scale mixes agenda with ideology. Wordshoal removes the agenda by scaling each debate *separately* and then combining. You supply, per document (speech), a `speakers` label and an externally-known `domains` (debate) label — the domains are trusted metadata, not inferred topics.
+
+```python
+m = topica.Wordshoal()
+m.fit(docs, speakers=speaker, domains=debate,      # one speech per row; both labels required
+      anchors={"Sanders": -1.0, "Cruz": 1.0})      # orient the sign of the shared axis
+m.author_positions   # (num_authors, 1): the cross-domain actor scale
+m.position_se        # (num_authors,): standard error of each position
+m.domain_scales      # (num_domains, 2): per-debate [intercept, loading]
+m.word_scores("health-2019", n=10)   # the discriminating words within one debate
+```
+
+The fit has two stages. **Stage 1** runs Wordfish independently on each debate, giving every speech a within-debate position `psi`. Each debate's axis is standardized and oriented arbitrarily — its sign is not comparable across debates, and that is fine. **Stage 2** is a one-dimensional linear factor model over the stacked within-debate positions, `psi = alpha_j + beta_j * theta_i + noise`, where `theta_i` is the actor's cross-domain position and the debate loading `beta_j` absorbs each debate's arbitrary sign and scale — a debate that runs "backwards" simply gets a negative `beta_j`. It is fit by the reference's conditional-maximum-likelihood coordinate ascent (weakly-informative priors on the loadings, intercepts, positions, and per-actor precisions; deterministic initialization). Identification follows the reference: positions are prior-scaled (not re-standardized to unit variance, unlike Wordfish) and identified up to sign, which `anchors` — or, with no anchors, the first two speakers — orient. The fit has no RNG and is bit-reproducible.
+
+Two edge cases are surfaced rather than hidden. Every domain must have at least two speeches to be scaled (a single-document debate raises an error, so you group and filter to debates with two or more speakers before fitting). And if the speaker-domain graph is *disconnected* — two blocs of speakers that never debate the same topics — the scale is not identified across the blocs; `num_components` reports it, `fit` warns, and `author_components` labels each actor's bloc, because positions in different components are not comparable. Pass `speakers`/`domains` as any labels (strings, ints, dates); they are coerced to strings, and `domain_names` is then sorted lexicographically.
+
+The multi-domain benefit — recovering ideology rather than the agenda of each debate — is best read as *directional*: on corpora with few actors the estimated positions carry real sampling noise, so treat the improvement over plain `Wordfish` as a qualitative gain (better party separation), not a precise number. We validate against an R reference oracle (`quanteda.textmodels` Wordfish per debate plus the paper's stage-2 ascent): on a two-stage synthetic corpus topica and the oracle recover the same actor scale at correlation 1.00, and both recover the planted positions (`parity/wordshoal_r_compare.py`).
+
+Reach for Wordshoal over [`Wordfish`](#wordfish) when your speeches carry trusted debate labels and you want a scale comparable *across* debates; reach for [`TBIP`](#tbip) when the issue domains are unknown and should be learned from the text instead.
 
 ## IdealPointSentenceTM
 

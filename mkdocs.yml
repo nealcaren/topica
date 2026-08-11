@@ -108,6 +108,7 @@ nav:
       - Visualization: guides/visualization.md
       - Distinguishing words: guides/keywords.md
       - Held-out inference: guides/transform.md
+      - Cross-validation: guides/cross-validation.md
   - Benchmarks: benchmarks.md
   - Examples:
       - Du Bois in The Crisis: examples/dubois.md

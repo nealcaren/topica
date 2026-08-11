@@ -444,8 +444,22 @@ class _MechanisticModel:
         """
         return self._require_fit().top_words(n, topic=topic)
 
-    def coherence(self, n: int = 10):
-        return self._require_fit().coherence(n)
+    def coherence(self, n: int = 10, *, coherence_type: str = "u_mass", texts=None):
+        """Per-topic coherence, aligned to topic index; higher is more coherent.
+
+        The same surface as every other model (``coherence_type`` of ``"u_mass"``,
+        ``"c_v"``, ``"c_uci"`` or ``"c_npmi"``; an optional ``texts`` reference
+        corpus), forwarded to the inner model.
+
+        Read the number with care here. Coherence asks whether a topic's top terms
+        co-occur, and these "terms" are SAE features, so a reference corpus must be
+        in *feature* space too — the feature corpus this was fit on, not the
+        original text. Passing word documents as ``texts`` would score feature ids
+        against words and silently return noise.
+        """
+        return self._require_fit().coherence(
+            n, coherence_type=coherence_type, texts=texts
+        )
 
     def save(self, path: str) -> None:
         """Save the inner fitted model. See the class docstring for what is lost."""

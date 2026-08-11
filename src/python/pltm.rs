@@ -497,19 +497,26 @@ impl PolylingualLDA {
         )
     }
 
-    /// Topic coherence (UMass) in a given language (default: the first).
-    #[pyo3(signature = (n=10, *, lang=None))]
+    /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
+    /// Scores each topic's top-``n`` words. ``coherence_type`` selects the measure
+    /// (``"u_mass"`` default, or ``"c_v"`` / ``"c_uci"`` / ``"c_npmi"``); ``texts``
+    /// supplies the reference corpus for the windowed measures (defaults to the
+    /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
+    /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
+    #[pyo3(signature = (n=10, *, lang=None, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         lang: Option<&str>,
+        coherence_type: String,
+        texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let m = self.fitted_model()?;
         let li = self.lang_index(lang)?;
         let phi = vecs_to_arr2(&m.topic_word[li]);
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
-        Ok(Array1::from(umass_coherence(&self.corpora[li], &tops)).to_pyarray_bound(py))
+        coherence_dispatch(py, &self.corpora[li], &tops, n, &coherence_type, texts)
     }
 
     fn __repr__(&self) -> String {

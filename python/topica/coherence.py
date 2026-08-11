@@ -181,7 +181,10 @@ def _score_umass(topic, vocab, occ, co, eps):
                 continue
             total += math.log((co[a, b] + 1.0) / occ[b])
             n += 1
-    return total / n if n else float("nan")
+    # UMass is the SUM of the pairwise log-ratios (Mimno et al. 2011), matching
+    # topica's Rust `umass_coherence` used by every model's `.coherence()`. (This
+    # is the one place the two implementations must agree; do not average here.)
+    return total if n else float("nan")
 
 
 def _pair_npmi(pi, pj, pij, eps):
@@ -343,7 +346,7 @@ def _as_reference(texts):
     return [list(t) for t in texts]
 
 
-def coherence(topics, texts, *, coherence_type="c_v", topn=10, window_size=None, epsilon=1e-12):
+def coherence(topics, texts, *, coherence_type="c_v", n=10, topn=None, window_size=None, epsilon=1e-12):
     """Per-topic coherence against a reference corpus.
 
     Parameters
@@ -357,21 +360,37 @@ def coherence(topics, texts, *, coherence_type="c_v", topn=10, window_size=None,
         character-by-character; see issue #648.)
     coherence_type : one of ``"u_mass"``, ``"c_uci"``, ``"c_npmi"``, ``"c_v"``
         (default ``"c_v"``).
-    topn : number of top words per topic to score (default 10).
+    n : number of top words per topic to score (default 10). ``n`` is topica's
+        canonical top-words name, shared with ``model.coherence(n=...)`` and
+        ``top_words(n)``; ``topn`` is accepted as an alias.
     window_size : sliding-window width for the windowed measures; ``None`` uses
         the per-measure default (110 for ``c_v``, 10 for ``c_uci``/``c_npmi``).
         Ignored by ``u_mass``.
 
     Returns
     -------
-    numpy.ndarray of shape ``(num_topics,)`` — the coherence of each topic.
-    Take ``.mean()`` for the overall model score.
+    numpy.ndarray of shape ``(num_topics,)`` — the coherence of each topic, aligned
+    to topic index; higher is more coherent. Take ``.mean()`` for an overall score.
+
+    Notes
+    -----
+    This is the same computation a fitted model exposes as
+    ``model.coherence(n=..., coherence_type=...)``: ``model.coherence(coherence_type=ct)``
+    equals ``coherence(model, training_texts, coherence_type=ct)``. ``c_v`` lies in
+    ``[0, 1]``.
+
+    ``u_mass`` is the **sum** of the pairwise log-ratios, the original Mimno et al.
+    (2011) definition, matching the model method. gensim's ``u_mass`` reports the
+    *mean* of the same per-pair scores, so topica's values differ from gensim's by the
+    pairwise-count factor ``n·(n-1)/2`` at a fixed ``n`` — but because that is a
+    constant divisor, the two rank topics identically; only the absolute scale differs.
     """
     ct = coherence_type.lower()
     if ct not in _VALID:
         raise ValueError(f"coherence_type must be one of {_VALID}, got {coherence_type!r}")
+    topn = n if topn is None else topn  # `topn` is the back-compatible alias for `n`
     if not isinstance(topn, (int, np.integer)) or topn < 1:
-        raise ValueError(f"topn must be a positive integer, got {topn!r}")
+        raise ValueError(f"n must be a positive integer, got {topn!r}")
     texts = _as_reference(texts)
     if len(texts) == 0:
         raise ValueError("texts is empty; pass the reference corpus as list[list[str]]")

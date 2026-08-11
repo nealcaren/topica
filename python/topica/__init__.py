@@ -66,6 +66,7 @@ from ._topica import (
     TBIP,
     TensorLDA,
     Wordfish,
+    Wordshoal,
     PartyEmbeddings,
     ProdLDA,
     RTM,
@@ -296,6 +297,12 @@ from .validation import (  # noqa: E402  general, model-agnostic post-hoc analys
     align_topics,
     topic_stability,
 )
+from .crossval import (  # noqa: E402  (#701 cross-validation evaluation framework)
+    cross_validate,
+    make_folds,
+    Folds,
+    CrossValResult,
+)
 from .ensemble import ensemble, EnsembleResult, cross_ensemble  # noqa: E402  (consensus across runs)
 from .compare import (  # noqa: E402  (statistical two-fit topic-drift comparison, #415)
     compare,
@@ -395,6 +402,7 @@ __all__ = [
     "TBIP",
     "TensorLDA",
     "Wordfish",
+    "Wordshoal",
     "PartyEmbeddings",
     "ProdLDA",
     "RTM",
@@ -461,6 +469,10 @@ __all__ = [
     "TopicDendrogram",
     "align_topics",
     "topic_stability",
+    "cross_validate",
+    "make_folds",
+    "Folds",
+    "CrossValResult",
     "compare",
     "CompareResult",
     "MatchedPair",

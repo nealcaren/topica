@@ -8,6 +8,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Changed
 
+- **Coherence is consistent across the model method and the standalone function**
+  (#686). Every model's `m.coherence(n=10)` now accepts `coherence_type=` (`"u_mass"`
+  default, plus `"c_v"` / `"c_uci"` / `"c_npmi"`) and an optional `texts=` reference
+  corpus; the default UMass fast path is unchanged, and other metrics route through the
+  single `topica.coherence` implementation, so `m.coherence(coherence_type="c_v")`
+  equals `topica.coherence(m, texts, coherence_type="c_v")`. The standalone
+  `topica.coherence` gains `n` as the canonical top-words argument (with `topn` kept as
+  an alias). Every model's `coherence()` docstring now states the sign/scale/alignment
+  (per-topic, aligned to topic index; higher is more coherent). **UMass definition
+  unified**: the standalone `topica.coherence(..., coherence_type="u_mass")` now
+  **sums** the pairwise log-ratios (Mimno et al. 2011), matching the Rust
+  `.coherence()` used by every model; it previously averaged them, so its `u_mass`
+  values change by the pairwise-count factor (model `.coherence()` values are
+  unchanged).
 - **Dataset loaders now offer a uniform shape** (#686). Text-table loaders
   (`load_gadarian`/`load_poliblog`/`load_dubois`) still return a pandas DataFrame by
   default, but accept `as_bunch=True` to return a `Bunch` whose `.df` is the table —
@@ -88,6 +102,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   activations, not tokens); both properties are `None` for corpora built any other
   way.
 
+- **`Wordshoal` — multi-domain political-text scaling** (Lauderdale & Herzog,
+  Political Analysis 2016). The multi-domain extension of `Wordfish`: it scales each
+  debate/domain separately with Wordfish (stage 1), then combines the within-domain
+  speaker positions into one cross-domain actor scale via a linear factor model
+  (stage 2, `psi = alpha_j + beta_j * theta_i`), so the recovered scale reflects
+  ideology rather than the agenda of each debate. `fit(docs, speakers=, domains=)`
+  with externally-known debate labels; exposes `author_positions`, `position_se`,
+  `domain_scales`, `author_precision`, and `word_scores(domain)`. Deterministic
+  (bit-reproducible); single-document domains error and disconnected speaker-domain
+  graphs warn (`num_components`). Validated against an R reference oracle
+  (`quanteda.textmodels` Wordfish + the paper's stage-2 ascent) at correlation 1.00
+  (#695).
 - **`GaussianLDA` — Gaussian LDA** (Das, Zaheer & Dyer, ACL 2015). LDA where each
   topic is a Gaussian over the word-embedding space (Normal-Inverse-Wishart prior)
   instead of a categorical over the vocabulary, so topics generalize over semantically
