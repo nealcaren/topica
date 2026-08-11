@@ -1,0 +1,325 @@
+{
+  "tag": "ng20-20group",
+  "n_docs": 10115,
+  "embed_dim": 384,
+  "n_true_groups": 20,
+  "K": 20,
+  "seed": 13,
+  "lda_top_words": {
+    "0": [
+      "israel",
+      "turkish",
+      "armenian",
+      "jews",
+      "war",
+      "israeli",
+      "armenians",
+      "people",
+      "turkey",
+      "government"
+    ],
+    "1": [
+      "space",
+      "nasa",
+      "launch",
+      "earth",
+      "satellite",
+      "shuttle",
+      "orbit",
+      "data",
+      "moon",
+      "lunar"
+    ],
+    "2": [
+      "car",
+      "new",
+      "bike",
+      "price",
+      "sale",
+      "cars",
+      "good",
+      "engine",
+      "offer",
+      "shipping"
+    ],
+    "3": [
+      "max",
+      "bhj",
+      "giz",
+      "bxn",
+      "air",
+      "qax",
+      "nrhj",
+      "biz",
+      "wwiz",
+      "ghj"
+    ],
+    "4": [
+      "health",
+      "medical",
+      "disease",
+      "use",
+      "patients",
+      "food",
+      "msg",
+      "pain",
+      "cancer",
+      "research"
+    ],
+    "5": [
+      "drive",
+      "card",
+      "scsi",
+      "disk",
+      "dos",
+      "windows",
+      "use",
+      "mac",
+      "bit",
+      "memory"
+    ],
+    "6": [
+      "window",
+      "server",
+      "motif",
+      "widget",
+      "use",
+      "application",
+      "set",
+      "using",
+      "display",
+      "windows"
+    ],
+    "7": [
+      "time",
+      "use",
+      "used",
+      "number",
+      "point",
+      "different",
+      "large",
+      "example",
+      "order",
+      "note"
+    ],
+    "8": [
+      "president",
+      "government",
+      "people",
+      "said",
+      "program",
+      "money",
+      "going",
+      "new",
+      "jobs",
+      "work"
+    ],
+    "9": [
+      "edu",
+      "com",
+      "mail",
+      "information",
+      "send",
+      "list",
+      "university",
+      "email",
+      "internet",
+      "address"
+    ],
+    "10": [
+      "said",
+      "people",
+      "went",
+      "didn",
+      "came",
+      "told",
+      "children",
+      "saw",
+      "did",
+      "started"
+    ],
+    "11": [
+      "image",
+      "software",
+      "available",
+      "ftp",
+      "files",
+      "graphics",
+      "file",
+      "version",
+      "windows",
+      "program"
+    ],
+    "12": [
+      "key",
+      "encryption",
+      "chip",
+      "clipper",
+      "keys",
+      "privacy",
+      "government",
+      "security",
+      "use",
+      "public"
+    ],
+    "13": [
+      "team",
+      "game",
+      "year",
+      "games",
+      "play",
+      "season",
+      "hockey",
+      "players",
+      "league",
+      "win"
+    ],
+    "14": [
+      "gun",
+      "law",
+      "guns",
+      "government",
+      "people",
+      "state",
+      "crime",
+      "police",
+      "control",
+      "right"
+    ],
+    "15": [
+      "don",
+      "just",
+      "like",
+      "know",
+      "think",
+      "good",
+      "people",
+      "time",
+      "really",
+      "want"
+    ],
+    "16": [
+      "people",
+      "god",
+      "does",
+      "believe",
+      "evidence",
+      "say",
+      "think",
+      "true",
+      "question",
+      "argument"
+    ],
+    "17": [
+      "power",
+      "use",
+      "water",
+      "ground",
+      "wire",
+      "used",
+      "current",
+      "circuit",
+      "radio",
+      "need"
+    ],
+    "18": [
+      "god",
+      "jesus",
+      "church",
+      "bible",
+      "christ",
+      "christian",
+      "faith",
+      "christians",
+      "man",
+      "people"
+    ],
+    "19": [
+      "file",
+      "entry",
+      "output",
+      "program",
+      "section",
+      "char",
+      "int",
+      "printf",
+      "rules",
+      "entries"
+    ]
+  },
+  "lda_cluster_map_to_group": {
+    "0": "talk.politics.mideast",
+    "1": "sci.space",
+    "2": "misc.forsale",
+    "3": "comp.os.ms-windows.misc",
+    "4": "sci.med",
+    "5": "comp.sys.ibm.pc.hardware",
+    "6": "comp.windows.x",
+    "7": "rec.autos",
+    "8": "talk.politics.misc",
+    "9": "comp.sys.mac.hardware",
+    "10": "talk.religion.misc",
+    "11": "comp.graphics",
+    "12": "sci.crypt",
+    "13": "rec.sport.hockey",
+    "14": "talk.politics.guns",
+    "15": "rec.motorcycles",
+    "16": "alt.atheism",
+    "17": "sci.electronics",
+    "18": "soc.religion.christian",
+    "19": "rec.sport.baseball"
+  },
+  "lda_vs_true": {
+    "ari": 0.1640579277997109,
+    "nmi": 0.4282786359574751,
+    "best_map_accuracy": 0.38536826495304005
+  },
+  "embed_recovers_lda_cluster": {
+    "cv_accuracy": 0.7285219970341078,
+    "n_disagree": 2746,
+    "frac_disagree": 0.27147800296589225
+  },
+  "disagreement_profile": {
+    "mean_entropy_agree": 0.4540922117286137,
+    "mean_entropy_disagree": 0.5240810599858735,
+    "mean_maxtheta_agree": 0.5310762220939359,
+    "mean_maxtheta_disagree": 0.41252335607665275
+  },
+  "external_referee_true_group": {
+    "on_disagreements_lda_matches_true": 0.2552804078659869,
+    "on_disagreements_embed_matches_true": 0.241442097596504,
+    "overall_lda_matches_true": 0.38536826495304005,
+    "overall_embed_matches_true": 0.3816114681166584
+  },
+  "controls": {
+    "embed_recovers_true_group_cv_acc": 0.7245674740484429,
+    "embed_recovers_shuffled_cluster_cv_acc": 0.2579337617399901,
+    "base_rate": 0.26554621848739496
+  },
+  "k_sweep": [
+    {
+      "K": 10,
+      "cv_recovery_acc": 0.7737024221453287,
+      "frac_disagree": 0.22629757785467128,
+      "ari_to_true": 0.1565895221179141
+    },
+    {
+      "K": 20,
+      "cv_recovery_acc": 0.7285219970341078,
+      "frac_disagree": 0.27147800296589225,
+      "ari_to_true": 0.1640579277997109
+    },
+    {
+      "K": 30,
+      "cv_recovery_acc": 0.6530894710825507,
+      "frac_disagree": 0.34691052891744933,
+      "ari_to_true": 0.21127474101590685
+    },
+    {
+      "K": 40,
+      "cv_recovery_acc": 0.6357884330202669,
+      "frac_disagree": 0.36421156697973306,
+      "ari_to_true": 0.24085281576187043
+    }
+  ]
+}

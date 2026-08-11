@@ -1,7 +1,8 @@
 {
+  "tag": "ng20-5group",
   "n_docs": 2594,
   "embed_dim": 384,
-  "n_true_newsgroups": 5,
+  "n_true_groups": 5,
   "K": 5,
   "seed": 13,
   "lda_top_words": {
@@ -66,7 +67,7 @@
       "state"
     ]
   },
-  "lda_cluster_map_to_newsgroup": {
+  "lda_cluster_map_to_group": {
     "0": "sci.space",
     "1": "rec.sport.baseball",
     "2": "comp.graphics",
@@ -89,14 +90,14 @@
     "mean_maxtheta_agree": 0.737206778868809,
     "mean_maxtheta_disagree": 0.5553371590787585
   },
-  "external_referee_true_newsgroup": {
+  "external_referee_true_group": {
     "on_disagreements_lda_matches_true": 0.4256410256410256,
     "on_disagreements_embed_matches_true": 0.4794871794871795,
     "overall_lda_matches_true": 0.6626831148804935,
     "overall_embed_matches_true": 0.6707787201233616
   },
   "controls": {
-    "embed_recovers_true_newsgroup_cv_acc": 0.8986121819583655,
+    "embed_recovers_true_group_cv_acc": 0.8986121819583655,
     "embed_recovers_shuffled_cluster_cv_acc": 0.43407864302235927,
     "base_rate": 0.4533538936006168
   },
