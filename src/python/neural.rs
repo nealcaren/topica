@@ -287,6 +287,7 @@ impl ETM {
         } else {
             convergence_tol
         };
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         if num_topics < 2 {
             return Err(PyValueError::new_err("need at least 2 topics"));
         }
@@ -960,6 +961,7 @@ impl DETM {
         if !finite_pos(delta) {
             return Err(PyValueError::new_err("delta must be > 0"));
         }
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         if eta_nlayers < 1 {
             return Err(PyValueError::new_err("eta_nlayers must be >= 1"));
         }
@@ -2158,6 +2160,7 @@ impl ProdLDA {
         } else {
             convergence_tol
         };
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         if num_topics < 2 {
             return Err(PyValueError::new_err("need at least 2 topics"));
         }
@@ -2798,6 +2801,7 @@ macro_rules! ctm_embedding_model {
                 if !finite_pos(alpha) {
                     return Err(PyValueError::new_err("alpha must be > 0"));
                 }
+                ensure_finite_nonneg("convergence_tol", convergence_tol)?;
                 if !(0.0..1.0).contains(&dropout) {
                     return Err(PyValueError::new_err("dropout must be in [0, 1)"));
                 }

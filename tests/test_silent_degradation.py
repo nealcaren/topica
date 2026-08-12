@@ -152,3 +152,56 @@ def test_dmr_stub_matches_runtime():
     m.fit(docs, X, feature_names=["x"], iters=80, num_samples=2, sample_interval=10)
     assert np.asarray(m.feature_effects).shape[0] == 3
     assert not hasattr(m, "prevalence_effects")
+
+
+# --- Gate B cross-cutting footguns (#713/#714/#715/#717) -----------------------
+
+def test_composition_theta_is_top_level_exported():
+    """#713-#1: posterior_theta_samples' error message steers users to
+    topica.composition_theta, so it must exist at the top level (not only under
+    topica.effects), and be the same callable."""
+    assert hasattr(topica, "composition_theta")
+    assert topica.composition_theta is effects.composition_theta
+    assert "composition_theta" in topica.__all__
+
+
+def test_estimate_effect_warns_on_rank_deficient_design():
+    """#713-#2/#714/#715-#6: a full dummy set plus the default add_intercept=True
+    is a collinear double-intercept design. The pseudoinverse solves it silently
+    with an arbitrary split; estimate_effect must warn that the coefficients are
+    not identified."""
+    rng = np.random.default_rng(0)
+    n, k = 40, 3
+    theta = rng.dirichlet(np.ones(k), size=n)
+    g = np.array([0, 1] * (n // 2))
+    X_full = np.column_stack([g == 0, g == 1]).astype(float)  # collinear with intercept
+    with pytest.warns(UserWarning, match="rank-deficient"):
+        effects.estimate_effect(theta, X=X_full, feature_names=["lvl0", "lvl1"])
+    # A full-rank design (drop_first) must not warn.
+    X_ok = (g == 1).astype(float)[:, None]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        effects.estimate_effect(theta, X=X_ok, feature_names=["lvl1"])
+
+
+def test_best_k_frontier_warns_at_grid_boundary():
+    """#715-#5: the default frontier best_k returned a grid-edge K silently, so
+    the pick flips with grid resolution. It must warn when the knee is at the
+    smallest or largest scanned K, and stay quiet on an interior optimum."""
+    boundary = validation.SearchKResult([
+        {"k": 3, "coherence": -70.0, "exclusivity": 0.50},
+        {"k": 5, "coherence": -68.0, "exclusivity": 0.55},
+        {"k": 7, "coherence": -66.0, "exclusivity": 0.60},
+        {"k": 10, "coherence": -60.0, "exclusivity": 0.95},  # best on both -> boundary
+    ])
+    with pytest.warns(UserWarning, match="boundary"):
+        assert boundary.best_k("frontier") == 10
+    interior = validation.SearchKResult([
+        {"k": 3, "coherence": -70.0, "exclusivity": 0.50},
+        {"k": 5, "coherence": -60.0, "exclusivity": 0.95},  # best interior
+        {"k": 7, "coherence": -66.0, "exclusivity": 0.60},
+        {"k": 10, "coherence": -69.0, "exclusivity": 0.52},
+    ])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert interior.best_k("frontier") == 5

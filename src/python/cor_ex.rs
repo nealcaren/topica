@@ -110,6 +110,7 @@ impl CorEx {
         if num_topics < 1 {
             return Err(PyValueError::new_err("need at least 1 topic"));
         }
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         let count_l = count.to_ascii_lowercase();
         match count_l.as_str() {
             "binarize" => {}

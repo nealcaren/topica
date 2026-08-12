@@ -149,12 +149,16 @@ def test_search_k_best_k_and_directions():
 def test_search_k_best_k_defaults_to_frontier():
     # #167: with no held-out set, best_k() picks the coherence/exclusivity
     # frontier (a knee), not bare coherence (which is monotone in K and would
-    # return the grid floor). The frontier default must not warn.
+    # return the grid floor). The frontier default must not emit the bare-
+    # coherence monotonicity warning. (A #715 grid-boundary warning may still
+    # fire when the knee lands on the smallest/largest scanned K — that is the
+    # intended new signal to widen the grid, not the thing this test guards.)
     docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12
     res = topica.search_k(docs, [2, 3, 4], iters=60, num_samples=1)
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")  # frontier default is silent
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         chosen = res.best_k()
+    assert not any("monotone" in str(w.message).lower() for w in caught)
     assert chosen == res.best_k("frontier")
     assert chosen in {r["k"] for r in res}
 

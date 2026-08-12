@@ -6,9 +6,12 @@ If your goal is a publishable analysis, pair it with
 
 ## Choose an approach
 
-Find your goal in the left column. Every model is validated against a reference
-implementation, so the choice is about fit to your research design, not quality.
-A specialized model is often the right first choice when your data calls for it.
+Find your goal in the left column. Every model is validated before it ships,
+against a maintained reference implementation where one exists and otherwise by
+planted recovery on a synthetic corpus with a known answer (see
+[validation](../contributing/validation.md)), so the choice is about fit to your
+research design, not quality. A specialized model is often the right first
+choice when your data calls for it.
 The [full roster](../guides/models.md) lists every model for each goal.
 
 <!-- BEGIN CHOOSER (generated from topica.registry CHOOSER; edit registry.py, not this block) -->

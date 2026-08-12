@@ -615,13 +615,20 @@ def markdown_table(by_group: bool = True) -> str:
 
     lines: list[str] = []
     if by_group:
-        # Every validated model is reference-checked; state that once, up front, so
-        # the grouping below cannot be read as a validity gradient. The "common
-        # starting points" band is an editorial convenience (where newcomers most
-        # often begin), not a ranking — a specialized model is the right first
-        # choice for its own design.
+        # Every validated model is checked before it ships, but the bar is tiered:
+        # a maintained reference implementation where one exists, otherwise planted
+        # recovery on a synthetic corpus with a known answer. State that honestly,
+        # up front, so the grouping below cannot be read as a validity gradient and
+        # the header does not overclaim reference parity for the planted-only
+        # models. The "common starting points" band is an editorial convenience
+        # (where newcomers most often begin), not a ranking.
         lines.append(
-            "*Every model below is validated against a reference implementation.* "
+            "*Every model below is validated before it enters the roster: against a "
+            "maintained reference implementation where one exists (MALLET, gensim, R "
+            "`stm`, tomotopy, and the like), otherwise by planted recovery on a "
+            "synthetic corpus with a known answer.* See "
+            "[validation](https://nealcaren.github.io/topica/contributing/validation/) "
+            "for where each model stands. "
             "The groupings are about **fit to your research design**, not quality: "
             "a specialized model is the right first choice when your data calls "
             "for it.\n"

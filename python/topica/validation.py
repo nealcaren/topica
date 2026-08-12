@@ -1061,6 +1061,29 @@ class SearchKResult(list):
                                  [r["exclusivity"] for r in self])
         return _argbest_k(self, score)
 
+    def _warn_grid_boundary(self, pick: int) -> None:
+        """Warn when the frontier optimum sits at the low or high end of the
+        scanned grid. There the knee is unidentified — the real best K may lie
+        outside ``ks=`` — and the answer can flip with the grid resolution
+        (``[3,5,7,10]`` vs ``[3,5,8,12,15,20]``). Symmetric to the coherence and
+        held-out boundary guards. Silent on a <=2-point grid, where every pick is
+        trivially a boundary."""
+        ks = [r["k"] for r in self]
+        if len(ks) < 3:
+            return
+        k_min, k_max = min(ks), max(ks)
+        if pick in (k_min, k_max):
+            end = "smallest" if pick == k_min else "largest"
+            warnings.warn(
+                f"best_k(metric='frontier') selected K={pick}, the {end} K in the "
+                f"grid (ks spans {k_min}..{k_max}): the coherence/exclusivity knee "
+                "is at the grid boundary, so the real best K may lie outside the "
+                "scanned range and the pick can change if you widen or refine ks=. "
+                "Widen ks= and refit before trusting a boundary K.",
+                UserWarning,
+                stacklevel=3,
+            )
+
     def best_k(self, metric: str | None = None, *, rule: str = "best",
                frontier_metrics=None, weights=None) -> int:
         """Return the ``k`` chosen by ``metric``.
@@ -1126,8 +1149,11 @@ class SearchKResult(list):
                 raise ValueError("rule='elbow' is not defined for the frontier; "
                                  "use it on a scalar metric like 'heldout_loglik'")
             if frontier_metrics is not None or weights is not None:
-                return self._custom_frontier_k(frontier_metrics, weights, rule)
-            return self._frontier_k_1se() if rule == "1se" else self._frontier_k()
+                pick = self._custom_frontier_k(frontier_metrics, weights, rule)
+            else:
+                pick = self._frontier_k_1se() if rule == "1se" else self._frontier_k()
+            self._warn_grid_boundary(pick)
+            return pick
         if metric not in SEARCH_K_DIRECTIONS:
             raise ValueError(
                 f"unknown metric {metric!r}; choose 'frontier' or one of "

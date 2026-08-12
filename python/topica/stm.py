@@ -785,6 +785,26 @@ def estimate_effect(
             raise ValueError("weights must be finite and non-negative")
 
     p = X.shape[1]
+    # A rank-deficient design (e.g. a bring-your-own full dummy set plus the
+    # default add_intercept=True, or an X that already carries its own intercept)
+    # is silently solved by the pseudoinverse, which returns an arbitrary
+    # minimum-norm split of the collinear effect across the tied columns. The
+    # per-column coefficients are then not identified and easy to misread as
+    # meaningful. R's estimateEffect warns and adds a ridge; we warn.
+    if n >= p:
+        rank = np.linalg.matrix_rank(X)
+        if rank < p:
+            warnings.warn(
+                f"design matrix is rank-deficient ({rank} independent columns for "
+                f"{p} coefficients): the columns are collinear (a common cause is a "
+                f"full set of dummies plus add_intercept=True, or an X that already "
+                f"contains an intercept column). The pseudoinverse returns an "
+                f"arbitrary minimum-norm split of the shared effect, so the "
+                f"individual coefficients are not identified. Drop a redundant "
+                f"column (e.g. one_hot(..., drop_first=True) or add_intercept=False), "
+                f"or use the formula= path, which handles this for you.",
+                stacklevel=2,
+            )
     # Cluster-robust SEs need many clusters. With G < 2 the sandwich meat
     # collapses to ~0 (SEs spuriously near zero); with G <= p the cluster vcov is
     # rank-deficient so some coefficients' SEs are understated. Previously silent.
