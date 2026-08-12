@@ -199,7 +199,7 @@ def _resample_draws(draws, nsims, seed):
     return draws[rng.integers(0, s, size=nsims)]
 
 
-def composition_theta(model, corpus=None, *, nsims=25, seed=0):
+def composition_theta(model, corpus=None, *, nsims=25, seed=0, uncertainty="local"):
     """Draw ``nsims`` theta matrices for method-of-composition, auto-selecting the
     sampler from the model family. Returns ``(nsims, num_docs, num_topics)``.
 
@@ -207,10 +207,17 @@ def composition_theta(model, corpus=None, *, nsims=25, seed=0):
     cross-sweep posterior samples; issue #31) when present, which also means no
     ``corpus`` is needed. It falls back to :func:`dirichlet_theta_samples` (the
     within-document Dirichlet approximation, which does need ``corpus`` for the
-    document lengths) when the model was fit with ``keep_theta_draws=False``."""
+    document lengths) when the model was fit with ``keep_theta_draws=False``.
+
+    ``uncertainty`` applies only to the logistic-normal (STM/CTM) family and is
+    forwarded to :func:`posterior_theta_samples` (``"local"`` / ``"global"`` /
+    ``"none"``, R ``stm``'s ``thetaPosterior`` types); it is ignored for the
+    Dirichlet family, whose draws come from the retained MCMC state."""
     fam = model_family(model)
     if fam == "logistic_normal":
-        return posterior_theta_samples(model, nsims=nsims, seed=seed)
+        return posterior_theta_samples(
+            model, nsims=nsims, seed=seed, uncertainty=uncertainty
+        )
     if fam == "dirichlet":
         draws = getattr(model, "theta_draws", None)
         if draws is not None and len(draws):

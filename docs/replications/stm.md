@@ -30,22 +30,31 @@ for the content model, and
 [`stm_r_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/stm_r_compare.py)
 for the small Gadarian stress case.
 
-## Content model: exact agreement
+## Content model: close agreement, with a different default prior
 
 The content (SAGE) covariate is the deterministic part of STM: given the topic
-assignments, the per-group word distributions follow in closed form. Here topica
-and R agree exactly. On a bilingual corpus fit with `content = ~group`, K = 2,
-the best-aligned cosine between R's and topica's per-group word distributions is
-1.000 in both groups, and both engines separate the two topics rather than
-collapsing them (topic-separation near 0 in each):
+assignments, the per-group word distributions follow in closed form. One default
+differs, so "exact agreement" would overstate it. topica's content prior defaults
+to Gaussian **L2** (`content_prior="l2"`, `content_prior_var=0.5`); R `stm`
+defaults to `kappa.prior="L1"` (a glmnet word-wise lasso). The two regularizers
+pull the per-group deviations differently, so the fits are close but not
+identical. On a bilingual corpus fit with `content = ~group`, K = 2
+([`stm_content_r_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/stm_content_r_compare.py)),
+R's L1 fit and topica's L2 fit align to a per-group cosine of ~0.999, but the
+topic-separation the two produce differs (R ~0.03 per topic, topica ~0.11) — the
+expected signature of L1 (sparser deviations) versus L2:
 
-| Content group | topica–R cosine | both separated |
-|---|---:|:--|
-| `de` | 1.000 | yes |
-| `en` | 1.000 | yes |
+| Content group | topica(L2)–R(L1) cosine |
+|---|---:|
+| `de` | ~0.999 |
+| `en` | ~0.999 |
 
 This is the path where a symmetric-initialization bug once collapsed all topics
-to the background; the exact match against R is how we know it is fixed.
+to the background; the high matched cosine against R is how we know it is fixed.
+If you need R-comparable content regularization, this is the knob to match — pass
+`content_prior="l1"`; topica keeps L2 as its default because that is the path its
+committed gold validates. (A matched-prior parity fixture is tracked as a
+follow-up.)
 
 ## Prevalence model: same neighborhood as R, and the same conclusions
 
@@ -83,12 +92,22 @@ computed base β (for example R `stm`'s exact spectral β), so a fit can start f
 R's initialization and reproduce that run.
 
 What replicates stably across optima is the substantive conclusion. Regressing
-topic prevalence on ideology, topica recovers R's effect coefficients with a
-Pearson correlation of 0.84, and the same sign and significance on 13 of 15
-topics. The [Poliblog](../examples/poliblog.md) and
-[Gadarian](../examples/gadarian.md) worked examples refit the canonical `stm`
-vignettes end to end and recover the prevalence effects the package documents,
-with well-calibrated standard errors from the method of composition.
+topic prevalence on ideology, topica recovers the same effect directions R does:
+in the worked examples the per-topic effect coefficients correlate strongly with
+R's and agree on the sign and significance of most topics (the few that differ are
+the bistable topics the two optimizers split, not a systematic offset). The
+[Poliblog](../examples/poliblog.md) and [Gadarian](../examples/gadarian.md)
+worked examples refit the canonical `stm` vignettes end to end and recover the
+prevalence effects the package documents. `estimate_effect` computes its
+method-of-composition standard errors with R `estimateEffect`'s default
+**Global** uncertainty (one shared topic covariance across documents); pass
+`uncertainty="local"` for the per-document variational covariance, or `"none"`
+for OLS on the point estimate.
+
+The committed gold gates the topic-word matrix (β cosine and top-word overlap);
+the prevalence-effect, θ, and content-κ agreement above is demonstrated in the
+worked-example replications, with committed effect/θ parity fixtures tracked as a
+follow-up.
 
 The smaller Gadarian survey corpus (339 documents, K = 3) is a deliberately
 harder, more multimodal case: with so few short open-ended responses, R itself
