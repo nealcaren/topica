@@ -9,6 +9,27 @@ import topica
 from topica.embedding import embedding_seeds
 
 
+@pytest.fixture(autouse=True)
+def _experimental():
+    """EmbeddingLDA is experimental-gated (#660); enable it for every test here."""
+    was = topica.experimental_enabled()
+    topica.enable_experimental(True)
+    yield
+    topica.enable_experimental(was)
+
+
+def test_requires_experimental():
+    """Construction is refused unless experimental models are enabled (#660)."""
+    vocab, emb, _ = _blocks()
+    was = topica.experimental_enabled()
+    topica.enable_experimental(False)
+    try:
+        with pytest.raises(RuntimeError, match="experimental"):
+            topica.EmbeddingLDA(num_topics=3, embeddings=emb, vocabulary=vocab)
+    finally:
+        topica.enable_experimental(was)
+
+
 def _blocks(n_blocks=3, per_block=8, e_dim=16, seed=0):
     """Vocabulary of disjoint blocks; each block's embeddings cluster around a
     distinct random center. Returns (vocab, embeddings, blocks)."""

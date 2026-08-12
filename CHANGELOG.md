@@ -102,6 +102,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   activations, not tokens); both properties are `None` for corpora built any other
   way.
 
+- **`KeyNMF` — embedding-keyword NMF** (Kristensen-McLachlan et al., 2024). The NMF
+  family's bridge to the embedding backend: for each document it scores its words by
+  the similarity between the document embedding and the word embedding, keeps the
+  top-N positive, and factors that sparse doc-word importance matrix with topica's
+  NMF. `fit(docs, doc_embeddings, word_embeddings=, vocabulary=)`; exposes
+  `keywords(doc)` alongside the standard topic surface. Deterministic. Faithful to
+  the KeyNMF *method*: topica implements the keyword extraction correctly (the
+  turftopic reference has a word/importance `zip`-scramble and an off-by-one) and
+  uses its own multiplicative-update NMF backend (turftopic uses sklearn CD).
+  Validated (`parity/keynmf_compare.py`): keyword extraction matches a correct
+  numpy oracle on every document, and topics align with turftopic at cosine ~0.98
+  (#590).
 - **`TopicalNGrams` — joint topic and phrase discovery** (Wang, McCallum & Wei,
   ICDM 2007). An LDA extension that learns topic-specific multiword phrases during
   fitting: a per-token bigram-status indicator, sampled jointly with the topic in a

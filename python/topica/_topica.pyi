@@ -4707,6 +4707,86 @@ class ZeroShotTM:
     def __repr__(self) -> str: ...
 
 
+class KeyNMF:
+    """KeyNMF (Kristensen-McLachlan et al. 2024): NMF over an embedding-derived
+    keyword-importance matrix. For each document, its words are scored by the
+    similarity between the document embedding and the word embedding; the top-N
+    positive words form a sparse doc-word importance matrix, factored by topica's
+    NMF (NNDSVD + Frobenius). The bridge between the count-based NMF family and the
+    embedding backend; sparse, readable topics robust to short/noisy text. Faithful
+    to the KeyNMF method (validated against turftopic at the method level); topica
+    implements the correct keyword extraction and uses its own MU-NMF backend."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        top_n: int = 25,
+        metric: str = "cosine",
+        seed: int = 13,
+    ) -> None:
+        """top_n keeps that many highest-similarity positive keywords per document;
+        metric is "cosine" (default) or "dot". The NMF iteration cap and tolerance
+        are fit() arguments. seed is accepted for API uniformity; the fit is
+        deterministic."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        doc_embeddings: object,
+        *,
+        word_embeddings: object,
+        vocabulary: Sequence[str],
+        iters: int | None = None,
+        convergence_tol: float | None = None,
+    ) -> "KeyNMF":
+        """doc_embeddings is (num_docs, E); word_embeddings is (len(vocabulary), E)
+        aligned to vocabulary. The vocabulary IS the model vocabulary: a document's
+        candidate words are its tokens present in vocabulary. Token order is
+        irrelevant. num_topics must be <= min(num_docs, len(vocabulary))."""
+        ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def converged(self) -> bool: ...
+    @property
+    def reconstruction_error(self) -> float: ...
+    def keywords(self, doc: int, n: int | None = None) -> list[tuple[str, float]]: ...
+    def top_words(self, n: int = 10, *, topic: int | None = None) -> object: ...
+    def coherence(
+        self,
+        n: int = 10,
+        *,
+        coherence_type: str = "u_mass",
+        texts: object | None = None,
+    ) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> KeyNMF: ...
+    def __repr__(self) -> str: ...
+
+
 class NMF:
     """NMF, non-negative matrix factorization for topic modeling (Lee & Seung
     2001; Boutsidis & Gallopoulos 2008). We factor the non-negative document-term

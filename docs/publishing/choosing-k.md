@@ -295,6 +295,7 @@ coherence-vs-diversity sweep by hand:
 ```python
 import numpy as np, topica
 
+topica.enable_experimental()   # EmbeddingLDA is experimental and gated
 b = topica.datasets.load_ng20_minilm()
 docs = [t.split() for t in b.texts]
 

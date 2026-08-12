@@ -1,7 +1,7 @@
 //! Rust-side estimator conformance — the analog of `python/topica/conformance.py`.
 //! Catches contract gaps in `cargo test --lib`, at the source, before the Python
-//! layer or a release. The full multi-model registry and EXEMPT set are populated
-//! in a later step; this file establishes the check.
+//! layer or a release. The multi-model registry and its structural exemptions
+//! live in `RUST_ESTIMATORS` below.
 
 use crate::estimator::{DirichletModel, Estimator, ModelFamily};
 use crate::variational::LogisticNormalModel;
@@ -271,6 +271,12 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::None_,
         exempt: &[],
     },
+    // KeyNMF: embedding-keyword NMF; the fitted struct wraps an NmfModel.
+    RegistryEntry {
+        name: "KeyNMF",
+        family: ModelFamily::None_,
+        exempt: &[],
+    },
     // GuidedNMF: seed-word-guided semi-supervised NMF (same factorization family).
     RegistryEntry {
         name: "GuidedNMF",
@@ -382,10 +388,10 @@ mod registry_tests {
             }
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
-        // Estimator-backed Rust struct). Bumped to 36 when TopicalNGrams was added.
+        // Estimator-backed Rust struct). Bumped to 37 when KeyNMF was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            36,
+            37,
             "registry size drifted from the Python REGISTRY"
         );
     }

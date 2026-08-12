@@ -101,6 +101,7 @@ Column meanings:
 
 | Model | Source | Binding | Core / family | Feature | Validation |
 |---|---|---|---|---|---|
+| `KeyNMF` | `src/keynmf.rs` | `src/python/keynmf.rs` | embedding-keyword extraction + multiplicative-update NMF (nmf.rs) | default | `parity/keynmf_compare.py`, `tests/test_keynmf.py` |
 | `BERTopic` | `src/bertopic.rs` | `src/python/embedding_cluster.rs` | embedding clustering (cluster.rs, reduce.rs, represent.rs) | `embeddings` | `parity/bertopic_gold.py` |
 | `Top2Vec` | `src/top2vec.rs` | `src/python/embedding_cluster.rs` | embedding clustering (cluster.rs, reduce.rs) | `embeddings` | `parity/top2vec_gold.py`, `parity/top2vec_compare.py` |
 | `MechanisticLDA` | `python/topica/mtm.py` | — _(Python)_ | SAE featurization (Python) over the SparseLDA collapsed-Gibbs core | default | `tests/test_mtm.py` |
@@ -111,7 +112,7 @@ Column meanings:
 | `IdealPointTM` | `src/idealpoint.rs` | `src/python/idealpoint.rs` | variational EM + ideal-point head | default | `tests/test_idealpoint.py`, `tests/test_idealpoint_counts.py` |
 | `IdealPointSentenceTM` | `src/sentence_ideal.rs` | `src/python/sentence_ideal.rs` | Gaussian-cluster EM over embeddings | default | `tests/test_sentence_ideal.py` |
 | `FASTopic` | `src/fastopic.rs` | `src/python/mod.rs` | reverse-mode Sinkhorn optimal transport | default | `parity/fastopic_gold.py`, `parity/fastopic_compare.py` |
-| `EmbeddingLDA` | `python/topica/embedding.py` | — _(Python)_ | seeded Gibbs + embedding NN expansion (Python) | default | `parity/embeddinglda_gold.py`, `tests/test_embedding_lda.py` |
+| `EmbeddingLDA` | `python/topica/embedding.py` | — _(Python)_ | k-means embedding seeding over a SeededLDA Gibbs core (Python); planted-recovery gold only, no external reference | default | `parity/embeddinglda_gold.py`, `tests/test_embedding_lda.py` |
 | `CombinedTM` | `src/prodlda.rs` | `src/python/neural.rs` | contextualized ProdLDA VAE (prodlda.rs) | default | `parity/combinedtm_gold.py`, `parity/combinedtm_compare.py` |
 | `ZeroShotTM` | `src/prodlda.rs` | `src/python/neural.rs` | contextualized ProdLDA VAE (prodlda.rs) | default | `parity/zeroshot_gold.py`, `parity/zeroshot_compare.py` |
 | `InfoCTM` | `src/infoctm.rs` | `src/python/neural.rs` | two ProdLDA VAEs + TAMI alignment (prodlda.rs) | default | `parity/infoctm_gold.py`, `parity/infoctm_compare.py` |

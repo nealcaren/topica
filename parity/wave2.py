@@ -166,6 +166,7 @@ def emb_embeddinglda():
 
 def fit_embeddinglda(iters=300):
     import topica
+    topica.enable_experimental(True)  # EmbeddingLDA is experimental and gated (#660)
 
     docs, vocab = tmi._planted_blocks(k=K, block=8, n=300, seed=0)
     _, word_emb = tmi._planted_embeddings(k=K, block=8, seed=0)
