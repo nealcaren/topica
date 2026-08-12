@@ -15230,6 +15230,11 @@ impl KeyATM {
                     continue;
                 }
                 let kept = words.len() - oov.len();
+                // kept == 0 (all keywords dropped) is the authoritative hard error
+                // below; don't also emit a softer warning for it here.
+                if kept == 0 {
+                    continue;
+                }
                 let note = format!(
                     "'{}' ({} of {} not in vocabulary, ignored: {})",
                     name,
@@ -15237,8 +15242,7 @@ impl KeyATM {
                     words.len(),
                     oov.join(", ")
                 );
-                // kept == 0 is the all-dropped case handled by the hard error below.
-                if kept >= 1 && oov.len() * 2 >= words.len() {
+                if oov.len() * 2 >= words.len() {
                     severe.push(note);
                 } else {
                     mild.push(note);
