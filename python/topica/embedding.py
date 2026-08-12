@@ -19,11 +19,22 @@ and the matching vocabulary list; it does the clustering and seeding.
     from sentence_transformers import SentenceTransformer
     import topica
 
+    topica.enable_experimental()  # EmbeddingLDA is experimental (see note below)
     vocab = sorted({w for d in docs for w in d})
     emb = SentenceTransformer("all-MiniLM-L6-v2").encode(vocab)
     model = topica.EmbeddingLDA(num_topics=10, embeddings=emb, vocabulary=vocab)
     model.fit(docs, iters=1000)
     print(model.top_words(8))
+
+Validation status (experimental). EmbeddingLDA is a topica original: it has no
+published paper and no external reference implementation, so it is validated by a
+*planted-recovery / determinism* gold only (``parity/embeddinglda_gold.py``), not
+by cross-implementation parity. That gold cannot distinguish EmbeddingLDA from
+plain LDA — on the planted corpus, plain LDA and even shuffled/random embeddings
+score the same block purity — and on real labeled text (20 Newsgroups) its label
+recovery sits *below* plain LDA, so it is sound but not demonstrably superior. It
+is therefore gated behind :func:`~topica.enable_experimental` and may change or be
+removed without a deprecation cycle (issue #660).
 """
 
 from __future__ import annotations
@@ -254,6 +265,15 @@ def llm_embed(texts, model="text-embedding-3-small", *, key=None, batch=True, ca
 class EmbeddingLDA:
     """LDA whose topics are anchored by pre-trained embeddings, on both sides.
 
+    .. note::
+       **Experimental** (issue #660). EmbeddingLDA is a topica original with no
+       published paper and no external reference; its gold is planted-recovery
+       only and cannot tell it apart from plain LDA, whose label recovery it does
+       not beat on real text. It is gated behind
+       :func:`~topica.enable_experimental` and may change without a deprecation
+       cycle. The inference core it delegates to (:class:`~topica.SeededLDA`) is
+       itself validated; what is unproven is the embedding-seeding *benefit*.
+
     The vocabulary embeddings define the topics: k-means clusters them into
     ``num_topics`` semantic groups, and each topic is seeded with the ``top_m``
     words nearest its centroid (a prior on the **topic-word** side, via
@@ -326,7 +346,17 @@ class EmbeddingLDA:
         beta: float = 0.01,
         seed: int = 13,
     ) -> None:
-        from . import SeededLDA
+        from . import SeededLDA, experimental_enabled
+
+        if not experimental_enabled():
+            raise RuntimeError(
+                "EmbeddingLDA is experimental: it is a topica original with no "
+                "published paper and no reference-implementation parity (its gold "
+                "is planted-recovery only, and cannot distinguish it from plain "
+                "LDA). Enable experimental models with `topica.enable_experimental()` "
+                "or set the environment variable TOPICA_EXPERIMENTAL=1. Experimental "
+                "models may change or be removed without a deprecation cycle."
+            )
 
         if len(vocabulary) != np.asarray(embeddings).shape[0]:
             raise ValueError("vocabulary length must match the number of embedding rows")

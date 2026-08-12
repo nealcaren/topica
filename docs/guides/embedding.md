@@ -295,6 +295,19 @@ transport problems (reference defaults 3.0 and 2.0); larger is sharper.
 
 ## EmbeddingLDA
 
+!!! warning "Experimental — validated by planted-recovery only"
+    `EmbeddingLDA` is a topica original: it ships before a published paper and a
+    reference-implementation parity check (topica's bar for a validated model). Its
+    gold (`parity/embeddinglda_gold.py`) is a planted-recovery/determinism lock,
+    not cross-implementation parity — on the planted corpus, plain LDA and even
+    shuffled/random embeddings score the same block purity, and on real labeled
+    text (20 Newsgroups) `EmbeddingLDA`'s label recovery sits *below* plain LDA. It
+    is sound but not demonstrably superior. It is **gated**: call
+    `topica.enable_experimental()` (or set `TOPICA_EXPERIMENTAL=1`) before
+    constructing or loading it. It may change or be removed without a deprecation
+    cycle (issue #660). The `SeededLDA` core it delegates to is itself validated;
+    what is unproven is the embedding-seeding *benefit*.
+
 `EmbeddingLDA` is a fixed-K, every-document LDA anchored by embeddings on **both
 sides**. The *word* embeddings define the topics: k-means clusters them into
 `num_topics` groups and seeds each topic with the `top_m` words nearest its
@@ -322,6 +335,7 @@ matrix with its aligned vocabulary, so nothing calls an embedding model:
 import topica
 import numpy as np
 
+topica.enable_experimental()              # EmbeddingLDA is experimental and gated
 ng = topica.datasets.load_ng20_minilm()   # documents + labels + MiniLM embeddings
 docs = [t.split() for t in ng["texts"]]
 
@@ -635,10 +649,10 @@ somewhere. Two ways out:
   labels = theta.argmax(1)          # == model.labels
   ```
 
-- **Use a fixed-K, every-document model.** [`EmbeddingLDA`](#embeddinglda),
-  `FASTopic`, and `ETM` are embedding-driven but give every document a full topic
-  distribution `θ` with no noise bucket. In our testing `EmbeddingLDA` gave the
-  best recovery when the `-1` bucket was the problem.
+- **Use a fixed-K, every-document model.** [`EmbeddingLDA`](#embeddinglda)
+  (experimental), `FASTopic`, and `ETM` are embedding-driven but give every
+  document a full topic distribution `θ` with no noise bucket, so no document is
+  dropped into a `-1` outlier bucket in the first place.
 
 `reduce_outliers()` (below) is the third option: keep HDBSCAN, then reassign the
 `-1` documents after the fact.

@@ -36,11 +36,19 @@ class ModelInfo:
         ``"nonparametric"``, ``"temporal"``, ``"hierarchical"``, ``"cross-lingual"``).
     summary : a one-line description for tables.
     doc : the docs anchor, relative to the docs root.
-    experimental : ``True`` for a model that ships before it has a published
-        paper and a reference-implementation parity check (topica's bar for a
-        *validated* model). Experimental models are gated at construction (see
+    experimental : ``True`` for a model that has not earned a place on the
+        validated roster, on either of two grounds: it is **unpublished** (a
+        topica original with no paper, so it can only ever be validated by
+        planted recovery, not by an independent yardstick), or it is a published
+        method topica ships whose **benefit has not held up** against a simpler
+        baseline. A published method with faithful inference stays validated even
+        when its accuracy basis is planted-recovery (no maintained reference
+        implementation exists); planted-recovery is a validation *basis*, not an
+        experimental marker. Experimental models are gated at construction (see
         :func:`topica.enable_experimental`) and listed apart from the validated
         roster; they may change or be removed without a deprecation cycle.
+        Graduation is the triple gate (accuracy, adversarial, user); see
+        ``docs/contributing/validation.md``.
     common_start : ``True`` for a *common starting point*: one of the handful of
         models most social scientists reach for first, chosen by contemporary
         popularity and applied usefulness. This is an editorial suggestion about
@@ -242,9 +250,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("FASTopic", "embedding", ("text", "embeddings"), "optimal-transport", "seed-reproducible", (),
            "Topics from optimal-transport plans between document, topic, and word embeddings.",
            "guides/embedding.md"),
-        _m("EmbeddingLDA", "embedding", ("text", "embeddings", "seeds"), "gibbs", "seed-reproducible", (),
-           "Seeded LDA whose seed sets are expanded with nearest neighbors in an embedding space.",
-           "guides/embedding.md"),
+        _m("EmbeddingLDA", "embedding", ("text", "embeddings"), "gibbs", "seed-reproducible", (),
+           "LDA anchored by pre-trained embeddings: k-means clusters the vocabulary embeddings, seeds each topic with the words nearest a cluster centroid, and (optionally) biases each document's mixture toward its own embedding. A topica original; validated by planted-recovery only.",
+           "guides/embedding.md", experimental=True),
         _m("CombinedTM", "embedding", ("text", "embeddings"), "vae", "seed-reproducible", (),
            "Contextualized ProdLDA: encoder reads the bag of words plus a document embedding.",
            "guides/embedding.md#combinedtm"),
@@ -354,7 +362,7 @@ IMPL: dict[str, ImplInfo] = {
     "TBIP": _i("src/tbip.rs", "src/python/tbip.rs", "Poisson-factorization mean-field SVI", "", "parity/tbip_parity.py, tests/test_tbip.py"),
     "PartyEmbeddings": _i("src/party_embeddings.rs", "src/python/party_embeddings.rs", "PV-DM paragraph vectors (negative sampling)", "", "parity/party_embeddings_compare.py, tests/test_party_embeddings.py"),
     "FASTopic": _i("src/fastopic.rs", "src/python/mod.rs", "reverse-mode Sinkhorn optimal transport", "", "parity/fastopic_gold.py, parity/fastopic_compare.py"),
-    "EmbeddingLDA": _i("python/topica/embedding.py", "", "seeded Gibbs + embedding NN expansion (Python)", "", "parity/embeddinglda_gold.py, tests/test_embedding_lda.py"),
+    "EmbeddingLDA": _i("python/topica/embedding.py", "", "k-means embedding seeding over a SeededLDA Gibbs core (Python); planted-recovery gold only, no external reference", "", "parity/embeddinglda_gold.py, tests/test_embedding_lda.py"),
     "CombinedTM": _i("src/prodlda.rs", "src/python/neural.rs", "contextualized ProdLDA VAE (prodlda.rs)", "", "parity/combinedtm_gold.py, parity/combinedtm_compare.py"),
     "ZeroShotTM": _i("src/prodlda.rs", "src/python/neural.rs", "contextualized ProdLDA VAE (prodlda.rs)", "", "parity/zeroshot_gold.py, parity/zeroshot_compare.py"),
     "InfoCTM": _i("src/infoctm.rs", "src/python/neural.rs", "two ProdLDA VAEs + TAMI alignment (prodlda.rs)", "", "parity/infoctm_gold.py, parity/infoctm_compare.py"),
@@ -654,10 +662,18 @@ def markdown_table(by_group: bool = True) -> str:
         if experimental:
             lines.append("### Experimental\n")
             lines.append(
-                "Shipped before a published paper and reference-implementation parity "
-                "(topica's bar for a validated model). Gated: call "
+                "Not (yet) on the validated roster, on one of two grounds: the model "
+                "is unpublished (a topica original with no paper), or it is a "
+                "published method whose benefit has not held up against a simpler "
+                "baseline. A published method with faithful inference stays validated "
+                "even when its basis is planted-recovery, so planted validation alone "
+                "does not land a model here. Gated: call "
                 "`topica.enable_experimental()` (or set `TOPICA_EXPERIMENTAL=1`) before "
-                "use. These may change or be removed without a deprecation cycle.\n"
+                "use. These may change or be removed without a deprecation cycle. For "
+                "the triple gate a model clears to graduate to the validated roster, "
+                "and where every model stands on validation evidence, see "
+                "[Validation & graduation]"
+                "(https://nealcaren.github.io/topica/contributing/validation/).\n"
             )
             lines += _rows(experimental)
             lines.append("")

@@ -631,6 +631,7 @@ def _fit_fastopic(iters=200):
 def _fit_embeddinglda(iters=300):
     docs, vocab = _planted_blocks(k=K, block=8, n=300, seed=0)
     _, word_emb = _planted_embeddings(k=K, block=8, seed=0)
+    topica.enable_experimental()  # EmbeddingLDA is experimental and gated (#660)
     m = topica.EmbeddingLDA(num_topics=K, embeddings=word_emb, vocabulary=vocab,
                             top_m=5, seed=1)
     m.fit(docs, iters=iters)
