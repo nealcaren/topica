@@ -85,24 +85,46 @@ An intercept is prepended; the learned coefficients are in `feature_effects`.
 import numpy as np
 is_dem = np.array([...]).reshape(-1, 1)          # one row per document
 model = topica.KeyATM(seeds, num_topics=2, seed=1)
+# λ is optimized only on the sweeps after burn_in, so give the fit enough
+# iterations (>= burn_in + optimize_interval, 250 at the defaults) or
+# feature_effects come back all-zero — the model warns when they would.
 model.fit(docs, covariates=is_dem, feature_names=["is_dem"], iters=1000)
 
-model.feature_names       # ['intercept', 'is_dem']
-model.feature_effects     # (num_topics, 2): coefficient of each covariate per topic
-model.feature_effect_se   # same shape: standard error of each coefficient
-z = model.feature_effects / model.feature_effect_se   # |z| > ~2 ⇒ notable
+# Report predicted topic proportions at each covariate value, with CIs — the
+# interpretable, on-the-proportion-scale answer (R keyATM's predicted props).
+pp = topica.predicted_prevalence(
+    model, X=is_dem, feature_names=["is_dem"], at={"is_dem": [0, 1]}
+)
+print(pp)   # per topic (with topic_name): predicted share at is_dem=0 vs 1, 95% CI
 ```
 
-A larger `feature_effects[k, j]` means covariate `j` raises topic `k`'s
-prevalence. `feature_effect_se` gives the standard error of each λ, so you can
-tell a real effect from noise: it is the observed information of the same
-penalized Dirichlet-multinomial that `DMR` uses, computed in the standardized fit
-space (keyATM z-scores covariates internally, issue #270) and mapped back to the
-original covariate scale, so it is exact (no bootstrap) and computed once at fit
-time. An entry is `NaN` when its standardized coefficient hit keyATM's ±5 bound,
-where the constrained estimate has no valid asymptotic standard error. For
-uncertainty on the resulting topic prevalences, pair the fitted `doc_topic` with
+**Report `predicted_prevalence`, not the raw coefficient.** `feature_effects[k, j]`
+is the underlying log-α regression coefficient λ, *not* a difference in topic
+proportions: it lives on the `exp(x·λ)` prior scale, so its sign gives the
+direction but its magnitude and z-score can disagree with the actual change in
+prevalence (a λ that looks "not notable" can still move the predicted proportion
+significantly). `predicted_prevalence` pushes the effect through to the topic-share
+scale with simulation CIs, which is what keyATM users report (`plot_predicted_prop`).
+
+```python
+model.feature_names       # ['intercept', 'is_dem']
+model.feature_effects     # (num_topics, 2): the log-α coefficient λ per covariate
+model.feature_effect_se   # asymptotic SE of each λ (see the caveat below)
+```
+
+Two fidelity caveats. topica estimates λ by **L-BFGS MAP** every `optimize_interval`
+sweeps (the penalized Dirichlet-multinomial `DMR` uses), whereas R keyATM
+slice/MH-**samples** λ every iteration; the generative model, N(0,1) prior, and ±5
+bound match, but the estimator does not. So `feature_effect_se` is an **asymptotic**
+observed-information SE (a topica construct computed once at fit time in the
+standardized space and mapped back, issue #270), not keyATM's posterior SD; an entry
+is `NaN` when its standardized coefficient hit the ±5 bound, where the constrained
+estimate has no valid asymptotic SE. For uncertainty on the resulting topic
+prevalences, prefer `predicted_prevalence` above, or pair the fitted `doc_topic` with
 [`estimate_effect`](covariates.md).
+
+`visualize_keywords(model)` and `refine_keywords(...)` inspect and prune the keyword
+sets (the latter drops too-rare seeds before fitting); see their docstrings.
 
 ### Dynamic keyATM
 

@@ -14887,8 +14887,11 @@ impl KeyATM {
     /// Create an unfitted model. `keywords` is ``{topic_name: [words]}`` (the
     /// keyword topics, in order). `num_topics` (default = number of keyword
     /// topics) may be larger to add regular, no-keyword topics. `alpha` is the
-    /// per-topic Dirichlet; it defaults to ``1 / num_topics``, matching R keyATM's
-    /// base prior (this is the starting point when `estimate_alpha` is on).
+    /// per-topic Dirichlet prior; it defaults to ``1 / num_topics``. It is the
+    /// **fixed** symmetric α used only when ``estimate_alpha=False``. Under the
+    /// default ``estimate_alpha=True``, α is learned each sweep starting from
+    /// keyATM's own ``50 / num_topics`` (matching R keyATM's base default), and a
+    /// supplied `alpha` is **ignored** (a warning is emitted if you pass one).
     /// `beta`/`beta_keyword` are the regular and keyword topic-word smoothing, and
     /// `gamma1`/`gamma2` the Beta prior on the keyword-vs-regular switch.
     ///
@@ -14905,6 +14908,7 @@ impl KeyATM {
     #[pyo3(signature = (keywords, *, num_topics=None, alpha=None, beta=0.01, beta_keyword=0.1, gamma1=1.0, gamma2=1.0, seed=13, estimate_alpha=true, sampler="sparse", num_threads=1))]
     #[allow(clippy::too_many_arguments)]
     fn new(
+        py: Python<'_>,
         keywords: &Bound<'_, PyDict>,
         #[pyo3(from_py_with = "py_num_topics_opt")] num_topics: Option<usize>,
         alpha: Option<f64>,
@@ -14927,7 +14931,21 @@ impl KeyATM {
         if k < 2 {
             return Err(PyValueError::new_err("need at least 2 topics"));
         }
-        // Default to R keyATM's base prior 1/K.
+        // Under estimate_alpha=True (the default) α is learned from keyATM's 50/K
+        // start, so a user-supplied fixed alpha is ignored — warn rather than drop
+        // it silently. It is honored only when estimate_alpha=False.
+        if alpha.is_some() && estimate_alpha {
+            let warnings = py.import_bound("warnings")?;
+            warnings.call_method1(
+                "warn",
+                (
+                    "KeyATM(alpha=…) is ignored when estimate_alpha=True (the default): α is \
+                  learned each sweep starting from keyATM's 50/num_topics. Pass \
+                  estimate_alpha=False to use your fixed α, or drop alpha= to silence this.",
+                ),
+            )?;
+        }
+        // The fixed symmetric prior (used when estimate_alpha=False) defaults to 1/K.
         let alpha = alpha.unwrap_or(1.0 / k as f64);
         if !finite_pos(alpha)
             || !finite_pos(beta)
@@ -15195,30 +15213,59 @@ impl KeyATM {
         // causes it.
         {
             let vocab: HashSet<&str> = corpus.id_to_word.iter().map(|s| s.as_str()).collect();
-            let mut notes: Vec<String> = Vec::new();
+            // Split into mild drops (topic still meaningfully anchored) and severe
+            // drops (>= half the keywords gone), where the topic keeps its label but
+            // is effectively unseeded — its `keyword_rate` will be near zero and its
+            // top words generic. A one-shot lumped warning buried that; call the
+            // severe case out separately so it is not mistaken for a seeded topic.
+            let mut mild: Vec<String> = Vec::new();
+            let mut severe: Vec<String> = Vec::new();
             for (name, words) in slf.key_names.iter().zip(slf.keywords.iter()) {
                 let oov: Vec<&str> = words
                     .iter()
                     .map(|w| w.as_str())
                     .filter(|w| !vocab.contains(w))
                     .collect();
-                if !oov.is_empty() {
-                    notes.push(format!(
-                        "'{}' ({} of {} not in vocabulary, ignored: {})",
-                        name,
-                        oov.len(),
-                        words.len(),
-                        oov.join(", ")
-                    ));
+                if oov.is_empty() {
+                    continue;
+                }
+                let kept = words.len() - oov.len();
+                let note = format!(
+                    "'{}' ({} of {} not in vocabulary, ignored: {})",
+                    name,
+                    oov.len(),
+                    words.len(),
+                    oov.join(", ")
+                );
+                // kept == 0 is the all-dropped case handled by the hard error below.
+                if kept >= 1 && oov.len() * 2 >= words.len() {
+                    severe.push(note);
+                } else {
+                    mild.push(note);
                 }
             }
-            if !notes.is_empty() {
+            if !mild.is_empty() {
                 let warnings = py.import_bound("warnings")?;
                 warnings.call_method1(
                     "warn",
                     (format!(
                         "KeyATM: some keywords were dropped — {}",
-                        notes.join("; ")
+                        mild.join("; ")
+                    ),),
+                )?;
+            }
+            if !severe.is_empty() {
+                let warnings = py.import_bound("warnings")?;
+                warnings.call_method1(
+                    "warn",
+                    (format!(
+                        "KeyATM: these topics lost most of their keywords and are now only \
+                         weakly anchored — they keep their names but behave like unseeded \
+                         topics (keyword_rate near zero, generic top words): {}. A common \
+                         cause is unstemmed seeds against a stemmed vocabulary, or corpus \
+                         pruning (rm_top / min_doc_freq) removing them; stem your seeds to \
+                         match preprocessing, or drop these topics.",
+                        severe.join("; ")
                     ),),
                 )?;
             }
@@ -15421,6 +15468,32 @@ impl KeyATM {
                         )));
                     }
                 }
+                // The covariate coefficients λ are optimized only on the sweeps after
+                // `burn_in` that fall on an `optimize_interval` boundary. If `iters`
+                // is too small (or `optimize_interval == 0`), λ is never optimized, so
+                // it stays at its zero init and `feature_effects` come back all-zero —
+                // a silently null covariate result. The φ/θ topics are still valid, so
+                // we warn rather than refuse (mirrors the empty-keyword-topic guard).
+                let n_lambda_steps = if optimize_interval == 0 || iters <= burn_in {
+                    0
+                } else {
+                    (iters - burn_in) / optimize_interval
+                };
+                if n_lambda_steps == 0 {
+                    let need = burn_in.saturating_add(optimize_interval.max(1));
+                    let warnings = py.import_bound("warnings")?;
+                    warnings.call_method1(
+                        "warn",
+                        (format!(
+                            "KeyATM covariate fit: λ was never optimized (iters={iters}, \
+                             burn_in={burn_in}, optimize_interval={optimize_interval}), so \
+                             feature_effects will be all-zero and feature_effect_se None — \
+                             a null covariate result. The topics (φ/θ) are still valid. For \
+                             covariate effects, fit with iters >= {need} (>= burn_in + \
+                             optimize_interval), lower burn_in, or set optimize_interval > 0.",
+                        ),),
+                    )?;
+                }
                 let feats: Vec<Vec<f64>> = raw
                     .iter()
                     .map(|x| {
@@ -15560,7 +15633,12 @@ impl KeyATM {
     }
 
     /// Covariate model: learned DMR coefficients λ, shape ``(num_topics, F+1)``;
-    /// column 0 is the intercept. Raises if the model was fit without covariates.
+    /// column 0 is the intercept. These are the **log-α regression coefficients**
+    /// (``α_{d,k} = exp(x_d · λ_k)``), not differences in topic proportions: the
+    /// sign gives the direction of a covariate's effect on topic k, but for the
+    /// effect on the topic-share scale (what to report) use
+    /// ``topica.predicted_prevalence``. λ is estimated by L-BFGS MAP (not keyATM's
+    /// per-sweep MCMC sampling). Raises if the model was fit without covariates.
     #[getter]
     fn feature_effects<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
@@ -15572,13 +15650,16 @@ impl KeyATM {
 
     /// Covariate model: standard errors of `feature_effects` (λ), same shape
     /// ``(num_topics, F+1)`` and column order, on the original covariate scale.
-    /// From the observed information of the penalized Dirichlet-multinomial in the
+    /// This is an **asymptotic** SE (a topica construct), *not* keyATM's posterior
+    /// SD: because topica MAP-estimates λ rather than MCMC-sampling it, the SE comes
+    /// from the observed information of the penalized Dirichlet-multinomial in the
     /// standardized fit space, mapped back by the standardization Jacobian
     /// (issue #316). A coefficient is notable when ``|feature_effects| /
-    /// feature_effect_se`` exceeds ~2. Entries are ``NaN`` where the standardized
-    /// λ hit the ±5 bound (the constrained estimate has no valid asymptotic SE).
-    /// ``None`` when λ was never optimized to a stationary point (#418). Raises if
-    /// the model was fit without covariates.
+    /// feature_effect_se`` exceeds ~2, but prefer ``predicted_prevalence`` for
+    /// significance on the topic-proportion scale. Entries are ``NaN`` where the
+    /// standardized λ hit the ±5 bound (the constrained estimate has no valid
+    /// asymptotic SE). ``None`` when λ was never optimized to a stationary point
+    /// (#418). Raises if the model was fit without covariates.
     #[getter]
     fn feature_effect_se<'py>(
         &self,
@@ -15605,8 +15686,10 @@ impl KeyATM {
     }
 
     /// Dynamic model: smoothed topic prevalence per time segment, shape
-    /// ``(T, num_topics)``, rows sum to 1, aligned with `time_labels`. Raises if
-    /// the model was fit without `timestamps`.
+    /// ``(T, num_topics)``, rows sum to 1, aligned with `time_labels`. This is the
+    /// per-state normalized α (the learned Dirichlet prior mean per HMM state), not
+    /// R keyATM's period-mean of the posterior θ; the two track each other but are
+    /// not the same estimator. Raises if the model was fit without `timestamps`.
     #[getter]
     fn time_prevalence<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;

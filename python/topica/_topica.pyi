@@ -6048,16 +6048,23 @@ class KeyATM:
     @property
     def feature_effects(self) -> numpy.typing.NDArray[numpy.float64]:
         """Covariate model: learned lambda, shape (num_topics, F+1); column 0 is
-        the intercept. Raises if fit without covariates."""
+        the intercept. These are the log-alpha regression coefficients
+        (alpha_dk = exp(x_d . lambda_k)), NOT differences in topic proportions:
+        the sign gives direction, but for the effect on the topic-share scale use
+        topica.predicted_prevalence. lambda is MAP-estimated (not keyATM's
+        per-sweep MCMC). Raises if fit without covariates."""
         ...
     @property
     def feature_effect_se(self) -> numpy.typing.NDArray[numpy.float64] | None:
         """Covariate model: standard errors of feature_effects (lambda), same
-        shape and column order, on the original covariate scale (observed
-        information in the standardized fit space mapped back by the
-        standardization Jacobian, issue #316). NaN where the standardized lambda
-        hit the +/-5 bound. None when lambda was never optimized to a stationary
-        point (optimize_interval past iters, burn_in>=iters, lbfgs_iters=0, or
+        shape and column order, on the original covariate scale. Asymptotic SE (a
+        topica construct), NOT keyATM's posterior SD: topica MAP-estimates lambda,
+        so the SE is the observed information of the penalized Dirichlet-multinomial
+        in the standardized fit space mapped back by the standardization Jacobian
+        (issue #316). Prefer predicted_prevalence for significance on the
+        topic-proportion scale. NaN where the standardized lambda hit the +/-5
+        bound. None when lambda was never optimized to a stationary point
+        (optimize_interval past iters, burn_in>=iters, lbfgs_iters=0, or
         non-convergence), since the observed information is only a valid covariance
         at an optimum (#418). Raises if fit without covariates."""
         ...
@@ -6078,8 +6085,10 @@ class KeyATM:
     @property
     def time_prevalence(self) -> numpy.typing.NDArray[numpy.float64]:
         """Dynamic model: smoothed topic prevalence per time segment, shape
-        (T, num_topics), aligned with `time_labels`. Raises if fit without
-        `timestamps`."""
+        (T, num_topics), aligned with `time_labels`. This is the per-state
+        normalized alpha (the learned Dirichlet prior mean per HMM state), not R
+        keyATM's period-mean of the posterior theta; they track each other but are
+        different estimators. Raises if fit without `timestamps`."""
         ...
     @property
     def time_state(self) -> list[int]:

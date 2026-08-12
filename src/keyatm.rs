@@ -568,6 +568,18 @@ impl DirichletModel for KeyAtmModel {
 /// Mirrors the `sample_index` in `gsdmm.rs`.
 fn sample_index<R: Rng>(weights: &[f64], rng: &mut R) -> usize {
     let total: f64 = weights.iter().sum();
+    // A non-finite or non-positive total means a degenerate weight vector — e.g. a
+    // NaN from an upstream numeric breakdown. Without this guard `r` is NaN, `r <=
+    // 0.0` is never true, and the loop silently falls through to the last index —
+    // a biased, wrong draw dressed up as a sample. Catch it loudly in debug/tests;
+    // in release fall back to a uniform pick rather than always the last state.
+    debug_assert!(
+        total.is_finite() && total > 0.0,
+        "sample_index: non-finite or non-positive weight total ({total})"
+    );
+    if !(total.is_finite() && total > 0.0) {
+        return rng.gen_range(0..weights.len());
+    }
     let mut r = rng.gen::<f64>() * total;
     for (i, &w) in weights.iter().enumerate() {
         r -= w;
@@ -1796,13 +1808,16 @@ fn covariate_lambda_se(
 
 /// Fit a keyATM **Covariate** model. The document-topic prior is a
 /// Dirichlet-Multinomial regression on document features,
-/// `α_{d,k} = exp(x_d · λ_k)` (Mimno & McCallum 2008), matching the keyATM R
-/// package's covariate model. Following R keyATM, the covariates are standardized
-/// and `λ` is bounded to ±5 (see [`LAMBDA_BOUND`] and [`standardize_features`])
-/// to keep `α` from blowing up; `λ` is re-estimated by L-BFGS (MAP under an
-/// N(0,1) prior) every
-/// `opt_interval` sweeps once past `burn_in`; the keyword (z, s) sampler is
-/// otherwise identical to the base model.
+/// `α_{d,k} = exp(x_d · λ_k)` (Mimno & McCallum 2008). It shares keyATM's
+/// generative model, N(0,1) prior, and ±5 bound, but **estimates `λ` by L-BFGS
+/// MAP (not keyATM's per-sweep slice/MH sampling)** — so `λ` is a MAP point
+/// estimate and its SE (issue #316) is asymptotic observed-information, not a
+/// posterior SD. Following R keyATM, the covariates are standardized and `λ` is
+/// bounded to ±5 (see [`LAMBDA_BOUND`] and [`standardize_features`]) to keep `α`
+/// from blowing up; `λ` is re-estimated every `opt_interval` sweeps once past
+/// `burn_in` (so it stays at its zero init — a null covariate effect — if
+/// `iters < burn_in + opt_interval`). The keyword (z, s) sampler is otherwise
+/// identical to the base model.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_keyatm_cov<R: Rng>(
     docs: &[Vec<u32>],
@@ -3494,6 +3509,24 @@ mod tests {
     fn accepts_nonpositive_alpha_when_estimated() {
         // α is only a start when estimated, so a 0 start is not rejected.
         run_base(&two_docs(), 2, 1, &[vec![0]], 0.0, 0.1, true);
+    }
+
+    #[test]
+    fn sample_index_returns_in_range_for_valid_weights() {
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        for _ in 0..200 {
+            let i = sample_index(&[1.0, 2.0, 3.0], &mut rng);
+            assert!(i < 3);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "non-finite or non-positive weight total")]
+    fn sample_index_rejects_nan_weights() {
+        // A NaN weight makes `r <= 0.0` never true; without the guard the loop
+        // silently falls through to the last index. The debug_assert catches it.
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let _ = sample_index(&[1.0, f64::NAN, 3.0], &mut rng);
     }
 
     fn run_dynamic(time_index: &[usize], num_states: usize, eta1: f64) {
