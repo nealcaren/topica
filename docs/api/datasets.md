@@ -26,10 +26,12 @@ access), not a DataFrame.
 ```python
 b = topica.datasets.load_ng20_minilm()
 docs = [t.split() for t in b.texts]
-# The default HDBSCAN clusterer over UMAP collapses this subset to a degenerate
-# handful of topics — ~80% of the documents land in a single bucket. A fixed-K
-# clusterer with reduce_frequent recovers the newsgroups cleanly. See
-# docs/guides/embedding.md, "Avoiding the `-1` noise bucket", for why.
+# The default density clusterer (UMAP -> HDBSCAN) finds only ~3 topics here, with
+# ~80% of the documents in one topic. That is NOT a topica defect: the reference
+# umap-learn + HDBSCAN pipeline finds the same few-topic structure on this corpus at
+# this min_cluster_size (see parity/bertopic_umap_default_compare.py). It is genuine,
+# coarse density structure. For a finer or fixed number of topics, lower
+# min_cluster_size, or use a fixed-K clusterer with reduce_frequent, e.g.:
 bt = topica.BERTopic(
     clusterer="kmeans", num_clusters=5, reduce_frequent=True, seed=1,
 ).fit(docs, b.doc_embeddings)

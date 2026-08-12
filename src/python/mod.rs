@@ -14214,16 +14214,40 @@ fn emit_cluster_diagnostics(
         Ok(())
     };
 
-    // (1) Collapse: an auto-K run that finds only 1-2 topics on a non-trivial
-    // corpus almost always means the geometry is wrong (unnormalized coordinates)
-    // or min_cluster_size is too large.
-    if auto_k && num_topics <= 2 && n >= 200 {
-        warn(format!(
-            "{model_name}: clustering produced only {num_topics} topic(s) from {n} \
-             documents. This usually means min_cluster_size is too large, the \
-             embeddings need checking, or the reduced coordinates were poorly \
-             separated (if you set reducer=\"pca\", try the default reducer=\"umap\")."
-        ))?;
+    // (1) Few-topic / single-dominant result: an auto-K run that finds very few
+    // topics, or piles most documents into one topic, on a non-trivial corpus.
+    // This is frequently the corpus's *genuine* density structure at this
+    // min_cluster_size — density clustering on some embedding sets legitimately
+    // yields a few coarse topics, and topica reproduces what the reference
+    // umap+HDBSCAN pipeline finds (see parity/bertopic_umap_default_compare.py) — so
+    // the message steers toward finer-granularity options rather than implying a bug.
+    // Triggers on the dominant-bucket share, not just the topic count, so a "3 topics,
+    // 82% in one" result (which slipped past the old num_topics<=2 gate) is flagged.
+    if auto_k && n >= 200 {
+        let assigned = labels.iter().filter(|&&l| l >= 0).count();
+        let mut sizes = vec![0usize; num_topics];
+        for &l in labels {
+            if l >= 0 && (l as usize) < num_topics {
+                sizes[l as usize] += 1;
+            }
+        }
+        let biggest = sizes.iter().copied().max().unwrap_or(0);
+        let dominant_frac = if assigned > 0 {
+            biggest as f64 / assigned as f64
+        } else {
+            0.0
+        };
+        if num_topics <= 2 || dominant_frac >= 0.6 {
+            let pct = (dominant_frac * 100.0).round() as u32;
+            warn(format!(
+                "{model_name}: clustering produced {num_topics} topic(s) from {n} documents, \
+                 with the largest holding {pct}% of the assigned documents. This can be the \
+                 corpus's genuine density structure at this min_cluster_size (it matches what \
+                 the reference umap+HDBSCAN pipeline finds), not necessarily an error. For \
+                 finer or more numerous topics, lower min_cluster_size, or use a fixed-K \
+                 clusterer (clusterer=\"kmeans\", num_clusters=...) or nr_topics."
+            ))?;
+        }
     }
 
     // (2) High noise: only HDBSCAN produces a `-1` bucket; a large one means most

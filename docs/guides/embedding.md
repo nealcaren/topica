@@ -574,14 +574,19 @@ do not over-interpret a single `eta` trajectory.
 
 ## Post-fit diagnostics
 
-The reduce→cluster pipeline decides almost everything, and its failure modes are
-*silent*: a bad configuration still returns a model. BERTopic and Top2Vec run a
-cheap post-fit check and emit a one-time `warnings.warn` when the result looks
-degenerate — near-total **collapse** (1–2 topics on a sizeable corpus, usually
-unnormalized coordinates or too large a `min_cluster_size`), a very **high noise
-fraction** (most documents left unassigned), or gross **over-splitting** (far more
-topics than the corpus supports). Each message names a concrete fix. The
-thresholds are conservative; silence it with `diagnostics=False`:
+The reduce→cluster pipeline decides almost everything, and its behavior is *quiet*:
+any configuration still returns a model. BERTopic and Top2Vec run a cheap post-fit
+check and emit a one-time `warnings.warn` when the result is worth a second look — a
+**few-topic / one-dominant-bucket** result (1–2 topics, or one topic holding most of
+the assigned documents), a very **high noise fraction** (most documents left
+unassigned), or gross **over-splitting** (far more topics than the corpus supports).
+The few-topic case is not always an error: density clustering on some embedding sets
+legitimately yields a few coarse topics, and topica reproduces what the reference
+umap-learn + HDBSCAN pipeline finds (see
+[`parity/bertopic_umap_default_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/bertopic_umap_default_compare.py)).
+The message says so, and points to the levers for finer/more topics — lower
+`min_cluster_size`, or a fixed-K clusterer (`clusterer="kmeans", num_clusters=…`) or
+`nr_topics`. The thresholds are conservative; silence it with `diagnostics=False`:
 
 ```python
 model = topica.BERTopic(seed=1)                    # warns if the fit is degenerate
@@ -728,19 +733,29 @@ For statistically-selected phrases instead of every bigram, use
   which separates real document embeddings much better than a linear projection
   and, on closely spaced themes, splits clusters PCA would merge. It is a faithful
   reimplementation of `umap-learn` (fuzzy simplicial set, `a`/`b` membership curve,
-  and the reference SGD layout), validated to match `umap-learn`'s cluster quality
-  on real sentence embeddings. It ships in the wheel, so it is opt-in at runtime,
-  not build time — pure Rust, with no `umap-learn`/`numba` dependency.
+  spectral (Laplacian-eigenmap) initialization, and the reference SGD layout). On real
+  sentence embeddings it reaches `umap-learn`'s cluster quality
+  ([`parity/umap_reference_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/umap_reference_compare.py)),
+  and the whole default BERTopic pipeline matches the reference umap-learn + HDBSCAN
+  result — including on corpora where both legitimately find only a few coarse topics
+  ([`parity/bertopic_umap_default_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/bertopic_umap_default_compare.py)).
+  It ships in the wheel, so it is opt-in at runtime, not build time — pure Rust, with
+  no `umap-learn`/`numba` dependency. topica uses exact brute-force neighbors and a
+  seeded RNG rather than umap-learn's approximate NN-descent and unseeded state, so the
+  embedding is not coordinate-identical to a given umap-learn run, but recovers the
+  same cluster structure.
 
-  Unlike a typical UMAP, topica's is **fully reproducible**: the negative sampling
-  is seeded, so a fixed `seed` pins the layout and the whole `reducer="umap"` fit is
-  deterministic. There is no non-determinism caveat and no warning.
+  Unlike a typical UMAP, topica's is **fully reproducible**: the initialization and
+  negative sampling are seeded, so a fixed `seed` pins the layout and the whole
+  `reducer="umap"` fit is deterministic. There is no non-determinism caveat and no
+  warning.
 - The UMAP layout is tunable. Beyond `n_neighbors`, `reducer="umap"` accepts
   `min_dist` (minimum spacing of points in the embedding; lower packs clusters
   tighter — the default `0.0` matches BERTopic), `spread`, `n_epochs` (`0` = auto:
   500 for ≤10k rows), `negative_sample_rate`, `repulsion_strength`, and `metric`
   (`"cosine"` default, or `"euclidean"`). All default to `umap-learn`'s values, so
-  touching nothing reproduces the reference; they are ignored under `reducer="pca"`.
+  touching nothing recovers the reference's cluster structure; they are ignored under
+  `reducer="pca"`.
   The same knobs are on `topica.project(method="umap", ...)`.
 
   ```python
