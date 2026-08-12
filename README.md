@@ -91,7 +91,7 @@ thread count), or `llm-bounded`.
 
 <!-- BEGIN MODEL TABLE (generated from topica.registry; edit registry.py, not this block) -->
 
-*Every model below is validated against a reference implementation.* The groupings are about **fit to your research design**, not quality: a specialized model is the right first choice when your data calls for it.
+*Every model below is validated before it enters the roster: against a maintained reference implementation where one exists (MALLET, gensim, R `stm`, tomotopy, and the like), otherwise by planted recovery on a synthetic corpus with a known answer.* See [validation](https://nealcaren.github.io/topica/contributing/validation/) for where each model stands. The groupings are about **fit to your research design**, not quality: a specialized model is the right first choice when your data calls for it.
 
 ### Common starting points
 

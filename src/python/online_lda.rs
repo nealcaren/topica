@@ -261,6 +261,7 @@ impl OnlineLDA {
         iters: usize,
         convergence_tol: f64,
     ) -> PyResult<Py<Self>> {
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {

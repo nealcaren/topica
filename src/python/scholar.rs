@@ -313,6 +313,7 @@ impl Scholar {
         if !finite_pos(alpha) {
             return Err(PyValueError::new_err("alpha must be > 0"));
         }
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         if !(0.0..1.0).contains(&dropout) {
             return Err(PyValueError::new_err("dropout must be in [0, 1)"));
         }

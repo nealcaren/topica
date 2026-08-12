@@ -152,6 +152,7 @@ impl NMF {
         if num_topics < 2 {
             return Err(PyValueError::new_err("need at least 2 topics"));
         }
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         Ok(NMF {
             num_topics,
             beta_loss: parse_beta_loss(beta_loss)?,

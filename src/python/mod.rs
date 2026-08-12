@@ -1345,6 +1345,7 @@ impl LDA {
         num_threads: Option<usize>,
         turbo_merge_every: usize,
     ) -> PyResult<Py<Self>> {
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         // Accept either a Corpus or a list[list[str]].
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -4168,6 +4169,7 @@ impl DMR {
         offset: Option<&Bound<'_, PyAny>>,
         num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         // num_threads: fit()-level value overrides the constructor default; the
         // sparse Gibbs sweep runs AD-LDA partition-and-merge when this is >1.
         let num_threads = num_threads.unwrap_or(slf.num_threads).max(1);
@@ -5347,6 +5349,7 @@ impl LabeledLDA {
         check_every: usize,
         num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         // num_threads: fit()-level value overrides the constructor default; the
         // sparse restricted-Gibbs sweep runs AD-LDA partition-and-merge when >1.
         let num_threads = num_threads.unwrap_or(slf.num_threads).max(1);
@@ -7163,6 +7166,7 @@ impl CTM {
         } else {
             convergence_tol
         };
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -8047,6 +8051,7 @@ impl STM {
         } else {
             convergence_tol
         };
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         // covariates= is a no-deprecation alias for prevalence=
         let prevalence = match (prevalence, covariates) {
             (Some(_), Some(_)) => {
@@ -9585,6 +9590,7 @@ impl STS {
         } else {
             convergence_tol
         };
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         // covariates= is a no-deprecation alias for prevalence=
         let prevalence = match (prevalence, covariates) {
             (Some(_), Some(_)) => {
@@ -11631,6 +11637,7 @@ impl SupervisedLDA {
         if corpus.num_docs() == 0 {
             return Err(PyValueError::new_err("corpus contains no documents"));
         }
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         if y.len() != corpus.num_docs() {
             return Err(PyValueError::new_err(format!(
                 "y has length {} but there are {} documents",
@@ -12309,6 +12316,7 @@ impl PT {
         // num_pseudo >= num_docs most pseudo-docs hold at most one real document,
         // the (m_p + lambda) aggregation collapses toward per-document LDA, and
         // PTM loses the very pooling it exists to provide (#491).
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         if slf.num_pseudo >= num_docs {
             let msg = format!(
                 "num_pseudo ({}) >= number of documents ({}); PTM's regime is \
@@ -13527,6 +13535,7 @@ impl SeededLDA {
         check_every: usize,
         num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         // num_threads: fit()-level value overrides the constructor default; the
         // sparse seeded-Gibbs sweep runs AD-LDA partition-and-merge when >1.
         let num_threads = num_threads.unwrap_or(slf.num_threads).max(1);
@@ -15106,6 +15115,8 @@ impl KeyATM {
         report_interval: Option<usize>,
         turbo_alpha_stride: usize,
     ) -> PyResult<Py<Self>> {
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
+        ensure_finite_pos("prior_variance", prior_variance)?;
         if turbo_alpha_stride < 1 {
             return Err(PyValueError::new_err(
                 "turbo_alpha_stride must be >= 1 (1 = exact; >1 = approximate, subsample documents in the alpha sampler)",

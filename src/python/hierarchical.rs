@@ -234,6 +234,7 @@ impl PA {
         check_every: usize,
         num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
+        ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {

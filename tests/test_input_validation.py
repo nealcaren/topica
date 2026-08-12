@@ -164,6 +164,54 @@ def test_convergence_tol_rejects_nonfinite(bad):
         topica.Wordfish(convergence_tol=bad)
 
 
+# Cross-cutting convergence_tol guard (Gate B #714/#715/#716): a NaN/inf/negative
+# tolerance either silently disables convergence (NaN, -1) or terminates almost
+# immediately (inf), so an unguarded fit reports a bogus `converged`. The guard
+# (`ensure_finite_nonneg`) must reject NaN/inf/negative and accept 0 (disabled)
+# at every constructor and fit that takes the parameter, not just Wordfish.
+_CONV_TOL_CTOR = [
+    ("NMF", lambda t: topica.NMF(2, convergence_tol=t)),
+    ("GuidedNMF", lambda t: topica.GuidedNMF(2, {"a": ["x"]}, convergence_tol=t)),
+    ("CorEx", lambda t: topica.CorEx(2, convergence_tol=t)),
+]
+
+_CONV_TOL_DOCS = [
+    ["alpha", "beta", "gamma"],
+    ["beta", "gamma", "delta"],
+    ["alpha", "delta", "epsilon"],
+    ["gamma", "epsilon", "zeta"],
+]
+
+_CONV_TOL_FIT = [
+    ("LDA", lambda t: topica.LDA(2).fit(_CONV_TOL_DOCS, convergence_tol=t)),
+    ("CTM", lambda t: topica.CTM(2).fit(_CONV_TOL_DOCS, convergence_tol=t)),
+    ("STM", lambda t: topica.STM(2).fit(_CONV_TOL_DOCS, convergence_tol=t)),
+    ("PT", lambda t: topica.PT(2).fit(_CONV_TOL_DOCS, convergence_tol=t)),
+    ("KeyATM", lambda t: topica.KeyATM({"g0": ["alpha", "beta"]}, num_topics=2)
+        .fit(_CONV_TOL_DOCS, convergence_tol=t)),
+]
+
+
+@pytest.mark.parametrize("bad", [NAN, INF, -1.0])
+@pytest.mark.parametrize(
+    "build",
+    [c[1] for c in _CONV_TOL_CTOR + _CONV_TOL_FIT],
+    ids=[c[0] for c in _CONV_TOL_CTOR + _CONV_TOL_FIT],
+)
+def test_convergence_tol_guarded_across_models(build, bad):
+    with pytest.raises(ValueError, match="finite"):
+        build(bad)
+
+
+def test_keyatm_prior_variance_rejects_nonfinite():
+    # #716-#8: the Gaussian prior variance on the covariate lambda was unguarded.
+    for bad in (NAN, INF, 0.0, -1.0):
+        with pytest.raises(ValueError, match="finite"):
+            topica.KeyATM({"g0": ["alpha", "beta"]}, num_topics=2).fit(
+                _CONV_TOL_DOCS, prior_variance=bad
+            )
+
+
 @pytest.mark.parametrize("bad", [NAN, -0.5])
 def test_partyembeddings_sample_rejects_nan_negative_allows_zero(bad):
     with pytest.raises(ValueError):
