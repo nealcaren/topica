@@ -212,3 +212,46 @@ def test_feature_effect_se_is_none_without_optimization():
     m.fit(docs, covariates=party.reshape(-1, 1), feature_names=["is_D"],
           iters=150, optimize_interval=10000, burn_in=50)
     assert m.feature_effect_se is None
+
+
+# --- #716-#1: the silent covariate dead-zone -------------------------------------
+def test_covariate_deadzone_warns_and_returns_null():
+    # iters < burn_in + optimize_interval (250 at defaults) -> lambda is never
+    # optimized -> all-zero feature_effects. This must WARN, not silently null out.
+    docs, party = _corpus()
+    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    with pytest.warns(UserWarning, match="was never optimized"):
+        m.fit(docs, covariates=party.reshape(-1, 1), feature_names=["is_D"], iters=100)
+    assert np.all(m.feature_effects == 0.0)
+    assert m.feature_effect_se is None
+
+
+def test_covariate_no_deadzone_warn_when_iters_sufficient(recwarn):
+    # iters >= burn_in + optimize_interval -> lambda optimized -> no dead-zone warning.
+    docs, party = _corpus()
+    m = topica.KeyATM(SEEDS, num_topics=2, seed=1)
+    m.fit(docs, covariates=party.reshape(-1, 1), feature_names=["is_D"], iters=300)
+    assert not any("was never optimized" in str(w.message) for w in recwarn)
+    assert not np.all(m.feature_effects == 0.0)
+
+
+# --- #716-#6: user alpha is ignored under estimate_alpha ------------------------
+def test_alpha_ignored_warns_under_estimate_alpha():
+    with pytest.warns(UserWarning, match="ignored when estimate_alpha"):
+        topica.KeyATM(SEEDS, num_topics=2, alpha=0.5)  # estimate_alpha defaults True
+
+
+def test_alpha_honored_no_warn_when_estimate_alpha_false(recwarn):
+    topica.KeyATM(SEEDS, num_topics=2, alpha=0.5, estimate_alpha=False)
+    assert not any("ignored when estimate_alpha" in str(w.message) for w in recwarn)
+
+
+# --- #716-#5: near-total keyword drop is called out --------------------------------
+def test_severe_keyword_drop_warns():
+    # 'economic' keeps only 1 of 4 seeds (the rest are out-of-vocabulary), so it is
+    # effectively unseeded but keeps its label -> a distinct, louder warning.
+    docs, _ = _corpus()
+    seeds = {"economic": ["tax", "zzznope1", "zzznope2", "zzznope3"], "social": SOC[:4]}
+    m = topica.KeyATM(seeds, num_topics=2, seed=1)
+    with pytest.warns(UserWarning, match="weakly anchored"):
+        m.fit(docs, iters=50)
