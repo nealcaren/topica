@@ -24,17 +24,20 @@ A naive regression of point topic proportions on covariates treats θ as if it
 were observed exactly. It isn't. R's `stm` uses the **method of composition**
 (Treier & Jackman 2008): draw θ from the model's posterior, regress each draw,
 and pool by Rubin's rules so the standard errors include topic-estimation
-uncertainty. topica does the same, drawing θ from each document's variational
-posterior. (It propagates that per-document θ uncertainty; it does not also
-simulate the global parameters β, Σ, and γ, so its pooled standard errors run a
-touch smaller than `stm`'s. The inflation over naive point-θ OLS is the part that
-matters, and it is there.)
+uncertainty. topica does the same, and by default uses R `estimateEffect`'s
+**Global** uncertainty — one shared topic covariance across documents (`stm`'s
+`thetaPosterior(type="Global")`), which is what `estimateEffect` draws from. Pass
+`uncertainty="local"` to `estimate_effect` for each document's own variational
+covariance instead, or `"none"` for OLS on the point θ. The inflation over naive
+point-θ OLS is the part that matters, and it is there.
 
 ```python
 from topica import stm
 
-draws = stm.posterior_theta_samples(model, nsims=50, seed=0)   # (50, D, K)
-effects = stm.estimate_effect(draws, X, feature_names=names)
+# Pass the model + nsims and the θ posterior is drawn for you, with R
+# estimateEffect's default Global uncertainty. (Equivalent to drawing explicitly:
+# stm.posterior_theta_samples(model, nsims=50, seed=0, uncertainty="global").)
+effects = stm.estimate_effect(model, X=X, feature_names=names, nsims=50, seed=0)
 for e in effects:
     d = e.as_dict()
     print(f"Topic {d['topic']}: {names[0]} coef={d[names[0]]['coef']:+.4f} "

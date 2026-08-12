@@ -7870,9 +7870,12 @@ impl STM {
     /// β init) or ``"random"`` (seeded). Spectral init applies to the base
     /// topic-word β with or without a content covariate: the content (SAGE)
     /// deviations κ are then derived deterministically from that base β, so a
-    /// content fit under spectral init is seed-independent too. Spectral can fall
-    /// back to a seeded random init for a degenerate corpus; ``initialization``
-    /// records which route ran.
+    /// content fit under spectral init is seed-independent too. Because the whole
+    /// spectral fit is deterministic, refitting across `seed` values is a no-op —
+    /// it does not test topic stability. For a stability check use
+    /// ``init="random"`` with varied seeds, or ``topica.topic_stability``.
+    /// Spectral can fall back to a seeded random init for a degenerate corpus;
+    /// ``initialization`` records which route ran.
     /// `variational` selects the per-document variational-covariance mode:
     /// ``"laplace"`` (default; full posterior covariance ν = H⁻¹) or
     /// ``"diagonal"`` (mean-field ν = diag(1/H_ii), which skips the per-document
@@ -7980,10 +7983,13 @@ impl STM {
     /// random walk, the temporal generalization of `content`. `content_smooth`
     /// controls that random-walk penalty strength (``1/tau^2``); larger values tie
     /// adjacent periods more tightly. `content_prior` selects the prior on the
-    /// content (SAGE κ) deviation blocks: ``"l2"`` (default) is a Gaussian ridge on
-    /// the deviations, while ``"l1"`` puts a *pure* sparse Laplace prior (FISTA, exact
-    /// zeros) on them — recovering sparse content contrasts, matching R `stm`'s sparse
-    /// content model. Under ``"l1"`` the deviation blocks carry the Laplace prior only
+    /// content (SAGE κ) deviation blocks: ``"l2"`` (topica's default) is a Gaussian
+    /// ridge on the deviations, while ``"l1"`` puts a *pure* sparse Laplace prior
+    /// (FISTA, exact zeros) on them — recovering sparse content contrasts and matching
+    /// R `stm`'s default (`kappa.prior="L1"`, a glmnet word-wise lasso). topica keeps
+    /// L2 as its default because that is the path its committed gold validates; pass
+    /// ``"l1"`` for R-comparable sparse content. Under ``"l1"`` the deviation blocks
+    /// carry the Laplace prior only
     /// (not an additional ridge); the topic baseline `kappa_topic` keeps its L2 either
     /// way. `content_prior_var` (default ``0.5``) sets the deviation-prior scale: under
     /// ``"l2"`` it is the Gaussian prior variance, under ``"l1"`` the Laplace scale (the

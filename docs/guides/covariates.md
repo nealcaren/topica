@@ -38,8 +38,9 @@ model = topica.STM(num_topics=scan.best_k(), seed=1)
 model.fit(corpus, prevalence=X, prevalence_names=names)
 
 # Effects with method-of-composition uncertainty, as a tidy long table.
-draws = topica.posterior_theta_samples(model, nsims=50, seed=0)
-effects = topica.estimate_effect(draws, X, feature_names=names)
+# Passing the model + nsims draws the theta posterior for you, with R
+# estimateEffect's default Global uncertainty.
+effects = topica.estimate_effect(model, X=X, feature_names=names, nsims=50, seed=0)
 table = pd.concat([e.to_frame() for e in effects], ignore_index=True)
 ```
 
@@ -111,12 +112,12 @@ GLM links:
 import pandas as pd
 import topica
 
-draws = topica.posterior_theta_samples(model, nsims=50, seed=0)
 effects = topica.estimate_effect(
-    draws, X, feature_names=names,
+    model, X=X, feature_names=names, nsims=50, seed=0,
     cluster=source_id,     # cluster-robust SEs for nested data
     weights=survey_weight,  # weighted least squares (e.g. survey weights)
     # link="logit",        # keep predictions in [0, 1]
+    # uncertainty="local", # per-document covariance instead of R's Global default
 )
 
 # One tidy row per (topic, feature): coef, se, z, ci_low, ci_high, r_squared

@@ -104,6 +104,58 @@ class TestMethodOfComposition:
             stm.estimate_effect(np.zeros((2, 2, 2, 2)), X)
 
 
+class TestUncertaintySelector:
+    """#715-#2: R stm's thetaPosterior Global/Local/None, defaulting to Global
+    (R estimateEffect's default) for estimate_effect's method-of-composition."""
+
+    def test_none_draws_are_the_point_theta(self, treated_model):
+        m, _ = treated_model
+        draws = stm.posterior_theta_samples(m, nsims=5, seed=0, uncertainty="none")
+        assert draws.shape == (5, m.doc_topic.shape[0], m.num_topics)
+        # No topic-model uncertainty: every draw is the point theta.
+        for s in range(5):
+            np.testing.assert_allclose(draws[s], np.asarray(m.doc_topic), atol=1e-12)
+
+    def test_global_covariance_is_mean_eta_cov(self, treated_model):
+        # R's Global shared covariance (Sigma - crossprod(lambda-mu)/N) equals the
+        # mean per-doc variational covariance at sigma.prior=0. Verify the draws'
+        # empirical within-doc covariance matches mean(eta_cov), shared across docs.
+        m, _ = treated_model
+        shared = np.asarray(m.eta_cov, dtype=np.float64).mean(axis=0)  # (K-1,K-1)
+        draws = stm.posterior_theta_samples(m, nsims=4000, seed=0, uncertainty="global")
+        # Map theta back to eta (ref cat 0): eta_k = log(theta_k) - log(theta_ref).
+        logit = np.log(draws[..., :-1]) - np.log(draws[..., -1:])  # (S, D, K-1)
+        emp = np.cov(logit[:, 0, :], rowvar=False)  # doc 0's draw covariance
+        np.testing.assert_allclose(np.atleast_2d(emp), shared, rtol=0.15, atol=0.02)
+
+    def test_se_ordering_none_local_global(self, treated_model):
+        m, X = treated_model
+        ses = {}
+        for unc in ("none", "local", "global"):
+            eff = stm.estimate_effect(
+                m, X=X, feature_names=["treatment"], nsims=80, seed=0, uncertainty=unc
+            )
+            ti = eff[0].feature_names.index("treatment")
+            ses[unc] = eff[0].se[ti]
+        # Global propagates the most uncertainty, none the least.
+        assert ses["none"] <= ses["local"] <= ses["global"]
+
+    def test_global_is_the_default(self, treated_model):
+        m, X = treated_model
+        default = stm.estimate_effect(m, X=X, feature_names=["treatment"], nsims=80, seed=0)
+        explicit = stm.estimate_effect(
+            m, X=X, feature_names=["treatment"], nsims=80, seed=0, uncertainty="global"
+        )
+        np.testing.assert_allclose(default[0].se, explicit[0].se)
+
+    def test_invalid_uncertainty_rejected(self, treated_model):
+        m, X = treated_model
+        with pytest.raises(ValueError, match="uncertainty must be"):
+            stm.estimate_effect(m, X=X, nsims=5, uncertainty="bogus")
+        with pytest.raises(ValueError, match="uncertainty must be"):
+            stm.posterior_theta_samples(m, nsims=5, uncertainty="bogus")
+
+
 class TestSpline:
     def test_basis_shape_and_names(self):
         x = np.linspace(0, 10, 100)

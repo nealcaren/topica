@@ -20,10 +20,10 @@ or — given posterior draws from :func:`posterior_theta_samples` (an STM/CTM
 variational posterior) — the **method of composition**, pooling per-draw
 regressions by Rubin's rules so the standard errors propagate topic-estimation
 uncertainty, following the same method-of-composition procedure as R ``stm``'s
-``estimateEffect``. topica propagates the per-document theta posterior
-uncertainty; it does not additionally simulate global-parameter (beta, Sigma,
-gamma) uncertainty, so its pooled standard errors are generally a touch smaller.
-Nonlinear and interaction terms are built with :func:`spline` and
+``estimateEffect``. The θ draws use R ``estimateEffect``'s default **Global**
+uncertainty (one shared topic covariance across documents) unless you pass
+``uncertainty="local"`` (each document's own variational covariance) or
+``"none"``. Nonlinear and interaction terms are built with :func:`spline` and
 :func:`interaction`.
 """
 
@@ -589,6 +589,7 @@ def estimate_effect(
     corpus=None,
     nsims=None,
     seed=0,
+    uncertainty="global",
 ):
     """Regress each topic's proportion on document covariates.
 
@@ -605,6 +606,16 @@ def estimate_effect(
     posterior (e.g. BERTopic), method-of-composition is unavailable; pass the model
     (not just its ``doc_topic`` array) so this is flagged, and use
     ``standard_errors(..., method="bootstrap")`` to quantify uncertainty.
+
+    ``uncertainty`` (STM/CTM only, when the θ posterior is drawn here via a model
+    + ``nsims``) selects the draw covariance, matching R ``stm``'s
+    ``thetaPosterior`` ``type=``. It defaults to ``"global"`` — R
+    ``estimateEffect``'s default — which draws every document from one shared
+    covariance (the global topic-model uncertainty) and so widens the intervals
+    relative to ``"local"`` (each document's own variational covariance, topica's
+    former behavior). ``"none"`` propagates no topic uncertainty (OLS on the point
+    θ). It has no effect when you pass a precomputed draw array or a Dirichlet
+    (Gibbs) model.
 
     For paper-grade inference two extras matter:
 
@@ -675,6 +686,12 @@ def estimate_effect(
         Restrict to these topics. Defaults to all.
     ci : float
         Confidence level for the (normal-approximation) intervals.
+    uncertainty : {"global", "local", "none"}
+        Draw covariance for the STM/CTM θ posterior when it is sampled here
+        (model + ``nsims``); R ``stm``'s ``thetaPosterior`` ``type=``. Defaults
+        to ``"global"`` (R ``estimateEffect``'s default; shared covariance,
+        wider CIs). See the discussion above. Ignored for precomputed draws or
+        Dirichlet models.
 
     Returns
     -------
@@ -720,12 +737,18 @@ def estimate_effect(
     # nsims, the family-appropriate posterior is sampled for method-of-composition
     # standard errors (no hand-wiring a sampler); without it, the point theta is
     # used for plain OLS.
+    if uncertainty not in ("global", "local", "none"):
+        raise ValueError(
+            f"uncertainty must be 'global', 'local', or 'none' (got {uncertainty!r})"
+        )
     if hasattr(doc_topic, "doc_topic") and not isinstance(doc_topic, np.ndarray):
         from .effects import composition_theta, model_family
 
         _model = doc_topic
         if nsims:
-            doc_topic = composition_theta(_model, corpus, nsims=nsims, seed=seed)
+            doc_topic = composition_theta(
+                _model, corpus, nsims=nsims, seed=seed, uncertainty=uncertainty
+            )
         else:
             # A model with no posterior over theta (a cluster/embedding model such as
             # BERTopic) has no method-of-composition path, so this is plain OLS on a
@@ -1580,17 +1603,38 @@ def predicted_prevalence(
     return out
 
 
-def posterior_theta_samples(model, nsims=25, seed=0):
+def posterior_theta_samples(model, nsims=25, seed=0, *, uncertainty="local"):
     """Draw `nsims` samples of the document-topic matrix θ from a fitted
     :class:`STM`/:class:`CTM`'s variational posterior.
 
-    Each document's logistic-normal posterior is ``η_d ~ N(λ_d, ν_d)`` (from
-    ``model.eta_mean`` / ``model.eta_cov``); a draw of η is mapped through the
-    softmax (with the reference category fixed at 0) to a θ row. Feed the result
-    to :func:`estimate_effect` for method-of-composition uncertainty.
+    Each document's logistic-normal posterior is centered at ``λ_d``
+    (``model.eta_mean``); a draw of η is mapped through the softmax (with the
+    reference category fixed at 0) to a θ row. Feed the result to
+    :func:`estimate_effect` for method-of-composition uncertainty.
+
+    ``uncertainty`` chooses the draw covariance, matching R ``stm``'s
+    ``thetaPosterior`` ``type=``:
+
+    - ``"local"`` (default here) — each document draws from its own variational
+      covariance ``ν_d`` (``model.eta_cov``). This is R's ``type="Local"``.
+    - ``"global"`` — every document draws from one *shared* covariance, R's
+      ``type="Global"`` (``Σ − crossprod(λ − μ)/N``). For STM/CTM's M-step that
+      shared covariance is identically the mean per-document variational
+      covariance ``mean_d(ν_d)`` (the between-document spread of the point λ is
+      exactly what the ``Σ`` update adds to ``mean(ν)``), so this propagates the
+      global topic-model uncertainty rather than each document's local Hessian.
+      It is R ``estimateEffect``'s default; :func:`estimate_effect` uses it.
+    - ``"none"`` — no topic-model uncertainty: every draw is the point θ
+      (``model.doc_topic``). Method-of-composition then reduces to OLS on the
+      point estimate and *understates* uncertainty; provided for parity with R's
+      ``type="None"`` and for a fast point-estimate pass.
 
     Returns an array of shape ``(nsims, num_docs, num_topics)``.
     """
+    if uncertainty not in ("local", "global", "none"):
+        raise ValueError(
+            f"uncertainty must be 'local', 'global', or 'none' (got {uncertainty!r})"
+        )
     # This is the logistic-normal (STM/CTM) sampler. Refuse other families cleanly
     # rather than failing with an AttributeError on the missing ``eta_mean`` getter
     # (issue #651): point at the right path for each family.
@@ -1610,34 +1654,56 @@ def posterior_theta_samples(model, nsims=25, seed=0):
             "of='effect', method='bootstrap') for uncertainty on this model."
         )
     lam = np.asarray(model.eta_mean, dtype=np.float64)  # (D, K-1)
+    d, km1 = lam.shape
+
+    # "none": no topic-model uncertainty — every draw is the point θ.
+    if uncertainty == "none":
+        full = np.concatenate([lam, np.zeros((d, 1))], axis=1)  # ref cat = 0
+        full -= full.max(axis=1, keepdims=True)
+        e = np.exp(full)
+        theta = e / e.sum(axis=1, keepdims=True)                # (D, K)
+        return np.broadcast_to(theta, (nsims, d, theta.shape[1])).copy()
+
     try:
         cov = np.asarray(model.eta_cov, dtype=np.float64)   # (D, K-1, K-1)
     except RuntimeError:
         cov = np.asarray(model._recompute_eta_cov(), dtype=np.float64)
-    d, km1 = lam.shape
-    k = km1 + 1
     rng = np.random.default_rng(seed)
     eye = np.eye(km1)
 
-    # Cholesky factors for every document at once. Cholesky is all-or-nothing on
-    # a batch, so only fall back to per-doc eigh for the docs that aren't PD —
-    # the common (all-PD) case stays a single batched LAPACK call.
-    csym = 0.5 * (cov + cov.transpose(0, 2, 1)) + 1e-10 * eye
-    try:
-        chol = np.linalg.cholesky(csym)                  # (D, K-1, K-1)
-    except np.linalg.LinAlgError:
-        chol = np.empty_like(csym)
-        for di in range(d):
-            try:
-                chol[di] = np.linalg.cholesky(csym[di])
-            except np.linalg.LinAlgError:
-                w, v = np.linalg.eigh(csym[di])
-                chol[di] = v @ np.diag(np.sqrt(np.clip(w, 1e-12, None)))
+    if uncertainty == "global":
+        # One shared covariance for all documents: the mean per-doc variational
+        # covariance, which equals R's Global Σ − crossprod(λ − μ)/N (the STM/CTM
+        # M-step sets Σ = crossprod(λ − μ)/N + mean(ν) at sigma.prior=0). Averaging
+        # PSD covariances keeps it PSD, so the Cholesky is robust.
+        shared = 0.5 * (cov.mean(axis=0) + cov.mean(axis=0).T) + 1e-10 * eye
+        try:
+            l_shared = np.linalg.cholesky(shared)
+        except np.linalg.LinAlgError:
+            w, v = np.linalg.eigh(shared)
+            l_shared = v @ np.diag(np.sqrt(np.clip(w, 1e-12, None)))
+        z = rng.standard_normal((d, nsims, km1))
+        eta = lam[:, None, :] + z @ l_shared.T               # (D, nsims, K-1)
+    else:
+        # Local: per-document covariance ν_d. Cholesky is all-or-nothing on a
+        # batch, so only fall back to per-doc eigh for the docs that aren't PD —
+        # the common (all-PD) case stays a single batched LAPACK call.
+        csym = 0.5 * (cov + cov.transpose(0, 2, 1)) + 1e-10 * eye
+        try:
+            chol = np.linalg.cholesky(csym)                  # (D, K-1, K-1)
+        except np.linalg.LinAlgError:
+            chol = np.empty_like(csym)
+            for di in range(d):
+                try:
+                    chol[di] = np.linalg.cholesky(csym[di])
+                except np.linalg.LinAlgError:
+                    w, v = np.linalg.eigh(csym[di])
+                    chol[di] = v @ np.diag(np.sqrt(np.clip(w, 1e-12, None)))
+        # Draw in document order (matches the old per-doc loop's RNG stream), then
+        # η = λ + Z·Lᵀ for all docs/sims via one batched matmul.
+        z = rng.standard_normal((d, nsims, km1))
+        eta = lam[:, None, :] + z @ chol.transpose(0, 2, 1)  # (D, nsims, K-1)
 
-    # Draw in document order (matches the old per-doc loop's RNG stream), then
-    # η = λ + Z·Lᵀ for all docs/sims via one batched matmul.
-    z = rng.standard_normal((d, nsims, km1))
-    eta = lam[:, None, :] + z @ chol.transpose(0, 2, 1)  # (D, nsims, K-1)
     full = np.concatenate([eta, np.zeros((d, nsims, 1))], axis=2)  # ref cat = 0
     full -= full.max(axis=2, keepdims=True)
     e = np.exp(full)
