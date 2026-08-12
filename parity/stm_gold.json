@@ -2,7 +2,10 @@
   "K": 20,
   "convergence_tol": 1e-05,
   "corpus": "poliblog (examples/poliblog.csv), fixed-seed 2000-doc subsample (seed 271), vignette preprocessing",
-  "date": "2026-06-22",
+  "date": "2026-08-12",
+  "effect_corr": 0.9765564219081504,
+  "effect_sign_agree": 17,
+  "effect_sign_total": 20,
   "formula": "~ rating + s(day)",
   "init": "Spectral",
   "margin": 0.15,
@@ -18,6 +21,8 @@
     "spectral": 1
   },
   "spline_df": 10,
+  "theta_cosine": 0.967126640584184,
+  "topic_corr_cosine": 0.9825979706530727,
   "topica_iters": 200,
   "topica_vs_r_spectral_cosine": 0.9754301838552131,
   "vocab_size": 2632

@@ -6,6 +6,18 @@ corpus to both engines, fit with `content = ~group`, K = 2. Reports, per content
 group, how distinct the two topics are in each engine (topic-sep: ~0 separated,
 ~1 collapsed) and the best-aligned cosine between R's and topica's per-group
 word distributions. Skips cleanly when Rscript / `stm` is unavailable.
+
+Two topica fits are compared to R's single (L1-default) fit:
+
+  * the **default L2** fit (`content_prior="l2"`, topica's default). Its per-group
+    word distributions align to R at a high cosine, but its topic-separation is
+    higher than R's — the expected L2-vs-L1 signature (L2 keeps small dense
+    deviations, L1 zeroes them). This is why the docs no longer claim "exact
+    agreement" for the content default.
+  * the **matched L1** fit (`content_prior="l1"`, R's default). Under a matched
+    prior the topic-separation also lines up with R's, showing topica's L1
+    content path is faithful to R and isolating the earlier gap to the default
+    prior, not the inference (issue #715-#3).
 """
 
 import csv
@@ -105,12 +117,17 @@ def run(verbose: bool = True) -> dict:
             raise RuntimeError("R stm content fit failed:\n" + out.stderr[-2000:])
         levs = open(os.path.join(d, "r_levels.txt")).read().split()
 
+        # topica's default L2 and the R-matched L1 content prior.
         m = STM(num_topics=2, seed=1)
-        m.fit(docs, content=groups, iters=80)
+        m.fit(docs, content=groups, iters=80)  # content_prior="l2" default
+        m1 = STM(num_topics=2, seed=1)
+        m1.fit(docs, content=groups, content_prior="l1", iters=80)
         vidx = {w: i for i, w in enumerate(m.vocabulary)}
         twg = np.asarray(m.topic_word_by_group)
+        twg1 = np.asarray(m1.topic_word_by_group)
 
-        result = {"cosine": {}, "r_topic_sep": {}, "tt_topic_sep": {}}
+        result = {"cosine": {}, "cosine_l1": {}, "r_topic_sep": {},
+                  "tt_topic_sep": {}, "tt_topic_sep_l1": {}}
         for g in levs:
             cols, rb = _read_beta(os.path.join(d, f"r_beta_{g}.csv"))
             rb_al = np.zeros((rb.shape[0], len(m.vocabulary)))
@@ -118,16 +135,22 @@ def run(verbose: bool = True) -> dict:
                 if w in vidx:
                     rb_al[:, vidx[w]] = rb[:, j]
             ttb = twg[:, m.groups.index(g), :]
+            ttb1 = twg1[:, m1.groups.index(g), :]
             result["cosine"][g] = _aligned_cosine(rb_al, ttb)
+            result["cosine_l1"][g] = _aligned_cosine(rb_al, ttb1)
             result["r_topic_sep"][g] = _topic_sep(rb_al)
             result["tt_topic_sep"][g] = _topic_sep(ttb)
+            result["tt_topic_sep_l1"][g] = _topic_sep(ttb1)
 
         if verbose:
             print(f"R levels {levs} | topica groups {m.groups}")
+            print("  R content prior = L1 (default); topica default = L2, matched = L1")
             for g in levs:
-                print(f"  {g}: R sep={result['r_topic_sep'][g]:.3f} "
-                      f"tt sep={result['tt_topic_sep'][g]:.3f} "
-                      f"cosine={result['cosine'][g]:.3f}")
+                print(f"  {g}: R sep={result['r_topic_sep'][g]:.3f} | "
+                      f"topica L2 sep={result['tt_topic_sep'][g]:.3f} "
+                      f"(cos {result['cosine'][g]:.3f}) | "
+                      f"topica L1 sep={result['tt_topic_sep_l1'][g]:.3f} "
+                      f"(cos {result['cosine_l1'][g]:.3f})")
         return result
 
 
