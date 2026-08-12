@@ -28,7 +28,7 @@ def test_collapse_warns():
     emb = np.vstack([rng.normal(0, 0.3, (150, 6)), rng.normal(8, 0.3, (150, 6))])
     docs = [[f"w{i % 6}"] for i in range(300)]
     msgs = _fit_capture(topica.BERTopic(min_cluster_size=15, seed=1), docs, emb)
-    assert any("only 2 topic" in m for m in msgs), msgs
+    assert any("genuine density structure" in m for m in msgs), msgs
 
 
 def test_collapse_not_warned_for_fixed_k():
@@ -39,7 +39,7 @@ def test_collapse_not_warned_for_fixed_k():
     msgs = _fit_capture(
         topica.BERTopic(clusterer="kmeans", num_clusters=2, seed=1), docs, emb
     )
-    assert not any("only 2 topic" in m for m in msgs), msgs
+    assert not any("genuine density structure" in m for m in msgs), msgs
 
 
 def test_high_noise_warns():
@@ -77,7 +77,7 @@ def test_diagnostics_false_suppresses():
     msgs = _fit_capture(
         topica.BERTopic(min_cluster_size=15, diagnostics=False, seed=1), docs, emb
     )
-    assert not any("only 2 topic" in m or "over-split" in m or "unassigned" in m for m in msgs), msgs
+    assert not any("genuine density structure" in m or "over-split" in m or "unassigned" in m for m in msgs), msgs
 
 
 def test_healthy_fit_is_quiet():
@@ -93,7 +93,7 @@ def test_healthy_fit_is_quiet():
     m = topica.BERTopic(clusterer="leiden", seed=1)
     msgs = _fit_capture(m, docs, emb)
     assert not any(
-        "only" in x or "over-split" in x or "unassigned" in x for x in msgs
+        "genuine density structure" in x or "over-split" in x or "unassigned" in x for x in msgs
     ), (m.num_topics, msgs)
 
 
@@ -102,4 +102,4 @@ def test_top2vec_also_diagnoses():
     emb = np.vstack([rng.normal(0, 0.3, (150, 6)), rng.normal(8, 0.3, (150, 6))])
     docs = [[f"w{i % 6}"] for i in range(300)]
     msgs = _fit_capture(topica.Top2Vec(min_cluster_size=15, seed=1), docs, emb)
-    assert any("Top2Vec" in m and "only 2 topic" in m for m in msgs), msgs
+    assert any("Top2Vec" in m and "genuine density structure" in m for m in msgs), msgs

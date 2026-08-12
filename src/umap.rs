@@ -17,7 +17,13 @@
 //!      offset `rho` calibrating a fuzzy membership of cardinality `log2(k)`.
 //!   3. Fuzzy simplicial set: membership strengths, symmetrized by the fuzzy
 //!      union `P = A + Aᵀ − A ⊙ Aᵀ` (for `set_op_mix_ratio = 1`).
-//!   4. SGD layout: sample edges in proportion to their weight, pull endpoints
+//!   4. Spectral (Laplacian-eigenmap) initialization of the layout — `umap-learn`'s
+//!      default `init="spectral"`. Solved by seeded subspace iteration on the
+//!      normalized adjacency (scalable where a dense eigensolve is not), with a
+//!      seeded-random fallback. Seeding the SGD from the graph's eigenmap starts
+//!      clusters in separated basins; the old uniform-random init gave clustered
+//!      real embeddings no structure to open (a residual `#555` contributor).
+//!   5. SGD layout: sample edges in proportion to their weight, pull endpoints
 //!      together, push uniformly-drawn negatives apart, with the `umap-learn`
 //!      gradient and the ±4 clip.
 
@@ -458,6 +464,166 @@ fn optimize_layout(
     }
 }
 
+/// Modified Gram-Schmidt orthonormalization of the `m` length-`n` columns stored
+/// column-major in `basis` (`basis[c*n + i]`). A column that collapses to ~0 is
+/// left as zeros; the caller's Rayleigh-Ritz step tolerates the rank drop.
+fn orthonormalize_cols(basis: &mut [f64], n: usize, m: usize) {
+    for c in 0..m {
+        // Subtract projections onto the earlier, already-normalized columns.
+        for p in 0..c {
+            let mut dot = 0.0;
+            for i in 0..n {
+                dot += basis[p * n + i] * basis[c * n + i];
+            }
+            for i in 0..n {
+                basis[c * n + i] -= dot * basis[p * n + i];
+            }
+        }
+        let mut nrm = 0.0;
+        for i in 0..n {
+            nrm += basis[c * n + i] * basis[c * n + i];
+        }
+        let nrm = nrm.sqrt();
+        if nrm > 1e-12 {
+            for i in 0..n {
+                basis[c * n + i] /= nrm;
+            }
+        }
+    }
+}
+
+/// Spectral (Laplacian-eigenmap) initial layout, matching `umap-learn`'s default
+/// `init="spectral"`. The layout is the top `n_components` non-trivial eigenvectors
+/// of the normalized adjacency `P = D^{-1/2} A D^{-1/2}` of the fuzzy simplicial set
+/// — equivalently the smallest non-zero eigenvectors of the normalized Laplacian
+/// `I − P` — which places clusters in the separated density basins the SGD then
+/// refines. topica previously seeded the SGD from a uniform random cloud; on real
+/// (clustered) sentence embeddings that cloud has no cluster structure for the
+/// short-range attraction to open, so the layout collapsed to ~2 topics (#555, the
+/// residual cause after the `a,b` and edge-order fixes). Spectral init supplies that
+/// structure.
+///
+/// Solved by seeded subspace (block power) iteration on `P` — O(n·k·m·iters), scalable
+/// where a dense eigensolve is not — plus a Rayleigh-Ritz step (small `m×m` Jacobi) to
+/// order the Ritz vectors. Returns `None` (⇒ caller falls back to random init) when the
+/// graph has an isolated vertex, matching `umap-learn`'s random fallback on a failed
+/// spectral solve. Deterministic for a fixed `seed`.
+fn spectral_init(
+    edges: &[(u32, u32, f64)],
+    n: usize,
+    n_components: usize,
+    seed: u64,
+) -> Option<Vec<f64>> {
+    // Weighted degrees of the (already symmetrized) graph.
+    let mut deg = vec![0.0f64; n];
+    for &(h, _, w) in edges {
+        deg[h as usize] += w;
+    }
+    // Isolated vertices (all their edges pruned) get D^{-1/2}=0 — a zero row/column in
+    // P, so they sit at the origin and are jittered by the SGD noise. Only bail to random
+    // init if the graph is *mostly* isolated (no usable structure to embed).
+    let n_isolated = deg.iter().filter(|&&d| d <= 0.0).count();
+    if n_isolated * 2 >= n {
+        return None;
+    }
+    let inv_sqrt_d: Vec<f64> = deg
+        .iter()
+        .map(|&d| if d > 0.0 { 1.0 / d.sqrt() } else { 0.0 })
+        .collect();
+
+    // y = P x from the edge list: y[h] = D^{-1/2}[h] Σ_edges(h→t) w · D^{-1/2}[t] · x[t].
+    let matvec = |x: &[f64], y: &mut [f64]| {
+        for v in y.iter_mut() {
+            *v = 0.0;
+        }
+        for &(h, t, w) in edges {
+            let (h, t) = (h as usize, t as usize);
+            y[h] += w * inv_sqrt_d[h] * inv_sqrt_d[t] * x[t];
+        }
+    };
+
+    // Top m = n_components+1 eigenvectors (the +1 is the trivial ~constant vector,
+    // eigenvalue 1, dropped below).
+    let m = (n_components + 1).min(n);
+    if m < 2 {
+        return None;
+    }
+    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_15DE_ADBE_EF01);
+    let mut basis = vec![0.0f64; n * m]; // column-major: basis[c*n + i]
+    for v in basis.iter_mut() {
+        *v = rng.gen_range(-1.0..1.0);
+    }
+    orthonormalize_cols(&mut basis, n, m);
+
+    let mut tmp = vec![0.0f64; n];
+    let mut ritz_vecs = vec![0.0f64; n * m];
+    let mut prev_vals = vec![f64::INFINITY; m];
+    for iter in 0..300 {
+        // Power step: basis <- orthonormal( P · basis ).
+        let mut yb = vec![0.0f64; n * m];
+        for c in 0..m {
+            matvec(&basis[c * n..(c + 1) * n], &mut tmp);
+            yb[c * n..(c + 1) * n].copy_from_slice(&tmp);
+        }
+        orthonormalize_cols(&mut yb, n, m);
+        basis.copy_from_slice(&yb);
+
+        // Rayleigh-Ritz occasionally: project P into the basis, eigensolve the small
+        // m×m, rotate to ordered Ritz vectors, and check the Ritz values for a plateau.
+        if iter % 10 == 9 {
+            let mut pb = vec![0.0f64; n * m];
+            for c in 0..m {
+                matvec(&basis[c * n..(c + 1) * n], &mut tmp);
+                pb[c * n..(c + 1) * n].copy_from_slice(&tmp);
+            }
+            let mut mm = vec![0.0f64; m * m];
+            for a in 0..m {
+                for b in 0..m {
+                    let mut s = 0.0;
+                    for i in 0..n {
+                        s += basis[a * n + i] * pb[b * n + i];
+                    }
+                    mm[a * m + b] = s;
+                }
+            }
+            let (vals, vecs) = crate::reduce::jacobi_eigen_symmetric(&mm, m);
+            for (j, vecs_j) in vecs.iter().enumerate() {
+                for i in 0..n {
+                    let mut s = 0.0;
+                    for a in 0..m {
+                        s += basis[a * n + i] * vecs_j[a];
+                    }
+                    ritz_vecs[j * n + i] = s;
+                }
+            }
+            let delta: f64 = vals
+                .iter()
+                .zip(&prev_vals)
+                .map(|(a, b)| (a - b).abs())
+                .sum();
+            prev_vals.copy_from_slice(&vals);
+            if delta < 1e-7 {
+                break;
+            }
+        }
+    }
+
+    // Drop the trivial top eigenvector (index 0, eigenvalue ≈ 1); keep the next
+    // n_components, ordered by descending eigenvalue (jacobi_eigen_symmetric sorts so).
+    let mut out = vec![0.0f64; n * n_components];
+    for comp in 0..n_components {
+        let j = comp + 1;
+        for i in 0..n {
+            out[i * n_components + comp] = ritz_vecs[j * n + i];
+        }
+    }
+    // Guard against a degenerate all-zero layout (e.g. the solve stalled): fall back.
+    if out.iter().all(|&v| v.abs() < 1e-12) {
+        return None;
+    }
+    Some(out)
+}
+
 /// Reduce `data` (`n × features`) to `n_components` with UMAP. `n_neighbors` is
 /// the graph neighborhood; `min_dist`/`spread` shape the embedding; `n_epochs`
 /// the SGD length (0 ⇒ 500 for ≤10k rows, else 200); `negative_sample_rate` and
@@ -524,12 +690,18 @@ pub fn umap(
 
     let (a, b) = find_ab_params(spread, min_dist);
 
-    // Random init in [-10, 10], seeded (umap-learn's random-init range).
-    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x9E37_79B9_7F4A_7C15);
-    let mut embedding = vec![0.0f64; n * n_components];
-    for v in embedding.iter_mut() {
-        *v = rng.gen_range(-10.0..10.0);
-    }
+    // Spectral init (umap-learn's default): seed the SGD from the graph's Laplacian
+    // eigenmap so clusters start in separated basins. Falls back to seeded random init
+    // in [-10, 10] (umap-learn's random-init range) when the spectral solve is
+    // unreliable (isolated vertex / stalled solve).
+    let mut embedding = spectral_init(&edges, n, n_components, seed).unwrap_or_else(|| {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x9E37_79B9_7F4A_7C15);
+        let mut e = vec![0.0f64; n * n_components];
+        for v in e.iter_mut() {
+            *v = rng.gen_range(-10.0..10.0);
+        }
+        e
+    });
 
     // Rescale the initial layout so each axis spans [0, 10], matching umap-learn's
     // `10 * (e - min) / (max - min)` step applied right before the SGD (umap_.py). Without
@@ -537,6 +709,13 @@ pub fn umap(
     // effective attractive velocity (grad ~ -2b/d for large d) so clusters never condense
     // into the density valleys HDBSCAN cuts on — the #555 collapse.
     rescale_unit_box(&mut embedding, n, n_components);
+
+    // Small seeded jitter so a symmetric spectral layout is not an exact SGD fixed point
+    // (umap-learn adds N(0, 1e-4) noise to the spectral init for the same reason).
+    let mut noise_rng = ChaCha8Rng::seed_from_u64(seed ^ 0xA5A5_5A5A_1234_5678);
+    for v in embedding.iter_mut() {
+        *v += noise_rng.gen_range(-1e-3..1e-3);
+    }
 
     let head: Vec<u32> = edges.iter().map(|&(h, _, _)| h).collect();
     let tail: Vec<u32> = edges.iter().map(|&(_, t, _)| t).collect();
@@ -686,5 +865,47 @@ mod tests {
             "UMAP did not separate the blobs: {correct}/{}",
             truth.len()
         );
+    }
+
+    #[test]
+    fn spectral_init_separates_two_components() {
+        // Two dense cliques joined by a single weak bridge (a barbell) — one connected
+        // component with a bottleneck, like a real fuzzy kNN graph over two clusters.
+        // The Laplacian eigenmap's first non-trivial (Fiedler) component must take
+        // opposite signs on the two sides, the cluster-separating structure random init
+        // lacks (the umap-learn default init topica now matches).
+        let mut edges: Vec<(u32, u32, f64)> = Vec::new();
+        let block = 15u32;
+        for grp in 0..2u32 {
+            let base = grp * block;
+            for i in 0..block {
+                for j in (i + 1)..block {
+                    edges.push((base + i, base + j, 1.0));
+                    edges.push((base + j, base + i, 1.0));
+                }
+            }
+        }
+        // Weak bridge so the graph is connected (the Fiedler vector then separates).
+        edges.push((0, block, 0.01));
+        edges.push((block, 0, 0.01));
+        let n = (block * 2) as usize;
+        let layout = spectral_init(&edges, n, 2, 42).expect("spectral init should succeed");
+        // First component averaged over each clique — the two means must have opposite
+        // sign and be well separated.
+        let mean = |g: usize| {
+            let mut s = 0.0;
+            for i in 0..block as usize {
+                s += layout[(g * block as usize + i) * 2];
+            }
+            s / block as f64
+        };
+        let (m0, m1) = (mean(0), mean(1));
+        assert!(
+            m0 * m1 < 0.0 && (m0 - m1).abs() > 0.1,
+            "spectral init did not separate the two components: means {m0}, {m1}"
+        );
+        // Deterministic for a fixed seed.
+        let again = spectral_init(&edges, n, 2, 42).unwrap();
+        assert_eq!(layout, again, "spectral init must be reproducible");
     }
 }
