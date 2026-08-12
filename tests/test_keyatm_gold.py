@@ -65,40 +65,47 @@ def test_keyatm_dynamic_matches_committed_gold():
 
 def test_keyatm_covariate_magnitude_parity():
     """#716-#4: beyond the rating-effect SIGN, the gold gates the MAGNITUDE of the
-    covariate coefficients λ (topica MAP vs R posterior-mean, correlation on the
-    keyword topics) and the keyword-switch π."""
+    covariate rating-SLOPE λ (topica MAP vs R posterior-mean, correlation on the
+    keyword topics, intercept excluded) and the keyword-switch π. The bar is R's
+    own seed-to-seed floor minus the margin (same standard as the phi bar)."""
     import pytest
 
     arrays, _ = harness.load_gold("keyatm")
     if "cov_lambda_r" not in arrays:
         pytest.skip("committed gold predates the λ/π magnitude arrays; regenerate")
     c = keyatm_gold.run(verbose=False)["covariate"]
-    assert c["lambda_corr"] >= keyatm_gold.LAMBDA_BAR, (
-        f"covariate λ magnitude correlation {c['lambda_corr']:.3f} < "
-        f"{keyatm_gold.LAMBDA_BAR}; details: {c}")
-    assert c["pi_corr"] >= keyatm_gold.PI_BAR, (
-        f"keyword-switch π correlation {c['pi_corr']:.3f} < {keyatm_gold.PI_BAR}; {c}")
+    assert c["lambda_corr"] >= c["lambda_bar"], (
+        f"covariate rating-slope λ correlation {c['lambda_corr']:.3f} < bar "
+        f"{c['lambda_bar']:.3f}; details: {c}")
+    assert c["pi_corr"] >= c["pi_bar"], (
+        f"keyword-switch π correlation {c['pi_corr']:.3f} < bar {c['pi_bar']:.3f}; {c}")
 
 
 def test_keyatm_dynamic_state_path_parity():
     """#716-#4: the dynamic gold gates the HMM state path — topica's per-period
     state vs R's, label-invariant (adjusted Rand index on the change-point
-    structure), not just the prevalence-trend sign."""
+    structure), not just the prevalence-trend sign. Bar is R's own state-path
+    seed-to-seed ARI minus the margin."""
     import pytest
 
     arrays, _ = harness.load_gold("keyatm")
     if "dyn_state_r" not in arrays:
         pytest.skip("committed gold predates the state-path array; regenerate")
     d = keyatm_gold.run(verbose=False)["dynamic"]
-    assert d["state_ari"] >= keyatm_gold.STATE_ARI_BAR, (
-        f"dynamic HMM state-path ARI {d['state_ari']:.3f} < "
-        f"{keyatm_gold.STATE_ARI_BAR}; details: {d}")
+    assert d["state_ari"] >= d["state_ari_bar"], (
+        f"dynamic HMM state-path ARI {d['state_ari']:.3f} < bar "
+        f"{d['state_ari_bar']:.3f}; details: {d}")
 
 
 def test_keyatm_magnitude_and_state_gates_are_non_vacuous():
-    """The λ / π / state-path bars must FAIL on a mismatched pairing — otherwise
-    they rubber-stamp any fit. Permute the reference's topics/periods and confirm
-    each metric collapses below its bar."""
+    """The λ / π / state-path gates must discriminate a mismatched pairing on
+    AVERAGE — otherwise they rubber-stamp any fit. HONEST LIMITATION: the covariate
+    corpus anchors only 4 keyword topics, so a single λ/π correlation is coarse — a
+    lucky topic permutation can align a wrong fit and clear the bar. We therefore
+    assert the MEAN |correlation| (and mean ARI) over many permutations sits below
+    the bar, i.e. a mismatch fails in expectation; the per-fit gate rests on topica
+    clearing R's own seed-to-seed floor, not on the correlation being un-foolable at
+    n=4. The state ARI (8 periods) is the more robust of the three."""
     import numpy as np
     import pytest
 
@@ -106,31 +113,33 @@ def test_keyatm_magnitude_and_state_gates_are_non_vacuous():
     if "cov_lambda_r" not in arrays:
         pytest.skip("committed gold predates the magnitude/state arrays; regenerate")
     cm = meta["models"]["covariate"]
+    dm = meta["models"]["dynamic"]
+    margin = float(meta["margin"])
     nk = int(cm["num_keyword"])
+    lam_bar = float(cm["lambda_r_self_corr"]) - margin
+    pi_bar = float(cm["pi_r_self_corr"]) - margin
+    state_bar = float(dm["state_r_self_ari"]) - margin
     rng = np.random.default_rng(0)
 
-    # λ / π: with only a handful of keyword topics a single permutation is noisy,
-    # so average |correlation| over many derangements — a genuine mismatch must
-    # sit well below the bar on average (not accidentally clear it).
-    lam = np.asarray(arrays["cov_lambda_r"])[:nk]
+    # λ is the rating-slope columns only (intercept excluded, matching the gate).
+    lam = np.asarray(arrays["cov_lambda_r"])[:nk, 1:]
     pi = np.asarray(arrays["cov_pi_r"])[:nk]
 
     def _mean_shuffled_corr(x):
         vals = []
-        for _ in range(200):
+        for _ in range(500):
             p = rng.permutation(nk)
             vals.append(abs(keyatm_gold._corr(x, x[p])))
         return float(np.nanmean(vals))
 
-    assert _mean_shuffled_corr(lam) < keyatm_gold.LAMBDA_BAR
-    assert _mean_shuffled_corr(pi) < keyatm_gold.PI_BAR
+    assert _mean_shuffled_corr(lam) < lam_bar
+    assert _mean_shuffled_corr(pi) < pi_bar
 
-    # state path: a shuffled period assignment must drop the ARI below its bar.
+    # state path: a shuffled period assignment must drop the mean ARI below the bar.
     st = np.asarray(arrays["dyn_state_r"]).astype(int)
-    aris = []
-    for _ in range(200):
-        aris.append(harness.adjusted_rand_index(st, st[rng.permutation(len(st))]))
-    assert float(np.mean(aris)) < keyatm_gold.STATE_ARI_BAR
+    aris = [harness.adjusted_rand_index(st, st[rng.permutation(len(st))])
+            for _ in range(500)]
+    assert float(np.mean(aris)) < state_bar
 
 
 def test_keyatm_gold_is_non_vacuous():

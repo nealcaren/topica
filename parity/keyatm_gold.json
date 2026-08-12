@@ -89,8 +89,8 @@
           "surg"
         ]
       },
-      "lambda_r_self_corr": 0.9760292211412934,
-      "note": "model fixed in #270 (covariate standardization + lambda bounds); lambda is topica MAP vs R posterior-mean, compared by magnitude correlation on the keyword topics",
+      "lambda_r_self_corr": 0.9816160025534109,
+      "note": "model fixed in #270 (covariate standardization + lambda bounds); lambda is topica MAP vs R posterior-mean, compared by rating-slope magnitude correlation on the keyword topics (intercept excluded)",
       "num_docs": 2000,
       "num_keyword": 4,
       "num_regular": 4,
@@ -102,7 +102,7 @@
         "phi2": 2
       },
       "topica_keyword_cosine": 0.9122431029695659,
-      "topica_lambda_corr": 0.9968679304031559,
+      "topica_lambda_corr": 0.9176529646495978,
       "topica_pi_corr": 0.979047816065588,
       "topica_rating_sign_agree": 1.0,
       "vocab_size": 2632

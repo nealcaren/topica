@@ -20,9 +20,11 @@ floor, for all three reference variants:
                   standardization + lambda bounds were added); a committed gold
                   vs R locks that fix against the reference. Beyond keyword phi
                   and the rating-effect SIGN, the gold now also gates the
-                  MAGNITUDE of the covariate coefficients lambda (topica's MAP
+                  MAGNITUDE of the rating-slope coefficient lambda (topica's MAP
                   lambda vs R's posterior-mean lambda, correlation on the keyword
-                  topics) and the keyword-switch pi (issue #716-#4).
+                  topics; the intercept baseline is excluded because it correlates
+                  ~1.0 and would flatter the covariate-effect claim) and the
+                  keyword-switch pi (issue #716-#4).
   3. dynamic    — Chib's change-point HMM over a shared, binned time index.
                   The gold locks keyword-topic phi, the per-topic prevalence-trend
                   signs, and now the HMM STATE PATH: topica's per-period state
@@ -78,14 +80,14 @@ ITERS = 600
 # keyword_r_self_cosine - 0.15).
 MARGIN = 0.15
 
-# Bars for the magnitude / state-path cases (topica MAP vs R MCMC, so a correlation
-# rather than an exact match). Set below the regenerate-time values (λ 0.997, π 0.979,
-# state-ARI 0.517) with headroom. The two correlations are smooth and robust, so their
-# bars sit close; the state-path ARI is a discrete, platform-sensitive partition metric,
-# so its bar keeps a wide margin.
-LAMBDA_BAR = 0.85   # covariate lambda-magnitude correlation (keyword topics)
-PI_BAR = 0.80       # keyword-switch pi correlation (keyword topics)
-STATE_ARI_BAR = 0.30  # dynamic HMM state-path adjusted Rand index (label-invariant)
+# The magnitude / state-path cases (covariate rating-slope λ, keyword-switch π,
+# dynamic HMM state-path) compare topica (MAP / Gibbs) to R (MCMC), so they are
+# correlations / a label-invariant ARI rather than exact matches. Their bars are
+# R's own seed-to-seed floor minus MARGIN — the same "at least as good as R agrees
+# with itself" standard as the phi bar — computed in run() from the stored floors.
+# NOTE: only 4 keyword topics anchor the covariate corpus, so the λ/π correlation
+# gates are coarse (a lucky topic permutation can align a wrong fit); the state ARI
+# has 8 periods. See test_keyatm_magnitude_and_state_gates_are_non_vacuous.
 
 NUM_REGULAR_BASE = base_live.NUM_REGULAR  # 6
 NUM_REGULAR_COV = cov_live.NUM_REGULAR    # 4
@@ -336,9 +338,12 @@ def regenerate() -> None:
     sgn_r1 = cov_live._group_sign(cov_th1, rating)[ckw]
     sgn_r2 = cov_live._group_sign(cov_th2, rating)[ckw]
     cov_sign_r_self = float((sgn_r1 == sgn_r2).mean())
-    # R's own lambda-magnitude / pi reproducibility (seed-to-seed floor) on the
-    # keyword topics — the yardstick the topica gap is measured against.
-    cov_lam_r_self = _corr(cov_lam1[ckw], cov_lam2[ckw])
+    # R's own lambda-slope / pi reproducibility (seed-to-seed floor) on the keyword
+    # topics — the yardstick the topica gap is measured against. Compare the
+    # NON-INTERCEPT columns only: the intercept is the topic's baseline prevalence
+    # (tied to the well-recovered phi, so it correlates ~1.0 and would flatter the
+    # result); the substantive covariate effect is the slope on rating.
+    cov_lam_r_self = _corr(cov_lam1[ckw, 1:], cov_lam2[ckw, 1:])
     cov_pi_r_self = _corr(cov_pi1[ckw], cov_pi2[ckw])
 
     cov_tt, cov_th_tt, cov_lam_tt, cov_pi_tt = _fit_topica_cov(
@@ -346,9 +351,10 @@ def regenerate() -> None:
     cov_tt_cos = cov_live._best_alignment_cosine(cov_phi1[ckw], cov_tt[ckw])
     sgn_tt = cov_live._group_sign(cov_th_tt, rating)[ckw]
     cov_sign_tt = float((sgn_r1 == sgn_tt).mean())
-    # Magnitude parity (keyword topics): topica's MAP lambda vs R's posterior-mean
-    # lambda, and topica's keyword-switch pi vs R's — beyond the sign-only check.
-    cov_lam_tt_corr = _corr(cov_lam1[ckw], cov_lam_tt[ckw])
+    # Magnitude parity (keyword topics): topica's MAP rating-slope lambda vs R's
+    # posterior-mean slope (intercept excluded, see above), and topica's
+    # keyword-switch pi vs R's — beyond the sign-only check.
+    cov_lam_tt_corr = _corr(cov_lam1[ckw, 1:], cov_lam_tt[ckw, 1:])
     cov_pi_tt_corr = _corr(cov_pi1[ckw], cov_pi_tt[ckw])
 
     arrays["cov_phi1"] = cov_phi1
@@ -375,8 +381,8 @@ def regenerate() -> None:
         "pi_r_self_corr": cov_pi_r_self,
         "topica_pi_corr": cov_pi_tt_corr,
         "note": "model fixed in #270 (covariate standardization + lambda bounds); "
-                "lambda is topica MAP vs R posterior-mean, compared by magnitude "
-                "correlation on the keyword topics",
+                "lambda is topica MAP vs R posterior-mean, compared by rating-slope "
+                "magnitude correlation on the keyword topics (intercept excluded)",
     }
 
     # ----- dynamic model ----- #
@@ -568,16 +574,22 @@ def run(verbose: bool = True) -> dict:
     # Magnitude parity (keyword topics): topica MAP lambda vs R posterior-mean
     # lambda, and topica pi vs R pi — gated when the extended gold is present.
     if "cov_lambda_r" in arrays:
-        lam_corr = _corr(arrays["cov_lambda_r"][ckw], cov_lam_tt[ckw])
+        # Rating-slope columns only (drop the intercept baseline, which correlates
+        # ~1.0 and would flatter the covariate-effect magnitude claim). Bars are
+        # R's own seed-to-seed floor minus the margin, exactly like the phi bar —
+        # topica must agree with R at least as well as R agrees with itself.
+        lam_corr = _corr(arrays["cov_lambda_r"][ckw, 1:], cov_lam_tt[ckw, 1:])
         pi_corr = _corr(arrays["cov_pi_r"][ckw], cov_pi_tt[ckw])
+        lam_bar = float(cm["lambda_r_self_corr"]) - margin
+        pi_bar = float(cm["pi_r_self_corr"]) - margin
         cov_dict.update({
             "lambda_corr": lam_corr,
-            "lambda_bar": LAMBDA_BAR,
+            "lambda_bar": lam_bar,
             "pi_corr": pi_corr,
-            "pi_bar": PI_BAR,
+            "pi_bar": pi_bar,
         })
         cov_dict["passes"] = bool(
-            cov_dict["passes"] and lam_corr >= LAMBDA_BAR and pi_corr >= PI_BAR)
+            cov_dict["passes"] and lam_corr >= lam_bar and pi_corr >= pi_bar)
     result["covariate"] = cov_dict
 
     # ----- dynamic ----- #
@@ -613,8 +625,9 @@ def run(verbose: bool = True) -> dict:
     if "dyn_state_r" in arrays:
         state_ari = harness.adjusted_rand_index(
             arrays["dyn_state_r"].astype(int), dyn_state_tt)
-        dyn_dict.update({"state_ari": state_ari, "state_ari_bar": STATE_ARI_BAR})
-        dyn_dict["passes"] = bool(dyn_dict["passes"] and state_ari >= STATE_ARI_BAR)
+        state_bar = float(dm["state_r_self_ari"]) - margin  # R-self floor - margin
+        dyn_dict.update({"state_ari": state_ari, "state_ari_bar": state_bar})
+        dyn_dict["passes"] = bool(dyn_dict["passes"] and state_ari >= state_bar)
     result["dynamic"] = dyn_dict
 
     result["passes"] = (result["base"]["passes"]
@@ -636,7 +649,7 @@ def run(verbose: bool = True) -> dict:
         print(f"  rating sign  — agree {c['rating_sign_agree']:.2f}  "
               f"(R self {c['rating_sign_r_self']:.2f})")
         if "lambda_corr" in c:
-            print(f"  λ magnitude  — corr {c['lambda_corr']:.3f} (bar {c['lambda_bar']:.2f})")
+            print(f"  λ rating slope — corr {c['lambda_corr']:.3f} (bar {c['lambda_bar']:.2f})")
             print(f"  π switch     — corr {c['pi_corr']:.3f} (bar {c['pi_bar']:.2f})")
         print(f"  verdict: {'PASS' if c['passes'] else 'FAIL'} "
               f"(margin {c['margin_over_bar']:+.4f})")
