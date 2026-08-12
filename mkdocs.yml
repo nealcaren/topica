@@ -137,5 +137,6 @@ nav:
       - API conventions: contributing/conventions.md
       - Estimator contract: contributing/estimator-contract.md
       - Model implementation map: contributing/model-map.md
+      - Validation & graduation: contributing/validation.md
       - Release checklist: contributing/release-checklist.md
   - Citing: citing.md

@@ -9,6 +9,15 @@ import pytest
 import topica
 
 
+@pytest.fixture(autouse=True)
+def _experimental():
+    """EmbeddingLDA is experimental-gated (#660); enable it for every test here."""
+    was = topica.experimental_enabled()
+    topica.enable_experimental(True)
+    yield
+    topica.enable_experimental(was)
+
+
 def _planted(seed=0, per=60, k=3, dim=12):
     rng = np.random.default_rng(seed)
     themes = {

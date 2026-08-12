@@ -129,6 +129,14 @@ against `time_labels` to see a topic's trajectory.
 
 ## Embedding-guided topics (EmbeddingLDA)
 
+!!! warning "Experimental — validated by planted-recovery only"
+    `EmbeddingLDA` is a topica original with no published paper or reference
+    implementation; its gold cannot distinguish it from plain LDA, whose label
+    recovery it does not beat on real text. It is **gated** behind
+    `topica.enable_experimental()` (or `TOPICA_EXPERIMENTAL=1`) and may change or
+    be removed without a deprecation cycle (issue #660). Its `SeededLDA` core is
+    validated; the embedding-seeding *benefit* is what remains unproven.
+
 `SeededLDA` and `KeyATM` ask you to name the seed words. `EmbeddingLDA` instead
 discovers them from a pre-trained embedding space: it clusters the vocabulary's
 embeddings into `num_topics` semantic groups, seeds each topic with the words
@@ -143,6 +151,7 @@ the vocabulary:
 from sentence_transformers import SentenceTransformer
 import topica
 
+topica.enable_experimental()   # EmbeddingLDA is experimental and gated
 vocab = sorted({w for d in docs for w in d})
 emb = SentenceTransformer("all-MiniLM-L6-v2").encode(vocab)
 
