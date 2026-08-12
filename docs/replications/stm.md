@@ -42,19 +42,22 @@ identical. On a bilingual corpus fit with `content = ~group`, K = 2
 ([`stm_content_r_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/stm_content_r_compare.py)),
 R's L1 fit and topica's L2 fit align to a per-group cosine of ~0.999, but the
 topic-separation the two produce differs (R ~0.03 per topic, topica ~0.11) — the
-expected signature of L1 (sparser deviations) versus L2:
+expected signature of L1 (sparser deviations) versus L2. Fit topica with the
+**matched** L1 prior (`content_prior="l1"`, R's default) and the separation lines
+up too (topica L1 ~0.02, essentially R's), which is how we know the gap is the
+default prior, not the inference:
 
-| Content group | topica(L2)–R(L1) cosine |
-|---|---:|
-| `de` | ~0.999 |
-| `en` | ~0.999 |
+| Content group | topica(L2)–R(L1) cosine | topica L2 sep | topica L1 sep | R (L1) sep |
+|---|---:|---:|---:|---:|
+| `de` | 0.999 | 0.11 | 0.02 | 0.03 |
+| `en` | 0.999 | 0.12 | 0.03 | 0.04 |
 
 This is the path where a symmetric-initialization bug once collapsed all topics
 to the background; the high matched cosine against R is how we know it is fixed.
-If you need R-comparable content regularization, this is the knob to match — pass
-`content_prior="l1"`; topica keeps L2 as its default because that is the path its
-committed gold validates. (A matched-prior parity fixture is tracked as a
-follow-up.)
+If you need R-comparable content regularization, pass `content_prior="l1"`; topica
+keeps L2 as its default because that is the path its committed gold validates. The
+matched-prior comparison above is checked in
+[`stm_content_r_compare.py`](https://github.com/nealcaren/topica/blob/main/parity/stm_content_r_compare.py).
 
 ## Prevalence model: same neighborhood as R, and the same conclusions
 
@@ -91,23 +94,35 @@ runs to convergence — issue #234.) For a guaranteed "replicate the original" m
 computed base β (for example R `stm`'s exact spectral β), so a fit can start from
 R's initialization and reproduce that run.
 
-What replicates stably across optima is the substantive conclusion. Regressing
-topic prevalence on ideology, topica recovers the same effect directions R does:
-in the worked examples the per-topic effect coefficients correlate strongly with
-R's and agree on the sign and significance of most topics (the few that differ are
-the bistable topics the two optimizers split, not a systematic offset). The
-[Poliblog](../examples/poliblog.md) and [Gadarian](../examples/gadarian.md)
-worked examples refit the canonical `stm` vignettes end to end and recover the
-prevalence effects the package documents. `estimate_effect` computes its
-method-of-composition standard errors with R `estimateEffect`'s default
-**Global** uncertainty (one shared topic covariance across documents); pass
-`uncertainty="local"` for the per-document variational covariance, or `"none"`
-for OLS on the point estimate.
+What replicates stably across optima is the substantive conclusion. On the
+2,000-document Poliblog fixture at K = 20, the committed gold now checks the whole
+model against R, not just the topic-word matrix. Aligning topica's topics to R's
+by β cosine, the agreement is:
 
-The committed gold gates the topic-word matrix (β cosine and top-word overlap);
-the prevalence-effect, θ, and content-κ agreement above is demonstrated in the
-worked-example replications, with committed effect/θ parity fixtures tracked as a
-follow-up.
+| Quantity | topica vs R |
+|---|---:|
+| topic-word β (aligned cosine) | 0.975 |
+| doc-topic θ (mean per-doc cosine) | 0.967 |
+| topic correlation (Σ, off-diagonal cosine) | 0.983 |
+| prevalence effect on `rating` (Pearson r across topics) | 0.977 |
+| prevalence-effect sign agreement | 17 / 20 topics |
+
+γ and Σ are not compared in the raw (K − 1) reference space — two independent
+fits' relabeled topics do not align there — but through their interpretable
+K-space forms: the per-topic prevalence effect (γ) and the topic-correlation
+matrix (Σ). The three topics whose effect sign differs are the bistable ones the
+two optimizers split, not a systematic offset. `estimate_effect` computes its
+method-of-composition standard errors with R `estimateEffect`'s default **Global**
+uncertainty (one shared topic covariance across documents); pass
+`uncertainty="local"` for the per-document variational covariance, or `"none"`
+for OLS on the point estimate. The [Poliblog](../examples/poliblog.md) and
+[Gadarian](../examples/gadarian.md) worked examples refit the canonical `stm`
+vignettes end to end.
+
+These numbers are gated offline (no R at test time) in
+[`stm_gold.py`](https://github.com/nealcaren/topica/blob/main/parity/stm_gold.py):
+the R reference fit, the exact corpus, and the design matrix are frozen in the
+committed fixture.
 
 The smaller Gadarian survey corpus (339 documents, K = 3) is a deliberately
 harder, more multimodal case: with so few short open-ended responses, R itself

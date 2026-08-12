@@ -40,6 +40,26 @@ def test_stm_matches_committed_gold():
     )
 
 
+def test_stm_whole_model_parity():
+    """Beyond topic-word beta, the committed gold now also gates the whole-model
+    agreement with R (issue #715-#1): the doc-topic theta, the topic-correlation
+    matrix (Sigma's interpretable K-space form), and the per-topic prevalence
+    effect (gamma's interpretable form, the substantive conclusion). gamma/Sigma
+    are not compared in the raw (K-1) reference space, where two independent fits'
+    relabeled topics do not align, but through these aligned K-space quantities."""
+    r = stm_gold.run(verbose=False)
+    if "theta_cosine" not in r:
+        import pytest
+
+        pytest.skip("committed gold predates the whole-model parity arrays; regenerate")
+    assert r["theta_passes"], f"theta cosine {r['theta_cosine']:.4f} < 0.85; {r}"
+    assert r["corr_passes"], f"topic-correlation cosine {r['topic_corr_cosine']:.4f} < 0.85; {r}"
+    assert r["effect_passes"], f"rating-effect correlation {r['effect_corr']:.4f} < 0.80; {r}"
+    # The prevalence effect (the substantive conclusion) agrees in sign on the
+    # large majority of topics.
+    assert r["effect_sign_agree"] >= int(0.75 * r["effect_sign_total"]), r
+
+
 def test_stm_gold_is_non_vacuous():
     """A shuffled topic-word matrix must FAIL the cosine bar — proving the gate
     actually discriminates a correct fit from a wrong one."""

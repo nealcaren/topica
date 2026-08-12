@@ -58,7 +58,12 @@ MARGIN = 0.15
 
 # R driver: reads space-joined docs + a numeric design matrix (intercept already
 # included) and fits stm with that matrix as `prevalence`, Spectral plus two
-# Random seeds. Exports each K x V topic-word matrix (vocab-named columns).
+# Random seeds. Exports each K x V topic-word matrix (vocab-named columns), plus,
+# for the Spectral fit, the posterior-mean theta (N x K), the topic-correlation
+# matrix (K x K), and the per-topic prevalence effect: the coefficient on the
+# rating covariate (design column 2) from regressing each topic's theta on the
+# SAME design X (a matched-design point regression, so any gap is the fit, not a
+# spline-basis or formula-coding difference).
 _R_DRIVER = r"""
 suppressMessages(library(stm))
 lines <- readLines(file.path(dir, "vdocs.txt"))
@@ -70,15 +75,21 @@ documents <- lapply(toks, function(d) {
   matrix(as.integer(rbind(idx[o], as.integer(tb)[o])), nrow = 2)
 })
 X <- as.matrix(read.csv(file.path(dir, "design.csv")))  # intercept + covariates
-beta_of <- function(seed, init) {
+fit_of <- function(seed, init) {
   set.seed(seed)
-  f <- stm(documents, vocab, K = KVAL, prevalence = X,
-           init.type = init, verbose = FALSE)
-  b <- exp(f$beta$logbeta[[1]]); colnames(b) <- vocab; b
+  stm(documents, vocab, K = KVAL, prevalence = X, init.type = init, verbose = FALSE)
 }
-write.csv(beta_of(1, "Spectral"), file.path(dir, "r_spectral.csv"), row.names = FALSE)
-write.csv(beta_of(11, "Random"),  file.path(dir, "r_rand1.csv"),    row.names = FALSE)
-write.csv(beta_of(22, "Random"),  file.path(dir, "r_rand2.csv"),    row.names = FALSE)
+beta_mat <- function(f) { b <- exp(f$beta$logbeta[[1]]); colnames(b) <- vocab; b }
+fs <- fit_of(1, "Spectral")
+write.csv(beta_mat(fs), file.path(dir, "r_spectral.csv"), row.names = FALSE)
+write.csv(fs$theta,     file.path(dir, "r_theta.csv"),    row.names = FALSE)
+write.csv(topicCorr(fs)$cor, file.path(dir, "r_topiccorr.csv"), row.names = FALSE)
+rating_coef <- sapply(seq_len(KVAL),
+                      function(k) lm.fit(X, fs$theta[, k])$coefficients[2])
+write.csv(data.frame(topic = seq_len(KVAL), rating_coef = rating_coef),
+          file.path(dir, "r_effect.csv"), row.names = FALSE)
+write.csv(beta_mat(fit_of(11, "Random")), file.path(dir, "r_rand1.csv"), row.names = FALSE)
+write.csv(beta_mat(fit_of(22, "Random")), file.path(dir, "r_rand2.csv"), row.names = FALSE)
 write(vocab, file.path(dir, "r_vocab.txt"))
 cat("ok\n")
 """
@@ -134,13 +145,17 @@ def regenerate() -> None:
     out = harness.run_rscript(
         _R_DRIVER.replace("KVAL", str(K)),
         files={"vdocs.txt": vdocs, "design.csv": design_csv},
-        reads=["r_spectral.csv", "r_rand1.csv", "r_rand2.csv", "r_vocab.txt"],
+        reads=["r_spectral.csv", "r_rand1.csv", "r_rand2.csv", "r_vocab.txt",
+               "r_theta.csv", "r_topiccorr.csv", "r_effect.csv"],
         timeout=1800,
     )
     r_vocab = out["r_vocab.txt"].split()
     r_spectral = harness.read_r_beta_csv(out["r_spectral.csv"], r_vocab)
     r_rand1 = harness.read_r_beta_csv(out["r_rand1.csv"], r_vocab)
     r_rand2 = harness.read_r_beta_csv(out["r_rand2.csv"], r_vocab)
+    r_theta = _read_float_csv(out["r_theta.csv"])                 # (N, K)
+    r_corr = _read_float_csv(out["r_topiccorr.csv"])              # (K, K)
+    r_effect = _read_float_csv(out["r_effect.csv"])[:, 1]         # rating_coef column
 
     # R's own seed-to-seed noise floor (Random-vs-Random) and the fair Spectral
     # basin yardstick (Spectral-vs-Random).
@@ -150,22 +165,29 @@ def regenerate() -> None:
         + harness.align_cosine(r_spectral, r_rand2)[0]
     )
 
-    # topica fit summary captured at regenerate time for the provenance log.
-    t_cos = _topica_cosine(docs, X, feat_names, r_vocab, r_spectral)
+    # topica fit + the full aligned parity (theta / topic-corr / rating effect),
+    # captured at regenerate time for the provenance log.
+    model = _fit_topica(docs, X, feat_names)
+    parity = _aligned_parity(
+        model, r_vocab, r_spectral, r_theta, r_corr, r_effect, X, feat_names
+    )
 
     harness.save_gold(
         NAME,
-        # Only r_spectral is needed offline (and for the non-vacuous shuffle
-        # check); the Random betas were used here to compute the noise floor /
-        # Spectral-vs-Random bar, which are recorded in the JSON, so they're not
-        # committed. beta as float32 keeps the fixture small without affecting
-        # the cosine alignment.
+        # Only r_spectral is needed offline for the beta bar (and the non-vacuous
+        # shuffle check); the Random betas fed the noise floor / Spectral-vs-Random
+        # bar recorded in the JSON. r_theta/r_topiccorr/r_effect back the
+        # whole-model parity (theta, Sigma-as-correlation, gamma-as-effect).
+        # Floats stored as float32 to keep the fixture small.
         arrays={
             "r_spectral": r_spectral.astype(np.float32),
             "vocab": np.array(r_vocab, dtype=object),
             "corpus": np.array(harness.docs_to_lines(docs), dtype=object),
             "design": design.astype(np.float64),
             "feat_names": np.array(feat_names, dtype=object),
+            "r_theta": r_theta.astype(np.float32),
+            "r_topiccorr": r_corr.astype(np.float32),
+            "r_effect": r_effect.astype(np.float64),
         },
         meta={
             "reference": _r_version(),
@@ -187,7 +209,12 @@ def regenerate() -> None:
             "noise_floor_random_vs_random": noise_floor,
             "r_spectral_vs_random": spec_vs_rand,
             "margin": MARGIN,
-            "topica_vs_r_spectral_cosine": t_cos,
+            "topica_vs_r_spectral_cosine": parity["beta_cosine"],
+            "theta_cosine": parity["theta_cosine"],
+            "topic_corr_cosine": parity["topic_corr_cosine"],
+            "effect_corr": parity["effect_corr"],
+            "effect_sign_agree": parity["effect_sign_agree"],
+            "effect_sign_total": parity["effect_sign_total"],
             "pass_bar": "topica cosine >= r_spectral_vs_random - margin",
         },
     )
@@ -196,17 +223,73 @@ def regenerate() -> None:
     print(f"  corpus: {len(docs)} docs, {len(r_vocab)} vocab, K={K}")
     print(f"  R noise floor (rand-vs-rand): {noise_floor:.4f}")
     print(f"  R Spectral-vs-Random:        {spec_vs_rand:.4f}")
-    print(f"  topica-vs-R Spectral cosine: {t_cos:.4f}")
+    print(f"  topica-vs-R Spectral cosine: {parity['beta_cosine']:.4f}")
+    print(f"  theta cosine:                {parity['theta_cosine']:.4f}")
+    print(f"  topic-correlation cosine:    {parity['topic_corr_cosine']:.4f}")
+    print(f"  rating-effect correlation:   {parity['effect_corr']:.4f}")
+    print(f"  effect sign agreement:       {parity['effect_sign_agree']}/{K}")
 
 
-def _topica_cosine(docs, X, feat_names, r_vocab, r_spectral) -> float:
+def _read_float_csv(text: str) -> np.ndarray:
+    """Parse a headered all-numeric CSV (R ``write.csv`` output) into a float array."""
+    return np.genfromtxt(io.StringIO(text), delimiter=",", skip_header=1)
+
+
+def _fit_topica(docs, X, feat_names):
     from topica import STM
 
     model = STM(num_topics=K, init="spectral")
     model.fit(docs, X, prevalence_names=feat_names, iters=ITERS, convergence_tol=CONV_TOL)
+    return model
+
+
+def _topica_rating_effect(model, X, feat_names) -> np.ndarray:
+    """Per-topic coefficient on the rating covariate from the matched-design point
+    regression (topica's estimate_effect on the point theta), for the effect gold."""
+    from topica.stm import estimate_effect
+
+    effs = estimate_effect(np.asarray(model.doc_topic), X, feature_names=feat_names)
+    ri = effs[0].feature_names.index(feat_names[0])  # rating is the first covariate
+    return np.array([e.coef[ri] for e in effs])
+
+
+def _aligned_parity(model, r_vocab, r_spectral, r_theta, r_corr, r_effect, X, feat_names):
+    """Align topica's topics onto R's (by beta cosine) and compare theta, the
+    topic-correlation matrix, and the per-topic rating effect. gamma and Sigma
+    live in the (K-1) reference space and are not simply permutable, so we validate
+    their interpretable K-space forms: the composition effect (for gamma) and the
+    topic correlation (for Sigma)."""
     t_beta = _to_r_vocab(np.asarray(model.topic_word), list(model.vocabulary), r_vocab)
-    cos, _ = harness.align_cosine(r_spectral, t_beta)
-    return cos
+    beta_cos, perm = harness.align_cosine(r_spectral, t_beta)
+
+    # theta: mean per-document cosine between R's and topica's (aligned) doc-topic rows.
+    t_theta = np.asarray(model.doc_topic)[:, perm]
+    tn = t_theta / (np.linalg.norm(t_theta, axis=1, keepdims=True) + 1e-12)
+    rn = r_theta / (np.linalg.norm(r_theta, axis=1, keepdims=True) + 1e-12)
+    theta_cos = float(np.mean(np.sum(rn * tn, axis=1)))
+
+    # topic correlation (Sigma's interpretable form): off-diagonal cosine.
+    t_corr = np.asarray(model.topic_correlation)[np.ix_(perm, perm)]
+    iu = np.triu_indices(K, k=1)
+    a, b = r_corr[iu], t_corr[iu]
+    corr_cos = float(a @ b / ((np.linalg.norm(a) + 1e-12) * (np.linalg.norm(b) + 1e-12)))
+
+    # rating effect (gamma's interpretable form): correlation + sign agreement across topics.
+    t_eff = _topica_rating_effect(model, X, feat_names)[perm]
+    if np.std(r_effect) > 0 and np.std(t_eff) > 0:
+        eff_corr = float(np.corrcoef(r_effect, t_eff)[0, 1])
+    else:
+        eff_corr = float("nan")
+    sign_agree = int(np.sum(np.sign(r_effect) == np.sign(t_eff)))
+
+    return {
+        "beta_cosine": beta_cos,
+        "theta_cosine": theta_cos,
+        "topic_corr_cosine": corr_cos,
+        "effect_corr": eff_corr,
+        "effect_sign_agree": sign_agree,
+        "effect_sign_total": K,
+    }
 
 
 def _to_r_vocab(raw: np.ndarray, vocab: list[str], r_vocab: list[str]) -> np.ndarray:
@@ -231,10 +314,7 @@ def run(verbose: bool = True) -> dict:
     X = arrays["design"][:, 1:]  # drop the intercept column (topica re-adds it)
     feat_names = list(arrays["feat_names"])
 
-    from topica import STM
-
-    model = STM(num_topics=K, init="spectral")
-    model.fit(docs, X, prevalence_names=feat_names, iters=ITERS, convergence_tol=CONV_TOL)
+    model = _fit_topica(docs, X, feat_names)
     t_beta = _to_r_vocab(np.asarray(model.topic_word), list(model.vocabulary), r_vocab)
 
     spectral_cosine, _ = harness.align_cosine(r_spectral, t_beta)
@@ -252,10 +332,41 @@ def run(verbose: bool = True) -> dict:
         "vocab_size": len(r_vocab),
         "n_docs": len(docs),
     }
+
+    # Whole-model parity, gated when the extended gold is present (theta,
+    # Sigma-as-topic-correlation, gamma-as-rating-effect). These back the doc
+    # claims the beta-only gold used to leave unverified.
+    if "r_theta" in arrays:
+        parity = _aligned_parity(
+            model, r_vocab, r_spectral,
+            np.asarray(arrays["r_theta"], dtype=np.float64),
+            np.asarray(arrays["r_topiccorr"], dtype=np.float64),
+            np.asarray(arrays["r_effect"], dtype=np.float64),
+            X, feat_names,
+        )
+        result.update(parity)
+        # Bars: theta and topic-correlation are high-agreement K-space quantities;
+        # the effect correlation is the substantive-conclusion bar. Set below the
+        # regenerate-time values (theta 0.967, topic-corr 0.983, effect 0.977) with
+        # generous headroom for cross-platform EM drift (the topica refit can land
+        # in a slightly different basin under a different BLAS).
+        result["theta_passes"] = bool(parity["theta_cosine"] >= 0.85)
+        result["corr_passes"] = bool(parity["topic_corr_cosine"] >= 0.85)
+        result["effect_passes"] = bool(parity["effect_corr"] >= 0.80)
+        result["passes"] = bool(
+            result["passes"] and result["theta_passes"]
+            and result["corr_passes"] and result["effect_passes"]
+        )
+
     if verbose:
         print(f"corpus: {result['n_docs']} docs, {result['vocab_size']} vocab (gold: {meta.get('reference')})")
         print(f"  topica-vs-R Spectral cosine : {spectral_cosine:.4f}")
         print(f"  top-10 Jaccard              : {jaccard:.4f}")
+        if "theta_cosine" in result:
+            print(f"  theta cosine                : {result['theta_cosine']:.4f} (bar 0.85)")
+            print(f"  topic-correlation cosine    : {result['topic_corr_cosine']:.4f} (bar 0.85)")
+            print(f"  rating-effect correlation   : {result['effect_corr']:.4f} (bar 0.80)")
+            print(f"  effect sign agreement       : {result['effect_sign_agree']}/{result['effect_sign_total']}")
         print(f"  R Spectral-vs-Random        : {spec_vs_rand:.4f}")
         print(f"  R rand-vs-rand noise floor  : {noise_floor:.4f}")
         print(f"  bar (spec_vs_rand - {MARGIN}) : {bar:.4f}")
