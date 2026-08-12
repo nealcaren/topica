@@ -76,3 +76,44 @@ def test_stm_gold_is_non_vacuous():
         f"shuffled beta cosine {cos:.4f} should be below the bar {bar:.4f}; "
         "the gate is vacuous"
     )
+
+
+def test_whole_model_gates_are_non_vacuous():
+    """The theta / topic-correlation / effect bars must FAIL on a topic-misaligned
+    fit — otherwise they rubber-stamp any result. Stand in a mislabeled fit by
+    shuffling the reference's topic order and confirm each metric collapses below
+    its bar (theta 0.85, topic-corr 0.85, effect 0.80)."""
+    import numpy as np
+
+    arrays, _ = harness.load_gold("stm")
+    if "r_theta" not in arrays:
+        import pytest
+
+        pytest.skip("committed gold predates the whole-model parity arrays; regenerate")
+
+    r_theta = np.asarray(arrays["r_theta"], dtype=np.float64)          # (N, K)
+    r_corr = np.asarray(arrays["r_topiccorr"], dtype=np.float64)       # (K, K)
+    r_effect = np.asarray(arrays["r_effect"], dtype=np.float64)        # (K,)
+    K = r_theta.shape[1]
+    rng = np.random.default_rng(0)
+    perm = rng.permutation(K)
+    # A derangement so the mislabeling is real (no topic maps to itself).
+    while np.any(perm == np.arange(K)):
+        perm = rng.permutation(K)
+
+    # theta: mean per-doc cosine between R and its topic-shuffled self.
+    a = r_theta / (np.linalg.norm(r_theta, axis=1, keepdims=True) + 1e-12)
+    b = r_theta[:, perm]
+    b = b / (np.linalg.norm(b, axis=1, keepdims=True) + 1e-12)
+    theta_cos = float(np.mean(np.sum(a * b, axis=1)))
+    assert theta_cos < 0.85, f"theta gate vacuous: shuffled cosine {theta_cos:.4f}"
+
+    # topic correlation: off-diagonal cosine against the shuffled matrix.
+    iu = np.triu_indices(K, k=1)
+    x, y = r_corr[iu], r_corr[np.ix_(perm, perm)][iu]
+    corr_cos = float(x @ y / ((np.linalg.norm(x) + 1e-12) * (np.linalg.norm(y) + 1e-12)))
+    assert corr_cos < 0.85, f"topic-corr gate vacuous: shuffled cosine {corr_cos:.4f}"
+
+    # effect: Pearson r against the shuffled effect vector.
+    eff_corr = float(np.corrcoef(r_effect, r_effect[perm])[0, 1])
+    assert eff_corr < 0.80, f"effect gate vacuous: shuffled correlation {eff_corr:.4f}"

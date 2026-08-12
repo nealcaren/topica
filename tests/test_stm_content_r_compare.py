@@ -30,6 +30,10 @@ def test_content_model_matches_r_stm():
         assert r["cosine"][g] > 0.7, r
 
 
+@pytest.mark.skipif(
+    not stm_content_r_compare.r_stm_available(),
+    reason="Rscript with the 'stm' package not available",
+)
 def test_content_matched_l1_prior_tracks_r_separation():
     """#715-#3: R defaults to kappa.prior="L1"; topica defaults to L2. Under a
     matched L1 prior topica's topic-separation lines up with R's (both sparse and
