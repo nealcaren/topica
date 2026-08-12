@@ -1,6 +1,6 @@
 {
   "corpus": "poliblog (examples/poliblog.csv), already stemmed",
-  "date": "2026-07-23",
+  "date": "2026-08-12",
   "margin": 0.15,
   "model": "KeyATM (base + covariate + dynamic)",
   "models": {
@@ -89,17 +89,21 @@
           "surg"
         ]
       },
-      "note": "model fixed in #270 (covariate standardization + lambda bounds)",
+      "lambda_r_self_corr": 0.9816160025534109,
+      "note": "model fixed in #270 (covariate standardization + lambda bounds); lambda is topica MAP vs R posterior-mean, compared by rating-slope magnitude correlation on the keyword topics (intercept excluded)",
       "num_docs": 2000,
       "num_keyword": 4,
       "num_regular": 4,
       "num_topics": 8,
+      "pi_r_self_corr": 0.9955690503743392,
       "rating_sign_r_self": 1.0,
       "seeds": {
         "phi1": 1,
         "phi2": 2
       },
       "topica_keyword_cosine": 0.9122431029695659,
+      "topica_lambda_corr": 0.9176529646495978,
+      "topica_pi_corr": 0.979047816065588,
       "topica_rating_sign_agree": 1.0,
       "vocab_size": 2632
     },
@@ -149,8 +153,10 @@
         "phi1": 1,
         "phi2": 2
       },
+      "state_r_self_ari": 0.5172413793103448,
       "time_index": "poliblog day rank, sorted and binned",
-      "topica_keyword_cosine": 0.9127449646075209,
+      "topica_keyword_cosine": 0.9315747111277957,
+      "topica_state_ari": 0.5172413793103448,
       "topica_trend_sign_agree": 1.0,
       "trend_sign_r_self": 1.0,
       "vocab_size": 2632
