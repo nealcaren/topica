@@ -1448,11 +1448,14 @@ def search_k(
             f"search_k fits an LDA or STM per K; model must be 'lda' or 'stm' "
             f"(got {model!r}). Other models are not scanned here: embedding-guided "
             f"models (EmbeddingLDA) need embeddings/vocabulary search_k cannot "
-            f"infer, and embedding+cluster models (BERTopic, Top2Vec) set K by the "
-            f"clusterer, not by refitting. Sweep K for those by hand: fit each K "
-            f"and compare the mean coherence; see the 'Fixed-K embedding models' "
-            f"(EmbeddingLDA) and 'Embedding + cluster models' (BERTopic/Top2Vec) "
-            f"sections of docs/publishing/choosing-k.md.")
+            f"infer, embedding+cluster models (BERTopic, Top2Vec) set K by the "
+            f"clusterer, not by refitting, and matrix-factorization models (NMF, "
+            f"LSA) are swept the ordinary way by refitting per K. Sweep K for those "
+            f"by hand: fit each K and compare the mean coherence (for NMF also the "
+            f"reconstruction_error); see the 'Matrix-factorization models "
+            f"(NMF, LSA)', 'Fixed-K embedding models' (EmbeddingLDA) and "
+            f"'Embedding + cluster models' (BERTopic/Top2Vec) sections of "
+            f"docs/publishing/choosing-k.md.")
     if int(num_seeds) < 1:
         raise ValueError(f"num_seeds must be >= 1, got {num_seeds!r}")
     if content is not None and model != "stm":
@@ -2664,11 +2667,31 @@ def topic_stability(runs, *, topn=10, metric="cosine"):
     later run's topics are matched to the first run's, and stability is the mean
     Jaccard overlap of their top-`topn` words. Returns a float in ``[0, 1]``;
     higher means more reproducible topics.
+
+    If every run is bit-identical to the first, a stability of 1.0 is
+    meaningless — the runs never varied. This most often bites when the runs are
+    the *same* deterministic fit repeated: models with a deterministic
+    initialization (e.g. ``NMF``/``LSA`` with the default ``init="nndsvd"``)
+    ignore ``seed``, so ``[NMF(seed=s).fit(docs) for s in range(5)]`` is five
+    copies of one fit. A ``UserWarning`` is emitted in that case; refit with
+    ``init="random"`` (which does respond to ``seed``) or measure stability on
+    bootstrap resamples of the documents instead.
     """
     mats = [_as_topic_word(r) for r in runs]
     if len(mats) < 2:
         raise ValueError("need at least two runs to measure stability")
     ref = mats[0]
+    if all(m.shape == ref.shape and np.array_equal(m, ref) for m in mats[1:]):
+        warnings.warn(
+            f"topic_stability: all {len(mats)} runs are identical, so the score "
+            "is a trivial 1.0 that says nothing about robustness. Deterministic "
+            "initializations ignore the seed (e.g. NMF/LSA with init='nndsvd'), "
+            "so repeating the same fit at different seeds gives identical runs. "
+            "Refit with init='random' (which responds to seed) or measure "
+            "stability on bootstrap resamples of the documents.",
+            UserWarning,
+            stacklevel=2,
+        )
     k = ref.shape[0]
     ref_top = [set(np.argsort(ref[t])[::-1][:topn]) for t in range(k)]
     scores = []

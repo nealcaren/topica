@@ -1,6 +1,8 @@
 """LDAvis relevance + pyLDAvis export, Taddy residual check, and topic
 alignment / stability utilities (topica.stm)."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -165,3 +167,23 @@ class TestStability:
         m, _ = two_topic
         with pytest.raises(ValueError):
             stm.topic_stability([m])
+
+    def test_warns_on_identical_runs(self, two_topic):
+        # Deterministic-init models (NMF init='nndsvd') ignore the seed, so a
+        # seed-varying stability loop silently compares identical fits and would
+        # report a meaningless 1.0. topic_stability must warn (issue #726).
+        import topica
+        _, docs = two_topic
+        runs = [topica.NMF(num_topics=2, seed=s).fit(docs) for s in (1, 2, 3)]
+        with pytest.warns(UserWarning, match="identical"):
+            s = stm.topic_stability(runs, topn=3)
+        assert s == 1.0
+
+    def test_no_warning_when_runs_differ(self, two_topic):
+        import topica
+        _, docs = two_topic
+        runs = [topica.NMF(num_topics=2, init="random", seed=s).fit(docs)
+                for s in (1, 2, 3)]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # any UserWarning would fail here
+            stm.topic_stability(runs, topn=3)
