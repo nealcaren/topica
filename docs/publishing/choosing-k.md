@@ -323,8 +323,8 @@ not the minimum, and cross it against coherence.
 ```python
 import topica
 
-b = topica.datasets.load_poliblog()
-corpus = topica.Corpus.from_documents([t.split() for t in b.texts])
+df = topica.datasets.load_poliblog()      # a DataFrame; the text is already stemmed
+corpus = topica.Corpus.from_documents([t.split() for t in df["text"]])
 
 for k in [10, 15, 20, 30, 40]:
     m = topica.NMF(num_topics=k, seed=1).fit(corpus)
