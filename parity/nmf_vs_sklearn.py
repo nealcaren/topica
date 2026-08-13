@@ -242,7 +242,13 @@ def run(verbose: bool = True) -> dict:
         for i in range(K)
     ])
 
-    obj_parity = bool(t_err <= sk_err + 1e-3) if sk_err is not None else True
+    # topica's reconstruction_error is the raw objective (0.5*||X-WH||^2 for
+    # frobenius, the generalized-KL divergence for kl); sklearn's
+    # reconstruction_err_ is sqrt(2*objective) on the same scale (square_root=True
+    # in _beta_divergence). Put topica on sklearn's scale before comparing, and use
+    # a relative tolerance since the errors run into the thousands.
+    t_err_norm = float(np.sqrt(2.0 * t_err))
+    obj_parity = bool(t_err_norm <= sk_err * (1.0 + 1e-3)) if sk_err is not None else True
 
     metrics = {
         "num_docs": len(docs),
@@ -257,6 +263,7 @@ def run(verbose: bool = True) -> dict:
         "noise_floor_mean": nf_mean,
         "noise_floor_std": nf_std,
         "topica_obj": t_err,
+        "topica_obj_norm": t_err_norm,
         "sklearn_obj": sk_err,
         "obj_parity": obj_parity,
     }
@@ -273,7 +280,7 @@ def run(verbose: bool = True) -> dict:
         print(f"  mean aligned cosine      : {metrics['mean_cosine']:.4f}")
         print(f"  mean top-10 Jaccard      : {metrics['mean_jaccard']:.4f}")
         print(f"  mean doc-topic corr      : {metrics['mean_doc_topic_corr']:.4f}")
-        print(f"  reconstruction obj       : topica={t_err:.6f}, sklearn={sk_err}")
+        print(f"  reconstruction obj       : topica={t_err:.6f} (norm {t_err_norm:.6f}), sklearn={sk_err}")
         print(f"  sklearn noise floor cos  : {nf_mean:.4f} +/- {nf_std:.4f}")
         verdict = "within noise floor + objective match" if within else "outside noise floor or objective drift"
         print(f"  verdict                  : {verdict}")
