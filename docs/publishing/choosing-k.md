@@ -311,6 +311,38 @@ Pick the knee, not the maximum. Note the sign convention differs from the c_v sw
 above: `EmbeddingLDA.coherence` is per-topic UMass (more-negative is worse), so
 average it and compare on that scale.
 
+## Matrix-factorization models (NMF, LSA)
+
+`NMF` and `LSA` factor the document-term matrix at a fixed rank K, so K is a model
+setting you sweep the ordinary way, by **refitting per K**. `search_k` raises for
+them (it only fits LDA/STM), so run the sweep by hand. NMF gives you a second
+signal LDA does not: the `reconstruction_error` (the fit's residual). Read it like
+a scree plot — the reconstruction error falls monotonically in K, so take the knee,
+not the minimum, and cross it against coherence.
+
+```python
+import topica
+
+df = topica.datasets.load_poliblog()      # a DataFrame; the text is already stemmed
+corpus = topica.Corpus.from_documents([t.split() for t in df["text"]])
+
+for k in [10, 15, 20, 30, 40]:
+    m = topica.NMF(num_topics=k, seed=1).fit(corpus)
+    coh = float(m.coherence(10).mean())        # per-topic UMass -> mean (higher is better)
+    div = topica.topic_diversity(m, topn=25)
+    print(f"K={k:>2}  coherence={coh:.1f}  diversity={div:.2f}  "
+          f"reconstruction_error={m.reconstruction_error:.1f}")
+```
+
+Pick the K where coherence and diversity plateau and the reconstruction error has
+passed its knee. Note the sign convention: `NMF.coherence` is per-topic UMass
+(more-negative is worse), so average it and compare on that scale.
+
+For a **stability** check across seeds, refit with `init="random"` — the default
+`init="nndsvd"` is deterministic and ignores `seed`, so `topic_stability` over
+nndsvd fits would report a meaningless 1.0. Vary the seed under random init, or
+resample the documents, to get an honest robustness read.
+
 ## Report sensitivity
 
 Pick the `K` that balances metrics, interpretability, and theory, then **show

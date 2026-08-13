@@ -4764,8 +4764,16 @@ class NMF:
     is each row of H normalized to sum 1; the document-topic matrix weights each
     topic by its H-row mass before row-normalizing (W_{d,k} * rowsum(H_k), then
     rows to sum 1), so the reported proportion tracks each topic's share of the
-    reconstructed term mass. weighting builds X from topica's TF-IDF (default) or
-    raw counts (weighting="count")."""
+    reconstructed term mass. weighting builds X from topica's TF-IDF (default, the
+    classic NMF recipe) or raw counts (weighting="count").
+
+    Constructor: NMF(num_topics, *, beta_loss="frobenius", init="nndsvd",
+    weighting="tfidf", convergence_tol=1e-4, seed=13). convergence_tol stops early
+    on the relative reconstruction-error decrease; 0.0 disables the early-stop
+    check, so the fit runs the full iters and reports converged=False by design.
+    seed affects only init="random" -- the default init="nndsvd" is deterministic
+    and ignores it, so a stability check that varies only the seed under nndsvd
+    compares identical fits; use init="random" to vary across seeds."""
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,
@@ -4790,9 +4798,12 @@ class NMF:
     ) -> None:
         """beta_loss is 'frobenius' or 'kullback-leibler' (alias 'kl'); init is
         'nndsvd' or 'random'; weighting is 'tfidf' (default) or 'count'. seed affects only
-        init='random'. The 'nndsvd' init is scikit-learn's NNDSVDa variant (exact
-        zeros filled with the data mean) and requires num_topics <=
-        min(num_documents, num_words); use 'random' above that rank."""
+        init='random' (the default 'nndsvd' init is deterministic and ignores it).
+        convergence_tol=0.0 disables the early-stop check, so the fit runs the full
+        iters and reports converged=False by design. The 'nndsvd' init is
+        scikit-learn's NNDSVDa variant (exact zeros filled with the data mean) and
+        requires num_topics <= min(num_documents, num_words); use 'random' above
+        that rank."""
         ...
     def fit(
         self,

@@ -20,7 +20,16 @@ use pyo3::types::PyDict;
 /// ``H``-row mass before row-normalizing (``W_{d,k} * rowsum(H_k)``, then rows to
 /// sum 1), so the reported proportion tracks each topic's share of the
 /// reconstructed term mass. ``weighting`` builds ``X`` from topica's TF-IDF
-/// (default) or raw counts (``weighting="count"``).
+/// (default, the classic NMF recipe) or raw counts (``weighting="count"``).
+///
+/// Constructor: ``NMF(num_topics, *, beta_loss="frobenius", init="nndsvd",
+/// weighting="tfidf", convergence_tol=1e-4, seed=13)``. ``convergence_tol`` stops
+/// early on the relative reconstruction-error decrease; ``0.0`` disables the
+/// early-stop check, so the fit runs the full ``iters`` and reports
+/// ``converged=False`` by design. ``seed`` affects only ``init="random"`` -- the
+/// default ``init="nndsvd"`` is deterministic and ignores it, so a stability check
+/// that varies only the seed under nndsvd compares identical fits; use
+/// ``init="random"`` to vary across seeds.
 #[pyclass(module = "topica")]
 pub struct NMF {
     num_topics: usize,
@@ -140,7 +149,10 @@ impl NMF {
     /// the initial factors are dense; it requires `num_topics <= min(num_documents,
     /// num_words)` (use `"random"` above that rank). `weighting` is `"tfidf"` (default)
     /// or `"count"`. `convergence_tol` stops early on the relative
-    /// reconstruction-error decrease. `seed` affects only `init="random"`.
+    /// reconstruction-error decrease; `0.0` disables the early-stop check, so the
+    /// fit runs the full `iters` and reports `converged=False` by design. `seed`
+    /// affects only `init="random"` (the default `"nndsvd"` init is deterministic
+    /// and ignores it).
     #[new]
     #[pyo3(signature = (num_topics, *, beta_loss="frobenius", init="nndsvd",
                         weighting="tfidf", convergence_tol=1e-4, seed=13))]

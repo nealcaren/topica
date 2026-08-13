@@ -71,4 +71,8 @@ for the full grouped table.
 
 ::: topica.HLDA
 
+::: topica.NMF
+
+::: topica.LSA
+
 ::: topica.Corpus
