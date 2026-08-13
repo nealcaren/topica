@@ -172,6 +172,39 @@ class Corpus:
         """
         ...
 
+    @staticmethod
+    def from_matrix(
+        counts: Any,
+        *,
+        feature_names: list[str] | None = None,
+        doc_names: list[str] | None = None,
+        doc_labels: list[str] | None = None,
+        max_doc_fraction: float = 1.0,
+        n_tokens: list[int] | None = None,
+    ) -> "Corpus":
+        """Build a corpus from a document x term count matrix (issue #575).
+
+        For already-vectorized data — a scikit-learn/gensim document-term matrix,
+        or the SAE feature counts a Mechanistic Topic Model is fit on. Preserves
+        the caller's column contract: column order, all-zero columns, and empty
+        rows are all kept, so ``topic_word[:, j]`` lines up with column ``j`` and
+        ``kept_indices`` is the identity. ``max_doc_fraction`` optionally drops
+        ubiquitous terms (reported in ``kept_features``). ``n_tokens`` records the
+        true per-document token count, which for thresholded counts differs from
+        the row sum."""
+        ...
+
+    @property
+    def kept_features(self) -> list[int] | None:
+        """Original column indices kept by :meth:`from_matrix`; ``None`` otherwise."""
+        ...
+
+    @property
+    def n_tokens(self) -> list[int] | None:
+        """True per-document token counts if supplied to :meth:`from_matrix`.
+        ``None`` otherwise — do not fall back to the row sum."""
+        ...
+
     def transform(
         self,
         documents: list[list[str]],

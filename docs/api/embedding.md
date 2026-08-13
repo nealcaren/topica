@@ -17,3 +17,23 @@ PyTorch: `fit` takes the vectors you pass in.
 ::: topica.ETM
 
 ::: topica.FASTopic
+
+## Mechanistic Topic Models
+
+Topics over **sparse-autoencoder features** rather than words, so each topic is a
+distribution over directions the language model itself represents. You bring the SAE
+activations; `topica.mtm` turns them into counts and embeddings. Both models are
+experimental and gated — see the [model catalog](../guides/models.md#mechanisticlda)
+for the recipe, the reference's defaults, and the known divergences.
+
+::: topica.MechanisticLDA
+
+::: topica.MechanisticBERTopic
+
+::: topica.mtm.featurize
+
+::: topica.mtm.feature_thresholds
+
+::: topica.mtm.document_embeddings
+
+::: topica.mtm.FeatureCounts

@@ -126,6 +126,36 @@ A held-out document with no in-vocabulary tokens is dropped; its surviving index
 is recorded in `heldout.kept_indices`, so external labels can be realigned the
 same way as after pruning.
 
+## Start from a count matrix
+
+If your data is already vectorized — a scikit-learn or gensim document-term matrix,
+or the sparse-autoencoder feature counts a [Mechanistic Topic
+Model](models.md#mechanisticlda) is fit on — `Corpus.from_matrix` is the way in:
+
+```python
+corpus = topica.Corpus.from_matrix(counts, feature_names=terms)
+model = topica.LDA(num_topics=20).fit(corpus)
+```
+
+It differs from `from_documents` in one deliberate way: it preserves **your column
+contract** rather than deriving a vocabulary from the data. Where `from_documents`
+frequency-sorts the vocabulary, `from_matrix` keeps your column order, so
+`topic_word[:, j]` is your column `j`; it keeps all-zero columns, so the width is
+always `counts.shape[1]`; and it keeps empty rows, so `doc_topic` rows stay aligned
+with external metadata and `kept_indices` is the identity. When column `j` is an
+external identifier — a feature id, another vectorizer's term index — a silent
+reorder or drop would corrupt every downstream lookup.
+
+`max_doc_fraction=` is the one operation that may change the width, dropping terms
+that occur in more than that fraction of documents; the surviving original column
+indices are then reported in `corpus.kept_features`. Note it is an *upper* bound, so
+a term occurring in no document is not ubiquitous and survives even at `0.0`.
+
+`n_tokens=` optionally records a true per-document token count when the row sum is
+not one — for thresholded feature counts the row sum counts feature activations
+rather than tokens. It is read back from `corpus.n_tokens`, and is `None` for
+corpora built any other way.
+
 ## Detect phrases
 
 Fixed expressions carry meaning together. Detect collocations and rewrite the

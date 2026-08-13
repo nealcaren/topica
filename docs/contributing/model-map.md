@@ -104,6 +104,8 @@ Column meanings:
 | `KeyNMF` | `src/keynmf.rs` | `src/python/keynmf.rs` | embedding-keyword extraction + multiplicative-update NMF (nmf.rs) | default | `parity/keynmf_compare.py`, `tests/test_keynmf.py` |
 | `BERTopic` | `src/bertopic.rs` | `src/python/embedding_cluster.rs` | embedding clustering (cluster.rs, reduce.rs, represent.rs) | `embeddings` | `parity/bertopic_gold.py` |
 | `Top2Vec` | `src/top2vec.rs` | `src/python/embedding_cluster.rs` | embedding clustering (cluster.rs, reduce.rs) | `embeddings` | `parity/top2vec_gold.py`, `parity/top2vec_compare.py` |
+| `MechanisticLDA` | `python/topica/mtm.py` | — _(Python)_ | SAE featurization (Python) over the SparseLDA collapsed-Gibbs core | default | `tests/test_mtm.py` |
+| `MechanisticBERTopic` | `python/topica/mtm.py` | — _(Python)_ | SAE featurization (Python) over the embedding-clustering core (cluster.rs, reduce.rs) | `embeddings` | `tests/test_mtm.py` |
 | `SemanticSignalSeparation` | `src/semantic_signal_separation.rs` | `src/python/semantic_signal_separation.rs` | FastICA over document embeddings + vocabulary projection (reduce.rs) | `embeddings` | `parity/s3_compare.py`, `tests/test_semantic_signal_separation.py` |
 | `ETM` | `src/etm.rs` | `src/python/neural.rs` | variational EM over word embeddings (ctm.rs) | default | `parity/etm_gold.py` |
 | `GaussianLDA` | `src/gaussian_lda.rs` | `src/python/gaussian_lda.rs` | collapsed Gibbs (NIW-Gaussian topics, Student-t predictive, rank-1 Cholesky up/downdates) | default | `parity/gaussian_lda_gold.py` |

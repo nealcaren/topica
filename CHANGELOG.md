@@ -63,6 +63,45 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **Mechanistic Topic Models: `topica.mtm`, `MechanisticLDA`, `MechanisticBERTopic`**
+  (#575, both **experimental**). An MTM ([Zheng et al.
+  2025](https://arxiv.org/abs/2507.23220)) replaces the bag of words with a bag of
+  **sparse-autoencoder features**, so topics are distributions over directions the
+  language model itself represents — and can be steered — rather than over vocabulary.
+  You supply the SAE activations; `topica.mtm.featurize` is the paper's eq. 5
+  (`c̃[d,i] = Σ_j 1{α_i(a_dj) > q_i}`, strictly greater, first token dropped, both
+  transcribed from the reference), `feature_thresholds` estimates the `q_i`, and
+  `document_embeddings` is eq. 14 (SAE decoder directions weighted by feature counts).
+  `MechanisticLDA` is §4.2.1 and `MechanisticBERTopic` is §4.2.3, each a thin wrapper
+  over topica's existing reference-validated core carrying the authors' defaults
+  (`alpha_sum=5.0`, `beta=0.01`, `optimize_interval=10`; `min_cluster_size=10`;
+  App. A.1's `max_doc_fraction=0.9` feature filter). `FeatureCounts` keeps `N_sae` (the
+  row sum, a count of feature activations) and `N_tok` (a count of tokens) as separate
+  vectors, because the paper's equations do not use them interchangeably. Experimental
+  because the recipe and priors are read off the authors' source but no end-to-end
+  numeric parity run exists — that needs their Gemma-2 activations and SAE — and
+  because `MechanisticBERTopic` has three documented divergences from the reference
+  (`nr_topics` counts the outlier cluster there but not here; topica's c-TF-IDF
+  excludes outliers and skips upstream's L1 normalization; `doc_topic` is a different
+  estimand).
+
+- **`Corpus.from_matrix` — build a corpus from a document x term count matrix**
+  (#575). The entry point for data that is already vectorized: a scikit-learn or
+  gensim document-term matrix, or the sparse-autoencoder feature counts a
+  Mechanistic Topic Model is fit on. Unlike `from_documents`, which derives and
+  frequency-sorts the vocabulary from the data, this preserves the caller's column
+  contract, because those indices are usually load-bearing (a feature id, an
+  external vectorizer's vocabulary): column order is kept, so `topic_word[:, j]`
+  lines up with the caller's column `j`; all-zero columns are kept, so the width is
+  always `counts.shape[1]`; and empty rows are kept, so `doc_topic` rows stay
+  aligned with external metadata and `kept_indices` is the identity.
+  `max_doc_fraction` is the one operation that may change the width, and reports
+  the surviving original column indices in the new `Corpus.kept_features`. The new
+  `Corpus.n_tokens` optionally records the true per-document token count, which for
+  *thresholded* counts differs from the row sum (the row sum counts feature
+  activations, not tokens); both properties are `None` for corpora built any other
+  way.
+
 - **`KeyNMF` — embedding-keyword NMF** (Kristensen-McLachlan et al., 2024). The NMF
   family's bridge to the embedding backend: for each document it scores its words by
   the similarity between the document embedding and the word embedding, keeps the

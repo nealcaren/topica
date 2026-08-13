@@ -173,13 +173,15 @@ experimental status is justified and what would let the model graduate.
 |---|---|---|---|
 | `TensorLDA` | Kangaslahti et al. 2026 | planted gold + opt-in TensorLy compare | **Graduation candidate.** It has a paper and an opt-in cross-implementation compare (`parity/tlda_compare.py` against `tensorly/tlda`, run when `TOPICA_TLDA_REF` points at a checkout). Running that compare as the standing accuracy gate, plus the adversarial and user gates, would clear the triple gate. |
 | `NarrativeTM` | topica original | planted / tests | Justified. No paper (an original GDMR-over-position construction), so planted-only by nature; cannot graduate under the current definition. |
+| `MechanisticLDA` | Zheng et al. 2025 | planted / tests + MALLET parity arm | **Worth a second look under the rule above.** The method is published and the inference is topica's validated SparseLDA core, which would ordinarily leave it validated; the gate rests instead on the *featurization* being the contribution, and on there being no end-to-end run against the authors' Gemma-2/SAE pipeline (that needs their activations and SAE). The mLDA arm does drive the shipped path against Java MALLET 2.0.8 at or above MALLET's own seed-to-seed floor, but that harness is reported in #685 rather than committed under `parity/`, so it is not currently reproducible from the tree. |
+| `MechanisticBERTopic` | Zheng et al. 2025 | planted / tests | Justified. Three documented divergences from the reference (`nr_topics` counts the outlier cluster there but not here; topica's c-TF-IDF excludes outliers and skips upstream's L1 normalization; `doc_topic` is a different estimand) mean cluster-label ARI is the only fair gate, and no parity arm exists for it yet. |
 | `IdealPointTM` | topica original | planted / tests | Justified. A Wordfish-with-topics construction with no dedicated paper; the word-topic variants are reliable, bare-scaling is not. |
 | `IdealPointSentenceTM` | topica original | planted / tests | Justified. The sentence-embedding sibling of `IdealPointTM`, same no-paper status. |
 | `EmbeddingLDA` | topica original | planted only | Justified (issue #660). A topica original with no paper and no external reference; its planted gold cannot distinguish it from plain LDA (on the planted corpus, plain LDA and shuffled/random embeddings score the same block purity), and on real labeled text its recovery sits below plain LDA. The `SeededLDA` core it delegates to is validated; the embedding-seeding benefit is what is unproven. |
 
 ## Following up
 
-Running the four current experimental models through the full triple gate
+Running the experimental models listed above through the full triple gate
 (graduate or keep-gated per the result) is tracked in issue #660. `TensorLDA` is
 the nearest candidate, since it is the only experimental model with both a paper
 and a cross-implementation reference already in the tree.
