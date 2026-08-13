@@ -740,14 +740,25 @@ def _effect_bootstrap(model, docs, X, feature_names, names, z, n_boot, topn, see
                 coefs[i].append(e.coef)
     out = []
     for i in range(k):
-        _, _, reliable = _reliability(quals[i], margins[i], min_alignment, min_margin, len(coefs[i]))
+        q, mg, reliable = _reliability(quals[i], margins[i], min_alignment, min_margin, len(coefs[i]))
         est = ref[i].coef
-        se = np.std(np.vstack(coefs[i]), axis=0, ddof=1) if reliable else np.full(p, np.nan)
+        se = np.std(np.vstack(coefs[i]), axis=0, ddof=1) if (reliable and len(coefs[i]) >= 2) else np.full(p, np.nan)
         with np.errstate(divide="ignore", invalid="ignore"):
             zz = est / se
+        msg = ""
+        if not reliable:
+            reasons = []
+            if q < min_alignment:
+                reasons.append(f"mean alignment Jaccard {q:.3f} < min_alignment {min_alignment:.3f}")
+            if mg < min_margin:
+                reasons.append(f"mean match margin {mg:.3f} < min_margin {min_margin:.3f}")
+            if len(coefs[i]) < 2:
+                reasons.append(f"only {len(coefs[i])} valid resample fits < 2 required")
+            msg = "suppressed because " + "; ".join(reasons)
         out.append(TopicEffect(
             topic=i, feature_names=fnames, coef=est, se=se, z=zz,
             ci_low=est - z * se, ci_high=est + z * se, r_squared=float("nan"),
+            reliable=reliable, message=msg,
         ))
     return out
 

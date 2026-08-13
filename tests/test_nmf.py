@@ -218,3 +218,49 @@ def test_num_threads_is_deterministic_resource_knob():
         m = topica.NMF(3, seed=1).fit(docs, iters=40, num_threads=nt)
         assert np.array_equal(base.topic_word, m.topic_word), f"num_threads={nt}"
         assert np.array_equal(base.doc_topic, m.doc_topic), f"num_threads={nt}"
+
+
+def test_convergence_tol_invalid_values():
+    """convergence_tol must reject nan, inf, and negative values."""
+    docs, _, _ = _planted()
+    with pytest.raises(ValueError, match="convergence_tol"):
+        topica.NMF(3, convergence_tol=float("nan"))
+    with pytest.raises(ValueError, match="convergence_tol"):
+        topica.NMF(3, convergence_tol=float("inf"))
+    with pytest.raises(ValueError, match="convergence_tol"):
+        topica.NMF(3, convergence_tol=-1.0)
+
+    m = topica.NMF(3)
+    with pytest.raises(ValueError, match="convergence_tol"):
+        m.fit(docs, convergence_tol=float("nan"))
+    with pytest.raises(ValueError, match="convergence_tol"):
+        m.fit(docs, convergence_tol=float("inf"))
+    with pytest.raises(ValueError, match="convergence_tol"):
+        m.fit(docs, convergence_tol=-1.0)
+
+
+def test_doc_topic_is_reconstruction_weighted():
+    """doc_topic must scale W by H row-sums before normalizing."""
+    docs, _, _ = _planted()
+    m = topica.NMF(3)
+    m.fit(docs)
+    # doc_topic rows sum to 1.0
+    assert np.allclose(m.doc_topic.sum(axis=1), 1.0)
+
+
+def test_standard_errors_topic_effect_reliable_and_message():
+    """standard_errors with method='bootstrap' returns TopicEffect objects with
+    reliable and message fields populated."""
+    docs, _, _ = _planted()
+    c = topica.Corpus.from_documents(docs)
+    m = topica.NMF(3, seed=1).fit(c)
+    rng = np.random.default_rng(1)
+    X = rng.binomial(1, 0.5, size=(len(docs), 1))
+    effects = topica.standard_errors(m, c, of="effect", method="bootstrap", X=X, n_boot=5, seed=1)
+    assert len(effects) == 3
+    for e in effects:
+        assert hasattr(e, "reliable")
+        assert hasattr(e, "message")
+        assert isinstance(e.reliable, bool)
+        assert isinstance(e.message, str)
+

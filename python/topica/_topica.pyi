@@ -4761,8 +4761,11 @@ class NMF:
     divergences are available through beta_loss: the squared Frobenius loss
     (default) and the generalized Kullback-Leibler divergence. The reference is
     scikit-learn's sklearn.decomposition.NMF (BSD-3-Clause). The topic-word matrix
-    is each row of H normalized to sum 1; the document-topic matrix is each row of
-    W normalized to sum 1."""
+    is each row of H normalized to sum 1; the document-topic matrix weights each
+    topic by its H-row mass before row-normalizing (W_{d,k} * rowsum(H_k), then
+    rows to sum 1), so the reported proportion tracks each topic's share of the
+    reconstructed term mass. weighting builds X from topica's TF-IDF (default) or
+    raw counts (weighting="count")."""
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,
@@ -4781,12 +4784,12 @@ class NMF:
         *,
         beta_loss: str = "frobenius",
         init: str = "nndsvd",
-        weighting: str = "count",
+        weighting: str = "tfidf",
         convergence_tol: float = 1e-4,
         seed: int = 13,
     ) -> None:
         """beta_loss is 'frobenius' or 'kullback-leibler' (alias 'kl'); init is
-        'nndsvd' or 'random'; weighting is 'count' or 'tfidf'. seed affects only
+        'nndsvd' or 'random'; weighting is 'tfidf' (default) or 'count'. seed affects only
         init='random'. The 'nndsvd' init is scikit-learn's NNDSVDa variant (exact
         zeros filled with the data mean) and requires num_topics <=
         min(num_documents, num_words); use 'random' above that rank."""

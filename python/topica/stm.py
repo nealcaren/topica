@@ -62,6 +62,8 @@ class TopicEffect:
     r_squared: float
     vcov: np.ndarray = None  # full (p, p) coefficient covariance (Rubin-pooled)
     varcomp: dict = None  # random-effect variance components (sd), when random= is set
+    reliable: bool = True
+    message: str = ""
 
     @property
     def pvalue(self) -> np.ndarray:

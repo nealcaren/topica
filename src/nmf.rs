@@ -884,6 +884,28 @@ pub(crate) fn normalize_rows(m: &Mat) -> Vec<Vec<f64>> {
         .collect()
 }
 
+/// Normalize each row of matrix W after scaling columns by `col_scales`; an
+/// all-zero row becomes uniform. This makes `doc_topic` reconstruction-weighted
+/// by H row sums.
+pub(crate) fn normalize_rows_scaled(m: &Mat, col_scales: &[f64]) -> Vec<Vec<f64>> {
+    (0..m.rows)
+        .map(|r| {
+            let row = m.row(r);
+            let scaled: Vec<f64> = row
+                .iter()
+                .zip(col_scales.iter())
+                .map(|(&x, &s)| x * s)
+                .collect();
+            let s: f64 = scaled.iter().sum();
+            if s > 0.0 {
+                scaled.iter().map(|&x| x / s).collect()
+            } else {
+                vec![1.0 / m.cols as f64; m.cols]
+            }
+        })
+        .collect()
+}
+
 /// Build the sparse document-term count matrix `X (D x V)` (CSR) from token-id
 /// documents. Each row's nonzeros are stored in ascending-column order.
 pub(crate) fn count_matrix(docs: &[Vec<u32>], num_types: usize) -> SpMat {
@@ -1033,6 +1055,9 @@ pub(crate) fn fit_nmf_on_matrix(
     let mut converged = false;
     let mut iters_run = 0usize;
 
+    let valid_tol = convergence_tol.is_finite() && convergence_tol > 0.0;
+    let effective_tol = if valid_tol { convergence_tol } else { 0.0 };
+
     for it in 0..iters {
         iters_run = it + 1;
         match beta_loss {
@@ -1043,14 +1068,15 @@ pub(crate) fn fit_nmf_on_matrix(
         error_history.push(err);
         let rel = (prev - err).abs() / (prev.abs() + 1e-12);
         prev = err;
-        if convergence_tol > 0.0 && rel < convergence_tol {
+        if effective_tol > 0.0 && rel < effective_tol {
             converged = true;
             break;
         }
     }
 
     let topic_word = normalize_rows(&h);
-    let doc_topic = normalize_rows(&w);
+    let h_row_sums: Vec<f64> = (0..h.rows).map(|r| h.row(r).iter().sum()).collect();
+    let doc_topic = normalize_rows_scaled(&w, &h_row_sums);
     let h_rows: Vec<Vec<f64>> = (0..h.rows).map(|r| h.row(r).to_vec()).collect();
     let w_rows: Vec<Vec<f64>> = (0..w.rows).map(|r| w.row(r).to_vec()).collect();
 
