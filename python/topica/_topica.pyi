@@ -4761,8 +4761,11 @@ class NMF:
     divergences are available through beta_loss: the squared Frobenius loss
     (default) and the generalized Kullback-Leibler divergence. The reference is
     scikit-learn's sklearn.decomposition.NMF (BSD-3-Clause). The topic-word matrix
-    is each row of H normalized to sum 1; the document-topic matrix is each row of
-    W normalized to sum 1."""
+    is each row of H normalized to sum 1; the document-topic matrix weights each
+    topic by its H-row mass before row-normalizing (W_{d,k} * rowsum(H_k), then
+    rows to sum 1), so the reported proportion tracks each topic's share of the
+    reconstructed term mass. weighting builds X from topica's TF-IDF (default) or
+    raw counts (weighting="count")."""
     @property
     def settings(self) -> dict:
         """The constructor configuration as a JSON-serialisable dict,

@@ -16,8 +16,11 @@ use pyo3::types::PyDict;
 /// the convergence-check cadence differ from sklearn (see the notes in
 /// ``nmf.rs``), so the guarantee is eventual close agreement of the fitted
 /// factors, not iteration-for-iteration parity. The topic-word matrix is each row of ``H``
-/// normalized to sum 1, and the document-topic matrix is each row of ``W``
-/// normalized to sum 1.
+/// normalized to sum 1. The document-topic matrix weights each topic by its
+/// ``H``-row mass before row-normalizing (``W_{d,k} * rowsum(H_k)``, then rows to
+/// sum 1), so the reported proportion tracks each topic's share of the
+/// reconstructed term mass. ``weighting`` builds ``X`` from topica's TF-IDF
+/// (default) or raw counts (``weighting="count"``).
 #[pyclass(module = "topica")]
 pub struct NMF {
     num_topics: usize,
@@ -260,7 +263,10 @@ impl NMF {
     fn topic_word<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(&self.fitted_model()?.topic_word()).to_pyarray_bound(py))
     }
-    /// Document-topic matrix (num_docs, num_topics); each row is W normalized to sum 1.
+    /// Document-topic matrix (num_docs, num_topics); each row is W with columns
+    /// scaled by their H-row mass (W_{d,k} * rowsum(H_k)) and then normalized to
+    /// sum 1, so the proportion reflects each topic's share of the reconstructed
+    /// term mass.
     #[getter]
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(&self.fitted_model()?.doc_topic).to_pyarray_bound(py))
