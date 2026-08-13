@@ -24,7 +24,9 @@ impl Cvb0ToModel for Cvb0 {
         model.alpha_sum = self.alpha_sum;
         model.beta = self.beta;
         model.beta_sum = self.beta_sum;
-        model.initialize_from_assignments(corpus, self.map_topic_assignments(corpus));
+        model
+            .initialize_from_assignments(corpus, self.map_topic_assignments(corpus))
+            .expect("CVB0 MAP assignments are internally consistent with the corpus");
         model
     }
 }

@@ -144,7 +144,39 @@ impl TopicModel {
     /// instead of random initialization — used to restore a model from a saved
     /// Gibbs state (e.g. a MALLET ``--output-state`` file). `doc_topics` must be
     /// parallel to `corpus.docs` (one topic per token, same order).
-    pub fn initialize_from_assignments(&mut self, corpus: &Corpus, doc_topics: Vec<Vec<u32>>) {
+    /// Seed the count tables from an explicit per-token topic assignment (used by
+    /// `load_state` and the CVB0 warm start). Returns an error if `doc_topics` does
+    /// not line up with `corpus` (a different number of documents, a per-document
+    /// length mismatch, or a topic id `>= num_topics`) instead of silently
+    /// truncating via `zip` or panicking on an out-of-range index.
+    pub fn initialize_from_assignments(
+        &mut self,
+        corpus: &Corpus,
+        doc_topics: Vec<Vec<u32>>,
+    ) -> Result<(), String> {
+        if doc_topics.len() != corpus.docs.len() {
+            return Err(format!(
+                "doc_topics has {} documents but the corpus has {}",
+                doc_topics.len(),
+                corpus.docs.len()
+            ));
+        }
+        for (d, (doc, topics)) in corpus.docs.iter().zip(doc_topics.iter()).enumerate() {
+            if doc.len() != topics.len() {
+                return Err(format!(
+                    "document {d} has {} tokens but {} topic assignments",
+                    doc.len(),
+                    topics.len()
+                ));
+            }
+            if let Some(&t) = topics.iter().find(|&&t| t as usize >= self.num_topics) {
+                return Err(format!(
+                    "document {d} has topic id {t} but the model has only {} topics",
+                    self.num_topics
+                ));
+            }
+        }
+
         let mut type_totals = vec![0usize; self.num_types];
         for doc in &corpus.docs {
             for &word_id in doc {
@@ -171,6 +203,7 @@ impl TopicModel {
             self.tokens_per_topic[topic] += 1;
             self.increment_type_topic(word_id, topic);
         }
+        Ok(())
     }
 
     /// Anchor-word / spectral initialization: seed each token's topic by

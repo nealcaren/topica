@@ -1,14 +1,18 @@
 {
   "K": 5,
   "corpus": "planted five-topic fixture, 250 docs x 12 tokens, disjoint six-word vocabularies (from parity/mallet_parity.py planted_corpus)",
-  "date": "2026-06-22",
+  "date": "2026-08-13",
   "iters": 800,
+  "iters_opt": 1000,
   "kind": "cross-implementation (Java MALLET SparseLDA)",
+  "mallet_opt_self_cosine": 0.9999999999951147,
+  "mallet_opt_self_jaccard": 1.0,
   "mallet_self_cosine": 0.9999976178323255,
   "mallet_self_jaccard": 1.0,
   "margin": 0.1,
   "model": "LDA (collapsed Gibbs / SparseLDA)",
   "num_docs": 250,
+  "optimize_interval": 50,
   "pass_bar": "aligned topic-word cosine AND top-word jaccard vs MALLET >= MALLET's own seed-to-seed floor - margin",
   "reference": "Java MALLET /opt/homebrew/Cellar/mallet/202108/libexec",
   "seeds": {
@@ -18,5 +22,9 @@
   "top_n": 6,
   "topica_cosine": 0.9999974372016036,
   "topica_jaccard": 1.0,
+  "topica_opt_alpha_sum": 0.03500485298204212,
+  "topica_opt_beta": 0.033810900592547946,
+  "topica_opt_cosine": 0.9999997489238744,
+  "topica_opt_jaccard": 1.0,
   "vocab_size": 30
 }

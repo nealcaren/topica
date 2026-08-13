@@ -168,8 +168,12 @@ def planted_corpus(seed: int = 0, num_docs: int = 250, doc_len: int = 12):
     return docs, len(topics)
 
 
-def _mallet_phi(docs, k, iters, seed, beta=0.01):
-    """Run Java MALLET train-topics; return (phi (k, V), vocab)."""
+def _mallet_phi(docs, k, iters, seed, beta=0.01, optimize_interval=0):
+    """Run Java MALLET train-topics; return (phi (k, V), vocab).
+
+    ``optimize_interval > 0`` turns on MALLET's Wallach alpha/beta hyperparameter
+    optimization (its default cadence is 50, burn-in 200), matching topica's
+    optimize_interval so the optimizer path is actually exercised."""
     mallet = shutil.which("mallet")
     d = tempfile.mkdtemp()
     try:
@@ -188,7 +192,8 @@ def _mallet_phi(docs, k, iters, seed, beta=0.01):
         subprocess.run(
             [mallet, "train-topics", "--input", mal, "--num-topics", str(k),
              "--num-iterations", str(iters), "--random-seed", str(seed),
-             "--optimize-interval", "0", "--word-topic-counts-file", wtc, "--num-top-words", "1"],
+             "--optimize-interval", str(optimize_interval),
+             "--word-topic-counts-file", wtc, "--num-top-words", "1"],
             check=True, capture_output=True, text=True,
         )
         counts = {}
@@ -262,6 +267,51 @@ def lda_parity(seed: int = 0, k: int | None = None, iters: int = 800, top_n: int
         "mean_cosine": float(np.mean([s for *_, s in pairs])),
         "jaccard": jacc,
         "cosine": [s for *_, s in pairs],
+    }
+
+
+def lda_parity_optimized(seed: int = 0, k: int | None = None, iters: int = 1000, top_n: int = 6):
+    """Like :func:`lda_parity`, but with hyperparameter optimization ON in both
+    engines and a *terminal* topica estimator (``num_samples=1``), so the check
+    actually exercises the Wallach alpha/beta optimizer against MALLET rather than
+    the optimize-off, snapshot-averaged path the committed gold uses (#713-#4).
+
+    Both run ``--optimize-interval 50`` past a burn-in of 200. topica's asymmetric
+    alpha step reproduces MALLET's ``learnParameters``; beta uses topica's
+    corrected convergent estimator, so agreement is statistical (topic overlap),
+    not byte parity."""
+    from topica import LDA
+
+    docs, planted_k = planted_corpus(seed=seed)
+    k = planted_k if k is None else k
+
+    mal_phi, vocab = _mallet_phi(docs, k, iters, seed=1, optimize_interval=50)
+
+    # Terminal estimator (num_samples=1): the final Gibbs state, not an average of
+    # snapshots, so it lines up with MALLET's single terminal draw.
+    model = LDA(num_topics=k, seed=1, optimize_interval=50, burn_in=200)
+    model.fit(docs, iters=iters, num_samples=1)
+    ophi, ovocab = model.topic_word, model.vocabulary
+    our_phi = np.zeros((k, len(vocab)))
+    ov = {w: i for i, w in enumerate(ovocab)}
+    for j, w in enumerate(vocab):
+        if w in ov:
+            our_phi[:, j] = ophi[:, ov[w]]
+
+    pairs = _align(mal_phi, our_phi)
+
+    def topw(m, t):
+        return set(vocab[j] for j in np.argsort(m[t])[::-1][:top_n])
+
+    jacc = [len(topw(mal_phi, a) & topw(our_phi, b)) / len(topw(mal_phi, a) | topw(our_phi, b))
+            for a, b, _ in pairs]
+    return {
+        "k": k,
+        "optimize_interval": 50,
+        "mean_jaccard": float(np.mean(jacc)),
+        "mean_cosine": float(np.mean([s for *_, s in pairs])),
+        "alpha_sum": float(np.sum(model.alpha)),
+        "beta": float(model.beta),
     }
 
 

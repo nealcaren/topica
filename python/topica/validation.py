@@ -657,6 +657,13 @@ def topic_table(model, vocabulary=None, *, doc_topic=None, n=7):
     usually the better label). Hand it to ``pandas.DataFrame`` for the table that
     goes in a results section.
 
+    Note the word shape differs from :func:`label_topics`: here ``prob`` and
+    ``frex`` are **bare word strings** (ready to drop straight into a DataFrame
+    cell), whereas ``label_topics`` returns ``(word, score)`` tuples. So
+    ``", ".join(row["frex"])`` is correct on a ``topic_table`` row, while the
+    ``", ".join(w for w, _ in ...)`` idiom you would use on ``label_topics`` output
+    raises here.
+
     Accepts either a **fitted model** (uses its ``topic_word``, ``doc_topic``, and
     ``vocabulary``) or a bare ``(K, V)`` **topic-word array**, matching the sibling
     helpers :func:`frex` / :func:`relevance`::

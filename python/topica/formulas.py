@@ -113,6 +113,15 @@ def design_matrix(formula, data, _knot_ctx=None):
         training mode so the knots are recorded.  Pass the same object
         to :func:`design_matrix_predict` to replay those knots on new data.
     """
+    # The signature is formula-first: design_matrix("~ party", df). Passing the
+    # data frame first gives formulaic an opaque failure, so catch it up front.
+    if not isinstance(formula, str):
+        raise TypeError(
+            "design_matrix(formula, data): the first argument must be an R-style "
+            f"formula string (e.g. '~ party + spline(year, df=3)'), got "
+            f"{type(formula).__name__}. Did you pass the data frame first? The "
+            "order is formula, then data."
+        )
     try:
         from formulaic import model_matrix
     except ImportError as e:  # pragma: no cover - exercised via message

@@ -1043,9 +1043,9 @@ pub struct LDA {
     // keeping every alpha[t] equal, instead of learning the per-topic shape.
     use_symmetric_alpha: bool,
     // Seed the initial token→topic assignment from a spectral anchor-word β
-    // instead of a uniform random draw. Opt-in (default random) so the CLI
-    // byte-parity (binding == bundled train CLI) and existing determinism
-    // baselines are unchanged.
+    // instead of a uniform random draw. Opt-in (default random) so the serial
+    // SparseLDA fixture (topica's own same-seed determinism baseline, not the
+    // Java CLI) is unchanged.
     init_spectral: bool,
 
     // Populated after fit().
@@ -1191,16 +1191,24 @@ impl LDA {
     /// prior. With `optimize_interval > 0`, α and β are re-estimated every
     /// that-many iterations once past `burn_in`.
     ///
+    /// The asymmetric-α update reproduces MALLET's Wallach/Minka step
+    /// (`Dirichlet.learnParameters`, one step, Gamma(1.001,1.0) hyperprior);
+    /// α-concentration and β iterate a corrected convergent fixed point rather
+    /// than MALLET's damped `learnSymmetricConcentration`.
+    ///
     /// `seed` seeds the Gibbs RNG. `num_threads` ``>1`` enables MALLET-style
     /// approximate parallel Gibbs in `fit` (deterministic for a fixed
-    /// `num_threads`+`seed`); ``1`` is the exact CLI-identical path. `sampler`
+    /// `num_threads`+`seed`); ``1`` is the exact serial SparseLDA sampler — a
+    /// faithful port of MALLET's collapsed Gibbs, byte-deterministic for a fixed
+    /// seed but not byte-identical to the Java MALLET CLI (different RNG). `sampler`
     /// selects the backend: ``"sparse"`` (default, MALLET SparseLDA), ``"lightlda"``
     /// (alias-table Metropolis-Hastings, with `mh_steps` MH proposals per token),
     /// ``"warp"`` (cache-efficient WarpLDA, flat per-sweep cost in K), or ``"cvb0"``
     /// (zeroth-order collapsed variational Bayes, deterministic, no MCMC draws).
     /// On speed ``"warp"`` overtakes ``"sparse"`` around K≈50 and wins by several
-    /// fold at large K; ``"sparse"`` stays the default for its small-K coherence
-    /// edge and convergence trace (``"warp"``/``"cvb0"`` record none).
+    /// fold at large K; ``"sparse"`` stays the default as the exact collapsed-Gibbs
+    /// posterior with a convergence trace (``"warp"``/``"cvb0"`` record none) — the
+    /// coherence of the two is close and seed/K-dependent, not a robust edge.
     /// `use_symmetric_alpha` mirrors MALLET's ``--use-symmetric-alpha``: when True,
     /// optimization learns only the α concentration and keeps the per-topic α equal
     /// instead of an asymmetric prior. `init` is ``"random"`` (default,
@@ -1287,6 +1295,13 @@ impl LDA {
 
     /// Run Gibbs sampling on `data`, then average `num_samples` snapshots
     /// (taken `sample_interval` iterations apart) into the final φ/θ estimates.
+    /// `num_samples` must be `>= 1`; use `num_samples=1` for the single terminal
+    /// state (no averaging). Note that φ/θ are posterior *averages* over the
+    /// snapshots, while `log_likelihood()`, `save_state()`, and the raw token
+    /// counts reflect the single *terminal* Gibbs state — so with the default
+    /// `num_samples > 1` the reported φ/θ and the terminal-state quantities are
+    /// not draws from the same instant. Set `num_samples=1` if you need φ/θ and
+    /// the state/likelihood to describe the same draw.
     ///
     /// `data` may be a :class:`Corpus` or a list of token lists (each a list of
     /// strings). When a token-list is passed, an internal corpus is built with
@@ -1346,6 +1361,12 @@ impl LDA {
         turbo_merge_every: usize,
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
+        if num_samples == 0 {
+            return Err(PyValueError::new_err(
+                "num_samples must be >= 1 (num_samples=0 would leave phi/theta all-zero); \
+                 use num_samples=1 for the terminal Gibbs state",
+            ));
+        }
         // Accept either a Corpus or a list[list[str]].
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -1471,7 +1492,7 @@ impl LDA {
         // difference. Unlike the SparseLDA path below, these compute no inline
         // log_likelihood, so convergence_tol is unsupported (full iters, empty
         // trace, converged=false). The SparseLDA path stays separate to keep its
-        // convergence trace, parallel sweep, and CLI byte-parity untouched.
+        // convergence trace, parallel sweep, and same-seed determinism untouched.
         if warp || light {
             let (acc_phi, acc_theta, theta_draw_buf, model, corpus) = py.allow_threads(move || {
                 let alpha0 = vec![alpha_sum / num_topics as f64; num_topics];
@@ -2109,7 +2130,9 @@ impl LDA {
             alpha.iter().sum()
         };
         let mut model = TopicModel::new(num_topics, alpha_sum, beta, num_types);
-        model.initialize_from_assignments(&corpus, doc_topics);
+        model
+            .initialize_from_assignments(&corpus, doc_topics)
+            .map_err(PyValueError::new_err)?;
         if !alpha.is_empty() {
             model.alpha = alpha;
             model.alpha_sum = alpha_sum;
@@ -2250,17 +2273,22 @@ impl LDA {
         )
     }
 
-    /// Per-topic diagnostics (MALLET-style), one dict per topic, suitable for
-    /// `pandas.DataFrame(model.diagnostics())`.
+    /// Per-topic diagnostics, one dict per topic, suitable for
+    /// `pandas.DataFrame(model.diagnostics())`. The key names follow MALLET's topic
+    /// diagnostics, but several are topica's own definitions rather than
+    /// field-for-field clones of MALLET's (`tests/test_mallet_state_contracts.py`
+    /// documents the differences), so read the definitions below, not MALLET's.
     ///
-    /// Keys mirror MALLET's topic diagnostics: `topic`, `tokens` (assignments to
-    /// the topic), `coherence` (UMass), `exclusivity` (mean top-word share of φ
-    /// vs. other topics; higher = more distinctive), `effective_words`
-    /// (`exp(H(φ_t))`, MALLET's `eff_num_words`; lower = more focused),
+    /// Keys: `topic`, `tokens` (assignments to the topic), `coherence` (UMass over
+    /// corpus word co-occurrence — not MALLET's co-*document* count with
+    /// beta-smoothing), `exclusivity` (mean top-word share of φ vs. other topics;
+    /// higher = more distinctive), `effective_words` (`exp(H(φ_t))`; MALLET's
+    /// `eff_num_words` uses the inverse participation ratio `1/Σφ²` instead),
     /// `document_entropy` (entropy of the topic's token allocation across
     /// documents), `uniform_dist` (KL of φ_t from uniform) and `corpus_dist`
-    /// (KL of φ_t from the corpus word distribution), `rank1_docs` (documents
-    /// whose dominant topic is this one), `alpha`, and `top_words`.
+    /// (KL of φ_t from the corpus word distribution), `rank1_docs` (the *count* of
+    /// documents whose dominant topic is this one; MALLET reports the proportion),
+    /// `alpha`, and `top_words`.
     /// `n` is the number of top words per topic surfaced in `top_words`.
     #[pyo3(signature = (n=10))]
     fn diagnostics<'py>(&self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyList>> {

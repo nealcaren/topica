@@ -2219,12 +2219,23 @@ class LDA:
         use_symmetric_alpha mirrors MALLET's --use-symmetric-alpha: when True,
         hyperparameter optimization learns only the alpha concentration and
         keeps every per-topic alpha equal, instead of learning an asymmetric
-        per-topic prior (the default, MALLET's Wallach optimization).
+        per-topic prior (the default). The asymmetric-alpha update reproduces
+        MALLET's Wallach/Minka fixed-point step (Dirichlet.learnParameters, one
+        step, Gamma(1.001, 1.0) hyperprior) to numerical precision. The
+        concentration updates for symmetric alpha and for beta iterate a
+        corrected, convergent fixed point rather than MALLET's
+        learnSymmetricConcentration, whose denominator accumulates across
+        observation lengths and damps the estimate; beta optimization runs
+        whenever optimize_interval > 0, as in MALLET.
 
         num_threads > 1 enables MALLET-style approximate parallel Gibbs
         sampling in fit() (faster on multicore; results differ from the exact
         single-threaded path but remain deterministic for a fixed
-        num_threads + seed). num_threads=1 is the exact, CLI-identical path.
+        num_threads + seed). num_threads=1 is the exact serial SparseLDA
+        sampler: topica faithfully ports MALLET's SparseLDA collapsed Gibbs (the
+        s/r/q bucket decomposition) and is byte-deterministic for a fixed seed,
+        but it is not byte-identical to the Java MALLET CLI, which draws from a
+        different RNG stream.
 
         sampler selects the inference backend: "sparse" (default) is MALLET's
         SparseLDA collapsed Gibbs sampler; "lightlda" is the alias-table
@@ -2237,10 +2248,13 @@ class LDA:
         "warp" is flat in K while "sparse" grows with it, so warp overtakes sparse
         around K~=50 and wins by several-fold at large K (measured on poliblog:
         warp ~13 ms/sweep at every K; sparse 16 ms at K=10 rising to 28 ms at
-        K=200). "sparse" remains the default because at small K its collapsed-Gibbs
-        posterior gives slightly better coherence than warp's MAP/MCEM target, and
-        it records a convergence trace warp does not. Rules of thumb: "sparse" for
-        small K or when you need the trace; "warp" when per-sweep speed dominates
+        K=200). "sparse" remains the default because it is the exact collapsed-Gibbs
+        posterior and records a convergence trace warp/cvb0 do not; the topic
+        coherence of the two is close and seed- and K-dependent (in a 3-seed
+        poliblog check warp was marginally ahead at K=10 and sparse at K=20, both
+        within about one standard deviation), so it is not a robust reason to
+        prefer one. Rules of thumb: "sparse" for the trace or the exact posterior;
+        "warp" when per-sweep speed dominates
         (large K, or K>=~50 with the trace not needed); "cvb0" for the best
         coherence when fit time is not the constraint. CVB0 produces no MCMC theta
         draws (theta_draws is None).
@@ -2252,8 +2266,8 @@ class LDA:
         recovery STM/CTM use). Spectral init does not speed convergence, but it
         improves topic coherence at larger K (roughly K >= 50; it is a wash at
         small K) and falls back to the random draw when the corpus is too small
-        for anchor recovery. The default leaves the MALLET byte-parity and
-        same-seed determinism guarantees unchanged.
+        for anchor recovery. The default leaves topica's same-seed determinism
+        unchanged.
         """
         ...
 
