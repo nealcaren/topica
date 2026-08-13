@@ -135,12 +135,12 @@ impl NMF {
     /// `"random"` (seeded by `seed`). The `"nndsvd"` init fills exact-zero entries
     /// of the SVD factors with the data mean (scikit-learn's NNDSVDa variant), so
     /// the initial factors are dense; it requires `num_topics <= min(num_documents,
-    /// num_words)` (use `"random"` above that rank). `weighting` is `"count"` (default, raw term
-    /// counts) or `"tfidf"`. `convergence_tol` stops early on the relative
+    /// num_words)` (use `"random"` above that rank). `weighting` is `"tfidf"` (default)
+    /// or `"count"`. `convergence_tol` stops early on the relative
     /// reconstruction-error decrease. `seed` affects only `init="random"`.
     #[new]
     #[pyo3(signature = (num_topics, *, beta_loss="frobenius", init="nndsvd",
-                        weighting="count", convergence_tol=1e-4, seed=13))]
+                        weighting="tfidf", convergence_tol=1e-4, seed=13))]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
         beta_loss: &str,
@@ -183,6 +183,7 @@ impl NMF {
         num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
         let tol = convergence_tol.unwrap_or(slf.convergence_tol);
+        ensure_finite_nonneg("convergence_tol", tol)?;
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {

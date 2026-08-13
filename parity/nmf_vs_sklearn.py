@@ -96,7 +96,7 @@ def topica_fit(docs):
     m = topica.NMF(K, beta_loss=bl, init="nndsvd", weighting="count", convergence_tol=0.0)
     m.fit(docs, iters=MAX_ITER)
     vocab = list(m.vocabulary)
-    return np.asarray(m.topic_word), np.asarray(m.doc_topic), vocab
+    return np.asarray(m.topic_word), np.asarray(m.doc_topic), vocab, float(m.reconstruction_error)
 
 
 def _sklearn_fit(x, seed, init):
@@ -113,7 +113,7 @@ def _sklearn_fit(x, seed, init):
     # Match topica's outputs: rows normalized to sum 1.
     tw = h / h.sum(axis=1, keepdims=True).clip(min=1e-300)
     dt = w / w.sum(axis=1, keepdims=True).clip(min=1e-300)
-    return tw, dt
+    return tw, dt, float(model.reconstruction_err_)
 
 
 def sklearn_fit(x, seed):
@@ -168,10 +168,10 @@ def noise_floor(x):
     and align each to the first; the resulting mean and spread of aligned cosine
     is the genuine seed-to-seed reproducibility of mu-NMF on this corpus, the
     real bar the port should clear."""
-    base_tw, _ = _sklearn_fit(x, SKLEARN_SEEDS[0], "random")
+    base_tw, _, _ = _sklearn_fit(x, SKLEARN_SEEDS[0], "random")
     means = []
     for s in SKLEARN_SEEDS[1:]:
-        tw, _ = _sklearn_fit(x, s, "random")
+        tw, _, _ = _sklearn_fit(x, s, "random")
         _, cos = align(base_tw, tw)
         means.append(float(cos.mean()))
     return float(np.mean(means)), float(np.std(means))
@@ -183,14 +183,15 @@ def regenerate():
         print("sklearn / scipy not installed; cannot regenerate.")
         sys.exit(0)
     docs = planted_corpus()
-    _, _, vocab = topica_fit(docs)        # vocab order from topica
+    _, _, vocab, _ = topica_fit(docs)        # vocab order from topica
     x = count_matrix(docs, vocab)
-    sk_tw, sk_dt = sklearn_fit(x, SKLEARN_SEEDS[0])
+    sk_tw, sk_dt, sk_err = sklearn_fit(x, SKLEARN_SEEDS[0])
     nf_mean, nf_std = noise_floor(x)
     np.savez(
         GOLD,
         sklearn_topic_word=sk_tw,
         sklearn_doc_topic=sk_dt,
+        sklearn_obj=sk_err,
         x=x,
         vocab=np.array(vocab, dtype=object),
         noise_floor_mean=np.array(nf_mean),
@@ -205,9 +206,10 @@ def regenerate():
 
 def run(verbose: bool = True) -> dict:
     docs = planted_corpus()
-    t_tw, t_dt, vocab = topica_fit(docs)
+    t_tw, t_dt, vocab, t_err = topica_fit(docs)
 
     # Prefer the golden fixture; fall back to a live sklearn fit if present.
+    sk_err = None
     if GOLD.exists():
         g = np.load(GOLD, allow_pickle=True)
         gold_vocab = list(g["vocab"])
@@ -217,11 +219,13 @@ def run(verbose: bool = True) -> dict:
             t_tw = t_tw[:, order]
         sk_tw = g["sklearn_topic_word"]
         sk_dt = g["sklearn_doc_topic"]
+        if "sklearn_obj" in g:
+            sk_err = float(g["sklearn_obj"])
         nf_mean = float(g["noise_floor_mean"])
         nf_std = float(g["noise_floor_std"])
     elif available():
         x = count_matrix(docs, vocab)
-        sk_tw, sk_dt = sklearn_fit(x, SKLEARN_SEEDS[0])
+        sk_tw, sk_dt, sk_err = sklearn_fit(x, SKLEARN_SEEDS[0])
         nf_mean, nf_std = noise_floor(x)
     else:
         print("sklearn / scipy not installed and no golden fixture; skipping.")
@@ -238,6 +242,8 @@ def run(verbose: bool = True) -> dict:
         for i in range(K)
     ])
 
+    obj_parity = bool(t_err <= sk_err + 1e-3) if sk_err is not None else True
+
     metrics = {
         "num_docs": len(docs),
         "vocab": len(vocab),
@@ -250,12 +256,14 @@ def run(verbose: bool = True) -> dict:
         "mean_doc_topic_corr": float(np.nanmean(dt_corr)),
         "noise_floor_mean": nf_mean,
         "noise_floor_std": nf_std,
+        "topica_obj": t_err,
+        "sklearn_obj": sk_err,
+        "obj_parity": obj_parity,
     }
     # Pass when topica's aligned cosine to sklearn's NNDSVDa fit is at least as
     # good as sklearn's own random-init seed-to-seed reproducibility (within 2
-    # std of that floor). The floor is now a non-degenerate bar (random init has
-    # genuine seed variance), so clearing it is meaningful.
-    within = metrics["mean_cosine"] >= nf_mean - 2.0 * nf_std
+    # std of that floor) and topica's reconstruction loss matches or beats sklearn's.
+    within = metrics["mean_cosine"] >= nf_mean - 2.0 * nf_std and obj_parity
     metrics["within_noise_floor"] = bool(within)
 
     if verbose:
@@ -265,8 +273,9 @@ def run(verbose: bool = True) -> dict:
         print(f"  mean aligned cosine      : {metrics['mean_cosine']:.4f}")
         print(f"  mean top-10 Jaccard      : {metrics['mean_jaccard']:.4f}")
         print(f"  mean doc-topic corr      : {metrics['mean_doc_topic_corr']:.4f}")
+        print(f"  reconstruction obj       : topica={t_err:.6f}, sklearn={sk_err}")
         print(f"  sklearn noise floor cos  : {nf_mean:.4f} +/- {nf_std:.4f}")
-        verdict = "within noise floor" if within else "outside noise floor"
+        verdict = "within noise floor + objective match" if within else "outside noise floor or objective drift"
         print(f"  verdict                  : {verdict}")
     return metrics
 

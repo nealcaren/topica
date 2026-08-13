@@ -4781,12 +4781,12 @@ class NMF:
         *,
         beta_loss: str = "frobenius",
         init: str = "nndsvd",
-        weighting: str = "count",
+        weighting: str = "tfidf",
         convergence_tol: float = 1e-4,
         seed: int = 13,
     ) -> None:
         """beta_loss is 'frobenius' or 'kullback-leibler' (alias 'kl'); init is
-        'nndsvd' or 'random'; weighting is 'count' or 'tfidf'. seed affects only
+        'nndsvd' or 'random'; weighting is 'tfidf' (default) or 'count'. seed affects only
         init='random'. The 'nndsvd' init is scikit-learn's NNDSVDa variant (exact
         zeros filled with the data mean) and requires num_topics <=
         min(num_documents, num_words); use 'random' above that rank."""
