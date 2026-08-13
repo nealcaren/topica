@@ -210,8 +210,9 @@ pub fn optimize_alpha(model: &mut TopicModel, corpus: &Corpus) {
     }
 }
 
-/// Optimise a *symmetric* document-topic prior: one Minka step on the shared
-/// alpha concentration, keeping every `alpha[t]` equal. This is MALLET's
+/// Optimise a *symmetric* document-topic prior: iterate the corrected
+/// concentration fixed point (see [`learn_symmetric_concentration`]) on the shared
+/// alpha, keeping every `alpha[t]` equal. This is MALLET's
 /// `--use-symmetric-alpha true` path — only the total alpha_sum is learned, not
 /// the per-topic shape (which `optimize_alpha` learns).
 pub fn optimize_alpha_symmetric(model: &mut TopicModel, corpus: &Corpus) {
@@ -247,7 +248,8 @@ pub fn optimize_alpha_symmetric(model: &mut TopicModel, corpus: &Corpus) {
     }
 }
 
-/// Optimise the symmetric beta (topic-word prior) using one Minka step.
+/// Optimise the symmetric beta (topic-word prior) by iterating the corrected
+/// concentration fixed point (see [`learn_symmetric_concentration`]).
 ///
 /// Sufficient statistics:
 ///   count_hist[c]       – number of (word, topic) pairs with c tokens
