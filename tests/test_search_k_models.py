@@ -140,6 +140,12 @@ def test_unknown_model_names_the_fit_hook():
 
 def test_nmf_multi_seed_reconstruction_error_has_se():
     c, _ = _corpus()
-    rows = topica.search_k(c, [2, 3], model="nmf", iters=80, num_seeds=2)
-    # multi-seed adds an SE column for numeric metrics
+    # NMF's default init='nndsvd' is deterministic, so every seed is identical:
+    # the SE column is still added (mechanics), but it is 0 and search_k warns
+    # that num_seeds adds no robustness information here (issue #733 Tier 1).
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        rows = topica.search_k(c, [2, 3], model="nmf", iters=80, num_seeds=2)
     assert any("reconstruction_error_se" in r for r in rows)
+    assert all(r["reconstruction_error_se"] == 0.0 for r in rows)
+    assert any("identical fit" in str(x.message) for x in w)

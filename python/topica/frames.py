@@ -8,10 +8,29 @@ prevalence regression. These helpers keep text and metadata bound together.
 
 from __future__ import annotations
 
+import re
 import warnings
 from typing import Sequence
 
 from . import Corpus, tokenize
+
+# HTML tags/entities and http/www URLs, removed by from_dataframe(strip_html=True).
+_HTML_TAG = re.compile(r"<[^>]+>")
+_HTML_ENTITY = re.compile(r"&(?:[a-zA-Z]+|#\d+);")
+# URL: stop at whitespace or the quote/bracket chars that delimit HTML attributes,
+# so a URL inside <a href="..."> does not swallow the closing tag.
+_URL = re.compile(r"(?:https?://|www\.)[^\s\"'<>]+", re.IGNORECASE)
+# Tokens that betray un-stripped web boilerplate if they survive into the vocab.
+_WEB_BOILERPLATE = frozenset({"http", "https", "www", "href", "aspx", "html", "nbsp"})
+
+
+def _strip_web(text: str) -> str:
+    """Remove HTML tags/entities and http/www URLs from a raw string, leaving a
+    space so adjacent words do not fuse."""
+    text = _HTML_TAG.sub(" ", text)     # tags first, before URLs touch the '>'
+    text = _URL.sub(" ", text)
+    text = _HTML_ENTITY.sub(" ", text)
+    return text
 
 
 def _is_polars(obj) -> bool:
@@ -72,6 +91,7 @@ def from_dataframe(
     metadata_cols=None,
     tokenizer=None,
     stopwords=None,
+    strip_html=False,
     min_length=1,
     min_doc_freq=1,
     max_doc_fraction=1.0,
@@ -108,6 +128,15 @@ def from_dataframe(
     metadata_cols : sequence[str], optional
         Columns to carry as aligned metadata. Defaults to all columns except
         ``text_col``.
+    strip_html : bool, default False
+        When True, remove HTML tags, entities, and ``http``/``www`` URLs from each
+        document before tokenizing. Web-scraped corpora (news blurbs, press
+        releases, forum posts) often carry markup such as ``<a href=...>`` or
+        ``www.example.com/page.aspx``; left in, tokens like ``href``, ``http``,
+        ``aspx`` survive pruning and form a spurious "boilerplate" topic. This is a
+        conservative clean (tags + URLs only); for heavier normalization pass your
+        own ``tokenizer``. When left False, a vocabulary that still contains obvious
+        web-boilerplate terms triggers a warning pointing here.
     tokenizer : callable, optional
         ``str -> list[str]``. Defaults to :func:`topica.tokenize` with the
         ``stopwords`` and ``min_length`` arguments below. This is also where you
@@ -134,6 +163,8 @@ def from_dataframe(
         ``max_doc_fraction`` — not both.
     """
     texts = list(df[text_col])  # pandas Series and Polars Series both iterate to values
+    if strip_html:
+        texts = [_strip_web(t) if isinstance(t, str) else t for t in texts]
     if tokenizer is None:
         sw = list(stopwords) if stopwords is not None else None
         docs = [
@@ -191,6 +222,21 @@ def from_dataframe(
         max_features=max_features,
         vocabulary=vocabulary,
     )
+
+    # Web-scraped text often leaves markup tokens (href/http/aspx) in the vocab,
+    # where they form a spurious boilerplate topic. If the user did not strip and
+    # such tokens survived, point them at strip_html=.
+    if not strip_html and vocabulary is None:
+        leaked = sorted(_WEB_BOILERPLATE.intersection(corpus.vocabulary))
+        if leaked:
+            warnings.warn(
+                f"vocabulary contains web-boilerplate token(s) {leaked}, which "
+                "suggests HTML/URLs in the raw text. Pass strip_html=True to "
+                "from_dataframe to remove tags and http/www URLs before "
+                "tokenizing, or they may form a spurious topic.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     cols = (
         list(metadata_cols)

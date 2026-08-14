@@ -1,5 +1,7 @@
 """Tests for the DMR class and one_hot helper."""
 
+import warnings
+
 import numpy as np
 import numpy.testing as npt
 import pytest
@@ -445,6 +447,32 @@ class TestOneHot:
         matrix, names = one_hot(values, drop_first=True)
         # sorted categories: bird, cat, dog -> drop bird -> 2 columns
         assert matrix.shape == (5, 2)
+
+    def test_reference_chooses_baseline(self):
+        # issue #733: pick the reference level explicitly instead of the silent
+        # alphabetical default.
+        values = ["cat", "dog", "bird"]
+        matrix, names = one_hot(values, reference="dog")
+        assert "dog" not in names and set(names) == {"cat", "bird"}
+        # the dog row is all zeros (it is the baseline)
+        assert matrix[1].sum() == 0.0
+
+    def test_reference_unknown_raises(self):
+        with pytest.raises(ValueError, match="not one of the categories"):
+            one_hot(["a", "b"], reference="z")
+
+    def test_multilevel_default_warns_binary_does_not(self):
+        # 3+ levels with a silent alphabetical baseline is a Tier-1 footgun -> warn;
+        # a binary covariate has an unambiguous baseline -> stay quiet.
+        with pytest.warns(UserWarning, match="alphabetically-first"):
+            one_hot(["cat", "dog", "bird"])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # binary: must NOT warn
+            one_hot(["cat", "dog"])
+        # passing reference= silences the multilevel warning
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            one_hot(["cat", "dog", "bird"], reference="bird")
 
     def test_drop_first_false_shape(self):
         values = ["cat", "dog", "cat", "bird", "dog"]

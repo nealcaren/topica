@@ -59,3 +59,17 @@ def test_plugs_into_corpus_builder():
     # French function words dropped; content words kept.
     assert "le" not in flat and "et" not in flat and "la" not in flat
     assert "chat" in flat and "planete" in flat
+
+
+def test_sentiment_stopwords_keep_negation_and_intensifiers():
+    # issue #733 Tier 1: the default list strips negation, which silently inverts
+    # a sentiment study. SENTIMENT_STOPWORDS retains it.
+    ss = topica.SENTIMENT_STOPWORDS
+    for w in ["not", "no", "very", "too", "but", "however"]:
+        assert w in topica.ENGLISH_STOPWORDS  # default strips it
+        assert w not in ss                     # sentiment-safe keeps it
+    # but ordinary function words are still dropped
+    for w in ["the", "and", "of", "is", "with"]:
+        assert w in ss
+    # it is a strict subset of the default
+    assert ss < topica.ENGLISH_STOPWORDS

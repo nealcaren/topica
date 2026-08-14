@@ -48,6 +48,19 @@ If you would rather not add the `formulaic` dependency, replace `design_matrix`
 with hand-built blocks: `X, names = topica.one_hot(df["party"])` combined with
 `topica.spline` / `topica.interaction` via `numpy.hstack`.
 
+`one_hot` drops one level as the reference (baseline), so every coefficient is a
+contrast against it. With three or more levels, name the baseline yourself with
+`one_hot(values, reference="technical")` rather than accepting the silent
+alphabetical default; each `coef` is then the difference from `technical`. For an
+*ordered* covariate (a 1-to-5 rating, a year), a single centered numeric column
+often reads better than a set of dummies: it gives one interpretable per-step
+slope, which is what a "how does prevalence move along the scale" question wants.
+
+For a sentiment or rating study, build the corpus with
+`stopwords=topica.SENTIMENT_STOPWORDS`, not the default `ENGLISH_STOPWORDS`: the
+default strips `not`/`no`/`very`/`too`, which would collapse "not clean" into
+"clean" in exactly the study whose outcome is valence.
+
 ## Prevalence covariates
 
 ```python

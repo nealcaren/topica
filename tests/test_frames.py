@@ -195,3 +195,33 @@ class TestDfAliases:
         df = _alias_frame()
         with pytest.raises(ValueError, match="min_df must be an int or a float"):
             topica.from_dataframe(df, text_col="text", min_df=True)
+
+
+# -- strip_html + web-boilerplate diagnostic (issue #733 Tier 1) -----------------
+
+
+def test_strip_html_removes_tags_and_urls():
+    rows = [f'See <a href="http://ex.com/p{i}.aspx">link</a> and www.foo.org policy reform vote budget'
+            for i in range(20)]
+    df = pd.DataFrame({"text": rows})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        c = topica.from_dataframe(df, text_col="text", strip_html=True)
+    for junk in ("http", "https", "href", "aspx", "www", "html"):
+        assert junk not in c.vocabulary
+    for real in ("policy", "reform", "vote", "budget"):
+        assert real in c.vocabulary
+
+
+def test_web_boilerplate_warns_when_not_stripped():
+    rows = [f'<a href="http://ex.com">x</a> policy reform vote budget item {i}' for i in range(20)]
+    df = pd.DataFrame({"text": rows})
+    with pytest.warns(UserWarning, match="web-boilerplate"):
+        topica.from_dataframe(df, text_col="text")  # strip_html defaults False
+
+
+def test_clean_text_does_not_warn_boilerplate():
+    df = pd.DataFrame({"text": [f"policy reform vote budget item {i}" for i in range(20)]})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # clean corpus: no boilerplate warning
+        topica.from_dataframe(df, text_col="text")

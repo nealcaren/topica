@@ -97,3 +97,24 @@ ENGLISH_STOPWORDS = frozenset({
     "very", "was", "we", "were", "what", "when", "where", "which", "while",
     "who", "will", "with", "would", "you", "your",
 })
+
+# Words in ENGLISH_STOPWORDS that carry sentiment and must NOT be stripped for a
+# sentiment / rating study: negation flips polarity ("not clean" != "clean") and
+# degree/contrast words modulate it. SENTIMENT_STOPWORDS is ENGLISH_STOPWORDS with
+# these retained in the text.
+_SENTIMENT_BEARING = frozenset({
+    "no", "not",                                             # negation
+    "very", "too", "more", "most", "much", "only", "just",   # degree / intensity
+    "so", "even", "few",
+    "but", "however", "although", "against",                 # contrast / opposition
+})
+
+#: :data:`ENGLISH_STOPWORDS` minus negation, intensifier, and contrast words, for
+#: sentiment or rating-covariate studies where those tokens carry the signal.
+#: The default :data:`ENGLISH_STOPWORDS` strips ``not``/``no``/``very``/``too``,
+#: which would collapse "not clean" into "clean"; pass this list instead when the
+#: outcome is valence::
+#:
+#:     corpus = topica.from_dataframe(df, text_col="review",
+#:                                    stopwords=topica.SENTIMENT_STOPWORDS)
+SENTIMENT_STOPWORDS = ENGLISH_STOPWORDS - _SENTIMENT_BEARING
