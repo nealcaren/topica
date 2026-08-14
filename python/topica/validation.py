@@ -1369,6 +1369,7 @@ def search_k(
     ks,
     *,
     model="lda",
+    fit=None,
     prevalence=None,
     content=None,
     held_out=None,
@@ -1384,10 +1385,30 @@ def search_k(
 ):
     """Fit a model for each K and report quality metrics (stm's ``searchK``).
 
-    With ``model="lda"`` (default) fits an :class:`~topica.LDA` per K. With
-    ``model="stm"`` fits an :class:`~topica.STM` per K — pass ``prevalence``
-    (a covariate design matrix) and optional ``content`` (group labels) to
-    scan K for the model you'll actually report.
+    ``model=`` selects a built-in: ``"lda"`` (default), ``"stm"``, ``"nmf"``, or
+    ``"lsa"``. For ``"stm"`` pass ``prevalence`` (a covariate design matrix) and
+    optional ``content`` (group labels) to scan K for the model you'll actually
+    report. ``"nmf"`` additionally reports a ``reconstruction_error`` column.
+
+    For **any other model**, pass ``fit=`` — a callable ``(k, seed) -> fitted
+    model`` that builds and fits the model, closing over ``docs`` and any
+    covariates or embeddings it needs. ``search_k`` then scores whatever it
+    returns with the same generic metrics, so it works for every model without
+    knowing its fit signature (the same escape hatch ``bootstrap_stability`` /
+    ``diagnostics`` / ``standard_errors`` offer via ``model_factory=``)::
+
+        search_k(docs, [10, 20, 30], fit=lambda k, s: topica.NMF(k, seed=s).fit(docs))
+
+    A fitted model only needs ``topic_word`` and ``top_words`` for the coherence
+    and exclusivity columns. The ``dispersion`` column and the ``held_out`` columns
+    are generative-count diagnostics, so they are reported only for models that
+    expose a generative ``transform`` (LDA/STM/DMR/CTM/HDP); they are omitted for
+    matrix-factorization models (NMF factors a tf-idf matrix; LSA has signed SVD
+    factors), which are not generative count models. The opt-in ``criteria``
+    (``deveaud``/``cao_juan``) treat each topic as a word distribution, so they are
+    omitted for a signed ``topic_word`` (LSA). The stm semantic-coherence metric is
+    used only for the built-in ``model="stm"``; a ``fit=`` closure returning an STM
+    is scored with plain UMass coherence.
 
     Returns a :class:`SearchKResult` (a list of per-K dicts) with ``k``,
     ``coherence`` (mean of the selected coherence type; for ``model="stm"`` with
@@ -1416,7 +1437,11 @@ def search_k(
     ----------
     docs : training documents (``list[list[str]]`` or a ``Corpus``).
     ks : sequence of topic counts to scan.
-    model : ``"lda"`` (default) or ``"stm"``.
+    model : ``"lda"`` (default), ``"stm"``, ``"nmf"``, or ``"lsa"``. Ignored when
+        ``fit=`` is given.
+    fit : optional ``callable(k, seed) -> fitted model``. When given it takes
+        precedence over ``model`` and lets ``search_k`` scan any model type; the
+        callable owns the fit (it closes over ``docs`` and any covariates).
     prevalence : covariate design matrix for ``model="stm"``; ignored otherwise.
     content : optional content group labels (sequence of str/int) for ``model="stm"``.
     held_out : optional held-out set. Pass a :class:`Heldout` (from
@@ -1448,23 +1473,26 @@ def search_k(
         ``best_k("cao_juan")`` and carry standard errors under ``num_seeds>1`` like
         any other metric.
     """
-    from . import LDA, STM  # local import to avoid a cycle at module load
+    from . import LDA, LSA, NMF, STM  # local import to avoid a cycle at module load
 
-    if model not in ("lda", "stm"):
+    use_fit = fit is not None
+    if use_fit and not callable(fit):
+        raise ValueError(f"fit= must be a callable (k, seed) -> fitted model, got {fit!r}")
+    if not use_fit and model not in ("lda", "stm", "nmf", "lsa"):
         raise ValueError(
-            f"search_k fits an LDA or STM per K; model must be 'lda' or 'stm' "
-            f"(got {model!r}). Other models are not scanned here: embedding-guided "
-            f"models (EmbeddingLDA) need embeddings/vocabulary search_k cannot "
-            f"infer, embedding+cluster models (BERTopic, Top2Vec) set K by the "
-            f"clusterer, not by refitting, and matrix-factorization models (NMF, "
-            f"LSA) are swept the ordinary way by refitting per K. Sweep K for those "
-            f"by hand: fit each K and compare the mean coherence (for NMF also the "
-            f"reconstruction_error); see the 'Matrix-factorization models "
-            f"(NMF, LSA)', 'Fixed-K embedding models' (EmbeddingLDA) and "
-            f"'Embedding + cluster models' (BERTopic/Top2Vec) sections of "
-            f"docs/publishing/choosing-k.md.")
+            f"search_k built-ins are 'lda', 'stm', 'nmf', 'lsa' (got {model!r}). "
+            f"For any other model pass fit=(k, seed) -> fitted model, which closes "
+            f"over docs and any covariates/embeddings the model needs — e.g. "
+            f"fit=lambda k, s: topica.DMR(k, seed=s).fit(docs, prevalence). "
+            f"Embedding+cluster models (BERTopic, Top2Vec) set K by the clusterer, "
+            f"not by refitting, so they do not fit this paradigm; sweep their "
+            f"clusterer settings instead (see docs/publishing/choosing-k.md).")
     if int(num_seeds) < 1:
         raise ValueError(f"num_seeds must be >= 1, got {num_seeds!r}")
+    if use_fit and (prevalence is not None or content is not None):
+        raise ValueError(
+            "prevalence=/content= are for the built-in model='stm'; with fit= the "
+            "callable owns the fit, so pass any covariates inside it.")
     if content is not None and model != "stm":
         raise ValueError("content covariates are only supported when model='stm'")
 
@@ -1510,14 +1538,31 @@ def search_k(
 
     ref_docs = _ref_corpus(docs)  # token lists, reused across every K
 
-    def _fit_row(k, fit_seed):
+    def _make_fitted(k, fit_seed):
+        """Build and fit the model for this (K, seed). The fit= hook owns the fit;
+        otherwise use the built-in per-model fit signature."""
+        if use_fit:
+            m = fit(k, fit_seed)
+            if not hasattr(m, "topic_word"):
+                raise TypeError(
+                    "fit=(k, seed) must return a fitted model exposing topic_word "
+                    f"(and top_words); got {type(m).__name__}")
+            return m
         if model == "stm":
             m = STM(num_topics=k, seed=fit_seed)
             m.fit(docs, prevalence, content=content, iters=iters)
+        elif model == "nmf":
+            m = NMF(num_topics=k, seed=fit_seed).fit(docs, iters=iters)
+        elif model == "lsa":
+            m = LSA(num_topics=k, seed=fit_seed).fit(docs)  # SVD: no iters/seed effect
         else:
             m = LDA(num_topics=k, seed=fit_seed)
             m.fit(docs, iters=iters, num_samples=num_samples,
                   sample_interval=sample_interval)
+        return m
+
+    def _fit_row(k, fit_seed):
+        m = _make_fitted(k, fit_seed)
 
         coh_label = coherence_type
         if stratified:
@@ -1551,16 +1596,42 @@ def search_k(
         }
         # Residual dispersion (Taddy 2012): dispersion >> 1 is direct evidence K
         # is too small -- the non-monotone signal stm's searchK reports. Diagnostic
-        # column, not a frontier metric (it keeps falling as K grows).
-        rc = check_residuals(m, ref_docs)
-        row["dispersion"] = float(rc.dispersion)
-        row["dispersion_pvalue"] = float(rc.pvalue)
-        # Opt-in ldatuning-style criteria from the topic-word matrix.
-        for c in criteria:
-            row[c] = _extra_criterion(c, m.topic_word)
+        # column, not a frontier metric (it keeps falling as K grows). It is a
+        # generative *multinomial-count* residual test, so it only applies to
+        # models that define p(counts) -- i.e. expose a generative `transform`
+        # (LDA/STM/DMR/CTM/HDP). Matrix-factorization models are not generative
+        # count models (NMF factors a tf-idf matrix; LSA's SVD factors are signed),
+        # so their dispersion is meaningless and non-monotone; omit the column for
+        # them, the same capability gate `held_out` uses.
+        if hasattr(m, "transform"):
+            rc = check_residuals(m, ref_docs)
+            row["dispersion"] = float(rc.dispersion)
+            row["dispersion_pvalue"] = float(rc.pvalue)
+        # NMF (and any factorization model that exposes it) reports its residual
+        # fit as an extra diagnostic column, like dispersion. Monotone in K, so it
+        # stays out of the frontier / best_k, same as dispersion.
+        if hasattr(m, "reconstruction_error"):
+            row["reconstruction_error"] = float(m.reconstruction_error)
+        # Opt-in ldatuning-style criteria from the topic-word matrix. These treat
+        # each topic as a word *distribution* (deveaud = pairwise Jensen-Shannon
+        # divergence, cao_juan = pairwise cosine), so they are only defined for a
+        # non-negative topic_word. LSA's signed SVD loadings make deveaud NaN (log
+        # of a negative) and cao_juan an orthogonality artifact, so omit these
+        # columns for signed factorizations rather than emit noise.
+        if criteria:
+            phi = np.asarray(m.topic_word)
+            if float(phi.min()) >= 0.0:
+                for c in criteria:
+                    row[c] = _extra_criterion(c, phi)
         if stratified:
             row["polarization"] = float(np.mean(_pol(m)))
         if held_out is not None:
+            if not hasattr(m, "transform"):
+                raise ValueError(
+                    f"held_out= scoring needs a generative transform, but "
+                    f"{type(m).__name__} has none (matrix-factorization and "
+                    "embedding-cluster models do not). Drop held_out= and compare "
+                    "these models on coherence / exclusivity instead.")
             if isinstance(held_out, Heldout):
                 result = eval_heldout(m, held_out, seed=fit_seed)
                 row["heldout_loglik"] = float(result.mean_per_doc_loglik)
