@@ -286,7 +286,7 @@ class SearchKResult(list):
     def best_k(self, metric: str | None = ..., *, rule: str = ..., frontier_metrics: Sequence[str] | None = ..., weights: Sequence[float] | None = ...) -> int: ...
 
 
-def search_k(docs: Any, ks: Sequence[int], *, model: str = ..., prevalence: Any | None = ..., content: Any | None = ..., held_out: Any = ..., iters: int = ..., num_samples: int = ..., sample_interval: int = ..., seed: int = ..., coherence_n: int = ..., coherence_type: str = ..., n_jobs: int = ..., num_seeds: int = ..., criteria: Sequence[str] = ...) -> SearchKResult:
+def search_k(docs: Any, ks: Sequence[int], *, model: str = ..., prevalence: Any | None = ..., prevalence_names: Any | None = ..., content: Any | None = ..., held_out: Any = ..., iters: int = ..., num_samples: int = ..., sample_interval: int = ..., seed: int = ..., coherence_n: int = ..., coherence_type: str = ..., n_jobs: int = ..., num_seeds: int = ..., criteria: Sequence[str] = ...) -> SearchKResult:
     """Fit an LDA/STM per K; report coherence, exclusivity, residual dispersion, and (optional) held-out metric."""
     ...
 

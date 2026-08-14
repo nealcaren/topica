@@ -136,6 +136,21 @@ def test_fit_hook_with_covariate_model():
     assert [r["k"] for r in rows] == [2, 3]
 
 
+def test_stm_accepts_prevalence_names_for_fit_parity():
+    """#739: STM.fit takes prevalence_names=; the same kwargs must drop straight
+    into search_k(model='stm', ...). It is accepted and ignored (search_k scans K
+    on the design matrix and never labels the covariates)."""
+    c, docs = _corpus()
+    x = np.array([[1.0, float(i < len(docs) // 2)] for i in range(len(docs))])
+    names = ["(Intercept)", "group"]
+    ref = topica.search_k(c, [2, 3], model="stm", prevalence=x, iters=40)
+    rows = topica.search_k(c, [2, 3], model="stm", prevalence=x,
+                           prevalence_names=names, iters=40)
+    assert [r["k"] for r in rows] == [2, 3]
+    # passing the names changes nothing about the scan
+    assert [r["k"] for r in rows] == [r["k"] for r in ref]
+
+
 def test_fit_hook_takes_precedence_and_rejects_covariate_args():
     c, _ = _corpus()
     x = np.ones((60, 1))

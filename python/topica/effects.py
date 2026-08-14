@@ -305,11 +305,21 @@ def prevalence_ci(model, groups, *, ci=0.95, normalize=True, corpus=None,
             "groups must be one label per document"
         )
 
-    group_str = np.asarray([str(v) for v in groups])
+    def _canon(v):
+        # Match groups to labels by string form, but render an integer-valued
+        # float as the plain integer ("2013.0" -> "2013"). A dynamic keyATM
+        # stores time_labels as int-like strings while the fit-time timestamps
+        # are often a float year array; without this, str(2013.0) != "2013"
+        # would spuriously report every period as missing (issue #739).
+        if isinstance(v, (float, np.floating)) and np.isfinite(v) and float(v).is_integer():
+            return str(int(v))
+        return str(v)
+
+    group_str = np.asarray([_canon(v) for v in groups])
     if labels is None:
-        uniq = sorted(np.unique(groups), key=lambda v: str(v))
+        uniq = sorted(np.unique(groups), key=_canon)
         labels = [u.item() if hasattr(u, "item") else u for u in uniq]
-    label_to_idx = {str(lbl): i for i, lbl in enumerate(labels)}
+    label_to_idx = {_canon(lbl): i for i, lbl in enumerate(labels)}
     missing = set(group_str) - set(label_to_idx)
     if missing:
         raise ValueError(f"groups contains values not in labels: {sorted(missing)}")
