@@ -66,3 +66,13 @@ def test_errors():
         stm.estimate_effect(theta)  # no X, no formula
     with pytest.raises(ValueError):
         stm.estimate_effect(theta, formula="~ x")  # formula without data
+
+
+def test_design_matrix_data_first_gives_clear_error():
+    """Calling design_matrix(data, formula) by mistake should raise a clear
+    TypeError naming the correct order, not an opaque formulaic failure (#713-#9)."""
+    import pandas as pd
+    from topica import design_matrix
+    df = pd.DataFrame({"party": ["D", "R", "D", "R"]})
+    with pytest.raises(TypeError, match="formula string"):
+        design_matrix(df, "~ party")

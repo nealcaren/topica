@@ -331,3 +331,34 @@ class TestSpectralInit:
         m.save(path)
         reloaded = LDA.load(path)
         npt.assert_array_equal(reloaded.topic_word, m.topic_word)
+
+
+# ---------------------------------------------------------------------------
+# Gate B (#713) follow-ups
+# ---------------------------------------------------------------------------
+
+def _planted_docs():
+    a = [["cat", "dog", "pet", "cat", "dog"]] * 20
+    b = [["star", "moon", "sky", "star", "moon"]] * 20
+    return a + b
+
+
+def test_num_samples_zero_is_rejected():
+    """num_samples=0 previously left phi/theta all-zero; it must now raise (#713-#10)."""
+    with pytest.raises(ValueError, match="num_samples"):
+        LDA(2, seed=1).fit(_planted_docs(), iters=50, num_samples=0)
+
+
+def test_num_samples_one_gives_nonzero_terminal_state():
+    m = LDA(2, seed=1).fit(_planted_docs(), iters=50, num_samples=1)
+    assert np.any(np.asarray(m.topic_word) > 0)
+    assert np.allclose(np.asarray(m.doc_topic).sum(axis=1), 1.0)
+
+
+def test_optimize_on_learns_finite_hyperparams():
+    """With optimization on (the default), the Wallach alpha/beta optimizer must
+    produce finite, positive hyperparameters (#713-#3)."""
+    m = LDA(4, seed=1, optimize_interval=50, burn_in=50).fit(
+        _planted_docs(), iters=200, num_samples=1)
+    assert np.all(np.isfinite(m.alpha)) and np.all(np.asarray(m.alpha) > 0)
+    assert np.isfinite(m.beta) and m.beta > 0
