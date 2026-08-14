@@ -2,6 +2,8 @@
 fit=(k, seed) -> fitted model hook (model-agnostic, like model_factory on the
 other tools)."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -44,11 +46,33 @@ def test_lsa_omits_dispersion_signed_factors():
     assert "dispersion" not in rows.directions
 
 
-def test_nmf_reports_sane_dispersion():
+def test_nmf_omits_dispersion_not_a_generative_count_model():
+    # NMF factors a tf-idf matrix, not counts, so Taddy's multinomial residual
+    # dispersion is meaningless (non-monotone garbage on real corpora). It must be
+    # omitted, like LSA — the column is gated on a generative transform.
     c, _ = _corpus()
     rows = topica.search_k(c, [2, 3], model="nmf", iters=100)
+    assert not any("dispersion" in r for r in rows)
+
+
+def test_lda_keeps_dispersion_generative_model():
+    c, _ = _corpus()
+    rows = topica.search_k(c, [2, 3], model="lda", iters=150)
     for r in rows:
-        assert "dispersion" in r and np.isfinite(r["dispersion"]) and r["dispersion"] >= 0
+        assert "dispersion" in r and np.isfinite(r["dispersion"])
+
+
+def test_criteria_omitted_for_signed_lsa_no_warning():
+    # deveaud (JS divergence) / cao_juan (cosine) are distribution metrics; LSA's
+    # signed loadings make them NaN/artifacts and leak a numpy RuntimeWarning.
+    # They must be omitted cleanly, and NMF (non-negative) must keep them.
+    c, _ = _corpus()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        rl = topica.search_k(c, [2, 3], model="lsa", criteria=("deveaud", "cao_juan"))
+    assert not any("deveaud" in r or "cao_juan" in r for r in rl)
+    rn = topica.search_k(c, [2, 3], model="nmf", iters=100, criteria=("deveaud", "cao_juan"))
+    assert all("deveaud" in r and "cao_juan" in r for r in rn)
 
 
 def test_fit_hook_without_doc_topic_skips_dispersion():

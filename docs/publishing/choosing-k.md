@@ -245,9 +245,10 @@ values.
 
 ## Embedding + cluster models (BERTopic, Top2Vec)
 
-Everything above fits LDA or STM. `search_k` does too — it **raises for
-embedding + cluster models** (`search_k(..., model="bertopic")` →
-`ValueError: model must be 'lda' or 'stm'`). Two things differ for these models:
+`search_k` scans LDA/STM/NMF/LSA directly and any other model through `fit=`, but
+it **cannot scan embedding + cluster models** — `search_k(..., model="bertopic")`
+raises, and passing a BERTopic through `fit=` makes no sense here. Two things
+differ for these models:
 
 - **Preprocessing does not change the topics.** Clusters are formed from the
   document *embeddings*, so stopword and frequency choices only affect the
@@ -288,9 +289,9 @@ the noise-bucket problem in depth.
 `EmbeddingLDA`, `ETM`, and `FASTopic` are embedding-driven but are **not**
 clusterers: K is a model setting you fix in advance and every document gets a full
 topic distribution, so unlike BERTopic/Top2Vec you sweep K the ordinary way, by
-**refitting per K**. `search_k` still raises for them (it only fits LDA/STM, and
-`EmbeddingLDA` needs embeddings/vocabulary it cannot infer), so run the same
-coherence-vs-diversity sweep by hand:
+**refitting per K**. They have no built-in `model=` string, but you can drive them
+through `search_k`'s `fit=` hook (closing over the embeddings/vocabulary they
+need), or run the coherence-vs-diversity sweep by hand as below:
 
 ```python
 import numpy as np, topica
