@@ -849,7 +849,12 @@ class STM:
         self, topic: int, group_a: str | int, group_b: str | int, n: int = 10
     ) -> list[tuple[str, float]]:
         """Words most distinguishing how `topic` is worded in group_a vs group_b
-        (log word-prob ratio; positive favours group_a). Requires content."""
+        (log word-prob ratio; positive favours group_a). Requires content.
+
+        Caveat: a named actor (person/place name) present in only one group — a
+        legislator's surname under content=party, say — tops the contrast as
+        speaker identity, not framing. Strip actor names from the vocabulary
+        before a content covariate that correlates with the actor (issue #743)."""
         ...
 
     def coherence(self, n: int = 10, *, coherence_type: str = "u_mass", texts: "Corpus | Sequence[Sequence[str]] | None" = None) -> numpy.typing.NDArray[numpy.float64]: ...

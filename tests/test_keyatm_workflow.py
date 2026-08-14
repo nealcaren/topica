@@ -34,6 +34,32 @@ def test_visualize_keywords_counts_and_order():
     assert absent["count"] == 0 and absent["doc_freq"] == 0
 
 
+def test_visualize_keywords_corpus_aware_of_pruning():
+    # #743: scoring against the built Corpus reflects vocabulary pruning. A seed
+    # dropped by max_doc_fraction shows count 0 / in_vocab False and warns, while
+    # scoring the raw docs reports the misleading pre-pruning count.
+    docs = [["health", "care", "x"], ["health", "tax", "y"], ["health", "budget", "z"]] * 5
+    seeds = {"Health": ["health", "care"], "Tax": ["tax"]}
+    raw = keyatm.visualize_keywords(docs, seeds)
+    raw_health = [r for r in raw["Health"] if r["keyword"] == "health"][0]
+    assert raw_health["count"] > 0 and raw_health["in_vocab"]  # raw: looks fine
+
+    c = topica.Corpus.from_documents(docs, max_doc_fraction=0.5)  # prunes "health"
+    assert "health" not in c.vocabulary
+    with pytest.warns(UserWarning, match="not in the corpus vocabulary"):
+        vis = keyatm.visualize_keywords(c, seeds)
+    corp_health = [r for r in vis["Health"] if r["keyword"] == "health"][0]
+    assert corp_health["count"] == 0 and corp_health["in_vocab"] is False
+
+
+def test_refine_keywords_corpus_drops_pruned_seed():
+    # #743: refine_keywords on the built Corpus drops a pruned seed too.
+    docs = [["health", "care", "x"], ["health", "tax", "y"]] * 6
+    c = topica.Corpus.from_documents(docs, max_doc_fraction=0.5)  # prunes "health"
+    refined, dropped = keyatm.refine_keywords(c, {"Health": ["health", "care"]})
+    assert "health" in dropped["Health"] and refined["Health"] == ["care"]
+
+
 def test_refine_keywords_drops_rare_and_empty_sets():
     docs, _ = _corpus()
     kw = {"econ": ["tax", "market", "absent"], "empty": ["nope1", "nope2"]}
