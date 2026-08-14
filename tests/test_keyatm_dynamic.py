@@ -216,6 +216,20 @@ def test_time_prevalence_ci_bounds(dyn_model_ci):
     assert np.all(result["sd"] >= 0.0)
 
 
+def test_time_prevalence_ci_accepts_float_timestamps(dyn_model_ci):
+    """#739: passing the fit-time timestamps as a float array (e.g. a pandas
+    float `year` column) must match int-like string time_labels, not report every
+    period missing because str(2013.0) != '2013'."""
+    m, _, years = dyn_model_ci
+    ref = topica.time_prevalence_ci(m, years)
+    float_years = np.asarray(years, dtype=np.float64)  # 2000.0, 2001.0, ...
+    out = topica.time_prevalence_ci(m, float_years)
+    assert out["labels"] == ref["labels"]
+    np.testing.assert_allclose(out["mean"], ref["mean"])
+    np.testing.assert_allclose(out["ci_low"], ref["ci_low"])
+    np.testing.assert_allclose(out["ci_high"], ref["ci_high"])
+
+
 def test_time_prevalence_ci_requires_draws():
     """Raises a clear error when theta_draws were not retained."""
     docs, years = _corpus(seed=8, n_years=4, change_at=2, per_year=20)
