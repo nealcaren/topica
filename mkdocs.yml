@@ -112,6 +112,7 @@ nav:
   - Benchmarks: benchmarks.md
   - Examples:
       - Du Bois in The Crisis: examples/dubois.md
+      - Congress (STM party & time): examples/congress.md
       - Gadarian (STM vignette): examples/gadarian.md
       - Political blogs: examples/poliblog.md
       - Party platforms (STM content_time): examples/content_time.md

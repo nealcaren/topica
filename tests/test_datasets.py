@@ -180,6 +180,55 @@ def test_ng20_minilm_registered():
     assert len(rec["sha256"]) == 64
 
 
+def test_congress_registered():
+    assert "load_congress" in datasets.__all__
+    rec = datasets._REGISTRY["congress"]
+    assert rec["remote"].endswith("congress_press.csv")
+    assert rec["text_col"] == "text"
+    assert rec["n_docs"] == 3120
+    assert len(rec["sha256"]) == 64
+    # the summary advertises the covariates the STM example depends on
+    assert "party" in rec["summary"] and "House" in rec["summary"]
+
+
+def test_congress_committed_csv_matches_registry_sha():
+    """When the repo tree is present (dev/CI checkout, not an installed wheel), the
+    committed examples/congress_press.csv must hash to the registry sha256, so the
+    real download the loader performs is guaranteed intact."""
+    from pathlib import Path
+
+    csv = Path(datasets.__file__).resolve().parents[3] / "examples" / "congress_press.csv"
+    if not csv.exists():
+        pytest.skip("examples/ not present (installed wheel); checked out of band")
+    got = hashlib.sha256(csv.read_bytes()).hexdigest()
+    assert got == datasets._REGISTRY["congress"]["sha256"]
+
+
+def test_congress_fetch_hermetic(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOPICA_DATA_HOME", str(tmp_path / "cache"))
+    payload = (
+        b"text,date,year,party,state,bioguide_id,member,title\n"
+        b"we support the bill,2015-06-01,2015,Democrat,CA,X000001,Rep A,Statement\n"
+        b"we oppose the bill,2017-06-01,2017,Republican,TX,X000002,Rep B,Remarks\n"
+    )
+
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self.close()
+            return False
+
+    monkeypatch.setattr(datasets.urllib.request, "urlopen",
+                        lambda url, timeout=None: _Resp(payload))
+    monkeypatch.setitem(datasets._REGISTRY["congress"], "sha256", _sha256_bytes(payload))
+    df = datasets.load_congress()
+    assert list(df.columns) == ["text", "date", "year", "party", "state",
+                                "bioguide_id", "member", "title"]
+    assert set(df["party"]) == {"Democrat", "Republican"}
+
+
 def test_bunch_attribute_access():
     b = datasets.Bunch(x=1, y=2)
     assert b.x == 1 and b["y"] == 2
