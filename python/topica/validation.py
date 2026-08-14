@@ -590,11 +590,49 @@ def mmr(topic_word, word_embeddings, vocabulary=None, *, n=10, diversity=0.3, n_
     return out
 
 
+class TopicLabels(dict):
+    """One topic's stm-style labels: a dict with keys ``prob``, ``frex``,
+    ``lift``, ``score``, each a list of ``(word, value)`` pairs.
+
+    A ``dict`` subclass, so ``labels["frex"]`` works as always. It only adds two
+    guard rails, because the nested shape is easy to misread: an ``int`` index
+    (``labels[0]``, or unpacking it as if it were a word list) raises a directive
+    error naming the real access, and the repr shows the shape instead of dumping
+    every word."""
+
+    __slots__ = ()
+
+    def __repr__(self):
+        keys = ", ".join(self.keys())
+        return f"TopicLabels({keys}); e.g. this['frex'] -> [(word, score), ...]"
+
+    def __getitem__(self, key):
+        if isinstance(key, (int, np.integer)):
+            raise TypeError(
+                "a topic's labels are a dict keyed by 'prob'/'frex'/'lift'/'score', "
+                "not a word list, so an integer index is undefined. Use "
+                "labels['frex'] for the (word, score) pairs, e.g. "
+                "[w for w, _ in labels['frex']]. label_topics returns one such "
+                "dict per topic."
+            )
+        return super().__getitem__(key)
+
+
 def label_topics(topic_word, vocabulary=None, *, n=10, word_counts=None, corpus=None):
     """stm-style topic labels: prob, FREX, lift, and score word lists per topic.
 
-    Returns a list (per topic) of dicts with keys ``prob``, ``frex``, ``lift``,
-    ``score``, each a list of ``(word, value)`` pairs. FREX, lift, and score all
+    Returns a list with one :class:`TopicLabels` per topic. Each is a dict with
+    keys ``prob``, ``frex``, ``lift``, ``score``, and each value is a list of
+    ``(word, value)`` pairs — so select a labeling before reading words::
+
+        labels = topica.label_topics(model)     # one TopicLabels per topic
+        frex_words = [w for w, _ in labels[0]["frex"]]   # top FREX words of topic 0
+        prob_score = labels[0]["prob"]                   # [(word, prob), ...]
+
+    Iterating a topic directly (``for w in labels[0]``) yields the dict *keys*
+    (``'prob'``, ``'frex'``, ...), not words — a common first-timer trap, so an
+    integer index on a topic raises a directive error. (For a table of bare word
+    strings instead of pairs, use :func:`topic_table`.) FREX, lift, and score all
     come from the single stm-faithful implementation in topica's Rust core
     (``topica-core``'s ``inspect``), so they cannot drift from faSTM / the Stata
     plugin.
@@ -639,12 +677,12 @@ def label_topics(topic_word, vocabulary=None, *, n=10, word_counts=None, corpus=
         prob_idx = np.argsort(phi[t])[::-1][:n]
         lift_idx = np.argsort(lift_mat[t])[::-1][:n]
         score_idx = np.argsort(score_mat[t])[::-1][:n]
-        out.append({
+        out.append(TopicLabels({
             "prob": [(vocabulary[i], float(phi[t, i])) for i in prob_idx],
             "frex": frex_words[t],
             "lift": [(vocabulary[i], float(lift_mat[t, i])) for i in lift_idx],
             "score": [(vocabulary[i], float(score_mat[t, i])) for i in score_idx],
-        })
+        }))
     return out
 
 
@@ -1044,6 +1082,13 @@ class SearchKResult(list):
         present = set().union(*[r.keys() for r in self]) if self else set()
         return {m: d for m, d in SEARCH_K_DIRECTIONS.items() if m in present}
 
+    def to_frame(self):
+        """The per-K rows as a pandas DataFrame, one row per K (raises if pandas
+        is absent). The same tidy shape the effect/robustness results expose."""
+        import pandas as pd
+
+        return pd.DataFrame(list(self))
+
     def _frontier_k(self) -> int:
         """K that maximizes ``z(coherence) + z(exclusivity)`` across the grid.
 
@@ -1155,6 +1200,12 @@ class SearchKResult(list):
                 metric = "frontier"
             else:
                 metric = "coherence"
+        # The results advertise which coherence flavor the "coherence" column holds
+        # via the coherence_metric label ("semcoh"/"u_mass"). Accept that label as
+        # an alias so best_k(res[0]["coherence_metric"]) works instead of raising
+        # "unknown metric" for a name the result itself displays (#733).
+        if metric is not None and metric == self[0].get("coherence_metric"):
+            metric = "coherence"
         if metric != "frontier" and (frontier_metrics is not None or weights is not None):
             raise ValueError(
                 "frontier_metrics and weights only apply to metric='frontier'; "

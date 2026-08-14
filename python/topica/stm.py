@@ -1142,6 +1142,14 @@ class PredictedPrevalence:
     covariate : str or None
         For ``continuous``, the name of the swept covariate (convenient for
         plotting); ``None`` otherwise.
+
+    Notes
+    -----
+    ``estimate``/``ci_low``/``ci_high`` are always arrays, one entry per grid
+    point, even for a ``contrast`` (which has a single point). For that single
+    -point case use the scalar helpers ``value`` and ``ci`` — ``f"{pp.value:+.3f}"``
+    formats, whereas ``f"{pp.estimate:+.3f}"`` raises because ``estimate`` is an
+    array. For every case, ``to_frame()`` gives a tidy per-point DataFrame.
     """
 
     topic: int
@@ -1152,6 +1160,32 @@ class PredictedPrevalence:
     ci_low: np.ndarray
     ci_high: np.ndarray
     covariate: str | None = None
+
+    @property
+    def value(self) -> float:
+        """The single predicted value as a float. Valid when there is exactly one
+        grid point (every ``contrast``, or a one-row ``at``); raises otherwise,
+        directing you to ``estimate`` (the array) or ``to_frame()``."""
+        est = np.atleast_1d(self.estimate)
+        if est.size != 1:
+            raise ValueError(
+                f"value is only defined for a single grid point; this result has "
+                f"{est.size}. Use estimate (the array, one per grid point) or "
+                "to_frame()."
+            )
+        return float(est[0])
+
+    @property
+    def ci(self) -> tuple:
+        """The single ``(ci_low, ci_high)`` as floats, under the same one-grid
+        -point condition as :attr:`value`."""
+        lo, hi = np.atleast_1d(self.ci_low), np.atleast_1d(self.ci_high)
+        if lo.size != 1:
+            raise ValueError(
+                f"ci is only defined for a single grid point; this result has "
+                f"{lo.size}. Use ci_low/ci_high (arrays) or to_frame()."
+            )
+        return float(lo[0]), float(hi[0])
 
     def to_frame(self):
         """Return a tidy pandas DataFrame with one row per grid point.

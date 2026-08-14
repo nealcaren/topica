@@ -46,6 +46,11 @@ pub struct LsaModel {
     pub doc_topic: Vec<Vec<f64>>,
     /// Truncated singular values `Sigma_k` (length K).
     pub singular_values: Vec<f64>,
+    /// Frobenius reconstruction error of the rank-K truncation,
+    /// `sqrt(||X||_F^2 - sum_k Sigma_k^2)` on the same weighted matrix the SVD
+    /// factors. Monotone-decreasing in K, so it is the LSA scree curve (the SVD
+    /// analogue of NMF's `reconstruction_error`).
+    pub reconstruction_error: f64,
 }
 
 /// Apply the scikit-learn `svd_flip` sign convention in place: for each component
@@ -118,12 +123,20 @@ pub fn fit_lsa(
         .map(|row| (0..kk).map(|c| row[c] * s[c]).collect())
         .collect();
 
+    // Frobenius residual of the rank-K truncation: ||X||_F^2 = sum of all squared
+    // singular values, and the top-K SVD captures the K largest, so the discarded
+    // energy is ||X||_F^2 - sum_k Sigma_k^2. Computed from X directly (no need for
+    // the full spectrum) so it is exact up to the randomized SVD's approximation.
+    let kept_sq: f64 = s.iter().map(|v| v * v).sum();
+    let reconstruction_error = (x.frob_sq() - kept_sq).max(0.0).sqrt();
+
     LsaModel {
         num_topics: kk,
         num_types,
         topic_word: vt_rows,
         doc_topic,
         singular_values,
+        reconstruction_error,
     }
 }
 

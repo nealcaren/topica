@@ -703,3 +703,65 @@ def test_report_is_callable():
     m.fit(docs, iters=50)
     assert topica.report(m) == topica.summary(m)
     assert "num_topics" in topica.report(m)
+
+
+def test_search_k_result_to_frame():
+    # #733 Tier 3: SearchKResult gained to_frame(), like the effect/robustness
+    # results (previously only effects_across_k had it).
+    from topica.validation import SearchKResult
+    rows = SearchKResult([{"k": 2, "coherence": -5.0, "exclusivity": 0.5},
+                          {"k": 3, "coherence": -6.0, "exclusivity": 0.6}])
+    df = rows.to_frame()
+    assert list(df["k"]) == [2, 3]
+    assert {"coherence", "exclusivity"}.issubset(df.columns)
+
+
+def test_best_k_accepts_coherence_metric_label_alias():
+    # #733 Tier 3: the result advertises coherence_metric ("semcoh"/"u_mass");
+    # best_k now accepts that label as an alias for "coherence" instead of raising.
+    from topica.validation import SearchKResult
+    for label in ("semcoh", "u_mass"):
+        rows = SearchKResult([{"k": 2, "coherence": -5.0, "exclusivity": 0.5,
+                               "coherence_metric": label},
+                              {"k": 3, "coherence": -6.0, "exclusivity": 0.6,
+                               "coherence_metric": label}])
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # bare-coherence monotone warning
+            assert rows.best_k(label) == rows.best_k("coherence")
+    # a label that is NOT this result's coherence_metric still errors
+    rows = SearchKResult([{"k": 2, "coherence": -5.0, "exclusivity": 0.5,
+                           "coherence_metric": "u_mass"}])
+    with pytest.raises(ValueError, match="unknown metric"):
+        rows.best_k("semcoh")
+
+
+def test_topic_labels_shape_and_guard():
+    # #733 Tier 3: label_topics rows are TopicLabels dicts; an integer index (the
+    # common "iterate for words" mistake) raises a directive error, dict access works.
+    from topica.validation import TopicLabels
+    tl = TopicLabels({"prob": [("a", 0.3)], "frex": [("b", 0.9)],
+                      "lift": [("c", 1.1)], "score": [("d", 0.2)]})
+    assert tl["frex"] == [("b", 0.9)]                  # dict access intact
+    assert [w for w, _ in tl["frex"]] == ["b"]
+    assert set(tl.keys()) == {"prob", "frex", "lift", "score"}
+    with pytest.raises(TypeError, match="dict keyed by"):
+        tl[0]                                          # int index -> directive error
+    assert "TopicLabels" in repr(tl)
+
+
+def test_predicted_prevalence_scalar_helpers():
+    # #733 Tier 3: a contrast is a single value but estimate is a 1-element array
+    # (f-string on it crashes). .value / .ci give floats; multi-point raises.
+    import numpy as np
+    from topica.stm import PredictedPrevalence
+    pp = PredictedPrevalence(topic=0, topic_name="t", mode="contrast", grid=["a", "b"],
+                             estimate=np.array([-0.096]), ci_low=np.array([-0.14]),
+                             ci_high=np.array([-0.05]))
+    assert f"{pp.value:+.3f}" == "-0.096"
+    assert pp.ci == pytest.approx((-0.14, -0.05))
+    multi = PredictedPrevalence(topic=0, topic_name="t", mode="continuous",
+                                grid=[{}, {}], estimate=np.array([0.1, 0.2]),
+                                ci_low=np.array([0.0, 0.1]), ci_high=np.array([0.2, 0.3]))
+    with pytest.raises(ValueError, match="single grid point"):
+        multi.value

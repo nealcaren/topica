@@ -42,6 +42,29 @@ def test_builtin_lsa_scans():
     assert all(np.isfinite(r["coherence"]) for r in rows)
 
 
+def test_lsa_reports_reconstruction_error_scree():
+    # issue #733 Tier 2: LSA now reports a reconstruction_error scree column, like
+    # NMF (was omitted though best_k's docstring advertised it as an NMF/LSA column).
+    c, _ = _corpus()
+    rows = topica.search_k(c, [2, 3, 4, 5], model="lsa")
+    errs = [r["reconstruction_error"] for r in rows]
+    assert all(np.isfinite(e) for e in errs)
+    # rank-K Frobenius residual falls monotonically as K grows
+    assert all(a >= b for a, b in zip(errs, errs[1:]))
+    assert rows.directions["reconstruction_error"] == "minimize"
+    assert rows.best_k("reconstruction_error", rule="elbow") in (2, 3, 4, 5)
+
+
+def test_lsa_reconstruction_error_survives_save_load(tmp_path):
+    c, _ = _corpus()
+    m = topica.LSA(num_topics=4).fit(c)
+    p = tmp_path / "lsa.bin"
+    m.save(str(p))
+    assert topica.LSA.load(str(p)).reconstruction_error == pytest.approx(
+        m.reconstruction_error
+    )
+
+
 def test_lsa_omits_dispersion_signed_factors():
     # LSA's topic_word is a signed SVD factor, so the multinomial residual
     # dispersion test is meaningless (~1e9). It must be skipped, not reported.

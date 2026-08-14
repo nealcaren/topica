@@ -317,11 +317,13 @@ average it and compare on that scale.
 `NMF` and `LSA` factor the document-term matrix at a fixed rank K, so K is a model
 setting you sweep by **refitting per K**. `search_k` scans them directly with
 `model="nmf"` or `model="lsa"`, giving you the same coherence/exclusivity frontier
-and `best_k` machinery as LDA. For NMF it adds a `reconstruction_error` column (the
-fit's residual) — read it like a scree plot: it falls monotonically in K, so take
-the knee, not the minimum, and cross it against coherence. Select on it directly
-with `rows.best_k("reconstruction_error", rule="elbow")` (bare `rule="best"` returns
-the grid edge and warns, because the error keeps shrinking with K).
+and `best_k` machinery as LDA. Both add a `reconstruction_error` column (NMF's fit
+residual; for LSA the rank-K Frobenius residual `sqrt(‖X‖² − Σσ_k²)`) — read it like
+a scree plot: it falls monotonically in K, so take the knee, not the minimum, and
+cross it against coherence. Select on it directly with
+`rows.best_k("reconstruction_error", rule="elbow")` (bare `rule="best"` returns the
+grid edge and warns, because the error keeps shrinking with K). `rows.to_frame()`
+gives the whole scan as a tidy DataFrame.
 
 ```python
 import topica

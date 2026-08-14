@@ -5689,6 +5689,11 @@ class LSA:
         """(num_topics,) truncated singular values Sigma_k."""
         ...
     @property
+    def reconstruction_error(self) -> float:
+        """Frobenius error of the rank-K truncation, sqrt(||X||_F^2 - sum_k Sigma_k^2);
+        the LSA scree column reported by search_k(model="lsa")."""
+        ...
+    @property
     def fit_history(self) -> list[tuple[int, float]]:
         """Empty: the SVD is a direct solve with no iterative trace."""
         ...
