@@ -6,6 +6,7 @@ normalized measures must respect their ranges, and the gensim-style API should
 accept both explicit word lists and fitted models.
 """
 
+import warnings
 import numpy as np
 import pytest
 
@@ -507,3 +508,34 @@ class TestModelCoherenceMethodConsistency:
         m, docs = self._fit()
         assert np.allclose(topica.coherence(m, docs, n=5, coherence_type="u_mass"),
                            topica.coherence(m, docs, topn=5, coherence_type="u_mass"))
+
+
+class TestNonDistributionalWarning:
+    """coherence() warns when a model's topic_word is not a distribution (LSA's
+    signed loadings), so a user does not rank model families by it (issue #733)."""
+
+    def _corpus(self):
+        rng = np.random.default_rng(0)
+        a = [["cat", "dog", "pet", "vet", "paw"]] * 40
+        b = [["star", "moon", "sky", "sun", "orbit"]] * 40
+        return topica.Corpus.from_documents(a + b)
+
+    def test_lsa_warns_non_distributional(self):
+        c = self._corpus()
+        lsa = topica.LSA(num_topics=4).fit(c)
+        with pytest.warns(UserWarning, match="not comparable across model families"):
+            topica.coherence(lsa, c, coherence_type="u_mass")
+
+    def test_lda_does_not_warn(self):
+        c = self._corpus()
+        lda = LDA(num_topics=4, seed=13).fit(c)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # a distribution -> no comparability warning
+            topica.coherence(lda, c, coherence_type="u_mass")
+
+    def test_word_lists_do_not_warn(self):
+        # passing bare word lists (no model) never triggers the model-only check
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            topica.coherence([["cat", "dog"], ["star", "moon"]],
+                             [["cat", "dog"], ["star", "moon"]], topn=2)

@@ -346,6 +346,33 @@ def _as_reference(texts):
     return [list(t) for t in texts]
 
 
+def _warn_if_non_distributional(topics):
+    """Warn when ``topics`` is a model whose ``topic_word`` rows are not a word
+    distribution (LSA's signed SVD loadings; any matrix with negative entries).
+
+    Coherence still scores that model's top words, but the number is not on the
+    same footing as a probabilistic model's, so ranking model *families* by
+    coherence (e.g. NMF vs a signed factorization) is misleading. Coherence
+    compares topics *within* a model; this flags the cross-family trap."""
+    tw = getattr(topics, "topic_word", None)
+    if tw is None:
+        return
+    try:
+        if float(np.asarray(tw).min()) < -1e-9:
+            warnings.warn(
+                "coherence: this model's topic_word has negative entries, so its "
+                "rows are not a word distribution (e.g. LSA's signed SVD loadings). "
+                "Coherence still ranks topics within this model, but the value is "
+                "not comparable across model families — do not use it to choose "
+                "between, say, NMF and a signed factorization. Compare recovery "
+                "against known labels or held-out likelihood instead.",
+                UserWarning,
+                stacklevel=3,
+            )
+    except (TypeError, ValueError):
+        pass  # exotic topic_word; skip the check rather than fail coherence
+
+
 def coherence(topics, texts, *, coherence_type="c_v", n=10, topn=None, window_size=None, epsilon=1e-12):
     """Per-topic coherence against a reference corpus.
 
@@ -394,6 +421,7 @@ def coherence(topics, texts, *, coherence_type="c_v", n=10, topn=None, window_si
     texts = _as_reference(texts)
     if len(texts) == 0:
         raise ValueError("texts is empty; pass the reference corpus as list[list[str]]")
+    _warn_if_non_distributional(topics)
     tops = _extract_topics(topics, topn)
     relevant = sorted({w for t in tops for w in t})
     vocab = {w: i for i, w in enumerate(relevant)}

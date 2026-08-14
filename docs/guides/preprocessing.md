@@ -38,6 +38,26 @@ Unknown languages raise with the list of available codes. For the cross-lingual
 models ([`InfoCTM`](models.md#infoctm), [`ZeroShotTM`](embedding.md#zeroshottm)),
 pass the matching list per language. Anything not covered: supply your own list.
 
+For a sentiment or rating study, use `topica.SENTIMENT_STOPWORDS` instead of the
+default: `ENGLISH_STOPWORDS` strips `not`/`no`/`very`/`too`, which would collapse
+"not clean" into "clean" in exactly the analysis whose outcome is valence.
+
+### Web-scraped text: strip HTML and URLs
+
+Text scraped from the web (news blurbs, press releases, forum posts) often carries
+markup — `<a href=...>` tags, `www.example.com/page.aspx` URLs — whose fragments
+(`href`, `http`, `aspx`) survive tokenization and form a spurious "boilerplate"
+topic. Pass `strip_html=True` to remove tags and `http`/`www` URLs before
+tokenizing:
+
+```python
+corpus = topica.from_dataframe(df, text_col="text", strip_html=True)
+```
+
+`from_dataframe` also warns if such tokens survive into the vocabulary when you
+did not strip, so the trap is hard to miss. `strip_html` is a conservative clean
+(tags and URLs only); for heavier normalization, pass your own `tokenizer`.
+
 ### Readable topic words: lemmatize, don't stem
 
 Stemming truncates words to a root (`military` → `militari`, `economy` →

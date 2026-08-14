@@ -1347,6 +1347,7 @@ def _aggregate_over_seeds(ks, seeds, tasks, fitted):
     keep_scalar = {"k", "coherence_metric"}
     no_se = {"dispersion_pvalue"}  # an SE on a p-value is not meaningful
     rows, coh_by_k, exc_by_k = [], [], []
+    max_spread = 0.0  # largest across-seed range of any metric, over all K
     for k in ks:
         seed_rows = by_k[k]
         agg = {"k": k}
@@ -1359,9 +1360,28 @@ def _aggregate_over_seeds(ks, seeds, tasks, fitted):
             agg[key] = float(np.mean(vals))
             if key not in no_se:
                 agg[key + "_se"] = float(np.std(vals, ddof=1) / np.sqrt(n))
+            if np.all(np.isfinite(vals)):
+                max_spread = max(max_spread, float(np.ptp(vals)))
         rows.append(agg)
         coh_by_k.append([r["coherence"] for r in seed_rows])
         exc_by_k.append([r["exclusivity"] for r in seed_rows])
+
+    # If every seed produced identical metrics, the model's initialization ignores
+    # the seed (STM's spectral init, NMF/LSA init='nndsvd'), so the *_se columns
+    # are all 0 and best_k(rule='1se') is meaningless — a user could read SE=0 as
+    # "robust across seeds" when the seeds never varied. Warn, mirroring
+    # topic_stability's identical-runs guard.
+    if n > 1 and max_spread <= 1e-12:
+        warnings.warn(
+            f"search_k(num_seeds={n}): every seed produced an identical fit at each "
+            "K, so all *_se columns are 0 and best_k(rule='1se') says nothing about "
+            "robustness. Deterministic initializations ignore the seed (STM's "
+            "spectral init; NMF/LSA with init='nndsvd'). To assess robustness, refit "
+            "with init='random' (which responds to seed) or use bootstrap resampling "
+            "(bootstrap_stability); num_seeds>1 adds no information for this model.",
+            UserWarning,
+            stacklevel=3,
+        )
 
     result = SearchKResult(rows)
     # Per-seed frontier: z-score within each seed across K (via the shared helper),
