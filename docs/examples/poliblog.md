@@ -10,8 +10,8 @@ tagged with the blog's `rating` (Conservative / Liberal), the `day`, and the
 
 !!! info "Focus of this example"
     K selection · topic validation · **clustered SEs** · GLM links. For corpus
-    cleaning and dynamic topics see [Du Bois](dubois.md); for the experimental
-    effect estimation see [Gadarian](gadarian.md).
+    cleaning and dynamic topics see [Du Bois](dubois.md); for STM prevalence by
+    group and time see [Congress](congress.md).
 
     Data: [`examples/poliblog.csv`](https://github.com/nealcaren/topica/blob/main/examples/poliblog.csv)
     (reconstructed from `stm`'s preprocessed, stemmed `poliblog5k.docs`).

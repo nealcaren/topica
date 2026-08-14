@@ -51,15 +51,15 @@ This is a six-step workflow. Each step maps onto specific topica functions.
 No single analysis shows every technique, but the [worked examples](../examples/dubois.md)
 **together** demonstrate the whole workflow on real, redistributable data:
 
-| Workflow step | [Du Bois](../examples/dubois.md) | [Gadarian](../examples/gadarian.md) | [Poliblog](../examples/poliblog.md) |
+| Workflow step | [Du Bois](../examples/dubois.md) | [Congress](../examples/congress.md) | [Poliblog](../examples/poliblog.md) |
 |---------------|:------:|:------:|:------:|
-| Corpus building & cleaning | ●●● | ● | ●● |
-| Model choice (why this one) | ●● | ●●● | ●● |
-| Choosing & justifying K | ● | ● | ●●● |
-| Topic validation | ● | ●● | ●●● |
+| Corpus building & cleaning | ●●● | ●●● | ●● |
+| Model choice (why this one) | ●● | ●● | ●● |
+| Choosing & justifying K | ● | ●● | ●●● |
+| Topic validation | ● | ● | ●●● |
 | Effects (method of composition) | ●● | ●●● | ●●● |
 | **Clustered SEs** (nested data) | – | – | ●●● |
-| Temporal / dynamic topics | ●●● | – | ● |
+| Temporal / dynamic topics | ●●● | ●● | ● |
 | Reporting & reproducibility | ●● | ●● | ●● |
 
 ## The short version

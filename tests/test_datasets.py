@@ -180,6 +180,18 @@ def test_ng20_minilm_registered():
     assert len(rec["sha256"]) == 64
 
 
+def test_reviews_vendored_loads_offline():
+    # ships in the wheel like gadarian; loads with no network.
+    df = datasets.load_reviews()
+    assert list(df.columns) == ["text", "stars"]
+    assert len(df) == 1500
+    assert sorted(df["stars"].unique().tolist()) == [1, 2, 3, 4, 5]
+    assert (df["stars"].value_counts() == 300).all()  # balanced across the scale
+    # vendored checksum matches the registry record
+    path = datasets.load_reviews(return_path=True)
+    assert _sha256_bytes(path.read_bytes()) == datasets._REGISTRY["reviews"]["sha256"]
+
+
 def test_congress_registered():
     assert "load_congress" in datasets.__all__
     rec = datasets._REGISTRY["congress"]

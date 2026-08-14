@@ -115,9 +115,8 @@ two optimizers split, not a systematic offset. `estimate_effect` computes its
 method-of-composition standard errors with R `estimateEffect`'s default **Global**
 uncertainty (one shared topic covariance across documents); pass
 `uncertainty="local"` for the per-document variational covariance, or `"none"`
-for OLS on the point estimate. The [Poliblog](../examples/poliblog.md) and
-[Gadarian](../examples/gadarian.md) worked examples refit the canonical `stm`
-vignettes end to end.
+for OLS on the point estimate. The [Poliblog](../examples/poliblog.md) worked
+example refits the canonical `stm` vignette end to end.
 
 These numbers are gated offline (no R at test time) in
 [`stm_gold.py`](https://github.com/nealcaren/topica/blob/main/parity/stm_gold.py):
