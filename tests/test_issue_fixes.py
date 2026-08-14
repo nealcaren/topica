@@ -765,3 +765,42 @@ def test_predicted_prevalence_scalar_helpers():
                                 ci_low=np.array([0.0, 0.1]), ci_high=np.array([0.2, 0.3]))
     with pytest.raises(ValueError, match="single grid point"):
         multi.value
+
+
+def test_lda_rejects_num_topics_over_vocab():
+    # #741: K larger than the vocabulary produces only degenerate topics, so LDA
+    # now guards it the way NMF/CTM do instead of fitting silently. K == vocab is
+    # still allowed.
+    tiny = [["a", "b"], ["b", "c"], ["a", "c"]]  # 3 distinct word types
+    with pytest.raises(ValueError, match="exceeds the vocabulary size"):
+        topica.LDA(num_topics=100, seed=13).fit(tiny, iters=10)
+    m = topica.LDA(num_topics=3, seed=13).fit(tiny, iters=10)  # K == vocab: fine
+    assert np.asarray(m.topic_word).shape == (3, 3)
+
+
+def _two_topic_corpus():
+    a = [["cat", "dog", "pet", "vet", "paw"]] * 30
+    b = [["star", "moon", "sky", "sun", "orbit"]] * 30
+    return topica.Corpus.from_documents(a + b)
+
+
+def test_bootstrap_stability_fit_kwargs_dict_and_inline_merge():
+    # #740: fit_kwargs= (a dict, like cross_validate) is documented but used to be
+    # **kwargs, so passing it crashed. Both the dict form and inline keywords now
+    # work and merge.
+    c = _two_topic_corpus()
+    r_dict = topica.bootstrap_stability(c, k=2, n_boot=2, fit_kwargs={"iters": 40})
+    r_inline = topica.bootstrap_stability(c, k=2, n_boot=2, iters=40)
+    assert 0.0 <= r_dict["mean"] <= 1.0
+    assert r_dict["mean"] == r_inline["mean"]  # same effective fit args -> same result
+
+
+def test_bootstrap_stability_warns_on_k_with_model_factory():
+    # #740: k= is silently ignored when model_factory= is given (the factory owns
+    # the topic count and its argument is the seed). Warn instead of building the
+    # wrong K.
+    c = _two_topic_corpus()
+    with pytest.warns(UserWarning, match="k= is ignored when model_factory"):
+        topica.bootstrap_stability(
+            c, k=8, n_boot=1,
+            model_factory=lambda seed: topica.LDA(2, seed=seed), iters=30)

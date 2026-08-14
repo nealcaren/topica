@@ -1386,6 +1386,18 @@ impl LDA {
         let num_topics = slf.num_topics;
         let num_types = corpus.num_types();
         let num_docs = corpus.num_docs();
+        // K larger than the vocabulary can never yield K distinct word
+        // distributions, so the extra topics collapse to empty/degenerate rows
+        // with no warning. Guard it the way NMF/CTM already do rather than fit
+        // silently meaningless topics (issue #741).
+        if num_topics > num_types {
+            return Err(PyValueError::new_err(format!(
+                "num_topics ({num_topics}) exceeds the vocabulary size ({num_types}): \
+                 there are not enough distinct word types to form that many topics, so \
+                 the surplus topics would be empty. Lower num_topics to at most {num_types}, \
+                 or supply a corpus with a larger vocabulary."
+            )));
+        }
         let alpha_sum = slf.alpha_sum.unwrap_or(num_topics as f64);
         let total_tokens = corpus.total_tokens().max(1) as f64;
 
