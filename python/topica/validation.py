@@ -962,6 +962,11 @@ SEARCH_K_DIRECTIONS = {
     "heldout_loglik": "maximize",
     "perplexity": "minimize",
     "polarization": "maximize",
+    # NMF/LSA reconstruction error: a scree curve, monotone-decreasing in K, so
+    # rule='best' returns the grid edge (guarded below) and rule='elbow' is the
+    # useful pick. Kept out of the frontier and the best_k default; selectable
+    # only when named explicitly.
+    "reconstruction_error": "minimize",
     # Opt-in ldatuning-style criteria (search_k(criteria=...)).
     "deveaud": "maximize",   # mean pairwise JS divergence between topics
     "cao_juan": "minimize",  # mean pairwise cosine similarity between topics
@@ -1111,6 +1116,9 @@ class SearchKResult(list):
           ``"heldout_loglik"``, ``"perplexity"``), optimized in its correct
           direction. Asking for bare ``"coherence"`` on a multi-K grid warns,
           because UMass coherence is roughly monotone in K.
+        - ``"reconstruction_error"`` (an NMF/LSA column) — a scree curve,
+          monotone-decreasing in K, so ``rule="best"`` returns the grid edge and
+          warns; pair it with ``rule="elbow"`` for the diminishing-returns knee.
 
         ``rule`` chooses how the optimum is turned into a pick:
 
@@ -1162,9 +1170,11 @@ class SearchKResult(list):
             self._warn_grid_boundary(pick)
             return pick
         if metric not in SEARCH_K_DIRECTIONS:
+            selectable = sorted(m for m in SEARCH_K_DIRECTIONS if m in self[0])
             raise ValueError(
-                f"unknown metric {metric!r}; choose 'frontier' or one of "
-                f"{sorted(SEARCH_K_DIRECTIONS)}"
+                f"unknown metric {metric!r}; choose 'frontier' or one of the "
+                f"selectable metrics in these results: {selectable} "
+                f"(all recognized metrics: {sorted(SEARCH_K_DIRECTIONS)})"
             )
         if metric not in self[0]:
             raise ValueError(
@@ -1206,7 +1216,8 @@ class SearchKResult(list):
         # with K on real corpora, so rule='best' tends to return the largest K
         # scanned — a grid artifact, not a real optimum. Warn (symmetric to the
         # coherence path) so a user doesn't publish the grid endpoint unexamined.
-        if metric in ("heldout_loglik", "perplexity") and len(present) >= 2:
+        if metric in ("heldout_loglik", "perplexity", "reconstruction_error") \
+                and len(present) >= 2:
             k_max = max(r["k"] for r in present)
             if pick == k_max:
                 warnings.warn(

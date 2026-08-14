@@ -82,6 +82,35 @@ def test_metadata_is_settable():
     assert list(c.metadata["k"]) == [1, 2, 3]
 
 
+# -- metadata survives save/load via a sidecar (issue #730) ----------------------
+
+
+def test_metadata_round_trips_through_save_load(tmp_path):
+    c = topica.Corpus.from_documents(DOCS, min_doc_freq=2)
+    c.metadata = pd.DataFrame({"year": [2000, 2002, 2004], "party": ["D", "R", "D"]})
+    p = tmp_path / "corpus.bin"
+    c.save(str(p))
+    assert (tmp_path / "corpus.bin.meta").exists()  # sidecar written
+    loaded = topica.Corpus.load(str(p))
+    assert loaded.metadata is not None
+    assert loaded.metadata.equals(c.metadata)
+
+
+def test_save_without_metadata_writes_no_sidecar_and_clears_stale(tmp_path):
+    p = tmp_path / "corpus.bin"
+    # First save WITH metadata leaves a sidecar...
+    c = topica.Corpus.from_documents(DOCS, min_doc_freq=2)
+    c.metadata = pd.DataFrame({"k": [1, 2, 3]})
+    c.save(str(p))
+    assert (tmp_path / "corpus.bin.meta").exists()
+    # ...re-saving a corpus with no metadata must remove the stale sidecar, so a
+    # later load doesn't reattach the wrong covariates.
+    plain = topica.Corpus.from_documents(DOCS, min_doc_freq=2)
+    plain.save(str(p))
+    assert not (tmp_path / "corpus.bin.meta").exists()
+    assert topica.Corpus.load(str(p)).metadata is None
+
+
 # -- scikit-learn min_df / max_df aliases (issue #647 discoverability) -----------
 
 

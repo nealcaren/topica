@@ -427,6 +427,30 @@ def test_best_k_elbow_rule():
         res_ce.best_k("frontier", rule="elbow")
 
 
+def test_best_k_reconstruction_error_selectable(recwarn):
+    # #730: reconstruction_error (an NMF/LSA scree column) used to raise
+    # "unknown metric"; now it is selectable. It is monotone-decreasing in K, so
+    # rule='best' hits the largest K (grid edge) and warns, while rule='elbow'
+    # finds the interior knee.
+    from topica.validation import SearchKResult
+    ks = [2, 4, 6, 8, 10, 12]
+    err = [3.0, 2.0, 1.6, 1.4, 1.3, 1.25]  # falls fast then flattens (a scree)
+    res = SearchKResult([{"k": k, "reconstruction_error": e} for k, e in zip(ks, err)])
+    assert res.best_k("reconstruction_error") == 12               # smallest error = edge
+    assert any("grid boundary" in str(w.message) for w in recwarn)
+    assert res.best_k("reconstruction_error", rule="elbow") == 6  # the knee, interior
+
+
+def test_best_k_unknown_metric_lists_present_columns():
+    # #730: the "unknown metric" error must enumerate the columns actually in
+    # these results, not just every recognized metric name.
+    from topica.validation import SearchKResult
+    res = SearchKResult([{"k": 2, "coherence": -5.0, "exclusivity": 0.5},
+                         {"k": 3, "coherence": -6.0, "exclusivity": 0.6}])
+    with pytest.raises(ValueError, match=r"selectable metrics in these results.*coherence"):
+        res.best_k("recon_err")  # unrecognized name -> lists present columns
+
+
 def test_best_k_configurable_frontier():
     # #637: frontier weights/metrics reshape the knee; default is unchanged.
     from topica.validation import SearchKResult

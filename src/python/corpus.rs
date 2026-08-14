@@ -9,7 +9,7 @@ use std::path::Path;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyBytes, PyDict};
 
 use super::build_corpus_from_docs_ext;
 use super::error::io_err;
@@ -38,6 +38,15 @@ pub(crate) struct PrepInfo {
 /// :meth:`Corpus.from_documents`, from a raw text file with
 /// :meth:`Corpus.from_text_file`, or load a binary corpus written by the
 /// ``preprocess`` CLI with :meth:`Corpus.load`.
+///
+/// Accessor convention: scalar/array *facts about the corpus* are attribute
+/// **properties** — access them with no parentheses (``corpus.num_docs``,
+/// ``corpus.num_words``, ``corpus.vocabulary``, ``corpus.word_counts``,
+/// ``corpus.doc_lengths``, ``corpus.kept_indices``, ``corpus.metadata``).
+/// Operations that *do work or produce a new object* are **methods** — call
+/// them with parentheses (``corpus.documents()``, ``corpus.transform(...)``,
+/// ``corpus.save(path)``). So ``corpus.num_docs`` is an int, while
+/// ``corpus.num_docs()`` raises ``TypeError: 'int' object is not callable``.
 #[pyclass(module = "topica")]
 pub struct Corpus {
     pub(crate) inner: corpus::Corpus,
@@ -60,6 +69,76 @@ impl Clone for Corpus {
             metadata: self.metadata.as_ref().map(|m| m.clone_ref(py)),
             preprocessing: self.preprocessing.clone(),
         })
+    }
+}
+
+/// Path of the metadata sidecar written alongside a saved corpus.
+fn metadata_sidecar_path(path: &str) -> String {
+    format!("{path}.meta")
+}
+
+/// Emit a Python ``UserWarning`` from Rust, swallowing any failure to warn.
+fn warn(py: Python<'_>, message: &str) {
+    if let Ok(warnings) = py.import_bound("warnings") {
+        let _ = warnings.call_method1("warn", (message,));
+    }
+}
+
+/// Pickle `metadata` to the ``<path>.meta`` sidecar so :meth:`Corpus.load` can
+/// reattach it. With no metadata, remove any stale sidecar so a re-save does not
+/// leave an out-of-date one behind. Never fails the save: unpicklable metadata
+/// warns and is dropped.
+fn save_metadata_sidecar(py: Python<'_>, path: &str, metadata: Option<&PyObject>) -> PyResult<()> {
+    let sidecar = metadata_sidecar_path(path);
+    let Some(meta) = metadata else {
+        let _ = std::fs::remove_file(&sidecar);
+        return Ok(());
+    };
+    let pickled = || -> PyResult<Vec<u8>> {
+        let pickle = py.import_bound("pickle")?;
+        pickle.call_method1("dumps", (meta,))?.extract::<Vec<u8>>()
+    };
+    match pickled() {
+        Ok(bytes) => std::fs::write(&sidecar, bytes).map_err(io_err),
+        Err(err) => {
+            warn(
+                py,
+                &format!(
+                    "corpus.metadata could not be pickled, so it was not saved \
+                     alongside the corpus and will be missing after load: {err}"
+                ),
+            );
+            let _ = std::fs::remove_file(&sidecar);
+            Ok(())
+        }
+    }
+}
+
+/// Read the ``<path>.meta`` sidecar back into a metadata object, if it exists.
+/// A missing sidecar returns ``None`` silently; an unreadable one warns.
+fn load_metadata_sidecar(py: Python<'_>, path: &str) -> Option<PyObject> {
+    let sidecar = metadata_sidecar_path(path);
+    let bytes = match std::fs::read(&sidecar) {
+        Ok(b) => b,
+        Err(_) => return None, // no sidecar: this corpus was saved without metadata
+    };
+    let unpickled = || -> PyResult<PyObject> {
+        let pickle = py.import_bound("pickle")?;
+        let obj = pickle.call_method1("loads", (PyBytes::new_bound(py, &bytes),))?;
+        Ok(obj.unbind())
+    };
+    match unpickled() {
+        Ok(obj) => Some(obj),
+        Err(err) => {
+            warn(
+                py,
+                &format!(
+                    "corpus metadata sidecar {sidecar:?} could not be unpickled \
+                     and was skipped; corpus.metadata is None: {err}"
+                ),
+            );
+            None
+        }
     }
 }
 
@@ -271,14 +350,18 @@ impl Corpus {
 
     /// Load a binary corpus file written by the ``preprocess`` CLI or
     /// :meth:`save`.
+    ///
+    /// If :meth:`save` wrote a ``<path>.meta`` sidecar (because the corpus
+    /// carried :attr:`metadata`), it is read back and reattached. A sidecar that
+    /// cannot be unpickled warns and is skipped rather than failing the load.
     #[staticmethod]
-    fn load(path: &str) -> PyResult<Self> {
+    fn load(py: Python<'_>, path: &str) -> PyResult<Self> {
         let inner = corpus::load_corpus(Path::new(path)).map_err(io_err)?;
         let kept_indices = (0..inner.num_docs()).collect();
         Ok(Corpus {
             inner,
             kept_indices,
-            metadata: None,
+            metadata: load_metadata_sidecar(py, path),
             // Not persisted in the corpus save format; unknown after load.
             preprocessing: None,
         })
@@ -286,8 +369,14 @@ impl Corpus {
 
     /// Write this corpus to a binary file (the ``preprocess`` format), so it
     /// can be reused by the CLI tools or reloaded with :meth:`load`.
-    fn save(&self, path: &str) -> PyResult<()> {
-        corpus::save_corpus(&self.inner, Path::new(path)).map_err(io_err)
+    ///
+    /// When the corpus carries :attr:`metadata` (e.g. from
+    /// :func:`topica.from_dataframe`), it is pickled to a ``<path>.meta`` sidecar
+    /// so :meth:`load` can reattach it; move both files together. Metadata that
+    /// cannot be pickled warns and is dropped rather than failing the save.
+    fn save(&self, py: Python<'_>, path: &str) -> PyResult<()> {
+        corpus::save_corpus(&self.inner, Path::new(path)).map_err(io_err)?;
+        save_metadata_sidecar(py, path, self.metadata.as_ref())
     }
 
     #[getter]
@@ -357,7 +446,9 @@ impl Corpus {
 
     /// Optional per-document metadata, already aligned to the surviving rows
     /// (set by :func:`topica.from_dataframe`, or assign your own). ``None`` if
-    /// unset.
+    /// unset. Persisted across :meth:`save`/:meth:`load` via a ``<path>.meta``
+    /// sidecar, so a prune-once, save, reuse-across-models workflow keeps its
+    /// covariates.
     #[getter]
     fn metadata(&self, py: Python<'_>) -> Option<PyObject> {
         self.metadata.as_ref().map(|m| m.clone_ref(py))

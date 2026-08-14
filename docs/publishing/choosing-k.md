@@ -319,7 +319,9 @@ setting you sweep by **refitting per K**. `search_k` scans them directly with
 `model="nmf"` or `model="lsa"`, giving you the same coherence/exclusivity frontier
 and `best_k` machinery as LDA. For NMF it adds a `reconstruction_error` column (the
 fit's residual) — read it like a scree plot: it falls monotonically in K, so take
-the knee, not the minimum, and cross it against coherence.
+the knee, not the minimum, and cross it against coherence. Select on it directly
+with `rows.best_k("reconstruction_error", rule="elbow")` (bare `rule="best"` returns
+the grid edge and warns, because the error keeps shrinking with K).
 
 ```python
 import topica

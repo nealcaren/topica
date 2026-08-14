@@ -25,9 +25,14 @@ def test_builtin_nmf_reports_reconstruction_error():
     for r in rows:
         assert "coherence" in r and "exclusivity" in r
         assert "reconstruction_error" in r and np.isfinite(r["reconstruction_error"])
-    # reconstruction_error is a diagnostic column, not a selectable direction
-    assert "reconstruction_error" not in rows.directions
+    # reconstruction_error is a scree curve: selectable by name (issue #730), but
+    # monotone in K so it stays out of the frontier and the best_k default.
+    assert rows.directions["reconstruction_error"] == "minimize"
     assert isinstance(rows.best_k("frontier"), int)
+    # reconstruction_error is now selectable by name (rule='best' or 'elbow'),
+    # where before it raised "unknown metric".
+    assert rows.best_k("reconstruction_error") in (2, 3, 4)
+    assert rows.best_k("reconstruction_error", rule="elbow") in (2, 3, 4)
 
 
 def test_builtin_lsa_scans():
