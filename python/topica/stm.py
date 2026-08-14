@@ -1301,7 +1301,12 @@ def _build_reference_rows(
             setting_a, setting_b = contrast
             col = None  # no named column in the sequence form
         else:
-            raise ValueError("contrast= must be a 2-item dict or a 2-element sequence.")
+            raise ValueError(
+                "contrast= must be either a one-key dict mapping a covariate to its "
+                'two levels, {"party": ["D", "R"]} (reports level_b - level_a), or a '
+                "2-element sequence of covariate settings, (setting_a, setting_b). "
+                f"Got {contrast!r} (length {len(contrast)})."
+            )
 
         def _single_row(setting):
             """Build one design row for a covariate setting (dict or scalar)."""
@@ -1481,8 +1486,12 @@ def predicted_prevalence(
         when using the raw ``X`` path.
     at : dict or DataFrame, optional
         Reference covariate settings for point predictions.
-    contrast : dict or 2-tuple, optional
-        Two covariate settings; the result is their difference.
+    contrast : dict or 2-element sequence, optional
+        Two covariate settings; the result is their difference (second minus
+        first). Two accepted forms: a one-key dict mapping a covariate to its two
+        levels, ``{"party": ["D", "R"]}`` (reports ``R - D``); or a 2-element
+        sequence of full settings, ``(setting_a, setting_b)``. A 3-tuple such as
+        ``("party", "D", "R")`` is *not* accepted — use the dict form.
     continuous : str, optional
         Column name to sweep over its observed range.
     npoints : int

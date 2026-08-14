@@ -17,6 +17,23 @@ use super::build_corpus_from_docs_ext;
 use super::error::io_err;
 use crate::corpus::{self, InputFormat, LoadOptions};
 
+/// Collect an optional stopword argument into a set, accepting any iterable of
+/// strings (list, tuple, set, frozenset) so the bundled `ENGLISH_STOPWORDS`
+/// frozenset composes directly with the corpus builders (issue #742), the same
+/// way `tokenize` already accepts it.
+fn stopwords_set(stopwords: Option<&Bound<'_, PyAny>>) -> PyResult<HashSet<String>> {
+    match stopwords {
+        Some(obj) => {
+            let mut s = HashSet::new();
+            for item in obj.iter()? {
+                s.insert(item?.extract::<String>()?);
+            }
+            Ok(s)
+        }
+        None => Ok(HashSet::new()),
+    }
+}
+
 /// The vocabulary-filtering parameters Topica applied when building a corpus.
 /// Recorded so a fitted corpus can report how it was preprocessed (issue #399).
 /// `None` on a corpus loaded from disk, where the parameters were not persisted.
@@ -233,7 +250,7 @@ impl Corpus {
         documents: Vec<Vec<String>>,
         doc_names: Option<Vec<String>>,
         doc_labels: Option<Vec<String>>,
-        stopwords: Option<Vec<String>>,
+        stopwords: Option<&Bound<'_, PyAny>>,
         min_doc_freq: u32,
         max_doc_fraction: f64,
         min_cf: u32,
@@ -263,7 +280,7 @@ impl Corpus {
             ));
         }
         let used_fixed_vocab = vocabulary.is_some();
-        let stop: HashSet<String> = stopwords.unwrap_or_default().into_iter().collect();
+        let stop: HashSet<String> = stopwords_set(stopwords)?;
         let (inner, kept_indices) = build_corpus_from_docs_ext(
             documents,
             doc_names,
@@ -360,7 +377,7 @@ impl Corpus {
         label_column: Option<usize>,
         text_column: usize,
         token_regex: Option<String>,
-        stopwords: Option<Vec<String>>,
+        stopwords: Option<&Bound<'_, PyAny>>,
         min_doc_freq: u32,
         max_doc_fraction: f64,
     ) -> PyResult<Self> {
@@ -378,7 +395,7 @@ impl Corpus {
                 )))
             }
         };
-        let stop: HashSet<String> = stopwords.unwrap_or_default().into_iter().collect();
+        let stop: HashSet<String> = stopwords_set(stopwords)?;
         let opts = LoadOptions {
             format: fmt,
             token_regex: token_regex.unwrap_or_else(|| corpus::DEFAULT_TOKEN_REGEX.to_string()),
