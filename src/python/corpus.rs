@@ -5,11 +5,13 @@
 //! methods accept a `Corpus` and read its `pub(crate) inner`.
 
 use std::collections::HashSet;
+use std::fs;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyBytes, PyDict};
 
 use super::build_corpus_from_docs_ext;
 use super::error::io_err;
@@ -38,6 +40,15 @@ pub(crate) struct PrepInfo {
 /// :meth:`Corpus.from_documents`, from a raw text file with
 /// :meth:`Corpus.from_text_file`, or load a binary corpus written by the
 /// ``preprocess`` CLI with :meth:`Corpus.load`.
+///
+/// Accessor convention: scalar/array *facts about the corpus* are attribute
+/// **properties** — access them with no parentheses (``corpus.num_docs``,
+/// ``corpus.num_words``, ``corpus.vocabulary``, ``corpus.word_counts``,
+/// ``corpus.doc_lengths``, ``corpus.kept_indices``, ``corpus.metadata``).
+/// Operations that *do work or produce a new object* are **methods** — call
+/// them with parentheses (``corpus.documents()``, ``corpus.transform(...)``,
+/// ``corpus.save(path)``). So ``corpus.num_docs`` is an int, while
+/// ``corpus.num_docs()`` raises ``TypeError: 'int' object is not callable``.
 #[pyclass(module = "topica")]
 pub struct Corpus {
     pub(crate) inner: corpus::Corpus,
@@ -60,6 +71,130 @@ impl Clone for Corpus {
             metadata: self.metadata.as_ref().map(|m| m.clone_ref(py)),
             preprocessing: self.preprocessing.clone(),
         })
+    }
+}
+
+// Metadata is embedded in the SAME corpus file as a trailer appended after the
+// corpus body, so there is nothing to orphan when the file is moved or copied.
+// The `CRP2` corpus reader (topica-core::load_corpus) stops exactly at the end of
+// the corpus body and ignores trailing bytes, so a plain CLI-`preprocess` corpus
+// (no trailer) and every model `fit` still read the file unchanged; only
+// `Corpus.load` looks for the trailer and reattaches the covariates.
+//
+// Trailer layout, read from EOF backwards:
+//   [.. corpus body ..][pickle bytes][u64-LE pickle_len][8-byte FOOTER magic]
+// A file whose last 8 bytes are not the magic simply has no metadata (None).
+const META_FOOTER: &[u8; 8] = b"TPCAMET1";
+
+/// Emit a Python ``UserWarning`` from Rust, swallowing any failure to warn.
+fn warn(py: Python<'_>, message: &str) {
+    if let Ok(warnings) = py.import_bound("warnings") {
+        let _ = warnings.call_method1("warn", (message,));
+    }
+}
+
+/// Append `metadata`, pickled, as a trailer on the corpus file at `path`.
+/// With no metadata, leaves the file as a plain corpus (no trailer). Never fails
+/// the save: metadata that cannot be pickled warns and is dropped, and the file
+/// stays a valid plain corpus.
+fn append_metadata_trailer(
+    py: Python<'_>,
+    path: &str,
+    metadata: Option<&PyObject>,
+) -> PyResult<()> {
+    let Some(meta) = metadata else {
+        return Ok(()); // save_corpus already wrote a fresh, trailer-free file
+    };
+    let pickled = || -> PyResult<Vec<u8>> {
+        let pickle = py.import_bound("pickle")?;
+        pickle.call_method1("dumps", (meta,))?.extract::<Vec<u8>>()
+    };
+    let bytes = match pickled() {
+        Ok(b) => b,
+        Err(err) => {
+            warn(
+                py,
+                &format!(
+                    "corpus.metadata could not be pickled, so it was not saved \
+                     with the corpus and will be missing after load: {err}"
+                ),
+            );
+            return Ok(());
+        }
+    };
+    let mut f = fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .map_err(io_err)?;
+    f.write_all(&bytes).map_err(io_err)?;
+    f.write_all(&(bytes.len() as u64).to_le_bytes())
+        .map_err(io_err)?;
+    f.write_all(META_FOOTER).map_err(io_err)?;
+    Ok(())
+}
+
+/// Read a metadata trailer back off the corpus file at `path`, if one is present.
+/// A file with no trailer returns ``None`` silently (a plain / CLI corpus); a
+/// present-but-corrupt trailer warns and returns ``None``.
+fn read_metadata_trailer(py: Python<'_>, path: &str) -> Option<PyObject> {
+    let read_tail = || -> std::io::Result<Option<Vec<u8>>> {
+        let mut f = fs::File::open(path)?;
+        let len = f.seek(SeekFrom::End(0))?;
+        if len < 16 {
+            return Ok(None);
+        }
+        let mut footer = [0u8; 8];
+        f.seek(SeekFrom::End(-8))?;
+        f.read_exact(&mut footer)?;
+        if &footer != META_FOOTER {
+            return Ok(None); // plain corpus, no metadata
+        }
+        let mut len_buf = [0u8; 8];
+        f.seek(SeekFrom::End(-16))?;
+        f.read_exact(&mut len_buf)?;
+        let plen = u64::from_le_bytes(len_buf);
+        if plen + 16 > len {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "metadata trailer length exceeds file size",
+            ));
+        }
+        f.seek(SeekFrom::End(-16 - plen as i64))?;
+        let mut buf = vec![0u8; plen as usize];
+        f.read_exact(&mut buf)?;
+        Ok(Some(buf))
+    };
+    let bytes = match read_tail() {
+        Ok(Some(b)) => b,
+        Ok(None) => return None,
+        Err(err) => {
+            warn(
+                py,
+                &format!(
+                    "corpus {path:?} has a metadata trailer that could not be read; \
+                     corpus.metadata is None: {err}"
+                ),
+            );
+            return None;
+        }
+    };
+    let unpickled = || -> PyResult<PyObject> {
+        let pickle = py.import_bound("pickle")?;
+        let obj = pickle.call_method1("loads", (PyBytes::new_bound(py, &bytes),))?;
+        Ok(obj.unbind())
+    };
+    match unpickled() {
+        Ok(obj) => Some(obj),
+        Err(err) => {
+            warn(
+                py,
+                &format!(
+                    "corpus {path:?} metadata trailer could not be unpickled and was \
+                     skipped; corpus.metadata is None: {err}"
+                ),
+            );
+            None
+        }
     }
 }
 
@@ -271,14 +406,19 @@ impl Corpus {
 
     /// Load a binary corpus file written by the ``preprocess`` CLI or
     /// :meth:`save`.
+    ///
+    /// If :meth:`save` embedded :attr:`metadata` in the file (because the corpus
+    /// carried it), it is read back and reattached — it travels inside the one
+    /// file, so moving/copying the corpus keeps its covariates. A corrupt
+    /// metadata trailer warns and is skipped rather than failing the load.
     #[staticmethod]
-    fn load(path: &str) -> PyResult<Self> {
+    fn load(py: Python<'_>, path: &str) -> PyResult<Self> {
         let inner = corpus::load_corpus(Path::new(path)).map_err(io_err)?;
         let kept_indices = (0..inner.num_docs()).collect();
         Ok(Corpus {
             inner,
             kept_indices,
-            metadata: None,
+            metadata: read_metadata_trailer(py, path),
             // Not persisted in the corpus save format; unknown after load.
             preprocessing: None,
         })
@@ -286,8 +426,16 @@ impl Corpus {
 
     /// Write this corpus to a binary file (the ``preprocess`` format), so it
     /// can be reused by the CLI tools or reloaded with :meth:`load`.
-    fn save(&self, path: &str) -> PyResult<()> {
-        corpus::save_corpus(&self.inner, Path::new(path)).map_err(io_err)
+    ///
+    /// When the corpus carries :attr:`metadata` (e.g. from
+    /// :func:`topica.from_dataframe`), it is pickled into a trailer on the *same*
+    /// file, so :meth:`load` reattaches it and there is nothing to lose when the
+    /// file is moved. The trailer is invisible to the CLI tools and model ``fit``
+    /// (they read the corpus body and ignore it). Metadata that cannot be pickled
+    /// warns and is dropped rather than failing the save.
+    fn save(&self, py: Python<'_>, path: &str) -> PyResult<()> {
+        corpus::save_corpus(&self.inner, Path::new(path)).map_err(io_err)?;
+        append_metadata_trailer(py, path, self.metadata.as_ref())
     }
 
     #[getter]
@@ -357,7 +505,9 @@ impl Corpus {
 
     /// Optional per-document metadata, already aligned to the surviving rows
     /// (set by :func:`topica.from_dataframe`, or assign your own). ``None`` if
-    /// unset.
+    /// unset. Persisted across :meth:`save`/:meth:`load` inside the corpus file
+    /// itself, so a prune-once, save, reuse-across-models workflow keeps its
+    /// covariates with nothing to lose when the file is moved.
     #[getter]
     fn metadata(&self, py: Python<'_>) -> Option<PyObject> {
         self.metadata.as_ref().map(|m| m.clone_ref(py))

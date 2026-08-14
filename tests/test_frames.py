@@ -5,6 +5,8 @@ the corpus reports which originals survived and keeps metadata aligned, so an
 STM prevalence design can't silently misalign with the text.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -80,6 +82,55 @@ def test_metadata_is_settable():
     assert c.metadata is None
     c.metadata = pd.DataFrame({"k": [1, 2, 3]})
     assert list(c.metadata["k"]) == [1, 2, 3]
+
+
+# -- metadata survives save/load inside one file (issues #730, #731 audit) -------
+
+
+def test_metadata_round_trips_through_save_load(tmp_path):
+    c = topica.Corpus.from_documents(DOCS, min_doc_freq=2)
+    c.metadata = pd.DataFrame({"year": [2000, 2002, 2004], "party": ["D", "R", "D"]})
+    p = tmp_path / "corpus.bin"
+    c.save(str(p))
+    # Metadata is embedded in the one file, not a sidecar that could be orphaned.
+    assert not (tmp_path / "corpus.bin.meta").exists()
+    loaded = topica.Corpus.load(str(p))
+    assert loaded.metadata is not None
+    assert loaded.metadata.equals(c.metadata)
+
+
+def test_metadata_travels_with_a_moved_file(tmp_path):
+    # The reuse trap the sample-user audit caught: metadata must not be lost when
+    # the corpus file is moved/copied. With a single self-contained file, moving
+    # it carries the covariates — there is no separate sidecar to leave behind.
+    c = topica.Corpus.from_documents(DOCS, min_doc_freq=2)
+    c.metadata = pd.DataFrame({"party": ["D", "R", "D"]})
+    src = tmp_path / "corpus.bin"
+    c.save(str(src))
+    moved = tmp_path / "sub" / "renamed.bin"
+    moved.parent.mkdir()
+    src.rename(moved)  # move ONLY the file — nothing else exists to move
+    reloaded = topica.Corpus.load(str(moved))
+    assert reloaded.metadata is not None
+    assert list(reloaded.metadata["party"]) == ["D", "R", "D"]
+
+
+def test_plain_corpus_and_cli_corpus_load_without_metadata(tmp_path):
+    p = tmp_path / "corpus.bin"
+    # A corpus saved with no metadata is a plain (CLI-compatible) file: no trailer,
+    # loads back with metadata None, no warning.
+    plain = topica.Corpus.from_documents(DOCS, min_doc_freq=2)
+    plain.save(str(p))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # a plain load must not warn
+        assert topica.Corpus.load(str(p)).metadata is None
+    # Re-saving with metadata, then again without, must not leave a stale trailer.
+    c = topica.Corpus.from_documents(DOCS, min_doc_freq=2)
+    c.metadata = pd.DataFrame({"k": [1, 2, 3]})
+    c.save(str(p))
+    assert topica.Corpus.load(str(p)).metadata is not None
+    plain.save(str(p))  # File::create truncates -> fresh trailer-free file
+    assert topica.Corpus.load(str(p)).metadata is None
 
 
 # -- scikit-learn min_df / max_df aliases (issue #647 discoverability) -----------
