@@ -315,12 +315,14 @@ class TestSpectralInit:
         assert covered == set(range(k)), f"only recovered {covered}"
 
     def test_spectral_falls_back_on_tiny_corpus(self):
-        # Fewer word types than topics: spectral_init returns None and the fit
-        # falls back to the random draw rather than erroring.
-        docs = [["a", "b"], ["a", "b"], ["b", "a"]]
-        m = LDA(5, seed=1, init="spectral")
+        # A degenerate corpus (identical docs) offers no K independent anchors, so
+        # spectral_init returns None and the fit falls back to the random draw
+        # rather than erroring. num_topics == vocab here, so it is a valid K (K >
+        # vocab is now rejected up front, see #741).
+        docs = [["a", "b", "c"], ["a", "b", "c"], ["a", "b", "c"]]
+        m = LDA(3, seed=1, init="spectral")
         m.fit(docs, iters=20)
-        assert m.num_topics == 5
+        assert m.num_topics == 3
         assert m.topic_word.shape[1] == len(m.vocabulary)
 
     def test_spectral_survives_save_load(self, tmp_path):

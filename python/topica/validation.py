@@ -3027,7 +3027,8 @@ def bootstrap_stability(
     seed=0,
     model_factory=None,
     reference=None,
-    **fit_kwargs,
+    fit_kwargs=None,
+    **extra_fit_kwargs,
 ):
     """Flag fragile topics by refitting on bootstrap resamples of the corpus.
 
@@ -3052,8 +3053,15 @@ def bootstrap_stability(
     reference : an already-fitted model to measure the stability *of*. When given,
         the resample topics are matched back to it (rather than to a fresh
         full-corpus fit), so the per-topic stability lines up with that model's
-        topic indices. ``model_factory`` should rebuild the same model type.
-    fit_kwargs : forwarded to each model's ``fit`` (e.g. ``iters=500``).
+        topic indices. ``model_factory`` should rebuild the same model type. The
+        factory's single argument is the **seed** (not ``k``), e.g.
+        ``model_factory=lambda seed: topica.LDA(8, seed=seed)``; the factory sets
+        the topic count, so ``k=`` is ignored when a factory is given.
+    fit_kwargs : dict of keyword arguments forwarded to each model's ``fit`` (e.g.
+        ``fit_kwargs={"iters": 500}``), matching :func:`cross_validate`. For
+        convenience the same arguments may also be passed inline as keywords
+        (``bootstrap_stability(docs, k=5, iters=500)``); the two are merged, with
+        inline keywords taking precedence on a clash.
 
     Returns
     -------
@@ -3061,6 +3069,11 @@ def bootstrap_stability(
     ``[0, 1]``), ``mean`` (overall), and ``reference`` (the reference model).
     """
     from . import LDA  # local import to avoid a cycle at module load
+
+    # fit_kwargs= (a dict, like cross_validate) and inline **extra_fit_kwargs both
+    # forward to fit; merge them so the documented dict form works and no longer
+    # collides with the old **kwargs (issue #740). Inline keywords win on a clash.
+    fit_kwargs = {**(fit_kwargs or {}), **extra_fit_kwargs}
 
     # Accept a Corpus, matching the docstring and the sibling functions
     # (perplexity, prepare_pyldavis): pull its token lists before resampling.
@@ -3070,10 +3083,25 @@ def bootstrap_stability(
     D = len(docs)
     if D < 2:
         raise ValueError("need at least two documents to resample")
-    if k is None:
-        if reference is None:
-            raise ValueError("pass k (number of topics) or a fitted reference model")
+    if model_factory is not None and k is not None:
+        # The factory owns the topic count and its argument is the seed, so a
+        # stray k= here is silently ignored — warn rather than build the wrong K
+        # (issue #740: `lambda k: LDA(k)` reads like k but receives the seed).
+        warnings.warn(
+            "bootstrap_stability: k= is ignored when model_factory= is given (the "
+            "factory sets the topic count). Note the factory's argument is the SEED, "
+            "not k — write model_factory=lambda seed: LDA(k, seed=seed).",
+            UserWarning,
+            stacklevel=2,
+        )
+    if k is None and reference is not None:
         k = int(reference.num_topics)
+    # k is only needed to build the *default* factory; a supplied model_factory
+    # owns the topic count itself (the reference K is read back off the fit), so
+    # factory-only usage without k= is allowed — matching the docstring (#742).
+    if model_factory is None and k is None:
+        raise ValueError(
+            "pass k (number of topics), a model_factory, or a fitted reference model")
     factory = model_factory or (lambda s: LDA(num_topics=k, seed=s))
 
     def top_word_sets(model):
