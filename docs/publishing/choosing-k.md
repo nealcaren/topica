@@ -314,11 +314,11 @@ average it and compare on that scale.
 ## Matrix-factorization models (NMF, LSA)
 
 `NMF` and `LSA` factor the document-term matrix at a fixed rank K, so K is a model
-setting you sweep the ordinary way, by **refitting per K**. `search_k` raises for
-them (it only fits LDA/STM), so run the sweep by hand. NMF gives you a second
-signal LDA does not: the `reconstruction_error` (the fit's residual). Read it like
-a scree plot — the reconstruction error falls monotonically in K, so take the knee,
-not the minimum, and cross it against coherence.
+setting you sweep by **refitting per K**. `search_k` scans them directly with
+`model="nmf"` or `model="lsa"`, giving you the same coherence/exclusivity frontier
+and `best_k` machinery as LDA. For NMF it adds a `reconstruction_error` column (the
+fit's residual) — read it like a scree plot: it falls monotonically in K, so take
+the knee, not the minimum, and cross it against coherence.
 
 ```python
 import topica
@@ -326,17 +326,26 @@ import topica
 df = topica.datasets.load_poliblog()      # a DataFrame; the text is already stemmed
 corpus = topica.Corpus.from_documents([t.split() for t in df["text"]])
 
-for k in [10, 15, 20, 30, 40]:
-    m = topica.NMF(num_topics=k, seed=1).fit(corpus)
-    coh = float(m.coherence(10).mean())        # per-topic UMass -> mean (higher is better)
-    div = topica.topic_diversity(m, topn=25)
-    print(f"K={k:>2}  coherence={coh:.1f}  diversity={div:.2f}  "
-          f"reconstruction_error={m.reconstruction_error:.1f}")
+rows = topica.search_k(corpus, [10, 15, 20, 30, 40], model="nmf")
+for r in rows:
+    print(f"K={r['k']:>2}  coherence={r['coherence']:.1f}  "
+          f"exclusivity={r['exclusivity']:.2f}  "
+          f"reconstruction_error={r['reconstruction_error']:.1f}")
+print("frontier K:", rows.best_k())
 ```
 
-Pick the K where coherence and diversity plateau and the reconstruction error has
-passed its knee. Note the sign convention: `NMF.coherence` is per-topic UMass
-(more-negative is worse), so average it and compare on that scale.
+Any other model scans through the `fit=` hook — a callable `(k, seed) -> fitted
+model` that closes over the corpus and any covariates or embeddings it needs, so
+`search_k` never has to know the model's fit signature:
+
+```python
+rows = topica.search_k(corpus, [10, 20, 30],
+                       fit=lambda k, s: topica.DMR(k, seed=s).fit(corpus, X))
+```
+
+Pick the K where coherence and exclusivity plateau and (for NMF) the reconstruction
+error has passed its knee. Note the sign convention: coherence is UMass
+(more-negative is worse).
 
 For a **stability** check across seeds, refit with `init="random"` — the default
 `init="nndsvd"` is deterministic and ignores `seed`, so `topic_stability` over
