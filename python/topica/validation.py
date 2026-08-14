@@ -3089,10 +3089,14 @@ def bootstrap_stability(
             UserWarning,
             stacklevel=2,
         )
-    if k is None:
-        if reference is None:
-            raise ValueError("pass k (number of topics) or a fitted reference model")
+    if k is None and reference is not None:
         k = int(reference.num_topics)
+    # k is only needed to build the *default* factory; a supplied model_factory
+    # owns the topic count itself (the reference K is read back off the fit), so
+    # factory-only usage without k= is allowed — matching the docstring (#742).
+    if model_factory is None and k is None:
+        raise ValueError(
+            "pass k (number of topics), a model_factory, or a fitted reference model")
     factory = model_factory or (lambda s: LDA(num_topics=k, seed=s))
 
     def top_word_sets(model):

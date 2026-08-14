@@ -795,6 +795,18 @@ def test_bootstrap_stability_fit_kwargs_dict_and_inline_merge():
     assert r_dict["mean"] == r_inline["mean"]  # same effective fit args -> same result
 
 
+def test_bootstrap_stability_factory_only_without_k():
+    # #742/#745: a supplied model_factory owns the topic count, so factory-only
+    # usage (no k=, no reference=) must work rather than raising "pass k ...".
+    c = _two_topic_corpus()
+    r = topica.bootstrap_stability(
+        c, n_boot=1, model_factory=lambda seed: topica.LDA(2, seed=seed), iters=30)
+    assert r["stability"].shape == (2,)  # K read back off the fitted reference
+    # still errors when there is genuinely no way to know K
+    with pytest.raises(ValueError, match="pass k"):
+        topica.bootstrap_stability(c, n_boot=1, iters=30)
+
+
 def test_bootstrap_stability_warns_on_k_with_model_factory():
     # #740: k= is silently ignored when model_factory= is given (the factory owns
     # the topic count and its argument is the seed). Warn instead of building the
