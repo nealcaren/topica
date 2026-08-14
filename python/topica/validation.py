@@ -1453,6 +1453,7 @@ def search_k(
     model="lda",
     fit=None,
     prevalence=None,
+    prevalence_names=None,
     content=None,
     held_out=None,
     iters=500,
@@ -1525,6 +1526,10 @@ def search_k(
         precedence over ``model`` and lets ``search_k`` scan any model type; the
         callable owns the fit (it closes over ``docs`` and any covariates).
     prevalence : covariate design matrix for ``model="stm"``; ignored otherwise.
+    prevalence_names : accepted for signature-parity with ``STM.fit`` (so the same
+        kwargs drop straight in) and ignored — ``search_k`` scans K on the design
+        matrix and never labels the covariates, so their names do not affect any
+        metric it reports.
     content : optional content group labels (sequence of str/int) for ``model="stm"``.
     held_out : optional held-out set. Pass a :class:`Heldout` (from
         :func:`make_heldout`) or a separate corpus / token lists.

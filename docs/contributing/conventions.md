@@ -51,6 +51,12 @@ by construction rather than by memory.
    keys from each constructor signature, so a new parameter that is not surfaced in
    `settings` fails the suite — there is no second inventory to maintain. The
    analysis manifest (`record_fit`) reads this surface directly.
+5. **`top_words(n, topic=None)` returns `(word, prob)` pairs**, not bare words:
+   `list[list[tuple[str, float]]]` for all topics, or `list[tuple[str, float]]`
+   for one `topic=`. So `", ".join(model.top_words(n, topic=t))` raises — unpack
+   the pairs first (`", ".join(w for w, _ in model.top_words(n, topic=t))`). The
+   probabilities are the topic-word weights, descending. This is uniform across
+   every model (issue #742).
 
 ## Threads and stopping rules
 
