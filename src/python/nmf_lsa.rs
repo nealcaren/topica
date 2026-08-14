@@ -508,6 +508,7 @@ struct LsaState {
     topic_word: Option<Vec<Vec<f64>>>,
     doc_topic: Option<Vec<Vec<f64>>>,
     singular_values: Option<Vec<f64>>,
+    reconstruction_error: Option<f64>,
 }
 
 impl LSA {
@@ -648,6 +649,15 @@ impl LSA {
     fn singular_values<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         Ok(Array1::from(self.fitted_model()?.singular_values.clone()).to_pyarray_bound(py))
     }
+    /// Frobenius reconstruction error of the rank-K truncation,
+    /// ``sqrt(||X||_F^2 - sum_k Sigma_k^2)`` on the weighted document-term matrix
+    /// the SVD factors. Falls monotonically with K, so ``search_k(model="lsa")``
+    /// reports it as a scree column just like NMF (pair with
+    /// ``best_k("reconstruction_error", rule="elbow")``).
+    #[getter]
+    fn reconstruction_error(&self) -> PyResult<f64> {
+        Ok(self.fitted_model()?.reconstruction_error)
+    }
     /// No iterative trace: the SVD is a direct solve. Returns an empty list to
     /// keep the uniform fitted surface.
     #[getter]
@@ -769,6 +779,7 @@ impl LSA {
                 topic_word: Some(m.topic_word.clone()),
                 doc_topic: Some(m.doc_topic.clone()),
                 singular_values: Some(m.singular_values.clone()),
+                reconstruction_error: Some(m.reconstruction_error),
             },
         )
     }
@@ -784,6 +795,7 @@ impl LSA {
                 topic_word: s.topic_word.unwrap_or_default(),
                 doc_topic: s.doc_topic.unwrap_or_default(),
                 singular_values: s.singular_values.unwrap_or_default(),
+                reconstruction_error: s.reconstruction_error.unwrap_or(f64::NAN),
             })
         } else {
             None

@@ -232,7 +232,7 @@ impl SpMat {
         (&self.col_idx[s..e], &self.vals[s..e])
     }
     /// `sum_{i,j} X_ij^2`.
-    fn frob_sq(&self) -> f64 {
+    pub(crate) fn frob_sq(&self) -> f64 {
         self.vals.iter().map(|&v| v * v).sum()
     }
     /// `sum_{i,j} X_ij`.
