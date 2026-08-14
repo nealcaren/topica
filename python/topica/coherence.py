@@ -406,6 +406,15 @@ def coherence(topics, texts, *, coherence_type="c_v", n=10, topn=None, window_si
     equals ``coherence(model, training_texts, coherence_type=ct)``. ``c_v`` lies in
     ``[0, 1]``.
 
+    **Default note (issue #742):** this function defaults to ``c_v`` while the
+    model method ``model.coherence()`` defaults to ``u_mass``. The difference is
+    deliberate: ``u_mass`` is intrinsic (it needs only the model's own corpus), so
+    it is the one measure the method can compute without an external reference,
+    whereas this function always receives ``texts`` and so can default to the
+    stronger sliding-window ``c_v``. Pass ``coherence_type=`` explicitly on both
+    sides if you need to compare scores across the two entry points — the measures
+    are on different scales.
+
     ``u_mass`` is the **sum** of the pairwise log-ratios, the original Mimno et al.
     (2011) definition, matching the model method. gensim's ``u_mass`` reports the
     *mean* of the same per-pair scores, so topica's values differ from gensim's by the

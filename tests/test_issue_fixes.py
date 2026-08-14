@@ -765,3 +765,39 @@ def test_predicted_prevalence_scalar_helpers():
                                 ci_low=np.array([0.0, 0.1]), ci_high=np.array([0.2, 0.3]))
     with pytest.raises(ValueError, match="single grid point"):
         multi.value
+
+
+def test_list_models_is_sortable():
+    # #742: ModelInfo had no __lt__, so sorted(list_models()) raised TypeError.
+    models = topica.list_models()
+    ordered = sorted(models)
+    assert [m.name for m in ordered] == sorted(m.name for m in models)
+
+
+def test_stopwords_frozenset_composes_with_corpus_builder():
+    # #742: topica.stopwords()/ENGLISH_STOPWORDS is a frozenset, but the corpus
+    # builders demanded a Sequence, so the library's own accessor did not compose
+    # with its own builder. Any iterable (set/frozenset/tuple/list) is now accepted.
+    sw = topica.stopwords("english")
+    assert isinstance(sw, frozenset)
+    c = topica.Corpus.from_documents([["the", "cat", "runs"], ["a", "dog", "barks"]],
+                                     stopwords=sw)
+    assert "the" not in c.vocabulary and "cat" in c.vocabulary
+    # a bare set and a tuple work too
+    topica.Corpus.from_documents([["x", "y"]], stopwords={"x"})
+    topica.Corpus.from_documents([["x", "y"]], stopwords=("x",))
+
+
+def test_predicted_prevalence_contrast_bad_shape_is_actionable():
+    # #742: a 3-tuple contrast raised a terse "must be a 2-item dict or 2-element
+    # sequence"; the message now names both accepted forms.
+    docs = [["cat", "dog", "pet", "vet", "paw"]] * 20 + \
+           [["star", "moon", "sky", "sun", "orbit"]] * 20
+    import pandas as pd
+    df = pd.DataFrame({"text": [" ".join(d) for d in docs],
+                       "party": (["D"] * 20) + (["R"] * 20)})
+    m = topica.LDA(3, seed=13).fit(
+        topica.from_dataframe(df, text_col="text", metadata_cols=["party"]), iters=40)
+    with pytest.raises(ValueError, match="one-key dict.*or a 2-element sequence"):
+        topica.predicted_prevalence(m, formula="party", data=df,
+                                    contrast=("R", 1.0, 0.0))

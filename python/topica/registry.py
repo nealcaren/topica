@@ -70,6 +70,14 @@ class ModelInfo:
     experimental: bool = False
     common_start: bool = False
 
+    def __lt__(self, other: "ModelInfo") -> bool:
+        # Order by name so ``sorted(list_models())`` just works (issue #742). A
+        # frozen dataclass without ``order=True`` is unorderable by default, and
+        # comparing every field would be meaningless here — name is the identity.
+        if not isinstance(other, ModelInfo):
+            return NotImplemented
+        return self.name < other.name
+
 
 # Purpose groups, in display order. Organized by what the user brings and wants,
 # not by inference family.
