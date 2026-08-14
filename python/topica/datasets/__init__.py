@@ -7,8 +7,8 @@ stays lean.
 **Return shapes.** There are two, by dataset kind:
 
 - **Text-table loaders** (:func:`load_gadarian`, :func:`load_poliblog`,
-  :func:`load_dubois`, :func:`load_congress`) return a :mod:`pandas` DataFrame
-  by default.
+  :func:`load_dubois`, :func:`load_congress`, :func:`load_reviews`) return a
+  :mod:`pandas` DataFrame by default.
 - **The embedding loader** (:func:`load_ng20_minilm`) returns a :class:`Bunch`
   (attribute-access dict) because it carries embedding arrays alongside the text.
 
@@ -49,6 +49,7 @@ __all__ = [
     "load_poliblog",
     "load_dubois",
     "load_congress",
+    "load_reviews",
     "load_ng20_minilm",
     "get_data_home",
     "clear_cache",
@@ -130,6 +131,19 @@ _REGISTRY = {
         "summary": (
             "Du Bois-era articles from The Crisis (1910-1922). Raw text in 'text'; "
             "covariates 'year', 'decade', 'volume', 'issue', 'author', 'subjects'."
+        ),
+    },
+    "reviews": {
+        "vendored": "reviews.csv",
+        "filename": "reviews.csv",
+        "sha256": "c94b9c16afaab55d72d11b88a76b6ce30e3f3b379a0fe2314213b5fee37825a8",
+        "text_col": "text",
+        "n_docs": 1500,
+        "summary": (
+            "Yelp business reviews, 1,500 short reviews balanced across the 1-5 "
+            "star scale (300 each). Raw text in 'text'; the ordinal covariate "
+            "'stars' (1-5) is the sentiment signal. Ships in the wheel; loads "
+            "offline. Derived from the Yelp Open Dataset."
         ),
     },
     "congress": {
@@ -379,6 +393,34 @@ def load_congress(*, return_path: bool = False, as_bunch: bool = False):
     script walks the raw-to-STM pipeline on it.
     """
     return _load("congress", return_path, as_bunch)
+
+
+def load_reviews(*, return_path: bool = False, as_bunch: bool = False):
+    """Load Yelp business reviews, balanced across the star scale (1,500 documents).
+
+    Three hundred reviews at each of the five star ratings, so the ordinal
+    ``stars`` covariate (1–5) is the sentiment signal. Ships inside the wheel and
+    loads offline. The canonical example for a covariate topic model whose outcome
+    is *valence*::
+
+        df = topica.datasets.load_reviews()
+        corpus = topica.from_dataframe(
+            df, text_col="text",
+            stopwords=topica.SENTIMENT_STOPWORDS,   # keep 'not'/'no'/'very'
+        )
+        X = (df["stars"].to_numpy(float) - 3.0).reshape(-1, 1)   # centered ordinal
+        model = topica.DMR(num_topics=12, seed=13).fit(corpus, X, feature_names=["stars"])
+
+    Pass ``stopwords=topica.SENTIMENT_STOPWORDS`` rather than the default: the
+    default ``ENGLISH_STOPWORDS`` strips ``not``/``no``/``very``, which would
+    collapse "not clean" into "clean" in exactly the study whose outcome is
+    sentiment.
+
+    Raw review text in ``text``; the ordinal covariate in ``stars``. Pass
+    ``return_path=True`` for the CSV path, or ``as_bunch=True`` for a :class:`Bunch`
+    whose ``.df`` is this table. Derived from the Yelp Open Dataset.
+    """
+    return _load("reviews", return_path, as_bunch)
 
 
 def load_ng20_minilm(*, return_path: bool = False):

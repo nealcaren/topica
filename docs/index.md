@@ -70,8 +70,8 @@ End-to-end analyses on real, redistributable corpora:
 
 - [**W.E.B. Du Bois in *The Crisis***](examples/dubois.md): 704 articles,
   1910–1934, the full workflow from preprocessing to dynamic topics.
-- [**Gadarian immigration experiment**](examples/gadarian.md): the canonical STM
-  vignette, reproduced.
+- [**Congressional press releases**](examples/congress.md): 3,120 U.S. House
+  releases, STM prevalence by party and time.
 - [**Political blogs**](examples/poliblog.md): STM with ideology and time
   covariates.
 - [**Party platforms**](examples/content_time.md): how Democrats and Republicans

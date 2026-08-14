@@ -8,7 +8,8 @@ check on `K`.
 !!! info "Focus of this example"
     Corpus building & cleaning · **temporal / dynamic topics** · using `HDP` as a
     `K` sanity check. For topic validation and clustered errors see
-    [Poliblog](poliblog.md); for the experimental effect see [Gadarian](gadarian.md).
+    [Poliblog](poliblog.md); for STM prevalence by group and time see
+    [Congress](congress.md).
 
     Data: [`examples/dubois_crisis.csv`](https://github.com/nealcaren/topica/blob/main/examples/dubois_crisis.csv) ·
     full notebook (adds STM decade-prevalence + held-out `transform`):

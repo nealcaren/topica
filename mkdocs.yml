@@ -113,9 +113,12 @@ nav:
   - Examples:
       - Du Bois in The Crisis: examples/dubois.md
       - Congress (STM party & time): examples/congress.md
-      - Gadarian (STM vignette): examples/gadarian.md
       - Political blogs: examples/poliblog.md
       - Party platforms (STM content_time): examples/content_time.md
+      - NMF vs neural (labeled): examples/nmf-neural.md
+      - Guided topics (keyATM): examples/guided.md
+      - Sentiment covariate (DMR): examples/dmr-sentiment.md
+      - Short text (GSDMM/BTM): examples/short-text.md
       - LLM embeddings & labels: examples/llm-topics.md
   - Replications:
       - Overview: replications/index.md

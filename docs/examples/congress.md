@@ -9,8 +9,8 @@ across the twelve years, each with honest uncertainty.
 !!! info "Focus of this example"
     Building a corpus from **raw** web text · **STM with a group covariate and a
     time trend** · reading party and time effects with confidence intervals. For
-    dynamic topics over time see [Du Bois](dubois.md); for a single experimental
-    covariate see [Gadarian](gadarian.md).
+    dynamic topics over time see [Du Bois](dubois.md); for K selection,
+    validation, and clustered SEs see [Poliblog](poliblog.md).
 
     Data: [`topica.datasets.load_congress()`](../api/datasets.md#topica.datasets.load_congress)
     (a clean bundled sample) · full raw-to-result script:

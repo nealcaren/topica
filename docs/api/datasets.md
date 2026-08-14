@@ -45,6 +45,8 @@ bt = topica.BERTopic(
 
 ::: topica.datasets.load_congress
 
+::: topica.datasets.load_reviews
+
 ::: topica.datasets.load_ng20_minilm
 
 ::: topica.datasets.get_data_home
