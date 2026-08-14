@@ -7,7 +7,8 @@ stays lean.
 **Return shapes.** There are two, by dataset kind:
 
 - **Text-table loaders** (:func:`load_gadarian`, :func:`load_poliblog`,
-  :func:`load_dubois`) return a :mod:`pandas` DataFrame by default.
+  :func:`load_dubois`, :func:`load_congress`) return a :mod:`pandas` DataFrame
+  by default.
 - **The embedding loader** (:func:`load_ng20_minilm`) returns a :class:`Bunch`
   (attribute-access dict) because it carries embedding arrays alongside the text.
 
@@ -47,6 +48,7 @@ __all__ = [
     "load_gadarian",
     "load_poliblog",
     "load_dubois",
+    "load_congress",
     "load_ng20_minilm",
     "get_data_home",
     "clear_cache",
@@ -128,6 +130,20 @@ _REGISTRY = {
         "summary": (
             "Du Bois-era articles from The Crisis (1910-1922). Raw text in 'text'; "
             "covariates 'year', 'decade', 'volume', 'issue', 'author', 'subjects'."
+        ),
+    },
+    "congress": {
+        "remote": "examples/congress_press.csv",
+        "filename": "congress_press.csv",
+        "sha256": "ec0918d80b31f808dbb25c95dc8bd9a61812de32a1dff86d86f9be91d6029ffd",
+        "text_col": "text",
+        "n_docs": 3120,
+        "summary": (
+            "U.S. House press releases, 2013-2024 (260 per year, balanced by "
+            "party). Raw text in 'text'; covariates 'party' (Democrat/Republican), "
+            "'year' and 'date' (time), 'state', 'member', 'bioguide_id', 'title'. "
+            "The canonical STM party + time example. Source: Derek Willis's "
+            "congress-press (MIT)."
         ),
     },
     "ng20_minilm": {
@@ -320,6 +336,49 @@ def load_dubois(*, return_path: bool = False, as_bunch: bool = False):
     :func:`load_ng20_minilm`).
     """
     return _load("dubois", return_path, as_bunch)
+
+
+def load_congress(*, return_path: bool = False, as_bunch: bool = False):
+    """Load U.S. House press releases, 2013-2024 (3,120 documents).
+
+    A balanced sample of 260 releases per year across twelve years (1,560
+    Democratic, 1,560 Republican), so the ``party`` and ``year`` covariates are
+    both well supported. This is the canonical Structural Topic Model example
+    where prevalence depends on a group *and* on time::
+
+        import numpy as np
+        df = topica.datasets.load_congress()
+        corpus = topica.from_dataframe(
+            df, text_col="text", strip_html=True,
+            stopwords=topica.ENGLISH_STOPWORDS, min_doc_freq=10,
+        )
+        # party (contrast vs Democrat) + a smooth trend in year
+        X, names = topica.design_matrix(
+            "~ party + spline(year, df=4)", corpus.metadata
+        )
+        model = topica.STM(num_topics=20, seed=13)
+        model.fit(corpus, prevalence=X, prevalence_names=names)
+
+    Columns: raw ``text`` (press-release body — pass ``strip_html=True`` to
+    :func:`topica.from_dataframe`, since some releases carry markup); ``date``
+    (YYYY-MM-DD) and ``year`` for the time covariate; ``party``
+    (``Democrat``/``Republican``); and ``state``, ``member``, ``bioguide_id``,
+    ``title`` for reference. Chamber is not a column: the sample is House-only, so
+    ``party`` and ``year`` are the covariates that vary. (Chamber is taken from the
+    source's member metadata, which mislabels a handful of members, so treat the
+    House scope as approximate.) Some releases are in Spanish; a bilingual member's
+    output can surface as its own topic.
+
+    Downloaded once and cached. Pass ``return_path=True`` for the CSV path, or
+    ``as_bunch=True`` for a :class:`Bunch` whose ``.df`` is this table.
+
+    Source: Derek Willis's `congress-press
+    <https://github.com/dwillis/congress-press>`_ (MIT licensed); the underlying
+    press releases are U.S. government works. For the full multi-year archive
+    (raw JSONL) start from that repository — the ``examples/congress_tutorial.py``
+    script walks the raw-to-STM pipeline on it.
+    """
+    return _load("congress", return_path, as_bunch)
 
 
 def load_ng20_minilm(*, return_path: bool = False):
