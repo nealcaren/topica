@@ -35,6 +35,39 @@ def test_builtin_lsa_scans():
     assert all(np.isfinite(r["coherence"]) for r in rows)
 
 
+def test_lsa_omits_dispersion_signed_factors():
+    # LSA's topic_word is a signed SVD factor, so the multinomial residual
+    # dispersion test is meaningless (~1e9). It must be skipped, not reported.
+    c, _ = _corpus()
+    rows = topica.search_k(c, [2, 3, 4], model="lsa")
+    assert not any("dispersion" in r for r in rows)
+    assert "dispersion" not in rows.directions
+
+
+def test_nmf_reports_sane_dispersion():
+    c, _ = _corpus()
+    rows = topica.search_k(c, [2, 3], model="nmf", iters=100)
+    for r in rows:
+        assert "dispersion" in r and np.isfinite(r["dispersion"]) and r["dispersion"] >= 0
+
+
+def test_fit_hook_without_doc_topic_skips_dispersion():
+    # A fit= model exposing topic_word/top_words but no doc_topic must not crash
+    # in the dispersion test; the column is simply omitted.
+    c, _ = _corpus()
+
+    class TWOnly:
+        topic_word = np.abs(np.random.default_rng(0).normal(size=(3, 5)))
+        vocabulary = ["cat", "dog", "pet", "vet", "paw"]
+
+        def top_words(self, n, topic=None):
+            return [[(f"w{i}", 1.0) for i in range(n)] for _ in range(3)]
+
+    rows = topica.search_k(c, [3], fit=lambda k, s: TWOnly())  # must not crash
+    assert "dispersion" not in rows[0]
+    assert "coherence" in rows[0] and "exclusivity" in rows[0]
+
+
 def test_fit_hook_scans_any_model():
     c, _ = _corpus()
     rows = topica.search_k(

@@ -1399,9 +1399,14 @@ def search_k(
 
         search_k(docs, [10, 20, 30], fit=lambda k, s: topica.NMF(k, seed=s).fit(docs))
 
-    A fitted model only needs ``topic_word`` and ``top_words`` for the coherence /
-    exclusivity / dispersion columns; the held-out columns additionally need a
-    ``transform`` method (LDA/STM/DMR/CTM/... have it; NMF/LSA do not).
+    A fitted model only needs ``topic_word`` and ``top_words`` for the coherence
+    and exclusivity columns. The ``dispersion`` column additionally needs a
+    non-negative ``topic_word`` and ``doc_topic`` (a multinomial model), so it is
+    omitted for signed factorizations like LSA and for a ``fit=`` model that
+    exposes no ``doc_topic``. The held-out columns need a ``transform`` method
+    (LDA/STM/DMR/CTM/... have it; NMF/LSA do not). The stm semantic-coherence
+    metric is used only for the built-in ``model="stm"``; a ``fit=`` closure that
+    returns an STM is scored with plain UMass coherence.
 
     Returns a :class:`SearchKResult` (a list of per-K dicts) with ``k``,
     ``coherence`` (mean of the selected coherence type; for ``model="stm"`` with
@@ -1589,10 +1594,18 @@ def search_k(
         }
         # Residual dispersion (Taddy 2012): dispersion >> 1 is direct evidence K
         # is too small -- the non-monotone signal stm's searchK reports. Diagnostic
-        # column, not a frontier metric (it keeps falling as K grows).
-        rc = check_residuals(m, ref_docs)
-        row["dispersion"] = float(rc.dispersion)
-        row["dispersion_pvalue"] = float(rc.pvalue)
+        # column, not a frontier metric (it keeps falling as K grows). It is a
+        # *multinomial* residual test, so it only applies to models whose
+        # topic_word and doc_topic are non-negative distributions. Signed
+        # factorizations (LSA's SVD factors) would report a meaningless ~1e9
+        # dispersion, and a fit= model may not expose doc_topic at all, so gate the
+        # column on both being present and non-negative rather than emitting noise.
+        phi_nonneg = float(np.asarray(m.topic_word).min()) >= 0.0
+        theta_nonneg = hasattr(m, "doc_topic") and float(np.asarray(m.doc_topic).min()) >= 0.0
+        if phi_nonneg and theta_nonneg:
+            rc = check_residuals(m, ref_docs)
+            row["dispersion"] = float(rc.dispersion)
+            row["dispersion_pvalue"] = float(rc.pvalue)
         # NMF (and any factorization model that exposes it) reports its residual
         # fit as an extra diagnostic column, like dispersion. Monotone in K, so it
         # stays out of the frontier / best_k, same as dispersion.
