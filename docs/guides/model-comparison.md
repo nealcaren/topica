@@ -175,6 +175,17 @@ topic is still found, and the cost is redundant topics that can be read and
 pruned. When unsure, err high. topica's [`search_k`](../publishing/validation.md)
 automates the scan.
 
+The matrix-factorization models (`NMF`, `LSA`) need extra care here. They have no
+held-out likelihood to anchor the scan, so K-selection leans on coherence and the
+reconstruction-error elbow — and both tend to keep improving as `K` grows, pointing
+higher than the substantive number of groups in the data. On a four-desk news
+corpus the coherence frontier reached `K=12` and the NMF reconstruction elbow sat
+around `K=8`, neither near the four known desks. Read those metrics as an upper
+bound, not an answer: cross-check the fitted topics against the structure you
+expect, and when the metric points past what you can interpret, err toward the
+smaller, readable `K`. The "err high" advice above is for likelihood-anchored
+parametric models; for MF models without that anchor, err toward interpretability.
+
 The nonparametric alternative is to let the model discover `K`. On this corpus
 that alternative disappoints. `HDP`, which is supposed to infer the topic count,
 collapses to a single topic under its default concentration and, as that

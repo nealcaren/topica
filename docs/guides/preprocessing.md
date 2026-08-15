@@ -58,6 +58,47 @@ corpus = topica.from_dataframe(df, text_col="text", strip_html=True)
 did not strip, so the trap is hard to miss. `strip_html` is a conservative clean
 (tags and URLs only); for heavier normalization, pass your own `tokenizer`.
 
+### Email, forum, and Usenet text: strip headers, quotes, and signatures
+
+`strip_html` handles markup, but email and newsgroup corpora (the classic
+20 Newsgroups set, mailing-list archives, forum dumps) carry a different kind of
+boilerplate: RFC headers (`From:`, `Subject:`, `NNTP-Posting-Host:`), quoted
+replies (`> ...`, `On <date> so-and-so wrote:`), and signature blocks after a
+`-- ` line. None of it is content, all of it survives `min_length=3` pruning, and
+left in it forms "topics" of mail-client vocabulary and the most-quoted posters'
+names. There is no built-in stripper for this — the shape is corpus-specific — so
+clean the raw text before you tokenize. A pragmatic pass for Usenet-style messages:
+
+```python
+import re
+import topica
+
+def strip_message_boilerplate(raw: str) -> str:
+    # 1. drop the header block: everything up to the first blank line
+    body = raw.split("\n\n", 1)[-1]
+    lines = []
+    for line in body.splitlines():
+        # 2. drop quoted reply lines and attribution ("On ... wrote:")
+        if line.lstrip().startswith(">"):
+            continue
+        if re.match(r"\s*On .+wrote:\s*$", line):
+            continue
+        # 3. stop at the signature delimiter
+        if line.rstrip() == "--":
+            break
+        lines.append(line)
+    return "\n".join(lines)
+
+df["clean"] = df["text"].map(strip_message_boilerplate)
+corpus = topica.from_dataframe(df, text_col="clean")
+```
+
+Tune the rules to your source — headers, quote markers, and signature conventions
+vary — but the principle holds: remove structural boilerplate in a preprocessing
+pass, then let `from_dataframe`/`tokenize` handle the linguistic cleaning. Inspect
+`corpus.vocabulary` afterward; if mail-client tokens or frequent poster surnames
+still lead the counts, the strip did not reach them.
+
 ### Readable topic words: lemmatize, don't stem
 
 Stemming truncates words to a root (`military` → `militari`, `economy` →
