@@ -56,7 +56,10 @@ pub(crate) struct PrepInfo {
 /// Build one from already-tokenised documents with
 /// :meth:`Corpus.from_documents`, from a raw text file with
 /// :meth:`Corpus.from_text_file`, or load a binary corpus written by the
-/// ``preprocess`` CLI with :meth:`Corpus.load`.
+/// ``preprocess`` CLI with :meth:`Corpus.load`. Starting from a pandas
+/// ``DataFrame``? Use the module-level :func:`topica.from_dataframe` (it builds
+/// the ``Corpus`` and keeps your metadata row-aligned through pruning) — there is
+/// no ``Corpus.from_dataframe``; the DataFrame on-ramp is a module function.
 ///
 /// Accessor convention: scalar/array *facts about the corpus* are attribute
 /// **properties** — access them with no parentheses (``corpus.num_docs``,
