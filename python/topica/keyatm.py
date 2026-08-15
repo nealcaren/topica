@@ -216,17 +216,22 @@ def visualize_keywords(docs, keywords):
     a pruned seed shows ``count == 0`` and is flagged; scoring against raw docs
     reports the pre-pruning counts and can disagree with the fit (issue #743).
 
-    Returns a dict mapping each keyword-set name to a list of dicts
+    Returns a :class:`~topica._results.KeywordDiagnostics` (a ``dict``) mapping
+    each keyword-set name to a list of dicts
     ``{"keyword", "count", "proportion", "doc_freq", "in_vocab"}`` sorted by
     descending proportion, where ``proportion`` is the keyword's share of all
     corpus tokens, ``doc_freq`` is the number of documents containing it, and
-    ``in_vocab`` is ``False`` for a keyword ``fit`` will not see (count 0). When a
-    Corpus is passed, keywords absent from its vocabulary raise a warning.
+    ``in_vocab`` is ``False`` for a keyword ``fit`` will not see (count 0). Call
+    ``.to_frame()`` for one long DataFrame across all sets (a leading ``set``
+    column names each row's keyword set). When a Corpus is passed, keywords absent
+    from its vocabulary raise a warning.
     """
+    from ._results import KeywordDiagnostics
+
     counts, doc_freq, total = _corpus_counts(docs)
     _, vocab = _docs_and_vocab(docs)
     total = max(total, 1)
-    out = {}
+    out = KeywordDiagnostics()
     missing = {}
     for name, words in keywords.items():
         rows = [
@@ -296,12 +301,14 @@ def time_prevalence_ci(model, timestamps, *, ci=0.95, normalize=True):
 
     Returns
     -------
-    dict with keys:
+    :class:`~topica._results.TimePrevalenceCI` (a ``dict``) with keys:
         - ``labels``: list of period labels (equals ``model.time_labels``)
         - ``mean``: ndarray shape (T, K), posterior mean prevalence per period
         - ``ci_low``: ndarray shape (T, K), lower credible bound
         - ``ci_high``: ndarray shape (T, K), upper credible bound
         - ``sd``: ndarray shape (T, K), posterior standard deviation
+
+    Call ``.to_frame()`` for a long tidy DataFrame, one row per (period, topic).
     """
     time_labels = list(getattr(model, "time_labels", []))
     if not time_labels:
@@ -327,9 +334,12 @@ def time_prevalence_ci(model, timestamps, *, ci=0.95, normalize=True):
     # requiring the HMM's own draws (above) and pinning the period order to
     # time_labels, so this is a thin wrapper over the general primitive.
     from .effects import prevalence_ci
+    from ._results import TimePrevalenceCI
 
-    return prevalence_ci(
-        model, timestamps, ci=ci, normalize=normalize, labels=time_labels
+    return TimePrevalenceCI(
+        prevalence_ci(
+            model, timestamps, ci=ci, normalize=normalize, labels=time_labels
+        )
     )
 
 

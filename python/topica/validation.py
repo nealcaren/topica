@@ -2968,12 +2968,13 @@ def quality_frontier(model, *, n=10, texts=None, coherence_type="u_mass", plot=F
     """Per-topic coherence, exclusivity, and prevalence — the data behind stm's
     classic coherence-vs-exclusivity quality plot.
 
-    Returns a dict of equal-length arrays: ``topic``, ``coherence``,
-    ``exclusivity``, ``prevalence`` (mean θ). By default coherence is the fast
-    per-topic UMass score; pass ``texts`` and a windowed ``coherence_type`` (e.g.
-    ``"c_v"``) for the human-aligned measure. Feed the dict straight to pandas /
-    matplotlib; with ``plot=True`` (and matplotlib installed) a labeled scatter
-    ``Figure`` is returned alongside the dict as ``(data, fig)``.
+    Returns a :class:`~topica._results.QualityFrontier` (a ``dict`` of
+    equal-length arrays — ``topic``, ``coherence``, ``exclusivity``,
+    ``prevalence`` (mean θ) — that also offers ``.to_frame()`` for a tidy
+    one-row-per-topic DataFrame). By default coherence is the fast per-topic
+    UMass score; pass ``texts`` and a windowed ``coherence_type`` (e.g. ``"c_v"``)
+    for the human-aligned measure. With ``plot=True`` (and matplotlib installed) a
+    labeled scatter ``Figure`` is returned alongside the data as ``(data, fig)``.
     """
     from .coherence import coherence as _coherence, exclusivity as _exclusivity
 
@@ -2995,12 +2996,14 @@ def quality_frontier(model, *, n=10, texts=None, coherence_type="u_mass", plot=F
                 stacklevel=2,
             )
         coh = np.asarray(model.coherence(n))
-    data = {
+    from ._results import QualityFrontier
+
+    data = QualityFrontier({
         "topic": np.arange(K),
         "coherence": coh,
         "exclusivity": _exclusivity(phi, n=n),
         "prevalence": theta.mean(axis=0),
-    }
+    })
     if not plot:
         return data
     try:
@@ -3065,8 +3068,10 @@ def bootstrap_stability(
 
     Returns
     -------
-    dict with ``topic`` (indices), ``stability`` (per-topic mean Jaccard in
-    ``[0, 1]``), ``mean`` (overall), and ``reference`` (the reference model).
+    :class:`~topica._results.BootstrapStability` (a ``dict``) with ``topic``
+    (indices), ``stability`` (per-topic mean Jaccard in ``[0, 1]``), ``mean``
+    (overall), and ``reference`` (the reference model). Call ``.to_frame()`` for a
+    per-topic ``(topic, stability)`` DataFrame.
     """
     from . import LDA  # local import to avoid a cycle at module load
 
@@ -3138,12 +3143,14 @@ def bootstrap_stability(
             per_topic[i].append(len(ref_sets[i] & boot_sets[j]) / len(union) if union else 0.0)
 
     stability = np.array([float(np.mean(s)) if s else float("nan") for s in per_topic])
-    return {
+    from ._results import BootstrapStability
+
+    return BootstrapStability({
         "topic": np.arange(K),
         "stability": stability,
         "mean": float(np.nanmean(stability)),
         "reference": ref,
-    }
+    })
 
 
 # ---------------------------------------------------------------------------
