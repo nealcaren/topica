@@ -3049,6 +3049,32 @@ def quality_frontier(model, *, n=10, texts=None, coherence_type="u_mass", plot=F
     return data, fig
 
 
+def _is_per_doc(value, D):
+    """True when a fit-kwarg is a per-document array (first-axis length ``D``) and
+    so must be resampled alongside the documents. Strings/scalars and per-feature
+    arrays (a length-``p`` ``prevalence_names``) are not."""
+    if isinstance(value, (str, bytes)) or value is None:
+        return False
+    try:
+        n = value.shape[0] if hasattr(value, "shape") else len(value)
+    except TypeError:
+        return False
+    return n == D
+
+
+def _take_rows(value, pick):
+    """Select rows ``pick`` (an integer index array) from a per-document
+    container, preserving its type where it matters for ``fit``."""
+    if hasattr(value, "iloc"):  # pandas DataFrame / Series
+        return value.iloc[list(pick)].reset_index(drop=True)
+    if isinstance(value, np.ndarray):
+        return value[pick]
+    try:  # polars and other array-likes that accept integer-array indexing
+        return value[np.asarray(pick)]
+    except Exception:
+        return [value[i] for i in pick]
+
+
 def bootstrap_stability(
     docs,
     *,
@@ -3094,6 +3120,24 @@ def bootstrap_stability(
         convenience the same arguments may also be passed inline as keywords
         (``bootstrap_stability(docs, k=5, iters=500)``); the two are merged, with
         inline keywords taking precedence on a clash.
+
+        **Covariate models.** A per-document design passed here (STM
+        ``prevalence`` / ``covariates``, a ``content`` label vector, dynamic
+        ``timestamps``) is resampled with the *same* bootstrap draw as the
+        documents, so the covariate rows stay aligned to the resampled corpus and
+        a covariate model can be bootstrapped as itself — no silent downgrade to a
+        covariate-free model (issue #751). Any fit-kwarg whose first-axis length
+        equals the number of documents is treated as per-document and resampled;
+        per-feature arrays (e.g. ``prevalence_names``, length ``p``) and scalars
+        are passed through unchanged. So a full STM stability check reads::
+
+            X, names = topica.one_hot(df["party"])
+            stm = topica.STM(num_topics=10, seed=13).fit(
+                docs, prevalence=X, prevalence_names=names)
+            bs = topica.bootstrap_stability(
+                docs, reference=stm,
+                model_factory=lambda s: topica.STM(num_topics=10, seed=s),
+                prevalence=X, prevalence_names=names)
 
     Returns
     -------
@@ -3164,13 +3208,24 @@ def bootstrap_stability(
     ref_sets = top_word_sets(ref)
     K = len(ref_sets)
 
+    # Any per-document fit-kwarg (a covariate design: STM `prevalence`, DMR
+    # `covariates`, `content` labels, `timestamps`) must be resampled with the
+    # *same* draw as the documents, or the covariate rows misalign with the
+    # resampled corpus. Per-feature arrays (`prevalence_names`, length p) and
+    # scalars (`iters`) are passed through untouched (issue #751).
+    per_doc_keys = [key for key, v in fit_kwargs.items() if _is_per_doc(v, D)]
+
     rng = np.random.RandomState(seed)
     per_topic = [[] for _ in range(K)]
     for b in range(n_boot):
         pick = rng.randint(0, D, size=D)
         sample = [docs[i] for i in pick]
+        boot_kwargs = {
+            key: (_take_rows(v, pick) if key in per_doc_keys else v)
+            for key, v in fit_kwargs.items()
+        }
         m = factory(seed + b + 1)
-        m.fit(sample, **fit_kwargs)
+        m.fit(sample, **boot_kwargs)
         boot_sets = top_word_sets(m)
         # Match bootstrap topics to reference topics by top-word Jaccard, then
         # record each reference topic's overlap with its match.

@@ -84,7 +84,26 @@ boot = topica.bootstrap_stability(docs, k=20, n_boot=50, iters=800)
 for t, s in zip(boot["topic"], boot["stability"]):
     print(f"Topic {t}: stability {s:.2f}")     # mean top-word Jaccard across resamples
 print("overall:", boot["mean"])
+boot.to_frame()                                 # the same, as a tidy DataFrame
 ```
+
+For a **covariate model** (STM, DMR, ...), bootstrap it *as itself* — pass the
+same per-document design you fit with, and it is resampled in lock-step with the
+documents so the covariate rows stay aligned:
+
+```python
+X, names = topica.one_hot(df["party"])
+stm = topica.STM(num_topics=20, seed=13).fit(docs, prevalence=X, prevalence_names=names)
+boot = topica.bootstrap_stability(
+    docs, reference=stm,
+    model_factory=lambda s: topica.STM(num_topics=20, seed=s),
+    prevalence=X, prevalence_names=names,      # design resampled with the docs
+)
+```
+
+Any fit argument with one row per document (`prevalence` / `covariates`, a
+`content` label vector, dynamic `timestamps`) is resampled with the draw;
+per-feature arguments like `prevalence_names` are passed through.
 
 Also check that the *same* topics emerge across **random seeds**, aligning topics
 between fits and scoring their overlap:
