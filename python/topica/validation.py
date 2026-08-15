@@ -1149,7 +1149,11 @@ class SearchKResult(list):
 
         - the held-out metric when a held-out set was supplied
           (``"heldout_loglik"`` for a :class:`Heldout`, ``"perplexity"`` for a
-          legacy corpus) — the principled, non-monotone criterion;
+          legacy corpus) — the held-out criterion, which unlike bare coherence
+          reflects generalization; note that on many real corpora it improves
+          only slowly and near-monotonically in K, so ``rule="best"`` can land on
+          the largest K scanned (a boundary warning fires and cites the
+          ``elbow``/``frontier`` picks when it does);
         - otherwise the ``"frontier"`` (see below), since bare ``"coherence"``
           is roughly monotone in K and would just return the grid floor.
 
@@ -1271,12 +1275,36 @@ class SearchKResult(list):
                 and len(present) >= 2:
             k_max = max(r["k"] for r in present)
             if pick == k_max:
+                # Cite the alternative picks we can already compute, so the user
+                # sees the actual less-fragmented K rather than just a rule name
+                # (issue #732). Guard each: elbow needs a bend, frontier needs the
+                # coherence/exclusivity columns — skip whichever isn't available.
+                hints = []
+                with warnings.catch_warnings():
+                    # The hint computation is exploratory; silence any warning the
+                    # elbow/frontier helpers raise (e.g. "elbow not well defined")
+                    # so only this boundary warning reaches the user.
+                    warnings.simplefilter("ignore")
+                    try:
+                        e = self._elbow_k(present, metric, maximize)
+                        if e != pick:
+                            hints.append(f"rule='elbow' gives K={e}")
+                    except Exception:
+                        pass
+                    try:
+                        f = self._frontier_k()
+                        if f != pick:
+                            hints.append(f"metric='frontier' gives K={f}")
+                    except Exception:
+                        pass
+                hint_txt = (" " + "; ".join(hints) + ".") if hints else ""
                 warnings.warn(
                     f"best_k(metric={metric!r}) selected K={pick}, the largest K "
                     "scanned: this metric tends to keep improving with K, so the "
                     "optimum is at the grid boundary and the real best K may lie "
-                    "beyond it. Widen ks=, or use rule='elbow' (diminishing-returns "
-                    "knee) or metric='frontier' (coherence/exclusivity knee).",
+                    f"beyond it.{hint_txt} Widen ks=, or use rule='elbow' "
+                    "(diminishing-returns knee) or metric='frontier' "
+                    "(coherence/exclusivity knee).",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -3025,6 +3053,7 @@ def bootstrap_stability(
     docs,
     *,
     k=None,
+    num_topics=None,
     n_boot=20,
     topn=10,
     seed=0,
@@ -3049,7 +3078,7 @@ def bootstrap_stability(
     ----------
     docs : the corpus (``list[list[str]]`` or a ``Corpus``).
     k : number of topics. Required unless ``reference`` is given (then taken from
-        it).
+        it). ``num_topics=`` is accepted as an alias (the library-wide name).
     n_boot : number of bootstrap resamples.
     model_factory : ``callable(seed) -> unfitted model``. Defaults to
         ``LDA(num_topics=k, seed=seed)``. Use it to bootstrap any model.
@@ -3074,6 +3103,17 @@ def bootstrap_stability(
     per-topic ``(topic, stability)`` DataFrame.
     """
     from . import LDA  # local import to avoid a cycle at module load
+
+    # num_topics= is the library-wide name for the topic count (every constructor
+    # is Model(num_topics=...)); accept it as an alias for this function's k= so a
+    # user need not remember the odd one out (issue #732).
+    if num_topics is not None:
+        if k is not None and int(k) != int(num_topics):
+            raise ValueError(
+                f"pass either k= or num_topics=, not both with different values "
+                f"(k={k}, num_topics={num_topics}); they are aliases for the topic count"
+            )
+        k = num_topics
 
     # fit_kwargs= (a dict, like cross_validate) and inline **extra_fit_kwargs both
     # forward to fit; merge them so the documented dict form works and no longer
@@ -3106,7 +3146,8 @@ def bootstrap_stability(
     # factory-only usage without k= is allowed — matching the docstring (#742).
     if model_factory is None and k is None:
         raise ValueError(
-            "pass k (number of topics), a model_factory, or a fitted reference model")
+            "pass k= / num_topics= (number of topics), a model_factory, or a "
+            "fitted reference model")
     factory = model_factory or (lambda s: LDA(num_topics=k, seed=s))
 
     def top_word_sets(model):
