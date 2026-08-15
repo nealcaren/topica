@@ -573,12 +573,13 @@ impl FactorialLDA {
     }
 
     // --- Conventional extras ---
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word);
         topic_words_helper(
@@ -588,6 +589,7 @@ impl FactorialLDA {
             self.num_topics,
             n,
             topic,
+            weights,
         )
     }
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.

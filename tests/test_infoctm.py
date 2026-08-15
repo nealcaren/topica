@@ -55,8 +55,8 @@ def _block_of(word):
 
 def test_topics_align_across_languages():
     m, _ = _fit()
-    ta = m.top_words(3, lang="en")
-    tb = m.top_words(3, lang="zh")
+    ta = m.top_words(3, lang="en", weights=True)
+    tb = m.top_words(3, lang="zh", weights=True)
     aligned = sum(_block_of(ta[t][0][0]) == _block_of(tb[t][0][0]) for t in range(K))
     # The dictionary-seeded MI term should align all three planted topics.
     assert aligned == K
@@ -80,7 +80,7 @@ def test_topic_word_and_doc_topic_valid():
 
 def test_top_words_and_vocabulary():
     m, _ = _fit()
-    tw = m.top_words(5, lang="en")
+    tw = m.top_words(5, lang="en", weights=True)
     assert len(tw) == K and len(tw[0]) == 5
     assert all(isinstance(w, str) for w, _ in tw[0])
     assert len(m.vocabulary(lang="zh")) >= K

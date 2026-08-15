@@ -69,7 +69,7 @@ def test_centroid_words_are_block_pure():
     # top_words defaults to the centroid representation when word_embeddings are
     # present; each topic's nearest vocabulary words must come from one block.
     for t in range(m.num_topics):
-        words = [w for w, _ in m.top_words(4, topic=t)]
+        words = [w for w, _ in m.top_words(4, topic=t, weights=True)]
         blocks = {w[1] for w in words}
         assert len(blocks) == 1, f"topic {t} centroid words mix blocks: {words}"
 
@@ -121,7 +121,7 @@ def test_reduction_merges_nearest_blocks():
     pure = [
         t
         for t in range(2)
-        if {w[1] for w, _ in m.top_words(4, topic=t)} == {"0"}
+        if {w[1] for w, _ in m.top_words(4, topic=t, weights=True)} == {"0"}
     ]
     assert pure, "block 0 was not preserved as its own topic after reduction"
 

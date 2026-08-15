@@ -51,7 +51,7 @@ def test_recovers_planted_blocks():
     m.fit(docs, doc_emb, iters=250)
     covered = set()
     for t in range(3):
-        words = [w for w, _ in m.top_words(3, topic=t)]
+        words = [w for w, _ in m.top_words(3, topic=t, weights=True)]
         blocks = {w.split("w")[0] for w in words}  # "b0w3" -> "b0"
         assert len(blocks) == 1, f"topic {t} mixes blocks: {words}"
         covered |= blocks

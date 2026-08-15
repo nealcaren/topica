@@ -76,7 +76,7 @@ def a_topic_idx(fitted_stm):
     """Index of the 'A' topic (top words dominated by _VOCAB_A)."""
     a_set = set(_VOCAB_A)
     for t in range(fitted_stm.num_topics):
-        top5 = [w for w, _ in fitted_stm.top_words(5, topic=t)]
+        top5 = [w for w, _ in fitted_stm.top_words(5, topic=t, weights=True)]
         if sum(1 for w in top5 if w in a_set) >= 3:
             return t
     pytest.fail("Could not identify the A topic by top words")
@@ -220,7 +220,7 @@ class TestSTMShapes:
 class TestSTMTopicRecovery:
     def test_a_topic_top_words_dominated_by_vocab_a(self, fitted_stm, a_topic_idx):
         a_set = set(_VOCAB_A)
-        top5 = [w for w, _ in fitted_stm.top_words(5, topic=a_topic_idx)]
+        top5 = [w for w, _ in fitted_stm.top_words(5, topic=a_topic_idx, weights=True)]
         overlap = sum(1 for w in top5 if w in a_set)
         assert overlap >= 3, (
             f"A topic top-5 words not dominated by _VOCAB_A: {top5}"
@@ -229,7 +229,7 @@ class TestSTMTopicRecovery:
     def test_b_topic_top_words_dominated_by_vocab_b(self, fitted_stm, a_topic_idx):
         b_idx = 1 - a_topic_idx
         b_set = set(_VOCAB_B)
-        top5 = [w for w, _ in fitted_stm.top_words(5, topic=b_idx)]
+        top5 = [w for w, _ in fitted_stm.top_words(5, topic=b_idx, weights=True)]
         overlap = sum(1 for w in top5 if w in b_set)
         assert overlap >= 3, (
             f"B topic top-5 words not dominated by _VOCAB_B: {top5}"
@@ -237,8 +237,8 @@ class TestSTMTopicRecovery:
 
     def test_two_topics_use_distinct_vocabularies(self, fitted_stm):
         """The two topics should not both have the same top word."""
-        top0 = {w for w, _ in fitted_stm.top_words(3, topic=0)}
-        top1 = {w for w, _ in fitted_stm.top_words(3, topic=1)}
+        top0 = {w for w, _ in fitted_stm.top_words(3, topic=0, weights=True)}
+        top1 = {w for w, _ in fitted_stm.top_words(3, topic=1, weights=True)}
         assert len(top0 & top1) == 0, (
             f"Topics share top-3 words: {top0 & top1}"
         )
@@ -468,7 +468,7 @@ class TestSTMTopWords:
             assert len(topic_list) == 3
 
     def test_single_topic_returns_list_of_tuples(self, fitted_stm):
-        result = fitted_stm.top_words(5, topic=0)
+        result = fitted_stm.top_words(5, topic=0, weights=True)
         assert isinstance(result, list)
         assert len(result) == 5
         for word, prob in result:
@@ -476,7 +476,7 @@ class TestSTMTopWords:
             assert isinstance(prob, float)
 
     def test_top_words_probabilities_descending(self, fitted_stm):
-        for topic_list in fitted_stm.top_words(5):
+        for topic_list in fitted_stm.top_words(5, weights=True):
             probs = [p for _, p in topic_list]
             assert probs == sorted(probs, reverse=True), (
                 "top_words probabilities must be sorted descending"

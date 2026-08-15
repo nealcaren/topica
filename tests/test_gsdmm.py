@@ -54,7 +54,7 @@ class TestGSDMM:
                   {"tax", "vote", "law", "bill"}]
         covered = set()
         for t in range(m.num_topics):
-            top = {w for w, _ in m.top_words(4, topic=t)}
+            top = {w for w, _ in m.top_words(4, topic=t, weights=True)}
             for b, blk in enumerate(blocks):
                 if len(top & blk) >= 3:    # a cluster cleanly owns a block
                     covered.add(b)

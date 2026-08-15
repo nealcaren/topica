@@ -31,7 +31,7 @@ def _fit(docs, k=2, iters=300, **kw):
 
 def test_recovers_two_topics():
     m = _fit(TWO_TOPIC_DOCS)
-    sets = {frozenset(w for w, _ in ws) for ws in m.top_words(6)}
+    sets = {frozenset(w for w, _ in ws) for ws in m.top_words(6, weights=True)}
     assert {frozenset(PETS), frozenset(SPACE)} == sets
 
 
@@ -76,7 +76,7 @@ def test_recovers_more_topics_at_larger_k():
     blocks = [set(vocab[b * wpb : (b + 1) * wpb]) for b in range(n_blocks)]
     covered = set()
     for t in range(m.num_topics):
-        top = {w for w, _ in m.top_words(wpb, topic=t)}
+        top = {w for w, _ in m.top_words(wpb, topic=t, weights=True)}
         for bi, blk in enumerate(blocks):
             if blk <= top:
                 covered.add(bi)

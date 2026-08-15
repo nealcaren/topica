@@ -586,7 +586,7 @@ class TestGDMRTopWords:
         return _fit_gdmr(docs, meta, degrees=[1], seed=1, iters=200)
 
     def test_top_words_all_topics_structure(self, fitted):
-        result = fitted.top_words(5)
+        result = fitted.top_words(5, weights=True)
         assert isinstance(result, list)
         assert len(result) == fitted.num_topics
         for topic_list in result:
@@ -597,7 +597,7 @@ class TestGDMRTopWords:
                 assert isinstance(prob, float)
 
     def test_top_words_single_topic(self, fitted):
-        result = fitted.top_words(5, topic=0)
+        result = fitted.top_words(5, topic=0, weights=True)
         assert isinstance(result, list)
         assert len(result) == 5
         for word, prob in result:
@@ -605,7 +605,7 @@ class TestGDMRTopWords:
             assert isinstance(prob, float)
 
     def test_top_words_probabilities_descending(self, fitted):
-        for topic_list in fitted.top_words(7):
+        for topic_list in fitted.top_words(7, weights=True):
             probs = [p for _, p in topic_list]
             assert probs == sorted(probs, reverse=True)
 

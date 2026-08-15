@@ -664,14 +664,15 @@ impl Scholar {
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
 
-    /// Top `n` words per topic as ``(word, probability)`` pairs (or one topic's list
-    /// when `topic` is given).
-    #[pyo3(signature = (n=10, *, topic=None))]
+    /// Top `n` words per topic (bare word strings), or one topic's list when
+    /// `topic` is given. Pass ``weights=True`` for ``(word, probability)`` pairs.
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
         topic_words_helper(
@@ -681,6 +682,7 @@ impl Scholar {
             self.num_topics,
             n,
             topic,
+            weights,
         )
     }
 

@@ -51,12 +51,25 @@ by construction rather than by memory.
    keys from each constructor signature, so a new parameter that is not surfaced in
    `settings` fails the suite — there is no second inventory to maintain. The
    analysis manifest (`record_fit`) reads this surface directly.
-5. **`top_words(n, topic=None)` returns `(word, prob)` pairs**, not bare words:
-   `list[list[tuple[str, float]]]` for all topics, or `list[tuple[str, float]]`
-   for one `topic=`. So `", ".join(model.top_words(n, topic=t))` raises — unpack
-   the pairs first (`", ".join(w for w, _ in model.top_words(n, topic=t))`). The
-   probabilities are the topic-word weights, descending. This is uniform across
-   every model (issue #742).
+5. **`top_words(n, topic=None)` returns bare word strings by default**:
+   `list[list[str]]` for all topics, or `list[str]` for one `topic=`, so
+   `", ".join(model.top_words(n, topic=t))` works directly. Pass `weights=True`
+   for the `(word, prob)` pairs instead — `list[list[tuple[str, float]]]` /
+   `list[tuple[str, float]]`, the topic-word weights in descending order. Both
+   shapes are uniform across every model, including the variants that take extra
+   arguments (`SAGE`'s `group=`, `DTM`'s `time`, `HLDA`'s `node`, `InfoCTM`'s
+   `lang=`); `weights` is keyword-only everywhere (issues #742, #752).
+6. **`converged` is a property; `coherence(...)` and `bound()` are methods.** On a
+   fitted model, read `model.converged` with no parentheses — it is a bool
+   attribute, so `model.converged()` raises `TypeError: 'bool' object is not
+   callable`. In contrast `model.coherence()` and `model.bound()` are called.
+   (`Corpus` documents the same property-vs-method split for its own accessors.)
+7. **`coherence(...)`'s first positional argument is `n`, the top-word count — not
+   the corpus.** It defaults to the training corpus, so bare `model.coherence()`
+   works; pass a reference corpus with the keyword `texts=` for the windowed
+   measures. This flips the convention of the module-level `topica.coherence(
+   topics, texts, ...)`, whose first argument is the topics — so
+   `model.coherence(corpus.documents())` misfires (issue #752).
 
 ## Threads and stopping rules
 

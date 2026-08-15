@@ -476,13 +476,14 @@ impl PolylingualLDA {
     }
 
     /// Top-`n` words per topic in a given language (default: the first).
-    #[pyo3(signature = (n=10, *, lang=None, topic=None))]
+    #[pyo3(signature = (n=10, *, lang=None, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         lang: Option<&str>,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let m = self.fitted_model()?;
         let li = self.lang_index(lang)?;
@@ -494,6 +495,7 @@ impl PolylingualLDA {
             self.num_topics,
             n,
             topic,
+            weights,
         )
     }
 

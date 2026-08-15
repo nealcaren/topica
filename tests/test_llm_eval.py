@@ -395,7 +395,7 @@ def test_alignment_counts_irrelevant_and_missing():
     class M:
         doc_topic = np.ones((6, 1))
         def top_words(self, n):
-            return [[(w, 1.0) for w in vocab[:n]]]
+            return [[w for w in vocab[:n]]]
     def be(prompt):
         if "not relevant" in prompt.lower() or "irrelevant" in prompt.lower():
             return "tax"          # 1 irrelevant topic word

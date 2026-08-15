@@ -161,8 +161,7 @@ def _top_words(model, t, n):
     method = getattr(model, "top_words", None)
     if callable(method):
         try:
-            pairs = method(n, topic=t)
-            return [w for w, _ in pairs]
+            return list(method(n, topic=t))
         except Exception as exc:
             warnings.warn(
                 f"{type(model).__name__}.top_words failed ({type(exc).__name__}: "

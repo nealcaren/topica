@@ -45,7 +45,7 @@ model.fit(docs, iters=2000)
 
 model.topic_names         # ['economy', 'immigration', 'residual_1', ...]
 for t in range(model.num_topics):
-    print(model.topic_names[t], [w for w, _ in model.top_words(8, topic=t)])
+    print(model.topic_names[t], model.top_words(8, topic=t))
 ```
 
 ## KeyATM
@@ -181,7 +181,7 @@ model = topica.EmbeddingLDA(num_topics=10, embeddings=emb, vocabulary=vocab,
                             top_m=20)   # weight defaults to a light 0.1
 model.fit(docs, iters=1000)
 for i, words in enumerate(model.top_words(8)):
-    print(f"Topic {i}:", ", ".join(w for w, _ in words))
+    print(f"Topic {i}:", ", ".join(words))
 ```
 
 `top_m` sets how many of each cluster's nearest words become seeds, and `weight`

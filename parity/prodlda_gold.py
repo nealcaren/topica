@@ -213,7 +213,7 @@ def _topica_topics(token_docs, seed):
         batch_size=BATCH, lr=LR, seed=seed,
     )
     tm.fit(token_docs, iters=EPOCHS)
-    topics = [[w for w, _ in tm.top_words(TOP_N, topic=t)] for t in range(tm.num_topics)]
+    topics = [[w for w in tm.top_words(TOP_N, topic=t)] for t in range(tm.num_topics)]
     return topics
 
 

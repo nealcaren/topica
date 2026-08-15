@@ -160,5 +160,5 @@ def test_bigrams_flow_into_bertopic_topic_words():
         warnings.simplefilter("ignore")
         m = topica.BERTopic(min_cluster_size=20, seed=1)
         m.fit(ng, np.array(emb))
-    words = {w for t in range(m.num_topics) for w, _ in m.top_words(8, topic=t)}
+    words = {w for t in range(m.num_topics) for w, _ in m.top_words(8, topic=t, weights=True)}
     assert any("_" in w for w in words)

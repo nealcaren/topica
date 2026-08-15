@@ -50,7 +50,7 @@ def test_bertopic_transform_and_ctfidf_options():
     mb = topica.BERTopic(min_cluster_size=8, bm25=True, reduce_frequent=True, seed=1)
     mb.fit(docs, doc_emb)
     for t in range(mb.num_topics):
-        blocks = {w.split("w")[0] for w, _ in mb.top_words(4, topic=t)}
+        blocks = {w.split("w")[0] for w, _ in mb.top_words(4, topic=t, weights=True)}
         assert len(blocks) == 1
 
 

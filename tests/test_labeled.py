@@ -193,7 +193,7 @@ class TestLabeledLDARecovery:
         label_to_idx = {lbl: i for i, lbl in enumerate(model.labels)}
         for lbl, vocab_words in _VOCAB.items():
             t = label_to_idx[lbl]
-            top4 = [w for w, _ in model.top_words(4, topic=t)]
+            top4 = [w for w, _ in model.top_words(4, topic=t, weights=True)]
             in_vocab = sum(1 for w in top4 if w in vocab_words)
             assert in_vocab >= 3, (
                 f"Topic '{lbl}' (idx {t}): only {in_vocab}/4 top words are in "
@@ -360,7 +360,7 @@ class TestLabeledLDATopWordsAndCoherence:
         return model
 
     def test_top_words_all_topics_structure(self, fitted):
-        result = fitted.top_words(5)
+        result = fitted.top_words(5, weights=True)
         assert isinstance(result, list)
         assert len(result) == 3   # one list per topic
         for topic_list in result:
@@ -370,7 +370,7 @@ class TestLabeledLDATopWordsAndCoherence:
                 assert isinstance(prob, float)
 
     def test_top_words_single_topic_structure(self, fitted):
-        result = fitted.top_words(5, topic=0)
+        result = fitted.top_words(5, topic=0, weights=True)
         assert isinstance(result, list)
         assert len(result) == 5
         for word, prob in result:
@@ -378,7 +378,7 @@ class TestLabeledLDATopWordsAndCoherence:
             assert isinstance(prob, float)
 
     def test_top_words_probabilities_descending(self, fitted):
-        for topic_list in fitted.top_words(6):
+        for topic_list in fitted.top_words(6, weights=True):
             probs = [p for _, p in topic_list]
             assert probs == sorted(probs, reverse=True)
 
@@ -411,7 +411,7 @@ class TestLabeledCvb0:
         label_to_idx = {lbl: i for i, lbl in enumerate(m.labels)}
         for lbl, vocab_words in _VOCAB.items():
             t = label_to_idx[lbl]
-            top4 = [w for w, _ in m.top_words(4, topic=t)]
+            top4 = [w for w, _ in m.top_words(4, topic=t, weights=True)]
             assert sum(1 for w in top4 if w in vocab_words) >= 3
 
     def test_mask_respected_exactly(self):

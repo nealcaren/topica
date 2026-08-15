@@ -68,7 +68,7 @@ def test_bm25_downweights_ubiquitous_term_below_default():
     docs, emb = _planted()
     m = _fit(docs, emb, bm25=True)
     for t in range(m.num_topics):
-        words = [w for w, _ in m.top_words(4, topic=t)]
+        words = [w for w, _ in m.top_words(4, topic=t, weights=True)]
         assert "STOP" not in words, f"topic {t} top words still include STOP: {words}"
 
 
@@ -125,7 +125,7 @@ def test_min_similarity_zeroes_weak_topics():
     m = _fit(docs, emb)
 
     def block_of(topic):
-        return int(m.top_words(1, topic=topic)[0][0][1:]) // 5
+        return int(m.top_words(1, topic=topic, weights=True)[0][0][1:]) // 5
 
     block0 = next(t for t in range(m.num_topics) if block_of(t) == 0)
     doc = [["w0", "w1", "w2", "w3", "w4", "w0", "w1", "w2"]]

@@ -39,7 +39,7 @@ def test_etm_recovers_planted_blocks():
     # Each topic's top words come from one block, covering all blocks.
     covered = set()
     for t in range(3):
-        blocks = {w.split("w")[0] for w, _ in m.top_words(4, topic=t)}
+        blocks = {w.split("w")[0] for w, _ in m.top_words(4, topic=t, weights=True)}
         assert len(blocks) == 1, f"topic {t} mixes blocks: {blocks}"
         covered |= blocks
     assert len(covered) == 3
@@ -89,7 +89,7 @@ def test_etm_vae_recovers_planted_blocks():
     assert np.allclose(m.topic_word.sum(axis=1), 1.0)
     covered = set()
     for t in range(3):
-        words = [w for w, _ in m.top_words(4, topic=t)]
+        words = [w for w, _ in m.top_words(4, topic=t, weights=True)]
         blocks = {w.split("w")[0] for w in words}
         assert len(blocks) == 1, f"topic {t} mixes blocks: {words}"
         covered |= blocks

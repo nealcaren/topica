@@ -494,16 +494,16 @@ impl GuidedNMF {
         self.fitted_model()?;
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
-    /// Top ``n`` (word, weight) pairs per topic. With ``topic=None`` returns one
-    /// list per topic (a list of lists); with ``topic=k`` returns the single list
-    /// for topic k. Each item is a (word, weight) tuple — print with
-    /// ``[w for w, _ in m.top_words(...)]``.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    /// Top ``n`` words per topic (bare word strings). With ``topic=None`` returns
+    /// one list per topic (a list of lists); with ``topic=k`` returns the single
+    /// list for topic k. Pass ``weights=True`` for ``(word, weight)`` pairs.
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word);
         topic_words_helper(
@@ -513,6 +513,7 @@ impl GuidedNMF {
             self.num_topics,
             n,
             topic,
+            weights,
         )
     }
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.

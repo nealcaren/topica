@@ -68,7 +68,7 @@ class TestFit:
             m = topica.AnchorLDA(4, recover=rec, min_count=2, seed=0).fit(docs)
             assert set(m.anchors) == set(anchors), rec
             for t in range(4):
-                blocks = {w.split("_")[0] for w, _ in m.top_words(8, topic=t)}
+                blocks = {w.split("_")[0] for w, _ in m.top_words(8, topic=t, weights=True)}
                 assert len(blocks) == 1, (rec, t)
 
     def test_topic_word_rows_are_distributions(self):
@@ -87,7 +87,7 @@ class TestFit:
         assert set(m.anchors) == set(anchors)
         # Each topic's top words come overwhelmingly from a single block.
         for t in range(4):
-            tops = [w for w, _ in m.top_words(8, topic=t)]
+            tops = [w for w, _ in m.top_words(8, topic=t, weights=True)]
             blocks = {w.split("_")[0] for w in tops}
             assert len(blocks) == 1, (t, tops)
 
@@ -258,14 +258,14 @@ class TestTopWordRanking:
 
     @staticmethod
     def _led_by_common(m, method):
-        return float(np.mean([m.top_words(1, topic=t, method=method)[0][0].startswith("common_")
+        return float(np.mean([m.top_words(1, topic=t, method=method, weights=True)[0][0].startswith("common_")
                               for t in range(m.num_topics)]))
 
     def test_methods_return_pairs(self):
         docs, _, _ = _separable_corpus()
         m = topica.AnchorLDA(4, min_count=2, seed=0).fit(docs)
         for method in ("frex", "prob", "lift"):
-            tw = m.top_words(5, topic=0, method=method)
+            tw = m.top_words(5, topic=0, method=method, weights=True)
             assert len(tw) == 5 and all(isinstance(w, str) for w, _ in tw)
 
     def test_bad_method_raises(self):
@@ -338,7 +338,7 @@ class TestKLStability:
         assert np.isfinite(tw).all(), "topic_word has NaN/inf"
         assert np.isfinite(dt).all(), "doc_topic has NaN/inf"
         # And the topics are non-degenerate (the NaN collapse made them identical).
-        tops = [[w for w, _ in m.top_words(8, topic=t)] for t in range(20)]
+        tops = [[w for w, _ in m.top_words(8, topic=t, weights=True)] for t in range(20)]
         flat = [w for t in tops for w in t]
         assert len(set(flat)) / len(flat) > 0.5
 

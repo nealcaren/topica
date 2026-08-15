@@ -36,7 +36,7 @@ class TestSeededLDA:
         assert m.topic_names[:3] == ["B0", "B2", "B4"]
         assert m.topic_names[3:] == ["residual_1", "residual_2"]
         for t, name in enumerate(["B0", "B2", "B4"]):
-            top = {w for w, _ in m.top_words(5, topic=t)}
+            top = {w for w, _ in m.top_words(5, topic=t, weights=True)}
             assert len(top & set(blocks[name])) >= 4   # the seed steered the topic
 
     def test_shapes(self):
@@ -79,7 +79,7 @@ class TestKeyATM:
         m.fit(docs, iters=500)
         assert m.num_topics == 5
         for t, name in enumerate(["B0", "B2", "B4"]):
-            top = {w for w, _ in m.top_words(5, topic=t)}
+            top = {w for w, _ in m.top_words(5, topic=t, weights=True)}
             assert len(top & set(blocks[name])) >= 4
 
     def test_keyword_rate(self):

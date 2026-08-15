@@ -130,8 +130,8 @@ def _recovery_invariants(model):
     German, and the two sets are near-disjoint. Returns a dict of booleans/scores."""
     en_ok = de_ok = disjoint_ok = True
     for t in range(NUM_TOPICS):
-        en = {w for w, _ in model.top_words(7, topic=t, group="en")}
-        de = {w for w, _ in model.top_words(7, topic=t, group="de")}
+        en = {w for w in model.top_words(7, topic=t, group="en")}
+        de = {w for w in model.top_words(7, topic=t, group="de")}
         en_ok &= en <= _EN_VOCAB
         de_ok &= de <= _DE_VOCAB
         disjoint_ok &= len(en & de) <= 1

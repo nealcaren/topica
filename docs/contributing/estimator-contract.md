@@ -46,7 +46,7 @@ module's `_accepts_kwarg` helper checks for this at import time; do not hide
 | `num_topics` | int | Number of topics K |
 | `topic_names` | list of str, length K | User-set labels; default `["topic_0", "topic_1", ...]` |
 | `doc_names` | list of str, length D | Row labels for `doc_topic`; default document indices as strings |
-| `top_words(n)` | list of K lists of `(word, weight)` | Top n words per topic |
+| `top_words(n)` | list of K lists of `word` (or `(word, weight)` with `weights=True`) | Top n words per topic |
 | `coherence(n)` | array of K floats | Per-topic UMass coherence over top n words |
 | `save(path)` | — | Serialize to disk |
 | `load(path)` | — | Class method; restore from disk |

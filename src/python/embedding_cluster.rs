@@ -501,8 +501,9 @@ impl Top2Vec {
         Ok(self.id_to_word.clone())
     }
 
-    /// Top `n` words of `topic` (or every topic when `topic` is None), as
-    /// `(word, weight)` pairs. Top2Vec's distinctive view is the **centroid**
+    /// Top `n` words of `topic` (or every topic when `topic` is None), as bare
+    /// word strings (pass `weights=True` for `(word, weight)` pairs).
+    /// Top2Vec's distinctive view is the **centroid**
     /// representation: the vocabulary words nearest the cluster centroid in
     /// embedding space. When fit with `word_embeddings`, `top_words` returns that
     /// by default (so `summary`/`top_words` show Top2Vec's identity, not just the
@@ -510,13 +511,14 @@ impl Top2Vec {
     /// falls back to c-TF-IDF weights. Pass `representation="c-tf-idf"` for the
     /// c-TF-IDF words, or `"centroid"` explicitly. `topic_word` and `topic_table`
     /// always stay c-TF-IDF.
-    #[pyo3(signature = (n=10, *, topic=None, representation=None))]
+    #[pyo3(signature = (n=10, *, topic=None, representation=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
         representation: Option<&str>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let m = self.fitted_model()?;
         if m.num_topics == 0 {
@@ -553,18 +555,19 @@ impl Top2Vec {
                         .collect();
                     Ok(PyList::new_bound(py, items))
                 };
-                match topic {
+                let __tw: PyResult<Bound<'py, PyAny>> = match topic {
                     Some(t) => Ok(one(t)?.into_any()),
                     None => {
                         let all: Vec<Bound<'py, PyList>> =
                             (0..m.num_topics).map(one).collect::<PyResult<_>>()?;
                         Ok(PyList::new_bound(py, all).into_any())
                     }
-                }
+                };
+                finish_top_words(py, __tw?, weights)
             }
             "c-tf-idf" | "ctfidf" | "c_tf_idf" => {
                 let phi = vecs_to_arr2(&m.topic_word);
-                topic_words_helper(py, &phi, &self.id_to_word, m.num_topics, n, topic)
+                topic_words_helper(py, &phi, &self.id_to_word, m.num_topics, n, topic, weights)
             }
             other => Err(PyValueError::new_err(format!(
                 "representation must be 'centroid' or 'c-tf-idf', got {other:?}"
@@ -1382,12 +1385,13 @@ impl BERTopic {
     }
 
     /// Top `n` words of `topic` (or every topic when None) by c-TF-IDF weight.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let m = self.fitted_model()?;
         if m.num_topics == 0 {
@@ -1397,7 +1401,7 @@ impl BERTopic {
             ));
         }
         let phi = vecs_to_arr2(&m.topic_word);
-        topic_words_helper(py, &phi, &self.id_to_word, m.num_topics, n, topic)
+        topic_words_helper(py, &phi, &self.id_to_word, m.num_topics, n, topic, weights)
     }
 
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.

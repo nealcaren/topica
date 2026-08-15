@@ -852,8 +852,9 @@ class GDMR:
     # Methods
     # ------------------------------------------------------------------
 
-    def top_words(self, n: int = 10, *, topic=None):
-        """Top n words per topic as ``(word, probability)`` pairs.
+    def top_words(self, n: int = 10, *, topic=None, weights=False):
+        """Top n words per topic. Returns bare word strings; pass
+        ``weights=True`` for ``(word, probability)`` pairs.
 
         Parameters
         ----------
@@ -862,9 +863,11 @@ class GDMR:
         topic:
             If given, return only the list for that topic index.
             If None (default), return a list of lists (one per topic).
+        weights:
+            If True, return ``(word, probability)`` pairs instead of bare words.
         """
         self._require_fitted()
-        return self._dmr.top_words(n, topic=topic)
+        return self._dmr.top_words(n, topic=topic, weights=weights)
 
     def coherence(self, n: int = 10) -> np.ndarray:
         """UMass topic coherence per topic, shape ``(num_topics,)``."""

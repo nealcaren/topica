@@ -1696,9 +1696,8 @@ def search_k(
             coh_val = float(np.mean(m.coherence(coherence_n)))
         else:
             from .coherence import coherence as external_coherence
-            # m.top_words(coherence_n) returns a list of lists of (word, weight) tuples.
-            # Convert to list[list[str]]
-            topics = [[w for w, _ in top_list] for top_list in m.top_words(coherence_n)]
+            # m.top_words(coherence_n) returns a list of lists of word strings.
+            topics = [list(top_list) for top_list in m.top_words(coherence_n)]
             scores = external_coherence(topics, ref_docs, coherence_type=base_ct, topn=coherence_n)
             coh_val = float(np.mean(scores))
 

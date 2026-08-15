@@ -61,7 +61,7 @@ def test_tfidf_idf_recovers_block_pure_topics():
     docs, emb = _planted(ubiquitous=False)
     m = _fit(docs, emb, weighting="tfidf-idf")
     for t in range(m.num_topics):
-        blocks = {int(w[1:]) // 5 for w, _ in m.top_words(4, topic=t)}
+        blocks = {int(w[1:]) // 5 for w, _ in m.top_words(4, topic=t, weights=True)}
         assert len(blocks) == 1, f"topic {t} mixes planted blocks: {blocks}"
 
 

@@ -94,7 +94,7 @@ animals = [["cat", "dog", "fish", "cat", "dog"]] * 15
 space   = [["planet", "star", "moon", "rocket", "planet"]] * 15
 model = topica.LDA(num_topics=2, seed=13)
 model.fit(animals + space)
-for i, words in enumerate(model.top_words(5)):
+for i, words in enumerate(model.top_words(5, weights=True)):
     print(f"Topic {i}:", "  ".join(f"{w}({p:.2f})" for w, p in words))
 ```
 

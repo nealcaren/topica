@@ -58,7 +58,7 @@ print("vocab", corpus.num_words)                  # 3423
 lda = topica.LDA(num_topics=15, seed=1)
 lda.fit(corpus, iters=400, num_samples=4, sample_interval=25)
 for t in range(15):
-    print(f"T{t:>2}: " + ", ".join(w.replace("_", " ") for w, _ in lda.top_words(8, topic=t)))
+    print(f"T{t:>2}: " + ", ".join(w.replace("_", " ") for w in lda.top_words(8, topic=t)))
 
 print("c_v:", round(float(np.mean(topica.coherence(lda, docs, coherence_type="c_v"))), 3),
       "diversity:", round(topica.topic_diversity(lda, topn=15), 3))
@@ -164,7 +164,7 @@ seeds = {
 ka = topica.KeyATM(seeds, num_topics=8, seed=1)
 ka.fit(docs, iters=800)
 for t in range(4):
-    print(f"{ka.topic_names[t]:10s}", [w for w, _ in ka.top_words(7, topic=t)])
+    print(f"{ka.topic_names[t]:10s}", ka.top_words(7, topic=t))
 ```
 
 ```

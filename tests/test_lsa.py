@@ -89,7 +89,7 @@ def test_top_words():
     allw = m.top_words(5)
     assert len(allw) == 3
     assert all(len(row) == 5 for row in allw)
-    one = m.top_words(5, topic=0)
+    one = m.top_words(5, topic=0, weights=True)
     assert len(one) == 5
     assert all(isinstance(w, str) and isinstance(v, float) for w, v in one)
     # Ranked by ABSOLUTE loading: the magnitudes are non-increasing.

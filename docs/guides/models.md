@@ -954,7 +954,7 @@ m = topica.GuidedNMF(num_topics=10, seed_words=seeds, seed=1)  # guidance defaul
 m.fit(docs)
 m.seed_topic_indices     # which learned topic each seed group steered
 dict(zip(m.seed_group_names, m.seed_topic_indices))   # group name -> topic index
-[w for w, _ in m.top_words(10, topic=m.seed_topic_indices[0])]   # top_words gives (word, weight) pairs
+m.top_words(10, topic=m.seed_topic_indices[0])   # bare words; add weights=True for (word, weight) pairs
 ```
 
 A caveat before you report document prevalence: `guidance` (λ) controls how tightly
@@ -1063,7 +1063,7 @@ corpus = topica.from_dataframe(df, text_col="text", stopwords=topica.ENGLISH_STO
 decade = [[f"{int(y) // 10 * 10}s"] for y in df.year]      # grouping variable as "author"
 m = topica.AuthorTopic(12, seed=13).fit(corpus, decade, iters=500)
 dict(zip(m.authors, m.author_doc_counts))                 # docs behind each decade
-[w for w, _ in m.top_words(6, topic=int(m.author_topic[i].argmax()))]  # a decade's theme
+m.top_words(6, topic=int(m.author_topic[i].argmax()))  # a decade's theme
 ```
 
 Validated against gensim's `AuthorTopicModel` (the reference implementation; gensim is LGPL, so topica implements the paper's collapsed Gibbs and uses gensim only as a black-box oracle) in `parity/author_topic_gold.py`. On a synthetic corpus with a planted author→topic structure and overlapping topics, topica matches gensim about as closely as two gensim runs with different seeds match each other: aligned topic-word cosine 0.99 (one gensim seed pair: 0.999) and aligned author-topic correlation 0.997 (seed pair: 1.000), with each author's dominant topic recovered cleanly and distinctly. Because ATM is stochastic and gensim's inference is variational while topica's is Gibbs, this is topic-aligned agreement near the reference's seed-to-seed noise, not a bit-for-bit match. On fit speed, topica is faster than gensim at matched full-corpus sweeps (roughly 2x on a small corpus, ~7x on a larger one; the exact multiplier depends on how gensim's online passes are configured).

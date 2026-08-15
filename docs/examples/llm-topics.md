@@ -54,7 +54,7 @@ model = topica.FASTopic(num_topics=10, seed=1)
 model.fit(docs, doc_emb, iters=200)
 
 for t in range(model.num_topics):
-    print(t, " ".join(w for w, _ in model.top_words(6, topic=t)))
+    print(t, " ".join(model.top_words(6, topic=t)))
 ```
 
 ```

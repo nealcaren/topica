@@ -341,12 +341,13 @@ impl NMF {
         self.fitted_model()?;
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
         topic_words_helper(
@@ -356,6 +357,7 @@ impl NMF {
             self.num_topics,
             n,
             topic,
+            weights,
         )
     }
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
@@ -701,12 +703,13 @@ impl LSA {
     /// Top-`n` words per topic, ranked by ABSOLUTE loading (a large negative
     /// loading is as defining of a component as a large positive one). Each entry
     /// is `(word, signed_loading)`.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let m = self.fitted_model()?;
         let phi = vecs_to_arr2(&m.topic_word());
@@ -726,14 +729,15 @@ impl LSA {
                 .collect();
             Ok(PyList::new_bound(py, items))
         };
-        match topic {
+        let __tw: PyResult<Bound<'py, PyAny>> = match topic {
             Some(t) => Ok(one(t)?.into_any()),
             None => {
                 let all: Vec<Bound<'py, PyList>> =
                     (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
                 Ok(PyList::new_bound(py, all).into_any())
             }
-        }
+        };
+        finish_top_words(py, __tw?, weights)
     }
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
     /// Scores each topic's top-``n`` words. ``coherence_type`` selects the measure

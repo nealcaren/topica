@@ -1855,16 +1855,17 @@ impl LDA {
         Ok(())
     }
 
-    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    /// Top `n` words per topic. Pass ``weights=True`` for ``(word, probability)`` pairs.
     ///
     /// Returns a list of `n`-length lists (one per topic), or — when `topic`
     /// is given — just that topic's list.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         let phi = self.phi.as_ref().unwrap();
@@ -1890,7 +1891,7 @@ impl LDA {
             Ok(PyList::new_bound(py, items))
         };
 
-        match topic {
+        let __tw: PyResult<Bound<'py, PyAny>> = match topic {
             Some(t) => Ok(one_topic(t)?.into_any()),
             None => {
                 let all: Vec<Bound<'py, PyList>> = (0..self.num_topics)
@@ -1898,7 +1899,8 @@ impl LDA {
                     .collect::<PyResult<_>>()?;
                 Ok(PyList::new_bound(py, all).into_any())
             }
-        }
+        };
+        finish_top_words(py, __tw?, weights)
     }
 
     /// Per-iteration log-likelihood trace: ``(iteration, log_likelihood)`` pairs
@@ -3741,22 +3743,27 @@ fn topic_words_helper<'py>(
     num_topics: usize,
     n: usize,
     topic: Option<usize>,
+    weights: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let tops = top_word_ids_phi(beta, num_topics, n);
     let one = |t: usize| -> PyResult<Bound<'py, PyList>> {
         if t >= num_topics {
             return Err(PyValueError::new_err("topic out of range"));
         }
-        let items: Vec<Bound<'py, PyTuple>> = tops[t]
-            .iter()
-            .map(|&w| {
-                PyTuple::new_bound(
-                    py,
-                    &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)],
-                )
-            })
-            .collect();
-        Ok(PyList::new_bound(py, items))
+        if weights {
+            let items: Vec<Bound<'py, PyTuple>> = tops[t]
+                .iter()
+                .map(|&w| {
+                    PyTuple::new_bound(
+                        py,
+                        &[vocab[w].clone().into_py(py), beta[[t, w]].into_py(py)],
+                    )
+                })
+                .collect();
+            return Ok(PyList::new_bound(py, items));
+        }
+        let words: Vec<String> = tops[t].iter().map(|&w| vocab[w].clone()).collect();
+        Ok(PyList::new_bound(py, words))
     };
     match topic {
         Some(t) => Ok(one(t)?.into_any()),
@@ -3765,6 +3772,33 @@ fn topic_words_helper<'py>(
             Ok(PyList::new_bound(py, all).into_any())
         }
     }
+}
+
+/// Post-filter a `top_words` result to honor `weights=false`: recursively
+/// replace every `(word, weight)` tuple with its bare word string, preserving
+/// the list nesting (flat for `topic=`, nested for all topics). Used by the
+/// `top_words` bindings whose bodies build tuples inline rather than through
+/// `topic_words_helper`. When `weights` is true the object is returned as-is.
+fn finish_top_words<'py>(
+    py: Python<'py>,
+    obj: Bound<'py, PyAny>,
+    weights: bool,
+) -> PyResult<Bound<'py, PyAny>> {
+    if weights {
+        return Ok(obj);
+    }
+    let list = obj
+        .downcast::<PyList>()
+        .map_err(|_| PyValueError::new_err("top_words: expected a list result"))?;
+    let mut out: Vec<Bound<'py, PyAny>> = Vec::with_capacity(list.len());
+    for item in list.iter() {
+        if let Ok(tuple) = item.downcast::<PyTuple>() {
+            out.push(tuple.get_item(0)?);
+        } else {
+            out.push(finish_top_words(py, item, weights)?);
+        }
+    }
+    Ok(PyList::new_bound(py, out).into_any())
 }
 
 /// Top-`n` word ids per topic from a (num_topics, num_words) φ matrix.
@@ -4962,14 +4996,15 @@ impl DMR {
         Ok(())
     }
 
-    /// Top `n` words per topic as ``(word, probability)`` pairs (all topics, or
-    /// one when `topic` is given).
-    #[pyo3(signature = (n=10, *, topic=None))]
+    /// Top `n` words per topic (bare word strings; all topics, or one when
+    /// `topic` is given). Pass ``weights=True`` for ``(word, probability)`` pairs.
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         let phi = self.phi.as_ref().unwrap();
@@ -4992,14 +5027,15 @@ impl DMR {
             Ok(PyList::new_bound(py, items))
         };
 
-        match topic {
+        let __tw: PyResult<Bound<'py, PyAny>> = match topic {
             Some(t) => Ok(one(t)?.into_any()),
             None => {
                 let all: Vec<Bound<'py, PyList>> =
                     (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
                 Ok(PyList::new_bound(py, all).into_any())
             }
-        }
+        };
+        finish_top_words(py, __tw?, weights)
     }
 
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
@@ -5811,12 +5847,14 @@ impl LabeledLDA {
     }
 
     /// Top `n` words for one topic (by label name or index) or all topics.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    /// Bare word strings by default; pass ``weights=True`` for ``(word, weight)`` pairs.
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         let phi = self.phi.as_ref().unwrap();
@@ -5839,14 +5877,15 @@ impl LabeledLDA {
             Ok(PyList::new_bound(py, items))
         };
 
-        match topic {
+        let __tw: PyResult<Bound<'py, PyAny>> = match topic {
             Some(t) => Ok(one(t)?.into_any()),
             None => {
                 let all: Vec<Bound<'py, PyList>> =
                     (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
                 Ok(PyList::new_bound(py, all).into_any())
             }
-        }
+        };
+        finish_top_words(py, __tw?, weights)
     }
 
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
@@ -6615,14 +6654,16 @@ impl SAGE {
     /// Top `n` words per topic. `topic=None` (default) returns a list of lists
     /// (one per topic); `topic=k` returns the list for topic k. With `group`
     /// (name or index) given, uses that group's word distribution; otherwise the
-    /// group-averaged distribution is used.
-    #[pyo3(signature = (n=10, *, topic=None, group=None))]
+    /// group-averaged distribution is used. Bare word strings by default; pass
+    /// ``weights=True`` for ``(word, weight)`` pairs.
+    #[pyo3(signature = (n=10, *, topic=None, group=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
         group: Option<&Bound<'py, PyAny>>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         let vocab = &self.corpus.as_ref().unwrap().id_to_word;
@@ -6657,14 +6698,15 @@ impl SAGE {
             Ok(PyList::new_bound(py, items))
         };
 
-        match topic {
+        let __tw: PyResult<Bound<'py, PyAny>> = match topic {
             Some(t) => Ok(top_for(t)?.into_any()),
             None => {
                 let all: Vec<Bound<'py, PyList>> =
                     (0..self.num_topics).map(top_for).collect::<PyResult<_>>()?;
                 Ok(PyList::new_bound(py, all).into_any())
             }
-        }
+        };
+        finish_top_words(py, __tw?, weights)
     }
 
     /// Words that most distinguish how `topic` is worded in `group_a` vs
@@ -7606,13 +7648,14 @@ impl CTM {
         self.num_topics
     }
 
-    /// Top `n` words per topic (or one topic) as ``(word, probability)`` pairs.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    /// Top `n` words per topic (or one topic). Pass ``weights=True`` for ``(word, probability)`` pairs.
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         let beta = self.beta.as_ref().unwrap();
@@ -7633,14 +7676,15 @@ impl CTM {
                 .collect();
             Ok(PyList::new_bound(py, items))
         };
-        match topic {
+        let __tw: PyResult<Bound<'py, PyAny>> = match topic {
             Some(t) => Ok(one(t)?.into_any()),
             None => {
                 let all: Vec<Bound<'py, PyList>> =
                     (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
                 Ok(PyList::new_bound(py, all).into_any())
             }
-        }
+        };
+        finish_top_words(py, __tw?, weights)
     }
 
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
@@ -8891,13 +8935,14 @@ impl STM {
         self.num_topics
     }
 
-    /// Top `n` words per topic (or one topic) as ``(word, probability)`` pairs.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    /// Top `n` words per topic (or one topic). Pass ``weights=True`` for ``(word, probability)`` pairs.
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         let beta = self.beta.as_ref().unwrap();
@@ -8918,14 +8963,15 @@ impl STM {
                 .collect();
             Ok(PyList::new_bound(py, items))
         };
-        match topic {
+        let __tw: PyResult<Bound<'py, PyAny>> = match topic {
             Some(t) => Ok(one(t)?.into_any()),
             None => {
                 let all: Vec<Bound<'py, PyList>> =
                     (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
                 Ok(PyList::new_bound(py, all).into_any())
             }
-        }
+        };
+        finish_top_words(py, __tw?, weights)
     }
 
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
@@ -10277,14 +10323,15 @@ impl STS {
         })
     }
 
-    /// Top `n` words per topic (or one topic) at neutral sentiment, as
-    /// ``(word, probability)`` pairs.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    /// Top `n` words per topic (or one topic) at neutral sentiment, as bare word
+    /// strings. Pass ``weights=True`` for ``(word, probability)`` pairs.
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         let beta = self.beta.as_ref().unwrap();
@@ -10305,14 +10352,15 @@ impl STS {
                 .collect();
             Ok(PyList::new_bound(py, items))
         };
-        match topic {
+        let __tw: PyResult<Bound<'py, PyAny>> = match topic {
             Some(t) => Ok(one(t)?.into_any()),
             None => {
                 let all: Vec<Bound<'py, PyList>> =
                     (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
                 Ok(PyList::new_bound(py, all).into_any())
             }
-        }
+        };
+        finish_top_words(py, __tw?, weights)
     }
 
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
@@ -10808,13 +10856,14 @@ impl HDP {
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
 
-    /// Top `n` words per topic (or one topic) as ``(word, probability)`` pairs.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    /// Top `n` words per topic (or one topic). Pass ``weights=True`` for ``(word, probability)`` pairs.
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         let beta = self.beta.as_ref().unwrap();
@@ -10835,14 +10884,15 @@ impl HDP {
                 .collect();
             Ok(PyList::new_bound(py, items))
         };
-        match topic {
+        let __tw: PyResult<Bound<'py, PyAny>> = match topic {
             Some(t) => Ok(one(t)?.into_any()),
             None => {
                 let all: Vec<Bound<'py, PyList>> =
                     (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
                 Ok(PyList::new_bound(py, all).into_any())
             }
-        }
+        };
+        finish_top_words(py, __tw?, weights)
     }
 
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
@@ -11302,9 +11352,17 @@ impl DTM {
         Ok(Array1::from(traj).to_pyarray_bound(py))
     }
 
-    /// Top `n` words for a topic at one time slice as ``(word, probability)``.
-    #[pyo3(signature = (topic, time, n=10))]
-    fn top_words(&self, topic: usize, time: usize, n: usize) -> PyResult<Vec<(String, f64)>> {
+    /// Top `n` words for a topic at one time slice. Returns bare word strings;
+    /// pass ``weights=True`` for ``(word, probability)`` pairs instead.
+    #[pyo3(signature = (topic, time, n=10, *, weights=false))]
+    fn top_words<'py>(
+        &self,
+        py: Python<'py>,
+        topic: usize,
+        time: usize,
+        n: usize,
+        weights: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         if topic >= self.num_topics {
             return Err(PyValueError::new_err("topic out of range"));
@@ -11316,11 +11374,15 @@ impl DTM {
         let row = &self.topic_words.as_ref().unwrap()[time][topic];
         let mut idx: Vec<usize> = (0..row.len()).collect();
         idx.sort_by(|&a, &b| f64::total_cmp(&row[b], &row[a]));
-        Ok(idx
-            .into_iter()
-            .take(n)
-            .map(|w| (vocab[w].clone(), row[w]))
-            .collect())
+        idx.truncate(n);
+        if weights {
+            let items: Vec<(String, f64)> =
+                idx.iter().map(|&w| (vocab[w].clone(), row[w])).collect();
+            Ok(items.into_py(py).into_bound(py))
+        } else {
+            let words: Vec<String> = idx.iter().map(|&w| vocab[w].clone()).collect();
+            Ok(words.into_py(py).into_bound(py))
+        }
     }
 
     /// Which words inside `topic` drift most between two time slices.
@@ -12008,13 +12070,14 @@ impl SupervisedLDA {
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
 
-    /// Top `n` words per topic (or one topic) as ``(word, probability)`` pairs.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    /// Top `n` words per topic (or one topic). Pass ``weights=True`` for ``(word, probability)`` pairs.
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         let beta = self.beta.as_ref().unwrap();
@@ -12035,14 +12098,15 @@ impl SupervisedLDA {
                 .collect();
             Ok(PyList::new_bound(py, items))
         };
-        match topic {
+        let __tw: PyResult<Bound<'py, PyAny>> = match topic {
             Some(t) => Ok(one(t)?.into_any()),
             None => {
                 let all: Vec<Bound<'py, PyList>> =
                     (0..self.num_topics).map(one).collect::<PyResult<_>>()?;
                 Ok(PyList::new_bound(py, all).into_any())
             }
-        }
+        };
+        finish_top_words(py, __tw?, weights)
     }
 
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
@@ -12514,16 +12578,17 @@ impl PT {
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
 
-    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    /// Top `n` words per topic. Pass ``weights=True`` for ``(word, probability)`` pairs.
     ///
     /// Returns a list of `n`-length lists (one per topic), or — when `topic`
     /// is given — just that topic's list.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         topic_words_helper(
@@ -12533,6 +12598,7 @@ impl PT {
             self.num_topics,
             n,
             topic,
+            weights,
         )
     }
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
@@ -13098,16 +13164,17 @@ impl GSDMM {
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
 
-    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    /// Top `n` words per topic. Pass ``weights=True`` for ``(word, probability)`` pairs.
     ///
     /// Returns a list of `n`-length lists (one per topic), or — when `topic`
     /// is given — just that topic's list.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         topic_words_helper(
@@ -13117,6 +13184,7 @@ impl GSDMM {
             self.num_used,
             n,
             topic,
+            weights,
         )
     }
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
@@ -13976,16 +14044,17 @@ impl SeededLDA {
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
 
-    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    /// Top `n` words per topic. Pass ``weights=True`` for ``(word, probability)`` pairs.
     ///
     /// Returns a list of `n`-length lists (one per topic), or — when `topic`
     /// is given — just that topic's list.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         topic_words_helper(
@@ -13995,6 +14064,7 @@ impl SeededLDA {
             self.num_topics_val(),
             n,
             topic,
+            weights,
         )
     }
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
@@ -14680,20 +14750,29 @@ impl FASTopic {
         self.fitted_model()?;
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
-    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    /// Top `n` words per topic. Pass ``weights=True`` for ``(word, probability)`` pairs.
     ///
     /// Returns a list of `n`-length lists (one per topic), or — when `topic`
     /// is given — just that topic's list.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let m = self.fitted_model()?;
         let phi = vecs_to_arr2(&m.topic_word);
-        topic_words_helper(py, &phi, &self.id_to_word, self.num_topics, n, topic)
+        topic_words_helper(
+            py,
+            &phi,
+            &self.id_to_word,
+            self.num_topics,
+            n,
+            topic,
+            weights,
+        )
     }
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
     /// Scores each topic's top-``n`` words. ``coherence_type`` selects the measure
@@ -15922,16 +16001,17 @@ impl KeyATM {
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
 
-    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    /// Top `n` words per topic. Pass ``weights=True`` for ``(word, probability)`` pairs.
     ///
     /// Returns a list of `n`-length lists (one per topic), or — when `topic`
     /// is given — just that topic's list.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         topic_words_helper(
@@ -15941,6 +16021,7 @@ impl KeyATM {
             self.num_topics,
             n,
             topic,
+            weights,
         )
     }
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.

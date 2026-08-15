@@ -86,11 +86,11 @@ def _topica_fit(docs, doc_emb, word_emb, vocab):
     tv.fit(docs, doc_emb, word_embeddings=word_emb, vocabulary=vocab)
     labels = np.array(tv.labels)
     ctfidf_words = [
-        [w for w, _ in tv.top_words(BLOCK, topic=t, representation="c-tf-idf")]
+        [w for w in tv.top_words(BLOCK, topic=t, representation="c-tf-idf")]
         for t in range(tv.num_topics)
     ]
     centroid_words = [
-        [w for w, _ in tv.top_words(BLOCK, topic=t, representation="centroid")]
+        [w for w in tv.top_words(BLOCK, topic=t, representation="centroid")]
         for t in range(tv.num_topics)
     ]
     return labels, ctfidf_words, centroid_words, int(tv.num_topics)

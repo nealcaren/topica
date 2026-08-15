@@ -96,7 +96,7 @@ def test_search_topics_ranks_the_matching_topic_first():
     assert len(ranked) == m.num_topics
     best_topic = ranked[0][0]
     # The best topic's centroid words come from block 2.
-    words = m.top_words(4, topic=best_topic)
+    words = m.top_words(4, topic=best_topic, weights=True)
     assert all(_block_of(w) == "2" for w, _ in words)
     # Descending cosine, limitable by n.
     scores = [s for _, s in ranked]

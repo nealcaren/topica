@@ -41,7 +41,7 @@ def test_prodlda_recovers_planted_blocks():
     # Each topic's top words come from one block, covering all blocks.
     covered = set()
     for t in range(3):
-        blocks = {w.split("w")[0] for w, _ in m.top_words(4, topic=t)}
+        blocks = {w.split("w")[0] for w, _ in m.top_words(4, topic=t, weights=True)}
         assert len(blocks) == 1, f"topic {t} mixes blocks: {blocks}"
         covered |= blocks
     assert len(covered) == 3

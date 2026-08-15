@@ -42,6 +42,20 @@ _VALID = ("u_mass", "c_uci", "c_npmi", "c_v")
 # Topic extraction
 # ---------------------------------------------------------------------------
 
+def _strip_pairs(result, weights):
+    """Post-filter a ``top_words`` tuple result to honor ``weights=False``.
+
+    Mirrors the Rust bindings for the pure-Python model wrappers: when
+    ``weights`` is false, replace each ``(word, score)`` pair with its bare word,
+    preserving the nesting (flat for a single ``topic=``, nested for all topics).
+    """
+    if weights or not result:
+        return result
+    if isinstance(result[0], tuple):
+        return [w for w, _ in result]
+    return [[w for w, _ in row] for row in result]
+
+
 def _extract_topics(topics, topn):
     """Normalize `topics` to a list of word lists, truncated to `topn`.
 
@@ -52,7 +66,7 @@ def _extract_topics(topics, topn):
     if hasattr(topics, "top_words") and not isinstance(topics, (list, tuple)):
         try:
             rows = topics.top_words(topn)
-            return [[w for w, _ in row] for row in rows]
+            return [[w[0] if isinstance(w, tuple) else w for w in row] for row in rows]
         except (TypeError, ValueError):
             # Some models' top_words takes extra positionals (SAGE's `topic`,
             # DTM's `time`), so top_words(topn) misfires. Fall through to the

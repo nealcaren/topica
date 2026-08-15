@@ -45,7 +45,7 @@ class TestInference:
         ]
         covered = set()
         for t in range(m.num_topics):
-            top = {w for w, _ in m.top_words(wps, topic=t)}
+            top = {w for w, _ in m.top_words(wps, topic=t, weights=True)}
             for bi, blk in enumerate(blocks):
                 if blk <= top:
                     covered.add(bi)

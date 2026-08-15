@@ -145,17 +145,19 @@ class EnsembleResult:
             f"agreement={self.agreement:.3f}{ci}, reliable={int(np.sum(self.reliable))}/{K})"
         )
 
-    def top_words(self, n=10):
-        """Top-`n` ``(term, probability)`` pairs per ensemble topic, matching the
-        fitted-model contract so the result drops into the analysis surface. The
-        term is a word when a vocabulary is known, else the integer term index."""
+    def top_words(self, n=10, *, weights=False):
+        """Top-`n` terms per ensemble topic, matching the fitted-model contract so
+        the result drops into the analysis surface. Returns bare terms; pass
+        ``weights=True`` for ``(term, probability)`` pairs. The term is a word when
+        a vocabulary is known, else the integer term index."""
+        from .coherence import _strip_pairs
         phi = self.topic_word
         vocab = list(self.vocabulary) if self.vocabulary is not None else None
         out = []
         for t in range(phi.shape[0]):
             idx = np.argsort(phi[t])[::-1][:n]
             out.append([((vocab[i] if vocab is not None else int(i)), float(phi[t, i])) for i in idx])
-        return out
+        return _strip_pairs(out, weights)
 
 
 # ---------------------------------------------------------------------------

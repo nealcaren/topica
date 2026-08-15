@@ -277,7 +277,7 @@ class TestSAGEGroupSpecificWording:
         """Top words for each topic in the 'en' group are English words."""
         m = bilingual_model
         for t in range(2):
-            top = {w for w, _ in m.top_words(7, topic=t, group="en")}
+            top = {w for w, _ in m.top_words(7, topic=t, group="en", weights=True)}
             assert top <= _EN_VOCAB, (
                 f"Topic {t} en top-words contain non-English words: "
                 f"{top - _EN_VOCAB}"
@@ -287,7 +287,7 @@ class TestSAGEGroupSpecificWording:
         """Top words for each topic in the 'de' group are German words."""
         m = bilingual_model
         for t in range(2):
-            top = {w for w, _ in m.top_words(7, topic=t, group="de")}
+            top = {w for w, _ in m.top_words(7, topic=t, group="de", weights=True)}
             # German vocab + shared word "wind"
             assert top <= _DE_VOCAB, (
                 f"Topic {t} de top-words contain non-German words: "
@@ -298,8 +298,8 @@ class TestSAGEGroupSpecificWording:
         """The top-word sets for 'en' and 'de' should share at most 1 word."""
         m = bilingual_model
         for t in range(2):
-            en_words = {w for w, _ in m.top_words(7, topic=t, group="en")}
-            de_words = {w for w, _ in m.top_words(7, topic=t, group="de")}
+            en_words = {w for w, _ in m.top_words(7, topic=t, group="en", weights=True)}
+            de_words = {w for w, _ in m.top_words(7, topic=t, group="de", weights=True)}
             shared = en_words & de_words
             assert len(shared) <= 1, (
                 f"Topic {t}: en and de top-word sets share too many words: "
@@ -376,7 +376,7 @@ class TestSAGETopWordsByNameVsIndex:
         """top_words with group=None should return the group-averaged distribution."""
         m = bilingual_model
         for t in range(2):
-            tw_none = m.top_words(5, topic=t, group=None)
+            tw_none = m.top_words(5, topic=t, group=None, weights=True)
             assert isinstance(tw_none, list)
             assert len(tw_none) == 5
             for w, p in tw_none:
@@ -488,7 +488,7 @@ class TestSAGECoherence:
 
 class TestSAGETopWordsStructure:
     def test_top_words_returns_word_prob_tuples(self, bilingual_model):
-        result = bilingual_model.top_words(5, topic=0, group="en")
+        result = bilingual_model.top_words(5, topic=0, group="en", weights=True)
         assert isinstance(result, list)
         assert len(result) == 5
         for w, p in result:
@@ -499,12 +499,12 @@ class TestSAGETopWordsStructure:
     def test_top_words_probabilities_descending(self, bilingual_model):
         for t in range(2):
             for g in ["en", "de"]:
-                probs = [p for _, p in bilingual_model.top_words(7, topic=t, group=g)]
+                probs = [p for _, p in bilingual_model.top_words(7, topic=t, group=g, weights=True)]
                 assert probs == sorted(probs, reverse=True)
 
     def test_top_words_marginal_probabilities_descending(self, bilingual_model):
         for t in range(2):
-            probs = [p for _, p in bilingual_model.top_words(5, topic=t)]
+            probs = [p for _, p in bilingual_model.top_words(5, topic=t, weights=True)]
             assert probs == sorted(probs, reverse=True)
 
     def test_word_contrast_returns_word_log_ratio_tuples(self, bilingual_model):
@@ -538,7 +538,7 @@ class TestSAGETopWordsCanonicalSignature:
 
     def test_top_words_n_only_returns_all_topics(self, bilingual_model):
         """top_words(5) returns a list[list] with one entry per topic."""
-        result = bilingual_model.top_words(5)
+        result = bilingual_model.top_words(5, weights=True)
         assert isinstance(result, list)
         assert len(result) == bilingual_model.num_topics
         for topic_words in result:
@@ -559,8 +559,12 @@ class TestSAGETopWordsCanonicalSignature:
         result = bilingual_model.top_words(5, topic=0)
         assert isinstance(result, list)
         assert len(result) == 5
-        # Each element is a (word, prob) tuple, not a nested list.
+        # By default each element is a bare word string, not a nested list.
         for item in result:
+            assert isinstance(item, str)
+        # With weights=True each element is a (word, prob) tuple.
+        result_w = bilingual_model.top_words(5, topic=0, weights=True)
+        for item in result_w:
             assert isinstance(item, tuple)
             w, p = item
             assert isinstance(w, str)
@@ -580,7 +584,7 @@ class TestSAGETopWordsCanonicalSignature:
 
     def test_top_words_with_group_single_topic(self, bilingual_model):
         """top_words(5, topic=0, group='de') returns the de words for topic 0."""
-        result = bilingual_model.top_words(5, topic=0, group="de")
+        result = bilingual_model.top_words(5, topic=0, group="de", weights=True)
         assert isinstance(result, list)
         assert len(result) == 5
         words = {w for w, _ in result}

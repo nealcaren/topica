@@ -73,7 +73,7 @@ def _identify_topics(model):
     # Build overlap counts: for each topic, count top-4 words in each vocabulary
     overlap = {}
     for t in range(model.num_topics):
-        top4 = [w for w, _ in model.top_words(4, topic=t)]
+        top4 = [w for w, _ in model.top_words(4, topic=t, weights=True)]
         overlap[t] = {label: sum(1 for w in top4 if w in s) for label, s in sets.items()}
 
     # Greedy assignment: assign the (topic, label) pair with the highest overlap
@@ -233,7 +233,7 @@ class TestCTMTopicRecovery:
             "C": set(_VOCAB_C),
         }
         for t in range(3):
-            top4 = [w for w, _ in fitted_ctm.top_words(4, topic=t)]
+            top4 = [w for w, _ in fitted_ctm.top_words(4, topic=t, weights=True)]
             counts = {label: sum(1 for w in top4 if w in s) for label, s in sets.items()}
             max_count = max(counts.values())
             assert max_count >= 3, (
@@ -371,7 +371,7 @@ class TestCTMTopWords:
             assert len(topic_list) == 3
 
     def test_single_topic_returns_list_of_tuples(self, small_model):
-        result = small_model.top_words(5, topic=0)
+        result = small_model.top_words(5, topic=0, weights=True)
         assert isinstance(result, list)
         assert len(result) == 5
         for word, prob in result:
@@ -379,7 +379,7 @@ class TestCTMTopWords:
             assert isinstance(prob, float)
 
     def test_top_words_probabilities_descending(self, small_model):
-        for topic_list in small_model.top_words(5):
+        for topic_list in small_model.top_words(5, weights=True):
             probs = [p for _, p in topic_list]
             assert probs == sorted(probs, reverse=True), (
                 "top_words probabilities must be sorted descending"
@@ -477,7 +477,7 @@ def _block_corpus(nb=3, wpb=6, n=600):
 def _recovered(m, nb, wpb):
     cov = set()
     for t in range(m.num_topics):
-        top = {w for w, _ in m.top_words(wpb, topic=t)}
+        top = {w for w, _ in m.top_words(wpb, topic=t, weights=True)}
         for b in range(nb):
             if set(f"w{b * wpb + i}" for i in range(wpb)) <= top:
                 cov.add(b)

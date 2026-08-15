@@ -76,7 +76,7 @@ def main():
     print(table.head(20).to_string())
 
     # --- get_topic(1) -> top words of a topic ----------------------------
-    print("topic 1:", [w for w, _ in topic_model.top_words(10, topic=1)])
+    print("topic 1:", topic_model.top_words(10, topic=1))
 
     # --- Representations --------------------------------------------------
     # FREX words are already a column in `table`. The tutorial's MMR
