@@ -27,6 +27,15 @@ print(topica.summary(model))                  # top words per topic
 For your own data, swap the first line for `df = pandas.read_csv("yours.csv")`
 and set `text_col` to your text column.
 
+!!! tip "Add a few corpus-specific stopwords"
+    `ENGLISH_STOPWORDS` is a compact list (115 words), so a term that is
+    everywhere in *your* corpus but not in general English can still lead a topic
+    — a publication's own name, a boilerplate header word, a survey prompt term.
+    If a topic's top words are dominated by one such word, add it to the
+    stoplist: `stopwords=topica.ENGLISH_STOPWORDS | {"crisis", "magazine"}`
+    (or start from a larger base list). The [preprocessing
+    guide](../guides/preprocessing.md) covers stoplist choices in full.
+
 !!! tip "Just `fit(corpus)` is enough"
     `LDA(num_topics=k).fit(corpus)` uses well-chosen defaults. The Gibbs samplers
     expose tuning knobs (`iters`, `num_samples`, `optimize_interval`, …), but you

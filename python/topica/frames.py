@@ -213,15 +213,35 @@ def from_dataframe(
                 stacklevel=2,
             )
 
-    corpus = Corpus.from_documents(
-        docs,
-        min_doc_freq=min_doc_freq,
-        max_doc_fraction=max_doc_fraction,
-        min_cf=min_cf,
-        rm_top=rm_top,
-        max_features=max_features,
-        vocabulary=vocabulary,
-    )
+    try:
+        corpus = Corpus.from_documents(
+            docs,
+            min_doc_freq=min_doc_freq,
+            max_doc_fraction=max_doc_fraction,
+            min_cf=min_cf,
+            rm_top=rm_top,
+            max_features=max_features,
+            vocabulary=vocabulary,
+        )
+    except ValueError as e:
+        # A frequent first-timer mistake is pointing text_col= at a covariate
+        # (e.g. a blog-name column), which tokenizes to almost nothing and empties
+        # the vocabulary. The core's "no words after frequency filtering" is
+        # column-blind; re-raise naming the column, how little it produced, and the
+        # other columns to pick from (issue #732).
+        if "no words after frequency filtering" in str(e):
+            n_tok = sum(len(d) for d in docs)
+            n_nonempty = sum(1 for d in docs if d)
+            others = [str(c) for c in df.columns if c != text_col]
+            raise ValueError(
+                f"text_col={text_col!r} produced an empty corpus: it tokenized to "
+                f"{n_tok} token(s) across {n_nonempty} non-empty document(s), then "
+                f"pruning removed them all. If that count is small, {text_col!r} may "
+                f"be a covariate rather than the text column — other columns are "
+                f"{others}. Otherwise relax the pruning (min_doc_freq / "
+                f"max_doc_fraction / rm_top)."
+            ) from e
+        raise
 
     # Web-scraped text often leaves markup tokens (href/http/aspx) in the vocab,
     # where they form a spurious boilerplate topic. If the user did not strip and

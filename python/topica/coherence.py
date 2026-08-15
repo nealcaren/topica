@@ -373,7 +373,7 @@ def _warn_if_non_distributional(topics):
         pass  # exotic topic_word; skip the check rather than fail coherence
 
 
-def coherence(topics, texts, *, coherence_type="c_v", n=10, topn=None, window_size=None, epsilon=1e-12):
+def coherence(topics, texts, *, coherence_type="c_v", metric=None, n=10, topn=None, window_size=None, epsilon=1e-12):
     """Per-topic coherence against a reference corpus.
 
     Parameters
@@ -386,7 +386,7 @@ def coherence(topics, texts, *, coherence_type="c_v", n=10, topn=None, window_si
         (Raw strings are tokenized for you — passing them is not silently scored
         character-by-character; see issue #648.)
     coherence_type : one of ``"u_mass"``, ``"c_uci"``, ``"c_npmi"``, ``"c_v"``
-        (default ``"c_v"``).
+        (default ``"c_v"``). ``metric=`` is accepted as an alias (issue #732).
     n : number of top words per topic to score (default 10). ``n`` is topica's
         canonical top-words name, shared with ``model.coherence(n=...)`` and
         ``top_words(n)``; ``topn`` is accepted as an alias.
@@ -421,9 +421,18 @@ def coherence(topics, texts, *, coherence_type="c_v", n=10, topn=None, window_si
     pairwise-count factor ``n·(n-1)/2`` at a fixed ``n`` — but because that is a
     constant divisor, the two rank topics identically; only the absolute scale differs.
     """
+    if metric is not None:
+        # `metric=` is an intuitive alias two independent users reached for (#732).
+        if coherence_type != "c_v" and metric != coherence_type:
+            raise ValueError(
+                f"pass either coherence_type= or metric=, not both with different "
+                f"values (coherence_type={coherence_type!r}, metric={metric!r}); "
+                "they are aliases"
+            )
+        coherence_type = metric
     ct = coherence_type.lower()
     if ct not in _VALID:
-        raise ValueError(f"coherence_type must be one of {_VALID}, got {coherence_type!r}")
+        raise ValueError(f"coherence_type/metric must be one of {_VALID}, got {coherence_type!r}")
     topn = n if topn is None else topn  # `topn` is the back-compatible alias for `n`
     if not isinstance(topn, (int, np.integer)) or topn < 1:
         raise ValueError(f"n must be a positive integer, got {topn!r}")
