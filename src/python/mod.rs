@@ -6671,6 +6671,13 @@ impl SAGE {
     /// `group_b`, by log-ratio of the two groups' word probabilities. Returns
     /// ``(word, log_ratio)`` — positive favours `group_a`.
     /// `n` is the number of most contrastive words to return.
+    ///
+    /// Caveat: when a named actor (a person or place name) appears only in one
+    /// group's documents — e.g. a legislator's surname under a ``content=party``
+    /// covariate — that name tops the contrast as pure speaker identity, not
+    /// framing. Strip actor names from the vocabulary before fitting a content
+    /// covariate that correlates with the actor, or read past the names to the
+    /// substantive contrast words underneath (issue #743).
     #[pyo3(signature = (topic, group_a, group_b, n=10))]
     fn word_contrast<'py>(
         &self,
@@ -8817,6 +8824,13 @@ impl STM {
     /// `group_b` (log word-probability ratio; positive favours `group_a`).
     /// Requires content covariates.
     /// `n` is the number of most contrastive words to return.
+    ///
+    /// Caveat: when a named actor (a person or place name) appears only in one
+    /// group's documents — e.g. a legislator's surname under a ``content=party``
+    /// covariate — that name tops the contrast as pure speaker identity, not
+    /// framing. Strip actor names from the vocabulary before fitting a content
+    /// covariate that correlates with the actor, or read past the names to the
+    /// substantive contrast words underneath (issue #743).
     #[pyo3(signature = (topic, group_a, group_b, n=10))]
     fn word_contrast<'py>(
         &self,

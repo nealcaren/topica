@@ -86,6 +86,15 @@ period's wording departs from the baseline only where the data earn it. With
 groups' wording of a topic, one value per period. Averaging it ranks topics by
 how partisan their language is.
 
+!!! warning "Strip actor names before a content covariate that correlates with the actor"
+    On a corpus of named authors (press releases, floor speeches), a person's
+    surname appears only in that person's documents, so under `content=party` the
+    `word_contrast` for a topic is topped by legislator names — speaker identity,
+    not framing. Remove actor names from the vocabulary during preprocessing (add
+    them to the stopword list) so the substantive framing contrast surfaces
+    instead. This example's corpus is already name-light; a raw press-release
+    corpus is not.
+
 ```python
 groups = ("D", "R")
 

@@ -22,6 +22,7 @@ document-topic matrix:
 
 from __future__ import annotations
 
+import warnings
 from collections import Counter
 from dataclasses import dataclass
 
@@ -173,12 +174,28 @@ def by_strata(model_or_theta, strata, *, ci=0.95, topic_names=None, corpus=None,
     return out
 
 
+def _docs_and_vocab(docs):
+    """Token lists plus the known vocabulary set (or ``None``).
+
+    Accepts either raw token lists or a built :class:`~topica.Corpus`. For a
+    Corpus we read its *pruned* token lists (``documents()``) and vocabulary, so
+    keyword diagnostics reflect exactly what ``fit`` will see — a substantive seed
+    word dropped by ``rm_top`` / ``min_doc_freq`` / ``max_doc_fraction`` then
+    shows up as absent, instead of being reported from the raw pre-pruning counts
+    (issue #743).
+    """
+    if hasattr(docs, "documents") and hasattr(docs, "vocabulary"):
+        return docs.documents(), set(docs.vocabulary)
+    return docs, None
+
+
 def _corpus_counts(docs):
     """(per-word corpus count, per-word document frequency, total tokens)."""
+    token_lists, _ = _docs_and_vocab(docs)
     counts = Counter()
     doc_freq = Counter()
     total = 0
-    for d in docs:
+    for d in token_lists:
         counts.update(d)
         doc_freq.update(set(d))
         total += len(d)
@@ -192,14 +209,25 @@ def visualize_keywords(docs, keywords):
     can catch keywords that are too rare to anchor a topic or so frequent they
     dominate it — the diagnostic keyATM asks you to run *before* fitting.
 
+    Pass the **built** :class:`~topica.Corpus` you will fit, not the raw token
+    lists: frequency pruning (``rm_top``, ``min_doc_freq``, ``max_doc_fraction``)
+    can drop a substantive seed word from the vocabulary, and ``fit`` then
+    silently ignores it. Scoring against the corpus reflects what ``fit`` sees, so
+    a pruned seed shows ``count == 0`` and is flagged; scoring against raw docs
+    reports the pre-pruning counts and can disagree with the fit (issue #743).
+
     Returns a dict mapping each keyword-set name to a list of dicts
-    ``{"keyword", "count", "proportion", "doc_freq"}`` sorted by descending
-    proportion, where ``proportion`` is the keyword's share of all corpus tokens
-    and ``doc_freq`` is the number of documents containing it.
+    ``{"keyword", "count", "proportion", "doc_freq", "in_vocab"}`` sorted by
+    descending proportion, where ``proportion`` is the keyword's share of all
+    corpus tokens, ``doc_freq`` is the number of documents containing it, and
+    ``in_vocab`` is ``False`` for a keyword ``fit`` will not see (count 0). When a
+    Corpus is passed, keywords absent from its vocabulary raise a warning.
     """
     counts, doc_freq, total = _corpus_counts(docs)
+    _, vocab = _docs_and_vocab(docs)
     total = max(total, 1)
     out = {}
+    missing = {}
     for name, words in keywords.items():
         rows = [
             {
@@ -207,11 +235,26 @@ def visualize_keywords(docs, keywords):
                 "count": int(counts.get(w, 0)),
                 "proportion": counts.get(w, 0) / total,
                 "doc_freq": int(doc_freq.get(w, 0)),
+                "in_vocab": counts.get(w, 0) > 0,
             }
             for w in words
         ]
         rows.sort(key=lambda r: r["proportion"], reverse=True)
         out[name] = rows
+        gone = [w for w in words if counts.get(w, 0) == 0]
+        if gone:
+            missing[name] = gone
+    if missing and vocab is not None:
+        # A Corpus was passed, so absent keywords are ones the built vocabulary
+        # does not contain — pruned or out-of-vocabulary — and fit will drop them.
+        detail = "; ".join(f"{name}: {kw}" for name, kw in missing.items())
+        warnings.warn(
+            "visualize_keywords: these keywords are not in the corpus vocabulary "
+            f"and fit will ignore them (pruned by rm_top/min_doc_freq or "
+            f"out-of-vocabulary): {detail}. Adjust the pruning or the seed list.",
+            UserWarning,
+            stacklevel=2,
+        )
     return out
 
 
@@ -297,6 +340,12 @@ def refine_keywords(docs, keywords, *, min_count=2, min_doc_freq=1, verbose=Fals
     document frequency is below ``min_doc_freq`` (so out-of-vocabulary keywords,
     with count 0, always go). Keyword sets that end up empty are dropped, since
     a keyword topic needs at least one surviving keyword.
+
+    As with :func:`visualize_keywords`, pass the **built** :class:`~topica.Corpus`
+    you will fit rather than the raw token lists, so a seed word removed by the
+    corpus's frequency pruning (``rm_top`` / ``min_doc_freq`` / ``max_doc_fraction``)
+    is refined out here too, instead of surviving on its raw pre-pruning count and
+    then being silently dropped by ``fit`` (issue #743).
 
     Returns ``(refined, dropped)`` where ``refined`` is the cleaned keyword dict
     and ``dropped`` maps each set name to the list of removed keywords. Set
