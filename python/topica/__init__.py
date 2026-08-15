@@ -347,6 +347,13 @@ from .robustness import (  # noqa: E402  (effect robustness across K / seeds, #6
     effects_across_seeds,
     RobustnessResult,
 )
+from ._results import (  # noqa: E402  (dict results with .to_frame(); #742, #752)
+    FrameDict,
+    QualityFrontier,
+    BootstrapStability,
+    KeywordDiagnostics,
+    TimePrevalenceCI,
+)
 from .analysis import (  # noqa: E402  (model-neutral fitted-model analysis surface)
     topic_info,
     topic_sizes,
@@ -517,6 +524,11 @@ __all__ = [
     "effects_across_k",
     "effects_across_seeds",
     "RobustnessResult",
+    "FrameDict",
+    "QualityFrontier",
+    "BootstrapStability",
+    "KeywordDiagnostics",
+    "TimePrevalenceCI",
     "ensemble",
     "EnsembleResult",
     "cross_ensemble",

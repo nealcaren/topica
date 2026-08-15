@@ -34,6 +34,17 @@ def _corpus(seed=0, n=120):
     return docs
 
 
+def test_result_classes_exported_at_top_level():
+    # #752: the FrameDict result types are reachable as topica.<Name> for
+    # isinstance checks, not buried in topica._results.
+    import topica
+    for name in ("FrameDict", "QualityFrontier", "BootstrapStability",
+                 "KeywordDiagnostics", "TimePrevalenceCI"):
+        assert hasattr(topica, name), f"topica.{name} not exported"
+        assert name in topica.__all__, f"{name} missing from __all__"
+    assert topica.BootstrapStability is BootstrapStability
+
+
 def test_framedict_is_still_a_dict():
     # Non-breaking: a FrameDict compares equal to the plain dict and unpacks.
     fd = BootstrapStability({"mean": 0.7, "topic": [0, 1], "stability": [0.6, 0.8]})
