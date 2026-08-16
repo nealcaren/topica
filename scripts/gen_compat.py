@@ -31,7 +31,6 @@ _CURATED = {
     "effects", "compare", "embeddings", "provenance",
     "Corpus", "tokenize", "from_dataframe",
     "LDA", "STM", "NMF", "KeyATM", "GSDMM", "BERTopic",
-    "search_k", "topic_table", "estimate_effect",
     "list_models", "enable_experimental",
 }
 _TARGET = pathlib.Path(__file__).resolve().parent.parent / "python" / "topica" / "_compat.py"
