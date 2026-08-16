@@ -114,7 +114,9 @@ def diagnostics(model, texts=None, *, n=10, coherence_type=None, stability=False
     def words_for(t):
         if callable(top_method):
             try:
-                return [w for w, _ in top_method(n, topic=t)]
+                # top_words returns bare word strings by default (#752); take them
+                # as-is so the model's own ordering/weighting is preserved.
+                return list(top_method(n, topic=t))
             except Exception as exc:
                 warnings.warn(
                     f"{type(model).__name__}.top_words failed ({type(exc).__name__}: "
@@ -431,8 +433,13 @@ def perplexity(model, held_out, *, seed=0):
             "held-out perplexity. Compare clustering models with coherence or "
             "topic_diversity instead."
         )
-    if hasattr(held_out, "documents"):
-        held_out = held_out.documents()
+    # Corpus.documents is a method; Heldout.documents is a plain list attribute.
+    # Accept both (and raw token lists) rather than assuming a callable (#761).
+    docs_attr = getattr(held_out, "documents", None)
+    if callable(docs_attr):
+        held_out = docs_attr()
+    elif docs_attr is not None:
+        held_out = docs_attr
     phi = _as_topic_word(model)
     if phi.shape[0] == 0:
         raise ValueError("the model has no topics (empty topic_word)")
@@ -1105,6 +1112,19 @@ def topic_stability(runs, *, num_topics=None, k=None, seeds=None, model_factory=
     if corpus_mode:
         from . import LDA  # local import to avoid a cycle at module load
 
+        # Guard the footgun of passing fitted runs *and* num_topics=/seeds= (which
+        # trips corpus mode and then tries to .fit() the model list). A fitted
+        # model exposes topic_word/num_topics; a corpus is a Corpus or token lists.
+        if not hasattr(runs, "documents"):
+            first = next(iter(runs), None)
+            if first is not None and (hasattr(first, "topic_word")
+                                      or hasattr(first, "num_topics")):
+                raise TypeError(
+                    "topic_stability got a list of fitted models together with "
+                    "num_topics=/seeds=/model_factory=, which only apply to the "
+                    "corpus overload. For already-fitted runs, drop those keywords: "
+                    "topic_stability([m1, m2, ...]). To fit from a corpus, pass the "
+                    "corpus as the first argument instead of models.")
         corpus = runs.documents() if hasattr(runs, "documents") else runs
         if model_factory is None and num_topics is None:
             raise ValueError(

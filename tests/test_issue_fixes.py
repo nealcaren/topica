@@ -852,3 +852,46 @@ def test_predicted_prevalence_contrast_bad_shape_is_actionable():
     with pytest.raises(ValueError, match="one-key dict.*or a 2-element sequence"):
         topica.predicted_prevalence(m, formula="party", data=df,
                                     contrast=("R", 1.0, 0.0))
+
+
+def test_diagnostics_no_spurious_warning_after_top_words_bare_strings():
+    # #761: diagnostics() unpacked top_words as (word, weight) pairs, but since
+    # #752 top_words returns bare strings, so it warned and fell back on every call.
+    import warnings
+    docs = [["housing", "rent", "tenant", "landlord", "evict"] * 3,
+            ["health", "clinic", "doctor", "patient", "care"] * 3,
+            ["school", "teacher", "student", "class", "grade"] * 3] * 20
+    m = topica.LDA(3, seed=13).fit(topica.Corpus.from_documents(docs), iters=80)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        rows = topica.diagnostics(m, texts=docs)
+    assert len(rows) == 3
+
+
+def test_perplexity_accepts_heldout_object():
+    # #761: perplexity called held_out.documents() unconditionally, but
+    # Heldout.documents is a list attribute (only Corpus.documents is a method),
+    # so perplexity(model, make_heldout(corpus)) crashed with 'list' not callable.
+    docs = [["housing", "rent", "tenant", "landlord", "evict"] * 3,
+            ["health", "clinic", "doctor", "patient", "care"] * 3,
+            ["school", "teacher", "student", "class", "grade"] * 3] * 20
+    c = topica.Corpus.from_documents(docs)
+    m = topica.LDA(3, seed=13).fit(c, iters=80)
+    ho = topica.make_heldout(c)
+    pp_heldout = float(topica.perplexity(m, ho))
+    pp_corpus = float(topica.perplexity(m, c))
+    assert pp_heldout > 0 and pp_corpus > 0
+
+
+def test_topic_stability_fitted_runs_with_num_topics_is_directive():
+    # #761: passing fitted runs AND num_topics= tripped the corpus overload, which
+    # then tried to .fit() the model list. It should raise a directive TypeError.
+    docs = [["housing", "rent", "tenant", "landlord", "evict"] * 3,
+            ["health", "clinic", "doctor", "patient", "care"] * 3,
+            ["school", "teacher", "student", "class", "grade"] * 3] * 20
+    c = topica.Corpus.from_documents(docs)
+    runs = [topica.LDA(3, seed=s).fit(c, iters=40) for s in (1, 2)]
+    with pytest.raises(TypeError, match="list of fitted models"):
+        topica.topic_stability(runs, num_topics=3)
+    # the plain fitted-runs path still works
+    assert 0.0 <= float(topica.topic_stability(runs)) <= 1.0
