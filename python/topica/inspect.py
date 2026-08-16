@@ -212,7 +212,7 @@ def label_topics(topic_word, vocabulary=None, *, n=10, word_counts=None, corpus=
     keys ``prob``, ``frex``, ``lift``, ``score``, and each value is a list of
     ``(word, value)`` pairs — so select a labeling before reading words::
 
-        labels = topica.label_topics(model)     # one TopicLabels per topic
+        labels = topica.inspect.label_topics(model)     # one TopicLabels per topic
         frex_words = [w for w, _ in labels[0]["frex"]]   # top FREX words of topic 0
         prob_score = labels[0]["prob"]                   # [(word, prob), ...]
 
@@ -359,9 +359,9 @@ def topic_table(model, vocabulary=None, *, doc_topic=None, n=7, weights=False):
 def _model_topic_table(self, vocabulary=None, *, doc_topic=None, n=7, weights=False):
     """A publication-ready topic table for this fitted model.
 
-    Method form of :func:`topica.topic_table`, so ``m.topic_table()`` works by
+    Method form of :func:`topica.inspect.topic_table`, so ``m.topic_table()`` works by
     analogy with ``m.top_words()`` / ``m.coherence()``. Equivalent to
-    ``topica.topic_table(m, ...)``; see that function for the full argument and
+    ``topica.inspect.topic_table(m, ...)``; see that function for the full argument and
     return description.
     """
     return topic_table(self, vocabulary, doc_topic=doc_topic, n=n, weights=weights)
@@ -385,7 +385,7 @@ def _bind_topic_table_method(classes):
         # Time-sliced models (e.g. DTM) expose ``topic_word`` as a method that
         # takes a time index rather than a plain ``(K, V)`` property, so a single
         # flat topic table is ill-defined; skip them rather than binding a method
-        # that could only ever raise. ``topica.topic_table(m.topic_word(t), vocab)``
+        # that could only ever raise. ``topica.inspect.topic_table(m.topic_word(t), vocab)``
         # remains the per-slice route.
         if callable(getattr(cls, "topic_word", None)):
             continue

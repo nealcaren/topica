@@ -27,7 +27,7 @@ The implementations live in :mod:`topica.coherence` (the metrics) and
 :mod:`topica.labeling` (the backend); this module is the curated public surface.
 ``topica.llm.backend`` is the same callable constructor as the top-level
 ``topica.llm_backend`` (kept because it is also the bring-your-own-model adapter for
-:class:`topica.TopicGPT` and :func:`topica.label_topics`).
+:class:`topica.TopicGPT` and :func:`topica.inspect.label_topics`).
 """
 
 from __future__ import annotations

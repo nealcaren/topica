@@ -4,16 +4,16 @@
 rarely carry topical meaning. Pass it to :func:`topica.tokenize` (or the corpus
 builders) so a first LDA fit is not dominated by ``the`` / ``and`` / ``of``::
 
-    docs = [topica.tokenize(t, stopwords=topica.ENGLISH_STOPWORDS) for t in texts]
+    docs = [topica.tokenize(t, stopwords=topica.data.ENGLISH_STOPWORDS) for t in texts]
 
 For other languages — or a more comprehensive English list — use
 :func:`stopwords`, which serves the `stopwords-iso
 <https://github.com/stopwords-iso/stopwords-iso>`_ lists (58 languages, MIT
 licensed; see ``_data/STOPWORDS_ISO_LICENSE.txt``)::
 
-    fr = topica.stopwords("fr")                 # or "french"
+    fr = topica.data.stopwords("fr")                 # or "french"
     corpus = topica.from_dataframe(df, text_col="texte", stopwords=fr)
-    topica.stopword_languages()                 # the available ISO 639-1 codes
+    topica.data.stopword_languages()                 # the available ISO 639-1 codes
 
 ``ENGLISH_STOPWORDS`` is kept as the short, stable default; ``stopwords("en")``
 is the larger stopwords-iso English list.
@@ -61,7 +61,7 @@ def stopwords(language: str) -> frozenset:
     result to :func:`topica.tokenize` or the corpus builders::
 
         corpus = topica.from_dataframe(df, text_col="texte",
-                                       stopwords=topica.stopwords("fr"))
+                                       stopwords=topica.data.stopwords("fr"))
 
     Raises ``ValueError`` with the available codes if the language is unknown.
     """
@@ -116,5 +116,5 @@ _SENTIMENT_BEARING = frozenset({
 #: outcome is valence::
 #:
 #:     corpus = topica.from_dataframe(df, text_col="review",
-#:                                    stopwords=topica.SENTIMENT_STOPWORDS)
+#:                                    stopwords=topica.data.SENTIMENT_STOPWORDS)
 SENTIMENT_STOPWORDS = ENGLISH_STOPWORDS - _SENTIMENT_BEARING

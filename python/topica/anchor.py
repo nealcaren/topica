@@ -333,7 +333,7 @@ class AnchorLDA:
         """Whether anchor selection hit its seeded degenerate-basis fallback during
         fit (issue #410). ``None`` before fit. When ``True`` the recovered topics are
         seed-dependent (a random anchor was drawn); when ``False`` selection was
-        deterministic. Read by :func:`topica.effective_determinism`."""
+        deterministic. Read by :func:`topica.provenance.effective_determinism`."""
         return self._anchor_fallback_used
 
     # -- fitting ------------------------------------------------------------

@@ -114,9 +114,9 @@ def from_dataframe(
     that metadata straight to an STM prevalence design with no manual alignment.
 
     To turn that metadata into a design matrix with an R-style formula, pass
-    ``corpus.metadata`` to :func:`topica.design_matrix`, which needs the optional
+    ``corpus.metadata`` to :func:`topica.design.design_matrix`, which needs the optional
     ``formulaic`` package (``pip install "topica[formula]"``); or build the design
-    by hand with :func:`topica.one_hot` / :func:`topica.spline`, which need no
+    by hand with :func:`topica.design.one_hot` / :func:`topica.design.spline`, which need no
     extra dependency.
 
     Parameters
@@ -139,9 +139,9 @@ def from_dataframe(
         web-boilerplate terms triggers a warning pointing here.
     stopwords : iterable of str or str, optional
         Words to drop during tokenizing. Pass an iterable of words (a set, or the
-        bundled :data:`topica.ENGLISH_STOPWORDS`), or a language name/code string
+        bundled :data:`topica.data.ENGLISH_STOPWORDS`), or a language name/code string
         like ``"english"`` / ``"en"``, which is resolved through
-        :func:`topica.stopwords` (the larger stopwords-iso list). Ignored when a
+        :func:`topica.data.stopwords` (the larger stopwords-iso list). Ignored when a
         custom ``tokenizer`` is given.
     tokenizer : callable, optional
         ``str -> list[str]``. Defaults to :func:`topica.tokenize` with the
@@ -464,7 +464,7 @@ def align(x, corpus):
     the corpus dropped some during pruning::
 
         corpus = topica.Corpus.from_documents(docs, min_doc_freq=5)
-        X = topica.align(X, corpus)          # now aligned to corpus rows
+        X = topica.data.align(X, corpus)          # now aligned to corpus rows
         model.fit(corpus, X, prevalence_names=names)
     """
     idx = corpus.kept_indices

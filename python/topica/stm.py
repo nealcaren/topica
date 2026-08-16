@@ -45,7 +45,7 @@ class TopicEffect:
 
     ``coef``/``se``/``z``/``ci_low``/``ci_high``/``pvalue`` are aligned to
     ``feature_names`` **positionally**. With ``add_intercept=True`` (the
-    :func:`~topica.estimate_effect` default) ``feature_names[0]`` is ``"intercept"``,
+    :func:`~topica.effects.estimate_effect` default) ``feature_names[0]`` is ``"intercept"``,
     so ``coef[0]`` is the baseline constant, *not* your covariate — a common way to
     accidentally report the wrong number. Prefer name-keyed access
     (:meth:`effect_of`, :attr:`by_feature`, :meth:`to_frame`) over positional
@@ -147,7 +147,7 @@ class TopicEffect:
         :func:`estimate_effect` call gives one row per (topic, feature)::
 
             import pandas as pd
-            effects = topica.estimate_effect(model, X, feature_names=names)
+            effects = topica.effects.estimate_effect(model, X, feature_names=names)
             table = pd.concat([e.to_frame() for e in effects], ignore_index=True)
         """
         import pandas as pd
@@ -210,7 +210,7 @@ def _coerce_design(X, feature_names):
     When ``feature_names`` is not given and the input is a DataFrame, the column
     labels are used as feature names. A non-numeric column (strings, a pandas
     ``Categorical``) raises a directive error pointing at
-    :func:`topica.design_matrix` / :func:`topica.one_hot` rather than surfacing a
+    :func:`topica.design.design_matrix` / :func:`topica.design.one_hot` rather than surfacing a
     cryptic numpy cast failure.
 
     Returns ``(X_float64, names_or_None)``.
@@ -222,7 +222,7 @@ def _coerce_design(X, feature_names):
             raise ValueError(
                 f"covariate column(s) {bad} are non-numeric and cannot be cast to "
                 "float. Encode categorical covariates first with "
-                "topica.design_matrix(formula, data) or topica.one_hot(...), then "
+                "topica.design.design_matrix(formula, data) or topica.design.one_hot(...), then "
                 "pass the resulting numeric matrix."
             )
         inferred = [str(c) for c in X.columns]
@@ -235,7 +235,7 @@ def _coerce_design(X, feature_names):
     except (ValueError, TypeError) as e:
         raise ValueError(
             "could not convert the covariates to a float64 matrix; encode "
-            "categorical covariates with topica.design_matrix / topica.one_hot "
+            "categorical covariates with topica.design.design_matrix / topica.design.one_hot "
             f"first (numpy: {e})"
         ) from e
     if arr.ndim == 1:
@@ -689,7 +689,7 @@ def estimate_effect(
     Specifying the design. Give the covariates one of two ways: a prebuilt design
     matrix as ``X`` (with ``feature_names``), or an R-style ``formula`` together
     with a ``data`` frame, which builds ``X`` for you via
-    :func:`topica.design_matrix`. **Use the same design you fit the model with.**
+    :func:`topica.design.design_matrix`. **Use the same design you fit the model with.**
     The effects regression is on the covariates you pass here, not on whatever
     went into ``STM.fit``; if they differ, the coefficients answer a different
     question than the model. The reliable pattern is to build the design once and
@@ -716,7 +716,7 @@ def estimate_effect(
     formula : str, optional
         R-style formula (e.g. ``"~ party + spline(year, df=3)"``) evaluated
         against ``data`` to build ``X`` and ``feature_names``, via
-        :func:`topica.design_matrix` (needs the optional ``topica[formula]``
+        :func:`topica.design.design_matrix` (needs the optional ``topica[formula]``
         extra). Pass either ``X`` or ``formula`` + ``data``, not both.
     topics : sequence[int], optional
         Restrict to these topics. Defaults to all.
@@ -736,7 +736,7 @@ def estimate_effect(
         like any list). For a tidy long table with one row per (topic, feature),
         call the container's :meth:`~EffectList.to_frame`::
 
-            table = topica.estimate_effect(model, X, feature_names=names).to_frame()
+            table = topica.effects.estimate_effect(model, X, feature_names=names).to_frame()
 
         (equivalent to
         ``pd.concat([e.to_frame() for e in result], ignore_index=True)``).
@@ -2100,7 +2100,7 @@ def transform(model, docs, *, prevalence=None, data=None, formula=None, X=None):
 
 # ---------------------------------------------------------------------------
 # Back-compatibility: the general post-hoc diagnostics were moved to
-# ``topica.diagnostics`` (they apply to any model, not just STM) and are
+# ``topica.evaluate.diagnostics`` (they apply to any model, not just STM) and are
 # also exported at the package top level. They are re-exported here so existing
 # ``topica.stm.<name>`` calls keep working.
 # ---------------------------------------------------------------------------

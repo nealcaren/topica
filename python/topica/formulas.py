@@ -3,7 +3,7 @@
 Wraps `formulaic` (an optional dependency) so social scientists can write
 ``"~ treatment * party + spline(year, df=3)"`` instead of hand-stitching
 `one_hot` and `np.hstack`. The library's own restricted-cubic-spline (the same
-one behind :func:`topica.spline`) is exposed inside formulas as ``spline(...)``,
+one behind :func:`topica.design.spline`) is exposed inside formulas as ``spline(...)``,
 so the basis matches what the STM toolkit uses elsewhere.
 """
 
@@ -78,7 +78,7 @@ def _formula_context():
 
     def spline(x, df=4, knots=None):
         # formulaic names the columns spline(col, df=k)[0..]; we return just the
-        # basis (drop the names tuple from topica.spline).
+        # basis (drop the names tuple from topica.design.spline).
         return _spline(x, df=df, knots=knots)[0]
 
     return {"spline": spline}
@@ -90,7 +90,7 @@ def design_matrix(formula, data, _knot_ctx=None):
 
     Returns ``(X, feature_names)`` where ``X`` is a ``(n_rows, p)`` float array
     and ``feature_names`` are the column labels. The intercept that `formulaic`
-    adds is stripped, because :func:`topica.estimate_effect` and the STM
+    adds is stripped, because :func:`topica.effects.estimate_effect` and the STM
     prevalence model add their own. Categorical columns become treatment-coded
     dummies; ``a * b`` / ``a:b`` expand interactions; ``spline(x, df=k)`` uses
     topica's restricted cubic spline. A Polars frame is converted to pandas for
@@ -99,8 +99,8 @@ def design_matrix(formula, data, _knot_ctx=None):
     Requires the optional ``formulaic`` package: install it with
     ``pip install "topica[formula]"`` (or ``pip install formulaic``). Without it,
     this raises ``ImportError`` at call time. If you would rather build the design
-    matrix without that dependency, use :func:`topica.one_hot`,
-    :func:`topica.spline`, and :func:`topica.interaction` directly.
+    matrix without that dependency, use :func:`topica.design.one_hot`,
+    :func:`topica.design.spline`, and :func:`topica.design.interaction` directly.
 
     Parameters
     ----------

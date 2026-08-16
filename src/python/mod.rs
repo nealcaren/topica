@@ -3459,7 +3459,7 @@ impl<'py> FromPyObject<'py> for TopN {
 /// The default (``coherence_type="u_mass"`` with no ``texts``) takes the fast in-Rust
 /// UMass path over the training corpus — unchanged from the historical behavior. Any
 /// other metric, or an explicit reference corpus, is delegated to the single Python
-/// implementation ``topica.coherence`` (which owns c_v / c_uci / c_npmi and the
+/// implementation ``topica.evaluate.coherence`` (which owns c_v / c_uci / c_npmi and the
 /// sliding-window logic), so there is exactly one place each metric is defined.
 /// `tops` are the top-``n`` word ids per topic; `corpus` supplies both the default
 /// reference documents and the id→word map for building the topic word lists.
@@ -3934,7 +3934,7 @@ fn features_cast_error(data: &Bound<'_, PyAny>) -> PyErr {
             return PyValueError::new_err(format!(
                 "covariate column(s) {cols:?} are non-numeric and cannot be cast to \
                  float. Encode categorical covariates first with \
-                 topica.design_matrix(formula, data) or topica.one_hot(...), then pass \
+                 topica.design.design_matrix(formula, data) or topica.design.one_hot(...), then pass \
                  the resulting numeric matrix."
             ));
         }
@@ -3942,7 +3942,7 @@ fn features_cast_error(data: &Bound<'_, PyAny>) -> PyErr {
     PyValueError::new_err(
         "could not convert the input to a float64 matrix. Pass a numeric \
          array/DataFrame (a 2-D matrix or a 1-D column); if these are categorical \
-         covariates, encode them first with topica.design_matrix / topica.one_hot.",
+         covariates, encode them first with topica.design.design_matrix / topica.design.one_hot.",
     )
 }
 
@@ -9318,7 +9318,7 @@ fn window_cooccurrence(
 /// probability matrix as a list of lists; `word_counts` (length V) enables stm's
 /// James-Stein exclusivity shrinkage when non-empty (pass `[]` to skip it); `w`
 /// is the frequency/exclusivity weight. Internal: backs the cross-language FREX
-/// parity check against the pure-Python `topica.frex` (issue #260).
+/// parity check against the pure-Python `topica.inspect.frex` (issue #260).
 #[pyfunction]
 #[pyo3(signature = (beta, word_counts, w=0.5))]
 fn inspect_frex_scores(
@@ -16018,7 +16018,7 @@ impl KeyATM {
     /// (``α_{d,k} = exp(x_d · λ_k)``), not differences in topic proportions: the
     /// sign gives the direction of a covariate's effect on topic k, but for the
     /// effect on the topic-share scale (what to report) use
-    /// ``topica.predicted_prevalence``. λ is estimated by L-BFGS MAP (not keyATM's
+    /// ``topica.effects.predicted_prevalence``. λ is estimated by L-BFGS MAP (not keyATM's
     /// per-sweep MCMC sampling). Raises if the model was fit without covariates.
     #[getter]
     fn feature_effects<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {

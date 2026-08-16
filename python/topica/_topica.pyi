@@ -73,7 +73,7 @@ def inspect_frex_scores(
 
     `word_counts` (length V) enables stm's James-Stein exclusivity shrinkage when
     non-empty; pass [] to skip it. Backs the cross-language FREX parity check
-    against the pure-Python topica.frex.
+    against the pure-Python topica.inspect.frex.
     """
     ...
 
@@ -126,7 +126,7 @@ def window_cooccurrence(
 
     docs holds relevant-word ids per token, 4294967295 marks a non-relevant
     token; pairs are (a, b) with a < b; window=0 requests document-level
-    co-occurrence. Returns (occ, co, n_windows). Used by topica.coherence.
+    co-occurrence. Returns (occ, co, n_windows). Used by topica.evaluate.coherence.
     """
     ...
 
@@ -6353,7 +6353,7 @@ class KeyATM:
         the intercept. These are the log-alpha regression coefficients
         (alpha_dk = exp(x_d . lambda_k)), NOT differences in topic proportions:
         the sign gives direction, but for the effect on the topic-share scale use
-        topica.predicted_prevalence. lambda is MAP-estimated (not keyATM's
+        topica.effects.predicted_prevalence. lambda is MAP-estimated (not keyATM's
         per-sweep MCMC). Raises if fit without covariates."""
         ...
     @property

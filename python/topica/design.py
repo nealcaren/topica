@@ -3,7 +3,7 @@
 Build the design a covariate model reads: R-style formulas, one-hot encodings,
 splines, and interactions. Re-exports the helpers that already live in
 :mod:`topica.formulas` and :mod:`topica.stm`; the names are also available at the
-package root (``topica.design_matrix``, ``topica.spline``, ``topica.one_hot`` …).
+package root (``topica.design.design_matrix``, ``topica.design.spline``, ``topica.design.one_hot`` …).
 """
 
 from __future__ import annotations

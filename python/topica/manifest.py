@@ -6,7 +6,7 @@ than a single green check. It is deliberately **not** a second model
 serialization: it composes with ``Corpus.save`` / ``model.save`` and references
 them by path + digest rather than embedding them.
 
-    record = topica.record_fit(model, corpus, prevalence=X, iters=1000)
+    record = topica.provenance.record_fit(model, corpus, prevalence=X, iters=1000)
     record.add_decision("K", "Chose 20 after inspecting 15/20/25.")
     record.save("analysis.topica.json")
 
@@ -973,7 +973,7 @@ def _capture_diagnostic(name: str, model, corpus, n: int) -> dict[str, Any]:
         if name == "coherence":
             value = float(_np.mean(model.coherence(n)))
         elif name == "exclusivity":
-            value = float(_np.mean(topica.exclusivity(model, n=n)))
+            value = float(_np.mean(topica.evaluate.exclusivity(model, n=n)))
         else:  # pragma: no cover - guarded by BUILTIN_DIAGNOSTICS
             raise KeyError(name)
         entry["value"] = value

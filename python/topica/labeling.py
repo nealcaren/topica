@@ -11,7 +11,7 @@ provider and local models via plugins.
 
 LLM labels are a readable convenience, not a reproducible measurement. Pin the
 model and set temperature to 0 for stability, and keep FREX / probability / lift
-(:func:`topica.label_topics`) as the defensible, deterministic descriptors.
+(:func:`topica.inspect.label_topics`) as the defensible, deterministic descriptors.
 """
 
 from __future__ import annotations
@@ -135,7 +135,7 @@ def llm_topic_labels(model, texts=None, *, backend=None, llm_model="gpt-4o-mini"
     :func:`topica.topic_labels`, and :func:`topica.plot_report`.
 
     LLM labels are a convenience, not a reproducible measurement: pin the model
-    and set temperature to 0, and keep :func:`topica.label_topics` (FREX /
+    and set temperature to 0, and keep :func:`topica.inspect.label_topics` (FREX /
     probability / lift) for the defensible descriptors.
     """
     fn = backend if backend is not None else llm_backend(llm_model)
