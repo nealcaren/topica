@@ -225,3 +225,42 @@ def test_clean_text_does_not_warn_boilerplate():
     with warnings.catch_warnings():
         warnings.simplefilter("error")  # clean corpus: no boilerplate warning
         topica.from_dataframe(df, text_col="text")
+
+
+# ---------------------------------------------------------------------------
+# #766: a bare stopwords= string is a language, not an iterable of characters
+# ---------------------------------------------------------------------------
+
+
+def test_from_dataframe_stopwords_string_resolves_as_language():
+    # The scikit-learn stop_words="english" habit used to be list()'d into single
+    # characters and silently removed nothing. It now resolves via topica.stopwords.
+    df = pd.DataFrame(
+        {"text": ["the government passed a new law and the senate agreed today"]}
+    )
+    c = topica.from_dataframe(df, text_col="text", stopwords="english")
+    assert not ({"the", "and", "a"} & set(c.vocabulary))  # real stopwords gone
+    assert "government" in c.vocabulary
+    # a language code works too
+    c2 = topica.from_dataframe(df, text_col="text", stopwords="en")
+    assert set(c2.vocabulary) == set(c.vocabulary)
+
+
+def test_from_documents_and_tokenize_stopwords_string_resolves_as_language():
+    toks = [["the", "senate", "and", "the", "house", "agreed"]]
+    c = topica.Corpus.from_documents(toks, stopwords="english", min_doc_freq=1)
+    assert not ({"the", "and"} & set(c.vocabulary))
+    assert topica.tokenize("the senate and the house", stopwords="english") == [
+        "senate",
+        "house",
+    ]
+
+
+def test_stopwords_set_still_accepted_and_unknown_language_raises():
+    df = pd.DataFrame({"text": ["the cat and the dog"]})
+    # an explicit set is unchanged (only those words dropped)
+    c = topica.from_dataframe(df, text_col="text", stopwords={"the"})
+    assert "the" not in c.vocabulary and "and" in c.vocabulary
+    # an unknown language surfaces topica.stopwords' own directive error
+    with pytest.raises(ValueError, match="no bundled stopword list"):
+        topica.tokenize("hello world", stopwords="klingon")

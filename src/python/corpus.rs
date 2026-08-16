@@ -11,7 +11,7 @@ use std::path::Path;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::{PyBytes, PyDict, PyString};
 
 use super::build_corpus_from_docs_ext;
 use super::error::io_err;
@@ -21,11 +21,27 @@ use crate::corpus::{self, InputFormat, LoadOptions};
 /// strings (list, tuple, set, frozenset) so the bundled `ENGLISH_STOPWORDS`
 /// frozenset composes directly with the corpus builders (issue #742), the same
 /// way `tokenize` already accepts it.
-fn stopwords_set(stopwords: Option<&Bound<'_, PyAny>>) -> PyResult<HashSet<String>> {
+///
+/// A bare string is read as a language name/code (the scikit-learn
+/// `stop_words="english"` habit) and resolved through `topica.stopwords(lang)`,
+/// rather than iterating the string into single characters — which silently
+/// removed a handful of letters and left the real stopwords in place (#766).
+pub(crate) fn stopwords_set(stopwords: Option<&Bound<'_, PyAny>>) -> PyResult<HashSet<String>> {
     match stopwords {
         Some(obj) => {
+            let resolved;
+            let iterable = if obj.is_instance_of::<PyString>() {
+                resolved = obj
+                    .py()
+                    .import_bound("topica")?
+                    .getattr("stopwords")?
+                    .call1((obj,))?;
+                &resolved
+            } else {
+                obj
+            };
             let mut s = HashSet::new();
-            for item in obj.iter()? {
+            for item in iterable.iter()? {
                 s.insert(item?.extract::<String>()?);
             }
             Ok(s)
@@ -225,7 +241,10 @@ impl Corpus {
     ///
     /// `documents` is a sequence of token lists. Optional `doc_names` /
     /// `doc_labels` (each the same length as `documents`) attach an id and a
-    /// label to every document. `stopwords` are dropped. Vocabulary is pruned by
+    /// label to every document. `stopwords` are dropped: pass an iterable of words
+    /// (e.g. a set, or the bundled `ENGLISH_STOPWORDS`), or a language name/code
+    /// string like `"english"` / `"en"`, which is resolved through
+    /// :func:`topica.stopwords`. Vocabulary is pruned by
     /// `min_doc_freq` (minimum document frequency) and `max_doc_fraction`
     /// (maximum fraction of documents), by `min_cf` (minimum collection/total
     /// frequency), and by `rm_top` (drop the N most frequent words) — matching

@@ -137,6 +137,12 @@ def from_dataframe(
         conservative clean (tags + URLs only); for heavier normalization pass your
         own ``tokenizer``. When left False, a vocabulary that still contains obvious
         web-boilerplate terms triggers a warning pointing here.
+    stopwords : iterable of str or str, optional
+        Words to drop during tokenizing. Pass an iterable of words (a set, or the
+        bundled :data:`topica.ENGLISH_STOPWORDS`), or a language name/code string
+        like ``"english"`` / ``"en"``, which is resolved through
+        :func:`topica.stopwords` (the larger stopwords-iso list). Ignored when a
+        custom ``tokenizer`` is given.
     tokenizer : callable, optional
         ``str -> list[str]``. Defaults to :func:`topica.tokenize` with the
         ``stopwords`` and ``min_length`` arguments below. This is also where you
@@ -166,6 +172,14 @@ def from_dataframe(
     if strip_html:
         texts = [_strip_web(t) if isinstance(t, str) else t for t in texts]
     if tokenizer is None:
+        if isinstance(stopwords, str):
+            # A bare string is a language name/code (the scikit-learn
+            # stop_words="english" habit), not an iterable of words. Resolve it
+            # once here rather than letting list("english") shatter it into
+            # single characters that remove nothing useful (#766).
+            from .stopwords import stopwords as _resolve_stopwords
+
+            stopwords = _resolve_stopwords(stopwords)
         sw = list(stopwords) if stopwords is not None else None
         docs = [
             tokenize(t if isinstance(t, str) else "", stopwords=sw, min_length=min_length)

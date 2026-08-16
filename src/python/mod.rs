@@ -9543,7 +9543,9 @@ fn project<'py>(
 ///
 /// `text` is the input string. `token_regex` is the token-matching pattern
 /// (None = the default word regex). `min_length` drops tokens shorter than that
-/// many characters.
+/// many characters. `stopwords` is an iterable of words (e.g. a set or the bundled
+/// `ENGLISH_STOPWORDS`), or a language name/code string like `"english"` / `"en"`,
+/// which is resolved through :func:`topica.stopwords`.
 #[pyfunction]
 #[pyo3(signature = (text, *, lowercase=true, stopwords=None, token_regex=None, min_length=1))]
 fn tokenize(
@@ -9556,17 +9558,9 @@ fn tokenize(
     let pattern = token_regex.unwrap_or_else(|| corpus::DEFAULT_TOKEN_REGEX.to_string());
     let re = Regex::new(&pattern).map_err(|e| PyValueError::new_err(e.to_string()))?;
     // Accept any iterable of strings (list, tuple, set, frozenset) so a
-    // `ENGLISH_STOPWORDS` frozenset can be passed directly.
-    let stop: HashSet<String> = match stopwords {
-        Some(obj) => {
-            let mut s = HashSet::new();
-            for item in obj.iter()? {
-                s.insert(item?.extract::<String>()?);
-            }
-            s
-        }
-        None => HashSet::new(),
-    };
+    // `ENGLISH_STOPWORDS` frozenset can be passed directly; a bare language
+    // string (e.g. "english") is resolved via `topica.stopwords` (#766).
+    let stop: HashSet<String> = py_corpus::stopwords_set(stopwords)?;
 
     let mut out = Vec::new();
     for m in re.find_iter(text) {
