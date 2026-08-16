@@ -161,8 +161,10 @@ class TestAcrossSeeds:
 
 class TestApi:
     def test_exported(self):
+        # Curated root (#757): still resolves at the top level, no longer required
+        # to be in __all__.
         for name in ("effects_across_k", "effects_across_seeds", "RobustnessResult"):
-            assert hasattr(topica, name) and name in topica.__all__
+            assert hasattr(topica, name)
 
     def test_empty_settings_raises(self):
         docs, X, names = _planted(n=40)

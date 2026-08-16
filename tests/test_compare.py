@@ -219,10 +219,13 @@ def test_compare_render_html_and_markdown_and_dict():
 
 
 def test_compare_public_api_exported():
-    for name in ("compare", "CompareResult", "MatchedPair", "UnmatchedTopic"):
+    # Curated root (#757): the compare family resolves at the top level. `compare`
+    # is a callable module (topica.compare(a, b) works and stays in __all__); the
+    # result types are reachable both flat and via topica.compare.*.
+    assert callable(topica.compare) and "compare" in topica.__all__
+    for name in ("CompareResult", "MatchedPair", "UnmatchedTopic"):
         assert hasattr(topica, name), f"topica.{name} not exported"
-        assert name in topica.__all__, f"{name} missing from __all__"
-    assert callable(topica.compare)
+        assert getattr(topica, name) is getattr(topica.compare, name)
 
 
 # --- manifest-native compare (#415): compare two provenance records -----------

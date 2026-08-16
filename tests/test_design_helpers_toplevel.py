@@ -12,11 +12,10 @@ import topica
 def test_spline_interaction_exported_at_top_level():
     assert hasattr(topica, "spline"), "topica.spline should be a top-level export"
     assert hasattr(topica, "interaction"), "topica.interaction should be top level"
-    # Same object as the stm-namespaced helper (re-export, not a copy).
-    assert topica.spline is topica.stm.spline
-    assert topica.interaction is topica.stm.interaction
-    assert "spline" in topica.__all__
-    assert "interaction" in topica.__all__
+    # Same object as the namespaced helpers (re-export, not a copy). Their home is
+    # topica.design (#757); topica.stm re-exports them too.
+    assert topica.spline is topica.stm.spline is topica.design.spline
+    assert topica.interaction is topica.stm.interaction is topica.design.interaction
 
 
 def test_spline_block_drives_a_non_stm_covariate_model():
