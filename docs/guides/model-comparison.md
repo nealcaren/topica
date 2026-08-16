@@ -355,8 +355,8 @@ remain, `compare` can still align them — as long as each fit was recorded with
 top words retained:
 
 ```python
-ra = topica.record_fit(fit_a, corpus_a, topic_words_n=25)   # opt-in: top words are content
-rb = topica.record_fit(fit_b, corpus_b, topic_words_n=25)
+ra = topica.provenance.record_fit(fit_a, corpus_a, topic_words_n=25)   # opt-in: top words are content
+rb = topica.provenance.record_fit(fit_b, corpus_b, topic_words_n=25)
 cmp = topica.compare(ra, rb)                                 # same CompareResult, no refit
 ```
 

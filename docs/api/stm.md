@@ -4,7 +4,7 @@ The structural / covariate operations live in `topica.stm`. The general
 post-hoc diagnostics (labeling, alignment, pyLDAvis, …) are on the
 [Diagnostics](diagnostics.md) page.
 
-::: topica.standard_errors
+::: topica.effects.standard_errors
 
 ::: topica.stm.estimate_effect
 
@@ -36,18 +36,18 @@ Compute predicted topic prevalence at chosen covariate values, with
 simulation-based credible intervals — the model-agnostic counterpart of
 R `stm`'s `plot.estimateEffect`.
 
-::: topica.predicted_prevalence
+::: topica.effects.predicted_prevalence
 
-::: topica.PredictedPrevalence
+::: topica.effects.PredictedPrevalence
 
 ## Permutation test
 
 Distribution-free test of whether a binary prevalence covariate genuinely
 shifts topic prevalence, or whether the association could arise by chance.
 
-::: topica.permutation_test
+::: topica.effects.permutation_test
 
-::: topica.PermutationResult
+::: topica.effects.PermutationResult
 
 ## Per-group prevalence with credible bands
 
@@ -67,17 +67,17 @@ model, setting the per-document prior from `mu_d = X_d gamma`.
 Map new token lists onto the fitted vocabulary before calling `transform`,
 dropping any out-of-vocabulary tokens.
 
-::: topica.align_corpus
+::: topica.design.align_corpus
 
 ## Model selection at fixed K
 
 Run multiple initializations at a fixed K and compare candidates on the
 coherence-exclusivity frontier — the analogue of R `stm`'s `selectModel`.
 
-::: topica.select_model
+::: topica.select.select_model
 
-::: topica.SelectModelResult
+::: topica.select.SelectModelResult
 
 Visualize the coherence-versus-exclusivity scatter across candidate runs.
 
-::: topica.plot_models
+::: topica.select.plot_models

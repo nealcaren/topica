@@ -34,7 +34,7 @@ import topica
 df = topica.datasets.load_congress()          # bundled clean sample (or build from raw)
 corpus = topica.from_dataframe(
     df, text_col="text", strip_html=True,
-    stopwords=topica.ENGLISH_STOPWORDS,
+    stopwords=topica.data.ENGLISH_STOPWORDS,
     min_doc_freq=10, max_doc_fraction=0.4,
 )
 ```
@@ -44,12 +44,12 @@ corpus = topica.from_dataframe(
 We pick `K` at the coherence/exclusivity frontier, then fit with a hand-built
 design: the party contrast (reference = Democrat) plus a centered linear year, so
 the year coefficient reads directly as a per-year trend. For curvature, swap in
-`topica.spline(year, df=4)`, which returns a `(basis, names)` pair you `hstack`
+`topica.design.spline(year, df=4)`, which returns a `(basis, names)` pair you `hstack`
 the same way.
 
 ```python
-X_party, party_names = topica.one_hot(corpus.metadata["party"], reference="Democrat")
-scan = topica.search_k(corpus, [10, 15, 20, 25], model="stm",
+X_party, party_names = topica.design.one_hot(corpus.metadata["party"], reference="Democrat")
+scan = topica.select.search_k(corpus, [10, 15, 20, 25], model="stm",
                        prevalence=X_party, iters=60, seed=13)
 k = scan.best_k()                              # frontier knee; warns on a grid edge
 
@@ -78,7 +78,7 @@ A representative `K = 15` FREX table (`label_topics(model, n=8)`):
 Read every effect by **name** — never `coef[0]`, which is the intercept.
 
 ```python
-effects = topica.estimate_effect(model, X=X, feature_names=names, nsims=50, seed=0)
+effects = topica.effects.estimate_effect(model, X=X, feature_names=names, nsims=50, seed=0)
 
 for eff in effects:
     party = eff.effect_of("Republican")   # positive = more Republican (baseline Democrat)

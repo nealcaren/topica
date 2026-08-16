@@ -12,7 +12,7 @@ import topica
 
 df = topica.datasets.load_gadarian()
 corpus = topica.from_dataframe(
-    df, text_col="open.ended.response", stopwords=topica.ENGLISH_STOPWORDS
+    df, text_col="open.ended.response", stopwords=topica.data.ENGLISH_STOPWORDS
 )
 ```
 

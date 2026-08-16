@@ -407,7 +407,7 @@ each, so you can tell a real effect from noise.
 
 ```python
 import numpy as np
-X, names = topica.one_hot(party)
+X, names = topica.design.one_hot(party)
 model = topica.DMR(num_topics=20, seed=1)
 model.fit(docs, X, feature_names=names)
 z = model.feature_effects / model.feature_effect_se   # |z| > ~2 ⇒ notable
@@ -1059,7 +1059,7 @@ When every document has exactly **one** author/group, ATM is essentially equival
 
 ```python
 df = topica.datasets.load_dubois().drop_duplicates("text")
-corpus = topica.from_dataframe(df, text_col="text", stopwords=topica.ENGLISH_STOPWORDS)
+corpus = topica.from_dataframe(df, text_col="text", stopwords=topica.data.ENGLISH_STOPWORDS)
 decade = [[f"{int(y) // 10 * 10}s"] for y in df.year]      # grouping variable as "author"
 m = topica.AuthorTopic(12, seed=13).fit(corpus, decade, iters=500)
 dict(zip(m.authors, m.author_doc_counts))                 # docs behind each decade
@@ -1091,7 +1091,7 @@ m.top_words(10, topic=0)          # global topic 0 (topics 0..4 global, 5..14 lo
 ```python
 import re
 raw = topica.datasets.load_dubois()["text"]
-stop = topica.ENGLISH_STOPWORDS
+stop = topica.data.ENGLISH_STOPWORDS
 def to_sentences(text):
     sents = [re.findall(r"[a-z]+", s.lower()) for s in re.split(r"[.!?]", text)]
     sents = [[w for w in s if w not in stop and len(w) > 2] for s in sents]
@@ -1137,7 +1137,7 @@ Gaussian LDA ([Das, Zaheer & Dyer 2015](https://aclanthology.org/P15-1077/)) mov
 
 ```python
 vocab = [...]                                   # your vocabulary
-rho = topica.llm_embed(vocab, model=...)        # (len(vocab), E) word embeddings
+rho = topica.embeddings.llm_embed(vocab, model=...)        # (len(vocab), E) word embeddings
 rho = (rho - rho.mean(0)) / rho.std(0)          # standardize: avoids mode collapse on
                                                 # dense contextual embeddings (see below)
 m = topica.GaussianLDA(num_topics=10, seed=13).fit(docs, rho, vocab)
@@ -1166,7 +1166,7 @@ We validate in `parity/gaussian_lda_gold.py` against the authors' Apache-2.0 Jav
 
 Semantic Signal Separation ([S³; Kardos, Kostkan, Enevoldsen, Vermillet, Nielbo & Rocca, ACL 2025](https://aclanthology.org/2025.acl-long.32/)) treats topics as *independent axes* of semantic space rather than distributions over a bag of words. It runs FastICA on the document embeddings; each recovered independent component is a topic axis. A word's importance to a topic comes from projecting the vocabulary embeddings onto that axis, so the topics are described in words without any bag-of-words modelling. The reference is the flagship model of [turftopic](https://github.com/x-tabdeveloping/turftopic), and the authors report it is the fastest contextual topic model.
 
-Like topica's other embedding-native models, you bring the embeddings: a `doc_embeddings` matrix (one row per document) and a `vocab_embeddings` matrix (one row per vocabulary term) in the same space. `topica.llm_embed(texts, model=...)` can build them.
+Like topica's other embedding-native models, you bring the embeddings: a `doc_embeddings` matrix (one row per document) and a `vocab_embeddings` matrix (one row per vocabulary term) in the same space. `topica.embeddings.llm_embed(texts, model=...)` can build them.
 
 ```python
 m = topica.SemanticSignalSeparation(num_topics=10, seed=1)
@@ -1201,7 +1201,7 @@ The anchor-words algorithm ([Arora et al. 2013](https://proceedings.mlr.press/v2
 `AnchorLDA` is validated against the [`anchor-topic`](https://pypi.org/project/anchor-topic/) RecoverL2 reference: the co-occurrence matrix agrees to numerical precision, and given the same anchors topica's `recover="l2"` recovery matches the reference to cosine ~1.0 on both a planted corpus and real survey text (`parity/anchor_compare.py`). The two libraries use different (both valid) greedy anchor selectors, so end-to-end agreement is corpus-dependent; the untempered configuration matches the full reference pipeline on a planted separable fixture. The default `frequency_temper=0.5` tempers frequent-word dominance for more distinctive topics — a deliberate, corpus-dependent departure from the reference-exact inversion, not reference parity.
 
 ```python
-m = topica.AnchorLDA(num_topics=20, min_count=5, seed=0)
+m = topica.embeddings.AnchorLDA(num_topics=20, min_count=5, seed=0)
 m.fit(docs)
 m.anchors                # the anchor word identifying each topic
 m.top_words(10)          # the recovered topic-word distributions

@@ -30,7 +30,7 @@ import topica
 df = topica.datasets.load_reviews()
 corpus = topica.from_dataframe(
     df, text_col="text",
-    stopwords=topica.SENTIMENT_STOPWORDS,   # keeps not / no / very / too
+    stopwords=topica.data.SENTIMENT_STOPWORDS,   # keeps not / no / very / too
     min_doc_freq=5, max_doc_fraction=0.5,
 )
 X = (corpus.metadata["stars"].to_numpy(float) - 3.0).reshape(-1, 1)  # centered 1..5
@@ -46,7 +46,7 @@ negative slope is a **complaint** topic (more prevalent in low-star reviews); a
 positive slope is **praise**.
 
 ```python
-effects = topica.estimate_effect(model.doc_topic, X, feature_names=["stars"],
+effects = topica.effects.estimate_effect(model.doc_topic, X, feature_names=["stars"],
                                  nsims=60, seed=0)
 for eff in effects:
     star = eff.effect_of("stars")     # dict: coef, se, z, ci_low, ci_high, pvalue

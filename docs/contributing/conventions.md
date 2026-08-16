@@ -74,7 +74,7 @@ by construction rather than by memory.
 7. **`coherence(...)`'s first positional argument is `n`, the top-word count — not
    the corpus.** It defaults to the training corpus, so bare `model.coherence()`
    works; pass a reference corpus with the keyword `texts=` for the windowed
-   measures. This flips the convention of the module-level `topica.coherence(
+   measures. This flips the convention of the module-level `topica.evaluate.coherence(
    topics, texts, ...)`, whose first argument is the topics — so
    `model.coherence(corpus.documents())` misfires. Passing texts positionally now
    raises a directive `TypeError` naming the `texts=` keyword rather than an

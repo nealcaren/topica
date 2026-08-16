@@ -66,7 +66,7 @@ ep.to_frame()              # coef / se / ci / reliable per topic
 Reuse `search_k` / `quality_frontier`, with the data export and a clean figure:
 
 ```python
-rows = topica.search_k(docs, ks=[10, 20, 30, 40], held_out=test_docs)
+rows = topica.select.search_k(docs, ks=[10, 20, 30, 40], held_out=test_docs)
 viz.search_k(rows).to_png("choose_k.png")          # coherence / exclusivity / perplexity vs K
 viz.coherence_frontier(model, texts).to_png("frontier.png")   # per-topic, defend dropping topics
 ```

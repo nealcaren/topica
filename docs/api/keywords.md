@@ -10,21 +10,21 @@
 
 ::: topica.tokenize
 
-::: topica.split_documents
+::: topica.data.split_documents
 
-::: topica.one_hot
+::: topica.design.one_hot
 
 Prune rare (and optionally common) vocabulary from a corpus, keeping
 metadata row-aligned with the documents that survive — the analogue of R
 `stm`'s `prepDocuments`.
 
-::: topica.prep_documents
+::: topica.data.prep_documents
 
 Sweep document-frequency thresholds and visualize how many documents and
 vocabulary terms are removed at each level, to inform the choice of
 `lower_thresh`.
 
-::: topica.plot_removed
+::: topica.data.plot_removed
 
 ## DataFrames & metadata
 
@@ -33,22 +33,22 @@ lists), keeping document metadata aligned to the rows that survive pruning.
 
 ::: topica.from_dataframe
 
-::: topica.align
+::: topica.data.align
 
-::: topica.design_matrix
+::: topica.design.design_matrix
 
 ## Embeddings
 
-::: topica.llm_embed
+::: topica.embeddings.llm_embed
 
-::: topica.save_embeddings
+::: topica.embeddings.save_embeddings
 
-::: topica.load_embeddings
+::: topica.embeddings.load_embeddings
 
 ## Phrases
 
-::: topica.learn_phrases
+::: topica.data.learn_phrases
 
-::: topica.apply_phrases
+::: topica.data.apply_phrases
 
-::: topica.add_ngrams
+::: topica.data.add_ngrams

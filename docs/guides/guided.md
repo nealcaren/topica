@@ -92,7 +92,7 @@ model.fit(docs, covariates=is_dem, feature_names=["is_dem"], iters=1000)
 
 # Report predicted topic proportions at each covariate value, with CIs — the
 # interpretable, on-the-proportion-scale answer (R keyATM's predicted props).
-pp = topica.predicted_prevalence(
+pp = topica.effects.predicted_prevalence(
     model, X=is_dem, feature_names=["is_dem"], at={"is_dem": [0, 1]}
 )
 print(pp)   # per topic (with topic_name): predicted share at is_dem=0 vs 1, 95% CI
@@ -177,7 +177,7 @@ topica.enable_experimental()   # EmbeddingLDA is experimental and gated
 vocab = sorted({w for d in docs for w in d})
 emb = SentenceTransformer("all-MiniLM-L6-v2").encode(vocab)
 
-model = topica.EmbeddingLDA(num_topics=10, embeddings=emb, vocabulary=vocab,
+model = topica.embeddings.EmbeddingLDA(num_topics=10, embeddings=emb, vocabulary=vocab,
                             top_m=20)   # weight defaults to a light 0.1
 model.fit(docs, iters=1000)
 for i, words in enumerate(model.top_words(8)):
@@ -192,7 +192,7 @@ necessarily co-occur, so anchoring them hard lowers topic coherence (see the
 hold topics closer to their semantic cluster.
 The whole fitted-model surface (`topic_word`, `doc_topic`, `top_words`,
 `coherence`, ...) is delegated to the underlying `SeededLDA`, and `model.seeds`
-holds the embedding-derived seed sets. `topica.embedding_seeds(...)` exposes just
+holds the embedding-derived seed sets. `topica.embeddings.embedding_seeds(...)` exposes just
 the clustering step if you want to inspect or edit the seeds before fitting.
 
 ## GuidedNMF

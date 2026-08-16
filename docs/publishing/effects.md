@@ -13,7 +13,7 @@ metadata. Fit prevalence as a regression on your covariates:
 ```python
 import topica
 
-X, names = topica.one_hot(party)                     # or build any design matrix
+X, names = topica.design.one_hot(party)                     # or build any design matrix
 model = topica.STM(num_topics=20, seed=1)
 model.fit(docs, prevalence=X, prevalence_names=names)
 ```
@@ -48,22 +48,22 @@ For non-linear time trends and interactions, build the design matrix with
 `stm.spline` and `stm.interaction`, the same `~ s(year)` and `~ a*b` you'd write
 in R.
 
-`topica.standard_errors` wraps this in one call: it detects the model family,
+`topica.effects.standard_errors` wraps this in one call: it detects the model family,
 draws the right posterior for you, and returns the same effects. It also reaches
 quantities the manual path doesn't, group prevalence and bootstrap intervals on
 the top words, with an alignment-quality flag for the embedding models. See
 [Reporting uncertainty](../guides/uncertainty.md).
 
 ```python
-eff = topica.standard_errors(model, corpus, of="effect",
+eff = topica.effects.standard_errors(model, corpus, of="effect",
                              formula="~ party", data=meta, nsims=50)
 ```
 
 ## It is not just for STM
 
-`topica.estimate_effect` regresses *any* model's θ on covariates, and
-`topica.by_strata` (mean prevalence by group, with intervals) and
-`topica.top_topics` work on any model's θ too.
+`topica.effects.estimate_effect` regresses *any* model's θ on covariates, and
+`topica.effects.by_strata` (mean prevalence by group, with intervals) and
+`topica.effects.top_topics` work on any model's θ too.
 
 STM and CTM have a logistic-normal posterior, so `posterior_theta_samples` draws
 from it directly. A Gibbs model (LDA, keyATM, SeededLDA, ...) has no such
@@ -78,8 +78,8 @@ model = topica.LDA(num_topics=20, seed=1)
 model.fit(docs, iters=1000)
 
 lengths = np.array([len(d) for d in docs])
-draws = topica.dirichlet_theta_samples(model.doc_topic, lengths, nsims=50, seed=0)
-effects = topica.estimate_effect(draws, X, feature_names=names)
+draws = topica.effects.dirichlet_theta_samples(model.doc_topic, lengths, nsims=50, seed=0)
+effects = topica.effects.estimate_effect(draws, X, feature_names=names)
 ```
 
 Pass the point θ (`model.doc_topic`) instead of draws and you get a plain OLS fit

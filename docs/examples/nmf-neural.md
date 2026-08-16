@@ -38,7 +38,7 @@ labels = np.array(b.labels)
 corpus = topica.Corpus.from_documents(docs, min_doc_freq=10, max_doc_fraction=0.4)
 
 for family in ("nmf", "lsa"):
-    scan = topica.search_k(corpus, [3, 4, 5, 6, 8], model=family)
+    scan = topica.select.search_k(corpus, [3, 4, 5, 6, 8], model=family)
     print(family, scan.best_k("reconstruction_error", rule="elbow"))
 ```
 
@@ -103,7 +103,7 @@ LSA's `topic_word` rows are signed SVD loadings, not a word distribution, so
 coherence computed on them is not on the same footing as NMF's — topica warns you:
 
 ```python
-topica.coherence(lsa, corpus)   # UserWarning: topic_word has negative entries,
+topica.evaluate.coherence(lsa, corpus)   # UserWarning: topic_word has negative entries,
                                 # not comparable across model families ...
 ```
 

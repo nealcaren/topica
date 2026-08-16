@@ -17,7 +17,7 @@ corpus = topica.Corpus.from_documents(tokens)
 model = topica.STM(num_topics=20, seed=13)
 model.fit(corpus, prevalence=X, iters=1000)
 
-record = topica.record_fit(model, corpus, prevalence=X, prevalence_names=names, iters=1000)
+record = topica.provenance.record_fit(model, corpus, prevalence=X, prevalence_names=names, iters=1000)
 record.add_decision("K", "Chose 20 after inspecting 15/20/25.")
 record.save("analysis.topica.json")
 
@@ -73,7 +73,7 @@ coarse per-class registry tag: a `cvb0` sampler or an `init="random"` fit is
 recorded as `seed-reproducible` even when the model class is nominally `bit-exact`,
 and `determinism_detail` carries the machine-readable `replay_requires` (the `seed`,
 plus `num_threads` for the collapsed-Gibbs approximate parallel sampler) and any
-caveats. Compute it directly for any model with `topica.effective_determinism`.
+caveats. Compute it directly for any model with `topica.provenance.effective_determinism`.
 
 ## Recording evidence
 
@@ -92,7 +92,7 @@ cannot see them on its own. Pass them so the fit stays verifiable and reproducib
 
 ```python
 model = topica.BERTopic(num_clusters=20, seed=0).fit(tokens, embeddings)
-record = topica.record_fit(model, corpus, embeddings=embeddings)   # fingerprints them
+record = topica.provenance.record_fit(model, corpus, embeddings=embeddings)   # fingerprints them
 ```
 
 The embeddings are recorded as an order-sensitive fingerprint under
@@ -120,7 +120,7 @@ models, record each fit with its top words retained and pass the two manifests t
 [`topica.compare`](../guides/model-comparison.md#comparing-two-manifests-without-the-models):
 
 ```python
-ra = topica.record_fit(model_a, corpus_a, topic_words_n=25)   # opt-in; off by default
+ra = topica.provenance.record_fit(model_a, corpus_a, topic_words_n=25)   # opt-in; off by default
 cmp = topica.compare(ra, rb)                                  # Jaccard top-word alignment
 ```
 
@@ -171,9 +171,9 @@ record.render("analysis-card.html", verification=record.verify(corpus, model))
 
 ## Reference
 
-::: topica.record_fit
+::: topica.provenance.record_fit
 
-::: topica.effective_determinism
+::: topica.provenance.effective_determinism
 
 ::: topica.manifest.AnalysisManifest
 

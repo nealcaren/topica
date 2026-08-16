@@ -24,7 +24,7 @@ keeping each chunk tied to its source document's metadata.
 import topica
 
 # `texts` are long documents; `meta` is one dict of covariates per document.
-chunks, chunk_meta = topica.split_documents(
+chunks, chunk_meta = topica.data.split_documents(
     texts, meta,
     max_words=200,     # target chunk length
     min_words=50,      # merge a short tail back rather than drop it
@@ -76,8 +76,8 @@ meaning together than apart. Detect them first so a topic can be about the
 phrase, not its scattered parts.
 
 ```python
-phrase_model = topica.learn_phrases(docs, min_count=8, threshold=12.0)
-docs = topica.apply_phrases(docs, phrase_model)
+phrase_model = topica.data.learn_phrases(docs, min_count=8, threshold=12.0)
+docs = topica.data.apply_phrases(docs, phrase_model)
 ```
 
 ## Inspect what survived
@@ -91,7 +91,7 @@ Those three numbers belong in your methods section.
 
 ## Choosing vocabulary thresholds with prep_documents
 
-`topica.prep_documents` prunes a `Corpus` by document frequency — dropping
+`topica.data.prep_documents` prunes a `Corpus` by document frequency — dropping
 terms that appear in fewer than `lower_thresh` documents — and keeps the
 metadata frame aligned with the surviving documents. This is the analogue of
 R `stm`'s `prepDocuments`:
@@ -99,7 +99,7 @@ R `stm`'s `prepDocuments`:
 ```python
 import topica
 
-corpus_pruned, meta_pruned = topica.prep_documents(
+corpus_pruned, meta_pruned = topica.data.prep_documents(
     corpus, meta=meta_df,
     lower_thresh=5,   # drop terms appearing in fewer than 5 docs
     rm_top=20,        # also drop the 20 most frequent residual terms
@@ -110,7 +110,7 @@ Before committing to a threshold, sweep a range and visualize how many
 documents and vocabulary terms each level removes:
 
 ```python
-topica.plot_removed(corpus, thresholds=range(1, 15))
+topica.data.plot_removed(corpus, thresholds=range(1, 15))
 ```
 
 The chart shows two lines: documents removed (left axis) and vocabulary terms

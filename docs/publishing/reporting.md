@@ -39,7 +39,7 @@ A complete methods section covers the corpus, the preprocessing, the model and
 import pandas as pd
 import topica
 
-labels = topica.label_topics(model.topic_word, model.vocabulary, n=7)
+labels = topica.inspect.label_topics(model.topic_word, model.vocabulary, n=7)
 prevalence = model.doc_topic.mean(axis=0)
 table = pd.DataFrame({
     "topic": range(model.num_topics),
@@ -97,7 +97,7 @@ model.save("model.tt")                                    # full state, reloadab
 - **Share the model.** `model.save(path)` writes the complete fitted state;
   `Model.load(path)` brings it back, so reviewers can reproduce every number
   without refitting.
-- **Record the analysis, not just the model.** `topica.record_fit(model, corpus,
+- **Record the analysis, not just the model.** `topica.provenance.record_fit(model, corpus,
   ...)` writes an [analysis manifest](../api/manifest.md): a small, privacy-aware
   JSON record of the fit's inputs, settings, environment, and your interpretive
   decisions, plus fingerprints that let `record.verify(corpus, model)` report
