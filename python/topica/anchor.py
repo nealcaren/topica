@@ -450,7 +450,10 @@ class AnchorLDA:
     def converged(self):
         """For ``recover="kl"``, whether the recovery stopped early on
         ``convergence_tol``;
-        ``None`` for the non-iterative ``"l2"`` recovery."""
+        ``None`` for the non-iterative ``"l2"`` recovery.
+
+        :func:`topica.stop_reason` turns this flag into a plain-language summary of
+        why the fit stopped."""
         return self._converged
 
     def _word_count_vector(self):

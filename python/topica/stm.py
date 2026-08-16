@@ -176,6 +176,13 @@ class EffectList(list):
     :func:`bootstrap_stability` also give: a container-level :meth:`to_frame`, so
     ``estimate_effect(...).to_frame()`` works without the
     ``pd.concat([e.to_frame() for e in effects])`` boilerplate.
+
+    Use :meth:`to_frame`, not ``pandas.DataFrame(effects)``: the two differ here.
+    :meth:`to_frame` gives the tidy long table (one row per topic-feature, named
+    columns); ``pandas.DataFrame(effects)`` would build a wide frame of raw
+    :class:`TopicEffect` fields (array-valued cells, internal attributes). Unlike
+    :func:`topic_table`, whose result hands straight to ``pandas.DataFrame``, an
+    ``EffectList`` does not.
     """
 
     def to_frame(self):
@@ -731,7 +738,8 @@ def estimate_effect(
 
             table = topica.estimate_effect(model, X, feature_names=names).to_frame()
 
-        (equivalent to ``pd.concat([e.to_frame() for e in result])``).
+        (equivalent to
+        ``pd.concat([e.to_frame() for e in result], ignore_index=True)``).
     """
     # Formula path: build X and feature_names from an R-style formula + a
     # DataFrame. A string `cluster` is read as a column of that frame.

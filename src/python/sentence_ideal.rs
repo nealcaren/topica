@@ -327,6 +327,9 @@ impl IdealPointSentenceTM {
             .map(|(i, &b)| (i + 1, b))
             .collect())
     }
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<Option<bool>> {
         Ok(Some(self.fitted_model()?.converged))
@@ -334,6 +337,9 @@ impl IdealPointSentenceTM {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<Option<bool>> {
         Ok(Some(self.fitted_model()?.converged))

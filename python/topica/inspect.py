@@ -382,6 +382,13 @@ def _bind_topic_table_method(classes):
     for cls in classes:
         if cls is None or not hasattr(cls, "top_words"):
             continue
+        # Time-sliced models (e.g. DTM) expose ``topic_word`` as a method that
+        # takes a time index rather than a plain ``(K, V)`` property, so a single
+        # flat topic table is ill-defined; skip them rather than binding a method
+        # that could only ever raise. ``topica.topic_table(m.topic_word(t), vocab)``
+        # remains the per-slice route.
+        if callable(getattr(cls, "topic_word", None)):
+            continue
         if "topic_table" in vars(cls):  # already a real (Rust) method; leave it
             continue
         try:

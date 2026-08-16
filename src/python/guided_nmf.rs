@@ -448,6 +448,9 @@ impl GuidedNMF {
     /// ``convergence_tol``). With the default ``convergence_tol=0.0`` there is no
     /// early stop, so a completed fit reports ``False`` — it means "ran the full
     /// iters budget", not a failure.
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         Ok(self.fitted_model()?.converged)
@@ -455,6 +458,9 @@ impl GuidedNMF {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         Ok(self.fitted_model()?.converged)

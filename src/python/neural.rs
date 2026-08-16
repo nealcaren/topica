@@ -499,6 +499,9 @@ impl ETM {
     fn bound(&self) -> PyResult<f64> {
         self.surf_bound()
     }
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.surf_converged()
@@ -506,6 +509,9 @@ impl ETM {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.surf_converged()
@@ -1291,6 +1297,9 @@ impl DETM {
         Ok(self.fitted_model()?.bound)
     }
 
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         Ok(self.fitted_model()?.converged)
@@ -1298,6 +1307,9 @@ impl DETM {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         Ok(self.fitted_model()?.converged)
@@ -1915,6 +1927,9 @@ impl InfoCTM {
             .unwrap_or_default()
     }
 
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> Option<bool> {
         self.model.as_ref().map(|m| m.converged)
@@ -1922,6 +1937,9 @@ impl InfoCTM {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> Option<bool> {
         self.model.as_ref().map(|m| m.converged)
@@ -2378,6 +2396,9 @@ impl ProdLDA {
     fn bound_history(&self) -> PyResult<Vec<f64>> {
         Ok(self.fitted_model()?.bound_history.clone())
     }
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         Ok(self.fitted_model()?.converged)
@@ -2385,6 +2406,9 @@ impl ProdLDA {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         Ok(self.fitted_model()?.converged)
@@ -3035,6 +3059,9 @@ macro_rules! ctm_embedding_model {
             fn bound_history(&self) -> PyResult<Vec<f64>> {
                 Ok(self.fitted_model()?.bound_history.clone())
             }
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
             #[getter]
             fn converged(&self) -> PyResult<bool> {
                 Ok(self.fitted_model()?.converged)
@@ -3042,6 +3069,9 @@ macro_rules! ctm_embedding_model {
             /// Alias of :attr:`converged` under the name that says what the flag means:
             /// True only if the fit early-stopped on `convergence_tol`; False when the
             /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
             #[getter]
             fn early_stopped(&self) -> PyResult<bool> {
                 Ok(self.fitted_model()?.converged)

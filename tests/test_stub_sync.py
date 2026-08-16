@@ -18,14 +18,20 @@ import pytest
 import topica._topica as _ext
 
 
-# Members attached to the compiled model classes by the ``topica`` package layer
-# (not by the extension), so they are intentionally absent from ``_topica.pyi``.
-# ``topic_table`` is bound onto every topic-word model in ``topica/__init__.py`` so
-# ``m.topic_table()`` mirrors ``m.top_words()``; ``from_dataframe`` is bound onto
-# ``Corpus`` as a classmethod alias for ``topica.from_dataframe`` (both issue #758).
-# They live on the same class objects the extension exports, but are not compiled
-# bindings, so they are intentionally absent from the stub.
-_PACKAGE_ATTACHED = {"topic_table", "from_dataframe"}
+# Members attached to the compiled classes by the ``topica`` package layer (not by
+# the extension), so they are intentionally absent from ``_topica.pyi``. Scoped per
+# class so the guard still catches a real Rust binding of the same name drifting on
+# any other class:
+#   - ``topic_table`` is bound onto every topic-word model in ``topica/__init__.py``
+#     so ``m.topic_table()`` mirrors ``m.top_words()`` (issue #758);
+#   - ``from_dataframe`` is bound onto ``Corpus`` as a classmethod alias for
+#     ``topica.from_dataframe`` (issue #758).
+_PACKAGE_ATTACHED_BY_CLASS = {"Corpus": {"from_dataframe"}}
+_PACKAGE_ATTACHED_DEFAULT = {"topic_table"}
+
+
+def _package_attached(class_name: str) -> set:
+    return _PACKAGE_ATTACHED_BY_CLASS.get(class_name, _PACKAGE_ATTACHED_DEFAULT)
 
 
 def _is_dunder(name: str) -> bool:
@@ -77,7 +83,7 @@ def test_no_members_missing_from_stub(class_name: str) -> None:
     """Every public member on the compiled class must appear in the stub."""
     compiled = _compiled_public_members(_COMPILED_CLASSES[class_name])
     stub = _STUB_MEMBERS.get(class_name, set())
-    missing = compiled - stub - _PACKAGE_ATTACHED
+    missing = compiled - stub - _package_attached(class_name)
     assert not missing, (
         f"{class_name}: compiled members missing from stub: {sorted(missing)}"
     )

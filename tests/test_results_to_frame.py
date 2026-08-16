@@ -191,3 +191,12 @@ def test_converged_flags_point_at_stop_reason():
     # stop_reason() pointer without hunting through conventions.md.
     assert "stop_reason" in (topica.LDA.converged.__doc__ or "")
     assert "stop_reason" in (topica.LDA.early_stopped.__doc__ or "")
+
+
+def test_topic_table_not_bound_to_time_sliced_models():
+    # #758 review: DTM's topic_word is time-sliced (a method, not a (K,V)
+    # property), so a flat topic_table is ill-defined; the method is not bound
+    # rather than bound-and-always-raising.
+    assert not hasattr(topica.DTM, "topic_table")
+    # a dynamic model that DOES expose a plain (K,V) topic_word still gets it
+    assert hasattr(topica.TopicsOverTime, "topic_table")
