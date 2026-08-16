@@ -68,7 +68,9 @@ by construction rather than by memory.
    only when a positive `convergence_tol` was actually hit, so with the default
    (`convergence_tol=0`, full `iters`) it is always `False`. Read
    `model.early_stopped` — the same value under the name that says what it means —
-   when the ambiguity would mislead; `converged` is kept as an alias (issue #755).
+   when the ambiguity would mislead; `converged` is kept as an alias. For a
+   plain-English summary of why a fit stopped, call `topica.stop_reason(model)`
+   (issue #755).
 7. **`coherence(...)`'s first positional argument is `n`, the top-word count — not
    the corpus.** It defaults to the training corpus, so bare `model.coherence()`
    works; pass a reference corpus with the keyword `texts=` for the windowed

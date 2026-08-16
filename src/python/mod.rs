@@ -3416,13 +3416,34 @@ pub(crate) struct TopN(pub usize);
 
 impl<'py> FromPyObject<'py> for TopN {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        match ob.extract::<usize>() {
-            Ok(n) => Ok(TopN(n)),
-            Err(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+        // A bool is a Python int subclass, so `True`/`False` would extract to 1/0
+        // — reject it as an obvious not-a-count before the usize path.
+        if ob.is_instance_of::<pyo3::types::PyBool>() {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "coherence()'s `n` (number of top words per topic) must be a \
+                 non-negative int, got a bool.",
+            ));
+        }
+        if let Ok(n) = ob.extract::<usize>() {
+            return Ok(TopN(n));
+        }
+        // A number that isn't a usize (a float, or a negative int) is plainly an
+        // intended `n`, not the reference texts — say what `n` must be rather than
+        // sending the caller toward `texts=`. Only a genuinely wrong *type*
+        // (list/str/array, i.e. reference texts passed first) gets the texts hint.
+        let is_number = ob.is_instance_of::<pyo3::types::PyInt>()
+            || ob.is_instance_of::<pyo3::types::PyFloat>();
+        if is_number {
+            Err(pyo3::exceptions::PyTypeError::new_err(
+                "coherence()'s `n` (number of top words per topic) must be a \
+                 non-negative int.",
+            ))
+        } else {
+            Err(pyo3::exceptions::PyTypeError::new_err(
                 "coherence()'s first positional argument is `n`, the number of top \
                  words per topic (an int) — not the reference texts. Pass reference \
                  texts as the keyword `texts=`, e.g. model.coherence(10, texts=docs).",
-            )),
+            ))
         }
     }
 }

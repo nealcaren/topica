@@ -725,8 +725,12 @@ def topic_table(model, vocabulary=None, *, doc_topic=None, n=7, weights=False):
     Pass ``weights=True`` to also carry the numbers behind the words — two extra
     columns ``prob_weights`` and ``frex_weights`` (``list[float]``, aligned with
     ``prob`` / ``frex``) so you can print ``"war (0.03)"``-style cells without a
-    separate call. This is the same information :meth:`top_words(n, weights=True)
-    <>` returns on the model; ``topic_table`` just lays it out per topic.
+    separate call. ``prob_weights`` are the topic-word probabilities φ (the same
+    numbers :meth:`top_words(n, weights=True) <>` returns). ``frex_weights`` are
+    the FREX **scores** from :func:`frex`, not probabilities: a bounded quantile
+    score in ``[0, 1]`` (stm's ECDF FREX), so the top word sits near ``1.0`` and
+    the values fall off by rank — they rank a topic's words, they are not a
+    distribution and do not sum to one.
 
     Accepts either a **fitted model** (uses its ``topic_word``, ``doc_topic``, and
     ``vocabulary``) or a bare ``(K, V)`` **topic-word array**, matching the sibling
@@ -2982,7 +2986,7 @@ def _kl(p, q):
     return float(np.sum(p * np.log(p / q)))
 
 
-def topic_stability(runs, *, num_topics=None, seeds=None, model_factory=None,
+def topic_stability(runs, *, num_topics=None, k=None, seeds=None, model_factory=None,
                     topn=10, metric="cosine", fit_kwargs=None, **extra_fit_kwargs):
     """Term-centric stability of topics across multiple fits (Greene, O'Callaghan
     & Cunningham 2014): a "how robust is this K?" score.
@@ -2994,10 +2998,11 @@ def topic_stability(runs, *, num_topics=None, seeds=None, model_factory=None,
       seeds, or on bootstrap resamples). You control exactly what is compared.
     - **From a corpus** (the convenience overload, matching
       :func:`bootstrap_stability`'s ``docs`` + ``num_topics`` convention): pass
-      the corpus as ``runs`` together with ``num_topics=`` and/or ``seeds=``, and
-      it fits one model per seed for you (``LDA(num_topics=k, seed=s)`` by
-      default, or your ``model_factory``) before scoring. ``seeds`` defaults to
-      ``range(5)``; extra keywords / ``fit_kwargs=`` forward to each ``fit``.
+      the corpus as ``runs`` together with ``num_topics=`` (``k=`` is accepted as
+      an alias, matching :func:`bootstrap_stability`) and/or ``seeds=``, and it
+      fits one model per seed for you (``LDA(num_topics=k, seed=s)`` by default, or
+      your ``model_factory``) before scoring. ``seeds`` defaults to ``range(5)``;
+      extra keywords / ``fit_kwargs=`` forward to each ``fit``.
 
     Either way, each later run's topics are matched to the first run's, and
     stability is the mean Jaccard overlap of their top-`topn` words. Returns a
@@ -3012,6 +3017,14 @@ def topic_stability(runs, *, num_topics=None, seeds=None, model_factory=None,
     ``init="random"`` (which does respond to ``seed``) or measure stability on
     bootstrap resamples of the documents instead.
     """
+    # k= is bootstrap_stability's name for the topic count; accept it here too so
+    # the two robustness siblings share one convention (issue #755 follow-up).
+    if k is not None:
+        if num_topics is not None and int(k) != int(num_topics):
+            raise ValueError(
+                f"pass either k= or num_topics=, not both with different values "
+                f"(k={k}, num_topics={num_topics}); they are aliases for the topic count")
+        num_topics = k
     corpus_mode = (num_topics is not None or seeds is not None
                    or model_factory is not None)
     fit_kwargs = {**(fit_kwargs or {}), **extra_fit_kwargs}
@@ -3037,21 +3050,34 @@ def topic_stability(runs, *, num_topics=None, seeds=None, model_factory=None,
             "(topic_stability([m1, m2, ...])) or use the corpus overload "
             "(topic_stability(docs, num_topics=K, seeds=[...])).")
     else:
+        corpus_hint = (
+            "To measure stability from a corpus, use the overload "
+            "topic_stability(docs, num_topics=K, seeds=[...]), or fit the models "
+            "yourself and pass them: "
+            "topic_stability([LDA(K, seed=s).fit(docs) for s in range(5)]).")
+        # A Corpus passed without num_topics=/seeds= isn't corpus-mode; catch it
+        # before the peek (a Corpus is not iterable) and steer to the overload.
+        if hasattr(runs, "documents"):
+            raise TypeError(
+                "topic_stability got a Corpus but no num_topics=/seeds=, so it is "
+                "in from-fitted-runs mode (the first argument must be a list of "
+                f"already-fitted models). {corpus_hint}")
+        # Materialize before the peek so a generator of runs isn't partly consumed
+        # (next(iter(...)) would drop run 0 and silently score the rest).
+        runs = list(runs)
         # Directive error for the intuitive-but-wrong topic_stability(docs) call:
         # in from-fitted-runs mode each element must be a model / topic-word array,
-        # not a document (a list/tuple of tokens or a raw string).
-        first = next(iter(runs), None)
+        # not a document (a list/tuple of tokens or ids, or a raw string).
+        first = runs[0] if runs else None
         if isinstance(first, str) or (
             isinstance(first, (list, tuple))
-            and (len(first) == 0 or isinstance(first[0], str))
+            and (len(first) == 0
+                 or isinstance(first[0], (str, int, np.integer)))
         ):
             raise TypeError(
                 "topic_stability's first argument is a list of already-fitted "
                 "models (or topic-word arrays), but you passed what looks like a "
-                "corpus (documents of tokens). To measure stability from a corpus, "
-                "use the overload topic_stability(docs, num_topics=K, seeds=[...]), "
-                "or fit the models yourself and pass them: "
-                "topic_stability([LDA(K, seed=s).fit(docs) for s in range(5)]).")
+                f"corpus (documents of tokens). {corpus_hint}")
     mats = [_as_topic_word(r) for r in runs]
     if len(mats) < 2:
         raise ValueError("need at least two runs to measure stability")
