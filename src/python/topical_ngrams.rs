@@ -359,6 +359,13 @@ impl TopicalNGrams {
     fn converged(&self) -> PyResult<bool> {
         Ok(self.fitted_model()?.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        Ok(self.fitted_model()?.converged)
+    }
 
     /// Top unigram words per topic (the standard topic-word view). Phrases are
     /// separate — see `top_phrases`.
@@ -442,14 +449,15 @@ impl TopicalNGrams {
     /// Per-topic coherence of the unigram topics (aligned to topic index). Higher is
     /// more coherent. `texts` supplies the reference corpus for windowed measures
     /// (defaults to the training corpus).
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word);
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
         coherence_dispatch(

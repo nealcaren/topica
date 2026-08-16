@@ -298,6 +298,13 @@ impl NMF {
     fn converged(&self) -> PyResult<bool> {
         Ok(self.fitted_model()?.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        Ok(self.fitted_model()?.converged)
+    }
     /// Uniform convergence trace: `(iter, reconstruction_error)` pairs. The first
     /// entry (`iter = 1`) is the initial error before any update.
     #[getter]
@@ -366,14 +373,15 @@ impl NMF {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
         coherence_dispatch(
@@ -673,6 +681,14 @@ impl LSA {
         self.fitted_model()?;
         Ok(None)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<Option<bool>> {
+        self.fitted_model()?;
+        Ok(None)
+    }
     #[getter]
     fn topic_names(&self) -> PyResult<Vec<String>> {
         self.fitted_model()?;
@@ -745,14 +761,15 @@ impl LSA {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word());
         let absphi = phi.mapv(f64::abs);
         let tops = top_word_ids_phi(&absphi, self.num_topics, n);

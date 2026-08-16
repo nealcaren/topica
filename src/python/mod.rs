@@ -1928,6 +1928,14 @@ impl LDA {
         self.require_fitted()?;
         Ok(self.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
 
     /// MALLET-formula model log-likelihood of the final sampler state.
     fn log_likelihood(&self) -> PyResult<f64> {
@@ -2267,14 +2275,15 @@ impl LDA {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = self.top_word_ids(n);
         coherence_dispatch(
@@ -3395,6 +3404,48 @@ fn umass_coherence(corpus: &corpus::Corpus, tops: &[Vec<usize>]) -> Vec<f64> {
             score
         })
         .collect()
+}
+
+/// The first positional argument of every model's ``coherence(n, ...)`` — the
+/// number of top words per topic. It exists only to replace PyO3's opaque
+/// ``"argument 'n': 'list' object cannot be interpreted as an integer"`` with a
+/// directive message when a caller passes reference texts first out of gensim
+/// muscle memory (``coherence(texts, ...)``), which is the single most common
+/// misuse (issue #755).
+pub(crate) struct TopN(pub usize);
+
+impl<'py> FromPyObject<'py> for TopN {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        // A bool is a Python int subclass, so `True`/`False` would extract to 1/0
+        // — reject it as an obvious not-a-count before the usize path.
+        if ob.is_instance_of::<pyo3::types::PyBool>() {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "coherence()'s `n` (number of top words per topic) must be a \
+                 non-negative int, got a bool.",
+            ));
+        }
+        if let Ok(n) = ob.extract::<usize>() {
+            return Ok(TopN(n));
+        }
+        // A number that isn't a usize (a float, or a negative int) is plainly an
+        // intended `n`, not the reference texts — say what `n` must be rather than
+        // sending the caller toward `texts=`. Only a genuinely wrong *type*
+        // (list/str/array, i.e. reference texts passed first) gets the texts hint.
+        let is_number = ob.is_instance_of::<pyo3::types::PyInt>()
+            || ob.is_instance_of::<pyo3::types::PyFloat>();
+        if is_number {
+            Err(pyo3::exceptions::PyTypeError::new_err(
+                "coherence()'s `n` (number of top words per topic) must be a \
+                 non-negative int.",
+            ))
+        } else {
+            Err(pyo3::exceptions::PyTypeError::new_err(
+                "coherence()'s first positional argument is `n`, the number of top \
+                 words per topic (an int) — not the reference texts. Pass reference \
+                 texts as the keyword `texts=`, e.g. model.coherence(10, texts=docs).",
+            ))
+        }
+    }
 }
 
 /// Shared dispatch behind every model's ``coherence(n, coherence_type=, texts=)``.
@@ -4957,6 +5008,14 @@ impl DMR {
         self.require_fitted()?;
         Ok(self.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
 
     #[getter]
     fn vocabulary(&self) -> PyResult<Vec<String>> {
@@ -5044,14 +5103,15 @@ impl DMR {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.phi.as_ref().unwrap(), self.num_topics, n);
         coherence_dispatch(
@@ -5806,6 +5866,14 @@ impl LabeledLDA {
         self.require_fitted()?;
         Ok(self.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
 
     #[getter]
     fn vocabulary(&self) -> PyResult<Vec<String>> {
@@ -5894,14 +5962,15 @@ impl LabeledLDA {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.phi.as_ref().unwrap(), self.num_topics, n);
         coherence_dispatch(
@@ -6606,6 +6675,14 @@ impl SAGE {
         self.require_fitted()?;
         Ok(self.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
 
     #[getter]
     fn vocabulary(&self) -> PyResult<Vec<String>> {
@@ -6757,14 +6834,15 @@ impl SAGE {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = top_word_ids_phi(&self.topic_marginal(), self.num_topics, n);
         coherence_dispatch(
@@ -7459,6 +7537,14 @@ impl CTM {
         self.require_fitted()?;
         Ok(self.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
 
     /// Variational-covariance mode: ``"laplace"`` (full ν = H⁻¹) or
     /// ``"diagonal"`` (mean-field ν = diag(1/H_ii)).
@@ -7693,14 +7779,15 @@ impl CTM {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.beta.as_ref().unwrap(), self.num_topics, n);
         coherence_dispatch(
@@ -8569,6 +8656,14 @@ impl STM {
         self.require_fitted()?;
         Ok(self.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
 
     /// Variational-covariance mode: ``"laplace"`` (full ν = H⁻¹) or
     /// ``"diagonal"`` (mean-field ν = diag(1/H_ii)).
@@ -8980,14 +9075,15 @@ impl STM {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.beta.as_ref().unwrap(), self.num_topics, n);
         coherence_dispatch(
@@ -10186,6 +10282,14 @@ impl STS {
         self.require_fitted()?;
         Ok(self.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
 
     /// Uniform convergence trace: ``(iteration, bound)`` pairs.
     #[getter]
@@ -10369,14 +10473,15 @@ impl STS {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.beta.as_ref().unwrap(), self.num_topics, n);
         coherence_dispatch(
@@ -10794,6 +10899,14 @@ impl HDP {
         self.require_fitted()?;
         Ok(false)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(false)
+    }
 
     /// The learned-concentration trace: ``(iteration, alpha, gamma)`` triples
     /// sampled during fit (only informative when ``resample_conc=True``). Empty
@@ -10901,14 +11014,15 @@ impl HDP {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.beta.as_ref().unwrap(), self.num_topics, n);
         coherence_dispatch(
@@ -11494,6 +11608,14 @@ impl DTM {
         self.require_fitted()?;
         Ok(false)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(false)
+    }
 
     /// One label per topic, in topic order. Defaults to ``["topic_0", ...]``
     /// after fit; assign a list of the same length to override.
@@ -12057,6 +12179,14 @@ impl SupervisedLDA {
         self.require_fitted()?;
         Ok(self.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
 
     #[getter]
     fn vocabulary(&self) -> PyResult<Vec<String>> {
@@ -12115,14 +12245,15 @@ impl SupervisedLDA {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.beta.as_ref().unwrap(), self.num_topics, n);
         coherence_dispatch(
@@ -12548,6 +12679,14 @@ impl PT {
         self.require_fitted()?;
         Ok(self.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
     /// One label per topic, in topic order. Defaults to ``["topic_0", ...]``
     /// after fit; assign a list of the same length to override.
     #[getter]
@@ -12607,14 +12746,15 @@ impl PT {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.phi.as_ref().unwrap(), self.num_topics, n);
         coherence_dispatch(
@@ -13040,6 +13180,14 @@ impl GSDMM {
         self.require_fitted()?;
         Ok(false)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(false)
+    }
     /// Document-topic matrix θ, shape ``(num_docs, num_topics)``; rows sum to 1.
     ///
     /// Each row is the Movie-Group-Process soft conditional (Yin & Wang Eq. 4) of
@@ -13193,14 +13341,15 @@ impl GSDMM {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.phi.as_ref().unwrap(), self.num_used, n);
         coherence_dispatch(
@@ -13951,6 +14100,14 @@ impl SeededLDA {
         self.require_fitted()?;
         Ok(self.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
     /// MALLET-formula collapsed marginal log-likelihood of the fitted model: the
     /// final recorded trace value (the log-likelihood at the last checkpoint, which
     /// is the final sweep when ``check_every`` divides ``iters``). Raises if no
@@ -14073,14 +14230,15 @@ impl SeededLDA {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.phi.as_ref().unwrap(), self.num_topics_val(), n);
         coherence_dispatch(
@@ -14710,6 +14868,13 @@ impl FASTopic {
     fn converged(&self) -> PyResult<bool> {
         Ok(self.fitted_model()?.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        Ok(self.fitted_model()?.converged)
+    }
     /// Uniform convergence trace: ``(epoch, negative_loss)`` pairs. The
     /// objective is the negated OT loss (so higher = better), indexed from 1.
     #[getter]
@@ -14780,14 +14945,15 @@ impl FASTopic {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         let m = self.fitted_model()?;
         let phi = vecs_to_arr2(&m.topic_word);
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
@@ -15947,6 +16113,14 @@ impl KeyATM {
         self.require_fitted()?;
         Ok(self.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
 
     /// Trace of the estimated document-topic prior α as ``(iteration, alpha)``
     /// pairs, where ``alpha`` is the length-K asymmetric prior at that sweep —
@@ -16030,14 +16204,15 @@ impl KeyATM {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.phi.as_ref().unwrap(), self.num_topics, n);
         coherence_dispatch(

@@ -505,15 +505,16 @@ impl PolylingualLDA {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, lang=None, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, lang=None, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         lang: Option<&str>,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         let m = self.fitted_model()?;
         let li = self.lang_index(lang)?;
         let phi = vecs_to_arr2(&m.topic_word[li]);

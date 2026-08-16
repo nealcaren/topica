@@ -386,6 +386,14 @@ impl PA {
         self.require_fitted()?;
         Ok(self.converged)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
     #[getter]
     fn topic_names(&self) -> PyResult<Vec<String>> {
         self.require_fitted()?;
@@ -443,14 +451,15 @@ impl PA {
     /// supplies the reference corpus for the windowed measures (defaults to the
     /// training corpus). Higher is more coherent (``u_mass`` is <= 0, nearer 0 is
     /// better; ``c_v`` in [0, 1]). Compare topics within one fit, not across corpora.
-    #[pyo3(signature = (n=10, *, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = n.0;
         self.require_fitted()?;
         let tops = top_word_ids_phi(self.phi.as_ref().unwrap(), self.num_sub, n);
         coherence_dispatch(
@@ -922,6 +931,14 @@ impl HLDA {
     /// HLDA does not implement an early-stop criterion; always ``False``.
     #[getter]
     fn converged(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(false)
+    }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
         Ok(false)
     }
