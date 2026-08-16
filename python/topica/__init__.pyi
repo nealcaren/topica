@@ -35,6 +35,16 @@ from . import stm as stm
 from . import keyatm as keyatm
 from . import effects as effects
 from . import mcmc as mcmc
+# workflow namespaces (#757)
+from . import data as data
+from . import design as design
+from . import select as select
+from . import inspect as inspect
+from . import evaluate as evaluate
+from . import compare as compare
+from . import embeddings as embeddings
+from . import provenance as provenance
+from .design import one_hot as one_hot
 from .mcmc import (
     mcmc_diagnostics as mcmc_diagnostics,
     effective_sample_size as effective_sample_size,
@@ -71,16 +81,6 @@ from .narrative import NarrativeTM as NarrativeTM
 
 __citation__: str
 ENGLISH_STOPWORDS: frozenset[str]
-
-def one_hot(
-    values: Sequence[object],
-    *,
-    drop_first: bool = True,
-    prefix: str = "",
-) -> tuple[numpy.typing.NDArray[numpy.float64], list[str]]:
-    """One-hot encode a categorical covariate into (matrix, names) for DMR.fit."""
-    ...
-
 
 def align_corpus(
     new_docs: Sequence[Sequence[str]],
