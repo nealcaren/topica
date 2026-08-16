@@ -686,14 +686,34 @@ def label_topics(topic_word, vocabulary=None, *, n=10, word_counts=None, corpus=
     return out
 
 
-def topic_table(model, vocabulary=None, *, doc_topic=None, n=7):
+class TopicTable(list):
+    """The :func:`topic_table` result: a ``list`` of per-topic dict rows, with a
+    ``.to_frame()`` for the one-line jump to a pandas DataFrame.
+
+    It is a ``list`` subclass, so it iterates, indexes, and hands to
+    ``pandas.DataFrame(...)`` exactly like the plain list it always returned.
+    ``.to_frame()`` is the same tidy shape :func:`search_k` and the effect /
+    robustness results expose, so you do not have to remember which helpers wrap
+    their output and which do not.
+    """
+
+    def to_frame(self):
+        """The per-topic rows as a pandas DataFrame, one row per topic (raises if
+        pandas is absent)."""
+        import pandas as pd
+
+        return pd.DataFrame(list(self))
+
+
+def topic_table(model, vocabulary=None, *, doc_topic=None, n=7, weights=False):
     """A publication-ready topic table: one row per topic with its prevalence and
     its top probability and FREX words.
 
-    Returns a list of dicts with ``topic``, ``prevalence`` (mean θ), ``prob`` (the
-    top-`n` highest-probability words), and ``frex`` (the top-`n` FREX words —
-    usually the better label). Hand it to ``pandas.DataFrame`` for the table that
-    goes in a results section.
+    Returns a :class:`TopicTable` (a ``list`` subclass) of dicts with ``topic``,
+    ``prevalence`` (mean θ), ``prob`` (the top-`n` highest-probability words), and
+    ``frex`` (the top-`n` FREX words — usually the better label). Call
+    ``.to_frame()`` for the pandas DataFrame that goes in a results section, or
+    hand the object straight to ``pandas.DataFrame`` (either works).
 
     Note the word shape differs from :func:`label_topics`: here ``prob`` and
     ``frex`` are **bare word strings** (ready to drop straight into a DataFrame
@@ -701,6 +721,12 @@ def topic_table(model, vocabulary=None, *, doc_topic=None, n=7):
     ``", ".join(row["frex"])`` is correct on a ``topic_table`` row, while the
     ``", ".join(w for w, _ in ...)`` idiom you would use on ``label_topics`` output
     raises here.
+
+    Pass ``weights=True`` to also carry the numbers behind the words — two extra
+    columns ``prob_weights`` and ``frex_weights`` (``list[float]``, aligned with
+    ``prob`` / ``frex``) so you can print ``"war (0.03)"``-style cells without a
+    separate call. This is the same information :meth:`top_words(n, weights=True)
+    <>` returns on the model; ``topic_table`` just lays it out per topic.
 
     Accepts either a **fitted model** (uses its ``topic_word``, ``doc_topic``, and
     ``vocabulary``) or a bare ``(K, V)`` **topic-word array**, matching the sibling
@@ -722,15 +748,19 @@ def topic_table(model, vocabulary=None, *, doc_topic=None, n=7):
     else:
         prevalence = None  # a bare topic-word array carries no prevalence
     labels = label_topics(phi, vocab, n=n)
-    return [
-        {
+    rows = []
+    for t in range(len(labels)):
+        row = {
             "topic": t,
             "prevalence": float(prevalence[t]) if prevalence is not None else None,
             "prob": [w for w, _ in labels[t]["prob"]],
             "frex": [w for w, _ in labels[t]["frex"]],
         }
-        for t in range(len(labels))
-    ]
+        if weights:
+            row["prob_weights"] = [float(s) for _, s in labels[t]["prob"]]
+            row["frex_weights"] = [float(s) for _, s in labels[t]["frex"]]
+        rows.append(row)
+    return TopicTable(rows)
 
 
 def topics_for_term(topic_word, terms, vocabulary=None, *, top_n=5, per_term=False,
@@ -1062,6 +1092,57 @@ def _frontier_score(coherence, exclusivity):
     return score
 
 
+class BestKExplanation(int):
+    """The return of ``SearchKResult.best_k(explain=True)``: the chosen ``k`` as a
+    plain ``int`` (so it drops into ``LDA(num_topics=best_k)`` unchanged and
+    compares equal to the bare pick), carrying the reasoning behind it.
+
+    Attributes
+    ----------
+    metric : str
+        The metric actually optimized (``"frontier"`` or a column name), after
+        the ``metric=None`` default was resolved.
+    rule : str
+        The ``rule`` used (``"best"`` / ``"1se"`` / ``"elbow"``).
+    rule_desc : str
+        A one-line plain description of the composite/curve the pick came from,
+        e.g. ``"frontier knee (max of z(coherence) + z(exclusivity))"``.
+    scores : list[dict]
+        The per-K score table the pick was read off — one row per scanned K with
+        the value(s) compared. Hand it to ``pandas.DataFrame`` to see the curve.
+    notes : list[str]
+        Any boundary / monotonicity warnings ``best_k`` raised (e.g. the pick sat
+        at the grid edge), captured here instead of only reaching the warning
+        stream.
+    """
+
+    def __new__(cls, k, *, metric, rule, rule_desc, scores, notes):
+        obj = super().__new__(cls, int(k))
+        obj.metric = metric
+        obj.rule = rule
+        obj.rule_desc = rule_desc
+        obj.scores = scores
+        obj.notes = notes
+        return obj
+
+    def __repr__(self) -> str:
+        head = f"best_k = {int(self)}  (metric={self.metric!r}, rule={self.rule!r})"
+        why = f"  chosen by: {self.rule_desc}"
+        rows = "\n".join(
+            "    " + ", ".join(f"{k}={v}" for k, v in row.items())
+            for row in self.scores
+        )
+        note_txt = ("\n  notes:\n" + "\n".join("    - " + n for n in self.notes)) \
+            if self.notes else ""
+        return f"{head}\n{why}\n  scores:\n{rows}{note_txt}"
+
+    def to_frame(self):
+        """The per-K score table as a pandas DataFrame (raises if pandas absent)."""
+        import pandas as pd
+
+        return pd.DataFrame(self.scores)
+
+
 class SearchKResult(list):
     """The :func:`search_k` result: a list of per-K dict rows, with the
     optimization direction stamped in and a safe ``best_k`` selector.
@@ -1141,9 +1222,38 @@ class SearchKResult(list):
                 stacklevel=3,
             )
 
+    def _resolve_metric(self, metric):
+        """The metric ``best_k`` will actually optimize, applying the
+        ``metric=None`` default (held-out → frontier → coherence) and the
+        ``coherence_metric`` label alias. Shared by :meth:`best_k` and
+        :meth:`_explain_best_k` so the two never drift."""
+        if metric is None:
+            if "heldout_loglik" in self[0]:
+                metric = "heldout_loglik"
+            elif "perplexity" in self[0]:
+                metric = "perplexity"
+            elif len(self) >= 2 and "coherence" in self[0] and "exclusivity" in self[0]:
+                metric = "frontier"
+            else:
+                metric = "coherence"
+        # The results advertise which coherence flavor the "coherence" column holds
+        # via the coherence_metric label ("semcoh"/"u_mass"). Accept that label as
+        # an alias so best_k(res[0]["coherence_metric"]) works instead of raising
+        # "unknown metric" for a name the result itself displays (#733).
+        if metric is not None and metric == self[0].get("coherence_metric"):
+            metric = "coherence"
+        return metric
+
     def best_k(self, metric: str | None = None, *, rule: str = "best",
-               frontier_metrics=None, weights=None) -> int:
+               frontier_metrics=None, weights=None, explain: bool = False):
         """Return the ``k`` chosen by ``metric``.
+
+        With ``explain=True`` the return is not the bare ``int`` but a
+        :class:`BestKExplanation` — the chosen ``k`` plus the per-K score table
+        that produced it (the frontier composite ``z(coherence)+z(exclusivity)``,
+        or the scalar metric column) and any boundary/monotonicity notes — so the
+        pick is auditable rather than opaque. It still prints as, and compares
+        equal to, the integer ``k``.
 
         With ``metric=None`` (the default), selection is:
 
@@ -1195,21 +1305,9 @@ class SearchKResult(list):
             raise ValueError(f"rule must be 'best', '1se', or 'elbow', got {rule!r}")
         if not self:
             raise ValueError("search_k returned no rows")
-        if metric is None:
-            if "heldout_loglik" in self[0]:
-                metric = "heldout_loglik"
-            elif "perplexity" in self[0]:
-                metric = "perplexity"
-            elif len(self) >= 2 and "coherence" in self[0] and "exclusivity" in self[0]:
-                metric = "frontier"
-            else:
-                metric = "coherence"
-        # The results advertise which coherence flavor the "coherence" column holds
-        # via the coherence_metric label ("semcoh"/"u_mass"). Accept that label as
-        # an alias so best_k(res[0]["coherence_metric"]) works instead of raising
-        # "unknown metric" for a name the result itself displays (#733).
-        if metric is not None and metric == self[0].get("coherence_metric"):
-            metric = "coherence"
+        if explain:
+            return self._explain_best_k(metric, rule, frontier_metrics, weights)
+        metric = self._resolve_metric(metric)
         if metric != "frontier" and (frontier_metrics is not None or weights is not None):
             raise ValueError(
                 "frontier_metrics and weights only apply to metric='frontier'; "
@@ -1309,6 +1407,40 @@ class SearchKResult(list):
                     stacklevel=2,
                 )
         return pick
+
+    def _explain_best_k(self, metric, rule, frontier_metrics, weights):
+        """Build the :class:`BestKExplanation` for ``best_k(..., explain=True)``.
+
+        Runs the ordinary selection (capturing any warning it raises as a note),
+        then reconstructs the per-K score the pick was read off: the frontier
+        composite ``z(coherence)+z(exclusivity)`` for the frontier, otherwise the
+        scalar metric column in its optimization direction."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            pick = self.best_k(metric, rule=rule, frontier_metrics=frontier_metrics,
+                               weights=weights)
+        notes = [str(w.message) for w in caught]
+        resolved = self._resolve_metric(metric)
+        ks = [r["k"] for r in self]
+        if resolved == "frontier" and frontier_metrics is None and weights is None:
+            comp = _frontier_score([r["coherence"] for r in self],
+                                    [r["exclusivity"] for r in self])
+            scores = [{"k": k, "score": float(s)} for k, s in zip(ks, comp)]
+            basis = "z(coherence) + z(exclusivity)"
+            rule_desc = f"frontier knee (max of {basis})"
+        elif resolved == "frontier":
+            mets = list(frontier_metrics) if frontier_metrics is not None else \
+                ["coherence", "exclusivity"]
+            scores = [{"k": r["k"], **{m: r.get(m) for m in mets}} for r in self]
+            basis = " + ".join(f"z({m})" for m in mets)
+            rule_desc = f"custom frontier knee (max of {basis})"
+        else:
+            direction = SEARCH_K_DIRECTIONS.get(resolved, "maximize")
+            scores = [{"k": r["k"], resolved: r.get(resolved)} for r in self]
+            basis = f"{resolved} ({direction})"
+            rule_desc = f"rule={rule!r} on {basis}"
+        return BestKExplanation(pick, metric=resolved, rule=rule,
+                                rule_desc=rule_desc, scores=scores, notes=notes)
 
     def _one_se_k(self, present, metric, maximize):
         """One-standard-error rule on a scalar ``metric``: the smallest K whose
@@ -2850,15 +2982,26 @@ def _kl(p, q):
     return float(np.sum(p * np.log(p / q)))
 
 
-def topic_stability(runs, *, topn=10, metric="cosine"):
+def topic_stability(runs, *, num_topics=None, seeds=None, model_factory=None,
+                    topn=10, metric="cosine", fit_kwargs=None, **extra_fit_kwargs):
     """Term-centric stability of topics across multiple fits (Greene, O'Callaghan
     & Cunningham 2014): a "how robust is this K?" score.
 
-    `runs` is a list of fitted models or topic-word arrays over the *same*
-    vocabulary (e.g. fits at different seeds, or on bootstrap resamples). Each
-    later run's topics are matched to the first run's, and stability is the mean
-    Jaccard overlap of their top-`topn` words. Returns a float in ``[0, 1]``;
-    higher means more reproducible topics.
+    Two call shapes:
+
+    - **From fitted runs** (the base form): ``runs`` is a list of fitted models
+      or topic-word arrays over the *same* vocabulary (e.g. fits at different
+      seeds, or on bootstrap resamples). You control exactly what is compared.
+    - **From a corpus** (the convenience overload, matching
+      :func:`bootstrap_stability`'s ``docs`` + ``num_topics`` convention): pass
+      the corpus as ``runs`` together with ``num_topics=`` and/or ``seeds=``, and
+      it fits one model per seed for you (``LDA(num_topics=k, seed=s)`` by
+      default, or your ``model_factory``) before scoring. ``seeds`` defaults to
+      ``range(5)``; extra keywords / ``fit_kwargs=`` forward to each ``fit``.
+
+    Either way, each later run's topics are matched to the first run's, and
+    stability is the mean Jaccard overlap of their top-`topn` words. Returns a
+    float in ``[0, 1]``; higher means more reproducible topics.
 
     If every run is bit-identical to the first, a stability of 1.0 is
     meaningless — the runs never varied. This most often bites when the runs are
@@ -2869,6 +3012,46 @@ def topic_stability(runs, *, topn=10, metric="cosine"):
     ``init="random"`` (which does respond to ``seed``) or measure stability on
     bootstrap resamples of the documents instead.
     """
+    corpus_mode = (num_topics is not None or seeds is not None
+                   or model_factory is not None)
+    fit_kwargs = {**(fit_kwargs or {}), **extra_fit_kwargs}
+    if corpus_mode:
+        from . import LDA  # local import to avoid a cycle at module load
+
+        corpus = runs.documents() if hasattr(runs, "documents") else runs
+        if model_factory is None and num_topics is None:
+            raise ValueError(
+                "topic_stability(corpus, ...) needs num_topics= (the topic count) "
+                "or a model_factory=")
+        factory = model_factory or (lambda s: LDA(num_topics=num_topics, seed=s))
+        seed_list = list(range(5)) if seeds is None else list(seeds)
+        if len(seed_list) < 2:
+            raise ValueError("need at least two seeds to measure stability")
+        runs = [factory(s).fit(corpus, **fit_kwargs) for s in seed_list]
+    elif fit_kwargs:
+        raise TypeError(
+            "topic_stability got fit keyword(s) "
+            f"{sorted(fit_kwargs)} but no num_topics=/seeds=/model_factory=, so it "
+            "is in from-fitted-runs mode where the first argument must be a list of "
+            "already-fitted models, not a corpus. Either pass fitted runs "
+            "(topic_stability([m1, m2, ...])) or use the corpus overload "
+            "(topic_stability(docs, num_topics=K, seeds=[...])).")
+    else:
+        # Directive error for the intuitive-but-wrong topic_stability(docs) call:
+        # in from-fitted-runs mode each element must be a model / topic-word array,
+        # not a document (a list/tuple of tokens or a raw string).
+        first = next(iter(runs), None)
+        if isinstance(first, str) or (
+            isinstance(first, (list, tuple))
+            and (len(first) == 0 or isinstance(first[0], str))
+        ):
+            raise TypeError(
+                "topic_stability's first argument is a list of already-fitted "
+                "models (or topic-word arrays), but you passed what looks like a "
+                "corpus (documents of tokens). To measure stability from a corpus, "
+                "use the overload topic_stability(docs, num_topics=K, seeds=[...]), "
+                "or fit the models yourself and pass them: "
+                "topic_stability([LDA(K, seed=s).fit(docs) for s in range(5)]).")
     mats = [_as_topic_word(r) for r in runs]
     if len(mats) < 2:
         raise ValueError("need at least two runs to measure stability")

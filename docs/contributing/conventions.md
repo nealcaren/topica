@@ -64,12 +64,19 @@ by construction rather than by memory.
    attribute, so `model.converged()` raises `TypeError: 'bool' object is not
    callable`. In contrast `model.coherence()` and `model.bound()` are called.
    (`Corpus` documents the same property-vs-method split for its own accessors.)
+   `converged` reports **early stopping**, not "the fit is good": it is `True`
+   only when a positive `convergence_tol` was actually hit, so with the default
+   (`convergence_tol=0`, full `iters`) it is always `False`. Read
+   `model.early_stopped` — the same value under the name that says what it means —
+   when the ambiguity would mislead; `converged` is kept as an alias (issue #755).
 7. **`coherence(...)`'s first positional argument is `n`, the top-word count — not
    the corpus.** It defaults to the training corpus, so bare `model.coherence()`
    works; pass a reference corpus with the keyword `texts=` for the windowed
    measures. This flips the convention of the module-level `topica.coherence(
    topics, texts, ...)`, whose first argument is the topics — so
-   `model.coherence(corpus.documents())` misfires (issue #752).
+   `model.coherence(corpus.documents())` misfires. Passing texts positionally now
+   raises a directive `TypeError` naming the `texts=` keyword rather than an
+   opaque "cannot be interpreted as an integer" (issues #752, #755).
 
 ## Threads and stopping rules
 

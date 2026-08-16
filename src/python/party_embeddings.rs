@@ -546,6 +546,14 @@ impl PartyEmbeddings {
         self.fitted_model()?;
         Ok(None)
     }
+    /// Alias of :attr:`converged` under the name that says what the flag means:
+    /// True only if the fit early-stopped on `convergence_tol`; False when the
+    /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<Option<bool>> {
+        self.fitted_model()?;
+        Ok(None)
+    }
 
     fn save(&self, path: &str) -> PyResult<()> {
         let m = self.model.as_ref();

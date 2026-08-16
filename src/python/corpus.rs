@@ -483,6 +483,11 @@ impl Corpus {
         self.inner.docs.iter().map(|d| d.len()).collect()
     }
 
+    /// The pruned vocabulary as a list of word strings, indexed by word id
+    /// (length ``num_words``). This is a **property**, so read it bare —
+    /// ``corpus.vocabulary``, no parentheses. (Its sibling :meth:`documents` *is* a
+    /// method — ``corpus.documents()`` — because it does work each call; calling
+    /// ``corpus.vocabulary()`` by analogy raises ``'list' object is not callable``.)
     #[getter]
     fn vocabulary(&self) -> Vec<String> {
         self.inner.id_to_word.clone()
@@ -503,6 +508,9 @@ impl Corpus {
     /// ``from_documents``: use it to recover tokens for ``prepare_pyldavis``,
     /// ``coherence``, or any function that wants ``list[list[str]]`` after you have
     /// committed to a ``Corpus``.
+    ///
+    /// This is a **method** — call it with parentheses, ``corpus.documents()`` —
+    /// unlike the bare :attr:`vocabulary` property next to it.
     fn documents(&self) -> Vec<Vec<String>> {
         self.inner
             .docs

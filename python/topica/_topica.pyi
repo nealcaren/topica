@@ -476,6 +476,12 @@ class DMR:
         ``check_every`` sweeps during :meth:`fit` (empty when ``check_every=0``)."""
         ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool:
         """True if fit early-stopped because the relative change in the objective
         fell below ``convergence_tol``; False when the full ``iters`` ran (the
@@ -577,6 +583,12 @@ class CTM:
     @property
     def bound_history(self) -> list[float]:
         """Variational bound after each EM iteration (length = iterations run)."""
+        ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
         ...
     @property
     def converged(self) -> bool:
@@ -756,6 +768,12 @@ class STM:
     @property
     def bound_history(self) -> list[float]:
         """Variational bound after each EM iteration (length = iterations run)."""
+        ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
         ...
     @property
     def converged(self) -> bool:
@@ -1038,6 +1056,12 @@ class STS:
     @property
     def bound_history(self) -> list[float]: ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool: ...
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
@@ -1148,6 +1172,12 @@ class HDP:
     @property
     def fit_history(self) -> list[tuple[int, float]]:
         """Uniform convergence trace aliasing log_likelihood_history."""
+        ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
         ...
     @property
     def converged(self) -> bool:
@@ -1332,6 +1362,12 @@ class DTM:
         """Per-iteration trace: list of (iteration, objective) pairs. Empty for DTM."""
         ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool:
         """Always False; DTM has no early-stop criterion."""
         ...
@@ -1476,6 +1512,12 @@ class DETM:
     @property
     def bound(self) -> float:
         """The final ELBO reached during fitting."""
+        ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
         ...
     @property
     def converged(self) -> bool: ...
@@ -1672,6 +1714,12 @@ class SupervisedLDA:
         ``check_every`` sweeps during :meth:`fit` (empty when ``check_every=0``)."""
         ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool:
         """True if fit early-stopped because the relative change in the objective
         fell below ``convergence_tol``; False when the full ``iters`` ran (the
@@ -1847,6 +1895,12 @@ class SAGE:
         ``check_every`` sweeps during :meth:`fit` (empty when ``check_every=0``)."""
         ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool:
         """True if fit early-stopped because the relative change in the objective
         fell below ``convergence_tol``; False when the full ``iters`` ran (the
@@ -2009,6 +2063,12 @@ class LabeledLDA:
         ``check_every`` sweeps during :meth:`fit` (empty when ``check_every=0``)."""
         ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool:
         """True if fit early-stopped because the relative change in the objective
         fell below ``convergence_tol``; False when the full ``iters`` ran (the
@@ -2142,6 +2202,12 @@ class OnlineLDA:
         draws. Present for the Dirichlet-family contract."""
         ...
 
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
     @property
     def converged(self) -> bool:
         """Whether fit stopped early on the per-pass bound tolerance."""
@@ -2420,6 +2486,12 @@ class LDA:
         ...
 
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool:
         """True if early stopping fired (``convergence_tol > 0`` and the relative
         change in log-likelihood fell below the tolerance). False by default."""
@@ -2641,6 +2713,12 @@ class PT:
         ``check_every`` sweeps during :meth:`fit` (empty when ``check_every=0``)."""
         ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool:
         """True if fit early-stopped because the relative change in the objective
         fell below ``convergence_tol``; False when the full ``iters`` ran (the
@@ -2713,6 +2791,12 @@ class GSDMM:
     @property
     def fit_history(self) -> list[tuple[int, float]]:
         """Uniform convergence trace aliasing log_likelihood_history."""
+        ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
         ...
     @property
     def converged(self) -> bool:
@@ -2974,6 +3058,12 @@ class FactorialLDA:
         ending with the final-iteration value."""
         ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool: ...
     @property
     def vocabulary(self) -> list[str]: ...
@@ -3181,6 +3271,12 @@ class DiscLDA:
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
     @property
+    def early_stopped(self) -> bool | None:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool | None: ...
     @property
     def vocabulary(self) -> list[str]: ...
@@ -3299,6 +3395,12 @@ class RTM:
     def link(self) -> str: ...
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
     @property
     def converged(self) -> bool: ...
     @property
@@ -3434,6 +3536,12 @@ class PA:
         ``check_every`` sweeps during :meth:`fit` (empty when ``check_every=0``)."""
         ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool:
         """True if fit early-stopped because the relative change in the objective
         fell below ``convergence_tol``; False when the full ``iters`` ran (the
@@ -3527,6 +3635,12 @@ class HLDA:
     @property
     def fit_history(self) -> list[tuple[int, float]]:
         """Per-iteration trace. Empty; HLDA has no flat K-topic objective."""
+        ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
         ...
     @property
     def converged(self) -> bool:
@@ -3701,6 +3815,12 @@ class SeededLDA:
         """Uniform convergence trace aliasing :attr:`log_likelihood_history`."""
         ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool:
         """True if fit early-stopped because the relative change in the objective
         fell below ``convergence_tol``; False when the full ``iters`` ran (the
@@ -3834,6 +3954,12 @@ class Top2Vec:
         """Always []; Top2Vec is not an iterative sampler."""
         ...
     @property
+    def early_stopped(self) -> None:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> None:  # type: ignore[override]
         """Always None; Top2Vec is a cluster model with no iterative objective."""
         ...
@@ -3951,6 +4077,12 @@ class BERTopic:
         """Always []; BERTopic is not an iterative sampler."""
         ...
     @property
+    def early_stopped(self) -> None:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> None:  # type: ignore[override]
         """Always None; BERTopic is a cluster model with no iterative objective."""
         ...
@@ -4025,6 +4157,12 @@ class SemanticSignalSeparation:
     @property
     def source_scores(self) -> numpy.typing.NDArray[numpy.float64]:
         """Signed document loadings on each axis, the raw ICA sources (D x K)."""
+        ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
         ...
     @property
     def converged(self) -> bool:
@@ -4127,6 +4265,12 @@ class ETM:
     def topic_embeddings(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
     def bound(self) -> float: ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
     @property
     def converged(self) -> bool: ...
     @property
@@ -4241,6 +4385,12 @@ class InfoCTM:
     @property
     def fit_history(self) -> list[float]: ...
     @property
+    def early_stopped(self) -> bool | None:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool | None: ...
     def save(self, path: str) -> None:
         """Persist the fitted model (both languages) to path. Reload with InfoCTM.load."""
@@ -4320,6 +4470,12 @@ class ProdLDA:
     def bound(self) -> float: ...
     @property
     def bound_history(self) -> list[float]: ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
     @property
     def converged(self) -> bool: ...
     @property
@@ -4439,6 +4595,12 @@ class Scholar:
     def bound(self) -> float: ...
     @property
     def bound_history(self) -> list[float]: ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
     @property
     def converged(self) -> bool: ...
     @property
@@ -4560,6 +4722,12 @@ class CombinedTM:
     @property
     def bound_history(self) -> list[float]: ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool: ...
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
@@ -4670,6 +4838,12 @@ class ZeroShotTM:
     @property
     def bound_history(self) -> list[float]: ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool: ...
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
@@ -4770,6 +4944,12 @@ class KeyNMF:
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool: ...
     @property
     def reconstruction_error(self) -> float: ...
@@ -4861,6 +5041,12 @@ class NMF:
     def reconstruction_error(self) -> float: ...
     @property
     def error_history(self) -> list[float]: ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
     @property
     def converged(self) -> bool: ...
     @property
@@ -4995,6 +5181,12 @@ class GuidedNMF:
         """Per-iteration value of the FULL objective
         ``||X - A S||_F^2 + guidance * ||Y - B S||_F^2`` (reconstruction plus
         guidance), with the initial value (before any update) first."""
+        ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
         ...
     @property
     def converged(self) -> bool:
@@ -5143,6 +5335,12 @@ class CorEx:
         """Per-iteration (iter, total_tc) pairs."""
         ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool:
         """True only if the total-correlation early stop fired before the iter budget."""
         ...
@@ -5256,6 +5454,12 @@ class AuthorTopic:
         diagnostic, not an early-stop criterion. Collapsed Gibbs runs the full
         ``iters`` budget, so ``converged`` is always False (there is no tolerance
         test) -- watch this trace flatten to judge mixing."""
+        ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
         ...
     @property
     def converged(self) -> bool:
@@ -5389,6 +5593,12 @@ class MGLDA:
         False (collapsed Gibbs runs the full iters budget)."""
         ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool: ...
     def top_words(
         self, n: int = 10, *, topic: int | None = None, weights: bool = False
@@ -5499,6 +5709,12 @@ class TopicsOverTime:
         """List of (iteration, held-in log-likelihood) pairs — column 0 is the sweep
         number, column 1 the log-likelihood — logged roughly every iters/25 sweeps
         (length ~25, not iters). converged is always False (Gibbs runs the full budget)."""
+        ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
         ...
     @property
     def converged(self) -> bool: ...
@@ -5624,6 +5840,12 @@ class GaussianLDA:
         """Per-sweep ``(iteration, avgLL)`` trace (see ``log_likelihood_history``)."""
         ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool: ...
     @property
     def vocabulary(self) -> list[str]: ...
@@ -5723,6 +5945,12 @@ class LSA:
         """Empty: the SVD is a direct solve with no iterative trace."""
         ...
     @property
+    def early_stopped(self) -> bool | None:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool | None:
         """None: convergence is not meaningful for a one-shot SVD."""
         ...
@@ -5800,6 +6028,12 @@ class TensorLDA:
     def unwhitened_raw(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
     @property
     def converged(self) -> bool: ...
     @property
@@ -5886,6 +6120,12 @@ class FASTopic:
     def word_embeddings(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
     def loss_history(self) -> list[float]: ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
     @property
     def converged(self) -> bool: ...
     @property
@@ -6203,6 +6443,12 @@ class KeyATM:
         """Per-iteration log-likelihood trace: list of (iteration, log_likelihood) pairs."""
         ...
     @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool:
         """True if the Gibbs run early-stopped because the relative change in the
         recorded model_fit log-likelihood fell below `convergence_tol`; False when
@@ -6350,6 +6596,12 @@ class IdealPointTM:
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
     @property
+    def early_stopped(self) -> Optional[bool]:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> Optional[bool]: ...
     @property
     def bound(self) -> float: ...
@@ -6430,6 +6682,12 @@ class TopicalNGrams:
     def doc_names(self) -> list[str]: ...
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
     @property
     def converged(self) -> bool: ...
     @property
@@ -6525,6 +6783,12 @@ class Wordfish:
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
     @property
+    def early_stopped(self) -> bool | None:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool | None: ...
     @property
     def iters_run(self) -> int: ...
@@ -6612,6 +6876,12 @@ class Wordshoal:
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
     @property
+    def early_stopped(self) -> bool | None:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
+    @property
     def converged(self) -> bool | None: ...
     @property
     def iters_run(self) -> int: ...
@@ -6695,6 +6965,12 @@ class IdealPointSentenceTM:
     def log_likelihood(self) -> float: ...
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def early_stopped(self) -> bool | None:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
     @property
     def converged(self) -> bool | None: ...
     @property
@@ -6883,6 +7159,12 @@ class PartyEmbeddings:
     def vocabulary(self) -> list[str]: ...
     @property
     def fit_history(self) -> list[tuple[int, float]]: ...
+    @property
+    def early_stopped(self) -> bool | None:
+        """Alias of :attr:`converged` under the name that says what it
+        means: True only if the fit early-stopped on ``convergence_tol``;
+        False when the full ``iters`` ran (issue #755)."""
+        ...
     @property
     def converged(self) -> bool | None: ...
     def nearest_words(self, group: str, n: int = 10) -> list[tuple[str, float]]:

@@ -46,11 +46,17 @@ and set `text_col` to your text column.
 
 `num_topics` (K) is a research decision, not a tuning parameter. As a starting
 point, K=10 gives broad themes, K=30 finer ones. `search_k` scores a range of K
-on coherence, exclusivity, and held-out likelihood:
+on coherence and exclusivity by default; pass `held_out=make_heldout(corpus)` to
+add a held-out likelihood column too:
 
 ```python
 result = topica.search_k(corpus, ks=[5, 10, 20, 30], seed=13)
-print(result.best_k())
+print(result.best_k())                 # the coherence/exclusivity frontier knee
+print(result.best_k(explain=True))     # ...and the per-K scores behind the pick
+
+# add held-out likelihood as a selection criterion
+ho = topica.search_k(corpus, ks=[5, 10, 20, 30], seed=13,
+                     held_out=topica.make_heldout(corpus))
 ```
 
 The [choosing K guide](../publishing/choosing-k.md) walks through how to justify
