@@ -1,12 +1,12 @@
 """Small result containers shared across the diagnostic helper families.
 
-Several diagnostics (:func:`~topica.quality_frontier`,
-:func:`~topica.bootstrap_stability`, :func:`~topica.visualize_keywords`,
+Several diagnostics (:func:`~topica.select.quality_frontier`,
+:func:`~topica.evaluate.bootstrap_stability`, :func:`~topica.visualize_keywords`,
 :func:`~topica.time_prevalence_ci`) historically returned a plain ``dict``. They
 still *are* dicts — every ``result[key]`` access, ``.get``, ``**`` unpacking, and
 JSON round-trip is unchanged, and ``FrameDict({...}) == {...}`` — but they now
 carry the same ``.to_frame()`` a pandas user already reaches for on the other
-result types (:class:`~topica.SearchKResult`, the effect/robustness results).
+result types (:class:`~topica.select.SearchKResult`, the effect/robustness results).
 That converges the "return-type zoo" (#742) onto one idiom without breaking the
 dict contract.
 
@@ -32,14 +32,14 @@ class FrameDict(dict):
 
 
 class QualityFrontier(FrameDict):
-    """:func:`~topica.quality_frontier` result: one row per topic with
+    """:func:`~topica.select.quality_frontier` result: one row per topic with
     ``topic``, ``coherence``, ``exclusivity``, ``prevalence``. The base
     :meth:`~FrameDict.to_frame` (every column an equal-length array) is exactly
     right here."""
 
 
 class BootstrapStability(FrameDict):
-    """:func:`~topica.bootstrap_stability` result. ``topic`` and ``stability``
+    """:func:`~topica.evaluate.bootstrap_stability` result. ``topic`` and ``stability``
     are per-topic arrays; ``mean`` (overall) and ``reference`` (the fitted model)
     are scalars, so :meth:`to_frame` frames only the per-topic columns."""
 

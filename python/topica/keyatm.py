@@ -5,7 +5,7 @@ on a fitted :class:`~topica.KeyATM`'s numpy outputs, so they cover most of the R
 workflow directly:
 
 - ``keyATM::top_words``       -> :meth:`topica.KeyATM.top_words`
-- ``keyATM::top_docs``        -> :func:`topica.find_thoughts`
+- ``keyATM::top_docs``        -> :func:`topica.inspect.find_thoughts`
 - ``keyATM::semantic_coherence`` -> :meth:`topica.KeyATM.coherence`
 - ``keyATM::plot_modelfit``   -> :attr:`topica.KeyATM.log_likelihood_history`
 - ``keyATM::covariates_info`` -> :attr:`topica.KeyATM.feature_effects` / ``feature_names``
@@ -269,8 +269,8 @@ def time_prevalence_ci(model, timestamps, *, ci=0.95, normalize=True):
     .. note::
        This is **dynamic-keyATM only** — it reads that model's retained MCMC draws.
        For prevalence over a time covariate on any other model (LDA, STM, …), use
-       :func:`topica.predicted_prevalence` with a continuous ``year`` (optionally a
-       :func:`topica.spline`), which gives the same over-time curve with intervals
+       :func:`topica.effects.predicted_prevalence` with a continuous ``year`` (optionally a
+       :func:`topica.design.spline`), which gives the same over-time curve with intervals
        via the method of composition.
 
     For a dynamic :class:`~topica.KeyATM` (fit with ``timestamps=`` and

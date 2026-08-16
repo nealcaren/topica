@@ -18,7 +18,7 @@ Three uses, one tool:
 Design commitments:
 
 - **Alignment is reused, not reinvented.** Matching runs through
-  :func:`topica.align_topics`, which pairs two topics by the Hungarian 1-to-1
+  :func:`topica.evaluate.align_topics`, which pairs two topics by the Hungarian 1-to-1
   assignment and keeps a pair when its similarity clears ``threshold``, then reports
   splits, merges, and unaligned topics. Splits/merges are a background-relative overlay
   (an extra partner close to a topic's own best match relative to the fit's cross-topic
@@ -41,7 +41,7 @@ Design commitments:
 
 Manifests, not just live models
 -------------------------------
-``compare`` also accepts two :class:`~topica.AnalysisManifest` records recorded with
+``compare`` also accepts two :class:`~topica.provenance.AnalysisManifest` records recorded with
 ``record_fit(..., topic_words_n>0)``, so two fits can be compared *without refitting*
 — useful when the models themselves are gone but their provenance records remain.
 A manifest stores only each topic's top-N words and mean prevalence, so the manifest
@@ -594,7 +594,7 @@ def compare(
     """Compare two fitted topic models statistically.
 
     ``a``, ``b`` are two fitted models (or ``K×V`` topic-word arrays), **or** two
-    :class:`~topica.AnalysisManifest` records recorded with ``topic_words_n>0`` — in
+    :class:`~topica.provenance.AnalysisManifest` records recorded with ``topic_words_n>0`` — in
     which case topics are aligned by Jaccard overlap of the retained top-word sets
     without refitting (see the module docstring; mixing a model with a manifest is
     refused). Topics are matched one-to-one by the Hungarian assignment

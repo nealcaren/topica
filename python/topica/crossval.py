@@ -629,21 +629,21 @@ def _resolve_covariates(covariates, n_docs):
         raise ValueError("covariates must be a dict {kwarg_name: array}")
     out = {}
     for key, arr in covariates.items():
-        # topica.one_hot / design_matrix return (matrix, names); a common first-timer
+        # topica.design.one_hot / design_matrix return (matrix, names); a common first-timer
         # mistake is to pass that tuple straight through. np.asarray on it yields a
         # ragged object array and a cryptic downstream error — catch it here.
         if isinstance(arr, tuple):
             raise ValueError(
                 f"covariate {key!r} is a tuple, not an array — did you forget to "
                 f"unpack one_hot()/design_matrix()? They return (matrix, names); pass "
-                f"the matrix, e.g. `X, names = topica.one_hot(...)` then "
+                f"the matrix, e.g. `X, names = topica.design.one_hot(...)` then "
                 f"`covariates={{'{key}': X}}`"
             )
         a = np.asarray(arr)
         if a.dtype == object or not np.issubdtype(a.dtype, np.number):
             raise ValueError(
                 f"covariate {key!r} must be a numeric array, got dtype {a.dtype}; "
-                "encode categoricals with topica.one_hot(...) first"
+                "encode categoricals with topica.design.one_hot(...) first"
             )
         if a.shape[0] != n_docs:
             raise ValueError(

@@ -7,7 +7,7 @@ than any one run: across Hoyle et al.'s experiments the ensemble improves on the
 median run in 97% of contexts and never loses to the worst. This module builds
 that consensus.
 
-It is the natural follow-on to :func:`~topica.select_model`, which fits N runs at a
+It is the natural follow-on to :func:`~topica.select.select_model`, which fits N runs at a
 fixed K. Instead of *picking* the best run with ``plot_models``, ``ensemble``
 *combines* all of them.
 
@@ -41,7 +41,7 @@ scan-order-dependent core validation — documented at ``_rank_mask`` and
 
 The result duck-types as a fitted model for the model-neutral analysis surface (it
 exposes ``topic_word``, ``doc_topic``, and ``vocabulary``), so the consensus flows
-straight into :func:`~topica.coherence`, the diagnostics, and the rest. Each
+straight into :func:`~topica.evaluate.coherence`, the diagnostics, and the rest. Each
 ensemble topic carries a ``stability`` score and a ``reliable`` flag, so a
 consensus topic the individual runs do not actually agree on is marked, not
 silently trusted.
@@ -70,7 +70,7 @@ class EnsembleResult:
 
     Exposes ``topic_word``, ``doc_topic``, and ``vocabulary`` so it can be passed
     wherever a fitted model is accepted by the model-neutral analysis functions
-    (:func:`~topica.coherence`, the diagnostics surface, :func:`~topica.align_topics`).
+    (:func:`~topica.evaluate.coherence`, the diagnostics surface, :func:`~topica.evaluate.align_topics`).
 
     Attributes
     ----------
@@ -866,7 +866,7 @@ def ensemble(runs, *, method="cluster", num_topics=None, lambda_=0.5,
 
     The consensus is more reliable than any single run — it beats the median run
     and rarely loses to the best (Hoyle et al. 2022). This is the natural
-    follow-on to :func:`~topica.select_model`: fit N runs, then combine them here
+    follow-on to :func:`~topica.select.select_model`: fit N runs, then combine them here
     instead of picking one.
 
     Parameters
@@ -914,7 +914,7 @@ def ensemble(runs, *, method="cluster", num_topics=None, lambda_=0.5,
     Returns
     -------
     An :class:`EnsembleResult`. It exposes ``topic_word``, ``doc_topic``, and
-    ``vocabulary``, so it passes straight into :func:`~topica.coherence`, the
+    ``vocabulary``, so it passes straight into :func:`~topica.evaluate.coherence`, the
     diagnostics, and other model-neutral analyses. Per-topic ``stability`` and
     ``reliable`` flags mark consensus topics the individual runs do not agree on.
     """

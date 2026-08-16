@@ -140,7 +140,7 @@ def topic_labels(model) -> list:
 def representative_docs(model, texts, *, topic=None, n=5):
     """The documents that load most heavily on a topic, with their text.
 
-    Wraps :func:`topica.find_thoughts`, returning ``texts`` for the ``n``
+    Wraps :func:`topica.inspect.find_thoughts`, returning ``texts`` for the ``n``
     highest-``doc_topic`` documents. With ``topic`` given, returns that topic's
     list; with ``topic=None`` returns ``{topic_id: [texts]}`` for every topic.
     Each list is ordered by descending topic proportion.
@@ -252,7 +252,7 @@ def topics_over_time(model, timestamps, *, normalize=True) -> dict:
 def topics_per_class(model, groups, *, ci=0.95):
     """Mean topic prevalence within each level of a grouping variable.
 
-    A thin wrapper over :func:`topica.by_strata` on ``model.doc_topic``:
+    A thin wrapper over :func:`topica.effects.by_strata` on ``model.doc_topic``:
     ``groups`` is one label per document, and the result is a list of
     per-stratum prevalence records (mean and confidence interval per topic).
     """

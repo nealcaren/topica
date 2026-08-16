@@ -1216,7 +1216,7 @@ def plot_search_k(rows, *, metrics=("coherence", "exclusivity"), ax=None):
     Returns the primary matplotlib ``Axes`` (consistent with topica's other
     ``plot_*`` helpers). To save the figure, go through the axes' figure::
 
-        ax = topica.plot_search_k(rows)
+        ax = topica.select.plot_search_k(rows)
         ax.figure.savefig("search_k.png", dpi=150, bbox_inches="tight")
 
     Requires matplotlib.

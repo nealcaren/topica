@@ -6,7 +6,7 @@ recover those labels?* It reports the standard partition-comparison metrics (ARI
 NMI, homogeneity, completeness, V-measure, and cluster purity), computed from the
 two label vectors alone.
 
-This complements :func:`topica.coherence`. Coherence rates the *interpretability*
+This complements :func:`topica.evaluate.coherence`. Coherence rates the *interpretability*
 of a topic's top words; it does not tell you whether documents were assigned to the
 right topic, and for embedding-based cluster models it can be actively misleading
 (a model can keep tight, coherent top-words while the document partition drifts).
@@ -153,7 +153,7 @@ def agreement(pred, gold, *, noise="keep"):
     -----
     All metrics are invariant to how the labels are named. Values match
     ``scikit-learn`` (``normalized_mutual_info_score`` with arithmetic averaging).
-    Pair with :func:`topica.coherence`: coherence for whether the top words read as a
+    Pair with :func:`topica.evaluate.coherence`: coherence for whether the top words read as a
     theme, ``agreement`` for whether the document partition is right.
     """
     if noise not in ("keep", "drop"):

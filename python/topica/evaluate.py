@@ -1315,10 +1315,10 @@ def bootstrap_stability(
         per-feature arrays (e.g. ``prevalence_names``, length ``p``) and scalars
         are passed through unchanged. So a full STM stability check reads::
 
-            X, names = topica.one_hot(df["party"])
+            X, names = topica.design.one_hot(df["party"])
             stm = topica.STM(num_topics=10, seed=13).fit(
                 docs, prevalence=X, prevalence_names=names)
-            bs = topica.bootstrap_stability(
+            bs = topica.evaluate.bootstrap_stability(
                 docs, reference=stm,
                 model_factory=lambda s: topica.STM(num_topics=10, seed=s),
                 prevalence=X, prevalence_names=names)
@@ -1614,8 +1614,8 @@ def flag_topics(model, texts, *, n=10, coherence_type="c_v"):
     """Score every topic on cheap quality features and flag likely junk.
 
     A quick "are these topics real, or did I forget to clean my corpus?" check.
-    For each topic it gathers :func:`topica.coherence`,
-    :func:`topica.exclusivity`, the normalized topic-word entropy (1.0 = a
+    For each topic it gathers :func:`topica.evaluate.coherence`,
+    :func:`topica.evaluate.exclusivity`, the normalized topic-word entropy (1.0 = a
     perfectly flat, uninformative topic), corpus prevalence, and the fraction of
     its top words that are stopwords, then flags a topic as junk when any of:
 

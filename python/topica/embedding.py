@@ -22,7 +22,7 @@ and the matching vocabulary list; it does the clustering and seeding.
     topica.enable_experimental()  # EmbeddingLDA is experimental (see note below)
     vocab = sorted({w for d in docs for w in d})
     emb = SentenceTransformer("all-MiniLM-L6-v2").encode(vocab)
-    model = topica.EmbeddingLDA(num_topics=10, embeddings=emb, vocabulary=vocab)
+    model = topica.embeddings.EmbeddingLDA(num_topics=10, embeddings=emb, vocabulary=vocab)
     model.fit(docs, iters=1000)
     print(model.top_words(8))
 
@@ -299,7 +299,7 @@ class EmbeddingLDA:
        passed; use ``model.vocabulary``, or the helpers that already pair them:
        ``top_words()`` and ``label_topics(model.topic_word, model.vocabulary)``.
 
-    No embedder of your own? :func:`~topica.llm_embed` builds the ``embeddings``
+    No embedder of your own? :func:`~topica.embeddings.llm_embed` builds the ``embeddings``
     matrix (OpenAI, or offline ``sentence-transformers``).
 
     Parameters

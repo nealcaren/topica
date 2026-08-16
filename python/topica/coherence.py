@@ -687,10 +687,10 @@ def embedding_coherence(topics, word_embeddings, vocabulary=None, *,
     a list of word lists. `word_embeddings` is either a ``dict {word: vector}``
     (matched by word, robust to any `topics` form) or a ``(V, E)`` matrix
     aligned to `vocabulary`; vectors need not be unit length. No embedder of
-    your own? :func:`~topica.llm_embed` builds one::
+    your own? :func:`~topica.embeddings.llm_embed` builds one::
 
-        emb = topica.llm_embed(model.vocabulary)          # (V, E) matrix
-        topica.embedding_coherence(model, emb, model.vocabulary)
+        emb = topica.embeddings.llm_embed(model.vocabulary)          # (V, E) matrix
+        topica.evaluate.embedding_coherence(model, emb, model.vocabulary)
 
     Words with no embedding — including any whose vector is NaN/inf or all-zero —
     are dropped from a topic; a topic left with fewer than two embedded words

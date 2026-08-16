@@ -14,7 +14,7 @@ coefficient, its interval, and whether the sign and significance held.
 Design commitments:
 
 - **Topics are matched, not assumed.** Fits are aligned with
-  :func:`topica.align_topics`' one-to-one Hungarian assignment, so topic 3 in the
+  :func:`topica.evaluate.align_topics`' one-to-one Hungarian assignment, so topic 3 in the
   K=20 fit is compared against whichever topic it actually corresponds to at
   K=25 — never against "topic 3" by index.
 - **Unmatched is reported, never dropped.** When K differs, some reference topics
@@ -318,7 +318,7 @@ def effects_across_k(
     """Is a covariate effect robust to the number of topics?
 
     Refits at each K, aligns every fit's topics back to a reference fit, re-runs
-    :func:`~topica.estimate_effect`, and reports one row per (reference topic, K)
+    :func:`~topica.effects.estimate_effect`, and reports one row per (reference topic, K)
     for the tracked ``feature`` — the robustness table an STM reviewer asks for.
 
     ``docs`` are the tokenized documents (or a :class:`~topica.Corpus`), ``ks`` the
@@ -332,10 +332,10 @@ def effects_across_k(
     ``(num_topics, seed) -> fitted model`` (which are fit without a design). ``fits=``
     reuses models you already fit (one per K, in order) instead of refitting.
 
-    Topics are matched by :func:`~topica.align_topics`' one-to-one assignment, so a
+    Topics are matched by :func:`~topica.evaluate.align_topics`' one-to-one assignment, so a
     topic is compared with its actual counterpart, not its index. A counterpart
     counts only if its similarity clears ``min_similarity`` (default ``0.3``,
-    :func:`~topica.align_topics`' own match threshold); a reference topic with no
+    :func:`~topica.evaluate.align_topics`' own match threshold); a reference topic with no
     counterpart — because K differs, or because the best pairing is below that
     threshold — is reported with ``matched=False`` and verdict ``unmatched`` rather
     than dropped or counted robust. Read the ``similarity`` column to judge

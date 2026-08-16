@@ -524,7 +524,7 @@ impl Corpus {
     /// all documents, parallel to :attr:`vocabulary` (length ``num_words``). This
     /// is the empirical ``P(w)`` (up to normalization) that stm's lift and FREX
     /// James-Stein shrinkage use; pass it (or the corpus) to
-    /// :func:`topica.label_topics` / :func:`topica.frex` for stm-faithful labels.
+    /// :func:`topica.inspect.label_topics` / :func:`topica.inspect.frex` for stm-faithful labels.
     #[getter]
     fn word_counts(&self) -> Vec<u32> {
         self.inner.total_freqs.clone()

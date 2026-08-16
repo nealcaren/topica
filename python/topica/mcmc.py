@@ -620,7 +620,7 @@ def multichain_diagnostics(
         log-likelihood trace only.
     metric : str, default "cosine"
         Topic-word distance metric for the cross-chain alignment (passed to
-        :func:`topica.align_topics`).
+        :func:`topica.evaluate.align_topics`).
     reference : int, default 0
         Index of the chain whose topic order the others are aligned to.
     warn : bool, default True
