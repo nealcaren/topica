@@ -804,3 +804,9 @@ def _thoughts_md(t, words, docs, theta, texts, max_chars):
             body = pat.sub(lambda m: f"**{m.group(0)}**", body)
         lines.append(f"- **doc {int(d)}** (θ={theta[d, t]:.2f}): {body}")
     return "\n".join(lines)
+
+
+def __dir__():
+    """Show only the public workflow surface in tab-completion (#757), hiding the
+    module's own imports (np, re, dataclass, ...)."""
+    return sorted(__all__)
