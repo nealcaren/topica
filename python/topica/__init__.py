@@ -191,6 +191,7 @@ from . import manifest  # noqa: E402  (analysis manifest / provenance record)
 from .manifest import AnalysisManifest, record_fit  # noqa: E402
 from .effects import (  # noqa: E402  general, work on any model's theta
     estimate_effect,
+    EffectList,
     by_strata,
     prevalence_ci,
     top_topics,
@@ -341,6 +342,12 @@ from .embedding import (  # noqa: E402
     save_embeddings,
     load_embeddings,
 )
+from .inspect import _bind_topic_table_method  # noqa: E402  (issue #758)
+# Give every topic-word model a `.topic_table()` method so `m.topic_table()` works
+# by analogy with `m.top_words()`, not just the top-level `topica.topic_table(m)`
+# function. Runs after every model class is imported above (including the Python-side
+# TopicGPT / AnchorLDA), binding each by its registry name.
+_bind_topic_table_method(globals().get(_name) for _name in REGISTRY)
 from .preprocess import split_documents  # noqa: E402
 from .stopwords import (  # noqa: E402
     ENGLISH_STOPWORDS,
@@ -350,6 +357,19 @@ from .stopwords import (  # noqa: E402
 )
 from .phrases import learn_phrases, apply_phrases, add_ngrams, Phrases  # noqa: E402
 from .frames import from_dataframe, align, prep_documents, plot_removed  # noqa: E402
+
+
+def _corpus_from_dataframe(cls, df, **kwargs):
+    """Build a :class:`Corpus` from a DataFrame; a classmethod alias for the
+    module-level :func:`topica.from_dataframe` (the pandas-native
+    ``Corpus.from_dataframe(df, text_col=...)`` first guess, issue #758). See
+    :func:`topica.from_dataframe` for every keyword argument."""
+    return from_dataframe(df, **kwargs)
+
+
+# A DataFrame on-ramp under the name a pandas user reaches for first; both this
+# and the top-level topica.from_dataframe build the same Corpus (issue #758).
+Corpus.from_dataframe = classmethod(_corpus_from_dataframe)
 from .formulas import design_matrix  # noqa: E402
 from .scaling import bimodality, polarization, polarization_ci, split_half_reliability, position_intervals  # noqa: E402  (intrinsic ideal-point diagnostics)
 from . import datasets  # noqa: E402  (bundled + fetch-on-demand example datasets)

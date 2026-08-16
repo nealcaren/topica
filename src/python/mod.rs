@@ -1923,6 +1923,9 @@ impl LDA {
     /// ``True`` if fit stopped early because the convergence tolerance criterion
     /// was met (``convergence_tol > 0``); ``False`` if the full ``iters``
     /// sweeps ran (the default).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -1931,6 +1934,9 @@ impl LDA {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -5003,6 +5009,9 @@ impl DMR {
 
     /// ``True`` if the relative-change convergence criterion was satisfied before
     /// all iterations completed. Always ``False`` when ``convergence_tol=0``.
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -5011,6 +5020,9 @@ impl DMR {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -5861,6 +5873,9 @@ impl LabeledLDA {
     }
 
     /// ``True`` if the convergence criterion was met; ``False`` otherwise.
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -5869,6 +5884,9 @@ impl LabeledLDA {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -6670,6 +6688,9 @@ impl SAGE {
 
     /// ``True`` if the relative-change convergence criterion was satisfied before
     /// all iterations completed. Always ``False`` when ``convergence_tol=0``.
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -6678,6 +6699,9 @@ impl SAGE {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -7532,6 +7556,9 @@ impl CTM {
 
     /// ``True`` if EM stopped on the `em_tol` criterion; ``False`` if it hit the
     /// `iters` cap first (the fit may not have converged).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -7540,6 +7567,9 @@ impl CTM {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -8651,6 +8681,9 @@ impl STM {
 
     /// ``True`` if EM stopped on the `em_tol` criterion; ``False`` if it hit the
     /// `iters` cap first (the fit may not have converged).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -8659,6 +8692,9 @@ impl STM {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -10277,6 +10313,9 @@ impl STS {
 
     /// ``True`` if EM stopped on the `em_tol` criterion, ``False`` if it hit the
     /// `iters` cap.
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -10285,6 +10324,9 @@ impl STS {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -10894,6 +10936,9 @@ impl HDP {
     }
 
     /// HDP does not implement an early-stop criterion; always ``False``.
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -10902,6 +10947,9 @@ impl HDP {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -11603,6 +11651,9 @@ impl DTM {
     }
 
     /// DTM does not implement an early-stop criterion; always ``False``.
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -11611,6 +11662,9 @@ impl DTM {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -12174,6 +12228,9 @@ impl SupervisedLDA {
 
     /// ``True`` if the relative-change convergence criterion was satisfied before
     /// all EM iterations completed. Always ``False`` when ``convergence_tol=0``.
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -12182,6 +12239,9 @@ impl SupervisedLDA {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -12674,6 +12734,9 @@ impl PT {
     }
     /// ``True`` if the relative-change convergence criterion was satisfied before
     /// all iterations completed. Always ``False`` when ``convergence_tol=0``.
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -12682,6 +12745,9 @@ impl PT {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -13175,6 +13241,9 @@ impl GSDMM {
         Ok(self.trace.iter().map(|&(it, _, ll)| (it, ll)).collect())
     }
     /// GSDMM does not implement an early-stop criterion; always ``False``.
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -13183,6 +13252,9 @@ impl GSDMM {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -14095,6 +14167,9 @@ impl SeededLDA {
     }
     /// ``True`` if the convergence criterion was met (``convergence_tol > 0``);
     /// ``False`` if the full ``iters`` ran.
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -14103,6 +14178,9 @@ impl SeededLDA {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -14864,6 +14942,9 @@ impl FASTopic {
     fn loss_history(&self) -> PyResult<Vec<f64>> {
         Ok(self.fitted_model()?.loss_history.clone())
     }
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         Ok(self.fitted_model()?.converged)
@@ -14871,6 +14952,9 @@ impl FASTopic {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         Ok(self.fitted_model()?.converged)
@@ -16108,6 +16192,9 @@ impl KeyATM {
     /// recorded ``model_fit`` log-likelihood fell below ``convergence_tol``;
     /// ``False`` when the full ``iters`` sweeps ran (the default, and always for
     /// the CVB0 backend, which keeps no trace).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
@@ -16116,6 +16203,9 @@ impl KeyATM {
     /// Alias of :attr:`converged` under the name that says what the flag means:
     /// True only if the fit early-stopped on `convergence_tol`; False when the
     /// full `iters` ran. `converged` is kept as an alias (issue #755).
+    /// :func:`topica.stop_reason` turns this flag into a plain-language summary of
+    /// why the fit stopped (tolerance met, ``iters`` cap hit, or no early-stop
+    /// criterion for this model).
     #[getter]
     fn early_stopped(&self) -> PyResult<bool> {
         self.require_fitted()?;

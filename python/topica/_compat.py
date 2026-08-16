@@ -17,6 +17,7 @@ LAZY = {
     'CompareResult': 'compare',
     'CrossValResult': 'select',
     'ENGLISH_STOPWORDS': 'data',
+    'EffectList': 'effects',
     'EmbeddingLDA': 'embeddings',
     'EmbeddingRegression': 'embeddings',
     'Folds': 'select',

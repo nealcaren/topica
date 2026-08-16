@@ -356,6 +356,40 @@ def topic_table(model, vocabulary=None, *, doc_topic=None, n=7, weights=False):
     return TopicTable(rows)
 
 
+def _model_topic_table(self, vocabulary=None, *, doc_topic=None, n=7, weights=False):
+    """A publication-ready topic table for this fitted model.
+
+    Method form of :func:`topica.topic_table`, so ``m.topic_table()`` works by
+    analogy with ``m.top_words()`` / ``m.coherence()``. Equivalent to
+    ``topica.topic_table(m, ...)``; see that function for the full argument and
+    return description.
+    """
+    return topic_table(self, vocabulary, doc_topic=doc_topic, n=n, weights=weights)
+
+
+def _bind_topic_table_method(classes):
+    """Attach a ``.topic_table(...)`` method to each model class that exposes
+    ``top_words`` (issue #758).
+
+    The method/function split is a coin-flip a newcomer loses: they reach for
+    ``m.topic_table()`` by analogy with ``m.top_words()``. Bind the method form
+    onto every topic-word model so both spellings work. Classes without a
+    ``top_words`` accessor (scaling / embedding models with no topic-word matrix)
+    are skipped, matching what the top-level :func:`topic_table` already accepts.
+    """
+    _model_topic_table.__name__ = "topic_table"
+    _model_topic_table.__qualname__ = "topic_table"
+    for cls in classes:
+        if cls is None or not hasattr(cls, "top_words"):
+            continue
+        if "topic_table" in vars(cls):  # already a real (Rust) method; leave it
+            continue
+        try:
+            cls.topic_table = _model_topic_table
+        except (TypeError, AttributeError):
+            pass  # a class that refuses attribute assignment keeps the function form
+
+
 
 def topics_for_term(topic_word, terms, vocabulary=None, *, top_n=5, per_term=False,
                     normalize=False, with_labels=False, label_n=5):

@@ -57,9 +57,10 @@ pub(crate) struct PrepInfo {
 /// :meth:`Corpus.from_documents`, from a raw text file with
 /// :meth:`Corpus.from_text_file`, or load a binary corpus written by the
 /// ``preprocess`` CLI with :meth:`Corpus.load`. Starting from a pandas
-/// ``DataFrame``? Use the module-level :func:`topica.from_dataframe` (it builds
-/// the ``Corpus`` and keeps your metadata row-aligned through pruning) — there is
-/// no ``Corpus.from_dataframe``; the DataFrame on-ramp is a module function.
+/// ``DataFrame``? Use :func:`topica.from_dataframe` (it builds the ``Corpus`` and
+/// keeps your metadata row-aligned through pruning); ``Corpus.from_dataframe(df,
+/// text_col=...)`` is a classmethod alias for the same function, for the
+/// pandas-native spelling.
 ///
 /// Accessor convention: scalar/array *facts about the corpus* are attribute
 /// **properties** — access them with no parentheses (``corpus.num_docs``,
@@ -460,6 +461,13 @@ impl Corpus {
 
     #[getter]
     fn num_docs(&self) -> usize {
+        self.inner.num_docs()
+    }
+
+    /// ``len(corpus)`` is the number of documents, the same value as the
+    /// :attr:`num_docs` property, so a ``Corpus`` counts like the list of
+    /// documents it stands in for.
+    fn __len__(&self) -> usize {
         self.inner.num_docs()
     }
 

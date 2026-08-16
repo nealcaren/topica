@@ -167,6 +167,33 @@ class TopicEffect:
         )
 
 
+class EffectList(list):
+    """The result of :func:`estimate_effect`: a ``list`` of per-topic
+    :class:`TopicEffect` objects, one per topic.
+
+    It *is* a plain ``list`` (index it, iterate it, ``len()`` it), with one
+    convenience the siblings :func:`search_k` / :func:`topic_table` /
+    :func:`bootstrap_stability` also give: a container-level :meth:`to_frame`, so
+    ``estimate_effect(...).to_frame()`` works without the
+    ``pd.concat([e.to_frame() for e in effects])`` boilerplate.
+    """
+
+    def to_frame(self):
+        """One tidy pandas DataFrame for the whole call, one row per
+        (topic, feature).
+
+        Concatenates every :meth:`TopicEffect.to_frame`, so the columns are
+        ``topic``, ``feature``, ``coef``, ``se``, ``z``, ``pvalue``, ``ci_low``,
+        ``ci_high``, ``r_squared`` (see :meth:`TopicEffect.to_frame`). Returns an
+        empty DataFrame when there are no effects.
+        """
+        import pandas as pd
+
+        if not self:
+            return pd.DataFrame()
+        return pd.concat([e.to_frame() for e in self], ignore_index=True)
+
+
 def _coerce_design(X, feature_names):
     """Coerce a design-matrix argument to a float64 ``(n, p)`` array.
 
@@ -697,12 +724,14 @@ def estimate_effect(
 
     Returns
     -------
-    list[TopicEffect]
-        One regression per topic. For a tidy long table with one row per
-        (topic, feature), concatenate the per-topic frames::
+    EffectList
+        A ``list`` of one :class:`TopicEffect` per topic (index and iterate it
+        like any list). For a tidy long table with one row per (topic, feature),
+        call the container's :meth:`~EffectList.to_frame`::
 
-            import pandas as pd
-            table = pd.concat([e.to_frame() for e in result], ignore_index=True)
+            table = topica.estimate_effect(model, X, feature_names=names).to_frame()
+
+        (equivalent to ``pd.concat([e.to_frame() for e in result])``).
     """
     # Formula path: build X and feature_names from an R-style formula + a
     # DataFrame. A string `cluster` is read as a column of that frame.
@@ -888,7 +917,7 @@ def estimate_effect(
             topic_list=topic_list, weights=weights,
         )
 
-    out: list[TopicEffect] = []
+    out = EffectList()
     for (beta, Sigma, r2), t in zip(pooled_results, topic_list):
         se = np.sqrt(np.clip(np.diag(Sigma), 0.0, None))
         with np.errstate(divide="ignore", invalid="ignore"):
