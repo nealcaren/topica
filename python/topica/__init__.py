@@ -133,61 +133,7 @@ __citation__ = (
 )
 
 
-def one_hot(values, *, drop_first=True, reference=None, prefix=""):
-    """One-hot encode a categorical covariate for use as DMR features.
-
-    Given a sequence of category labels (one per document), returns
-    ``(matrix, names)`` where ``matrix`` is a ``(num_docs, num_categories)``
-    float array of 0/1 indicators and ``names`` are the corresponding column
-    names. One category is omitted as the reference (baseline) level, which
-    avoids collinearity with the DMR/STM intercept; every coefficient is then a
-    contrast *against that reference*, so which level is the reference sets what
-    the effects mean.
-
-    ``reference`` names the level to drop. When ``None`` (and ``drop_first=True``,
-    the default), the alphabetically-first category is dropped; with three or more
-    levels a warning names it, since which of several baselines is the reference
-    shapes the whole story and a silent choice is easy to misread — pass
-    ``reference=`` to choose it explicitly (and silence the warning).
-    ``drop_first=False`` keeps every level (full dummy set, e.g. for a model
-    without an intercept). Pass the result straight to ``DMR.fit(docs, matrix,
-    feature_names=names)``; combine multiple covariates with ``numpy.hstack``.
-    """
-    import numpy as np
-    import warnings
-
-    values = list(values)
-    categories = sorted(set(values))
-    if reference is not None:
-        if reference not in categories:
-            raise ValueError(
-                f"reference={reference!r} is not one of the categories "
-                f"{categories}"
-            )
-        categories = [c for c in categories if c != reference]
-    elif drop_first and categories:
-        dropped = categories[0]
-        categories = categories[1:]
-        # Binary covariate: the baseline is unambiguous (only one other level), so
-        # warning would be noise. With 3+ levels the reference genuinely shapes the
-        # contrasts and a silent alphabetical choice is a Tier-1 footgun.
-        if len(categories) >= 2:
-            warnings.warn(
-                f"one_hot: dropped the alphabetically-first level {dropped!r} as "
-                "the reference, so every coefficient is a contrast against it. "
-                "Pass reference= to choose the baseline explicitly (and silence "
-                "this warning), or drop_first=False to keep all levels.",
-                UserWarning,
-                stacklevel=2,
-            )
-    index = {c: j for j, c in enumerate(categories)}
-    matrix = np.zeros((len(values), len(categories)), dtype=np.float64)
-    for i, v in enumerate(values):
-        j = index.get(v)
-        if j is not None:
-            matrix[i, j] = 1.0
-    names = [f"{prefix}{c}" for c in categories]
-    return matrix, names
+# one_hot lives in topica.design (re-exported below); see design.py.
 
 
 def summary(model, topn=8):
@@ -337,11 +283,13 @@ from .crossval import (  # noqa: E402  (#701 cross-validation evaluation framewo
 )
 from .ensemble import ensemble, EnsembleResult, cross_ensemble  # noqa: E402  (consensus across runs)
 from .compare import (  # noqa: E402  (statistical two-fit topic-drift comparison, #415)
-    compare,
     CompareResult,
     MatchedPair,
     UnmatchedTopic,
 )
+# `compare` is exposed as a callable module (issue #757): `topica.compare(a, b)`
+# still calls the function, and `topica.compare.CompareResult` reaches the namespace.
+from . import compare  # noqa: E402, F811
 from .robustness import (  # noqa: E402  (effect robustness across K / seeds, #644)
     effects_across_k,
     effects_across_seeds,
@@ -405,6 +353,21 @@ from .frames import from_dataframe, align, prep_documents, plot_removed  # noqa:
 from .formulas import design_matrix  # noqa: E402
 from .scaling import bimodality, polarization, polarization_ci, split_half_reliability, position_intervals  # noqa: E402  (intrinsic ideal-point diagnostics)
 from . import datasets  # noqa: E402  (bundled + fetch-on-demand example datasets)
+
+# Workflow namespaces (issue #757): task-oriented facades that group the flat API
+# by analysis stage. Every name they expose is also available at the package root,
+# so this is purely additive; prefer the namespace path in new code
+# (``topica.select.search_k``, ``topica.inspect.topic_table``, ``topica.data``).
+from . import (  # noqa: E402, F401
+    data,
+    design,
+    select,
+    inspect,
+    evaluate,
+    embeddings,
+    provenance,
+)
+from .design import one_hot  # noqa: E402  (one_hot's home is topica.design)
 
 __all__ = [
     "list_models",
@@ -518,6 +481,15 @@ __all__ = [
     "Folds",
     "CrossValResult",
     "compare",
+    # workflow namespaces (#757)
+    "data",
+    "design",
+    "select",
+    "inspect",
+    "evaluate",
+    "effects",
+    "embeddings",
+    "provenance",
     "CompareResult",
     "MatchedPair",
     "UnmatchedTopic",

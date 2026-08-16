@@ -60,7 +60,7 @@ from typing import Any, Callable, Sequence
 
 import numpy as np
 
-from .validation import _classify_alignment, _hungarian, align_topics
+from .evaluate import _classify_alignment, _hungarian, align_topics
 
 __all__ = ["compare", "CompareResult", "MatchedPair", "UnmatchedTopic"]
 
@@ -905,3 +905,19 @@ def _render_markdown(r: CompareResult) -> str:
         lines += ["", "## Merges (many A → B)", ""]
         lines += [f"- {k} ← {v}" for k, v in r.merges.items()]
     return "\n".join(lines) + "\n"
+
+
+# Make the module itself callable so that `topica.compare(fit_a, fit_b)` (the
+# function call the whole docstring teaches) and `topica.compare.CompareResult`
+# (the workflow namespace) both resolve. Well-trodden pattern (cf. `sh`); keeps
+# `callable(topica.compare)` true after `compare` becomes a namespace (issue #757).
+import sys as _sys
+from types import ModuleType as _ModuleType
+
+
+class _CompareModule(_ModuleType):
+    def __call__(self, *args, **kwargs):
+        return compare(*args, **kwargs)
+
+
+_sys.modules[__name__].__class__ = _CompareModule

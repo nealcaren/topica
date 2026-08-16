@@ -22,8 +22,18 @@ from .coherence import (
 
 from .inspect import frex
 
+# Coherence / diversity / exclusivity / intrusion diagnostics belong to the
+# evaluate stage; re-export the public surface from topica.coherence (a leaf
+# module, so no import cycle) so `topica.evaluate.coherence` etc. resolve (#757).
+from .coherence import (  # noqa: F401
+    coherence, coherence_ci, CoherenceCI, semantic_coherence, embedding_coherence,
+    topic_diversity, topic_semantic_diversity, inverted_rbo, exclusivity,
+    word_intrusion, document_intrusion,
+)
+
 __all__ = [
     'AlignmentResult',
+    'CoherenceCI',
     'Heldout',
     'HeldoutResult',
     'ResidualCheck',
@@ -31,13 +41,23 @@ __all__ = [
     'align_topics',
     'bootstrap_stability',
     'check_residuals',
+    'coherence',
+    'coherence_ci',
     'diagnostics',
+    'document_intrusion',
     'document_residuals',
+    'embedding_coherence',
     'eval_heldout',
+    'exclusivity',
     'flag_topics',
+    'inverted_rbo',
     'make_heldout',
     'perplexity',
+    'semantic_coherence',
+    'topic_diversity',
+    'topic_semantic_diversity',
     'topic_dendrogram',
+    'word_intrusion',
     'topic_stability',
 ]
 
@@ -1732,3 +1752,9 @@ def document_residuals(model, docs, *, floor=1e-12):
         })
     rows.sort(key=lambda r: r["novelty"], reverse=True)
     return rows
+
+
+def __dir__():
+    """Show only the public workflow surface in tab-completion (#757), hiding the
+    module's own imports (np, re, dataclass, ...)."""
+    return sorted(__all__)
