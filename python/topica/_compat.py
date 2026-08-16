@@ -68,6 +68,7 @@ LAZY = {
     'embedding_coherence': 'evaluate',
     'embedding_regression': 'embeddings',
     'embedding_seeds': 'embeddings',
+    'estimate_effect': 'effects',
     'eval_heldout': 'select',
     'exclusivity': 'evaluate',
     'export_phrases': 'data',
@@ -99,6 +100,7 @@ LAZY = {
     'record_fit': 'provenance',
     'relevance': 'inspect',
     'save_embeddings': 'embeddings',
+    'search_k': 'select',
     'select_model': 'select',
     'semantic_coherence': 'evaluate',
     'spline': 'design',
@@ -112,6 +114,7 @@ LAZY = {
     'topic_diversity': 'evaluate',
     'topic_semantic_diversity': 'evaluate',
     'topic_stability': 'evaluate',
+    'topic_table': 'inspect',
     'topics_for_term': 'inspect',
     'word_intrusion': 'evaluate',
 }

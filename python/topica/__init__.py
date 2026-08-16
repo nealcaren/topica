@@ -1,34 +1,51 @@
 """topica: fast, all-purpose topic modeling for Python, with a Rust core.
 
-More than a dozen models — LDA, STM, CTM, DMR, keyATM, SAGE, HDP, BERTopic,
+More than fifty models — LDA, STM, CTM, DMR, keyATM, SAGE, HDP, BERTopic,
 ProdLDA, and more — behind one numpy-native API, each validated against its
 reference implementation. Built for computational social scientists who need a
 defensible, reviewer-ready analysis, not just topics.
+
+The API is organized by analysis stage. Model constructors live at the top level
+(``topica.LDA``, ``topica.STM``, …); the helper functions that surround a fit are
+grouped into task namespaces you reach through ``topica.<stage>`` — ``select`` for
+choosing K, ``inspect`` for reading topics, ``evaluate`` for validation, ``effects``
+for covariate effects, ``data`` / ``design`` for corpus and design-matrix prep,
+``compare`` / ``provenance`` for the rest.
 
 Start here (a full LDA workflow is only a few lines)::
 
     import topica
 
-    corpus = topica.from_dataframe(df, text_col="text")   # build + prune vocab
-    res = topica.search_k(corpus, ks=[10, 20, 30])         # choose K defensibly
+    corpus = topica.from_dataframe(df, text_col="text")     # build + prune vocab
+    res = topica.select.search_k(corpus, ks=[10, 20, 30])   # choose K defensibly
     model = topica.LDA(num_topics=res.best_k()).fit(corpus)
-    topica.topic_table(model)                              # publication-ready labels
-    topica.estimate_effect(model, X=X, corpus=corpus)      # covariate effects + CIs
+    topica.inspect.topic_table(model)                       # publication-ready labels
+    topica.effects.estimate_effect(model, X=X, corpus=corpus)  # covariate effects + CIs
 
 The main entry points, by task:
 
-- **Corpus**: :func:`from_dataframe`, :class:`Corpus`, :func:`tokenize`.
-- **Models**: :class:`LDA` and the wider family (:class:`STM`, :class:`CTM`,
-  :class:`DMR`, :class:`KeyATM`, :class:`SAGE`, :class:`HDP`, :class:`BERTopic`,
-  …); ``model.fit(corpus)`` then read ``model.topic_word`` / ``model.doc_topic``.
-- **Choosing K**: :func:`search_k` (+ ``.best_k()``), :func:`plot_search_k`.
-- **Interpretation**: :func:`label_topics`, :func:`topic_table`, :func:`frex`,
-  :func:`find_thoughts`, :func:`topics_for_term`.
-- **Validation**: :func:`coherence`, :func:`coherence_ci`, :func:`exclusivity`,
-  :func:`topic_diversity`, :func:`ensemble`, :func:`topic_stability`.
-- **Covariate effects**: :func:`estimate_effect`, :func:`predicted_prevalence`,
-  :func:`one_hot`, :func:`design_matrix`, :func:`spline`.
-- **Provenance**: :func:`record_fit` → :class:`AnalysisManifest`.
+- **Corpus** (``topica.data``): :func:`from_dataframe`, :class:`Corpus`,
+  :func:`tokenize` (also at the top level); bundled example corpora in
+  :mod:`topica.data.datasets`.
+- **Models** (top level): :class:`LDA` and the wider family (:class:`STM`,
+  :class:`CTM`, :class:`DMR`, :class:`KeyATM`, :class:`SAGE`, :class:`HDP`,
+  :class:`BERTopic`, …); ``model.fit(corpus)`` then read ``model.topic_word`` /
+  ``model.doc_topic``. :func:`list_models` enumerates the roster.
+- **Choosing K** (``topica.select``): ``search_k`` (+ ``.best_k()``),
+  ``plot_search_k``, ``select_model``.
+- **Interpretation** (``topica.inspect``): ``label_topics``, ``topic_table``,
+  ``frex``, ``find_thoughts``, ``topics_for_term``.
+- **Validation** (``topica.evaluate``): ``coherence``, ``coherence_ci``,
+  ``exclusivity``, ``topic_diversity``, ``topic_stability``, ``make_heldout`` /
+  ``eval_heldout`` / ``perplexity``.
+- **Covariate effects** (``topica.effects`` / ``topica.design``):
+  ``effects.estimate_effect``, ``effects.predicted_prevalence``;
+  ``design.one_hot``, ``design.design_matrix``, ``design.spline``.
+- **Provenance** (``topica.provenance``): ``record_fit`` → :class:`AnalysisManifest`.
+
+Every helper is also still importable at the top level (``topica.search_k``,
+``topica.topic_table``, …) for backward compatibility, but the namespaced path
+above is the recommended, documented form.
 
 The heavy lifting lives in the compiled extension ``topica._topica``; this module
 re-exports its public surface so ``import topica`` works and editors/type-checkers
@@ -397,19 +414,23 @@ from .design import one_hot  # noqa: E402  (one_hot's home is topica.design)
 # no longer part of `import *` / the advertised surface. Prefer the namespace path
 # (topica.select.search_k, topica.inspect.label_topics, ...) in new code.
 __all__ = [
-    # workflow namespaces
+    # workflow namespaces — the taught surface; helpers live here
+    # (topica.select.search_k, topica.inspect.topic_table, topica.effects.estimate_effect, ...)
     "data", "design", "select", "inspect", "evaluate",
     "effects", "compare", "embeddings", "provenance",
-    # corpus ingress
+    # corpus ingress (nouns / constructors stay at the top level)
     "Corpus", "tokenize", "from_dataframe",
     # flagship models (the newcomer starting set; the rest stay importable)
     "LDA", "STM", "NMF", "KeyATM", "GSDMM", "BERTopic",
-    # permanent quick-path callables
-    "search_k", "topic_table", "estimate_effect",
     # discovery / experimental gate / identity
     "list_models", "enable_experimental",
     "__version__", "__citation__",
 ]
+# The flat helper callables (search_k, topic_table, estimate_effect, perplexity,
+# label_topics, ...) remain importable as `topica.X` for backward compatibility,
+# but they are no longer part of the advertised surface: the documented form is the
+# namespaced path (topica.select.search_k, topica.inspect.topic_table, ...). See the
+# module docstring's task map.
 
 
 from . import _compat as _compat  # noqa: E402  (legacy-name -> namespace map, #757)
