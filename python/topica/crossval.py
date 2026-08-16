@@ -666,7 +666,7 @@ def _heldout_completion(model, test_docs, cov_slice, seed):
     docs are co-dropped with their covariate rows). Returns a dict with per-fold
     perplexity, scored-token count, and OOV info.
     """
-    from .validation import _as_topic_word
+    from .coherence import _as_topic_word
 
     phi = _as_topic_word(model)
     if phi.shape[0] == 0:

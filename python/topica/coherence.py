@@ -830,6 +830,16 @@ def _as_topic_word(obj):
     return np.asarray(obj, dtype=np.float64)
 
 
+def _ref_corpus(texts):
+    """Normalize a coherence reference to ``list[list[str]]``: a Corpus, raw
+    strings (split on whitespace), or token lists all work."""
+    if hasattr(texts, "documents"):
+        return texts.documents()
+    if len(texts) and isinstance(texts[0], str):
+        return [t.split() for t in texts]
+    return [list(t) for t in texts]
+
+
 def _as_doc_topic(obj):
     """A fitted model (use its ``doc_topic``) or a ``(D, K)`` array."""
     if hasattr(obj, "doc_topic") and not isinstance(obj, np.ndarray):
