@@ -22,6 +22,7 @@ import numpy as np
 
 from .stm import (
     estimate_effect,
+    EffectList,
     posterior_theta_samples,
     predicted_prevalence,
     PredictedPrevalence,
@@ -34,6 +35,7 @@ from .keyatm import by_strata, top_topics
 
 __all__ = [
     "estimate_effect",
+    "EffectList",
     "posterior_theta_samples",
     "predicted_prevalence",
     "PredictedPrevalence",

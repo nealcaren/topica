@@ -112,3 +112,91 @@ def test_time_prevalence_ci_to_frame_melts():
     # period 2014 (index 1), topic 1 -> mean value 3.0
     row = df[(df["period"] == "2014") & (df["topic"] == 1)].iloc[0]
     assert row["mean"] == 3.0 and row["ci_high"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# #758: sample-user API-consistency follow-ups
+# ---------------------------------------------------------------------------
+
+
+def _fit_lda(seed=13, k=2):
+    corpus = topica.Corpus.from_documents(_corpus(seed=seed), min_doc_freq=1)
+    return corpus, topica.LDA(num_topics=k, seed=seed).fit(corpus, iters=60)
+
+
+def test_corpus_len_matches_num_docs():
+    # #758: len(corpus) works and equals num_docs.
+    corpus = topica.Corpus.from_documents(_corpus(n=37), min_doc_freq=1)
+    assert len(corpus) == corpus.num_docs == 37
+
+
+def test_corpus_from_dataframe_classmethod_alias():
+    # #758: Corpus.from_dataframe(df, ...) is the pandas-native alias for the
+    # module-level topica.from_dataframe and builds the same corpus.
+    df = pd.DataFrame({"text": [" ".join(d) for d in _corpus(n=20)],
+                       "party": (["D", "R"] * 10)})
+    via_method = topica.Corpus.from_dataframe(df, text_col="text")
+    via_func = topica.from_dataframe(df, text_col="text")
+    assert isinstance(via_method, topica.Corpus)
+    assert len(via_method) == len(via_func) == 20
+    assert via_method.vocabulary == via_func.vocabulary
+
+
+def test_model_topic_table_method_matches_function():
+    # #758: m.topic_table() mirrors the top-level topica.topic_table(m).
+    _, m = _fit_lda()
+    from_method = m.topic_table()
+    from_func = topica.topic_table(m)
+    assert [r["topic"] for r in from_method] == [r["topic"] for r in from_func]
+    assert [r["frex"] for r in from_method] == [r["frex"] for r in from_func]
+    # and it carries the same .to_frame() the function's result does
+    assert from_method.to_frame().equals(from_func.to_frame())
+
+
+def test_topic_table_method_absent_on_scaling_models():
+    # #758: models with no topic-word matrix (scaling / embedding) do not get it.
+    assert not hasattr(topica.Wordfish, "topic_table")
+
+
+def test_estimate_effect_returns_effectlist_with_to_frame():
+    # #758: the estimate_effect container has .to_frame() like its siblings, and
+    # is still a plain list.
+    corpus, m = _fit_lda()
+    X = np.array([[1.0, 0.0] if i % 2 else [0.0, 1.0] for i in range(len(corpus))])
+    eff = topica.estimate_effect(m, X=X, feature_names=["D", "R"], add_intercept=False)
+    assert isinstance(eff, topica.EffectList)
+    assert isinstance(eff, list)  # non-breaking: still indexes / iterates
+    df = eff.to_frame()
+    # one row per (topic, feature); matches the manual concat it replaces.
+    manual = pd.concat([e.to_frame() for e in eff], ignore_index=True)
+    assert df.equals(manual)
+    assert set(["topic", "feature", "coef", "se"]).issubset(df.columns)
+
+
+def test_effectlist_to_frame_empty():
+    empty = topica.EffectList()
+    assert empty.to_frame().empty
+
+
+def test_heldout_corpus_attribute_gives_directive_hint():
+    # #758: heldout.corpus (a common mis-reach) points at .documents / eval_heldout.
+    corpus = topica.Corpus.from_documents(_corpus(n=20), min_doc_freq=1)
+    ho = topica.make_heldout(corpus, seed=13)
+    with pytest.raises(AttributeError, match=r"\.documents"):
+        _ = ho.corpus
+
+
+def test_converged_flags_point_at_stop_reason():
+    # #758: a tab-completion user landing on the getter docstring finds the
+    # stop_reason() pointer without hunting through conventions.md.
+    assert "stop_reason" in (topica.LDA.converged.__doc__ or "")
+    assert "stop_reason" in (topica.LDA.early_stopped.__doc__ or "")
+
+
+def test_topic_table_not_bound_to_time_sliced_models():
+    # #758 review: DTM's topic_word is time-sliced (a method, not a (K,V)
+    # property), so a flat topic_table is ill-defined; the method is not bound
+    # rather than bound-and-always-raising.
+    assert not hasattr(topica.DTM, "topic_table")
+    # a dynamic model that DOES expose a plain (K,V) topic_word still gets it
+    assert hasattr(topica.TopicsOverTime, "topic_table")

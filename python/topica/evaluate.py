@@ -202,6 +202,18 @@ class Heldout:
     missing: list
     doc_indices: np.ndarray
 
+    @property
+    def corpus(self):
+        """Directive hint: a common mis-reach is ``heldout.corpus``. The reduced
+        training corpus lives on ``.documents``, and the pair is scored with
+        :func:`eval_heldout` (not :func:`perplexity`)."""
+        raise AttributeError(
+            "Heldout has no `.corpus`; the reduced training corpus is "
+            "`heldout.documents`. Fit on it and score the withheld words with "
+            "eval_heldout: `model.fit(heldout.documents); "
+            "eval_heldout(model, heldout)`."
+        )
+
 
 
 @dataclass

@@ -844,7 +844,10 @@ class GDMR:
 
     @property
     def converged(self) -> bool:
-        """True if fit early-stopped due to convergence."""
+        """True if fit early-stopped due to convergence.
+
+        :func:`topica.stop_reason` turns this flag into a plain-language summary of
+        why the fit stopped."""
         self._require_fitted()
         return self._dmr.converged
 

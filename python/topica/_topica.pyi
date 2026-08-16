@@ -221,6 +221,10 @@ class Corpus:
         """Number of documents in the corpus."""
         ...
 
+    def __len__(self) -> int:
+        """Number of documents, the same value as :attr:`num_docs`."""
+        ...
+
     @property
     def num_words(self) -> int:
         """Vocabulary size (number of unique word types)."""

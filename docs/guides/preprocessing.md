@@ -156,6 +156,33 @@ Ties are broken deterministically (by frequency, then by first appearance). Note
 that scikit-learn ranks by collection (total) frequency, while gensim's `keep_n`
 ranks by document frequency; topica follows scikit-learn.
 
+### Domain boilerplate and proper nouns survive frequency pruning
+
+Frequency filters (`max_doc_fraction`, `rm_top`) remove words that are common
+*across the corpus*, so they miss two kinds of noise that are common *within a
+genre* but not corpus-wide. The first is template or interface text that rides
+along with the content: on a corpus of congressional press releases, even with
+`strip_html=True`, `rm_top=20`, and `max_doc_fraction=0.5`, the share-button
+labels `print` and `tweet` survive and cluster into their own topic. The second
+is proper nouns, especially names of the actors the corpus is about: in the same
+corpus, legislator surnames (`durbin`, `tester`, ...) collect into a topic that
+tells you who spoke, not what they said.
+
+Neither is a bug in the pruning; it is doing what you asked. When a run surfaces a
+boilerplate-or-names topic, add the offending terms to a custom stopword list and
+rebuild:
+
+```python
+stop = topica.stopwords("en") | {"print", "tweet", "share", "email"}
+stop |= {"durbin", "tester", "schumer"}   # actor names, if they are not the object of study
+corpus = topica.from_dataframe(df, text_col="text", stopwords=stop)
+```
+
+Inspect `corpus.word_counts` (or a first fit's `top_words`) before committing to a
+list: the terms worth cutting are usually obvious once ranked, and whether a name
+is noise depends on the question. If *who spoke* is part of the analysis, keep the
+names and model authorship directly (`AuthorTopic`, or a speaker covariate).
+
 ## Apply a fixed vocabulary, or vectorize held-out documents
 
 Two related tasks need the vocabulary held fixed rather than learned from the data.
