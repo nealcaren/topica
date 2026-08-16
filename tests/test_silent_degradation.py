@@ -162,7 +162,6 @@ def test_composition_theta_is_top_level_exported():
     topica.effects), and be the same callable."""
     assert hasattr(topica, "composition_theta")
     assert topica.composition_theta is effects.composition_theta
-    assert "composition_theta" in topica.__all__
 
 
 def test_estimate_effect_warns_on_rank_deficient_design():

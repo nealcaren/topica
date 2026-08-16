@@ -70,6 +70,12 @@ if [ -x "$PY" ]; then
         echo "  -> update python/topica/_topica.pyi to match the binding" >&2
         fail=1
     fi
+
+    step "compat map in sync with the namespaces (scripts/gen_compat.py --check)"
+    if ! VIRTUAL_ENV="$VENV" "$PY" scripts/gen_compat.py --check; then
+        echo "  -> run 'python scripts/gen_compat.py' to regenerate" >&2
+        fail=1
+    fi
 else
     printf '\n\033[33m[preflight] no dev venv (%s); skipping the generated-file checks.\033[0m\n' "$VENV" >&2
     echo "  (fmt + clippy still ran; CI will catch table/stub drift)" >&2

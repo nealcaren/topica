@@ -38,10 +38,11 @@ def test_result_classes_exported_at_top_level():
     # #752: the FrameDict result types are reachable as topica.<Name> for
     # isinstance checks, not buried in topica._results.
     import topica
+    # Curated root (#757): reachable as topica.<Name> for isinstance checks (no
+    # longer required in __all__, which now lists only the curated surface).
     for name in ("FrameDict", "QualityFrontier", "BootstrapStability",
                  "KeywordDiagnostics", "TimePrevalenceCI"):
         assert hasattr(topica, name), f"topica.{name} not exported"
-        assert name in topica.__all__, f"{name} missing from __all__"
     assert topica.BootstrapStability is BootstrapStability
 
 

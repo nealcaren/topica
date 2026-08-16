@@ -30,10 +30,15 @@ _DETERMINISM = {"bit-exact", "seed-reproducible", "llm-bounded"}
 
 def _exported_model_classes() -> set[str]:
     names = set()
-    for name in topica.__all__:
+    # Iterate dir(topica), not topica.__all__: the curated __all__ (#757) lists only
+    # the flagship models, but every model class stays resolvable at the top level.
+    for name in dir(topica):
         obj = getattr(topica, name)
+        # Skip aliases (e.g. FLDA -> FactorialLDA, PLTM -> PolylingualLDA): dir()
+        # surfaces them, but the registry is keyed by the canonical class name.
         if (inspect.isclass(obj) and hasattr(obj, "fit")
-                and name not in _NON_MODEL_CLASSES):
+                and name not in _NON_MODEL_CLASSES
+                and obj.__name__ == name):
             names.add(name)
     return names
 
