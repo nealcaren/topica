@@ -296,8 +296,8 @@ class TestParallelTopicQuality:
         """In the parallel-trained model the two dominant topics should have
         disjoint leading vocabularies (animal words vs space words)."""
         animal_t, space_t = self._get_topics(model_t2)
-        top_animal = {w for w, _ in model_t2.top_words(5, topic=animal_t)}
-        top_space = {w for w, _ in model_t2.top_words(5, topic=space_t)}
+        top_animal = {w for w, _ in model_t2.top_words(5, topic=animal_t, weights=True)}
+        top_space = {w for w, _ in model_t2.top_words(5, topic=space_t, weights=True)}
         assert top_animal.issubset(set(ANIMAL_WORDS)), (
             f"Top animal-topic words contain non-animal words: "
             f"{top_animal - set(ANIMAL_WORDS)}"

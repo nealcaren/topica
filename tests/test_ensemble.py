@@ -336,7 +336,7 @@ class TestApiSurface:
         rng = np.random.default_rng(0)
         beta = _sharp_topics([[0, 1], [5, 6]], 8, rng)
         res = topica.ensemble([beta, beta.copy()], topn=2, lambda_=1.0)
-        tw = res.top_words(2)  # list of [(term, prob), ...] per topic; terms are ints
+        tw = res.top_words(2, weights=True)  # list of [(term, prob), ...] per topic; terms are ints
         terms = {t for t, _ in tw[0]}
         assert terms == {0, 1} or terms == {5, 6}
         assert all(isinstance(p, float) for _, p in tw[0])

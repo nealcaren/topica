@@ -615,12 +615,13 @@ impl TensorLDA {
     }
 
     /// Top-`n` words per topic.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let m = self.fitted_model()?;
         let phi = vecs_to_arr2(&m.topic_word);
@@ -631,6 +632,7 @@ impl TensorLDA {
             self.num_topics,
             n,
             topic,
+            weights,
         )
     }
 

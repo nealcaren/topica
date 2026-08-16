@@ -571,9 +571,9 @@ def test_top2vec_centroid_default_and_kwarg():
     neigh = [w for w, _ in tv.topic_neighbors(0, n=4)]  # previously raised
     assert len(neigh) == 4
 
-    centroid = [w for w, _ in tv.top_words(4, topic=0)]              # default
+    centroid = [w for w, _ in tv.top_words(4, topic=0, weights=True)]              # default
     assert centroid == neigh                                        # centroid view
-    ctfidf = [w for w, _ in tv.top_words(4, topic=0, representation="c-tf-idf")]
+    ctfidf = [w for w, _ in tv.top_words(4, topic=0, representation="c-tf-idf", weights=True)]
     assert isinstance(ctfidf, list)
     assert tv.topic_word.shape[0] == tv.num_topics                  # matrix stays c-TF-IDF
 

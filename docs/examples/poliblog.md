@@ -162,7 +162,7 @@ seeds = {
 ka = topica.KeyATM(seeds, num_topics=8, seed=1)
 ka.fit(docs, iters=800)
 for t in range(4):
-    print(f"{ka.topic_names[t]:15s}", [w for w, _ in ka.top_words(7, topic=t)])
+    print(f"{ka.topic_names[t]:15s}", ka.top_words(7, topic=t))
 ```
 
 ```

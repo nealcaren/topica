@@ -66,8 +66,8 @@ def test_guidance_steers_seeded_topics():
     assert idx[0] != idx[1], "distinct seed groups should steer distinct topics"
     assert list(m.seed_group_names) == ["first", "third"]
     # The topic each group steers should peak on that group's block.
-    top0 = [w for w, _ in m.top_words(3, topic=idx[0])]
-    top1 = [w for w, _ in m.top_words(3, topic=idx[1])]
+    top0 = [w for w, _ in m.top_words(3, topic=idx[0], weights=True)]
+    top1 = [w for w, _ in m.top_words(3, topic=idx[1], weights=True)]
     assert {"a", "b"} & set(top0)
     assert {"x", "y"} & set(top1)
 

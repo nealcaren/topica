@@ -362,13 +362,14 @@ impl SemanticSignalSeparation {
     /// The top `n` words of a topic. `pole="positive"` (default) returns the
     /// highest-loading words on the axis; `pole="negative"` returns the opposite
     /// pole (the most negatively loaded words), with their signed importance.
-    #[pyo3(signature = (n=10, *, topic=None, pole="positive"))]
+    #[pyo3(signature = (n=10, *, topic=None, pole="positive", weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
         pole: &str,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let model = self.fitted_model()?;
         let negative = match pole {
@@ -390,7 +391,7 @@ impl SemanticSignalSeparation {
                 .collect();
             PyList::new_bound(py, items)
         };
-        match topic {
+        let __tw: PyResult<Bound<'py, PyAny>> = match topic {
             Some(t) => {
                 if t >= self.num_topics {
                     return Err(PyValueError::new_err(format!(
@@ -404,7 +405,8 @@ impl SemanticSignalSeparation {
                 let all: Vec<Bound<'py, PyList>> = (0..self.num_topics).map(one).collect();
                 Ok(PyList::new_bound(py, all).into_any())
             }
-        }
+        };
+        finish_top_words(py, __tw?, weights)
     }
 
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.

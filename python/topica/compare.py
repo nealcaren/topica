@@ -90,8 +90,8 @@ def _top_words(model_or_phi, n: int) -> list[list[str]]:
     tw = getattr(model_or_phi, "top_words", None)
     if callable(tw):
         try:
-            allrows = tw(n)  # list[list[(word, weight)]]
-            return [[w for w, _ in row] for row in allrows]
+            allrows = tw(n)  # list[list[str]] (or [(word, weight)] with weights=True)
+            return [[w[0] if isinstance(w, tuple) else w for w in row] for row in allrows]
         except TypeError:
             pass
     from .coherence import _as_topic_word

@@ -609,12 +609,13 @@ impl DiscLDA {
     }
 
     /// Top-`n` words per topic (all topics; class blocks then shared block).
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let m = self.fitted_model()?;
         let phi = vecs_to_arr2(&m.topic_word);
@@ -625,6 +626,7 @@ impl DiscLDA {
             m.num_topics,
             n,
             topic,
+            weights,
         )
     }
 
@@ -768,6 +770,6 @@ impl DiscLDA {
         let vocab = &self.corpus.as_ref().unwrap().id_to_word;
         let sub: Vec<Vec<f64>> = ids.iter().map(|&t| m.topic_word[t].clone()).collect();
         let phi = vecs_to_arr2(&sub);
-        topic_words_helper(py, &phi, vocab, ids.len(), n, None)
+        topic_words_helper(py, &phi, vocab, ids.len(), n, None, true)
     }
 }

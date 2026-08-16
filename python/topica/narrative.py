@@ -107,10 +107,10 @@ class NarrativeTM:
             raise RuntimeError("Model is not fitted")
         return self._doc_topic
 
-    def top_words(self, n: int = 10, *, topic: int | None = None):
+    def top_words(self, n: int = 10, *, topic: int | None = None, weights: bool = False):
         if not self._fitted:
             raise RuntimeError("Model is not fitted")
-        return self._gdmr.top_words(n, topic=topic)
+        return self._gdmr.top_words(n, topic=topic, weights=weights)
 
     def coherence(self, n: int = 10) -> np.ndarray:
         if not self._fitted:

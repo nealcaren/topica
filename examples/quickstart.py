@@ -88,14 +88,14 @@ print()
 # ---------------------------------------------------------------------------
 
 print("Top 5 words per topic:")
-for topic_idx, words in enumerate(model.top_words(5)):
+for topic_idx, words in enumerate(model.top_words(5, weights=True)):
     words_str = "  ".join(f"{w}({p:.3f})" for w, p in words)
     print(f"  Topic {topic_idx}: {words_str}")
 print()
 
-# Single-topic convenience
+# Single-topic convenience (weights=True for the (word, probability) pairs)
 print("Top 3 words for topic 0 only:")
-for word, prob in model.top_words(3, topic=0):
+for word, prob in model.top_words(3, topic=0, weights=True):
     print(f"  {word:12s} {prob:.4f}")
 print()
 

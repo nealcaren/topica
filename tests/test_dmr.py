@@ -292,7 +292,7 @@ class TestDMRCovariateRecovery:
 
     def test_topics_separate_into_two_vocabularies(self, recovery_model):
         """Top words of each topic should come from only one vocabulary."""
-        top = recovery_model.top_words(5)
+        top = recovery_model.top_words(5, weights=True)
         vocab_A_set = set(_VOCAB_A)
         vocab_B_set = set(_VOCAB_B)
         for topic_words in top:
@@ -405,7 +405,7 @@ class TestDMRTopWordsAndCoherence:
         return model
 
     def test_top_words_all_topics_structure(self, fitted_model):
-        result = fitted_model.top_words(5)
+        result = fitted_model.top_words(5, weights=True)
         assert isinstance(result, list)
         assert len(result) == 2
         for topic_list in result:
@@ -416,7 +416,7 @@ class TestDMRTopWordsAndCoherence:
                 assert isinstance(prob, float)
 
     def test_top_words_single_topic_structure(self, fitted_model):
-        result = fitted_model.top_words(5, topic=0)
+        result = fitted_model.top_words(5, topic=0, weights=True)
         assert isinstance(result, list)
         assert len(result) == 5
         for word, prob in result:
@@ -424,7 +424,7 @@ class TestDMRTopWordsAndCoherence:
             assert isinstance(prob, float)
 
     def test_top_words_probabilities_descending(self, fitted_model):
-        for topic_list in fitted_model.top_words(7):
+        for topic_list in fitted_model.top_words(7, weights=True):
             probs = [p for _, p in topic_list]
             assert probs == sorted(probs, reverse=True)
 
@@ -577,7 +577,7 @@ class TestDmrWarp:
         m = _fit_dmr(docs, feats, sampler="warp")
         a = _identify_A_topic(m)
         # The A-topic's top words are the space vocab; the other topic is animals.
-        top_a = {w for w, _ in m.top_words(5, topic=a)}
+        top_a = {w for w, _ in m.top_words(5, topic=a, weights=True)}
         assert top_a == set(_VOCAB_A)
 
     def test_valid_distributions(self):
@@ -621,7 +621,7 @@ class TestDmrCvb0:
         docs, _, feats = _make_corpus(seed=2)
         m = _fit_dmr(docs, feats, sampler="cvb0")
         a = _identify_A_topic(m)
-        assert {w for w, _ in m.top_words(5, topic=a)} == set(_VOCAB_A)
+        assert {w for w, _ in m.top_words(5, topic=a, weights=True)} == set(_VOCAB_A)
         npt.assert_allclose(m.topic_word.sum(axis=1), 1.0)
         npt.assert_allclose(m.doc_topic.sum(axis=1), 1.0)
 

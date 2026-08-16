@@ -465,8 +465,9 @@ class AnchorLDA:
             self._word_counts = c
         return self._word_counts
 
-    def top_words(self, n: int = 10, *, topic=None, method="frex"):
-        """Top ``n`` words per topic as ``(word, score)`` pairs.
+    def top_words(self, n: int = 10, *, topic=None, method="frex", weights=False):
+        """Top ``n`` words per topic. Returns bare word strings; pass
+        ``weights=True`` for ``(word, score)`` pairs instead.
 
         ``method`` controls the ranking. The default ``"frex"`` ranks by the
         FREX score (the frequency/exclusivity harmonic mean, balance ``frex_w``),
@@ -478,13 +479,15 @@ class AnchorLDA:
         list, else a list per topic is returned.
         """
         self._require_fit()
+        from .coherence import _strip_pairs
         beta = self._topic_word
         vocab = self._vocab
         if method == "frex":
             from .validation import frex as _frex
             pairs = _frex(beta, vocab, w=self.frex_w, n=n,
                           word_counts=self._word_count_vector())
-            return pairs[int(topic)] if topic is not None else pairs
+            result = pairs[int(topic)] if topic is not None else pairs
+            return _strip_pairs(result, weights)
         if method == "lift":
             wc = self._word_count_vector()
             score = beta / np.where(wc > 0, wc, 1.0)
@@ -497,16 +500,15 @@ class AnchorLDA:
             idx = np.argsort(score[t])[::-1][:n]
             return [(vocab[i], float(score[t, i])) for i in idx]
 
-        if topic is not None:
-            return one(int(topic))
-        return [one(t) for t in range(self._k)]
+        result = one(int(topic)) if topic is not None else [one(t) for t in range(self._k)]
+        return _strip_pairs(result, weights)
 
     def coherence(self, n: int = 10):
         """Per-topic c_v coherence over the training corpus (a ``(K,)`` array)."""
         self._require_fit()
         from .coherence import coherence as _coherence
 
-        topics = [[w for w, _ in self.top_words(n, topic=t)] for t in range(self._k)]
+        topics = [list(self.top_words(n, topic=t)) for t in range(self._k)]
         return np.asarray(_coherence(topics, self._texts, topn=n), dtype=np.float64)
 
     # -- persistence --------------------------------------------------------

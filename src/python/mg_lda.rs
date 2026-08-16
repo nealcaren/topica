@@ -418,13 +418,15 @@ impl MGLDA {
         Ok(self.fitted_model()?.converged)
     }
 
-    /// Top (word, prob) pairs per combined topic (global topics first, then local).
-    #[pyo3(signature = (n=10, *, topic=None))]
+    /// Top `n` words per combined topic (global topics first, then local), as
+    /// bare word strings. Pass ``weights=True`` for ``(word, prob)`` pairs.
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word);
         topic_words_helper(
@@ -434,6 +436,7 @@ impl MGLDA {
             self.num_global_topics + self.num_local_topics,
             n,
             topic,
+            weights,
         )
     }
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.

@@ -72,7 +72,7 @@ print(f"recovered {m.num_authors} author positions; correlation with planted = {
 # --- 2. the topics: the other half of the double job --------------------------
 print("\ntop words per topic (at the neutral position):")
 for k, words in enumerate(m.top_words(6)):
-    print(f"  topic {k}: {', '.join(w for w, _ in words)}")
+    print(f"  topic {k}: {', '.join(words)}")
 
 # --- 3. discrimination: which topic carries the latent axis -------------------
 disc = m.topic_discrimination

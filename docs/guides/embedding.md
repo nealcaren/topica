@@ -348,7 +348,7 @@ model = topica.EmbeddingLDA(
 )
 model.fit(docs, iters=1000)
 for topic in model.top_words(8):
-    print([word for word, _ in topic])
+    print(list(topic))
 ```
 
 **Seed strength (`weight`).** The embedding-cluster seed words are *semantically*

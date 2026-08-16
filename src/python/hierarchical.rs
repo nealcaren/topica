@@ -414,16 +414,17 @@ impl PA {
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
 
-    /// Top `n` words per topic as ``(word, probability)`` pairs.
+    /// Top `n` words per topic. Pass ``weights=True`` for ``(word, probability)`` pairs.
     ///
     /// Returns a list of `n`-length lists (one per topic), or — when `topic`
     /// is given — just that topic's list.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         topic_words_helper(
@@ -433,6 +434,7 @@ impl PA {
             self.num_sub,
             n,
             topic,
+            weights,
         )
     }
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
@@ -924,9 +926,16 @@ impl HLDA {
         Ok(false)
     }
 
-    /// Top `n` words for one topic node as ``(word, probability)`` pairs.
-    #[pyo3(signature = (node, n=10))]
-    fn top_words(&self, node: usize, n: usize) -> PyResult<Vec<(String, f64)>> {
+    /// Top `n` words for one topic node. Returns bare word strings; pass
+    /// ``weights=True`` for ``(word, probability)`` pairs instead.
+    #[pyo3(signature = (node, n=10, *, weights=false))]
+    fn top_words<'py>(
+        &self,
+        py: Python<'py>,
+        node: usize,
+        n: usize,
+        weights: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
         if node >= self.num_nodes {
             return Err(PyValueError::new_err("node out of range"));
@@ -936,11 +945,17 @@ impl HLDA {
         let v = tw.shape()[1];
         let mut idx: Vec<usize> = (0..v).collect();
         idx.sort_by(|&a, &b| f64::total_cmp(&tw[[node, b]], &tw[[node, a]]));
-        Ok(idx
-            .into_iter()
-            .take(n)
-            .map(|w| (vocab[w].clone(), tw[[node, w]]))
-            .collect())
+        idx.truncate(n);
+        if weights {
+            let items: Vec<(String, f64)> = idx
+                .iter()
+                .map(|&w| (vocab[w].clone(), tw[[node, w]]))
+                .collect();
+            Ok(items.into_py(py).into_bound(py))
+        } else {
+            let words: Vec<String> = idx.iter().map(|&w| vocab[w].clone()).collect();
+            Ok(words.into_py(py).into_bound(py))
+        }
     }
 
     /// Save the fitted model to `path`. Reload with `HLDA.load`.

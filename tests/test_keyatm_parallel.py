@@ -25,7 +25,7 @@ def _corpus(seed=0, n=600):
 def _econ_topic(model):
     """Index of the topic whose top words are economic."""
     for k in range(2):
-        tops = {w for w, _ in model.top_words(4, topic=k)}
+        tops = {w for w, _ in model.top_words(4, topic=k, weights=True)}
         if len(tops & set(A)) >= 2:
             return k
     return None

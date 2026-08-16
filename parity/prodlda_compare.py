@@ -206,7 +206,7 @@ def _topica_fit(token_docs, seed):
     )
     tm.fit(token_docs, iters=EPOCHS)
     theta = np.asarray(tm.transform(token_docs))
-    topics = [[w for w, _ in tm.top_words(TOP_N, topic=t)] for t in range(tm.num_topics)]
+    topics = [[w for w in tm.top_words(TOP_N, topic=t)] for t in range(tm.num_topics)]
     return topics, theta.argmax(1)
 
 

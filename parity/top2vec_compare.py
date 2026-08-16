@@ -102,7 +102,7 @@ def run(verbose: bool = True) -> dict:
     # Compare the class-based TF-IDF words (what BERTopic also reports); Top2Vec's
     # default top_words is now the centroid view when word_embeddings are present.
     tv_words = [
-        [w for w, _ in tv.top_words(BLOCK, topic=t, representation="c-tf-idf")]
+        [w for w in tv.top_words(BLOCK, topic=t, representation="c-tf-idf")]
         for t in range(tv.num_topics)
     ]
 

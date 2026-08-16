@@ -33,7 +33,7 @@ def _fit(sampler, docs, k=2, **kw):
 
 
 def _topic_sets(model, n=5):
-    return [frozenset(w for w, _ in ws) for ws in model.top_words(n)]
+    return [frozenset(w for w, _ in ws) for ws in model.top_words(n, weights=True)]
 
 
 def test_recovers_two_topics():

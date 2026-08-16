@@ -412,13 +412,15 @@ impl CorEx {
         self.fitted_model()?;
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
-    /// Top (word, alpha*mis) pairs per topic, ranked by membership-weighted MI.
-    #[pyo3(signature = (n=10, *, topic=None))]
+    /// Top `n` words per topic (bare word strings), ranked by membership-weighted
+    /// MI. Pass ``weights=True`` for ``(word, alpha*mis)`` pairs.
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let phi = vecs_to_arr2(&self.fitted_model()?.topic_word);
         topic_words_helper(
@@ -428,6 +430,7 @@ impl CorEx {
             self.num_topics,
             n,
             topic,
+            weights,
         )
     }
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.

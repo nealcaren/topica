@@ -68,8 +68,8 @@ def test_recovers_planted_axes():
     m = _fit()
     owned = []
     for t in range(2):
-        pos = m.top_words(3, topic=t)
-        neg = m.top_words(3, topic=t, pole="negative")
+        pos = m.top_words(3, topic=t, weights=True)
+        neg = m.top_words(3, topic=t, pole="negative", weights=True)
         strong = pos if abs(pos[0][1]) >= abs(neg[0][1]) else neg
         ids = {_VOCAB.index(w) for w, _ in strong}
         owned.append(0 if len(ids & _BLOCK_A) >= len(ids & _BLOCK_B) else 1)
@@ -80,11 +80,11 @@ def test_signed_poles_are_opposites():
     """A signed ICA axis: its two poles draw from opposite word blocks."""
     m = _fit()
     for t in range(2):
-        pos = {_VOCAB.index(w) for w, _ in m.top_words(3, topic=t)}
-        neg = {_VOCAB.index(w) for w, _ in m.top_words(3, topic=t, pole="negative")}
+        pos = {_VOCAB.index(w) for w, _ in m.top_words(3, topic=t, weights=True)}
+        neg = {_VOCAB.index(w) for w, _ in m.top_words(3, topic=t, pole="negative", weights=True)}
         assert pos.isdisjoint(neg), "positive and negative poles must not overlap"
         # The positive pole's leading importance is >= the negative pole's.
-        assert m.top_words(1, topic=t)[0][1] >= m.top_words(1, topic=t, pole="negative")[0][1]
+        assert m.top_words(1, topic=t, weights=True)[0][1] >= m.top_words(1, topic=t, pole="negative", weights=True)[0][1]
 
 
 def test_feature_importance_modes():
@@ -195,7 +195,7 @@ def test_missing_vocab_words_get_zero_importance():
         assert np.all(comps[:, i] == 0.0), "a word with no embedding must score zero"
     # A zero-scored missing word cannot outrank a genuinely positive word, so it
     # never leads a topic's positive pole.
-    leads = {m.top_words(1, topic=t)[0][0] for t in range(2)}
+    leads = {m.top_words(1, topic=t, weights=True)[0][0] for t in range(2)}
     assert leads.isdisjoint({"moon", "sky"})
 
 

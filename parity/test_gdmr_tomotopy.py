@@ -243,7 +243,7 @@ def test_topic_word_top_words_agree(topica_model, tomotopy_model):
     This is a soft content check, not a rank check.
     """
     ti = _identify_space_topic_topica(topica_model)
-    topica_top = {w for w, _ in topica_model.top_words(5, topic=ti)}
+    topica_top = {w for w in topica_model.top_words(5, topic=ti)}
 
     tm_vocab = list(tomotopy_model.used_vocabs)
     tm_tw = np.array(tomotopy_model.get_topic_word_dist(

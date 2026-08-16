@@ -85,7 +85,9 @@ def test_top_words():
     assert all(len(row) == 5 for row in allw)
     one = m.top_words(5, topic=0)
     assert len(one) == 5
-    assert all(isinstance(w, str) and isinstance(p, float) for w, p in one)
+    assert all(isinstance(w, str) for w in one)
+    one_w = m.top_words(5, topic=0, weights=True)
+    assert all(isinstance(w, str) and isinstance(p, float) for w, p in one_w)
     with pytest.raises(Exception):
         m.top_words(5, topic=99)
 

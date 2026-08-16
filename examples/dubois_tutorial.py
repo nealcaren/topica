@@ -152,7 +152,7 @@ def main():
     lda.fit(pcorpus, iters=400, num_samples=4, sample_interval=25)
     print(f"Fit LDA(K={K}). Top words per topic:")
     for t in range(K):
-        words = [w for w, _ in lda.top_words(8, topic=t)]
+        words = lda.top_words(8, topic=t)
         print(f"  T{t:2d}: {', '.join(w.replace('_', ' ') for w in words)}")
 
     # coherence/topic_diversity accept the fitted model directly; coherence
@@ -287,7 +287,7 @@ def main():
     order = np.argsort(mass)[::-1]
     print("The most prevalent inferred topics:")
     for t in order[:6]:
-        words = [w.replace("_", " ") for w, _ in hdp.top_words(8, topic=int(t))]
+        words = [w.replace("_", " ") for w in hdp.top_words(8, topic=int(t))]
         print(f"  ({mass[t]:5.1f} docs) {', '.join(words)}")
 
     # ------------------------------------------------------------------ #
@@ -310,7 +310,7 @@ def main():
     ka.fit(phrased_docs, iters=800)         # ~1500+ iters for a real run
     print("Seeded topics (and how much each leans on its keywords):")
     for t in range(len(seeds)):
-        words = [w.replace("_", " ") for w, _ in ka.top_words(7, topic=t)]
+        words = [w.replace("_", " ") for w in ka.top_words(7, topic=t)]
         print(f"  {ka.topic_names[t]:10s} (kw {ka.keyword_rate[t]:.2f}): "
               f"{', '.join(words)}")
     print("education, voting, and africa land cleanly on their seeds; labor is "
@@ -360,7 +360,7 @@ def main():
     print("Inferred topic proportions for 2 held-out snippets:")
     for i, row in enumerate(theta):
         top = int(row.argmax())
-        words = ", ".join(w for w, _ in lda.top_words(6, topic=top))
+        words = ", ".join(lda.top_words(6, topic=top))
         print(f"  snippet {i}: top topic T{top} (p={row[top]:.2f}) -> {words}")
 
     banner("Done — that's the full topica workflow on Du Bois's Crisis.")

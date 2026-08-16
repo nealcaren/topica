@@ -80,7 +80,7 @@ def test_top_words(cls):
     docs, embs, _ = _planted()
     m = _model(cls, seed=1)
     m.fit(docs, embs, iters=80)
-    per_topic = m.top_words(5)
+    per_topic = m.top_words(5, weights=True)
     assert len(per_topic) == 3
     for words in per_topic:
         assert len(words) == 5
@@ -221,11 +221,11 @@ def test_recovers_planted_blocks():
         m = _model(cls, seed=1)
         m.fit(docs, embs, iters=200)
         covered = set()
-        for words in m.top_words(4):
+        for words in m.top_words(4, weights=True):
             blocks = {term.split("w")[0] for term, _ in words}
             covered.add(tuple(sorted(blocks)))
         # Each topic concentrates on few blocks; together they touch all blocks.
-        all_blocks = {term.split("w")[0] for words in m.top_words(4) for term, _ in words}
+        all_blocks = {term.split("w")[0] for words in m.top_words(4, weights=True) for term, _ in words}
         assert len(all_blocks) == 3, f"{cls.__name__}: blocks covered {all_blocks}"
 
 

@@ -99,7 +99,7 @@ def run(verbose: bool = True) -> dict:
 
     tm = topica.FASTopic(num_topics=NUM_TOPICS, lr=0.002, seed=SEED)
     t_theta = np.asarray(tm.fit_transform(token_docs, emb))
-    t_topics = [[w for w, _ in tm.top_words(TOP_N, topic=t)] for t in range(tm.num_topics)]
+    t_topics = [[w for w in tm.top_words(TOP_N, topic=t)] for t in range(tm.num_topics)]
     t_assign = t_theta.argmax(1)
 
     rm = FASTopic(NUM_TOPICS, verbose=False)

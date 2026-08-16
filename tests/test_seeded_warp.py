@@ -31,7 +31,7 @@ def _recovered(m):
     bsets = [set(b) for b in _BLOCKS]
     covered = set()
     for t in range(m.num_topics):
-        top = {w for w, _ in m.top_words(4, topic=t)}
+        top = {w for w, _ in m.top_words(4, topic=t, weights=True)}
         for bi, bs in enumerate(bsets):
             if bs <= top:
                 covered.add(bi)
@@ -67,7 +67,7 @@ def test_seed_word_lands_on_its_topic():
         # the topic where this seed word is most probable
         best_t = int(np.argmax(tw[:, vocab.index(seed_w)]))
         block = set(_BLOCKS[ti])
-        top = {w for w, _ in m.top_words(4, topic=best_t)}
+        top = {w for w, _ in m.top_words(4, topic=best_t, weights=True)}
         assert block <= top
 
 

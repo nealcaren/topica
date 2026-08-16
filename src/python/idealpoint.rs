@@ -669,15 +669,24 @@ impl IdealPointTM {
         self.fitted_model()?;
         Ok(self.corpus.as_ref().unwrap().doc_names.clone())
     }
-    #[pyo3(signature = (n=10, *, topic=None))]
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
     fn top_words<'py>(
         &self,
         py: Python<'py>,
         n: usize,
         topic: Option<usize>,
+        weights: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let phi = vecs_to_arr2(self.fitted_model()?.beta0());
-        topic_words_helper(py, &phi, &self.id_to_word, self.num_topics, n, topic)
+        topic_words_helper(
+            py,
+            &phi,
+            &self.id_to_word,
+            self.num_topics,
+            n,
+            topic,
+            weights,
+        )
     }
     /// Per-topic topic coherence, shape ``(num_topics,)``, aligned to topic index.
     /// Scores each topic's top-``n`` words. ``coherence_type`` selects the measure

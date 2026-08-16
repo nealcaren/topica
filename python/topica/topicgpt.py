@@ -928,14 +928,15 @@ class TopicGPT:
         self._check_fitted()
         return list(self._doc_names)
 
-    def top_words(self, n: int = 10, *, topic: Optional[int] = None):
+    def top_words(self, n: int = 10, *, topic: Optional[int] = None, weights: bool = False):
         """Top-``n`` words per topic from the synthesized class-TF-IDF descriptor.
 
-        Returns a list of ``(word, score)`` pairs for the given ``topic``, or one
-        such list per topic when ``topic`` is None. The scores are c-TF-IDF
-        weights, not probabilities.
+        Returns bare word strings for the given ``topic`` (or one list per topic
+        when ``topic`` is None). Pass ``weights=True`` for ``(word, score)`` pairs,
+        where the scores are c-TF-IDF weights, not probabilities.
         """
         self._check_fitted()
+        from .coherence import _strip_pairs
         phi = self._topic_word
         vocab = self._vocabulary
 
@@ -943,9 +944,8 @@ class TopicGPT:
             idx = np.argsort(phi[t])[::-1][:n]
             return [(vocab[j], float(phi[t, j])) for j in idx if phi[t, j] > 0]
 
-        if topic is not None:
-            return row_words(topic)
-        return [row_words(t) for t in range(phi.shape[0])]
+        result = row_words(topic) if topic is not None else [row_words(t) for t in range(phi.shape[0])]
+        return _strip_pairs(result, weights)
 
     def coherence(self, n: int = 10) -> np.ndarray:
         """Per-topic c_v coherence of the top-``n`` descriptor words against the
@@ -953,7 +953,7 @@ class TopicGPT:
         self._check_fitted()
         from .coherence import coherence as _coherence
 
-        topics = [[w for w, _ in self.top_words(n, topic=t)] for t in range(self.num_topics)]
+        topics = [list(self.top_words(n, topic=t)) for t in range(self.num_topics)]
         c = np.asarray(_coherence(topics, self._docs_tokens, topn=n), dtype=np.float64)
         # A degenerate topic (e.g. one with no assigned documents, or too few
         # distinct top words) can yield NaN from the windowed measure; report a

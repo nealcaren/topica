@@ -55,7 +55,7 @@ def test_recovers_embedding_clusters():
     m.fit(docs, iters=300)
     # Each recovered topic's top words come from a single embedding block.
     for t in range(3):
-        prefixes = [w[0] for w, _ in m.top_words(6)[t]]
+        prefixes = [w[0] for w, _ in m.top_words(6, weights=True)[t]]
         dominant = max(set(prefixes), key=prefixes.count)
         assert prefixes.count(dominant) >= 5, f"topic {t} mixes blocks: {prefixes}"
 
@@ -163,7 +163,7 @@ def test_document_prior_separates_identical_bag_of_words():
     m.fit(docs, doc_embeddings=doc_emb, iters=400)
 
     # Identify which fitted topic is the "a" topic by its top words.
-    a_topic = 0 if all(w[0] == "a" for w, _ in m.top_words(4)[0]) else 1
+    a_topic = 0 if all(w[0] == "a" for w, _ in m.top_words(4, weights=True)[0]) else 1
     theta = m.doc_topic
     a_docs = theta[0::2, a_topic]  # embedding near center 0
     b_docs = theta[1::2, a_topic]  # embedding near center 1

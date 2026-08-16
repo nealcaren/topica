@@ -216,7 +216,7 @@ def summary(model, topn=8):
         tops = model.top_words(topn)
         if isinstance(tops, list) and tops and isinstance(tops[0], list):
             for i, words in enumerate(tops):
-                lines.append(f"  topic {i}: " + " ".join(w for w, _ in words))
+                lines.append(f"  topic {i}: " + " ".join(words))
     except Exception:
         pass
     return "\n".join(lines)

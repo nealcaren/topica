@@ -21,7 +21,7 @@ model = topica.LDA(num_topics=2, seed=13)
 model.fit(docs, iters=1000)
 
 for i, words in enumerate(model.top_words(5)):
-    print(f"Topic {i}:", " ".join(w for w, _ in words))
+    print(f"Topic {i}:", " ".join(words))
 ```
 
 ## Why topica

@@ -54,7 +54,7 @@ def test_recovers_global_themes():
     docs = _planted()
     m = topica.MGLDA(2, 3, window=3, seed=0).fit(docs, iters=300)
     themes = [{"phone", "android", "mobile"}, {"laptop", "notebook", "keyboard"}]
-    top_sets = [{w for w, _ in m.top_words(3, topic=t)} for t in range(2)]
+    top_sets = [{w for w, _ in m.top_words(3, topic=t, weights=True)} for t in range(2)]
     # each global topic matches a distinct planted theme block
     matched = set()
     for ts in top_sets:

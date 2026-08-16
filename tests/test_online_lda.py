@@ -58,7 +58,7 @@ def test_recovers_planted_topics():
     # Every planted block should be the top-5 of exactly one recovered topic.
     recovered = set()
     for t in range(3):
-        top = {w for w, _ in m.top_words(5, topic=t)}
+        top = {w for w, _ in m.top_words(5, topic=t, weights=True)}
         for b, block in enumerate(_BLOCKS):
             if set(block) <= top:
                 recovered.add(b)

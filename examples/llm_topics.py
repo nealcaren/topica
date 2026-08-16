@@ -53,7 +53,7 @@ def main():
         print(f"[skipping LLM labels: {e}]")
         print("Top words per topic:")
         for t in range(model.num_topics):
-            print(f"{t:2d}  " + " ".join(w for w, _ in model.top_words(6, topic=t)))
+            print(f"{t:2d}  " + " ".join(model.top_words(6, topic=t)))
 
     # 4. A one-figure report (with LLM labels if step 3 ran, default labels if not).
     fig = topica.plot_report(model, texts=docs, timestamps=decade, n=6,

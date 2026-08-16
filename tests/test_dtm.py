@@ -84,7 +84,9 @@ class TestOutputs:
     def test_top_words(self, fitted):
         tw = fitted.top_words(0, 0, n=4)
         assert len(tw) == 4
-        assert all(isinstance(w, str) and isinstance(p, float) for w, p in tw)
+        assert all(isinstance(w, str) for w in tw)
+        tw_w = fitted.top_words(0, 0, n=4, weights=True)
+        assert all(isinstance(w, str) and isinstance(p, float) for w, p in tw_w)
 
     def test_word_evolution_by_id(self, fitted):
         # Accepts an integer word id as well as a string.

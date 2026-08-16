@@ -185,8 +185,9 @@ the Gibbs models expose log-likelihood history). A model that did not converge i
 not a result. Read topics off several surfaces together — top words alone
 underdetermine what a topic is:
 
-- `model.top_words(n)` returns per-topic `(word, weight)` tuples, not bare
-  strings; take just the words with `[w for w, _ in row]`.
+- `model.top_words(n)` returns per-topic bare word strings, so
+  `" ".join(model.top_words(n, topic=t))` works directly; pass `weights=True`
+  for `(word, weight)` pairs when you need the probabilities.
 - `label_topics`, `frex`, `relevance`, `find_thoughts`, `topic_table` and
   `summary` are **module-level functions, not model methods**, and take the
   model's matrices as the first argument — e.g.
@@ -297,7 +298,8 @@ with the diagnostics to defend each one.
   and the README table; consult it rather than relying on any hardcoded list here.
   Common starting points: `LDA`, `STM`, `CTM`, `STS` (sentiment), `DMR`, `HDP`,
   `KeyATM`, `SeededLDA`, `BERTopic`, `GSDMM` (short text)
-- **Read topics:** `model.top_words(n)` (method → `(word, weight)` tuples) plus
+- **Read topics:** `model.top_words(n)` (method → bare words; `weights=True` for
+  `(word, weight)` pairs) plus
   the module functions `topica.label_topics`, `frex`, `relevance`,
   `find_thoughts`, `topic_table`, `summary` (first arg is the model's
   `topic_word` / `doc_topic` matrix, or the model)

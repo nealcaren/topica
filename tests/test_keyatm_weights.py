@@ -49,7 +49,7 @@ def test_weighting_demotes_stopwords():
     m_inf.fit(docs, iters=300, weights="information-theory")
 
     def stopword_rank(model):
-        tops = [w for w, _ in model.top_words(6, topic=0)]
+        tops = [w for w, _ in model.top_words(6, topic=0, weights=True)]
         return sum(1 for w in ("the", "of") if w in tops)
 
     assert stopword_rank(m_inf) <= stopword_rank(m_none)

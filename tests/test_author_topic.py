@@ -90,7 +90,9 @@ def test_top_words_and_coherence():
     docs, authors = _planted()
     m = topica.AuthorTopic(3, seed=0).fit(docs, authors, iters=100)
     tw = m.top_words(3, topic=0)
-    assert len(tw) == 3 and isinstance(tw[0], tuple)
+    assert len(tw) == 3 and isinstance(tw[0], str)
+    tw_w = m.top_words(3, topic=0, weights=True)
+    assert len(tw_w) == 3 and isinstance(tw_w[0], tuple)
     assert m.coherence(4).shape == (3,)
 
 

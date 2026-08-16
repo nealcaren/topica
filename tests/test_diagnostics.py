@@ -22,7 +22,7 @@ class TestRelevance:
         m, _ = two_topic
         # lambda=1 -> rank by p(w|t); should select the same top words as prob.
         rel = stm.relevance(m.topic_word, m.vocabulary, lam=1.0, n=3)
-        probs = m.top_words(3)
+        probs = m.top_words(3, weights=True)
         for t in range(2):
             assert {w for w, _ in rel[t]} == {w for w, _ in probs[t]}
 

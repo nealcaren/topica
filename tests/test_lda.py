@@ -173,6 +173,10 @@ class TestTopWords:
         for topic_list in result:
             assert isinstance(topic_list, list)
             for item in topic_list:
+                assert isinstance(item, str)
+        weighted = model.top_words(5, weights=True)
+        for topic_list in weighted:
+            for item in topic_list:
                 assert len(item) == 2
                 word, prob = item
                 assert isinstance(word, str)
@@ -183,19 +187,20 @@ class TestTopWords:
         result = model.top_words(5, topic=0)
         assert isinstance(result, list)
         assert len(result) == 5
-        for word, prob in result:
+        assert all(isinstance(w, str) for w in result)
+        for word, prob in model.top_words(5, topic=0, weights=True):
             assert isinstance(word, str)
             assert isinstance(prob, float)
 
     def test_probabilities_descending_all_topics(self, toy_docs):
         model = _quick_model(toy_docs)
-        for topic_list in model.top_words(7):
+        for topic_list in model.top_words(7, weights=True):
             probs = [p for _, p in topic_list]
             assert probs == sorted(probs, reverse=True)
 
     def test_probabilities_descending_single_topic(self, toy_docs):
         model = _quick_model(toy_docs)
-        probs = [p for _, p in model.top_words(7, topic=1)]
+        probs = [p for _, p in model.top_words(7, topic=1, weights=True)]
         assert probs == sorted(probs, reverse=True)
 
     def test_topic_out_of_range_raises(self, toy_docs):
@@ -308,7 +313,7 @@ class TestSpectralInit:
         blocks = [set(vocab[b * wpb : (b + 1) * wpb]) for b in range(k)]
         covered = set()
         for t in range(k):
-            top = {w for w, _ in m.top_words(wpb, topic=t)}
+            top = {w for w, _ in m.top_words(wpb, topic=t, weights=True)}
             for bi, blk in enumerate(blocks):
                 if blk <= top:
                     covered.add(bi)

@@ -62,7 +62,7 @@ def test_corpus_is_model_ready():
     lda.fit(corpus, iters=50, num_samples=1, sample_interval=5)
     assert lda.num_topics == 3
 
-    topics = lda.top_words(5)
+    topics = lda.top_words(5, weights=True)
     assert len(topics) == 3
     for words in topics:
         assert len(words) == 5

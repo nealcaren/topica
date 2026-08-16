@@ -91,7 +91,7 @@ def _topica_fit(docs, doc_emb):
     bt.fit(docs, doc_emb)
     labels = np.array(bt.labels)
     words = [
-        [w for w, _ in bt.top_words(BLOCK, topic=t)]
+        [w for w in bt.top_words(BLOCK, topic=t)]
         for t in range(bt.num_topics)
     ]
     return labels, words, int(bt.num_topics)

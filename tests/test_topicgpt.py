@@ -127,7 +127,7 @@ def test_top_words_and_salient_keyword():
     model, _ = _fit()
     # the sports topic's top words should surface a sports keyword
     sports = model.topic_names.index("Sports")
-    words = [w for w, _ in model.top_words(10, topic=sports)]
+    words = [w for w, _ in model.top_words(10, topic=sports, weights=True)]
     assert any(w in words for w in ("championship", "goal", "striker", "game"))
     # full list form: one row per topic
     allrows = model.top_words(5)

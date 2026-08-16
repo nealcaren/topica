@@ -55,7 +55,7 @@ class TestFit:
         m, docs, truth = _fit()
         # Map each topic to a planted block by its actual top words (the corpus
         # assigns vocabulary ids in its own order, so word strings are the anchor).
-        top_words = [{w for w, _ in m.top_words(4)[t]} for t in range(2)]
+        top_words = [{w for w, _ in m.top_words(4, weights=True)[t]} for t in range(2)]
         a_set = set(A)
         topic_for_a = 0 if len(top_words[0] & a_set) >= len(top_words[1] & a_set) else 1
         theta = np.asarray(m.doc_topic)
@@ -92,7 +92,7 @@ class TestAnalysisSurface:
         m, docs, _ = _fit()
         cv = topica.coherence(m, docs, coherence_type="c_v", topn=4)
         assert np.asarray(cv).shape == (2,)
-        rows = m.top_words(3)
+        rows = m.top_words(3, weights=True)
         assert len(rows) == 2 and all(isinstance(w, str) for w, _ in rows[0])
 
     def test_no_prevalence_still_fits(self):

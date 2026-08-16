@@ -247,7 +247,7 @@ class TestSTMTransformCovariate:
         a_set = set(_VOCAB_A)
         a_topic = None
         for t in range(model.num_topics):
-            top5 = [w for w, _ in model.top_words(5, topic=t)]
+            top5 = [w for w, _ in model.top_words(5, topic=t, weights=True)]
             if sum(1 for w in top5 if w in a_set) >= 3:
                 a_topic = t
                 break

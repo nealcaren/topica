@@ -30,7 +30,7 @@ class TestPT:
         np.testing.assert_allclose(m.topic_word.sum(axis=1), 1.0, atol=1e-9)
         # The two topics separate the two vocabularies.
         blocks = [{"cat", "dog", "pet"}, {"star", "moon", "sky"}]
-        tops = [{w for w, _ in m.top_words(3, topic=t)} for t in range(2)]
+        tops = [{w for w, _ in m.top_words(3, topic=t, weights=True)} for t in range(2)]
         owned = [max(range(2), key=lambda b: len(tops[t] & blocks[b])) for t in range(2)]
         assert set(owned) == {0, 1}
 
@@ -118,7 +118,7 @@ class TestPA:
         # coverage rather than per-sub-topic purity).
         covered = set()
         for t in range(4):
-            for w, _ in m.top_words(4, topic=t):
+            for w, _ in m.top_words(4, topic=t, weights=True):
                 covered.add(w.split("w")[0])
         assert {"b0", "b1", "b2", "b3"} <= covered
 
@@ -178,7 +178,7 @@ class TestHLDA:
         m = topica.HLDA(depth=2, seed=1)
         m.fit(docs, iters=300)
         root = m.node_parents.index(-1)
-        root_top = {w for w, _ in m.top_words(root, 3)}
+        root_top = {w for w, _ in m.top_words(root, 3, weights=True)}
         # The shared function words should dominate the root topic.
         assert len(root_top & {"the", "of", "and"}) >= 2
 

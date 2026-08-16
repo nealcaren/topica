@@ -104,7 +104,7 @@ def avg_div(k):
 
 for k in sorted(range(model.num_topics), key=avg_div, reverse=True)[:4]:
     print(f"Topic #{k} (avgTV={avg_div(k):.3f}): "
-          f"{' '.join(w for w, _ in model.top_words(9, topic=k))}")
+          f"{' '.join(model.top_words(9, topic=k))}")
 ```
 
 ```text
@@ -177,7 +177,7 @@ fit_kwargs = dict(num_topics=18, prevalence=X, prevalence_names=names,
                   content=party, content_time=year,
                   content_prior="l1", content_prior_var=1.0, content_smooth=6.0,
                   iters=80)
-anchor = [w for w, _ in model.top_words(8, topic=env)]
+anchor = list(model.top_words(8, topic=env))
 dci = content_divergence(model, groups=groups, anchor_words=anchor,
                          measure="hellinger", ci=True, corpus=docs,
                          fit_kwargs=fit_kwargs, cluster=cluster, B=40, seed=0)
