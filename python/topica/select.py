@@ -20,13 +20,27 @@ from .coherence import (
     coherence as _coherence, exclusivity as _exclusivity,
 )
 
-from .evaluate import Heldout, _kl, check_residuals, eval_heldout, perplexity
+from .evaluate import (
+    Heldout, _kl, check_residuals, eval_heldout, make_heldout, perplexity,
+)
+# Cross-validation is a model-selection tool; co-locate it with search_k /
+# select_model (crossval imports from evaluate/coherence, not select — no cycle).
+from .crossval import cross_validate, make_folds, Folds, CrossValResult  # noqa: F401
 
 __all__ = [
     'BestKExplanation',
+    'CrossValResult',
+    'Folds',
+    'Heldout',
     'SEARCH_K_DIRECTIONS',
     'SearchKResult',
     'SelectModelResult',
+    'check_residuals',
+    'cross_validate',
+    'eval_heldout',
+    'make_folds',
+    'make_heldout',
+    'perplexity',
     'plot_models',
     'plot_search_k',
     'plot_topic_discovery',
@@ -1405,3 +1419,9 @@ def quality_frontier(model, *, n=10, texts=None, coherence_type="u_mass", plot=F
     ax.set_ylabel("Exclusivity")
     ax.set_title("Topic quality (size ∝ prevalence)")
     return data, fig
+
+
+def __dir__():
+    """Show only the public workflow surface in tab-completion (#757), hiding the
+    module's own imports (np, re, dataclass, ...)."""
+    return sorted(__all__)
