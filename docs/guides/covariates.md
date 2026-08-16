@@ -5,20 +5,21 @@ The Structural Topic Model lets topics depend on document metadata in two ways:
 topic is worded). For the publication-grade version of this workflow, with proper
 uncertainty and clustered errors, see [Measure effects properly](../publishing/effects.md).
 
-!!! tip "Importing the covariate helpers"
-    All of the design-matrix and effect helpers are top-level: `topica.one_hot`,
-    `topica.design_matrix`, `topica.spline`, `topica.interaction`,
-    `topica.estimate_effect`, and `topica.posterior_theta_samples`. That is the
-    canonical path used throughout these docs. The same names are also reachable
-    under `topica.stm.*` (they are the identical objects, kept as a compatibility
-    alias), but prefer the top-level form.
+!!! tip "Where the covariate helpers live"
+    Design-matrix helpers live in `topica.design` (`topica.design.one_hot`,
+    `topica.design.design_matrix`, `topica.design.spline`, `topica.design.interaction`)
+    and effect helpers in `topica.effects` (`topica.effects.estimate_effect`,
+    `topica.effects.posterior_theta_samples`). That is the canonical path used
+    throughout these docs. The same names are also reachable bare at the top level
+    (`topica.estimate_effect`, …) and under `topica.stm.*` — identical objects kept
+    as compatibility aliases — but prefer the namespaced form.
 
 ## End to end: from a DataFrame to effects
 
 The whole covariate workflow in one block: build an aligned corpus from a
 DataFrame, turn the metadata into a design matrix with an R-style formula, fit
 the STM, and read the effects as a tidy table. Every step uses the canonical
-top-level helpers.
+namespaced helpers.
 
 ```python
 import pandas as pd
@@ -29,24 +30,24 @@ corpus = topica.from_dataframe(df, text_col="text")     # metadata kept aligned
 
 # Design matrix from a formula (needs the optional topica[formula] extra).
 # corpus.metadata is the surviving rows, already aligned to the documents.
-X, names = topica.design_matrix("~ party + spline(year, df=3)", corpus.metadata)
+X, names = topica.design.design_matrix("~ party + spline(year, df=3)", corpus.metadata)
 
 # Pick K at the coherence/exclusivity frontier (a knee, not a coherence max,
 # which would just return the smallest K), then fit at that K.
-scan = topica.search_k(corpus, [10, 20, 30], model="stm", prevalence=X, iters=200)
+scan = topica.select.search_k(corpus, [10, 20, 30], model="stm", prevalence=X, iters=200)
 model = topica.STM(num_topics=scan.best_k(), seed=1)
 model.fit(corpus, prevalence=X, prevalence_names=names)
 
 # Effects with method-of-composition uncertainty, as a tidy long table.
 # Passing the model + nsims draws the theta posterior for you, with R
 # estimateEffect's default Global uncertainty.
-effects = topica.estimate_effect(model, X=X, feature_names=names, nsims=50, seed=0)
+effects = topica.effects.estimate_effect(model, X=X, feature_names=names, nsims=50, seed=0)
 table = pd.concat([e.to_frame() for e in effects], ignore_index=True)
 ```
 
 If you would rather not add the `formulaic` dependency, replace `design_matrix`
-with hand-built blocks: `X, names = topica.one_hot(df["party"])` combined with
-`topica.spline` / `topica.interaction` via `numpy.hstack`.
+with hand-built blocks: `X, names = topica.design.one_hot(df["party"])` combined with
+`topica.design.spline` / `topica.design.interaction` via `numpy.hstack`.
 
 `one_hot` drops one level as the reference (baseline), so every coefficient is a
 contrast against it. With three or more levels, name the baseline yourself with
@@ -57,7 +58,7 @@ often reads better than a set of dummies: it gives one interpretable per-step
 slope, which is what a "how does prevalence move along the scale" question wants.
 
 For a sentiment or rating study, build the corpus with
-`stopwords=topica.SENTIMENT_STOPWORDS`, not the default `ENGLISH_STOPWORDS`: the
+`stopwords=topica.data.SENTIMENT_STOPWORDS`, not the default `ENGLISH_STOPWORDS`: the
 default strips `not`/`no`/`very`/`too`, which would collapse "not clean" into
 "clean" in exactly the study whose outcome is valence.
 
@@ -66,12 +67,12 @@ default strips `not`/`no`/`very`/`too`, which would collapse "not clean" into
 ```python
 import topica
 
-X, names = topica.one_hot(party)                      # design matrix + column names
+X, names = topica.design.one_hot(party)                      # design matrix + column names
 model = topica.STM(num_topics=20, seed=1)
 model.fit(docs, prevalence=X, prevalence_names=names)
 
 model.prevalence_effects        # learned γ
-topica.topic_correlation(model.doc_topic)
+topica.inspect.topic_correlation(model.doc_topic)
 ```
 
 ## Content covariates
@@ -125,7 +126,7 @@ GLM links:
 import pandas as pd
 import topica
 
-effects = topica.estimate_effect(
+effects = topica.effects.estimate_effect(
     model, X=X, feature_names=names, nsims=50, seed=0,
     cluster=source_id,     # cluster-robust SEs for nested data
     weights=survey_weight,  # weighted least squares (e.g. survey weights)
@@ -137,8 +138,8 @@ effects = topica.estimate_effect(
 table = pd.concat([e.to_frame() for e in effects], ignore_index=True)
 ```
 
-Build non-linear and interaction terms with `topica.spline` and
-`topica.interaction`. Full detail and the journal-grade treatment are in the
+Build non-linear and interaction terms with `topica.design.spline` and
+`topica.design.interaction`. Full detail and the journal-grade treatment are in the
 [Publishing](../publishing/effects.md) track.
 
 ### On a plain LDA model (not only STM)
@@ -156,8 +157,8 @@ direct path.
 model = topica.LDA(num_topics=20, seed=1)
 model.fit(corpus, iters=1000)
 
-X, names = topica.one_hot(corpus.metadata["rating"], prefix="rating_")
-effects = topica.estimate_effect(model, X=X, feature_names=names, corpus=corpus, nsims=50)
+X, names = topica.design.one_hot(corpus.metadata["rating"], prefix="rating_")
+effects = topica.effects.estimate_effect(model, X=X, feature_names=names, corpus=corpus, nsims=50)
 ```
 
 **Read effects by name, not by position.** `add_intercept=True` is the default, so
@@ -187,7 +188,7 @@ The estimated group and residual standard deviations come back on
 and reproduces `lme4::lmer`'s fixed effects exactly.
 
 ```python
-effects = topica.estimate_effect(
+effects = topica.effects.estimate_effect(
     draws, formula="~ party", data=meta, random="(1 | state)",
 )
 effects[0].varcomp   # {"state": sd_between, "residual": sd_within}
@@ -199,7 +200,7 @@ and without `cluster`/`weights`.
 ### Average marginal effects
 
 When the design has splines or interactions, no single coefficient is "the
-effect" of a covariate. `topica.average_marginal_effects` (alias `topica.ame`)
+effect" of a covariate. `topica.effects.average_marginal_effects` (alias `topica.effects.ame`)
 reports the average change in a topic's proportion per unit of a covariate —
 the average derivative for a continuous covariate, or the average
 level-vs-reference contrast for a factor — averaged over the observed documents,
@@ -207,7 +208,7 @@ with standard errors that propagate the topic-estimation uncertainty:
 
 ```python
 # Average marginal effect of `year` on every topic (year enters via a spline).
-ame = topica.average_marginal_effects(
+ame = topica.effects.average_marginal_effects(
     model, "year", formula="~ party + spline(year, df=4)", data=meta, nsims=50,
 )
 ame.to_frame()   # tidy: topic, term, ame, se, ci_low, ci_high
@@ -227,7 +228,7 @@ ame.to_frame()   # tidy: topic, term, ame, se, ci_low, ci_high
 
 ## Predicted prevalence
 
-`topica.predicted_prevalence` computes predicted topic prevalence at chosen
+`topica.effects.predicted_prevalence` computes predicted topic prevalence at chosen
 covariate values with simulation-based credible intervals — the direct
 counterpart of R `stm`'s `plot.estimateEffect`. Three modes mirror `stm`'s
 `method` argument:
@@ -236,7 +237,7 @@ counterpart of R `stm`'s `plot.estimateEffect`. Three modes mirror `stm`'s
 import topica
 
 # Point grid: predicted prevalence when party is "D" vs "R"
-pp = topica.predicted_prevalence(
+pp = topica.effects.predicted_prevalence(
     model,
     formula="~ party + year",
     data=meta,
@@ -246,13 +247,13 @@ for result in pp:
     print(result.topic_name, result.estimate, result.ci_low, result.ci_high)
 
 # Continuous sweep: prevalence as year varies, other covariates at their means
-pp = topica.predicted_prevalence(
+pp = topica.effects.predicted_prevalence(
     model, formula="~ party + year", data=meta,
     continuous="year",
 )
 
 # Contrast: difference in prevalence between two covariate settings
-pp = topica.predicted_prevalence(
+pp = topica.effects.predicted_prevalence(
     model, formula="~ party", data=meta,
     contrast={"party": ["D", "R"]},
 )
@@ -260,12 +261,12 @@ pp = topica.predicted_prevalence(
 
 ## Permutation test for binary covariates
 
-`topica.permutation_test` assesses whether a binary covariate genuinely shifts
+`topica.effects.permutation_test` assesses whether a binary covariate genuinely shifts
 topic prevalence, using permutation resampling rather than parametric
 assumptions:
 
 ```python
-results = topica.permutation_test(
+results = topica.effects.permutation_test(
     model, corpus=docs, covariate=treated,   # treated: 0/1 array
     n_perm=100, seed=0,
 )
@@ -332,7 +333,7 @@ under the default `inference="context"`).
 
 ```python
 # You bring pretrained word embeddings as {word: vector} (GloVe, word2vec, ...).
-fit = topica.embedding_regression(
+fit = topica.embeddings.embedding_regression(
     docs,                       # tokenized documents (word order matters)
     covariates=party,           # numeric (N,)/(N, p), or category labels (dummy-coded)
     pre_trained=glove,          # {word: vector} or (matrix, vocab)

@@ -62,9 +62,9 @@ is the *attention* half — how often each topic is discussed — and is optiona
 here; the content design is where the wording lives.
 
 ```python
-party_col, pn = topica.one_hot(party)                 # indicator(Republican)
-yr_basis, sn = topica.spline(np.asarray(year, float), df=4)
-inter, _ = topica.interaction(party_col, yr_basis, name="party_year")
+party_col, pn = topica.design.one_hot(party)                 # indicator(Republican)
+yr_basis, sn = topica.design.spline(np.asarray(year, float), df=4)
+inter, _ = topica.design.interaction(party_col, yr_basis, name="party_year")
 X = np.column_stack([party_col, yr_basis, inter])
 names = list(pn) + list(sn) + [f"party_year_{i}" for i in range(inter.shape[1])]
 

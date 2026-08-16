@@ -48,9 +48,9 @@ import topica
 
 # 1) Scan a theoretically plausible range. num_seeds>1 refits each K several
 #    times so every metric carries a standard error; n_jobs parallelizes the fits.
-held = topica.make_heldout(topica.Corpus.from_documents(train_docs),
+held = topica.evaluate.make_heldout(topica.Corpus.from_documents(train_docs),
                            prop_docs=0.3, prop_words=0.5, seed=0)
-results = topica.search_k(
+results = topica.select.search_k(
     held.documents, ks=[10, 15, 20, 25, 30],
     held_out=held, num_seeds=4, n_jobs=-1, iters=800,
 )
@@ -78,16 +78,16 @@ coherence×exclusivity spread, and check held-out perplexity directly:
 model = topica.STM(num_topics=20, seed=1)
 model.fit(docs, prevalence=X)
 
-table = topica.diagnostics(model, texts)          # one row per topic: coherence,
+table = topica.evaluate.diagnostics(model, texts)          # one row per topic: coherence,
                                                    # exclusivity, FREX, size, ...
-pp = topica.perplexity(model, held_out)            # held-out, lower is better
+pp = topica.evaluate.perplexity(model, held_out)            # held-out, lower is better
 
-frontier = topica.quality_frontier(model, n=10)   # per-topic coherence & exclusivity
+frontier = topica.select.quality_frontier(model, n=10)   # per-topic coherence & exclusivity
 # scatter frontier["coherence"] vs frontier["exclusivity"];
 # weak topics cluster in the lower-left.
 ```
 
-`topica.perplexity(model, held_out)` works across the generative models (LDA,
+`topica.evaluate.perplexity(model, held_out)` works across the generative models (LDA,
 DMR, CTM, STM, HDP, …) by inferring each held-out document's topic mixture from
 half its tokens and scoring the other half, so it is comparable across `K`.
 
@@ -101,11 +101,11 @@ then score the withheld words:
 ```python
 import topica
 
-h = topica.make_heldout(corpus, prop_docs=0.5, prop_words=0.5, seed=0)
+h = topica.evaluate.make_heldout(corpus, prop_docs=0.5, prop_words=0.5, seed=0)
 model = topica.STM(num_topics=20, seed=1)
 model.fit(h.documents, prevalence=X)
 
-result = topica.eval_heldout(model, h)
+result = topica.evaluate.eval_heldout(model, h)
 print(f"mean per-doc held-out log-likelihood: {result.mean_per_doc_loglik:.3f}")
 ```
 
@@ -119,7 +119,7 @@ values. `select_model` runs `runs` initializations at a fixed K and returns all
 fitted models with their coherence and exclusivity scores:
 
 ```python
-result = topica.select_model(
+result = topica.select.select_model(
     docs, K=20,
     runs=20,           # number of random initializations
     model="stm",       # "lda" or "stm"
@@ -127,7 +127,7 @@ result = topica.select_model(
     fraction=0.5,      # keep only the top 50% after a short burn-in
 )
 # inspect the coherence-exclusivity frontier across all runs:
-topica.plot_models(result)
+topica.select.plot_models(result)
 
 # pick the run in the upper-right corner and use that model:
 best_idx = result.coherence.argmax()   # or use exclusivity, or visual inspection
@@ -159,10 +159,10 @@ metric carries a standard error, add a held-out set, and report the extra
 import topica
 
 docs = load_poliblog()                                  # list[list[str]], ~2000 docs
-held = topica.make_heldout(topica.Corpus.from_documents(docs),
+held = topica.evaluate.make_heldout(topica.Corpus.from_documents(docs),
                            prop_docs=0.3, prop_words=0.5, seed=0)
 
-res = topica.search_k(
+res = topica.select.search_k(
     held.documents, ks=[10, 20, 30, 40, 60, 80, 100, 120],
     held_out=held,
     num_seeds=4,                        # each K refit 4 times -> mean +/- SE
@@ -271,8 +271,8 @@ docs = [t.split() for t in b.texts]
 for k in [4, 5, 6, 8, 10]:
     m = topica.BERTopic(clusterer="kmeans", num_clusters=k,
                         reduce_frequent=True, seed=1).fit(docs, b.doc_embeddings)
-    cv  = float(np.mean(topica.coherence(m, docs, coherence_type="c_v")))
-    div = topica.topic_diversity(m, topn=25)
+    cv  = float(np.mean(topica.evaluate.coherence(m, docs, coherence_type="c_v")))
+    div = topica.evaluate.topic_diversity(m, topn=25)
     print(f"K={k:>2}  c_v={cv:.3f}  diversity={div:.2f}  topics={m.num_topics}")
 ```
 
@@ -301,10 +301,10 @@ b = topica.datasets.load_ng20_minilm()
 docs = [t.split() for t in b.texts]
 
 for k in [4, 5, 6, 8, 10]:
-    m = topica.EmbeddingLDA(num_topics=k, embeddings=b.word_embeddings,
+    m = topica.embeddings.EmbeddingLDA(num_topics=k, embeddings=b.word_embeddings,
                             vocabulary=b.vocab, seed=1).fit(docs, iters=1000)
     coh = float(m.coherence(10).mean())     # per-topic UMass vector -> mean
-    div = topica.topic_diversity(m, topn=25)
+    div = topica.evaluate.topic_diversity(m, topn=25)
     print(f"K={k:>2}  coherence={coh:.1f}  diversity={div:.2f}")
 ```
 
@@ -331,7 +331,7 @@ import topica
 df = topica.datasets.load_poliblog()      # a DataFrame; the text is already stemmed
 corpus = topica.Corpus.from_documents([t.split() for t in df["text"]])
 
-rows = topica.search_k(corpus, [10, 15, 20, 30, 40], model="nmf")
+rows = topica.select.search_k(corpus, [10, 15, 20, 30, 40], model="nmf")
 for r in rows:
     print(f"K={r['k']:>2}  coherence={r['coherence']:.1f}  "
           f"exclusivity={r['exclusivity']:.2f}  "
@@ -344,7 +344,7 @@ model` that closes over the corpus and any covariates or embeddings it needs, so
 `search_k` never has to know the model's fit signature:
 
 ```python
-rows = topica.search_k(corpus, [10, 20, 30],
+rows = topica.select.search_k(corpus, [10, 20, 30],
                        fit=lambda k, s: topica.DMR(k, seed=s).fit(corpus, X))
 ```
 

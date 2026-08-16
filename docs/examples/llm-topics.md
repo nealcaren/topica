@@ -38,7 +38,7 @@ the matrix to disk so re-running the script reloads it instead of re-embedding
 (embeddings are the costly step).
 
 ```python
-doc_emb = topica.llm_embed(
+doc_emb = topica.embeddings.llm_embed(
     texts, model="sentence-transformers/all-MiniLM-L6-v2", cache="crisis_emb.npz"
 )
 doc_emb.shape          # (704, 384)

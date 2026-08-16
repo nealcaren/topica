@@ -65,13 +65,13 @@ dv = content.content_divergence(stm, groups=("Democrat", "Republican"),
 
 ## Choosing K with group-stratified coherence
 
-`topica.search_k` accepts a `"stratified_<type>"` coherence metric for
+`topica.select.search_k` accepts a `"stratified_<type>"` coherence metric for
 content models (`model="stm"` with a `content` covariate): it scores each group's
 own top words against that group's subcorpus, and reports group-adjusted
 exclusivity and mean polarization alongside.
 
 ```python
-res = topica.search_k(
+res = topica.select.search_k(
     corpus, ks=[5, 10, 15], model="stm",
     prevalence=X, content=source,
     coherence_type="stratified_c_npmi",

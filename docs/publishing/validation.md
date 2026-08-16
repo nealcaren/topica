@@ -15,7 +15,7 @@ you, with an answer key.
 ```python
 import topica
 
-tests = topica.word_intrusion(model, n_words=5, seed=0)
+tests = topica.evaluate.word_intrusion(model, n_words=5, seed=0)
 for t in tests:
     print(f"Topic {t['topic']}: {t['words']}")
     # answer key for coding:
@@ -30,7 +30,7 @@ topic is nearly absent. This tests whether the topic captures real document
 similarity.
 
 ```python
-tests = topica.document_intrusion(model, texts=texts, n_docs=3, seed=0)
+tests = topica.evaluate.document_intrusion(model, texts=texts, n_docs=3, seed=0)
 ```
 
 Report intrusion accuracy (and, ideally, inter-coder agreement) in your
@@ -43,10 +43,10 @@ topic is coherent **and** exclusive.
 
 ```python
 coherence   = model.coherence(10)               # UMass, per topic
-cv          = topica.coherence(model, texts, coherence_type="c_v", topn=10)
-exclusivity = topica.exclusivity(model, 10)          # per topic
+cv          = topica.evaluate.coherence(model, texts, coherence_type="c_v", topn=10)
+exclusivity = topica.evaluate.exclusivity(model, 10)          # per topic
 
-frontier = topica.quality_frontier(model, n=10)      # tidy: coherence, exclusivity, prevalence
+frontier = topica.select.quality_frontier(model, n=10)      # tidy: coherence, exclusivity, prevalence
 ```
 
 `c_v` correlates best with human judgement; UMass is a fast intrinsic check;
@@ -80,7 +80,7 @@ A topic that dissolves when you perturb the corpus is not a finding. Refit on
 bootstrap resamples and report which topics are robust:
 
 ```python
-boot = topica.bootstrap_stability(docs, k=20, n_boot=50, iters=800)
+boot = topica.evaluate.bootstrap_stability(docs, k=20, n_boot=50, iters=800)
 for t, s in zip(boot["topic"], boot["stability"]):
     print(f"Topic {t}: stability {s:.2f}")     # mean top-word Jaccard across resamples
 print("overall:", boot["mean"])
@@ -92,9 +92,9 @@ same per-document design you fit with, and it is resampled in lock-step with the
 documents so the covariate rows stay aligned:
 
 ```python
-X, names = topica.one_hot(df["party"])
+X, names = topica.design.one_hot(df["party"])
 stm = topica.STM(num_topics=20, seed=13).fit(docs, prevalence=X, prevalence_names=names)
-boot = topica.bootstrap_stability(
+boot = topica.evaluate.bootstrap_stability(
     docs, reference=stm,
     model_factory=lambda s: topica.STM(num_topics=20, seed=s),
     prevalence=X, prevalence_names=names,      # design resampled with the docs
@@ -111,8 +111,8 @@ between fits and scoring their overlap:
 ```python
 a = topica.LDA(num_topics=20, seed=1); a.fit(docs, iters=800)
 b = topica.LDA(num_topics=20, seed=2); b.fit(docs, iters=800)
-pairs = topica.align_topics(a, b)                    # one-to-one matching (Hungarian)
-print("stability across seeds:", topica.topic_stability([a, b], topn=10))
+pairs = topica.evaluate.align_topics(a, b)                    # one-to-one matching (Hungarian)
+print("stability across seeds:", topica.evaluate.topic_stability([a, b], topn=10))
 ```
 
 Flag fragile topics explicitly. A paper that says "topics 4 and 11 were unstable
@@ -125,8 +125,8 @@ required. Pull a topic's most representative documents and read them, with the
 topic's words highlighted in your notebook:
 
 ```python
-labels = topica.label_topics(model.topic_word, model.vocabulary, n=8)  # prob & FREX
-html = topica.find_thoughts_html(model, texts, n_docs=3, n_words=8)    # highlighted quotes
+labels = topica.inspect.label_topics(model.topic_word, model.vocabulary, n=8)  # prob & FREX
+html = topica.inspect.find_thoughts_html(model, texts, n_docs=3, n_words=8)    # highlighted quotes
 ```
 
 Use **FREX** (frequent *and* exclusive) words, not just the most probable ones,

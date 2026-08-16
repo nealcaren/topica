@@ -21,7 +21,7 @@ import topica
 
 df = topica.datasets.load_gadarian()          # bundled; loads offline
 corpus = topica.from_dataframe(
-    df, text_col="open.ended.response", stopwords=topica.ENGLISH_STOPWORDS
+    df, text_col="open.ended.response", stopwords=topica.data.ENGLISH_STOPWORDS
 )
 
 model = topica.LDA(num_topics=5, seed=13)
@@ -37,8 +37,8 @@ prevalence = corpus.metadata[["treatment"]]   # a numeric DataFrame goes straigh
 stm = topica.STM(num_topics=5, seed=13)
 stm.fit(corpus, prevalence, prevalence_names=["treatment"])
 
-draws  = topica.posterior_theta_samples(stm, nsims=30, seed=0)
-effect = topica.estimate_effect(draws, prevalence, feature_names=["treatment"])
+draws  = topica.effects.posterior_theta_samples(stm, nsims=30, seed=0)
+effect = topica.effects.estimate_effect(draws, prevalence, feature_names=["treatment"])
 ```
 
 Your own data is one line away: pass `pandas.read_csv("yours.csv")` to `from_dataframe`. See the [getting-started guide](https://nealcaren.github.io/topica/getting-started/quickstart/) and the [worked examples](https://nealcaren.github.io/topica/examples/dubois/) for analyses end to end.
@@ -221,7 +221,7 @@ Model-agnostic: they work on any fitted model's `topic_word`/`doc_topic`:
 - **Validation:** `word_intrusion`, `document_intrusion`, `bootstrap_stability`, `search_k`
 - **Reliability:** `select_model` (fit many seeds) and `ensemble` (combine runs into a consensus more reliable than any single fit — cluster/align/stable methods, the last derived from gensim's `EnsembleLda`)
 - **Comparison:** `fighting_words` (weighted log-odds) for contrasting corpora
-- **Covariate effects:** `estimate_effect` (method of composition, **cluster-robust SEs**, GLM links), `topic_correlation`, and the design helpers `one_hot`, `spline`, and `interaction` (all top level; they build covariate bases for any model's design matrix); `posterior_theta_samples` draws θ for the logistic-normal models (STM/CTM)
+- **Covariate effects:** `estimate_effect` (method of composition, **cluster-robust SEs**, GLM links), `topic_correlation`, and the design helpers `one_hot`, `spline`, and `interaction` (in `topica.effects` / `topica.design`; they build covariate bases for any model's design matrix); `posterior_theta_samples` draws θ for the logistic-normal models (STM/CTM)
 - **Preprocessing:** `tokenize`, `learn_phrases` / `apply_phrases`, `split_documents`, the `Corpus` class
 
 See [diagnostics](https://nealcaren.github.io/topica/guides/diagnostics/) and [covariate effects](https://nealcaren.github.io/topica/guides/covariates/).

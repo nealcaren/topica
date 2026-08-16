@@ -1,10 +1,11 @@
 # Diagnostics & validation
 
 All of these are **model-agnostic**: they take any fitted model's `topic_word` /
-`doc_topic`, so they work the same across LDA, STM, HDP, and the rest. They're
-exported at the top level (`topica.<name>`) and in `topica.diagnostics`. For how
-to *use* them to make an analysis publishable, see
-[Validate the topics](../publishing/validation.md).
+`doc_topic`, so they work the same across LDA, STM, HDP, and the rest. They live
+in the `topica.evaluate` namespace (`topica.evaluate.coherence`,
+`topica.evaluate.exclusivity`, …); every name is also reachable bare at the top
+level (`topica.<name>`) as a compatibility alias. For how to *use* them to make an
+analysis publishable, see [Validate the topics](../publishing/validation.md).
 
 ## Quality metrics
 
@@ -12,14 +13,14 @@ to *use* them to make an analysis publishable, see
 import topica
 
 model.coherence(10)                                   # per-topic UMass (built in)
-topica.coherence(model, texts, coherence_type="c_v")      # windowed, human-aligned
-topica.exclusivity(model, n=10)                           # per topic
-topica.topic_diversity(model, topn=25)                    # fraction of unique top words
-topica.topic_semantic_diversity(model, topn=25)           # fraction of unique top-word *pairs*
-topica.inverted_rbo(model, topn=10)                       # rank-weighted diversity (RBO)
-topica.embedding_coherence(model, word_embeddings, topn=10)  # top-word proximity in embedding space
+topica.evaluate.coherence(model, texts, coherence_type="c_v")      # windowed, human-aligned
+topica.evaluate.exclusivity(model, n=10)                           # per topic
+topica.evaluate.topic_diversity(model, topn=25)                    # fraction of unique top words
+topica.evaluate.topic_semantic_diversity(model, topn=25)           # fraction of unique top-word *pairs*
+topica.evaluate.inverted_rbo(model, topn=10)                       # rank-weighted diversity (RBO)
+topica.evaluate.embedding_coherence(model, word_embeddings, topn=10)  # top-word proximity in embedding space
 
-qf = topica.quality_frontier(model, n=10)                 # coherence, exclusivity, prevalence
+qf = topica.select.quality_frontier(model, n=10)                 # coherence, exclusivity, prevalence
 # qf["coherence"], qf["exclusivity"] -> the canonical STM quality scatter
 ```
 
@@ -42,15 +43,15 @@ reads as a misleadingly low diversity, so set `topn` explicitly when comparing.
 word-embedding space — the intrinsic middle ground between corpus-based
 `coherence` and LLM-based `topica.llm.coherence`. Bring your own embedding (it is
 only comparable across models scored on the *same* one, with no absolute
-threshold); `topica.llm_embed` builds one:
+threshold); `topica.embeddings.llm_embed` builds one:
 
 ```python
-emb = topica.llm_embed(model.vocabulary)                 # (V, E) word table
-topica.embedding_coherence(model, emb, model.vocabulary) # per-topic, higher = better
+emb = topica.embeddings.llm_embed(model.vocabulary)                 # (V, E) word table
+topica.evaluate.embedding_coherence(model, emb, model.vocabulary) # per-topic, higher = better
 ```
 
 !!! tip "Coherence is fast, even at large K"
-    `topica.coherence` runs its co-occurrence counting in the Rust core, scoring only
+    `topica.evaluate.coherence` runs its co-occurrence counting in the Rust core, scoring only
     the word pairs that actually occur within a topic's top-N rather than a full
     vocabulary×vocabulary matrix. `c_v` on a 500-topic model that took minutes in
     a pure-Python loop now takes a fraction of a second. Two habits still help on
@@ -63,12 +64,12 @@ topica.embedding_coherence(model, emb, model.vocabulary) # per-topic, higher = b
 ## Labeling and interpretation
 
 ```python
-topica.label_topics(model.topic_word, model.vocabulary, n=10)   # prob / frex / lift / score
-topica.label_topics(model.topic_word, corpus=corpus, n=10)     # stm-faithful: lift + FREX James-Stein shrinkage from corpus word counts
-topica.frex(model.topic_word, model.vocabulary, n=10)           # frequent + exclusive
-topica.relevance(model.topic_word, model.vocabulary, lam=0.6)   # LDAvis relevance
-topica.find_thoughts(model.doc_topic, texts, topic=0, n=3)      # representative docs
-topica.find_thoughts_html(model, texts, n_docs=3)               # highlighted close-reading
+topica.inspect.label_topics(model.topic_word, model.vocabulary, n=10)   # prob / frex / lift / score
+topica.inspect.label_topics(model.topic_word, corpus=corpus, n=10)     # stm-faithful: lift + FREX James-Stein shrinkage from corpus word counts
+topica.inspect.frex(model.topic_word, model.vocabulary, n=10)           # frequent + exclusive
+topica.inspect.relevance(model.topic_word, model.vocabulary, lam=0.6)   # LDAvis relevance
+topica.inspect.find_thoughts(model.doc_topic, texts, topic=0, n=3)      # representative docs
+topica.inspect.find_thoughts_html(model, texts, n_docs=3)               # highlighted close-reading
 ```
 
 For readable labels, `llm_topic_labels` asks an LLM to name each topic from its
@@ -96,8 +97,8 @@ and keep `label_topics` (FREX / probability / lift) as the defensible descriptor
 ## Human validation: intrusion tests
 
 ```python
-topica.word_intrusion(model, n_words=5, seed=0)           # top words + an intruder
-topica.document_intrusion(model, texts=texts, n_docs=3)   # top docs + an intruder
+topica.evaluate.word_intrusion(model, n_words=5, seed=0)           # top words + an intruder
+topica.evaluate.document_intrusion(model, texts=texts, n_docs=3)   # top docs + an intruder
 ```
 
 ## LLM-based evaluation
@@ -271,11 +272,11 @@ of these numbers.
 ## Stability and model selection
 
 ```python
-topica.search_k(docs, ks=[10, 20, 30], held_out=test)     # coherence, exclusivity, held-out, dispersion per K
-topica.bootstrap_stability(docs, k=20, n_boot=50)         # per-topic stability under resampling
-topica.align_topics(model_a, model_b)                     # one-to-one match across fits
-topica.topic_stability([model_a, model_b], topn=10)       # cross-fit term overlap
-topica.check_residuals(model, docs)                       # Taddy dispersion: is K too small?
+topica.select.search_k(docs, ks=[10, 20, 30], held_out=test)     # coherence, exclusivity, held-out, dispersion per K
+topica.evaluate.bootstrap_stability(docs, k=20, n_boot=50)         # per-topic stability under resampling
+topica.evaluate.align_topics(model_a, model_b)                     # one-to-one match across fits
+topica.evaluate.topic_stability([model_a, model_b], topn=10)       # cross-fit term overlap
+topica.evaluate.check_residuals(model, docs)                       # Taddy dispersion: is K too small?
 ```
 
 `search_k` returns a `SearchKResult` whose rows carry `coherence`, `exclusivity`,
@@ -295,7 +296,7 @@ guide works a full example on `poliblog`.
 
 ### Topic alignment
 
-To compare topics across different runs, seeds, or even architectures, `topica.align_topics(model_a, model_b)` performs Kuhn-Munkres (Hungarian) matching to align topics one-to-one. It returns a custom `AlignmentResult` object containing matched tuples of `(topic_a, topic_b, distance)`.
+To compare topics across different runs, seeds, or even architectures, `topica.evaluate.align_topics(model_a, model_b)` performs Kuhn-Munkres (Hungarian) matching to align topics one-to-one. It returns a custom `AlignmentResult` object containing matched tuples of `(topic_a, topic_b, distance)`.
 
 It supports several distance metrics:
 - `metric="cosine"` (default): Cosine distance.
@@ -307,7 +308,7 @@ If the models have different vocabularies, `align_topics` automatically intersec
 
 You can inspect relationship classifications (matches, splits, merges, and unaligned topics):
 ```python
-result = topica.align_topics(model_a, model_b, metric="cosine", threshold=0.3)
+result = topica.evaluate.align_topics(model_a, model_b, metric="cosine", threshold=0.3)
 
 result.matches     # Hungarian 1-to-1 pairs whose similarity clears `threshold`
 result.splits      # topic in A splitting to multiple in B (overlay on the matches)
@@ -331,18 +332,18 @@ Three post-hoc, no-refit diagnostics that read a fitted model's `topic_word` and
 
 ```python
 # Is K=20 really a few super-themes, and are any topics near-duplicates?
-dnd = topica.topic_dendrogram(model, metric="js")     # needs scipy
+dnd = topica.evaluate.topic_dendrogram(model, metric="js")     # needs scipy
 dnd.cut(6)                                             # group label per topic at 6 super-topics
 dnd.groups(6, n=10)                                    # {group: (member topics, merged top words)}
 dnd.merge_candidates()                                 # near-duplicate pairs (relative threshold)
 dnd.linkage                                            # SciPy linkage matrix for plotting
 
 # Are these topics real, or did I forget to clean my corpus?
-rows = topica.flag_topics(model, docs)                 # per-topic quality + a junk flag
+rows = topica.evaluate.flag_topics(model, docs)                 # per-topic quality + a junk flag
 junk = [r for r in rows if r["junk"]]                  # reasons: stopword-soup / dead-tiny / incoherent+flat
 
 # Which documents does the model fail to explain?
-res = topica.document_residuals(model, docs)           # per-doc novelty, most anomalous first
+res = topica.evaluate.document_residuals(model, docs)           # per-doc novelty, most anomalous first
 res[:10]                                               # off-topic, repetitive, or anomalous docs
 ```
 
@@ -381,14 +382,14 @@ it carries `topic_word`, `doc_topic`, and `vocabulary`, so it flows straight int
 on is marked rather than trusted.
 
 ```python
-runs = topica.select_model(docs, K=20, runs=10)   # ten initializations
+runs = topica.select.select_model(docs, K=20, runs=10)   # ten initializations
 cons = topica.ensemble(runs)                       # combine them
 
 cons.topic_word.shape       # (20, V)
 cons.stability              # per-topic agreement across runs, in [0, 1]
 cons.reliable               # per-topic: consistent AND well-supported?
 cons.agreement              # scalar: mean stability, "how reproducible is this K?"
-topica.coherence(cons, docs)
+topica.evaluate.coherence(cons, docs)
 ```
 
 `agreement` and `stability` are point estimates. Pass `n_boot>0` to bootstrap
@@ -566,7 +567,7 @@ log-likelihood is permutation-invariant, so it compares chains directly with no
 alignment. The **per-topic R-hat** is finer but needs care — topic 3 in one chain
 need not be topic 3 in another, so `multichain_diagnostics` first aligns the
 topics across chains (a Hungarian match on the topic-word matrix, the same
-machinery [`align_topics`](../api/diagnostics.md#topica.align_topics) uses) and then compares each
+machinery [`align_topics`](../api/diagnostics.md#topica.evaluate.align_topics) uses) and then compares each
 aligned topic's per-draw prevalence. Read `topic_rhat` next to `topic_alignment`:
 a topic with a low alignment Jaccard did not line up across chains, so its R-hat
 is comparing different topics and means nothing.
@@ -578,6 +579,6 @@ the same spirit as the single-chain primitives above.
 ## Visualization
 
 ```python
-viz = topica.prepare_pyldavis(model, docs)                # pyLDAvis PreparedData if installed
-qf, fig = topica.quality_frontier(model, plot=True)       # matplotlib scatter if installed
+viz = topica.inspect.prepare_pyldavis(model, docs)                # pyLDAvis PreparedData if installed
+qf, fig = topica.select.quality_frontier(model, plot=True)       # matplotlib scatter if installed
 ```

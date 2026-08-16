@@ -13,14 +13,14 @@ document-vector matrix (and, for Top2Vec, a matching word-vector matrix) from
 wherever you like, a sentence-transformer, an API, or a local model such as
 ollama. Everything downstream is in the wheel.
 
-If you would rather not wire up an embedder yourself, `topica.llm_embed` produces
+If you would rather not wire up an embedder yourself, `topica.embeddings.llm_embed` produces
 the matrix through Simon Willison's [`llm`](https://llm.datasette.io/) library
 (the optional `topica[llm]` extra), which reaches OpenAI embeddings and local
 sentence-transformers via plugins:
 
 ```python
-doc_emb = topica.llm_embed(texts, model="text-embedding-3-small")          # API
-doc_emb = topica.llm_embed(texts, model="sentence-transformers/all-MiniLM-L6-v2")  # local
+doc_emb = topica.embeddings.llm_embed(texts, model="text-embedding-3-small")          # API
+doc_emb = topica.embeddings.llm_embed(texts, model="sentence-transformers/all-MiniLM-L6-v2")  # local
 ```
 
 Embeddings are costly, so cache them. Pass `cache=path` to embed a corpus once and
@@ -28,10 +28,10 @@ reuse it on later runs (it reloads when the file matches the same `texts`, and
 recomputes otherwise), or save and load any embedding matrix yourself:
 
 ```python
-doc_emb = topica.llm_embed(texts, model="text-embedding-3-small", cache="emb.npz")
+doc_emb = topica.embeddings.llm_embed(texts, model="text-embedding-3-small", cache="emb.npz")
 
-topica.save_embeddings("emb.npz", doc_emb, texts=texts, model="all-MiniLM-L6-v2")
-doc_emb = topica.load_embeddings("emb.npz")
+topica.embeddings.save_embeddings("emb.npz", doc_emb, texts=texts, model="all-MiniLM-L6-v2")
+doc_emb = topica.embeddings.load_embeddings("emb.npz")
 ```
 
 End to end, from raw text to a fitted model, with `llm_embed` doing the
@@ -50,9 +50,9 @@ texts = [
 ]
 
 # text -> (num_docs, E) vectors; the topica[llm] extra, sentence-transformers backend
-doc_emb = topica.llm_embed(texts, model="sentence-transformers/all-MiniLM-L6-v2")
+doc_emb = topica.embeddings.llm_embed(texts, model="sentence-transformers/all-MiniLM-L6-v2")
 
-docs = [topica.tokenize(t, stopwords=topica.ENGLISH_STOPWORDS) for t in texts]
+docs = [topica.tokenize(t, stopwords=topica.data.ENGLISH_STOPWORDS) for t in texts]
 model = topica.BERTopic(min_cluster_size=2, seed=1)
 model.fit(docs, doc_emb)
 print(topica.report(model))
@@ -340,7 +340,7 @@ ng = topica.datasets.load_ng20_minilm()   # documents + labels + MiniLM embeddin
 docs = [t.split() for t in ng["texts"]]
 
 # Word-seed mode: the vocabulary embeddings anchor the topics.
-model = topica.EmbeddingLDA(
+model = topica.embeddings.EmbeddingLDA(
     num_topics=5,
     embeddings=ng["word_embeddings"],      # (vocab, E), one row per word
     vocabulary=ng["vocab"],                # aligned to the embedding rows
@@ -368,7 +368,7 @@ pruning (on the fully-covered `load_ng20_minilm` demo it is the same 3521 words,
 just reordered, but a real corpus with externally-sourced embeddings will drop
 words). Index `topic_word` with `model.vocabulary`,
 never with the `vocabulary=` you passed, or use the helpers that already pair them:
-`model.top_words(n)` and `topica.label_topics(model.topic_word, model.vocabulary)`.
+`model.top_words(n)` and `topica.inspect.label_topics(model.topic_word, model.vocabulary)`.
 
 **Document-embedding prior.** Pass `doc_embeddings=` (one row per document, same
 space as the words) to `fit` to add the document-topic prior. `doc_anchor` sets its
@@ -384,8 +384,8 @@ The fitted-model *attributes and methods* (`topic_word`, `doc_topic`,
 `top_words()`, `coherence()`, `document_topic_prior()`) are delegated to the
 underlying SeededLDA. The [effects](../publishing/effects.md) and reporting stack
 are **module functions** that take the fitted model as their first argument, not
-methods on it. Call `topica.estimate_effect(model, ...)`, `topica.topic_table(model)`,
-`topica.report(model)`, `topica.label_topics(model.topic_word, model.vocabulary)`.
+methods on it. Call `topica.effects.estimate_effect(model, ...)`, `topica.inspect.topic_table(model)`,
+`topica.report(model)`, `topica.inspect.label_topics(model.topic_word, model.vocabulary)`.
 Two conventions to keep straight:
 
 - `coherence(n)` returns a **per-topic** vector (UMass here, so more-negative is
@@ -697,13 +697,13 @@ model = topica.BERTopic.load("topics.tt")   # reload, then transform() forever
 ## Richer topic words: n-grams
 
 The c-TF-IDF topic words are over the tokens you pass in, so bigrams are a
-preprocessing choice. `topica.add_ngrams` adds them (the mechanical analog of
+preprocessing choice. `topica.data.add_ngrams` adds them (the mechanical analog of
 scikit-learn's `CountVectorizer(ngram_range=..., min_df=...)`), keeping every
 document so the rows stay aligned with the embeddings:
 
 ```python
-docs = [topica.tokenize(t, stopwords=topica.ENGLISH_STOPWORDS) for t in texts]
-docs = topica.add_ngrams(docs, ngram_range=(1, 2), min_df=5)   # unigrams + bigrams
+docs = [topica.tokenize(t, stopwords=topica.data.ENGLISH_STOPWORDS) for t in texts]
+docs = topica.data.add_ngrams(docs, ngram_range=(1, 2), min_df=5)   # unigrams + bigrams
 model.fit(docs, doc_emb)        # topic words can now read "machine_learning"
 ```
 

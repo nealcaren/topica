@@ -46,8 +46,8 @@ print(len(rows), "articles;", {d: by_decade[d] for d in sorted(by_decade)})
 ## 2. Phrases, then a pruned corpus
 
 ```python
-phrases = topica.learn_phrases(docs, min_count=8, threshold=12.0)
-docs = topica.apply_phrases(docs, phrases)            # "jim crow" -> "jim_crow"
+phrases = topica.data.learn_phrases(docs, min_count=8, threshold=12.0)
+docs = topica.data.apply_phrases(docs, phrases)            # "jim crow" -> "jim_crow"
 corpus = Corpus.from_documents(docs, min_doc_freq=10, rm_top=20)
 print("vocab", corpus.num_words)                  # 3423
 ```
@@ -60,8 +60,8 @@ lda.fit(corpus, iters=400, num_samples=4, sample_interval=25)
 for t in range(15):
     print(f"T{t:>2}: " + ", ".join(w.replace("_", " ") for w in lda.top_words(8, topic=t)))
 
-print("c_v:", round(float(np.mean(topica.coherence(lda, docs, coherence_type="c_v"))), 3),
-      "diversity:", round(topica.topic_diversity(lda, topn=15), 3))
+print("c_v:", round(float(np.mean(topica.evaluate.coherence(lda, docs, coherence_type="c_v"))), 3),
+      "diversity:", round(topica.evaluate.topic_diversity(lda, topn=15), 3))
 ```
 
 ```

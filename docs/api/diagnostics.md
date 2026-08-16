@@ -2,34 +2,35 @@
 
 Model-agnostic quality, interpretation, and validation tools. They take any
 fitted model's `topic_word` / `doc_topic` (or raw arrays), so they work the same
-across every model family. All are available at the top level (`topica.<name>`)
-and in the `topica.validation` module.
+across every model family. They live in the `topica.evaluate` namespace
+(`topica.evaluate.<name>`, the documented path below); every name is also
+reachable bare at the top level (`topica.<name>`) as a compatibility alias.
 
 ## One-call table
 
-::: topica.diagnostics
+::: topica.evaluate.diagnostics
 
-::: topica.perplexity
+::: topica.evaluate.perplexity
 
 ## Quality
 
-::: topica.coherence
+::: topica.evaluate.coherence
 
-::: topica.coherence_ci
+::: topica.evaluate.coherence_ci
 
-::: topica.semantic_coherence
+::: topica.evaluate.semantic_coherence
 
-::: topica.embedding_coherence
+::: topica.evaluate.embedding_coherence
 
-::: topica.topic_diversity
+::: topica.evaluate.topic_diversity
 
-::: topica.topic_semantic_diversity
+::: topica.evaluate.topic_semantic_diversity
 
-::: topica.inverted_rbo
+::: topica.evaluate.inverted_rbo
 
-::: topica.exclusivity
+::: topica.evaluate.exclusivity
 
-::: topica.quality_frontier
+::: topica.select.quality_frontier
 
 ## External validation
 
@@ -41,9 +42,9 @@ tracks recovery, where coherence can mislead.
 
 ## Interpretation
 
-::: topica.label_topics
+::: topica.inspect.label_topics
 
-::: topica.topics_for_term
+::: topica.inspect.topics_for_term
 
 ::: topica.llm_topic_labels
 
@@ -51,25 +52,25 @@ tracks recovery, where coherence can mislead.
 
 ::: topica.topic_label_prompts
 
-::: topica.frex
+::: topica.inspect.frex
 
-::: topica.mmr
+::: topica.inspect.mmr
 
-::: topica.relevance
+::: topica.inspect.relevance
 
-::: topica.find_thoughts
+::: topica.inspect.find_thoughts
 
-::: topica.find_thoughts_html
+::: topica.inspect.find_thoughts_html
 
-::: topica.topic_correlation
+::: topica.inspect.topic_correlation
 
-::: topica.prepare_pyldavis
+::: topica.inspect.prepare_pyldavis
 
 ## Validation
 
-::: topica.word_intrusion
+::: topica.evaluate.word_intrusion
 
-::: topica.document_intrusion
+::: topica.evaluate.document_intrusion
 
 ### LLM-based evaluation (`topica.llm`)
 
@@ -89,21 +90,21 @@ tracks recovery, where coherence can mislead.
 
 ::: topica.llm.adversarial
 
-::: topica.bootstrap_stability
+::: topica.evaluate.bootstrap_stability
 
-::: topica.search_k
+::: topica.select.search_k
 
-::: topica.check_residuals
+::: topica.evaluate.check_residuals
 
-::: topica.document_residuals
+::: topica.evaluate.document_residuals
 
-::: topica.flag_topics
+::: topica.evaluate.flag_topics
 
-::: topica.topic_dendrogram
+::: topica.evaluate.topic_dendrogram
 
-::: topica.align_topics
+::: topica.evaluate.align_topics
 
-::: topica.topic_stability
+::: topica.evaluate.topic_stability
 
 ::: topica.ensemble
 
@@ -145,16 +146,16 @@ Build a within-corpus word-heldout set — the analogue of R `stm`'s
 `make.heldout` — and score it under a fitted model to get document-completion
 log-likelihood.
 
-::: topica.make_heldout
+::: topica.evaluate.make_heldout
 
-::: topica.eval_heldout
+::: topica.evaluate.eval_heldout
 
 ## Estimator conformance
 
 Check any fitted model or model class against the topica estimator contract;
 returns a list of violation strings (empty means fully conformant).
 
-::: topica.check_conformance
+::: topica.provenance.check_conformance
 
 ## Reporting
 

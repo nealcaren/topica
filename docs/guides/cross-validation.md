@@ -2,7 +2,7 @@
 
 Cross-validation gives you shared, reproducible evidence about a model's
 *predictive* behavior: refit a fresh model on each training fold, then score the
-held-out documents it never saw. `topica.cross_validate` runs the whole loop and
+held-out documents it never saw. `topica.select.cross_validate` runs the whole loop and
 records the fold assignments and every seed so a rerun reproduces the result.
 
 It reports evidence; it does not adjudicate. Cross-validation here never picks `K`
@@ -20,7 +20,7 @@ import topica
 df = topica.datasets.load_poliblog()      # a real bundled dataset
 docs = [t.split() for t in df["text"]]    # -> list[list[str]]
 
-result = topica.cross_validate(
+result = topica.select.cross_validate(
     lambda seed: topica.LDA(10, seed=seed),   # a factory: seed -> fresh model
     docs,
     folds=5,
@@ -87,8 +87,8 @@ plain `topica.LDA(K, seed=s)` pattern):
 
 ```python
 keywords = {"econ": ["market", "tax"], "social": ["family", "church"]}
-X, names = topica.one_hot(df["rating"])   # (matrix, names) — unpack it
-result = topica.cross_validate(
+X, names = topica.design.one_hot(df["rating"])   # (matrix, names) — unpack it
+result = topica.select.cross_validate(
     lambda s: topica.KeyATM(keywords, num_topics=10, seed=s),
     docs,
     covariates={"covariates": X},         # D x F numeric matrix
@@ -133,7 +133,7 @@ predict the held-out response, assemble the out-of-fold (OOF) prediction vector,
 report regression error, calibration, and interval coverage.
 
 ```python
-result = topica.cross_validate(
+result = topica.select.cross_validate(
     lambda seed: topica.SupervisedLDA(10, seed=seed),
     docs,
     y=response,                 # per-document numeric response, length n_docs
@@ -179,8 +179,8 @@ is the single place leakage is guarded:
 | `"temporal"` | ordered, test always after train | `times=` | `max(train) < min(test)`; tied timestamps stay together |
 
 ```python
-folds = topica.make_folds(len(docs), strategy="grouped", folds=5, groups=author_id)
-result = topica.cross_validate(factory, docs, folds=folds)
+folds = topica.select.make_folds(len(docs), strategy="grouped", folds=5, groups=author_id)
+result = topica.select.cross_validate(factory, docs, folds=folds)
 ```
 
 For `temporal`, the training window **expands** by default; pass `window=` for a
@@ -197,9 +197,9 @@ dict keyed by the model's fit keyword:
 ```python
 # Covariates must be a numeric matrix. Encode a categorical column first.
 # one_hot returns (matrix, names) — unpack it; passing the tuple raises.
-X, names = topica.one_hot(df["rating"])     # or topica.design_matrix(...)
+X, names = topica.design.one_hot(df["rating"])     # or topica.design.design_matrix(...)
 
-result = topica.cross_validate(
+result = topica.select.cross_validate(
     lambda seed: topica.STM(10, seed=seed),
     docs,
     covariates={"prevalence": X},           # D x P, aligned to docs
@@ -266,7 +266,7 @@ say) raises with the list of keys that model does accept.
 ```python
 import topica.viz as viz
 
-result = topica.cross_validate(lambda s: topica.LDA(10, seed=s), docs, folds=5)
+result = topica.select.cross_validate(lambda s: topica.LDA(10, seed=s), docs, folds=5)
 viz.plot_cv(result).to_png("cv.pdf")   # or .to_frame() for the numbers
 ```
 

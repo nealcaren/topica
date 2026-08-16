@@ -27,7 +27,7 @@ import topica
 
 df = topica.datasets.load_congress()
 corpus = topica.from_dataframe(df, text_col="title",     # the headline, not the body
-                               stopwords=topica.ENGLISH_STOPWORDS,
+                               stopwords=topica.data.ENGLISH_STOPWORDS,
                                min_doc_freq=5, max_doc_fraction=0.3)
 model = topica.GSDMM(num_topics=20, seed=13).fit(corpus.documents(), iters=40)
 ```
