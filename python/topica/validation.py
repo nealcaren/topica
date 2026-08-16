@@ -28,19 +28,9 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .coherence import (
-    _as_topic_word, _as_doc_topic, _vocabulary_of, _rbo,
+    _as_topic_word, _as_doc_topic, _vocabulary_of, _rbo, _ref_corpus,
     coherence as _coherence, exclusivity as _exclusivity,
 )
-
-
-def _ref_corpus(texts):
-    """Normalize a coherence reference to ``list[list[str]]``: a Corpus, raw
-    strings (split on whitespace), or token lists all work."""
-    if hasattr(texts, "documents"):
-        return texts.documents()
-    if len(texts) and isinstance(texts[0], str):
-        return [t.split() for t in texts]
-    return [list(t) for t in texts]
 
 
 def diagnostics(model, texts=None, *, n=10, coherence_type=None, stability=False,
