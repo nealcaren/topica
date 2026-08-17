@@ -1276,41 +1276,52 @@ def _build_reference_rows(
     from .formulas import design_matrix_predict
 
     if continuous is not None:
-        # Sweep the named continuous covariate over its observed range.
-        if data is None:
-            raise ValueError("continuous= requires data= (the training DataFrame).")
+        # Sweep the named continuous covariate over its observed range. The range
+        # comes from data[col] on the formula path, or straight from the design
+        # column on the raw-X path — so a user who built X = design_matrix(...) can
+        # sweep a design column without also passing data= (#775 T2.1).
         col = continuous
-        x_obs = np.asarray(data[col], dtype=np.float64)
+        fn = list(feature_names) if feature_names is not None else None
+        if data is not None:
+            x_obs = np.asarray(data[col], dtype=np.float64)
+        elif fn is not None and col in fn:
+            x_obs = np.asarray(X_train[:, fn.index(col)], dtype=np.float64)
+        else:
+            raise ValueError(
+                f"continuous={col!r} needs the covariate's range. Pass data= (the "
+                "training DataFrame), or pass X=/feature_names= where continuous= "
+                "names one of the design columns"
+                + (f" (feature_names={fn})" if fn is not None else "")
+                + ". Note a basis-expanded term such as a spline (e.g. 'year' behind "
+                "spline(year, df=3)) is not a single design column: sweep it with the "
+                "formula=+data= path so the whole basis is re-evaluated at each grid "
+                "point, not one basis column held against the others' means."
+            )
         grid_vals = np.linspace(x_obs.min(), x_obs.max(), npoints)
-        # Hold all other numeric columns at their means, categoricals at their mode.
-        ref = {}
-        for c in data.columns:
-            if c == col:
-                continue
-            col_vals = data[c]
-            try:
-                ref[c] = float(col_vals.mean())
-            except (TypeError, AttributeError):
-                ref[c] = col_vals.mode()[0] if len(col_vals) > 0 else col_vals.iloc[0]
-        rows = []
-        for v in grid_vals:
-            row_dict = dict(ref)
-            row_dict[col] = v
-            rows.append(row_dict)
-        grid_df = pd.DataFrame(rows)
         if formula is not None:
+            if data is None:
+                raise ValueError("continuous= with formula= requires data= (the training DataFrame).")
+            # Hold all other numeric columns at their means, categoricals at their mode.
+            ref = {}
+            for c in data.columns:
+                if c == col:
+                    continue
+                col_vals = data[c]
+                try:
+                    ref[c] = float(col_vals.mean())
+                except (TypeError, AttributeError):
+                    ref[c] = col_vals.mode()[0] if len(col_vals) > 0 else col_vals.iloc[0]
+            grid_df = pd.DataFrame([{**ref, col: v} for v in grid_vals])
             X_new, _ = design_matrix_predict(formula, grid_df, knot_ctx)
         else:
-            # Raw X path: only the swept column changed; rebuild with the same columns.
-            if feature_names is None:
+            # Raw X path: only the swept column changes; others held at their means.
+            if fn is None:
                 raise ValueError(
                     "continuous= with raw X requires feature_names= to identify the column."
                 )
-            fn = list(feature_names)
             if col not in fn:
                 raise ValueError(f"continuous={col!r} not in feature_names {fn}")
             ci_idx = fn.index(col)
-            # Hold other columns at their column means.
             col_means = X_train.mean(axis=0)
             X_new = np.tile(col_means, (npoints, 1))
             X_new[:, ci_idx] = grid_vals
@@ -1501,8 +1512,13 @@ def predicted_prevalence(
       theta between the two settings per topic, with CI.
     - ``continuous=`` (**smooth curve**) — a column name; sweeps the covariate
       over its observed range on a ``npoints``-point grid, holding all other
-      columns at their means. Spline terms in ``formula`` are evaluated with the
-      training knots, not re-fit to the new grid.
+      columns at their means. Works from either path: with ``formula=``+``data=``
+      the sweep re-evaluates the whole formula (spline terms use the training
+      knots, not re-fit to the new grid); with a raw ``X``+``feature_names`` it
+      sweeps the named **design column** and needs no ``data=`` (the range is read
+      off that column). A basis-expanded term (e.g. ``year`` behind
+      ``spline(year, df=3)``) is not a single column, so sweep it via the
+      ``formula=``+``data=`` path.
 
     Parameters
     ----------

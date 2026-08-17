@@ -235,6 +235,29 @@ class TestSTM:
             assert r.mode == "continuous"
             assert r.covariate == "x"
 
+    def test_continuous_raw_X_needs_no_data(self, stm_continuous_model):
+        """#775 T2.1: continuous= works from a raw X + feature_names, reading the
+        sweep range off the named design column, without also passing data=."""
+        m, x = stm_continuous_model
+        X = x.reshape(-1, 1)
+        result = predicted_prevalence(m, X=X, feature_names=["x"], continuous="x",
+                                      npoints=8, nsims=8, n_sim=100, seed=0)
+        for r in result:
+            assert r.estimate.shape == (8,)
+            assert r.mode == "continuous" and r.covariate == "x"
+        # grid spans the observed range of the design column
+        grid = [list(g.values())[0] for g in result[0].grid]
+        assert min(grid) == pytest.approx(float(x.min()))
+        assert max(grid) == pytest.approx(float(x.max()))
+
+    def test_continuous_raw_X_unknown_column_is_directive(self, stm_continuous_model):
+        """A column not in feature_names (e.g. the variable behind a spline) points
+        the user at the formula=+data= path rather than failing opaquely."""
+        m, x = stm_continuous_model
+        with pytest.raises(ValueError, match="names one of the design columns"):
+            predicted_prevalence(m, X=x.reshape(-1, 1), feature_names=["x"],
+                                 continuous="year", npoints=5, nsims=5, seed=0)
+
     def test_continuous_ci_ordering(self, stm_continuous_model):
         m, x = stm_continuous_model
         meta = pd.DataFrame({"x": x})
