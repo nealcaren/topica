@@ -258,6 +258,23 @@ class TestSTM:
             predicted_prevalence(m, X=x.reshape(-1, 1), feature_names=["x"],
                                  continuous="year", npoints=5, nsims=5, seed=0)
 
+    def test_grid_values_uniform_across_modes(self, stm_continuous_model):
+        """#775 T3.2: grid_values is a flat list in every mode — floats for
+        continuous, the two labels for contrast — so it can be zipped with estimate
+        without special-casing grid's per-mode element type (dict vs string)."""
+        m, x = stm_continuous_model
+        X = x.reshape(-1, 1)
+        cont = predicted_prevalence(m, X=X, feature_names=["x"], continuous="x",
+                                    npoints=5, nsims=5, n_sim=100, seed=0)[0]
+        gv = cont.grid_values
+        assert len(gv) == len(cont.estimate)
+        assert all(isinstance(v, float) for v in gv)
+        assert min(gv) == pytest.approx(float(x.min()))
+        contr = predicted_prevalence(m, X=X, feature_names=["x"],
+                                     contrast={"x": [float(x.min()), float(x.max())]},
+                                     nsims=5, n_sim=100, seed=0)[0]
+        assert len(contr.grid_values) == 2  # two setting labels, not dicts
+
     def test_continuous_ci_ordering(self, stm_continuous_model):
         m, x = stm_continuous_model
         meta = pd.DataFrame({"x": x})

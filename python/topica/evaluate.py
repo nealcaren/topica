@@ -1113,7 +1113,8 @@ def _kl(p, q):
 
 
 def topic_stability(runs, *, num_topics=None, k=None, seeds=None, model_factory=None,
-                    topn=10, metric="cosine", fit_kwargs=None, **extra_fit_kwargs):
+                    topn=10, metric="cosine", per_topic=False, fit_kwargs=None,
+                    **extra_fit_kwargs):
     """Term-centric stability of topics across multiple fits (Greene, O'Callaghan
     & Cunningham 2014): a "how robust is this K?" score.
 
@@ -1132,7 +1133,10 @@ def topic_stability(runs, *, num_topics=None, k=None, seeds=None, model_factory=
 
     Either way, each later run's topics are matched to the first run's, and
     stability is the mean Jaccard overlap of their top-`topn` words. Returns a
-    float in ``[0, 1]``; higher means more reproducible topics.
+    float in ``[0, 1]``; higher means more reproducible topics. Pass
+    ``per_topic=True`` for the per-topic vector instead — one matched-Jaccard mean
+    per reference topic (index-aligned to ``runs[0]``), so you can see *which*
+    topics are fragile rather than only the corpus-wide average (#775 T3.3).
 
     If every run is bit-identical to the first, a stability of 1.0 is
     meaningless — the runs never varied. This most often bites when the runs are
@@ -1234,12 +1238,18 @@ def topic_stability(runs, *, num_topics=None, k=None, seeds=None, model_factory=
         )
     k = ref.shape[0]
     ref_top = [set(np.argsort(ref[t])[::-1][:topn]) for t in range(k)]
-    scores = []
+    # Accumulate per reference topic (i) across the other runs, so we can report a
+    # per-topic vector as well as the overall mean (#775 T3.3).
+    per = [[] for _ in range(k)]
     for mat in mats[1:]:
         for i, j, _ in align_topics(ref, mat, metric=metric):
             other = set(np.argsort(mat[j])[::-1][:topn])
             union = ref_top[i] | other
-            scores.append(len(ref_top[i] & other) / len(union) if union else 0.0)
+            per[i].append(len(ref_top[i] & other) / len(union) if union else 0.0)
+    if per_topic:
+        # One matched-Jaccard mean per reference topic, index-aligned to runs[0].
+        return np.array([float(np.mean(s)) if s else float("nan") for s in per])
+    scores = [s for topic_scores in per for s in topic_scores]
     return float(np.mean(scores)) if scores else float("nan")
 
 
@@ -1274,7 +1284,7 @@ def _take_rows(value, pick):
 
 def bootstrap_stability(
     docs,
-    *,
+    *args,
     k=None,
     num_topics=None,
     n_boot=20,
@@ -1344,6 +1354,34 @@ def bootstrap_stability(
     per-topic ``(topic, stability)`` DataFrame.
     """
     from . import LDA  # local import to avoid a cycle at module load
+
+    # bootstrap_stability REFITS on resamples, so its first argument is the corpus,
+    # not a fitted model, and everything else is keyword-only. The natural wrong
+    # guesses — `bootstrap_stability(model)` or `bootstrap_stability(model, corpus)`
+    # (a #775 T2.2 finding) — otherwise die with an opaque positional-argument
+    # error. Redirect to the docs-first signature and the reference= param, which is
+    # how you measure a *specific* fitted model. (`*args` exists only to catch the
+    # second-positional mistake; all real arguments are keyword-only.)
+    _looks_like_model = hasattr(docs, "topic_word") or hasattr(docs, "num_topics")
+    if _looks_like_model or args:
+        if _looks_like_model:
+            raise TypeError(
+                "bootstrap_stability(docs, ...) takes the corpus (token lists or a "
+                "Corpus) as its only positional argument and refits on bootstrap "
+                "resamples — it does not take a fitted model. To measure a fitted "
+                "model's stability, pass the corpus and name the model with "
+                "reference=:\n"
+                "    bootstrap_stability(docs, reference=model,\n"
+                "        model_factory=lambda seed: type(model)(model.num_topics, seed=seed))\n"
+                "or just bootstrap_stability(docs, num_topics=model.num_topics)."
+            )
+        raise TypeError(
+            f"bootstrap_stability takes one positional argument (the corpus); got "
+            f"{1 + len(args)}. Everything else is keyword-only (num_topics=, "
+            "n_boot=, reference=, ...). If you meant bootstrap_stability(model, "
+            "corpus), note it refits from the documents: pass the corpus first and "
+            "the model as reference=."
+        )
 
     # num_topics= is the library-wide name for the topic count (every constructor
     # is Model(num_topics=...)); accept it as an alias for this function's k= so a

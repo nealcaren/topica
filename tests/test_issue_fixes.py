@@ -915,3 +915,33 @@ def test_stability_helpers_discoverable_under_robustness():
     assert topica.robustness.topic_stability is topica.evaluate.topic_stability
     assert topica.robustness.bootstrap_stability is topica.evaluate.bootstrap_stability
     assert {"topic_stability", "bootstrap_stability"} <= set(topica.robustness.__all__)
+
+
+def test_bootstrap_stability_rejects_fitted_model_directively():
+    # #775 T2.2: bootstrap_stability refits from the corpus, so bootstrap_stability(
+    # model) and bootstrap_stability(model, corpus) — the natural guesses — used to
+    # die on an opaque positional-arg error. Redirect to docs-first + reference=.
+    docs = [["cat", "dog", "pet"]] * 15 + [["star", "moon", "sky"]] * 15
+    m = topica.LDA(2, seed=1).fit(docs, iters=50)
+    for call in (lambda: topica.evaluate.bootstrap_stability(m),
+                 lambda: topica.evaluate.bootstrap_stability(m, docs)):
+        with pytest.raises(TypeError, match="does not take a fitted model|reference="):
+            call()
+    # a second positional that is NOT a model still gets a clear keyword-only error
+    with pytest.raises(TypeError, match="one positional argument"):
+        topica.evaluate.bootstrap_stability(docs, docs)
+    # the correct call still works
+    r = topica.evaluate.bootstrap_stability(docs, num_topics=2, n_boot=3, iters=40)
+    assert 0.0 <= r["mean"] <= 1.0
+
+
+def test_topic_stability_per_topic_vector():
+    # #775 T3.3: per_topic=True returns a per-topic vector (index-aligned to
+    # runs[0]) alongside the scalar default, so a lone 0.46 isn't the only signal.
+    docs = [["cat", "dog", "pet"]] * 12 + [["star", "moon", "sky"]] * 12
+    runs = [topica.LDA(3, seed=s).fit(docs, iters=60) for s in (1, 2, 3)]
+    overall = topica.topic_stability(runs)
+    per = topica.topic_stability(runs, per_topic=True)
+    assert isinstance(overall, float)
+    assert per.shape == (3,)
+    assert np.all((per >= 0.0) & (per <= 1.0))

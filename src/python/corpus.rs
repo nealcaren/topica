@@ -9,6 +9,8 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+use numpy::ndarray::Array1;
+use numpy::{PyArray1, ToPyArray};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyString};
@@ -506,8 +508,17 @@ impl Corpus {
     /// recover each document's Dirichlet posterior for method-of-composition
     /// standard errors.
     #[getter]
-    fn doc_lengths(&self) -> Vec<usize> {
-        self.inner.docs.iter().map(|d| d.len()).collect()
+    fn doc_lengths<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i64>> {
+        // A numpy array, not a list, so `.mean()`/`.sum()` work directly on the
+        // numpy-native corpus (#775 T3.1).
+        Array1::from(
+            self.inner
+                .docs
+                .iter()
+                .map(|d| d.len() as i64)
+                .collect::<Vec<_>>(),
+        )
+        .to_pyarray_bound(py)
     }
 
     /// The pruned vocabulary as a list of word strings, indexed by word id
@@ -526,8 +537,16 @@ impl Corpus {
     /// James-Stein shrinkage use; pass it (or the corpus) to
     /// :func:`topica.inspect.label_topics` / :func:`topica.inspect.frex` for stm-faithful labels.
     #[getter]
-    fn word_counts(&self) -> Vec<u32> {
-        self.inner.total_freqs.clone()
+    fn word_counts<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i64>> {
+        // A numpy array, not a list, parallel to `vocabulary` (#775 T3.1).
+        Array1::from(
+            self.inner
+                .total_freqs
+                .iter()
+                .map(|&c| c as i64)
+                .collect::<Vec<_>>(),
+        )
+        .to_pyarray_bound(py)
     }
 
     /// The corpus as token lists — one list of word strings per document, in the

@@ -1,8 +1,22 @@
 """Tests for the Corpus class."""
 
+import numpy as np
 import pytest
 
 from topica import Corpus
+
+
+def test_doc_lengths_word_counts_are_numpy_arrays():
+    # #775 T3.1: doc_lengths / word_counts are numpy arrays (not lists) on the
+    # numpy-native corpus, so .mean()/.sum() work directly. vocabulary stays a list.
+    docs = [["cat", "dog", "fish"], ["cat", "dog"], ["cat"]]
+    c = Corpus.from_documents(docs)
+    assert isinstance(c.doc_lengths, np.ndarray)
+    assert isinstance(c.word_counts, np.ndarray)
+    assert c.doc_lengths.tolist() == [3, 2, 1]
+    assert float(c.doc_lengths.mean()) == pytest.approx(2.0)
+    assert int(c.word_counts.sum()) == 6  # total token occurrences
+    assert isinstance(c.vocabulary, list) and all(isinstance(w, str) for w in c.vocabulary)
 
 
 # ---------------------------------------------------------------------------

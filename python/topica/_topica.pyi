@@ -236,15 +236,17 @@ class Corpus:
         ...
 
     @property
-    def doc_lengths(self) -> list[int]:
+    def doc_lengths(self) -> numpy.typing.NDArray[numpy.int64]:
         """Tokens per document in the pruned vocabulary, parallel to a model's
-        ``doc_topic`` rows. The N_d that ``dirichlet_theta_samples`` needs."""
+        ``doc_topic`` rows. The N_d that ``dirichlet_theta_samples`` needs. A numpy
+        array, so ``.mean()``/``.sum()`` work directly."""
         ...
 
     @property
-    def word_counts(self) -> list[int]:
+    def word_counts(self) -> numpy.typing.NDArray[numpy.int64]:
         """Total occurrences of each vocabulary term across all documents, parallel
-        to ``vocabulary``. The empirical P(w) for stm's lift / FREX shrinkage."""
+        to ``vocabulary``. The empirical P(w) for stm's lift / FREX shrinkage. A
+        numpy array, so ``.mean()``/``.sum()`` work directly."""
         ...
 
     @property
