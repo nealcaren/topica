@@ -827,8 +827,24 @@ def estimate_effect(
     if len(names) != X.shape[1]:
         raise ValueError("feature_names length must match X columns")
     if add_intercept:
-        X = np.hstack([np.ones((n, 1)), X])
-        names = ["intercept"] + names
+        # If X already carries a constant column, prepending another intercept makes
+        # the design collinear and shifts every coefficient label by one, so coef[1]
+        # is a duplicate intercept rather than the first real covariate (#775 T1.2).
+        # Skip the auto-add and say which column looked like an intercept, instead of
+        # silently producing a rank-deficient design.
+        const = [i for i in range(X.shape[1]) if np.ptp(X[:, i]) == 0.0]
+        if const:
+            warnings.warn(
+                f"add_intercept=True but X already has a constant column at index "
+                f"{const[0]} ({names[const[0]]!r}); not adding a second intercept "
+                "(that would split the intercept across collinear columns and shift "
+                "every coefficient label). Pass add_intercept=False to silence this.",
+                UserWarning,
+                stacklevel=2,
+            )
+        else:
+            X = np.hstack([np.ones((n, 1)), X])
+            names = ["intercept"] + names
 
     if link not in ("identity", "logit", "log"):
         raise ValueError("link must be 'identity', 'logit', or 'log'")
@@ -1223,6 +1239,20 @@ class PredictedPrevalence:
                 f"{lo.size}. Use ci_low/ci_high (arrays) or to_frame()."
             )
         return float(lo[0]), float(hi[0])
+
+    @property
+    def grid_values(self) -> list:
+        """The grid as a flat list, uniform across modes — so you can zip it with
+        ``estimate`` without special-casing the mode (#775 T3.2). ``grid`` itself
+        holds dicts for ``at``/``continuous`` but the two setting labels for
+        ``contrast``, so indexing it directly (e.g. ``float(pp.grid[i])``) breaks
+        across modes. This returns the swept covariate's value per point for
+        ``continuous`` (floats), the two labels for ``contrast``, and one dict per
+        row for ``at``."""
+        if self.mode == "continuous" and self.covariate is not None:
+            return [float(g[self.covariate]) if isinstance(g, dict) else float(g)
+                    for g in self.grid]
+        return list(self.grid)
 
     def to_frame(self):
         """Return a tidy pandas DataFrame with one row per grid point.
@@ -1895,7 +1925,7 @@ def topic_correlation_ci(model, *, nsims=200, ci=0.9, seed=0):
     return TopicCorrelationCI(estimate, se, ci_low, ci_high)
 
 
-def spline(x, df=4, knots=None):
+def spline(x, df=4, knots=None, name="x"):
     """Restricted (natural) cubic-spline basis for a covariate — the building
     block for nonlinear prevalence terms like R ``stm``'s ``~ s(day)``.
 
@@ -1903,6 +1933,12 @@ def spline(x, df=4, knots=None):
     evenly spaced quantiles of `x` unless `knots` is given) yield `df` basis
     columns whose first is the linear term. ``np.column_stack`` the result into
     your design matrix and extend ``feature_names`` with the returned names.
+
+    Columns are named ``spline(<name>, df=<df>)[<i>]`` — the same convention the
+    ``spline(...)`` term in a formula produces (#775 T4.2), so a raw-``X`` design
+    built with this helper labels its columns identically to
+    :func:`design_matrix`. Pass ``name=`` (the covariate's name) to match a
+    specific formula column; it defaults to ``"x"``.
 
     Returns ``(basis (n, df), names)``.
     """
@@ -1929,7 +1965,7 @@ def spline(x, df=4, knots=None):
         ) / denom
         cols.append(term)
     basis = np.column_stack(cols)
-    names = ["spline_lin"] + [f"spline_{j + 1}" for j in range(basis.shape[1] - 1)]
+    names = [f"spline({name}, df={df})[{j}]" for j in range(basis.shape[1])]
     return basis, names
 
 

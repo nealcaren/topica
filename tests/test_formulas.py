@@ -36,6 +36,21 @@ def test_design_matrix_spline_columns(frame):
     assert X.shape == (20, 3)
 
 
+def test_standalone_spline_names_match_formula_convention(frame):
+    # #775 T4.2: topica.design.spline() names columns spline(<name>, df=<k>)[i] —
+    # the same convention as the spline() term in a formula — instead of the old
+    # spline_lin/spline_1/spline_2, so a raw-X design labels columns identically.
+    year = frame["year"].to_numpy()
+    _, names = topica.design.spline(year, df=3, name="year")
+    assert names == ["spline(year, df=3)[0]", "spline(year, df=3)[1]", "spline(year, df=3)[2]"]
+    # matches the formula path's column names exactly
+    _, form_names = topica.design_matrix("~ spline(year, df=3)", frame)
+    assert names == form_names
+    # default name is "x"
+    _, dflt = topica.design.spline(year, df=2)
+    assert dflt == ["spline(x, df=2)[0]", "spline(x, df=2)[1]"]
+
+
 def test_formula_path_matches_manual_X(frame):
     theta = np.random.default_rng(0).dirichlet([1, 1, 1], size=20)
     X, names = topica.design_matrix("~ party + x", frame)

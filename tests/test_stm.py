@@ -155,6 +155,27 @@ class TestEstimateEffect:
         assert "intercept" not in eff.feature_names
         assert len(eff.coef) == 1
 
+    def test_intercept_not_doubled_when_x_has_constant(self, synthetic_model_and_x, space_topic_idx):
+        """#775 T1.2: if X already carries a constant column, add_intercept=True must
+        not prepend a *second* intercept (which splits it across collinear columns
+        and shifts every coefficient label). It warns and skips instead."""
+        import numpy as np
+        model, x = synthetic_model_and_x
+        x2 = np.atleast_2d(x)
+        if x2.shape[0] == 1:
+            x2 = x2.T
+        Xc = np.column_stack([np.ones(x2.shape[0]), x2])  # user-supplied intercept
+        with pytest.warns(UserWarning, match="already has a constant column"):
+            effects = stm.estimate_effect(
+                model.doc_topic, Xc, feature_names=["Intercept", "x"],
+                add_intercept=True, topics=[space_topic_idx],
+            )
+        eff = effects[0]
+        # exactly one intercept column, and 'x' still at the index the user gave it
+        assert [n.lower() for n in eff.feature_names].count("intercept") == 1
+        assert eff.feature_names == ["Intercept", "x"]
+        assert len(eff.coef) == 2
+
     def test_all_topics_default(self, synthetic_model_and_x):
         """Default topics=None returns one effect per topic."""
         model, x = synthetic_model_and_x
