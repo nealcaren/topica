@@ -24,7 +24,7 @@ structural topic model lives in \proglang{R}, the fastest collapsed-Gibbs
 sampler lives in \proglang{Java}, and the keyword-assisted and embedding-based
 models live in separate \proglang{Python} repositories, none sharing a data
 format or a diagnostic suite. We present \pkg{topica}, a \proglang{Python}
-framework that brings more than two dozen topic models, classical and
+framework that brings more than fifty topic models, classical and
 embedding-based alike, behind one \pkg{NumPy}-native interface. Every model
 exposes the same surface, the topic-word and document-topic matrices, so one set
 of coherence, exclusivity, stability, labeling, and covariate-effect tools
@@ -108,7 +108,7 @@ second run, which undermines the replication that the field increasingly
 expects.
 
 We present \pkg{topica}, a \proglang{Python} library that addresses these three
-problems together. \pkg{topica} provides more than two dozen topic models behind a
+problems together. \pkg{topica} provides more than fifty topic models behind a
 single \pkg{NumPy}-native interface, computes the standard diagnostics for any of
 them, and produces reproducible fits. It rests on four claims, which the rest of
 this article defends in turn:
@@ -230,8 +230,8 @@ model.top_words(10)     # the ten highest-probability words per topic
 \end{CodeChunk}
 
 Because the diagnostics consume only \code{topic\_word} and \code{doc\_topic},
-we write them once and they apply to every model. \code{topica.coherence},
-\code{topica.exclusivity}, \code{topica.estimate\_effect}, and the rest do not
+we write them once and they apply to every model. \code{topica.evaluate.coherence},
+\code{topica.evaluate.exclusivity}, \code{topica.effects.estimate\_effect}, and the rest do not
 know or care which model produced the matrices they are given. This is what makes
 cross-model comparison free: an LDA fit and a clustering of embeddings present
 the same surface, so the analyst can score both with the same coherence measure
@@ -267,15 +267,15 @@ class MyModel:
     def top_words(self, n=10, *, topic=None): ...
 
 m = MyModel(); m.fit(docs)
-topica.coherence(m, docs)          # every diagnostic ...
-topica.exclusivity(m)
-topica.topic_diversity(m)
-topica.estimate_effect(m.doc_topic, X)   # ... and effect tool applies to m.
+topica.evaluate.coherence(m, docs)          # every diagnostic ...
+topica.evaluate.exclusivity(m)
+topica.evaluate.topic_diversity(m)
+topica.effects.estimate_effect(m.doc_topic, X)   # ... and effect tool applies to m.
 \end{CodeInput}
 \end{CodeChunk}
 
 The built-in models are written to exactly this contract, and the contract is not
-left to convention. A machine-readable specification, \code{topica.check\_conformance},
+left to convention. A machine-readable specification, \code{topica.provenance.check\_conformance},
 enumerates the attributes and methods every estimator must expose: the two
 matrices, the held-out \code{transform}, the per-iteration convergence trace, and
 the family-specific posterior draws. A parametrized test checks all of them on
@@ -456,7 +456,7 @@ show where each one decides.
 The corpus fixes the scope of every later claim, so preprocessing is a
 substantive decision rather than a chore. \pkg{topica} provides the \code{Corpus}
 container and tokenization, phrase learning, and document-splitting tools, and
-\code{topica.prep\_documents} with \code{topica.plot\_removed} reports how many
+\code{topica.data.prep\_documents} with \code{topica.data.plot\_removed} reports how many
 documents, words, and tokens each vocabulary threshold removes, so the pruning is
 quantified rather than guessed. The workflow documents every choice (stopwords,
 frequency thresholds, phrases) because the methods section has to report them.
@@ -467,14 +467,14 @@ The number of topics $K$ is the decision agents and automated pipelines most
 often get wrong, because the diagnostics tempt one to optimize it. $K$ is a
 research decision about granularity, not a hyperparameter to maximize: a model
 with fewer topics often scores higher on coherence while collapsing distinctions
-the researcher cares about. \code{topica.search\_k} fits a range of $K$ and
+the researcher cares about. \code{topica.select.search\_k} fits a range of $K$ and
 reports coherence and exclusivity for each, and, when given a held-out split from
-\code{topica.make\_heldout}, the document-completion held-out log-likelihood
-\pkg{stm} uses (\code{topica.eval\_heldout}), available for every model that
+\code{topica.evaluate.make\_heldout}, the document-completion held-out log-likelihood
+\pkg{stm} uses (\code{topica.evaluate.eval\_heldout}), available for every model that
 supports held-out inference rather than only \code{LDA}.
-\code{topica.quality\_frontier} plots the per-topic coherence-exclusivity
+\code{topica.select.quality\_frontier} plots the per-topic coherence-exclusivity
 trade-off, and because a single fit of a non-convex model can land on a poor
-local optimum, \code{topica.select\_model} fits several models at a fixed $K$
+local optimum, \code{topica.select.select\_model} fits several models at a fixed $K$
 under different seeds and returns them with their per-run coherence and
 exclusivity, for the researcher to choose among. The procedure we recommend is to
 fit a small range around a theoretically plausible $K$, label the topics at each,
@@ -495,10 +495,10 @@ when the relative change in the variational bound falls below a tolerance,
 whichever comes first; the collapsed-Gibbs samplers run a fixed number of sweeps.
 The \code{converged} flag records which of the two ended the fit.
 Validation is not optional.
-\code{topica.coherence} computes the windowed coherence measures
+\code{topica.evaluate.coherence} computes the windowed coherence measures
 \citep{lau2014coherence}, counting word co-occurrences in the core,
-\code{topica.exclusivity} and
-\code{topica.topic\_diversity} measure distinctness, \code{bootstrap\_stability}
+\code{topica.evaluate.exclusivity} and
+\code{topica.evaluate.topic\_diversity} measure distinctness, \code{bootstrap\_stability}
 checks that topics persist across seeds, and \code{word\_intrusion} and
 \code{document\_intrusion} build the human-validation tasks of
 \citet{chang2009reading}. For teams without annotators, the \code{topica.llm}
@@ -517,7 +517,7 @@ can move from one random seed to the next, enough that recent work questions
 whether the newer neural models are reproducible at all \citep{hoyle2022broken}.
 \pkg{topica} supports this stability assessment by combining independent runs
 into a consensus that can be more reliable than any single fit.
-\code{topica.select\_model} fits a model from
+\code{topica.select.select\_model} fits a model from
 many seeds, and \code{topica.ensemble} reduces those runs to one consensus model
 that carries the usual \code{topic\_word}/\code{doc\_topic} contract, so it flows
 into the same diagnostics as any other fit. Each consensus topic reports a
@@ -543,24 +543,22 @@ linear model links:
 
 \begin{CodeChunk}
 \begin{CodeInput}
-from topica import stm
-
-X, names = topica.one_hot(party)
+X, names = topica.design.one_hot(party)
 model = topica.STM(num_topics=20, seed=42)
 model.fit(docs, prevalence=X, prevalence_names=names)
 
-draws   = stm.posterior_theta_samples(model, nsims=50, seed=0)
-effects = stm.estimate_effect(draws, X, feature_names=names, cluster=source_id)
+draws   = topica.effects.posterior_theta_samples(model, nsims=50, seed=0)
+effects = topica.effects.estimate_effect(draws, X, feature_names=names, cluster=source_id)
 \end{CodeInput}
 \end{CodeChunk}
 
-Beyond the coefficient table, \code{topica.predicted\_prevalence} reports predicted
+Beyond the coefficient table, \code{topica.effects.predicted\_prevalence} reports predicted
 topic prevalence at chosen covariate values, with differences between settings and
 continuous prediction curves carried with simulation-based intervals (the
 quantity of interest \pkg{stm}'s \code{estimateEffect} plots).
-\code{topica.permutation\_test} gives a distribution-free check of whether a
+\code{topica.effects.permutation\_test} gives a distribution-free check of whether a
 topic's prevalence differs across a binary covariate. The model-agnostic
-\code{topica.standard\_errors} extends this to any model and is explicit about the
+\code{topica.effects.standard\_errors} extends this to any model and is explicit about the
 kind of uncertainty it reports. For a model with no posterior over $\theta$ to
 propagate---an embedding clustering like \code{BERTopic}, or a neural autoencoder
 like \code{ProdLDA}---we provide bootstrap standard errors instead.
@@ -594,10 +592,10 @@ weights, a closure-corrected topic correlation, and indicators for \emph{dead}
 and near-duplicate topics. Panels that require a posterior are omitted for
 models that do not provide one; for example, an embedding clustering with no
 posterior over $\theta$ has no uncertainty ribbons. Interactive views render through \pkg{Plotly}, and
-\code{topica.prepare\_pyldavis} still feeds the original \pkg{LDAvis} when wanted.
+\code{topica.inspect.prepare\_pyldavis} still feeds the original \pkg{LDAvis} when wanted.
 
 A fit is reported alongside a record of how it was produced.
-\code{topica.record\_fit} writes an \emph{analysis manifest}, a portable JSON
+\code{topica.provenance.record\_fit} writes an \emph{analysis manifest}, a portable JSON
 record of one fit: the model settings, the fit arguments and researcher
 decisions, the environment, and canonical fingerprints of the corpus, the design
 matrix, and the fitted outputs. Given the corpus and the model back,
@@ -939,9 +937,9 @@ import topica
 
 # docs: preprocessed posts; conservative: (D, 1) indicator column.
 def score(m):                # the SAME diagnostics for every model
-    return (topica.coherence(m, docs).mean(),
-            topica.exclusivity(m).mean(),
-            topica.topic_diversity(m))
+    return (topica.evaluate.coherence(m, docs).mean(),
+            topica.evaluate.exclusivity(m).mean(),
+            topica.evaluate.topic_diversity(m))
 
 lda = topica.LDA(num_topics=15, seed=1); lda.fit(docs, iters=500)
 ctm = topica.CTM(num_topics=15, seed=1); ctm.fit(docs, iters=25)
@@ -998,19 +996,17 @@ admits:
 
 \begin{CodeChunk}
 \begin{CodeInput}
-from topica import stm
-
 # lda (collapsed-Gibbs) and stm_model (variational) were fit above on the
 # same corpus, so their topic-word columns share a vocabulary. Match them.
-pairs = topica.align_topics(lda, stm_model)   # [(lda_topic, stm_topic, dist), ...]
+pairs = topica.evaluate.align_topics(lda, stm_model)   # [(lda_topic, stm_topic, dist), ...]
 
 # One estimator, two families: it draws the posterior each admits (Dirichlet
 # theta for the Gibbs LDA, logistic-normal theta for the STM) so the
 # conservative effect carries method-of-composition uncertainty in both.
-eff_lda = stm.estimate_effect(lda, conservative, corpus=docs,
-                              feature_names=["conservative"], nsims=100)
-eff_stm = stm.estimate_effect(stm_model, conservative,
-                              feature_names=["conservative"], nsims=100)
+eff_lda = topica.effects.estimate_effect(lda, conservative, corpus=docs,
+                                         feature_names=["conservative"], nsims=100)
+eff_stm = topica.effects.estimate_effect(stm_model, conservative,
+                                         feature_names=["conservative"], nsims=100)
 
 # Compare the conservative slope on matched topics, each with its own 95% CI.
 for i, j, _ in pairs:
@@ -1041,7 +1037,7 @@ fit, FREX labeling, and effect plot are a handful of lines:
 
 \begin{CodeChunk}
 \begin{CodeInput}
-from topica import Corpus, stm
+from topica import Corpus
 import topica.viz as viz
 
 corpus = Corpus.from_documents(
@@ -1050,7 +1046,7 @@ model = topica.STM(num_topics=15, seed=1)
 model.fit(docs, conservative,
           prevalence_names=["conservative"], iters=25)
 
-labels = stm.label_topics(model.topic_word, model.vocabulary, n=3)
+labels = topica.inspect.label_topics(model.topic_word, model.vocabulary, n=3)
 panel = viz.effect_plot(model, corpus, X=conservative,
                         feature_names=["conservative"], nsims=100)
 panel.to_pdf("fig_poliblog_effect.pdf")
@@ -1174,7 +1170,7 @@ reference results are published.
 the GPL-3 terms \proglang{R} and several reference packages carry, and installs
 from the Python Package Index with \code{pip install topica}; the core requires
 only \pkg{NumPy} and \pkg{pandas}. The benchmarks and validation reported here were
-produced with \pkg{topica} 0.53.0 by \code{paper/reproduce.py}; the exact
+produced with \pkg{topica} 0.55.0 by \code{paper/reproduce.py}; the exact
 hardware, operating system, and reference-toolchain versions are recorded in the
 generated replication report. Source code, documentation, and worked examples are available at
 \url{https://github.com/nealcaren/topica} and
