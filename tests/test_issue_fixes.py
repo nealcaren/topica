@@ -935,6 +935,19 @@ def test_bootstrap_stability_rejects_fitted_model_directively():
     assert 0.0 <= r["mean"] <= 1.0
 
 
+def test_stopword_lists_cross_reference_each_other():
+    # #766: the two English lists differ in size on purpose (ENGLISH_STOPWORDS ~115
+    # curated vs stopwords("en") ~1300 iso). help() on either must point at the
+    # other so a newcomer can tell which is "the" list.
+    small = topica.ENGLISH_STOPWORDS
+    big = topica.stopwords("en")
+    assert len(small) < len(big)
+    # stopwords() docstring names the curated frozenset; the module docstring names both.
+    assert "ENGLISH_STOPWORDS" in topica.stopwords.__doc__
+    import topica.stopwords as sw_mod
+    assert "ENGLISH_STOPWORDS" in sw_mod.__doc__ and 'stopwords("en")' in sw_mod.__doc__
+
+
 def test_topic_stability_per_topic_vector():
     # #775 T3.3: per_topic=True returns a per-topic vector (index-aligned to
     # runs[0]) alongside the scalar default, so a lone 0.46 isn't the only signal.
