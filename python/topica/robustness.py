@@ -33,10 +33,18 @@ from typing import Any, Sequence
 
 import numpy as np
 
+# Topic-stability helpers live in `evaluate`, but "does a topic survive a
+# different seed?" is a robustness question, so users reach for
+# `topica.robustness.topic_stability` first and hit AttributeError (#775 T4.1).
+# Re-export them here for discoverability; `topica.evaluate` remains their home.
+from .evaluate import bootstrap_stability, topic_stability
+
 __all__ = [
     "effects_across_k",
     "effects_across_seeds",
     "RobustnessResult",
+    "bootstrap_stability",
+    "topic_stability",
 ]
 
 
