@@ -324,13 +324,17 @@ default surface is only models checked against a reference implementation.
 models learn topics from word counts, by collapsed-Gibbs sampling, variational
 EM, or an amortized variational autoencoder, and present topic-word weights on
 the probability simplex. \emph{Matrix-factorization} models decompose the
-document-term matrix directly. \emph{Ideal-point} models estimate a latent
-one-dimensional position for each author or document---the text-scaling tradition
-political scientists use to place actors on a left--right axis---from word
-frequencies or from trained embeddings. \emph{Embedding-based} models start from
-document vectors the user supplies, and include contextualized and cross-lingual
-variants. A final \emph{LLM-based} model drives discovery by prompting a large
-language model. Table~\ref{tab:models} lists the family and the question each
+document-term matrix directly, including seed-guided and embedding-keyword
+variants. An \emph{information-theoretic} model (\code{CorEx}) instead maximizes
+the total correlation the topics explain, and a \emph{relational} model
+(\code{RTM}) fits topics jointly with a link graph over the documents.
+\emph{Ideal-point} models estimate a latent one-dimensional position for each
+author or document---the text-scaling tradition political scientists use to place
+actors on a left--right axis---from word frequencies or from trained embeddings.
+\emph{Embedding-based} models start from document vectors the user supplies, and
+include contextualized and cross-lingual variants. A final \emph{LLM-based} model
+drives discovery by prompting a large language model. Table~\ref{tab:models} lists
+the family and the question each
 model answers. The breadth is the point: a single import covers the span from the
 LDA baseline to the structural topic model, text scaling, neural clustering,
 cross-lingual alignment, and LLM-driven discovery.
@@ -361,20 +365,35 @@ Model & What it is for & Reference \\
 \midrule
 \multicolumn{3}{l}{\emph{Count-based}}\\
 \code{LDA}          & Classic topics, fast collapsed-Gibbs (SparseLDA; WarpLDA / CVB0 optional) & \citet{blei2003lda, yao2009sparselda} \\
+\code{OnlineLDA}    & Streaming variational LDA for large or growing corpora & \citet{hoffman2010online} \\
+\code{AnchorLDA}    & Deterministic anchor-word spectral recovery         & \citet{arora2013practical} \\
+\code{TensorLDA}    & Deterministic method-of-moments (spectral) LDA       & \citet{kangaslahti2026tensor} \\
 \code{DMR}          & Topics conditioned on document metadata              & \citet{mimno2008dmr} \\
 \code{GDMR}         & DMR over continuous metadata (Legendre basis)        & \citet{lee2020gdmr} \\
 \code{LabeledLDA}   & Supervised topics tied to document labels            & \citet{ramage2009llda} \\
+\code{AuthorTopic}  & A topic distribution per author                      & \citet{rosenzvi2004author} \\
+\code{FactorialLDA} & Each token a tuple of latent factors (topic\,$\times$\,sentiment) & \citet{paul2012factorial} \\
+\code{DiscLDA}      & Discriminative topics split by document class        & \citet{lacostejulien2008disclda} \\
 \code{CTM}          & Correlated topics (logistic-normal)                  & \citet{blei2007ctm} \\
 \code{ProdLDA}      & Sharper topics via a product-of-experts VAE          & \citet{srivastava2017prodlda} \\
+\code{Scholar}      & Neural (VAE) topics with a covariate-shifted prior   & \citet{card2018neural} \\
 \code{STM}          & Prevalence \emph{and} content covariates             & \citet{roberts2016model} \\
 \code{STS}          & Covariate-driven topic sentiment-discourse on STM    & \citet{chen2024sts} \\
 \code{SAGE}         & A topic worded differently across groups             & \citet{eisenstein2011sage} \\
-\code{HDP}          & Learns the number of topics (\code{gamma}-steered)   & \citet{teh2006hdp} \\
-\code{DTM}          & Topics that evolve across time slices                & \citet{blei2006dtm} \\
 \code{SupervisedLDA}& Topics shaped to predict a response                  & \citet{blei2008slda} \\
-\code{PT}, \code{GSDMM} & Short-text models                                & \citet{zuo2016pt, yin2014gsdmm} \\
+\code{HDP}          & Learns the number of topics (\code{gamma}-steered)   & \citet{teh2006hdp} \\
+\code{TopicalNGrams}& Joint topics and phrases (\code{n}-grams)            & \citet{wang2007topical} \\
+\code{MGLDA}        & Global document topics plus local aspect topics      & \citet{titov2008multigrain} \\
+\code{PolylingualLDA}& Aligned topics across translation-linked languages  & \citet{mimno2009polylingual} \\
+\code{DTM}          & Topics that evolve across time slices                & \citet{blei2006dtm} \\
+\code{TopicsOverTime}& LDA with a continuous per-topic time distribution   & \citet{wang2006topics} \\
+\code{NarrativeTM}  & Within-document topic trajectory (narrative arc)     & \citet{caren2026topica} \\
+\code{PT}, \code{GSDMM}, \code{BTM} & Short-text models                    & \citet{zuo2016pt, yin2014gsdmm, yan2013biterm} \\
 \code{SeededLDA}, \code{KeyATM} & Guided topics from seed words            & \citet{jagarlamudi2012seeded, eshima2024keyatm} \\
 \code{PA}, \code{HLDA} & Topic hierarchies                                 & \citet{li2006pa, griffiths2004hlda} \\
+\midrule
+\multicolumn{3}{l}{\emph{Information-theoretic}}\\
+\code{CorEx}        & Total-correlation topics, optionally anchored        & \citet{gallagher2017anchored} \\
 \midrule
 \multicolumn{3}{l}{\emph{Relational}}\\
 \code{RTM}          & Topics for a text corpus with a link graph          & \citet{chang2010rtm} \\
@@ -382,16 +401,23 @@ Model & What it is for & Reference \\
 \multicolumn{3}{l}{\emph{Matrix factorization}}\\
 \code{NMF}          & Non-negative factorization of the document-term matrix & \citet{lee2001nmf} \\
 \code{LSA}          & Latent semantic analysis (truncated {SVD})           & \citet{deerwester1990lsa} \\
+\code{GuidedNMF}    & Seed-word-guided semi-supervised NMF                 & \citet{vendrow2021guided} \\
+\code{KeyNMF}       & NMF over an embedding-derived keyword graph          & \citet{kristensenmclachlan2024keynmf} \\
+\code{SemanticSignalSeparation} & Topics as independent axes of semantic space ($S^3$) & \citet{mclachlan2024s3} \\
 \midrule
 \multicolumn{3}{l}{\emph{Ideal point}}\\
 \code{Wordfish}     & One-dimensional party scaling from word frequencies  & \citet{slapin2008wordfish} \\
+\code{Wordshoal}    & Two-stage multi-domain political scaling             & \citet{lauderdale2016measuring} \\
 \code{TBIP}         & Text-based ideal points (Poisson factorization)      & \citet{vafa2020tbip} \\
 \code{PartyEmbeddings} & Ideological placement from party paragraph vectors & \citet{rheault2020party} \\
+\code{IdealPointTM} & Topic model with a latent author ideal-point head    & \citet{caren2026topica} \\
+\code{IdealPointSentenceTM} & Ideal points over sentence / document embeddings & \citet{caren2026topica} \\
 \midrule
 \multicolumn{3}{l}{\emph{Embedding-based}}\\
 \code{BERTopic}     & Cluster embeddings, label by class-TF-IDF            & \citet{grootendorst2022bertopic} \\
 \code{Top2Vec}      & Topics as points in the embedding space              & \citet{angelov2020top2vec} \\
 \code{ETM}          & Logistic-normal topic model factored through embeddings & \citet{dieng2020etm} \\
+\code{GaussianLDA}  & Topics as Gaussians over word embeddings             & \citet{das2015gaussian} \\
 \code{FASTopic}     & Topics from optimal-transport plans                  & \citet{wu2024fastopic} \\
 \code{DETM}         & Embedded topics that drift across time slices        & \citet{dieng2019detm} \\
 \code{EmbeddingLDA} & Seeded {LDA} with embedding-expanded seed sets       & \citet{jagarlamudi2012seeded} \\
