@@ -80,6 +80,20 @@ by construction rather than by memory.
    raises a directive `TypeError` naming the `texts=` keyword rather than an
    opaque "cannot be interpreted as an integer" (issues #752, #755).
 
+8. **Helper functions live in workflow namespaces; models and corpus ingress stay
+   at the top level** (issue #757). The taught surface is `topica.<stage>`:
+   `select` (choosing K), `inspect` (reading topics), `evaluate` (validation),
+   `effects` (covariate effects), `data` / `design` (corpus and design-matrix
+   prep), and `compare` / `provenance` / `embeddings`. Write new docs, docstrings,
+   examples, and error messages in the namespaced form
+   (`topica.select.search_k`, `topica.inspect.topic_table`,
+   `topica.effects.estimate_effect`). Model constructors (`topica.LDA`) and corpus
+   ingress (`topica.Corpus`, `topica.from_dataframe`, `topica.tokenize`) stay at the
+   root — nouns at the top level, verbs in namespaces. Every flat helper name still
+   resolves as a legacy compatibility alias (`topica.search_k` is the same object as
+   `topica.select.search_k`), but it is no longer part of the advertised surface; a
+   new helper should be exported from the namespace that owns it, not added flat.
+
 ## Threads and stopping rules
 
 Reproducibility is the default. Gibbs samplers use `num_threads=1` by default:
@@ -178,17 +192,17 @@ names.
 These were the candidate inconsistencies (#155). Each is now decided, so the
 `KNOWN_DRIFT` list in `tests/test_naming_conventions.py` is empty.
 
-- **LLM-based evaluation is a namespace, `topica.llm.*`, not flat `llm_*`.** The
-  diagnostics that call an external model (`topica.llm.coherence`,
+- **LLM-based evaluation is its own namespace, `topica.llm.*`, not `llm_*`
+  helpers.** The diagnostics that call an external model (`topica.llm.coherence`,
   `topica.llm.intrusion`, `topica.llm.select_k`, and the future
   `outlier`/`repetitiveness`/`diversity`/`alignment`) are grouped under
-  `topica.llm` rather than spread as top-level `llm_*` functions. This is a
-  deliberate carve-out from the flat-function rule: the suite is a coherent,
-  growing family that shares one property the rest of the library does not —
-  `llm-bounded` non-determinism — and the namespace signals that at the call site.
-  `topica.llm.backend` is the same constructor as the top-level `topica.llm_backend`
-  (kept flat because it is also the bring-your-own-model adapter for `TopicGPT` and
-  `label_topics`, not only an eval metric).
+  `topica.llm` rather than named `llm_*`. Beyond the general namespace organization
+  (rule 8 in [Structural rules](#structural-rules)), the LLM suite has its own
+  reason to be set apart: it is a coherent, growing family that shares one property
+  the rest of the library does not — `llm-bounded` non-determinism — and the
+  dedicated namespace signals that at the call site. `topica.llm.backend` is the
+  same constructor as `topica.llm_backend` (the bring-your-own-model adapter that
+  `TopicGPT` and `label_topics` also use, so it stays reachable at the root too).
 
 - **Temporal index — `times`.** Canonical across models (DTM's positional arg).
   KeyATM now accepts `times=` and keeps `timestamps=` as an alias. A

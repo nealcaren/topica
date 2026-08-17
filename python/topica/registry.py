@@ -2,11 +2,12 @@
 for every model list (the README table, the docs roster, and the programmatic
 ``topica.list_models`` discovery helper).
 
-The flat ``from topica import X`` namespace is frozen and stays flat; this module
-is a *presentation and discovery* layer over it, not a second import path. A
-conformance test (``tests/test_registry.py``) asserts the registry and the
-exported model classes stay in one-to-one correspondence, so neither drifts as
-models are added.
+Model classes stay at the top level (``from topica import LDA``) — the analysis
+*helpers* moved into workflow namespaces (issue #757), but the model constructors
+are nouns and remain flat. This module is a *presentation and discovery* layer
+over them, not a second import path. A conformance test
+(``tests/test_registry.py``) asserts the registry and the exported model classes
+stay in one-to-one correspondence, so neither drifts as models are added.
 
 Adding a model: export its class from ``__init__`` and add one ``ModelInfo`` here.
 """
