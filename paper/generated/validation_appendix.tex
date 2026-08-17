@@ -21,7 +21,7 @@ g-DMR & \pkg{tomotopy} & poliblog & 0.82 & Tab.~\ref{tab:app:gdmr} \\
 KeyATM & \proglang{R}~\pkg{keyATM} & poliblog & 0.89 & Tab.~\ref{tab:app:keyatm} \\
 sLDA & \pkg{tomotopy} & poliblog & 0.73 & Tab.~\ref{tab:app:slda} \\
 LabeledLDA & \pkg{tomotopy} & poliblog & 1.00 & Tab.~\ref{tab:app:labeledlda} \\
-HDP & \pkg{tomotopy} & poliblog & count 37$\approx$28 & Tab.~\ref{tab:app:hdp} \\
+HDP & \pkg{blei-lab/hdp} eqns & 20\,NG subset & $K\;267\!\approx\!248$, conc.\ within 2$\times$ & Tab.~\ref{tab:app:hdp} \\
 PA & \pkg{tomotopy} & poliblog & 0.75 & Tab.~\ref{tab:app:pa} \\
 DTM & \pkg{tomotopy} & poliblog & 0.73 & Tab.~\ref{tab:app:dtm} \\
 STS & \proglang{R} (authors) & poliblog & 0.93 & Tab.~\ref{tab:app:sts} \\
@@ -380,27 +380,42 @@ Liberal & mccain, obama, will, said, campaign, one, say, presid & mccain, obama,
 \end{table}
 
 
-\subsection[Hierarchical Dirichlet process (vs tomotopy)]{Hierarchical Dirichlet process (vs \pkg{tomotopy})}
+\subsection[Hierarchical Dirichlet process (vs the blei-lab/hdp equations)]{Hierarchical Dirichlet process (vs the \pkg{blei-lab/hdp} equations)}
 
-The nonparametric model: both engines \emph{infer} the topic count rather than fixing it, and they land in the same range --- \pkg{tomotopy} discovered \textbf{37} live topics, \pkg{topica} \textbf{28}, a quantity neither was told. That count recovery is HDP's headline check. Topic identities, by contrast, are seed-sensitive in any HDP sampler: \pkg{topica}'s 10 most prevalent topics match \pkg{tomotopy}'s at cosine 0.606, which is its own seed-to-seed ceiling (0.585 between two \pkg{topica} seeds) --- the cross-engine match is as tight as the model is reproducible with itself.
+The one nonparametric model: HDP infers both the topic count and the two Dirichlet-process concentrations from the data. \pkg{topica} resamples the concentrations by default (\code{resample\_conc=True}), reproducing the blei-lab/hdp update equations (Escobar-West/Teh 2006). We validate that resampler against an independent NumPy reimplementation of the same equations on a 20\,Newsgroups subset. The two land in the same regime --- \pkg{topica} infers \textbf{267} topics, the oracle \textbf{248}, with learned $\alpha$ (8.04 vs 5.64) and $\gamma$ (65.6 vs 57.8) agreeing within a factor of two and the background-topic share within a few points (Table~\ref{tab:app:hdp}). Both sit far from the degenerate collapse that fixed low concentrations produce (\textbf{11} topics, 51\% of the tokens in one background topic) --- which is exactly what \pkg{topica}'s earlier fixed-concentration default did, and why the default now resamples. \pkg{tomotopy}'s HDP, whose simplified new-table weight drops the dominant $\sum_k m_k f_k$ term, regularizes toward far fewer topics (\textbf{55} here); it is a coarser fit, not a competing ground truth, so we validate against the exact equations rather than its count.
 
 \begin{table}[ht]\centering\footnotesize
-\caption{HDP topics on poliblog: \pkg{topica}'s 10 most prevalent topics beside their best-matched \pkg{tomotopy} topic.}
+\caption{HDP on a 20\,Newsgroups subset ($D=58$, $V=2984$, 80 sweeps): inferred topic count $K$, learned Dirichlet-process concentrations $\alpha$/$\gamma$, and the share of tokens in the single largest topic. \pkg{topica}'s resampler tracks an independent oracle of the blei-lab/hdp equations; fixing the concentrations (the old default) collapses the model, and \pkg{tomotopy}'s simplified weight lands far coarser.}
 \label{tab:app:hdp}
-\begin{tabular}{@{}r >{\raggedright\arraybackslash}p{0.40\textwidth} >{\raggedright\arraybackslash}p{0.40\textwidth}@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.46\textwidth} r r r r@{}}
 \toprule
- & \pkg{tomotopy} & \pkg{topica} \\
+engine (concentration mode) & $K$ & $\alpha$ & $\gamma$ & top share \\
 \midrule
-1 & iraq, will, bush, presid, war, obama, said, nation & will, can, one, like, think, even, want, say \\
-2 & one, will, right, peopl, like, say, can, just & peopl, make, said, get, just, right, support, presid \\
-3 & will, iraq, war, said, american, one, militari, attack & iraq, war, militari, iran, bush, forc, govern, secur \\
-4 & obama, polit, one, time, like, campaign, just, stori & time, new, stori, live, man, post, american, day \\
-5 & obama, mccain, campaign, will, hillari, democrat, poll, vote & obama, vote, democrat, voter, poll, state, elect, will \\
-6 & mccain, palin, obama, peopl, think, one, say, know & obama, mccain, campaign, john, barack, palin, senat, say \\
-7 & report, state, senat, pentagon, hous, investig, build, confirm & state, report, court, law, investig, administr, offic, feder \\
-8 & will, tax, american, mccain, year, can, govern, make & tax, will, govern, econom, economi, american, plan, billion \\
-9 & mccain, obama, democrat, senat, will, said, campaign, vote & senat, democrat, vote, republican, hous, bill, bush, presid \\
-10 & oil, water, product, reid, find, energi, nuclear, system & oil, energi, price, compani, drill, global, state, increas \\
+\pkg{topica} (est.\ conc., default) & 267 & 8.04 & 65.6 & 33\% \\
+blei-lab/hdp equations (oracle) & 248 & 5.64 & 57.8 & 33\% \\
+\pkg{topica} (fixed conc., \emph{old} default) & 11 & --- & --- & 51\% \\
+\pkg{tomotopy} (fixed conc., simplified weight) & 55 & --- & --- & 9\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[ht]\centering\footnotesize
+\caption{\pkg{topica} HDP: the 10 most prevalent inferred topics on the 20\,Newsgroups subset (function words omitted from the display; the fit is on the unfiltered tokens).}
+\label{tab:app:hdp:words}
+\begin{tabular}{@{}r >{\raggedright\arraybackslash}p{0.82\textwidth}@{}}
+\toprule
+ & top words \\
+\midrule
+1 & don, does, people, think, use, because, after, know \\
+2 & probe, earth, launch, mission, titan, atmosphere, isas, ray \\
+3 & insurance, year, pay, supra, record, tickets, accidents, california \\
+4 & car, rate, state, turbo, higher, cars, male, driving \\
+5 & flights, power, capability, module, redesign, station, external, tended \\
+6 & space, venus, jupiter, flyby, first, observatory, heat, based \\
+7 & orbiter, orbit, gravity, saturn, solar, mars, global, observer \\
+8 & scsi, chip, bit, fast, controller, lawyers, quadra, true \\
+9 & years, buy, never, deductible, group, james, miles, post \\
+10 & option, ssf, shuttle, orbiter, options, add, vehicle, developed \\
 \bottomrule
 \end{tabular}
 \end{table}
