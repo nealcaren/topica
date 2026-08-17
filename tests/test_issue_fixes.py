@@ -906,3 +906,12 @@ def test_topic_stability_fitted_runs_with_num_topics_is_directive():
         topica.topic_stability(runs, num_topics=3)
     # the plain fitted-runs path still works
     assert 0.0 <= float(topica.topic_stability(runs)) <= 1.0
+
+
+def test_stability_helpers_discoverable_under_robustness():
+    # #775 T4.1: "does a topic survive a different seed?" is a robustness question,
+    # so users reach for topica.robustness.topic_stability first. Re-export the
+    # stability helpers there (evaluate stays their home) so the guess resolves.
+    assert topica.robustness.topic_stability is topica.evaluate.topic_stability
+    assert topica.robustness.bootstrap_stability is topica.evaluate.bootstrap_stability
+    assert {"topic_stability", "bootstrap_stability"} <= set(topica.robustness.__all__)
