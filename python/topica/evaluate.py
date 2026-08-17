@@ -465,8 +465,21 @@ def perplexity(model, held_out, *, seed=0):
             "held-out perplexity. Compare clustering models with coherence or "
             "topic_diversity instead."
         )
-    # Corpus.documents is a method; Heldout.documents is a plain list attribute.
-    # Accept both (and raw token lists) rather than assuming a callable (#761).
+    # A Heldout is not a corpus (#767). make_heldout withholds words in place, and
+    # that word-holdout is scored by eval_heldout, not by perplexity's own
+    # document-completion split. Passing the object would silently score the
+    # reduced training corpus under a different scheme than the user intends, so we
+    # redirect — mirroring the Heldout.corpus directive guard shipped in #765.
+    if isinstance(held_out, Heldout):
+        raise TypeError(
+            "perplexity() does not take a Heldout. make_heldout() withholds words "
+            "in place, and that word-holdout is scored with eval_heldout:\n"
+            "    model.fit(ho.documents); topica.eval_heldout(model, ho)\n"
+            "If you instead want document-completion perplexity on the reduced "
+            "corpus, pass the documents explicitly: perplexity(model, ho.documents)."
+        )
+    # Corpus.documents is a method; a raw token list has none. Accept both a Corpus
+    # and raw token lists rather than assuming a callable (#761).
     docs_attr = getattr(held_out, "documents", None)
     if callable(docs_attr):
         held_out = docs_attr()

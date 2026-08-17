@@ -868,19 +868,30 @@ def test_diagnostics_no_spurious_warning_after_top_words_bare_strings():
     assert len(rows) == 3
 
 
-def test_perplexity_accepts_heldout_object():
-    # #761: perplexity called held_out.documents() unconditionally, but
-    # Heldout.documents is a list attribute (only Corpus.documents is a method),
-    # so perplexity(model, make_heldout(corpus)) crashed with 'list' not callable.
+def test_perplexity_rejects_heldout_object():
+    # #767: perplexity() must not silently accept a Heldout. make_heldout withholds
+    # words in place; that word-holdout is scored by eval_heldout, not by
+    # perplexity's own document-completion split. Passing the object would score the
+    # reduced training corpus under a different scheme than the user intends, so we
+    # redirect (mirroring the Heldout.corpus guard from #765). The earlier #761/#762
+    # accept behavior is deliberately reversed here.
     docs = [["housing", "rent", "tenant", "landlord", "evict"] * 3,
             ["health", "clinic", "doctor", "patient", "care"] * 3,
             ["school", "teacher", "student", "class", "grade"] * 3] * 20
     c = topica.Corpus.from_documents(docs)
     m = topica.LDA(3, seed=13).fit(c, iters=80)
     ho = topica.make_heldout(c)
-    pp_heldout = float(topica.perplexity(m, ho))
-    pp_corpus = float(topica.perplexity(m, c))
-    assert pp_heldout > 0 and pp_corpus > 0
+
+    with pytest.raises(TypeError) as exc:
+        topica.perplexity(m, ho)
+    # The error must hand the user both correct paths.
+    assert "eval_heldout" in str(exc.value)
+    assert "ho.documents" in str(exc.value)
+
+    # A plain Corpus is still accepted, and the explicit escape hatch
+    # (document-completion perplexity on the reduced corpus) still returns a number.
+    assert float(topica.perplexity(m, c)) > 0
+    assert float(topica.perplexity(m, ho.documents)) > 0
 
 
 def test_topic_stability_fitted_runs_with_num_topics_is_directive():
