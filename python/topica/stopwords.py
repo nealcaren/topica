@@ -15,8 +15,11 @@ licensed; see ``_data/STOPWORDS_ISO_LICENSE.txt``)::
     corpus = topica.from_dataframe(df, text_col="texte", stopwords=fr)
     topica.data.stopword_languages()                 # the available ISO 639-1 codes
 
-``ENGLISH_STOPWORDS`` is kept as the short, stable default; ``stopwords("en")``
-is the larger stopwords-iso English list.
+There are two English lists, of different sizes on purpose:
+``ENGLISH_STOPWORDS`` (~115 words) is the short, curated, stable default;
+``stopwords("en")`` (~1300 words) is the larger, more aggressive stopwords-iso
+English list. Pick the curated list for a conservative, predictable cut and the
+ISO list when you want to strip more.
 """
 from __future__ import annotations
 
@@ -62,6 +65,13 @@ def stopwords(language: str) -> frozenset:
 
         corpus = topica.from_dataframe(df, text_col="texte",
                                        stopwords=topica.data.stopwords("fr"))
+
+    For English there are two bundled lists, and they differ in size on purpose:
+    ``stopwords("en")`` is the stopwords-iso list (~1300 words, aggressive),
+    while :data:`ENGLISH_STOPWORDS` is a short, curated frozenset (~115 common
+    function words) kept as the stable default. Reach for ``stopwords("en")``
+    when you want a heavier cut; reach for :data:`ENGLISH_STOPWORDS` when you
+    want a conservative, predictable list.
 
     Raises ``ValueError`` with the available codes if the language is unknown.
     """
