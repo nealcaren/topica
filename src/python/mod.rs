@@ -13014,10 +13014,52 @@ impl GSDMM {
     }
 }
 
+/// Emit the GSDMM post-fit honesty warnings (#717). Two failure modes look like
+/// success unless flagged: a discovered cluster count pinned at the `K_max` cap
+/// (the cap, not the data, set the answer) and singleton/doubleton clusters shown
+/// as full topics (their FREX/coherence are computed from almost no data).
+fn gsdmm_fit_warnings(py: Python<'_>, num_used: usize, k_max: usize, doc_cluster: &[usize]) {
+    let warn = |msg: String| {
+        if let Ok(warnings) = py.import_bound("warnings") {
+            let _ = warnings.call_method1("warn", (msg,));
+        }
+    };
+    // Discovered count sitting at/near the cap → the cap is probably too low.
+    if k_max > 0 && num_used * 10 >= k_max * 9 {
+        warn(format!(
+            "GSDMM used {num_used} of {k_max} clusters (>=90% of the num_topics/K_max \
+             cap). The discovered count is tracking the cap, not the data: refit with \
+             a larger num_topics and check the count stabilises below it. The number \
+             of clusters GSDMM finds is also sensitive to beta and to how separable \
+             your texts are, so treat it as an upper-bound-conditioned estimate, not \
+             a guaranteed recovery of the true K."
+        ));
+    }
+    // Tiny clusters reported as full topics.
+    let mut sizes = vec![0usize; num_used];
+    for &c in doc_cluster {
+        if c < num_used {
+            sizes[c] += 1;
+        }
+    }
+    let tiny = sizes.iter().filter(|&&s| s > 0 && s < 3).count();
+    if tiny > 0 {
+        warn(format!(
+            "GSDMM produced {tiny} tiny cluster(s) (1-2 documents) reported as full \
+             topics. Their top words, FREX/exclusivity, and coherence are computed \
+             from almost no data and look deceptively strong; treat clusters this \
+             small as noise or merge them."
+        ));
+    }
+}
+
 #[pymethods]
 impl GSDMM {
     /// The constructor configuration as a JSON-serialisable dict, keyword-named
-    /// to match ``__init__`` (issue #400). ``num_topics`` is the max-cluster cap.
+    /// to match ``__init__`` (issue #400). ``num_topics`` here is the max-cluster
+    /// cap you constructed with (the same meaning as the constructor argument);
+    /// the number of clusters actually discovered is the :attr:`num_topics`
+    /// getter, and the cap is also available unambiguously as :attr:`max_topics`.
     #[getter]
     fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let d = PyDict::new_bound(py);
@@ -13146,6 +13188,22 @@ impl GSDMM {
         }
         let num_types = corpus.num_types();
         let (k, a, b) = (slf.k_max, slf.alpha, slf.beta);
+        // Edge guards (#717 F12): a corpus of only empty documents has nothing to
+        // cluster (every φ would be uniform and the log-likelihood trace NaN), and
+        // a β so large that V·β overflows to +inf makes every φ = inf/inf = NaN.
+        if num_types == 0 {
+            return Err(PyValueError::new_err(
+                "corpus has documents but no tokens after preprocessing; there is \
+                 nothing to cluster",
+            ));
+        }
+        if !(num_types as f64 * b).is_finite() {
+            return Err(PyValueError::new_err(format!(
+                "beta={b} is too large: V*beta overflows to infinity (V={num_types}), \
+                 which makes every cluster-word distribution NaN. Use a beta on the \
+                 order of 0.01-1."
+            )));
+        }
         let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         let ll_interval = if progress_interval == 0 {
             (iters / 50).max(1)
@@ -13199,6 +13257,7 @@ impl GSDMM {
         slf.trace = model.trace.clone();
         slf.model = Some(model);
         slf.fitted = true;
+        gsdmm_fit_warnings(py, slf.num_used, slf.k_max, &slf.doc_cluster);
         Ok(slf.into())
     }
 
@@ -13263,8 +13322,9 @@ impl GSDMM {
     /// knowing: (1) it is an in-sample plug-in estimate, not a Gibbs-draw-averaged
     /// posterior; and (2) because GSDMM is a hard-clustering (single-membership)
     /// model, `doc_topic.argmax(axis=1)` is *usually* but not *guaranteed* to equal
-    /// the hard :attr:`doc_cluster` (the last sampled assignment). Use
-    /// :attr:`doc_cluster` for the hard label; use `doc_topic` for the soft scores.
+    /// the hard :attr:`doc_cluster` (the last sampled assignment) — they can differ
+    /// on ~10% of documents. **Always use :attr:`doc_cluster` for the label** and
+    /// read `doc_topic` only as a soft-confidence view (it over-peaks in-sample).
     /// :meth:`transform` applies the same conditional to held-out documents.
     #[getter]
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
@@ -13345,10 +13405,21 @@ impl GSDMM {
         let v: Vec<i64> = self.doc_cluster.iter().map(|&c| c as i64).collect();
         Ok(Array1::from(v).to_pyarray_bound(py))
     }
-    /// The number of *non-empty* clusters discovered (≤ the `K` you set).
+    /// The number of *non-empty* clusters discovered (≤ :attr:`max_topics`). This
+    /// is what the Movie Group Process inferred from the data; the upper bound you
+    /// constructed with is :attr:`max_topics`.
     #[getter]
     fn num_topics(&self) -> usize {
         self.num_used
+    }
+
+    /// The `K_max` cap the model was constructed with (the constructor's
+    /// `num_topics` argument). Reported unambiguously here so the cap does not have
+    /// to be read back through the `num_topics` getter, which returns the smaller
+    /// *discovered* count once fitted (#717).
+    #[getter]
+    fn max_topics(&self) -> usize {
+        self.k_max
     }
     #[getter]
     fn topic_names(&self) -> PyResult<Vec<String>> {

@@ -628,8 +628,15 @@ def find_thoughts(doc_topic, texts=None, *, topic, n=3):
     topic proportion; ``text`` is ``None`` when ``texts`` is not supplied.
 
     `doc_topic` is a fitted model (uses its ``doc_topic``) or a ``(D, K)`` array.
+    `texts` is a sequence of the documents' texts, or a :class:`~topica.Corpus`
+    (its tokenized documents are used) aligned to the model's rows.
     """
     theta = _as_doc_topic(doc_topic)
+    # Accept a Corpus for `texts` (recover its token lists), so the natural
+    # find_thoughts(model, corpus, topic=...) call works instead of raising an
+    # opaque "not subscriptable" error (#717).
+    if texts is not None and hasattr(texts, "documents") and callable(getattr(texts, "documents")):
+        texts = texts.documents()
     if topic < 0 or topic >= theta.shape[1]:
         raise ValueError(f"topic {topic} out of range (num_topics={theta.shape[1]})")
     if texts is not None and len(texts) != theta.shape[0]:
@@ -776,11 +783,17 @@ def find_thoughts_html(
 
     `model` is any fitted model exposing ``topic_word``, ``doc_topic`` and
     ``vocabulary``; `texts` are the original document strings, aligned to the
-    rows of ``doc_topic``. Returns a string (HTML unless ``markdown=True``).
+    rows of ``doc_topic``. A :class:`~topica.Corpus` is also accepted, in which
+    case its tokenized documents are joined back into text for display. Returns a
+    string (HTML unless ``markdown=True``).
     """
     phi = _as_topic_word(model)
     theta = _as_doc_topic(model)
     vocab = list(model.vocabulary)
+    # Accept a Corpus for `texts`: use its tokenized documents (joined for the
+    # highlighter) rather than crashing on the natural (model, corpus) call (#717).
+    if hasattr(texts, "documents") and callable(getattr(texts, "documents")):
+        texts = [" ".join(d) for d in texts.documents()]
     if len(texts) != theta.shape[0]:
         raise ValueError("texts must be aligned with the model's documents")
     K = phi.shape[0]

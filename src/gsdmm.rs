@@ -37,6 +37,27 @@
 
 use rand::Rng;
 
+/// Distinct word ids of `doc` with their within-document counts, in **ascending
+/// word-id order**.
+///
+/// Iterating this reproduces the exact accumulation order of a dense `0..V` scan
+/// that skips zero counts, so the numerator log-sums stay bit-for-bit identical
+/// while dropping the per-document `O(V)` allocation and full-vocabulary scan.
+/// Short-text documents touch only a handful of the `V` types, so the paper's
+/// `O(D·K·L̄)` complexity is restored without changing any result (#717).
+fn word_counts_sorted(doc: &[u32]) -> Vec<(usize, u32)> {
+    let mut ws: Vec<u32> = doc.to_vec();
+    ws.sort_unstable();
+    let mut out: Vec<(usize, u32)> = Vec::with_capacity(ws.len());
+    for &w in &ws {
+        match out.last_mut() {
+            Some(last) if last.0 == w as usize => last.1 += 1,
+            _ => out.push((w as usize, 1)),
+        }
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Model struct
 // ---------------------------------------------------------------------------
@@ -127,11 +148,13 @@ impl GsdmmModel {
         self.z.clone()
     }
 
-    /// Per-document posterior cluster probability vector.
+    /// Per-document posterior cluster probability vector (Yin & Wang Eq. 4).
     ///
-    /// Recomputes Eq. 4 for each document given the final Gibbs state (the
-    /// document itself is NOT removed before computing its own distribution —
-    /// this is an in-sample "soft assignment" estimate).
+    /// This is an **in-sample plug-in** estimate: the document is NOT held out
+    /// before scoring, so its own tokens still inflate its current cluster. The
+    /// result is therefore over-peaked and can disagree with the hard
+    /// `doc_cluster` on the exact ordering — use `doc_cluster` for the label and
+    /// treat this as a soft-confidence view, not a leave-one-out posterior.
     ///
     /// Shape: D × k_max; each inner vec sums to 1.
     pub fn doc_cluster_dist(&self, docs: &[Vec<u32>]) -> Vec<Vec<f64>> {
@@ -141,11 +164,9 @@ impl GsdmmModel {
 
         docs.iter()
             .map(|doc| {
-                // Build per-word count map for this doc.
-                let mut wc: Vec<u32> = vec![0u32; v];
-                for &w in doc {
-                    wc[w as usize] += 1;
-                }
+                // Distinct (word, count) in ascending word order — same log-sum
+                // order as a dense 0..V scan, but O(distinct) not O(V) (#717).
+                let wc = word_counts_sorted(doc);
                 let n_d = doc.len() as u32;
 
                 let mut log_probs: Vec<f64> = vec![0.0f64; k];
@@ -153,10 +174,7 @@ impl GsdmmModel {
                     let mut lp = (self.m[kk] as f64 + self.alpha).ln();
 
                     // Numerator: Π over distinct words, each occurrence index j.
-                    for (w, &cw) in wc.iter().enumerate() {
-                        if cw == 0 {
-                            continue;
-                        }
+                    for &(w, cw) in &wc {
                         let base = self.nw[kk][w] as f64 + self.beta;
                         for j in 0..cw {
                             lp += (base + j as f64).ln();
@@ -223,11 +241,10 @@ fn resample_doc<R: Rng>(model: &mut GsdmmModel, d: usize, doc: &[u32], rng: &mut
     }
 
     // --- Compute unnormalised log-probabilities for each cluster ---
-    // Build per-word count for this doc (needed for the numerator product).
-    let mut wc: Vec<u32> = vec![0u32; v];
-    for &w in doc {
-        wc[w as usize] += 1;
-    }
+    // Distinct (word, count) for this doc in ascending word order: the same
+    // numerator accumulation order as a dense 0..V scan (so results stay
+    // bit-identical), but O(distinct words) rather than O(V) per cluster (#717).
+    let wc = word_counts_sorted(doc);
 
     let mut log_probs: Vec<f64> = vec![0.0f64; k];
     for kk in 0..k {
@@ -235,10 +252,7 @@ fn resample_doc<R: Rng>(model: &mut GsdmmModel, d: usize, doc: &[u32], rng: &mut
         let mut lp = (model.m[kk] as f64 + alpha).ln();
 
         // Numerator: Π_w Π_{j=0..c_dw-1} (nw[k][w] + β + j)
-        for (w, &cw) in wc.iter().enumerate() {
-            if cw == 0 {
-                continue;
-            }
+        for &(w, cw) in &wc {
             let base = model.nw[kk][w] as f64 + model.beta;
             for j in 0..cw {
                 lp += (base + j as f64).ln();
@@ -536,6 +550,67 @@ mod tests {
                 (s - 1.0).abs() < 1e-10,
                 "doc_cluster_dist row {d} sums to {s:.12}, expected 1.0"
             );
+        }
+    }
+
+    /// The sparse `word_counts_sorted` numerator must reproduce a dense `0..V`
+    /// scan bit-for-bit, including repeated tokens (rising factorial) (#717 F11).
+    #[test]
+    fn doc_cluster_dist_matches_dense_reference() {
+        let v = 15usize;
+        // Include a doc with a thrice-repeated token to exercise the rising factorial.
+        let docs: Vec<Vec<u32>> = vec![
+            vec![0, 1, 2],
+            vec![3, 3, 3, 4],
+            vec![5, 6, 5, 7, 6],
+            vec![8, 9],
+            vec![10, 11, 12, 13, 14, 0],
+        ];
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let model = fit_gsdmm(&docs, v, 6, 0.1, 0.1, 40, 0, &mut rng);
+
+        // Independent dense reference: full 0..V scan, skipping zero counts.
+        let dense = |doc: &[u32]| -> Vec<f64> {
+            let k = model.k_max;
+            let vbeta = v as f64 * model.beta;
+            let mut wc = vec![0u32; v];
+            for &w in doc {
+                wc[w as usize] += 1;
+            }
+            let n_d = doc.len() as u32;
+            let mut lps = vec![0.0f64; k];
+            for kk in 0..k {
+                let mut lp = (model.m[kk] as f64 + model.alpha).ln();
+                for (w, &cw) in wc.iter().enumerate() {
+                    if cw == 0 {
+                        continue;
+                    }
+                    let base = model.nw[kk][w] as f64 + model.beta;
+                    for j in 0..cw {
+                        lp += (base + j as f64).ln();
+                    }
+                }
+                let base_d = model.n[kk] as f64 + vbeta;
+                for i in 0..n_d {
+                    lp -= (base_d + i as f64).ln();
+                }
+                lps[kk] = lp;
+            }
+            let max_lp = lps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let mut probs: Vec<f64> = lps.iter().map(|&lp| (lp - max_lp).exp()).collect();
+            let total: f64 = probs.iter().sum();
+            for p in &mut probs {
+                *p /= total;
+            }
+            probs
+        };
+
+        let got = model.doc_cluster_dist(&docs);
+        for (d, doc) in docs.iter().enumerate() {
+            let want = dense(doc);
+            for (a, b) in got[d].iter().zip(want.iter()) {
+                assert_eq!(a.to_bits(), b.to_bits(), "doc {d}: sparse != dense");
+            }
         }
     }
 
