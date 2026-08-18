@@ -2773,6 +2773,7 @@ class GSDMM:
         progress_interval: int = 0,
         report_interval: Optional[int] = None,
         num_threads: int = 1,
+        verbose: bool = False,
     ) -> "GSDMM":
         """Fit by the Movie Group Process. progress_interval controls the
         cluster-discovery trace (0 = auto ~50 points).
@@ -2780,7 +2781,10 @@ class GSDMM:
         report_interval is a deprecated alias for progress_interval.
 
         num_threads must be 1; GSDMM is not parallelized (cluster-count discovery
-        is inherently sequential). num_threads > 1 raises ValueError."""
+        is inherently sequential). num_threads > 1 raises ValueError.
+
+        verbose=True prints a per-sweep progress line to stderr so a long
+        single-threaded fit does not look hung."""
         ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...

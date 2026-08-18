@@ -17,8 +17,21 @@ cap nor honours its one-topic-per-document assumption; reach for `LDA` or `STM`
 there instead, or reduce each document to a short field (a title or first
 sentence). `fit` warns you when the average document is long. It is also
 **single-threaded by design** (its cluster-count discovery is inherently
-sequential), so a large corpus fits slowly and silently — subsample while you
-explore, and raise `progress_interval` to watch the discovery trace.
+sequential), so a large corpus fits slowly — subsample while you explore, and
+pass `fit(..., verbose=True)` to print per-sweep progress (iteration, cluster
+count, log-likelihood) to stderr so a long fit does not look hung.
+
+To report which topics load on a covariate — the "which topics do Democrats vs
+Republicans write?" table — cross the assignment against a metadata column:
+
+```python
+topica.inspect.topic_crosstab(model, corpus, "party")                 # counts
+topica.inspect.topic_crosstab(model, corpus, "party", normalize="index")  # row %
+```
+
+It uses `doc_cluster` for GSDMM (and any hard-clustering model) and the dominant
+`doc_topic` topic for mixed-membership models; `corpus.metadata` stays row-aligned
+through pruning, so no manual realignment is needed.
 
 Two caveats to read the discovered count honestly. First, with the default
 `alpha=0.1` an emptied cluster keeps `alpha`-proportional mass and can revive, so

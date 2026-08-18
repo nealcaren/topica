@@ -110,6 +110,7 @@ LAZY = {
     'stopwords': 'data',
     'top_topics': 'effects',
     'topic_correlation': 'inspect',
+    'topic_crosstab': 'inspect',
     'topic_dendrogram': 'evaluate',
     'topic_diversity': 'evaluate',
     'topic_semantic_diversity': 'evaluate',

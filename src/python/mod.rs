@@ -13160,9 +13160,12 @@ impl GSDMM {
     /// `report_interval` is a deprecated alias for `progress_interval`.
     /// `num_threads` must be `1`; GSDMM is not parallelized (its cluster-count
     /// discovery is inherently sequential — see the constructor). `num_threads > 1`
-    /// raises `ValueError`.
+    /// raises `ValueError`. `verbose=True` prints a per-sweep progress line
+    /// (iteration, cluster count, log-likelihood) to stderr so a long
+    /// single-threaded fit does not look hung; it prints at the same cadence as
+    /// the recorded trace (`progress_interval`, ~50 points by default).
     #[pyo3(signature = (data, *, iters=30, progress_interval=0, report_interval=None,
-                        num_threads=1))]
+                        num_threads=1, verbose=false))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -13171,6 +13174,7 @@ impl GSDMM {
         progress_interval: usize,
         report_interval: Option<usize>,
         num_threads: usize,
+        verbose: bool,
     ) -> PyResult<Py<Self>> {
         gsdmm_reject_threads(num_threads)?;
         let progress_interval = if let Some(old_val) = report_interval {
@@ -13246,6 +13250,7 @@ impl GSDMM {
                 b,
                 iters,
                 ll_interval,
+                verbose,
                 &mut rng,
             );
             (m, corpus)
