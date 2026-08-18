@@ -242,6 +242,7 @@ from .coherence import (  # noqa: E402
     document_intrusion,
 )
 from .agreement import agreement  # noqa: E402  (external validation vs gold labels)
+from .progress import progress, sparkline  # noqa: E402  (live fit-progress callback: bar + ETA + metric sparkline)
 # LLM-based evaluation is exposed as a namespace, topica.llm.* (coherence,
 # intrusion, select_k, backend, PROMPTS) -- it is an llm-bounded family, kept
 # distinct from the bit-exact diagnostics above. See topica/llm.py.
@@ -420,6 +421,8 @@ __all__ = [
     "effects", "compare", "embeddings", "provenance",
     # corpus ingress (nouns / constructors stay at the top level)
     "Corpus", "tokenize", "from_dataframe",
+    # live fit-progress callback (bar + ETA + metric sparkline)
+    "progress",
     # flagship models (the newcomer starting set; the rest stay importable)
     "LDA", "STM", "NMF", "KeyATM", "GSDMM", "BERTopic",
     # discovery / experimental gate / identity
