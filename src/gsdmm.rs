@@ -89,7 +89,16 @@ fn cluster_log_probs(
     for kk in 0..k {
         if m[kk] == 0 {
             // Empty cluster: n==0, nw==0 for all words. Same value for every empty
-            // cluster, so compute once and reuse.
+            // cluster, so compute once and reuse. This memoization is load-bearing
+            // on the count invariant (m/n/nw are only ever mutated together, one
+            // doc at a time), so guard it: n[k]==0 with non-negative counts implies
+            // every nw[k][w]==0, so the memoized template is exact.
+            debug_assert_eq!(
+                n[kk], 0,
+                "empty cluster {kk} (m=0) has nonzero token count n={} — the \
+                 empty-cluster memoization would be wrong",
+                n[kk]
+            );
             out[kk] = *empty_lp.get_or_insert_with(|| {
                 let mut lp = alpha.ln();
                 for &(_w, cw) in wc {
