@@ -17,7 +17,7 @@ def _fired_iters(merge_every, progress_interval, iters=200, threads=2):
         sample_interval=10,
         num_threads=threads,
         turbo_merge_every=merge_every,
-        progress=lambda it, ll: fired.append(it),
+        progress=lambda it, total, info: fired.append(it),  # 3-arg contract (#785)
         progress_interval=progress_interval,
     )
     return fired

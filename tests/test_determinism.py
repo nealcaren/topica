@@ -74,8 +74,8 @@ class TestProgressCallback:
         """Progress callback must be called at least once."""
         calls = []
 
-        def cb(iteration, ll):
-            calls.append((iteration, ll))
+        def cb(iteration, total, info):
+            calls.append((iteration, total, info))
 
         model = LDA(2, seed=42, optimize_interval=0)
         model.fit(
@@ -92,8 +92,8 @@ class TestProgressCallback:
         """First element of each callback tuple must be an int."""
         calls = []
 
-        def cb(iteration, ll):
-            calls.append((iteration, ll))
+        def cb(iteration, total, info):
+            calls.append((iteration, total, info))
 
         model = LDA(2, seed=42, optimize_interval=0)
         model.fit(
@@ -104,14 +104,14 @@ class TestProgressCallback:
             progress=cb,
             progress_interval=20,
         )
-        assert all(isinstance(i, int) for i, _ in calls)
+        assert all(isinstance(i, int) for i, _t, _info in calls)
 
     def test_callback_receives_float_ll(self):
         """Second element of each callback tuple must be a float."""
         calls = []
 
-        def cb(iteration, ll):
-            calls.append((iteration, ll))
+        def cb(iteration, total, info):
+            calls.append((iteration, total, info))
 
         model = LDA(2, seed=42, optimize_interval=0)
         model.fit(
@@ -122,13 +122,13 @@ class TestProgressCallback:
             progress=cb,
             progress_interval=20,
         )
-        assert all(isinstance(ll, float) for _, ll in calls)
+        assert all(isinstance(info["ll"], float) for _, _t, info in calls)
 
     def test_callback_cadence(self):
         """Callback should fire every progress_interval iterations (approx)."""
         calls = []
 
-        def cb(iteration, ll):
+        def cb(iteration, total, info):
             calls.append(iteration)
 
         model = LDA(2, seed=42, optimize_interval=0)
