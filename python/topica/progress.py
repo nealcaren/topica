@@ -23,6 +23,7 @@ import sys
 import time
 
 _BLOCKS = "▁▂▃▄▅▆▇█"
+_UNSET = object()
 
 
 def sparkline(values, width=None):
@@ -64,8 +65,10 @@ class _ProgressReporter:
     metric to draw its sparkline and estimates the remaining time from the mean
     time per completed step."""
 
-    def __init__(self, metric=None, *, width=20, spark_width=40, label="fit", stream=None):
+    def __init__(self, metric=None, *, total=None, width=20, spark_width=40,
+                 label="fit", stream=None):
         self.metric = metric
+        self.total = total
         self.width = width
         self.spark_width = spark_width
         self.label = label
@@ -74,7 +77,18 @@ class _ProgressReporter:
         self._start = None
         self._done = False
 
-    def __call__(self, iteration, total, info=None):
+    def __call__(self, iteration, second=_UNSET, third=_UNSET):
+        # Two shapes, disambiguated by argument count (reliable — a bare metric
+        # and a total cannot be told apart positionally):
+        #   3-arg  callback(iteration, total, info)   — the standard contract
+        #   2-arg  callback(iteration, metric)        — legacy models (LDA/DMR/…);
+        #          `total` then comes from progress(total=…) if the user set it.
+        if third is _UNSET:
+            total = self.total
+            info = None if second is _UNSET else second
+        else:
+            total = second
+            info = third
         if self._start is None:
             self._start = time.perf_counter()
         primary, extras = self._split(info)
@@ -109,12 +123,18 @@ class _ProgressReporter:
 
     def _render(self, iteration, total, primary, extras):
         elapsed = time.perf_counter() - self._start
-        frac = (iteration / total) if total else 0.0
-        eta = (elapsed / frac - elapsed) if frac > 0 else float("nan")
-        parts = [f"{self.label} |{self._bar(frac)}| {int(frac * 100):3d}%"]
         if total:
-            parts.append(f"{iteration}/{total}")
-        parts.append(f"ETA {_fmt_secs(eta)}")
+            frac = iteration / total
+            eta = (elapsed / frac - elapsed) if frac > 0 else float("nan")
+            parts = [
+                f"{self.label} |{self._bar(frac)}| {int(frac * 100):3d}%",
+                f"{iteration}/{total}",
+                f"ETA {_fmt_secs(eta)}",
+            ]
+        else:
+            # Total unknown (a 2-arg legacy callback with no progress(total=…)):
+            # no bar/%/ETA, just the running count and elapsed.
+            parts = [f"{self.label}  {iteration}  {_fmt_secs(elapsed)}"]
         if self._history:
             sk = sparkline(self._history, width=self.spark_width)
             key = next(iter(extras)) if extras else "metric"
@@ -135,7 +155,7 @@ def _fmt(v):
     return str(v)
 
 
-def progress(metric=None, *, width=20, spark_width=40, label="fit", stream=None):
+def progress(metric=None, *, total=None, width=20, spark_width=40, label="fit", stream=None):
     """Return a live-progress callback for ``fit(progress=...)``.
 
     `metric` selects which named entry of the model's ``info`` dict to draw as the
@@ -143,9 +163,15 @@ def progress(metric=None, *, width=20, spark_width=40, label="fit", stream=None)
     is the bar width; `spark_width` caps the sparkline to a rolling last-N window;
     `label` prefixes the line; `stream` defaults to ``sys.stderr``.
 
+    `total` is only needed for models whose callback is the older 2-arg
+    ``(iteration, metric)`` form (e.g. today's ``LDA``/``DMR``): pass the same
+    ``iters`` you give ``fit`` and you get the full bar + ETA; omit it and the line
+    shows the running iteration count and elapsed time instead. Models on the
+    3-arg ``(iteration, total, info)`` contract supply the total themselves.
+
     The returned object is a fresh reporter (keeps its own metric history and
     start time), so use a new ``progress()`` per fit.
     """
     return _ProgressReporter(
-        metric, width=width, spark_width=spark_width, label=label, stream=stream
+        metric, total=total, width=width, spark_width=spark_width, label=label, stream=stream
     )

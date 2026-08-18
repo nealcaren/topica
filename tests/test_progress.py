@@ -56,6 +56,26 @@ def test_progress_accepts_scalar_and_none_metric():
     assert "fit |" in out and out.endswith("\n")
 
 
+def test_progress_two_arg_legacy_callback_without_total():
+    # Legacy (iteration, metric) callback (today's LDA/DMR): no total -> running
+    # count + elapsed + sparkline, no bar/ETA, and no crash.
+    buf = io.StringIO()
+    cb = topica.progress(stream=buf, label="LDA")
+    for i, ll in enumerate([-9.0, -8.5, -8.1, -8.0], 1):
+        cb(i, ll)  # 2 positional args
+    last = buf.getvalue().split("\r")[-1]
+    assert last.startswith("LDA  4") and "%" not in last and "▁" in last
+
+
+def test_progress_two_arg_with_total_gives_full_bar():
+    buf = io.StringIO()
+    cb = topica.progress(total=4, stream=buf, label="LDA")
+    for i, ll in enumerate([-9.0, -8.5, -8.1, -8.0], 1):
+        cb(i, ll)
+    out = buf.getvalue()
+    assert "100%" in out and "4/4" in out and "ETA" in out
+
+
 def test_progress_metric_selection_defaults_to_first_key():
     buf = io.StringIO()
     cb = topica.progress(stream=buf)  # no metric= -> first key ("perplexity")
