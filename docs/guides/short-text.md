@@ -8,8 +8,28 @@ topica has two models built for this regime.
 
 The Gibbs Sampling Dirichlet Multinomial Mixture, a.k.a. the *Movie Group
 Process* (Yin & Wang 2014), assumes each short document belongs to a **single**
-topic. You give it an upper bound `K`; empty clusters die out during sampling, so
-it effectively **infers** the number of topics.
+topic. You give it an upper bound `K`, and it lets clusters shrink during
+sampling, so it effectively **infers** the number of topics.
+
+GSDMM is for genuinely **short** text. On long, multi-topic documents (news
+articles, press releases, speeches) it neither infers a topic count below your
+cap nor honours its one-topic-per-document assumption; reach for `LDA` or `STM`
+there instead, or reduce each document to a short field (a title or first
+sentence). `fit` warns you when the average document is long. It is also
+**single-threaded by design** (its cluster-count discovery is inherently
+sequential), so a large corpus fits slowly and silently — subsample while you
+explore, and raise `progress_interval` to watch the discovery trace.
+
+Two caveats to read the discovered count honestly. First, with the default
+`alpha=0.1` an emptied cluster keeps `alpha`-proportional mass and can revive, so
+clusters are not permanently pruned (that holds only for the paper's `alpha=0`
+variant). Second, the number GSDMM settles on is sensitive to the `K` upper
+bound, to `beta`, and to how separable your texts are: on clean, well-separated
+short text it collapses cleanly toward the true count, but on messy overlapping
+text it can sit near your `K` cap. Treat the discovered count as an
+upper-bound-conditioned estimate, not a guaranteed recovery of the true `K`. If
+the fit uses close to all `K` clusters, `topica` warns you to raise `K` and
+refit until the count stabilises below the cap.
 
 ```python
 import topica
@@ -24,6 +44,20 @@ model.doc_cluster                            # one cluster id per document
 
 `topic_word` and `doc_topic` cover only the non-empty clusters; `doc_cluster`
 gives the hard assignment, since GSDMM places each document in exactly one group.
+Prefer `doc_cluster` for the label: `doc_topic` is an in-sample soft score that
+over-peaks, and its `argmax` can disagree with `doc_cluster` on a small fraction
+of documents.
+
+Because each document commits to one cluster, GSDMM's top-word lists tend to be
+**less diverse** than a mixed-membership model's on the same overlapping corpus
+(shared words concentrate in one cluster rather than spreading across several).
+That is expected, not a defect, but it is worth knowing when you compare top-word
+diversity across models. Watch, too, for very small clusters (one or two
+documents): their top words, FREX/exclusivity, and coherence are computed from
+almost no data and look deceptively strong, so `topica` warns when a fit produces
+them — treat clusters that small as noise or merge them. Documents left empty
+after vocabulary pruning are dropped from the fit; `corpus.kept_indices` maps the
+rows of `doc_topic`/`doc_cluster` back to your original documents.
 
 ## PT — pseudo-document aggregation
 
