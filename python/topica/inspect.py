@@ -628,15 +628,20 @@ def find_thoughts(doc_topic, texts=None, *, topic, n=3):
     topic proportion; ``text`` is ``None`` when ``texts`` is not supplied.
 
     `doc_topic` is a fitted model (uses its ``doc_topic``) or a ``(D, K)`` array.
-    `texts` is a sequence of the documents' texts, or a :class:`~topica.Corpus`
-    (its tokenized documents are used) aligned to the model's rows.
+    `texts` is a sequence of the documents' texts, or a :class:`~topica.Corpus`.
+    A Corpus only retains tokens, so its ``text`` field comes back as the
+    space-joined *processed* tokens (lowercased, stopword-stripped), not the
+    original prose; to read the raw documents, pass your original text sequence
+    indexed by ``corpus.kept_indices`` (pruning may have dropped some rows).
     """
     theta = _as_doc_topic(doc_topic)
     # Accept a Corpus for `texts` (recover its token lists), so the natural
     # find_thoughts(model, corpus, topic=...) call works instead of raising an
-    # opaque "not subscriptable" error (#717).
+    # opaque "not subscriptable" error. Join the tokens back into a display string
+    # so the returned `text` is a string for every input type, matching
+    # find_thoughts_html and the list-of-strings path (#717).
     if texts is not None and hasattr(texts, "documents") and callable(getattr(texts, "documents")):
-        texts = texts.documents()
+        texts = [" ".join(d) for d in texts.documents()]
     if topic < 0 or topic >= theta.shape[1]:
         raise ValueError(f"topic {topic} out of range (num_topics={theta.shape[1]})")
     if texts is not None and len(texts) != theta.shape[0]:

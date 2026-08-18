@@ -11,6 +11,15 @@ Process* (Yin & Wang 2014), assumes each short document belongs to a **single**
 topic. You give it an upper bound `K`, and it lets clusters shrink during
 sampling, so it effectively **infers** the number of topics.
 
+GSDMM is for genuinely **short** text. On long, multi-topic documents (news
+articles, press releases, speeches) it neither infers a topic count below your
+cap nor honours its one-topic-per-document assumption; reach for `LDA` or `STM`
+there instead, or reduce each document to a short field (a title or first
+sentence). `fit` warns you when the average document is long. It is also
+**single-threaded by design** (its cluster-count discovery is inherently
+sequential), so a large corpus fits slowly and silently — subsample while you
+explore, and raise `progress_interval` to watch the discovery trace.
+
 Two caveats to read the discovered count honestly. First, with the default
 `alpha=0.1` an emptied cluster keeps `alpha`-proportional mass and can revive, so
 clusters are not permanently pruned (that holds only for the paper's `alpha=0`

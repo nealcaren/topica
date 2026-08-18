@@ -13014,28 +13014,53 @@ impl GSDMM {
     }
 }
 
-/// Emit the GSDMM post-fit honesty warnings (#717). Two failure modes look like
-/// success unless flagged: a discovered cluster count pinned at the `K_max` cap
-/// (the cap, not the data, set the answer) and singleton/doubleton clusters shown
-/// as full topics (their FREX/coherence are computed from almost no data).
-fn gsdmm_fit_warnings(py: Python<'_>, num_used: usize, k_max: usize, doc_cluster: &[usize]) {
+/// Emit the GSDMM post-fit honesty warnings (#717). Three failure modes look like
+/// success unless flagged: fitting a *short-text* model on long, multi-topic
+/// documents; a discovered cluster count pinned at the `K_max` cap (so the cap,
+/// not the data, may have set it); and a fit fragmented into many singleton /
+/// doubleton clusters whose FREX/coherence are computed from almost no data.
+fn gsdmm_fit_warnings(
+    py: Python<'_>,
+    num_used: usize,
+    k_max: usize,
+    doc_cluster: &[usize],
+    mean_doc_len: f64,
+) {
     let warn = |msg: String| {
         if let Ok(warnings) = py.import_bound("warnings") {
             let _ = warnings.call_method1("warn", (msg,));
         }
     };
-    // Discovered count sitting at/near the cap → the cap is probably too low.
-    if k_max > 0 && num_used * 10 >= k_max * 9 {
+    // Long documents: GSDMM assumes ONE topic per (short) document. On long,
+    // multi-topic text it can neither infer K nor honour that assumption. ~50
+    // tokens is generous headroom over genuine short text (tweets/titles/survey
+    // answers run well under that).
+    if mean_doc_len > 50.0 {
         warn(format!(
-            "GSDMM used {num_used} of {k_max} clusters (>=90% of the num_topics/K_max \
-             cap). The discovered count is tracking the cap, not the data: refit with \
-             a larger num_topics and check the count stabilises below it. The number \
-             of clusters GSDMM finds is also sensitive to beta and to how separable \
-             your texts are, so treat it as an upper-bound-conditioned estimate, not \
-             a guaranteed recovery of the true K."
+            "GSDMM documents average {mean_doc_len:.0} tokens. GSDMM assumes short, \
+             single-topic documents (tweets, headlines, survey answers); on longer \
+             multi-topic text it tends to use every cluster (never inferring K) and \
+             its one-topic-per-document assumption is violated. Consider LDA or STM \
+             for longer documents, or shorten these to a title/first-sentence field."
         ));
     }
-    // Tiny clusters reported as full topics.
+    // Discovered count sitting at/near the cap. This does NOT by itself prove the
+    // cap is wrong — the data's true K may simply be near the cap — so frame it as
+    // a check to run, not a verdict.
+    if k_max > 0 && num_used * 10 >= k_max * 9 {
+        warn(format!(
+            "GSDMM used {num_used} of {k_max} clusters, at or near the num_topics/\
+             K_max cap. The count may be limited by the cap rather than inferred from \
+             the data: refit with a larger num_topics and see what happens. If it \
+             settles below the new cap, that lower number is the inferred K; if it \
+             keeps filling the cap, the data supports at least this many and GSDMM is \
+             not converging on a K for this corpus. The count is also sensitive to \
+             beta and to how separable your texts are."
+        ));
+    }
+    // A fit fragmented into many tiny clusters. Firing on a single stray singleton
+    // is noise (the Movie Group Process sheds them routinely), so only warn when
+    // tiny clusters are a real share (>=1/3) of the discovered clusters.
     let mut sizes = vec![0usize; num_used];
     for &c in doc_cluster {
         if c < num_used {
@@ -13043,12 +13068,13 @@ fn gsdmm_fit_warnings(py: Python<'_>, num_used: usize, k_max: usize, doc_cluster
         }
     }
     let tiny = sizes.iter().filter(|&&s| s > 0 && s < 3).count();
-    if tiny > 0 {
+    if tiny >= 2 && tiny * 3 >= num_used {
         warn(format!(
-            "GSDMM produced {tiny} tiny cluster(s) (1-2 documents) reported as full \
-             topics. Their top words, FREX/exclusivity, and coherence are computed \
-             from almost no data and look deceptively strong; treat clusters this \
-             small as noise or merge them."
+            "GSDMM fragmented into {tiny} tiny clusters (1-2 documents each) out of \
+             {num_used} — a large share of the result. Their top words, FREX/\
+             exclusivity, and coherence are computed from almost no data and look \
+             deceptively strong; treat clusters this small as noise or merge them, \
+             and consider a smaller num_topics or a larger beta."
         ));
     }
 }
@@ -13200,8 +13226,9 @@ impl GSDMM {
         if !(num_types as f64 * b).is_finite() {
             return Err(PyValueError::new_err(format!(
                 "beta={b} is too large: V*beta overflows to infinity (V={num_types}), \
-                 which makes every cluster-word distribution NaN. Use a beta on the \
-                 order of 0.01-1."
+                 so the sampler's log-denominator ln(n+V*beta) is infinite and every \
+                 cluster probability collapses to NaN. Use a beta on the order of \
+                 0.01-1."
             )));
         }
         let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
@@ -13257,7 +13284,16 @@ impl GSDMM {
         slf.trace = model.trace.clone();
         slf.model = Some(model);
         slf.fitted = true;
-        gsdmm_fit_warnings(py, slf.num_used, slf.k_max, &slf.doc_cluster);
+        // Only diagnose a *fitted* state: with iters=0 the assignment is still the
+        // uniform-random init, so num_used==k_max and stray tiny clusters are
+        // initialization artifacts, not discoveries (#717 review).
+        if iters > 0 {
+            let corpus = slf.corpus.as_ref().unwrap();
+            let ndocs = corpus.docs.len().max(1);
+            let mean_doc_len =
+                corpus.docs.iter().map(|d| d.len()).sum::<usize>() as f64 / ndocs as f64;
+            gsdmm_fit_warnings(py, slf.num_used, slf.k_max, &slf.doc_cluster, mean_doc_len);
+        }
         Ok(slf.into())
     }
 

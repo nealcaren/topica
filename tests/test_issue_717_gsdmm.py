@@ -47,9 +47,13 @@ def test_max_topics_reports_the_cap_num_topics_reports_discovered():
 
 # --- F2: auto-K honesty warning --------------------------------------------
 
+def _cap_warned(records):
+    return any("at or near the num_topics" in str(x.message) for x in records)
+
+
 def test_warns_when_discovered_count_pins_at_cap():
-    # Many distinct 3-token docs over a big vocab with a small cap: the count
-    # tracks the cap, not the data, so fit() must warn.
+    # Many distinct 3-token docs over a big vocab with a small cap: the count is
+    # limited by the cap, not inferred from the data, so fit() must warn.
     rng = np.random.default_rng(0)
     docs = [[f"w{int(rng.integers(200))}" for _ in range(3)] for _ in range(300)]
     m = topica.GSDMM(num_topics=6, seed=13)
@@ -57,7 +61,7 @@ def test_warns_when_discovered_count_pins_at_cap():
         warnings.simplefilter("always")
         m.fit(docs, iters=30)
     assert m.num_topics >= int(np.ceil(0.9 * m.max_topics))
-    assert any("tracking the cap" in str(x.message) for x in w)
+    assert _cap_warned(w)
 
 
 def test_no_cap_warning_when_count_settles_below_cap():
@@ -67,18 +71,66 @@ def test_no_cap_warning_when_count_settles_below_cap():
         warnings.simplefilter("always")
         m.fit(docs, iters=60)
     assert m.num_topics < m.max_topics
-    assert not any("tracking the cap" in str(x.message) for x in w)
+    assert not _cap_warned(w)
 
 
-# --- F7: tiny-cluster warning ----------------------------------------------
-
-def test_warns_on_tiny_clusters():
-    docs = [["a", "b", "c"]] * 30 + [["x", "y", "z"]] * 30 + [["lone_p", "lone_q"]]
+def test_no_warnings_when_iters_zero():
+    # iters=0 leaves the uniform-random init (num_used==k_max, stray singletons);
+    # those are artifacts, not discoveries, so no honesty warning should fire.
+    docs, _ = _disjoint_blocks(n_per=20)
     m = topica.GSDMM(num_topics=10, seed=13)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        m.fit(docs, iters=50)
-    assert any("tiny cluster" in str(x.message) for x in w)
+        m.fit(docs, iters=0)
+    assert not _cap_warned(w)
+    assert not any("tiny cluster" in str(x.message).lower() for x in w)
+
+
+# --- long-document appropriateness warning ---------------------------------
+
+def test_warns_when_documents_are_long():
+    # GSDMM is a short-text model; warn when documents are long (multi-topic).
+    rng = np.random.default_rng(0)
+    vocab = [f"w{i}" for i in range(80)]
+    docs = [[vocab[int(rng.integers(80))] for _ in range(60)] for _ in range(60)]
+    m = topica.GSDMM(num_topics=8, seed=13)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        m.fit(docs, iters=20)
+    assert any("average" in str(x.message) and "short" in str(x.message) for x in w)
+
+
+def test_no_long_doc_warning_on_short_text():
+    docs, _ = _disjoint_blocks()  # 3-token docs
+    m = topica.GSDMM(num_topics=15, seed=13)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        m.fit(docs, iters=40)
+    assert not any("single-topic documents" in str(x.message) for x in w)
+
+
+# --- F7: tiny-cluster warning fires only on real fragmentation -------------
+
+def test_warns_when_fit_fragments_into_tiny_clusters():
+    # Fully disjoint singleton-vocab docs: GSDMM keeps them apart, so the fit
+    # fragments into many 1-2 doc clusters and must warn.
+    docs = [[f"d{i}_a", f"d{i}_b"] for i in range(14)]
+    m = topica.GSDMM(num_topics=15, seed=13)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        m.fit(docs, iters=40)
+    assert any("fragmented into" in str(x.message) for x in w)
+
+
+def test_no_tiny_warning_on_a_healthy_fit():
+    # A few big clusters and at most one stray singleton must NOT warn (the old
+    # behaviour fired on every stray singleton — that was noise).
+    docs, _ = _disjoint_blocks(n_per=80, n_blocks=4)
+    m = topica.GSDMM(num_topics=15, seed=13)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        m.fit(docs, iters=80)
+    assert not any("fragmented into" in str(x.message) for x in w)
 
 
 # --- F12: edge-case guards -------------------------------------------------
