@@ -58,6 +58,77 @@ fn word_counts_sorted(doc: &[u32]) -> Vec<(usize, u32)> {
     out
 }
 
+/// Unnormalized log `p(z_d = k)` for every cluster `k` (Yin-Wang Eq. 4), given
+/// the current counts and this document's sorted `(word, count)` list.
+///
+/// Two bit-exact speedups over the naive per-cluster/per-word double loop (#781):
+/// - **Empty-cluster memoization.** Every cluster with `m[k]==0` has `n[k]==0` and
+///   all `nw[k][*]==0`, so its log-prob is a single value that does not depend on
+///   `k`. GSDMM keeps `k_max` clusters and empties most of them, so this collapses
+///   the dominant cost from `O(k_max)` to `O(#non-empty)` per document.
+/// - **`ln(beta)` caching.** For a word absent from cluster `k` (`nw[k][w]==0`) the
+///   `j=0` numerator term is `ln(0+beta)=ln(beta)`; most (word, cluster) pairs are
+///   absent, so this skips the majority of the numerator's `ln` calls.
+///
+/// Both reuse values that are bit-identical to recomputing them inline (`0.0+x==x`
+/// exactly), so the sampler draws and the committed gold are unchanged.
+fn cluster_log_probs(
+    m: &[u32],
+    n: &[u32],
+    nw: &[Vec<u32>],
+    wc: &[(usize, u32)],
+    n_d: u32,
+    alpha: f64,
+    beta: f64,
+    vbeta: f64,
+) -> Vec<f64> {
+    let k = m.len();
+    let ln_beta = beta.ln();
+    let mut empty_lp: Option<f64> = None;
+    let mut out = vec![0.0f64; k];
+    for kk in 0..k {
+        if m[kk] == 0 {
+            // Empty cluster: n==0, nw==0 for all words. Same value for every empty
+            // cluster, so compute once and reuse.
+            out[kk] = *empty_lp.get_or_insert_with(|| {
+                let mut lp = alpha.ln();
+                for &(_w, cw) in wc {
+                    lp += ln_beta; // j=0: ln(0+beta)
+                    for j in 1..cw {
+                        lp += (beta + j as f64).ln();
+                    }
+                }
+                for i in 0..n_d {
+                    lp -= (vbeta + i as f64).ln();
+                }
+                lp
+            });
+            continue;
+        }
+        let mut lp = (m[kk] as f64 + alpha).ln();
+        for &(w, cw) in wc {
+            let nwk = nw[kk][w];
+            if nwk == 0 {
+                lp += ln_beta; // j=0: ln(0+beta), cached
+                for j in 1..cw {
+                    lp += (beta + j as f64).ln();
+                }
+            } else {
+                let base = nwk as f64 + beta;
+                for j in 0..cw {
+                    lp += (base + j as f64).ln();
+                }
+            }
+        }
+        let base_d = n[kk] as f64 + vbeta;
+        for i in 0..n_d {
+            lp -= (base_d + i as f64).ln();
+        }
+        out[kk] = lp;
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Model struct
 // ---------------------------------------------------------------------------
@@ -158,7 +229,6 @@ impl GsdmmModel {
     ///
     /// Shape: D × k_max; each inner vec sums to 1.
     pub fn doc_cluster_dist(&self, docs: &[Vec<u32>]) -> Vec<Vec<f64>> {
-        let k = self.k_max;
         let v = self.num_types;
         let vbeta = v as f64 * self.beta;
 
@@ -168,27 +238,9 @@ impl GsdmmModel {
                 // order as a dense 0..V scan, but O(distinct) not O(V) (#717).
                 let wc = word_counts_sorted(doc);
                 let n_d = doc.len() as u32;
-
-                let mut log_probs: Vec<f64> = vec![0.0f64; k];
-                for kk in 0..k {
-                    let mut lp = (self.m[kk] as f64 + self.alpha).ln();
-
-                    // Numerator: Π over distinct words, each occurrence index j.
-                    for &(w, cw) in &wc {
-                        let base = self.nw[kk][w] as f64 + self.beta;
-                        for j in 0..cw {
-                            lp += (base + j as f64).ln();
-                        }
-                    }
-
-                    // Denominator: Π_{i=1..N_d} (n[k] + V·β + i − 1).
-                    let base_d = self.n[kk] as f64 + vbeta;
-                    for i in 0..n_d {
-                        lp -= (base_d + i as f64).ln();
-                    }
-
-                    log_probs[kk] = lp;
-                }
+                let log_probs = cluster_log_probs(
+                    &self.m, &self.n, &self.nw, &wc, n_d, self.alpha, self.beta, vbeta,
+                );
 
                 // Stable softmax.
                 let max_lp = log_probs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
@@ -225,7 +277,6 @@ fn sample_index<R: Rng>(probs: &[f64], rng: &mut R) -> usize {
 /// computing the sampling probabilities and is added to the new cluster
 /// afterwards.
 fn resample_doc<R: Rng>(model: &mut GsdmmModel, d: usize, doc: &[u32], rng: &mut R) {
-    let k = model.k_max;
     let v = model.num_types;
     let vbeta = v as f64 * model.beta;
     let alpha = model.alpha;
@@ -244,29 +295,12 @@ fn resample_doc<R: Rng>(model: &mut GsdmmModel, d: usize, doc: &[u32], rng: &mut
     // Distinct (word, count) for this doc in ascending word order: the same
     // numerator accumulation order as a dense 0..V scan (so results stay
     // bit-identical), but O(distinct words) rather than O(V) per cluster (#717).
+    // `cluster_log_probs` additionally memoizes the shared empty-cluster value and
+    // caches ln(beta) for absent words (#781) — still bit-identical.
     let wc = word_counts_sorted(doc);
-
-    let mut log_probs: Vec<f64> = vec![0.0f64; k];
-    for kk in 0..k {
-        // Prior: log(m[k] + α)  (the 1/(D-1+K·α) factor is constant → dropped)
-        let mut lp = (model.m[kk] as f64 + alpha).ln();
-
-        // Numerator: Π_w Π_{j=0..c_dw-1} (nw[k][w] + β + j)
-        for &(w, cw) in &wc {
-            let base = model.nw[kk][w] as f64 + model.beta;
-            for j in 0..cw {
-                lp += (base + j as f64).ln();
-            }
-        }
-
-        // Denominator: Π_{i=0..N_d-1} (n[k] + V·β + i)
-        let base_d = model.n[kk] as f64 + vbeta;
-        for i in 0..n_d {
-            lp -= (base_d + i as f64).ln();
-        }
-
-        log_probs[kk] = lp;
-    }
+    let log_probs = cluster_log_probs(
+        &model.m, &model.n, &model.nw, &wc, n_d, alpha, model.beta, vbeta,
+    );
 
     // --- Stable softmax then categorical sample ---
     let max_lp = log_probs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
@@ -566,8 +600,10 @@ mod tests {
             vec![8, 9],
             vec![10, 11, 12, 13, 14, 0],
         ];
+        // K=12 on 5 docs guarantees many empty clusters, exercising the
+        // empty-cluster memoization against the naive dense reference below (#781).
         let mut rng = ChaCha8Rng::seed_from_u64(7);
-        let model = fit_gsdmm(&docs, v, 6, 0.1, 0.1, 40, 0, &mut rng);
+        let model = fit_gsdmm(&docs, v, 12, 0.1, 0.1, 40, 0, &mut rng);
 
         // Independent dense reference: full 0..V scan, skipping zero counts.
         let dense = |doc: &[u32]| -> Vec<f64> {
