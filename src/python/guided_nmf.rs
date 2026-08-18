@@ -117,6 +117,44 @@ impl GuidedNMF {
     }
 }
 
+/// Warn when two or more seed groups steer the SAME learned topic (#686): their
+/// document prevalence is then indistinguishable, so a user could report one
+/// group's `doc_topic` share as another's. Silent when every group owns a distinct
+/// topic. Collisions are sorted so the message is deterministic.
+fn guided_nmf_collapse_warning(
+    py: Python<'_>,
+    seed_topic_indices: &[usize],
+    seed_names: &[String],
+) {
+    let mut by_topic: std::collections::HashMap<usize, Vec<&str>> =
+        std::collections::HashMap::new();
+    for (i, &k) in seed_topic_indices.iter().enumerate() {
+        let name = seed_names.get(i).map(String::as_str).unwrap_or("?");
+        by_topic.entry(k).or_default().push(name);
+    }
+    let mut collisions: Vec<String> = by_topic
+        .iter()
+        .filter(|(_, names)| names.len() > 1)
+        .map(|(k, names)| format!("topic {k}: {}", names.join(", ")))
+        .collect();
+    if collisions.is_empty() {
+        return;
+    }
+    collisions.sort();
+    if let Ok(warnings) = py.import_bound("warnings") {
+        let _ = warnings.call_method1(
+            "warn",
+            (format!(
+                "GuidedNMF: seed groups collapsed onto a shared topic ({}). Their \
+                 document prevalence is indistinguishable — do not report one group's \
+                 doc_topic share as another's (see seed_topic_map). Try a larger \
+                 num_topics, a higher guidance, or more distinctive seed words.",
+                collisions.join("; ")
+            ),),
+        );
+    }
+}
+
 #[pymethods]
 impl GuidedNMF {
     /// The random seed the model was constructed with.
@@ -384,6 +422,11 @@ impl GuidedNMF {
         slf.corpus = Some(corpus);
         slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
         slf.fitted = true;
+        guided_nmf_collapse_warning(
+            py,
+            &slf.model.as_ref().unwrap().seed_topic_indices,
+            &slf.seed_names,
+        );
         Ok(slf.into())
     }
 
@@ -427,6 +470,20 @@ impl GuidedNMF {
     #[getter]
     fn seed_group_names(&self) -> Vec<String> {
         self.seed_names.clone()
+    }
+
+    /// Convenience map ``{seed_group_name: learned_topic_index}`` — the same pairing
+    /// as ``dict(zip(seed_group_names, seed_topic_indices))``. When two group names
+    /// point at the *same* index they collapsed onto a shared topic (:meth:`fit`
+    /// warns), and their document prevalence cannot be told apart.
+    #[getter]
+    fn seed_topic_map<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let idx = &self.fitted_model()?.seed_topic_indices;
+        let d = PyDict::new_bound(py);
+        for (name, &k) in self.seed_names.iter().zip(idx.iter()) {
+            d.set_item(name, k)?;
+        }
+        Ok(d)
     }
     /// The guidance weight lambda.
     #[getter]

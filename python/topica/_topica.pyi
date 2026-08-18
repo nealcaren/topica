@@ -5180,6 +5180,10 @@ class GuidedNMF:
         """The seed-group names, ordered to index seed_topic_indices."""
         ...
     @property
+    def seed_topic_map(self) -> dict[str, int]:
+        """{seed_group_name: learned_topic_index}; duplicate indices = a collapse (fit warns)."""
+        ...
+    @property
     def guidance(self) -> float: ...
     @property
     def reconstruction_error(self) -> float:

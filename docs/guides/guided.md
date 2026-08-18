@@ -207,9 +207,15 @@ the same `seed_match`/`case_insensitive` matcher as `SeededLDA`.
 seeds = {"economy": ["tax", "market", "jobs"], "foreign": ["war", "troops"]}
 m = topica.GuidedNMF(num_topics=10, seed_words=seeds, seed=1).fit(docs)  # guidance defaults to 3.0
 m.seed_topic_indices           # which learned topic each group steered
-dict(zip(m.seed_group_names, m.seed_topic_indices))   # name -> topic
+m.seed_topic_map               # {group name -> topic index}, the same pairing
 m.top_words(10, topic=m.seed_topic_indices[0])
 ```
+
+If two seed groups steer the *same* learned topic — their indices repeat in
+`seed_topic_indices` / collide in `seed_topic_map` — `fit` warns: the groups
+collapsed onto one topic, so their document prevalence is indistinguishable and
+you must not report one group's `doc_topic` share as another's. Give the groups
+more distinctive seed words, raise `num_topics`, or raise `guidance`.
 
 The full model reference and its ssnmf validation are in
 [models.md#guidednmf](models.md#guidednmf). Two things to know before you report
