@@ -37,6 +37,32 @@ def test_quiet_by_default(capfd):
     assert "[GSDMM] sweep" not in capfd.readouterr().err
 
 
+def test_gsdmm_progress_callback_and_topica_progress(capfd):
+    # #785: GSDMM.fit(progress=) calls (iteration, total, {"clusters", "ll"}) and
+    # topica.progress() renders the live bar + cluster-count sparkline.
+    docs = [["cat", "dog", "pet"], ["star", "moon", "sky"]] * 60
+    calls = []
+    topica.GSDMM(8, seed=13).fit(
+        docs, iters=20, progress_interval=4,
+        progress=lambda it, total, info: calls.append((it, total, dict(info))),
+    )
+    assert calls and all(t == 20 for _, t, _ in calls)
+    assert all({"clusters", "ll"} <= set(info) for _, _, info in calls)
+    # the shipped renderer draws a bar with the clusters sparkline
+    topica.GSDMM(8, seed=13).fit(docs, iters=20, progress_interval=4,
+                                 progress=topica.progress(metric="clusters", label="GSDMM"))
+    err = capfd.readouterr().err
+    assert "GSDMM |" in err and "clusters " in err and "100%" in err
+
+
+def test_gsdmm_progress_does_not_change_the_fit():
+    docs = [["cat", "dog", "pet"], ["star", "moon", "sky"], ["cat", "pet", "dog"]] * 20
+    a = topica.GSDMM(8, seed=13).fit(docs, iters=25)
+    b = topica.GSDMM(8, seed=13).fit(docs, iters=25,
+                                     progress=lambda *xs: None, progress_interval=3)
+    assert np.array_equal(np.asarray(a.doc_cluster), np.asarray(b.doc_cluster))
+
+
 def test_verbose_does_not_change_the_fit():
     docs = [["cat", "dog", "pet"], ["star", "moon", "sky"], ["cat", "pet", "dog"]] * 30
     with warnings.catch_warnings():
