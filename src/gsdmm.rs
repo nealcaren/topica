@@ -394,6 +394,9 @@ pub fn fit_gsdmm<R: Rng>(
         trace: Vec::new(),
     };
 
+    // Wall-clock only for the opt-in progress line (never used in any
+    // computation, so it does not affect determinism).
+    let start = std::time::Instant::now();
     for it in 0..iters {
         sweep(&mut model, docs, rng);
         if report_interval > 0 && ((it + 1) % report_interval == 0 || it + 1 == iters) {
@@ -402,9 +405,12 @@ pub fn fit_gsdmm<R: Rng>(
             model.trace.push((it + 1, nc, ll));
             if verbose {
                 // Progress to stderr (not stdout), so a long single-threaded fit
-                // does not look hung. Opt-in; off during tests and pipelines.
+                // does not look hung. The elapsed seconds let a user extrapolate
+                // how long the remaining sweeps will take. Opt-in; off during
+                // tests and pipelines.
+                let elapsed = start.elapsed().as_secs_f64();
                 eprintln!(
-                    "[GSDMM] sweep {}/{}  {nc} clusters  ll={ll:.4}",
+                    "[GSDMM] sweep {}/{}  {nc} clusters  ll={ll:.4}  ({elapsed:.1}s)",
                     it + 1,
                     iters
                 );

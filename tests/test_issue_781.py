@@ -80,3 +80,40 @@ def test_topic_crosstab_accepts_bare_array_and_checks_length():
     assert ct.values.sum() == len(docs)
     with pytest.raises(ValueError, match="align the covariate"):
         topica.inspect.topic_crosstab(m, np.array(party[:-5]))
+
+
+def test_topic_crosstab_keeps_missing_values_visible():
+    # #784 review: NaN/None covariate values must NOT be silently dropped — the
+    # table has to account for every document.
+    corpus, docs, party = _corpus_with_party()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        m = topica.GSDMM(6, seed=13).fit(corpus, iters=30)
+    cov = np.array(party, dtype=object)
+    cov[:20] = None  # 20 missing
+    ct = topica.inspect.topic_crosstab(m, cov)
+    assert ct.values.sum() == len(docs)  # nothing dropped
+    assert any(isinstance(c, float) and np.isnan(c) for c in ct.columns)  # NaN column present
+
+
+def test_topic_crosstab_gives_every_topic_a_row():
+    # #784 review: a mixture topic that is never the argmax winner still gets a
+    # (zero) row, so the index is dense and lines up with topic_table.
+    corpus, docs, party = _corpus_with_party()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        lda = topica.LDA(6, seed=13).fit(corpus, iters=60)  # more topics than the 2 real ones
+    ct = topica.inspect.topic_crosstab(lda, corpus, "party")
+    assert list(ct.index) == list(range(6))
+
+
+def test_topic_crosstab_directive_errors():
+    # #784 review: wrong column and a 2-D covariate raise clean ValueErrors.
+    corpus, docs, party = _corpus_with_party()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        m = topica.GSDMM(6, seed=13).fit(corpus, iters=30)
+    with pytest.raises(ValueError, match="not found; available"):
+        topica.inspect.topic_crosstab(m, corpus, "partee")
+    with pytest.raises(ValueError, match="1-D"):
+        topica.inspect.topic_crosstab(m, np.array(party).reshape(-1, 1))
