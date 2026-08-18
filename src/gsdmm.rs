@@ -357,6 +357,7 @@ pub fn fit_gsdmm<R: Rng>(
     beta: f64,
     iters: usize,
     report_interval: usize,
+    verbose: bool,
     rng: &mut R,
 ) -> GsdmmModel {
     let d_count = docs.len();
@@ -393,11 +394,27 @@ pub fn fit_gsdmm<R: Rng>(
         trace: Vec::new(),
     };
 
+    // Wall-clock only for the opt-in progress line (never used in any
+    // computation, so it does not affect determinism).
+    let start = std::time::Instant::now();
     for it in 0..iters {
         sweep(&mut model, docs, rng);
         if report_interval > 0 && ((it + 1) % report_interval == 0 || it + 1 == iters) {
             let ll = model.cluster_log_likelihood(docs);
-            model.trace.push((it + 1, model.num_clusters(), ll));
+            let nc = model.num_clusters();
+            model.trace.push((it + 1, nc, ll));
+            if verbose {
+                // Progress to stderr (not stdout), so a long single-threaded fit
+                // does not look hung. The elapsed seconds let a user extrapolate
+                // how long the remaining sweeps will take. Opt-in; off during
+                // tests and pipelines.
+                let elapsed = start.elapsed().as_secs_f64();
+                eprintln!(
+                    "[GSDMM] sweep {}/{}  {nc} clusters  ll={ll:.4}  ({elapsed:.1}s)",
+                    it + 1,
+                    iters
+                );
+            }
         }
     }
 
@@ -478,7 +495,7 @@ mod tests {
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         // k_max=10, expect it to collapse toward 3 non-empty clusters.
-        let model = fit_gsdmm(&docs, v, 10, 0.1, 0.1, 200, 0, &mut rng);
+        let model = fit_gsdmm(&docs, v, 10, 0.1, 0.1, 200, 0, false, &mut rng);
 
         let nc = model.num_clusters();
         // MGP may over- or under-cluster a bit; just assert it is in a sane range.
@@ -528,8 +545,8 @@ mod tests {
 
         let mut r1 = ChaCha8Rng::seed_from_u64(99);
         let mut r2 = ChaCha8Rng::seed_from_u64(99);
-        let m1 = fit_gsdmm(&docs, v, 8, 0.1, 0.1, 50, 0, &mut r1);
-        let m2 = fit_gsdmm(&docs, v, 8, 0.1, 0.1, 50, 0, &mut r2);
+        let m1 = fit_gsdmm(&docs, v, 8, 0.1, 0.1, 50, 0, false, &mut r1);
+        let m2 = fit_gsdmm(&docs, v, 8, 0.1, 0.1, 50, 0, false, &mut r2);
 
         assert_eq!(
             m1.doc_cluster(),
@@ -555,7 +572,7 @@ mod tests {
             .collect();
 
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        let model = fit_gsdmm(&docs, v, 6, 0.1, 0.1, 30, 0, &mut rng);
+        let model = fit_gsdmm(&docs, v, 6, 0.1, 0.1, 30, 0, false, &mut rng);
 
         // doc_cluster() has length D.
         assert_eq!(
@@ -612,7 +629,7 @@ mod tests {
         // K=12 on 5 docs guarantees many empty clusters, exercising the
         // empty-cluster memoization against the naive dense reference below (#781).
         let mut rng = ChaCha8Rng::seed_from_u64(7);
-        let model = fit_gsdmm(&docs, v, 12, 0.1, 0.1, 40, 0, &mut rng);
+        let model = fit_gsdmm(&docs, v, 12, 0.1, 0.1, 40, 0, false, &mut rng);
 
         // Independent dense reference: full 0..V scan, skipping zero counts.
         let dense = |doc: &[u32]| -> Vec<f64> {
@@ -675,7 +692,7 @@ mod tests {
             }
         }
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let model = fit_gsdmm(&docs, v, 10, 0.1, 0.1, 200, 0, &mut rng);
+        let model = fit_gsdmm(&docs, v, 10, 0.1, 0.1, 200, 0, false, &mut rng);
         let base = crate::conformance::check_conformance(&model);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }

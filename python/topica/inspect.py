@@ -33,6 +33,7 @@ __all__ = [
     'prepare_pyldavis',
     'relevance',
     'topic_correlation',
+    'topic_crosstab',
     'topic_table',
     'topics_for_term',
 ]
@@ -662,6 +663,99 @@ def find_thoughts(doc_topic, texts=None, *, topic, n=3):
         out.append((int(i), float(theta[i, topic]), text))
     return out
 
+
+
+def topic_crosstab(model, metadata, column=None, *, normalize=None):
+    """Crosstab each document's dominant topic against a covariate — the standard
+    "which topics do Democrats vs Republicans write?" reporting table.
+
+    Returns a pandas ``DataFrame`` with one row per topic (index-aligned to
+    :func:`topic_table` / ``top_words`` — row ``t`` is topic/cluster ``t``, so the
+    two tables join on the index) and one column per distinct value of the
+    covariate. Every topic gets a row even if it is never any document's dominant
+    topic (its row is all zeros). Cells are document counts by default;
+    ``normalize`` follows :func:`pandas.crosstab` — ``"index"`` for row
+    proportions (each topic's split across the covariate), ``"columns"`` for
+    column proportions (each group's split across topics), ``"all"``, or ``None``.
+
+    `model` is a fitted model. Hard-clustering models (``GSDMM``) use
+    :attr:`doc_cluster`; every other model uses ``doc_topic.argmax(axis=1)`` (the
+    dominant topic — for mixed-membership models this is a summary, not the full
+    mixture). `metadata` is a :class:`~topica.Corpus` (uses its row-aligned
+    ``.metadata``), a ``DataFrame``, or a 1-D array / ``Series`` of covariate
+    values; pass `column` to name the field when it is a Corpus or DataFrame. A
+    ``Series`` is aligned to the documents by *position*, not by its index.
+    Missing covariate values (``NaN`` / ``None``) are kept as their own column
+    rather than silently dropped, so the table always accounts for every document.
+
+    The covariate must be row-aligned to the model's documents. ``from_dataframe``
+    keeps ``corpus.metadata`` aligned through pruning, so ``topic_crosstab(model,
+    corpus, "party")`` just works; if you pass an external array, index it by
+    ``corpus.kept_indices`` first.
+    """
+    import pandas as pd
+
+    if hasattr(model, "doc_cluster"):
+        assign = np.asarray(model.doc_cluster)
+        n_topics = int(getattr(model, "num_topics", 0)) or (int(assign.max()) + 1 if assign.size else 0)
+        row_name = "cluster"
+    elif hasattr(model, "doc_topic"):
+        dt = np.asarray(model.doc_topic)
+        assign = dt.argmax(axis=1)
+        n_topics = dt.shape[1]
+        row_name = "topic"
+    else:
+        raise TypeError(
+            "topic_crosstab needs a fitted model exposing doc_cluster (GSDMM) or "
+            "doc_topic (every other model)"
+        )
+
+    # Resolve the covariate values.
+    def _select(frame, kind):
+        if column is None:
+            raise ValueError(f"pass column= to select a field from the {kind}")
+        try:
+            return np.asarray(frame[column])
+        except KeyError:
+            avail = ", ".join(map(str, list(frame.columns)))
+            raise ValueError(f"column {column!r} not found; available: {avail}") from None
+
+    if hasattr(metadata, "metadata"):  # a Corpus
+        md = metadata.metadata
+        if md is None:
+            raise ValueError(
+                "the Corpus carries no metadata; build it with from_dataframe(..., "
+                "metadata_cols=[...]) or pass the covariate array directly"
+            )
+        values = _select(md, "Corpus")
+        col_name = column
+    elif hasattr(metadata, "columns"):  # a DataFrame
+        values = _select(metadata, "DataFrame")
+        col_name = column
+    else:  # a 1-D array / Series
+        values = np.asarray(metadata)
+        col_name = column or "covariate"
+
+    if values.ndim != 1:
+        raise ValueError(f"covariate must be 1-D, got a {values.ndim}-D array")
+    if values.shape[0] != assign.shape[0]:
+        raise ValueError(
+            f"covariate has {values.shape[0]} rows but the model has {assign.shape[0]} "
+            "documents; align the covariate to the fitted documents "
+            "(corpus.kept_indices) — pruning may have dropped some"
+        )
+    ct = pd.crosstab(
+        pd.Series(assign, name=row_name),
+        pd.Series(values, name=col_name),
+        normalize=normalize if normalize is not None else False,
+        dropna=False,  # keep NaN covariate values visible, not silently dropped
+    )
+    # Give every topic a row (a never-dominant topic is otherwise missing), and
+    # keep the index dense so it lines up with topic_table / top_words by number.
+    if n_topics:
+        ct = ct.reindex(range(n_topics), fill_value=0)
+        ct.index.name = row_name
+    return ct
 
 
 # ---------------------------------------------------------------------------
