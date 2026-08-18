@@ -1019,6 +1019,17 @@ fn build_with_fixed_vocab(
 
 /// SparseLDA topic model (the MALLET algorithm).
 ///
+/// Invoke a fit progress callback with the standard 3-arg contract
+/// `callback(iteration, total, info)`, where `info` is `{"ll": ll_per_token}`.
+/// This is what `topica.progress()` renders as a live bar + ETA + ll sparkline.
+/// Best-effort: a callback that raises is ignored so the progress display can
+/// never abort a fit (#785).
+fn emit_progress(py: Python<'_>, cb: &PyObject, iter: usize, total: usize, ll: f64) {
+    let info = PyDict::new_bound(py);
+    let _ = info.set_item("ll", ll);
+    let _ = cb.call1(py, (iter, total, info));
+}
+
 /// Construct with the hyperparameters, then call :meth:`fit` on a
 /// :class:`Corpus` or a list of token lists. After fitting, the estimated
 /// distributions are available as :attr:`topic_word` (φ) and
@@ -1307,8 +1318,10 @@ impl LDA {
     /// strings). When a token-list is passed, an internal corpus is built with
     /// no frequency filtering — build a :class:`Corpus` explicitly for that.
     ///
-    /// `progress`, if given, is called as ``progress(iteration, ll_per_token)``
-    /// every `progress_interval` iterations during the main loop.
+    /// `progress`, if given, is called as ``progress(iteration, total_iters,
+    /// {"ll": ll_per_token})`` every `progress_interval` iterations during the main
+    /// loop. Pass :func:`topica.progress` for a live bar + ETA + log-likelihood
+    /// sparkline, or your own callback.
     ///
     /// `convergence_tol` (default 0.0, disabled) enables early stopping: after
     /// each `check_every` sweeps the relative change in a smoothed log-likelihood
@@ -1470,7 +1483,7 @@ impl LDA {
                                 let m = cv.to_topic_model(&corpus);
                                 let ll = output::model_log_likelihood(&m, &corpus) / total_tokens;
                                 Python::with_gil(|py| {
-                                    let _ = cb.call1(py, (iter, ll));
+                                    emit_progress(py, cb, iter, iters, ll);
                                 });
                             }
                         }
@@ -1669,7 +1682,7 @@ impl LDA {
                         {
                             let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
                             Python::with_gil(|py| {
-                                let _ = cb.call1(py, (iter, ll));
+                                emit_progress(py, cb, iter, iters, ll);
                             });
                         }
                     }
@@ -2840,7 +2853,7 @@ fn run_mh_training<S: crate::mh::MhSampler>(
                 let m = sampler.to_topic_model();
                 let ll = output::model_log_likelihood(&m, &corpus) / total_tokens;
                 Python::with_gil(|py| {
-                    let _ = cb.call1(py, (iter, ll));
+                    emit_progress(py, cb, iter, iters, ll);
                 });
             }
         }
@@ -4589,7 +4602,7 @@ impl DMR {
                             );
                             let llpt = ll / total_tokens;
                             Python::with_gil(|py| {
-                                let _ = cb.call1(py, (iter, llpt));
+                                emit_progress(py, cb, iter, iters, llpt);
                             });
                         }
                     }
@@ -4753,7 +4766,7 @@ impl DMR {
                             );
                             let llpt = ll / total_tokens;
                             Python::with_gil(|py| {
-                                let _ = cb.call1(py, (iter, llpt));
+                                emit_progress(py, cb, iter, iters, llpt);
                             });
                         }
                     }
@@ -5702,7 +5715,7 @@ impl LabeledLDA {
                         if progress_interval > 0 && iter % progress_interval == 0 {
                             let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
                             Python::with_gil(|py| {
-                                let _ = cb.call1(py, (iter, ll));
+                                emit_progress(py, cb, iter, iters, ll);
                             });
                         }
                     }
@@ -6508,7 +6521,7 @@ impl SAGE {
                     if progress_interval > 0 && iter % progress_interval == 0 {
                         let llpt = compute_ll(&model) / total_tokens;
                         Python::with_gil(|py| {
-                            let _ = cb.call1(py, (iter, llpt));
+                            emit_progress(py, cb, iter, iters, llpt);
                         });
                     }
                 }

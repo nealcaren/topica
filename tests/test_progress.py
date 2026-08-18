@@ -76,6 +76,34 @@ def test_progress_two_arg_with_total_gives_full_bar():
     assert "100%" in out and "4/4" in out and "ETA" in out
 
 
+def test_lda_drives_progress_with_3arg_contract(capfd):
+    # #785: LDA's callback now passes (iteration, total, {"ll": ...}), so
+    # topica.progress() renders the full bar + ETA + "ll" sparkline with no total=.
+    import numpy as np
+    docs = [["a", "b", "c"]] * 60 + [["x", "y", "z"]] * 60
+    calls = []
+    topica.LDA(2, seed=13).fit(
+        docs, iters=40, progress_interval=8,
+        progress=lambda it, total, info: calls.append((it, total, dict(info))),
+    )
+    assert calls and all(t == 40 for _, t, _ in calls)          # auto total
+    assert all("ll" in info for _, _, info in calls)             # named metric
+    # and the shipped renderer produces a bar labelled "ll"
+    topica.LDA(2, seed=13).fit(docs, iters=40, progress_interval=8,
+                               progress=topica.progress(label="LDA"))
+    err = capfd.readouterr().err
+    assert "LDA |" in err and "ll " in err and "100%" in err
+
+
+def test_lda_progress_does_not_change_the_fit():
+    import numpy as np
+    docs = [["a", "b", "c"]] * 40 + [["x", "y", "z"]] * 40
+    a = topica.LDA(2, seed=13).fit(docs, iters=50)
+    b = topica.LDA(2, seed=13).fit(docs, iters=50,
+                                   progress=lambda *xs: None, progress_interval=5)
+    assert np.array_equal(np.asarray(a.doc_topic), np.asarray(b.doc_topic))
+
+
 def test_progress_metric_selection_defaults_to_first_key():
     buf = io.StringIO()
     cb = topica.progress(stream=buf)  # no metric= -> first key ("perplexity")
