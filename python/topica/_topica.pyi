@@ -2774,6 +2774,7 @@ class GSDMM:
         report_interval: Optional[int] = None,
         num_threads: int = 1,
         verbose: bool = False,
+        progress: Any = None,
     ) -> "GSDMM":
         """Fit by the Movie Group Process. progress_interval controls the
         cluster-discovery trace (0 = auto ~50 points).

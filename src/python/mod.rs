@@ -13177,8 +13177,12 @@ impl GSDMM {
     /// (iteration, cluster count, log-likelihood) to stderr so a long
     /// single-threaded fit does not look hung; it prints at the same cadence as
     /// the recorded trace (`progress_interval`, ~50 points by default).
+    /// `progress`, if given, is called as ``progress(iteration, total_iters,
+    /// {"clusters": n, "ll": ll})`` at that same cadence — pass
+    /// :func:`topica.progress` (e.g. ``topica.progress(metric="clusters")``) for a
+    /// live bar + ETA + cluster-count/log-likelihood sparkline.
     #[pyo3(signature = (data, *, iters=30, progress_interval=0, report_interval=None,
-                        num_threads=1, verbose=false))]
+                        num_threads=1, verbose=false, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -13188,6 +13192,7 @@ impl GSDMM {
         report_interval: Option<usize>,
         num_threads: usize,
         verbose: bool,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         gsdmm_reject_threads(num_threads)?;
         let progress_interval = if let Some(old_val) = report_interval {
@@ -13264,6 +13269,19 @@ impl GSDMM {
                 iters,
                 ll_interval,
                 verbose,
+                |it, total, nc, ll| {
+                    // GSDMM surfaces two live signals: the cluster count collapsing
+                    // toward the discovered K, and the plug-in log-likelihood. The
+                    // callback is best-effort (a raise never aborts the fit) (#785).
+                    if let Some(cb) = &progress {
+                        Python::with_gil(|py| {
+                            let info = PyDict::new_bound(py);
+                            let _ = info.set_item("clusters", nc);
+                            let _ = info.set_item("ll", ll);
+                            let _ = cb.call1(py, (it, total, info));
+                        });
+                    }
+                },
                 &mut rng,
             );
             (m, corpus)
