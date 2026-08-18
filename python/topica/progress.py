@@ -74,14 +74,18 @@ class _ProgressReporter:
         self.label = label
         self.stream = stream if stream is not None else sys.stderr
         self._history = []
-        self._start = None
+        # Start the clock at construction (typically right before fit) so the very
+        # first callback already has real elapsed time and a believable ETA, rather
+        # than reporting ETA 0.0s on the first frame.
+        self._start = time.perf_counter()
         self._done = False
 
     def __call__(self, iteration, second=_UNSET, third=_UNSET):
         # Two shapes, disambiguated by argument count (reliable — a bare metric
         # and a total cannot be told apart positionally):
-        #   3-arg  callback(iteration, total, info)   — the standard contract
-        #   2-arg  callback(iteration, metric)        — legacy models (LDA/DMR/…);
+        #   3-arg  callback(iteration, total, info)   — the standard contract that
+        #          topica's models use (they supply the total and a metric dict)
+        #   2-arg  callback(iteration, metric)        — a hand-written legacy callback;
         #          `total` then comes from progress(total=…) if the user set it.
         if third is _UNSET:
             total = self.total
@@ -89,8 +93,6 @@ class _ProgressReporter:
         else:
             total = second
             info = third
-        if self._start is None:
-            self._start = time.perf_counter()
         primary, extras = self._split(info)
         if primary is not None:
             self._history.append(primary)
@@ -163,11 +165,13 @@ def progress(metric=None, *, total=None, width=20, spark_width=40, label="fit", 
     is the bar width; `spark_width` caps the sparkline to a rolling last-N window;
     `label` prefixes the line; `stream` defaults to ``sys.stderr``.
 
-    `total` is only needed for models whose callback is the older 2-arg
-    ``(iteration, metric)`` form (e.g. today's ``LDA``/``DMR``): pass the same
-    ``iters`` you give ``fit`` and you get the full bar + ETA; omit it and the line
-    shows the running iteration count and elapsed time instead. Models on the
-    3-arg ``(iteration, total, info)`` contract supply the total themselves.
+    You normally do **not** pass `total`: topica's models call the callback with
+    the 3-arg ``(iteration, total, info)`` contract and supply the total (and a
+    named metric) themselves, so ``progress()`` shows the full bar + ETA + sparkline
+    out of the box. `total` is only a fallback for a hand-written callback that uses
+    the older 2-arg ``(iteration, metric)`` form: pass the same ``iters`` you give
+    ``fit`` for the bar + ETA, or omit it to show the running iteration count and
+    elapsed time instead.
 
     The returned object is a fresh reporter (keeps its own metric history and
     start time), so use a new ``progress()`` per fit.
