@@ -21,7 +21,7 @@ _LEGACY_NAMES = [ln.strip() for ln in _LEGACY.read_text().splitlines() if ln.str
 _CURATED = {
     "data", "design", "select", "inspect", "evaluate",
     "effects", "compare", "embeddings", "provenance",
-    "Corpus", "tokenize", "from_dataframe",
+    "Corpus", "tokenize", "from_dataframe", "progress",
     "LDA", "STM", "NMF", "KeyATM", "GSDMM", "BERTopic",
     "list_models", "enable_experimental",
     "__version__", "__citation__",
@@ -30,7 +30,7 @@ _CURATED = {
 
 def test_curated_all_is_exactly_the_surface():
     assert set(topica.__all__) == _CURATED
-    assert len(topica.__all__) == 22
+    assert len(topica.__all__) == 23
 
 
 def test_flagship_models_match_common_start_set():
