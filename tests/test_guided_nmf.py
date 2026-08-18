@@ -6,6 +6,8 @@ recovery, determinism, save-load + bad-params) plus the guidance-specific surfac
 (seed_topic_indices, raw factors) and edge cases.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -70,6 +72,40 @@ def test_guidance_steers_seeded_topics():
     top1 = [w for w, _ in m.top_words(3, topic=idx[1], weights=True)]
     assert {"a", "b"} & set(top0)
     assert {"x", "y"} & set(top1)
+
+
+def test_seed_topic_map_matches_indices():
+    # #686: seed_topic_map is dict(zip(seed_group_names, seed_topic_indices)).
+    docs = _planted_docs()
+    m = topica.GuidedNMF(3, SEEDS, weighting="count", seed=0).fit(docs, iters=80)
+    assert m.seed_topic_map == dict(zip(m.seed_group_names, list(m.seed_topic_indices)))
+
+
+def test_warns_when_seed_groups_collapse_onto_one_topic():
+    # #686: two seed groups that both point at the same content should collapse
+    # onto a shared topic, and fit() must warn (their prevalence is then
+    # indistinguishable) and expose the collision via seed_topic_map.
+    t1 = ["tax", "vote", "law", "bill", "budget", "senate"]
+    t2 = ["health", "clinic", "patient", "doctor", "care", "nurse"]
+    docs = [[t1[i % 6] for i in range(d, d + 4)] for d in range(120)]
+    docs += [[t2[i % 6] for i in range(d, d + 4)] for d in range(120)]
+    seeds = {"fiscal": ["tax", "vote"], "legislative": ["law", "bill"],
+             "medical": ["health", "clinic"]}
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        m = topica.GuidedNMF(3, seeds, seed=13).fit(docs)
+    idx = list(m.seed_topic_indices)
+    assert len(idx) != len(set(idx)), "expected two groups to share a topic"
+    assert any("collapsed onto a shared topic" in str(x.message) for x in w)
+
+
+def test_no_collapse_warning_when_groups_own_distinct_topics():
+    docs = _planted_docs()
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        m = topica.GuidedNMF(3, SEEDS, weighting="count", seed=0).fit(docs, iters=80)
+    assert len(set(m.seed_topic_indices)) == len(list(m.seed_topic_indices))
+    assert not any("collapsed onto a shared topic" in str(x.message) for x in w)
 
 
 def test_objective_decreases():
