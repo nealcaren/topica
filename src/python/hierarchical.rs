@@ -790,13 +790,14 @@ impl HLDA {
     /// inside each path resample across that many threads; the document loop and
     /// every tree mutation stay serial, so the fit is **bit-for-bit identical for any
     /// `num_threads`** — threading only speeds it up, it never changes the result.
-    #[pyo3(signature = (data, *, iters=500, num_threads=1))]
+    #[pyo3(signature = (data, *, iters=500, num_threads=1, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: usize,
         num_threads: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -830,7 +831,13 @@ impl HLDA {
             hlda::LevelPrior::Dirichlet(slf.alpha.clone())
         };
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
+        let progress = resolve_progress(py, progress, "HLDA");
         let (model, corpus) = py.allow_threads(move || {
+            let on_progress = |it: usize, total: usize| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress_bare(py, cb, it, total));
+                }
+            };
             let m = hlda::fit_hlda(
                 &corpus.docs,
                 num_types,
@@ -840,6 +847,7 @@ impl HLDA {
                 level_prior,
                 iters,
                 num_threads.max(1),
+                on_progress,
                 &mut rng,
             );
             (m, corpus)

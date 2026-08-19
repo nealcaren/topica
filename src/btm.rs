@@ -339,7 +339,7 @@ fn parallel_sweep_btm(
 /// runs MALLET-style approximate-parallel (AD-LDA) sampling over the biterms,
 /// deterministic for a fixed `num_threads` + seed.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_btm<R: Rng>(
+pub fn fit_btm<R: Rng, F: FnMut(usize, usize)>(
     docs: &[Vec<u32>],
     num_topics: usize,
     num_types: usize,
@@ -349,6 +349,7 @@ pub fn fit_btm<R: Rng>(
     window: usize,
     background: bool,
     num_threads: usize,
+    mut on_progress: F,
     rng: &mut R,
 ) -> BtmModel {
     let k = num_topics;
@@ -383,7 +384,7 @@ pub fn fit_btm<R: Rng>(
     let denom_z = b as f64 + k as f64 * alpha;
     let mut pz = vec![0.0f64; k];
 
-    for _ in 0..iters {
+    for it in 0..iters {
         if num_threads <= 1 {
             // Exact serial path — byte-identical to the pre-threading loop.
             run_sweep_btm_range(
@@ -421,6 +422,7 @@ pub fn fit_btm<R: Rng>(
                 sweep_seed,
             );
         }
+        on_progress(it + 1, iters);
     }
 
     // θ_k = (nb_z[k] + α) / (B + Kα).
@@ -549,6 +551,7 @@ mod tests {
             15,
             false,
             1,
+            |_, _| {},
             &mut rng,
         );
 
@@ -577,7 +580,19 @@ mod tests {
         let (docs, v) = planted(k, block, 60, 4, 123);
         let run = || {
             let mut rng = ChaCha8Rng::seed_from_u64(99);
-            fit_btm(&docs, k, v, 1.0, 0.01, 80, 15, false, 1, &mut rng)
+            fit_btm(
+                &docs,
+                k,
+                v,
+                1.0,
+                0.01,
+                80,
+                15,
+                false,
+                1,
+                |_, _| {},
+                &mut rng,
+            )
         };
         let a = run();
         let b = run();

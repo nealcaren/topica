@@ -1030,6 +1030,15 @@ fn emit_progress(py: Python<'_>, cb: &PyObject, iter: usize, total: usize, ll: f
     let _ = cb.call1(py, (iter, total, info));
 }
 
+/// Progress with no per-iteration metric: drives the bar/ETA only (empty info
+/// dict, so `topica.progress()` renders no sparkline). For samplers that do not
+/// compute a cheap per-sweep log-likelihood (BTM, HLDA), where the bar's value is
+/// the "is it still running?" signal rather than a convergence trace.
+fn emit_progress_bare(py: Python<'_>, cb: &PyObject, iter: usize, total: usize) {
+    let info = PyDict::new_bound(py);
+    let _ = cb.call1(py, (iter, total, info));
+}
+
 /// When the caller did not pass a `progress` callback, default to a live
 /// `topica.progress()` bar **only if stderr is an interactive terminal**, so
 /// interactive users get progress for free while scripts, pipelines, notebooks
@@ -14131,7 +14140,8 @@ impl SeededLDA {
     /// `1` is the exact serial path, and it is ignored by the warp/cvb0 backends.
     #[pyo3(signature = (data, *, iters=2000, doc_topic_prior=None,
                         keep_theta_draws=true, num_theta_draws=25,
-                        convergence_tol=0.0_f64, check_every=10_usize, num_threads=None))]
+                        convergence_tol=0.0_f64, check_every=10_usize, num_threads=None,
+                        progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -14143,6 +14153,7 @@ impl SeededLDA {
         convergence_tol: f64,
         check_every: usize,
         num_threads: Option<usize>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         // num_threads: fit()-level value overrides the constructor default; the
@@ -14340,7 +14351,13 @@ impl SeededLDA {
             return Ok(slf.into());
         }
 
+        let progress = resolve_progress(py, progress, "SeededLDA");
         let (model, ll_history, converged, corpus) = py.allow_threads(move || {
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             let (m, ll, conv) = seeded::fit_seeded_lda(
                 &corpus.docs,
                 num_types,
@@ -14356,6 +14373,7 @@ impl SeededLDA {
                 convergence_tol,
                 check_every,
                 num_threads,
+                &mut on_progress,
                 &mut rng,
             );
             (m, ll, conv, corpus)

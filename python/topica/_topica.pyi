@@ -2921,6 +2921,7 @@ class BTM:
     def fit(
         self, data: Corpus | Sequence[Sequence[str]], *, iters: int | None = None,
         num_threads: int | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "BTM":
         """num_threads overrides the constructor's worker count for this fit only
         (None = constructor value); >1 runs the biterm sweep as approximate-parallel
@@ -3631,7 +3632,7 @@ class HLDA:
 
         eta is a deprecated alias for beta."""
         ...
-    def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int = 500, num_threads: int = 1) -> "HLDA": ...
+    def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int = 500, num_threads: int = 1, progress: Callable[[int, int, dict], object] | None = None) -> "HLDA": ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
         """Node-word matrix, shape (num_nodes, num_words); rows sum to 1."""
@@ -3762,6 +3763,7 @@ class SeededLDA:
         convergence_tol: float = 0.0,
         check_every: int = 10,
         num_threads: int | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "SeededLDA":
         """Fit the seeded model. `convergence_tol` (default 0.0, disabled) enables
         opt-in log-likelihood early stopping on the default ("sparse") sampler,
