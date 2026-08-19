@@ -846,7 +846,16 @@ impl ETM {
         vocabulary: Vec<String>,
         iters: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let fitted = Self::fit(slf, py, data, word_embeddings, vocabulary, iters, None, None)?;
+        let fitted = Self::fit(
+            slf,
+            py,
+            data,
+            word_embeddings,
+            vocabulary,
+            iters,
+            None,
+            None,
+        )?;
         Ok(vecs_to_arr2(&fitted.bind(py).borrow().surf_doc_topic()?).to_pyarray_bound(py))
     }
 
