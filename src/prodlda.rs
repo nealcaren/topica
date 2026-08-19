@@ -2708,6 +2708,7 @@ mod tests {
                 0.01,
                 0.0,
                 AvitmOptions::default(),
+                |_, _, _| {},
                 &mut r1,
             );
             let b = fit_avitm(
@@ -2725,6 +2726,7 @@ mod tests {
                 0.01,
                 0.0,
                 AvitmOptions::default(),
+                |_, _, _| {},
                 &mut r2,
             );
             assert_eq!(

@@ -4599,6 +4599,7 @@ class Scholar:
         content: object | None = None,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "Scholar":
         """Fit on a Corpus or list of token lists with prior ``covariates``, supervised
         ``labels`` (str/int, one per document), and/or topic-covariate ``content``. At
@@ -6141,6 +6142,7 @@ class FASTopic:
         *,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "FASTopic":
         """Fit on token documents plus frozen document embeddings (num_docs x E).
         The vocabulary is taken from the corpus; the word embeddings are learned.

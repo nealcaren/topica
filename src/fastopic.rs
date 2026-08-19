@@ -528,7 +528,7 @@ fn theta_scale_grad(g_theta: f64, scale: usize) -> f64 {
 /// topic-word transport (reference defaults 3.0 and 2.0); `theta_temp` is the
 /// inference temperature (Eq. 9). `em_tol` stops on the relative loss change.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_fastopic<R: Rng>(
+pub fn fit_fastopic<R: Rng, F: FnMut(usize, usize, f64)>(
     docs: &[Vec<u32>],
     doc_emb: &[Vec<f64>],
     num_topics: usize,
@@ -541,6 +541,7 @@ pub fn fit_fastopic<R: Rng>(
     em_tol: f64,
     sinkhorn_iters: usize,
     sinkhorn_tol: f64,
+    mut on_progress: F,
     rng: &mut R,
 ) -> FastopicModel {
     let k = num_topics;
@@ -581,6 +582,7 @@ pub fn fit_fastopic<R: Rng>(
             sinkhorn_tol,
         );
         loss_history.push(loss);
+        on_progress(epoch + 1, epochs, -loss);
 
         // Flatten, step, unflatten the two embedding blocks.
         let mut te_flat: Vec<f64> = topic_emb.iter().flatten().copied().collect();
@@ -890,7 +892,20 @@ mod tests {
             .collect();
 
         let m = fit_fastopic(
-            &docs, &doc_emb, k, v, 300, 0.05, 3.0, 2.0, 1.0, 1e-6, 50, 1e-4, &mut rng,
+            &docs,
+            &doc_emb,
+            k,
+            v,
+            300,
+            0.05,
+            3.0,
+            2.0,
+            1.0,
+            1e-6,
+            50,
+            1e-4,
+            |_, _, _| {},
+            &mut rng,
         );
         assert_eq!(m.topic_word.len(), k);
         // Loss decreases overall.
@@ -935,7 +950,20 @@ mod tests {
             })
             .collect();
         let m = fit_fastopic(
-            &docs, &doc_emb, k, v, 300, 0.05, 3.0, 2.0, 1.0, 1e-6, 50, 1e-4, &mut rng,
+            &docs,
+            &doc_emb,
+            k,
+            v,
+            300,
+            0.05,
+            3.0,
+            2.0,
+            1.0,
+            1e-6,
+            50,
+            1e-4,
+            |_, _, _| {},
+            &mut rng,
         );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);

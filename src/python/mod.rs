@@ -15095,7 +15095,7 @@ impl FASTopic {
     /// the corpus; FASTopic learns the word embeddings itself, so none are passed.
     /// `iters` sets the number of training epochs (default 200).
     /// `convergence_tol` overrides the constructor value for this run (when given).
-    #[pyo3(signature = (data, doc_embeddings, *, iters=None, convergence_tol=None))]
+    #[pyo3(signature = (data, doc_embeddings, *, iters=None, convergence_tol=None, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -15103,6 +15103,7 @@ impl FASTopic {
         doc_embeddings: &Bound<'_, PyAny>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         if let Some(t) = convergence_tol {
             // Guard-parity (#517): the fit-time override must satisfy the same
@@ -15161,9 +15162,28 @@ impl FASTopic {
             slf.sinkhorn_tol,
         );
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
+        let progress = resolve_progress(py, progress, "FASTopic");
         let model = py.allow_threads(move || {
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             fastopic::fit_fastopic(
-                &docs_ids, &doc_emb, k, num_types, ep, lr, dta, twa, tt, et, si, st, &mut rng,
+                &docs_ids,
+                &doc_emb,
+                k,
+                num_types,
+                ep,
+                lr,
+                dta,
+                twa,
+                tt,
+                et,
+                si,
+                st,
+                &mut on_progress,
+                &mut rng,
             )
         });
         slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
@@ -15342,7 +15362,7 @@ impl FASTopic {
         data: &Bound<'py, PyAny>,
         doc_embeddings: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let fitted = Self::fit(slf, py, data, doc_embeddings, None, None)?;
+        let fitted = Self::fit(slf, py, data, doc_embeddings, None, None, None)?;
         Ok(vecs_to_arr2(&fitted.bind(py).borrow().fitted_model()?.doc_topic).to_pyarray_bound(py))
     }
 
