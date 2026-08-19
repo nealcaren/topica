@@ -569,6 +569,7 @@ class CTM:
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
         spectral_projection_threshold: int = 10000,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "CTM":
         """EM stops once the relative change in the variational bound falls below
         convergence_tol or after iters iterations, whichever comes first. Pass
@@ -753,6 +754,7 @@ class STM:
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
         spectral_projection_threshold: int = 10000,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "STM":
         """Fit. prevalence (or covariates, a symmetric alias) is (num_docs, F)
         covariates driving topic proportions (mu_d = X_d gamma; intercept
@@ -1336,6 +1338,7 @@ class DTM:
         times: Sequence[int],
         *,
         iters: int = 20,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "DTM":
         """Fit by variational EM. `times` is each document's integer time-slice
         index (0-based, contiguous); the slice count is max(times)+1."""
@@ -1476,6 +1479,7 @@ class DETM:
         timestamps: Sequence[int] | None = None,
         iters: int = 100,
         convergence_tol: float | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "DETM":
         """Fit on `data` with `word_embeddings` (len(vocabulary), L) aligned to
         `vocabulary`. `times` is each document's integer time-slice index (0-based,
@@ -2920,6 +2924,7 @@ class BTM:
     def fit(
         self, data: Corpus | Sequence[Sequence[str]], *, iters: int | None = None,
         num_threads: int | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "BTM":
         """num_threads overrides the constructor's worker count for this fit only
         (None = constructor value); >1 runs the biterm sweep as approximate-parallel
@@ -3630,7 +3635,7 @@ class HLDA:
 
         eta is a deprecated alias for beta."""
         ...
-    def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int = 500, num_threads: int = 1) -> "HLDA": ...
+    def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int = 500, num_threads: int = 1, progress: Callable[[int, int, dict], object] | None = None) -> "HLDA": ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
         """Node-word matrix, shape (num_nodes, num_words); rows sum to 1."""
@@ -3761,6 +3766,7 @@ class SeededLDA:
         convergence_tol: float = 0.0,
         check_every: int = 10,
         num_threads: int | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "SeededLDA":
         """Fit the seeded model. `convergence_tol` (default 0.0, disabled) enables
         opt-in log-likelihood early stopping on the default ("sparse") sampler,
@@ -4278,6 +4284,7 @@ class ETM:
         *,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "ETM":
         """Fit on token documents plus word embeddings (len(vocabulary) x E) and
         the aligned vocabulary, which defines the word ids. `iters` sets the number
@@ -4395,6 +4402,7 @@ class InfoCTM:
         embeddings_b: dict[str, Sequence[float]] | None = None,
         iters: int | None = None,
         batch_size: int = 128,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "InfoCTM":
         """Fit both languages jointly. ``dictionary`` is an iterable of
         ``(word_a, word_b)`` pairs; ``embeddings_*`` are optional ``{word: vector}``
@@ -4487,6 +4495,7 @@ class ProdLDA:
         *,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "ProdLDA":
         """Fit on a Corpus or a list of token lists. `iters` sets the number of epochs.
 
@@ -4595,6 +4604,7 @@ class Scholar:
         content: object | None = None,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "Scholar":
         """Fit on a Corpus or list of token lists with prior ``covariates``, supervised
         ``labels`` (str/int, one per document), and/or topic-covariate ``content``. At
@@ -6137,6 +6147,7 @@ class FASTopic:
         *,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "FASTopic":
         """Fit on token documents plus frozen document embeddings (num_docs x E).
         The vocabulary is taken from the corpus; the word embeddings are learned.

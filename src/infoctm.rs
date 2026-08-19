@@ -338,7 +338,7 @@ pub struct InfoctmModel {
 /// masks. Hyperparameters mirror the reference (lr 0.002, hidden 100, dropout 0,
 /// temperature 0.2, pos_threshold 0.4, weight 30). Returns the two fitted models.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_infoctm<R: Rng>(
+pub fn fit_infoctm<R: Rng, F: FnMut(usize, usize, f64)>(
     docs_a: &[Vec<u32>],
     docs_b: &[Vec<u32>],
     va: usize,
@@ -356,6 +356,7 @@ pub fn fit_infoctm<R: Rng>(
     temperature: f64,
     pos_threshold: f64,
     em_tol: f64,
+    mut on_progress: F,
     rng: &mut R,
 ) -> InfoctmModel {
     let k = num_topics;
@@ -427,9 +428,11 @@ pub fn fit_infoctm<R: Rng>(
         }
         let avg = epoch_loss / steps.max(1) as f64;
         bound_history.push(-avg);
+        on_progress(epoch + 1, epochs, -avg);
         if em_tol > 0.0 && bound_history.len() >= 2 {
             let prev = bound_history[bound_history.len() - 2];
             if (-avg - prev).abs() / (prev.abs() + 1e-12) < em_tol {
+                on_progress(epoch + 1, epoch + 1, -avg); // snap bar to 100% (#786)
                 converged = true;
                 break;
             }
@@ -688,8 +691,25 @@ mod tests {
         let trans = block_dict(va, vb, k);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         fit_infoctm(
-            &docs_a, &docs_b, va, vb, &trans, None, None, k, 32, 0.0, 60, 40, 0.01, 30.0, 0.2, 0.4,
-            0.0, &mut rng,
+            &docs_a,
+            &docs_b,
+            va,
+            vb,
+            &trans,
+            None,
+            None,
+            k,
+            32,
+            0.0,
+            60,
+            40,
+            0.01,
+            30.0,
+            0.2,
+            0.4,
+            0.0,
+            |_, _, _| {},
+            &mut rng,
         )
     }
 

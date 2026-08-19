@@ -179,13 +179,14 @@ impl BTM {
     /// value); `>1` runs the biterm Gibbs sweep as approximate-parallel AD-LDA
     /// (deterministic for a fixed `num_threads`+`seed`), `1` is the exact serial
     /// path.
-    #[pyo3(signature = (data, *, iters=None, num_threads=None))]
+    #[pyo3(signature = (data, *, iters=None, num_threads=None, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: Option<usize>,
         num_threads: Option<usize>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -223,8 +224,14 @@ impl BTM {
             slf.seed,
         );
 
+        let progress = resolve_progress(py, progress, "BTM");
         let (model, corpus) = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let mut on_progress = |it: usize, total: usize| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress_bare(py, cb, it, total));
+                }
+            };
             let m = crate::btm::fit_btm(
                 &corpus.docs,
                 k,
@@ -235,6 +242,7 @@ impl BTM {
                 window,
                 background,
                 num_threads,
+                &mut on_progress,
                 &mut rng,
             );
             (m, corpus)

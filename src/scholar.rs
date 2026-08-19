@@ -184,7 +184,7 @@ fn prior_mean_for(prior_w: &[f64], pc: &[f64], k: usize, n_pc: usize) -> Vec<f64
 /// covariate prior-mean update and, when labeled, a softmax classifier off `theta`
 /// whose cross-entropy loss trains `wc`/`bc` and pushes a gradient back into `theta`.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_scholar<R: Rng>(
+pub fn fit_scholar<R: Rng, F: FnMut(usize, usize, f64)>(
     docs: &[Vec<u32>],
     pcs: &[Vec<f64>],
     labels: Option<&[usize]>,
@@ -204,6 +204,7 @@ pub fn fit_scholar<R: Rng>(
     lr: f64,
     l2_prior_reg: f64,
     em_tol: f64,
+    mut on_progress: F,
     rng: &mut R,
 ) -> ScholarModel {
     let (k, v, pc, tc) = (num_topics, num_types, n_prior_covars, n_topic_covars);
@@ -501,10 +502,12 @@ pub fn fit_scholar<R: Rng>(
 
         let avg = epoch_loss / batches.max(1) as f64;
         bound_history.push(-avg); // report the ELBO (negative loss)
+        on_progress(epoch + 1, epochs, -avg);
         if em_tol > 0.0 && bound_history.len() >= 2 {
             let prev = bound_history[bound_history.len() - 2];
             let rel = (-avg - prev).abs() / (prev.abs() + 1e-12);
             if rel < em_tol {
+                on_progress(epoch + 1, epoch + 1, -avg); // snap bar to 100% (#786)
                 converged = true;
                 break;
             }
@@ -777,8 +780,27 @@ mod tests {
         }
 
         let m = fit_scholar(
-            &docs, &pcs, None, 0, NO_TC, 0, false, 0.0, k, v, 2, 20, 1.0, 0.2, 120, 40, 0.01, 0.0,
-            0.0, &mut rng,
+            &docs,
+            &pcs,
+            None,
+            0,
+            NO_TC,
+            0,
+            false,
+            0.0,
+            k,
+            v,
+            2,
+            20,
+            1.0,
+            0.2,
+            120,
+            40,
+            0.01,
+            0.0,
+            0.0,
+            |_, _, _| {},
+            &mut rng,
         );
 
         // Topic-word rows are valid distributions.
@@ -827,8 +849,27 @@ mod tests {
         let run = || {
             let mut rng = ChaCha8Rng::seed_from_u64(3);
             fit_scholar(
-                &docs, &pcs, None, 0, NO_TC, 0, false, 0.0, 2, 6, 2, 8, 1.0, 0.2, 15, 4, 0.01,
-                0.01, 0.0, &mut rng,
+                &docs,
+                &pcs,
+                None,
+                0,
+                NO_TC,
+                0,
+                false,
+                0.0,
+                2,
+                6,
+                2,
+                8,
+                1.0,
+                0.2,
+                15,
+                4,
+                0.01,
+                0.01,
+                0.0,
+                |_, _, _| {},
+                &mut rng,
             )
         };
         let a = run();
@@ -981,6 +1022,7 @@ mod tests {
             0.01,
             0.0,
             0.0,
+            |_, _, _| {},
             &mut rng,
         );
 
@@ -1031,6 +1073,7 @@ mod tests {
                 0.01,
                 0.0,
                 0.0,
+                |_, _, _| {},
                 &mut rng,
             )
         };
@@ -1243,8 +1286,27 @@ mod tests {
         }
         let pcs: Vec<Vec<f64>> = vec![Vec::new(); docs.len()];
         let m = fit_scholar(
-            &docs, &pcs, None, 0, &tcs, 2, false, 0.0, k, v, 0, 20, 1.0, 0.2, 200, 40, 0.01, 0.0,
-            0.0, &mut rng,
+            &docs,
+            &pcs,
+            None,
+            0,
+            &tcs,
+            2,
+            false,
+            0.0,
+            k,
+            v,
+            0,
+            20,
+            1.0,
+            0.2,
+            200,
+            40,
+            0.01,
+            0.0,
+            0.0,
+            |_, _, _| {},
+            &mut rng,
         );
         let eff = m.content_effects();
         assert_eq!(eff.len(), 2);
@@ -1284,8 +1346,27 @@ mod tests {
         let run = || {
             let mut rng = ChaCha8Rng::seed_from_u64(5);
             fit_scholar(
-                &docs, &pcs, None, 0, &tcs, 2, true, 0.0, 2, 6, 0, 8, 1.0, 0.2, 15, 4, 0.01, 0.0,
-                0.0, &mut rng,
+                &docs,
+                &pcs,
+                None,
+                0,
+                &tcs,
+                2,
+                true,
+                0.0,
+                2,
+                6,
+                0,
+                8,
+                1.0,
+                0.2,
+                15,
+                4,
+                0.01,
+                0.0,
+                0.0,
+                |_, _, _| {},
+                &mut rng,
             )
         };
         let a = run();

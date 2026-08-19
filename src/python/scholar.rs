@@ -383,7 +383,7 @@ impl Scholar {
     /// must be given. `iters` sets the number of epochs (default 200);
     /// `convergence_tol` overrides the constructor value for this run.
     #[pyo3(signature = (data, *, covariates=None, labels=None, content=None, iters=None,
-                        convergence_tol=None))]
+                        convergence_tol=None, progress=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -394,6 +394,7 @@ impl Scholar {
         content: Option<&Bound<'_, PyAny>>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -501,8 +502,14 @@ impl Scholar {
             slf.l1_content_reg,
         );
         let seed = slf.seed;
+        let progress = resolve_progress(py, progress, "Scholar");
         let (model, corpus) = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             let m = crate::scholar::fit_scholar(
                 &corpus.docs,
                 &pcs,
@@ -523,6 +530,7 @@ impl Scholar {
                 lr,
                 l2,
                 tol,
+                &mut on_progress,
                 &mut rng,
             );
             (m, corpus)

@@ -1030,6 +1030,15 @@ fn emit_progress(py: Python<'_>, cb: &PyObject, iter: usize, total: usize, ll: f
     let _ = cb.call1(py, (iter, total, info));
 }
 
+/// Progress with no per-iteration metric: drives the bar/ETA only (empty info
+/// dict, so `topica.progress()` renders no sparkline). For samplers that do not
+/// compute a cheap per-sweep log-likelihood (BTM, HLDA), where the bar's value is
+/// the "is it still running?" signal rather than a convergence trace.
+fn emit_progress_bare(py: Python<'_>, cb: &PyObject, iter: usize, total: usize) {
+    let info = PyDict::new_bound(py);
+    let _ = cb.call1(py, (iter, total, info));
+}
+
 /// When the caller did not pass a `progress` callback, default to a live
 /// `topica.progress()` bar **only if stderr is an interactive terminal**, so
 /// interactive users get progress for free while scripts, pipelines, notebooks
@@ -7383,10 +7392,13 @@ impl CTM {
     /// deterministic random projection. The default (10000) matches R `stm`, which
     /// stays exact up to that size; lower it to force the cheaper approximate path
     /// on smaller vocabularies. It only affects `init="spectral"` runs.
+    /// `progress` is an optional `(iteration, total, info)` callback for a live
+    /// progress bar (see `topica.progress`); omitted, a bar shows in an interactive terminal.
     #[pyo3(signature = (data, *, iters=500, convergence_tol=1e-5, inference="batch",
                         batch_size=256, tau=64.0, kappa=0.7, beta_init=None, em_tol=None,
                         keep_eta_cov=true, num_threads=None,
-                        spectral_projection_threshold=spectral::DEFAULT_PROJ_THRESHOLD))]
+                        spectral_projection_threshold=spectral::DEFAULT_PROJ_THRESHOLD,
+                        progress=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -7403,6 +7415,7 @@ impl CTM {
         keep_eta_cov: bool,
         num_threads: Option<usize>,
         spectral_projection_threshold: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
@@ -7464,9 +7477,17 @@ impl CTM {
 
         let init_beta = parse_init_beta(beta_init, k, num_types, svi)?;
 
+        let progress = resolve_progress(py, progress, "CTM");
         let (model, corpus) = py.allow_threads(move || {
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             let m = run_with_threads(num_threads, || {
                 if svi {
+                    // The stochastic (SVI) inference path is not yet wired for
+                    // progress; only the default batch EM below reports (#786).
                     ctm::fit_ctm_svi(
                         &corpus.docs,
                         k,
@@ -7502,6 +7523,7 @@ impl CTM {
                         keep_eta_cov,
                         diagonal,
                         spectral_projection_threshold,
+                        &mut on_progress,
                         &mut rng,
                     )
                 }
@@ -8282,13 +8304,16 @@ impl STM {
     /// exact init for any vocabulary at or below 10000 types. Lower it to force the
     /// cheaper approximate path on smaller vocabularies (trading fidelity for
     /// speed/memory). It has no effect when the constructor sets `init="random"`.
+    /// `progress` is an optional `(iteration, total, info)` callback for a live
+    /// progress bar (see `topica.progress`); omitted, a bar shows in an interactive terminal.
     #[pyo3(signature = (data, prevalence=None, *, prevalence_names=None,
                         content=None, content_names=None, content_time=None, content_smooth=1.0,
                         content_prior_var=0.5, content_prior="l2",
                         iters=500, convergence_tol=1e-5,
                         gamma_prior="pooled", gamma_enet=1.0, beta_init=None, em_tol=None,
                         covariates=None, keep_eta_cov=true, num_threads=None,
-                        spectral_projection_threshold=spectral::DEFAULT_PROJ_THRESHOLD))]
+                        spectral_projection_threshold=spectral::DEFAULT_PROJ_THRESHOLD,
+                        progress=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -8312,6 +8337,7 @@ impl STM {
         keep_eta_cov: bool,
         num_threads: Option<usize>,
         spectral_projection_threshold: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
@@ -8586,9 +8612,15 @@ impl STM {
 
         let init_beta = parse_init_beta(beta_init, k, num_types, false)?;
 
+        let progress = resolve_progress(py, progress, "STM");
         let (model, corpus) = py.allow_threads(move || {
             let prev_ref = prevalence_x.as_deref();
             let cont_ref = content_groups.as_ref().map(|(g, n)| (g.as_slice(), *n));
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             let m = run_with_threads(num_threads, || {
                 ctm::fit_ctm(
                     &corpus.docs,
@@ -8608,6 +8640,7 @@ impl STM {
                     keep_eta_cov,
                     diagonal,
                     spectral_projection_threshold,
+                    &mut on_progress,
                     &mut rng,
                 )
             });
@@ -11478,13 +11511,16 @@ impl DTM {
     /// `times` gives each document's integer time-slice index (0-based,
     /// contiguous). The number of slices is inferred as ``max(times) + 1``.
     /// `iters` is the number of variational-EM iterations.
-    #[pyo3(signature = (data, times, *, iters=20))]
+    /// `progress` is an optional `(iteration, total, info)` callback for a live
+    /// progress bar (see `topica.progress`); omitted, a bar shows in an interactive terminal.
+    #[pyo3(signature = (data, times, *, iters=20, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         times: Vec<i64>,
         iters: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -11536,7 +11572,13 @@ impl DTM {
         let init_spectral = slf.init_spectral;
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
+        let progress = resolve_progress(py, progress, "DTM");
         let (model, corpus) = py.allow_threads(move || {
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             let m = dtm::fit_dtm(
                 &corpus.docs,
                 &times_u,
@@ -11548,6 +11590,7 @@ impl DTM {
                 ov,
                 iters,
                 init_spectral,
+                &mut on_progress,
                 &mut rng,
             );
             (m, corpus)
@@ -14129,9 +14172,12 @@ impl SeededLDA {
     /// (`None` = constructor value); `>1` runs the sparse seeded-Gibbs sweep as
     /// approximate-parallel AD-LDA (deterministic for a fixed `num_threads`+`seed`),
     /// `1` is the exact serial path, and it is ignored by the warp/cvb0 backends.
+    /// `progress` is an optional `(iteration, total, info)` callback for a live
+    /// progress bar (see `topica.progress`); omitted, a bar shows in an interactive terminal.
     #[pyo3(signature = (data, *, iters=2000, doc_topic_prior=None,
                         keep_theta_draws=true, num_theta_draws=25,
-                        convergence_tol=0.0_f64, check_every=10_usize, num_threads=None))]
+                        convergence_tol=0.0_f64, check_every=10_usize, num_threads=None,
+                        progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -14143,6 +14189,7 @@ impl SeededLDA {
         convergence_tol: f64,
         check_every: usize,
         num_threads: Option<usize>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         // num_threads: fit()-level value overrides the constructor default; the
@@ -14340,7 +14387,13 @@ impl SeededLDA {
             return Ok(slf.into());
         }
 
+        let progress = resolve_progress(py, progress, "SeededLDA");
         let (model, ll_history, converged, corpus) = py.allow_threads(move || {
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             let (m, ll, conv) = seeded::fit_seeded_lda(
                 &corpus.docs,
                 num_types,
@@ -14356,6 +14409,7 @@ impl SeededLDA {
                 convergence_tol,
                 check_every,
                 num_threads,
+                &mut on_progress,
                 &mut rng,
             );
             (m, ll, conv, corpus)
@@ -15095,7 +15149,9 @@ impl FASTopic {
     /// the corpus; FASTopic learns the word embeddings itself, so none are passed.
     /// `iters` sets the number of training epochs (default 200).
     /// `convergence_tol` overrides the constructor value for this run (when given).
-    #[pyo3(signature = (data, doc_embeddings, *, iters=None, convergence_tol=None))]
+    /// `progress` is an optional `(iteration, total, info)` callback for a live
+    /// progress bar (see `topica.progress`); omitted, a bar shows in an interactive terminal.
+    #[pyo3(signature = (data, doc_embeddings, *, iters=None, convergence_tol=None, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -15103,6 +15159,7 @@ impl FASTopic {
         doc_embeddings: &Bound<'_, PyAny>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         if let Some(t) = convergence_tol {
             // Guard-parity (#517): the fit-time override must satisfy the same
@@ -15161,9 +15218,28 @@ impl FASTopic {
             slf.sinkhorn_tol,
         );
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
+        let progress = resolve_progress(py, progress, "FASTopic");
         let model = py.allow_threads(move || {
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             fastopic::fit_fastopic(
-                &docs_ids, &doc_emb, k, num_types, ep, lr, dta, twa, tt, et, si, st, &mut rng,
+                &docs_ids,
+                &doc_emb,
+                k,
+                num_types,
+                ep,
+                lr,
+                dta,
+                twa,
+                tt,
+                et,
+                si,
+                st,
+                &mut on_progress,
+                &mut rng,
             )
         });
         slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
@@ -15342,7 +15418,7 @@ impl FASTopic {
         data: &Bound<'py, PyAny>,
         doc_embeddings: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let fitted = Self::fit(slf, py, data, doc_embeddings, None, None)?;
+        let fitted = Self::fit(slf, py, data, doc_embeddings, None, None, None)?;
         Ok(vecs_to_arr2(&fitted.bind(py).borrow().fitted_model()?.doc_topic).to_pyarray_bound(py))
     }
 

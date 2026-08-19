@@ -973,7 +973,7 @@ fn alpha_rw_kl_and_grad(
 /// before every `exp` for numerical stability (see [`clamp_logvar`]); on the stable
 /// training path the clamp is never reached, so default fits are unchanged.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_detm<R: Rng>(
+pub fn fit_detm<R: Rng, F: FnMut(usize, usize, f64)>(
     tokens: &[Vec<u32>],
     counts: &[Vec<u32>],
     times: &[usize],
@@ -991,6 +991,7 @@ pub fn fit_detm<R: Rng>(
     wdecay: f64,
     em_tol: f64,
     grad_clip: Option<f64>,
+    mut on_progress: F,
     rng: &mut R,
 ) -> DetmModel {
     let (k, v, t, l) = (
@@ -1526,10 +1527,12 @@ pub fn fit_detm<R: Rng>(
             f64::NAN
         };
         bound_history.push(-avg); // ELBO == negative loss
+        on_progress(epoch + 1, epochs, -avg);
         if em_tol > 0.0 && bound_history.len() >= 2 {
             let prev = bound_history[bound_history.len() - 2];
             let rel = (-avg - prev).abs() / (prev.abs() + 1e-12);
             if rel < em_tol {
+                on_progress(epoch + 1, epoch + 1, -avg); // snap bar to 100% (#786)
                 converged = true;
                 break;
             }
@@ -1736,8 +1739,25 @@ mod tests {
         let (k, block, t, d_per_t) = (3usize, 6usize, 4usize, 20usize);
         let (tokens, counts, times, rho, v) = planted_corpus(&mut rng, k, block, t, d_per_t);
         let m = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 32, 16, 2, 30, 64, 0.02, 1.2e-6, 0.0,
-            None, &mut rng,
+            &tokens,
+            &counts,
+            &times,
+            k,
+            v,
+            t,
+            &rho,
+            0.005,
+            32,
+            16,
+            2,
+            30,
+            64,
+            0.02,
+            1.2e-6,
+            0.0,
+            None,
+            |_, _, _| {},
+            &mut rng,
         );
         assert_eq!(m.num_topics, k);
         assert_eq!(m.num_times, t);
@@ -1771,13 +1791,47 @@ mod tests {
 
         let mut rng_a = ChaCha8Rng::seed_from_u64(123);
         let a = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 20, 64, 0.02, 1.2e-6, 0.0,
-            None, &mut rng_a,
+            &tokens,
+            &counts,
+            &times,
+            k,
+            v,
+            t,
+            &rho,
+            0.005,
+            16,
+            16,
+            2,
+            20,
+            64,
+            0.02,
+            1.2e-6,
+            0.0,
+            None,
+            |_, _, _| {},
+            &mut rng_a,
         );
         let mut rng_b = ChaCha8Rng::seed_from_u64(123);
         let b = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 20, 64, 0.02, 1.2e-6, 0.0,
-            None, &mut rng_b,
+            &tokens,
+            &counts,
+            &times,
+            k,
+            v,
+            t,
+            &rho,
+            0.005,
+            16,
+            16,
+            2,
+            20,
+            64,
+            0.02,
+            1.2e-6,
+            0.0,
+            None,
+            |_, _, _| {},
+            &mut rng_b,
         );
         for tt in 0..t {
             for kk in 0..k {
@@ -1794,8 +1848,25 @@ mod tests {
         let (k, block, t, d_per_t) = (3usize, 8usize, 5usize, 40usize);
         let (tokens, counts, times, rho, v) = planted_corpus(&mut rng, k, block, t, d_per_t);
         let m = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 32, 32, 2, 300, 1000, 0.02, 1.2e-6,
-            0.0, None, &mut rng,
+            &tokens,
+            &counts,
+            &times,
+            k,
+            v,
+            t,
+            &rho,
+            0.005,
+            32,
+            32,
+            2,
+            300,
+            1000,
+            0.02,
+            1.2e-6,
+            0.0,
+            None,
+            |_, _, _| {},
+            &mut rng,
         );
         // The time-varying topic prior eta (the latent the random walk regularizes)
         // should move across the slices for at least one topic, recovering the
@@ -2137,8 +2208,25 @@ mod tests {
         let (k, block, t, d_per_t) = (3usize, 6usize, 4usize, 20usize);
         let (tokens, counts, times, rho, v) = planted_corpus(&mut rng, k, block, t, d_per_t);
         let m = fit_detm(
-            &tokens, &counts, &times, k, v, t, &rho, 0.005, 16, 16, 2, 25, 64, 0.02, 1.2e-6, 0.0,
-            None, &mut rng,
+            &tokens,
+            &counts,
+            &times,
+            k,
+            v,
+            t,
+            &rho,
+            0.005,
+            16,
+            16,
+            2,
+            25,
+            64,
+            0.02,
+            1.2e-6,
+            0.0,
+            None,
+            |_, _, _| {},
+            &mut rng,
         );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
