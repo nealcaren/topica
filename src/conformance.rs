@@ -436,6 +436,7 @@ mod ctm_conformance_tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            |_, _, _| {},
             &mut rng,
         );
 

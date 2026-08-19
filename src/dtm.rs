@@ -565,7 +565,7 @@ pub(crate) fn init_suffstats<R: Rng>(
 /// Fit a Dynamic Topic Model. `times[d]` is the slice index (0..num_times) of
 /// document `d`. Returns the fitted model. Deterministic for a fixed `rng`.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_dtm<R: Rng>(
+pub fn fit_dtm<R: Rng, F: FnMut(usize, usize, f64)>(
     docs: &[Vec<u32>],
     times: &[usize],
     num_types: usize,
@@ -576,6 +576,7 @@ pub fn fit_dtm<R: Rng>(
     obs_variance: f64,
     em_iters: usize,
     init_spectral: bool,
+    mut on_progress: F,
     rng: &mut R,
 ) -> DtmModel {
     let k = num_topics;
@@ -679,6 +680,7 @@ pub fn fit_dtm<R: Rng>(
             topic_bound += chains[kk].fit(&sstats[kk]);
         }
         bound = doc_bound + topic_bound;
+        on_progress(iter + 1, em_iters, bound);
         if bound < old_bound && lda_max_iter < 10 {
             lda_max_iter *= 2; // gensim: back off when the bound dips
         }
@@ -782,7 +784,20 @@ mod tests {
 
         // Looser chain variance: the planted drift is abrupt (disjoint vocab per
         // slice), so the random walk needs room to move between slices.
-        let model = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.5, 0.5, 20, false, &mut rng);
+        let model = fit_dtm(
+            &docs,
+            &times,
+            v,
+            2,
+            3,
+            0.01,
+            0.5,
+            0.5,
+            20,
+            false,
+            |_, _, _| {},
+            &mut rng,
+        );
 
         // Identify the drifting topic as the one whose top word changes across
         // slices; the other should be the stable {10,11,12} topic.
@@ -848,8 +863,34 @@ mod tests {
         let times: Vec<usize> = (0..30).map(|d| d % 3).collect();
         let mut r1 = ChaCha8Rng::seed_from_u64(5);
         let mut r2 = ChaCha8Rng::seed_from_u64(99);
-        let m1 = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, true, &mut r1);
-        let m2 = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, true, &mut r2);
+        let m1 = fit_dtm(
+            &docs,
+            &times,
+            v,
+            2,
+            3,
+            0.01,
+            0.005,
+            0.5,
+            8,
+            true,
+            |_, _, _| {},
+            &mut r1,
+        );
+        let m2 = fit_dtm(
+            &docs,
+            &times,
+            v,
+            2,
+            3,
+            0.01,
+            0.005,
+            0.5,
+            8,
+            true,
+            |_, _, _| {},
+            &mut r2,
+        );
         assert_eq!(m1.topic_word(0, 0), m2.topic_word(0, 0));
         assert_eq!(m1.topic_word(1, 2), m2.topic_word(1, 2));
     }
@@ -863,8 +904,34 @@ mod tests {
         let times: Vec<usize> = (0..30).map(|d| d % 3).collect();
         let mut r1 = ChaCha8Rng::seed_from_u64(5);
         let mut r2 = ChaCha8Rng::seed_from_u64(5);
-        let m1 = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, false, &mut r1);
-        let m2 = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, false, &mut r2);
+        let m1 = fit_dtm(
+            &docs,
+            &times,
+            v,
+            2,
+            3,
+            0.01,
+            0.005,
+            0.5,
+            8,
+            false,
+            |_, _, _| {},
+            &mut r1,
+        );
+        let m2 = fit_dtm(
+            &docs,
+            &times,
+            v,
+            2,
+            3,
+            0.01,
+            0.005,
+            0.5,
+            8,
+            false,
+            |_, _, _| {},
+            &mut r2,
+        );
         assert_eq!(m1.topic_word(0, 0), m2.topic_word(0, 0));
         assert_eq!(m1.topic_word(1, 2), m2.topic_word(1, 2));
     }
@@ -974,7 +1041,20 @@ mod tests {
             .collect();
         let times: Vec<usize> = vec![0; docs.len()];
         let mut rng = ChaCha8Rng::seed_from_u64(3);
-        let m = fit_dtm(&docs, &times, v, 2, 1, 0.01, 0.005, 0.5, 6, false, &mut rng);
+        let m = fit_dtm(
+            &docs,
+            &times,
+            v,
+            2,
+            1,
+            0.01,
+            0.005,
+            0.5,
+            6,
+            false,
+            |_, _, _| {},
+            &mut rng,
+        );
         assert_eq!(m.num_times, 1);
         for k in 0..2 {
             let row = m.topic_word(k, 0);
@@ -998,7 +1078,20 @@ mod tests {
             .collect();
         let times: Vec<usize> = (0..30).map(|d| d % 3).collect();
         let mut rng = ChaCha8Rng::seed_from_u64(5);
-        let m = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, true, &mut rng);
+        let m = fit_dtm(
+            &docs,
+            &times,
+            v,
+            2,
+            3,
+            0.01,
+            0.005,
+            0.5,
+            8,
+            true,
+            |_, _, _| {},
+            &mut rng,
+        );
         assert_eq!(m.doc_topic.len(), docs.len());
         for row in &m.doc_topic {
             assert_eq!(row.len(), 2);
@@ -1018,7 +1111,20 @@ mod tests {
             .collect();
         let times: Vec<usize> = (0..30).map(|d| d % 3).collect();
         let mut rng = ChaCha8Rng::seed_from_u64(5);
-        let m = fit_dtm(&docs, &times, v, 2, 3, 0.01, 0.005, 0.5, 8, true, &mut rng);
+        let m = fit_dtm(
+            &docs,
+            &times,
+            v,
+            2,
+            3,
+            0.01,
+            0.005,
+            0.5,
+            8,
+            true,
+            |_, _, _| {},
+            &mut rng,
+        );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }

@@ -1107,7 +1107,7 @@ fn mu_from(x_d: &[f64], gamma: &[Vec<f64>], km1: usize) -> Vec<f64> {
 /// [`crate::spectral::DEFAULT_PROJ_THRESHOLD`] to match R `stm`. It only matters
 /// when `init_spectral` is set.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_ctm<R: Rng>(
+pub fn fit_ctm<R: Rng, F: FnMut(usize, usize, f64)>(
     docs: &[Vec<u32>],
     num_topics: usize,
     num_types: usize,
@@ -1125,6 +1125,7 @@ pub fn fit_ctm<R: Rng>(
     keep_nu: bool,
     diagonal: bool,
     spectral_proj_threshold: usize,
+    mut on_progress: F,
     rng: &mut R,
 ) -> CtmModel {
     let k = num_topics;
@@ -1384,6 +1385,7 @@ pub fn fit_ctm<R: Rng>(
         // computed with the parameters from the previous M-step — the quantity
         // whose relative change drives convergence.
         bound_history.push(total_bound);
+        on_progress(em + 1, em_iters, total_bound);
 
         // Convergence: stop once the relative change in the corpus bound falls
         // below `em_tol`. Break before the M-step, so the returned β/Σ/γ are the
@@ -1917,6 +1919,7 @@ mod tests {
                 true,
                 false,
                 crate::spectral::DEFAULT_PROJ_THRESHOLD,
+                |_, _, _| {},
                 &mut rng,
             )
         };
@@ -2324,6 +2327,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            |_, _, _| {},
             &mut rng,
         );
         let theta = model.doc_topics();
@@ -2374,6 +2378,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            |_, _, _| {},
             &mut rng,
         );
         let cb = model.content_beta.expect("content_beta present");
@@ -2451,6 +2456,7 @@ mod tests {
                 true,
                 false,
                 crate::spectral::DEFAULT_PROJ_THRESHOLD,
+                |_, _, _| {},
                 &mut rng,
             )
             .content_beta
@@ -2520,6 +2526,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            |_, _, _| {},
             &mut rng,
         );
         // The bound trajectory is (weakly) monotone increasing.
@@ -2555,6 +2562,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            |_, _, _| {},
             &mut rng2,
         );
         assert!(!capped.converged);
@@ -2597,6 +2605,7 @@ mod tests {
             true,
             true,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            |_, _, _| {},
             &mut rng,
         );
         assert!(model.diagonal, "model should record diagonal mode");
@@ -2857,6 +2866,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            |_, _, _| {},
             &mut rng,
         );
         let stored = m_keep.nu.clone(); // per-group E-step ν (keep_nu = true)
@@ -2882,6 +2892,7 @@ mod tests {
             false,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            |_, _, _| {},
             &mut rng2,
         );
         assert!(model.content_beta.is_some(), "content_beta present");
@@ -2967,6 +2978,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            |_, _, _| {},
             &mut rng,
         );
         let stored = m_keep.nu.clone();
@@ -2989,6 +3001,7 @@ mod tests {
             false,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            |_, _, _| {},
             &mut rng2,
         );
         assert!(

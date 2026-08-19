@@ -569,6 +569,7 @@ class CTM:
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
         spectral_projection_threshold: int = 10000,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "CTM":
         """EM stops once the relative change in the variational bound falls below
         convergence_tol or after iters iterations, whichever comes first. Pass
@@ -753,6 +754,7 @@ class STM:
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
         spectral_projection_threshold: int = 10000,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "STM":
         """Fit. prevalence (or covariates, a symmetric alias) is (num_docs, F)
         covariates driving topic proportions (mu_d = X_d gamma; intercept
@@ -1336,6 +1338,7 @@ class DTM:
         times: Sequence[int],
         *,
         iters: int = 20,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "DTM":
         """Fit by variational EM. `times` is each document's integer time-slice
         index (0-based, contiguous); the slice count is max(times)+1."""

@@ -7395,7 +7395,8 @@ impl CTM {
     #[pyo3(signature = (data, *, iters=500, convergence_tol=1e-5, inference="batch",
                         batch_size=256, tau=64.0, kappa=0.7, beta_init=None, em_tol=None,
                         keep_eta_cov=true, num_threads=None,
-                        spectral_projection_threshold=spectral::DEFAULT_PROJ_THRESHOLD))]
+                        spectral_projection_threshold=spectral::DEFAULT_PROJ_THRESHOLD,
+                        progress=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -7412,6 +7413,7 @@ impl CTM {
         keep_eta_cov: bool,
         num_threads: Option<usize>,
         spectral_projection_threshold: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
@@ -7473,9 +7475,17 @@ impl CTM {
 
         let init_beta = parse_init_beta(beta_init, k, num_types, svi)?;
 
+        let progress = resolve_progress(py, progress, "CTM");
         let (model, corpus) = py.allow_threads(move || {
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             let m = run_with_threads(num_threads, || {
                 if svi {
+                    // The stochastic (SVI) inference path is not yet wired for
+                    // progress; only the default batch EM below reports (#786).
                     ctm::fit_ctm_svi(
                         &corpus.docs,
                         k,
@@ -7511,6 +7521,7 @@ impl CTM {
                         keep_eta_cov,
                         diagonal,
                         spectral_projection_threshold,
+                        &mut on_progress,
                         &mut rng,
                     )
                 }
@@ -8297,7 +8308,8 @@ impl STM {
                         iters=500, convergence_tol=1e-5,
                         gamma_prior="pooled", gamma_enet=1.0, beta_init=None, em_tol=None,
                         covariates=None, keep_eta_cov=true, num_threads=None,
-                        spectral_projection_threshold=spectral::DEFAULT_PROJ_THRESHOLD))]
+                        spectral_projection_threshold=spectral::DEFAULT_PROJ_THRESHOLD,
+                        progress=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -8321,6 +8333,7 @@ impl STM {
         keep_eta_cov: bool,
         num_threads: Option<usize>,
         spectral_projection_threshold: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
@@ -8595,9 +8608,15 @@ impl STM {
 
         let init_beta = parse_init_beta(beta_init, k, num_types, false)?;
 
+        let progress = resolve_progress(py, progress, "STM");
         let (model, corpus) = py.allow_threads(move || {
             let prev_ref = prevalence_x.as_deref();
             let cont_ref = content_groups.as_ref().map(|(g, n)| (g.as_slice(), *n));
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             let m = run_with_threads(num_threads, || {
                 ctm::fit_ctm(
                     &corpus.docs,
@@ -8617,6 +8636,7 @@ impl STM {
                     keep_eta_cov,
                     diagonal,
                     spectral_projection_threshold,
+                    &mut on_progress,
                     &mut rng,
                 )
             });
@@ -11487,13 +11507,14 @@ impl DTM {
     /// `times` gives each document's integer time-slice index (0-based,
     /// contiguous). The number of slices is inferred as ``max(times) + 1``.
     /// `iters` is the number of variational-EM iterations.
-    #[pyo3(signature = (data, times, *, iters=20))]
+    #[pyo3(signature = (data, times, *, iters=20, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         times: Vec<i64>,
         iters: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -11545,7 +11566,13 @@ impl DTM {
         let init_spectral = slf.init_spectral;
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
+        let progress = resolve_progress(py, progress, "DTM");
         let (model, corpus) = py.allow_threads(move || {
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             let m = dtm::fit_dtm(
                 &corpus.docs,
                 &times_u,
@@ -11557,6 +11584,7 @@ impl DTM {
                 ov,
                 iters,
                 init_spectral,
+                &mut on_progress,
                 &mut rng,
             );
             (m, corpus)
