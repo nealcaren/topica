@@ -1030,6 +1030,32 @@ fn emit_progress(py: Python<'_>, cb: &PyObject, iter: usize, total: usize, ll: f
     let _ = cb.call1(py, (iter, total, info));
 }
 
+/// When the caller did not pass a `progress` callback, default to a live
+/// `topica.progress()` bar **only if stderr is an interactive terminal**, so
+/// interactive users get progress for free while scripts, pipelines, notebooks
+/// saving to a file, and CI stay silent (#785). `label` names the model in the bar.
+fn resolve_progress(py: Python<'_>, progress: Option<PyObject>, label: &str) -> Option<PyObject> {
+    if progress.is_some() {
+        return progress;
+    }
+    let is_tty = py
+        .import_bound("sys")
+        .and_then(|s| s.getattr("stderr"))
+        .and_then(|e| e.call_method0("isatty"))
+        .and_then(|r| r.extract::<bool>())
+        .unwrap_or(false);
+    if !is_tty {
+        return None;
+    }
+    let kwargs = PyDict::new_bound(py);
+    let _ = kwargs.set_item("label", label);
+    py.import_bound("topica")
+        .and_then(|t| t.getattr("progress"))
+        .and_then(|p| p.call((), Some(&kwargs)))
+        .ok()
+        .map(|obj| obj.unbind())
+}
+
 /// Like `emit_progress` but for models that surface a perplexity alongside the
 /// log-likelihood (keyATM): `callback(iteration, total, {"ll": ll, "perplexity":
 /// ppl})`. Best-effort — a raising callback never aborts the fit (#785).
@@ -1391,6 +1417,7 @@ impl LDA {
         turbo_merge_every: usize,
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
+        let progress = resolve_progress(py, progress, "LDA");
         if num_samples == 0 {
             return Err(PyValueError::new_err(
                 "num_samples must be >= 1 (num_samples=0 would leave phi/theta all-zero); \
@@ -1496,7 +1523,9 @@ impl LDA {
                     for iter in 1..=iters {
                         let change = cv.sweep();
                         if let Some(cb) = &progress {
-                            if progress_interval > 0 && iter % progress_interval == 0 {
+                            if progress_interval > 0
+                                && (iter % progress_interval == 0 || iter == iters)
+                            {
                                 let m = cv.to_topic_model(&corpus);
                                 let ll = output::model_log_likelihood(&m, &corpus) / total_tokens;
                                 Python::with_gil(|py| {
@@ -1695,7 +1724,8 @@ impl LDA {
                     }
 
                     if let Some(cb) = &progress {
-                        if progress_interval > 0 && crossed_multiple(prev, iter, progress_interval)
+                        if progress_interval > 0
+                            && (crossed_multiple(prev, iter, progress_interval) || iter == iters)
                         {
                             let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
                             Python::with_gil(|py| {
@@ -2866,7 +2896,7 @@ fn run_mh_training<S: crate::mh::MhSampler>(
         }
 
         if let Some(cb) = progress {
-            if progress_interval > 0 && iter % progress_interval == 0 {
+            if progress_interval > 0 && (iter % progress_interval == 0 || iter == iters) {
                 let m = sampler.to_topic_model();
                 let ll = output::model_log_likelihood(&m, &corpus) / total_tokens;
                 Python::with_gil(|py| {
@@ -4331,6 +4361,7 @@ impl DMR {
         num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
+        let progress = resolve_progress(py, progress, "DMR");
         // num_threads: fit()-level value overrides the constructor default; the
         // sparse Gibbs sweep runs AD-LDA partition-and-merge when this is >1.
         let num_threads = num_threads.unwrap_or(slf.num_threads).max(1);
@@ -4604,7 +4635,8 @@ impl DMR {
                     }
 
                     if let Some(cb) = &progress {
-                        if progress_interval > 0 && iter % progress_interval == 0 {
+                        if progress_interval > 0 && (iter % progress_interval == 0 || iter == iters)
+                        {
                             let dtc = doc_topic_counts(ws.doc_topics(), k);
                             let (ll, _) = dmr::dmr_objective_and_gradient(
                                 &lambda,
@@ -4768,7 +4800,8 @@ impl DMR {
                     }
 
                     if let Some(cb) = &progress {
-                        if progress_interval > 0 && iter % progress_interval == 0 {
+                        if progress_interval > 0 && (iter % progress_interval == 0 || iter == iters)
+                        {
                             let dtc = doc_topic_counts(&model.doc_topics, k);
                             let (ll, _) = dmr::dmr_objective_and_gradient(
                                 &lambda,
@@ -5528,6 +5561,7 @@ impl LabeledLDA {
         num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
+        let progress = resolve_progress(py, progress, "LabeledLDA");
         // num_threads: fit()-level value overrides the constructor default; the
         // sparse restricted-Gibbs sweep runs AD-LDA partition-and-merge when >1.
         let num_threads = num_threads.unwrap_or(slf.num_threads).max(1);
@@ -5729,7 +5763,8 @@ impl LabeledLDA {
                         push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
                     }
                     if let Some(cb) = &progress {
-                        if progress_interval > 0 && iter % progress_interval == 0 {
+                        if progress_interval > 0 && (iter % progress_interval == 0 || iter == iters)
+                        {
                             let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
                             Python::with_gil(|py| {
                                 emit_progress(py, cb, iter, iters, ll);
@@ -6378,6 +6413,7 @@ impl SAGE {
         convergence_tol: f64,
         check_every: usize,
     ) -> PyResult<Py<Self>> {
+        let progress = resolve_progress(py, progress, "SAGE");
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -6535,7 +6571,7 @@ impl SAGE {
                     push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
                 }
                 if let Some(cb) = &progress {
-                    if progress_interval > 0 && iter % progress_interval == 0 {
+                    if progress_interval > 0 && (iter % progress_interval == 0 || iter == iters) {
                         let llpt = compute_ll(&model) / total_tokens;
                         Python::with_gil(|py| {
                             emit_progress(py, cb, iter, iters, llpt);
@@ -13212,6 +13248,7 @@ impl GSDMM {
         progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         gsdmm_reject_threads(num_threads)?;
+        let progress = resolve_progress(py, progress, "GSDMM");
         let progress_interval = if let Some(old_val) = report_interval {
             let warnings = py.import_bound("warnings")?;
             warnings.call_method1(
@@ -15683,6 +15720,7 @@ impl KeyATM {
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         ensure_finite_pos("prior_variance", prior_variance)?;
+        let progress = resolve_progress(py, progress, "keyATM");
         if turbo_alpha_stride < 1 {
             return Err(PyValueError::new_err(
                 "turbo_alpha_stride must be >= 1 (1 = exact; >1 = approximate, subsample documents in the alpha sampler)",
