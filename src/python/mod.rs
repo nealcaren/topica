@@ -7392,6 +7392,8 @@ impl CTM {
     /// deterministic random projection. The default (10000) matches R `stm`, which
     /// stays exact up to that size; lower it to force the cheaper approximate path
     /// on smaller vocabularies. It only affects `init="spectral"` runs.
+    /// `progress` is an optional `(iteration, total, info)` callback for a live
+    /// progress bar (see `topica.progress`); omitted, a bar shows in an interactive terminal.
     #[pyo3(signature = (data, *, iters=500, convergence_tol=1e-5, inference="batch",
                         batch_size=256, tau=64.0, kappa=0.7, beta_init=None, em_tol=None,
                         keep_eta_cov=true, num_threads=None,
@@ -8302,6 +8304,8 @@ impl STM {
     /// exact init for any vocabulary at or below 10000 types. Lower it to force the
     /// cheaper approximate path on smaller vocabularies (trading fidelity for
     /// speed/memory). It has no effect when the constructor sets `init="random"`.
+    /// `progress` is an optional `(iteration, total, info)` callback for a live
+    /// progress bar (see `topica.progress`); omitted, a bar shows in an interactive terminal.
     #[pyo3(signature = (data, prevalence=None, *, prevalence_names=None,
                         content=None, content_names=None, content_time=None, content_smooth=1.0,
                         content_prior_var=0.5, content_prior="l2",
@@ -11507,6 +11511,8 @@ impl DTM {
     /// `times` gives each document's integer time-slice index (0-based,
     /// contiguous). The number of slices is inferred as ``max(times) + 1``.
     /// `iters` is the number of variational-EM iterations.
+    /// `progress` is an optional `(iteration, total, info)` callback for a live
+    /// progress bar (see `topica.progress`); omitted, a bar shows in an interactive terminal.
     #[pyo3(signature = (data, times, *, iters=20, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -14166,6 +14172,8 @@ impl SeededLDA {
     /// (`None` = constructor value); `>1` runs the sparse seeded-Gibbs sweep as
     /// approximate-parallel AD-LDA (deterministic for a fixed `num_threads`+`seed`),
     /// `1` is the exact serial path, and it is ignored by the warp/cvb0 backends.
+    /// `progress` is an optional `(iteration, total, info)` callback for a live
+    /// progress bar (see `topica.progress`); omitted, a bar shows in an interactive terminal.
     #[pyo3(signature = (data, *, iters=2000, doc_topic_prior=None,
                         keep_theta_draws=true, num_theta_draws=25,
                         convergence_tol=0.0_f64, check_every=10_usize, num_threads=None,
@@ -15141,6 +15149,8 @@ impl FASTopic {
     /// the corpus; FASTopic learns the word embeddings itself, so none are passed.
     /// `iters` sets the number of training epochs (default 200).
     /// `convergence_tol` overrides the constructor value for this run (when given).
+    /// `progress` is an optional `(iteration, total, info)` callback for a live
+    /// progress bar (see `topica.progress`); omitted, a bar shows in an interactive terminal.
     #[pyo3(signature = (data, doc_embeddings, *, iters=None, convergence_tol=None, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
