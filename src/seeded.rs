@@ -744,6 +744,7 @@ pub fn fit_seeded_lda<R: Rng, F: FnMut(usize, usize, f64)>(
                 let prev = ll_history[ll_history.len() - 2].1;
                 let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
                 if rel < convergence_tol {
+                    on_progress(iter, iter, ll); // snap bar to 100% (#786)
                     converged = true;
                     break;
                 }

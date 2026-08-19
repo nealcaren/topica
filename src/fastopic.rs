@@ -604,6 +604,7 @@ pub fn fit_fastopic<R: Rng, F: FnMut(usize, usize, f64)>(
             let prev = loss_history[loss_history.len() - 2];
             let rel = (prev - loss).abs() / (prev.abs() + 1e-12);
             if rel < em_tol {
+                on_progress(epoch + 1, epoch + 1, -loss); // snap bar to 100% (#786)
                 converged = true;
                 break;
             }

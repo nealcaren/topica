@@ -91,9 +91,13 @@ def test_progress_fires_with_iteration_total_info(model_name):
     its, totals, infos = zip(*calls)
     assert all(isinstance(i, int) and isinstance(t, int) for i, t, _ in calls)
     assert all(isinstance(inf, dict) for inf in infos)
-    # iteration is 1-based, monotonically non-decreasing, never past total.
+    # iteration is 1-based, monotonically non-decreasing, never past its own total.
     assert its[0] >= 1 and all(a <= b for a, b in zip(its, its[1:]))
-    assert all(t == totals[0] for t in totals) and its[-1] <= totals[0]
+    assert all(i <= t for i, t in zip(its, totals))
+    # In-progress frames report the iteration budget as total; on early
+    # convergence the fit emits a final snap frame with iteration == total (100%),
+    # so the last frame always closes the bar even when it stopped short of budget.
+    assert its[-1] == totals[-1], f"{model_name}: bar did not close at 100%"
     if model_name in LL_MODELS:
         assert all("ll" in inf for inf in infos), f"{model_name}: missing ll metric"
     else:

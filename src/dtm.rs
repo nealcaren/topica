@@ -688,6 +688,7 @@ pub fn fit_dtm<R: Rng, F: FnMut(usize, usize, f64)>(
             && old_bound != 0.0
             && ((bound - old_bound) / old_bound).abs() < 1e-4
         {
+            on_progress(iter + 1, iter + 1, bound); // snap bar to 100% (#786)
             break;
         }
     }

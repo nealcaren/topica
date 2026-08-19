@@ -432,6 +432,7 @@ pub fn fit_infoctm<R: Rng, F: FnMut(usize, usize, f64)>(
         if em_tol > 0.0 && bound_history.len() >= 2 {
             let prev = bound_history[bound_history.len() - 2];
             if (-avg - prev).abs() / (prev.abs() + 1e-12) < em_tol {
+                on_progress(epoch + 1, epoch + 1, -avg); // snap bar to 100% (#786)
                 converged = true;
                 break;
             }
