@@ -1476,6 +1476,7 @@ class DETM:
         timestamps: Sequence[int] | None = None,
         iters: int = 100,
         convergence_tol: float | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "DETM":
         """Fit on `data` with `word_embeddings` (len(vocabulary), L) aligned to
         `vocabulary`. `times` is each document's integer time-slice index (0-based,
@@ -4278,6 +4279,7 @@ class ETM:
         *,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "ETM":
         """Fit on token documents plus word embeddings (len(vocabulary) x E) and
         the aligned vocabulary, which defines the word ids. `iters` sets the number
@@ -4395,6 +4397,7 @@ class InfoCTM:
         embeddings_b: dict[str, Sequence[float]] | None = None,
         iters: int | None = None,
         batch_size: int = 128,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "InfoCTM":
         """Fit both languages jointly. ``dictionary`` is an iterable of
         ``(word_a, word_b)`` pairs; ``embeddings_*`` are optional ``{word: vector}``
@@ -4487,6 +4490,7 @@ class ProdLDA:
         *,
         iters: int | None = None,
         convergence_tol: Optional[float] = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "ProdLDA":
         """Fit on a Corpus or a list of token lists. `iters` sets the number of epochs.
 

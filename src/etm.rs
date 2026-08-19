@@ -184,7 +184,7 @@ impl EtmModel {
 /// `max_inner` caps the per-iteration L-BFGS steps for the embedding M-step, and
 /// `em_tol` stops EM on the relative change in the corpus bound.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_etm<R: Rng>(
+pub fn fit_etm<R: Rng, F: FnMut(usize, usize, f64)>(
     docs: &[Vec<u32>],
     num_topics: usize,
     num_types: usize,
@@ -194,6 +194,7 @@ pub fn fit_etm<R: Rng>(
     sigma_shrink: f64,
     prior_variance: f64,
     max_inner: usize,
+    mut on_progress: F,
     rng: &mut R,
 ) -> EtmModel {
     let k = num_topics;
@@ -278,6 +279,7 @@ pub fn fit_etm<R: Rng>(
 
         let total_bound: f64 = doc_results.iter().map(|(_, _, r)| r.bound).sum();
         bound_history.push(total_bound);
+        on_progress(em + 1, em_iters, total_bound);
 
         for (di, opt, res) in &doc_results {
             let di = *di;
@@ -472,7 +474,19 @@ mod tests {
             })
             .collect();
 
-        let m = fit_etm(&docs, k, v, &rho, 50, 1e-5, 0.0, 1e6, 25, &mut rng);
+        let m = fit_etm(
+            &docs,
+            k,
+            v,
+            &rho,
+            50,
+            1e-5,
+            0.0,
+            1e6,
+            25,
+            |_, _, _| {},
+            &mut rng,
+        );
         assert_eq!(m.beta.len(), k);
         // Each fitted topic's top words come from one block, and all blocks appear.
         let mut covered = std::collections::HashSet::new();
@@ -512,7 +526,19 @@ mod tests {
                     .collect()
             })
             .collect();
-        let m = fit_etm(&docs, k, v, &rho, 50, 1e-5, 0.0, 1e6, 25, &mut rng);
+        let m = fit_etm(
+            &docs,
+            k,
+            v,
+            &rho,
+            50,
+            1e-5,
+            0.0,
+            1e6,
+            25,
+            |_, _, _| {},
+            &mut rng,
+        );
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }

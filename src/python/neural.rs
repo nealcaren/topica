@@ -329,7 +329,7 @@ impl ETM {
     /// defines the word ids; tokens outside it are dropped.
     /// `iters` sets the number of training iterations (EM iterations or VAE epochs).
     /// `convergence_tol` overrides the constructor value for this run (when given).
-    #[pyo3(signature = (data, word_embeddings, vocabulary, *, iters=None, convergence_tol=None))]
+    #[pyo3(signature = (data, word_embeddings, vocabulary, *, iters=None, convergence_tol=None, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -338,6 +338,7 @@ impl ETM {
         vocabulary: Vec<String>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         // Use fit()-level convergence_tol if given, else fall back to constructor value.
         let tol = convergence_tol.unwrap_or(slf.em_tol);
@@ -428,8 +429,26 @@ impl ETM {
                 slf.prior_variance,
                 slf.max_inner,
             );
+            let progress = resolve_progress(py, progress, "ETM");
             let model = py.allow_threads(move || {
-                etm::fit_etm(&docs_ids, k, num_types, &rho, ei, et, ss, pv, mi, &mut rng)
+                let mut on_progress = |it: usize, total: usize, ll: f64| {
+                    if let Some(cb) = &progress {
+                        Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                    }
+                };
+                etm::fit_etm(
+                    &docs_ids,
+                    k,
+                    num_types,
+                    &rho,
+                    ei,
+                    et,
+                    ss,
+                    pv,
+                    mi,
+                    &mut on_progress,
+                    &mut rng,
+                )
             });
             slf.model = Some(model);
             slf.vae = None;
@@ -827,7 +846,7 @@ impl ETM {
         vocabulary: Vec<String>,
         iters: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let fitted = Self::fit(slf, py, data, word_embeddings, vocabulary, iters, None)?;
+        let fitted = Self::fit(slf, py, data, word_embeddings, vocabulary, iters, None, None)?;
         Ok(vecs_to_arr2(&fitted.bind(py).borrow().surf_doc_topic()?).to_pyarray_bound(py))
     }
 
@@ -1027,7 +1046,7 @@ impl DETM {
     /// the run stops when the relative change in the variational evidence bound
     /// falls below it.
     #[pyo3(signature = (data, word_embeddings, vocabulary, *, times=None, timestamps=None,
-                        iters=100, convergence_tol=None))]
+                        iters=100, convergence_tol=None, progress=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -1039,6 +1058,7 @@ impl DETM {
         timestamps: Option<Vec<i64>>,
         iters: usize,
         convergence_tol: Option<f64>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         // times is canonical; timestamps is the accepted alias.
         let times = match (times, timestamps) {
@@ -1155,10 +1175,33 @@ impl DETM {
             slf.wdecay,
             slf.grad_clip,
         );
+        let progress = resolve_progress(py, progress, "DETM");
         let model = py.allow_threads(move || {
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             detm::fit_detm(
-                &tokens, &counts, &times_u, k, num_types, num_times, &rho, delta, h, eh, enl,
-                iters, bs, lr, wd, tol, gc, &mut rng,
+                &tokens,
+                &counts,
+                &times_u,
+                k,
+                num_types,
+                num_times,
+                &rho,
+                delta,
+                h,
+                eh,
+                enl,
+                iters,
+                bs,
+                lr,
+                wd,
+                tol,
+                gc,
+                &mut on_progress,
+                &mut rng,
             )
         });
 
@@ -1711,7 +1754,7 @@ impl InfoCTM {
     /// epochs (reference 500).
     /// `batch_size` is the number of documents per minibatch.
     #[pyo3(signature = (data_a, data_b, *, dictionary, embeddings_a=None,
-                        embeddings_b=None, iters=None, batch_size=128))]
+                        embeddings_b=None, iters=None, batch_size=128, progress=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -1723,6 +1766,7 @@ impl InfoCTM {
         embeddings_b: Option<std::collections::HashMap<String, Vec<f64>>>,
         iters: Option<usize>,
         batch_size: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let to_corpus = |data: &Bound<'_, PyAny>| -> PyResult<corpus::Corpus> {
             if let Ok(c) = data.extract::<Corpus>() {
@@ -1804,7 +1848,13 @@ impl InfoCTM {
 
         let docs_a = corpus_a.docs.clone();
         let docs_b = corpus_b.docs.clone();
+        let progress = resolve_progress(py, progress, "InfoCTM");
         let model = py.allow_threads(move || {
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             infoctm::fit_infoctm(
                 &docs_a,
                 &docs_b,
@@ -1823,6 +1873,7 @@ impl InfoCTM {
                 mt,
                 pt,
                 et,
+                &mut on_progress,
                 &mut rng,
             )
         });
@@ -2291,13 +2342,14 @@ impl ProdLDA {
     /// Fit on `data` (a Corpus or list of token lists).
     /// `iters` sets the number of training epochs (default 200).
     /// `convergence_tol` overrides the constructor value for this run (when given).
-    #[pyo3(signature = (data, *, iters=None, convergence_tol=None))]
+    #[pyo3(signature = (data, *, iters=None, convergence_tol=None, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let tol = convergence_tol.unwrap_or(slf.em_tol);
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
@@ -2345,7 +2397,13 @@ impl ProdLDA {
         );
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let empty: Vec<Vec<f64>> = vec![Vec::new(); corpus.docs.len()];
+        let progress = resolve_progress(py, progress, "ProdLDA");
         let (model, corpus) = py.allow_threads(move || {
+            let mut on_progress = |it: usize, total: usize, ll: f64| {
+                if let Some(cb) = &progress {
+                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                }
+            };
             let m = prodlda::fit_avitm(
                 &corpus.docs,
                 &empty,
@@ -2361,6 +2419,7 @@ impl ProdLDA {
                 lr,
                 et,
                 opts,
+                &mut on_progress,
                 &mut rng,
             );
             (m, corpus)
@@ -2528,7 +2587,7 @@ impl ProdLDA {
         py: Python<'py>,
         data: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let fitted = Self::fit(slf, py, data, None, None)?;
+        let fitted = Self::fit(slf, py, data, None, None, None)?;
         Ok(vecs_to_arr2(&fitted.bind(py).borrow().fitted_model()?.doc_topic).to_pyarray_bound(py))
     }
 
@@ -3024,6 +3083,7 @@ macro_rules! ctm_embedding_model {
                         lr,
                         tol,
                         opts,
+                        |_, _, _| {},
                         &mut rng,
                     );
                     (m, corpus)
