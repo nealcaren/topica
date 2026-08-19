@@ -101,3 +101,16 @@ def test_from_dataframe_default_is_silent_off_tty(capfd):
     # capfd's stderr is not a tty, so verbose=None must not print.
     topica.from_dataframe(_df(), text_col="text", min_doc_freq=2)
     assert capfd.readouterr().err == ""
+
+
+def test_custom_tokenizer_progress_is_throttled(capfd):
+    # The custom-tokenizer path can't parallelize, but it must still throttle its
+    # progress frames (~200 max), not emit one per document, or a redirected
+    # stderr on a large corpus collects megabytes of bar frames (#786).
+    big = pd.DataFrame({"text": ["the senate passed a budget bill today"] * 20000})
+    topica.from_dataframe(
+        big, text_col="text", tokenizer=lambda s: s.split(), verbose=True
+    )
+    err = capfd.readouterr().err
+    assert err.count("\r") <= 205  # not ~20000
+    assert "100%" in err and err.endswith("\n")  # still completes and closes

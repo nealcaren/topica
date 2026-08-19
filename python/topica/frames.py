@@ -218,11 +218,15 @@ def from_dataframe(
     else:
         # A custom tokenizer is an arbitrary Python callable, so it cannot be
         # parallelized under the GIL; loop, but still report progress if asked.
+        # Throttle to ~200 ticks (matching tokenize_many's chunk cadence) so a
+        # redirected stderr does not collect one bar frame per document.
+        n = len(texts)
+        step = max(1, n // 200)
         docs = []
         for i, t in enumerate(texts, 1):
             docs.append(tokenizer(t if isinstance(t, str) else ""))
-            if reporter is not None:
-                reporter(i, len(texts), {})
+            if reporter is not None and (i % step == 0 or i == n):
+                reporter(i, n, {})
 
     # scikit-learn min_df/max_df aliases -> topica's min_doc_freq/max_doc_fraction.
     min_doc_freq, max_doc_fraction = _resolve_df_aliases(
