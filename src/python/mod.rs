@@ -9668,9 +9668,14 @@ fn tokenize_one(
 /// the regex; hoisting both out and going multi-core cuts that wait to a fraction
 /// (#786). Output is byte-identical to calling `tokenize` on each string.
 ///
-/// When `progress` is given it is called as `progress(done, total, {})` between
-/// chunks (on the GIL-holding thread, a safe callback point), so a
-/// `topica.progress()` reporter renders a bar/ETA over the tokenization pass.
+/// `texts` is the list of strings to tokenize. `lowercase`, `stopwords`,
+/// `token_regex`, and `min_length` are exactly as in `tokenize` (applied
+/// uniformly to every string): lowercase before matching, drop stopwords (an
+/// iterable of words or a language name/code), the token-matching regex (None =
+/// the default word regex), and the minimum token length in characters. When
+/// `progress` is given it is called as `progress(done, total, {})` between chunks
+/// (on the GIL-holding thread, a safe callback point), so a `topica.progress()`
+/// reporter renders a bar/ETA over the tokenization pass.
 #[pyfunction]
 #[pyo3(signature = (texts, *, lowercase=true, stopwords=None, token_regex=None, min_length=1, progress=None))]
 fn tokenize_many(
