@@ -12,7 +12,7 @@ import re
 import warnings
 from typing import Sequence
 
-from . import Corpus, tokenize
+from . import Corpus
 
 # HTML tags/entities and http/www URLs, removed by from_dataframe(strip_html=True).
 _HTML_TAG = re.compile(r"<[^>]+>")
@@ -37,6 +37,25 @@ def _is_polars(obj) -> bool:
     """True for a Polars DataFrame/Series, without importing Polars (it is an
     optional dependency)."""
     return type(obj).__module__.split(".", 1)[0] == "polars"
+
+
+def _build_reporter(verbose, total, *, label):
+    """Return a `topica.progress()` reporter for a corpus-build pass, or None.
+
+    ``verbose=None`` (the default) shows the bar only when stderr is an interactive
+    terminal — the same rule ``fit(progress=)`` uses; ``True`` / ``False`` force it.
+    The reporter is called as ``reporter(done, total, {})`` between chunks."""
+    import sys
+
+    if verbose is False or total == 0:
+        return None
+    if verbose is None:
+        stream = sys.stderr
+        if not (hasattr(stream, "isatty") and stream.isatty()):
+            return None
+    from .progress import progress as _progress
+
+    return _progress(label=label)
 
 
 def _resolve_df_aliases(min_df, max_df, min_doc_freq, max_doc_fraction, n_docs):
@@ -101,6 +120,7 @@ def from_dataframe(
     vocabulary=None,
     min_df=None,
     max_df=None,
+    verbose=None,
 ):
     """Build a :class:`Corpus` from a pandas or Polars DataFrame, keeping
     per-document metadata aligned to the documents that survive pruning.
@@ -167,10 +187,17 @@ def from_dataframe(
         drops terms in more than half the documents (topica's ``max_doc_fraction``).
         Pass at most one of each pair — ``min_df`` or ``min_doc_freq``, ``max_df`` or
         ``max_doc_fraction`` — not both.
+    verbose : bool, optional
+        Show a progress bar for the tokenization pass, which on a large corpus is
+        the longest silent wait (it can exceed the model fit). ``None`` (default)
+        shows the bar only when stderr is an interactive terminal, matching
+        ``fit(progress=)``; pass ``True`` / ``False`` to force it on or off.
     """
     texts = list(df[text_col])  # pandas Series and Polars Series both iterate to values
     if strip_html:
         texts = [_strip_web(t) if isinstance(t, str) else t for t in texts]
+
+    reporter = _build_reporter(verbose, len(texts), label="corpus")
     if tokenizer is None:
         if isinstance(stopwords, str):
             # A bare string is a language name/code (the scikit-learn
@@ -181,12 +208,25 @@ def from_dataframe(
 
             stopwords = _resolve_stopwords(stopwords)
         sw = list(stopwords) if stopwords is not None else None
-        docs = [
-            tokenize(t if isinstance(t, str) else "", stopwords=sw, min_length=min_length)
-            for t in texts
-        ]
+        # Batch tokenizer: compiles the regex and builds the stopword set once,
+        # then tokenizes multi-core with the GIL released — far faster than a
+        # Python loop over single-doc tokenize() on a large corpus (#786).
+        from ._topica import tokenize_many
+
+        safe = [t if isinstance(t, str) else "" for t in texts]
+        docs = tokenize_many(safe, stopwords=sw, min_length=min_length, progress=reporter)
     else:
-        docs = [tokenizer(t if isinstance(t, str) else "") for t in texts]
+        # A custom tokenizer is an arbitrary Python callable, so it cannot be
+        # parallelized under the GIL; loop, but still report progress if asked.
+        # Throttle to ~200 ticks (matching tokenize_many's chunk cadence) so a
+        # redirected stderr does not collect one bar frame per document.
+        n = len(texts)
+        step = max(1, n // 200)
+        docs = []
+        for i, t in enumerate(texts, 1):
+            docs.append(tokenizer(t if isinstance(t, str) else ""))
+            if reporter is not None and (i % step == 0 or i == n):
+                reporter(i, n, {})
 
     # scikit-learn min_df/max_df aliases -> topica's min_doc_freq/max_doc_fraction.
     min_doc_freq, max_doc_fraction = _resolve_df_aliases(

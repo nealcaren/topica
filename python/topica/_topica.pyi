@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, Optional, Sequence, Union, overload
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, Union, overload
 import numpy
 import numpy.typing
 
@@ -23,6 +23,24 @@ def tokenize(
     """Tokenize a string with the corpus loader's regex; lowercase, drop short
     tokens and stopwords. `stopwords` is any iterable of strings (list, set, or
     `topica.ENGLISH_STOPWORDS`). Convenience for building list[list[str]] input."""
+    ...
+
+
+def tokenize_many(
+    texts: Sequence[str],
+    *,
+    lowercase: bool = True,
+    stopwords: Iterable[str] | None = None,
+    token_regex: str | None = None,
+    min_length: int = 1,
+    progress: Callable[[int, int, dict], object] | None = None,
+) -> list[list[str]]:
+    """Tokenize many strings in parallel, byte-identical to calling `tokenize` on
+    each. Compiles the regex and builds the stopword set once (not per document)
+    and runs multi-core with the GIL released, so it is far faster than a Python
+    loop over `tokenize` on large corpora; this is the fast path `from_dataframe`
+    uses when no custom tokenizer is given. `progress`, if given, is called as
+    `progress(done, total, {})` between chunks."""
     ...
 
 

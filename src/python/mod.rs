@@ -9627,7 +9627,21 @@ fn tokenize(
     // `ENGLISH_STOPWORDS` frozenset can be passed directly; a bare language
     // string (e.g. "english") is resolved via `topica.stopwords` (#766).
     let stop: HashSet<String> = py_corpus::stopwords_set(stopwords)?;
+    Ok(tokenize_one(&re, &stop, text, lowercase, min_length))
+}
 
+/// The per-document tokenization inner loop, factored so single-doc `tokenize`
+/// and the parallel batch `tokenize_many` produce byte-identical output. Takes an
+/// already-compiled regex and an already-built stopword set (both hoisted out of
+/// the per-document loop — rebuilding them per doc is what made a Python loop over
+/// `tokenize` the dominant cost on large corpora, #786).
+fn tokenize_one(
+    re: &Regex,
+    stop: &HashSet<String>,
+    text: &str,
+    lowercase: bool,
+    min_length: usize,
+) -> Vec<String> {
     let mut out = Vec::new();
     for m in re.find_iter(text) {
         let tok = if lowercase {
@@ -9642,6 +9656,61 @@ fn tokenize(
             continue;
         }
         out.push(tok);
+    }
+    out
+}
+
+/// Tokenize many strings at once, in parallel. Compiles the regex and builds the
+/// stopword set once (not once per document), then tokenizes with rayon while
+/// releasing the GIL. This is the fast path `from_dataframe` takes when no custom
+/// tokenizer is given: on a 555k-doc corpus the old per-document Python loop spent
+/// most of its time rebuilding the stopword `HashSet` (~128 us/doc) and recompiling
+/// the regex; hoisting both out and going multi-core cuts that wait to a fraction
+/// (#786). Output is byte-identical to calling `tokenize` on each string.
+///
+/// `texts` is the list of strings to tokenize. `lowercase`, `stopwords`,
+/// `token_regex`, and `min_length` are exactly as in `tokenize` (applied
+/// uniformly to every string): lowercase before matching, drop stopwords (an
+/// iterable of words or a language name/code), the token-matching regex (None =
+/// the default word regex), and the minimum token length in characters. When
+/// `progress` is given it is called as `progress(done, total, {})` between chunks
+/// (on the GIL-holding thread, a safe callback point), so a `topica.progress()`
+/// reporter renders a bar/ETA over the tokenization pass.
+#[pyfunction]
+#[pyo3(signature = (texts, *, lowercase=true, stopwords=None, token_regex=None, min_length=1, progress=None))]
+fn tokenize_many(
+    py: Python<'_>,
+    texts: Vec<String>,
+    lowercase: bool,
+    stopwords: Option<&Bound<'_, PyAny>>,
+    token_regex: Option<String>,
+    min_length: usize,
+    progress: Option<PyObject>,
+) -> PyResult<Vec<Vec<String>>> {
+    let pattern = token_regex.unwrap_or_else(|| corpus::DEFAULT_TOKEN_REGEX.to_string());
+    let re = Regex::new(&pattern).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let stop: HashSet<String> = py_corpus::stopwords_set(stopwords)?;
+    let total = texts.len();
+    if total == 0 {
+        return Ok(Vec::new());
+    }
+    // Cap progress at ~200 ticks: each chunk is tokenized fully in parallel, then
+    // reported between chunks. The floor keeps chunks large enough that rayon
+    // scheduling overhead stays negligible on small corpora.
+    let chunk = (total / 200).max(4096).min(total);
+    let mut out: Vec<Vec<String>> = Vec::with_capacity(total);
+    for slice in texts.chunks(chunk) {
+        let mut part: Vec<Vec<String>> = py.allow_threads(|| {
+            slice
+                .par_iter()
+                .map(|text| tokenize_one(&re, &stop, text, lowercase, min_length))
+                .collect()
+        });
+        out.append(&mut part);
+        if let Some(cb) = &progress {
+            let info = PyDict::new_bound(py);
+            cb.call1(py, (out.len(), total, info))?;
+        }
     }
     Ok(out)
 }
@@ -16811,6 +16880,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DETM>()?;
     m.add_class::<Corpus>()?;
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
+    m.add_function(wrap_pyfunction!(tokenize_many, m)?)?;
     m.add_function(wrap_pyfunction!(window_cooccurrence, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_frex_scores, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_lift_scores, m)?)?;
