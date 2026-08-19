@@ -1523,7 +1523,9 @@ impl LDA {
                     for iter in 1..=iters {
                         let change = cv.sweep();
                         if let Some(cb) = &progress {
-                            if progress_interval > 0 && iter % progress_interval == 0 {
+                            if progress_interval > 0
+                                && (iter % progress_interval == 0 || iter == iters)
+                            {
                                 let m = cv.to_topic_model(&corpus);
                                 let ll = output::model_log_likelihood(&m, &corpus) / total_tokens;
                                 Python::with_gil(|py| {
@@ -1722,7 +1724,8 @@ impl LDA {
                     }
 
                     if let Some(cb) = &progress {
-                        if progress_interval > 0 && crossed_multiple(prev, iter, progress_interval)
+                        if progress_interval > 0
+                            && (crossed_multiple(prev, iter, progress_interval) || iter == iters)
                         {
                             let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
                             Python::with_gil(|py| {
@@ -2893,7 +2896,7 @@ fn run_mh_training<S: crate::mh::MhSampler>(
         }
 
         if let Some(cb) = progress {
-            if progress_interval > 0 && iter % progress_interval == 0 {
+            if progress_interval > 0 && (iter % progress_interval == 0 || iter == iters) {
                 let m = sampler.to_topic_model();
                 let ll = output::model_log_likelihood(&m, &corpus) / total_tokens;
                 Python::with_gil(|py| {
@@ -4632,7 +4635,8 @@ impl DMR {
                     }
 
                     if let Some(cb) = &progress {
-                        if progress_interval > 0 && iter % progress_interval == 0 {
+                        if progress_interval > 0 && (iter % progress_interval == 0 || iter == iters)
+                        {
                             let dtc = doc_topic_counts(ws.doc_topics(), k);
                             let (ll, _) = dmr::dmr_objective_and_gradient(
                                 &lambda,
@@ -4796,7 +4800,8 @@ impl DMR {
                     }
 
                     if let Some(cb) = &progress {
-                        if progress_interval > 0 && iter % progress_interval == 0 {
+                        if progress_interval > 0 && (iter % progress_interval == 0 || iter == iters)
+                        {
                             let dtc = doc_topic_counts(&model.doc_topics, k);
                             let (ll, _) = dmr::dmr_objective_and_gradient(
                                 &lambda,
@@ -5758,7 +5763,8 @@ impl LabeledLDA {
                         push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
                     }
                     if let Some(cb) = &progress {
-                        if progress_interval > 0 && iter % progress_interval == 0 {
+                        if progress_interval > 0 && (iter % progress_interval == 0 || iter == iters)
+                        {
                             let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
                             Python::with_gil(|py| {
                                 emit_progress(py, cb, iter, iters, ll);
@@ -6565,7 +6571,7 @@ impl SAGE {
                     push_capped(&mut theta_draw_buf, snap, draws_opts.cap);
                 }
                 if let Some(cb) = &progress {
-                    if progress_interval > 0 && iter % progress_interval == 0 {
+                    if progress_interval > 0 && (iter % progress_interval == 0 || iter == iters) {
                         let llpt = compute_ll(&model) / total_tokens;
                         Python::with_gil(|py| {
                             emit_progress(py, cb, iter, iters, llpt);
