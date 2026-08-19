@@ -6268,6 +6268,7 @@ class KeyATM:
         convergence_tol: float = 0.0,
         report_interval: Optional[int] = None,
         turbo_alpha_stride: int = 1,
+        progress: Any = None,
     ) -> "KeyATM":
         """Fit by collapsed Gibbs. Pass `covariates` (num_docs x F) for the
         covariate keyATM: the document-topic prior becomes a DMR,
