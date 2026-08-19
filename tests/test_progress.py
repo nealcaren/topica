@@ -104,6 +104,36 @@ def test_lda_progress_does_not_change_the_fit():
     assert np.array_equal(np.asarray(a.doc_topic), np.asarray(b.doc_topic))
 
 
+def test_keyatm_drives_progress_base_and_covariate(capfd):
+    # #785: keyATM's base and covariate Gibbs paths call the 3-arg contract with
+    # {"ll", "perplexity"} and topica.progress() renders the bar.
+    import warnings
+
+    import numpy as np
+    docs = [["tax", "budget", "vote"]] * 80 + [["health", "care", "clinic"]] * 80
+    keys = {"fiscal": ["tax", "budget"], "health": ["health", "care"]}
+    for kwargs in ({}, dict(covariates=np.array([[0.0]] * 80 + [[1.0]] * 80),
+                            feature_names=["grp"])):
+        calls = []
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            topica.KeyATM(keys, num_topics=3, seed=13).fit(
+                docs, iters=120, progress_interval=20,
+                progress=lambda it, total, info: calls.append((it, total, dict(info))),
+                **kwargs,
+            )
+        assert calls and all(t == 120 for _, t, _ in calls)
+        assert all({"ll", "perplexity"} <= set(info) for _, _, info in calls)
+    # the renderer draws the bar with an ll sparkline
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        topica.KeyATM(keys, num_topics=3, seed=13).fit(
+            docs, iters=120, progress_interval=20,
+            progress=topica.progress(label="keyATM"))
+    err = capfd.readouterr().err
+    assert "keyATM |" in err and "ll " in err and "100%" in err
+
+
 def test_progress_metric_selection_defaults_to_first_key():
     buf = io.StringIO()
     cb = topica.progress(stream=buf)  # no metric= -> first key ("perplexity")

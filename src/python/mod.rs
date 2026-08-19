@@ -1030,6 +1030,23 @@ fn emit_progress(py: Python<'_>, cb: &PyObject, iter: usize, total: usize, ll: f
     let _ = cb.call1(py, (iter, total, info));
 }
 
+/// Like `emit_progress` but for models that surface a perplexity alongside the
+/// log-likelihood (keyATM): `callback(iteration, total, {"ll": ll, "perplexity":
+/// ppl})`. Best-effort — a raising callback never aborts the fit (#785).
+fn emit_progress_ll_ppl(
+    py: Python<'_>,
+    cb: &PyObject,
+    iter: usize,
+    total: usize,
+    ll: f64,
+    ppl: f64,
+) {
+    let info = PyDict::new_bound(py);
+    let _ = info.set_item("ll", ll);
+    let _ = info.set_item("perplexity", ppl);
+    let _ = cb.call1(py, (iter, total, info));
+}
+
 /// Construct with the hyperparameters, then call :meth:`fit` on a
 /// :class:`Corpus` or a list of token lists. After fitting, the estimated
 /// distributions are available as :attr:`topic_word` (φ) and
@@ -15615,7 +15632,11 @@ impl KeyATM {
     /// `composition_theta` prefers over the Dirichlet approximation; set it False
     /// to save memory. `progress_interval` sets how often model_fit is recorded for
     /// `log_likelihood_history` (0 = ~50 evenly spaced points); `report_interval` is
-    /// a deprecated alias for it. `convergence_tol` (default 0.0, disabled) enables
+    /// a deprecated alias for it. `progress`, if given, is called as
+    /// ``progress(iteration, total_iters, {"ll": ll, "perplexity": ppl})`` at that
+    /// cadence — pass :func:`topica.progress` for a live bar + ETA + log-likelihood
+    /// sparkline (base, covariate, and dynamic paths; the cvb0 sampler excepted).
+    /// `convergence_tol` (default 0.0, disabled) enables
     /// opt-in early stopping: the run stops once the relative change in the recorded
     /// model-fit log-likelihood between the last two trace points falls below it,
     /// setting `converged` (ignored by the CVB0 backend, which keeps no trace).
@@ -15633,7 +15654,7 @@ impl KeyATM {
                         num_threads=None, optimize_interval=50, burn_in=200, prior_variance=1.0,
                         lbfgs_iters=20, progress_interval=0, prior_offset=None,
                         keep_theta_draws=true, num_theta_draws=25, convergence_tol=0.0_f64,
-                        report_interval=None, turbo_alpha_stride=1))]
+                        report_interval=None, turbo_alpha_stride=1, progress=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -15658,6 +15679,7 @@ impl KeyATM {
         convergence_tol: f64,
         report_interval: Option<usize>,
         turbo_alpha_stride: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         ensure_finite_pos("prior_variance", prior_variance)?;
@@ -15901,6 +15923,9 @@ impl KeyATM {
                 order.iter().map(|&d| corpus.docs[d].clone()).collect();
             let sorted_time: Vec<usize> = order.iter().map(|&d| time_raw[d]).collect();
 
+            // Clone the progress handle for this branch: the non-dynamic path below
+            // moves the original into its own worker closure.
+            let progress_dyn = progress.as_ref().map(|p| p.clone_ref(py));
             let model = py.allow_threads(move || {
                 keyatm::fit_keyatm_dynamic(
                     &sorted_docs,
@@ -15923,6 +15948,11 @@ impl KeyATM {
                     nthreads,
                     draws_opts,
                     convergence_tol,
+                    |it, total, ll, ppl| {
+                        if let Some(cb) = &progress_dyn {
+                            Python::with_gil(|py| emit_progress_ll_ppl(py, cb, it, total, ll, ppl));
+                        }
+                    },
                     &mut rng,
                 )
             });
@@ -16093,6 +16123,11 @@ impl KeyATM {
                     offset.as_deref(),
                     draws_opts,
                     convergence_tol,
+                    |it, total, ll, ppl| {
+                        if let Some(cb) = &progress {
+                            Python::with_gil(|py| emit_progress_ll_ppl(py, cb, it, total, ll, ppl));
+                        }
+                    },
                     &mut rng,
                 ),
                 None if cvb0 => keyatm::fit_keyatm_cvb0(
@@ -16127,6 +16162,11 @@ impl KeyATM {
                     draws_opts,
                     convergence_tol,
                     turbo_alpha_stride,
+                    |it, total, ll, ppl| {
+                        if let Some(cb) = &progress {
+                            Python::with_gil(|py| emit_progress_ll_ppl(py, cb, it, total, ll, ppl));
+                        }
+                    },
                     &mut rng,
                 ),
             };

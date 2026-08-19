@@ -1113,7 +1113,7 @@ fn run_sweep<R: Rng>(
 ///                          Higher γ₁ → more weight on keyword distribution.
 /// * `iters`              — number of full Gibbs sweeps.
 /// * `rng`                — random-number source (deterministic for fixed seed).
-pub fn fit_keyatm<R: Rng>(
+pub fn fit_keyatm<R: Rng, F: FnMut(usize, usize, f64, f64)>(
     docs: &[Vec<u32>],
     num_types: usize,
     num_topics: usize,
@@ -1131,6 +1131,7 @@ pub fn fit_keyatm<R: Rng>(
     draws: ThetaDrawOpts,
     convergence_tol: f64,
     alpha_stride: usize,
+    mut on_progress: F,
     rng: &mut R,
 ) -> KeyAtmModel {
     // A fixed symmetric α (estimate_alpha = false) must be a valid Dirichlet
@@ -1204,9 +1205,10 @@ pub fn fit_keyatm<R: Rng>(
         draws.maybe_collect(&mut theta_draw_buf, it + 1, &model.ndk, &doc_alpha);
         if record_ll(it + 1, ll_interval, iters) {
             model.alpha_vec = Some(alpha_vec.clone());
-            model
-                .log_likelihood_history
-                .push((it + 1, model.model_loglik(), model.perplexity()));
+            let ll = model.model_loglik();
+            let ppl = model.perplexity();
+            model.log_likelihood_history.push((it + 1, ll, ppl));
+            on_progress(it + 1, iters, ll, ppl);
             // The alpha trace (plot_alpha) is only meaningful when alpha is being
             // learned; with a fixed symmetric prior it would be a flat line.
             if estimate_alpha {
@@ -1819,7 +1821,7 @@ fn covariate_lambda_se(
 /// `iters < burn_in + opt_interval`). The keyword (z, s) sampler is otherwise
 /// identical to the base model.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_keyatm_cov<R: Rng>(
+pub fn fit_keyatm_cov<R: Rng, F: FnMut(usize, usize, f64, f64)>(
     docs: &[Vec<u32>],
     num_types: usize,
     num_topics: usize,
@@ -1841,6 +1843,7 @@ pub fn fit_keyatm_cov<R: Rng>(
     offset: Option<&[Vec<f64>]>,
     draws: ThetaDrawOpts,
     convergence_tol: f64,
+    mut on_progress: F,
     rng: &mut R,
 ) -> KeyAtmModel {
     assert_eq!(
@@ -1946,9 +1949,10 @@ pub fn fit_keyatm_cov<R: Rng>(
             model.lambda = Some(lambda.clone());
             model.features = Some(features_std.clone());
             model.prior_offset = offset.map(|o| o.to_vec());
-            model
-                .log_likelihood_history
-                .push((it + 1, model.model_loglik(), model.perplexity()));
+            let ll = model.model_loglik();
+            let ppl = model.perplexity();
+            model.log_likelihood_history.push((it + 1, ll, ppl));
+            on_progress(it + 1, iters, ll, ppl);
             model.pi_history.push((it + 1, model.keyword_rate()));
             if ll_converged(&model.log_likelihood_history, convergence_tol) {
                 model.converged = true;
@@ -2203,7 +2207,7 @@ fn shuffled_topic_ids<R: Rng>(n: usize, rng: &mut R) -> Vec<usize> {
 /// backward sampling (FFBS) of the state path and resamples the left-to-right
 /// transition matrix.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_keyatm_dynamic<R: Rng>(
+pub fn fit_keyatm_dynamic<R: Rng, F: FnMut(usize, usize, f64, f64)>(
     docs: &[Vec<u32>],
     num_types: usize,
     num_topics: usize,
@@ -2224,6 +2228,7 @@ pub fn fit_keyatm_dynamic<R: Rng>(
     num_threads: usize,
     draws: ThetaDrawOpts,
     convergence_tol: f64,
+    mut on_progress: F,
     rng: &mut R,
 ) -> KeyAtmModel {
     assert_eq!(
@@ -2543,9 +2548,10 @@ pub fn fit_keyatm_dynamic<R: Rng>(
                 r_est: r_est.clone(),
                 p_est: p_est.clone(),
             });
-            model
-                .log_likelihood_history
-                .push((it + 1, model.model_loglik(), model.perplexity()));
+            let ll = model.model_loglik();
+            let ppl = model.perplexity();
+            model.log_likelihood_history.push((it + 1, ll, ppl));
+            on_progress(it + 1, iters, ll, ppl);
             model.pi_history.push((it + 1, model.keyword_rate()));
             if ll_converged(&model.log_likelihood_history, convergence_tol) {
                 model.converged = true;
@@ -2788,6 +2794,7 @@ mod tests {
             ThetaDrawOpts::new(false, 0, 0),
             0.0,
             1,
+            |_, _, _, _| {},
             &mut rng,
         );
 
@@ -2931,6 +2938,7 @@ mod tests {
             ThetaDrawOpts::new(false, 0, 0),
             0.0,
             1,
+            |_, _, _, _| {},
             &mut rng,
         );
 
@@ -2987,6 +2995,7 @@ mod tests {
             ThetaDrawOpts::new(false, 0, 0),
             0.0,
             1,
+            |_, _, _, _| {},
             &mut rng,
         );
 
@@ -3062,6 +3071,7 @@ mod tests {
             1,
             ThetaDrawOpts::new(false, 0, 0),
             0.0,
+            |_, _, _, _| {},
             &mut rng,
         );
 
@@ -3119,6 +3129,7 @@ mod tests {
             1,
             ThetaDrawOpts::new(false, 0, 0),
             0.0,
+            |_, _, _, _| {},
             &mut r1,
         );
         let m2 = fit_keyatm_dynamic(
@@ -3142,6 +3153,7 @@ mod tests {
             1,
             ThetaDrawOpts::new(false, 0, 0),
             0.0,
+            |_, _, _, _| {},
             &mut r2,
         );
         assert_eq!(
@@ -3186,6 +3198,7 @@ mod tests {
             ThetaDrawOpts::new(false, 0, 0),
             0.0,
             1,
+            |_, _, _, _| {},
             &mut r1,
         );
         let m2 = fit_keyatm(
@@ -3206,6 +3219,7 @@ mod tests {
             ThetaDrawOpts::new(false, 0, 0),
             0.0,
             1,
+            |_, _, _, _| {},
             &mut r2,
         );
 
@@ -3254,6 +3268,7 @@ mod tests {
             ThetaDrawOpts::new(false, 0, 0),
             0.0,
             1,
+            |_, _, _, _| {},
             &mut rng,
         );
         let h = &model.log_likelihood_history;
@@ -3292,6 +3307,7 @@ mod tests {
             ThetaDrawOpts::new(false, 0, 0),
             0.0,
             1,
+            |_, _, _, _| {},
             &mut rng2,
         );
         assert!(none.log_likelihood_history.is_empty());
@@ -3323,6 +3339,7 @@ mod tests {
             ThetaDrawOpts::new(false, 0, 0),
             0.0,
             1,
+            |_, _, _, _| {},
             &mut rng,
         );
         let base = crate::conformance::check_conformance(&m);
@@ -3361,6 +3378,7 @@ mod tests {
                 ThetaDrawOpts::new(false, 0, 0),
                 0.0,
                 stride,
+                |_, _, _, _| {},
                 &mut r,
             )
         };
@@ -3450,6 +3468,7 @@ mod tests {
             ThetaDrawOpts::new(false, 0, 0),
             0.0,
             1,
+            |_, _, _, _| {},
             &mut rng,
         );
     }
@@ -3553,6 +3572,7 @@ mod tests {
             1,
             ThetaDrawOpts::new(false, 0, 0),
             0.0,
+            |_, _, _, _| {},
             &mut rng,
         );
     }
