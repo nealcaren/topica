@@ -32,6 +32,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Pin the Rust toolchain so a new stable release cannot move CI ahead of a
+# contributor's local clippy (which twice landed red-lint pushes in 2026-08).
+# Keep this in lockstep with `rust-toolchain.toml` (which drives local dev);
+# `scripts/preflight.sh` fails if the two disagree. Bumping is a deliberate,
+# reviewed edit to both, not a silent `@stable` upgrade.
+env:
+  RUST_TOOLCHAIN: "1.98.0"
+
 # ---------------------------------------------------------------------------
 # Job: test
 # Builds the extension in-place with `maturin develop` and runs pytest.
@@ -64,9 +72,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust (pinned)
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -86,8 +95,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust (pinned)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
       # `--workspace` so the extracted `topica-core` member is tested too, not
@@ -113,9 +124,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Install stable Rust toolchain (required for maturin/pyo3 compilation).
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+      # Install the pinned Rust toolchain (required for maturin/pyo3 compilation).
+      - name: Install Rust (pinned)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       # Cache the cargo registry and target/ across runs so the release compile
       # is paid once and reused, not rebuilt cold every time.
@@ -179,8 +192,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust (pinned)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -307,8 +322,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust (pinned)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
@@ -417,8 +434,9 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ matrix.target }}
 
       - name: Install musl tools (Linux)
