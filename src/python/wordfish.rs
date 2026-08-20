@@ -135,9 +135,11 @@ impl Wordfish {
     /// word offsets so it does not contaminate the latent position. `anchors` is an
     /// optional `{author_label: value}` mapping used to orient the sign of the axis so
     /// positions align with the supplied direction. `iters` sets the EM iteration cap
-    /// (default 100).
+    /// (default 100). `progress` opts into a per-iteration fit callback (or `True`
+    /// for a progress bar); it receives `(iter, total, log_likelihood)` and may
+    /// return `False` to stop early.
     #[pyo3(signature = (data, *, group=None, control=None, anchors=None, iters=None,
-                        convergence_tol=None))]
+                        convergence_tol=None, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -147,6 +149,7 @@ impl Wordfish {
         anchors: Option<HashMap<String, f64>>,
         iters: Option<usize>,
         convergence_tol: Option<f64>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let (docs_str, doc_names): (Vec<Vec<String>>, Vec<String>) =
             if let Ok(c) = data.extract::<Corpus>() {
@@ -317,7 +320,9 @@ impl Wordfish {
         let tol = convergence_tol.unwrap_or(slf.convergence_tol);
         let it = iters.unwrap_or(100);
         let (bsd, tsd) = (slf.beta_prior_sd, slf.theta_prior_sd);
+        let progress = resolve_progress(py, progress, "Wordfish")?;
         let model = py.allow_threads(move || {
+            let mut on_progress = on_progress_ll(&progress);
             wordfish::fit_wordfish_controlled(
                 &counts,
                 num_types,
@@ -328,8 +333,10 @@ impl Wordfish {
                 tol,
                 bsd,
                 tsd,
+                &mut on_progress,
             )
         });
+        reraise_if_interrupted(py)?;
 
         slf.model = Some(model);
         slf.id_to_word = id_to_word;

@@ -145,8 +145,10 @@ impl TBIP {
     /// of author labels (length num_docs): documents sharing a label share one latent
     /// ideal point; if omitted, each document is its own author. `iters`,
     /// `batch_size`, and `learning_rate` override the constructor values when given.
+    /// `progress` opts into a per-step fit callback (or `True` for a progress bar);
+    /// it receives `(step, total, elbo)` and may return `False` to stop early.
     #[pyo3(signature = (data, *, group=None, iters=None, batch_size=None,
-                        learning_rate=None))]
+                        learning_rate=None, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -155,6 +157,7 @@ impl TBIP {
         iters: Option<usize>,
         batch_size: Option<usize>,
         learning_rate: Option<f64>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let (docs_str, doc_names): (Vec<Vec<String>>, Vec<String>) =
             if let Ok(c) = data.extract::<Corpus>() {
@@ -272,8 +275,10 @@ impl TBIP {
             learning_rate: learning_rate.unwrap_or(slf.learning_rate),
         };
         let (k, seed) = (slf.num_topics, slf.seed);
+        let progress = resolve_progress(py, progress, "TBIP")?;
         let model = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let mut on_progress = on_progress_ll(&progress);
             tbip::fit_tbip(
                 &docs_ids,
                 &group_idx,
@@ -281,9 +286,11 @@ impl TBIP {
                 k,
                 num_types,
                 &cfg,
+                &mut on_progress,
                 &mut rng,
             )
         });
+        reraise_if_interrupted(py)?;
 
         slf.model = Some(model);
         slf.corpus = Some(coherence_corpus);

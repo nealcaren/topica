@@ -427,7 +427,7 @@ impl OnlineLDAModel {
 /// the bound (`convergence_tol > 0`). A final full E-step gives every document a
 /// θ row and the reported topic-word matrix its normalised `λ`.
 #[allow(clippy::too_many_arguments)]
-pub fn fit<R: Rng>(
+pub fn fit<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     corpus: &Corpus,
     num_topics: usize,
     alpha: Vec<f64>,
@@ -440,6 +440,7 @@ pub fn fit<R: Rng>(
     iters: usize,
     convergence_tol: f64,
     total_docs_override: Option<f64>,
+    mut on_progress: F,
     rng: &mut R,
 ) -> OnlineLDAModel {
     let num_types = corpus.num_types();
@@ -479,15 +480,26 @@ pub fn fit<R: Rng>(
         let (elogbeta, _) = dirichlet_expectation(&model.lambda);
         pass_bound += beta_bound(&model.lambda, &elogbeta, eta, num_types);
 
+        let mut converged_now = false;
         if let Some(&(_, prev)) = model.fit_history.last() {
             let rel = (pass_bound - prev).abs() / prev.abs().max(1e-10);
             model.fit_history.push((pass + 1, pass_bound));
             if convergence_tol > 0.0 && rel < convergence_tol {
                 model.converged = true;
-                break;
+                converged_now = true;
             }
         } else {
             model.fit_history.push((pass + 1, pass_bound));
+        }
+
+        // Per-pass ELBO drives the live progress bar. On an early-stop, snap the
+        // bar to 100% by reporting (pass, pass) (mirrors fastopic, #786).
+        if converged_now {
+            let _ = on_progress(pass + 1, pass + 1, pass_bound);
+            break;
+        }
+        if !on_progress(pass + 1, iters, pass_bound) {
+            break;
         }
     }
 
@@ -608,6 +620,7 @@ mod tests {
             100,
             0.0,
             None,
+            |_, _, _| true,
             &mut rng,
         )
     }

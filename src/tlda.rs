@@ -761,7 +761,7 @@ fn recover_params(
 }
 
 /// Fit Online Tensor LDA on the given document-term counts.
-pub fn fit_tlda(
+pub fn fit_tlda<F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<u32>],
     num_topics: usize,
     num_types: usize,
@@ -774,6 +774,7 @@ pub fn fit_tlda(
     theta: f64,
     n_eigenvec: Option<usize>,
     seed: u64,
+    mut on_progress: F,
 ) -> TensorLdaModel {
     let d = docs.len();
     let v = num_types;
@@ -875,6 +876,11 @@ pub fn fit_tlda(
         fit_history.push((i, max_diff));
         if max_diff < tol && i >= 10 {
             converged = true;
+            let _ = on_progress(i, i); // snap bar to 100% on early convergence (#786)
+            break;
+        }
+        if !on_progress(i, n_iter_train) {
+            break;
         }
         i += 1;
     }
@@ -946,7 +952,21 @@ mod tests {
         let block = 6;
         let (docs, v) = planted_corpus(k, block, 60, 10, 42);
 
-        let m = fit_tlda(&docs, k, v, 1.0, 50, 20, 0.01, 10, 0.01, 1.0, None, 42);
+        let m = fit_tlda(
+            &docs,
+            k,
+            v,
+            1.0,
+            50,
+            20,
+            0.01,
+            10,
+            0.01,
+            1.0,
+            None,
+            42,
+            |_, _| true,
+        );
         assert_eq!(m.num_topics(), k);
         assert_eq!(m.topic_word.len(), k);
         assert_eq!(m.topic_word[0].len(), v);
@@ -1067,8 +1087,36 @@ mod tests {
         let block = 5;
         let (docs, v) = planted_corpus(k, block, 40, 8, 123);
 
-        let m1 = fit_tlda(&docs, k, v, 0.5, 30, 15, 0.05, 5, 0.05, 1.0, None, 999);
-        let m2 = fit_tlda(&docs, k, v, 0.5, 30, 15, 0.05, 5, 0.05, 1.0, None, 999);
+        let m1 = fit_tlda(
+            &docs,
+            k,
+            v,
+            0.5,
+            30,
+            15,
+            0.05,
+            5,
+            0.05,
+            1.0,
+            None,
+            999,
+            |_, _| true,
+        );
+        let m2 = fit_tlda(
+            &docs,
+            k,
+            v,
+            0.5,
+            30,
+            15,
+            0.05,
+            5,
+            0.05,
+            1.0,
+            None,
+            999,
+            |_, _| true,
+        );
 
         assert_eq!(m1.topic_word, m2.topic_word);
         assert_eq!(m1.doc_topic, m2.doc_topic);
