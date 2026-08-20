@@ -429,11 +429,12 @@ impl ETM {
                 slf.prior_variance,
                 slf.max_inner,
             );
-            let progress = resolve_progress(py, progress, "ETM");
+            let progress = resolve_progress(py, progress, "ETM")?;
             let model = py.allow_threads(move || {
-                let mut on_progress = |it: usize, total: usize, ll: f64| {
-                    if let Some(cb) = &progress {
-                        Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+                let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
+                    match &progress {
+                        Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
+                        None => true,
                     }
                 };
                 etm::fit_etm(
@@ -450,6 +451,7 @@ impl ETM {
                     &mut rng,
                 )
             });
+            reraise_if_interrupted(py)?;
             slf.model = Some(model);
             slf.vae = None;
         }
@@ -1184,11 +1186,12 @@ impl DETM {
             slf.wdecay,
             slf.grad_clip,
         );
-        let progress = resolve_progress(py, progress, "DETM");
+        let progress = resolve_progress(py, progress, "DETM")?;
         let model = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| {
-                if let Some(cb) = &progress {
-                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
+                match &progress {
+                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
+                    None => true,
                 }
             };
             detm::fit_detm(
@@ -1213,6 +1216,7 @@ impl DETM {
                 &mut rng,
             )
         });
+        reraise_if_interrupted(py)?;
 
         slf.num_times = num_times;
         slf.model = Some(model);
@@ -1857,11 +1861,12 @@ impl InfoCTM {
 
         let docs_a = corpus_a.docs.clone();
         let docs_b = corpus_b.docs.clone();
-        let progress = resolve_progress(py, progress, "InfoCTM");
+        let progress = resolve_progress(py, progress, "InfoCTM")?;
         let model = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| {
-                if let Some(cb) = &progress {
-                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
+                match &progress {
+                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
+                    None => true,
                 }
             };
             infoctm::fit_infoctm(
@@ -1886,6 +1891,7 @@ impl InfoCTM {
                 &mut rng,
             )
         });
+        reraise_if_interrupted(py)?;
         slf.model = Some(model);
         slf.corpus_a = Some(corpus_a);
         slf.corpus_b = Some(corpus_b);
@@ -2406,11 +2412,12 @@ impl ProdLDA {
         );
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let empty: Vec<Vec<f64>> = vec![Vec::new(); corpus.docs.len()];
-        let progress = resolve_progress(py, progress, "ProdLDA");
+        let progress = resolve_progress(py, progress, "ProdLDA")?;
         let (model, corpus) = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| {
-                if let Some(cb) = &progress {
-                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
+                match &progress {
+                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
+                    None => true,
                 }
             };
             let m = prodlda::fit_avitm(
@@ -2433,6 +2440,7 @@ impl ProdLDA {
             );
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
         slf.model = Some(model);
         slf.corpus = Some(corpus);
         slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
@@ -3092,7 +3100,7 @@ macro_rules! ctm_embedding_model {
                         lr,
                         tol,
                         opts,
-                        |_, _, _| {},
+                        |_, _, _| true,
                         &mut rng,
                     );
                     (m, corpus)

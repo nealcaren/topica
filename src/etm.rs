@@ -184,7 +184,7 @@ impl EtmModel {
 /// `max_inner` caps the per-iteration L-BFGS steps for the embedding M-step, and
 /// `em_tol` stops EM on the relative change in the corpus bound.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_etm<R: Rng, F: FnMut(usize, usize, f64)>(
+pub fn fit_etm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
     num_topics: usize,
     num_types: usize,
@@ -279,7 +279,9 @@ pub fn fit_etm<R: Rng, F: FnMut(usize, usize, f64)>(
 
         let total_bound: f64 = doc_results.iter().map(|(_, _, r)| r.bound).sum();
         bound_history.push(total_bound);
-        on_progress(em + 1, em_iters, total_bound);
+        if !on_progress(em + 1, em_iters, total_bound) {
+            break;
+        }
 
         for (di, opt, res) in &doc_results {
             let di = *di;
@@ -302,7 +304,7 @@ pub fn fit_etm<R: Rng, F: FnMut(usize, usize, f64)>(
             let prev = bound_history[bound_history.len() - 2];
             let rel = (total_bound - prev).abs() / (prev.abs() + 1e-12);
             if rel < em_tol {
-                on_progress(em + 1, em + 1, total_bound); // snap bar to 100% (#786)
+                let _ = on_progress(em + 1, em + 1, total_bound); // snap bar to 100% (#786)
                 converged = true;
                 break;
             }
@@ -485,7 +487,7 @@ mod tests {
             0.0,
             1e6,
             25,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         assert_eq!(m.beta.len(), k);
@@ -537,7 +539,7 @@ mod tests {
             0.0,
             1e6,
             25,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let base = crate::conformance::check_conformance(&m);

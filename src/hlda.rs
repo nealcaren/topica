@@ -612,7 +612,7 @@ impl HldaModel {
 /// RNGs (`ChaCha8Rng`, `Pcg64Mcg`) satisfy it. A non-`Send` RNG cannot be used
 /// even at `num_threads = 1`.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_hlda<R: Rng + Send, F: FnMut(usize, usize) + Send>(
+pub fn fit_hlda<R: Rng + Send, F: FnMut(usize, usize) -> bool + Send>(
     docs: &[Vec<u32>],
     num_types: usize,
     depth: usize,
@@ -713,7 +713,9 @@ pub fn fit_hlda<R: Rng + Send, F: FnMut(usize, usize) + Send>(
                 model.sample_path(d, doc, parallel, rng);
                 model.sample_levels(d, doc, rng);
             }
-            on_progress(it + 1, iters);
+            if !on_progress(it + 1, iters) {
+                break;
+            }
         }
     };
     if parallel {
@@ -827,7 +829,7 @@ mod tests {
             LevelPrior::Dirichlet(vec![0.5; 2]),
             80,
             1,
-            |_, _| {},
+            |_, _| true,
             &mut rng,
         );
 
@@ -935,7 +937,7 @@ mod tests {
             LevelPrior::Dirichlet(vec![0.5; 2]),
             30,
             1,
-            |_, _| {},
+            |_, _| true,
             &mut r1,
         );
         let m2 = fit_hlda(
@@ -947,7 +949,7 @@ mod tests {
             LevelPrior::Dirichlet(vec![0.5; 2]),
             30,
             1,
-            |_, _| {},
+            |_, _| true,
             &mut r2,
         );
 
@@ -975,7 +977,7 @@ mod tests {
             LevelPrior::Dirichlet(vec![0.5; 2]),
             80,
             1,
-            |_, _| {},
+            |_, _| true,
             &mut rng,
         );
         let base = crate::conformance::check_conformance(&model);
@@ -1017,7 +1019,7 @@ mod tests {
                 LevelPrior::Dirichlet(vec![0.5; 5]),
                 80,
                 1,
-                |_, _| {},
+                |_, _| true,
                 &mut rng,
             );
 
@@ -1181,7 +1183,7 @@ mod tests {
 
         let count_level0 = |prior: LevelPrior| -> usize {
             let mut r = ChaCha8Rng::seed_from_u64(99);
-            let m = fit_hlda(&docs, v, 3, 1.0, 0.1, prior, 60, 1, |_, _| {}, &mut r);
+            let m = fit_hlda(&docs, v, 3, 1.0, 0.1, prior, 60, 1, |_, _| true, &mut r);
             m.levels.iter().flatten().filter(|&&l| l == 0).count()
         };
         let sym = count_level0(LevelPrior::Dirichlet(vec![0.5; 3]));
@@ -1210,7 +1212,7 @@ mod tests {
                 },
                 40,
                 1,
-                |_, _| {},
+                |_, _| true,
                 &mut r,
             )
         };
@@ -1239,7 +1241,7 @@ mod tests {
                 LevelPrior::Dirichlet(vec![0.1; 3]),
                 40,
                 threads,
-                |_, _| {},
+                |_, _| true,
                 &mut r,
             )
         };
@@ -1288,7 +1290,7 @@ mod tests {
                 LevelPrior::Dirichlet(vec![0.1; 3]),
                 50,
                 1,
-                |_, _| {},
+                |_, _| true,
                 &mut r,
             );
             let root = (0..model.num_nodes())

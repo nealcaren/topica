@@ -565,7 +565,7 @@ pub(crate) fn init_suffstats<R: Rng>(
 /// Fit a Dynamic Topic Model. `times[d]` is the slice index (0..num_times) of
 /// document `d`. Returns the fitted model. Deterministic for a fixed `rng`.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_dtm<R: Rng, F: FnMut(usize, usize, f64)>(
+pub fn fit_dtm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
     times: &[usize],
     num_types: usize,
@@ -680,7 +680,9 @@ pub fn fit_dtm<R: Rng, F: FnMut(usize, usize, f64)>(
             topic_bound += chains[kk].fit(&sstats[kk]);
         }
         bound = doc_bound + topic_bound;
-        on_progress(iter + 1, em_iters, bound);
+        if !on_progress(iter + 1, em_iters, bound) {
+            break;
+        }
         if bound < old_bound && lda_max_iter < 10 {
             lda_max_iter *= 2; // gensim: back off when the bound dips
         }
@@ -688,7 +690,7 @@ pub fn fit_dtm<R: Rng, F: FnMut(usize, usize, f64)>(
             && old_bound != 0.0
             && ((bound - old_bound) / old_bound).abs() < 1e-4
         {
-            on_progress(iter + 1, iter + 1, bound); // snap bar to 100% (#786)
+            let _ = on_progress(iter + 1, iter + 1, bound); // snap bar to 100% (#786)
             break;
         }
     }
@@ -796,7 +798,7 @@ mod tests {
             0.5,
             20,
             false,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
 
@@ -875,7 +877,7 @@ mod tests {
             0.5,
             8,
             true,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut r1,
         );
         let m2 = fit_dtm(
@@ -889,7 +891,7 @@ mod tests {
             0.5,
             8,
             true,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut r2,
         );
         assert_eq!(m1.topic_word(0, 0), m2.topic_word(0, 0));
@@ -916,7 +918,7 @@ mod tests {
             0.5,
             8,
             false,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut r1,
         );
         let m2 = fit_dtm(
@@ -930,7 +932,7 @@ mod tests {
             0.5,
             8,
             false,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut r2,
         );
         assert_eq!(m1.topic_word(0, 0), m2.topic_word(0, 0));
@@ -1053,7 +1055,7 @@ mod tests {
             0.5,
             6,
             false,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         assert_eq!(m.num_times, 1);
@@ -1090,7 +1092,7 @@ mod tests {
             0.5,
             8,
             true,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         assert_eq!(m.doc_topic.len(), docs.len());
@@ -1123,7 +1125,7 @@ mod tests {
             0.5,
             8,
             true,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let base = crate::conformance::check_conformance(&m);

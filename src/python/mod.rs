@@ -1017,57 +1017,139 @@ fn build_with_fixed_vocab(
 // LDA pyclass
 // ---------------------------------------------------------------------------
 
+/// Deliver one progress tick to `cb` and report whether the fit should keep
+/// going. Returns `true` to continue, `false` to abort.
+///
+/// Two ways a fit aborts here (#794):
+///   * A `Ctrl-C` during the GIL-released fit sets Python's signal flag;
+///     `py.check_signals()` surfaces it as a pending `KeyboardInterrupt` even
+///     before the callback runs.
+///   * The callback itself raises a `BaseException` that is not an ordinary
+///     `Exception` (`KeyboardInterrupt`, `SystemExit`, `GeneratorExit`).
+///
+/// In both cases the exception is re-parked in the interpreter's error
+/// indicator and `false` is returned; the fit loop breaks and the model's
+/// `fit` re-raises it via [`reraise_if_interrupted`] once the fit unwinds. An
+/// ordinary `Exception` from a buggy user callback is still swallowed (returns
+/// `true`) so the progress display can never kill a fit (#785).
+fn deliver_progress(
+    py: Python<'_>,
+    cb: &PyObject,
+    iter: usize,
+    total: usize,
+    info: Bound<'_, PyDict>,
+) -> bool {
+    if let Err(e) = py.check_signals() {
+        e.restore(py);
+        return false;
+    }
+    match cb.call1(py, (iter, total, info)) {
+        Ok(_) => true,
+        Err(e) => {
+            // Let BaseException-only errors (Ctrl-C, sys.exit) abort the fit;
+            // swallow ordinary Exception subclasses from a buggy callback.
+            let fatal = e
+                .get_type_bound(py)
+                .is_subclass_of::<pyo3::exceptions::PyException>()
+                .map(|is_exc| !is_exc)
+                .unwrap_or(true);
+            if fatal {
+                e.restore(py);
+                false
+            } else {
+                true
+            }
+        }
+    }
+}
+
+/// After a GIL-released fit returns, re-raise a progress-triggered interrupt
+/// (`Ctrl-C` / `SystemExit`) that [`deliver_progress`] parked in the error
+/// indicator. No-op when the fit ran to completion. (#794)
+fn reraise_if_interrupted(py: Python<'_>) -> PyResult<()> {
+    match PyErr::take(py) {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
 /// SparseLDA topic model (the MALLET algorithm).
 ///
 /// Invoke a fit progress callback with the standard 3-arg contract
 /// `callback(iteration, total, info)`, where `info` is `{"ll": ll_per_token}`.
 /// This is what `topica.progress()` renders as a live bar + ETA + ll sparkline.
-/// Best-effort: a callback that raises is ignored so the progress display can
-/// never abort a fit (#785).
-fn emit_progress(py: Python<'_>, cb: &PyObject, iter: usize, total: usize, ll: f64) {
+/// Returns `false` if the fit should abort (see [`deliver_progress`]).
+fn emit_progress(py: Python<'_>, cb: &PyObject, iter: usize, total: usize, ll: f64) -> bool {
     let info = PyDict::new_bound(py);
     let _ = info.set_item("ll", ll);
-    let _ = cb.call1(py, (iter, total, info));
+    deliver_progress(py, cb, iter, total, info)
 }
 
 /// Progress with no per-iteration metric: drives the bar/ETA only (empty info
 /// dict, so `topica.progress()` renders no sparkline). For samplers that do not
 /// compute a cheap per-sweep log-likelihood (BTM, HLDA), where the bar's value is
 /// the "is it still running?" signal rather than a convergence trace.
-fn emit_progress_bare(py: Python<'_>, cb: &PyObject, iter: usize, total: usize) {
+/// Returns `false` if the fit should abort (see [`deliver_progress`]).
+fn emit_progress_bare(py: Python<'_>, cb: &PyObject, iter: usize, total: usize) -> bool {
     let info = PyDict::new_bound(py);
-    let _ = cb.call1(py, (iter, total, info));
+    deliver_progress(py, cb, iter, total, info)
 }
 
 /// When the caller did not pass a `progress` callback, default to a live
 /// `topica.progress()` bar **only if stderr is an interactive terminal**, so
 /// interactive users get progress for free while scripts, pipelines, notebooks
 /// saving to a file, and CI stay silent (#785). `label` names the model in the bar.
-fn resolve_progress(py: Python<'_>, progress: Option<PyObject>, label: &str) -> Option<PyObject> {
-    if progress.is_some() {
-        return progress;
-    }
-    let is_tty = py
-        .import_bound("sys")
-        .and_then(|s| s.getattr("stderr"))
-        .and_then(|e| e.call_method0("isatty"))
-        .and_then(|r| r.extract::<bool>())
-        .unwrap_or(false);
+///
+/// A non-`None`, non-callable `progress` is a `TypeError` here (with the GIL,
+/// before `allow_threads`), so a typo'd callback fails loudly instead of a
+/// silent no-op fit (#794).
+fn resolve_progress(
+    py: Python<'_>,
+    progress: Option<PyObject>,
+    label: &str,
+) -> PyResult<Option<PyObject>> {
+    // `progress=True/False` is the long-standing on/off toggle: `False` disables
+    // the bar (like `None` in a non-terminal), `True` forces the default bar even
+    // when stderr is not a TTY. A non-bool, non-callable value is a typo -> raise.
+    let force_default = match &progress {
+        Some(obj) => match obj.bind(py).extract::<bool>() {
+            Ok(false) => return Ok(None),
+            Ok(true) => true,
+            Err(_) => {
+                if !obj.bind(py).is_callable() {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "progress must be callable, a bool, or None, got {}",
+                        obj.bind(py).get_type().name()?,
+                    )));
+                }
+                return Ok(Some(progress.unwrap()));
+            }
+        },
+        None => false,
+    };
+    let is_tty = force_default
+        || py
+            .import_bound("sys")
+            .and_then(|s| s.getattr("stderr"))
+            .and_then(|e| e.call_method0("isatty"))
+            .and_then(|r| r.extract::<bool>())
+            .unwrap_or(false);
     if !is_tty {
-        return None;
+        return Ok(None);
     }
     let kwargs = PyDict::new_bound(py);
     let _ = kwargs.set_item("label", label);
-    py.import_bound("topica")
+    Ok(py
+        .import_bound("topica")
         .and_then(|t| t.getattr("progress"))
         .and_then(|p| p.call((), Some(&kwargs)))
         .ok()
-        .map(|obj| obj.unbind())
+        .map(|obj| obj.unbind()))
 }
 
 /// Like `emit_progress` but for models that surface a perplexity alongside the
 /// log-likelihood (keyATM): `callback(iteration, total, {"ll": ll, "perplexity":
-/// ppl})`. Best-effort — a raising callback never aborts the fit (#785).
+/// ppl})`. Returns `false` if the fit should abort (see [`deliver_progress`]).
 fn emit_progress_ll_ppl(
     py: Python<'_>,
     cb: &PyObject,
@@ -1075,11 +1157,11 @@ fn emit_progress_ll_ppl(
     total: usize,
     ll: f64,
     ppl: f64,
-) {
+) -> bool {
     let info = PyDict::new_bound(py);
     let _ = info.set_item("ll", ll);
     let _ = info.set_item("perplexity", ppl);
-    let _ = cb.call1(py, (iter, total, info));
+    deliver_progress(py, cb, iter, total, info)
 }
 
 /// Construct with the hyperparameters, then call :meth:`fit` on a
@@ -1373,7 +1455,10 @@ impl LDA {
     /// `progress`, if given, is called as ``progress(iteration, total_iters,
     /// {"ll": ll_per_token})`` every `progress_interval` iterations during the main
     /// loop. Pass :func:`topica.progress` for a live bar + ETA + log-likelihood
-    /// sparkline, or your own callback.
+    /// sparkline, or your own callback. ``progress=True``/``False`` force the
+    /// default bar on/off. A callback that raises an ordinary exception is
+    /// ignored (a broken display never kills a fit); a ``KeyboardInterrupt``
+    /// (Ctrl-C) does abort the fit and propagate.
     ///
     /// `convergence_tol` (default 0.0, disabled) enables early stopping: after
     /// each `check_every` sweeps the relative change in a smoothed log-likelihood
@@ -1426,7 +1511,7 @@ impl LDA {
         turbo_merge_every: usize,
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
-        let progress = resolve_progress(py, progress, "LDA");
+        let progress = resolve_progress(py, progress, "LDA")?;
         if num_samples == 0 {
             return Err(PyValueError::new_err(
                 "num_samples must be >= 1 (num_samples=0 would leave phi/theta all-zero); \
@@ -1537,9 +1622,9 @@ impl LDA {
                             {
                                 let m = cv.to_topic_model(&corpus);
                                 let ll = output::model_log_likelihood(&m, &corpus) / total_tokens;
-                                Python::with_gil(|py| {
-                                    emit_progress(py, cb, iter, iters, ll);
-                                });
+                                if !Python::with_gil(|py| emit_progress(py, cb, iter, iters, ll)) {
+                                    break;
+                                }
                             }
                         }
                         if check_every > 0 && iter % check_every == 0 {
@@ -1558,6 +1643,7 @@ impl LDA {
                     let model = cv.to_topic_model(&corpus);
                     (acc_phi, acc_theta, ll_history, converged, model, corpus)
                 });
+            reraise_if_interrupted(py)?;
             slf.theta_draws = None;
             slf.finalize_fit(
                 num_topics, num_types, num_docs, acc_phi, acc_theta, model, corpus, ll_history,
@@ -1622,6 +1708,7 @@ impl LDA {
                     )
                 }
             });
+            reraise_if_interrupted(py)?;
             slf.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, num_topics, None);
             slf.finalize_fit(
                 num_topics,
@@ -1737,9 +1824,9 @@ impl LDA {
                             && (crossed_multiple(prev, iter, progress_interval) || iter == iters)
                         {
                             let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
-                            Python::with_gil(|py| {
-                                emit_progress(py, cb, iter, iters, ll);
-                            });
+                            if !Python::with_gil(|py| emit_progress(py, cb, iter, iters, ll)) {
+                                break;
+                            }
                         }
                     }
                 }
@@ -1787,6 +1874,7 @@ impl LDA {
                     (model, corpus),
                 )
             });
+        reraise_if_interrupted(py)?;
         let (model, corpus) = model;
         slf.theta_draws = draws_to_array3(&theta_draw_buf, num_docs, num_topics, None);
         slf.finalize_fit(
@@ -2908,9 +2996,9 @@ fn run_mh_training<S: crate::mh::MhSampler>(
             if progress_interval > 0 && (iter % progress_interval == 0 || iter == iters) {
                 let m = sampler.to_topic_model();
                 let ll = output::model_log_likelihood(&m, &corpus) / total_tokens;
-                Python::with_gil(|py| {
-                    emit_progress(py, cb, iter, iters, ll);
-                });
+                if !Python::with_gil(|py| emit_progress(py, cb, iter, iters, ll)) {
+                    break;
+                }
             }
         }
     }
@@ -4370,7 +4458,7 @@ impl DMR {
         num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
-        let progress = resolve_progress(py, progress, "DMR");
+        let progress = resolve_progress(py, progress, "DMR")?;
         // num_threads: fit()-level value overrides the constructor default; the
         // sparse Gibbs sweep runs AD-LDA partition-and-merge when this is >1.
         let num_threads = num_threads.unwrap_or(slf.num_threads).max(1);
@@ -4659,9 +4747,9 @@ impl DMR {
                                 offset.as_deref(),
                             );
                             let llpt = ll / total_tokens;
-                            Python::with_gil(|py| {
-                                emit_progress(py, cb, iter, iters, llpt);
-                            });
+                            if !Python::with_gil(|py| emit_progress(py, cb, iter, iters, llpt)) {
+                                break;
+                            }
                         }
                     }
                 }
@@ -4824,9 +4912,9 @@ impl DMR {
                                 offset.as_deref(),
                             );
                             let llpt = ll / total_tokens;
-                            Python::with_gil(|py| {
-                                emit_progress(py, cb, iter, iters, llpt);
-                            });
+                            if !Python::with_gil(|py| emit_progress(py, cb, iter, iters, llpt)) {
+                                break;
+                            }
                         }
                     }
 
@@ -4934,6 +5022,7 @@ impl DMR {
                 )
             })
         };
+        reraise_if_interrupted(py)?;
         let _ = model;
 
         let mut phi = Array2::<f64>::zeros((k, num_types));
@@ -5570,7 +5659,7 @@ impl LabeledLDA {
         num_threads: Option<usize>,
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
-        let progress = resolve_progress(py, progress, "LabeledLDA");
+        let progress = resolve_progress(py, progress, "LabeledLDA")?;
         // num_threads: fit()-level value overrides the constructor default; the
         // sparse restricted-Gibbs sweep runs AD-LDA partition-and-merge when >1.
         let num_threads = num_threads.unwrap_or(slf.num_threads).max(1);
@@ -5775,9 +5864,9 @@ impl LabeledLDA {
                         if progress_interval > 0 && (iter % progress_interval == 0 || iter == iters)
                         {
                             let ll = output::model_log_likelihood(&model, &corpus) / total_tokens;
-                            Python::with_gil(|py| {
-                                emit_progress(py, cb, iter, iters, ll);
-                            });
+                            if !Python::with_gil(|py| emit_progress(py, cb, iter, iters, ll)) {
+                                break;
+                            }
                         }
                     }
                     // Trace recording and optional convergence check (never alters RNG).
@@ -5860,6 +5949,7 @@ impl LabeledLDA {
                     corpus,
                 )
             });
+        reraise_if_interrupted(py)?;
         let _ = model;
 
         let mut phi = Array2::<f64>::zeros((k, num_types));
@@ -6422,7 +6512,7 @@ impl SAGE {
         convergence_tol: f64,
         check_every: usize,
     ) -> PyResult<Py<Self>> {
-        let progress = resolve_progress(py, progress, "SAGE");
+        let progress = resolve_progress(py, progress, "SAGE")?;
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
         } else {
@@ -6582,9 +6672,9 @@ impl SAGE {
                 if let Some(cb) = &progress {
                     if progress_interval > 0 && (iter % progress_interval == 0 || iter == iters) {
                         let llpt = compute_ll(&model) / total_tokens;
-                        Python::with_gil(|py| {
-                            emit_progress(py, cb, iter, iters, llpt);
-                        });
+                        if !Python::with_gil(|py| emit_progress(py, cb, iter, iters, llpt)) {
+                            break;
+                        }
                     }
                 }
                 // Trace recording and optional convergence check (never alters RNG).
@@ -6640,6 +6730,7 @@ impl SAGE {
                 corpus,
             )
         });
+        reraise_if_interrupted(py)?;
 
         if !kappa_ok {
             let warnings = py.import_bound("warnings")?;
@@ -7477,11 +7568,12 @@ impl CTM {
 
         let init_beta = parse_init_beta(beta_init, k, num_types, svi)?;
 
-        let progress = resolve_progress(py, progress, "CTM");
+        let progress = resolve_progress(py, progress, "CTM")?;
         let (model, corpus) = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| {
-                if let Some(cb) = &progress {
-                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
+                match &progress {
+                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
+                    None => true,
                 }
             };
             let m = run_with_threads(num_threads, || {
@@ -7530,6 +7622,7 @@ impl CTM {
             });
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
 
         let mut beta = Array2::<f64>::zeros((k, num_types));
         for t in 0..k {
@@ -8612,13 +8705,14 @@ impl STM {
 
         let init_beta = parse_init_beta(beta_init, k, num_types, false)?;
 
-        let progress = resolve_progress(py, progress, "STM");
+        let progress = resolve_progress(py, progress, "STM")?;
         let (model, corpus) = py.allow_threads(move || {
             let prev_ref = prevalence_x.as_deref();
             let cont_ref = content_groups.as_ref().map(|(g, n)| (g.as_slice(), *n));
-            let mut on_progress = |it: usize, total: usize, ll: f64| {
-                if let Some(cb) = &progress {
-                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
+                match &progress {
+                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
+                    None => true,
                 }
             };
             let m = run_with_threads(num_threads, || {
@@ -8646,6 +8740,7 @@ impl STM {
             });
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
 
         let mut beta = Array2::<f64>::zeros((k, num_types));
         for t in 0..k {
@@ -11572,11 +11667,12 @@ impl DTM {
         let init_spectral = slf.init_spectral;
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
-        let progress = resolve_progress(py, progress, "DTM");
+        let progress = resolve_progress(py, progress, "DTM")?;
         let (model, corpus) = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| {
-                if let Some(cb) = &progress {
-                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
+                match &progress {
+                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
+                    None => true,
                 }
             };
             let m = dtm::fit_dtm(
@@ -11595,6 +11691,7 @@ impl DTM {
             );
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
 
         // Precompute p(word | topic, time) for every slice.
         let tw: Vec<Vec<Vec<f64>>> = (0..num_times).map(|t| model.topic_word_matrix(t)).collect();
@@ -13360,7 +13457,7 @@ impl GSDMM {
         progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         gsdmm_reject_threads(num_threads)?;
-        let progress = resolve_progress(py, progress, "GSDMM");
+        let progress = resolve_progress(py, progress, "GSDMM")?;
         let progress_interval = if let Some(old_val) = report_interval {
             let warnings = py.import_bound("warnings")?;
             warnings.call_method1(
@@ -13437,21 +13534,23 @@ impl GSDMM {
                 verbose,
                 |it, total, nc, ll| {
                     // GSDMM surfaces two live signals: the cluster count collapsing
-                    // toward the discovered K, and the plug-in log-likelihood. The
-                    // callback is best-effort (a raise never aborts the fit) (#785).
-                    if let Some(cb) = &progress {
-                        Python::with_gil(|py| {
+                    // toward the discovered K, and the plug-in log-likelihood. A raise
+                    // never aborts the fit, but Ctrl-C / SystemExit does (#785, #794).
+                    match &progress {
+                        Some(cb) => Python::with_gil(|py| {
                             let info = PyDict::new_bound(py);
                             let _ = info.set_item("clusters", nc);
                             let _ = info.set_item("ll", ll);
-                            let _ = cb.call1(py, (it, total, info));
-                        });
+                            deliver_progress(py, cb, it, total, info)
+                        }),
+                        None => true,
                     }
                 },
                 &mut rng,
             );
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
 
         // Keep only non-empty clusters; remap their ids to a dense 0..num_used.
         let used = model.used_clusters();
@@ -14387,11 +14486,12 @@ impl SeededLDA {
             return Ok(slf.into());
         }
 
-        let progress = resolve_progress(py, progress, "SeededLDA");
+        let progress = resolve_progress(py, progress, "SeededLDA")?;
         let (model, ll_history, converged, corpus) = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| {
-                if let Some(cb) = &progress {
-                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
+                match &progress {
+                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
+                    None => true,
                 }
             };
             let (m, ll, conv) = seeded::fit_seeded_lda(
@@ -14414,6 +14514,7 @@ impl SeededLDA {
             );
             (m, ll, conv, corpus)
         });
+        reraise_if_interrupted(py)?;
         slf.phi = Some(vecs_to_arr2(&model.topic_word_all()));
         slf.theta = Some(vecs_to_arr2(&model.doc_topic()));
         slf.theta_draws = draws_to_array3(&model.theta_draws, corpus.num_docs(), num_topics, None);
@@ -15218,11 +15319,12 @@ impl FASTopic {
             slf.sinkhorn_tol,
         );
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
-        let progress = resolve_progress(py, progress, "FASTopic");
+        let progress = resolve_progress(py, progress, "FASTopic")?;
         let model = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| {
-                if let Some(cb) = &progress {
-                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
+                match &progress {
+                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
+                    None => true,
                 }
             };
             fastopic::fit_fastopic(
@@ -15242,6 +15344,7 @@ impl FASTopic {
                 &mut rng,
             )
         });
+        reraise_if_interrupted(py)?;
         slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
         slf.model = Some(model);
         slf.corpus = Some(corpus);
@@ -15865,7 +15968,7 @@ impl KeyATM {
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         ensure_finite_pos("prior_variance", prior_variance)?;
-        let progress = resolve_progress(py, progress, "keyATM");
+        let progress = resolve_progress(py, progress, "keyATM")?;
         if turbo_alpha_stride < 1 {
             return Err(PyValueError::new_err(
                 "turbo_alpha_stride must be >= 1 (1 = exact; >1 = approximate, subsample documents in the alpha sampler)",
@@ -16131,14 +16234,16 @@ impl KeyATM {
                     nthreads,
                     draws_opts,
                     convergence_tol,
-                    |it, total, ll, ppl| {
-                        if let Some(cb) = &progress_dyn {
-                            Python::with_gil(|py| emit_progress_ll_ppl(py, cb, it, total, ll, ppl));
+                    |it, total, ll, ppl| match &progress_dyn {
+                        Some(cb) => {
+                            Python::with_gil(|py| emit_progress_ll_ppl(py, cb, it, total, ll, ppl))
                         }
+                        None => true,
                     },
                     &mut rng,
                 )
             });
+            reraise_if_interrupted(py)?;
 
             // θ comes back in sorted order; scatter it to the original doc order.
             let theta_sorted = model.doc_topic();
@@ -16306,10 +16411,11 @@ impl KeyATM {
                     offset.as_deref(),
                     draws_opts,
                     convergence_tol,
-                    |it, total, ll, ppl| {
-                        if let Some(cb) = &progress {
-                            Python::with_gil(|py| emit_progress_ll_ppl(py, cb, it, total, ll, ppl));
+                    |it, total, ll, ppl| match &progress {
+                        Some(cb) => {
+                            Python::with_gil(|py| emit_progress_ll_ppl(py, cb, it, total, ll, ppl))
                         }
+                        None => true,
                     },
                     &mut rng,
                 ),
@@ -16345,16 +16451,18 @@ impl KeyATM {
                     draws_opts,
                     convergence_tol,
                     turbo_alpha_stride,
-                    |it, total, ll, ppl| {
-                        if let Some(cb) = &progress {
-                            Python::with_gil(|py| emit_progress_ll_ppl(py, cb, it, total, ll, ppl));
+                    |it, total, ll, ppl| match &progress {
+                        Some(cb) => {
+                            Python::with_gil(|py| emit_progress_ll_ppl(py, cb, it, total, ll, ppl))
                         }
+                        None => true,
                     },
                     &mut rng,
                 ),
             };
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
         slf.phi = Some(vecs_to_arr2(&model.topic_word_all()));
         slf.theta = Some(vecs_to_arr2(&model.doc_topic()));
         slf.theta_draws = draws_to_array3(&model.theta_draws, corpus.num_docs(), num_topics, None);

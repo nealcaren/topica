@@ -1965,7 +1965,7 @@ pub fn fit_prodlda<R: Rng>(
         lr,
         em_tol,
         AvitmOptions::default(),
-        |_, _, _| {},
+        |_, _, _| true,
         rng,
     )
 }
@@ -1977,7 +1977,7 @@ pub fn fit_prodlda<R: Rng>(
 /// loss are identical across modes; only the layer-1 input differs. CombinedTM is
 /// [`InputMode::BowEmbAdapt`], ZeroShotTM is [`InputMode::EmbOnly`].
 #[allow(clippy::too_many_arguments)]
-pub fn fit_avitm<R: Rng, F: FnMut(usize, usize, f64)>(
+pub fn fit_avitm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
     embs: &[Vec<f64>],
     mode: InputMode,
@@ -2096,12 +2096,14 @@ pub fn fit_avitm<R: Rng, F: FnMut(usize, usize, f64)>(
 
         let avg = epoch_loss / batches.max(1) as f64;
         bound_history.push(-avg); // report the ELBO (negative loss)
-        on_progress(epoch + 1, epochs, -avg);
+        if !on_progress(epoch + 1, epochs, -avg) {
+            break;
+        }
         if em_tol > 0.0 && bound_history.len() >= 2 {
             let prev = bound_history[bound_history.len() - 2];
             let rel = (-avg - prev).abs() / (prev.abs() + 1e-12);
             if rel < em_tol {
-                on_progress(epoch + 1, epoch + 1, -avg); // snap bar to 100% (#786)
+                let _ = on_progress(epoch + 1, epoch + 1, -avg); // snap bar to 100% (#786)
                 converged = true;
                 break;
             }
@@ -2586,7 +2588,7 @@ mod tests {
             0.01,
             0.0,
             AvitmOptions::default(),
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let tw = m.topic_word();
@@ -2625,7 +2627,7 @@ mod tests {
             0.01,
             0.0,
             AvitmOptions::default(),
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let tw = m.topic_word();
@@ -2667,7 +2669,7 @@ mod tests {
             0.01,
             0.0,
             AvitmOptions::default(),
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let tw = m.topic_word();
@@ -2709,7 +2711,7 @@ mod tests {
                 0.01,
                 0.0,
                 AvitmOptions::default(),
-                |_, _, _| {},
+                |_, _, _| true,
                 &mut r1,
             );
             let b = fit_avitm(
@@ -2727,7 +2729,7 @@ mod tests {
                 0.01,
                 0.0,
                 AvitmOptions::default(),
-                |_, _, _| {},
+                |_, _, _| true,
                 &mut r2,
             );
             assert_eq!(
@@ -2775,7 +2777,7 @@ mod tests {
             0.01,
             0.0,
             opts,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let tw = m.topic_word();
@@ -2818,7 +2820,7 @@ mod tests {
             0.005,
             0.0,
             opts,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let tw = m.topic_word();
@@ -2890,7 +2892,7 @@ mod tests {
             0.005,
             0.0,
             opts,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         assert!(
@@ -2979,7 +2981,7 @@ mod tests {
             0.005,
             0.0,
             opts,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let tw = m.topic_word();

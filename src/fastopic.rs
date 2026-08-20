@@ -528,7 +528,7 @@ fn theta_scale_grad(g_theta: f64, scale: usize) -> f64 {
 /// topic-word transport (reference defaults 3.0 and 2.0); `theta_temp` is the
 /// inference temperature (Eq. 9). `em_tol` stops on the relative loss change.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_fastopic<R: Rng, F: FnMut(usize, usize, f64)>(
+pub fn fit_fastopic<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
     doc_emb: &[Vec<f64>],
     num_topics: usize,
@@ -582,7 +582,9 @@ pub fn fit_fastopic<R: Rng, F: FnMut(usize, usize, f64)>(
             sinkhorn_tol,
         );
         loss_history.push(loss);
-        on_progress(epoch + 1, epochs, -loss);
+        if !on_progress(epoch + 1, epochs, -loss) {
+            break;
+        }
 
         // Flatten, step, unflatten the two embedding blocks.
         let mut te_flat: Vec<f64> = topic_emb.iter().flatten().copied().collect();
@@ -604,7 +606,7 @@ pub fn fit_fastopic<R: Rng, F: FnMut(usize, usize, f64)>(
             let prev = loss_history[loss_history.len() - 2];
             let rel = (prev - loss).abs() / (prev.abs() + 1e-12);
             if rel < em_tol {
-                on_progress(epoch + 1, epoch + 1, -loss); // snap bar to 100% (#786)
+                let _ = on_progress(epoch + 1, epoch + 1, -loss); // snap bar to 100% (#786)
                 converged = true;
                 break;
             }
@@ -905,7 +907,7 @@ mod tests {
             1e-6,
             50,
             1e-4,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         assert_eq!(m.topic_word.len(), k);
@@ -963,7 +965,7 @@ mod tests {
             1e-6,
             50,
             1e-4,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let base = crate::conformance::check_conformance(&m);
