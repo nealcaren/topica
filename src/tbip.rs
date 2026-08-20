@@ -1157,18 +1157,16 @@ mod tests {
         let gamma_sample = |rng: &mut ChaCha8Rng, a: f64, b: f64| -> f64 {
             // Marsaglia-Tsang for shape a (a<1 via boosting).
             let d;
-            let c;
             let boost;
             if a < 1.0 {
                 let u: f64 = rng.gen::<f64>().max(1e-12);
                 boost = u.powf(1.0 / a);
                 d = 1.0 - 1.0 / 3.0 + a;
-                c = 1.0 / (9.0 * d).sqrt();
             } else {
                 boost = 1.0;
                 d = a - 1.0 / 3.0;
-                c = 1.0 / (9.0 * d).sqrt();
             }
+            let c = 1.0 / (9.0 * d).sqrt();
             loop {
                 let z: f64 = randn(rng);
                 let x1 = 1.0 + c * z;
