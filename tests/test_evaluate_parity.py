@@ -154,6 +154,27 @@ def test_coherence_over_time_empty_slice_is_nan_and_index_aligned():
     assert np.isfinite(topica.evaluate.coherence_over_time(dm, c, ref_times, n=8))
 
 
+def test_coherence_over_time_warns_when_all_slices_empty():
+    c, _, times = _two_block_corpus()
+    dm = topica.DTM(3, seed=13).fit(c, np.array(times), iters=15)
+    # Raw-date-style codes that never match any fitted slice 0..T-1.
+    bad_times = [2013 + (t % 4) for t in times]
+    with pytest.warns(UserWarning, match="slice codes"):
+        out = topica.evaluate.coherence_over_time(dm, c, bad_times, n=8)
+    assert np.isnan(out)
+
+
+def test_classification_quality_too_small_for_class_count_raises():
+    pytest.importorskip("sklearn")
+    # 6 classes over few documents: the stratified split can't cover every class.
+    docs = [[f"w{i}"] * 5 for i in range(12)]
+    c = topica.Corpus.from_documents(docs)
+    m = topica.LDA(4, seed=13).fit(c, iters=20)
+    labels = list(range(6)) * 2
+    with pytest.raises(ValueError, match="too small"):
+        topica.evaluate.classification_quality(m, labels, test_size=0.3)
+
+
 def test_diversity_over_time_on_dtm():
     c, _, times = _two_block_corpus()
     dm = topica.DTM(3, seed=13).fit(c, np.array(times), iters=15)

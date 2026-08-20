@@ -148,8 +148,9 @@ def classification_quality(model, labels, *, test_size=0.3, C=1.0, kernel="linea
     extractor, not a classifier. The exact number depends on the classifier and split,
     so read it as a relative score between models on one dataset, not an absolute.
 
-    ``labels`` is one label per document, in corpus order. Requires scikit-learn
-    (``pip install scikit-learn``); it is not a core dependency.
+    ``labels`` is one label per document, in corpus order. Returns a dict with keys
+    ``accuracy`` and ``macro_f1``. Requires scikit-learn (``pip install
+    scikit-learn``); it is not a core dependency.
     """
     try:
         from sklearn.metrics import accuracy_score, f1_score
@@ -179,9 +180,16 @@ def classification_quality(model, labels, *, test_size=0.3, C=1.0, kernel="linea
             f"labels has {classes.shape[0]} distinct class; classification needs at least 2"
         )
     stratify = y if counts.min() >= 2 else None
-    x_tr, x_te, y_tr, y_te = train_test_split(
-        theta, y, test_size=test_size, random_state=seed, stratify=stratify
-    )
+    try:
+        x_tr, x_te, y_tr, y_te = train_test_split(
+            theta, y, test_size=test_size, random_state=seed, stratify=stratify
+        )
+    except ValueError as e:
+        raise ValueError(
+            f"cannot split {theta.shape[0]} documents into a train/test set with "
+            f"test_size={test_size} and {classes.shape[0]} classes; the corpus is too "
+            "small for this many labels (raise test_size or use fewer classes)"
+        ) from e
     clf = SVC(C=C, kernel=kernel, random_state=seed)
     clf.fit(x_tr, y_tr)
     pred = clf.predict(x_te)
@@ -258,6 +266,13 @@ def coherence_over_time(model, texts, timestamps, *, n=10, coherence_type="c_npm
         top = _slice_top_words(_topic_word_at(model, t), vocab, n)
         scores = np.asarray(coherence(top, docs_t, coherence_type=coherence_type, n=n), dtype=float)
         per.append(float(np.nanmean(scores)))
+    if per and np.isnan(per).all():
+        warnings.warn(
+            "no reference document fell in any slice 0..T-1, so every slice scored "
+            "NaN; are `timestamps` raw dates rather than the integer slice codes the "
+            "model was fit with?",
+            stacklevel=2,
+        )
     if per_slice:
         return per
     return float(np.nanmean(per)) if per and not np.isnan(per).all() else float("nan")
@@ -265,10 +280,14 @@ def coherence_over_time(model, texts, timestamps, *, n=10, coherence_type="c_npm
 
 def diversity_over_time(model, *, n=25, per_slice=False):
     """Topic diversity of a dynamic model, computed one time slice at a time and
-    averaged (the measure TopMost calls ``dynamic_diversity``): the fraction of
-    distinct top-``n`` words among a slice's topics. Low diversity in a slice means
-    its topics repeat the same words. Applies to DTM and DETM. Returns the mean over
-    slices, or the per-slice list when ``per_slice=True``.
+    averaged: the fraction of distinct top-``n`` words among a slice's topics. Low
+    diversity in a slice means its topics repeat the same words. Applies to DTM and
+    DETM. Returns the mean over slices, or the per-slice list when ``per_slice=True``.
+
+    This is the per-slice analogue of :func:`topic_diversity`, in the spirit of
+    TopMost's ``dynamic_diversity`` but not identical to it: TopMost additionally
+    counts only words unique to a single topic in the slice and present in that
+    slice's own documents, so its numbers run lower when topics share words.
     """
     num_times = getattr(model, "num_times", None)
     if num_times is None:
