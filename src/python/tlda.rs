@@ -211,12 +211,18 @@ impl TensorLDA {
     }
 
     /// Fit the model on the given corpus or token lists.
-    #[pyo3(signature = (data, *, iters=None))]
+    ///
+    /// `progress` opts into a fit progress callback `callback(iteration, total,
+    /// {})` (one call per training iteration, no per-iteration metric); pass `True`
+    /// to force the default :func:`topica.progress` bar, a callable for a custom
+    /// sink, or leave `None`.
+    #[pyo3(signature = (data, *, iters=None, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: Option<usize>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -272,7 +278,9 @@ impl TensorLDA {
             slf.seed,
         );
 
+        let progress = resolve_progress(py, progress, "TensorLDA")?;
         let (model, corpus) = py.allow_threads(move || {
+            let mut on_progress = on_progress_bare(&progress);
             let m = crate::tlda::fit_tlda(
                 &corpus.docs,
                 k,
@@ -286,9 +294,11 @@ impl TensorLDA {
                 theta,
                 n_eigen,
                 seed,
+                &mut on_progress,
             );
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
 
         slf.model = Some(model);
         slf.corpus = Some(corpus);

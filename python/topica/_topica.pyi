@@ -2167,11 +2167,13 @@ class OnlineLDA:
         *,
         iters: int = 100,
         convergence_tol: float = 0.0,
+        progress: Callable[[int, int, dict], object] | bool | None = None,
     ) -> "OnlineLDA":
         """Fit by online VB: sweep the corpus for ``iters`` passes (gensim's
         ``passes``), one stochastic lambda update per minibatch.
         ``convergence_tol > 0`` early-stops on the relative change in the per-pass
-        evidence lower bound. Returns ``self``."""
+        evidence lower bound. ``progress`` opts into a fit progress callback
+        ``callback(pass, total, {"ll": elbo})``. Returns ``self``."""
         ...
 
     def partial_fit(
@@ -3398,9 +3400,12 @@ class RTM:
         iters: int = 50,
         e_sweeps: int = 3,
         e_inner: int = 5,
+        progress: Callable[[int, int, dict], object] | bool | None = None,
     ) -> "RTM":
         """Fit RTM on a document graph. ``links`` is a sequence of undirected
-        ``(i, j)`` document-index pairs (only observed links are modelled)."""
+        ``(i, j)`` document-index pairs (only observed links are modelled).
+        ``progress`` opts into a fit progress callback ``callback(iteration,
+        total, {})`` (one call per EM / Gibbs M-step)."""
         ...
     def predict_link(self, i: int, j: int) -> float:
         """Plug-in link probability between two training documents."""
@@ -6064,7 +6069,13 @@ class TensorLDA:
         pca_batch_size: int = 128,
         seed: int = 13,
     ) -> None: ...
-    def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int | None = None) -> "TensorLDA": ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        *,
+        iters: int | None = None,
+        progress: Callable[[int, int, dict], object] | bool | None = None,
+    ) -> "TensorLDA": ...
     def partial_fit(
         self,
         data: Corpus | Sequence[Sequence[str]],
@@ -6811,6 +6822,7 @@ class Wordfish:
         anchors: dict[str, float] | None = None,
         iters: int | None = None,
         convergence_tol: float | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "Wordfish":
         """group pools documents sharing a label into one unit with one position;
         control is an optional categorical confound (constant within each author)
@@ -7087,6 +7099,7 @@ class TBIP:
         iters: int | None = None,
         batch_size: int | None = None,
         learning_rate: float | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "TBIP":
         """data is a Corpus or list of token lists; group (length num_docs) gives the
         author of each document (documents sharing a label share one ideal point)."""

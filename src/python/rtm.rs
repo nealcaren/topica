@@ -236,7 +236,12 @@ impl RTM {
 
     /// Fit RTM on a document graph. ``data`` is a ``Corpus`` or ``list[list[str]]``;
     /// ``links`` is a sequence of undirected ``(i, j)`` document-index pairs.
-    #[pyo3(signature = (data, links, *, iters=50, e_sweeps=3, e_inner=5))]
+    ///
+    /// `progress` opts into a fit progress callback `callback(iteration, total,
+    /// {})` (one call per EM / Gibbs M-step, no per-iteration metric); pass `True`
+    /// to force the default :func:`topica.progress` bar, a callable for a custom
+    /// sink, or leave `None`.
+    #[pyo3(signature = (data, links, *, iters=50, e_sweeps=3, e_inner=5, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -245,6 +250,7 @@ impl RTM {
         iters: usize,
         e_sweeps: usize,
         e_inner: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -293,14 +299,17 @@ impl RTM {
         };
         let gibbs = slf.inference == "gibbs";
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
+        let progress = resolve_progress(py, progress, "RTM")?;
         let (model, corpus) = py.allow_threads(move || {
+            let mut on_progress = on_progress_bare(&progress);
             let model = if gibbs {
-                crate::rtm::fit_rtm_gibbs(&corpus.docs, &edges, &params, &mut rng)
+                crate::rtm::fit_rtm_gibbs(&corpus.docs, &edges, &params, &mut on_progress, &mut rng)
             } else {
-                crate::rtm::fit_rtm(&corpus.docs, &edges, &params, &mut rng)
+                crate::rtm::fit_rtm(&corpus.docs, &edges, &params, &mut on_progress, &mut rng)
             };
             (model, corpus)
         });
+        reraise_if_interrupted(py)?;
         slf.model = Some(model);
         slf.corpus = Some(corpus);
         slf.fitted = true;

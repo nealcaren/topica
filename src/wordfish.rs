@@ -112,6 +112,7 @@ pub fn fit_wordfish(
         tol,
         beta_prior_sd,
         theta_prior_sd,
+        |_, _, _| true,
     )
 }
 
@@ -124,7 +125,7 @@ pub fn fit_wordfish(
 /// latent position `theta`. With `num_levels == 1` the offsets are all zero and the
 /// fit is exactly plain Wordfish.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_wordfish_controlled(
+pub fn fit_wordfish_controlled<F: FnMut(usize, usize, f64) -> bool>(
     counts: &[Vec<(u32, f64)>],
     num_types: usize,
     level: &[usize],
@@ -134,6 +135,7 @@ pub fn fit_wordfish_controlled(
     tol: f64,
     beta_prior_sd: f64,
     theta_prior_sd: f64,
+    mut on_progress: F,
 ) -> WordfishModel {
     let a = counts.len();
     let v = num_types;
@@ -286,10 +288,14 @@ pub fn fit_wordfish_controlled(
             if (ll - prev_ll).abs() / denom < tol {
                 converged = true;
                 prev_ll = ll;
+                let _ = on_progress(it + 1, it + 1, ll); // snap bar to 100% (#786)
                 break;
             }
         }
         prev_ll = ll;
+        if !on_progress(it + 1, iters, ll) {
+            break;
+        }
     }
 
     orient(&mut theta, &mut beta, anchors);
@@ -684,7 +690,18 @@ mod tests {
             );
         }
         let no_control = fit_wordfish(&counts, v, &[], 120, 1e-8, 3.0, 1.0);
-        let with_control = fit_wordfish_controlled(&counts, v, &level, 2, &[], 120, 1e-8, 3.0, 1.0);
+        let with_control = fit_wordfish_controlled(
+            &counts,
+            v,
+            &level,
+            2,
+            &[],
+            120,
+            1e-8,
+            3.0,
+            1.0,
+            |_, _, _| true,
+        );
         let r_plain = pearson(&no_control.theta, &ideo).abs();
         let r_ctrl = pearson(&with_control.theta, &ideo).abs();
         assert!(
@@ -715,7 +732,10 @@ mod tests {
         }
         let plain = fit_wordfish(&counts, v, &[], 50, 1e-8, 3.0, 1.0);
         let level = vec![0usize; a];
-        let ctrl = fit_wordfish_controlled(&counts, v, &level, 1, &[], 50, 1e-8, 3.0, 1.0);
+        let ctrl =
+            fit_wordfish_controlled(&counts, v, &level, 1, &[], 50, 1e-8, 3.0, 1.0, |_, _, _| {
+                true
+            });
         assert_eq!(plain.theta, ctrl.theta);
         assert_eq!(plain.beta, ctrl.beta);
         assert_eq!(plain.psi, ctrl.psi);

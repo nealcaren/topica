@@ -637,13 +637,15 @@ fn ln_gamma(x: f64) -> f64 {
 
 /// Fit TBIP by reparameterized SVI (Adam). Deterministic for a fixed `rng` seed:
 /// one RNG drives both the minibatch sampling and the reparam noise.
-pub fn fit_tbip<R: Rng>(
+#[allow(clippy::too_many_arguments)]
+pub fn fit_tbip<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
     group: &[usize],
     num_authors: usize,
     num_topics: usize,
     num_types: usize,
     cfg: &TbipConfig,
+    mut on_progress: F,
     rng: &mut R,
 ) -> TbipModel {
     let k = num_topics;
@@ -668,8 +670,10 @@ pub fn fit_tbip<R: Rng>(
     let m2 = (steps * 4) / 5; // halve at 80%
     let mut elbo_history: Vec<f64> = Vec::new();
     let mut counts_buf = vec![0.0f64; v];
+    let mut steps_run = 0usize;
 
     for step in 0..steps {
+        steps_run = step + 1;
         // LR schedule (halve at 50% and 80%).
         let lr = cfg.learning_rate
             * if step >= m2 {
@@ -740,7 +744,10 @@ pub fn fit_tbip<R: Rng>(
         step_sparse(&mut ad_rs_theta, &mut p.rs_theta, &full_rs, &touched, k);
 
         elbo_history.push(g.elbo);
-        let _ = step;
+        // Report the ELBO (higher is better) as the per-step metric (#786).
+        if !on_progress(step + 1, steps, g.elbo) {
+            break;
+        }
     }
 
     TbipModel {
@@ -750,7 +757,7 @@ pub fn fit_tbip<R: Rng>(
         params: p,
         group: group.to_vec(),
         elbo_history,
-        iters_run: steps,
+        iters_run: steps_run,
     }
 }
 
@@ -1246,7 +1253,7 @@ mod tests {
             learning_rate: 0.05,
         };
         let mut fit_rng = ChaCha8Rng::seed_from_u64(7);
-        let m = fit_tbip(&docs, &group, a_n, k, v, &cfg, &mut fit_rng);
+        let m = fit_tbip(&docs, &group, a_n, k, v, &cfg, |_, _, _| true, &mut fit_rng);
         let xhat = m.ideal_points();
         let r = pearson(&xhat, &x_true).abs();
         println!("synthetic recovery Pearson r = {r:.4}");
@@ -1274,7 +1281,7 @@ mod tests {
             batch_size: docs.len(),
             ..Default::default()
         };
-        let m = fit_tbip(&docs, &group, 6, k, v, &cfg, &mut rng);
+        let m = fit_tbip(&docs, &group, 6, k, v, &cfg, |_, _, _| true, &mut rng);
         let se = m.position_se();
         assert_eq!(se.len(), 6);
         for (s, &sd) in se.iter().enumerate() {
@@ -1303,7 +1310,7 @@ mod tests {
             batch_size: docs.len(),
             ..Default::default()
         };
-        let m = fit_tbip(&docs, &group, 8, k, v, &cfg, &mut rng);
+        let m = fit_tbip(&docs, &group, 8, k, v, &cfg, |_, _, _| true, &mut rng);
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
     }

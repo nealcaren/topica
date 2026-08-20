@@ -274,10 +274,11 @@ pub struct RtmParams {
 /// Fit RTM by variational EM. `docs` are token-id lists; `edges` are undirected
 /// observed links between document indices. Deterministic given `rng` and a
 /// serial (Gauss-Seidel) E-step.
-pub fn fit_rtm<R: Rng>(
+pub fn fit_rtm<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<u32>],
     edges: &[(usize, usize)],
     p: &RtmParams,
+    mut on_progress: F,
     rng: &mut R,
 ) -> RTMModel {
     let k = p.num_topics;
@@ -464,9 +465,13 @@ pub fn fit_rtm<R: Rng>(
         history.push((it, obj));
         if (obj - prev_obj).abs() < p.convergence_tol * prev_obj.abs().max(1.0) && it > 0 {
             converged = true;
+            let _ = on_progress(it + 1, it + 1); // snap bar to 100% (#786)
             break;
         }
         prev_obj = obj;
+        if !on_progress(it + 1, p.em_iters) {
+            break;
+        }
     }
 
     let topic_word: Vec<Vec<f64>> = log_beta
@@ -571,10 +576,11 @@ fn rtm_gibbs_estimate_beta(
 ///   computed once per document per sweep from neighbours' raw topic counts and the
 ///   fixed document token lengths. The exponential link's coefficient is stored as
 ///   `eta` (with `nu = 0`, matching R's intercept-free link).
-pub fn fit_rtm_gibbs<R: Rng>(
+pub fn fit_rtm_gibbs<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<u32>],
     edges: &[(usize, usize)],
     p: &RtmParams,
+    mut on_progress: F,
     rng: &mut R,
 ) -> RTMModel {
     use std::collections::BTreeMap;
@@ -709,6 +715,9 @@ pub fn fit_rtm_gibbs<R: Rng>(
         // M-step: re-estimate the link coefficient from the final counts.
         link_beta = rtm_gibbs_estimate_beta(&ndk, &adj, alpha, lambda, k);
         history.push((m + 1, link_beta.iter().sum::<f64>()));
+        if !on_progress(m + 1, m_steps) {
+            break;
+        }
     }
 
     // Fitted surface (same shape as the variational backend).
@@ -994,7 +1003,7 @@ mod tests {
             let mut rng = ChaCha8Rng::seed_from_u64(7);
             let (docs, edges, groups, v) = planted(&mut rng, 60, 3, 6, 40);
             let mut frng = ChaCha8Rng::seed_from_u64(0);
-            let m = fit_rtm(&docs, &edges, &params(3, v, link), &mut frng);
+            let m = fit_rtm(&docs, &edges, &params(3, v, link), |_, _| true, &mut frng);
             // each topic concentrates on a distinct 6-word block
             let owned: Vec<usize> = (0..3)
                 .map(|kk| {
@@ -1047,7 +1056,13 @@ mod tests {
         let (docs, edges, _g, v) = planted(&mut rng, 30, 2, 5, 30);
         let fit = || {
             let mut r = ChaCha8Rng::seed_from_u64(3);
-            fit_rtm(&docs, &edges, &params(2, v, Link::Logistic), &mut r)
+            fit_rtm(
+                &docs,
+                &edges,
+                &params(2, v, Link::Logistic),
+                |_, _| true,
+                &mut r,
+            )
         };
         let a = fit();
         let b = fit();
@@ -1056,7 +1071,13 @@ mod tests {
         assert_eq!(a.phi_bar, b.phi_bar);
         // a different seed gives a different fit (so the test can't pass trivially)
         let mut r2 = ChaCha8Rng::seed_from_u64(99);
-        let c = fit_rtm(&docs, &edges, &params(2, v, Link::Logistic), &mut r2);
+        let c = fit_rtm(
+            &docs,
+            &edges,
+            &params(2, v, Link::Logistic),
+            |_, _| true,
+            &mut r2,
+        );
         assert_ne!(a.topic_word, c.topic_word);
     }
 
@@ -1065,7 +1086,13 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
         let (docs, edges, _g, v) = planted(&mut rng, 20, 2, 5, 25);
         let mut frng = ChaCha8Rng::seed_from_u64(0);
-        let m = fit_rtm(&docs, &edges, &params(2, v, Link::Logistic), &mut frng);
+        let m = fit_rtm(
+            &docs,
+            &edges,
+            &params(2, v, Link::Logistic),
+            |_, _| true,
+            &mut frng,
+        );
         assert!(crate::conformance::check_conformance(&m).is_empty());
     }
 
@@ -1076,7 +1103,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let (docs, edges, _groups, v) = planted(&mut rng, 60, 3, 6, 40);
         let mut frng = ChaCha8Rng::seed_from_u64(0);
-        let m = fit_rtm_gibbs(&docs, &edges, &gibbs_params(3, v), &mut frng);
+        let m = fit_rtm_gibbs(&docs, &edges, &gibbs_params(3, v), |_, _| true, &mut frng);
 
         // rows are valid simplices
         for row in &m.topic_word {
@@ -1114,7 +1141,7 @@ mod tests {
         let (docs, edges, _g, v) = planted(&mut rng, 30, 2, 5, 30);
         let fit = || {
             let mut r = ChaCha8Rng::seed_from_u64(3);
-            fit_rtm_gibbs(&docs, &edges, &gibbs_params(2, v), &mut r)
+            fit_rtm_gibbs(&docs, &edges, &gibbs_params(2, v), |_, _| true, &mut r)
         };
         let a = fit();
         let b = fit();
@@ -1122,7 +1149,7 @@ mod tests {
         assert_eq!(a.eta, b.eta);
         assert_eq!(a.doc_topic, b.doc_topic);
         let mut r2 = ChaCha8Rng::seed_from_u64(99);
-        let c = fit_rtm_gibbs(&docs, &edges, &gibbs_params(2, v), &mut r2);
+        let c = fit_rtm_gibbs(&docs, &edges, &gibbs_params(2, v), |_, _| true, &mut r2);
         assert_ne!(a.topic_word, c.topic_word);
     }
 
@@ -1131,7 +1158,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
         let (docs, edges, _g, v) = planted(&mut rng, 20, 2, 5, 25);
         let mut frng = ChaCha8Rng::seed_from_u64(0);
-        let m = fit_rtm_gibbs(&docs, &edges, &gibbs_params(2, v), &mut frng);
+        let m = fit_rtm_gibbs(&docs, &edges, &gibbs_params(2, v), |_, _| true, &mut frng);
         assert!(crate::conformance::check_conformance(&m).is_empty());
     }
 
@@ -1143,7 +1170,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(5);
         let (docs, edges, _g, v) = planted(&mut rng, 60, 3, 6, 40);
         let mut frng = ChaCha8Rng::seed_from_u64(0);
-        let m = fit_rtm_gibbs(&docs, &edges, &gibbs_params(3, v), &mut frng);
+        let m = fit_rtm_gibbs(&docs, &edges, &gibbs_params(3, v), |_, _| true, &mut frng);
         assert!(
             m.eta.iter().all(|&b| b < 0.0),
             "expected all-negative link β (R quirk), got {:?}",

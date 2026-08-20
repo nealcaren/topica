@@ -253,13 +253,18 @@ impl OnlineLDA {
     /// update per minibatch. `data` is a :class:`Corpus` or a list of token
     /// lists. `convergence_tol` (default 0.0, disabled) early-stops on the
     /// relative change in the per-pass evidence lower bound. Returns `self`.
-    #[pyo3(signature = (data, *, iters=100, convergence_tol=0.0))]
+    ///
+    /// `progress` opts into a fit progress callback `callback(pass, total,
+    /// {"ll": elbo})` (per-pass ELBO); pass `True` to force the default
+    /// :func:`topica.progress` bar, a callable for a custom sink, or leave `None`.
+    #[pyo3(signature = (data, *, iters=100, convergence_tol=0.0, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: usize,
         convergence_tol: f64,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
@@ -297,8 +302,10 @@ impl OnlineLDA {
         );
         let total_docs_override = slf.total_docs;
 
+        let progress = resolve_progress(py, progress, "OnlineLDA")?;
         let (model, corpus) = py.allow_threads(move || {
             let mut rng = Pcg64Mcg::seed_from_u64(seed);
+            let mut on_progress = on_progress_ll(&progress);
             // A user-declared streaming corpus size scales the natural gradient for
             // BOTH the batch fit and later partial_fit; otherwise D = fit-corpus size.
             let m = online_lda::fit(
@@ -314,10 +321,12 @@ impl OnlineLDA {
                 iters,
                 convergence_tol,
                 total_docs_override,
+                &mut on_progress,
                 &mut rng,
             );
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
 
         slf.model = Some(model);
         slf.corpus = Some(corpus);
