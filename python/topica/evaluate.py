@@ -59,7 +59,196 @@ __all__ = [
     'topic_dendrogram',
     'word_intrusion',
     'topic_stability',
+    'topic_significance',
+    'classification_quality',
+    'coherence_over_time',
+    'diversity_over_time',
 ]
+
+
+def _kl_rows(p, q, epsilon=1e-5):
+    """Row-wise KL(P || Q) matching OCTIS: add ``epsilon`` to both, then
+    ``sum(P * log(P / Q))``. ``p`` is ``(K, M)`` row-normalized, ``q`` is ``(M,)``."""
+    p = np.asarray(p, dtype=np.float64) + epsilon
+    q = np.asarray(q, dtype=np.float64) + epsilon
+    return (p * np.log(p / q)).sum(axis=1)
+
+
+def topic_significance(model, *, kind="vacuous", per_topic=False):
+    """How far each topic sits from a null distribution, so background and junk
+    topics score low (Aletras and Stevenson 2013, following OCTIS).
+
+    ``kind`` selects the null:
+
+    - ``"uniform"``: KL(topic-word || uniform over the vocabulary). A topic spread
+      evenly over all words carries little information and scores near zero.
+    - ``"vacuous"``: KL(topic-word || the corpus-average word distribution
+      ``sum_k phi_k * p(k)``). A topic that looks like the corpus as a whole scores
+      low.
+    - ``"background"``: KL(topic-document || uniform over documents). A topic present
+      in every document (a background topic) scores low.
+
+    Returns the mean over topics, or the per-topic scores when ``per_topic=True``.
+    Higher is more distinctive. Needs only the fitted model's topic-word and, for
+    ``vacuous``/``background``, its document-topic matrix.
+    """
+    kind = str(kind).lower()
+    if kind in ("uniform", "vacuous"):
+        phi = np.asarray(_as_topic_word(model), dtype=np.float64)
+        rowsum = phi.sum(axis=1, keepdims=True)
+        # A zero row (empty topic) becomes uniform, as in OCTIS.
+        phi = np.where(rowsum > 0, phi, 1.0 / phi.shape[1])
+        p = phi / phi.sum(axis=1, keepdims=True)
+        if kind == "uniform":
+            q = np.full(phi.shape[1], 1.0 / phi.shape[1])
+        else:
+            theta = np.asarray(_as_doc_topic(model), dtype=np.float64)
+            p_topic = theta.mean(axis=0)  # mean prevalence per topic
+            q = (phi * p_topic[:, None]).sum(axis=0)
+            q = q / q.sum()
+        div = _kl_rows(p, q)
+    elif kind == "background":
+        theta = np.asarray(_as_doc_topic(model), dtype=np.float64).T  # (K, D)
+        rowsum = theta.sum(axis=1, keepdims=True)
+        theta = np.where(rowsum > 0, theta, 1.0 / theta.shape[1])
+        p = theta / theta.sum(axis=1, keepdims=True)
+        q = np.full(theta.shape[1], 1.0 / theta.shape[1])
+        div = _kl_rows(p, q)
+    else:
+        raise ValueError(
+            f"kind must be 'uniform', 'vacuous', or 'background', got {kind!r}"
+        )
+    return div.tolist() if per_topic else float(div.mean())
+
+
+def classification_quality(model, labels, *, test_size=0.3, C=1.0, kernel="linear", seed=13):
+    """Downstream utility of the topics as document features. Train a linear support
+    vector machine on the document-topic matrix and report how well it predicts
+    ``labels`` on a held-out split, as accuracy and macro-averaged F1 (higher is
+    better). This is the standard extrinsic check (OCTIS, TopMost) for whether the
+    learned topics carry label-relevant signal; the topic model is used as a feature
+    extractor, not a classifier.
+
+    ``labels`` is one label per document, in corpus order. Requires scikit-learn
+    (``pip install scikit-learn``); it is not a core dependency.
+    """
+    try:
+        from sklearn.metrics import accuracy_score, f1_score
+        from sklearn.model_selection import train_test_split
+        from sklearn.svm import SVC
+    except ImportError as e:  # pragma: no cover - exercised via message
+        raise ImportError(
+            "classification_quality needs scikit-learn "
+            "(pip install scikit-learn)."
+        ) from e
+    theta = np.asarray(_as_doc_topic(model), dtype=np.float64)
+    y = np.asarray(labels)
+    if y.shape[0] != theta.shape[0]:
+        raise ValueError(
+            f"labels has {y.shape[0]} entries but the model has {theta.shape[0]} documents"
+        )
+    # Stratify only when every class has at least two members to split.
+    _, counts = np.unique(y, return_counts=True)
+    stratify = y if counts.min() >= 2 else None
+    x_tr, x_te, y_tr, y_te = train_test_split(
+        theta, y, test_size=test_size, random_state=seed, stratify=stratify
+    )
+    clf = SVC(C=C, kernel=kernel, random_state=seed)
+    clf.fit(x_tr, y_tr)
+    pred = clf.predict(x_te)
+    return {
+        "accuracy": float(accuracy_score(y_te, pred)),
+        "macro_f1": float(f1_score(y_te, pred, average="macro")),
+    }
+
+
+def _topic_word_at(model, t):
+    """The ``(K, V)`` topic-word matrix of a dynamic model at integer time slice
+    ``t``. Supports DTM (``topic_word(t)`` callable) and DETM (``topic_word_at(t)``)."""
+    tw = getattr(model, "topic_word", None)
+    if callable(tw):
+        return np.asarray(tw(t), dtype=np.float64)
+    twa = getattr(model, "topic_word_at", None)
+    if callable(twa):
+        return np.asarray(twa(t), dtype=np.float64)
+    raise TypeError(
+        f"{type(model).__name__} is not a time-sliced model "
+        "(no topic_word(t) or topic_word_at(t)); coherence_over_time needs one."
+    )
+
+
+def _slice_top_words(phi_t, vocab, n):
+    """Top-``n`` words per topic from a ``(K, V)`` slice matrix and a vocabulary."""
+    out = []
+    for row in phi_t:
+        idx = np.argsort(row)[::-1][:n]
+        out.append([vocab[i] for i in idx])
+    return out
+
+
+def coherence_over_time(model, texts, timestamps, *, n=10, coherence_type="c_npmi",
+                        per_slice=False):
+    """Coherence of a dynamic topic model, scored one time slice at a time against
+    that slice's own documents and averaged (TopMost's ``dynamic_coherence``).
+
+    ``texts`` is the reference corpus and ``timestamps`` maps each reference document
+    to its integer time slice ``0..T-1`` (the same slicing used to fit the model).
+    For each slice, the model's slice-specific topics are scored only against the
+    documents in that slice, which is the point: a dynamic model should be coherent
+    *within* each period, not just on average. Returns the mean over slices, or the
+    per-slice list when ``per_slice=True``. Applies to DTM and DETM, whose topics
+    change over time; a static model has no per-slice topics to score.
+    """
+    num_times = getattr(model, "num_times", None)
+    if num_times is None:
+        raise TypeError(
+            f"{type(model).__name__} is not a dynamic model (no num_times); "
+            "coherence_over_time/diversity_over_time apply to DTM and DETM."
+        )
+    num_times = int(num_times)
+    vocab = list(getattr(model, "vocabulary", []))
+    refs = _ref_corpus(texts)
+    ts = np.asarray(timestamps)
+    if len(ts) != len(refs):
+        raise ValueError(
+            f"timestamps has {len(ts)} entries but texts has {len(refs)} documents"
+        )
+    per = []
+    for t in range(num_times):
+        docs_t = [d for d, tt in zip(refs, ts) if tt == t]
+        if not docs_t:
+            continue
+        top = _slice_top_words(_topic_word_at(model, t), vocab, n)
+        scores = np.asarray(coherence(top, docs_t, coherence_type=coherence_type, n=n), dtype=float)
+        per.append(float(np.nanmean(scores)))
+    if per_slice:
+        return per
+    return float(np.mean(per)) if per else float("nan")
+
+
+def diversity_over_time(model, *, n=25, per_slice=False):
+    """Topic diversity of a dynamic model, computed one time slice at a time and
+    averaged (TopMost's ``dynamic_diversity``): the fraction of distinct top-``n``
+    words among a slice's topics. Low diversity in a slice means its topics repeat
+    the same words. Applies to DTM and DETM. Returns the mean over slices, or the
+    per-slice list when ``per_slice=True``.
+    """
+    num_times = getattr(model, "num_times", None)
+    if num_times is None:
+        raise TypeError(
+            f"{type(model).__name__} is not a dynamic model (no num_times); "
+            "coherence_over_time/diversity_over_time apply to DTM and DETM."
+        )
+    num_times = int(num_times)
+    vocab = list(getattr(model, "vocabulary", []))
+    per = []
+    for t in range(num_times):
+        top = _slice_top_words(_topic_word_at(model, t), vocab, n)
+        per.append(float(topic_diversity(top, topn=n)))
+    if per_slice:
+        return per
+    return float(np.mean(per)) if per else float("nan")
+
 
 def diagnostics(model, texts=None, *, n=10, coherence_type=None, stability=False,
                 n_boot=20, model_factory=None, seed=0):

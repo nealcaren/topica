@@ -30,6 +30,12 @@ reachable bare at the top level (`topica.<name>`) as a compatibility alias.
 
 ::: topica.evaluate.exclusivity
 
+::: topica.evaluate.topic_significance
+
+::: topica.evaluate.coherence_over_time
+
+::: topica.evaluate.diversity_over_time
+
 ::: topica.select.quality_frontier
 
 ## External validation
@@ -39,6 +45,8 @@ scores how well the discovered topics recover them — the check that actually
 tracks recovery, where coherence can mislead.
 
 ::: topica.agreement
+
+::: topica.evaluate.classification_quality
 
 ## Interpretation
 
