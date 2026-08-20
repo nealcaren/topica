@@ -13,6 +13,7 @@ type: software
 authors:
   - family-names: Caren
     given-names: Neal
+    orcid: "https://orcid.org/0000-0003-1704-5494"
 repository-code: "https://github.com/nealcaren/topica"
 url: "https://nealcaren.github.io/topica/"
 license: Apache-2.0
