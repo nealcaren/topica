@@ -61,12 +61,12 @@ from the premise that the researcher, not the software, owns the decisions that
 make a topic-model study credible: what the corpus represents, how many topics is
 the right granularity, and what each topic means. The software supplies the
 mechanics and the diagnostics that support those decisions, and it matches the
-uncertainty it reports to what each model can actually support, exposing standard
-errors alongside covariate effects where the estimator earns them. Speed and
-reproducibility come from the Rust core: fit to convergence, the structural and
+uncertainty it reports to what each model can support, exposing standard errors
+alongside covariate effects where the estimator earns them. Speed and
+reproducibility come from the Rust core. Fit to convergence, the structural and
 other variational models run roughly one and a half to three times faster than R
 `stm` on a single core and five to seven times faster on a typical multicore
-workstation, `topica` is at parity with the compiled MALLET and `keyATM` samplers,
+workstation; `topica` is at parity with the compiled MALLET and `keyATM` samplers;
 and it reproduces the variational models to the bit and the samplers exactly from a
 fixed seed.
 
