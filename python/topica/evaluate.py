@@ -59,7 +59,252 @@ __all__ = [
     'topic_dendrogram',
     'word_intrusion',
     'topic_stability',
+    'topic_significance',
+    'classification_quality',
+    'coherence_over_time',
+    'diversity_over_time',
 ]
+
+
+def _kl_rows(p, q, epsilon=1e-5):
+    """Row-wise KL(P || Q) matching OCTIS: add ``epsilon`` to both, then
+    ``sum(P * log(P / Q))``. ``p`` is ``(K, M)`` row-normalized, ``q`` is ``(M,)``."""
+    p = np.asarray(p, dtype=np.float64) + epsilon
+    q = np.asarray(q, dtype=np.float64) + epsilon
+    return (p * np.log(p / q)).sum(axis=1)
+
+
+def topic_significance(model, *, kind="vacuous", per_topic=False):
+    """How far each topic sits from a null distribution, so background and junk
+    topics score low (Aletras and Stevenson 2013, following OCTIS).
+
+    ``kind`` selects the null:
+
+    - ``"uniform"``: KL(topic-word || uniform over the vocabulary). A topic spread
+      evenly over all words carries little information and scores near zero.
+    - ``"vacuous"``: KL(topic-word || the corpus-average word distribution
+      ``sum_k phi_k * p(k)``). A topic that looks like the corpus as a whole scores
+      low.
+    - ``"background"``: KL(topic-document || uniform over documents). A topic present
+      in every document (a background topic) scores low.
+
+    Returns the mean over topics, or the per-topic scores when ``per_topic=True``.
+    Higher is more distinctive. The scores are KL divergences in nats, so they are
+    comparable across topics of one model but not across corpora of different
+    vocabulary size; read them as a ranking, and pass ``per_topic=True`` to find the
+    weakest topics (compare with ``evaluate.flag_topics`` for a fuller diagnosis).
+    Needs only the fitted model's topic-word and, for ``vacuous``/``background``, its
+    document-topic matrix.
+    """
+    kind = str(kind).lower()
+    if kind not in ("uniform", "vacuous", "background"):
+        raise ValueError(
+            f"kind must be 'uniform', 'vacuous', or 'background', got {kind!r}"
+        )
+    if kind in ("vacuous", "background") and getattr(model, "doc_topic", None) is None:
+        raise ValueError(
+            f"kind={kind!r} needs a fitted model with a document-topic matrix, not a "
+            "bare topic-word array; use kind='uniform' for a topic-word-only input"
+        )
+
+    def _dist(arr, what):
+        a = np.asarray(arr, dtype=np.float64)
+        if not np.isfinite(a).all():
+            raise ValueError(f"{what} has non-finite values; cannot score significance")
+        if (a < 0).any():
+            raise ValueError(f"{what} has negative values; expected a distribution")
+        return a
+
+    if kind in ("uniform", "vacuous"):
+        phi = _dist(_as_topic_word(model), "topic-word matrix")
+        rowsum = phi.sum(axis=1, keepdims=True)
+        # A zero row (empty topic) becomes uniform, as in OCTIS.
+        phi = np.where(rowsum > 0, phi, 1.0 / phi.shape[1])
+        p = phi / phi.sum(axis=1, keepdims=True)
+        if kind == "uniform":
+            q = np.full(phi.shape[1], 1.0 / phi.shape[1])
+        else:
+            theta = _dist(_as_doc_topic(model), "document-topic matrix")
+            p_topic = theta.mean(axis=0)  # mean prevalence per topic
+            q = (phi * p_topic[:, None]).sum(axis=0)
+            q = q / q.sum()
+        div = _kl_rows(p, q)
+    else:  # background
+        theta = _dist(_as_doc_topic(model), "document-topic matrix").T  # (K, D)
+        rowsum = theta.sum(axis=1, keepdims=True)
+        theta = np.where(rowsum > 0, theta, 1.0 / theta.shape[1])
+        p = theta / theta.sum(axis=1, keepdims=True)
+        q = np.full(theta.shape[1], 1.0 / theta.shape[1])
+        div = _kl_rows(p, q)
+    return div.tolist() if per_topic else float(div.mean())
+
+
+def classification_quality(model, labels, *, test_size=0.3, C=1.0, kernel="linear", seed=13):
+    """Downstream utility of the topics as document features. Train a linear support
+    vector machine on the document-topic matrix and report how well it predicts
+    ``labels`` on a held-out split, as accuracy and macro-averaged F1 (higher is
+    better). This is the extrinsic check both OCTIS and TopMost use for whether the
+    learned topics carry label-relevant signal; the topic model is used as a feature
+    extractor, not a classifier. The exact number depends on the classifier and split,
+    so read it as a relative score between models on one dataset, not an absolute.
+
+    ``labels`` is one label per document, in corpus order. Returns a dict with keys
+    ``accuracy`` and ``macro_f1``. Requires scikit-learn (``pip install
+    scikit-learn``); it is not a core dependency.
+    """
+    try:
+        from sklearn.metrics import accuracy_score, f1_score
+        from sklearn.model_selection import train_test_split
+        from sklearn.svm import SVC
+    except ImportError as e:  # pragma: no cover - exercised via message
+        raise ImportError(
+            "classification_quality needs scikit-learn "
+            "(pip install scikit-learn)."
+        ) from e
+    if not 0.0 < test_size < 1.0:
+        raise ValueError(f"test_size must be in (0, 1), got {test_size}")
+    theta = np.asarray(_as_doc_topic(model), dtype=np.float64)
+    if not np.isfinite(theta).all():
+        raise ValueError(
+            "document-topic matrix has non-finite values; cannot train a classifier"
+        )
+    y = np.asarray(labels)
+    if y.shape[0] != theta.shape[0]:
+        raise ValueError(
+            f"labels has {y.shape[0]} entries but the model has {theta.shape[0]} documents"
+        )
+    # Stratify only when every class has at least two members to split.
+    classes, counts = np.unique(y, return_counts=True)
+    if classes.shape[0] < 2:
+        raise ValueError(
+            f"labels has {classes.shape[0]} distinct class; classification needs at least 2"
+        )
+    stratify = y if counts.min() >= 2 else None
+    try:
+        x_tr, x_te, y_tr, y_te = train_test_split(
+            theta, y, test_size=test_size, random_state=seed, stratify=stratify
+        )
+    except ValueError as e:
+        raise ValueError(
+            f"cannot split {theta.shape[0]} documents into a train/test set with "
+            f"test_size={test_size} and {classes.shape[0]} classes; the corpus is too "
+            "small for this many labels (raise test_size or use fewer classes)"
+        ) from e
+    clf = SVC(C=C, kernel=kernel, random_state=seed)
+    clf.fit(x_tr, y_tr)
+    pred = clf.predict(x_te)
+    return {
+        "accuracy": float(accuracy_score(y_te, pred)),
+        "macro_f1": float(f1_score(y_te, pred, average="macro")),
+    }
+
+
+def _topic_word_at(model, t):
+    """The ``(K, V)`` topic-word matrix of a dynamic model at integer time slice
+    ``t``. Supports DTM (``topic_word(t)`` callable) and DETM (``topic_word_at(t)``)."""
+    tw = getattr(model, "topic_word", None)
+    if callable(tw):
+        return np.asarray(tw(t), dtype=np.float64)
+    twa = getattr(model, "topic_word_at", None)
+    if callable(twa):
+        return np.asarray(twa(t), dtype=np.float64)
+    raise TypeError(
+        f"{type(model).__name__} is not a time-sliced model "
+        "(no topic_word(t) or topic_word_at(t)); coherence_over_time needs one."
+    )
+
+
+def _slice_top_words(phi_t, vocab, n):
+    """Top-``n`` words per topic from a ``(K, V)`` slice matrix and a vocabulary."""
+    out = []
+    for row in phi_t:
+        idx = np.argsort(row)[::-1][:n]
+        out.append([vocab[i] for i in idx])
+    return out
+
+
+def coherence_over_time(model, texts, timestamps, *, n=10, coherence_type="c_npmi",
+                        per_slice=False):
+    """Coherence of a dynamic topic model, scored one time slice at a time against
+    that slice's own documents and averaged (TopMost's ``dynamic_coherence``).
+
+    ``texts`` is the reference corpus and ``timestamps`` maps each reference document
+    to its integer time slice ``0..T-1`` (the same slicing used to fit the model).
+    For each slice, the model's slice-specific topics are scored only against the
+    documents in that slice, which is the point: a dynamic model should be coherent
+    *within* each period, not just on average. Returns the mean over slices, or the
+    per-slice list when ``per_slice=True``. Applies to DTM and DETM, whose topics
+    change over time; a static model has no per-slice topics to score.
+
+    ``timestamps`` must use the same integer slice codes ``0..T-1`` the model was fit
+    with, not raw dates; a slice with no reference documents scores NaN and is dropped
+    from the mean. Words that survived corpus pruning but never occur in a slice's
+    documents contribute nothing to that slice's score, as in any windowed coherence.
+    """
+    num_times = getattr(model, "num_times", None)
+    if num_times is None:
+        raise TypeError(
+            f"{type(model).__name__} is not a dynamic model (no num_times); "
+            "coherence_over_time/diversity_over_time apply to DTM and DETM."
+        )
+    num_times = int(num_times)
+    vocab = list(getattr(model, "vocabulary", []))
+    refs = _ref_corpus(texts)
+    ts = np.asarray(timestamps)
+    if len(ts) != len(refs):
+        raise ValueError(
+            f"timestamps has {len(ts)} entries but texts has {len(refs)} documents"
+        )
+    per = []
+    for t in range(num_times):
+        docs_t = [d for d, tt in zip(refs, ts) if tt == t]
+        if not docs_t:
+            # A slice with no reference documents scores NaN, so the per-slice list
+            # stays index-aligned with the time slices (and with diversity_over_time).
+            per.append(float("nan"))
+            continue
+        top = _slice_top_words(_topic_word_at(model, t), vocab, n)
+        scores = np.asarray(coherence(top, docs_t, coherence_type=coherence_type, n=n), dtype=float)
+        per.append(float(np.nanmean(scores)))
+    if per and np.isnan(per).all():
+        warnings.warn(
+            "no reference document fell in any slice 0..T-1, so every slice scored "
+            "NaN; are `timestamps` raw dates rather than the integer slice codes the "
+            "model was fit with?",
+            stacklevel=2,
+        )
+    if per_slice:
+        return per
+    return float(np.nanmean(per)) if per and not np.isnan(per).all() else float("nan")
+
+
+def diversity_over_time(model, *, n=25, per_slice=False):
+    """Topic diversity of a dynamic model, computed one time slice at a time and
+    averaged: the fraction of distinct top-``n`` words among a slice's topics. Low
+    diversity in a slice means its topics repeat the same words. Applies to DTM and
+    DETM. Returns the mean over slices, or the per-slice list when ``per_slice=True``.
+
+    This is the per-slice analogue of :func:`topic_diversity`, in the spirit of
+    TopMost's ``dynamic_diversity`` but not identical to it: TopMost additionally
+    counts only words unique to a single topic in the slice and present in that
+    slice's own documents, so its numbers run lower when topics share words.
+    """
+    num_times = getattr(model, "num_times", None)
+    if num_times is None:
+        raise TypeError(
+            f"{type(model).__name__} is not a dynamic model (no num_times); "
+            "coherence_over_time/diversity_over_time apply to DTM and DETM."
+        )
+    num_times = int(num_times)
+    vocab = list(getattr(model, "vocabulary", []))
+    per = []
+    for t in range(num_times):
+        top = _slice_top_words(_topic_word_at(model, t), vocab, n)
+        per.append(float(topic_diversity(top, topn=n)))
+    if per_slice:
+        return per
+    return float(np.mean(per)) if per else float("nan")
+
 
 def diagnostics(model, texts=None, *, n=10, coherence_type=None, stability=False,
                 n_boot=20, model_factory=None, seed=0):
@@ -950,10 +1195,65 @@ def _classify_alignment(
 
 
 
+def _align_topics_by_documents(a, b, *, threshold=0.3) -> AlignmentResult:
+    """Align two fits' topics by the documents that load on them: the cross-fit
+    similarity is the correlation between each pair of document-topic columns, then
+    Hungarian-matched with the same split/merge overlay as the word-space path.
+    Both fits must have been trained on the same documents in the same order.
+    """
+    for name, obj in (("a", a), ("b", b)):
+        if not isinstance(obj, np.ndarray) and getattr(obj, "doc_topic", None) is None:
+            raise ValueError(
+                "document-based alignment needs live fitted models with a "
+                f"document-topic matrix; {name} has none (manifests store only top "
+                "words, so pass by='words')"
+            )
+    ta = np.asarray(_as_doc_topic(a), dtype=np.float64)  # (D, Ka)
+    tb = np.asarray(_as_doc_topic(b), dtype=np.float64)  # (D, Kb)
+    if not (np.isfinite(ta).all() and np.isfinite(tb).all()):
+        raise ValueError(
+            "document-topic matrix has non-finite values; cannot align by documents "
+            "(a non-converged or unstable fit can carry NaN theta)"
+        )
+    if ta.shape[0] != tb.shape[0]:
+        raise ValueError(
+            "document-based alignment needs both fits on the same documents in the "
+            f"same order (got {ta.shape[0]} vs {tb.shape[0]} documents)"
+        )
+    # Each topic's feature vector is its column of theta (its loading over documents),
+    # centered so the similarity is the correlation across documents rather than a
+    # mean-dominated cosine (raw non-negative theta columns sit near 1 for every pair,
+    # which would make the match threshold and split/merge overlay inert). This is the
+    # document-topic-column correlation the topic-stability literature uses.
+    fa = ta.T - ta.T.mean(axis=1, keepdims=True)  # (Ka, D)
+    fb = tb.T - tb.T.mean(axis=1, keepdims=True)  # (Kb, D)
+    an = fa / np.clip(np.linalg.norm(fa, axis=1, keepdims=True), 1e-12, None)
+    bn = fb / np.clip(np.linalg.norm(fb, axis=1, keepdims=True), 1e-12, None)
+    similarity_matrix = np.clip(an @ bn.T, 0.0, 1.0)
+    legacy_pairs = [
+        (i, j, float(1.0 - similarity_matrix[i, j]))
+        for (i, j) in _hungarian(1.0 - similarity_matrix)
+    ]
+    hungarian_pairs = [(i, j) for (i, j, _d) in legacy_pairs]
+    matches, splits, merges, unaligned_a, unaligned_b = _classify_alignment(
+        similarity_matrix, hungarian_pairs, threshold
+    )
+    return AlignmentResult(
+        legacy_pairs,
+        matches=matches,
+        splits=splits,
+        merges=merges,
+        unaligned_a=unaligned_a,
+        unaligned_b=unaligned_b,
+        similarity_matrix=similarity_matrix,
+    )
+
+
 def align_topics(
     a,
     b,
     *,
+    by="words",
     metric="cosine",
     threshold=0.3,
     depth=50,
@@ -961,13 +1261,28 @@ def align_topics(
     word_embeddings=None,
 ) -> AlignmentResult:
     """Match the topics of two fits one-to-one by minimal total distance
-    (Hungarian on the cross-fit topic-word distance matrix). Use it to compare
+    (Hungarian on the cross-fit distance matrix). Use it to compare
     runs across seeds, across K, or train vs. resample.
 
-    `a`, `b` are fitted models or K×V topic-word arrays (same vocabulary order, or
-    automatically intersected if `.vocabulary` is available).
-    `metric` is ``"cosine"``, ``"js"`` (Jensen-Shannon), ``"rbo"`` (Rank-biased overlap),
-    or ``"emd"``/``"ot"`` (Earth Mover's Distance).
+    `by` chooses the space the topics are matched in:
+
+    - ``"words"`` (default): match by each topic's **word** distribution, so two
+      topics align when they use the same vocabulary. `a`, `b` are fitted models or
+      K×V topic-word arrays (same vocabulary order, or automatically intersected if
+      `.vocabulary` is available), and `metric` selects the word-space distance.
+    - ``"documents"``: match by each topic's **document** loading, so two topics
+      align when the same documents load on them, even if their top words differ.
+      This requires both fits to have been trained on the *same documents in the
+      same order*; the similarity is the correlation between the two topics' columns
+      of the document-topic matrix (each column centered across documents, so a shared
+      baseline prevalence does not inflate the match; `metric` is ignored). Complements
+      :func:`topica.agreement`, which scores the two fits' hard document partitions
+      as a whole (ARI/NMI) rather than topic-by-topic.
+
+    `metric` (word space only) is ``"cosine"``, ``"js"`` (Jensen-Shannon), ``"rbo"``
+    (Rank-biased overlap), or ``"emd"``/``"ot"`` (Earth Mover's Distance). In every
+    space the tuple carries a **distance** (``1 - similarity``), while
+    ``similarity_matrix`` holds the **similarity**; lower tuple values are closer.
     Returns an `AlignmentResult` object which behaves as a list of ``(topic_a, topic_b, distance)``
     tuples sorted by ``topic_a``, but exposes additional attributes: ``matches``, ``splits``,
     ``merges``, ``unaligned_a``, ``unaligned_b``, and ``similarity_matrix``.
@@ -981,6 +1296,11 @@ def align_topics(
     ``threshold`` sets the one-to-one match cut; the split/merge overlay self-calibrates
     and does not depend on it.
     """
+    if by == "documents":
+        return _align_topics_by_documents(a, b, threshold=threshold)
+    if by != "words":
+        raise ValueError(f"by must be 'words' or 'documents', got {by!r}")
+
     A = _as_topic_word(a)
     B = _as_topic_word(b)
 
