@@ -1156,16 +1156,12 @@ mod tests {
         // words; beta/theta from the Gamma prior; x planted ~ uniform.
         let gamma_sample = |rng: &mut ChaCha8Rng, a: f64, b: f64| -> f64 {
             // Marsaglia-Tsang for shape a (a<1 via boosting).
-            let d;
-            let boost;
-            if a < 1.0 {
+            let (d, boost) = if a < 1.0 {
                 let u: f64 = rng.gen::<f64>().max(1e-12);
-                boost = u.powf(1.0 / a);
-                d = 1.0 - 1.0 / 3.0 + a;
+                (1.0 - 1.0 / 3.0 + a, u.powf(1.0 / a))
             } else {
-                boost = 1.0;
-                d = a - 1.0 / 3.0;
-            }
+                (a - 1.0 / 3.0, 1.0)
+            };
             let c = 1.0 / (9.0 * d).sqrt();
             loop {
                 let z: f64 = randn(rng);
