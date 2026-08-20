@@ -1,46 +1,63 @@
 @article{roberts2019stm,
-  title   = {{stm}: An {R} Package for Structural Topic Models},
   author  = {Roberts, Margaret E. and Stewart, Brandon M. and Tingley, Dustin},
+  title   = {\pkg{stm}: An {R} Package for Structural Topic Models},
   journal = {Journal of Statistical Software},
+  year    = {2019},
   volume  = {91},
   number  = {2},
   pages   = {1--40},
-  year    = {2019},
   doi     = {10.18637/jss.v091.i02}
 }
 
-@misc{mallet,
-  title        = {{MALLET}: A Machine Learning for Language Toolkit},
+@misc{mccallum2002mallet,
   author       = {McCallum, Andrew Kachites},
+  title        = {{MALLET}: A Machine Learning for Language Toolkit},
   year         = {2002},
-  howpublished = {\url{http://mallet.cs.umass.edu}}
+  howpublished = {\url{https://mallet.cs.umass.edu}}
 }
 
 @article{eshima2024keyatm,
-  title   = {Keyword-Assisted Topic Models},
   author  = {Eshima, Shusei and Imai, Kosuke and Sasaki, Tomoya},
+  title   = {Keyword-Assisted Topic Models},
   journal = {American Journal of Political Science},
+  year    = {2024},
   volume  = {68},
   number  = {2},
   pages   = {730--750},
-  year    = {2024},
   doi     = {10.1111/ajps.12779}
 }
 
 @article{grootendorst2022bertopic,
-  title   = {{BERTopic}: Neural Topic Modeling with a Class-Based {TF-IDF} Procedure},
   author  = {Grootendorst, Maarten},
+  title   = {{BERTopic}: Neural Topic Modeling with a Class-Based {TF-IDF}
+             Procedure},
   journal = {arXiv preprint arXiv:2203.05794},
   year    = {2022},
   doi     = {10.48550/arXiv.2203.05794}
 }
 
 @article{angelov2020top2vec,
-  title   = {{Top2Vec}: Distributed Representations of Topics},
   author  = {Angelov, Dimo},
+  title   = {{Top2Vec}: Distributed Representations of Topics},
   journal = {arXiv preprint arXiv:2008.09470},
   year    = {2020},
   doi     = {10.48550/arXiv.2008.09470}
+}
+
+@inproceedings{rehurek2010gensim,
+  author    = {\v{R}eh\r{u}\v{r}ek, Radim and Sojka, Petr},
+  title     = {Software Framework for Topic Modelling with Large Corpora},
+  booktitle = {Proceedings of the LREC 2010 Workshop on New Challenges for
+               NLP Frameworks},
+  year      = {2010},
+  pages     = {45--50}
+}
+
+@misc{tomotopy,
+  author       = {Lee, Minchul},
+  title        = {\pkg{tomotopy}: Python Extension for Online {LDA}},
+  year         = {2020},
+  howpublished = {\url{https://github.com/bab2min/tomotopy}}
 }
 
 @article{kardos2025turftopic,
@@ -54,16 +71,6 @@
   doi     = {10.21105/joss.08183}
 }
 
-@inproceedings{rehurek2010gensim,
-  title     = {Software Framework for Topic Modelling with Large Corpora},
-  author    = {\v{R}eh\r{u}\v{r}ek, Radim and Sojka, Petr},
-  booktitle = {Proceedings of the LREC 2010 Workshop on New Challenges for NLP Frameworks},
-  pages     = {45--50},
-  year      = {2010},
-  address   = {Valletta, Malta},
-  publisher = {ELRA}
-}
-
 @article{pedregosa2011scikit,
   title   = {Scikit-learn: Machine Learning in {P}ython},
   author  = {Pedregosa, Fabian and Varoquaux, Ga{\"e}l and Gramfort, Alexandre and Michel, Vincent and Thirion, Bertrand and Grisel, Olivier and Blondel, Mathieu and Prettenhofer, Peter and Weiss, Ron and Dubourg, Vincent and Vanderplas, Jake and Passos, Alexandre and Cournapeau, David and Brucher, Matthieu and Perrot, Matthieu and Duchesnay, {\'E}douard},
@@ -71,14 +78,6 @@
   volume  = {12},
   pages   = {2825--2830},
   year    = {2011}
-}
-
-@misc{tomotopy,
-  title        = {{tomotopy}: Python Extension for Online Topic Modeling},
-  author       = {Lee, Minchul},
-  year         = {2019},
-  howpublished = {\url{https://github.com/bab2min/tomotopy}},
-  doi          = {10.5281/zenodo.4009118}
 }
 
 @inproceedings{terragni2021octis,
@@ -97,4 +96,300 @@
   pages     = {31--41},
   year      = {2024},
   doi       = {10.18653/v1/2024.acl-demos.4}
+}
+
+@article{blei2003lda,
+  author  = {Blei, David M. and Ng, Andrew Y. and Jordan, Michael I.},
+  title   = {Latent {Dirichlet} Allocation},
+  journal = {Journal of Machine Learning Research},
+  year    = {2003},
+  volume  = {3},
+  pages   = {993--1022}
+}
+
+@inproceedings{yao2009sparselda,
+  author    = {Yao, Limin and Mimno, David and McCallum, Andrew},
+  title     = {Efficient Methods for Topic Model Inference on Streaming
+               Document Collections},
+  booktitle = {Proceedings of the 15th ACM SIGKDD International Conference on
+               Knowledge Discovery and Data Mining (KDD)},
+  year      = {2009},
+  pages     = {937--946},
+  doi       = {10.1145/1557019.1557121}
+}
+
+@inproceedings{yuan2015lightlda,
+  author    = {Yuan, Jinhui and Gao, Fei and Ho, Qirong and Dai, Wei and Wei,
+               Jinliang and Zheng, Xun and Xing, Eric P. and Liu, Tie-Yan and
+               Ma, Wei-Ying},
+  title     = {{LightLDA}: Big Topic Models on Modest Computer Clusters},
+  booktitle = {Proceedings of the 24th International Conference on World Wide
+               Web (WWW)},
+  year      = {2015},
+  pages     = {1351--1361},
+  doi       = {10.1145/2736277.2741115}
+}
+
+@article{chen2016warplda,
+  author  = {Chen, Jianfei and Li, Kaiwei and Zhu, Jun and Chen, Wenguang},
+  title   = {{WarpLDA}: A Cache Efficient {O(1)} Algorithm for Latent
+             {Dirichlet} Allocation},
+  journal = {Proceedings of the VLDB Endowment},
+  year    = {2016},
+  volume  = {9},
+  number  = {10},
+  pages   = {744--755},
+  doi     = {10.14778/2977797.2977801}
+}
+
+@inproceedings{ramage2009llda,
+  author    = {Ramage, Daniel and Hall, David and Nallapati, Ramesh and
+               Manning, Christopher D.},
+  title     = {Labeled {LDA}: A Supervised Topic Model for Credit Attribution
+               in Multi-Labeled Corpora},
+  booktitle = {Proceedings of the 2009 Conference on Empirical Methods in
+               Natural Language Processing (EMNLP)},
+  year      = {2009},
+  pages     = {248--256},
+  doi       = {10.3115/1699510.1699543}
+}
+
+@inproceedings{jagarlamudi2012seeded,
+  author    = {Jagarlamudi, Jagadeesh and Daum\'e III, Hal and Udupa, Raghavendra},
+  title     = {Incorporating Lexical Priors into Topic Models},
+  booktitle = {Proceedings of the 13th Conference of the European Chapter of
+               the Association for Computational Linguistics (EACL)},
+  year      = {2012},
+  pages     = {204--213}
+}
+
+@inproceedings{eisenstein2011sage,
+  author    = {Eisenstein, Jacob and Ahmed, Amr and Xing, Eric P.},
+  title     = {Sparse Additive Generative Models of Text},
+  booktitle = {Proceedings of the 28th International Conference on Machine
+               Learning (ICML)},
+  year      = {2011},
+  pages     = {1041--1048}
+}
+
+@inproceedings{mimno2008dmr,
+  author    = {Mimno, David and McCallum, Andrew},
+  title     = {Topic Models Conditioned on Arbitrary Features with
+               {Dirichlet}-Multinomial Regression},
+  booktitle = {Proceedings of the 24th Conference on Uncertainty in Artificial
+               Intelligence (UAI)},
+  year      = {2008},
+  pages     = {411--418}
+}
+
+@article{lee2020gdmr,
+  author    = {Lee, Minwoo and Song, Min},
+  title     = {Incorporating Citation Impact into Analysis of Research Trends},
+  journal   = {Scientometrics},
+  year      = {2020},
+  volume    = {124},
+  number    = {2},
+  pages     = {1191--1224},
+  doi       = {10.1007/s11192-020-03508-3}
+}
+
+@inproceedings{li2006pa,
+  author    = {Li, Wei and McCallum, Andrew},
+  title     = {Pachinko Allocation: {DAG}-Structured Mixture Models of Topic
+               Correlations},
+  booktitle = {Proceedings of the 23rd International Conference on Machine
+               Learning (ICML)},
+  year      = {2006},
+  pages     = {577--584},
+  doi       = {10.1145/1143844.1143917}
+}
+
+@article{teh2006hdp,
+  author  = {Teh, Yee Whye and Jordan, Michael I. and Beal, Matthew J. and
+             Blei, David M.},
+  title   = {Hierarchical {Dirichlet} Processes},
+  journal = {Journal of the American Statistical Association},
+  year    = {2006},
+  volume  = {101},
+  number  = {476},
+  pages   = {1566--1581},
+  doi     = {10.1198/016214506000000302}
+}
+
+@inproceedings{griffiths2004hlda,
+  author    = {Griffiths, Thomas L. and Jordan, Michael I. and Tenenbaum,
+               Joshua B. and Blei, David M.},
+  title     = {Hierarchical Topic Models and the Nested {Chinese} Restaurant
+               Process},
+  booktitle = {Advances in Neural Information Processing Systems 16 (NIPS 2003)},
+  year      = {2004},
+  pages     = {17--24}
+}
+
+@article{roberts2014structural,
+  author  = {Roberts, Margaret E. and Stewart, Brandon M. and Tingley, Dustin
+             and Lucas, Christopher and Leder-Luis, Jetson and Gadarian,
+             Shana Kushner and Albertson, Bethany and Rand, David G.},
+  title   = {Structural Topic Models for Open-Ended Survey Responses},
+  journal = {American Journal of Political Science},
+  year    = {2014},
+  volume  = {58},
+  number  = {4},
+  pages   = {1064--1082},
+  doi     = {10.1111/ajps.12103}
+}
+
+@article{blei2007ctm,
+  author  = {Blei, David M. and Lafferty, John D.},
+  title   = {A Correlated Topic Model of {Science}},
+  journal = {The Annals of Applied Statistics},
+  year    = {2007},
+  volume  = {1},
+  number  = {1},
+  pages   = {17--35},
+  doi     = {10.1214/07-AOAS114}
+}
+
+@inproceedings{yan2013biterm,
+  author    = {Yan, Xiaohui and Guo, Jiafeng and Lan, Yanyan and Cheng, Xueqi},
+  title     = {A Biterm Topic Model for Short Texts},
+  booktitle = {Proceedings of the 22nd International Conference on World Wide Web (WWW)},
+  year      = {2013},
+  pages     = {1445--1456},
+  doi       = {10.1145/2488388.2488514}
+}
+
+@inproceedings{yin2014gsdmm,
+  author    = {Yin, Jianhua and Wang, Jianyong},
+  title     = {A {Dirichlet} Multinomial Mixture Model-Based Approach for Short
+               Text Clustering},
+  booktitle = {Proceedings of the 20th ACM SIGKDD International Conference on
+               Knowledge Discovery and Data Mining (KDD)},
+  year      = {2014},
+  pages     = {233--242},
+  doi       = {10.1145/2623330.2623715}
+}
+
+@inproceedings{blei2006dtm,
+  author    = {Blei, David M. and Lafferty, John D.},
+  title     = {Dynamic Topic Models},
+  booktitle = {Proceedings of the 23rd International Conference on Machine
+               Learning (ICML)},
+  year      = {2006},
+  pages     = {113--120},
+  doi       = {10.1145/1143844.1143859}
+}
+
+@inproceedings{wang2006topics,
+  author    = {Wang, Xuerui and McCallum, Andrew},
+  title     = {Topics over Time: A Non-Markov Continuous-Time Model of Topical Trends},
+  booktitle = {Proceedings of the 12th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining (KDD)},
+  year      = {2006},
+  pages     = {424--433},
+  doi       = {10.1145/1150402.1150450}
+}
+
+@inproceedings{rosenzvi2004author,
+  author    = {Rosen-Zvi, Michal and Griffiths, Thomas and Steyvers, Mark and Smyth, Padhraic},
+  title     = {The Author-Topic Model for Authors and Documents},
+  booktitle = {Proceedings of the 20th Conference on Uncertainty in Artificial Intelligence (UAI)},
+  year      = {2004},
+  pages     = {487--494}
+}
+
+@inproceedings{blei2008slda,
+  author    = {Blei, David M. and McAuliffe, Jon D.},
+  title     = {Supervised Topic Models},
+  booktitle = {Advances in Neural Information Processing Systems 20 (NIPS 2007)},
+  year      = {2008},
+  pages     = {121--128}
+}
+
+@article{slapin2008wordfish,
+  author  = {Slapin, Jonathan B. and Proksch, Sven-Oliver},
+  title   = {A Scaling Model for Estimating Time-Series Party Positions from Texts},
+  journal = {American Journal of Political Science},
+  year    = {2008},
+  volume  = {52},
+  number  = {3},
+  pages   = {705--722},
+  doi     = {10.1111/j.1540-5907.2008.00338.x}
+}
+
+@article{lauderdale2016measuring,
+  author    = {Lauderdale, Benjamin E. and Herzog, Alexander},
+  title     = {Measuring Political Positions from Legislative Speech},
+  journal   = {Political Analysis},
+  year      = {2016},
+  volume    = {24},
+  number    = {3},
+  pages     = {374--394},
+  doi       = {10.1093/pan/mpw017}
+}
+
+@inproceedings{srivastava2017prodlda,
+  author    = {Srivastava, Akash and Sutton, Charles},
+  title     = {Autoencoding Variational Inference for Topic Models},
+  booktitle = {5th International Conference on Learning Representations (ICLR)},
+  year      = {2017},
+  url       = {https://arxiv.org/abs/1703.01488}
+}
+
+@article{dieng2020etm,
+  author  = {Dieng, Adji B. and Ruiz, Francisco J. R. and Blei, David M.},
+  title   = {Topic Modeling in Embedding Spaces},
+  journal = {Transactions of the Association for Computational Linguistics},
+  year    = {2020},
+  volume  = {8},
+  pages   = {439--453},
+  doi     = {10.1162/tacl_a_00325}
+}
+
+@inproceedings{bianchi2021combined,
+  author    = {Bianchi, Federico and Terragni, Silvia and Hovy, Dirk},
+  title     = {Pre-training is a Hot Topic: Contextualized Document Embeddings
+               Improve Topic Coherence},
+  booktitle = {Proceedings of the 59th Annual Meeting of the Association for
+               Computational Linguistics (ACL-IJCNLP)},
+  year      = {2021},
+  pages     = {759--766},
+  doi       = {10.18653/v1/2021.acl-short.96}
+}
+
+@inproceedings{bianchi2021zeroshot,
+  author    = {Bianchi, Federico and Terragni, Silvia and Hovy, Dirk and
+               Nozza, Debora and Fersini, Elisabetta},
+  title     = {Cross-lingual Contextualized Topic Models with Zero-shot Learning},
+  booktitle = {Proceedings of the 16th Conference of the European Chapter of the
+               Association for Computational Linguistics (EACL)},
+  year      = {2021},
+  pages     = {1676--1683},
+  doi       = {10.18653/v1/2021.eacl-main.143}
+}
+
+@inproceedings{wu2024fastopic,
+  author    = {Wu, Xiaobao and Nguyen, Thong and Zhang, Delvin Ce and Wang,
+               William Yang and Luu, Anh Tuan},
+  title     = {{FASTopic}: Pretrained Transformer is a Fast, Adaptive, Stable,
+               and Transferable Topic Model},
+  booktitle = {Advances in Neural Information Processing Systems 37 (NeurIPS)},
+  year      = {2024}
+}
+
+@misc{kristensenmclachlan2024keynmf,
+  author    = {Kristensen-McLachlan, Ross Deans and Hicke, Rebecca M. M. and
+               Kardos, M{\'a}rton and Thun{\o}, Mette},
+  title     = {Context is Key(NMF): Modelling Topical Information Dynamics in Chinese Diaspora Media},
+  year      = {2024},
+  howpublished = {arXiv:2410.12791},
+  doi       = {10.48550/arXiv.2410.12791}
+}
+
+@misc{mclachlan2024s3,
+  author    = {Kardos, M{\'a}rton and Kostkan, Jan and Vermillet, Arnault-Quentin and
+               Nielbo, Kristoffer and Enevoldsen, Kenneth and Rocca, Roberta},
+  title     = {{$S^3$} -- Semantic Signal Separation},
+  year      = {2024},
+  howpublished = {arXiv:2406.09556},
+  doi       = {10.48550/arXiv.2406.09556}
 }

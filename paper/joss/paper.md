@@ -40,7 +40,7 @@ pandas, with no Java runtime and no deep-learning framework.
 The models a text-as-data researcher needs are scattered across incompatible
 software. The Structural Topic Model lives in the R package `stm`
 [@roberts2019stm]; the fastest collapsed-Gibbs samplers live in the Java toolkit
-MALLET [@mallet]; keyword-assisted models live in R `keyATM` [@eshima2024keyatm];
+MALLET [@mccallum2002mallet]; keyword-assisted models live in R `keyATM` [@eshima2024keyatm];
 and clustering, autoencoding, and embedding-based models live in separate Python
 repositories such as BERTopic [@grootendorst2022bertopic] and Top2Vec
 [@angelov2020top2vec]. Some libraries do collect several models, but each covers
@@ -78,20 +78,27 @@ fixed seed and thread count.
 
 `topica` groups its roster into families that share the common surface:
 
-- **Classical count-based models**: LDA (with the MALLET SparseLDA, LightLDA, and
-  WarpLDA samplers), Labeled LDA, SeededLDA, SAGE, the Dirichlet-Multinomial
-  Regression (DMR) and generalized-DMR covariate models, Pachinko allocation, HDP,
-  and hierarchical LDA.
-- **Structural and keyword models**: the Structural Topic Model (STM), the
-  Correlated Topic Model (CTM), and the keyATM family (base, covariate, and
-  dynamic).
-- **Short-text, dynamic, and specialized models**: BTM, GSDMM, the Dynamic Topic
-  Model, Topics-over-Time, author-topic and supervised models, and political-scaling
-  models such as Wordfish and Wordshoal.
-- **Neural and embedding-based models**: ProdLDA, ETM, CombinedTM, ZeroShotTM,
-  FASTopic, BERTopic, Top2Vec, KeyNMF, and Semantic Signal Separation. The
-  embedding-based models consume document embeddings the user supplies from any
-  encoder, so the package carries no embedder as a dependency.
+- **Classical count-based models**: LDA [@blei2003lda] (with the MALLET SparseLDA
+  [@yao2009sparselda], LightLDA [@yuan2015lightlda], and WarpLDA [@chen2016warplda]
+  samplers), Labeled LDA [@ramage2009llda], SeededLDA [@jagarlamudi2012seeded], SAGE
+  [@eisenstein2011sage], the Dirichlet-Multinomial Regression (DMR)
+  [@mimno2008dmr] and generalized-DMR [@lee2020gdmr] covariate models, Pachinko
+  allocation [@li2006pa], HDP [@teh2006hdp], and hierarchical LDA [@griffiths2004hlda].
+- **Structural and keyword models**: the Structural Topic Model
+  [@roberts2014structural], the Correlated Topic Model [@blei2007ctm], and the
+  keyATM family (base, covariate, and dynamic) [@eshima2024keyatm].
+- **Short-text, dynamic, and specialized models**: BTM [@yan2013biterm], GSDMM
+  [@yin2014gsdmm], the Dynamic Topic Model [@blei2006dtm], Topics-over-Time
+  [@wang2006topics], author-topic [@rosenzvi2004author] and supervised
+  [@blei2008slda] models, and political-scaling models such as Wordfish
+  [@slapin2008wordfish] and Wordshoal [@lauderdale2016measuring].
+- **Neural and embedding-based models**: ProdLDA [@srivastava2017prodlda], ETM
+  [@dieng2020etm], CombinedTM [@bianchi2021combined], ZeroShotTM [@bianchi2021zeroshot],
+  FASTopic [@wu2024fastopic], BERTopic [@grootendorst2022bertopic], Top2Vec
+  [@angelov2020top2vec], KeyNMF [@kristensenmclachlan2024keynmf], and Semantic Signal
+  Separation [@mclachlan2024s3]. The embedding-based models consume document
+  embeddings the user supplies from any encoder, so the package carries no embedder
+  as a dependency.
 
 All models share a common ingress (a `Corpus` built from a DataFrame or token
 lists), and a common analysis workflow organized into stages: selecting the number
