@@ -331,6 +331,7 @@ def _reseed_null(
     metric: str,
     threshold: float,
     seed: int,
+    by: str = "words",
 ) -> dict[int, float] | None:
     """Per-A-topic similarity floor from reseeding: refit A under fresh seeds, align
     each refit back to A, and take the *worst* self-match similarity each topic
@@ -347,7 +348,7 @@ def _reseed_null(
     # For each reseed, the similarity each A-topic keeps under its best match.
     per_topic: dict[int, list[float]] = {}
     for f in fits:
-        al = align_topics(a, f, metric=metric, threshold=threshold)
+        al = align_topics(a, f, by=by, metric=metric, threshold=threshold)
         best: dict[int, float] = {}
         for (ta, _tb, dist) in al:
             best[ta] = max(best.get(ta, 0.0), 1.0 - float(dist))
@@ -579,6 +580,7 @@ def compare(
     a,
     b,
     *,
+    by: str = "words",
     metric: str | None = None,
     threshold: float | None = None,
     refit: Callable[[int], Any] | None = None,
@@ -607,11 +609,20 @@ def compare(
     longer reported as near-total splits/merges, and comparing a fit with itself yields
     K matched / 0 split / 0 merged regardless of correlation (issue #642).
 
+    ``by`` chooses the space topics are matched in. The default ``"words"`` matches
+    two topics when they use the same vocabulary. ``by="documents"`` instead matches
+    them when the same documents load on them (cosine of the two document-topic
+    columns), so a topic that persists across two fits is recognized even when its
+    top words churn; it needs two live fits on the *same documents in the same order*
+    (not manifests). It complements :func:`topica.agreement`, which scores the two
+    fits' whole document partitions rather than pairing topics.
+
     ``metric``/``threshold`` default per path: live fits use ``metric="cosine"`` with
     ``threshold=0.3`` (the minimum similarity for a one-to-one match; splits/merges
     self-calibrate to the fit and do not depend on it); manifests use
     ``metric="jaccard"`` with a lower default (~0.12) matched to the Jaccard scale of
-    top-word sets. Pass ``threshold=`` to override either.
+    top-word sets. Pass ``threshold=`` to override either. ``metric`` applies to the
+    word space only; ``by="documents"`` always uses cosine on the document loadings.
 
     **Drift needs a null.** Pass exactly one reseed source to judge whether a matched
     pair moved beyond the self-agreement A shows across reseeds (a heuristic band —
@@ -658,6 +669,11 @@ def compare(
             "manifests (recorded with topic_words_n>0) or two live models."
         )
     if a_man and b_man:
+        if by == "documents":
+            raise ValueError(
+                "document-based comparison (by='documents') needs live fitted models "
+                "with a document-topic matrix; manifests store only top words."
+            )
         return _compare_manifests(
             a, b, metric=metric, threshold=threshold,
             refit=refit, reseed_fits=reseed_fits, baseline=baseline,
@@ -667,7 +683,7 @@ def compare(
     metric = "cosine" if metric is None else metric
     threshold = _LIVE_DEFAULT_THRESHOLD if threshold is None else threshold
 
-    al = align_topics(a, b, metric=metric, threshold=threshold)
+    al = align_topics(a, b, by=by, metric=metric, threshold=threshold)
     words_a = _top_words(a, top_n)
     words_b = _top_words(b, top_n)
     prev_a, se_a = _prevalence(a, corpus_a, nsims, seed)
@@ -680,7 +696,7 @@ def compare(
     if baseline is not None:
         baseline_info = {"kind": "baseline", "similarity_floor": float(baseline)}
     elif refit is not None or reseed_fits is not None:
-        null_floor = _reseed_null(a, refit, reseed_fits, n_reseed, metric, threshold, seed)
+        null_floor = _reseed_null(a, refit, reseed_fits, n_reseed, metric, threshold, seed, by=by)
         n_used = (len(reseed_fits) if reseed_fits is not None else 0) + (
             n_reseed if refit is not None else 0
         )

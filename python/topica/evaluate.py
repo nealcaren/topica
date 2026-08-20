@@ -1139,10 +1139,49 @@ def _classify_alignment(
 
 
 
+def _align_topics_by_documents(a, b, *, threshold=0.3) -> AlignmentResult:
+    """Align two fits' topics by the documents that load on them: the cross-fit
+    similarity is the cosine between each pair of document-topic columns, then
+    Hungarian-matched with the same split/merge overlay as the word-space path.
+    Both fits must have been trained on the same documents in the same order.
+    """
+    ta = np.asarray(_as_doc_topic(a), dtype=np.float64)  # (D, Ka)
+    tb = np.asarray(_as_doc_topic(b), dtype=np.float64)  # (D, Kb)
+    if ta.shape[0] != tb.shape[0]:
+        raise ValueError(
+            "document-based alignment needs both fits on the same documents in the "
+            f"same order (got {ta.shape[0]} vs {tb.shape[0]} documents)"
+        )
+    # Each topic's feature vector is its column of theta (its loading over documents).
+    fa = ta.T  # (Ka, D)
+    fb = tb.T  # (Kb, D)
+    an = fa / np.clip(np.linalg.norm(fa, axis=1, keepdims=True), 1e-12, None)
+    bn = fb / np.clip(np.linalg.norm(fb, axis=1, keepdims=True), 1e-12, None)
+    similarity_matrix = np.clip(an @ bn.T, 0.0, 1.0)
+    legacy_pairs = [
+        (i, j, float(1.0 - similarity_matrix[i, j]))
+        for (i, j) in _hungarian(1.0 - similarity_matrix)
+    ]
+    hungarian_pairs = [(i, j) for (i, j, _d) in legacy_pairs]
+    matches, splits, merges, unaligned_a, unaligned_b = _classify_alignment(
+        similarity_matrix, hungarian_pairs, threshold
+    )
+    return AlignmentResult(
+        legacy_pairs,
+        matches=matches,
+        splits=splits,
+        merges=merges,
+        unaligned_a=unaligned_a,
+        unaligned_b=unaligned_b,
+        similarity_matrix=similarity_matrix,
+    )
+
+
 def align_topics(
     a,
     b,
     *,
+    by="words",
     metric="cosine",
     threshold=0.3,
     depth=50,
@@ -1150,13 +1189,25 @@ def align_topics(
     word_embeddings=None,
 ) -> AlignmentResult:
     """Match the topics of two fits one-to-one by minimal total distance
-    (Hungarian on the cross-fit topic-word distance matrix). Use it to compare
+    (Hungarian on the cross-fit distance matrix). Use it to compare
     runs across seeds, across K, or train vs. resample.
 
-    `a`, `b` are fitted models or K×V topic-word arrays (same vocabulary order, or
-    automatically intersected if `.vocabulary` is available).
-    `metric` is ``"cosine"``, ``"js"`` (Jensen-Shannon), ``"rbo"`` (Rank-biased overlap),
-    or ``"emd"``/``"ot"`` (Earth Mover's Distance).
+    `by` chooses the space the topics are matched in:
+
+    - ``"words"`` (default): match by each topic's **word** distribution, so two
+      topics align when they use the same vocabulary. `a`, `b` are fitted models or
+      K×V topic-word arrays (same vocabulary order, or automatically intersected if
+      `.vocabulary` is available), and `metric` selects the word-space distance.
+    - ``"documents"``: match by each topic's **document** loading, so two topics
+      align when the same documents load on them, even if their top words differ.
+      This requires both fits to have been trained on the *same documents in the
+      same order*; the similarity is the cosine between the two topics' columns of
+      the document-topic matrix (`metric` is ignored). Complements
+      :func:`topica.agreement`, which scores the two fits' hard document partitions
+      as a whole (ARI/NMI) rather than topic-by-topic.
+
+    `metric` (word space only) is ``"cosine"``, ``"js"`` (Jensen-Shannon), ``"rbo"``
+    (Rank-biased overlap), or ``"emd"``/``"ot"`` (Earth Mover's Distance).
     Returns an `AlignmentResult` object which behaves as a list of ``(topic_a, topic_b, distance)``
     tuples sorted by ``topic_a``, but exposes additional attributes: ``matches``, ``splits``,
     ``merges``, ``unaligned_a``, ``unaligned_b``, and ``similarity_matrix``.
@@ -1170,6 +1221,11 @@ def align_topics(
     ``threshold`` sets the one-to-one match cut; the split/merge overlay self-calibrates
     and does not depend on it.
     """
+    if by == "documents":
+        return _align_topics_by_documents(a, b, threshold=threshold)
+    if by != "words":
+        raise ValueError(f"by must be 'words' or 'documents', got {by!r}")
+
     A = _as_topic_word(a)
     B = _as_topic_word(b)
 

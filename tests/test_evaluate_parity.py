@@ -130,3 +130,51 @@ def test_metrics_reachable_from_root_and_namespace():
                  "coherence_over_time", "diversity_over_time"]:
         assert hasattr(topica, name)
         assert hasattr(topica.evaluate, name)
+
+
+# --- document-based topic alignment ----------------------------------------
+
+
+def _two_lda_fits():
+    c, _, _ = _two_block_corpus(150)
+    a = topica.LDA(4, seed=1).fit(c, iters=60)
+    b = topica.LDA(4, seed=2).fit(c, iters=60)
+    return c, a, b
+
+
+def test_align_topics_by_documents_matches_same_corpus_fits():
+    _, a, b = _two_lda_fits()
+    ad = topica.evaluate.align_topics(a, b, by="documents")
+    assert ad.similarity_matrix.shape == (4, 4)
+    # two fits of the same well-separated corpus recover a full 1-to-1 match
+    assert len(ad.matches) == 4
+
+
+def test_align_by_documents_uses_theta_not_words():
+    # Document-space similarities come from theta columns, so they differ from the
+    # word-space cosine on the same pair of fits (usually cleaner on the same corpus).
+    _, a, b = _two_lda_fits()
+    aw = {(i, j): 1 - d for (i, j, d) in topica.evaluate.align_topics(a, b, by="words")}
+    ad = {(i, j): 1 - d for (i, j, d) in topica.evaluate.align_topics(a, b, by="documents")}
+    assert aw != ad
+
+
+def test_align_by_documents_requires_same_documents():
+    c, _, _ = _two_block_corpus(150)
+    a = topica.LDA(4, seed=1).fit(c, iters=40)
+    c2, _, _ = _two_block_corpus(80, seed=7)
+    b = topica.LDA(4, seed=2).fit(c2, iters=40)
+    with pytest.raises(ValueError, match="same documents"):
+        topica.evaluate.align_topics(a, b, by="documents")
+
+
+def test_align_topics_bad_by_raises():
+    _, a, b = _two_lda_fits()
+    with pytest.raises(ValueError, match="by must be"):
+        topica.evaluate.align_topics(a, b, by="nonsense")
+
+
+def test_compare_by_documents_runs():
+    _, a, b = _two_lda_fits()
+    result = topica.compare(a, b, by="documents")
+    assert len(result.aligned) == 4
