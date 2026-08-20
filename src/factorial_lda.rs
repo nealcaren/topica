@@ -830,11 +830,12 @@ impl<'a> State<'a> {
 /// optional semi-supervised constraint: `observed[d][kf] = Some(label)` pins factor
 /// kf of document d to `label`; pass an empty slice (or all-empty rows) for the
 /// faithful fully-unsupervised fit.
-pub fn fit_flda<R: Rng>(
+pub fn fit_flda<R: Rng, F: FnMut(usize, usize) -> bool>(
     corpus: &Corpus,
     cfg: &FactorialLdaConfig,
     priors: &OmegaPriors,
     observed: &[Vec<Option<usize>>],
+    mut on_progress: F,
     rng: &mut R,
 ) -> FactorialLDAModel {
     let mut st = State::new(corpus, cfg, priors, observed);
@@ -875,6 +876,9 @@ pub fn fit_flda<R: Rng>(
         }
         if burned_in {
             st.collect_sample();
+        }
+        if !on_progress(iter, cfg.iters) {
+            break;
         }
     }
     let final_ll = st.log_likelihood();
@@ -990,8 +994,22 @@ mod tests {
         let c = tiny_corpus();
         let cfg = cfg();
         let priors = OmegaPriors::default();
-        let m1 = fit_flda(&c, &cfg, &priors, &[], &mut ChaCha8Rng::seed_from_u64(42));
-        let m2 = fit_flda(&c, &cfg, &priors, &[], &mut ChaCha8Rng::seed_from_u64(42));
+        let m1 = fit_flda(
+            &c,
+            &cfg,
+            &priors,
+            &[],
+            |_, _| true,
+            &mut ChaCha8Rng::seed_from_u64(42),
+        );
+        let m2 = fit_flda(
+            &c,
+            &cfg,
+            &priors,
+            &[],
+            |_, _| true,
+            &mut ChaCha8Rng::seed_from_u64(42),
+        );
         assert_eq!(m1.topic_word, m2.topic_word);
         assert_eq!(m1.doc_topic, m2.doc_topic);
     }
@@ -1004,6 +1022,7 @@ mod tests {
             &cfg(),
             &OmegaPriors::default(),
             &[],
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(0),
         );
         assert!(crate::conformance::check_conformance(&m).is_empty());
@@ -1025,6 +1044,7 @@ mod tests {
             &cfg(),
             &OmegaPriors::default(),
             &[],
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(7),
         );
         for row in &m.topic_word {
@@ -1048,6 +1068,7 @@ mod tests {
             &cfg,
             &OmegaPriors::default(),
             &[],
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(3),
         );
         assert!(m.tuple_activity.iter().all(|b| b.is_finite()));

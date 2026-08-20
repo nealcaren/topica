@@ -70,7 +70,7 @@ pub struct TopicalNGramsModel {
 /// unigram topic-word prior; `gamma` the bigram topic-word prior; `delta1`/`delta2`
 /// the Beta pseudocounts for unigram/bigram status.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_tng<R: Rng>(
+pub fn fit_tng<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<Token>],
     num_types: usize,
     num_topics: usize,
@@ -80,6 +80,7 @@ pub fn fit_tng<R: Rng>(
     gamma: f64,
     delta1: f64,
     delta2: f64,
+    mut on_progress: F,
     rng: &mut R,
 ) -> TopicalNGramsModel {
     let k = num_topics;
@@ -250,6 +251,9 @@ pub fn fit_tng<R: Rng>(
         }
         let bi: usize = token_gram.iter().flatten().filter(|&&g| g == 1).count();
         fit_history.push((it + 1, bi as f64));
+        if !on_progress(it + 1, iters) {
+            break;
+        }
     }
 
     // Unigram topic-word phi (K, V): a proper simplex per topic.
@@ -443,6 +447,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(1),
         );
         let phrases = extract_phrases(&model, &docs);
@@ -475,6 +480,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(7),
         );
         let b = fit_tng(
@@ -487,6 +493,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(7),
         );
         assert_eq!(a.topic_word, b.topic_word);
@@ -507,6 +514,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(0),
         );
         for row in &m.topic_word {
@@ -534,6 +542,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(2),
         );
         for grams in &m.token_gram {

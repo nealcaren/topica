@@ -96,7 +96,7 @@ fn allowed_for(c: usize, num_classes: usize, k_class: usize, k_shared: usize) ->
 /// Fit fixed-transform DiscLDA by restricted collapsed Gibbs sampling. `docs[d]` is
 /// the token ids of document `d`; `labels[d]` is its class in `0..num_classes`.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_disclda<R: Rng>(
+pub fn fit_disclda<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<u32>],
     labels: &[usize],
     num_classes: usize,
@@ -106,6 +106,7 @@ pub fn fit_disclda<R: Rng>(
     alpha: f64,
     beta: f64,
     iters: usize,
+    mut on_progress: F,
     rng: &mut R,
 ) -> DiscLdaModel {
     let l = num_classes * k_class + k_shared;
@@ -137,7 +138,7 @@ pub fn fit_disclda<R: Rng>(
 
     let vbeta = v as f64 * beta;
     let mut scores: Vec<f64> = Vec::with_capacity(k_class + k_shared);
-    for _ in 0..iters {
+    for it in 0..iters {
         for di in 0..d {
             let allow = &allowed[labels[di]];
             for pos in 0..docs[di].len() {
@@ -169,6 +170,9 @@ pub fn fit_disclda<R: Rng>(
                 nwt[chosen][w] += 1;
                 nt[chosen] += 1;
             }
+        }
+        if !on_progress(it + 1, iters) {
+            break;
         }
     }
 
@@ -375,7 +379,19 @@ mod tests {
         let (docs, labels, v) = planted(nc, cbw, sbw, 240, 12, 42);
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         // k_class=1 per class, k_shared=2
-        let m = fit_disclda(&docs, &labels, nc, 1, 2, v, 0.1, 0.01, 300, &mut rng);
+        let m = fit_disclda(
+            &docs,
+            &labels,
+            nc,
+            1,
+            2,
+            v,
+            0.1,
+            0.01,
+            300,
+            |_, _| true,
+            &mut rng,
+        );
 
         assert_eq!(m.num_topics, nc + 2); // k_class=1 per class + k_shared=2
         for row in &m.topic_word {
@@ -411,7 +427,19 @@ mod tests {
         let (nc, cbw, sbw) = (3, 6, 6);
         let (docs, labels, v) = planted(nc, cbw, sbw, 240, 12, 1);
         let mut rng = ChaCha8Rng::seed_from_u64(7);
-        let m = fit_disclda(&docs, &labels, nc, 2, 2, v, 0.1, 0.01, 300, &mut rng);
+        let m = fit_disclda(
+            &docs,
+            &labels,
+            nc,
+            2,
+            2,
+            v,
+            0.1,
+            0.01,
+            300,
+            |_, _| true,
+            &mut rng,
+        );
         // Held-out docs of a known class should be predicted correctly a large
         // majority of the time.
         let (test, tlabels, _) = planted(nc, cbw, sbw, 60, 12, 999);
@@ -439,7 +467,19 @@ mod tests {
         let (docs, labels, v) = planted(nc, cbw, sbw, 80, 10, 123);
         let run = || {
             let mut rng = ChaCha8Rng::seed_from_u64(99);
-            fit_disclda(&docs, &labels, nc, 2, 2, v, 0.1, 0.01, 120, &mut rng)
+            fit_disclda(
+                &docs,
+                &labels,
+                nc,
+                2,
+                2,
+                v,
+                0.1,
+                0.01,
+                120,
+                |_, _| true,
+                &mut rng,
+            )
         };
         let a = run();
         let b = run();
@@ -455,7 +495,19 @@ mod tests {
         let (nc, cbw, sbw) = (2, 5, 5);
         let (docs, labels, v) = planted(nc, cbw, sbw, 80, 10, 5);
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        let mut m = fit_disclda(&docs, &labels, nc, 2, 2, v, 0.1, 0.01, 100, &mut rng);
+        let mut m = fit_disclda(
+            &docs,
+            &labels,
+            nc,
+            2,
+            2,
+            v,
+            0.1,
+            0.01,
+            100,
+            |_, _| true,
+            &mut rng,
+        );
         // A skewed empirical-style prior: p = [0.8, 0.2].
         m.class_log_prior = vec![0.8f64.ln(), 0.2f64.ln()];
         let mut prng = ChaCha8Rng::seed_from_u64(2);

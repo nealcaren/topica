@@ -121,13 +121,18 @@ impl AuthorTopic {
     /// labels build a stable, sorted author vocabulary. `iters` is the number of
     /// collapsed-Gibbs sweeps (default 1000, a topica default — the paper uses
     /// problem-specific chain lengths).
-    #[pyo3(signature = (data, authors, *, iters=1000))]
+    ///
+    /// `progress` takes a ``(iteration, total, info)`` callback (see
+    /// ``topica.progress``); pass ``True``/``False`` to force the bar on or off, and a
+    /// ``KeyboardInterrupt`` raised from the callback aborts the fit.
+    #[pyo3(signature = (data, authors, *, iters=1000, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         authors: Vec<Vec<String>>,
         iters: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         // Build (or accept) the corpus; keep the surviving-document indices so the
         // author lists stay aligned when empty documents are pruned.
@@ -203,7 +208,9 @@ impl AuthorTopic {
         let beta = slf.beta;
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
+        let progress = resolve_progress(py, progress, "AuthorTopic")?;
         let (model, corpus) = py.allow_threads(move || {
+            let mut on_progress = on_progress_bare(&progress);
             let m = crate::author_topic::fit(
                 &corpus.docs,
                 num_types,
@@ -213,10 +220,12 @@ impl AuthorTopic {
                 alpha,
                 beta,
                 iters,
+                &mut on_progress,
                 &mut rng,
             );
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
 
         slf.model = Some(model);
         slf.corpus = Some(corpus);

@@ -78,7 +78,7 @@ pub struct MgLdaModel {
 ///   >= 1 non-empty sentence.
 /// - `num_types`: vocabulary size V.
 #[allow(clippy::too_many_arguments)]
-pub fn fit<R: Rng>(
+pub fn fit<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<Vec<u32>>],
     num_types: usize,
     k_gl: usize,
@@ -92,6 +92,7 @@ pub fn fit<R: Rng>(
     beta_loc: f64,
     gamma: f64,
     iters: usize,
+    mut on_progress: F,
     rng: &mut R,
 ) -> MgLdaModel {
     let t = window;
@@ -319,6 +320,10 @@ pub fn fit<R: Rng>(
                 gamma,
             );
             fit_history.push((it + 1, ll));
+        }
+
+        if !on_progress(it + 1, iters) {
+            break;
         }
     }
 
@@ -567,7 +572,21 @@ mod tests {
         let (docs, v) = planted();
         let mut rng = ChaCha8Rng::seed_from_u64(13);
         let m = fit(
-            &docs, v, 2, 3, 3, 0.1, 0.1, 0.1, 0.1, 0.01, 0.01, 0.1, 400, &mut rng,
+            &docs,
+            v,
+            2,
+            3,
+            3,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.01,
+            0.01,
+            0.1,
+            400,
+            |_, _| true,
+            &mut rng,
         );
         let argmax = |r: &[f64]| {
             (0..v)
@@ -602,10 +621,38 @@ mod tests {
         let mut r1 = ChaCha8Rng::seed_from_u64(7);
         let mut r2 = ChaCha8Rng::seed_from_u64(7);
         let a = fit(
-            &docs, v, 2, 3, 3, 0.1, 0.1, 0.1, 0.1, 0.01, 0.01, 0.1, 60, &mut r1,
+            &docs,
+            v,
+            2,
+            3,
+            3,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.01,
+            0.01,
+            0.1,
+            60,
+            |_, _| true,
+            &mut r1,
         );
         let b = fit(
-            &docs, v, 2, 3, 3, 0.1, 0.1, 0.1, 0.1, 0.01, 0.01, 0.1, 60, &mut r2,
+            &docs,
+            v,
+            2,
+            3,
+            3,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.01,
+            0.01,
+            0.1,
+            60,
+            |_, _| true,
+            &mut r2,
         );
         assert_eq!(a.global_topic_word, b.global_topic_word);
         assert_eq!(a.local_topic_word, b.local_topic_word);
@@ -618,7 +665,21 @@ mod tests {
         let (docs, v) = planted();
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         let m = fit(
-            &docs, v, 2, 3, 3, 0.1, 0.1, 0.1, 0.1, 0.01, 0.01, 0.1, 20, &mut rng,
+            &docs,
+            v,
+            2,
+            3,
+            3,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.01,
+            0.01,
+            0.1,
+            20,
+            |_, _| true,
+            &mut rng,
         );
         assert!(crate::conformance::check_conformance(&m).is_empty());
         // topic_word rows sum to 1; doc_topic rows sum to 1
@@ -640,7 +701,21 @@ mod tests {
         ];
         let mut rng = ChaCha8Rng::seed_from_u64(1);
         let m = fit(
-            &docs, 5, 2, 2, 3, 0.1, 0.1, 0.1, 0.1, 0.01, 0.01, 0.1, 20, &mut rng,
+            &docs,
+            5,
+            2,
+            2,
+            3,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.01,
+            0.01,
+            0.1,
+            20,
+            |_, _| true,
+            &mut rng,
         );
         assert_eq!(m.topic_word.len(), 4);
         assert_eq!(m.doc_topic.len(), 3);
@@ -652,7 +727,21 @@ mod tests {
         let (docs, v) = planted();
         let mut rng = ChaCha8Rng::seed_from_u64(2);
         let m = fit(
-            &docs, v, 2, 3, 1, 0.1, 0.1, 0.1, 0.1, 0.01, 0.01, 0.1, 40, &mut rng,
+            &docs,
+            v,
+            2,
+            3,
+            1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.01,
+            0.01,
+            0.1,
+            40,
+            |_, _| true,
+            &mut rng,
         );
         assert_eq!(m.topic_word.len(), 5);
         assert!(m.global_fraction >= 0.0 && m.global_fraction <= 1.0);

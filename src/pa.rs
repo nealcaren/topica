@@ -543,7 +543,7 @@ impl PamModel {
 /// super-topic label symmetry), are held fixed through a burn-in, then adapted to
 /// the data over the final quarter of the sweeps. Deterministic for a fixed `rng`.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_pam<R: Rng>(
+pub fn fit_pam<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<u32>],
     num_types: usize,
     num_super: usize,
@@ -551,6 +551,7 @@ pub fn fit_pam<R: Rng>(
     alpha: f64,
     beta: f64,
     iters: usize,
+    on_progress: F,
     rng: &mut R,
 ) -> PamModel {
     // Plain fit is the draw-collecting fit with collection disabled, so the
@@ -567,6 +568,7 @@ pub fn fit_pam<R: Rng>(
         0.0,
         0,
         1,
+        on_progress,
         rng,
     );
     model
@@ -583,7 +585,7 @@ pub fn fit_pam<R: Rng>(
 ///
 /// Returns `(model, ll_history, converged)`.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_pam_with_draws<R: Rng>(
+pub fn fit_pam_with_draws<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<u32>],
     num_types: usize,
     num_super: usize,
@@ -595,6 +597,7 @@ pub fn fit_pam_with_draws<R: Rng>(
     convergence_tol: f64,
     check_every: usize,
     num_threads: usize,
+    mut on_progress: F,
     rng: &mut R,
 ) -> (PamModel, Vec<(usize, f64)>, bool) {
     let d = docs.len();
@@ -719,10 +722,14 @@ pub fn fit_pam_with_draws<R: Rng>(
                 let prev = ll_history[ll_history.len() - 2].1;
                 let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
                 if rel < convergence_tol {
+                    let _ = on_progress(iter, iter); // snap bar to 100% (#786)
                     converged = true;
                     break;
                 }
             }
+        }
+        if !on_progress(iter, iters) {
+            break;
         }
     }
 
@@ -771,7 +778,7 @@ mod tests {
     fn recovers_planted_blocks_and_grouping() {
         let (docs, blocks, groups, v) = planted_corpus();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let model = fit_pam(&docs, v, 2, 4, 0.1, 0.01, 200, &mut rng);
+        let model = fit_pam(&docs, v, 2, 4, 0.1, 0.01, 200, |_, _| true, &mut rng);
 
         // (1) Each sub-topic's top words concentrate on a single planted block.
         // Map each sub-topic to the block its top-6 words fill.
@@ -836,8 +843,8 @@ mod tests {
             .collect();
         let mut r1 = ChaCha8Rng::seed_from_u64(7);
         let mut r2 = ChaCha8Rng::seed_from_u64(7);
-        let m1 = fit_pam(&docs, 12, 2, 4, 0.1, 0.01, 30, &mut r1);
-        let m2 = fit_pam(&docs, 12, 2, 4, 0.1, 0.01, 30, &mut r2);
+        let m1 = fit_pam(&docs, 12, 2, 4, 0.1, 0.01, 30, |_, _| true, &mut r1);
+        let m2 = fit_pam(&docs, 12, 2, 4, 0.1, 0.01, 30, |_, _| true, &mut r2);
         assert_eq!(m1.topic_word(), m2.topic_word());
     }
 
@@ -847,7 +854,7 @@ mod tests {
             .map(|d| (0..8).map(|i| ((i + d * 3) % 12) as u32).collect())
             .collect();
         let mut rng = ChaCha8Rng::seed_from_u64(11);
-        let m = fit_pam(&docs, 12, 2, 3, 0.1, 0.01, 20, &mut rng);
+        let m = fit_pam(&docs, 12, 2, 3, 0.1, 0.01, 20, |_, _| true, &mut rng);
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
         let dir = crate::conformance::check_dirichlet(&m);
@@ -862,7 +869,7 @@ mod tests {
         // the corpus into two groups aligned (up to label swap) with the planting.
         let (docs, _, _, v) = planted_corpus();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let model = fit_pam(&docs, v, 2, 4, 0.1, 0.01, 200, &mut rng);
+        let model = fit_pam(&docs, v, 2, 4, 0.1, 0.01, 200, |_, _| true, &mut rng);
         let ds = model.doc_super();
         assert_eq!(ds.len(), docs.len());
         for row in &ds {
@@ -896,8 +903,21 @@ mod tests {
             .collect();
         let opts = crate::keyatm::ThetaDrawOpts { cap: 0, thin: 1 };
         let mut rng = ChaCha8Rng::seed_from_u64(3);
-        let (model, _, _) =
-            fit_pam_with_draws(&docs, 12, 2, 3, 0.1, 0.01, 5, opts, 0.0, 0, 1, &mut rng);
+        let (model, _, _) = fit_pam_with_draws(
+            &docs,
+            12,
+            2,
+            3,
+            0.1,
+            0.01,
+            5,
+            opts,
+            0.0,
+            0,
+            1,
+            |_, _| true,
+            &mut rng,
+        );
         // Collection stays disabled: nothing pushed despite thin=1.
         assert!(model.theta_draws.is_empty());
     }
@@ -932,6 +952,7 @@ mod tests {
             0.0,
             0,
             num_threads,
+            |_, _| true,
             &mut rng,
         );
         m
@@ -943,7 +964,7 @@ mod tests {
         // pre-threading serial path exactly.
         let (docs, v) = threading_corpus();
         let mut r_serial = ChaCha8Rng::seed_from_u64(99);
-        let serial = fit_pam(&docs, v, 3, 4, 0.1, 0.01, 40, &mut r_serial);
+        let serial = fit_pam(&docs, v, 3, 4, 0.1, 0.01, 40, |_, _| true, &mut r_serial);
         let threaded1 = fit_threaded(&docs, v, 40, 1, 99);
         assert_eq!(serial.nkw, threaded1.nkw, "nkw differs at num_threads=1");
         assert_eq!(serial.nk, threaded1.nk, "nk differs at num_threads=1");

@@ -213,13 +213,17 @@ impl PolylingualLDA {
     /// Fit on aligned document tuples. `data` is a dict `{language: docs}` (or a
     /// list of per-language corpora); every language must have the same number of
     /// tuples `D`, aligned by index. A tuple absent in a language is an empty
-    /// document `[]` at that index.
-    #[pyo3(signature = (data, *, iters=None))]
+    /// document `[]` at that index. `progress` is an optional per-sweep callback
+    /// `callback(iteration, total, {})` (no per-sweep metric); `True`/`False`
+    /// force/suppress the default `topica.progress()` bar (raising in it aborts
+    /// the fit).
+    #[pyo3(signature = (data, *, iters=None, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: Option<usize>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let (languages, str_docs) = extract_languages(data)?;
 
@@ -273,8 +277,10 @@ impl PolylingualLDA {
             slf.num_topics,
         );
 
+        let progress = resolve_progress(py, progress, "PolylingualLDA")?;
         let model = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let mut on_progress = on_progress_bare(&progress);
             crate::pltm::fit_pltm(
                 &docs_by_lang,
                 k,
@@ -285,9 +291,11 @@ impl PolylingualLDA {
                 optimize_alpha,
                 optimize_interval,
                 optimize_burn_in,
+                &mut on_progress,
                 &mut rng,
             )
         });
+        reraise_if_interrupted(py)?;
 
         slf.model = Some(model);
         slf.corpora = corpora;

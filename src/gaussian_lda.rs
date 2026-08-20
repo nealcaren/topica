@@ -448,7 +448,7 @@ fn kmeans_words<R: Rng>(
 /// Cholesky sampler's behavior). Seeds every draw from `rng` for bit-for-bit
 /// reproducibility.
 #[allow(clippy::too_many_arguments)]
-pub fn fit<R: Rng>(
+pub fn fit<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
     embeddings: &[Vec<f64>],
     num_topics: usize,
@@ -458,6 +458,7 @@ pub fn fit<R: Rng>(
     psi_scale: f64,
     iters: usize,
     use_kmeans: bool,
+    mut on_progress: F,
     rng: &mut R,
 ) -> GaussianLDAModel {
     let e = embeddings.first().map(|r| r.len()).unwrap_or(0);
@@ -582,10 +583,14 @@ pub fn fit<R: Rng>(
             ndk[doc * num_topics + newk] += 1;
             topic_add(&mut topics[newk], &emb_i, &prior);
         }
+        let ll = avg_ll(&topics, &token_emb, &token_topic, embeddings, &prior);
         fit_history.push((
             it + 2, // 1-based: point 1 is post-init, so sweep `it` (0-based) is point it+2
-            avg_ll(&topics, &token_emb, &token_topic, embeddings, &prior),
+            ll,
         ));
+        if !on_progress(it + 1, iters, ll) {
+            break;
+        }
     }
 
     // Derived topic_word: softmax over vocab of the Student-t density under each topic.
@@ -810,6 +815,7 @@ mod tests {
             3.0,
             60,
             true,
+            |_, _, _| true,
             &mut rng,
         );
         // Each doc's argmax topic should be consistent per planted label: build a
@@ -842,8 +848,32 @@ mod tests {
         let (docs, emb, _) = planted(3, 8, 12, 40, 5);
         let mut r1 = ChaCha8Rng::seed_from_u64(13);
         let mut r2 = ChaCha8Rng::seed_from_u64(13);
-        let m1 = fit(&docs, &emb, 3, 0.3, 0.1, 8.0, 3.0, 30, true, &mut r1);
-        let m2 = fit(&docs, &emb, 3, 0.3, 0.1, 8.0, 3.0, 30, true, &mut r2);
+        let m1 = fit(
+            &docs,
+            &emb,
+            3,
+            0.3,
+            0.1,
+            8.0,
+            3.0,
+            30,
+            true,
+            |_, _, _| true,
+            &mut r1,
+        );
+        let m2 = fit(
+            &docs,
+            &emb,
+            3,
+            0.3,
+            0.1,
+            8.0,
+            3.0,
+            30,
+            true,
+            |_, _, _| true,
+            &mut r2,
+        );
         assert_eq!(m1.topic_word, m2.topic_word);
         assert_eq!(m1.doc_topic, m2.doc_topic);
         assert_eq!(m1.topic_means, m2.topic_means);
@@ -862,6 +892,7 @@ mod tests {
             3.0,
             15,
             true,
+            |_, _, _| true,
             &mut ChaCha8Rng::seed_from_u64(0),
         );
         assert!(crate::conformance::check_conformance(&m).is_empty());

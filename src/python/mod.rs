@@ -10069,11 +10069,13 @@ impl STS {
     /// tolerance for EM early stopping — the run stops when the relative change in
     /// the variational evidence bound falls below it. `keep_eta_cov` (default True)
     /// stores the full per-document logistic-normal covariances; set it False to
-    /// save memory.
+    /// save memory. `progress` takes an optional `(iteration, total, info)` fit
+    /// callback (see `topica.progress`) reporting the EM bound; `True`/`False`
+    /// force the default bar, and a KeyboardInterrupt aborts the fit.
     #[pyo3(signature = (data, sentiment_seed, prevalence=None, *,
                         prevalence_names=None, iters=30, convergence_tol=1e-5,
                         kappa_estimation=None, kappa_ridge=1e-3, em_tol=None, covariates=None,
-                        keep_eta_cov=true, reference="none"))]
+                        keep_eta_cov=true, reference="none", progress=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -10090,6 +10092,7 @@ impl STS {
         covariates: Option<&Bound<'_, PyAny>>,
         keep_eta_cov: bool,
         reference: &str,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
@@ -10271,8 +10274,10 @@ impl STS {
         let spectral = slf.init_spectral;
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
+        let progress = resolve_progress(py, progress, "STS")?;
         let (model, corpus) = py.allow_threads(move || {
             let prev_ref = prevalence_x.as_deref();
+            let mut on_progress = on_progress_ll(&progress);
             let m = sts::fit_sts(
                 &corpus.docs,
                 k,
@@ -10286,10 +10291,12 @@ impl STS {
                 keep_eta_cov,
                 reference_init,
                 kappa_damping,
+                &mut on_progress,
                 &mut rng,
             );
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
 
         let n = 2 * k - 1;
         // Baseline topic-word (α^(s)=0).
@@ -12185,10 +12192,13 @@ impl SupervisedLDA {
     /// `num_threads` caps the worker pool for the parallel per-document variational
     /// E-step (`None`/`0` = all cores). Output is deterministic regardless of the
     /// worker count, so this controls only resource use, not results; it has no
-    /// effect on the serial `inference="gibbs"` backend.
+    /// effect on the serial `inference="gibbs"` backend. `progress` takes an
+    /// optional `(iteration, total, info)` fit callback (see `topica.progress`);
+    /// `True`/`False` force the default bar, and a KeyboardInterrupt aborts the fit.
     #[pyo3(signature = (data, y, *, iters=25, var_iters=15,
                         keep_theta_draws=true, num_theta_draws=25,
-                        convergence_tol=0.0_f64, check_every=1_usize, num_threads=None))]
+                        convergence_tol=0.0_f64, check_every=1_usize, num_threads=None,
+                        progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -12201,6 +12211,7 @@ impl SupervisedLDA {
         convergence_tol: f64,
         check_every: usize,
         num_threads: Option<usize>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -12248,10 +12259,12 @@ impl SupervisedLDA {
         let draw_cap = if keep_theta_draws { num_theta_draws } else { 0 };
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
+        let progress = resolve_progress(py, progress, "SupervisedLDA")?;
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let use_gibbs = slf.inference == "gibbs";
 
         let (model, ll_history, converged_flag, corpus) = py.allow_threads(move || {
+            let mut on_progress = on_progress_bare(&progress);
             let (m, hist, conv) = run_with_threads(num_threads, || {
                 if use_gibbs {
                     // Gibbs ignores var_iters (no per-document E-step) and never
@@ -12265,6 +12278,7 @@ impl SupervisedLDA {
                         alpha,
                         iters,
                         check_every,
+                        &mut on_progress,
                         &mut rng,
                     )
                 } else {
@@ -12278,12 +12292,14 @@ impl SupervisedLDA {
                         var_iters,
                         convergence_tol,
                         check_every,
+                        &mut on_progress,
                         &mut rng,
                     )
                 }
             });
             (m, hist, conv, corpus)
         });
+        reraise_if_interrupted(py)?;
 
         let mut beta = Array2::<f64>::zeros((k, num_types));
         let tw = model.topic_word();
@@ -12877,9 +12893,12 @@ impl PT {
     /// `num_threads` overrides the constructor's worker count for this fit only
     /// (`None` = constructor value); `>1` runs the two-phase collapsed-Gibbs sweep
     /// as approximate-parallel AD-LDA (deterministic for a fixed `num_threads`+`seed`),
-    /// `1` is the exact serial path.
+    /// `1` is the exact serial path. `progress` takes an optional
+    /// `(iteration, total, info)` fit callback (see `topica.progress`);
+    /// `True`/`False` force the default bar, and a KeyboardInterrupt aborts the fit.
     #[pyo3(signature = (data, *, iters=1000, keep_theta_draws=true, num_theta_draws=25,
-                        convergence_tol=0.0_f64, check_every=10_usize, num_threads=None))]
+                        convergence_tol=0.0_f64, check_every=10_usize, num_threads=None,
+                        progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -12890,6 +12909,7 @@ impl PT {
         convergence_tol: f64,
         check_every: usize,
         num_threads: Option<usize>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -12945,8 +12965,10 @@ impl PT {
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
+        let progress = resolve_progress(py, progress, "PT")?;
         let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         let (model, ll_history, converged_flag, corpus) = py.allow_threads(move || {
+            let mut on_progress = on_progress_bare(&progress);
             let (m, hist, conv) = pt::fit_ptm_with_draws(
                 &corpus.docs,
                 num_types,
@@ -12960,10 +12982,12 @@ impl PT {
                 convergence_tol,
                 check_every,
                 num_threads,
+                &mut on_progress,
                 &mut rng,
             );
             (m, hist, conv, corpus)
         });
+        reraise_if_interrupted(py)?;
         slf.theta_draws = draws_to_array3(&model.theta_draws, num_docs, k, None);
         slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
         slf.phi = Some(vecs_to_arr2(&model.topic_word()));
