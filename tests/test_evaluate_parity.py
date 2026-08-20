@@ -75,6 +75,24 @@ def test_topic_significance_bad_kind_raises():
         topica.evaluate.topic_significance(m, kind="nonsense")
 
 
+def test_topic_significance_vacuous_rejects_bare_array():
+    # vacuous/background need a document-topic matrix; a raw K x V phi has none.
+    phi = np.full((4, 40), 1.0 / 40)
+    with pytest.raises(ValueError, match="document-topic"):
+        topica.evaluate.topic_significance(phi, kind="vacuous")
+    with pytest.raises(ValueError, match="document-topic"):
+        topica.evaluate.topic_significance(phi, kind="background")
+    # uniform works on a bare array (topic-word only)
+    assert np.isfinite(topica.evaluate.topic_significance(phi, kind="uniform"))
+
+
+def test_topic_significance_rejects_non_finite():
+    phi = np.full((4, 40), 1.0 / 40)
+    phi[0, 0] = np.nan
+    with pytest.raises(ValueError, match="non-finite"):
+        topica.evaluate.topic_significance(phi, kind="uniform")
+
+
 # --- classification quality ------------------------------------------------
 
 
@@ -97,6 +115,22 @@ def test_classification_quality_label_length_mismatch_raises():
         topica.evaluate.classification_quality(m, labels[:-1])
 
 
+def test_classification_quality_bad_test_size_raises():
+    pytest.importorskip("sklearn")
+    c, labels, _ = _two_block_corpus()
+    m = topica.LDA(3, seed=13).fit(c, iters=30)
+    with pytest.raises(ValueError, match="test_size"):
+        topica.evaluate.classification_quality(m, labels, test_size=1.5)
+
+
+def test_classification_quality_single_class_raises():
+    pytest.importorskip("sklearn")
+    c, labels, _ = _two_block_corpus()
+    m = topica.LDA(3, seed=13).fit(c, iters=30)
+    with pytest.raises(ValueError, match="at least 2"):
+        topica.evaluate.classification_quality(m, [1] * len(labels))
+
+
 # --- dynamic coherence / diversity -----------------------------------------
 
 
@@ -107,6 +141,17 @@ def test_coherence_over_time_on_dtm():
     per = topica.evaluate.coherence_over_time(dm, c, times, n=8, per_slice=True)
     assert np.isfinite(mean)
     assert len(per) == dm.num_times and all(np.isfinite(per))
+
+
+def test_coherence_over_time_empty_slice_is_nan_and_index_aligned():
+    # Fit with all 4 slices, but score against reference documents that omit slice 3.
+    c, _, times = _two_block_corpus()
+    dm = topica.DTM(3, seed=13).fit(c, np.array(times), iters=15)
+    ref_times = [t if t != 3 else 2 for t in times]  # no document lands on slice 3
+    per = topica.evaluate.coherence_over_time(dm, c, ref_times, n=8, per_slice=True)
+    assert len(per) == dm.num_times
+    assert np.isnan(per[3])  # the empty slice scores NaN, index still aligned
+    assert np.isfinite(topica.evaluate.coherence_over_time(dm, c, ref_times, n=8))
 
 
 def test_diversity_over_time_on_dtm():

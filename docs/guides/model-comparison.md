@@ -348,6 +348,27 @@ versions and flag when a "harmless" refactor silently moves the topics. It descr
 and tests *difference*; it does not build a consensus model (that is
 `ensemble`).
 
+### Aligning by documents instead of words
+
+By default `compare` and `align_topics` match topics by their **word** distributions:
+two topics pair when they draw on the same vocabulary. When both fits were trained on
+the **same documents in the same order**, you can instead match by which documents load
+on each topic:
+
+```python
+cmp = topica.compare(fit_a, fit_b, by="documents")     # or align_topics(fit_a, fit_b, by="documents")
+```
+
+Here each topic's signature is its column of the document-topic matrix, centered across
+documents so a shared baseline prevalence does not inflate the match, and the two
+signatures are compared by correlation. This finds topics that partition the corpus the
+same way even when they surface different top words, and it misses topics that share
+vocabulary but land on different documents. It complements `topica.agreement`, which
+scores the two fits' hard document partitions as a whole (ARI/NMI) rather than
+topic-by-topic. Word-space alignment is the default because it needs no shared corpus;
+reach for `by="documents"` when you have one and care about document assignment. This
+path needs the live models (a manifest stores only top words, so it must use `by="words"`).
+
 ### Comparing two manifests, without the models
 
 When the models themselves are gone but their [analysis manifests](../api/manifest.md)
