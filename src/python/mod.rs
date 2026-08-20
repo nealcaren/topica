@@ -1073,6 +1073,40 @@ fn reraise_if_interrupted(py: Python<'_>) -> PyResult<()> {
     }
 }
 
+/// Build the per-fit `on_progress` closure for a model core whose progress
+/// callback is `FnMut(iteration, total, ll) -> bool` (the common contract).
+/// Returns a closure that re-acquires the GIL and forwards to `emit_progress`,
+/// or is a no-op returning `true` (continue) when no `progress` was resolved.
+///
+/// Reused verbatim by every progress-enabled model binding so the GIL handshake
+/// and the abort contract live in one place (#786). Call it *inside* the
+/// `py.allow_threads(move || …)` block, after `progress` has been moved in:
+///
+/// ```ignore
+/// let progress = resolve_progress(py, progress, "MyModel")?;
+/// let model = py.allow_threads(move || {
+///     let mut on_progress = on_progress_ll(&progress);
+///     mymodel::fit(…, &mut on_progress, …)
+/// });
+/// reraise_if_interrupted(py)?;
+/// ```
+fn on_progress_ll(progress: &Option<PyObject>) -> impl FnMut(usize, usize, f64) -> bool + '_ {
+    move |it, total, ll| match progress {
+        Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
+        None => true,
+    }
+}
+
+/// Like [`on_progress_ll`] but for cores with no per-iteration metric: the
+/// callback is `FnMut(iteration, total) -> bool` and forwards to
+/// `emit_progress_bare` (bar/ETA only, no sparkline). (#786)
+fn on_progress_bare(progress: &Option<PyObject>) -> impl FnMut(usize, usize) -> bool + '_ {
+    move |it, total| match progress {
+        Some(cb) => Python::with_gil(|py| emit_progress_bare(py, cb, it, total)),
+        None => true,
+    }
+}
+
 /// SparseLDA topic model (the MALLET algorithm).
 ///
 /// Invoke a fit progress callback with the standard 3-arg contract
@@ -7570,12 +7604,7 @@ impl CTM {
 
         let progress = resolve_progress(py, progress, "CTM")?;
         let (model, corpus) = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             let m = run_with_threads(num_threads, || {
                 if svi {
                     // The stochastic (SVI) inference path is not yet wired for
@@ -8709,12 +8738,7 @@ impl STM {
         let (model, corpus) = py.allow_threads(move || {
             let prev_ref = prevalence_x.as_deref();
             let cont_ref = content_groups.as_ref().map(|(g, n)| (g.as_slice(), *n));
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             let m = run_with_threads(num_threads, || {
                 ctm::fit_ctm(
                     &corpus.docs,
@@ -11669,12 +11693,7 @@ impl DTM {
 
         let progress = resolve_progress(py, progress, "DTM")?;
         let (model, corpus) = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             let m = dtm::fit_dtm(
                 &corpus.docs,
                 &times_u,
@@ -14488,12 +14507,7 @@ impl SeededLDA {
 
         let progress = resolve_progress(py, progress, "SeededLDA")?;
         let (model, ll_history, converged, corpus) = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             let (m, ll, conv) = seeded::fit_seeded_lda(
                 &corpus.docs,
                 num_types,
@@ -15321,12 +15335,7 @@ impl FASTopic {
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let progress = resolve_progress(py, progress, "FASTopic")?;
         let model = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             fastopic::fit_fastopic(
                 &docs_ids,
                 &doc_emb,
