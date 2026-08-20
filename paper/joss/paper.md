@@ -48,13 +48,16 @@ one region of the space: gensim [@rehurek2010gensim] adds HDP, author-topic, and
 dynamic variants to its variational LDA; tomotopy [@tomotopy] provides a fast C++
 collapsed-Gibbs engine for a dozen classical models behind a Python API; Turftopic
 [@kardos2025turftopic] unifies contextual, embedding-based models under a
-scikit-learn [@pedregosa2011scikit] interface; and framework packages such as OCTIS
-[@terragni2021octis] and TopMost [@wu2024topmost] assemble model zoos for training
-and benchmarking, chiefly of neural models. None of these spans the classical,
-structural, keyword, and embedding families together, and none pairs them with a
-shared diagnostic and covariate-effect layer, so a study that wants to compare a
-structural model against a clustering of embeddings must move data between
-ecosystems by hand and re-learn an interface for each.
+scikit-learn [@pedregosa2011scikit] interface; and evaluation-oriented frameworks
+such as OCTIS [@terragni2021octis] and TopMost [@wu2024topmost] assemble classical
+and neural models for benchmarking, hyperparameter optimization, and metric-based
+comparison. These frameworks target research *on* topic models. None of them spans
+the classical, structural, keyword, and embedding families that applied work draws
+on together, and none pairs the models with a shared diagnostic and
+covariate-effect layer, so a study that wants to compare a structural model against
+a clustering of embeddings, and to read how each topic varies with a document
+attribute, must move data between ecosystems by hand and re-learn an interface for
+each.
 
 `topica` closes that gap by unifying the families behind a single, uniform
 interface built for reuse. Every model that presents the shared topic-word and
