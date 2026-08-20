@@ -23,8 +23,8 @@ bibliography: paper.bib
 Topic models discover recurring themes in a collection of documents and describe
 each document as a mixture of those themes. They are a standard tool for
 researchers who work with text at scale. `topica` is a topic-modeling library for
-Python that brings more than fifty models, classical and embedding-based alike,
-behind one NumPy-native interface. Latent Dirichlet Allocation, the Structural
+Python that brings fifty models on its validated default surface, classical and
+embedding-based alike, behind one NumPy-native interface. Latent Dirichlet Allocation, the Structural
 Topic Model, keyword-assisted models, dynamic and short-text models, and modern
 clustering and neural models all present the same surface: a topic-word matrix and
 a document-topic matrix. Because the surface is shared, one set of tools for
@@ -41,16 +41,20 @@ The models a text-as-data researcher needs are scattered across incompatible
 software. The Structural Topic Model lives in the R package `stm`
 [@roberts2019stm]; the fastest collapsed-Gibbs samplers live in the Java toolkit
 MALLET [@mallet]; keyword-assisted models live in R `keyATM` [@eshima2024keyatm];
-and clustering, autoencoding, and embedding-based models live in a set of separate
-Python repositories such as BERTopic [@grootendorst2022bertopic], Top2Vec
-[@angelov2020top2vec], and Turftopic [@kardos2025turftopic]. None of these share a
-data format, a diagnostic suite, or an effect-estimation interface, so a study
-that wants to compare a structural model against a clustering of embeddings must
-move data between ecosystems by hand and re-learn a new interface for each. General
-Python libraries such as gensim [@rehurek2010gensim] and scikit-learn
-[@pedregosa2011scikit] cover only a few classical models and do not provide the
-structural, keyword, or embedding families that applied work increasingly relies
-on.
+and clustering, autoencoding, and embedding-based models live in separate Python
+repositories such as BERTopic [@grootendorst2022bertopic] and Top2Vec
+[@angelov2020top2vec]. Some libraries do collect several models, but each covers
+one region of the space: gensim [@rehurek2010gensim] adds HDP, author-topic, and
+dynamic variants to its variational LDA; tomotopy [@tomotopy] provides a fast C++
+collapsed-Gibbs engine for a dozen classical models behind a Python API; Turftopic
+[@kardos2025turftopic] unifies contextual, embedding-based models under a
+scikit-learn [@pedregosa2011scikit] interface; and framework packages such as OCTIS
+[@terragni2021octis] and TopMost [@wu2024topmost] assemble model zoos for training
+and benchmarking, chiefly of neural models. None of these spans the classical,
+structural, keyword, and embedding families together, and none pairs them with a
+shared diagnostic and covariate-effect layer, so a study that wants to compare a
+structural model against a clustering of embeddings must move data between
+ecosystems by hand and re-learn an interface for each.
 
 `topica` closes that gap by unifying the families behind a single, uniform
 interface built for reuse. Every model that presents the shared topic-word and
@@ -65,10 +69,10 @@ uncertainty it reports to what each model can support, exposing standard errors
 alongside covariate effects where the estimator earns them. Speed and
 reproducibility come from the Rust core. Fit to convergence, the structural and
 other variational models run roughly one and a half to three times faster than R
-`stm` on a single core and five to seven times faster on a typical multicore
+`stm` on a single core and five to seven times faster on a sixteen-core
 workstation; `topica` is at parity with the compiled MALLET and `keyATM` samplers;
 and it reproduces the variational models to the bit and the samplers exactly from a
-fixed seed.
+fixed seed and thread count.
 
 # Functionality
 
@@ -85,7 +89,9 @@ fixed seed.
   Model, Topics-over-Time, author-topic and supervised models, and political-scaling
   models such as Wordfish and Wordshoal.
 - **Neural and embedding-based models**: ProdLDA, ETM, CombinedTM, ZeroShotTM,
-  FASTopic, BERTopic, Top2Vec, KeyNMF, and Semantic Signal Separation.
+  FASTopic, BERTopic, Top2Vec, KeyNMF, and Semantic Signal Separation. The
+  embedding-based models consume document embeddings the user supplies from any
+  encoder, so the package carries no embedder as a dependency.
 
 All models share a common ingress (a `Corpus` built from a DataFrame or token
 lists), and a common analysis workflow organized into stages: selecting the number
@@ -94,8 +100,9 @@ covariate effects. The library ships coherence and exclusivity metrics, stabilit
 and reproducibility checks, optional large-language-model topic labeling, and an
 analysis-provenance record so that a fitted result carries the settings that
 produced it. Each model on the default surface is validated before it ships:
-against a maintained reference implementation where one exists, and otherwise by
-recovering a planted answer on a synthetic corpus with a known solution.
+twenty-one of them are checked against an external reference implementation in R,
+Java, or Python, and the rest by recovering a planted answer on a synthetic corpus
+with a known solution.
 
 # Target audience
 

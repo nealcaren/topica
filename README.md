@@ -6,7 +6,7 @@
 [![Website](https://img.shields.io/badge/website-get--topica-F5B93A.svg)](https://nealcaren.github.io/get-topica/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-`topica` is a fast, memory-efficient, all-in-one topic-modeling library for Python, built for social scientists. It brings together more than forty models usually split across JVM tools like MALLET and R packages like `stm`, including LDA, STM, CTM, keyATM, BERTopic, and neural, dynamic, short-text, and embedding-based models, all under one NumPy-native API. Every model is validated against its reference implementation and reproducible from a fixed seed; all share one set of diagnostics, labeling, validation, and covariate-effect tools, so you learn a single workflow and it applies across the roster. It installs as a single wheel that needs only NumPy and pandas: no JVM, no PyTorch.
+`topica` is a fast, memory-efficient, all-in-one topic-modeling library for Python, built for social scientists. It brings together more than fifty models usually split across JVM tools like MALLET and R packages like `stm`, including LDA, STM, CTM, keyATM, BERTopic, and neural, dynamic, short-text, and embedding-based models, all under one NumPy-native API. Every model is validated against its reference implementation and reproducible from a fixed seed; all share one set of diagnostics, labeling, validation, and covariate-effect tools, so you learn a single workflow and it applies across the roster. It installs as a single wheel that needs only NumPy and pandas: no JVM, no PyTorch.
 
 ```bash
 pip install topica
@@ -80,7 +80,7 @@ A specialized model is often the right first choice when your data calls for it.
 `list_models(group=…, brings=…)` filters the full roster below.
 
 <details>
-<summary><b>All models</b> (more than forty, grouped by what you bring and what you want; click to expand)</summary>
+<summary><b>All models</b> (more than fifty, grouped by what you bring and what you want; click to expand)</summary>
 
 Models are organized by **what you bring and what you want**, not by inference
 family. The `from topica import X` namespace is flat; `topica.list_models(group=…,
