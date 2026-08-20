@@ -423,6 +423,7 @@ class EmbeddingLDA:
         iters: int = 1000,
         convergence_tol: float = 0.0,
         check_every: int = 10,
+        progress=None,
     ) -> "EmbeddingLDA":
         """Fit on ``data`` (a Corpus or list of token lists). If ``doc_embeddings``
         is given (one row per document, same embedding space as the vocabulary),
@@ -438,7 +439,12 @@ class EmbeddingLDA:
         and :attr:`converged` is ``True``. With the default ``0.0`` the fit always
         runs the full ``iters`` and :attr:`converged` stays ``False`` (it means
         "early-stopping never triggered", not "did not mix"); set e.g.
-        ``convergence_tol=1e-4`` to get a genuine verdict and a shorter fit."""
+        ``convergence_tol=1e-4`` to get a genuine verdict and a shorter fit.
+
+        ``progress`` takes an optional ``(iteration, total, info)`` fit-progress
+        callback (see :func:`topica.progress`), forwarded to the underlying
+        SeededLDA sweep; ``True`` / ``False`` force the default bar, and a
+        ``KeyboardInterrupt`` aborts the fit."""
         prior = self.document_topic_prior(doc_embeddings) if doc_embeddings is not None else None
         self._model.fit(
             data,
@@ -446,6 +452,7 @@ class EmbeddingLDA:
             doc_topic_prior=prior,
             convergence_tol=convergence_tol,
             check_every=check_every,
+            progress=progress,
         )
         return self
 

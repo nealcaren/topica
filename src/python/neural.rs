@@ -431,12 +431,7 @@ impl ETM {
             );
             let progress = resolve_progress(py, progress, "ETM")?;
             let model = py.allow_threads(move || {
-                let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                    match &progress {
-                        Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                        None => true,
-                    }
-                };
+                let mut on_progress = on_progress_ll(&progress);
                 etm::fit_etm(
                     &docs_ids,
                     k,
@@ -1188,12 +1183,7 @@ impl DETM {
         );
         let progress = resolve_progress(py, progress, "DETM")?;
         let model = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             detm::fit_detm(
                 &tokens,
                 &counts,
@@ -1863,12 +1853,7 @@ impl InfoCTM {
         let docs_b = corpus_b.docs.clone();
         let progress = resolve_progress(py, progress, "InfoCTM")?;
         let model = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             infoctm::fit_infoctm(
                 &docs_a,
                 &docs_b,
@@ -2414,12 +2399,7 @@ impl ProdLDA {
         let empty: Vec<Vec<f64>> = vec![Vec::new(); corpus.docs.len()];
         let progress = resolve_progress(py, progress, "ProdLDA")?;
         let (model, corpus) = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             let m = prodlda::fit_avitm(
                 &corpus.docs,
                 &empty,

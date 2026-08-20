@@ -1073,6 +1073,40 @@ fn reraise_if_interrupted(py: Python<'_>) -> PyResult<()> {
     }
 }
 
+/// Build the per-fit `on_progress` closure for a model core whose progress
+/// callback is `FnMut(iteration, total, ll) -> bool` (the common contract).
+/// Returns a closure that re-acquires the GIL and forwards to `emit_progress`,
+/// or is a no-op returning `true` (continue) when no `progress` was resolved.
+///
+/// Reused verbatim by every progress-enabled model binding so the GIL handshake
+/// and the abort contract live in one place (#786). Call it *inside* the
+/// `py.allow_threads(move || …)` block, after `progress` has been moved in:
+///
+/// ```ignore
+/// let progress = resolve_progress(py, progress, "MyModel")?;
+/// let model = py.allow_threads(move || {
+///     let mut on_progress = on_progress_ll(&progress);
+///     mymodel::fit(…, &mut on_progress, …)
+/// });
+/// reraise_if_interrupted(py)?;
+/// ```
+fn on_progress_ll(progress: &Option<PyObject>) -> impl FnMut(usize, usize, f64) -> bool + '_ {
+    move |it, total, ll| match progress {
+        Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
+        None => true,
+    }
+}
+
+/// Like [`on_progress_ll`] but for cores with no per-iteration metric: the
+/// callback is `FnMut(iteration, total) -> bool` and forwards to
+/// `emit_progress_bare` (bar/ETA only, no sparkline). (#786)
+fn on_progress_bare(progress: &Option<PyObject>) -> impl FnMut(usize, usize) -> bool + '_ {
+    move |it, total| match progress {
+        Some(cb) => Python::with_gil(|py| emit_progress_bare(py, cb, it, total)),
+        None => true,
+    }
+}
+
 /// SparseLDA topic model (the MALLET algorithm).
 ///
 /// Invoke a fit progress callback with the standard 3-arg contract
@@ -7570,12 +7604,7 @@ impl CTM {
 
         let progress = resolve_progress(py, progress, "CTM")?;
         let (model, corpus) = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             let m = run_with_threads(num_threads, || {
                 if svi {
                     // The stochastic (SVI) inference path is not yet wired for
@@ -8709,12 +8738,7 @@ impl STM {
         let (model, corpus) = py.allow_threads(move || {
             let prev_ref = prevalence_x.as_deref();
             let cont_ref = content_groups.as_ref().map(|(g, n)| (g.as_slice(), *n));
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             let m = run_with_threads(num_threads, || {
                 ctm::fit_ctm(
                     &corpus.docs,
@@ -10045,11 +10069,13 @@ impl STS {
     /// tolerance for EM early stopping — the run stops when the relative change in
     /// the variational evidence bound falls below it. `keep_eta_cov` (default True)
     /// stores the full per-document logistic-normal covariances; set it False to
-    /// save memory.
+    /// save memory. `progress` takes an optional `(iteration, total, info)` fit
+    /// callback (see `topica.progress`) reporting the EM bound; `True`/`False`
+    /// force the default bar, and a KeyboardInterrupt aborts the fit.
     #[pyo3(signature = (data, sentiment_seed, prevalence=None, *,
                         prevalence_names=None, iters=30, convergence_tol=1e-5,
                         kappa_estimation=None, kappa_ridge=1e-3, em_tol=None, covariates=None,
-                        keep_eta_cov=true, reference="none"))]
+                        keep_eta_cov=true, reference="none", progress=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -10066,6 +10092,7 @@ impl STS {
         covariates: Option<&Bound<'_, PyAny>>,
         keep_eta_cov: bool,
         reference: &str,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
@@ -10247,8 +10274,10 @@ impl STS {
         let spectral = slf.init_spectral;
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
+        let progress = resolve_progress(py, progress, "STS")?;
         let (model, corpus) = py.allow_threads(move || {
             let prev_ref = prevalence_x.as_deref();
+            let mut on_progress = on_progress_ll(&progress);
             let m = sts::fit_sts(
                 &corpus.docs,
                 k,
@@ -10262,10 +10291,12 @@ impl STS {
                 keep_eta_cov,
                 reference_init,
                 kappa_damping,
+                &mut on_progress,
                 &mut rng,
             );
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
 
         let n = 2 * k - 1;
         // Baseline topic-word (α^(s)=0).
@@ -11669,12 +11700,7 @@ impl DTM {
 
         let progress = resolve_progress(py, progress, "DTM")?;
         let (model, corpus) = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             let m = dtm::fit_dtm(
                 &corpus.docs,
                 &times_u,
@@ -12166,10 +12192,13 @@ impl SupervisedLDA {
     /// `num_threads` caps the worker pool for the parallel per-document variational
     /// E-step (`None`/`0` = all cores). Output is deterministic regardless of the
     /// worker count, so this controls only resource use, not results; it has no
-    /// effect on the serial `inference="gibbs"` backend.
+    /// effect on the serial `inference="gibbs"` backend. `progress` takes an
+    /// optional `(iteration, total, info)` fit callback (see `topica.progress`);
+    /// `True`/`False` force the default bar, and a KeyboardInterrupt aborts the fit.
     #[pyo3(signature = (data, y, *, iters=25, var_iters=15,
                         keep_theta_draws=true, num_theta_draws=25,
-                        convergence_tol=0.0_f64, check_every=1_usize, num_threads=None))]
+                        convergence_tol=0.0_f64, check_every=1_usize, num_threads=None,
+                        progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -12182,6 +12211,7 @@ impl SupervisedLDA {
         convergence_tol: f64,
         check_every: usize,
         num_threads: Option<usize>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -12229,10 +12259,12 @@ impl SupervisedLDA {
         let draw_cap = if keep_theta_draws { num_theta_draws } else { 0 };
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
+        let progress = resolve_progress(py, progress, "SupervisedLDA")?;
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let use_gibbs = slf.inference == "gibbs";
 
         let (model, ll_history, converged_flag, corpus) = py.allow_threads(move || {
+            let mut on_progress = on_progress_bare(&progress);
             let (m, hist, conv) = run_with_threads(num_threads, || {
                 if use_gibbs {
                     // Gibbs ignores var_iters (no per-document E-step) and never
@@ -12246,6 +12278,7 @@ impl SupervisedLDA {
                         alpha,
                         iters,
                         check_every,
+                        &mut on_progress,
                         &mut rng,
                     )
                 } else {
@@ -12259,12 +12292,14 @@ impl SupervisedLDA {
                         var_iters,
                         convergence_tol,
                         check_every,
+                        &mut on_progress,
                         &mut rng,
                     )
                 }
             });
             (m, hist, conv, corpus)
         });
+        reraise_if_interrupted(py)?;
 
         let mut beta = Array2::<f64>::zeros((k, num_types));
         let tw = model.topic_word();
@@ -12858,9 +12893,12 @@ impl PT {
     /// `num_threads` overrides the constructor's worker count for this fit only
     /// (`None` = constructor value); `>1` runs the two-phase collapsed-Gibbs sweep
     /// as approximate-parallel AD-LDA (deterministic for a fixed `num_threads`+`seed`),
-    /// `1` is the exact serial path.
+    /// `1` is the exact serial path. `progress` takes an optional
+    /// `(iteration, total, info)` fit callback (see `topica.progress`);
+    /// `True`/`False` force the default bar, and a KeyboardInterrupt aborts the fit.
     #[pyo3(signature = (data, *, iters=1000, keep_theta_draws=true, num_theta_draws=25,
-                        convergence_tol=0.0_f64, check_every=10_usize, num_threads=None))]
+                        convergence_tol=0.0_f64, check_every=10_usize, num_threads=None,
+                        progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -12871,6 +12909,7 @@ impl PT {
         convergence_tol: f64,
         check_every: usize,
         num_threads: Option<usize>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -12926,8 +12965,10 @@ impl PT {
         let draws_opts = keyatm::ThetaDrawOpts::new(keep_theta_draws, num_theta_draws, iters);
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
+        let progress = resolve_progress(py, progress, "PT")?;
         let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
         let (model, ll_history, converged_flag, corpus) = py.allow_threads(move || {
+            let mut on_progress = on_progress_bare(&progress);
             let (m, hist, conv) = pt::fit_ptm_with_draws(
                 &corpus.docs,
                 num_types,
@@ -12941,10 +12982,12 @@ impl PT {
                 convergence_tol,
                 check_every,
                 num_threads,
+                &mut on_progress,
                 &mut rng,
             );
             (m, hist, conv, corpus)
         });
+        reraise_if_interrupted(py)?;
         slf.theta_draws = draws_to_array3(&model.theta_draws, num_docs, k, None);
         slf.topic_names = (0..k).map(|i| format!("topic_{i}")).collect();
         slf.phi = Some(vecs_to_arr2(&model.topic_word()));
@@ -14488,12 +14531,7 @@ impl SeededLDA {
 
         let progress = resolve_progress(py, progress, "SeededLDA")?;
         let (model, ll_history, converged, corpus) = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             let (m, ll, conv) = seeded::fit_seeded_lda(
                 &corpus.docs,
                 num_types,
@@ -15321,12 +15359,7 @@ impl FASTopic {
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let progress = resolve_progress(py, progress, "FASTopic")?;
         let model = py.allow_threads(move || {
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             fastopic::fit_fastopic(
                 &docs_ids,
                 &doc_emb,

@@ -217,13 +217,17 @@ impl MGLDA {
     /// document positions are preserved: empty sentences and empty documents are kept,
     /// so the output rows (`doc_topic`, `global_doc_topic`) align 1:1 with the input
     /// documents (an empty document gets a uniform row). `iters` is the number of
-    /// collapsed-Gibbs sweeps (default 1000, a topica default).
-    #[pyo3(signature = (data, *, iters=1000))]
+    /// collapsed-Gibbs sweeps (default 1000, a topica default). `progress` is an
+    /// optional `(iteration, total, info)` callback fired once per sweep;
+    /// `True`/`False` force or silence the default bar, and a `KeyboardInterrupt`
+    /// raised from it aborts the fit.
+    #[pyo3(signature = (data, *, iters=1000, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let sent_docs = parse_sentence_docs(data)?;
         if sent_docs.is_empty() {
@@ -291,11 +295,28 @@ impl MGLDA {
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let n_docs = id_docs.len();
 
+        let progress = resolve_progress(py, progress, "MGLDA")?;
         let model = py.allow_threads(move || {
+            let mut on_progress = on_progress_bare(&progress);
             crate::mg_lda::fit(
-                &id_docs, num_types, kg, kl, t, ag, al, amg, aml, bg, bl, g, iters, &mut rng,
+                &id_docs,
+                num_types,
+                kg,
+                kl,
+                t,
+                ag,
+                al,
+                amg,
+                aml,
+                bg,
+                bl,
+                g,
+                iters,
+                &mut on_progress,
+                &mut rng,
             )
         });
+        reraise_if_interrupted(py)?;
 
         // Warn when the local grain barely fired: the grain switch routed almost every
         // token to the global grain, so `local_topic_word` is dominated by the prior and

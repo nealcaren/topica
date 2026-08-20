@@ -352,6 +352,7 @@ class GDMR:
         check_every: int = 10,
         covariates=None,
         metadata=None,
+        progress=None,
     ) -> None:
         """Fit GDMR by collapsed Gibbs with the Legendre-basis DMR prior.
 
@@ -391,6 +392,11 @@ class GDMR:
             Alias for ``features`` (topica's DMR vocabulary).
         metadata:
             Alias for ``features`` (tomotopy ``GDMRModel`` vocabulary).
+        progress:
+            Optional ``(iteration, total, info)`` fit-progress callback, forwarded
+            to the underlying DMR engine (see :func:`topica.progress`). ``True`` /
+            ``False`` force the default bar on or off; a ``KeyboardInterrupt``
+            aborts the fit.
         """
         features = _resolve_covariates(
             features, covariates, metadata, where="GDMR.fit", required=True
@@ -502,6 +508,7 @@ class GDMR:
             convergence_tol=convergence_tol,
             check_every=check_every,
             offset=offset,
+            progress=progress,
         )
 
         # Recover true coefficients as lambda_j = dmr_lambda_j * c_j. c_0 == 1 by

@@ -214,7 +214,7 @@ pub fn infer_tuple<R: Rng>(
 /// number of tuples `D` (a tuple absent in a language is an empty inner vector).
 /// `vocab_sizes[l]` is V_l, `beta[l]` is that language's topic-word prior.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_pltm<R: Rng>(
+pub fn fit_pltm<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<Vec<u32>>],
     num_topics: usize,
     vocab_sizes: &[usize],
@@ -224,6 +224,7 @@ pub fn fit_pltm<R: Rng>(
     optimize_alpha: bool,
     optimize_interval: usize,
     optimize_burn_in: usize,
+    mut on_progress: F,
     rng: &mut R,
 ) -> PltmModel {
     let k = num_topics;
@@ -300,6 +301,9 @@ pub fn fit_pltm<R: Rng>(
             && (it + 1) % optimize_interval == 0
         {
             optimize_alpha_step(&mut alpha, &mut alpha_sum, &n_dk, k);
+        }
+        if !on_progress(it + 1, iters) {
+            break;
         }
     }
 
@@ -383,7 +387,19 @@ mod tests {
         let (docs, vocab) = planted(k, block, langs, 180, 8, 42);
         let beta = vec![0.01; langs];
         let mut rng = ChaCha8Rng::seed_from_u64(7);
-        let m = fit_pltm(&docs, k, &vocab, 0.1, &beta, 300, true, 10, 50, &mut rng);
+        let m = fit_pltm(
+            &docs,
+            k,
+            &vocab,
+            0.1,
+            &beta,
+            300,
+            true,
+            10,
+            50,
+            |_, _| true,
+            &mut rng,
+        );
 
         assert_eq!(m.topic_word.len(), langs);
         for l in 0..langs {
@@ -431,7 +447,19 @@ mod tests {
         let beta = vec![0.01; langs];
         let run = || {
             let mut rng = ChaCha8Rng::seed_from_u64(99);
-            fit_pltm(&docs, k, &vocab, 0.1, &beta, 120, true, 10, 30, &mut rng)
+            fit_pltm(
+                &docs,
+                k,
+                &vocab,
+                0.1,
+                &beta,
+                120,
+                true,
+                10,
+                30,
+                |_, _| true,
+                &mut rng,
+            )
         };
         let a = run();
         let b = run();
@@ -448,7 +476,19 @@ mod tests {
         let (docs, vocab) = planted(k, block, 1, 120, 8, 1);
         let beta = vec![0.01];
         let mut rng = ChaCha8Rng::seed_from_u64(3);
-        let m = fit_pltm(&docs, k, &vocab, 0.1, &beta, 200, false, 10, 0, &mut rng);
+        let m = fit_pltm(
+            &docs,
+            k,
+            &vocab,
+            0.1,
+            &beta,
+            200,
+            false,
+            10,
+            0,
+            |_, _| true,
+            &mut rng,
+        );
         assert_eq!(m.topic_word.len(), 1);
         let mut covered = std::collections::HashSet::new();
         for row in &m.topic_word[0] {

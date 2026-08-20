@@ -152,12 +152,17 @@ impl TopicalNGrams {
     /// (so "New STOPWORD York" cannot form "New_York"). A pre-built `Corpus` has
     /// already discarded such gaps, so all surviving adjacent tokens are treated as
     /// phrase-eligible — pass raw token lists to preserve boundary breaks.
-    #[pyo3(signature = (data, *, iters=1000))]
+    ///
+    /// `progress` takes a ``(iteration, total, info)`` callback (see
+    /// ``topica.progress``); pass ``True``/``False`` to force the bar on or off, and a
+    /// ``KeyboardInterrupt`` raised from the callback aborts the fit.
+    #[pyo3(signature = (data, *, iters=1000, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         iters: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         // Raw token lists (order preserved), and whether gaps are known.
         let (docs_str, doc_names): (Vec<Vec<String>>, Vec<String>) =
@@ -299,13 +304,26 @@ impl TopicalNGrams {
         let alpha = slf.alpha_sum / k as f64;
         let (beta, gamma, d1, d2) = (slf.beta, slf.gamma, slf.delta1, slf.delta2);
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
+        let progress = resolve_progress(py, progress, "TopicalNGrams")?;
         let (model, phrases) = py.allow_threads(move || {
+            let mut on_progress = on_progress_bare(&progress);
             let model = topical_ngrams::fit_tng(
-                &seqs, num_types, k, iters, alpha, beta, gamma, d1, d2, &mut rng,
+                &seqs,
+                num_types,
+                k,
+                iters,
+                alpha,
+                beta,
+                gamma,
+                d1,
+                d2,
+                &mut on_progress,
+                &mut rng,
             );
             let phrases = topical_ngrams::extract_phrases(&model, &seqs);
             (model, phrases)
         });
+        reraise_if_interrupted(py)?;
 
         slf.phrases = phrases
             .into_iter()

@@ -870,7 +870,7 @@ fn damp_kappa_halfstep(new: &mut [Vec<f64>], prev: &[Vec<f64>]) {
 /// dims (`Sigma_Inv = diag(1/20)`). `kappa_damping` applies the CRAN half-step κ
 /// update `(κ_new + κ_old)/2` on every M-step and at initialization.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_sts<R: Rng>(
+pub fn fit_sts<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
     num_topics: usize,
     num_types: usize,
@@ -883,6 +883,7 @@ pub fn fit_sts<R: Rng>(
     keep_nu: bool,
     reference_init: bool,
     kappa_damping: bool,
+    mut on_progress: F,
     rng: &mut R,
 ) -> StsModel {
     let k = num_topics;
@@ -1162,9 +1163,13 @@ pub fn fit_sts<R: Rng>(
             let prev = bound_history[bound_history.len() - 2];
             let rel = (total_bound - prev).abs() / (prev.abs() + 1e-12);
             if rel < em_tol {
+                let _ = on_progress(em + 1, em + 1, total_bound);
                 converged = true;
                 break;
             }
+        }
+        if !on_progress(em + 1, em_iters, total_bound) {
+            break;
         }
 
         // M-step: Γ (pooled ridge) or shared mean μ.
@@ -1440,6 +1445,7 @@ mod tests {
             true,
             false,
             false,
+            |_, _, _| true,
             &mut rng,
         );
 
@@ -1494,6 +1500,7 @@ mod tests {
             true,
             false,
             false,
+            |_, _, _| true,
             &mut r1,
         );
         let m2 = fit_sts(
@@ -1509,6 +1516,7 @@ mod tests {
             true,
             false,
             false,
+            |_, _, _| true,
             &mut r2,
         );
         for (a, b) in m1.alpha.iter().flatten().zip(m2.alpha.iter().flatten()) {
@@ -1608,6 +1616,7 @@ mod tests {
             true,
             false,
             false,
+            |_, _, _| true,
             &mut rng,
         );
 
@@ -1646,6 +1655,7 @@ mod tests {
             true,
             false,
             false,
+            |_, _, _| true,
             &mut rng,
         );
 
@@ -1734,6 +1744,7 @@ mod tests {
             true,
             false,
             false,
+            |_, _, _| true,
             &mut rng,
         );
         let ks_max = m
@@ -1791,6 +1802,7 @@ mod tests {
             true,
             true,
             true,
+            |_, _, _| true,
             &mut rng,
         );
         assert!(m.kappa_t.iter().flatten().all(|x| x.is_finite()));
@@ -1840,6 +1852,7 @@ mod tests {
             true,
             false,
             false,
+            |_, _, _| true,
             &mut rng,
         );
         let base = check_conformance(&m);

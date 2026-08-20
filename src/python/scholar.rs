@@ -505,12 +505,7 @@ impl Scholar {
         let progress = resolve_progress(py, progress, "Scholar")?;
         let (model, corpus) = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
-                match &progress {
-                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
-                    None => true,
-                }
-            };
+            let mut on_progress = on_progress_ll(&progress);
             let m = crate::scholar::fit_scholar(
                 &corpus.docs,
                 &pcs,

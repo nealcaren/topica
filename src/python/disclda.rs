@@ -305,13 +305,18 @@ impl DiscLDA {
 
     /// Fit on documents with a per-document class label `y` (str or int, one per
     /// document). Classes are sorted to a fixed order.
-    #[pyo3(signature = (data, y, *, iters=None))]
+    ///
+    /// `progress` is an optional `(iteration, total, info)` callback fired once per
+    /// Gibbs sweep; `True`/`False` force or silence the default bar, and a
+    /// `KeyboardInterrupt` raised from it aborts the fit.
+    #[pyo3(signature = (data, y, *, iters=None, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         y: &Bound<'_, PyAny>,
         iters: Option<usize>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let labels_str = extract_labels(y)?;
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
@@ -382,8 +387,10 @@ impl DiscLDA {
             num_classes,
         )?;
 
+        let progress = resolve_progress(py, progress, "DiscLDA")?;
         let (mut model, corpus) = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let mut on_progress = on_progress_bare(&progress);
             let m = crate::disclda::fit_disclda(
                 &corpus.docs,
                 &labels,
@@ -394,10 +401,12 @@ impl DiscLDA {
                 alpha,
                 beta,
                 iters,
+                &mut on_progress,
                 &mut rng,
             );
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
         model.class_log_prior = class_log_prior;
         slf.class_counts = class_counts;
         slf.model = Some(model);

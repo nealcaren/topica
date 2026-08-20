@@ -980,6 +980,7 @@ class STS:
         covariates: Optional[numpy.typing.NDArray[numpy.float64]] = None,
         keep_eta_cov: bool = True,
         reference: str = "none",
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "STS":
         """Fit. sentiment_seed (required, one value per document) defines the
         aggregation groups for the topic-word (kappa) Poisson M-step and seeds the
@@ -1625,6 +1626,7 @@ class SupervisedLDA:
         convergence_tol: float = 0.0,
         check_every: int = 1,
         num_threads: int | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "SupervisedLDA":
         """Fit the model. `y` is the per-document response (length = number of
         documents). With inference="variational", `iters` is EM iterations and
@@ -2683,6 +2685,7 @@ class PT:
         convergence_tol: float = 0.0,
         check_every: int = 10,
         num_threads: int | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "PT": ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
@@ -3029,6 +3032,7 @@ class FactorialLDA:
         eval_every: int = 0,
         omega_priors: dict | None = None,
         observed_factors: dict | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "FactorialLDA":
         """``samples`` tail iterations are averaged into the topic-word and
         doc-topic MCEM estimate (a tail mean of the per-sweep predictive
@@ -3154,6 +3158,7 @@ class PolylingualLDA:
         | Sequence[Corpus | Sequence[Sequence[str]]],
         *,
         iters: int | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "PolylingualLDA":
         """Fit on aligned document tuples: a dict {language: docs} (preferred) or a
         list of per-language corpora. Every language must have the same number of
@@ -3260,6 +3265,7 @@ class DiscLDA:
         y: Sequence[str] | Sequence[int],
         *,
         iters: int | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "DiscLDA":
         """Fit on documents with one class label `y` per document (str or int)."""
         ...
@@ -3499,6 +3505,7 @@ class PA:
         convergence_tol: float = 0.0,
         check_every: int = 10,
         num_threads: int | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "PA": ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
@@ -5450,6 +5457,7 @@ class AuthorTopic:
         authors: Sequence[Sequence[str]],
         *,
         iters: int = 1000,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "AuthorTopic":
         """Fit on a Corpus or list of token lists. `authors` is parallel to the
         documents; each entry is that document's set of author labels (>= 1;
@@ -5577,6 +5585,7 @@ class MGLDA:
         data: Sequence[Sequence[Sequence[str]]],
         *,
         iters: int = 1000,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "MGLDA":
         """Fit on sentence-segmented documents (list[list[list[str]]]: doc ->
         sentences -> tokens). A flat list[list[str]] is rejected. Out-of-vocabulary
@@ -5698,6 +5707,7 @@ class TopicsOverTime:
         *,
         timestamps: Sequence[float] | None = None,
         iters: int = 1000,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "TopicsOverTime":
         """Fit on documents plus per-document numeric timestamps. times is the canonical
         argument (any numeric scale — year, decade, ordinal date, unix time); timestamps
@@ -5828,6 +5838,7 @@ class GaussianLDA:
         vocabulary: Sequence[str],
         *,
         iters: int | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
     ) -> "GaussianLDA":
         """Fit on token documents plus word embeddings (len(vocabulary) x E) and the
         aligned vocabulary, which defines the word ids. Tokens outside the vocabulary are
@@ -6711,7 +6722,7 @@ class TopicalNGrams:
         unigram/bigram status (balanced by default). min_count drops rare words; a
         dropped word breaks a phrase across it."""
         ...
-    def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int = 1000) -> "TopicalNGrams":
+    def fit(self, data: Corpus | Sequence[Sequence[str]], *, iters: int = 1000, progress: Callable[[int, int, dict], object] | None = None) -> "TopicalNGrams":
         """Token ORDER matters. When data is a list of token lists, a word pruned by
         min_count breaks the adjacency of its neighbours (so a phrase never spans a
         dropped stopword/punctuation); a pre-built Corpus has already discarded such

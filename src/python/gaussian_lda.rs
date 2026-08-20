@@ -162,8 +162,10 @@ impl GaussianLDA {
     /// Fit on `data` (a Corpus or list of token lists) with `word_embeddings`
     /// (`(len(vocabulary), E)`) and the aligned `vocabulary`, which defines the word
     /// ids. Tokens outside the vocabulary are dropped. `iters` sets the number of
-    /// Gibbs sweeps (default 100).
-    #[pyo3(signature = (data, word_embeddings, vocabulary, *, iters=None))]
+    /// Gibbs sweeps (default 100). `progress` is an optional per-sweep callback
+    /// `callback(iteration, total, {"ll": avg_ll})`; `True`/`False` force/suppress
+    /// the default `topica.progress()` bar (raising in it aborts the fit).
+    #[pyo3(signature = (data, word_embeddings, vocabulary, *, iters=None, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -171,6 +173,7 @@ impl GaussianLDA {
         word_embeddings: &Bound<'_, PyAny>,
         vocabulary: Vec<String>,
         iters: Option<usize>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let docs_str: Vec<Vec<String>> = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -224,11 +227,24 @@ impl GaussianLDA {
         let use_kmeans = slf.init == "kmeans";
         let it = iters.unwrap_or(100);
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
+        let progress = resolve_progress(py, progress, "GaussianLDA")?;
         let model = py.allow_threads(move || {
+            let mut on_progress = on_progress_ll(&progress);
             crate::gaussian_lda::fit(
-                &docs_ids, &rho, num_topics, alpha, kappa, nu0, psi_scale, it, use_kmeans, &mut rng,
+                &docs_ids,
+                &rho,
+                num_topics,
+                alpha,
+                kappa,
+                nu0,
+                psi_scale,
+                it,
+                use_kmeans,
+                &mut on_progress,
+                &mut rng,
             )
         });
+        reraise_if_interrupted(py)?;
 
         // Build a corpus aligned to `vocabulary` for coherence / top_words / vocabulary.
         let n = docs_str.len();

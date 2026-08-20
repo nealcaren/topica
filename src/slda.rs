@@ -255,7 +255,7 @@ fn response_log_likelihood(
 /// of `(em_iteration, response_log_likelihood)` pairs, one per EM iteration when
 /// `check_every > 0`.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_slda<R: Rng>(
+pub fn fit_slda<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<u32>],
     y: &[f64],
     num_types: usize,
@@ -265,6 +265,7 @@ pub fn fit_slda<R: Rng>(
     var_iters: usize,
     convergence_tol: f64,
     check_every: usize,
+    mut on_progress: F,
     rng: &mut R,
 ) -> (SldaModel, Vec<(usize, f64)>, bool) {
     let k = num_topics;
@@ -375,10 +376,14 @@ pub fn fit_slda<R: Rng>(
                 let prev = bound_history[bound_history.len() - 2].1;
                 let rel = (bnd - prev).abs() / (prev.abs() + 1e-12);
                 if rel < convergence_tol {
+                    let _ = on_progress(em_iter, em_iter);
                     converged = true;
                     break;
                 }
             }
+        }
+        if !on_progress(em_iter, em_iters) {
+            break;
         }
     }
 
@@ -422,7 +427,7 @@ pub fn fit_slda<R: Rng>(
 /// [`fit_slda`]'s shape; the history records `(sweep, response_log_likelihood)`
 /// every `check_every` sweeps (no early stopping — Gibbs runs the full `iters`).
 #[allow(clippy::too_many_arguments)]
-pub fn fit_slda_gibbs<R: Rng>(
+pub fn fit_slda_gibbs<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<u32>],
     y: &[f64],
     num_types: usize,
@@ -430,6 +435,7 @@ pub fn fit_slda_gibbs<R: Rng>(
     alpha: f64,
     iters: usize,
     check_every: usize,
+    mut on_progress: F,
     rng: &mut R,
 ) -> (SldaModel, Vec<(usize, f64)>, bool) {
     let k = num_topics;
@@ -564,6 +570,9 @@ pub fn fit_slda_gibbs<R: Rng>(
             ll -= d as f64 * 0.5 * (2.0 * std::f64::consts::PI * sigma2).ln();
             bound_history.push((sweep, ll));
         }
+        if !on_progress(sweep, iters) {
+            break;
+        }
     }
 
     // Read out β from the final counts and γ = α + topic counts (for doc_topic).
@@ -682,7 +691,7 @@ mod tests {
     fn recovers_predictive_topics() {
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let (docs, y, v) = supervised_corpus(&mut rng);
-        let (model, _, _) = fit_slda(&docs, &y, v, 2, 0.1, 25, 15, 0.0, 0, &mut rng);
+        let (model, _, _) = fit_slda(&docs, &y, v, 2, 0.1, 25, 15, 0.0, 0, |_, _| true, &mut rng);
 
         // The two topics should separate the two vocabularies.
         let tw = model.topic_word();
@@ -718,7 +727,7 @@ mod tests {
     fn coefficient_se_and_predictive_variance() {
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let (docs, y, v) = supervised_corpus(&mut rng);
-        let (model, _, _) = fit_slda(&docs, &y, v, 2, 0.1, 25, 15, 0.0, 0, &mut rng);
+        let (model, _, _) = fit_slda(&docs, &y, v, 2, 0.1, 25, 15, 0.0, 0, |_, _| true, &mut rng);
 
         // Coefficient SEs: finite, positive, and the strong predictive topic's
         // coefficient is many SEs from zero on this well-separated corpus.
@@ -757,8 +766,8 @@ mod tests {
         let (docs, y, v) = supervised_corpus(&mut r0);
         let mut r1 = ChaCha8Rng::seed_from_u64(9);
         let mut r2 = ChaCha8Rng::seed_from_u64(9);
-        let (m1, _, _) = fit_slda(&docs, &y, v, 2, 0.1, 10, 10, 0.0, 0, &mut r1);
-        let (m2, _, _) = fit_slda(&docs, &y, v, 2, 0.1, 10, 10, 0.0, 0, &mut r2);
+        let (m1, _, _) = fit_slda(&docs, &y, v, 2, 0.1, 10, 10, 0.0, 0, |_, _| true, &mut r1);
+        let (m2, _, _) = fit_slda(&docs, &y, v, 2, 0.1, 10, 10, 0.0, 0, |_, _| true, &mut r2);
         assert_eq!(m1.eta, m2.eta);
         assert_eq!(m1.sigma2, m2.sigma2);
     }
@@ -782,7 +791,8 @@ mod tests {
     fn gibbs_recovers_predictive_topics() {
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let (docs, y, v) = supervised_corpus(&mut rng);
-        let (model, hist, conv) = fit_slda_gibbs(&docs, &y, v, 2, 0.1, 300, 50, &mut rng);
+        let (model, hist, conv) =
+            fit_slda_gibbs(&docs, &y, v, 2, 0.1, 300, 50, |_, _| true, &mut rng);
         assert!(!conv); // Gibbs runs the full sweep budget
         assert!(!hist.is_empty(), "expected a response-ll trace");
 
@@ -817,8 +827,8 @@ mod tests {
         let (docs, y, v) = supervised_corpus(&mut r0);
         let mut r1 = ChaCha8Rng::seed_from_u64(9);
         let mut r2 = ChaCha8Rng::seed_from_u64(9);
-        let (m1, _, _) = fit_slda_gibbs(&docs, &y, v, 2, 0.1, 50, 0, &mut r1);
-        let (m2, _, _) = fit_slda_gibbs(&docs, &y, v, 2, 0.1, 50, 0, &mut r2);
+        let (m1, _, _) = fit_slda_gibbs(&docs, &y, v, 2, 0.1, 50, 0, |_, _| true, &mut r1);
+        let (m2, _, _) = fit_slda_gibbs(&docs, &y, v, 2, 0.1, 50, 0, |_, _| true, &mut r2);
         assert_eq!(m1.eta, m2.eta);
         assert_eq!(m1.sigma2, m2.sigma2);
         assert_eq!(m1.log_beta, m2.log_beta);
@@ -828,7 +838,7 @@ mod tests {
     fn gibbs_conforms() {
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let (docs, y, v) = supervised_corpus(&mut rng);
-        let (m, _, _) = fit_slda_gibbs(&docs, &y, v, 2, 0.1, 100, 0, &mut rng);
+        let (m, _, _) = fit_slda_gibbs(&docs, &y, v, 2, 0.1, 100, 0, |_, _| true, &mut rng);
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
         let dir = crate::conformance::check_dirichlet(&m);
@@ -839,7 +849,7 @@ mod tests {
     fn slda_conforms() {
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let (docs, y, v) = supervised_corpus(&mut rng);
-        let (m, _, _) = fit_slda(&docs, &y, v, 2, 0.1, 25, 15, 0.0, 0, &mut rng);
+        let (m, _, _) = fit_slda(&docs, &y, v, 2, 0.1, 25, 15, 0.0, 0, |_, _| true, &mut rng);
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
         let dir = crate::conformance::check_dirichlet(&m);

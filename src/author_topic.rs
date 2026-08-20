@@ -71,7 +71,7 @@ pub struct AuthorTopicModel {
 /// - `beta`: symmetric topic-word Dirichlet scalar.
 /// - `iters`: Gibbs sweeps.
 #[allow(clippy::too_many_arguments)]
-pub fn fit<R: Rng>(
+pub fn fit<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<u32>],
     num_types: usize,
     doc_authors: &[Vec<u32>],
@@ -80,6 +80,7 @@ pub fn fit<R: Rng>(
     alpha: Vec<f64>,
     beta: f64,
     iters: usize,
+    mut on_progress: F,
     rng: &mut R,
 ) -> AuthorTopicModel {
     let k = num_topics;
@@ -205,6 +206,10 @@ pub fn fit<R: Rng>(
                 k,
             );
             fit_history.push((it + 1, ll));
+        }
+
+        if !on_progress(it + 1, iters) {
+            break;
         }
     }
 
@@ -356,7 +361,18 @@ mod tests {
         let (docs, v, authors, k) = planted();
         let alpha = vec![50.0 / k as f64; k];
         let mut rng = ChaCha8Rng::seed_from_u64(13);
-        let m = fit(&docs, v, &authors, k, k, alpha, 0.01, 300, &mut rng);
+        let m = fit(
+            &docs,
+            v,
+            &authors,
+            k,
+            k,
+            alpha,
+            0.01,
+            300,
+            |_, _| true,
+            &mut rng,
+        );
         // Each author's dominant topic is distinct (authors map 1:1 to topics).
         let dom: Vec<usize> = m
             .author_topic
@@ -388,8 +404,30 @@ mod tests {
         let alpha = vec![50.0 / k as f64; k];
         let mut r1 = ChaCha8Rng::seed_from_u64(7);
         let mut r2 = ChaCha8Rng::seed_from_u64(7);
-        let a = fit(&docs, v, &authors, k, k, alpha.clone(), 0.01, 80, &mut r1);
-        let b = fit(&docs, v, &authors, k, k, alpha, 0.01, 80, &mut r2);
+        let a = fit(
+            &docs,
+            v,
+            &authors,
+            k,
+            k,
+            alpha.clone(),
+            0.01,
+            80,
+            |_, _| true,
+            &mut r1,
+        );
+        let b = fit(
+            &docs,
+            v,
+            &authors,
+            k,
+            k,
+            alpha,
+            0.01,
+            80,
+            |_, _| true,
+            &mut r2,
+        );
         assert_eq!(a.topic_word, b.topic_word);
         assert_eq!(a.author_topic, b.author_topic);
         assert_eq!(a.doc_topic, b.doc_topic);
@@ -400,7 +438,18 @@ mod tests {
         let (docs, v, authors, k) = planted();
         let alpha = vec![50.0 / k as f64; k];
         let mut rng = ChaCha8Rng::seed_from_u64(0);
-        let m = fit(&docs, v, &authors, k, k, alpha, 0.01, 20, &mut rng);
+        let m = fit(
+            &docs,
+            v,
+            &authors,
+            k,
+            k,
+            alpha,
+            0.01,
+            20,
+            |_, _| true,
+            &mut rng,
+        );
         assert!(crate::conformance::check_conformance(&m).is_empty());
     }
 
@@ -412,7 +461,18 @@ mod tests {
         let docs: Vec<Vec<u32>> = (0..10).map(|_| (0..8).map(|i| i % 6).collect()).collect();
         let authors: Vec<Vec<u32>> = (0..10).map(|d| vec![(d % 2) as u32]).collect();
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        let m = fit(&docs, 6, &authors, 2, 20, vec![2.5; 20], 0.01, 15, &mut rng);
+        let m = fit(
+            &docs,
+            6,
+            &authors,
+            2,
+            20,
+            vec![2.5; 20],
+            0.01,
+            15,
+            |_, _| true,
+            &mut rng,
+        );
         assert_eq!(m.author_topic.len(), 2);
         assert_eq!(m.author_topic[0].len(), 20);
         // K=2 topics, A=8 authors (co-authored docs).
@@ -430,6 +490,7 @@ mod tests {
             vec![25.0; 2],
             0.01,
             15,
+            |_, _| true,
             &mut rng2,
         );
         assert_eq!(m2.author_topic.len(), 8);
@@ -456,6 +517,7 @@ mod tests {
             alpha,
             0.01,
             200,
+            |_, _| true,
             &mut rng,
         );
         // Each document's empirical dominant topic and its (sole) author's dominant

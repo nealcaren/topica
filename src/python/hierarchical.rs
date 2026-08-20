@@ -221,8 +221,12 @@ impl PA {
     /// (`None` = constructor value); `>1` runs the collapsed-Gibbs sweep as
     /// approximate-parallel AD-LDA (deterministic for a fixed `num_threads`+`seed`),
     /// `1` is the exact serial path.
+    /// `progress` is an optional per-sweep callback `callback(iteration, total, {})`
+    /// (no per-sweep metric); `True`/`False` force/suppress the default
+    /// `topica.progress()` bar (raising in it aborts the fit).
     #[pyo3(signature = (data, *, iters=1000, keep_theta_draws=true, num_theta_draws=25,
-                        convergence_tol=0.0_f64, check_every=10_usize, num_threads=None))]
+                        convergence_tol=0.0_f64, check_every=10_usize, num_threads=None,
+                        progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -233,6 +237,7 @@ impl PA {
         convergence_tol: f64,
         check_every: usize,
         num_threads: Option<usize>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         ensure_finite_nonneg("convergence_tol", convergence_tol)?;
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
@@ -266,7 +271,9 @@ impl PA {
         warn_theta_draw_memory(py, keep_theta_draws, num_theta_draws, num_docs, k)?;
 
         let mut rng = Pcg64Mcg::seed_from_u64(slf.seed);
+        let progress = resolve_progress(py, progress, "PA")?;
         let (model, ll_history, converged_flag, corpus) = py.allow_threads(move || {
+            let mut on_progress = on_progress_bare(&progress);
             let (m, hist, conv) = pa::fit_pam_with_draws(
                 &corpus.docs,
                 num_types,
@@ -279,10 +286,12 @@ impl PA {
                 convergence_tol,
                 check_every,
                 num_threads,
+                &mut on_progress,
                 &mut rng,
             );
             (m, hist, conv, corpus)
         });
+        reraise_if_interrupted(py)?;
         slf.theta_draws = draws_to_array3(&model.theta_draws, num_docs, k, None);
         slf.phi = Some(vecs_to_arr2(&model.topic_word()));
         slf.theta = Some(vecs_to_arr2(&model.doc_topic()));

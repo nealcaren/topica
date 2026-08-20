@@ -372,7 +372,10 @@ impl FactorialLDA {
         })
     }
 
-    #[pyo3(signature = (data, *, iters=2000, samples=100, eval_every=0, omega_priors=None, observed_factors=None))]
+    /// `progress` is an optional `(iteration, total, info)` callback fired once per
+    /// Gibbs sweep; `True`/`False` force or silence the default bar, and a
+    /// `KeyboardInterrupt` raised from it aborts the fit.
+    #[pyo3(signature = (data, *, iters=2000, samples=100, eval_every=0, omega_priors=None, observed_factors=None, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -382,6 +385,7 @@ impl FactorialLDA {
         eval_every: usize,
         omega_priors: Option<&Bound<'_, PyAny>>,
         observed_factors: Option<&Bound<'_, PyAny>>,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
             c.inner
@@ -430,10 +434,20 @@ impl FactorialLDA {
         };
         let cfg = slf.build_config(iters, samples, eval_every);
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
+        let progress = resolve_progress(py, progress, "FactorialLDA")?;
         let (model, corpus) = py.allow_threads(move || {
-            let model = crate::factorial_lda::fit_flda(&corpus, &cfg, &priors, &observed, &mut rng);
+            let mut on_progress = on_progress_bare(&progress);
+            let model = crate::factorial_lda::fit_flda(
+                &corpus,
+                &cfg,
+                &priors,
+                &observed,
+                &mut on_progress,
+                &mut rng,
+            );
             (model, corpus)
         });
+        reraise_if_interrupted(py)?;
         slf.model = Some(model);
         slf.corpus = Some(corpus);
         slf.fitted = true;

@@ -127,6 +127,7 @@ class NarrativeTM:
         keep_theta_draws: bool = True,
         convergence_tol: float = 0.0,
         check_every: int = 10,
+        progress=None,
     ) -> None:
         from ._topica import Corpus
         
@@ -211,6 +212,7 @@ class NarrativeTM:
             keep_theta_draws=keep_theta_draws,
             convergence_tol=convergence_tol,
             check_every=check_every,
+            progress=progress,
         )
 
         self._vocabulary = self._gdmr.vocabulary

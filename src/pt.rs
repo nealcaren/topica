@@ -510,7 +510,7 @@ impl PtmModel {
 /// * `iters`      — number of Gibbs sweeps
 /// * `rng`        — random-number source (determines all randomness)
 #[allow(clippy::too_many_arguments)]
-pub fn fit_ptm<R: Rng>(
+pub fn fit_ptm<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<u32>],
     num_types: usize,
     num_topics: usize,
@@ -519,6 +519,7 @@ pub fn fit_ptm<R: Rng>(
     beta: f64,
     lambda: f64,
     iters: usize,
+    on_progress: F,
     rng: &mut R,
 ) -> PtmModel {
     // Plain fit is the draw-collecting fit with collection disabled, so the
@@ -536,6 +537,7 @@ pub fn fit_ptm<R: Rng>(
         0.0,
         0,
         1,
+        on_progress,
         rng,
     );
     model
@@ -551,7 +553,7 @@ pub fn fit_ptm<R: Rng>(
 ///
 /// Returns `(model, ll_history, converged)`.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_ptm_with_draws<R: Rng>(
+pub fn fit_ptm_with_draws<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<u32>],
     num_types: usize,
     num_topics: usize,
@@ -564,6 +566,7 @@ pub fn fit_ptm_with_draws<R: Rng>(
     convergence_tol: f64,
     check_every: usize,
     num_threads: usize,
+    mut on_progress: F,
     rng: &mut R,
 ) -> (PtmModel, Vec<(usize, f64)>, bool) {
     let d_count = docs.len();
@@ -675,10 +678,14 @@ pub fn fit_ptm_with_draws<R: Rng>(
                 let prev = ll_history[ll_history.len() - 2].1;
                 let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
                 if rel < convergence_tol {
+                    let _ = on_progress(iter, iter);
                     converged = true;
                     break;
                 }
             }
+        }
+        if !on_progress(iter, iters) {
+            break;
         }
     }
 
@@ -757,7 +764,18 @@ mod tests {
         let recovered = (1..=n_seeds)
             .filter(|&s| {
                 let mut rng = ChaCha8Rng::seed_from_u64(s);
-                let model = fit_ptm(&docs, v, num_topics, 50, 0.1, 0.01, 0.1, 1000, &mut rng);
+                let model = fit_ptm(
+                    &docs,
+                    v,
+                    num_topics,
+                    50,
+                    0.1,
+                    0.01,
+                    0.1,
+                    1000,
+                    |_, _| true,
+                    &mut rng,
+                );
                 recovers(&model)
             })
             .count();
@@ -777,8 +795,8 @@ mod tests {
             .collect();
         let mut r1 = ChaCha8Rng::seed_from_u64(7);
         let mut r2 = ChaCha8Rng::seed_from_u64(7);
-        let m1 = fit_ptm(&docs, v, 3, 5, 0.1, 0.01, 0.1, 30, &mut r1);
-        let m2 = fit_ptm(&docs, v, 3, 5, 0.1, 0.01, 0.1, 30, &mut r2);
+        let m1 = fit_ptm(&docs, v, 3, 5, 0.1, 0.01, 0.1, 30, |_, _| true, &mut r1);
+        let m2 = fit_ptm(&docs, v, 3, 5, 0.1, 0.01, 0.1, 30, |_, _| true, &mut r2);
         assert_eq!(m1.nk, m2.nk, "nk differs between two identical-seed runs");
         assert_eq!(
             m1.topic_word(),
@@ -794,7 +812,7 @@ mod tests {
             .map(|d| (0..3).map(|i| ((i + d) % v) as u32).collect())
             .collect();
         let mut rng = ChaCha8Rng::seed_from_u64(55);
-        let m = fit_ptm(&docs, v, 3, 5, 0.1, 0.01, 0.1, 20, &mut rng);
+        let m = fit_ptm(&docs, v, 3, 5, 0.1, 0.01, 0.1, 20, |_, _| true, &mut rng);
         let base = crate::conformance::check_conformance(&m);
         assert!(base.is_empty(), "check_conformance: {:?}", base);
         let dir = crate::conformance::check_dirichlet(&m);
@@ -834,6 +852,7 @@ mod tests {
             0.0,
             0,
             num_threads,
+            |_, _| true,
             &mut rng,
         );
         m
@@ -846,7 +865,18 @@ mod tests {
         // assignments (both sweep phases).
         let (docs, v) = threading_corpus();
         let mut r_serial = ChaCha8Rng::seed_from_u64(42);
-        let serial = fit_ptm(&docs, v, 3, 8, 0.1, 0.01, 0.1, 40, &mut r_serial);
+        let serial = fit_ptm(
+            &docs,
+            v,
+            3,
+            8,
+            0.1,
+            0.01,
+            0.1,
+            40,
+            |_, _| true,
+            &mut r_serial,
+        );
         let threaded1 = fit_threaded(&docs, v, 40, 1, 42);
         assert_eq!(serial.nkw, threaded1.nkw, "nkw differs at num_threads=1");
         assert_eq!(serial.nk, threaded1.nk, "nk differs at num_threads=1");

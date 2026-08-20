@@ -133,7 +133,7 @@ fn beta_peak(a: f64, b: f64) -> f64 {
 ///   clipped away from the exact boundaries by the binding.
 /// - `alpha`: length-K doc-topic Dirichlet. `beta`: symmetric topic-word Dirichlet.
 #[allow(clippy::too_many_arguments)]
-pub fn fit<R: Rng>(
+pub fn fit<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<u32>],
     num_types: usize,
     times: &[f64],
@@ -141,6 +141,7 @@ pub fn fit<R: Rng>(
     alpha: Vec<f64>,
     beta: f64,
     iters: usize,
+    mut on_progress: F,
     rng: &mut R,
 ) -> TopicsOverTimeModel {
     let k = num_topics;
@@ -300,6 +301,10 @@ pub fn fit<R: Rng>(
                 docs, &wt, &n_dk, &psi, &ln_norm, &ln_t, &ln_1mt, &alpha, beta, beta_sum, k,
             );
             fit_history.push((it + 1, ll));
+        }
+
+        if !on_progress(it + 1, iters) {
+            break;
         }
     }
 
@@ -463,7 +468,7 @@ mod tests {
         let (docs, v, times) = planted(k);
         let alpha = vec![50.0 / k as f64; k];
         let mut rng = ChaCha8Rng::seed_from_u64(13);
-        let m = fit(&docs, v, &times, k, alpha, 0.1, 300, &mut rng);
+        let m = fit(&docs, v, &times, k, alpha, 0.1, 300, |_, _| true, &mut rng);
         // Each topic concentrates on its 5-word block.
         for row in &m.topic_word {
             let top5: f64 = {
@@ -501,6 +506,7 @@ mod tests {
             alpha.clone(),
             0.1,
             80,
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(1),
         );
         let b = fit(
@@ -511,6 +517,7 @@ mod tests {
             alpha,
             0.1,
             80,
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(1),
         );
         assert_eq!(a.topic_word, b.topic_word);
@@ -531,6 +538,7 @@ mod tests {
             alpha,
             0.1,
             20,
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(0),
         );
         assert!(crate::conformance::check_conformance(&m).is_empty());
@@ -554,6 +562,7 @@ mod tests {
             alpha,
             0.1,
             40,
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(0),
         );
         assert!(
@@ -682,6 +691,7 @@ mod tests {
             alpha.clone(),
             0.1,
             400,
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(13),
         );
         // Time-blind: constant timestamp → Beta collapses to uniform → plain LDA.
@@ -694,6 +704,7 @@ mod tests {
             alpha,
             0.1,
             400,
+            |_, _| true,
             &mut ChaCha8Rng::seed_from_u64(13),
         );
 

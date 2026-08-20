@@ -137,7 +137,11 @@ impl TopicsOverTime {
     /// peaks/means in the input units). `iters` is the number of collapsed-Gibbs sweeps
     /// (default 1000, a topica default). A constant-timestamp corpus reduces to LDA (the
     /// per-topic Beta collapses to uniform).
-    #[pyo3(signature = (data, times=None, *, timestamps=None, iters=1000))]
+    ///
+    /// `progress` takes a ``(iteration, total, info)`` callback (see
+    /// ``topica.progress``); pass ``True``/``False`` to force the bar on or off, and a
+    /// ``KeyboardInterrupt`` raised from the callback aborts the fit.
+    #[pyo3(signature = (data, times=None, *, timestamps=None, iters=1000, progress=None))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -145,6 +149,7 @@ impl TopicsOverTime {
         times: Option<Vec<f64>>,
         timestamps: Option<Vec<f64>>,
         iters: usize,
+        progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
         let raw_times = match (times, timestamps) {
             (Some(t), None) | (None, Some(t)) => t,
@@ -233,7 +238,9 @@ impl TopicsOverTime {
         let beta = slf.beta;
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
 
+        let progress = resolve_progress(py, progress, "TopicsOverTime")?;
         let (model, corpus) = py.allow_threads(move || {
+            let mut on_progress = on_progress_bare(&progress);
             let m = crate::topics_over_time::fit(
                 &corpus.docs,
                 num_types,
@@ -242,10 +249,12 @@ impl TopicsOverTime {
                 alpha,
                 beta,
                 iters,
+                &mut on_progress,
                 &mut rng,
             );
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
 
         slf.model = Some(model);
         slf.corpus = Some(corpus);
