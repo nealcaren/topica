@@ -14,6 +14,7 @@ Two guarantees, fixed once in the shared progress helpers (`deliver_progress`,
 
 import os
 import signal
+import sys
 
 import pytest
 
@@ -94,6 +95,13 @@ def test_ordinary_exception_in_callback_is_swallowed(model):
     _fit(model, progress=cb, iters=20)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="os.kill(pid, SIGINT) is not a portable Ctrl-C simulation on Windows "
+    "(it maps to TerminateProcess, not a KeyboardInterrupt); the check_signals "
+    "abort path itself is platform-independent and covered by the callback-raises "
+    "cases above.",
+)
 def test_real_sigint_during_fit_is_surfaced():
     # The reported bug: with progress default-on, a Ctrl-C during a slow fit was
     # swallowed at the callback and the fit ran to completion. The callback here
