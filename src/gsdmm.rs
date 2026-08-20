@@ -349,7 +349,7 @@ fn sweep<R: Rng>(model: &mut GsdmmModel, docs: &[Vec<u32>], rng: &mut R) {
 /// * `rng`       — random-number source; determines all randomness (deterministic
 ///                 for a fixed seed)
 #[allow(clippy::too_many_arguments)]
-pub fn fit_gsdmm<R: Rng, F: FnMut(usize, usize, usize, f64)>(
+pub fn fit_gsdmm<R: Rng, F: FnMut(usize, usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
     num_types: usize,
     k_max: usize,
@@ -404,7 +404,9 @@ pub fn fit_gsdmm<R: Rng, F: FnMut(usize, usize, usize, f64)>(
             let ll = model.cluster_log_likelihood(docs);
             let nc = model.num_clusters();
             model.trace.push((it + 1, nc, ll));
-            on_progress(it + 1, iters, nc, ll);
+            if !on_progress(it + 1, iters, nc, ll) {
+                break;
+            }
             if verbose {
                 // Progress to stderr (not stdout), so a long single-threaded fit
                 // does not look hung. The elapsed seconds let a user extrapolate
@@ -506,7 +508,7 @@ mod tests {
             200,
             0,
             false,
-            |_, _, _, _| {},
+            |_, _, _, _| true,
             &mut rng,
         );
 
@@ -567,7 +569,7 @@ mod tests {
             50,
             0,
             false,
-            |_, _, _, _| {},
+            |_, _, _, _| true,
             &mut r1,
         );
         let m2 = fit_gsdmm(
@@ -579,7 +581,7 @@ mod tests {
             50,
             0,
             false,
-            |_, _, _, _| {},
+            |_, _, _, _| true,
             &mut r2,
         );
 
@@ -616,7 +618,7 @@ mod tests {
             30,
             0,
             false,
-            |_, _, _, _| {},
+            |_, _, _, _| true,
             &mut rng,
         );
 
@@ -684,7 +686,7 @@ mod tests {
             40,
             0,
             false,
-            |_, _, _, _| {},
+            |_, _, _, _| true,
             &mut rng,
         );
 
@@ -758,7 +760,7 @@ mod tests {
             200,
             0,
             false,
-            |_, _, _, _| {},
+            |_, _, _, _| true,
             &mut rng,
         );
         let base = crate::conformance::check_conformance(&model);

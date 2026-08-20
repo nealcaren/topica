@@ -1107,7 +1107,7 @@ fn mu_from(x_d: &[f64], gamma: &[Vec<f64>], km1: usize) -> Vec<f64> {
 /// [`crate::spectral::DEFAULT_PROJ_THRESHOLD`] to match R `stm`. It only matters
 /// when `init_spectral` is set.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_ctm<R: Rng, F: FnMut(usize, usize, f64)>(
+pub fn fit_ctm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
     num_topics: usize,
     num_types: usize,
@@ -1385,7 +1385,9 @@ pub fn fit_ctm<R: Rng, F: FnMut(usize, usize, f64)>(
         // computed with the parameters from the previous M-step — the quantity
         // whose relative change drives convergence.
         bound_history.push(total_bound);
-        on_progress(em + 1, em_iters, total_bound);
+        if !on_progress(em + 1, em_iters, total_bound) {
+            break;
+        }
 
         // Convergence: stop once the relative change in the corpus bound falls
         // below `em_tol`. Break before the M-step, so the returned β/Σ/γ are the
@@ -1397,7 +1399,7 @@ pub fn fit_ctm<R: Rng, F: FnMut(usize, usize, f64)>(
             if rel < em_tol {
                 // Snap the progress bar to 100% on early convergence so it does
                 // not read as a hang at, e.g., 70/150 (#786).
-                on_progress(em + 1, em + 1, total_bound);
+                let _ = on_progress(em + 1, em + 1, total_bound);
                 converged = true;
                 break;
             }
@@ -1922,7 +1924,7 @@ mod tests {
                 true,
                 false,
                 crate::spectral::DEFAULT_PROJ_THRESHOLD,
-                |_, _, _| {},
+                |_, _, _| true,
                 &mut rng,
             )
         };
@@ -2330,7 +2332,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let theta = model.doc_topics();
@@ -2381,7 +2383,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let cb = model.content_beta.expect("content_beta present");
@@ -2459,7 +2461,7 @@ mod tests {
                 true,
                 false,
                 crate::spectral::DEFAULT_PROJ_THRESHOLD,
-                |_, _, _| {},
+                |_, _, _| true,
                 &mut rng,
             )
             .content_beta
@@ -2529,7 +2531,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         // The bound trajectory is (weakly) monotone increasing.
@@ -2565,7 +2567,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng2,
         );
         assert!(!capped.converged);
@@ -2608,7 +2610,7 @@ mod tests {
             true,
             true,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         assert!(model.diagonal, "model should record diagonal mode");
@@ -2869,7 +2871,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let stored = m_keep.nu.clone(); // per-group E-step ν (keep_nu = true)
@@ -2895,7 +2897,7 @@ mod tests {
             false,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng2,
         );
         assert!(model.content_beta.is_some(), "content_beta present");
@@ -2981,7 +2983,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let stored = m_keep.nu.clone();
@@ -3004,7 +3006,7 @@ mod tests {
             false,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng2,
         );
         assert!(

@@ -534,7 +534,7 @@ fn parallel_sweep_seeded(
 /// Returns `(model, ll_history, converged)` where `ll_history` is a vector of
 /// `(iteration, log_likelihood)` pairs recorded every `check_every` sweeps.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_seeded_lda<R: Rng, F: FnMut(usize, usize, f64)>(
+pub fn fit_seeded_lda<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
     num_types: usize,
     num_topics: usize,
@@ -739,12 +739,14 @@ pub fn fit_seeded_lda<R: Rng, F: FnMut(usize, usize, f64)>(
         if check_every > 0 && iter % check_every == 0 {
             let ll = compute_ll(&nkw, &nk, &ndk);
             ll_history.push((iter, ll));
-            on_progress(iter, iters, ll);
+            if !on_progress(iter, iters, ll) {
+                break;
+            }
             if convergence_tol > 0.0 && ll_history.len() >= 2 {
                 let prev = ll_history[ll_history.len() - 2].1;
                 let rel = (ll - prev).abs() / (prev.abs() + 1e-12);
                 if rel < convergence_tol {
-                    on_progress(iter, iter, ll); // snap bar to 100% (#786)
+                    let _ = on_progress(iter, iter, ll); // snap bar to 100% (#786)
                     converged = true;
                     break;
                 }
@@ -866,7 +868,7 @@ mod tests {
             0.0,
             0,
             1,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
 
@@ -930,7 +932,7 @@ mod tests {
             0.0,
             0,
             1,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
 
@@ -992,7 +994,7 @@ mod tests {
             0.0,
             20, // check_every: record the trace
             1,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
 
@@ -1055,7 +1057,7 @@ mod tests {
             0.0,
             25,
             1,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
 
@@ -1097,7 +1099,7 @@ mod tests {
             0.0,
             0,
             1,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut r1,
         );
         let (m2, _, _) = fit_seeded_lda(
@@ -1115,7 +1117,7 @@ mod tests {
             0.0,
             0,
             1,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut r2,
         );
 
@@ -1156,7 +1158,7 @@ mod tests {
             0.0,
             0,
             1,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let base = crate::conformance::check_conformance(&m);

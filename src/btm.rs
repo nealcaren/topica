@@ -339,7 +339,7 @@ fn parallel_sweep_btm(
 /// runs MALLET-style approximate-parallel (AD-LDA) sampling over the biterms,
 /// deterministic for a fixed `num_threads` + seed.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_btm<R: Rng, F: FnMut(usize, usize)>(
+pub fn fit_btm<R: Rng, F: FnMut(usize, usize) -> bool>(
     docs: &[Vec<u32>],
     num_topics: usize,
     num_types: usize,
@@ -422,7 +422,9 @@ pub fn fit_btm<R: Rng, F: FnMut(usize, usize)>(
                 sweep_seed,
             );
         }
-        on_progress(it + 1, iters);
+        if !on_progress(it + 1, iters) {
+            break;
+        }
     }
 
     // θ_k = (nb_z[k] + α) / (B + Kα).
@@ -551,7 +553,7 @@ mod tests {
             15,
             false,
             1,
-            |_, _| {},
+            |_, _| true,
             &mut rng,
         );
 
@@ -590,7 +592,7 @@ mod tests {
                 15,
                 false,
                 1,
-                |_, _| {},
+                |_, _| true,
                 &mut rng,
             )
         };

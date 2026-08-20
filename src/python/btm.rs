@@ -224,12 +224,13 @@ impl BTM {
             slf.seed,
         );
 
-        let progress = resolve_progress(py, progress, "BTM");
+        let progress = resolve_progress(py, progress, "BTM")?;
         let (model, corpus) = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let mut on_progress = |it: usize, total: usize| {
-                if let Some(cb) = &progress {
-                    Python::with_gil(|py| emit_progress_bare(py, cb, it, total));
+            let mut on_progress = |it: usize, total: usize| -> bool {
+                match &progress {
+                    Some(cb) => Python::with_gil(|py| emit_progress_bare(py, cb, it, total)),
+                    None => true,
                 }
             };
             let m = crate::btm::fit_btm(
@@ -247,6 +248,7 @@ impl BTM {
             );
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
         slf.model = Some(model);
         slf.corpus = Some(corpus);
         slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();

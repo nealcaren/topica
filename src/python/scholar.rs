@@ -502,12 +502,13 @@ impl Scholar {
             slf.l1_content_reg,
         );
         let seed = slf.seed;
-        let progress = resolve_progress(py, progress, "Scholar");
+        let progress = resolve_progress(py, progress, "Scholar")?;
         let (model, corpus) = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let mut on_progress = |it: usize, total: usize, ll: f64| {
-                if let Some(cb) = &progress {
-                    Python::with_gil(|py| emit_progress(py, cb, it, total, ll));
+            let mut on_progress = |it: usize, total: usize, ll: f64| -> bool {
+                match &progress {
+                    Some(cb) => Python::with_gil(|py| emit_progress(py, cb, it, total, ll)),
+                    None => true,
                 }
             };
             let m = crate::scholar::fit_scholar(
@@ -535,6 +536,7 @@ impl Scholar {
             );
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
         slf.model = Some(model);
         slf.corpus = Some(corpus);
         slf.covariate_names = Some(names);

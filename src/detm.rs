@@ -973,7 +973,7 @@ fn alpha_rw_kl_and_grad(
 /// before every `exp` for numerical stability (see [`clamp_logvar`]); on the stable
 /// training path the clamp is never reached, so default fits are unchanged.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_detm<R: Rng, F: FnMut(usize, usize, f64)>(
+pub fn fit_detm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     tokens: &[Vec<u32>],
     counts: &[Vec<u32>],
     times: &[usize],
@@ -1527,12 +1527,14 @@ pub fn fit_detm<R: Rng, F: FnMut(usize, usize, f64)>(
             f64::NAN
         };
         bound_history.push(-avg); // ELBO == negative loss
-        on_progress(epoch + 1, epochs, -avg);
+        if !on_progress(epoch + 1, epochs, -avg) {
+            break;
+        }
         if em_tol > 0.0 && bound_history.len() >= 2 {
             let prev = bound_history[bound_history.len() - 2];
             let rel = (-avg - prev).abs() / (prev.abs() + 1e-12);
             if rel < em_tol {
-                on_progress(epoch + 1, epoch + 1, -avg); // snap bar to 100% (#786)
+                let _ = on_progress(epoch + 1, epoch + 1, -avg); // snap bar to 100% (#786)
                 converged = true;
                 break;
             }
@@ -1756,7 +1758,7 @@ mod tests {
             1.2e-6,
             0.0,
             None,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         assert_eq!(m.num_topics, k);
@@ -1808,7 +1810,7 @@ mod tests {
             1.2e-6,
             0.0,
             None,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng_a,
         );
         let mut rng_b = ChaCha8Rng::seed_from_u64(123);
@@ -1830,7 +1832,7 @@ mod tests {
             1.2e-6,
             0.0,
             None,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng_b,
         );
         for tt in 0..t {
@@ -1865,7 +1867,7 @@ mod tests {
             1.2e-6,
             0.0,
             None,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         // The time-varying topic prior eta (the latent the random walk regularizes)
@@ -2225,7 +2227,7 @@ mod tests {
             1.2e-6,
             0.0,
             None,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let base = crate::conformance::check_conformance(&m);

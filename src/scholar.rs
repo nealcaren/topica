@@ -184,7 +184,7 @@ fn prior_mean_for(prior_w: &[f64], pc: &[f64], k: usize, n_pc: usize) -> Vec<f64
 /// covariate prior-mean update and, when labeled, a softmax classifier off `theta`
 /// whose cross-entropy loss trains `wc`/`bc` and pushes a gradient back into `theta`.
 #[allow(clippy::too_many_arguments)]
-pub fn fit_scholar<R: Rng, F: FnMut(usize, usize, f64)>(
+pub fn fit_scholar<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
     pcs: &[Vec<f64>],
     labels: Option<&[usize]>,
@@ -502,12 +502,14 @@ pub fn fit_scholar<R: Rng, F: FnMut(usize, usize, f64)>(
 
         let avg = epoch_loss / batches.max(1) as f64;
         bound_history.push(-avg); // report the ELBO (negative loss)
-        on_progress(epoch + 1, epochs, -avg);
+        if !on_progress(epoch + 1, epochs, -avg) {
+            break;
+        }
         if em_tol > 0.0 && bound_history.len() >= 2 {
             let prev = bound_history[bound_history.len() - 2];
             let rel = (-avg - prev).abs() / (prev.abs() + 1e-12);
             if rel < em_tol {
-                on_progress(epoch + 1, epoch + 1, -avg); // snap bar to 100% (#786)
+                let _ = on_progress(epoch + 1, epoch + 1, -avg); // snap bar to 100% (#786)
                 converged = true;
                 break;
             }
@@ -799,7 +801,7 @@ mod tests {
             0.01,
             0.0,
             0.0,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
 
@@ -868,7 +870,7 @@ mod tests {
                 0.01,
                 0.01,
                 0.0,
-                |_, _, _| {},
+                |_, _, _| true,
                 &mut rng,
             )
         };
@@ -1022,7 +1024,7 @@ mod tests {
             0.01,
             0.0,
             0.0,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
 
@@ -1073,7 +1075,7 @@ mod tests {
                 0.01,
                 0.0,
                 0.0,
-                |_, _, _| {},
+                |_, _, _| true,
                 &mut rng,
             )
         };
@@ -1305,7 +1307,7 @@ mod tests {
             0.01,
             0.0,
             0.0,
-            |_, _, _| {},
+            |_, _, _| true,
             &mut rng,
         );
         let eff = m.content_effects();
@@ -1365,7 +1367,7 @@ mod tests {
                 0.01,
                 0.0,
                 0.0,
-                |_, _, _| {},
+                |_, _, _| true,
                 &mut rng,
             )
         };

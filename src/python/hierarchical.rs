@@ -831,11 +831,12 @@ impl HLDA {
             hlda::LevelPrior::Dirichlet(slf.alpha.clone())
         };
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
-        let progress = resolve_progress(py, progress, "HLDA");
+        let progress = resolve_progress(py, progress, "HLDA")?;
         let (model, corpus) = py.allow_threads(move || {
-            let on_progress = |it: usize, total: usize| {
-                if let Some(cb) = &progress {
-                    Python::with_gil(|py| emit_progress_bare(py, cb, it, total));
+            let on_progress = |it: usize, total: usize| -> bool {
+                match &progress {
+                    Some(cb) => Python::with_gil(|py| emit_progress_bare(py, cb, it, total)),
+                    None => true,
                 }
             };
             let m = hlda::fit_hlda(
@@ -852,6 +853,7 @@ impl HLDA {
             );
             (m, corpus)
         });
+        reraise_if_interrupted(py)?;
 
         let nn = model.num_nodes();
         let mut tw = Array2::<f64>::zeros((nn, num_types));
