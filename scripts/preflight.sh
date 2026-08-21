@@ -9,9 +9,10 @@
 #
 # It runs the EXACT commands CI runs, in order of cheapest-first:
 #   1. cargo fmt --all --check
-#   2. cargo clippy --workspace --all-targets --all-features -- -D warnings
-#   3. generated model tables are in sync (scripts/gen_model_tables.py --check)
-#   4. the .pyi type stub is in sync with the compiled extension (test_stub_sync.py)
+#   2. the Rust toolchain pin agrees (rust-toolchain.toml == the workflow env)
+#   3. cargo clippy --workspace --all-targets --all-features -- -D warnings
+#   4. generated model tables are in sync (scripts/gen_model_tables.py --check)
+#   5. the .pyi type stub is in sync with the compiled extension (test_stub_sync.py)
 #
 # Steps 3-4 need `topica` importable; they use $VIRTUAL_ENV or .venv-dev, and are
 # skipped with a warning (not a hard failure) if no dev venv is present, so the
@@ -27,6 +28,42 @@ step "cargo fmt --all --check"
 if ! cargo fmt --all --check; then
     echo "  -> run 'cargo fmt --all' to fix" >&2
     fail=1
+fi
+
+# The Rust toolchain is pinned in one place, `rust-toolchain.toml`, which drives
+# local dev (rustup auto-selects it) AND CI (the workflows pass it via a
+# RUST_TOOLCHAIN env). If those drift, CI's clippy differs from local clippy and a
+# new stable can land a red-lint push (as happened twice in 2026-08). Fail on any
+# mismatch so the pin stays a single source of truth. Bump by editing
+# rust-toolchain.toml *and* the workflow env together, then `rustup update`.
+step "rust toolchain pin agrees across rust-toolchain.toml and the workflows"
+pin="$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml | head -1)"
+if [ -z "$pin" ]; then
+    echo "  -> could not read channel from rust-toolchain.toml" >&2
+    fail=1
+else
+    ok=1
+    for wf in .github/workflows/CI.yml .github/workflows/docs.yml; do
+        wf_pin="$(sed -n 's/.*RUST_TOOLCHAIN: *"\([^"]*\)".*/\1/p' "$wf" | head -1)"
+        if [ "$wf_pin" != "$pin" ]; then
+            echo "  -> $wf pins RUST_TOOLCHAIN='$wf_pin' but rust-toolchain.toml pins '$pin'" >&2
+            ok=0
+        fi
+    done
+    if command -v rustc >/dev/null 2>&1; then
+        active="$(rustc --version 2>/dev/null | awk '{print $2}')"
+        if [ "$active" != "$pin" ]; then
+            echo "  -> active rustc is $active but the repo pins $pin; run 'rustup update'" >&2
+            echo "     (rustup honors rust-toolchain.toml, so this usually just needs the" >&2
+            echo "     pinned toolchain installed)." >&2
+            ok=0
+        fi
+    fi
+    if [ "$ok" = 1 ]; then
+        echo "pinned at $pin, local and CI agree"
+    else
+        fail=1
+    fi
 fi
 
 step "cargo clippy --workspace --all-targets --all-features -- -D warnings"

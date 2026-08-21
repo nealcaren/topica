@@ -1,0 +1,12 @@
+# Single source of truth for the Rust toolchain, so local dev and GitHub CI use
+# the *same* clippy/rustfmt and a new stable release cannot silently move CI ahead
+# of a contributor's local toolchain (which twice landed red-lint pushes in
+# 2026-08). rustup auto-installs this version on any cargo/clippy/rustc call in the
+# repo; CI reads this file via `dtolnay/rust-toolchain@master`.
+#
+# To adopt a newer stable: bump `channel` here in its own small PR (that is the
+# deliberate, reviewed upgrade), then `rustup update` locally. Nothing else pins a
+# version — the workflows all read this file.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
