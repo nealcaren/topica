@@ -32,9 +32,21 @@ _OBJECTIVE_KIND = {
     "LDA": "log_likelihood",
 }
 
+# How each family reaches its fit: "gibbs" collapsed samplers run a fixed number of
+# sweeps and do not early-stop by default (so their ``converged`` flag is off unless a
+# tolerance was set and tripped, and a bare "no" reads as failure when it is not);
+# "em" variational/EM models genuinely converge. Seeded with LDA for the spike.
+_SAMPLER_KIND = {
+    "LDA": "gibbs",
+}
+
 
 def _objective_kind(model) -> str:
     return _OBJECTIVE_KIND.get(type(model).__name__, "none")
+
+
+def _sampler_kind(model) -> str:
+    return _SAMPLER_KIND.get(type(model).__name__, "none")
 
 
 def _is_fitted(model) -> bool:
@@ -68,7 +80,33 @@ class FitSummary:
     """One per-model header of fit statistics. Two tiers: family-internal *fit
     diagnostics* (comparable only within a family) and model-agnostic *quality*
     metrics (the cross-family analogue of R2), the latter populated only when
-    ``summary(texts=...)`` is given a reference corpus."""
+    ``summary(texts=...)`` is given a reference corpus.
+
+    Field legend (each renders ``n/a`` when it does not apply to the family):
+
+    - ``log_likelihood`` / ``elbo`` / ``reconstruction_error``: the *in-sample*
+      training objective at the last iteration — a convergence witness, not a quality
+      score, and not comparable across families.
+    - ``perplexity``: held-out document-completion perplexity; lower is better. Only
+      from ``summary(heldout=...)``.
+    - ``heldout_loglik``: mean per-document held-out log-likelihood from a
+      :func:`topica.make_heldout` split (R stm's ``eval.heldout``); higher (less
+      negative) is better.
+    - ``effective_topics``: exp-entropy of topic prevalence, in ``[1, K]`` — how many
+      topics actually carry mass (near ``K`` = balanced, near ``1`` = one topic
+      dominates).
+    - ``diversity``: fraction of distinct words across the pooled top-n lists, in
+      ``(0, 1]``; higher = less word overlap between topics.
+    - ``topic_redundancy``: mean off-diagonal cosine between topic-word rows, in
+      ``[0, 1]``; lower is better (0 = orthogonal topics).
+    - ``topic_significance``: mean OCTIS significance (``evaluate.topic_significance``,
+      KL to the corpus-average word distribution in nats); higher = more distinctive.
+      Read as a within-model ranking, not an absolute threshold.
+    - ``weak_topics``: count of near-background topics flagged by a relative threshold
+      on the per-topic significance scores; lower is better.
+    - ``coherence`` / ``exclusivity``: the quality tier (mean over topics), from
+      ``summary(texts=corpus)``; higher is better.
+    """
 
     model: str
     fitted: bool
@@ -77,6 +115,7 @@ class FitSummary:
     vocab_size: int | None = None
     # fit diagnostics (family-internal)
     converged: bool | None = None
+    sampler: str = "none"
     iterations: int | None = None
     objective_kind: str = "none"
     log_likelihood: float | None = None
@@ -106,14 +145,20 @@ class FitSummary:
         ]
 
     def _fit_rows(self):
+        # A Gibbs sampler runs fixed sweeps and does not early-stop by default, so a
+        # bare "no" misreads as failure; show why instead. A True flag means a set
+        # tolerance actually tripped, which is worth reporting as-is.
+        converged = self.converged
+        if self.sampler == "gibbs" and converged is False:
+            converged = "n/a (fixed sweeps)"
         return [
-            ("converged", self.converged),
+            ("converged", converged),
             ("iterations", self.iterations),
             ("log_likelihood (in-sample)", self.log_likelihood),
             ("elbo (in-sample)", self.elbo),
             ("reconstruction_error", self.reconstruction_error),
-            ("perplexity (held-out)", self.perplexity),
-            ("heldout_loglik", self.heldout_loglik),
+            ("perplexity (held-out, document-completion)", self.perplexity),
+            ("heldout_loglik (mean per-doc)", self.heldout_loglik),
         ]
 
     def _health_rows(self):
@@ -326,6 +371,7 @@ def _build_summary(model, *, texts=None, heldout=None, assume_unseen=False, n=10
         num_docs=num_docs,
         vocab_size=vocab_size,
         converged=bool(model.converged),
+        sampler=_sampler_kind(model),
         iterations=iterations,
         objective_kind=kind,
         log_likelihood=log_likelihood,

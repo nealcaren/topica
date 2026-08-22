@@ -25,8 +25,14 @@ import topica._topica as _ext
 #   - ``topic_table`` is bound onto every topic-word model in ``topica/__init__.py``
 #     so ``m.topic_table()`` mirrors ``m.top_words()`` (issue #758);
 #   - ``from_dataframe`` is bound onto ``Corpus`` as a classmethod alias for
-#     ``topica.from_dataframe`` (issue #758).
-_PACKAGE_ATTACHED_BY_CLASS = {"Corpus": {"from_dataframe"}}
+#     ``topica.from_dataframe`` (issue #758);
+#   - ``summary`` and ``_repr_html_`` are bound onto ``LDA`` by the fit-summary layer
+#     so ``m.summary()`` / the repr fit block work (issue #806); LDA-only for the
+#     spike, so scoped here rather than in the default until the rollout.
+_PACKAGE_ATTACHED_BY_CLASS = {
+    "Corpus": {"from_dataframe"},
+    "LDA": {"topic_table", "summary", "_repr_html_"},
+}
 _PACKAGE_ATTACHED_DEFAULT = {"topic_table"}
 
 
