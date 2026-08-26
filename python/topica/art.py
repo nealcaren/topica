@@ -72,8 +72,14 @@ class AuthorRecipientTopic:
         least one recipient). Labels are serializable categoricals (strings or ints).
         For Reddit-style reply data, the sender is the commenter and the single
         recipient is the parent comment's author.
+
+        ``docs`` may be token lists or a :class:`topica.Corpus`.
         """
         D = len(docs)
+        if isinstance(authors, (str, bytes)):
+            raise ValueError("authors must be a sequence of per-document sender labels, not a single string")
+        if isinstance(recipients, (str, bytes)):
+            raise ValueError("recipients must be a sequence of per-document recipient lists, not a single string")
         if len(authors) != D:
             raise ValueError(f"authors has {len(authors)} entries but there are {D} documents")
         if len(recipients) != D:
@@ -133,19 +139,29 @@ class AuthorRecipientTopic:
     # -- fitted surface -----------------------------------------------------
     @property
     def topic_word(self) -> np.ndarray:
+        """Topic-word distribution phi (K x V), rows summing to 1."""
         self._check()
         return self._at.topic_word
 
     @property
     def doc_topic(self) -> np.ndarray:
-        """Per-document content-based topic simplex (D x K), as AuthorTopic/LDA report."""
+        """Per-document content-based topic simplex (D x K), as AuthorTopic/LDA report.
+        This is the *document*'s empirical topic mix, NOT the directed-pair output — for
+        the model's who-talks-to-whom-about-what question use :attr:`pair_topic`."""
         self._check()
         return self._at.doc_topic
 
     @property
     def pair_topic(self) -> np.ndarray:
         """The model-defining output: per (sender, recipient) pair topic distribution
-        (P x K), aligned to :attr:`pair_labels`."""
+        (P x K), aligned to :attr:`pair_labels`.
+
+        Reliability: a row is only as trustworthy as its :attr:`pair_counts`. A pair
+        seen on few messages is *prior-dominated* and, under the default smoothing
+        (``alpha = 50/K``), its few token assignments concentrate — so a sparse row
+        looks *spikier* (more confident) than a well-populated one. Peakedness is NOT
+        confidence. Join :attr:`pair_counts` and drop/flag low-count pairs before
+        reading ``argmax`` as a pair's "dominant topic"."""
         self._check()
         return self._at.author_topic
 
@@ -157,8 +173,10 @@ class AuthorRecipientTopic:
 
     @property
     def pair_counts(self) -> np.ndarray:
-        """Number of *messages* each pair appears on (length P) — the observed
-        data-support diagnostic (a pair seen on one message has an unstable row)."""
+        """Number of *messages* each pair appears on (length P), aligned to
+        :attr:`pair_labels` — the observed data-support diagnostic. Rows whose count is
+        small are prior-dominated and unstable across seeds; threshold on this before
+        reporting a pair's topic profile (see :attr:`pair_topic`)."""
         self._check()
         return np.asarray(self._at.author_doc_counts)
 
@@ -173,8 +191,11 @@ class AuthorRecipientTopic:
 
     @property
     def settings(self) -> dict:
-        """Constructor configuration (available before and after fit)."""
-        return {"num_topics": self._num_topics, "alpha": self._alpha,
+        """Constructor configuration (available before and after fit). ``alpha`` is
+        shown resolved to its effective value (``50/K`` when left as the default),
+        so the smoothing strength is visible."""
+        alpha = self._alpha if self._alpha is not None else 50.0 / self._num_topics
+        return {"num_topics": self._num_topics, "alpha": alpha,
                 "beta": self._beta, "seed": self._seed}
 
     @property
@@ -183,11 +204,15 @@ class AuthorRecipientTopic:
 
     @property
     def converged(self) -> bool:
+        """Always ``False``: the Gibbs sampler runs the full ``iters`` budget and does
+        not early-stop. Judge convergence from :attr:`fit_history` instead."""
         self._check()
         return self._at.converged
 
     @property
     def fit_history(self):
+        """Convergence trace: a list of ``(iteration, log_likelihood)`` pairs recorded
+        during the fit. Watch it flatten to judge convergence."""
         self._check()
         return self._at.fit_history
 
