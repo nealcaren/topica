@@ -43,10 +43,31 @@ def test_model_card_is_case_insensitive_and_carries_signatures():
         assert "guides/models.md#stm" in card
 
 
-def test_unknown_model_suggests_and_does_not_raise():
+def test_helper_card_resolves_signatures():
+    # The essentials sheet lists helper names without signatures; guide("<name>")
+    # must resolve them (the two a sample-user audit crashed on). See #816 audit.
+    for name, ns, needle in [
+        ("topic_stability", "evaluate", "topic_stability(runs"),
+        ("record_fit", "provenance", "record_fit(model, corpus"),
+        ("estimate_effect", "effects", "estimate_effect(doc_topic"),
+    ]:
+        card = build_guide(name)
+        assert card.startswith(f"{ns}.{name} "), card[:60]
+        assert needle in card
+
+
+def test_essentials_points_to_helper_guide():
+    text = build_guide()
+    assert 'guide("<name>")' in text  # closes the name -> signature loop
+
+
+def test_unknown_name_suggests_across_models_and_helpers():
     card = build_guide("STMX")
-    assert "No model named 'STMX'" in card
+    assert "No model or helper named 'STMX'" in card
     assert "STM" in card  # substring suggestion
+    # a helper-side miss suggests helper names too
+    card2 = build_guide("stability")
+    assert "topic_stability" in card2 or "bootstrap_stability" in card2
 
 
 def test_full_covers_every_validated_model():

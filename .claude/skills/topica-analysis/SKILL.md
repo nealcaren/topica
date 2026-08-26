@@ -49,8 +49,8 @@ roster. `guide()` ships in the wheel, so it works from a bare `pip install topic
 with no repository checkout. For task-shaped starting points you can transplant
 onto the researcher's data (explore with LDA and justify K, seed named concepts
 with keyATM, short text with GSDMM, embedding clusters with BERTopic, compare
-prevalence or wording across groups, track a topic over time), copy from
-`examples/recipes/` in the
+prevalence or wording across groups, track a topic over time, bootstrap topic
+robustness, record provenance), copy from `examples/recipes/` in the
 [repository](https://github.com/nealcaren/topica/tree/main/examples/recipes),
 which has one recipe per common task.
 

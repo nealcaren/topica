@@ -53,6 +53,21 @@ def test_gsdmm_short_text_runs():
     assert "clusters retained" in out
 
 
+def test_robustness_runs():
+    out = _run("robustness.py")
+    assert "Bootstrap topic stability" in out
+    assert "mean stability" in out
+
+
+def test_provenance_runs(tmp_path, monkeypatch):
+    # provenance.py writes a manifest JSON to the cwd; run it in a temp dir so it
+    # does not litter the repo.
+    monkeypatch.chdir(tmp_path)
+    out = _run("provenance.py")
+    assert "Analysis card" in out
+    assert (tmp_path / "gadarian_manifest.json").exists()
+
+
 @pytest.mark.skipif(not _dataset_available("load_ng20_minilm"),
                     reason="load_ng20_minilm unavailable (offline)")
 def test_bertopic_embeddings_runs():

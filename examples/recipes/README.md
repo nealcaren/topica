@@ -15,6 +15,8 @@ the rest carries over. Each is smoke-tested in `tests/test_recipes.py`.
 | Do two groups talk about different things? (treatment vs control, party A vs B) | [`stm_prevalence_groups.py`](stm_prevalence_groups.py) | STM prevalence covariate |
 | Do two groups word the same topics differently? | [`stm_content_groups.py`](stm_content_groups.py) | STM content covariate |
 | How does a topic's wording drift over time? | [`dtm_over_time.py`](dtm_over_time.py) | Dynamic Topic Model |
+| Are my topics real, or seed/sample noise? | [`robustness.py`](robustness.py) | bootstrap_stability |
+| Record provenance so the analysis reproduces | [`provenance.py`](provenance.py) | record_fit → AnalysisManifest |
 
 Run any of them directly:
 

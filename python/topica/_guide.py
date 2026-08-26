@@ -50,6 +50,13 @@ NAMESPACES = [
 ]
 
 
+# The workflow namespaces whose helper functions guide("<name>") can resolve.
+_HELPER_NAMESPACES = (
+    "data", "design", "select", "inspect", "evaluate",
+    "effects", "compare", "provenance", "embeddings",
+)
+
+
 def _model_class(name: str):
     """Resolve a registry name to its class on the ``topica`` namespace.
 
@@ -61,6 +68,46 @@ def _model_class(name: str):
     import topica
 
     return getattr(topica, name, None)
+
+
+def _helper_index() -> dict:
+    """Map every helper-function name to its ``(namespace, function)``.
+
+    Walks the workflow namespaces (:data:`_HELPER_NAMESPACES`) and indexes the
+    topica-owned callables they expose — the helpers the essentials sheet lists by
+    name so ``guide("estimate_effect")`` can print a signature the same way
+    ``guide("STM")`` prints a model's. Third-party re-exports (numpy, etc.) are
+    skipped by the ``__module__`` filter; the first namespace to define a name
+    wins, matching the display order.
+    """
+    import topica
+
+    index: dict = {}
+    for ns in _HELPER_NAMESPACES:
+        mod = getattr(topica, ns, None)
+        if mod is None:
+            continue
+        for name in dir(mod):
+            if name.startswith("_"):
+                continue
+            obj = getattr(mod, name, None)
+            if not callable(obj) or isinstance(obj, type):
+                continue
+            if not getattr(obj, "__module__", "").startswith("topica"):
+                continue
+            index.setdefault(name, (ns, obj))
+    return index
+
+
+def _helper_card(name: str, ns: str, func) -> list[str]:
+    """One helper function's card: where it lives, its purpose, its signature."""
+    out = [f"{ns}.{name}   (topica.{ns}.{name})", ""]
+    doc = (inspect.getdoc(func) or "").strip()
+    if doc:
+        out.append(f"  {doc.split(chr(10) + chr(10))[0].replace(chr(10), ' ')}")
+        out.append("")
+    out.append(f"  {name}{_sig(func) or '(...)'}")
+    return out
 
 
 def _sig(obj) -> str | None:
@@ -130,13 +177,15 @@ def _essentials(show_version: bool = True) -> list[str]:
     width = max(len(name) for name, _ in NAMESPACES)
     for name, desc in NAMESPACES:
         out.append(f"    {name.ljust(width)}  {desc}")
+    out.append('    -> guide("<name>") prints any helper\'s signature (e.g. guide("estimate_effect"))')
     out += [
         "",
         "GO DEEPER",
-        '    topica.guide("STM")      one model: signatures + first calls',
-        "    topica.guide(full=True)  every model, grouped",
-        "    help(topica.STM)         full constructor / fit docstrings",
-        "    topica.list_models()     the roster (list_models(group=...) to filter)",
+        '    topica.guide("STM")            one model: signatures + first calls',
+        '    topica.guide("topic_stability") one helper: signature + purpose',
+        "    topica.guide(full=True)        every model, grouped",
+        "    help(topica.STM)               full constructor / fit docstrings",
+        "    topica.list_models()           the roster (list_models(group=...) to filter)",
         f"    docs: {DOCS_BASE}",
     ]
     return out
@@ -213,14 +262,19 @@ def build_guide(topic: str | None = None, *, full: bool = False, show_version: b
     """
     if topic is not None:
         match = _resolve_name(topic)
-        if match is None:
-            near = _did_you_mean(topic)
-            hint = f" Did you mean: {', '.join(near)}?" if near else ""
-            return (
-                f"No model named {topic!r} in the roster.{hint}\n"
-                "Run topica.list_models() for the full list."
-            )
-        return "\n".join(_card(match))
+        if match is not None:
+            return "\n".join(_card(match))
+        # Not a model: try the helper functions the namespaces expose, so
+        # guide("estimate_effect") / guide("topic_stability") print a signature.
+        helper = _resolve_helper(topic)
+        if helper is not None:
+            return "\n".join(_helper_card(*helper))
+        near = _did_you_mean(topic)
+        hint = f" Did you mean: {', '.join(near)}?" if near else ""
+        return (
+            f"No model or helper named {topic!r}.{hint}\n"
+            "Run topica.list_models() for the roster, or topica.guide() for the helpers."
+        )
     if full:
         return "\n".join(_full())
     return "\n".join(_essentials(show_version=show_version))
@@ -235,9 +289,19 @@ def _resolve_name(topic: str) -> str | None:
     return None
 
 
-def _did_you_mean(topic: str) -> list[str]:
-    """Up to three registry names whose lowercase form contains, or is contained
-    by, the query — a cheap substring suggestion, no fuzzy-match dependency."""
+def _resolve_helper(topic: str):
+    """Case-insensitive match of ``topic`` to a helper; returns ``(name, ns, func)``."""
     lowered = topic.lower()
-    hits = [n for n in REGISTRY if lowered in n.lower() or n.lower() in lowered]
+    for name, (ns, func) in _helper_index().items():
+        if name.lower() == lowered:
+            return name, ns, func
+    return None
+
+
+def _did_you_mean(topic: str) -> list[str]:
+    """Up to three model or helper names whose lowercase form contains, or is
+    contained by, the query — a cheap substring suggestion, no fuzzy dependency."""
+    lowered = topic.lower()
+    names = list(REGISTRY) + list(_helper_index())
+    hits = [n for n in names if lowered in n.lower() or n.lower() in lowered]
     return hits[:3]

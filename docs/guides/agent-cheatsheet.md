@@ -79,12 +79,14 @@ HELPER NAMESPACES (topica.<stage>.*)
     design                             design matrices (one_hot, design_matrix, spline)
     data                               corpus + bundled datasets (from_dataframe, tokenize, datasets)
     compare / provenance / embeddings  two-fit drift, analysis manifest, embedding I/O
+    -> guide("<name>") prints any helper's signature (e.g. guide("estimate_effect"))
 
 GO DEEPER
-    topica.guide("STM")      one model: signatures + first calls
-    topica.guide(full=True)  every model, grouped
-    help(topica.STM)         full constructor / fit docstrings
-    topica.list_models()     the roster (list_models(group=...) to filter)
+    topica.guide("STM")            one model: signatures + first calls
+    topica.guide("topic_stability") one helper: signature + purpose
+    topica.guide(full=True)        every model, grouped
+    help(topica.STM)               full constructor / fit docstrings
+    topica.list_models()           the roster (list_models(group=...) to filter)
     docs: https://nealcaren.github.io/topica/
 ```
 

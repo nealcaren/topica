@@ -36,7 +36,7 @@ The main entry points, by task:
 
 - **Corpus** (``topica.data``): :func:`from_dataframe`, :class:`Corpus`,
   :func:`tokenize` (also at the top level); bundled example corpora in
-  :mod:`topica.data.datasets`.
+  :mod:`topica.datasets` (``topica.datasets.load_gadarian()``).
 - **Models** (top level): :class:`LDA` and the wider family (:class:`STM`,
   :class:`CTM`, :class:`DMR`, :class:`KeyATM`, :class:`SAGE`, :class:`HDP`,
   :class:`BERTopic`, …); ``model.fit(corpus)`` then read ``model.topic_word`` /
