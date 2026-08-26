@@ -23,14 +23,14 @@ _CURATED = {
     "effects", "compare", "embeddings", "provenance",
     "Corpus", "tokenize", "from_dataframe", "progress",
     "LDA", "STM", "NMF", "KeyATM", "GSDMM", "BERTopic",
-    "list_models", "enable_experimental",
+    "list_models", "guide", "enable_experimental",
     "__version__", "__citation__",
 }
 
 
 def test_curated_all_is_exactly_the_surface():
     assert set(topica.__all__) == _CURATED
-    assert len(topica.__all__) == 23
+    assert len(topica.__all__) == 24
 
 
 def test_flagship_models_match_common_start_set():
