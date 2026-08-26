@@ -124,6 +124,15 @@ def _fit_lda(iters=200):
     return m.doc_topic, m.topic_word, K
 
 
+def _fit_csatm(iters=300):
+    # No parents supplied: every document is a thread root (popularity 1), so the
+    # invariant suite exercises the popularity-weighted Gibbs core and the
+    # (self-only) transitivity path on the shared planted-block corpus.
+    docs, _ = _planted_blocks(seed=0)
+    m = topica.CSATM(num_topics=K, seed=1).fit(docs, iters=iters)
+    return m.doc_topic, m.topic_word, K
+
+
 def _fit_topical_ngrams(iters=200):
     docs, _ = _planted_blocks(seed=0)
     m = topica.TopicalNGrams(num_topics=K, seed=1).fit(docs, iters=iters)
@@ -695,6 +704,7 @@ def _fit_pltm(iters=400):
 
 FIT_ADAPTERS = {
     "LDA": _fit_lda,
+    "CSATM": _fit_csatm,
     "TopicalNGrams": _fit_topical_ngrams,
     "KeyNMF": _fit_keynmf,
     "OnlineLDA": _fit_online_lda,

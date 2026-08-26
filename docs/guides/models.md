@@ -145,6 +145,7 @@ Not (yet) on the validated roster, on one of two grounds: the model is unpublish
 |---|---|---|---|---|
 | `TensorLDA` | text | svd | seed-reproducible | Online Tensor LDA (Kangaslahti et al. 2026): deterministic method-of-moments topic modeling via second and third-order cumulants. |
 | `NarrativeTM` | text | gibbs | seed-reproducible | Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text. |
+| `CSATM` | text, links | gibbs | seed-reproducible | Conversational Structure Aware TM (Sun et al. 2020): weights each comment's tokens by a reply-tree 'popularity' score and, after Gibbs, smooths each comment's topics toward its ancestors along the reply path ('transitivity'). For threaded forum data (posts + nested comments). Ported from the paper (no reference implementation); validated by planted recovery + LDA reduction. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate. |
 | `IdealPointSentenceTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The sentence-embedding sibling of IdealPointTM, fit by EM. |
 | `EmbeddingLDA` | text, embeddings | gibbs | seed-reproducible | LDA anchored by pre-trained embeddings: k-means clusters the vocabulary embeddings, seeds each topic with the words nearest a cluster centroid, and (optionally) biases each document's mixture toward its own embedding. A topica original; validated by planted-recovery only. |
@@ -563,6 +564,36 @@ next to a Java run for a loose eyeball comparison only — it lines up topica's
 weights (without the word background term), so it is a sanity check, not a fidelity
 measurement; the gradient and recovery tests are what substantiate faithfulness. A
 fixed seed reproduces bit-for-bit.
+
+## CSATM
+
+CSATM (Conversational Structure Aware and Context Sensitive Topic Model; Sun,
+Loparo & Kolacinski 2020) is an LDA variant for **threaded forum discussions** —
+posts with nested reply trees, one comment per document. It uses the reply tree in
+two ways. First, **popularity**: each comment gets a weight equal to the
+level-discounted node count of its reply subtree, so a comment that draws many
+replies carries more weight in inference (its tokens count for `lambda_ * p_c`
+instead of 1 — the same weighted-count idea as KeyATM, but per comment rather than
+per word). Second, **transitivity**: after Gibbs, each comment's topic distribution
+is smoothed toward its ancestors along the path to the thread root, weighted so a
+nearer ancestor (the comment it directly replies to) pulls harder than the root.
+
+Pass the reply structure to `fit` as a `parents` list — `parents[d]` is document
+`d`'s parent index (`-1` for a thread root). Omit it and every document is a root,
+which reduces the model to ordinary LDA when `lambda_=1`. The level-weight sequence
+(`weight_seq`, default `"arithmetic"`) is shared by popularity and transitivity; a
+sharper fall-off (larger `weight_d`) or a larger `lambda_` leans harder on the
+thread structure. Besides the usual `topic_word`/`doc_topic`, CSATM exposes
+`doc_topic_raw` (the pre-transitivity Gibbs theta) and `popularity` (the per-comment
+`p_c` diagnostic).
+
+CSATM is **experimental**: the paper has no public reference implementation, so it
+was ported from the paper's equations and validated by planted-topic recovery, a
+degenerate-case identity (all-roots + `lambda_=1` reduces to LDA), and a directional
+coherence check on real threaded Reddit data, where CSATM matches or beats LDA and
+the margin grows as the popularity weighting is strengthened. It is not a
+byte-for-byte reproduction of the paper's reported numbers. A fixed seed reproduces
+bit-for-bit.
 
 ## Scholar
 

@@ -205,6 +205,11 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         exempt: &[],
     },
     RegistryEntry {
+        name: "CSATM",
+        family: ModelFamily::Dirichlet,
+        exempt: &[],
+    },
+    RegistryEntry {
         name: "PA",
         family: ModelFamily::Dirichlet,
         exempt: &[],
@@ -388,10 +393,11 @@ mod registry_tests {
             }
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
-        // Estimator-backed Rust struct). Bumped to 37 when KeyNMF was added.
+        // Estimator-backed Rust struct). Bumped to 37 when KeyNMF was added, 38
+        // when CSATM was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            37,
+            38,
             "registry size drifted from the Python REGISTRY"
         );
     }

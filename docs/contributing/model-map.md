@@ -66,6 +66,7 @@ Column meanings:
 | `NarrativeTM` | `python/topica/narrative.py` | — _(Python)_ | intra-document trajectory over Gibbs core (Python) | default | `tests/test_content_trajectory.py` |
 | `RTM` | `src/rtm.rs` | `src/python/rtm.rs` | variational EM + link head (optimize.rs digamma) | default | `parity/rtm_compare.py`, `parity/rtm_reference.py`, `tests/test_rtm.py` |
 | `FactorialLDA` | `src/factorial_lda.rs` | `src/python/factorial_lda.rs` | collapsed Gibbs over tuples + MCEM gradient ascent on log-linear priors | default | `parity/factorial_lda_compare.py`, `tests/test_factorial_lda.py` |
+| `CSATM` | `src/csatm.rs` | `src/python/csatm.rs` | popularity-weighted collapsed Gibbs + post-hoc reply-path transitivity smoothing | default | `tests/test_csatm.py` |
 | `AuthorTopic` | `src/author_topic.rs` | `src/python/author_topic.rs` | collapsed Gibbs (author×topic + word×topic counts) | default | `parity/author_topic_gold.py` |
 
 ### Guided & supervised
