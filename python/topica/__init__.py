@@ -68,6 +68,7 @@ from ._topica import (
     PT,
     GSDMM,
     BTM,
+    CSATM,
     FactorialLDA,
     FactorialLDA as FLDA,
     PolylingualLDA,

@@ -56,6 +56,7 @@ _FACTORIES: dict[str, object] = {
     "SeededLDA": lambda: topica.SeededLDA({"a": ["x"], "b": ["y"]}),
     "GSDMM": lambda: topica.GSDMM(num_topics=5),
     "BTM": lambda: topica.BTM(2),
+    "CSATM": lambda: topica.CSATM(2),
     "FactorialLDA": lambda: topica.FactorialLDA([3, 2]),
     "STM": lambda: topica.STM(2),
     "CTM": lambda: topica.CTM(2),

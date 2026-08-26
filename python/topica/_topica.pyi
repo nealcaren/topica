@@ -2976,6 +2976,81 @@ class BTM:
     def __repr__(self) -> str: ...
 
 
+class CSATM:
+    """Conversational Structure Aware and Context Sensitive Topic Model (Sun,
+    Loparo & Kolacinski 2020): a collapsed-Gibbs topic model for threaded forum
+    discussions (posts + nested reply trees, one comment per document). Each
+    comment's tokens are weighted by a reply-tree "popularity" score, and after
+    inference each comment's topic distribution is smoothed toward its ancestors
+    along the reply path ("transitivity"). Ported from the paper with no reference
+    implementation; validated by planted recovery + LDA reduction. Experimental."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha: float = 0.1,
+        beta: float = 0.01,
+        lambda_: float = 0.1,
+        weight_seq: str = "arithmetic",
+        weight_c: float = 1.0,
+        weight_d: float = 0.5,
+        weight_g: float = 1.0,
+        seed: int = 13,
+    ) -> None:
+        """`weight_seq` selects the decreasing level-weight sequence shared by
+        popularity and transitivity: "arithmetic" (``max(weight_c -
+        (l-1)*weight_d, 0)``), "geometric" (``weight_c * weight_d**(l-1)``), or
+        "harmonic" (``(weight_c + (l-1)*weight_d)**(-weight_g)``). `lambda_` scales
+        the popularity weight applied to token counts."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        parents: Sequence[int] | None = None,
+        *,
+        iters: int = 1000,
+    ) -> "CSATM":
+        """`parents[d]` is document ``d``'s parent index in the reply tree (``-1``
+        for a thread root); omit it (or pass ``None``) to treat every document as a
+        root, which reduces the fit to ordinary LDA when ``lambda_=1``."""
+        ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """The transitivity-smoothed document-topic distribution (rows sum to 1)."""
+        ...
+    @property
+    def doc_topic_raw(self) -> numpy.typing.NDArray[numpy.float64]:
+        """The raw Gibbs document-topic distribution, before transitivity smoothing."""
+        ...
+    @property
+    def popularity(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-document reply-tree popularity score ``p_c`` (a fit diagnostic)."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None, weights: bool = False
+    ) -> list[str] | list[list[str]] | list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10, *, coherence_type: str = "u_mass", texts: "Corpus | Sequence[Sequence[str]] | None" = None) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> "CSATM": ...
+    def __repr__(self) -> str: ...
+
+
 class FactorialLDA:
     """Factorial LDA (Paul & Dredze 2012): a sparse multi-dimensional topic model.
     Each token is drawn from a K-tuple of latent factors (e.g. (topic, sentiment) or

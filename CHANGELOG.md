@@ -63,6 +63,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`CSATM` — Conversational Structure Aware Topic Model** (Sun, Loparo &
+  Kolacinski 2020; #811). A collapsed-Gibbs LDA for threaded forum discussions that
+  weights each comment's tokens by a reply-tree "popularity" score and, after
+  inference, smooths each comment's topics toward its ancestors along the reply path
+  ("transitivity"). Pass the reply tree to `fit(docs, parents=...)` (`parents[d]` =
+  parent doc index, `-1` for a root); it exposes `doc_topic_raw` and a per-comment
+  `popularity` diagnostic. **Experimental**: ported from the paper (no public
+  reference implementation) and validated by planted recovery, an LDA-reduction
+  identity, and a directional coherence check on real threaded Reddit data.
 - **`KeyNMF` — embedding-keyword NMF** (Kristensen-McLachlan et al., 2024). The NMF
   family's bridge to the embedding backend: for each document it scores its words by
   the similarity between the document embedding and the word embedding, keeps the

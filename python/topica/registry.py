@@ -159,6 +159,9 @@ REGISTRY: dict[str, ModelInfo] = {
         _m("FactorialLDA", "covariates", ("text",), "gibbs", "seed-reproducible", (),
            "Factorial LDA (Paul & Dredze 2012): each token is a K-tuple of latent factors (e.g. topic x sentiment); structured word priors tie tuples sharing a component and a sparsity prior deactivates unsupported tuples.",
            "guides/models.md#factorial-lda"),
+        _m("CSATM", "covariates", ("text", "links"), "gibbs", "seed-reproducible", ("network", "short-text"),
+           "Conversational Structure Aware TM (Sun et al. 2020): weights each comment's tokens by a reply-tree 'popularity' score and, after Gibbs, smooths each comment's topics toward its ancestors along the reply path ('transitivity'). For threaded forum data (posts + nested comments). Ported from the paper (no reference implementation); validated by planted recovery + LDA reduction.",
+           "guides/models.md#csatm", experimental=True),
         # ---- Guided & supervised -------------------------------------------
         _m("KeyATM", "guided", ("text", "seeds"), "gibbs", "seed-reproducible", (),
            "Keyword-assisted topics: anchor named topics with a few seed words each.",
@@ -357,6 +360,7 @@ IMPL: dict[str, ImplInfo] = {
     "GSDMM": _i("src/gsdmm.rs", "src/python/mod.rs", "collapsed Gibbs mixture (one topic/doc)", "", "parity/gsdmm_gold.py"),
     "PT": _i("src/pt.rs", "src/python/mod.rs", "collapsed Gibbs over pseudo-documents", "", "parity/pt_gold.py"),
     "BTM": _i("src/btm.rs", "src/python/btm.rs", "collapsed Gibbs over biterms", "", "parity/btm_compare.py, tests/test_btm.py"),
+    "CSATM": _i("src/csatm.rs", "src/python/csatm.rs", "popularity-weighted collapsed Gibbs + post-hoc reply-path transitivity smoothing", "", "tests/test_csatm.py"),
     "FactorialLDA": _i("src/factorial_lda.rs", "src/python/factorial_lda.rs", "collapsed Gibbs over tuples + MCEM gradient ascent on log-linear priors", "", "parity/factorial_lda_compare.py, tests/test_factorial_lda.py"),
     "DTM": _i("src/dtm.rs", "src/python/mod.rs", "variational Kalman over time slices", "", "parity/dtm_gold.py"),
     "DETM": _i("src/detm.rs", "src/python/neural.rs", "embedding VAE + LSTM q(eta) (etm_vae.rs)", "", "parity/detm_gold.py"),
