@@ -80,6 +80,7 @@ The right first choice when your design calls for one: short text, change over t
 | `RTM` | text, links | variational | seed-reproducible | Relational topic model (Chang & Blei 2010): jointly models document text and a link graph (citations, hyperlinks, adjacency); predicts links from words and words from links. |
 | `FactorialLDA` | text | gibbs | seed-reproducible | Factorial LDA (Paul & Dredze 2012): each token is a K-tuple of latent factors (e.g. topic x sentiment); structured word priors tie tuples sharing a component and a sparsity prior deactivates unsupported tuples. |
 | `AuthorTopic` | text, metadata | gibbs | seed-reproducible | Author-Topic Model: each author has a topic distribution; documents mix their authors. Answers what an author writes about. |
+| `AuthorRecipientTopic` | text, metadata | gibbs | seed-reproducible | Author-Recipient-Topic (McCallum et al. 2007): topics conditioned on the (sender, recipient) pair, for the language of a directed social network (who talks to whom about what). Realized over the AuthorTopic engine. |
 
 #### Guided & supervised
 
@@ -1067,6 +1068,26 @@ m.top_words(6, topic=int(m.author_topic[i].argmax()))  # a decade's theme
 ```
 
 Validated against gensim's `AuthorTopicModel` (the reference implementation; gensim is LGPL, so topica implements the paper's collapsed Gibbs and uses gensim only as a black-box oracle) in `parity/author_topic_gold.py`. On a synthetic corpus with a planted author→topic structure and overlapping topics, topica matches gensim about as closely as two gensim runs with different seeds match each other: aligned topic-word cosine 0.99 (one gensim seed pair: 0.999) and aligned author-topic correlation 0.997 (seed pair: 1.000), with each author's dominant topic recovered cleanly and distinctly. Because ATM is stochastic and gensim's inference is variational while topica's is Gibbs, this is topic-aligned agreement near the reference's seed-to-seed noise, not a bit-for-bit match. On fit speed, topica is faster than gensim at matched full-corpus sweeps (roughly 2x on a small corpus, ~7x on a larger one; the exact multiplier depends on how gensim's online passes are configured).
+
+## AuthorRecipientTopic
+
+The Author-Recipient-Topic model ([McCallum, Wang & Corrada-Emmanuel 2007](https://www.jair.org/index.php/jair/article/view/10476)) conditions topics on the **directed (sender, recipient) pair**, not on a single author. For each token a recipient is drawn uniformly from the message's recipient set, a topic from the pair-specific distribution `θ_{sender, recipient}`, and a word from `φ`. It captures the language of a *directed* social network — who talks to whom about what — which the author-only model cannot see. The canonical use is email or reply data; on Reddit-style threads the sender is a comment's author and the single recipient is the parent comment's author.
+
+```python
+docs       = [["you", "should", "lift"], ["thanks", "that", "helped"], ...]
+authors    = ["userA", "userB", ...]          # one sender per message
+recipients = [["userB"], ["userA"], ...]      # recipient list per message (>= 1)
+m = topica.AuthorRecipientTopic(num_topics=20, seed=13).fit(
+        docs, authors=authors, recipients=recipients)
+m.pair_topic    # (num_pairs, K) each (sender, recipient) pair's topic distribution
+m.pair_labels   # the (sender, recipient) tuples indexing those rows
+m.pair_counts   # messages behind each pair's row (its reliability)
+m.topic_word    # (K, V)   m.doc_topic  # (num_docs, K) content-based, as in LDA
+```
+
+**Implementation.** ART is mathematically isomorphic to `AuthorTopic` with the "author" taken to be the ordered `(sender, recipient)` pair: because the sender is fixed within a message, uniform sampling over recipients is identical to uniform sampling over that message's pairs. topica therefore realizes ART as a faithful wrapper over the validated AuthorTopic collapsed-Gibbs engine (mapping recipients to pair labels and delegating the fit), which inherits its determinism and — because AuthorTopic's held-in likelihood already carries the `1/|recipients|` factor — the correct recipient-averaged likelihood. `alpha` and `beta` default to the paper's values, `50/K` and `0.1`. Validation is the isomorphism identity (ART's token→pair partition matches an independently-labeled AuthorTopic fit, so `topic_word`/`doc_topic` agree bit-for-bit), planted recovery with unequal recipient-set sizes, the unique-pair-per-document reduction to LDA, and label-collision / set-determinism edge cases, in `tests/test_art.py`.
+
+**Reading pair profiles honestly.** As with AuthorTopic, a pair's `pair_topic` row is only as trustworthy as its `pair_counts`; per-individual pairs are often ultra-sparse (most dyads exchange one message), so report the counts and prefer stable, well-populated pairs. A subtle trap: under the default `50/K` smoothing a *sparse* pair's few token assignments concentrate, so its row looks **spikier** — more confident — than a well-populated pair's flatter row. Peakedness is not confidence; threshold on `pair_counts` before reading any pair's `argmax` as its "dominant topic." Note also that `pair_topic` is the model-defining output: the general `inspect.topic_crosstab` helper reads `doc_topic` (content-based, LDA-style) and so ignores the directed-pair structure — build your reporting table from `pair_topic` / `pair_labels` / `pair_counts` to keep the dyad. **Any dyadic grouping can play sender/recipient.** Passing observed group labels — a poster's home community as sender, the location subreddit as recipient — turns `pair_topic` into a per-group discourse profile and lets ART model how the same population talks differently across spaces. This is a coarsened, observed-group application of ART, not latent-role discovery (the RART role extension is future work). Labels must be serializable (strings or ints), and every message needs at least one recipient (an empty recipient set raises). Fit cost tracks AuthorTopic (roughly on par; the pair-preprocessing pass is negligible), so it inherits the author-family sampler's speed — slower than plain LDA, since each token samples over a `|pairs-in-doc| × K` grid. The `pair_topic` table is `P × K`, where `P` is the number of distinct pairs; with many individual dyads `P` can far exceed the number of senders, so on very large per-individual corpora prefer coarser group labels (which also make each pair's row better populated).
 
 ## MGLDA
 

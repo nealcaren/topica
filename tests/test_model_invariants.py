@@ -346,6 +346,17 @@ def _fit_author_topic(iters=300):
     return m.doc_topic, m.topic_word, m.num_topics
 
 
+def _fit_art(iters=300):
+    # One (sender, recipient) pair per block, so each pair owns one topic; doc_topic
+    # is the empirical per-document topic simplex, like LDA / AuthorTopic.
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    authors = [f"a{d % K}" for d in range(len(docs))]
+    recipients = [[f"r{d % K}"] for d in range(len(docs))]
+    m = topica.AuthorRecipientTopic(K, seed=1).fit(
+        docs, authors=authors, recipients=recipients, iters=iters)
+    return m.doc_topic, m.topic_word, m.num_topics
+
+
 def _fit_tot(iters=300):
     # Topics over Time: planted blocks, each block clustered in a distinct time window
     # so the temporal factor is informative. doc_topic is the standard LDA simplex.
@@ -718,6 +729,7 @@ FIT_ADAPTERS = {
     "SeededLDA": _fit_seededlda,
     "LabeledLDA": _fit_labeledlda,
     "AuthorTopic": _fit_author_topic,
+    "AuthorRecipientTopic": _fit_art,
     "MGLDA": _fit_mglda,
     "TopicsOverTime": _fit_tot,
     "SupervisedLDA": _fit_supervisedlda,
