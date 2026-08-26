@@ -124,10 +124,38 @@ impl CSATM {
                 "weight_seq must be 'arithmetic', 'geometric', or 'harmonic'",
             ));
         }
-        for (name, val) in [("weight_c", weight_c), ("weight_d", weight_d), ("weight_g", weight_g)] {
+        for (name, val) in [
+            ("weight_c", weight_c),
+            ("weight_d", weight_d),
+            ("weight_g", weight_g),
+        ] {
             if !val.is_finite() {
                 return Err(PyValueError::new_err(format!("{name} must be finite")));
             }
+        }
+        // The weight sequence MUST be non-increasing and bounded (the paper's
+        // "decreasing sequence"): this keeps popularity p_c finite and bounded by
+        // the subtree node count, so the weighted counts can never overflow. A
+        // growing sequence (e.g. geometric ratio > 1) would let p_c explode. Route
+        // positivity checks through the shared NaN-rejecting helpers (#481).
+        ensure_finite_pos("weight_c", weight_c)?;
+        match weight_seq.as_str() {
+            // w_l = max(c - (l-1)*d, 0): d >= 0 is non-increasing (and clamped >= 0).
+            "arithmetic" => ensure_finite_nonneg("weight_d", weight_d)?,
+            // w_l = c*r^(l-1): the ratio r must be in (0, 1] to be non-increasing.
+            "geometric" => {
+                if !(weight_d.is_finite() && weight_d > 0.0 && weight_d <= 1.0) {
+                    return Err(PyValueError::new_err(
+                        "geometric weight_d (ratio) must be in (0, 1] (a non-increasing sequence)",
+                    ));
+                }
+            }
+            // w_l = (c + (l-1)*b)^(-g): b >= 0 and g >= 0 give a non-increasing sequence.
+            "harmonic" => {
+                ensure_finite_nonneg("weight_d", weight_d)?;
+                ensure_finite_nonneg("weight_g", weight_g)?;
+            }
+            _ => unreachable!(),
         }
         Ok(CSATM {
             num_topics,
@@ -146,10 +174,14 @@ impl CSATM {
     }
 
     /// Fit CSATM. `data` is a `Corpus` or a list of token lists. `parents` is an
-    /// optional per-document list of parent document indices in the reply tree
-    /// (`-1` for a thread root / post); when omitted, every document is treated as
-    /// a root, so with `lambda_=1` the fit reduces to ordinary LDA. `iters` is the
-    /// number of collapsed-Gibbs sweeps.
+    /// optional per-document list of parent document **indices** in the reply tree
+    /// (`-1` for a thread root / post); when omitted, every document is treated as a
+    /// root, so with `lambda_=1` the fit reduces to ordinary LDA. Each `parents`
+    /// value must be `-1` or a valid other-document index; an out-of-range value, a
+    /// self-parent, or a cycle raises `ValueError`. Because the values are indices,
+    /// build `parents` in the SAME order as `docs` and rebuild it (do not just
+    /// reorder it) after any preprocessing that drops or reorders documents. `iters`
+    /// is the number of collapsed-Gibbs sweeps.
     #[pyo3(signature = (data, parents=None, *, iters=1000))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -197,6 +229,42 @@ impl CSATM {
                         p.len(),
                         expected_len
                     )));
+                }
+                // Validate every parent value BEFORE remapping. `parents[d]` is an
+                // index into the ORIGINAL document list: it must be -1 (a thread
+                // root) or a valid other-document index. Out-of-range, self-parent,
+                // and stray-negative values are almost always a stale/scrambled
+                // array (e.g. reordered by corpus pruning without remapping the
+                // index VALUES) — reject them loudly rather than silently treating
+                // them as roots and fitting on a scrambled reply tree.
+                for (d, &par) in p.iter().enumerate() {
+                    if par < -1 || par >= expected_len as i64 {
+                        return Err(PyValueError::new_err(format!(
+                            "parents[{d}] = {par} is out of range; must be -1 (a thread root) \
+                             or a document index in [0, {expected_len})"
+                        )));
+                    }
+                    if par == d as i64 {
+                        return Err(PyValueError::new_err(format!(
+                            "parents[{d}] = {d} points at itself; a document cannot be its own parent"
+                        )));
+                    }
+                }
+                // Cheap acyclicity check: following parent links from any node must
+                // reach a root (-1) within `expected_len` steps, else there is a cycle.
+                for start in 0..expected_len {
+                    let mut cur = start as i64;
+                    let mut steps = 0usize;
+                    while cur != -1 {
+                        cur = p[cur as usize];
+                        steps += 1;
+                        if steps > expected_len {
+                            return Err(PyValueError::new_err(format!(
+                                "parents contains a cycle reachable from document {start}; \
+                                 the reply structure must be a forest (acyclic)"
+                            )));
+                        }
+                    }
                 }
                 let mut old_to_new = vec![-1i64; expected_len];
                 for (new_idx, &old) in kept.iter().enumerate() {

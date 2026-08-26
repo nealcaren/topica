@@ -138,3 +138,32 @@ def test_parents_length_validated():
     docs, _ = _threaded_corpus()
     with pytest.raises(ValueError):
         topica.CSATM(2, seed=0).fit(docs, [-1, 0])  # wrong length
+
+
+def test_parents_values_validated():
+    docs, _ = _threaded_corpus()  # 6 docs
+    # Out-of-range parent index.
+    with pytest.raises(ValueError):
+        topica.CSATM(2, seed=0).fit(docs, [-1, 0, 1, -1, 3, 99])
+    # Self-parent.
+    with pytest.raises(ValueError):
+        topica.CSATM(2, seed=0).fit(docs, [-1, 0, 1, -1, 3, 5])
+    # Stray negative (not -1).
+    with pytest.raises(ValueError):
+        topica.CSATM(2, seed=0).fit(docs, [-1, 0, 1, -1, 3, -7])
+    # Cycle: 0 -> 1 -> 0.
+    with pytest.raises(ValueError):
+        topica.CSATM(2, seed=0).fit(docs, [1, 0, 1, -1, 3, 4])
+
+
+def test_weight_seq_params_validated():
+    # Growing sequences (which would let popularity explode) are rejected.
+    with pytest.raises(ValueError):
+        topica.CSATM(2, weight_seq="geometric", weight_d=1.5)  # ratio > 1
+    with pytest.raises(ValueError):
+        topica.CSATM(2, weight_seq="arithmetic", weight_d=-0.1)  # increasing
+    with pytest.raises(ValueError):
+        topica.CSATM(2, weight_c=0.0)  # non-positive scale
+    # Valid non-increasing sequences are accepted.
+    topica.CSATM(2, weight_seq="geometric", weight_d=0.5)
+    topica.CSATM(2, weight_seq="harmonic", weight_d=1.0, weight_g=1.0)

@@ -311,21 +311,31 @@ pub fn fit<R: Rng>(
                 for t in 0..k {
                     // (ñ_{k,c} + α)·(ñ_{k,w} + β)/(Σ_w ñ_{k,w} + Vβ), on the
                     // already-weighted counts (no further ×λp_c).
-                    let val =
-                        (ndk[dd][t] + alpha) * (nkw[t][w] + beta) / (nk[t] + vbeta);
+                    let val = (ndk[dd][t] + alpha) * (nkw[t][w] + beta) / (nk[t] + vbeta);
                     cond[t] = val;
                     total += val;
                 }
-                // Categorical draw (cumulative-sum + seeded RNG).
-                let mut r = rng.gen::<f64>() * total;
-                let mut new = k - 1;
-                for t in 0..k {
-                    r -= cond[t];
-                    if r <= 0.0 {
-                        new = t;
-                        break;
+                // Categorical draw (cumulative-sum + seeded RNG). Guard against a
+                // non-finite or non-positive total: with α,β>0 and finite weights
+                // `total` is always strictly positive, but if a pathological weight
+                // magnitude ever pushed a term to inf/NaN (rejected at construction,
+                // but belt-and-suspenders) fall back to a uniform draw rather than
+                // silently biasing toward the last topic (which `r <= 0.0` would do
+                // when `r` is NaN).
+                let new = if total.is_finite() && total > 0.0 {
+                    let mut r = rng.gen::<f64>() * total;
+                    let mut pick = k - 1;
+                    for t in 0..k {
+                        r -= cond[t];
+                        if r <= 0.0 {
+                            pick = t;
+                            break;
+                        }
                     }
-                }
+                    pick
+                } else {
+                    (rng.gen::<f64>() * k as f64) as usize % k
+                };
 
                 z[dd][pos] = new;
                 ndk[dd][new] += w_d;
@@ -524,12 +534,30 @@ mod tests {
             num_topics: 3,
             ..Default::default()
         };
-        let a = fit(&corpus, &[], &params, 120, &mut ChaCha8Rng::seed_from_u64(3));
-        let b = fit(&corpus, &[], &params, 120, &mut ChaCha8Rng::seed_from_u64(3));
+        let a = fit(
+            &corpus,
+            &[],
+            &params,
+            120,
+            &mut ChaCha8Rng::seed_from_u64(3),
+        );
+        let b = fit(
+            &corpus,
+            &[],
+            &params,
+            120,
+            &mut ChaCha8Rng::seed_from_u64(3),
+        );
         assert_eq!(a.topic_word, b.topic_word);
         assert_eq!(a.doc_topic, b.doc_topic);
         // A different seed should differ, so the test can't pass trivially.
-        let c = fit(&corpus, &[], &params, 120, &mut ChaCha8Rng::seed_from_u64(99));
+        let c = fit(
+            &corpus,
+            &[],
+            &params,
+            120,
+            &mut ChaCha8Rng::seed_from_u64(99),
+        );
         assert_ne!(a.topic_word, c.topic_word);
     }
 

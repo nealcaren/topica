@@ -579,21 +579,74 @@ is smoothed toward its ancestors along the path to the thread root, weighted so 
 nearer ancestor (the comment it directly replies to) pulls harder than the root.
 
 Pass the reply structure to `fit` as a `parents` list — `parents[d]` is document
-`d`'s parent index (`-1` for a thread root). Omit it and every document is a root,
-which reduces the model to ordinary LDA when `lambda_=1`. The level-weight sequence
-(`weight_seq`, default `"arithmetic"`) is shared by popularity and transitivity; a
-sharper fall-off (larger `weight_d`) or a larger `lambda_` leans harder on the
-thread structure. Besides the usual `topic_word`/`doc_topic`, CSATM exposes
-`doc_topic_raw` (the pre-transitivity Gibbs theta) and `popularity` (the per-comment
-`p_c` diagnostic).
+`d`'s parent **index** (`-1` for a thread root). `fit` validates it: a value outside
+`[-1, num_docs)`, a self-parent, or a cycle raises `ValueError` rather than fitting on
+a scrambled tree.
 
-CSATM is **experimental**: the paper has no public reference implementation, so it
-was ported from the paper's equations and validated by planted-topic recovery, a
-degenerate-case identity (all-roots + `lambda_=1` reduces to LDA), and a directional
-coherence check on real threaded Reddit data, where CSATM matches or beats LDA and
-the margin grows as the popularity weighting is strengthened. It is not a
-byte-for-byte reproduction of the paper's reported numbers. A fixed seed reproduces
-bit-for-bit.
+**`parents` holds indices, so it is fragile to any step that reorders or drops
+documents.** If you build a `Corpus` first (which prunes empty documents and reorders
+survivors), the *positions* shift **and** some referenced parents disappear — so
+realigning with `parents[corpus.kept_indices]` is wrong (that reorders the values but
+leaves them pointing at old positions). Rebuild the indices from a stable id after
+preprocessing. A worked example from Reddit-style data (a `fullname` / `parent_fullname`
+export):
+
+```python
+import topica
+
+# rows: each has fullname (e.g. "t1_abc"), parent_fullname ("t1_xyz" or "t3_post"),
+# and text. Keep the comments you will model, in one fixed order.
+rows = [r for r in load_threaded_csv() if r["row_type"] == "comment"]
+docs = [topica.tokenize(r["text"]) for r in rows]
+
+# Drop docs that tokenize to (near-)empty BEFORE building parents, so indices align.
+keep = [i for i, d in enumerate(docs) if len(d) >= 3]
+docs = [docs[i] for i in keep]
+index_of = {rows[i]["fullname"]: new for new, i in enumerate(keep)}
+# A parent that is a post, is missing, or was dropped becomes a thread root (-1).
+parents = [index_of.get(rows[i]["parent_fullname"], -1) for i in keep]
+
+m = topica.CSATM(num_topics=15, seed=13).fit(docs, parents, iters=1000)
+```
+
+Omit `parents` (or pass `None`) and every document is a root: popularity is 1
+everywhere and transitivity is a no-op.
+
+**`lambda_` and the LDA relationship.** `lambda_` scales the per-token popularity
+weight `lambda_ * p_c`. The model reduces to ordinary LDA **only at `lambda_=1` with
+no reply tree** (then every weight is 1). The **default `lambda_=0.1` is not LDA** — it
+shrinks every token's count (a leaf counts 0.1), which leans *away* from the thread
+structure; raise `lambda_` toward 1 (or higher) and sharpen `weight_d` to lean *into*
+it. If you want an LDA baseline to compare against, use `CSATM(lambda_=1).fit(docs)`
+with no `parents` as the honest null — not `topica.LDA`, whose separate sampler and
+RNG stream will differ from CSATM's even when the two are mathematically equivalent.
+The level-weight sequence (`weight_seq`, default `"arithmetic"`) must be non-increasing
+and is shared by popularity and transitivity.
+
+**Which doc-topic to report.** `doc_topic` is the transitivity-**smoothed** θ′ (the
+default, and what prevalence tables read) — each comment's topics are partly borrowed
+from its ancestors, which is the model's intent. `doc_topic_raw` is the pre-smoothing
+Gibbs θ. For per-document prevalence that should reflect a comment on its own, report
+`doc_topic_raw`; to reflect a comment *in the context of its thread*, report
+`doc_topic`. They can differ substantially. `popularity` exposes the per-comment `p_c`
+for auditing.
+
+CSATM is **experimental**: the paper has no public reference implementation, so it was
+ported from the paper's equations and validated by planted-topic recovery, a
+degenerate-case reduction (all-roots + `lambda_=1` collapses the weighted counts to
+ordinary LDA), and determinism. A fixed seed reproduces bit-for-bit.
+
+**On coherence, do not expect a free win over LDA.** On a real threaded Reddit corpus
+(r/tradwives) the conversational structure did **not** measurably improve topic
+coherence over plain LDA once the confound is controlled: raising `lambda_` inflates
+token counts relative to the priors, which lifts within-corpus u_mass on its own, so a
+naive "CSATM beats LDA" u_mass margin is mostly that count-scale effect. In a
+scale-matched test (structure on vs. off at equal mean token weight) the structural
+effect on coherence was ~0 (u_mass −0.2, c_npmi −0.003), and plain LDA was in fact the
+most coherent on sliding-window c_npmi. CSATM's contribution is the thread-aware topic
+*assignment* and the `popularity` / `doc_topic_raw` diagnostics, not a coherence
+upgrade. The paper's reported coherence and assignment-accuracy gains were measured
+against external references with tuned hyperparameters and are not reproduced here.
 
 ## Scholar
 
