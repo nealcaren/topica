@@ -187,6 +187,7 @@ def summary(model, topn=8):
 
 from .gdmr import GDMR  # noqa: E402  (pure-Python Legendre-basis DMR wrapper)
 from .narrative import NarrativeTM  # noqa: E402  (pure-Python NarrativeTM wrapper)
+from .art import AuthorRecipientTopic, ART  # noqa: E402  (pure-Python ART wrapper over AuthorTopic)
 
 # PLTM is the paper's acronym for the Polylingual Topic Model.
 PLTM = PolylingualLDA  # noqa: E402
