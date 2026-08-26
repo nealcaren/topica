@@ -13,6 +13,8 @@
 #   3. cargo clippy --workspace --all-targets --all-features -- -D warnings
 #   4. generated model tables are in sync (scripts/gen_model_tables.py --check)
 #   5. the .pyi type stub is in sync with the compiled extension (test_stub_sync.py)
+#   6. the compat map and the agent cheat sheet are in sync (gen_compat.py /
+#      gen_guide.py --check)
 #
 # Steps 3-4 need `topica` importable; they use $VIRTUAL_ENV or .venv-dev, and are
 # skipped with a warning (not a hard failure) if no dev venv is present, so the
@@ -111,6 +113,12 @@ if [ -x "$PY" ]; then
     step "compat map in sync with the namespaces (scripts/gen_compat.py --check)"
     if ! VIRTUAL_ENV="$VENV" "$PY" scripts/gen_compat.py --check; then
         echo "  -> run 'python scripts/gen_compat.py' to regenerate" >&2
+        fail=1
+    fi
+
+    step "agent cheat sheet in sync with topica.guide (scripts/gen_guide.py --check)"
+    if ! VIRTUAL_ENV="$VENV" "$PY" scripts/gen_guide.py --check; then
+        echo "  -> run 'python scripts/gen_guide.py' to regenerate" >&2
         fail=1
     fi
 else

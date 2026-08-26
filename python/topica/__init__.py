@@ -12,6 +12,11 @@ choosing K, ``inspect`` for reading topics, ``evaluate`` for validation, ``effec
 for covariate effects, ``data`` / ``design`` for corpus and design-matrix prep,
 ``compare`` / ``provenance`` for the rest.
 
+New here? Run ``topica.guide()`` for a one-screen cheat sheet — the workflow, the
+goal-to-model chooser, and the read surface every fitted model shares —
+``topica.guide("STM")`` for one model, or ``topica.guide(full=True)`` for the
+whole roster. It is rendered live, so it always matches the installed build.
+
 Start here (a full LDA workflow is only a few lines)::
 
     import topica
@@ -21,6 +26,11 @@ Start here (a full LDA workflow is only a few lines)::
     model = topica.LDA(num_topics=res.best_k()).fit(corpus)
     topica.inspect.topic_table(model)                       # publication-ready labels
     topica.effects.estimate_effect(model, X=X, corpus=corpus)  # covariate effects + CIs
+
+For metadata-aware topics, swap ``LDA`` for ``STM`` and pass a prevalence design::
+
+    model = topica.STM(num_topics=20).fit(corpus, prevalence=X)
+    topica.effects.estimate_effect(model, X=X, corpus=corpus)
 
 The main entry points, by task:
 
@@ -184,6 +194,32 @@ def summary(model, topn=8):
     except Exception:
         pass
     return "\n".join(lines)
+
+
+def guide(topic=None, *, full=False):
+    """Print the topica cheat sheet: the workflow, the goal-to-model chooser, and
+    the read surface every fitted model shares.
+
+    The entry point for an agent or a first-time user who has ``import topica``
+    and needs the canonical patterns without reading the docs. Unlike
+    :func:`summary`, which describes a *fitted* model, ``guide`` is static: it
+    needs no model and no corpus.
+
+    Parameters
+    ----------
+    topic : a model name (case-insensitive, e.g. ``"STM"``) for that model's card
+        — its purpose, constructor and ``fit`` signatures, and first calls — or
+        ``None`` for the one-screen essentials.
+    full : print every validated model, grouped by purpose, with signatures.
+        Ignored when ``topic`` is given.
+
+    The sheet is rendered live from :mod:`topica.registry` and each model's real
+    signature, so it always matches the installed build. Returns ``None`` and
+    prints; use :func:`topica._guide.build_guide` for the string.
+    """
+    from ._guide import build_guide
+
+    print(build_guide(topic, full=full))
 
 
 from .gdmr import GDMR  # noqa: E402  (pure-Python Legendre-basis DMR wrapper)
@@ -428,7 +464,7 @@ __all__ = [
     # flagship models (the newcomer starting set; the rest stay importable)
     "LDA", "STM", "NMF", "KeyATM", "GSDMM", "BERTopic",
     # discovery / experimental gate / identity
-    "list_models", "enable_experimental",
+    "list_models", "guide", "enable_experimental",
     "__version__", "__citation__",
 ]
 # The flat helper callables (search_k, topic_table, estimate_effect, perplexity,

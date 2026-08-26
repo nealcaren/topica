@@ -85,6 +85,7 @@ nav:
       - Installation: getting-started/installation.md
       - Quickstart: getting-started/quickstart.md
       - Choose an approach: can-do/index.md
+      - Agent cheat sheet: guides/agent-cheatsheet.md
   - From corpus to credible result:
       - Overview: publishing/index.md
       - 1. Build a defensible corpus: publishing/corpus.md

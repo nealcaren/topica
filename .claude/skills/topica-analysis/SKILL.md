@@ -40,6 +40,20 @@ Because the count-based variational models (`CTM`, `STM`, `DTM`,
 seed-reproducible, "run it again and see if the topics hold" is a real test here,
 not a hope. Use that.
 
+**First move at the REPL: `topica.guide()`.** It prints a one-screen cheat sheet
+built live from the installed build — the canonical workflow, a goal-to-model
+chooser, the read surface above, and the helper namespaces — so you do not have to
+guess signatures or grep the type stub. `topica.guide("STM")` prints one model's
+constructor and `fit` signatures; `topica.guide(full=True)` prints the whole
+roster. `guide()` ships in the wheel, so it works from a bare `pip install topica`
+with no repository checkout. For task-shaped starting points you can transplant
+onto the researcher's data (explore with LDA and justify K, seed named concepts
+with keyATM, short text with GSDMM, embedding clusters with BERTopic, compare
+prevalence or wording across groups, track a topic over time), copy from
+`examples/recipes/` in the
+[repository](https://github.com/nealcaren/topica/tree/main/examples/recipes),
+which has one recipe per common task.
+
 ## How topica changes the standard advice
 
 If you have internalized the usual computational-text-analysis guidance ("STM is
