@@ -202,6 +202,37 @@ class SearchKResult(list):
     maximum) to avoid that, and to the held-out metric when one is supplied.
     """
 
+    def __repr__(self) -> str:
+        """A compact adjudicating summary: the chosen K and a per-K
+        coherence/exclusivity table, so printing the result answers "which K?"
+        instead of dumping the raw per-K dicts. ``.to_frame()`` gives every
+        column; ``.best_k(explain=True)`` gives the selection rule."""
+        if not self:
+            return "SearchKResult([])"
+        import warnings
+
+        ks = [r.get("k") for r in self]
+        try:
+            with warnings.catch_warnings():  # a boundary pick warns; don't emit on display
+                warnings.simplefilter("ignore")
+                chosen = self.best_k()
+        except Exception:
+            chosen = None
+        metric = self[0].get("coherence_metric", "coherence")
+        head = f"SearchKResult: scanned K={ks}"
+        if chosen is not None:
+            head += f"; best_k()={chosen}"
+        lines = [head, f"  {'K':>4}  {('coherence(' + metric + ')'):>20}  {'exclusivity':>11}"]
+        for r in self:
+            mark = " *" if r.get("k") == chosen else "  "
+            coh = r.get("coherence")
+            exc = r.get("exclusivity")
+            coh_s = f"{coh:.2f}" if isinstance(coh, (int, float)) else "-"
+            exc_s = f"{exc:.2f}" if isinstance(exc, (int, float)) else "-"
+            lines.append(f"{mark}{r.get('k'):>4}  {coh_s:>20}  {exc_s:>11}")
+        lines.append("  (* = best_k(); .to_frame() for all columns, .best_k(explain=True) for the rule)")
+        return "\n".join(lines)
+
     @property
     def directions(self) -> dict:
         """``{metric: "maximize"|"minimize"}`` for the metrics actually present."""

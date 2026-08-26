@@ -200,6 +200,13 @@ class EffectList(list):
             return pd.DataFrame()
         return pd.concat([e.to_frame() for e in self], ignore_index=True)
 
+    def __repr__(self) -> str:
+        if not self:
+            return "EffectList([])"
+        nfeat = len(getattr(self[0], "feature_names", []) or [])
+        return (f"EffectList: {len(self)} topics × {nfeat} features; "
+                ".to_frame() for the tidy table")
+
 
 def _coerce_design(X, feature_names):
     """Coerce a design-matrix argument to a float64 ``(n, p)`` array.
@@ -1503,6 +1510,35 @@ def _build_reference_rows(
     raise ValueError("One of at=, contrast=, or continuous= must be supplied.")
 
 
+class PredictedPrevalenceList(list):
+    """The result of :func:`predicted_prevalence`: a ``list`` of per-topic
+    :class:`PredictedPrevalence` objects.
+
+    It *is* a plain ``list`` (index, iterate, ``len()``), with the same two
+    conveniences its sibling :class:`EffectList` gives so the return-type zoo
+    (#742) stays uniform: a container-level :meth:`to_frame` (no
+    ``pd.concat([p.to_frame() for p in result])`` boilerplate), and a summary
+    ``repr`` instead of dumping every :class:`PredictedPrevalence`.
+    """
+
+    def to_frame(self):
+        """One tidy DataFrame for the whole call: every element's per-point
+        :meth:`PredictedPrevalence.to_frame` concatenated. Empty when there are
+        no rows."""
+        import pandas as pd
+
+        if not self:
+            return pd.DataFrame()
+        return pd.concat([p.to_frame() for p in self], ignore_index=True)
+
+    def __repr__(self) -> str:
+        if not self:
+            return "PredictedPrevalenceList([])"
+        mode = getattr(self[0], "mode", "?")
+        return (f"PredictedPrevalenceList: {len(self)} topics, mode={mode!r}; "
+                ".to_frame() for the tidy per-point table")
+
+
 def predicted_prevalence(
     model,
     *,
@@ -1728,7 +1764,7 @@ def predicted_prevalence(
             ci_high=ci_hi,
             covariate=cov_name,
         ))
-    return out
+    return PredictedPrevalenceList(out)
 
 
 def posterior_theta_samples(model, nsims=25, seed=0, *, uncertainty="local"):
