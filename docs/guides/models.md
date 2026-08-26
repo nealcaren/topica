@@ -632,10 +632,17 @@ Gibbs θ. For per-document prevalence that should reflect a comment on its own, 
 `doc_topic`. They can differ substantially. `popularity` exposes the per-comment `p_c`
 for auditing.
 
-CSATM is **experimental**: the paper has no public reference implementation, so it was
-ported from the paper's equations and validated by planted-topic recovery, a
+CSATM is **experimental**, and it is worth being precise about why. The inference is a
+faithful port of the paper's equations, validated by planted-topic recovery, a
 degenerate-case reduction (all-roots + `lambda_=1` collapses the weighted counts to
-ordinary LDA), and determinism. A fixed seed reproduces bit-for-bit.
+ordinary LDA), and determinism (a fixed seed reproduces bit-for-bit). For a published
+method with faithful inference, that planted-recovery basis is *not* what makes a model
+experimental, and the absence of a public reference implementation is not either —
+planted recovery is an accepted accuracy basis when no maintained reference exists. The
+flag is about the benefit not holding up: as the coherence results below show, the
+conversational structure does not measurably improve topics over plain LDA once the
+count-scale confound is controlled, and the paper's reported gains are not reproduced
+here.
 
 **On coherence, do not expect a free win over LDA.** On a real threaded Reddit corpus
 (r/tradwives) the conversational structure did **not** measurably improve topic
