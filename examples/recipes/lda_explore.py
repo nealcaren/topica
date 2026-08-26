@@ -42,7 +42,6 @@ for t, words in enumerate(model.top_words(8)):
     print(f"  topic {t}: {', '.join(words)}")
 
 # --- how coherent are they? (a validation check, not a K selector) ---------
-topics = model.top_words(10)
-texts = [" ".join(doc) for doc in corpus.documents()]
-per_topic = topica.evaluate.coherence(topics, texts, coherence_type="c_v")
+# coherence scores each topic against a reference corpus; pass the Corpus directly.
+per_topic = topica.evaluate.coherence(model.top_words(10), corpus, coherence_type="c_v")
 print(f"\nMean c_v coherence: {float(np.mean(per_topic)):.3f}  (0-1; higher = more coherent)")
