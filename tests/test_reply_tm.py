@@ -62,7 +62,7 @@ def test_fit_shapes_and_readouts():
     assert np.allclose(m.topic_word.sum(1), 1.0)
     assert np.allclose(m.doc_topic.sum(1), 1.0)
     assert m.group_labels() == ["A", "B"]
-    assert set(m.vocabulary()) == set(vocab)
+    assert set(m.vocabulary) == set(vocab)
     assert m.num_topics == K
     assert np.isfinite(m.kappa) and np.isfinite(m.sigma2)
     assert len(m.bound_history) >= 1
@@ -84,7 +84,7 @@ def test_topic_and_prevalence_recovery():
     m = topica.ReplyTM(2, em_iters=100, seed=13)
     m.fit(docs, parents=parents, covariates=cov, covariate_labels=["A", "B"])
     beta = m.topic_word
-    vidx = {w: i for i, w in enumerate(m.vocabulary())}
+    vidx = {w: i for i, w in enumerate(m.vocabulary)}
     a_cols = [vidx[f"a{i}"] for i in range(5)]
     # each true block should be captured by a distinct topic (mass concentrated on the block)
     a_mass = [beta[k][a_cols].sum() for k in range(2)]
@@ -111,3 +111,64 @@ def test_unfitted_raises():
     m = topica.ReplyTM(3)
     with pytest.raises(RuntimeError):
         m.topic_word
+
+
+def test_reduces_to_flat_when_no_tree():
+    """With no reply edges ReplyTM is a plain logistic-normal topic model: topics still recover,
+    and the reply parameters are correctly flagged unidentified (NaN)."""
+    import math
+    import warnings
+
+    docs, parents, cov, vocab = _threaded_corpus()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # parents=None warns on purpose
+        m = topica.ReplyTM(2, em_iters=80, seed=13)
+        m.fit(docs, parents=None)
+    beta = m.topic_word
+    vidx = {w: i for i, w in enumerate(m.vocabulary)}
+    a_cols = [vidx[f"a{i}"] for i in range(5)]
+    a_mass = [beta[k][a_cols].sum() for k in range(2)]
+    assert max(a_mass) > 0.8 and min(a_mass) < 0.2, a_mass  # topics still recovered
+    assert math.isnan(m.kappa) and math.isnan(m.sigma2)  # no edges → unidentified
+
+
+def test_held_out_beat_tree_vs_no_tree():
+    """Acceptance gate: on a persistence-structured corpus, the tree prior (the parent's θ)
+    predicts held-out leaf tokens better than the no-tree baseline (group prevalence)."""
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=80, depth=12)
+    d = len(docs)
+    has_child = {p for p in parents if p >= 0}
+    leaves = [i for i in range(d) if parents[i] >= 0 and i not in has_child]
+    rng = np.random.default_rng(0)
+    test = set(rng.choice(leaves, size=len(leaves) // 3, replace=False).tolist())
+    train = [[] if i in test else docs[i] for i in range(d)]  # hold out leaf tokens
+    m = topica.ReplyTM(2, em_iters=100, seed=13)
+    m.fit(train, parents=parents, covariates=cov, covariate_labels=["A", "B"])
+    beta, theta, anchor = m.topic_word, m.doc_topic, m.group_prevalence
+    vidx = {w: i for i, w in enumerate(m.vocabulary)}
+
+    def tokll(i, th):
+        ids = [vidx[w] for w in docs[i] if w in vidx]
+        if not ids:
+            return None
+        pw = beta[:, ids].T @ th
+        return float(np.mean(np.log(pw + 1e-12)))
+
+    tree, no_tree = [], []
+    for dn in test:
+        a = tokll(dn, theta[parents[dn]])  # predict from the parent (tree)
+        b = tokll(dn, anchor[cov[dn]])  # predict from the group baseline (no tree)
+        if a is not None and b is not None:
+            tree.append(a)
+            no_tree.append(b)
+    assert np.mean(tree) > np.mean(no_tree), (np.mean(tree), np.mean(no_tree))
+
+
+def test_inspect_integration():
+    """The taught inspect API must work on ReplyTM (regression: it was misdispatched as a
+    time-sliced model because topic_word/vocabulary were methods, not properties)."""
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=6)
+    m = topica.ReplyTM(2, em_iters=40, seed=13)
+    m.fit(docs, parents=parents)
+    table = topica.inspect.topic_table(m)
+    assert len(table) == 2

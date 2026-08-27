@@ -305,6 +305,7 @@ impl ReplyTM {
     }
 
     /// The vocabulary (index order matches the `topic_word` columns).
+    #[getter]
     fn vocabulary(&self) -> PyResult<Vec<String>> {
         self.require_fitted()?;
         Ok(self.vocab.clone())
