@@ -1,11 +1,12 @@
-//! Python binding for ReplyTM — the reply-threaded topic model (STM logistic-normal topics
-//! with a tree-coupled prior; see `crate::reply_tm`). Experimental tier: topica-original, no
-//! published reference yet, so `fit` is gated behind `topica.enable_experimental()`.
+//! Python binding for ReplyTM — a reply-threaded topic model (CTM/STM logistic-normal topics
+//! with a reply-tree structured prior; see `crate::reply_tm`). Experimental tier: topica-original,
+//! no published reference yet, so `fit` is gated behind `topica.enable_experimental()`.
 //!
-//! This first class exposes the validated core — fit on token lists + a reply tree + an optional
-//! categorical covariate, with topic/proportion/prevalence readouts and the fitted reversion
-//! (kappa) / diffusion (sigma^2). Corpus/formula covariates, save/load, and the namespaced
-//! `effects`/`evaluate` surface are follow-ups.
+//! The class exposes the validated core — fit on token lists + a reply tree + an optional
+//! categorical covariate, with topic/proportion/prevalence readouts (prevalence carries a
+//! method-of-composition SE), the persistence parameter `kappa` with a profile-likelihood CI,
+//! and the ELBO trace. Corpus/formula covariates, save/load, and the namespaced `effects`/
+//! `evaluate` surface are follow-ups.
 
 use super::*;
 use numpy::PyArray2;
@@ -14,11 +15,11 @@ use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
 
-/// ReplyTM: a reply-threaded topic model. Topic prevalence diffuses along reply edges as an
-/// Ornstein–Uhlenbeck process — a reply starts near the comment it answers and reverts toward
-/// its covariate-group baseline. Reduces to a plain logistic-normal topic model when the reply
-/// tree is flat. `num_topics` is K; `em_iters` the variational-EM iteration cap; `seed` makes
-/// the fit deterministic.
+/// ReplyTM: a reply-threaded topic model. A reply's topic prior is coupled to the comment it
+/// answers (a persistence-smoothing prior along reply edges), reverting toward its covariate-group
+/// baseline; `kappa` measures the reversion (on real corpora it is typically ~0, i.e. persistence-
+/// dominated). Reduces to a plain logistic-normal topic model when the reply tree is flat.
+/// `num_topics` is K; `em_iters` the variational-EM iteration cap; `seed` makes the fit deterministic.
 #[pyclass(module = "topica")]
 pub struct ReplyTM {
     num_topics: usize,
@@ -30,7 +31,9 @@ pub struct ReplyTM {
     beta: Vec<Vec<f64>>,
     doc_topic: Vec<Vec<f64>>,
     group_prevalence: Vec<Vec<f64>>,
+    prevalence_se: Vec<Vec<f64>>,
     kappa: f64,
+    kappa_ci: (f64, f64),
     sigma2: f64,
     p0: f64,
     bound_history: Vec<f64>,
@@ -69,7 +72,9 @@ impl ReplyTM {
             beta: Vec::new(),
             doc_topic: Vec::new(),
             group_prevalence: Vec::new(),
+            prevalence_se: Vec::new(),
             kappa: f64::NAN,
+            kappa_ci: (f64::NAN, f64::NAN),
             sigma2: f64::NAN,
             p0: f64::NAN,
             bound_history: Vec::new(),
@@ -78,17 +83,17 @@ impl ReplyTM {
 
     /// Fit ReplyTM. `docs` is a list of token lists (already tokenized). `parents[d]` is `d`'s
     /// parent **document index** in the reply tree (`-1` for a thread root); build it in the
-    /// SAME order as `docs`. `covariate` is an optional per-document categorical group id in
-    /// `0..num_groups` (the reversion anchor becomes that group's baseline prevalence); omit for
-    /// a single global anchor. `covariate_labels` names the groups for the readouts. `min_count`
-    /// drops words rarer than it. Experimental: requires `topica.enable_experimental()`.
-    #[pyo3(signature = (docs, parents=None, covariate=None, covariate_labels=None, *, min_count=1))]
+    /// SAME order as `docs`. `covariates` is an optional per-document categorical group id in a
+    /// DENSE range `0..num_groups` (the reversion anchor becomes that group's baseline prevalence);
+    /// omit for a single global anchor. `covariate_labels` names the groups for the readouts.
+    /// `min_count` drops words rarer than it. Experimental: requires `topica.enable_experimental()`.
+    #[pyo3(signature = (docs, parents=None, covariates=None, covariate_labels=None, *, min_count=1))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         docs: Vec<Vec<String>>,
         parents: Option<Vec<i64>>,
-        covariate: Option<Vec<usize>>,
+        covariates: Option<Vec<usize>>,
         covariate_labels: Option<Vec<String>>,
         min_count: usize,
     ) -> PyResult<()> {
@@ -129,9 +134,22 @@ impl ReplyTM {
             })
             .collect();
 
-        // parents: validate length + range (indices into the doc list; -1 = root)
+        // parents: validate length + range + acyclicity (indices into the doc list; -1 = root)
         let par: Vec<i64> = match &parents {
-            None => vec![-1; n],
+            None => {
+                // No reply tree: the model degenerates to a plain logistic-normal topic model
+                // and the reply-structure parameters are undefined. Warn rather than silently
+                // report a meaningless kappa/sigma2 (they come back NaN with no edges).
+                PyErr::warn_bound(
+                    py,
+                    &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
+                    "ReplyTM.fit called with parents=None: no reply tree, so the model reduces to \
+                     a plain logistic-normal topic model and kappa/sigma2 are undefined (NaN). \
+                     Pass parents to use the reply structure.",
+                    1,
+                )?;
+                vec![-1; n]
+            }
             Some(p) => {
                 if p.len() != n {
                     return Err(PyValueError::new_err(format!(
@@ -151,21 +169,49 @@ impl ReplyTM {
                         )));
                     }
                 }
+                // acyclicity: walking parent links from any node must reach a root within n steps
+                for start in 0..n {
+                    let (mut cur, mut steps) = (start as i64, 0usize);
+                    while cur >= 0 {
+                        cur = p[cur as usize];
+                        steps += 1;
+                        if steps > n {
+                            return Err(PyValueError::new_err(format!(
+                                "parents contains a cycle reachable from document {start}; the \
+                                 reply tree must be acyclic"
+                            )));
+                        }
+                    }
+                }
                 p.clone()
             }
         };
 
         // covariate groups
-        let (groups, num_groups, group_names) = match &covariate {
+        let (groups, num_groups, group_names) = match &covariates {
             None => (vec![0usize; n], 1usize, vec!["all".to_string()]),
             Some(g) => {
                 if g.len() != n {
                     return Err(PyValueError::new_err(format!(
-                        "covariate has {} entries but there are {n} documents",
+                        "covariates has {} entries but there are {n} documents",
                         g.len()
                     )));
                 }
                 let ng = g.iter().copied().max().map(|m| m + 1).unwrap_or(1);
+                // warn on a non-dense covariate (a gap creates an empty phantom group)
+                for gid in 0..ng {
+                    if !g.contains(&gid) {
+                        PyErr::warn_bound(
+                            py,
+                            &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
+                            "covariates has a gap: group ids are not dense 0..num_groups, so an \
+                             empty phantom group will appear in group_prevalence. Re-code the \
+                             covariate to consecutive ids.",
+                            1,
+                        )?;
+                        break;
+                    }
+                }
                 let names = covariate_labels
                     .clone()
                     .unwrap_or_else(|| (0..ng).map(|i| format!("group{i}")).collect());
@@ -206,7 +252,9 @@ impl ReplyTM {
         slf.beta = m.beta;
         slf.doc_topic = dt;
         slf.group_prevalence = gp;
+        slf.prevalence_se = m.anchor_se;
         slf.kappa = m.kappa;
+        slf.kappa_ci = m.kappa_ci;
         slf.sigma2 = m.sigma2;
         slf.p0 = m.p0;
         slf.bound_history = m.bound_history;
@@ -215,22 +263,40 @@ impl ReplyTM {
     }
 
     /// K×V topic-word probability matrix.
+    #[getter]
     fn topic_word<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         Ok(vecs_to_arr2(&self.beta).to_pyarray_bound(py))
     }
 
+    /// Number of topics K.
+    #[getter]
+    fn num_topics(&self) -> usize {
+        self.num_topics
+    }
+
     /// D×K document-topic proportions θ.
+    #[getter]
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         Ok(vecs_to_arr2(&self.doc_topic).to_pyarray_bound(py))
     }
 
-    /// G×K per-group baseline topic prevalence (softmax of the covariate anchor) — the
-    /// STM-style "which topics dominate group g's threads" readout.
+    /// G×K per-group baseline topic prevalence (softmax of the covariate anchor): the descriptive
+    /// mean topic mix of each covariate group's documents. See `prevalence_se` for uncertainty.
+    #[getter]
     fn group_prevalence<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         Ok(vecs_to_arr2(&self.group_prevalence).to_pyarray_bound(py))
+    }
+
+    /// G×(K-1) method-of-composition standard error of the group prevalence anchor (in η space):
+    /// combines the between-document sampling variance with the mean per-document posterior
+    /// variance, so group contrasts can be reported with honest uncertainty.
+    #[getter]
+    fn prevalence_se<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        Ok(vecs_to_arr2(&self.prevalence_se).to_pyarray_bound(py))
     }
 
     /// The covariate group labels (order matches `group_prevalence` rows).
@@ -244,24 +310,46 @@ impl ReplyTM {
         Ok(self.vocab.clone())
     }
 
-    /// Top-`n` words of a topic by probability.
-    #[pyo3(signature = (n=10, *, topic))]
-    fn top_words(&self, n: usize, topic: usize) -> PyResult<Vec<String>> {
+    /// Top-`n` words per topic. With `topic=None` (default) returns a list of lists for all K
+    /// topics; with an integer `topic`, returns that one topic's words.
+    #[pyo3(signature = (n=10, *, topic=None))]
+    fn top_words(&self, py: Python<'_>, n: usize, topic: Option<usize>) -> PyResult<PyObject> {
         self.require_fitted()?;
-        if topic >= self.num_topics {
-            return Err(PyValueError::new_err(format!(
-                "topic {topic} out of range [0, {})",
-                self.num_topics
-            )));
+        let one = |t: usize| -> Vec<String> {
+            let row = &self.beta[t];
+            let mut idx: Vec<usize> = (0..row.len()).collect();
+            idx.sort_by(|&a, &b| {
+                row[b]
+                    .partial_cmp(&row[a])
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            idx.into_iter()
+                .take(n)
+                .map(|i| self.vocab[i].clone())
+                .collect()
+        };
+        match topic {
+            Some(t) => {
+                if t >= self.num_topics {
+                    return Err(PyValueError::new_err(format!(
+                        "topic {t} out of range [0, {})",
+                        self.num_topics
+                    )));
+                }
+                Ok(one(t).into_py(py))
+            }
+            None => {
+                let all: Vec<Vec<String>> = (0..self.num_topics).map(one).collect();
+                Ok(all.into_py(py))
+            }
         }
-        let row = &self.beta[topic];
-        let mut idx: Vec<usize> = (0..row.len()).collect();
-        idx.sort_by(|&a, &b| row[b].partial_cmp(&row[a]).unwrap());
-        Ok(idx
-            .into_iter()
-            .take(n)
-            .map(|i| self.vocab[i].clone())
-            .collect())
+    }
+
+    /// 95% profile-likelihood CI for the reversion `κ` as a `(lower, upper)` tuple; `(nan, nan)`
+    /// when there are no reply edges. On real corpora this usually brackets 0 (persistence).
+    #[getter]
+    fn kappa_ci(&self) -> (f64, f64) {
+        self.kappa_ci
     }
 
     /// Reversion strength `κ = 1 - a` (0 = pure persistence / parent-copy, 1 = no memory).

@@ -43,6 +43,13 @@ pub struct ReplyTmModel {
     /// reverts toward. With one group this is the global mean; with a categorical covariate
     /// (subreddit, verdict, submission-type) it is that group's prevalence in η-space.
     pub anchor: Vec<Vec<f64>>,
+    /// Method-of-composition standard error of each anchor entry (num_groups × K-1): combines the
+    /// between-document sampling variance of η with the mean per-document posterior variance ν,
+    /// so a group's prevalence carries honest uncertainty rather than being a bare mean.
+    pub anchor_se: Vec<Vec<f64>>,
+    /// Profile-likelihood 95% CI for the reversion `κ` (lower, upper); `(NaN, NaN)` when there
+    /// are no reply edges (κ unidentified). On real corpora this typically brackets 0.
+    pub kappa_ci: (f64, f64),
     /// Reversion strength `κ = 1 - a` toward the anchor.
     pub kappa: f64,
     /// Per-edge diffusion variance `σ²`.
@@ -55,32 +62,26 @@ pub struct ReplyTmModel {
     pub em_iters_run: usize,
 }
 
+/// Numerically-stable softmax of `[eta, 0]` (reference topic K-1 fixed at 0). Subtracts the max
+/// (including the implicit 0) before exponentiating, so large `eta` cannot overflow to NaN.
+fn softmax_ref(eta: &[f64]) -> Vec<f64> {
+    let mx = eta.iter().copied().fold(0.0_f64, f64::max); // includes the reference-topic 0
+    let mut e: Vec<f64> = eta.iter().map(|&x| (x - mx).exp()).collect();
+    e.push((-mx).exp());
+    let s: f64 = e.iter().sum();
+    e.iter().map(|&x| x / s).collect()
+}
+
 impl ReplyTmModel {
     /// Topic proportions `θ_d = softmax([η_d, 0])` per document.
     pub fn doc_topic(&self) -> Vec<Vec<f64>> {
-        self.lambda
-            .iter()
-            .map(|eta| {
-                let mut e: Vec<f64> = eta.iter().map(|&x| x.exp()).collect();
-                e.push(1.0);
-                let s: f64 = e.iter().sum();
-                e.iter().map(|&x| x / s).collect()
-            })
-            .collect()
+        self.lambda.iter().map(|eta| softmax_ref(eta)).collect()
     }
 
-    /// Per-group topic prevalence `θ_g = softmax([μ_g, 0])` — the STM-style baseline topic mix
-    /// of each covariate group (the answer to "which topics dominate group g's threads").
+    /// Per-group baseline topic prevalence `θ_g = softmax([μ_g, 0])` — the descriptive mean topic
+    /// mix of each covariate group's documents (which topics dominate group g's threads).
     pub fn group_prevalence(&self) -> Vec<Vec<f64>> {
-        self.anchor
-            .iter()
-            .map(|mu| {
-                let mut e: Vec<f64> = mu.iter().map(|&x| x.exp()).collect();
-                e.push(1.0);
-                let s: f64 = e.iter().sum();
-                e.iter().map(|&x| x / s).collect()
-            })
-            .collect()
+        self.anchor.iter().map(|mu| softmax_ref(mu)).collect()
     }
 }
 
@@ -105,6 +106,12 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     let km1 = k - 1;
     let d = docs.len();
     let sparse: Vec<(Vec<usize>, Vec<f64>)> = docs.iter().map(|doc| doc_sparse(doc)).collect();
+    // Empty documents (no tokens, or all tokens dropped by the vocabulary) carry no evidence:
+    // their η is never updated by the E-step, so they must be excluded from the anchor mean and
+    // treated as UNOBSERVED (latent-only) in the field fit. Feeding their frozen η=0 in as a
+    // near-exact pseudo-observation (the old bug) pinned the field and biased (κ, σ²) and the
+    // anchor toward the origin.
+    let has_tokens: Vec<bool> = sparse.iter().map(|(w, _)| !w.is_empty()).collect();
 
     // seed each topic from a random (non-empty) document's word distribution, smoothed — an
     // LDA/CTM-style init that breaks symmetry toward real word clusters (random-uniform init
@@ -128,7 +135,8 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
 
     let mut lambda = vec![vec![0.0f64; km1]; d];
     let mut anchor = vec![vec![0.0f64; km1]; num_groups.max(1)];
-    // field hyperparameters; a = 1 - kappa
+    let mut last_nu_diag: Vec<Vec<f64>> = vec![vec![0.0f64; km1]; d]; // final-iter posterior var
+                                                                      // field hyperparameters; a = 1 - kappa
     let mut a = 0.7f64;
     let mut sigma2 = 1.0f64;
     let mut p0 = 1.0f64;
@@ -204,6 +212,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                 }
             }
         }
+        last_nu_diag.clone_from(&nu_diag_store); // keep the final-iteration posterior variances
 
         if em_tol > 0.0 && bound_history.len() >= 2 {
             let prev = bound_history[bound_history.len() - 2];
@@ -230,6 +239,9 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         let mut gsum = vec![vec![0.0f64; km1]; ng];
         let mut gcnt = vec![0usize; ng];
         for (di, l) in lambda.iter().enumerate() {
+            if !has_tokens[di] {
+                continue; // empty docs have a frozen η=0, not a real estimate
+            }
             let g = groups[di];
             gcnt[g] += 1;
             for i in 0..km1 {
@@ -263,8 +275,13 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                         .collect()
                 })
                 .collect();
+            // Empty nodes stay in the tree (so their children still couple through them) but
+            // carry NO observation: r = +inf makes them latent-only, so they never pin the field.
             let r: Vec<f64> = (0..d)
                 .map(|di| {
+                    if !has_tokens[di] {
+                        return 1e12;
+                    }
                     let nd = &nu_diag_store[di];
                     (nd.iter().sum::<f64>() / km1 as f64).max(1e-6)
                 })
@@ -280,11 +297,98 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                     p0,
                 },
             );
-            a = fit.a;
+            // clamp a < 1 so the next iteration's logit init stays finite (a=1 → +inf → NaN in
+            // the Nelder-Mead simplex); floor σ²/p0 (a clamp, not an estimate — see kappa_ci).
+            a = fit.a.min(0.999);
             sigma2 = fit.q.max(0.1);
             p0 = fit.p0.max(0.1);
         }
     }
+
+    // The field is only identified when there ARE reply edges. With an all-root corpus
+    // (parents=None) a and q never enter the tree likelihood, so κ/σ² would be noise; report
+    // them as NaN (unidentified) rather than an arbitrary optimizer landing.
+    let n_edges = parents.iter().filter(|&&p| p >= 0).count();
+    if n_edges == 0 {
+        a = f64::NAN;
+        sigma2 = f64::NAN;
+    }
+
+    // ---- uncertainty ----
+    // Anchor SE (method-of-composition): the group prevalence is a mean of per-document η, each
+    // of which carries posterior variance ν. Its SE combines the between-document sampling
+    // variance and the mean per-document posterior variance — so prevalence is reported with
+    // honest uncertainty, not as a bare point.
+    let ng = num_groups.max(1);
+    let mut anchor_se = vec![vec![0.0f64; km1]; ng];
+    for (g, se_g) in anchor_se.iter_mut().enumerate() {
+        let members: Vec<usize> = (0..d)
+            .filter(|&di| has_tokens[di] && groups[di] == g)
+            .collect();
+        let n = members.len();
+        if n < 2 {
+            continue;
+        }
+        for (i, se) in se_g.iter_mut().enumerate() {
+            let mean = anchor[g][i];
+            let between: f64 = members
+                .iter()
+                .map(|&di| (lambda[di][i] - mean).powi(2))
+                .sum::<f64>()
+                / (n as f64 - 1.0);
+            let mean_nu: f64 =
+                members.iter().map(|&di| last_nu_diag[di][i]).sum::<f64>() / n as f64;
+            *se = ((between + mean_nu) / n as f64).sqrt();
+        }
+    }
+
+    // κ profile-likelihood 95% CI: profile `a` over the tree marginal log-likelihood (a χ²(1)
+    // drop of 1.92 in the profile), holding σ²/p0 at their fitted values. Unidentified (NaN)
+    // with no edges. On real corpora this typically brackets 0 (persistence-dominated).
+    let kappa_ci = if n_edges == 0 {
+        (f64::NAN, f64::NAN)
+    } else {
+        let obs: Vec<Vec<f64>> = (0..km1)
+            .map(|i| {
+                (0..d)
+                    .map(|di| lambda[di][i] - anchor[groups[di]][i])
+                    .collect()
+            })
+            .collect();
+        let r: Vec<f64> = (0..d)
+            .map(|di| {
+                if has_tokens[di] {
+                    (last_nu_diag[di].iter().sum::<f64>() / km1 as f64).max(1e-6)
+                } else {
+                    1e12
+                }
+            })
+            .collect();
+        let ll_at = |av: f64| {
+            tree_field::loglik_multi(
+                parents,
+                &obs,
+                &r,
+                TreeFieldParams {
+                    a: av,
+                    q: sigma2.max(1e-6),
+                    m: 0.0,
+                    p0: p0.max(1e-6),
+                },
+            )
+        };
+        let a_hat = if a.is_finite() { a } else { 0.999 };
+        let ll_max = ll_at(a_hat);
+        let (mut lo, mut hi) = (a_hat, a_hat);
+        for j in 1..=199 {
+            let av = j as f64 / 200.0;
+            if ll_at(av) >= ll_max - 1.92 {
+                lo = lo.min(av);
+                hi = hi.max(av);
+            }
+        }
+        (1.0 - hi, 1.0 - lo) // κ = 1 - a flips the interval
+    };
 
     ReplyTmModel {
         num_topics: k,
@@ -292,6 +396,8 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         beta,
         lambda,
         anchor,
+        anchor_se,
+        kappa_ci,
         kappa: 1.0 - a,
         sigma2,
         p0,

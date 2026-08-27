@@ -3052,35 +3052,52 @@ class CSATM:
 
 
 class ReplyTM:
-    """ReplyTM: a reply-threaded topic model. STM/CTM logistic-normal topics with a
-    tree-coupled prior — topic prevalence diffuses along reply edges (Ornstein-Uhlenbeck),
-    so a reply starts near the comment it answers and reverts toward its covariate-group
-    baseline. Reduces to a plain logistic-normal model when the reply tree is flat. topica-
-    original, no published reference; validated by planted recovery + a held-out-beat gate
-    (the tree prior beats STM-without-tree out-of-sample). Experimental."""
+    """ReplyTM: a reply-threaded topic model. CTM/STM logistic-normal topics with a reply-tree
+    structured prior — a reply's topic prior is coupled to the comment it answers (a
+    persistence-smoothing prior), reverting toward its covariate-group baseline. `kappa` measures
+    the reversion (on real corpora it is typically ~0, persistence-dominated). Reduces to a plain
+    logistic-normal model when the reply tree is flat. topica-original, no published reference;
+    validated by planted recovery + a held-out-beat gate (the tree prior beats the no-tree
+    baseline out-of-sample on high-contingency corpora). Experimental."""
     def __init__(self, num_topics: int, *, em_iters: int = 150, seed: int = 13) -> None: ...
     def fit(
         self,
         docs: Sequence[Sequence[str]],
         parents: Sequence[int] | None = None,
-        covariate: Sequence[int] | None = None,
+        covariates: Sequence[int] | None = None,
         covariate_labels: Sequence[str] | None = None,
         *,
         min_count: int = 1,
     ) -> None:
         """`parents[d]` is document ``d``'s parent index in the reply tree (``-1`` for a
-        thread root), in the SAME order as ``docs``. `covariate[d]` is an optional categorical
-        group id in ``0..num_groups`` whose per-group baseline becomes the reversion anchor;
-        `covariate_labels` names the groups. Requires ``topica.enable_experimental()``."""
+        thread root), in the SAME order as ``docs``. `covariates[d]` is an optional categorical
+        group id in a DENSE range ``0..num_groups`` whose per-group baseline becomes the reversion
+        anchor; `covariate_labels` names the groups. Requires ``topica.enable_experimental()``."""
         ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
     def group_prevalence(self) -> numpy.typing.NDArray[numpy.float64]:
         """Per-group baseline topic prevalence (softmax of the covariate anchor)."""
         ...
+    @property
+    def prevalence_se(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Method-of-composition SE of the group prevalence anchor (η space)."""
+        ...
     def group_labels(self) -> list[str]: ...
     def vocabulary(self) -> list[str]: ...
-    def top_words(self, n: int = 10, *, topic: int) -> list[str]: ...
+    def top_words(self, n: int = 10, *, topic: int | None = None) -> list:
+        """Top-n words per topic. With ``topic=None`` returns a list per topic; with an integer
+        ``topic`` returns that topic's words."""
+        ...
+    @property
+    def kappa_ci(self) -> tuple[float, float]:
+        """95% profile-likelihood CI for the reversion (lower, upper); (nan, nan) with no edges."""
+        ...
     @property
     def kappa(self) -> float:
         """Reversion strength (0 = pure persistence / parent-copy, 1 = no memory)."""

@@ -164,6 +164,17 @@ pub(crate) fn solve(parents: &[i64], y: &[f64], r: &[f64], p: TreeFieldParams) -
     }
 }
 
+/// Summed marginal log-likelihood across the K observation dimensions that share the field
+/// params — used to profile a (hence kappa) for a confidence interval.
+pub(crate) fn loglik_multi(
+    parents: &[i64],
+    obs: &[Vec<f64>],
+    r: &[f64],
+    p: TreeFieldParams,
+) -> f64 {
+    obs.iter().map(|yk| solve(parents, yk, r, p).loglik).sum()
+}
+
 /// Result of fitting the OU field hyperparameters by maximum marginal likelihood.
 pub(crate) struct TreeFieldFit {
     pub a: f64,

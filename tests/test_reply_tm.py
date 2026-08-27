@@ -54,26 +54,36 @@ def test_experimental_gate_blocks_fit():
 def test_fit_shapes_and_readouts():
     docs, parents, cov, vocab = _threaded_corpus()
     m = topica.ReplyTM(2, em_iters=60, seed=13)
-    m.fit(docs, parents=parents, covariate=cov, covariate_labels=["A", "B"])
+    m.fit(docs, parents=parents, covariates=cov, covariate_labels=["A", "B"])
     D, K, V, G = len(docs), 2, len(vocab), 2
-    assert m.topic_word().shape == (K, V)
-    assert m.doc_topic().shape == (D, K)
-    assert m.group_prevalence().shape == (G, K)
-    assert np.allclose(m.topic_word().sum(1), 1.0)
-    assert np.allclose(m.doc_topic().sum(1), 1.0)
+    assert m.topic_word.shape == (K, V)
+    assert m.doc_topic.shape == (D, K)
+    assert m.group_prevalence.shape == (G, K)
+    assert np.allclose(m.topic_word.sum(1), 1.0)
+    assert np.allclose(m.doc_topic.sum(1), 1.0)
     assert m.group_labels() == ["A", "B"]
     assert set(m.vocabulary()) == set(vocab)
+    assert m.num_topics == K
     assert np.isfinite(m.kappa) and np.isfinite(m.sigma2)
     assert len(m.bound_history) >= 1
     # ELBO should not decrease overall
     assert m.bound_history[-1] >= m.bound_history[0] - 1e-6
+    # uncertainty is reported: prevalence SE (G x K-1) and a kappa CI bracketing kappa
+    assert m.prevalence_se.shape == (G, K - 1)
+    assert np.all(m.prevalence_se >= 0)
+    lo, hi = m.kappa_ci
+    assert lo <= m.kappa + 1e-9 and hi >= m.kappa - 1e-9
+    # top_words: all-topics mode returns K lists; single-topic mode returns one list
+    allw = m.top_words()
+    assert len(allw) == K and all(isinstance(t, list) for t in allw)
+    assert isinstance(m.top_words(3, topic=0), list) and len(m.top_words(3, topic=0)) == 3
 
 
 def test_topic_and_prevalence_recovery():
     docs, parents, cov, vocab = _threaded_corpus()
     m = topica.ReplyTM(2, em_iters=100, seed=13)
-    m.fit(docs, parents=parents, covariate=cov, covariate_labels=["A", "B"])
-    beta = m.topic_word()
+    m.fit(docs, parents=parents, covariates=cov, covariate_labels=["A", "B"])
+    beta = m.topic_word
     vidx = {w: i for i, w in enumerate(m.vocabulary())}
     a_cols = [vidx[f"a{i}"] for i in range(5)]
     # each true block should be captured by a distinct topic (mass concentrated on the block)
@@ -81,7 +91,7 @@ def test_topic_and_prevalence_recovery():
     # one topic is mostly A-block, the other mostly B-block
     assert max(a_mass) > 0.8 and min(a_mass) < 0.2, a_mass
     # group prevalence differs by group (A-group leans to a different topic than B-group)
-    gp = m.group_prevalence()
+    gp = m.group_prevalence
     assert not np.allclose(gp[0], gp[1], atol=0.1)
 
 
@@ -93,9 +103,11 @@ def test_parent_validation():
         m.fit([["a"], ["b"]], parents=[-1, 5])  # out of range
     with pytest.raises(ValueError):
         m.fit([["a"], ["b"]], parents=[-1, 1])  # self-parent
+    with pytest.raises(ValueError):
+        m.fit([["a"], ["b"]], parents=[1, 0])  # cycle A->B->A
 
 
 def test_unfitted_raises():
     m = topica.ReplyTM(3)
     with pytest.raises(RuntimeError):
-        m.topic_word()
+        m.topic_word
