@@ -88,6 +88,7 @@ mod party_embeddings;
 mod pltm;
 #[path = "corpus.rs"]
 mod py_corpus;
+mod reply_tm;
 mod rtm;
 mod save;
 mod scholar;
@@ -120,6 +121,7 @@ use online_lda::OnlineLDA;
 use party_embeddings::PartyEmbeddings;
 use pltm::PolylingualLDA;
 use py_corpus::Corpus;
+use reply_tm::ReplyTM;
 use rtm::RTM;
 use save::*;
 use scholar::Scholar;
@@ -17113,6 +17115,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<GSDMM>()?;
     m.add_class::<BTM>()?;
     m.add_class::<CSATM>()?;
+    m.add_class::<ReplyTM>()?;
     m.add_class::<FactorialLDA>()?;
     m.add_class::<PolylingualLDA>()?;
     m.add_class::<DiscLDA>()?;

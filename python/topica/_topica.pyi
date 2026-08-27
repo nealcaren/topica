@@ -3051,6 +3051,63 @@ class CSATM:
     def __repr__(self) -> str: ...
 
 
+class ReplyTM:
+    """ReplyTM: a reply-threaded topic model. STM/CTM logistic-normal topics with a
+    tree-coupled prior — topic prevalence diffuses along reply edges (Ornstein-Uhlenbeck),
+    so a reply starts near the comment it answers and reverts toward its covariate-group
+    baseline. Reduces to a plain logistic-normal model when the reply tree is flat. topica-
+    original, no published reference; validated by planted recovery + a held-out-beat gate
+    (the tree prior beats STM-without-tree out-of-sample). Experimental."""
+    def __init__(self, num_topics: int, *, em_iters: int = 150, seed: int = 13) -> None: ...
+    def fit(
+        self,
+        docs: Sequence[Sequence[str]],
+        parents: Sequence[int] | None = None,
+        covariate: Sequence[int] | None = None,
+        covariate_labels: Sequence[str] | None = None,
+        *,
+        min_count: int = 1,
+    ) -> None:
+        """`parents[d]` is document ``d``'s parent index in the reply tree (``-1`` for a
+        thread root), in the SAME order as ``docs``. `covariate[d]` is an optional categorical
+        group id in ``0..num_groups`` whose per-group baseline becomes the reversion anchor;
+        `covariate_labels` names the groups. Requires ``topica.enable_experimental()``."""
+        ...
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    def group_prevalence(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-group baseline topic prevalence (softmax of the covariate anchor)."""
+        ...
+    def group_labels(self) -> list[str]: ...
+    def vocabulary(self) -> list[str]: ...
+    def top_words(self, n: int = 10, *, topic: int) -> list[str]: ...
+    @property
+    def kappa(self) -> float:
+        """Reversion strength (0 = pure persistence / parent-copy, 1 = no memory)."""
+        ...
+    @property
+    def sigma2(self) -> float:
+        """Per-edge diffusion variance."""
+        ...
+    @property
+    def p0(self) -> float:
+        """Root prior variance."""
+        ...
+    @property
+    def bound_history(self) -> list[float]:
+        """The variational-EM evidence-bound trace (one value per iteration)."""
+        ...
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict, keyword-named to
+        match ``__init__`` (issue #400)."""
+        ...
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+
+
 class FactorialLDA:
     """Factorial LDA (Paul & Dredze 2012): a sparse multi-dimensional topic model.
     Each token is drawn from a K-tuple of latent factors (e.g. (topic, sentiment) or
