@@ -164,6 +164,165 @@ pub(crate) fn solve(parents: &[i64], y: &[f64], r: &[f64], p: TreeFieldParams) -
     }
 }
 
+/// Result of fitting the OU field hyperparameters by maximum marginal likelihood.
+pub(crate) struct TreeFieldFit {
+    pub a: f64,
+    pub q: f64,
+    pub m: f64,
+    pub p0: f64,
+    pub loglik: f64,
+}
+
+/// Maximum-likelihood fit of `(a, q, m, p0)` across `K` observation dimensions that SHARE the
+/// field hyperparameters (the diffusion is isotropic across topics). `obs[k]` is the length-`n`
+/// observation vector for topic dimension `k`; `r` is the per-node observation-noise variance,
+/// shared across dimensions and supplied by the caller (in ReplyTM it comes from the STM/CTM
+/// logistic-normal curvature). Direct Nelder–Mead on the exact marginal log-likelihood from
+/// [`solve`], optimizing in an unconstrained reparameterization
+/// (`a = σ(θ₀)`, `q = e^{θ₁}`, `m = θ₂`, `p0 = e^{θ₃}`).
+pub(crate) fn fit(
+    parents: &[i64],
+    obs: &[Vec<f64>],
+    r: &[f64],
+    init: TreeFieldParams,
+) -> TreeFieldFit {
+    let sigmoid = |z: f64| 1.0 / (1.0 + (-z).exp());
+    let unpack = |t: &[f64]| TreeFieldParams {
+        a: sigmoid(t[0]),
+        q: t[1].exp(),
+        m: t[2],
+        p0: t[3].exp(),
+    };
+    let neg_ll = |t: &[f64]| -> f64 {
+        let p = unpack(t);
+        // guard the boundary (a→1, q→0) that makes the OU degenerate
+        if !(p.a.is_finite() && p.q > 1e-12 && p.p0 > 1e-12) {
+            return f64::INFINITY;
+        }
+        let mut ll = 0.0;
+        for yk in obs {
+            ll += solve(parents, yk, r, p).loglik;
+        }
+        -ll
+    };
+    let x0 = [
+        (init.a / (1.0 - init.a)).ln(),
+        init.q.ln(),
+        init.m,
+        init.p0.ln(),
+    ];
+    let best = nelder_mead(&neg_ll, x0, 0.5, 400);
+    let p = unpack(&best.0);
+    TreeFieldFit {
+        a: p.a,
+        q: p.q,
+        m: p.m,
+        p0: p.p0,
+        loglik: -best.1,
+    }
+}
+
+/// Compact Nelder–Mead for a fixed 4-dimensional objective. Deterministic; returns the best
+/// vertex and its value. Standard reflect / expand / contract / shrink with the usual
+/// coefficients. Kept local because topica has no shared general-purpose minimizer.
+fn nelder_mead<F: Fn(&[f64]) -> f64>(
+    f: &F,
+    x0: [f64; 4],
+    step: f64,
+    max_iter: usize,
+) -> ([f64; 4], f64) {
+    const N: usize = 4;
+    let (alpha, gamma, rho, sigma) = (1.0, 2.0, 0.5, 0.5);
+    // initial simplex: x0 plus one perturbed vertex per coordinate
+    let mut simplex: Vec<[f64; 4]> = Vec::with_capacity(N + 1);
+    simplex.push(x0);
+    for i in 0..N {
+        let mut v = x0;
+        v[i] += step;
+        simplex.push(v);
+    }
+    let mut fval: Vec<f64> = simplex.iter().map(|v| f(v)).collect();
+    let centroid = |simplex: &[[f64; 4]], except: usize| -> [f64; 4] {
+        let mut c = [0.0; 4];
+        for (i, v) in simplex.iter().enumerate() {
+            if i == except {
+                continue;
+            }
+            for k in 0..N {
+                c[k] += v[k] / N as f64;
+            }
+        }
+        c
+    };
+    let comb = |a: &[f64; 4], b: &[f64; 4], t: f64| -> [f64; 4] {
+        let mut o = [0.0; 4];
+        for k in 0..N {
+            o[k] = a[k] + t * (a[k] - b[k]);
+        }
+        o
+    };
+    for _ in 0..max_iter {
+        // order by objective
+        let mut idx: Vec<usize> = (0..=N).collect();
+        idx.sort_by(|&i, &j| fval[i].partial_cmp(&fval[j]).unwrap());
+        let ordered: Vec<[f64; 4]> = idx.iter().map(|&i| simplex[i]).collect();
+        let ordered_f: Vec<f64> = idx.iter().map(|&i| fval[i]).collect();
+        simplex = ordered;
+        fval = ordered_f;
+        // convergence: simplex collapsed in value
+        if (fval[N] - fval[0]).abs() < 1e-9 {
+            break;
+        }
+        let c = centroid(&simplex, N);
+        let worst = simplex[N];
+        // reflection
+        let xr = comb(&c, &worst, alpha);
+        let fr = f(&xr);
+        if fr < fval[0] {
+            // expansion
+            let xe = comb(&c, &worst, gamma);
+            let fe = f(&xe);
+            if fe < fr {
+                simplex[N] = xe;
+                fval[N] = fe;
+            } else {
+                simplex[N] = xr;
+                fval[N] = fr;
+            }
+        } else if fr < fval[N - 1] {
+            simplex[N] = xr;
+            fval[N] = fr;
+        } else {
+            // contraction toward the better of worst/reflection
+            let mut c2 = [0.0; 4];
+            for k in 0..N {
+                c2[k] = c[k] + rho * (worst[k] - c[k]);
+            }
+            let fc = f(&c2);
+            if fc < fval[N] {
+                simplex[N] = c2;
+                fval[N] = fc;
+            } else {
+                // shrink toward best
+                let best = simplex[0];
+                for i in 1..=N {
+                    for k in 0..N {
+                        simplex[i][k] = best[k] + sigma * (simplex[i][k] - best[k]);
+                    }
+                    fval[i] = f(&simplex[i]);
+                }
+            }
+        }
+    }
+    let mut bi = 0;
+    for i in 1..=N {
+        if fval[i] < fval[bi] {
+            bi = i;
+        }
+    }
+    (simplex[bi], fval[bi])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,6 +433,12 @@ mod tests {
         fn int(&mut self, lo: usize, hi: usize) -> usize {
             lo + (self.next_f64() * (hi - lo) as f64) as usize
         }
+        fn gauss(&mut self) -> f64 {
+            // Box–Muller
+            let u1 = self.next_f64().max(1e-12);
+            let u2 = self.next_f64();
+            (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+        }
     }
 
     fn rand_forest(rng: &mut Lcg) -> Vec<i64> {
@@ -317,6 +482,43 @@ mod tests {
         assert!(worst_ll < 1e-8, "loglik mismatch {worst_ll:e}");
         assert!(worst_m < 1e-8, "mean mismatch {worst_m:e}");
         assert!(worst_v < 1e-8, "var mismatch {worst_v:e}");
+    }
+
+    #[test]
+    fn fit_recovers_planted_params() {
+        // deep chains so the reversion `a` is identifiable (shallow trees can't see it)
+        let mut rng = Lcg(0xdead_beef_0000_0001);
+        let (a, q, m, p0, r_true): (f64, f64, f64, f64, f64) = (0.80, 0.50, 0.0, 1.0, 0.20);
+        let n_chains = 80;
+        let depth = 40;
+        let mut parents: Vec<i64> = Vec::new();
+        let mut x: Vec<f64> = Vec::new();
+        for _ in 0..n_chains {
+            let base = parents.len();
+            parents.push(-1);
+            x.push(m + p0.sqrt() * rng.gauss());
+            for t in 1..depth {
+                parents.push((base + t - 1) as i64);
+                let xp = *x.last().unwrap();
+                x.push(a * xp + (1.0 - a) * m + q.sqrt() * rng.gauss());
+            }
+        }
+        let n = parents.len();
+        // three oracle observation dims sharing the field params (isotropic)
+        let r = vec![r_true; n];
+        let obs: Vec<Vec<f64>> = (0..3)
+            .map(|_| (0..n).map(|i| x[i] + r_true.sqrt() * rng.gauss()).collect())
+            .collect();
+        let init = TreeFieldParams {
+            a: 0.5,
+            q: 1.0,
+            m: 0.0,
+            p0: 1.0,
+        };
+        let f = fit(&parents, &obs, &r, init);
+        assert!((f.a - a).abs() < 0.08, "a: got {} want {}", f.a, a);
+        assert!((f.q - q).abs() < 0.12, "q: got {} want {}", f.q, q);
+        assert!(f.m.abs() < 0.15, "m: got {}", f.m);
     }
 
     #[test]
