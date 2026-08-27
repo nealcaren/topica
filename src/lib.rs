@@ -80,6 +80,7 @@ pub mod tbip;
 pub mod tlda;
 pub mod topical_ngrams;
 pub mod topics_over_time;
+pub mod tree_field;
 pub mod warplda;
 pub mod wordfish;
 pub mod wordshoal;
