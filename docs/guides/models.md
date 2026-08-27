@@ -147,6 +147,7 @@ Not (yet) on the validated roster, on one of two grounds: the model is unpublish
 | `TensorLDA` | text | svd | seed-reproducible | Online Tensor LDA (Kangaslahti et al. 2026): deterministic method-of-moments topic modeling via second and third-order cumulants. |
 | `NarrativeTM` | text | gibbs | seed-reproducible | Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text. |
 | `CSATM` | text, links | gibbs | seed-reproducible | Conversational Structure Aware TM (Sun et al. 2020): weights each comment's tokens by a reply-tree 'popularity' score and, after Gibbs, smooths each comment's topics toward its ancestors along the reply path ('transitivity'). For threaded forum data (posts + nested comments). Ported from the paper (no reference implementation); validated by planted recovery + LDA reduction. |
+| `ReplyTM` | text, links, metadata | gibbs | seed-reproducible | Reply-conditioned TM (topica original, #810): a child comment's topic prior is shifted by a learned directed response matrix T applied to its parent's topic proportions, per covariate group (T[i,j] = response mass a topic-i parent places on child topic j), reported with posterior credible intervals. For threaded discussions where the question is how a community responds to a theme, not just which themes cluster. Collapsed Gibbs with T sampled; validated by planted recovery + an exact tiny-tree enumeration gate + LDA reduction. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate. |
 | `IdealPointSentenceTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The sentence-embedding sibling of IdealPointTM, fit by EM. |
 | `EmbeddingLDA` | text, embeddings | gibbs | seed-reproducible | LDA anchored by pre-trained embeddings: k-means clusters the vocabulary embeddings, seeds each topic with the words nearest a cluster centroid, and (optionally) biases each document's mixture toward its own embedding. A topica original; validated by planted-recovery only. |
@@ -655,6 +656,131 @@ most coherent on sliding-window c_npmi. CSATM's contribution is the thread-aware
 *assignment* and the `popularity` / `doc_topic_raw` diagnostics, not a coherence
 upgrade. The paper's reported coherence and assignment-accuracy gains were measured
 against external references with tuned hyperparameters and are not reproduced here.
+
+## ReplyTM
+
+ReplyTM (a topica original, issue #810) is for **threaded discussions** where the
+substantive question is not only which themes appear but **how a community responds to
+them**: when a comment is about theme A, what do its replies tend to be about? CSATM
+(above) models the tendency of a reply to resemble its parent (homophily along the
+thread). ReplyTM instead learns a directed **response matrix** `T`, where `T[i, j]` is
+the share of response mass that a topic-`i` parent places on child topic `j`. The
+off-diagonal of `T` is the object of interest: it reads "parents about *i* tend to draw
+replies about *j*," which a symmetric smoother cannot express.
+
+A child comment's topic prior is its parent's response contribution added to a
+per-group baseline:
+
+```text
+child concentration  a = exp(b_g) + rho_g * T_g.T @ zbar_parent
+```
+
+`zbar_parent` is the parent's topic proportions, `rho_g` the **response strength**
+(how hard the parent pulls the child, separated from the shape `T`), and `exp(b_g)` a
+baseline concentration per covariate group. Root posts fall back to the baseline alone.
+`T`, `rho`, and the baseline are sampled during fitting, so every cell of `T` is
+reported with a posterior credible interval.
+
+Pass the reply structure as `parents` (the same contract as CSATM: `parents[d]` is
+document `d`'s parent **index**, `-1` for a thread root; the worked Reddit example under
+CSATM applies unchanged). Pass an optional `covariate`, a 0-based integer group label
+per document, to estimate a **separate response matrix per group**: the motivating use
+is contrasting how two communities respond to the same themes.
+
+```python
+import topica
+topica.enable_experimental()
+
+m = topica.ReplyTM(num_topics=20, seed=13).fit(docs, parents=parents,
+                                                covariate=subreddit_id, iters=1000)
+
+m.response_matrix        # list of (K, K) arrays, one per group; rows sum to 1
+m.response_matrix_lower  # 2.5% credible bound per cell
+m.response_matrix_upper  # 97.5% credible bound per cell
+m.response_strength      # rho per group (with response_strength_lower/upper)
+```
+
+Pass `covariate_labels=["RedPillWomen", "TheRedPill"]` to `fit` so `group_labels`
+and the readers carry names instead of positional `group_0`.
+
+**Use the readers, not the raw matrix.** `topica.inspect.response_table(m, group=…)`
+ranks a group's **directed** responses (the off-diagonal), scored by **lift** over
+each child topic's base reply rate, with the diagonal excluded and the credible
+interval on every row — this is the safe way to read the model, because the raw
+matrix's largest cells are the diagonal (homophily) and its off-diagonal is easy to
+over-read on a high-prevalence "attractor" topic. `topica.inspect.response_contrast(
+m, group_a, group_b)` differences two groups' responses and flags the cells whose
+credible intervals **separate**; treat only those as defensible community
+differences, and confirm them across seeds.
+
+**Do not compare `rho` across groups naively.** `response_strength` (with
+`response_strength_lower/upper`) is on the model's own scale and is entangled with the
+baseline and the shape `T` — because `a = exp(b_g) + rho_g · Tᵀ z̄`, a larger `rho_g`
+does not by itself mean "community g responds harder." Report `rho` as a within-group
+magnitude, not a cross-group ratio; the defensible cross-group object is the response
+*shape* contrast from `response_contrast`, read off its credible intervals.
+
+**Convergence and uncertainty.** `m.fit_history` is a `(sweep, log-likelihood)` trace
+— it should rise and plateau; a still-climbing tail means raise `iters` before
+trusting the intervals (`m.converged` is a coarse flag). The credible intervals come
+from a single chain, so they can be optimistic on sparse cells; **fit at 2–3 seeds
+and keep only responses stable across them** before reporting a cell.
+
+**Choosing K.** ReplyTM's word model is LDA, so pick K with the LDA selector —
+`topica.select.search_k(docs, [8, 12, 16, 20], model="lda")` (the second argument is
+the list of K values to score) — then fit ReplyTM at the chosen K.
+
+**Speed.** The reply-coupling makes each sweep heavier than plain LDA (every parent
+token re-scores its children). Pass `num_threads=N` to `fit` for AD-LDA
+parallelism — whole conversations are partitioned across workers, so the fit stays
+reproducible for a fixed `num_threads` + `seed` (but differs across thread counts;
+`num_threads=1` is the exact serial fit), and topic recovery holds at high worker
+counts. The parallel speedup is modest, though: only the token sweep is threaded,
+while the Metropolis parameter block (sampling `T`, `rho`, and the baseline) stays
+serial, so throughput plateaus after a few threads — most of ReplyTM's speed over a
+naive implementation is algorithmic (a first-order fast path for the child
+log-Dirichlet-multinomial), not from threads. A few hundred iterations at a modest K
+is usually enough; watch `fit_history` to decide.
+
+**Reading `T` honestly.** The **diagonal** of `T` restates homophily (topics persist
+down a thread), which is also what CSATM's transitivity captures; the novel signal is in
+the **off-diagonal**, so inspect it separately and lean on the credible intervals before
+claiming a directed effect. To decide whether the response really differs between two
+groups, compare `response_matrix[g1]` and `response_matrix[g2]` cell by cell and treat a
+difference as real only when the credible intervals separate. If they do not, the
+`covariate_response="shared_shape"` setting (one shape, per-group strength) or `"global"`
+(one matrix) is the more honest report.
+
+**Short comments.** Forum replies are short, and a per-comment topic estimate from ~30
+tokens is noisy. ReplyTM is robust to this because `T` pools evidence across thousands
+of parent–child edges, so the per-comment noise averages out; the estimate that suffers
+first on very short comments is `rho` (the strength), which a weakly-informative prior
+shrinks. `T`'s *shape* holds up well down to realistic comment lengths.
+
+**Why not just cross-tabulate?** The obvious baseline is to fit flat topics, take each
+comment's topic, and cross-tab parent topic against child topic. That is a useful first
+look and usually agrees with `T` qualitatively. But it treats each comment's topic as
+*observed* when it is *estimated* from a few noisy tokens: the resulting response is
+attenuated toward the base rate (regression dilution), and its uncertainty is wrong,
+because a cross-tab confidence interval cannot know the topics themselves are uncertain.
+ReplyTM is the joint (errors-in-variables) version — it samples the topics and `T`
+together, so `T`'s credible intervals propagate the topic-estimation uncertainty, and it
+separates response *strength* (`rho`) from response *shape*. Reach for it when you want
+a directed-response number with a defensible interval, not just an exploratory heatmap.
+
+**`parents` is index-fragile.** As with CSATM, `parents[d]` is a document *index*, so any
+step that prunes or reorders documents (building a `Corpus`, dropping empties) invalidates
+it — rebuild the indices from a stable id after preprocessing rather than reindexing the
+values. See the worked Reddit example in the CSATM section above.
+
+**Validation and status.** ReplyTM is a topica original with no reference
+implementation, so it is **experimental** (gate it with `enable_experimental()`) and
+validated by planted recovery: on synthetic reply forests with a known asymmetric `T`,
+the fit recovers the planted directed responses and the response strength on the model's
+own scale. The sampler's correctness is pinned by an exact enumeration test on a tiny
+tree (`src/reply_tm.rs`), which checks that the collapsed-Gibbs conditional includes the
+term coupling a parent to its children and would fail a sampler that dropped it. With no
+reply tree (or `rho=0`) and one group, the fit reduces to LDA.
 
 ## Scholar
 

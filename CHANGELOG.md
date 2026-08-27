@@ -63,6 +63,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`ReplyTM` — reply-conditioned topic model** (topica original; #810). For threaded
+  discussions where the question is how a community *responds* to a theme, not just
+  which themes cluster. A child comment's topic prior is shifted by a learned, directed
+  **response matrix** `T` applied to its parent's topic proportions
+  (`a_child = exp(b_g) + rho_g * T_g.T @ zbar_parent`), plus an optional per-covariate
+  baseline; `T[i, j]` is the response mass a topic-`i` parent places on child topic `j`,
+  reported per group (`covariate=`) with posterior credible intervals
+  (`response_matrix`, `response_matrix_lower/upper`, `response_strength`). Fit by
+  collapsed Gibbs with `T`, `rho`, and the baseline sampled (Metropolis-within-Gibbs);
+  the token conditional includes the children Dirichlet-multinomial factor that couples a
+  parent to its replies. Experimental (gate with `enable_experimental()`); validated by
+  planted directed-response recovery, an exact tiny-tree enumeration gate on the sampler,
+  and LDA reduction. Complements `CSATM` (which models homophily along the thread; ReplyTM
+  models the directed off-diagonal response CSATM cannot represent).
 - **`CSATM` — Conversational Structure Aware Topic Model** (Sun, Loparo &
   Kolacinski 2020; #811). A collapsed-Gibbs LDA for threaded forum discussions that
   weights each comment's tokens by a reply-tree "popularity" score and, after

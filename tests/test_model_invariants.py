@@ -133,6 +133,18 @@ def _fit_csatm(iters=300):
     return m.doc_topic, m.topic_word, K
 
 
+def _fit_reply_tm(iters=300):
+    # A simple reply chain over the planted-block corpus (each doc replies to the
+    # previous one) exercises the reply-conditioned Gibbs core; ReplyTM is
+    # experimental so the suite enables it. Recovery of the planted blocks is the
+    # invariant checked.
+    topica.enable_experimental(True)
+    docs, _ = _planted_blocks(seed=0)
+    parents = [-1] + list(range(len(docs) - 1))
+    m = topica.ReplyTM(num_topics=K, seed=1).fit(docs, parents=parents, iters=iters)
+    return m.doc_topic, m.topic_word, K
+
+
 def _fit_topical_ngrams(iters=200):
     docs, _ = _planted_blocks(seed=0)
     m = topica.TopicalNGrams(num_topics=K, seed=1).fit(docs, iters=iters)
@@ -716,6 +728,7 @@ def _fit_pltm(iters=400):
 FIT_ADAPTERS = {
     "LDA": _fit_lda,
     "CSATM": _fit_csatm,
+    "ReplyTM": _fit_reply_tm,
     "TopicalNGrams": _fit_topical_ngrams,
     "KeyNMF": _fit_keynmf,
     "OnlineLDA": _fit_online_lda,

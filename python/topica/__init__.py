@@ -79,6 +79,7 @@ from ._topica import (
     GSDMM,
     BTM,
     CSATM,
+    ReplyTM,
     FactorialLDA,
     FactorialLDA as FLDA,
     PolylingualLDA,

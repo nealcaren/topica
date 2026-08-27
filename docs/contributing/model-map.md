@@ -67,6 +67,7 @@ Column meanings:
 | `RTM` | `src/rtm.rs` | `src/python/rtm.rs` | variational EM + link head (optimize.rs digamma) | default | `parity/rtm_compare.py`, `parity/rtm_reference.py`, `tests/test_rtm.py` |
 | `FactorialLDA` | `src/factorial_lda.rs` | `src/python/factorial_lda.rs` | collapsed Gibbs over tuples + MCEM gradient ascent on log-linear priors | default | `parity/factorial_lda_compare.py`, `tests/test_factorial_lda.py` |
 | `CSATM` | `src/csatm.rs` | `src/python/csatm.rs` | popularity-weighted collapsed Gibbs + post-hoc reply-path transitivity smoothing | default | `tests/test_csatm.py` |
+| `ReplyTM` | `src/reply_tm.rs` | `src/python/reply_tm.rs` | reply-conditioned collapsed Gibbs (children Dirichlet-multinomial factor) + Metropolis-within-Gibbs sampled per-group response matrix | default | `tests/test_reply_tm.py` |
 | `AuthorTopic` | `src/author_topic.rs` | `src/python/author_topic.rs` | collapsed Gibbs (author×topic + word×topic counts) | default | `parity/author_topic_gold.py` |
 | `AuthorRecipientTopic` | `python/topica/art.py` | — _(Python)_ | ART as (sender,recipient)-pair isomorphism over the AuthorTopic Gibbs core (Python) | default | `tests/test_art.py` |
 

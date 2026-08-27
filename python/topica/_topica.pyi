@@ -3048,6 +3048,157 @@ class CSATM:
     def save(self, path: str) -> None: ...
     @staticmethod
     def load(path: str) -> "CSATM": ...
+
+class ReplyTM:
+    """Reply-conditioned topic model (topica original, issue #810): a child
+    comment's topic prior is shifted by a learned, directed response matrix ``T``
+    applied to its parent's topic proportions, plus a per-group (covariate)
+    baseline: ``a_child = exp(b_g) + rho_g * T_g.T @ zbar_parent``. ``T_g[i, j]`` is
+    the response mass a topic-``i`` parent places on child topic ``j``, reported per
+    covariate group with posterior credible intervals. Collapsed Gibbs with ``T``,
+    ``rho``, and the baseline sampled (Metropolis-within-Gibbs). Validated by
+    planted recovery + an exact tiny-tree enumeration gate + LDA reduction.
+    Experimental (topica original, gated behind ``enable_experimental()``)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict,
+        keyword-named to match ``__init__`` (issue #400)."""
+        ...
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha: float = 0.5,
+        beta: float = 0.01,
+        covariate_response: str = "per_group",
+        response_link: str = "simplex",
+        t_inference: str = "sampled",
+        seed: int = 13,
+    ) -> None:
+        """`covariate_response` selects how the response matrix varies with the
+        covariate: "per_group" (one ``T_g`` per group), "shared_shape" (shared
+        ``T`` shape, per-group strength ``rho_g``), or "global" (ignore the
+        covariate). `response_link` is "simplex" (additive, elicitation-only;
+        "loglinear" reserved). `t_inference` is "sampled" (posterior credible
+        intervals; "map" reserved)."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        parents: Sequence[int] | None = None,
+        covariate: Sequence[int] | None = None,
+        *,
+        covariate_labels: Sequence[str] | None = None,
+        iters: int = 1000,
+        num_threads: int | None = None,
+        mh_steps: int | None = None,
+        mh_step_sd: float | None = None,
+        burn: int | None = None,
+        rho_prior: tuple[float, float] | None = None,
+        t_prior_sd: float | None = None,
+    ) -> "ReplyTM":
+        """`parents[d]` is document ``d``'s parent index in the reply tree (``-1``
+        for a thread root); omit it to treat every document as a root, which reduces
+        the fit to LDA. `covariate[d]` is ``d``'s 0-based integer group label
+        selecting the response matrix ``T_g``; omit it to use a single group.
+        `covariate_labels` names the groups (length = number of groups) for
+        ``group_labels``; omit for positional ``group_0``, …. Arrays are indexed in
+        the same order as ``docs``. `num_threads` > 1 runs AD-LDA (whole conversations
+        partitioned across workers); results are reproducible for a fixed
+        ``num_threads`` + ``seed`` but differ across thread counts (``None``/``1`` is
+        the exact serial fit).
+
+        The Metropolis-within-Gibbs sampler for ``T``/``rho``/baseline exposes its
+        knobs for diagnosing or tightening the credible intervals: `mh_steps`
+        (proposals per parameter block per sweep), `mh_step_sd` (proposal SD),
+        `burn` (draws discarded before the posterior mean/interval accumulate,
+        capped at ``iters // 2``), `rho_prior` (``(mean, sd)`` of the log-normal
+        prior on response strength), and `t_prior_sd` (Gaussian prior SD on the
+        ``T`` logits). Each defaults to ``None`` = the fitted default; pass a value
+        only to override."""
+        ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """The document-topic distribution (posterior mean over retained sweeps, rows sum to 1)."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def alpha(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Representative document-topic Dirichlet concentration (mean over
+        documents of ``a_d``), used for method-of-composition standard errors."""
+        ...
+    @property
+    def num_groups(self) -> int:
+        """Number of covariate groups (1 when no covariate was supplied)."""
+        ...
+    @property
+    def response_matrix(self) -> list[numpy.typing.NDArray[numpy.float64]]:
+        """Response matrices ``T_g``, a list of ``(K, K)`` arrays (one per group),
+        each row on the simplex. ``T_g[i, j]`` = response mass a topic-``i`` parent
+        places on child topic ``j``."""
+        ...
+    @property
+    def response_matrix_lower(self) -> list[numpy.typing.NDArray[numpy.float64]]:
+        """2.5% posterior credible bound of each ``T_g`` cell (list of ``(K, K)`` arrays)."""
+        ...
+    @property
+    def response_matrix_upper(self) -> list[numpy.typing.NDArray[numpy.float64]]:
+        """97.5% posterior credible bound of each ``T_g`` cell (list of ``(K, K)`` arrays)."""
+        ...
+    @property
+    def response_strength(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Response strength ``rho_g`` per covariate group (posterior mean)."""
+        ...
+    @property
+    def response_strength_lower(self) -> numpy.typing.NDArray[numpy.float64]:
+        """2.5% posterior credible bound of ``rho_g`` per group."""
+        ...
+    @property
+    def response_strength_upper(self) -> numpy.typing.NDArray[numpy.float64]:
+        """97.5% posterior credible bound of ``rho_g`` per group."""
+        ...
+    @property
+    def baseline(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Baseline concentration ``exp(b_g)`` per group, a ``(G, K)`` array."""
+        ...
+    @property
+    def baseline_lower(self) -> numpy.typing.NDArray[numpy.float64]:
+        """2.5% posterior credible bound of the baseline, a ``(G, K)`` array."""
+        ...
+    @property
+    def baseline_upper(self) -> numpy.typing.NDArray[numpy.float64]:
+        """97.5% posterior credible bound of the baseline, a ``(G, K)`` array."""
+        ...
+    @property
+    def group_labels(self) -> list[str]:
+        """Group index to label (the ``covariate_labels`` passed to ``fit``, else
+        positional ``group_0``, ``group_1``, …)."""
+        ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """``(sweep, corpus topic-word log-likelihood)`` convergence trace; should
+        rise and plateau. A climbing tail means more ``iters`` are needed."""
+        ...
+    @property
+    def converged(self) -> bool:
+        """Whether the log-likelihood trace flattened by the end of the run."""
+        ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None, weights: bool = False
+    ) -> list[str] | list[list[str]] | list[tuple[str, float]] | list[list[tuple[str, float]]]: ...
+    def coherence(self, n: int = 10) -> numpy.typing.NDArray[numpy.float64]: ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> "ReplyTM": ...
     def __repr__(self) -> str: ...
 
 

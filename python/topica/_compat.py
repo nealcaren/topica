@@ -102,6 +102,8 @@ LAZY = {
     'quality_frontier': 'select',
     'record_fit': 'provenance',
     'relevance': 'inspect',
+    'response_contrast': 'inspect',
+    'response_table': 'inspect',
     'save_embeddings': 'embeddings',
     'search_k': 'select',
     'select_model': 'select',

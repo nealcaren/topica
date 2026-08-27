@@ -32,6 +32,8 @@ __all__ = [
     'mmr',
     'prepare_pyldavis',
     'relevance',
+    'response_contrast',
+    'response_table',
     'topic_correlation',
     'topic_crosstab',
     'topic_table',
@@ -957,6 +959,105 @@ def _thoughts_md(t, words, docs, theta, texts, max_chars):
             body = pat.sub(lambda m: f"**{m.group(0)}**", body)
         lines.append(f"- **doc {int(d)}** (θ={theta[d, t]:.2f}): {body}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# ReplyTM: directed-response readers (issue #810)
+# ---------------------------------------------------------------------------
+def _reply_labels(model, n):
+    return [" ".join(model.top_words(n, topic=k)) for k in range(model.num_topics)]
+
+
+def response_table(model, group=0, *, top=10, include_diagonal=False, n=4):
+    """Rank a ReplyTM group's **directed** responses — the off-diagonal of its
+    response matrix ``T`` — as a results-ready table.
+
+    Each row is a parent topic ``i`` → child topic ``j`` response, scored by **lift**
+    over the child topic's base reply rate (``T[i, j] / mean_i T[i, j]``), which
+    strips out the prevalence attractor so a generic high-baseline topic does not
+    dominate. The diagonal (homophily: replies staying on the parent's topic) is
+    excluded by default, because that is the part a context-free model also captures;
+    pass ``include_diagonal=True`` to keep it. Every row carries the posterior 95%
+    credible interval, so you can see which responses are actually estimated apart
+    from zero.
+
+    Returns a list of row dicts (hand to ``pandas.DataFrame`` for a table).
+    ``group`` may be an integer index or a group label.
+    """
+    T = np.asarray(model.response_matrix[_group_index(model, group)])
+    lo = np.asarray(model.response_matrix_lower[_group_index(model, group)])
+    hi = np.asarray(model.response_matrix_upper[_group_index(model, group)])
+    K = T.shape[0]
+    labels = _reply_labels(model, n)
+    base = T.mean(axis=0)  # mean child distribution = base reply rate per topic
+    rows = []
+    for i in range(K):
+        for j in range(K):
+            if i == j and not include_diagonal:
+                continue
+            lift = T[i, j] / base[j] if base[j] > 0 else float("nan")
+            rows.append({
+                "parent_topic": i,
+                "parent_words": labels[i],
+                "child_topic": j,
+                "child_words": labels[j],
+                "response_mass": float(T[i, j]),
+                "lift_over_base": float(lift),
+                "ci_lower": float(lo[i, j]),
+                "ci_upper": float(hi[i, j]),
+                "is_homophily": i == j,
+            })
+    rows.sort(key=lambda r: (-r["lift_over_base"], -r["response_mass"]))
+    return rows[:top]
+
+
+def response_contrast(model, group_a=0, group_b=1, *, top=10, n=4):
+    """Contrast two ReplyTM groups' directed responses, flagging where the 95%
+    credible intervals **separate** — the honest basis for "these communities
+    respond differently."
+
+    For each off-diagonal cell it reports ``T_a[i,j] - T_b[i,j]`` with both groups'
+    credible intervals and a ``separated`` flag (the intervals do not overlap). Rank
+    is by absolute difference; treat only ``separated=True`` rows as defensible
+    differences, and prefer confirming them across seeds. Returns a list of row
+    dicts. ``group_a``/``group_b`` may be indices or labels.
+    """
+    ga, gb = _group_index(model, group_a), _group_index(model, group_b)
+    Ta, Tb = np.asarray(model.response_matrix[ga]), np.asarray(model.response_matrix[gb])
+    la, ha = np.asarray(model.response_matrix_lower[ga]), np.asarray(model.response_matrix_upper[ga])
+    lb, hb = np.asarray(model.response_matrix_lower[gb]), np.asarray(model.response_matrix_upper[gb])
+    K = Ta.shape[0]
+    labels = _reply_labels(model, n)
+    names = list(model.group_labels)
+    rows = []
+    for i in range(K):
+        for j in range(K):
+            if i == j:
+                continue
+            separated = bool(la[i, j] > hb[i, j] or lb[i, j] > ha[i, j])
+            rows.append({
+                "parent_topic": i,
+                "parent_words": labels[i],
+                "child_topic": j,
+                "child_words": labels[j],
+                f"mass_{names[ga]}": float(Ta[i, j]),
+                f"mass_{names[gb]}": float(Tb[i, j]),
+                "difference": float(Ta[i, j] - Tb[i, j]),
+                f"ci_{names[ga]}": (float(la[i, j]), float(ha[i, j])),
+                f"ci_{names[gb]}": (float(lb[i, j]), float(hb[i, j])),
+                "separated": separated,
+            })
+    rows.sort(key=lambda r: -abs(r["difference"]))
+    return rows[:top]
+
+
+def _group_index(model, group):
+    if isinstance(group, str):
+        labels = list(model.group_labels)
+        if group not in labels:
+            raise ValueError(f"unknown group label {group!r}; have {labels}")
+        return labels.index(group)
+    return int(group)
 
 
 def __dir__():
