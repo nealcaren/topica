@@ -9537,8 +9537,9 @@ fn window_cooccurrence(
 /// topic model on real corpora before the full model class lands. `docs` are token-id lists,
 /// `parents[d]` is `d`'s parent index (negative marks a root), `groups[d]` is `d`'s covariate
 /// group id in `0..num_groups` (all-zeros + `num_groups=1` = no covariate), `num_types` the
-/// vocab size. Returns `(topic_word K×V, doc_topic D×K, group_prevalence G×K, kappa, sigma2,
-/// p0, bound_history)`.
+/// vocab size. Returns the RAW fit `(topic_word β K×V, lambda η D×(K-1), anchor μ G×(K-1),
+/// kappa, sigma2, p0, bound_history)` — callers softmax `[η, 0]` for θ and `[μ, 0]` for group
+/// prevalence, and use the raw η/μ to form the tree-prior predictive means for held-out scoring.
 #[pyfunction]
 #[pyo3(signature = (docs, parents, groups, num_groups, num_topics, num_types, em_iters=150, em_tol=1e-6, seed=13))]
 #[allow(clippy::type_complexity)]
@@ -9577,8 +9578,8 @@ fn reply_tm_fit(
             |_, _, _| true,
             &mut rng,
         );
-        let dt = m.doc_topic();
-        let gp = m.group_prevalence();
+        let dt = m.lambda;
+        let gp = m.anchor;
         (m.beta, dt, gp, m.kappa, m.sigma2, m.p0, m.bound_history)
     })
 }
