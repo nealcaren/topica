@@ -9535,27 +9535,41 @@ fn window_cooccurrence(
 
 /// Minimal ReplyTM fit entry point (experimental) — used to smoke-test the reply-threaded
 /// topic model on real corpora before the full model class lands. `docs` are token-id lists,
-/// `parents[d]` is `d`'s parent index (negative marks a root), `num_types` the vocab size.
-/// Returns `(topic_word K×V, doc_topic D×K, kappa, sigma2, p0, bound_history)`.
+/// `parents[d]` is `d`'s parent index (negative marks a root), `groups[d]` is `d`'s covariate
+/// group id in `0..num_groups` (all-zeros + `num_groups=1` = no covariate), `num_types` the
+/// vocab size. Returns `(topic_word K×V, doc_topic D×K, group_prevalence G×K, kappa, sigma2,
+/// p0, bound_history)`.
 #[pyfunction]
-#[pyo3(signature = (docs, parents, num_topics, num_types, em_iters=150, em_tol=1e-6, seed=13))]
+#[pyo3(signature = (docs, parents, groups, num_groups, num_topics, num_types, em_iters=150, em_tol=1e-6, seed=13))]
 #[allow(clippy::type_complexity)]
 fn reply_tm_fit(
     py: Python<'_>,
     docs: Vec<Vec<u32>>,
     parents: Vec<i64>,
+    groups: Vec<usize>,
+    num_groups: usize,
     num_topics: usize,
     num_types: usize,
     em_iters: usize,
     em_tol: f64,
     seed: u64,
-) -> (Vec<Vec<f64>>, Vec<Vec<f64>>, f64, f64, f64, Vec<f64>) {
+) -> (
+    Vec<Vec<f64>>,
+    Vec<Vec<f64>>,
+    Vec<Vec<f64>>,
+    f64,
+    f64,
+    f64,
+    Vec<f64>,
+) {
     use rand_chacha::rand_core::SeedableRng;
     py.allow_threads(move || {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
         let m = crate::reply_tm::fit_reply_tm(
             &docs,
             &parents,
+            &groups,
+            num_groups,
             num_topics,
             num_types,
             em_iters,
@@ -9564,7 +9578,8 @@ fn reply_tm_fit(
             &mut rng,
         );
         let dt = m.doc_topic();
-        (m.beta, dt, m.kappa, m.sigma2, m.p0, m.bound_history)
+        let gp = m.group_prevalence();
+        (m.beta, dt, gp, m.kappa, m.sigma2, m.p0, m.bound_history)
     })
 }
 

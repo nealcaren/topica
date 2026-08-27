@@ -39,8 +39,10 @@ pub struct ReplyTmModel {
     pub beta: Vec<Vec<f64>>,
     /// Per-document variational means `η` (each length K-1; reference topic K-1 fixed at 0).
     pub lambda: Vec<Vec<f64>>,
-    /// Global anchor `μ` (length K-1): the per-topic baseline the process reverts toward.
-    pub anchor: Vec<f64>,
+    /// Per-group anchor `μ_g` (num_groups × K-1): the per-topic baseline each covariate group
+    /// reverts toward. With one group this is the global mean; with a categorical covariate
+    /// (subreddit, verdict, submission-type) it is that group's prevalence in η-space.
+    pub anchor: Vec<Vec<f64>>,
     /// Reversion strength `κ = 1 - a` toward the anchor.
     pub kappa: f64,
     /// Per-edge diffusion variance `σ²`.
@@ -66,6 +68,20 @@ impl ReplyTmModel {
             })
             .collect()
     }
+
+    /// Per-group topic prevalence `θ_g = softmax([μ_g, 0])` — the STM-style baseline topic mix
+    /// of each covariate group (the answer to "which topics dominate group g's threads").
+    pub fn group_prevalence(&self) -> Vec<Vec<f64>> {
+        self.anchor
+            .iter()
+            .map(|mu| {
+                let mut e: Vec<f64> = mu.iter().map(|&x| x.exp()).collect();
+                e.push(1.0);
+                let s: f64 = e.iter().sum();
+                e.iter().map(|&x| x / s).collect()
+            })
+            .collect()
+    }
 }
 
 /// Fit ReplyTM by variational EM. `docs` are token-id lists, `parents[d]` the index of `d`'s
@@ -76,6 +92,8 @@ impl ReplyTmModel {
 pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
     parents: &[i64],
+    groups: &[usize],
+    num_groups: usize,
     num_topics: usize,
     num_types: usize,
     em_iters: usize,
@@ -109,7 +127,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     }
 
     let mut lambda = vec![vec![0.0f64; km1]; d];
-    let mut anchor = vec![0.0f64; km1];
+    let mut anchor = vec![vec![0.0f64; km1]; num_groups.max(1)];
     // field hyperparameters; a = 1 - kappa
     let mut a = 0.7f64;
     let mut sigma2 = 1.0f64;
@@ -143,12 +161,13 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
             .filter(|(_, (w, _))| !w.is_empty())
             .map(|(di, (words, counts))| {
                 let par = parents[di];
+                let ag = &anchor[groups[di]]; // the document's covariate-group anchor
                 let (mu_d, siginv, entropy) = if par < 0 {
-                    (anchor.clone(), &siginv_root, ent_root)
+                    (ag.clone(), &siginv_root, ent_root)
                 } else {
                     let lp = &lambda[par as usize];
                     let mu: Vec<f64> = (0..km1)
-                        .map(|i| (1.0 - kappa) * lp[i] + kappa * anchor[i])
+                        .map(|i| (1.0 - kappa) * lp[i] + kappa * ag[i])
                         .collect();
                     (mu, &siginv_edge, ent_edge)
                 };
@@ -205,9 +224,24 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         }
         beta = beta_ss;
 
-        // M-step (anchor): per-topic baseline = mean η
-        for i in 0..km1 {
-            anchor[i] = lambda.iter().map(|l| l[i]).sum::<f64>() / d as f64;
+        // M-step (anchor): per-GROUP per-topic baseline = mean η within the covariate group
+        // (categorical prevalence; equals the global mean when there is a single group).
+        let ng = num_groups.max(1);
+        let mut gsum = vec![vec![0.0f64; km1]; ng];
+        let mut gcnt = vec![0usize; ng];
+        for (di, l) in lambda.iter().enumerate() {
+            let g = groups[di];
+            gcnt[g] += 1;
+            for i in 0..km1 {
+                gsum[g][i] += l[i];
+            }
+        }
+        for g in 0..ng {
+            if gcnt[g] > 0 {
+                for i in 0..km1 {
+                    anchor[g][i] = gsum[g][i] / gcnt[g] as f64;
+                }
+            }
         }
 
         // M-step (field): fit (a, σ², p0) with the tree-field kernel on centered η. Centering
@@ -221,7 +255,13 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         let warmup = 15;
         if em + 1 > warmup {
             let obs: Vec<Vec<f64>> = (0..km1)
-                .map(|i| lambda.iter().map(|l| l[i] - anchor[i]).collect())
+                .map(|i| {
+                    lambda
+                        .iter()
+                        .enumerate()
+                        .map(|(di, l)| l[i] - anchor[groups[di]][i])
+                        .collect()
+                })
                 .collect();
             let r: Vec<f64> = (0..d)
                 .map(|di| {
@@ -328,9 +368,12 @@ mod tests {
         }
 
         let mut fit_rng = StdRng::seed_from_u64(7);
+        let groups = vec![0usize; docs.len()]; // single covariate group (global anchor)
         let model = fit_reply_tm(
             &docs,
             &parents,
+            &groups,
+            1,
             k,
             v,
             150,
