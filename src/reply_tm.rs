@@ -1,29 +1,28 @@
 //! ReplyTM — a reply-threaded topic model.
 //!
-//! ReplyTM is CTM/STM's logistic-normal topic model with **one structural change**: a
-//! document's prior mean is not independent but *tree-coupled* to its parent in the reply
-//! tree. Topic prevalence `η_d` diffuses along reply edges as an Ornstein–Uhlenbeck process,
-//! so a reply starts near the comment it answers and reverts toward a community anchor:
+//! ReplyTM is CTM's logistic-normal topic model with **one structural change**: a document's
+//! prior mean is coupled to its parent in the reply tree (a persistence-smoothing prior along
+//! reply edges), reverting toward a per-covariate-group anchor:
 //!
 //! ```text
-//! root d:      η_d ~ N(anchor, p0·I)
-//! non-root d:  η_d ~ N((1-κ)·η_{parent} + κ·anchor, σ²·I)      (κ = reversion, σ² = diffusion)
-//! tokens:      w ~ softmax([η_d, 0]) · β                        (CTM/STM likelihood)
+//! root d:      η_d ~ N(anchor_g, p0·I)
+//! non-root d:  η_d ~ N((1-κ)·η_{parent} + κ·anchor_g, σ²·I)     (κ = reversion, σ² = step variance)
+//! tokens:      w ~ softmax([η_d, 0]) · β                        (CTM logistic-normal likelihood)
 //! ```
 //!
-//! It reduces exactly to a plain logistic-normal topic model when `κ = 1` (no memory). The
-//! per-document machinery is reused verbatim from [`crate::ctm`]: the variational η-optimization
-//! (`lbfgs_minimize` over `ctm_lhood_grad`) and the Laplace bound (`ctm_hpb`, giving the
-//! posterior variance `ν` and the expected token counts `φ`). The only new pieces are the
-//! tree-coupled prior mean in the E-step and an M-step that fits `(κ, σ²)` with the exact
-//! Gaussian tree-field kernel [`crate::tree_field`].
+//! It reduces to a plain logistic-normal topic model when the tree is flat. On real corpora the
+//! fit drives κ toward 0, i.e. **persistence** (a reply ≈ its parent), so the "reversion" reading
+//! is usually vacuous — κ is reported with a profile-likelihood CI that reflects this.
 //!
-//! This is the diffusion model that replaced the shelved directed-transition "ReplyTM"; the name
-//! now denotes the model for its purpose (topic-modeling reply threads). Ships experimental.
+//! The per-document machinery is reused verbatim from [`crate::ctm`]: the variational
+//! η-optimization (`lbfgs_minimize` over `ctm_lhood_grad`) and the Laplace bound (`ctm_hpb`,
+//! giving the posterior variance `ν` and expected counts `φ`). The E-step coupling uses the
+//! parent's current variational mean λ_parent (a structured mean-field on point estimates, NOT
+//! the smoothed tree posterior); the [`crate::tree_field`] kernel supplies the exact marginal
+//! likelihood used to fit `(κ, σ²)` and to profile κ for its CI. Prevalence carries a
+//! method-of-composition SE. Ships experimental (topica-original, no published reference).
 
-// Binding lands in a follow-up commit; the fit entry point is exercised by the planted-recovery
-// test until then.
-#![allow(dead_code)]
+#![allow(dead_code)] // several public entry points are exercised only by tests / the binding
 
 use crate::ctm::{ctm_hpb, ctm_lhood_grad};
 use crate::tree_field::{self, TreeFieldParams};

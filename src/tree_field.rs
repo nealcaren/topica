@@ -1,10 +1,9 @@
 //! Gaussian tree-field kernel: exact, O(n), two-pass inference for a linear-Gaussian
 //! Ornstein–Uhlenbeck process on a *forest* of reply trees.
 //!
-//! This is the one new numerical core of `ReplyTM` (issue TBD) — a reply-threaded topic model
-//! that walks a per-topic prevalence coordinate `x_d` down each reply edge and reads it noisily
-//! through the STM logistic-normal bound. Per topic dimension the field is a scalar
-//! linear-Gaussian model:
+//! This is the one new numerical core of `ReplyTM` — a reply-threaded topic model that couples a
+//! per-topic prevalence coordinate `x_d` along each reply edge and reads it noisily through the
+//! CTM logistic-normal bound. Per topic dimension the field is a scalar linear-Gaussian model:
 //!
 //! ```text
 //! root r:   x_r ~ N(m, P0)
@@ -20,8 +19,10 @@
 //! ~1e-10 on random forests (the algorithm was first validated in Python, see
 //! `notes/tree_field_validate.py`).
 //!
-//! The kernel lands ahead of its consumer: `ReplyTM` wires it into the STM EM loop in the next
-//! PR, so the public entry points are exercised only by the tests until then.
+//! `ReplyTM`'s M-step uses [`fit`]/[`loglik_multi`] here to estimate `(κ, σ²)` and profile κ for
+//! its CI; [`solve`]'s smoothed means/variances are available but the E-step coupling currently
+//! uses the parent's point estimate instead (a structured mean-field), so some entry points are
+//! exercised only by the tests.
 #![allow(dead_code)]
 
 use std::f64::consts::PI;

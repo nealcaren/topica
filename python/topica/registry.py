@@ -163,7 +163,7 @@ REGISTRY: dict[str, ModelInfo] = {
            "Conversational Structure Aware TM (Sun et al. 2020): weights each comment's tokens by a reply-tree 'popularity' score and, after Gibbs, smooths each comment's topics toward its ancestors along the reply path ('transitivity'). For threaded forum data (posts + nested comments). Ported from the paper (no reference implementation); validated by planted recovery + LDA reduction.",
            "guides/models.md#csatm", experimental=True),
         _m("ReplyTM", "covariates", ("text",), "variational", "seed-reproducible", (),
-           "ReplyTM (topica-original): a reply-threaded topic model — STM logistic-normal topics with a tree-coupled prior, so topic prevalence diffuses along reply edges (a reply starts near the comment it answers and reverts toward its covariate-group baseline). For threaded discussion (posts + nested comments). Validated by planted recovery + a held-out-beat gate: the tree prior beats STM-without-tree out-of-sample.",
+           "ReplyTM (topica-original): a reply-threaded topic model — CTM logistic-normal topics with a reply-tree structured prior, so a reply's topic prior is coupled to the comment it answers (a persistence-smoothing prior, reverting toward its covariate-group baseline). For threaded discussion (posts + nested comments). Validated by planted recovery + a held-out-beat gate: the tree prior beats the no-tree baseline out-of-sample on high-contingency corpora (debate, deep threads).",
            "guides/models.md#replytm", experimental=True),
         # ---- Guided & supervised -------------------------------------------
         _m("KeyATM", "guided", ("text", "seeds"), "gibbs", "seed-reproducible", (),
