@@ -3095,6 +3095,7 @@ class ReplyTM:
         covariate_labels: Sequence[str] | None = None,
         iters: int = 1000,
         num_threads: int | None = None,
+        num_chains: int | None = None,
         mh_steps: int | None = None,
         mh_step_sd: float | None = None,
         burn: int | None = None,
@@ -3112,13 +3113,19 @@ class ReplyTM:
         ``num_threads`` + ``seed`` but differ across thread counts (``None``/``1`` is
         the exact serial fit).
 
+        `num_chains` (default 4) runs that many independent MCMC chains from dispersed
+        seeds, topic-aligns them, and pools their draws. The credible intervals are
+        empirical quantiles of the pooled draws, so they include between-chain
+        variance (a single chain badly under-covers), and ``converged``/``max_rhat``
+        are split-R̂ on the pooled parameters. Use ``num_chains=1`` only for a fast
+        debug fit — it has no convergence diagnostic and its intervals are too narrow.
+
         The Metropolis-within-Gibbs sampler for ``T``/``rho``/baseline exposes its
-        knobs for diagnosing or tightening the credible intervals: `mh_steps`
-        (proposals per parameter block per sweep), `mh_step_sd` (proposal SD),
-        `burn` (draws discarded before the posterior mean/interval accumulate,
-        capped at ``iters // 2``), `rho_prior` (``(mean, sd)`` of the log-normal
-        prior on response strength), and `t_prior_sd` (Gaussian prior SD on the
-        ``T`` logits). Each defaults to ``None`` = the fitted default; pass a value
+        knobs for diagnosing mixing: `mh_steps` (proposals per parameter block per
+        sweep), `mh_step_sd` (proposal SD), `burn` (draws discarded before draws are
+        collected, capped at ``iters // 2``), `rho_prior` (``(mean, sd)`` of the
+        log-normal prior on response strength), and `t_prior_sd` (Gaussian prior SD on
+        the ``T`` logits). Each defaults to ``None`` = the fitted default; pass a value
         only to override."""
         ...
     @property
@@ -3190,7 +3197,20 @@ class ReplyTM:
         ...
     @property
     def converged(self) -> bool:
-        """Whether the log-likelihood trace flattened by the end of the run."""
+        """``max_rhat < 1.1``: the sampled parameters mixed across chains. ``False``
+        (and ``max_rhat`` NaN) when fit with ``num_chains=1``."""
+        ...
+    @property
+    def max_rhat(self) -> float:
+        """Maximum split-R̂ over all sampled scalars across chains (≈1 at convergence,
+        ``> 1.1`` flags a chain that has not mixed). NaN when ``num_chains=1``."""
+        ...
+    @property
+    def parent_support(self) -> numpy.typing.NDArray[numpy.float64]:
+        """Parent-topic support, a ``(num_groups, K)`` array: total parent proportion
+        mass on each topic over the group's reply edges. Row ``i`` of ``T_g`` is only
+        identified where this is non-trivial; ``response_contrast`` uses it to suppress
+        cells whose group difference is really a prevalence difference."""
         ...
     def top_words(
         self, n: int = 10, *, topic: int | None = None, weights: bool = False

@@ -82,6 +82,12 @@ pub struct ReplyTmParams {
     /// docs' assignments, and recomputes the global topic-word table exactly from
     /// the merged `z` each sweep; deterministic for a fixed `num_threads` + seed.
     pub num_threads: usize,
+    /// Number of independent MCMC chains run from dispersed seeds. Their draws are
+    /// topic-aligned (Hungarian on φ) and pooled, so the reported credible intervals
+    /// include between-chain variance and `converged`/`max_rhat` come from split-R̂.
+    /// A single chain under-represents posterior spread; `>1` (default 4) is required
+    /// for honest intervals. `1` is a fast debug mode with no R̂.
+    pub num_chains: usize,
 }
 
 impl Default for ReplyTmParams {
@@ -98,6 +104,7 @@ impl Default for ReplyTmParams {
             mh_step_sd: 0.3,
             burn: 200,
             num_threads: 1,
+            num_chains: 4,
         }
     }
 }
@@ -167,22 +174,35 @@ pub struct ReplyTmModel {
     pub doc_topic: Vec<Vec<f64>>,
     /// T_g (G×K×K) posterior mean, each row on the simplex.
     pub response_matrix: Vec<Vec<Vec<f64>>>,
-    /// 2.5% / 97.5% per-cell credible bounds of T_g (each G×K×K).
+    /// 2.5% / 97.5% per-cell empirical-quantile credible bounds of T_g (each G×K×K),
+    /// from pooled topic-aligned draws across all chains (so they carry between-chain
+    /// variance).
     pub response_matrix_lo: Vec<Vec<Vec<f64>>>,
     pub response_matrix_hi: Vec<Vec<Vec<f64>>>,
-    /// rho_g (G) posterior mean response strength, with 2.5% / 97.5% bounds.
+    /// rho_g (G) posterior mean response strength, with 2.5% / 97.5% quantile bounds.
     pub response_strength: Vec<f64>,
     pub response_strength_lo: Vec<f64>,
     pub response_strength_hi: Vec<f64>,
-    /// exp(b_g) (G×K) baseline concentration posterior mean, with 2.5% / 97.5% bounds.
+    /// exp(b_g) (G×K) baseline concentration posterior mean, with quantile bounds.
     pub baseline: Vec<Vec<f64>>,
     pub baseline_lo: Vec<Vec<f64>>,
     pub baseline_hi: Vec<Vec<f64>>,
     /// Representative document-topic Dirichlet (mean over docs of a_d) for
     /// method-of-composition standard errors.
     pub alpha_mean: Vec<f64>,
+    /// Parent-topic support (G×K): for each group g and topic i, the total parent
+    /// z̄ mass on topic i summed over that group's child edges. Row i of T_g is only
+    /// identified where this is non-trivial; `response_contrast`/`response_table` use
+    /// it to suppress cells estimated on near-empty support (an unequal-prevalence
+    /// contrast otherwise reads as a spurious response difference).
+    pub parent_support: Vec<Vec<f64>>,
     pub doc_lengths: Vec<usize>,
     pub fit_history: Vec<(usize, f64)>,
+    /// Max split-R̂ over all sampled scalars (T cells, rho, baseline) across chains.
+    /// `NaN` when `num_chains == 1` (no R̂ available).
+    pub max_rhat: f64,
+    /// `max_rhat < 1.1` (multi-chain). Convergence of the *parameters*, not just the
+    /// log-likelihood. `false` with a single chain (no R̂).
     pub converged: bool,
 }
 
@@ -500,17 +520,30 @@ struct GroupParams {
     t_logits: Vec<Vec<f64>>, // K×K response-matrix logits (row-softmax -> T)
 }
 
-/// Fit ReplyTM. `parents[d]` is document `d`'s parent index (negative = thread
-/// root); `covariate[d]` is `d`'s group index (0-based, contiguous). Empty
-/// `parents` => all roots; empty `covariate` => a single group.
-pub fn fit<R: Rng>(
+/// Output of a single MCMC chain: the raw per-sweep draws plus the chain's own
+/// posterior-mean topic-word and doc-topic tables (used to topic-align chains before
+/// pooling). Means / intervals / R̂ are assembled by [`fit`] across chains.
+struct ChainOut {
+    num_groups: usize,
+    topic_word: Vec<Vec<f64>>,
+    doc_topic: Vec<Vec<f64>>,
+    t_draws: Vec<Vec<Vec<Vec<f64>>>>, // [g][draw][i][j]
+    rho_draws: Vec<Vec<f64>>,         // [g][draw]
+    base_draws: Vec<Vec<Vec<f64>>>,   // [g][draw][j]
+    fit_history: Vec<(usize, f64)>,
+}
+
+/// Run one MCMC chain. `parents[d]` is document `d`'s parent index (negative = thread
+/// root); `covariate[d]` is `d`'s group index (0-based, contiguous). Empty `parents`
+/// => all roots; empty `covariate` => a single group.
+fn fit_one_chain<R: Rng>(
     corpus: &Corpus,
     parents: &[i64],
     covariate: &[i64],
     params: &ReplyTmParams,
     iters: usize,
     rng: &mut R,
-) -> ReplyTmModel {
+) -> ChainOut {
     let k = params.num_topics.max(1);
     let d = corpus.num_docs();
     let v = corpus.num_types();
@@ -596,16 +629,12 @@ pub fn fit<R: Rng>(
         })
         .collect();
 
-    // Accumulators for posterior means / draws.
+    // theta accumulates its posterior mean in-chain; T / rho / baseline retain raw
+    // draws (aligned + pooled across chains by the orchestrator).
     let mut theta_acc = vec![vec![0.0f64; k]; d];
-    let mut t_acc = vec![vec![vec![0.0f64; k]; k]; num_groups];
-    let mut rho_acc = vec![0.0f64; num_groups];
-    let mut base_acc = vec![vec![0.0f64; k]; num_groups];
-    // Retain T / rho / baseline draws for credible intervals.
     let mut t_draws: Vec<Vec<Vec<Vec<f64>>>> = vec![Vec::new(); num_groups];
     let mut rho_draws: Vec<Vec<f64>> = vec![Vec::new(); num_groups];
     let mut base_draws: Vec<Vec<Vec<f64>>> = vec![Vec::new(); num_groups];
-    let mut n_collected = 0usize;
     // Held-in log-likelihood trace (a convergence signal): recorded every
     // `ll_every` sweeps as the collapsed topic-word predictive log-likelihood.
     let ll_every = (iters / 40).max(1);
@@ -759,23 +788,14 @@ pub fn fit<R: Rng>(
         }
 
         // ---- (3) collect draws after burn-in ----
+        // Raw per-sweep draws only; means/intervals/R̂ are computed by the multi-chain
+        // orchestrator after topic-aligning and pooling these across chains.
         if sweep >= burn {
             let t_draw: Vec<Vec<Vec<f64>>> =
                 gp.iter().map(|g| softmax_rows(&g.t_logits, k)).collect();
             for g in 0..num_groups {
-                for i in 0..k {
-                    for j in 0..k {
-                        t_acc[g][i][j] += t_draw[g][i][j];
-                    }
-                }
-                let rho_g = gp[g].log_rho.exp();
-                rho_acc[g] += rho_g;
-                rho_draws[g].push(rho_g);
-                let base_g: Vec<f64> = gp[g].b.iter().map(|&x| x.exp()).collect();
-                for j in 0..k {
-                    base_acc[g][j] += base_g[j];
-                }
-                base_draws[g].push(base_g);
+                rho_draws[g].push(gp[g].log_rho.exp());
+                base_draws[g].push(gp[g].b.iter().map(|&x| x.exp()).collect());
                 t_draws[g].push(t_draw[g].clone());
             }
             // theta from current counts.
@@ -789,7 +809,6 @@ pub fn fit<R: Rng>(
                     };
                 }
             }
-            n_collected += 1;
         }
 
         // Convergence signal: corpus topic-word predictive log-likelihood under the
@@ -806,27 +825,14 @@ pub fn fit<R: Rng>(
             fit_history.push((sweep, ll));
         }
     }
-    // Simple convergence flag: the last few LL records within a small relative band.
-    let converged = fit_history.len() >= 3 && {
-        let n = fit_history.len();
-        let recent: Vec<f64> = fit_history[n - 3..].iter().map(|&(_, l)| l).collect();
-        let span = recent.iter().cloned().fold(f64::MIN, f64::max)
-            - recent.iter().cloned().fold(f64::MAX, f64::min);
-        let scale = recent.iter().map(|l| l.abs()).sum::<f64>() / 3.0;
-        scale > 0.0 && (span / scale) < 0.002
-    };
-
-    let nc = n_collected.max(1) as f64;
-
-    // phi posterior mean from final counts.
+    // phi posterior mean from this chain's final counts.
     let topic_word: Vec<Vec<f64>> = (0..k)
         .map(|t| {
             let denom = nk[t] + vbeta;
             (0..v).map(|w| (nkw[t][w] + beta) / denom).collect()
         })
         .collect();
-
-    // theta posterior mean, renormalized.
+    // theta posterior mean, renormalized (this chain).
     let doc_topic: Vec<Vec<f64>> = (0..d)
         .map(|dd| {
             let s: f64 = theta_acc[dd].iter().sum();
@@ -838,37 +844,211 @@ pub fn fit<R: Rng>(
         })
         .collect();
 
-    // T posterior mean + credible intervals from retained draws.
-    let response_matrix: Vec<Vec<Vec<f64>>> = (0..num_groups)
-        .map(|g| {
-            (0..k)
-                .map(|i| (0..k).map(|j| t_acc[g][i][j] / nc).collect())
-                .collect()
+    ChainOut {
+        num_groups,
+        topic_word,
+        doc_topic,
+        t_draws,
+        rho_draws,
+        base_draws,
+        fit_history,
+    }
+}
+
+/// Fit ReplyTM with `params.num_chains` independent MCMC chains from dispersed seeds,
+/// topic-align them (Hungarian on φ), and pool their draws. Credible intervals are
+/// empirical 2.5/97.5% quantiles of the pooled draws (so they include between-chain
+/// variance — a single chain badly under-covers), and convergence is split-R̂ on the
+/// pooled scalars, not the log-likelihood trace. `parents[d]`/`covariate[d]` as in
+/// [`fit_one_chain`]. Deterministic for a fixed seed + `num_chains` + `num_threads`
+/// (chains are seeded from the master rng, run in parallel, and pooled in chain order).
+pub fn fit<R: Rng>(
+    corpus: &Corpus,
+    parents: &[i64],
+    covariate: &[i64],
+    params: &ReplyTmParams,
+    iters: usize,
+    rng: &mut R,
+) -> ReplyTmModel {
+    use rayon::prelude::*;
+    let k = params.num_topics.max(1);
+    let d = corpus.num_docs();
+    let num_chains = params.num_chains.max(1);
+    // Draw one seed per chain deterministically, then run the chains in parallel; each
+    // chain's output depends only on its seed, so collection order (chain index) makes
+    // the whole fit reproducible regardless of scheduling.
+    let seeds: Vec<u64> = (0..num_chains).map(|_| rng.gen()).collect();
+    let chains: Vec<ChainOut> = seeds
+        .par_iter()
+        .map(|&s| {
+            let mut crng = ChaCha8Rng::seed_from_u64(s);
+            fit_one_chain(corpus, parents, covariate, params, iters, &mut crng)
         })
         .collect();
-    let (response_matrix_lo, response_matrix_hi) = t_credible_intervals(&t_draws, num_groups, k);
-    let response_strength: Vec<f64> = (0..num_groups).map(|g| rho_acc[g] / nc).collect();
-    let baseline: Vec<Vec<f64>> = (0..num_groups)
-        .map(|g| (0..k).map(|j| base_acc[g][j] / nc).collect())
-        .collect();
-    // Credible intervals for rho (per group) and baseline (per group, per topic).
+
+    let num_groups = chains[0].num_groups;
+    let v = corpus.num_types();
+
+    // Align every chain's topics to chain 0 (the reference) by maximum φ-cosine, via
+    // Hungarian assignment. `perm[c][t]` = the reference topic that chain c's topic t
+    // maps to; `inv[c][I]` = chain c's topic that carries reference topic I.
+    let ref_phi = &chains[0].topic_word;
+    let mut inv: Vec<Vec<usize>> = Vec::with_capacity(num_chains);
+    for (c, ch) in chains.iter().enumerate() {
+        if c == 0 {
+            inv.push((0..k).collect());
+            continue;
+        }
+        // cost[t][t'] = -cosine(phi_c[t], phi_ref[t'])
+        let cost: Vec<Vec<f64>> = (0..k)
+            .map(|t| {
+                (0..k)
+                    .map(|tp| -cosine(&ch.topic_word[t], &ref_phi[tp], v))
+                    .collect()
+            })
+            .collect();
+        let perm = hungarian(&cost); // perm[t] = ref topic for chain topic t
+        let mut invc = vec![0usize; k];
+        for (t, &rt) in perm.iter().enumerate() {
+            invc[rt] = t;
+        }
+        inv.push(invc);
+    }
+
+    // Aligned point estimates for phi/theta: average across chains.
+    let mut topic_word = vec![vec![0.0f64; v]; k];
+    for (c, ch) in chains.iter().enumerate() {
+        for i in 0..k {
+            let src = inv[c][i];
+            for w in 0..v {
+                topic_word[i][w] += ch.topic_word[src][w];
+            }
+        }
+    }
+    for row in topic_word.iter_mut() {
+        let s: f64 = row.iter().sum();
+        if s > 0.0 {
+            row.iter_mut().for_each(|x| *x /= s);
+        }
+    }
+    let mut doc_topic = vec![vec![0.0f64; k]; d];
+    for (c, ch) in chains.iter().enumerate() {
+        for dd in 0..d {
+            for i in 0..k {
+                doc_topic[dd][i] += ch.doc_topic[dd][inv[c][i]];
+            }
+        }
+    }
+    for row in doc_topic.iter_mut() {
+        let s: f64 = row.iter().sum();
+        if s > 0.0 {
+            row.iter_mut().for_each(|x| *x /= s);
+        }
+    }
+
+    // Pool aligned draws per group; report mean + 2.5/97.5% quantiles, and track the
+    // max split-R̂ across all sampled scalars (T cells, rho, baseline).
+    let mut response_matrix = vec![vec![vec![0.0f64; k]; k]; num_groups];
+    let mut response_matrix_lo = vec![vec![vec![0.0f64; k]; k]; num_groups];
+    let mut response_matrix_hi = vec![vec![vec![0.0f64; k]; k]; num_groups];
+    let mut response_strength = vec![0.0f64; num_groups];
     let mut response_strength_lo = vec![0.0f64; num_groups];
     let mut response_strength_hi = vec![0.0f64; num_groups];
+    let mut baseline = vec![vec![0.0f64; k]; num_groups];
     let mut baseline_lo = vec![vec![0.0f64; k]; num_groups];
     let mut baseline_hi = vec![vec![0.0f64; k]; num_groups];
+    let mut max_rhat = if num_chains > 1 { 0.0 } else { f64::NAN };
+
+    let mean = |xs: &[f64]| -> f64 {
+        if xs.is_empty() {
+            0.0
+        } else {
+            xs.iter().sum::<f64>() / xs.len() as f64
+        }
+    };
+
     for g in 0..num_groups {
-        let (rl, rh) = sd_interval(&rho_draws[g]);
-        response_strength_lo[g] = rl.max(0.0);
-        response_strength_hi[g] = rh.max(0.0);
+        // rho: perm-invariant scalar.
+        let rho_seqs: Vec<Vec<f64>> = chains.iter().map(|ch| ch.rho_draws[g].clone()).collect();
+        let rho_pool: Vec<f64> = rho_seqs.iter().flatten().copied().collect();
+        response_strength[g] = mean(&rho_pool);
+        response_strength_lo[g] = quantile(&rho_pool, 0.025).max(0.0);
+        response_strength_hi[g] = quantile(&rho_pool, 0.975).max(0.0);
+        if num_chains > 1 {
+            max_rhat = max_rhat.max(split_rhat(&rho_seqs));
+        }
+        // baseline[g][J]: aligned per topic.
         for j in 0..k {
-            let bd: Vec<f64> = base_draws[g].iter().map(|dr| dr[j]).collect();
-            let (bl, bh) = sd_interval(&bd);
-            baseline_lo[g][j] = bl.max(0.0);
-            baseline_hi[g][j] = bh.max(0.0);
+            let seqs: Vec<Vec<f64>> = chains
+                .iter()
+                .enumerate()
+                .map(|(c, ch)| ch.base_draws[g].iter().map(|dr| dr[inv[c][j]]).collect())
+                .collect();
+            let pool: Vec<f64> = seqs.iter().flatten().copied().collect();
+            baseline[g][j] = mean(&pool);
+            baseline_lo[g][j] = quantile(&pool, 0.025).max(0.0);
+            baseline_hi[g][j] = quantile(&pool, 0.975).max(0.0);
+            if num_chains > 1 {
+                max_rhat = max_rhat.max(split_rhat(&seqs));
+            }
+        }
+        // T[g][I][J]: aligned on both topic axes.
+        for i in 0..k {
+            for j in 0..k {
+                let seqs: Vec<Vec<f64>> = chains
+                    .iter()
+                    .enumerate()
+                    .map(|(c, ch)| {
+                        let (ci, cj) = (inv[c][i], inv[c][j]);
+                        ch.t_draws[g].iter().map(|dr| dr[ci][cj]).collect()
+                    })
+                    .collect();
+                let pool: Vec<f64> = seqs.iter().flatten().copied().collect();
+                response_matrix[g][i][j] = mean(&pool);
+                response_matrix_lo[g][i][j] = quantile(&pool, 0.025).clamp(0.0, 1.0);
+                response_matrix_hi[g][i][j] = quantile(&pool, 0.975).clamp(0.0, 1.0);
+                if num_chains > 1 {
+                    max_rhat = max_rhat.max(split_rhat(&seqs));
+                }
+            }
+        }
+    }
+    let converged = num_chains > 1 && max_rhat.is_finite() && max_rhat < 1.1;
+
+    // Parent-topic support (G×K): total parent z̄ mass on each topic over the group's
+    // child edges (identifies which rows of T_g are estimable). Uses the pooled
+    // doc_topic as z̄_parent.
+    let group_of: Vec<usize> =
+        if covariate.is_empty() || params.covariate_response == CovResponse::Global {
+            vec![0usize; d]
+        } else {
+            (0..d).map(|dd| covariate[dd].max(0) as usize).collect()
+        };
+    let mut parent_support = vec![vec![0.0f64; k]; num_groups];
+    if !parents.is_empty() {
+        for dd in 0..d {
+            let p = parents[dd];
+            if p >= 0 && (p as usize) < d && (p as usize) != dd {
+                let g = group_of[dd];
+                for i in 0..k {
+                    parent_support[g][i] += doc_topic[p as usize][i];
+                }
+            }
         }
     }
 
     // Representative alpha for composition SEs: mean over docs of a_d.
+    let parent_of = |dd: usize| -> Option<usize> {
+        if parents.is_empty() {
+            return None;
+        }
+        let p = parents[dd];
+        if p >= 0 && (p as usize) < d && (p as usize) != dd {
+            Some(p as usize)
+        } else {
+            None
+        }
+    };
     let mut alpha_mean = vec![0.0f64; k];
     for dd in 0..d {
         let g = group_of[dd];
@@ -910,10 +1090,26 @@ pub fn fit<R: Rng>(
         baseline_lo,
         baseline_hi,
         alpha_mean,
-        doc_lengths: docs.iter().map(|doc| doc.len()).collect(),
-        fit_history,
+        parent_support,
+        doc_lengths: corpus.docs.iter().map(|doc| doc.len()).collect(),
+        fit_history: chains[0].fit_history.clone(),
+        max_rhat,
         converged,
     }
+}
+
+/// Cosine similarity of two equal-length dense vectors (length `n`).
+fn cosine(a: &[f64], b: &[f64], n: usize) -> f64 {
+    let mut dot = 0.0;
+    let mut na = 0.0;
+    let mut nb = 0.0;
+    for i in 0..n {
+        dot += a[i] * b[i];
+        na += a[i] * a[i];
+        nb += b[i] * b[i];
+    }
+    let den = (na.sqrt() * nb.sqrt()).max(1e-300);
+    dot / den
 }
 
 fn parent_of_vec(parents: &[i64], d: usize) -> Vec<Option<usize>> {
@@ -1073,67 +1269,139 @@ fn gaussian<R: Rng>(rng: &mut R) -> f64 {
 }
 
 /// Per-cell 2.5% / 97.5% quantiles of retained T draws.
-fn t_credible_intervals(
-    t_draws: &[Vec<Vec<Vec<f64>>>],
-    num_groups: usize,
-    k: usize,
-) -> (Vec<Vec<Vec<f64>>>, Vec<Vec<Vec<f64>>>) {
-    let mut lo = vec![vec![vec![0.0f64; k]; k]; num_groups];
-    let mut hi = vec![vec![vec![0.0f64; k]; k]; num_groups];
-    for g in 0..num_groups {
-        let draws = &t_draws[g];
-        for i in 0..k {
-            for j in 0..k {
-                let col: Vec<f64> = draws.iter().map(|dr| dr[i][j]).collect();
-                let (l, h) = sd_interval(&col);
-                lo[g][i][j] = l.max(0.0);
-                hi[g][i][j] = h.min(1.0);
+/// Empirical `q`-quantile (0..=1) of a sample by linear interpolation between order
+/// statistics (the "type-7"/numpy default). Clones + sorts, so it is O(n log n) per
+/// call — fine at our draw counts. Pooled cross-chain draws make these quantiles
+/// include between-chain variance, which is the whole point of multi-chain intervals.
+fn quantile(xs: &[f64], q: f64) -> f64 {
+    let n = xs.len();
+    if n == 0 {
+        return 0.0;
+    }
+    if n == 1 {
+        return xs[0];
+    }
+    let mut s: Vec<f64> = xs.to_vec();
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let pos = q.clamp(0.0, 1.0) * (n as f64 - 1.0);
+    let lo = pos.floor() as usize;
+    let hi = pos.ceil() as usize;
+    if lo == hi {
+        s[lo]
+    } else {
+        let frac = pos - lo as f64;
+        s[lo] * (1.0 - frac) + s[hi] * frac
+    }
+}
+
+/// Split-`R̂` (potential scale reduction factor) for one scalar parameter across
+/// `chains`. Each chain is split in half (so a single non-stationary chain is caught
+/// as between-half disagreement), giving `m = 2·C` sequences of length `n`. Returns
+/// `sqrt(((n-1)/n·W + B/n) / W)`; ≈1 at convergence, >1.1 flags a chain that has not
+/// mixed. Returns 1.0 when there is no variance to compare (identical draws, or too
+/// few draws/chains) so a degenerate-but-consistent parameter never reports spurious
+/// non-convergence.
+fn split_rhat(chains: &[Vec<f64>]) -> f64 {
+    // Split each chain in half; keep only the usable equal-length prefix.
+    let mut seqs: Vec<&[f64]> = Vec::new();
+    let mut n = usize::MAX;
+    for c in chains {
+        let h = c.len() / 2;
+        if h == 0 {
+            continue;
+        }
+        seqs.push(&c[..h]);
+        seqs.push(&c[h..2 * h]);
+        n = n.min(h);
+    }
+    let m = seqs.len();
+    if m < 2 || n < 2 || n == usize::MAX {
+        return 1.0;
+    }
+    let means: Vec<f64> = seqs
+        .iter()
+        .map(|s| s[..n].iter().sum::<f64>() / n as f64)
+        .collect();
+    let grand = means.iter().sum::<f64>() / m as f64;
+    let b = n as f64 / (m as f64 - 1.0) * means.iter().map(|&mj| (mj - grand).powi(2)).sum::<f64>();
+    let w = seqs
+        .iter()
+        .zip(&means)
+        .map(|(s, &mj)| s[..n].iter().map(|&x| (x - mj).powi(2)).sum::<f64>() / (n as f64 - 1.0))
+        .sum::<f64>()
+        / m as f64;
+    if w <= 1e-300 {
+        return 1.0;
+    }
+    let var_plus = (n as f64 - 1.0) / n as f64 * w + b / n as f64;
+    (var_plus / w).sqrt()
+}
+
+/// Minimum-cost perfect assignment on a square matrix (Kuhn–Munkres / Hungarian,
+/// O(n³) shortest-augmenting-path form). Returns `perm` with `perm[row] = col`. Used
+/// to align a chain's topics to a reference chain's before pooling draws: with
+/// `cost[t][t'] = −cosine(φ_chain[t], φ_ref[t'])`, `perm[t]` is the reference topic
+/// that chain-topic `t` maps to.
+fn hungarian(cost: &[Vec<f64>]) -> Vec<usize> {
+    let n = cost.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let inf = f64::INFINITY;
+    let mut u = vec![0.0f64; n + 1];
+    let mut v = vec![0.0f64; n + 1];
+    let mut p = vec![0usize; n + 1]; // p[j] = row (1-indexed) assigned to col j
+    let mut way = vec![0usize; n + 1];
+    for i in 1..=n {
+        p[0] = i;
+        let mut j0 = 0usize;
+        let mut minv = vec![inf; n + 1];
+        let mut used = vec![false; n + 1];
+        loop {
+            used[j0] = true;
+            let i0 = p[j0];
+            let mut delta = inf;
+            let mut j1 = 0usize;
+            for j in 1..=n {
+                if !used[j] {
+                    let cur = cost[i0 - 1][j - 1] - u[i0] - v[j];
+                    if cur < minv[j] {
+                        minv[j] = cur;
+                        way[j] = j0;
+                    }
+                    if minv[j] < delta {
+                        delta = minv[j];
+                        j1 = j;
+                    }
+                }
+            }
+            for j in 0..=n {
+                if used[j] {
+                    u[p[j]] += delta;
+                    v[j] -= delta;
+                } else {
+                    minv[j] -= delta;
+                }
+            }
+            j0 = j1;
+            if p[j0] == 0 {
+                break;
+            }
+        }
+        loop {
+            let j1 = way[j0];
+            p[j0] = p[j1];
+            j0 = j1;
+            if j0 == 0 {
+                break;
             }
         }
     }
-    (lo, hi)
-}
-
-/// Empirical coverage calibration for the credible intervals. The raw posterior
-/// (mean ± 1.96·SD) intervals are anticonservative: a simulation-based-calibration
-/// study (planted response matrix, repeated corpora — see `scripts`/the paper's SBC
-/// appendix) found the nominal-95% raw intervals cover ~84%, because the softmax/
-/// simplex response shape is mildly over-concentrated in finite samples. Multiplying
-/// the half-width by this factor brings frequentist coverage to ~0.95 (it plateaus
-/// there by ~2.5). This is an empirical calibration fit on synthetic data; it may not
-/// transfer exactly to every corpus, so serious inference should still confirm effects
-/// across seeds (the response-contrast readers flag only CI-separated cells).
-const CI_CALIBRATION: f64 = 2.5;
-
-/// A calibrated `mean ± z·SD` posterior interval. Extreme empirical quantiles from a
-/// short, autocorrelated MH chain are biased inward; the sample SD is a consistent
-/// estimate of the marginal posterior spread regardless of autocorrelation, so a
-/// moment interval covers better at these chain lengths. A small ESS correction widens
-/// it further when successive draws are correlated, and `CI_CALIBRATION` applies the
-/// SBC-measured coverage correction.
-fn sd_interval(draws: &[f64]) -> (f64, f64) {
-    let n = draws.len();
-    if n == 0 {
-        return (0.0, 0.0);
+    let mut perm = vec![0usize; n];
+    for j in 1..=n {
+        perm[p[j] - 1] = j - 1;
     }
-    if n == 1 {
-        return (draws[0], draws[0]);
-    }
-    let mean: f64 = draws.iter().sum::<f64>() / n as f64;
-    let var: f64 = draws.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / (n as f64 - 1.0);
-    let sd = var.sqrt();
-    // Lag-1 autocorrelation -> effective sample size; widen for the finite-ESS
-    // uncertainty in the mean via a small t-style inflation (kept mild).
-    let mut c1 = 0.0;
-    for w in draws.windows(2) {
-        c1 += (w[0] - mean) * (w[1] - mean);
-    }
-    c1 /= (n as f64 - 1.0) * var.max(1e-12);
-    let rho1 = c1.clamp(-0.99, 0.99);
-    let ess = (n as f64) * (1.0 - rho1) / (1.0 + rho1);
-    let inflate = (1.0 + 1.0 / ess.max(2.0)).sqrt();
-    let half = CI_CALIBRATION * 1.96 * sd * inflate;
-    (mean - half, mean + half)
+    perm
 }
 
 impl Estimator for ReplyTmModel {
@@ -1175,6 +1443,60 @@ mod tests {
     use crate::corpus::Corpus;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha8Rng;
+
+    #[test]
+    fn quantile_matches_numpy_type7() {
+        let xs = [3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0];
+        // numpy.quantile(xs, q) with default linear interpolation.
+        assert!((quantile(&xs, 0.0) - 1.0).abs() < 1e-9);
+        assert!((quantile(&xs, 1.0) - 9.0).abs() < 1e-9);
+        assert!((quantile(&xs, 0.5) - 3.5).abs() < 1e-9);
+        assert!((quantile(&xs, 0.25) - 1.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn split_rhat_near_one_for_iid_and_high_for_offset_chains() {
+        // Two well-mixed chains sampling the same distribution -> R̂ ≈ 1.
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let draw = |rng: &mut ChaCha8Rng| {
+            (0..400)
+                .map(|_| {
+                    // Box–Muller standard normal.
+                    let u1: f64 = (rng.gen::<u64>() as f64 + 1.0) / (u64::MAX as f64 + 2.0);
+                    let u2: f64 = (rng.gen::<u64>() as f64 + 1.0) / (u64::MAX as f64 + 2.0);
+                    (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+                })
+                .collect::<Vec<f64>>()
+        };
+        let c0 = draw(&mut rng);
+        let c1 = draw(&mut rng);
+        let rhat_good = split_rhat(&[c0.clone(), c1.clone()]);
+        assert!(rhat_good < 1.1, "iid chains R̂ = {rhat_good}");
+        // Same chains but one shifted by a large constant -> big between-chain var.
+        let c1_off: Vec<f64> = c1.iter().map(|&x| x + 10.0).collect();
+        let rhat_bad = split_rhat(&[c0, c1_off]);
+        assert!(rhat_bad > 1.5, "offset chains R̂ = {rhat_bad}");
+        // Degenerate (identical constant) -> defined, returns 1.0.
+        assert_eq!(split_rhat(&[vec![2.0; 20], vec![2.0; 20]]), 1.0);
+    }
+
+    #[test]
+    fn hungarian_recovers_a_known_permutation() {
+        // cost minimized when row t -> col perm_true[t]; give those cells cost 0 and
+        // everything else cost 1, so the optimal assignment IS perm_true.
+        let perm_true = [2usize, 0, 3, 1];
+        let n = perm_true.len();
+        let mut cost = vec![vec![1.0f64; n]; n];
+        for (t, &c) in perm_true.iter().enumerate() {
+            cost[t][c] = 0.0;
+        }
+        assert_eq!(hungarian(&cost), perm_true.to_vec());
+        // Identity when the diagonal is cheapest.
+        let eye: Vec<Vec<f64>> = (0..n)
+            .map(|i| (0..n).map(|j| if i == j { 0.0 } else { 1.0 }).collect())
+            .collect();
+        assert_eq!(hungarian(&eye), vec![0, 1, 2, 3]);
+    }
 
     // Build a corpus from token-id documents (mirrors csatm.rs test helper).
     fn corpus_from(docs: Vec<Vec<u32>>, v: usize) -> Corpus {

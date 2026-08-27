@@ -33,6 +33,7 @@ __all__ = [
     'prepare_pyldavis',
     'relevance',
     'response_contrast',
+    'response_null',
     'response_table',
     'topic_correlation',
     'topic_crosstab',
@@ -968,58 +969,103 @@ def _reply_labels(model, n):
     return [" ".join(model.top_words(n, topic=k)) for k in range(model.num_topics)]
 
 
-def response_table(model, group=0, *, top=10, include_diagonal=False, n=4):
+def _support(model, g):
+    """Parent-topic support (K,) for group ``g``: total parent proportion mass on
+    each topic over the group's reply edges. Row ``i`` of ``T_g`` is only identified
+    where this is non-trivial. Falls back to all-ones if the model predates the
+    ``parent_support`` field."""
+    ps = getattr(model, "parent_support", None)
+    if ps is None:
+        return np.ones(np.asarray(model.response_matrix[g]).shape[0])
+    arr = np.asarray(ps)
+    return arr[g] if arr.ndim == 2 else arr
+
+
+def _min_support(model):
+    """A per-model support floor: a parent topic must carry at least this much total
+    parent mass for its ``T`` row to be treated as estimated rather than prior-pinned.
+    Set to one expected edge's worth (1.0), which is deliberately conservative."""
+    return 1.0
+
+
+def response_table(model, group=0, *, top=10, include_diagonal=False, n=4,
+                   min_support=None, null=None):
     """Rank a ReplyTM group's **directed** responses — the off-diagonal of its
     response matrix ``T`` — as a results-ready table.
 
-    Each row is a parent topic ``i`` → child topic ``j`` response, scored by **lift**
-    over the child topic's base reply rate (``T[i, j] / mean_i T[i, j]``), which
-    strips out the prevalence attractor so a generic high-baseline topic does not
-    dominate. The diagonal (homophily: replies staying on the parent's topic) is
-    excluded by default, because that is the part a context-free model also captures;
-    pass ``include_diagonal=True`` to keep it. Every row carries the posterior 95%
-    credible interval, so you can see which responses are actually estimated apart
-    from zero.
+    Each row is a parent topic ``i`` → child topic ``j`` response. The honest signal
+    is whether the response is **elevated above the flat reply rate** ``1/(K-1)``: the
+    ``clears_baseline`` flag is ``True`` only when the cell's 95% credible interval
+    lies entirely above ``1/(K-1)``. A ``lift_over_base`` column is also reported, but
+    treat it with care — lift over a tiny base manufactures large multipliers from
+    noise, so it is NOT the sort key and a high lift with ``clears_baseline=False`` is
+    not a finding. Rows are ranked so cells that clear baseline come first.
 
-    Returns a list of row dicts (hand to ``pandas.DataFrame`` for a table).
-    ``group`` may be an integer index or a group label.
+    Parent topics with little parent support (``parent_support[i] < min_support``,
+    default one expected edge) are dropped: row ``i`` of ``T`` is not identified there.
+    The diagonal (homophily) is excluded by default (``include_diagonal=True`` keeps
+    it). Pass ``null=response_null(...)`` to additionally flag ``beats_null`` — the
+    cell exceeds its within-group permutation null (the strongest baseline).
+
+    Returns a list of row dicts (hand to ``pandas.DataFrame``). ``group`` may be an
+    integer index or a group label.
     """
-    T = np.asarray(model.response_matrix[_group_index(model, group)])
-    lo = np.asarray(model.response_matrix_lower[_group_index(model, group)])
-    hi = np.asarray(model.response_matrix_upper[_group_index(model, group)])
+    g = _group_index(model, group)
+    T = np.asarray(model.response_matrix[g])
+    lo = np.asarray(model.response_matrix_lower[g])
+    hi = np.asarray(model.response_matrix_upper[g])
     K = T.shape[0]
+    flat = 1.0 / (K - 1) if K > 1 else 1.0
     labels = _reply_labels(model, n)
     base = T.mean(axis=0)  # mean child distribution = base reply rate per topic
+    support = _support(model, g)
+    floor = _min_support(model) if min_support is None else min_support
+    null_q = None if null is None else np.asarray(null[g] if np.ndim(null) == 3 else null)
     rows = []
     for i in range(K):
+        if support[i] < floor:
+            continue
         for j in range(K):
             if i == j and not include_diagonal:
                 continue
             lift = T[i, j] / base[j] if base[j] > 0 else float("nan")
-            rows.append({
+            row = {
                 "parent_topic": i,
                 "parent_words": labels[i],
                 "child_topic": j,
                 "child_words": labels[j],
                 "response_mass": float(T[i, j]),
+                "clears_baseline": bool(lo[i, j] > flat),
                 "lift_over_base": float(lift),
                 "ci_lower": float(lo[i, j]),
                 "ci_upper": float(hi[i, j]),
+                "parent_support": float(support[i]),
                 "is_homophily": i == j,
-            })
-    rows.sort(key=lambda r: (-r["lift_over_base"], -r["response_mass"]))
+            }
+            if null_q is not None:
+                row["beats_null"] = bool(T[i, j] > null_q[i, j])
+            rows.append(row)
+    # Rank cleared-baseline cells first, then by mass — never by raw lift.
+    rows.sort(key=lambda r: (not r["clears_baseline"], -r["response_mass"]))
     return rows[:top]
 
 
-def response_contrast(model, group_a=0, group_b=1, *, top=10, n=4):
+def response_contrast(model, group_a=0, group_b=1, *, top=10, n=4, min_support=None):
     """Contrast two ReplyTM groups' directed responses, flagging where the 95%
     credible intervals **separate** — the honest basis for "these communities
     respond differently."
 
+    A separation is only reported when **both** groups actually estimate row ``i`` of
+    ``T`` — i.e. both have parent support ``>= min_support`` on parent topic ``i``.
+    This is essential: if the two communities have different topic *prevalence*, a
+    parent topic one of them rarely visits leaves that ``T`` row pinned to the prior,
+    which reads as a spurious "responds differently" when it is only a difference in
+    what they *talk about*. Cells failing the support test are returned with
+    ``separated=False`` and ``low_support=True`` so they are visible but not counted.
+
     For each off-diagonal cell it reports ``T_a[i,j] - T_b[i,j]`` with both groups'
-    credible intervals and a ``separated`` flag (the intervals do not overlap). Rank
-    is by absolute difference; treat only ``separated=True`` rows as defensible
-    differences, and prefer confirming them across seeds. Returns a list of row
+    credible intervals. Rank is by absolute difference; treat only ``separated=True``
+    rows as defensible, and prefer confirming across seeds. Returns a list of row
     dicts. ``group_a``/``group_b`` may be indices or labels.
     """
     ga, gb = _group_index(model, group_a), _group_index(model, group_b)
@@ -1029,12 +1075,15 @@ def response_contrast(model, group_a=0, group_b=1, *, top=10, n=4):
     K = Ta.shape[0]
     labels = _reply_labels(model, n)
     names = list(model.group_labels)
+    sa, sb = _support(model, ga), _support(model, gb)
+    floor = _min_support(model) if min_support is None else min_support
     rows = []
     for i in range(K):
+        supported = bool(sa[i] >= floor and sb[i] >= floor)
         for j in range(K):
             if i == j:
                 continue
-            separated = bool(la[i, j] > hb[i, j] or lb[i, j] > ha[i, j])
+            ci_apart = bool(la[i, j] > hb[i, j] or lb[i, j] > ha[i, j])
             rows.append({
                 "parent_topic": i,
                 "parent_words": labels[i],
@@ -1045,10 +1094,72 @@ def response_contrast(model, group_a=0, group_b=1, *, top=10, n=4):
                 "difference": float(Ta[i, j] - Tb[i, j]),
                 f"ci_{names[ga]}": (float(la[i, j]), float(ha[i, j])),
                 f"ci_{names[gb]}": (float(lb[i, j]), float(hb[i, j])),
-                "separated": separated,
+                "separated": bool(ci_apart and supported),
+                "low_support": not supported,
             })
     rows.sort(key=lambda r: -abs(r["difference"]))
     return rows[:top]
+
+
+def response_null(model, docs, parents, covariate=None, *, n_perm=20, iters=None,
+                  seed=13):
+    """Permutation-null response matrices for ReplyTM: the off-diagonal ``T`` you would
+    see if parent topic and child topic were **unrelated**. This is the honest baseline
+    a directed-response claim must beat — it absorbs both the lift-over-tiny-base
+    footgun and the unequal-prevalence artifact that inflate the raw matrix.
+
+    Each permutation keeps the reply *depth* structure but rewires every non-root
+    document to a random parent one level up, breaking the parent→child topic pairing
+    while preserving the number and depth of edges. ReplyTM is refit on each rewiring
+    (single chain, for speed) and the per-cell distribution of ``T`` is collected.
+
+    Returns an array ``(num_groups, K, K)`` of the 95th-percentile null response mass
+    per cell. Pass it to ``response_table(..., null=that)`` and keep only cells with
+    ``beats_null=True``. ``docs``/``parents``/``covariate`` are the same arrays passed
+    to ``fit``.
+    """
+    from . import ReplyTM  # local import to avoid a cycle
+
+    K = int(model.num_topics)
+    settings = dict(model.settings)
+    cov_resp = settings.get("covariate_response", "per_group")
+    fit_iters = int(iters) if iters is not None else 400
+    parents = list(parents)
+    n = len(parents)
+    # Reply depth of each doc under the real forest (root = 0).
+    depth = [None] * n
+    def _depth(d):
+        seen = 0
+        cur = d
+        while parents[cur] is not None and parents[cur] >= 0:
+            cur = parents[cur]
+            seen += 1
+            if seen > n:  # defensive; fit() already rejects cycles
+                break
+        return seen
+    for d in range(n):
+        depth[d] = _depth(d)
+    levels = {}
+    for d in range(n):
+        levels.setdefault(depth[d], []).append(d)
+    max_depth = max(levels) if levels else 0
+
+    rng = np.random.default_rng(seed)
+    ng = int(model.num_groups)
+    draws = np.zeros((n_perm, ng, K, K))
+    for p in range(n_perm):
+        new_parents = [-1] * n
+        for d in range(n):
+            if depth[d] >= 1:
+                up = levels.get(depth[d] - 1, [])
+                if up:
+                    new_parents[d] = int(rng.choice(up))
+        m = ReplyTM(K, seed=seed + p + 1, covariate_response=cov_resp).fit(
+            docs, parents=new_parents, covariate=covariate, iters=fit_iters,
+            num_chains=1)
+        for g in range(ng):
+            draws[p, g] = np.asarray(m.response_matrix[g])
+    return np.percentile(draws, 95, axis=0)
 
 
 def _group_index(model, group):

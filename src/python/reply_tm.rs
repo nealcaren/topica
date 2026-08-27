@@ -57,9 +57,16 @@ struct ReplyTmState {
     baseline_lo: Option<Vec<Vec<f64>>>,
     baseline_hi: Option<Vec<Vec<f64>>>,
     alpha_mean: Option<Vec<f64>>,
+    parent_support: Option<Vec<Vec<f64>>>,
     doc_lengths: Option<Vec<usize>>,
     fit_history: Option<Vec<(usize, f64)>>,
+    #[serde(default = "nan")]
+    max_rhat: f64,
     converged: bool,
+}
+
+fn nan() -> f64 {
+    f64::NAN
 }
 
 impl ReplyTM {
@@ -153,7 +160,7 @@ impl ReplyTM {
     /// the response matrix `T_g`; when omitted a single group is used. Both arrays
     /// are indexed in the SAME order as `docs` (they are realigned if empty
     /// documents are pruned).
-    #[pyo3(signature = (data, parents=None, covariate=None, *, covariate_labels=None, iters=1000, num_threads=None, mh_steps=None, mh_step_sd=None, burn=None, rho_prior=None, t_prior_sd=None))]
+    #[pyo3(signature = (data, parents=None, covariate=None, *, covariate_labels=None, iters=1000, num_threads=None, num_chains=None, mh_steps=None, mh_step_sd=None, burn=None, rho_prior=None, t_prior_sd=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -164,6 +171,7 @@ impl ReplyTM {
         covariate_labels: Option<Vec<String>>,
         iters: usize,
         num_threads: Option<usize>,
+        num_chains: Option<usize>,
         mh_steps: Option<usize>,
         mh_step_sd: Option<f64>,
         burn: Option<usize>,
@@ -171,6 +179,11 @@ impl ReplyTM {
         t_prior_sd: Option<f64>,
     ) -> PyResult<Py<Self>> {
         require_experimental("ReplyTM")?;
+        if let Some(nc) = num_chains {
+            if nc < 1 {
+                return Err(PyValueError::new_err("num_chains must be >= 1"));
+            }
+        }
         if let Some(sd) = mh_step_sd {
             if !(sd > 0.0 && sd.is_finite()) {
                 return Err(PyValueError::new_err(
@@ -303,6 +316,7 @@ impl ReplyTM {
             beta: slf.beta,
             covariate_response: slf.cov_response()?,
             num_threads: num_threads.unwrap_or(1).max(1),
+            num_chains: num_chains.unwrap_or(defaults.num_chains).max(1),
             mh_steps: mh_steps.unwrap_or(defaults.mh_steps),
             mh_step_sd: mh_step_sd.unwrap_or(defaults.mh_step_sd),
             burn: burn.unwrap_or(defaults.burn),
@@ -464,11 +478,27 @@ impl ReplyTM {
     fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
         Ok(self.fitted_model()?.fit_history.clone())
     }
-    /// Whether the log-likelihood trace flattened by the end of the run (a coarse
-    /// signal; confirm with multiple seeds before reporting cell-level differences).
+    /// `max_rhat < 1.1`: the sampled parameters (T cells, rho, baseline) mixed across
+    /// chains. `False` (and `max_rhat` NaN) when fit with `num_chains=1` — a single
+    /// chain has no convergence diagnostic.
     #[getter]
     fn converged(&self) -> PyResult<bool> {
         Ok(self.fitted_model()?.converged)
+    }
+    /// Maximum split-R̂ over all sampled scalars across chains (≈1 at convergence,
+    /// `> 1.1` flags a chain that has not mixed). NaN when `num_chains=1`.
+    #[getter]
+    fn max_rhat(&self) -> PyResult<f64> {
+        Ok(self.fitted_model()?.max_rhat)
+    }
+    /// Parent-topic support, a (num_groups, K) array: for each group and topic `i`,
+    /// the total parent proportion mass on topic `i` over that group's reply edges.
+    /// Row `i` of `T_g` is only identified where this is non-trivial;
+    /// `topica.inspect.response_contrast` uses it to suppress cells whose apparent
+    /// group difference is really a prevalence (support) difference.
+    #[getter]
+    fn parent_support<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        Ok(vecs_to_arr2(&self.fitted_model()?.parent_support).to_pyarray_bound(py))
     }
 
     // --- Conventional extras ---
@@ -527,8 +557,10 @@ impl ReplyTM {
             baseline_lo: self.model.as_ref().map(|m| m.baseline_lo.clone()),
             baseline_hi: self.model.as_ref().map(|m| m.baseline_hi.clone()),
             alpha_mean: self.model.as_ref().map(|m| m.alpha_mean.clone()),
+            parent_support: self.model.as_ref().map(|m| m.parent_support.clone()),
             doc_lengths: self.model.as_ref().map(|m| m.doc_lengths.clone()),
             fit_history: self.model.as_ref().map(|m| m.fit_history.clone()),
+            max_rhat: self.model.as_ref().map(|m| m.max_rhat).unwrap_or(f64::NAN),
             converged: self.model.as_ref().map(|m| m.converged).unwrap_or(false),
         };
         let bytes = bincode::serialize(&state)
@@ -561,8 +593,10 @@ impl ReplyTM {
                 baseline_lo: state.baseline_lo.unwrap_or_default(),
                 baseline_hi: state.baseline_hi.unwrap_or_default(),
                 alpha_mean: state.alpha_mean.unwrap_or_default(),
+                parent_support: state.parent_support.unwrap_or_default(),
                 doc_lengths: state.doc_lengths.unwrap_or_default(),
                 fit_history: state.fit_history.clone().unwrap_or_default(),
+                max_rhat: state.max_rhat,
                 converged: state.converged,
             })
         } else {
