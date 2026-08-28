@@ -26,8 +26,9 @@ use std::collections::HashMap;
 /// dominated). Reduces to a plain logistic-normal topic model when the reply tree is flat.
 /// `num_topics` is K; `em_iters` the variational-EM iteration cap; `seed` makes the fit deterministic.
 /// `coupling` chooses the prior structure: `"parent"` (default; shrink toward the immediate parent,
-/// the reply-chain prior) or `"root"` (shrink toward the thread root, a broadcast / topic-around-the-
-/// root prior for discourse where replies track the thread topic rather than the specific parent).
+/// the reply-chain prior), `"root"` (shrink toward the thread root, a broadcast / topic-around-the-
+/// root prior), or `"blend"` (shrink toward both, `α·parent + β·root + (1-α-β)·anchor`, with the
+/// weights estimated or pinned via `blend_alpha`/`blend_beta`).
 #[pyclass(module = "topica")]
 pub struct ReplyTM {
     num_topics: usize,
@@ -37,8 +38,17 @@ pub struct ReplyTM {
     // reply-chain prior) or "root" (a node shrinks toward its thread root, a broadcast /
     // topic-around-the-root prior). "root" is fit by running the SAME kernel on a reparented
     // depth-2 star topology (every non-root points at its thread root), so the whole field / kappa
-    // / transform / persistence stack is unchanged; only the coupling neighbor differs.
+    // / transform / persistence stack is unchanged; only the coupling neighbor differs. "blend"
+    // couples each node to BOTH its parent and its thread root (α·parent + β·root + rest·anchor);
+    // its weights are estimated (or pinned by blend_alpha_fixed/blend_beta_fixed).
     coupling: String,
+    // Fixed blend weights from the constructor (None = estimate in the M-step). Retained so
+    // `settings` round-trips and refits reproduce the same pinning.
+    blend_alpha_fixed: Option<f64>,
+    blend_beta_fixed: Option<f64>,
+    // Effective (fitted or pinned) blend weights after fit; NaN unless coupling="blend" and fitted.
+    blend_alpha: f64,
+    blend_beta: f64,
     fitted: bool,
     vocab: Vec<String>,
     group_names: Vec<String>,
@@ -75,6 +85,14 @@ struct ReplyTmState {
     // consistency with the other states (see mod.rs / neural.rs).
     #[serde(default = "default_coupling")]
     coupling: String,
+    #[serde(default = "default_none_f64")]
+    blend_alpha_fixed: Option<f64>,
+    #[serde(default = "default_none_f64")]
+    blend_beta_fixed: Option<f64>,
+    #[serde(default = "default_nan")]
+    blend_alpha: f64,
+    #[serde(default = "default_nan")]
+    blend_beta: f64,
     fitted: bool,
     vocab: Vec<String>,
     group_names: Vec<String>,
@@ -96,6 +114,27 @@ struct ReplyTmState {
 
 fn default_coupling() -> String {
     "parent".to_string()
+}
+
+fn default_none_f64() -> Option<f64> {
+    None
+}
+
+fn default_nan() -> f64 {
+    f64::NAN
+}
+
+/// Each node's thread root (itself for a root). Used to build the blend `BlendConfig`.
+fn thread_roots(parents: &[i64]) -> Vec<usize> {
+    (0..parents.len())
+        .map(|start| {
+            let mut cur = start as i64;
+            while parents[cur as usize] >= 0 {
+                cur = parents[cur as usize];
+            }
+            cur as usize
+        })
+        .collect()
 }
 
 /// Reparent a forest to its thread-root star: every non-root node points at its thread root, roots
@@ -129,25 +168,57 @@ impl ReplyTM {
 #[pymethods]
 impl ReplyTM {
     #[new]
-    #[pyo3(signature = (num_topics, *, em_iters=150, seed=13, coupling="parent".to_string()))]
-    fn new(num_topics: usize, em_iters: usize, seed: u64, coupling: String) -> PyResult<Self> {
+    #[pyo3(signature = (num_topics, *, em_iters=150, seed=13, coupling="parent".to_string(), blend_alpha=None, blend_beta=None))]
+    fn new(
+        num_topics: usize,
+        em_iters: usize,
+        seed: u64,
+        coupling: String,
+        blend_alpha: Option<f64>,
+        blend_beta: Option<f64>,
+    ) -> PyResult<Self> {
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
         if em_iters == 0 {
             return Err(PyValueError::new_err("em_iters must be >= 1"));
         }
-        if coupling != "parent" && coupling != "root" {
+        if coupling != "parent" && coupling != "root" && coupling != "blend" {
             return Err(PyValueError::new_err(format!(
-                "coupling must be \"parent\" (shrink toward the immediate parent) or \"root\" \
-                 (shrink toward the thread root); got {coupling:?}"
+                "coupling must be \"parent\" (immediate parent), \"root\" (thread root), or \
+                 \"blend\" (both); got {coupling:?}"
             )));
+        }
+        // blend weights are only meaningful under blend coupling; a pinned weight must be a valid
+        // convex share (α, β ≥ 0 and α + β ≤ 1 so the anchor keeps the remainder).
+        if coupling != "blend" && (blend_alpha.is_some() || blend_beta.is_some()) {
+            return Err(PyValueError::new_err(
+                "blend_alpha/blend_beta are only valid with coupling=\"blend\"",
+            ));
+        }
+        for (name, w) in [("blend_alpha", blend_alpha), ("blend_beta", blend_beta)] {
+            if let Some(v) = w {
+                if !(0.0..=1.0).contains(&v) {
+                    return Err(PyValueError::new_err(format!("{name} must be in [0, 1]")));
+                }
+            }
+        }
+        if let (Some(a), Some(b)) = (blend_alpha, blend_beta) {
+            if a + b > 1.0 {
+                return Err(PyValueError::new_err(
+                    "blend_alpha + blend_beta must be <= 1 (the anchor takes the remaining weight)",
+                ));
+            }
         }
         Ok(ReplyTM {
             num_topics,
             em_iters,
             seed,
             coupling,
+            blend_alpha_fixed: blend_alpha,
+            blend_beta_fixed: blend_beta,
+            blend_alpha: f64::NAN,
+            blend_beta: f64::NAN,
             fitted: false,
             vocab: Vec::new(),
             group_names: Vec::new(),
@@ -377,14 +448,40 @@ impl ReplyTM {
             }
         };
 
-        // The coupling topology the kernel actually fits on: the reply tree itself for the default
-        // parent coupling, or the reparented thread-root star for root coupling. Everything
-        // downstream (field fit, kappa, persistence, transform) operates on this topology, so
-        // storing it as `fit_parents` keeps them consistent with how the model was fit.
+        // The coupling topology the kernel actually fits on. Parent coupling uses the reply tree
+        // itself; root coupling uses the reparented thread-root star; blend keeps the real tree
+        // (it couples to parent AND root via a BlendConfig, not a reparented topology). Everything
+        // downstream (field fit, kappa, persistence, transform) operates on `fit_parents`, so
+        // storing the right topology keeps them consistent with how the model was fit.
         let coupling_par = if slf.coupling == "root" {
             root_star_parents(&par)
         } else {
             par.clone()
+        };
+        // Blend configuration: the real tree's thread roots + any pinned weights. Warn when the tree
+        // lacks depth-3 structure, where a node's parent equals its root and α vs β is unidentified.
+        let blend_cfg = if slf.coupling == "blend" {
+            let n_deep = (0..n)
+                .filter(|&c| par[c] >= 0 && thread_roots(&par)[c] != par[c] as usize)
+                .count();
+            if slf.blend_alpha_fixed.is_none() && slf.blend_beta_fixed.is_none() && n_deep < 2 {
+                PyErr::warn_bound(
+                    py,
+                    &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
+                    "coupling=\"blend\": the reply tree has almost no depth-3+ structure (a node's \
+                     parent is its thread root), so the parent weight α and root weight β are not \
+                     separately identified and the split is arbitrary. Pin blend_alpha/blend_beta, \
+                     or use coupling=\"parent\"/\"root\".",
+                    1,
+                )?;
+            }
+            Some(crate::reply_tm::BlendConfig {
+                root: thread_roots(&par),
+                fixed_alpha: slf.blend_alpha_fixed,
+                fixed_beta: slf.blend_beta_fixed,
+            })
+        } else {
+            None
         };
 
         // Retain the coupling topology + groups for persistence() before the move-closure consumes them.
@@ -407,6 +504,7 @@ impl ReplyTM {
                 iters,
                 1e-6,
                 false, // kappa_ci computed lazily by the getter, not in fit
+                blend_cfg.as_ref(),
                 |_, _, _| true,
                 &mut rng,
             )
@@ -424,6 +522,8 @@ impl ReplyTM {
         slf.prevalence_se = m.anchor_se;
         slf.kappa = m.kappa;
         slf.kappa_ci = m.kappa_ci;
+        slf.blend_alpha = m.blend_alpha;
+        slf.blend_beta = m.blend_beta;
         slf.sigma2 = m.sigma2;
         slf.p0 = m.p0;
         slf.bound_history = m.bound_history;
@@ -584,12 +684,15 @@ impl ReplyTM {
             }
         };
 
-        // Couple the new forest the same way the model was fit: toward the immediate parent, or
-        // (root coupling) toward each node's thread root via the reparented star topology.
-        let coupling_par = if self.coupling == "root" {
-            root_star_parents(&par)
+        // Couple the new forest the same way the model was fit: toward the immediate parent; (root)
+        // toward each node's thread root via the reparented star; or (blend) toward both, with the
+        // fitted weights passed through so transform_reply_tm builds α·parent + β·root + rest·anchor.
+        let (coupling_par, blend) = if self.coupling == "root" {
+            (root_star_parents(&par), None)
+        } else if self.coupling == "blend" {
+            (par, Some((self.blend_alpha, self.blend_beta)))
         } else {
-            par
+            (par, None)
         };
 
         let kappa = self.kappa;
@@ -606,6 +709,7 @@ impl ReplyTM {
                 kappa,
                 sigma2,
                 p0,
+                blend,
             )
         });
         Ok(vecs_to_arr2(&theta).to_pyarray_bound(py))
@@ -734,6 +838,10 @@ impl ReplyTM {
                 em_iters: self.em_iters,
                 seed: self.seed,
                 coupling: self.coupling.clone(),
+                blend_alpha_fixed: self.blend_alpha_fixed,
+                blend_beta_fixed: self.blend_beta_fixed,
+                blend_alpha: self.blend_alpha,
+                blend_beta: self.blend_beta,
                 fitted: self.fitted,
                 vocab: self.vocab.clone(),
                 group_names: self.group_names.clone(),
@@ -764,6 +872,10 @@ impl ReplyTM {
             em_iters: s.em_iters,
             seed: s.seed,
             coupling: s.coupling,
+            blend_alpha_fixed: s.blend_alpha_fixed,
+            blend_beta_fixed: s.blend_beta_fixed,
+            blend_alpha: s.blend_alpha,
+            blend_beta: s.blend_beta,
             fitted: s.fitted,
             vocab: s.vocab,
             group_names: s.group_names,
@@ -837,6 +949,7 @@ impl ReplyTM {
                 iters,
                 1e-6,
                 false, // uncoupled pass for persistence(); no kappa_ci needed
+                None,  // uncoupled: every doc a root, no blend
                 |_, _, _| true,
                 &mut rng,
             )
@@ -1013,10 +1126,28 @@ impl ReplyTM {
         }))
     }
 
-    /// Reversion strength `κ = 1 - a` (0 = pure persistence / parent-copy, 1 = no memory).
+    /// Reversion strength `κ = 1 - a` (0 = pure persistence / parent-copy, 1 = no memory). `NaN`
+    /// under `coupling="blend"`, where the mix is described by `blend_alpha`/`blend_beta` instead.
     #[getter]
     fn kappa(&self) -> f64 {
         self.kappa
+    }
+
+    /// Blend parent weight `α` (how much a node tracks its immediate parent), `NaN` unless the model
+    /// was fit with `coupling="blend"`. A reliability-corrected (errors-in-variables) hard-EM
+    /// estimate, so it is de-attenuated for the η measurement error but still conditional on the
+    /// topic fit; read the held-out `reply_completion` delta for the model-vs-model comparison.
+    #[getter]
+    fn blend_alpha(&self) -> f64 {
+        self.blend_alpha
+    }
+
+    /// Blend root weight `β` (how much a node tracks its thread root), `NaN` unless the model was fit
+    /// with `coupling="blend"`. The anchor takes the remaining `1 - α - β`. Same estimator caveat as
+    /// `blend_alpha`.
+    #[getter]
+    fn blend_beta(&self) -> f64 {
+        self.blend_beta
     }
 
     /// Per-edge diffusion variance `σ²` (floored at 0.1; a returned 0.1 may be the floor, not an
@@ -1049,6 +1180,8 @@ impl ReplyTM {
         d.set_item("em_iters", self.em_iters)?;
         d.set_item("seed", self.seed)?;
         d.set_item("coupling", self.coupling.clone())?;
+        d.set_item("blend_alpha", self.blend_alpha_fixed)?;
+        d.set_item("blend_beta", self.blend_beta_fixed)?;
         Ok(d)
     }
 
@@ -1058,13 +1191,20 @@ impl ReplyTM {
         self.seed
     }
 
-    /// The reply coupling structure (`"parent"` or `"root"`).
+    /// The reply coupling structure (`"parent"`, `"root"`, or `"blend"`).
     #[getter]
     fn coupling(&self) -> String {
         self.coupling.clone()
     }
 
     fn __repr__(&self) -> String {
+        if self.fitted && self.coupling == "blend" {
+            return format!(
+                "ReplyTM(num_topics={}, coupling=\"blend\", fitted, alpha={:.3}, beta={:.3}, \
+                 sigma2={:.3})",
+                self.num_topics, self.blend_alpha, self.blend_beta, self.sigma2
+            );
+        }
         if self.fitted {
             format!(
                 "ReplyTM(num_topics={}, coupling={:?}, fitted, kappa={:.3}, sigma2={:.3})",

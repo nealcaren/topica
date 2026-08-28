@@ -713,3 +713,107 @@ def test_parent_coupling_wins_on_chain_persistence():
     res = topica.evaluate.reply_completion(
         docs, parents, num_topics=5, baselines=("root",), em_iters=60, seed=13, n_boot=300)
     assert res.delta["root"]["estimate"] > 0.0
+
+
+# ---------------------------------------------------------------------------
+# coupling="blend": parent + root mixture (issue #831)
+# ---------------------------------------------------------------------------
+
+def test_blend_validation():
+    # blend weights only valid with coupling="blend"
+    with pytest.raises(ValueError, match="only valid with"):
+        topica.ReplyTM(2, blend_alpha=0.5)
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        topica.ReplyTM(2, coupling="blend", blend_alpha=1.5)
+    with pytest.raises(ValueError, match="<= 1"):
+        topica.ReplyTM(2, coupling="blend", blend_alpha=0.7, blend_beta=0.6)
+    with pytest.raises(ValueError, match="coupling"):
+        topica.ReplyTM(2, coupling="bogus")
+
+
+def _mixed_corpus(seed=1, n_threads=140):
+    """Planted MIXED discourse: each thin leaf token is drawn 50/50 from its thread-root topic and
+    its parent topic, with root and parent topics both drawn from four equally-frequent blocks and
+    required to differ (so all topics are balanced, the two regressors are not collinear, and there
+    are no pure leaves). The optimal predictor of a held-out leaf token, not knowing which component
+    it came from, is the blend of parent and root, so blend coupling should beat both pure couplings."""
+    rng = np.random.default_rng(seed)
+    blocks = [[f"t{k}w{i}" for i in range(6)] for k in range(4)]
+    docs, parents = [], []
+    for _ in range(n_threads):
+        rk = int(rng.integers(4))
+        docs.append(list(rng.choice(blocks[rk], 10))); parents.append(-1)
+        r = len(docs) - 1
+        for _ in range(2):
+            pk = int(rng.integers(4))
+            while pk == rk:  # parent topic differs from the root topic
+                pk = int(rng.integers(4))
+            docs.append(list(rng.choice(blocks[pk], 10))); parents.append(r)
+            m = len(docs) - 1
+            for _ in range(3):  # thin leaves: each token a 50/50 draw from root vs parent topic
+                leaf = [rng.choice(blocks[rk if rng.random() < 0.5 else pk]) for _ in range(3)]
+                docs.append(leaf); parents.append(m)
+    return docs, parents
+
+
+def test_blend_fits_getters_and_repr():
+    docs, parents = _mixed_corpus()
+    m = topica.ReplyTM(4, em_iters=80, seed=13, coupling="blend")
+    m.fit(docs, parents=parents)
+    assert m.coupling == "blend"
+    assert np.isfinite(m.blend_alpha) and np.isfinite(m.blend_beta)
+    assert 0.0 <= m.blend_alpha <= 1.0 and 0.0 <= m.blend_beta <= 1.0
+    assert m.blend_alpha + m.blend_beta <= 1.0 + 1e-9
+    assert np.isnan(m.kappa)  # blend has no single reversion
+    assert "blend" in repr(m)
+    assert m.settings["coupling"] == "blend"
+
+
+def test_blend_estimates_both_weights_positive():
+    """On genuinely mixed discourse both the parent and the root weight are estimated positive."""
+    docs, parents = _mixed_corpus()
+    m = topica.ReplyTM(4, em_iters=80, seed=13, coupling="blend")
+    m.fit(docs, parents=parents)
+    assert m.blend_alpha > 0.01 and m.blend_beta > 0.01
+
+
+def test_blend_fixed_weights_respected():
+    docs, parents = _mixed_corpus(n_threads=30)
+    m = topica.ReplyTM(4, em_iters=40, seed=13, coupling="blend", blend_alpha=0.6, blend_beta=0.3)
+    m.fit(docs, parents=parents)
+    assert m.blend_alpha == 0.6 and m.blend_beta == 0.3
+    assert m.settings["blend_alpha"] == 0.6 and m.settings["blend_beta"] == 0.3
+
+
+def test_blend_transform_and_save(tmp_path):
+    docs, parents = _mixed_corpus(n_threads=30)
+    m = topica.ReplyTM(4, em_iters=50, seed=13, coupling="blend")
+    m.fit(docs, parents=parents)
+    th = m.transform(docs, parents=parents)
+    assert th.shape == (len(docs), 4) and np.allclose(th.sum(1), 1.0)
+    p = tmp_path / "blend.bin"
+    m.save(str(p))
+    m2 = topica.ReplyTM.load(str(p))
+    assert m2.coupling == "blend"
+    assert m2.blend_alpha == m.blend_alpha and m2.blend_beta == m.blend_beta
+    assert np.allclose(m2.transform(docs, parents=parents), th)
+
+
+def test_blend_identifiability_warning():
+    """A shallow (depth-2-only) corpus cannot separate alpha from beta; the fit warns."""
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=2)
+    m = topica.ReplyTM(2, em_iters=30, seed=13, coupling="blend")
+    with pytest.warns(UserWarning, match="not separately identified"):
+        m.fit(docs, parents=parents)
+
+
+def test_blend_beats_parent_and_root_on_mixed():
+    """The headline: on mixed discourse the estimated blend predicts held-out leaf tokens better
+    than either pure-parent or pure-root coupling."""
+    docs, parents = _mixed_corpus()
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=4, baselines=("root", "blend"),
+        em_iters=70, seed=13, n_boot=300)
+    assert res.per_token_ll["blend"] > res.per_token_ll["tree"]   # blend beats pure parent
+    assert res.per_token_ll["blend"] > res.per_token_ll["root"]   # blend beats pure root
+    assert res.delta["blend"]["estimate"] < 0.0                   # tree(parent) minus blend < 0

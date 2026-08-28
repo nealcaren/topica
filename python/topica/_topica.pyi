@@ -3060,10 +3060,14 @@ class ReplyTM:
     validated by planted recovery + a held-out-beat gate (the parent's topics predict held-out
     leaf tokens better than the no-tree baseline on synthetic persistence-structured data).
     Experimental."""
-    def __init__(self, num_topics: int, *, em_iters: int = 150, seed: int = 13, coupling: str = "parent") -> None:
+    def __init__(self, num_topics: int, *, em_iters: int = 150, seed: int = 13, coupling: str = "parent", blend_alpha: float | None = None, blend_beta: float | None = None) -> None:
         """coupling is "parent" (default; a node's prior shrinks toward its immediate parent, the
-        reply-chain prior) or "root" (shrink toward the thread root, a broadcast / topic-around-the-
-        root prior for discourse where replies track the thread topic, not the specific parent)."""
+        reply-chain prior), "root" (shrink toward the thread root, a broadcast / topic-around-the-
+        root prior for discourse where replies track the thread topic, not the specific parent), or
+        "blend" (shrink toward both: alpha*parent + beta*root + (1-alpha-beta)*anchor). With
+        coupling="blend" the weights are estimated in the M-step unless pinned by blend_alpha and/or
+        blend_beta (each in [0, 1], with alpha+beta <= 1); blend_alpha/blend_beta are only valid
+        with coupling="blend"."""
         ...
     def fit(
         self,
@@ -3097,7 +3101,16 @@ class ReplyTM:
     def num_topics(self) -> int: ...
     @property
     def coupling(self) -> str:
-        """The reply coupling structure (``"parent"`` or ``"root"``)."""
+        """The reply coupling structure (``"parent"``, ``"root"``, or ``"blend"``)."""
+        ...
+    @property
+    def blend_alpha(self) -> float:
+        """Blend parent weight alpha (NaN unless fit with coupling="blend"). A reliability-corrected
+        (errors-in-variables) hard-EM estimate; use the reply_completion delta for the model test."""
+        ...
+    @property
+    def blend_beta(self) -> float:
+        """Blend root weight beta (NaN unless fit with coupling="blend"); the anchor takes 1-alpha-beta."""
         ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...

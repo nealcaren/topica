@@ -763,10 +763,29 @@ m = topica.ReplyTM(num_topics=25, seed=13, coupling="root")
 Root coupling fits the same logistic-normal field on a reparented depth-2 star (every node
 points at its thread root), so the same machinery runs for `kappa`, `transform`,
 `persistence`, and the readouts; only the coupling neighbor changes (their values differ,
-since they are now computed on the root-star topology). To let the data say which structure fits,
-fit both and compare them on held-out replies with the `"root"` baseline in
-`reply_completion` below: `delta["root"]` is parent-coupling minus root-coupling, positive
-where the reply edge matters more than the thread topic and negative where it does not.
+since they are now computed on the root-star topology).
+
+When discourse is neither purely edge-driven nor purely thread-driven, `coupling="blend"`
+shrinks each node toward BOTH its parent and its thread root:
+
+```python
+m = topica.ReplyTM(num_topics=25, seed=13, coupling="blend")
+m.fit(docs, parents=parents)
+m.blend_alpha, m.blend_beta   # fitted parent weight and root weight
+```
+
+The prior mean is `alpha * parent + beta * root + (1 - alpha - beta) * anchor`. The weights
+are estimated in the M-step (or pinned with `blend_alpha=`/`blend_beta=`). Estimation uses a
+reliability-corrected (errors-in-variables) regression, so the weights are de-attenuated for
+the η measurement error, but they remain conditional on the topic fit; use the held-out
+`reply_completion` delta for the model-versus-model comparison. Separating `alpha` from `beta` needs threads with depth-3 or more (where
+a node's parent is not its root); on shallower corpora the fit warns and you should pin the
+weights or use `coupling="parent"`/`"root"`. `kappa`/`kappa_ci` are `NaN` under blend, since
+the mix is described by the two weights instead of a single reversion. To let the data say which structure fits, fit
+these variants and compare them on held-out replies with the `"root"` and `"blend"` baselines
+in `reply_completion` below: `delta["root"]` is parent-coupling minus root-coupling, positive
+where the reply edge matters more than the thread topic and negative where it does not, and
+`delta["blend"]` is parent-coupling minus the estimated blend.
 
 **Inferring topics for a new thread.** `transform` maps a fresh reply forest to topic
 proportions, holding the fitted topics, reversion, step/root variances, and per-group

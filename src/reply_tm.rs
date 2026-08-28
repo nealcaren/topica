@@ -58,8 +58,15 @@ pub struct ReplyTmModel {
     /// each κ; `(NaN, NaN)` when there are no reply edges or the field was not fit (κ unidentified).
     /// Conditional on the topic fit; the point estimate is biased toward κ→0 (persistence).
     pub kappa_ci: (f64, f64),
-    /// Reversion strength `κ = 1 - a` toward the anchor.
+    /// Reversion strength `κ = 1 - a` toward the anchor. `NaN` under blend coupling (where the mix
+    /// is described by `alpha`/`beta` instead of a single reversion).
     pub kappa: f64,
+    /// Blend coupling parent weight `α` (`NaN` unless `coupling="blend"`): how much a node's prior
+    /// mean tracks its immediate parent.
+    pub blend_alpha: f64,
+    /// Blend coupling root weight `β` (`NaN` unless `coupling="blend"`): how much a node's prior mean
+    /// tracks its thread root. The anchor gets the remaining `1 - α - β`.
+    pub blend_beta: f64,
     /// Per-edge diffusion variance `σ²`.
     pub sigma2: f64,
     /// Root prior variance.
@@ -101,6 +108,17 @@ impl ReplyTmModel {
 /// parent in the reply forest (any negative value marks a root). `num_types` is the vocabulary
 /// size. Returns the fitted model; deterministic given `rng` (the E-step runs in parallel but
 /// folds sufficient statistics in document order, as in `fit_ctm`).
+/// Blend coupling configuration (issue #831). Under blend a non-root node's prior mean is
+/// `α·η_parent + β·η_root + (1-α-β)·anchor`, coupling each node to BOTH its immediate parent and its
+/// thread root. `root[c]` is node `c`'s thread root (itself for a root). `fixed_alpha`/`fixed_beta`
+/// pin the weights; when `None` they are estimated in the M-step by a ridge-regularized regression
+/// of each node's centered η on its parent's and root's centered η (a hard-EM point estimate).
+pub struct BlendConfig {
+    pub root: Vec<usize>,
+    pub fixed_alpha: Option<f64>,
+    pub fixed_beta: Option<f64>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
@@ -112,6 +130,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     em_iters: usize,
     em_tol: f64,
     compute_ci: bool,
+    blend: Option<&BlendConfig>,
     mut on_progress: F,
     rng: &mut R,
 ) -> ReplyTmModel {
@@ -154,6 +173,10 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     let mut a = 0.7f64;
     let mut sigma2 = 1.0f64;
     let mut p0 = 1.0f64;
+    // Blend coupling weights (α = parent, β = root); seeded to a parent-leaning mix and updated in
+    // the M-step unless pinned. Unused (and returned as NaN) when `blend` is None.
+    let mut alpha = blend.and_then(|b| b.fixed_alpha).unwrap_or(0.5);
+    let mut beta_w = blend.and_then(|b| b.fixed_beta).unwrap_or(0.25);
 
     let mut bound_history: Vec<f64> = Vec::with_capacity(em_iters);
     let mut converged = false;
@@ -191,6 +214,16 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                 let ag = &anchor[groups[di]]; // the document's covariate-group anchor
                 let (mu_d, siginv, entropy) = if par < 0 {
                     (ag.clone(), &siginv_root, ent_root)
+                } else if let Some(bc) = blend {
+                    // Blend: couple to BOTH parent and thread root, reverting toward the anchor by
+                    // the residual weight. Reads the previous iteration's λ for both (structured
+                    // mean-field); parent and root are ancestors, so this is a directed coupling.
+                    let lp = &lambda[par as usize];
+                    let lr = &lambda[bc.root[di]];
+                    let mu: Vec<f64> = (0..km1)
+                        .map(|i| alpha * lp[i] + beta_w * lr[i] + (1.0 - alpha - beta_w) * ag[i])
+                        .collect();
+                    (mu, &siginv_edge, ent_edge)
                 } else {
                     let lp = &lambda[par as usize];
                     let mu: Vec<f64> = (0..km1)
@@ -288,46 +321,144 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         // keeps a reply's own tokens able to move it off the parent even once the field is fit.
         let warmup = 15;
         if em + 1 > warmup {
-            let obs: Vec<Vec<f64>> = (0..km1)
-                .map(|i| {
-                    lambda
-                        .iter()
-                        .enumerate()
-                        .map(|(di, l)| l[i] - anchor[groups[di]][i])
-                        .collect()
-                })
-                .collect();
-            // Empty nodes stay in the tree (so their children still couple through them) but
-            // carry NO observation: r = +inf makes them latent-only, so they never pin the field.
-            let r: Vec<f64> = (0..d)
-                .map(|di| {
-                    if !has_tokens[di] {
-                        return 1e12;
+            if let Some(bc) = blend {
+                // Blend M-step: estimate (α, β) by a ridge-regularized, errors-in-variables
+                // regression of each node's anchor-centered η on its parent's and root's
+                // anchor-centered η, pooled over topics and edges. The EIV term (below) subtracts the
+                // Laplace ν so the weights are reliability-corrected rather than attenuated (the
+                // two-regressor analogue of persistence()'s structural correction); still a hard-EM
+                // estimate conditional on the topic fit, so the held-out reply_completion delta is
+                // the model-vs-model readout. σ² is the residual variance; p0 the root variance.
+                let (mut spp, mut spr, mut srr, mut spy, mut sry, mut syy, mut ne) =
+                    (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0f64);
+                // Measurement-error (Laplace ν) sums for the errors-in-variables correction below:
+                // the parent/root regressors are noisy estimates of the latent η, so their observed
+                // second moments are inflated by ν; subtracting it de-attenuates α/β (the same
+                // reliability correction persistence() applies, generalized to two regressors).
+                let (mut snu_p, mut snu_r, mut snu_pr) = (0.0, 0.0, 0.0f64);
+                for c in 0..d {
+                    let par = parents[c];
+                    if par < 0 || !has_tokens[c] {
+                        continue;
                     }
-                    let nd = &nu_diag_store[di];
-                    (nd.iter().sum::<f64>() / km1 as f64).max(1e-6)
-                })
-                .collect();
-            // fit with the anchor mean held at 0 (obs are anchor-centered): this keeps the fitted
-            // `a` consistent with the m=0 profile used for kappa_ci, and avoids double-counting the
-            // mean the anchor already removed.
-            let fit = tree_field::fit_fixed_mean(
-                parents,
-                &obs,
-                &r,
-                TreeFieldParams {
-                    a,
-                    q: sigma2,
-                    m: 0.0,
-                    p0,
-                },
-            );
-            // clamp a < 1 so the next iteration's logit init stays finite (a=1 → +inf → NaN in
-            // the Nelder-Mead simplex); floor σ²/p0 (a clamp, not an estimate — see kappa_ci).
-            a = fit.a.min(0.999);
-            sigma2 = fit.q.max(0.1);
-            p0 = fit.p0.max(0.1);
-            field_fit_ran = true;
+                    let (p, r) = (par as usize, bc.root[c]);
+                    if !has_tokens[p] || !has_tokens[r] {
+                        continue;
+                    }
+                    let ag = &anchor[groups[c]];
+                    for i in 0..km1 {
+                        let xp = lambda[p][i] - ag[i];
+                        let xr = lambda[r][i] - ag[i];
+                        let y = lambda[c][i] - ag[i];
+                        spp += xp * xp;
+                        spr += xp * xr;
+                        srr += xr * xr;
+                        spy += xp * y;
+                        sry += xr * y;
+                        syy += y * y;
+                        snu_p += nu_diag_store[p][i];
+                        snu_r += nu_diag_store[r][i];
+                        // When parent == root (depth-2 nodes) the two regressors are the SAME noisy
+                        // node, so their measurement errors are perfectly shared and inflate the
+                        // cross term too; otherwise the errors are independent (cross-correction 0).
+                        if p == r {
+                            snu_pr += nu_diag_store[p][i];
+                        }
+                        ne += 1.0;
+                    }
+                }
+                if ne > 0.0 {
+                    if bc.fixed_alpha.is_none() || bc.fixed_beta.is_none() {
+                        // De-attenuate: subtract the measurement-error second moments, then ridge
+                        // for stability / collinearity (depth-2 threads, where parent == root).
+                        let ridge = 1e-6 * (spp + srr) + 1e-9;
+                        let a11 = (spp - snu_p).max(0.0) + ridge;
+                        let a22 = (srr - snu_r).max(0.0) + ridge;
+                        let a12 = spr - snu_pr;
+                        let (b1, b2) = (spy, sry);
+                        let det = a11 * a22 - a12 * a12;
+                        if det.abs() > 1e-12 {
+                            let mut al = (a22 * b1 - a12 * b2) / det;
+                            let mut be = (a11 * b2 - a12 * b1) / det;
+                            // Project onto {α,β ≥ 0, α+β ≤ 1} so the prior mean stays a convex
+                            // blend of parent, root, and anchor.
+                            al = al.max(0.0);
+                            be = be.max(0.0);
+                            if al + be > 1.0 {
+                                let s = al + be;
+                                al /= s;
+                                be /= s;
+                            }
+                            alpha = bc.fixed_alpha.unwrap_or(al);
+                            beta_w = bc.fixed_beta.unwrap_or(be);
+                        }
+                    }
+                    // σ² = residual variance of y around α·xp + β·xr.
+                    let resid = (syy - 2.0 * (alpha * spy + beta_w * sry)
+                        + alpha * alpha * spp
+                        + 2.0 * alpha * beta_w * spr
+                        + beta_w * beta_w * srr)
+                        / ne;
+                    sigma2 = resid.max(0.1);
+                }
+                // p0 = root variance around the anchor.
+                let (mut rss, mut nr) = (0.0, 0.0f64);
+                for c in 0..d {
+                    if parents[c] < 0 && has_tokens[c] {
+                        let ag = &anchor[groups[c]];
+                        for i in 0..km1 {
+                            let e = lambda[c][i] - ag[i];
+                            rss += e * e;
+                            nr += 1.0;
+                        }
+                    }
+                }
+                if nr > 0.0 {
+                    p0 = (rss / nr).max(0.1);
+                }
+                field_fit_ran = true;
+            } else {
+                let obs: Vec<Vec<f64>> = (0..km1)
+                    .map(|i| {
+                        lambda
+                            .iter()
+                            .enumerate()
+                            .map(|(di, l)| l[i] - anchor[groups[di]][i])
+                            .collect()
+                    })
+                    .collect();
+                // Empty nodes stay in the tree (so their children still couple through them) but
+                // carry NO observation: r = +inf makes them latent-only, so they never pin the field.
+                let r: Vec<f64> = (0..d)
+                    .map(|di| {
+                        if !has_tokens[di] {
+                            return 1e12;
+                        }
+                        let nd = &nu_diag_store[di];
+                        (nd.iter().sum::<f64>() / km1 as f64).max(1e-6)
+                    })
+                    .collect();
+                // fit with the anchor mean held at 0 (obs are anchor-centered): this keeps the fitted
+                // `a` consistent with the m=0 profile used for kappa_ci, and avoids double-counting the
+                // mean the anchor already removed.
+                let fit = tree_field::fit_fixed_mean(
+                    parents,
+                    &obs,
+                    &r,
+                    TreeFieldParams {
+                        a,
+                        q: sigma2,
+                        m: 0.0,
+                        p0,
+                    },
+                );
+                // clamp a < 1 so the next iteration's logit init stays finite (a=1 → +inf → NaN in
+                // the Nelder-Mead simplex); floor σ²/p0 (a clamp, not an estimate — see kappa_ci).
+                a = fit.a.min(0.999);
+                sigma2 = fit.q.max(0.1);
+                p0 = fit.p0.max(0.1);
+                field_fit_ran = true;
+            }
         }
     }
 
@@ -339,6 +470,18 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         sigma2 = f64::NAN;
         p0 = f64::NAN;
     }
+    // Blend reports its mix via (alpha, beta), not a single reversion; kappa is undefined. When the
+    // field never ran (no edges / warm-up not reached) the weights are still the init constants, so
+    // report them as NaN like the other field params.
+    let (kappa_out, alpha_out, beta_out) = if blend.is_some() {
+        if n_edges == 0 || !field_fit_ran {
+            (f64::NAN, f64::NAN, f64::NAN)
+        } else {
+            (f64::NAN, alpha, beta_w)
+        }
+    } else {
+        (1.0 - a, f64::NAN, f64::NAN)
+    };
 
     // ---- uncertainty ----
     // Thread root of each document (walk parents to the root). The reply tree induces WITHIN-THREAD
@@ -396,7 +539,8 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     // κ CI is the dominant per-fit cost (a 99-point profile, each an inner Nelder-Mead), and it is
     // usually not read (persistence() supersedes it). Compute it here only when explicitly asked;
     // otherwise the binding computes it lazily from the stored fit via `kappa_profile_ci`.
-    let kappa_ci = if compute_ci {
+    // kappa_ci is a tree-field profile of the reversion; it has no meaning under blend coupling.
+    let kappa_ci = if compute_ci && blend.is_none() {
         kappa_profile_ci(
             parents,
             &lambda,
@@ -420,7 +564,9 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         anchor,
         anchor_se,
         kappa_ci,
-        kappa: 1.0 - a,
+        kappa: kappa_out,
+        blend_alpha: alpha_out,
+        blend_beta: beta_out,
         sigma2,
         p0,
         bound: bound_history.last().copied().unwrap_or(f64::NAN),
@@ -447,6 +593,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
 /// (θ uniform); transform's prior-mode is the principled value (it matches `ctm::infer_theta`), so on
 /// a tree with an empty interior or root node transform and the stored fit `doc_topic` diverge for
 /// that node and its subtree. Returns D×K proportions in `docs` order.
+#[allow(clippy::too_many_arguments)]
 pub fn transform_reply_tm(
     docs: &[Vec<u32>],
     parents: &[i64],
@@ -456,10 +603,22 @@ pub fn transform_reply_tm(
     kappa: f64,
     sigma2: f64,
     p0: f64,
+    blend: Option<(f64, f64)>,
 ) -> Vec<Vec<f64>> {
     let k = beta.len();
     let km1 = k - 1;
     let d = docs.len();
+    // Blend needs each node's thread root (parent and root are both ancestors, so the same
+    // topological pass still finalizes both before a node is inferred).
+    let root: Vec<usize> = (0..d)
+        .map(|start| {
+            let mut cur = start as i64;
+            while parents[cur as usize] >= 0 {
+                cur = parents[cur as usize];
+            }
+            cur as usize
+        })
+        .collect();
 
     // Diagonal inverse prior covariance for edges (σ²) and roots (p0).
     let siginv_diag = |var: f64| -> Vec<f64> {
@@ -499,6 +658,13 @@ pub fn transform_reply_tm(
         let par = parents[di];
         let (mu_d, siginv) = if par < 0 {
             (ag.clone(), &siginv_root)
+        } else if let Some((alpha, beta_w)) = blend {
+            let lp = &lambda[par as usize];
+            let lr = &lambda[root[di]];
+            let mu: Vec<f64> = (0..km1)
+                .map(|i| alpha * lp[i] + beta_w * lr[i] + (1.0 - alpha - beta_w) * ag[i])
+                .collect();
+            (mu, &siginv_edge)
         } else {
             let lp = &lambda[par as usize];
             let mu: Vec<f64> = (0..km1)
@@ -667,6 +833,7 @@ mod tests {
             150,
             1e-7,
             true, // exercise the eager kappa_ci path
+            None, // parent coupling
             |_, _, _| true,
             &mut fit_rng,
         );
