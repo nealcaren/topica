@@ -391,8 +391,9 @@ impl ReplyTM {
     }
 
     /// D×(K-1) per-document variational mean η (softmax basis, reference topic K-1 fixed at 0):
-    /// the latent topic coordinate whose reversion the reply prior models. Paired with
-    /// `doc_topic_var` for a measurement-error-corrected persistence estimate.
+    /// the latent topic coordinate. NOTE this is the **tree-coupled** posterior — the reply prior
+    /// already pulls a child's η toward its parent's — so regressing these directly to measure
+    /// persistence is CIRCULAR. Use `persistence()`, which refits an uncoupled pass for that.
     #[getter]
     fn doc_eta<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
@@ -400,8 +401,8 @@ impl ReplyTM {
     }
 
     /// D×(K-1) per-document posterior variance ν of η (the Laplace curvature): the measurement-error
-    /// variance of each `doc_eta` row. Use it to correct a child-on-parent η regression for
-    /// attenuation (reliability = Var(η) / (Var(η) + mean ν)).
+    /// variance of each `doc_eta` row. Exposed for diagnostics; `persistence()` uses it (with an
+    /// uncoupled η) to correct its child-on-parent regression for attenuation.
     #[getter]
     fn doc_topic_var<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
@@ -554,7 +555,9 @@ impl ReplyTM {
     /// parent's η (centered on the covariate-group mean), pooled across topics with a thread-clustered
     /// bootstrap. Returns a dict:
     ///   `observed_persistence` — the raw slope `a` (how much a reply's topic mix tracks its
-    ///     parent's); always identified. `observed_ci` is its 95% bootstrap interval.
+    ///     parent's); identified whenever parents vary (NaN on a degenerate corpus where every
+    ///     eligible parent equals its group anchor). `observed_ci` is its 95% bootstrap interval,
+    ///     or `(NaN, NaN)` when too many resamples are unidentifiable for an honest interval.
     ///   `reliability` — `Var(η) / (Var(η) + mean ν)` of the parent, the signal share and the
     ///     identifiability gate: `<= 0` means the per-document η are mostly noise, so the structural
     ///     value cannot be recovered.
@@ -663,13 +666,18 @@ impl ReplyTM {
                 "not enough reply edges across threads to estimate persistence",
             ));
         }
-        // point estimate from a set of thread aggregates
+        // point estimate from a set of thread aggregates. Guards the degenerate case where the
+        // pooled parent variance is zero (all eligible parents equal their group anchor) — the
+        // regression is then unidentified, so the slope/reliability are NaN, not 0/0.
         let est = |sel: &[[f64; 4]]| -> (f64, f64, f64) {
             let mut s = [0.0f64; 4];
             for a in sel {
                 for j in 0..4 {
                     s[j] += a[j];
                 }
+            }
+            if !s[1].is_finite() || s[1] <= 0.0 || s[3] <= 0.0 {
+                return (f64::NAN, f64::NAN, f64::NAN);
             }
             let a = s[0] / s[1]; // slope
             let var_x = s[1] / s[3];
@@ -684,7 +692,8 @@ impl ReplyTM {
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
         let (mut a_bs, mut k_bs): (Vec<f64>, Vec<f64>) = (Vec::new(), Vec::new());
         let t = threads.len();
-        for _ in 0..bootstrap.max(1) {
+        let reps = bootstrap.max(1);
+        for _ in 0..reps {
             let sel: Vec<[f64; 4]> = (0..t)
                 .map(|_| threads[(rng.gen::<f64>() * t as f64) as usize % t])
                 .collect();
@@ -692,17 +701,21 @@ impl ReplyTM {
             a_bs.push(a);
             k_bs.push(kap);
         }
-        let pct = |v: &mut Vec<f64>, q: f64| -> f64 {
-            v.retain(|x| x.is_finite());
-            if v.is_empty() {
-                return f64::NAN;
+        // Honest percentile CI: report it ONLY if >=90% of resamples are identifiable. Silently
+        // dropping non-finite resamples would make the interval conditional on the identifiable
+        // ones and look precise even when the parameter is badly non-identified (e.g. many
+        // resamples hit reliability<=0), so below that threshold we return NaN bounds.
+        let ci = |v: &[f64]| -> (f64, f64) {
+            let mut f: Vec<f64> = v.iter().copied().filter(|x| x.is_finite()).collect();
+            if f.len() < 2 || (f.len() as f64) < 0.9 * reps as f64 {
+                return (f64::NAN, f64::NAN);
             }
-            v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let idx = ((q * (v.len() - 1) as f64).round() as usize).min(v.len() - 1);
-            v[idx]
+            f.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let at = |q: f64| f[((q * (f.len() - 1) as f64).round() as usize).min(f.len() - 1)];
+            (at(0.025), at(0.975))
         };
-        let obs_ci = (pct(&mut a_bs.clone(), 0.025), pct(&mut a_bs.clone(), 0.975));
-        let kap_ci = (pct(&mut k_bs.clone(), 0.025), pct(&mut k_bs.clone(), 0.975));
+        let obs_ci = ci(&a_bs);
+        let kap_ci = ci(&k_bs);
 
         let d = PyDict::new_bound(py);
         d.set_item("observed_persistence", a_obs)?;

@@ -333,6 +333,12 @@ def test_save_load_roundtrip(tmp_path):
     assert m.group_labels() == m2.group_labels()
     # coherence still works after load (the corpus snapshot round-tripped)
     assert np.allclose(m.coherence(10), m2.coherence(10))
+    # the persistence() inputs round-trip too: η, ν, and the method's result
+    assert np.array_equal(m.doc_eta, m2.doc_eta)
+    assert np.array_equal(m.doc_topic_var, m2.doc_topic_var)
+    r1, r2 = m.persistence(bootstrap=100), m2.persistence(bootstrap=100)
+    assert r1["observed_persistence"] == r2["observed_persistence"]
+    assert r1["observed_ci"] == r2["observed_ci"]
 
 
 def test_inspect_integration():

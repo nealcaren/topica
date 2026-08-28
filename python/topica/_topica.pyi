@@ -3084,12 +3084,13 @@ class ReplyTM:
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
     def doc_eta(self) -> numpy.typing.NDArray[numpy.float64]:
-        """D×(K-1) per-document variational mean η (softmax basis, reference topic fixed at 0)."""
+        """D×(K-1) per-document variational mean η. This is the TREE-COUPLED posterior, so
+        regressing it to measure persistence is circular — use ``persistence()`` instead."""
         ...
     @property
     def doc_topic_var(self) -> numpy.typing.NDArray[numpy.float64]:
-        """D×(K-1) posterior variance ν of η (measurement-error variance for attenuation
-        correction: reliability = Var(η) / (Var(η) + mean ν))."""
+        """D×(K-1) posterior variance ν of η (measurement-error variance). Exposed for diagnostics;
+        ``persistence()`` uses it with an uncoupled η for its attenuation correction."""
         ...
     @property
     def group_prevalence(self) -> numpy.typing.NDArray[numpy.float64]:
@@ -3121,10 +3122,12 @@ class ReplyTM:
         """Reduced-form reply persistence — the identifiable replacement for ``kappa``. Refits an
         internal no-tree pass (uncoupled η) and regresses each reply's η on its parent's, pooled
         across topics with a thread-clustered bootstrap. Returns a dict with
-        ``observed_persistence`` (+``observed_ci``) — the raw child-tracks-parent slope, always
-        identified; ``reliability`` — the signal share and identifiability gate (``<=0`` means η is
-        mostly noise); and ``structural_kappa`` (+``structural_kappa_ci``) — the
-        measurement-error-corrected reversion, ``NaN`` when reliability ``<= 0``."""
+        ``observed_persistence`` (+``observed_ci``) — the raw child-tracks-parent slope, identified
+        whenever parents vary (NaN on a degenerate corpus); ``reliability`` — the signal share and
+        identifiability gate (``<=0`` means η is mostly noise); and ``structural_kappa``
+        (+``structural_kappa_ci``) — the measurement-error-corrected reversion, ``NaN`` when
+        reliability ``<= 0``. A CI is ``(NaN, NaN)`` when too many bootstrap resamples are
+        unidentifiable."""
         ...
     def save(self, path: str) -> None:
         """Save the fitted model to ``path``. Reload with ``ReplyTM.load``."""
