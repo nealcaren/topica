@@ -605,3 +605,111 @@ def test_transform_rejects_negative_covariate():
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     with pytest.raises(ValueError, match="group id"):
         m.transform(docs[:2], parents=[-1, 0], covariates=[-1, 0])
+
+
+# ---------------------------------------------------------------------------
+# coupling="root": thread-root anchoring for broadcast discourse (issue #831)
+# ---------------------------------------------------------------------------
+
+def test_coupling_validation():
+    with pytest.raises(ValueError, match="coupling"):
+        topica.ReplyTM(3, coupling="bogus")
+
+
+def test_root_coupling_settings_and_repr():
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=5)
+    m = topica.ReplyTM(2, em_iters=40, seed=13, coupling="root")
+    assert m.coupling == "root"
+    assert m.settings["coupling"] == "root"
+    assert "coupling='root'" in repr(m) or 'coupling="root"' in repr(m)
+    m.fit(docs, parents=parents)
+    assert m.doc_topic.shape == (len(docs), 2)
+    assert np.isfinite(m.kappa) and np.isfinite(m.sigma2)
+
+
+def test_root_coupling_transform_and_save(tmp_path):
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=25, depth=5)
+    m = topica.ReplyTM(2, em_iters=50, seed=13, coupling="root")
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
+    th = m.transform(docs, parents=parents, covariates=cov)
+    assert th.shape == (len(docs), 2) and np.allclose(th.sum(1), 1.0)
+    p = tmp_path / "rtm_root.bin"
+    m.save(str(p))
+    m2 = topica.ReplyTM.load(str(p))
+    assert m2.coupling == "root"
+    assert np.allclose(m2.transform(docs, parents=parents, covariates=cov), th)
+
+
+def test_coupling_survives_save_load_both():
+    """settings["coupling"] round-trips through save/load for both values."""
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=15, depth=4)
+    import tempfile, os
+    for coupling in ("parent", "root"):
+        m = topica.ReplyTM(2, em_iters=30, seed=13, coupling=coupling)
+        m.fit(docs, parents=parents)
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "m.bin")
+            m.save(p)
+            assert topica.ReplyTM.load(p).settings["coupling"] == coupling
+
+
+def test_root_coupling_transform_new_forest():
+    """Root coupling reparents a NEW forest (different topology from the fit forest) to its thread
+    root: transform matches a hand-reparented star fit under parent coupling."""
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=25, depth=6)
+    m_root = topica.ReplyTM(2, em_iters=60, seed=13, coupling="root")
+    m_root.fit(docs, parents=parents)
+    # a fresh multi-level forest, unrelated to the fit topology
+    new = [list(docs[i]) for i in (0, 1, 2, 3, 4)]
+    new_parents = [-1, 0, 1, 0, 2]  # root 0; a depth-3 chain 0<-1<-2<-4 plus a branch 0<-3
+    got = m_root.transform(new, parents=new_parents)
+    # Root coupling must collapse new_parents to the thread-root star before inference, so the
+    # result equals transform on the hand-reparented star under the SAME model (identical topics).
+    star = [-1, 0, 0, 0, 0]  # every non-root points at root 0
+    got_star = m_root.transform(new, parents=star)
+    assert np.allclose(got, got_star)
+    assert got.shape == (5, 2) and np.allclose(got.sum(1), 1.0)
+
+
+def _broadcast_corpus(seed=1, n_threads=70):
+    """Planted BROADCAST discourse: a thin leaf tracks its THREAD ROOT's topic, not its immediate
+    parent, which is deliberately the OPPOSITE topic. With few seen tokens per leaf the prior
+    dominates, so root coupling (shrink to the root) should predict the held-out leaf tokens far
+    better than parent coupling (shrink to the opposite-topic parent)."""
+    rng = np.random.default_rng(seed)
+    A = [f"a{i}" for i in range(8)]
+    B = [f"b{i}" for i in range(8)]
+    docs, parents = [], []
+    for t in range(n_threads):
+        roott, other = (A, B) if t % 2 == 0 else (B, A)
+        docs.append(list(rng.choice(roott, 12))); parents.append(-1)
+        r = len(docs) - 1
+        for _ in range(2):
+            # middle reply is the OPPOSITE topic (a maximally misleading parent)
+            docs.append(list(rng.choice(other, 12))); parents.append(r)
+            m = len(docs) - 1
+            for _ in range(2):  # thin leaves (3 tokens) that echo the ROOT topic
+                docs.append(list(rng.choice(roott, 3))); parents.append(m)
+    return docs, parents
+
+
+def test_root_coupling_wins_on_broadcast():
+    """On planted broadcast discourse (leaves track the root, not the noisy parent), the
+    root-coupled model predicts held-out leaf tokens better than the parent-coupled tree."""
+    docs, parents = _broadcast_corpus(seed=1)
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=2, baselines=("root",), em_iters=60, seed=13, n_boot=300)
+    # delta["root"] = parent-tree minus root-tree; root better => root scores higher and the
+    # paired difference is negative with the bulk of the bootstrap mass below zero.
+    assert res.per_token_ll["root"] > res.per_token_ll["tree"]
+    assert res.delta["root"]["estimate"] < 0.0
+    assert res.delta["root"]["ci"][0] < 0.0
+
+
+def test_parent_coupling_wins_on_chain_persistence():
+    """On chain-persistence discourse (a reply tracks its parent), parent coupling beats root
+    coupling: delta["root"] is positive."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.92)
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=5, baselines=("root",), em_iters=60, seed=13, n_boot=300)
+    assert res.delta["root"]["estimate"] > 0.0

@@ -800,7 +800,7 @@ class ReplyCompletionResult:
         # fold in the whole modeling stack (covariates, estimator), so a reader who saw
         # only the flattering tree-no_tree line could misattribute a covariate/tool gain
         # to the reply tree. Order no_tree/permuted (tree ablations) before lda/stm.
-        order = ["no_tree", "permuted", "lda", "stm"]
+        order = ["no_tree", "permuted", "root", "lda", "stm"]
         parts = []
         for name in order:
             d = self.delta.get(name)
@@ -884,7 +884,7 @@ def reply_completion(
     This is the turnkey preference test for ReplyTM: does the reply tree add
     predictive information on real data, and does the gain come from the
     observed edge? It fits the matched models named in ``baselines`` (the tree
-    plus up to four comparators) on the SAME reduced corpus (identical
+    plus up to five comparators) on the SAME reduced corpus (identical
     vocabulary, ``num_topics``, ``min_count``, and ``seed``) and scores held-out
     tokens of short leaf comments under each.
 
@@ -913,6 +913,11 @@ def reply_completion(
       coupling. This is the model-versus-model comparator.
     - ``permuted``: ReplyTM with a depth-stratified within-thread parent
       permutation (the placebo). If the gain is real it should shrink here.
+    - ``root`` (issue #831): ReplyTM whose prior shrinks each node toward its
+      THREAD ROOT instead of its immediate parent (a broadcast / topic-around-the-
+      root structure). ``delta["root"]`` is parent-coupling minus root-coupling, so
+      it is positive where the reply edge matters more than the thread topic and
+      negative where the thread root is the operative structure (sports, fandom).
     - ``lda`` / ``stm`` (issue #828): off-the-shelf comparators — a plain
       ``LDA(K)``, and an ``STM(K)`` with the ``covariates`` one-hot encoded as
       prevalence — fit on the same reduced corpus (pinned to the tree model's
@@ -941,8 +946,8 @@ def reply_completion(
     eval_frac : float. Share of eligible leaves to evaluate (sampled with
         ``seed``); ``1.0`` uses them all.
     baselines : which comparators to fit, any of ``"no_tree"``, ``"permuted"``,
-        ``"lda"``, ``"stm"``.
-    em_iters : EM iterations for the ReplyTM fits (tree, no_tree, permuted). Match
+        ``"root"``, ``"lda"``, ``"stm"``.
+    em_iters : EM iterations for the ReplyTM fits (tree, no_tree, permuted, root). Match
         this to the analysis fit. The off-the-shelf ``lda`` / ``stm`` comparators
         run at their own default iteration counts, not ``em_iters``.
     min_count : words rarer than this are dropped (shared across models).
@@ -970,7 +975,7 @@ def reply_completion(
     if not (0.0 < eval_frac <= 1.0):
         raise ValueError("eval_frac must be in (0, 1]")
     baselines = tuple(baselines)
-    _known_baselines = ("no_tree", "permuted", "lda", "stm")
+    _known_baselines = ("no_tree", "permuted", "root", "lda", "stm")
     for b in baselines:
         if b not in _known_baselines:
             raise ValueError(
@@ -1019,8 +1024,8 @@ def reply_completion(
 
     # matched fits on the SAME reduced corpus. Suppress the expected UserWarnings
     # (emptied docs, no-tree reduction) so the eval output stays clean.
-    def _fit(par):
-        m = ReplyTM(num_topics, em_iters=em_iters, seed=seed)
+    def _fit(par, coupling="parent"):
+        m = ReplyTM(num_topics, em_iters=em_iters, seed=seed, coupling=coupling)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=UserWarning)
             m.fit(
@@ -1041,6 +1046,12 @@ def reply_completion(
         ) from exc
     if "no_tree" in baselines:
         models["no_tree"] = _fit([-1] * n)
+    if "root" in baselines:
+        # A matched ReplyTM whose prior shrinks each node toward its THREAD ROOT rather than its
+        # immediate parent (issue #831): the broadcast-discourse structure. Same corpus, vocabulary,
+        # and covariate; only the coupling neighbor differs. delta["root"] = parent-tree minus
+        # root-tree, so it is positive where reply-edge structure beats thread-level structure.
+        models["root"] = _fit(parents, coupling="root")
     perm_changed_frac = None
     if "permuted" in baselines:
         perm = _permute_parents_within_depth(parents, depth, root, rng)
