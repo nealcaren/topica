@@ -26,6 +26,7 @@
 //! tests.
 #![allow(dead_code)]
 
+use rayon::prelude::*;
 use std::f64::consts::PI;
 
 const LOG_2PI: f64 = 1.837_877_066_409_345_5; // ln(2π)
@@ -168,13 +169,23 @@ pub(crate) fn solve(parents: &[i64], y: &[f64], r: &[f64], p: TreeFieldParams) -
 
 /// Summed marginal log-likelihood across the K observation dimensions that share the field
 /// params — used to profile a (hence kappa) for a confidence interval.
+///
+/// The K solves are independent, so they run in parallel — this is the serial per-iteration cost
+/// (`fit_fixed_mean`'s Nelder–Mead evaluates it hundreds of times per M-step) that the E-step's own
+/// `par_iter` was contending with (see issue #824). To keep the fit bit-for-bit reproducible the
+/// per-dimension log-liks are collected in dimension order and summed serially (float `+` is not
+/// associative), rather than reduced in rayon's nondeterministic order.
 pub(crate) fn loglik_multi(
     parents: &[i64],
     obs: &[Vec<f64>],
     r: &[f64],
     p: TreeFieldParams,
 ) -> f64 {
-    obs.iter().map(|yk| solve(parents, yk, r, p).loglik).sum()
+    obs.par_iter()
+        .map(|yk| solve(parents, yk, r, p).loglik)
+        .collect::<Vec<f64>>()
+        .iter()
+        .sum()
 }
 
 /// PROFILE log-likelihood at a fixed `a` (hence fixed κ): the max of [`loglik_multi`] over the
@@ -237,11 +248,7 @@ pub(crate) fn fit(
         if !(p.a.is_finite() && p.q > 1e-12 && p.p0 > 1e-12) {
             return f64::INFINITY;
         }
-        let mut ll = 0.0;
-        for yk in obs {
-            ll += solve(parents, yk, r, p).loglik;
-        }
-        -ll
+        -loglik_multi(parents, obs, r, p)
     };
     let x0 = vec![
         (init.a / (1.0 - init.a)).ln(),
