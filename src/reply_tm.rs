@@ -111,6 +111,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     num_types: usize,
     em_iters: usize,
     em_tol: f64,
+    compute_ci: bool,
     mut on_progress: F,
     rng: &mut R,
 ) -> ReplyTmModel {
@@ -392,58 +393,23 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         }
     }
 
-    // κ 95% CI by PROFILE likelihood: at each candidate `a`, re-optimize the nuisance variances
-    // (σ², p0) and take a χ²(1) drop of 1.92 from the profile max. Re-optimizing (rather than
-    // slicing at the fitted σ²) reflects the a↔σ² ridge, so the interval is not spuriously narrow.
-    // NaN when there are no edges or the field was never fit (κ unidentified). Conditional on the
-    // topic fit θ (obs/r held), and note the point estimate is biased toward persistence (κ→0) by
-    // topic-model shrinkage — the interval does not correct that bias.
-    let kappa_ci = if n_edges == 0 || !field_fit_ran {
-        (f64::NAN, f64::NAN)
+    // κ CI is the dominant per-fit cost (a 99-point profile, each an inner Nelder-Mead), and it is
+    // usually not read (persistence() supersedes it). Compute it here only when explicitly asked;
+    // otherwise the binding computes it lazily from the stored fit via `kappa_profile_ci`.
+    let kappa_ci = if compute_ci {
+        kappa_profile_ci(
+            parents,
+            &lambda,
+            &anchor,
+            groups,
+            &last_nu_diag,
+            &has_tokens,
+            sigma2,
+            p0,
+            a,
+        )
     } else {
-        let obs: Vec<Vec<f64>> = (0..km1)
-            .map(|i| {
-                (0..d)
-                    .map(|di| lambda[di][i] - anchor[groups[di]][i])
-                    .collect()
-            })
-            .collect();
-        let r: Vec<f64> = (0..d)
-            .map(|di| {
-                if has_tokens[di] {
-                    (last_nu_diag[di].iter().sum::<f64>() / km1 as f64).max(1e-6)
-                } else {
-                    1e12
-                }
-            })
-            .collect();
-        let init = TreeFieldParams {
-            a: 0.0,
-            q: sigma2.max(1e-6),
-            m: 0.0,
-            p0: p0.max(1e-6),
-        };
-        let prof = |av: f64| tree_field::profile_loglik_at_a(parents, &obs, &r, av, init);
-        let a_hat = if a.is_finite() { a } else { 0.999 };
-        // Two-pass: evaluate the m=0 profile on a grid (plus the fitted â, now itself an m=0 fit so
-        // it is consistent with the profile), take the true max, then keep the a's within a χ²(1)/2
-        // = 1.92 drop. Seed lo/hi ONLY from admissible points — do NOT force â in, or an â whose
-        // own profile is below the cutoff would be wrongly included in the interval.
-        let grid: Vec<f64> = (1..=199).map(|j| j as f64 / 200.0).chain([a_hat]).collect();
-        let profs: Vec<(f64, f64)> = grid.iter().map(|&av| (av, prof(av))).collect();
-        let ll_max = profs
-            .iter()
-            .map(|&(_, ll)| ll)
-            .fold(f64::NEG_INFINITY, f64::max);
-        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
-        for &(av, ll) in &profs {
-            if ll >= ll_max - 1.92 {
-                lo = lo.min(av);
-                hi = hi.max(av);
-            }
-        }
-        // ll_max is attained on the grid, so at least that point is admissible and lo/hi are set.
-        (1.0 - hi, 1.0 - lo) // κ = 1 - a flips the interval
+        (f64::NAN, f64::NAN)
     };
 
     ReplyTmModel {
@@ -463,6 +429,72 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         em_iters_run,
         doc_topic_var: last_nu_diag,
     }
+}
+
+/// 95% profile-likelihood CI for the reversion κ, factored out of `fit_reply_tm` because it is the
+/// dominant per-fit cost and is usually not read. At each candidate `a` on a 99-point grid it
+/// re-optimizes the nuisance variances (σ², p0) via `profile_loglik_at_a` and keeps the a's within
+/// a χ²(1)/2 = 1.92 log-likelihood drop of the profile max. The grid points are independent, so
+/// they run in PARALLEL. `lambda`/`nu` are per-document η and its posterior variance, `anchor` the
+/// per-group η mean, `has_tokens` marks documents that carry evidence. Returns `(NaN, NaN)` when
+/// there are no reply edges or the field was not fit (`a` non-finite). κ = 1 - a flips the interval.
+#[allow(clippy::too_many_arguments)]
+pub fn kappa_profile_ci(
+    parents: &[i64],
+    lambda: &[Vec<f64>],
+    anchor: &[Vec<f64>],
+    groups: &[usize],
+    nu: &[Vec<f64>],
+    has_tokens: &[bool],
+    sigma2: f64,
+    p0: f64,
+    a: f64,
+) -> (f64, f64) {
+    let d = lambda.len();
+    if d == 0 || !a.is_finite() || parents.iter().all(|&p| p < 0) {
+        return (f64::NAN, f64::NAN);
+    }
+    let km1 = lambda[0].len();
+    let obs: Vec<Vec<f64>> = (0..km1)
+        .map(|i| {
+            (0..d)
+                .map(|di| lambda[di][i] - anchor[groups[di]][i])
+                .collect()
+        })
+        .collect();
+    let r: Vec<f64> = (0..d)
+        .map(|di| {
+            if has_tokens[di] {
+                (nu[di].iter().sum::<f64>() / km1 as f64).max(1e-6)
+            } else {
+                1e12
+            }
+        })
+        .collect();
+    let init = TreeFieldParams {
+        a: 0.0,
+        q: sigma2.max(1e-6),
+        m: 0.0,
+        p0: p0.max(1e-6),
+    };
+    let prof = |av: f64| tree_field::profile_loglik_at_a(parents, &obs, &r, av, init);
+    // 99-point grid (plus the fitted â), evaluated in parallel — each profile is independent.
+    let grid: Vec<f64> = (1..=99).map(|j| j as f64 / 100.0).chain([a]).collect();
+    let profs: Vec<(f64, f64)> = grid.par_iter().map(|&av| (av, prof(av))).collect();
+    let ll_max = profs
+        .iter()
+        .map(|&(_, ll)| ll)
+        .fold(f64::NEG_INFINITY, f64::max);
+    // Seed lo/hi ONLY from admissible points (do not force â in — an â below the cutoff would be
+    // wrongly included). ll_max is attained on the grid, so at least that point is admissible.
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for &(av, ll) in &profs {
+        if ll >= ll_max - 1.92 {
+            lo = lo.min(av);
+            hi = hi.max(av);
+        }
+    }
+    (1.0 - hi, 1.0 - lo)
 }
 
 #[cfg(test)]
@@ -541,6 +573,7 @@ mod tests {
             v,
             150,
             1e-7,
+            true, // exercise the eager kappa_ci path
             |_, _, _| true,
             &mut fit_rng,
         );

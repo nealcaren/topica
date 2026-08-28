@@ -9579,6 +9579,7 @@ fn reply_tm_fit(
             num_types,
             em_iters,
             em_tol,
+            false, // raw smoke-test entry point does not return kappa_ci
             |_, _, _| true,
             &mut rng,
         );

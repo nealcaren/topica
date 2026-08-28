@@ -352,6 +352,7 @@ impl ReplyTM {
                 v,
                 iters,
                 1e-6,
+                false, // kappa_ci computed lazily by the getter, not in fit
                 |_, _, _| true,
                 &mut rng,
             )
@@ -598,6 +599,7 @@ impl ReplyTM {
                 v,
                 iters,
                 1e-6,
+                false, // uncoupled pass for persistence(); no kappa_ci needed
                 |_, _, _| true,
                 &mut rng,
             )
@@ -730,9 +732,48 @@ impl ReplyTM {
     /// (σ², p0) at each κ so the a↔σ² ridge is reflected; `(nan, nan)` when there are no reply
     /// edges or the field was not fit. Conditional on the topic fit; the point estimate is biased
     /// toward κ→0 (persistence) by topic-model shrinkage and the interval does not correct that.
+    /// Computed lazily on access (it is the dominant per-fit cost and usually not needed —
+    /// `persistence()` supersedes it), from the stored fit; expect ~1s per call.
     #[getter]
-    fn kappa_ci(&self) -> (f64, f64) {
-        self.kappa_ci
+    fn kappa_ci<'py>(&self, py: Python<'py>) -> PyResult<(f64, f64)> {
+        self.require_fitted()?;
+        let a = 1.0 - self.kappa;
+        if !a.is_finite() {
+            return Ok((f64::NAN, f64::NAN));
+        }
+        let corpus = self.corpus.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err("no training corpus retained; refit the model")
+        })?;
+        let has_tokens: Vec<bool> = corpus.docs.iter().map(|doc| !doc.is_empty()).collect();
+        // Reconstruct the η-space group anchor from the softmax group prevalence (exact inverse:
+        // anchor[g][k] = ln(prevalence[g][k] / prevalence[g][K-1])).
+        let km1 = self.num_topics - 1;
+        let anchor: Vec<Vec<f64>> = self
+            .group_prevalence
+            .iter()
+            .map(|gp| {
+                let ref_p = gp[km1].max(1e-12);
+                (0..km1).map(|k| (gp[k].max(1e-12) / ref_p).ln()).collect()
+            })
+            .collect();
+        let doc_eta = self.doc_eta.clone();
+        let doc_var = self.doc_topic_var.clone();
+        let parents = self.fit_parents.clone();
+        let groups = self.fit_groups.clone();
+        let (s2, p0) = (self.sigma2, self.p0);
+        Ok(py.allow_threads(move || {
+            crate::reply_tm::kappa_profile_ci(
+                &parents,
+                &doc_eta,
+                &anchor,
+                &groups,
+                &doc_var,
+                &has_tokens,
+                s2,
+                p0,
+                a,
+            )
+        }))
     }
 
     /// Reversion strength `κ = 1 - a` (0 = pure persistence / parent-copy, 1 = no memory).
