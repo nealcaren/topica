@@ -411,3 +411,127 @@ def test_reply_completion_requires_branching_for_placebo():
     with pytest.warns(UserWarning, match="placebo"):
         topica.evaluate.reply_completion(
             docs, parents, num_topics=2, em_iters=40, seed=13, n_boot=100)
+
+
+# ---------------------------------------------------------------------------
+# transform: inference for new reply forests
+# ---------------------------------------------------------------------------
+
+def test_transform_shapes_and_simplex():
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=30, depth=6)
+    m = topica.ReplyTM(2, em_iters=60, seed=13)
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
+    theta = m.transform(docs, parents=parents, covariates=cov)
+    assert theta.shape == (len(docs), 2)
+    assert np.allclose(theta.sum(1), 1.0)
+    assert (theta >= 0).all()
+
+
+def test_transform_recovers_training_theta():
+    """A single topological pass with the topics/field/anchors frozen is the exact structured
+    mean-field fixed point, so transform on the training forest reproduces the fitted doc_topic."""
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=30, depth=6)
+    m = topica.ReplyTM(2, em_iters=80, seed=13)
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
+    theta = m.transform(docs, parents=parents, covariates=cov)
+    dt = np.asarray(m.doc_topic)
+    # Near-exact, not bit-identical: the fit's final E-step reads the one-iteration-lagged parent
+    # lambda, while transform reads the converged parent, so transform is the more-converged pass.
+    assert np.abs(theta - dt).mean() < 2e-3
+    assert np.corrcoef(theta[:, 0], dt[:, 0])[0, 1] > 0.999
+
+
+def test_transform_tree_couples_reply_to_parent():
+    """The reply coupling must act at transform time: a reply's inferred mix tracks its parent's
+    more under the tree than under the tree-blind (parents=None) pass."""
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=40, depth=6)
+    m = topica.ReplyTM(2, em_iters=80, seed=13)
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
+    tree = m.transform(docs, parents=parents, covariates=cov)
+    flat = m.transform(docs, covariates=cov)  # every doc a root
+    # child-parent agreement in topic-0 proportion, over real edges
+    edges = [(d, p) for d, p in enumerate(parents) if p >= 0]
+    tree_gap = np.mean([abs(tree[d, 0] - tree[p, 0]) for d, p in edges])
+    flat_gap = np.mean([abs(flat[d, 0] - flat[p, 0]) for d, p in edges])
+    assert tree_gap < flat_gap
+
+
+def test_transform_new_thread_and_defaults():
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=30, depth=6)
+    m = topica.ReplyTM(2, em_iters=60, seed=13)
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
+    # a fresh thread expressed in the training vocabulary
+    new = [[vocab[i] for i in (0, 1, 2, 3)], [vocab[i] for i in (0, 1, 5, 6)]]
+    th = m.transform(new, parents=[-1, 0], covariates=[0, 0])
+    assert th.shape == (2, 2) and np.allclose(th.sum(1), 1.0)
+    # covariates omitted -> across-group mean anchor (still a valid simplex)
+    th2 = m.transform(new, parents=[-1, 0])
+    assert np.allclose(th2.sum(1), 1.0)
+    # out-of-vocabulary / empty documents survive as a prior-only row
+    th3 = m.transform([["zzz_oov_token"]], parents=[-1])
+    assert th3.shape == (1, 2) and np.allclose(th3.sum(1), 1.0)
+
+
+def test_transform_requires_tree_fit():
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=5)
+    m = topica.ReplyTM(2, em_iters=30, seed=13)
+    with pytest.warns(UserWarning):
+        m.fit(docs)  # no tree -> field undefined
+    with pytest.raises(ValueError, match="reply tree"):
+        m.transform(docs, parents=parents)
+
+
+def test_transform_validates_covariate_range():
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=5)
+    m = topica.ReplyTM(2, em_iters=40, seed=13)
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
+    with pytest.raises(ValueError, match="group id"):
+        m.transform(docs[:2], parents=[-1, 0], covariates=[0, 9])
+    with pytest.raises(ValueError, match="out of range"):
+        m.transform(docs[:2], parents=[-1, 5])
+
+
+def test_transform_scores_through_eval_heldout():
+    """transform lets ReplyTM ride the generic tree-blind held-out scorer (issue #828 half 2)."""
+    docs, parents = _branching_corpus(seed=3, persistence=0.9)
+    m = topica.ReplyTM(5, em_iters=60, seed=13)
+    m.fit(docs, parents=parents)
+    heldout = topica.evaluate.make_heldout(docs, seed=13)
+    m2 = topica.ReplyTM(5, em_iters=60, seed=13)
+    m2.fit(heldout.documents, parents=parents)
+    res = topica.evaluate.eval_heldout(m2, heldout)
+    assert np.isfinite(res.mean_per_doc_loglik)
+
+
+# ---------------------------------------------------------------------------
+# reply_completion off-the-shelf baselines (issue #828)
+# ---------------------------------------------------------------------------
+
+def test_reply_completion_offshelf_baselines():
+    """LDA and STM comparators are fit on the same reduced corpus and scored through the identical
+    protocol, so they land in delta with a thread-clustered CI alongside the tree."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.92)
+    cov = [i % 2 for i in range(len(docs))]
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=5, covariates=cov, covariate_names=["g0", "g1"],
+        baselines=("no_tree", "lda", "stm"), em_iters=50, seed=13, n_boot=200)
+    for name in ("no_tree", "lda", "stm"):
+        assert name in res.per_token_ll
+        assert name in res.delta
+        lo, hi = res.delta[name]["ci"]
+        assert np.isfinite(lo) and np.isfinite(hi) and lo <= hi
+    assert res.settings["baselines"] == ["no_tree", "lda", "stm"]
+
+
+def test_reply_completion_stm_needs_covariate():
+    docs, parents = _branching_corpus(seed=1, persistence=0.9)
+    with pytest.raises(ValueError, match="covariate"):
+        topica.evaluate.reply_completion(
+            docs, parents, num_topics=5, baselines=("stm",), em_iters=30, seed=13, n_boot=50)
+
+
+def test_reply_completion_rejects_unknown_baseline():
+    docs, parents = _branching_corpus(seed=1, persistence=0.9)
+    with pytest.raises(ValueError, match="unknown baseline"):
+        topica.evaluate.reply_completion(
+            docs, parents, num_topics=5, baselines=("bogus",), em_iters=20, seed=13)

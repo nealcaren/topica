@@ -8,8 +8,9 @@
 //! read from `persistence()` — an identifiable reduced-form estimate (observed slope + reliability
 //! gate + attenuation-corrected structural κ) — rather than the ML `kappa` getter, which collapses
 //! to the σ² floor on real corpora. The covariate story lives entirely in
-//! `group_prevalence`/`prevalence_se`; ReplyTM is outside the `effects` namespace. Formula
-//! covariates and `transform` on new threads are follow-ups.
+//! `group_prevalence`/`prevalence_se`; ReplyTM is outside the `effects` namespace. `transform`
+//! infers proportions for new reply forests (a single topological pass, topics/field/anchors held
+//! fixed); formula covariates remain a follow-up.
 
 use super::*;
 use numpy::{PyArray1, PyArray2};
@@ -376,6 +377,171 @@ impl ReplyTM {
         slf.corpus = Some(corpus_snapshot);
         slf.fitted = true;
         Ok(slf.into())
+    }
+
+    /// Infer topic proportions for a NEW reply forest, holding the fitted topics, reversion `kappa`,
+    /// step/root variances, and per-group anchors fixed. `data` is a `topica.Corpus` or a list of
+    /// token lists (mapped to the training vocabulary; out-of-vocabulary tokens are dropped, exactly
+    /// as at fit). `parents[d]` is `d`'s parent **document index** in the new forest (`-1` for a
+    /// thread root), in the SAME order as the documents; omit it to treat every document as a root
+    /// (a plain logistic-normal inference against the group anchor, ignoring reply structure).
+    /// `covariates` is the per-document group id; omit to anchor every document at the across-group
+    /// mean baseline. Returns an N×K proportions matrix.
+    ///
+    /// The reply coupling is directed (a document's prior mean depends only on its parent's η), so a
+    /// single topological pass is the exact structured mean-field — no iteration needed. Requires a
+    /// model fit **with** a reply tree (the step/root variances are otherwise undefined).
+    #[pyo3(signature = (data, parents=None, covariates=None))]
+    fn transform<'py>(
+        &self,
+        py: Python<'py>,
+        data: &Bound<'py, PyAny>,
+        parents: Option<Vec<i64>>,
+        covariates: Option<Vec<usize>>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        if !self.sigma2.is_finite() || !self.p0.is_finite() {
+            return Err(PyValueError::new_err(
+                "transform needs a model fit with a reply tree; this model was fit with \
+                 parents=None (the step/root variances are undefined). Refit with parents, or use \
+                 CTM for tree-free inference.",
+            ));
+        }
+
+        // Map new tokens to the training vocabulary (raw words, matching fit — NO lowercasing).
+        let wid: HashMap<&str, u32> = self
+            .vocab
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.as_str(), i as u32))
+            .collect();
+        let str_docs: Vec<Vec<String>> = if let Ok(c) = data.extract::<Corpus>() {
+            c.inner
+                .docs
+                .iter()
+                .map(|doc| {
+                    doc.iter()
+                        .map(|&w| c.inner.id_to_word[w as usize].clone())
+                        .collect()
+                })
+                .collect()
+        } else {
+            data.extract::<Vec<Vec<String>>>().map_err(|_| {
+                PyValueError::new_err(
+                    "expected a Corpus or a list of token lists (list[list[str]])",
+                )
+            })?
+        };
+        let docs_id: Vec<Vec<u32>> = str_docs
+            .iter()
+            .map(|doc| {
+                doc.iter()
+                    .filter_map(|w| wid.get(w.as_str()).copied())
+                    .collect()
+            })
+            .collect();
+        let n = docs_id.len();
+        if n == 0 {
+            return Err(PyValueError::new_err("data is empty"));
+        }
+
+        // parents: default to an all-root forest; validate length, range, and acyclicity otherwise.
+        let par: Vec<i64> = match parents {
+            None => vec![-1; n],
+            Some(p) => {
+                if p.len() != n {
+                    return Err(PyValueError::new_err(format!(
+                        "parents has {} entries but there are {n} documents",
+                        p.len()
+                    )));
+                }
+                for (d, &pd) in p.iter().enumerate() {
+                    if pd < -1 || pd >= n as i64 {
+                        return Err(PyValueError::new_err(format!(
+                            "parents[{d}] = {pd} out of range; must be -1 or in [0, {n})"
+                        )));
+                    }
+                    if pd == d as i64 {
+                        return Err(PyValueError::new_err(format!(
+                            "parents[{d}] points at itself"
+                        )));
+                    }
+                }
+                for start in 0..n {
+                    let (mut cur, mut steps) = (start as i64, 0usize);
+                    while cur >= 0 {
+                        cur = p[cur as usize];
+                        steps += 1;
+                        if steps > n {
+                            return Err(PyValueError::new_err(format!(
+                                "parents contains a cycle reachable from document {start}; the \
+                                 reply tree must be acyclic"
+                            )));
+                        }
+                    }
+                }
+                p
+            }
+        };
+
+        // Reconstruct the η-space anchor per training group from the stored softmax prevalence
+        // (exact inverse: anchor[g][k] = ln(prevalence[g][k] / prevalence[g][K-1])), as in kappa_ci.
+        let km1 = self.num_topics - 1;
+        let ng = self.group_names.len().max(1);
+        let anchors: Vec<Vec<f64>> = self
+            .group_prevalence
+            .iter()
+            .map(|gp| {
+                let ref_p = gp[km1].max(1e-12);
+                (0..km1).map(|k| (gp[k].max(1e-12) / ref_p).ln()).collect()
+            })
+            .collect();
+
+        // groups: an explicit covariate, or a single synthetic anchor at the across-group mean.
+        let (groups, anchor_rows) = match covariates {
+            Some(g) => {
+                if g.len() != n {
+                    return Err(PyValueError::new_err(format!(
+                        "covariates has {} entries but there are {n} documents",
+                        g.len()
+                    )));
+                }
+                if let Some(&bad) = g.iter().find(|&&gid| gid >= ng) {
+                    return Err(PyValueError::new_err(format!(
+                        "covariates has group id {bad}, but the model was fit with {ng} group(s) \
+                         (ids 0..{ng})"
+                    )));
+                }
+                (g, anchors)
+            }
+            None => {
+                let mut mean = vec![0.0f64; km1];
+                for a in &anchors {
+                    for (m, &v) in mean.iter_mut().zip(a) {
+                        *m += v / ng as f64;
+                    }
+                }
+                (vec![0usize; n], vec![mean])
+            }
+        };
+
+        let kappa = self.kappa;
+        let sigma2 = self.sigma2;
+        let p0 = self.p0;
+        let beta = self.beta.clone();
+        let theta = py.allow_threads(move || {
+            crate::reply_tm::transform_reply_tm(
+                &docs_id,
+                &par,
+                &groups,
+                &beta,
+                &anchor_rows,
+                kappa,
+                sigma2,
+                p0,
+            )
+        });
+        Ok(vecs_to_arr2(&theta).to_pyarray_bound(py))
     }
 
     /// K×V topic-word probability matrix.

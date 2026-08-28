@@ -3076,6 +3076,19 @@ class ReplyTM:
         ``0..num_groups`` whose per-group baseline becomes the reversion anchor; `covariate_names`
         names the groups. Requires ``topica.enable_experimental()``."""
         ...
+    def transform(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        parents: Sequence[int] | None = None,
+        covariates: Sequence[int] | None = None,
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Infer topic proportions for a NEW reply forest, holding the fitted topics, reversion,
+        step/root variances, and per-group anchors fixed. `data` is a ``Corpus`` or token lists
+        (mapped to the training vocabulary). `parents[d]` is ``d``'s parent document index (``-1``
+        for a root); omit to treat every document as a root (ignoring reply structure). `covariates`
+        selects the per-document group anchor; omit to anchor at the across-group mean. Returns an
+        N×K matrix. Requires a model fit WITH a reply tree."""
+        ...
     @property
     def num_topics(self) -> int: ...
     @property

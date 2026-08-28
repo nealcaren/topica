@@ -892,6 +892,13 @@ def reply_completion(
       coupling. This is the model-versus-model comparator.
     - ``permuted``: ReplyTM with a depth-stratified within-thread parent
       permutation (the placebo). If the gain is real it should shrink here.
+    - ``lda`` / ``stm`` (issue #828): off-the-shelf comparators — a plain
+      ``LDA(K)``, and an ``STM(K)`` with the ``covariates`` one-hot encoded as
+      prevalence — fit on the same reduced corpus (pinned to the tree model's
+      vocabulary) and scored through the identical leaf mask and fit-time-theta
+      protocol, so ``delta["lda"]``/``delta["stm"]`` are the tree-minus-tool
+      difference with the same thread-clustered interval. ``stm`` requires a
+      covariate with at least two groups.
 
     Aggregation clusters on the thread root, not the comment, because comments
     within a thread are correlated. The paired difference (tree minus baseline)
@@ -912,7 +919,8 @@ def reply_completion(
     min_eval_tokens : int. Minimum tokens for a leaf to be eligible (``>= 2``).
     eval_frac : float. Share of eligible leaves to evaluate (sampled with
         ``seed``); ``1.0`` uses them all.
-    baselines : which comparators to fit, any of ``"no_tree"``, ``"permuted"``.
+    baselines : which comparators to fit, any of ``"no_tree"``, ``"permuted"``,
+        ``"lda"``, ``"stm"``.
     em_iters : EM iterations per fit. Match this to the analysis fit.
     min_count : words rarer than this are dropped (shared across models).
     seed : RNG seed for leaf sampling, the token split, the permutation, and the
@@ -939,9 +947,12 @@ def reply_completion(
     if not (0.0 < eval_frac <= 1.0):
         raise ValueError("eval_frac must be in (0, 1]")
     baselines = tuple(baselines)
+    _known_baselines = ("no_tree", "permuted", "lda", "stm")
     for b in baselines:
-        if b not in ("no_tree", "permuted"):
-            raise ValueError(f"unknown baseline {b!r}; use 'no_tree' and/or 'permuted'")
+        if b not in _known_baselines:
+            raise ValueError(
+                f"unknown baseline {b!r}; use any of {_known_baselines}"
+            )
 
     docs_attr = getattr(docs, "documents", None)
     if callable(docs_attr):
@@ -1029,24 +1040,80 @@ def reply_completion(
             )
         models["permuted"] = _fit(perm)
 
+    # Off-the-shelf comparators (issue #828): a named tool (LDA, STM) fit on the
+    # SAME reduced corpus and scored through the identical leaf mask + fit-time-theta
+    # protocol, so the paper can put ReplyTM(tree) and LDA/STM in one matched table.
+    # We pin them to the tree model's vocabulary (a fixed-vocabulary Corpus) so the
+    # in-vocab held tokens are exactly the tree's — the pairing the bootstrap needs.
+    # That Corpus drops any document emptied under min_count, so their fit-time theta
+    # is indexed through kept_indices; a `None` row means the leaf was dropped and it
+    # is excluded from every model's paired arrays below.
+    row_map = {name: None for name in models}  # None => identity (the ReplyTM fits)
+    off_shelf = [b for b in baselines if b in ("lda", "stm")]
+    if off_shelf:
+        import topica
+
+        tree_vocab = list(models["tree"].vocabulary)
+        base_corpus = topica.Corpus.from_documents(train_docs, vocabulary=tree_vocab)
+        orig_to_row = {orig: i for i, orig in enumerate(base_corpus.kept_indices)}
+
+        def _fit_offshelf(build):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=UserWarning)
+                return build()
+
+        if "lda" in off_shelf:
+            models["lda"] = _fit_offshelf(
+                lambda: topica.LDA(num_topics, seed=seed).fit(base_corpus)
+            )
+            row_map["lda"] = orig_to_row
+        if "stm" in off_shelf:
+            if covariates is None:
+                raise ValueError(
+                    "the 'stm' baseline needs a prevalence covariate, but covariates=None. "
+                    "Pass covariates (the categorical group id per document) or drop 'stm' "
+                    "from baselines (use 'no_tree' for the covariate-aware logistic-normal "
+                    "comparator)."
+                )
+            cov_arr = np.asarray(covariates, dtype=int)
+            ng = int(cov_arr.max()) + 1 if cov_arr.size else 1
+            if ng < 2:
+                raise ValueError(
+                    "the 'stm' baseline needs at least two covariate groups for a prevalence "
+                    "design (got one); drop 'stm' from baselines."
+                )
+            # one-hot the categorical covariate, dropping level 0 as the reference (STM
+            # prepends its own intercept), then align to the surviving documents.
+            design = np.zeros((n, ng - 1), dtype=np.float64)
+            for j in range(1, ng):
+                design[:, j - 1] = (cov_arr == j).astype(np.float64)
+            design_kept = design[base_corpus.kept_indices]
+            models["stm"] = _fit_offshelf(
+                lambda: topica.STM(num_topics, seed=seed).fit(
+                    base_corpus, prevalence=design_kept
+                )
+            )
+            row_map["stm"] = orig_to_row
+
     # score held-out tokens under each model's theta * topic_word
-    def _score(model):
+    def _score(model, rmap):
         phi = np.asarray(model.topic_word, dtype=np.float64)
         theta = np.asarray(model.doc_topic, dtype=np.float64)
         vocab = {w: i for i, w in enumerate(model.vocabulary)}
         per_token = {}   # leaf -> list of token log-liks
         oov = 0
         for d in eligible:
+            row = d if rmap is None else rmap.get(d)
             ids = [vocab[w] for w in held[d] if w in vocab]
             oov += len(held[d]) - len(ids)
-            if not ids:
+            if row is None or not ids:
                 per_token[d] = []
                 continue
-            pw = np.clip(theta[d] @ phi[:, ids], 1e-12, None)
+            pw = np.clip(theta[row] @ phi[:, ids], 1e-12, None)
             per_token[d] = np.log(pw).tolist()
         return per_token, oov
 
-    scored = {name: _score(m) for name, m in models.items()}
+    scored = {name: _score(m, row_map[name]) for name, m in models.items()}
     # vocab is identical across the matched fits, so oov is too; report one.
     oov_dropped = scored["tree"][1]
 
@@ -1054,14 +1121,31 @@ def reply_completion(
     # in-vocab held-out token contribute)
     tree_pt = scored["tree"][0]
     thread_ids, per_model_ll = [], {name: [] for name in models}
+    dropped_leaves = 0
     for d in eligible:
         m_lls = {name: scored[name][0][d] for name in models}
         if not tree_pt[d]:
+            continue
+        # Every model must have scored the same held tokens for this leaf, else the
+        # paired arrays would misalign. Off-the-shelf fits on the fixed-vocab Corpus
+        # drop a leaf whose seen tokens are all below min_count; skip such leaves in
+        # every model so the pairing (and its bootstrap) stays valid.
+        if any(len(m_lls[name]) != len(tree_pt[d]) for name in models):
+            dropped_leaves += 1
             continue
         for j in range(len(tree_pt[d])):
             thread_ids.append(root[d])
             for name in models:
                 per_model_ll[name].append(m_lls[name][j])
+    if dropped_leaves:
+        warnings.warn(
+            f"{dropped_leaves} eval leaf/leaves were dropped from the comparison because "
+            "an off-the-shelf baseline (lda/stm) could not score them: their seen tokens "
+            "are all below min_count, so the fixed-vocabulary Corpus emptied and dropped "
+            "them. Lower min_count to keep them.",
+            UserWarning,
+            stacklevel=2,
+        )
     thread_ids = np.asarray(thread_ids)
     per_model_ll = {name: np.asarray(v, dtype=np.float64) for name, v in per_model_ll.items()}
     n_tokens = len(thread_ids)
