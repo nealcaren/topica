@@ -431,6 +431,99 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     }
 }
 
+/// Infer topic proportions θ for a NEW reply forest under a fitted model, holding the topics `beta`,
+/// the reversion `kappa`, the per-edge variance `sigma2`, the root variance `p0`, and the per-group
+/// `anchor` all fixed. This is `transform` for ReplyTM.
+///
+/// The E-step coupling is directed — a document's prior mean depends only on its PARENT's η, never on
+/// its children (see `fit_reply_tm`). So a single sweep in topological order (every parent before its
+/// children) is the structured mean-field fixed point: each node is inferred against a prior mean
+/// built from its parent's already-finalized η, and nothing downstream feeds back, so there is no need
+/// to iterate. On a tree of token-bearing nodes this reproduces the converged fit E-step. `parents[d]`
+/// indexes into `docs` (negative = root); `groups[d]` selects the anchor row. Documents with no
+/// in-vocabulary tokens carry no evidence, so their posterior mode is the prior mean (θ = softmax of
+/// that mean) and they still pass persistence on to their children. NOTE this differs from
+/// `fit_reply_tm`, which excludes empty documents from its E-step and leaves their η at the init 0
+/// (θ uniform); transform's prior-mode is the principled value (it matches `ctm::infer_theta`), so on
+/// a tree with an empty interior or root node transform and the stored fit `doc_topic` diverge for
+/// that node and its subtree. Returns D×K proportions in `docs` order.
+pub fn transform_reply_tm(
+    docs: &[Vec<u32>],
+    parents: &[i64],
+    groups: &[usize],
+    beta: &[Vec<f64>],
+    anchor: &[Vec<f64>],
+    kappa: f64,
+    sigma2: f64,
+    p0: f64,
+) -> Vec<Vec<f64>> {
+    let k = beta.len();
+    let km1 = k - 1;
+    let d = docs.len();
+
+    // Diagonal inverse prior covariance for edges (σ²) and roots (p0).
+    let siginv_diag = |var: f64| -> Vec<f64> {
+        let mut s = vec![0.0f64; km1 * km1];
+        for i in 0..km1 {
+            s[i * km1 + i] = 1.0 / var;
+        }
+        s
+    };
+    let siginv_edge = siginv_diag(sigma2);
+    let siginv_root = siginv_diag(p0);
+
+    // Topological order (roots first, every parent before its children). The tree is acyclic (the
+    // binding validates this), so a BFS from the roots down the children lists visits each node once.
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); d];
+    let mut order: Vec<usize> = Vec::with_capacity(d);
+    for (c, &p) in parents.iter().enumerate() {
+        if p < 0 {
+            order.push(c);
+        } else {
+            children[p as usize].push(c);
+        }
+    }
+    let mut head = 0;
+    while head < order.len() {
+        let node = order[head];
+        head += 1;
+        for &c in &children[node] {
+            order.push(c);
+        }
+    }
+
+    let sparse: Vec<(Vec<usize>, Vec<f64>)> = docs.iter().map(|doc| doc_sparse(doc)).collect();
+    let mut lambda = vec![vec![0.0f64; km1]; d];
+    for &di in &order {
+        let ag = &anchor[groups[di]];
+        let par = parents[di];
+        let (mu_d, siginv) = if par < 0 {
+            (ag.clone(), &siginv_root)
+        } else {
+            let lp = &lambda[par as usize];
+            let mu: Vec<f64> = (0..km1)
+                .map(|i| (1.0 - kappa) * lp[i] + kappa * ag[i])
+                .collect();
+            (mu, &siginv_edge)
+        };
+        let (words, counts) = &sparse[di];
+        lambda[di] = if words.is_empty() {
+            // No token evidence: the objective reduces to the prior, whose mode is η = μ.
+            mu_d
+        } else {
+            lbfgs_minimize(
+                mu_d.clone(),
+                |eta| ctm_lhood_grad(eta, beta, words, counts, &mu_d, siginv),
+                40,
+                7,
+                1e-5,
+            )
+        };
+    }
+
+    lambda.iter().map(|eta| softmax_ref(eta)).collect()
+}
+
 /// 95% profile-likelihood CI for the reversion κ, factored out of `fit_reply_tm` because it is the
 /// dominant per-fit cost and is usually not read. At each candidate `a` on a 99-point grid it
 /// re-optimizes the nuisance variances (σ², p0) via `profile_loglik_at_a` and keeps the a's within
