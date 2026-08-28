@@ -303,7 +303,10 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                     (nd.iter().sum::<f64>() / km1 as f64).max(1e-6)
                 })
                 .collect();
-            let fit = tree_field::fit(
+            // fit with the anchor mean held at 0 (obs are anchor-centered): this keeps the fitted
+            // `a` consistent with the m=0 profile used for kappa_ci, and avoids double-counting the
+            // mean the anchor already removed.
+            let fit = tree_field::fit_fixed_mean(
                 parents,
                 &obs,
                 &r,
@@ -418,21 +421,24 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         };
         let prof = |av: f64| tree_field::profile_loglik_at_a(parents, &obs, &r, av, init);
         let a_hat = if a.is_finite() { a } else { 0.999 };
-        // Two-pass: evaluate the profile on the grid (plus the fitted â) and take the true max,
-        // so a suboptimal â cannot understate ll_max and distort the interval.
+        // Two-pass: evaluate the m=0 profile on a grid (plus the fitted â, now itself an m=0 fit so
+        // it is consistent with the profile), take the true max, then keep the a's within a χ²(1)/2
+        // = 1.92 drop. Seed lo/hi ONLY from admissible points — do NOT force â in, or an â whose
+        // own profile is below the cutoff would be wrongly included in the interval.
         let grid: Vec<f64> = (1..=199).map(|j| j as f64 / 200.0).chain([a_hat]).collect();
         let profs: Vec<(f64, f64)> = grid.iter().map(|&av| (av, prof(av))).collect();
         let ll_max = profs
             .iter()
             .map(|&(_, ll)| ll)
             .fold(f64::NEG_INFINITY, f64::max);
-        let (mut lo, mut hi) = (a_hat, a_hat);
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
         for &(av, ll) in &profs {
             if ll >= ll_max - 1.92 {
                 lo = lo.min(av);
                 hi = hi.max(av);
             }
         }
+        // ll_max is attained on the grid, so at least that point is admissible and lo/hi are set.
         (1.0 - hi, 1.0 - lo) // κ = 1 - a flips the interval
     };
 

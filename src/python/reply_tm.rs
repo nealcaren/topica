@@ -394,8 +394,9 @@ impl ReplyTM {
     }
 
     /// The covariate group labels (order matches `group_prevalence` rows).
-    fn group_labels(&self) -> Vec<String> {
-        self.group_names.clone()
+    fn group_labels(&self) -> PyResult<Vec<String>> {
+        self.require_fitted()?;
+        Ok(self.group_names.clone())
     }
 
     /// The vocabulary (index order matches the `topic_word` columns).
@@ -424,15 +425,16 @@ impl ReplyTM {
     /// Topic coherence (one score per topic). `coherence_type` is `"u_mass"` (default, uses the
     /// training corpus) or a windowed measure (`"c_v"`, `"c_uci"`, `"c_npmi"`); `texts` supplies
     /// an alternative reference corpus for the windowed measures. Higher is more coherent.
-    #[pyo3(signature = (n=10, coherence_type="u_mass".to_string(), texts=None))]
+    #[pyo3(signature = (n=TopN(10), *, coherence_type="u_mass".to_string(), texts=None))]
     fn coherence<'py>(
         &self,
         py: Python<'py>,
-        n: usize,
+        n: TopN,
         coherence_type: String,
         texts: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         self.require_fitted()?;
+        let n = n.0;
         let phi = vecs_to_arr2(&self.beta);
         let tops = top_word_ids_phi(&phi, self.num_topics, n);
         coherence_dispatch(

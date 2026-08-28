@@ -246,12 +246,31 @@ def test_prevalence_se_cluster_robust():
     assert np.all(np.isnan(se[1])), "single-thread group SE must be NaN (unidentified)"
 
 
+def test_kappa_within_its_ci():
+    """The point estimate kappa must lie inside kappa_ci on every fit (regression: the CI used to
+    force the fitted a_hat into the interval even when its own profile was below the cutoff, and the
+    field mean was fit free while the CI profiled at m=0, so kappa could fall outside its CI)."""
+    import math
+
+    for seed in (1, 7, 13, 21):
+        docs, parents, cov, vocab = _threaded_corpus(seed=seed, n_threads=30, depth=8)
+        m = topica.ReplyTM(2, em_iters=80, seed=seed)
+        m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
+        lo, hi = m.kappa_ci
+        assert math.isfinite(lo) and math.isfinite(hi) and lo <= hi
+        assert lo - 1e-9 <= m.kappa <= hi + 1e-9, (seed, m.kappa, (lo, hi))
+
+
 def test_coherence():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=6)
     m = topica.ReplyTM(2, em_iters=40, seed=13)
     m.fit(docs, parents=parents)
     coh = m.coherence(10)
     assert coh.shape == (2,) and np.all(np.isfinite(coh))
+    # coherence_type/texts are keyword-only; passing a corpus positionally is a clear TypeError,
+    # not an opaque int-coercion error (the TopN gensim-muscle-memory guard).
+    with pytest.raises(TypeError):
+        m.coherence(docs)
 
 
 def test_save_load_roundtrip(tmp_path):

@@ -3099,7 +3099,11 @@ class ReplyTM:
         ``topic`` returns that topic's words. ``weights=True`` returns ``(word, prob)`` pairs."""
         ...
     def coherence(
-        self, n: int = 10, coherence_type: str = "u_mass", texts: object | None = None
+        self,
+        n: int = 10,
+        *,
+        coherence_type: str = "u_mass",
+        texts: Corpus | Sequence[Sequence[str]] | None = None,
     ) -> numpy.typing.NDArray[numpy.float64]:
         """Per-topic coherence. ``coherence_type`` is ``"u_mass"`` (default) or a windowed measure
         (``"c_v"``/``"c_uci"``/``"c_npmi"``); ``texts`` supplies a reference corpus for those."""

@@ -19,10 +19,11 @@
 //! < 1e-8 on random forests (the algorithm was first validated in Python, see
 //! `notes/tree_field_validate.py`).
 //!
-//! `ReplyTM`'s M-step uses [`fit`]/[`loglik_multi`] here to estimate `(κ, σ²)` and profile κ for
-//! its CI; [`solve`]'s smoothed means/variances are available but the E-step coupling currently
-//! uses the parent's point estimate instead (a structured mean-field), so some entry points are
-//! exercised only by the tests.
+//! `ReplyTM`'s M-step uses [`fit_fixed_mean`] here to estimate `(κ, σ²)` on anchor-centered
+//! residuals and [`profile_loglik_at_a`] to profile κ for its CI; [`solve`]'s smoothed
+//! means/variances are available but the E-step coupling currently uses the parent's point
+//! estimate instead (a structured mean-field), so some entry points are exercised only by the
+//! tests.
 #![allow(dead_code)]
 
 use std::f64::consts::PI;
@@ -190,79 +191,15 @@ pub(crate) fn profile_loglik_at_a(
     init: TreeFieldParams,
 ) -> f64 {
     // 2-D Nelder–Mead over (ln q, ln p0) at fixed a; small and deterministic.
-    let neg_ll = |t: &[f64; 2]| -> f64 {
+    let neg_ll = |t: &[f64]| -> f64 {
         let (q, p0) = (t[0].exp(), t[1].exp());
         if !(q > 1e-12 && p0 > 1e-12) {
             return f64::INFINITY;
         }
         -loglik_multi(parents, obs, r, TreeFieldParams { a, q, m: 0.0, p0 })
     };
-    let x0 = [init.q.max(1e-6).ln(), init.p0.max(1e-6).ln()];
-    let (alpha, gamma, rho, sigma) = (1.0, 2.0, 0.5, 0.5);
-    let mut simplex = [x0, [x0[0] + 0.5, x0[1]], [x0[0], x0[1] + 0.5]];
-    let mut fv = [
-        neg_ll(&simplex[0]),
-        neg_ll(&simplex[1]),
-        neg_ll(&simplex[2]),
-    ];
-    for _ in 0..200 {
-        // order vertices best..worst
-        let mut idx = [0usize, 1, 2];
-        idx.sort_by(|&i, &j| {
-            fv[i]
-                .partial_cmp(&fv[j])
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        let (b, s, w) = (idx[0], idx[1], idx[2]);
-        if (fv[w] - fv[b]).abs() < 1e-9 {
-            break;
-        }
-        let cen = [
-            (simplex[b][0] + simplex[s][0]) / 2.0,
-            (simplex[b][1] + simplex[s][1]) / 2.0,
-        ];
-        let reflect = |t: f64| {
-            [
-                cen[0] + t * (cen[0] - simplex[w][0]),
-                cen[1] + t * (cen[1] - simplex[w][1]),
-            ]
-        };
-        let xr = reflect(alpha);
-        let fr = neg_ll(&xr);
-        if fr < fv[b] {
-            let xe = reflect(gamma);
-            let fe = neg_ll(&xe);
-            if fe < fr {
-                simplex[w] = xe;
-                fv[w] = fe;
-            } else {
-                simplex[w] = xr;
-                fv[w] = fr;
-            }
-        } else if fr < fv[s] {
-            simplex[w] = xr;
-            fv[w] = fr;
-        } else {
-            let xc = [
-                cen[0] + rho * (simplex[w][0] - cen[0]),
-                cen[1] + rho * (simplex[w][1] - cen[1]),
-            ];
-            let fc = neg_ll(&xc);
-            if fc < fv[w] {
-                simplex[w] = xc;
-                fv[w] = fc;
-            } else {
-                for &i in &[s, w] {
-                    simplex[i] = [
-                        simplex[b][0] + sigma * (simplex[i][0] - simplex[b][0]),
-                        simplex[b][1] + sigma * (simplex[i][1] - simplex[b][1]),
-                    ];
-                    fv[i] = neg_ll(&simplex[i]);
-                }
-            }
-        }
-    }
-    -fv.iter().cloned().fold(f64::INFINITY, f64::min)
+    let x0 = vec![init.q.max(1e-6).ln(), init.p0.max(1e-6).ln()];
+    -nelder_mead_min(&neg_ll, x0, 0.5, 200).1
 }
 
 /// Result of fitting the OU field hyperparameters by maximum marginal likelihood.
@@ -306,13 +243,13 @@ pub(crate) fn fit(
         }
         -ll
     };
-    let x0 = [
+    let x0 = vec![
         (init.a / (1.0 - init.a)).ln(),
         init.q.ln(),
         init.m,
         init.p0.ln(),
     ];
-    let best = nelder_mead(&neg_ll, x0, 0.5, 400);
+    let best = nelder_mead_min(&neg_ll, x0, 0.5, 400);
     let p = unpack(&best.0);
     TreeFieldFit {
         a: p.a,
@@ -323,60 +260,81 @@ pub(crate) fn fit(
     }
 }
 
-/// Compact Nelder–Mead for a fixed 4-dimensional objective. Deterministic; returns the best
-/// vertex and its value. Standard reflect / expand / contract / shrink with the usual
-/// coefficients. Kept local because topica has no shared general-purpose minimizer.
-fn nelder_mead<F: Fn(&[f64]) -> f64>(
+/// Like [`fit`] but with the anchor mean `m` HELD at 0 — for ReplyTM, whose field is fit on
+/// anchor-centered residuals, so the mean is already removed and freeing `m` both double-counts it
+/// and makes the fitted `a` inconsistent with the `m=0` profile used for the κ CI. Optimizes only
+/// `(a, q, p0)`.
+pub(crate) fn fit_fixed_mean(
+    parents: &[i64],
+    obs: &[Vec<f64>],
+    r: &[f64],
+    init: TreeFieldParams,
+) -> TreeFieldFit {
+    let sigmoid = |z: f64| 1.0 / (1.0 + (-z).exp());
+    let neg_ll = |t: &[f64]| -> f64 {
+        let (a, q, p0) = (sigmoid(t[0]), t[1].exp(), t[2].exp());
+        if !(a.is_finite() && q > 1e-12 && p0 > 1e-12) {
+            return f64::INFINITY;
+        }
+        -loglik_multi(parents, obs, r, TreeFieldParams { a, q, m: 0.0, p0 })
+    };
+    let x0 = vec![(init.a / (1.0 - init.a)).ln(), init.q.ln(), init.p0.ln()];
+    let best = nelder_mead_min(&neg_ll, x0, 0.5, 400);
+    TreeFieldFit {
+        a: sigmoid(best.0[0]),
+        q: best.0[1].exp(),
+        m: 0.0,
+        p0: best.0[2].exp(),
+        loglik: -best.1,
+    }
+}
+
+/// Deterministic Nelder–Mead minimizer over an N-dimensional domain (N = `x0.len()`). Full
+/// reflect / expand / OUTSIDE-contract / INSIDE-contract / shrink — the outside/inside split
+/// matters: contracting only toward the worst vertex (as an earlier version did) can retain a
+/// worse point and under-optimize. Returns the best vertex and its value. Kept local because
+/// topica has no shared general-purpose minimizer.
+fn nelder_mead_min<F: Fn(&[f64]) -> f64>(
     f: &F,
-    x0: [f64; 4],
+    x0: Vec<f64>,
     step: f64,
     max_iter: usize,
-) -> ([f64; 4], f64) {
-    const N: usize = 4;
+) -> (Vec<f64>, f64) {
+    let n = x0.len();
     let (alpha, gamma, rho, sigma) = (1.0, 2.0, 0.5, 0.5);
     // initial simplex: x0 plus one perturbed vertex per coordinate
-    let mut simplex: Vec<[f64; 4]> = Vec::with_capacity(N + 1);
-    simplex.push(x0);
-    for i in 0..N {
-        let mut v = x0;
+    let mut simplex: Vec<Vec<f64>> = Vec::with_capacity(n + 1);
+    simplex.push(x0.clone());
+    for i in 0..n {
+        let mut v = x0.clone();
         v[i] += step;
         simplex.push(v);
     }
     let mut fval: Vec<f64> = simplex.iter().map(|v| f(v)).collect();
-    let centroid = |simplex: &[[f64; 4]], except: usize| -> [f64; 4] {
-        let mut c = [0.0; 4];
-        for (i, v) in simplex.iter().enumerate() {
-            if i == except {
-                continue;
-            }
-            for k in 0..N {
-                c[k] += v[k] / N as f64;
-            }
-        }
-        c
-    };
-    let comb = |a: &[f64; 4], b: &[f64; 4], t: f64| -> [f64; 4] {
-        let mut o = [0.0; 4];
-        for k in 0..N {
-            o[k] = a[k] + t * (a[k] - b[k]);
-        }
-        o
+    // comb(a, b, t) = a + t*(a - b): reflection/expansion when b is the worst vertex.
+    let comb = |a: &[f64], b: &[f64], t: f64| -> Vec<f64> {
+        (0..a.len()).map(|k| a[k] + t * (a[k] - b[k])).collect()
     };
     for _ in 0..max_iter {
-        // order by objective
-        let mut idx: Vec<usize> = (0..=N).collect();
-        idx.sort_by(|&i, &j| fval[i].partial_cmp(&fval[j]).unwrap());
-        let ordered: Vec<[f64; 4]> = idx.iter().map(|&i| simplex[i]).collect();
-        let ordered_f: Vec<f64> = idx.iter().map(|&i| fval[i]).collect();
-        simplex = ordered;
-        fval = ordered_f;
-        // convergence: simplex collapsed in value
-        if (fval[N] - fval[0]).abs() < 1e-9 {
+        let mut idx: Vec<usize> = (0..=n).collect();
+        idx.sort_by(|&i, &j| {
+            fval[i]
+                .partial_cmp(&fval[j])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        simplex = idx.iter().map(|&i| simplex[i].clone()).collect();
+        fval = idx.iter().map(|&i| fval[i]).collect();
+        if (fval[n] - fval[0]).abs() < 1e-9 {
             break;
         }
-        let c = centroid(&simplex, N);
-        let worst = simplex[N];
-        // reflection
+        // centroid of all but the worst vertex
+        let mut c = vec![0.0; n];
+        for v in simplex.iter().take(n) {
+            for (k, ck) in c.iter_mut().enumerate() {
+                *ck += v[k] / n as f64;
+            }
+        }
+        let worst = simplex[n].clone();
         let xr = comb(&c, &worst, alpha);
         let fr = f(&xr);
         if fr < fval[0] {
@@ -384,49 +342,115 @@ fn nelder_mead<F: Fn(&[f64]) -> f64>(
             let xe = comb(&c, &worst, gamma);
             let fe = f(&xe);
             if fe < fr {
-                simplex[N] = xe;
-                fval[N] = fe;
+                simplex[n] = xe;
+                fval[n] = fe;
             } else {
-                simplex[N] = xr;
-                fval[N] = fr;
+                simplex[n] = xr;
+                fval[n] = fr;
             }
-        } else if fr < fval[N - 1] {
-            simplex[N] = xr;
-            fval[N] = fr;
+        } else if fr < fval[n - 1] {
+            simplex[n] = xr;
+            fval[n] = fr;
+        } else if fr < fval[n] {
+            // OUTSIDE contraction (between centroid and reflection); accept vs the reflection
+            let xc = comb(&c, &worst, rho * alpha);
+            let fc = f(&xc);
+            if fc <= fr {
+                simplex[n] = xc;
+                fval[n] = fc;
+            } else {
+                shrink(&mut simplex, &mut fval, sigma, f);
+            }
         } else {
-            // contraction toward the better of worst/reflection
-            let mut c2 = [0.0; 4];
-            for k in 0..N {
-                c2[k] = c[k] + rho * (worst[k] - c[k]);
-            }
-            let fc = f(&c2);
-            if fc < fval[N] {
-                simplex[N] = c2;
-                fval[N] = fc;
+            // INSIDE contraction (between centroid and worst); accept vs the worst
+            let xc = comb(&c, &worst, -rho);
+            let fc = f(&xc);
+            if fc < fval[n] {
+                simplex[n] = xc;
+                fval[n] = fc;
             } else {
-                // shrink toward best
-                let best = simplex[0];
-                for i in 1..=N {
-                    for k in 0..N {
-                        simplex[i][k] = best[k] + sigma * (simplex[i][k] - best[k]);
-                    }
-                    fval[i] = f(&simplex[i]);
-                }
+                shrink(&mut simplex, &mut fval, sigma, f);
             }
         }
     }
     let mut bi = 0;
-    for i in 1..=N {
+    for i in 1..=n {
         if fval[i] < fval[bi] {
             bi = i;
         }
     }
-    (simplex[bi], fval[bi])
+    (simplex[bi].clone(), fval[bi])
+}
+
+/// Nelder–Mead shrink toward the best vertex (simplex[0]).
+fn shrink<F: Fn(&[f64]) -> f64>(simplex: &mut [Vec<f64>], fval: &mut [f64], sigma: f64, f: &F) {
+    let n = simplex.len() - 1;
+    let best = simplex[0].clone();
+    for i in 1..=n {
+        for k in 0..n {
+            simplex[i][k] = best[k] + sigma * (simplex[i][k] - best[k]);
+        }
+        fval[i] = f(&simplex[i]);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The generic Nelder–Mead must find the minimum of the Rosenbrock function, which has a
+    /// curved valley that a contraction-only-toward-worst simplex handles poorly — this locks the
+    /// outside/inside contraction split.
+    #[test]
+    fn nelder_mead_minimizes_rosenbrock() {
+        let rosen = |v: &[f64]| -> f64 {
+            let (x, y) = (v[0], v[1]);
+            (1.0 - x).powi(2) + 100.0 * (y - x * x).powi(2)
+        };
+        let (best, fbest) = nelder_mead_min(&rosen, vec![-1.2, 1.0], 0.3, 4000);
+        assert!(fbest < 1e-6, "did not converge: f={fbest:e}");
+        assert!(
+            (best[0] - 1.0).abs() < 1e-2 && (best[1] - 1.0).abs() < 1e-2,
+            "min at {best:?}"
+        );
+    }
+
+    /// `fit_fixed_mean` recovers a planted `(a, q, p0)` with the mean held at 0.
+    #[test]
+    fn fit_fixed_mean_recovers_params() {
+        // one long chain; obs generated from an OU field with m=0, 8 shared dimensions
+        let n = 60usize;
+        let parents: Vec<i64> = (0..n)
+            .map(|i| if i == 0 { -1 } else { (i - 1) as i64 })
+            .collect();
+        let (a_true, q_true, p0_true) = (0.8f64, 0.3f64, 1.0f64);
+        let mut rng = Lcg(7);
+        let obs: Vec<Vec<f64>> = (0..8)
+            .map(|_| {
+                let mut x = vec![0.0f64; n];
+                x[0] = p0_true.sqrt() * rng.gauss();
+                for i in 1..n {
+                    x[i] = a_true * x[i - 1] + q_true.sqrt() * rng.gauss();
+                }
+                x
+            })
+            .collect();
+        let r = vec![0.05f64; n];
+        let fit = fit_fixed_mean(
+            &parents,
+            &obs,
+            &r,
+            TreeFieldParams {
+                a: 0.5,
+                q: 0.5,
+                m: 0.0,
+                p0: 0.5,
+            },
+        );
+        assert_eq!(fit.m, 0.0);
+        assert!((fit.a - a_true).abs() < 0.15, "a={} (want {a_true})", fit.a);
+        assert!(fit.q > 0.05 && fit.p0 > 0.05, "q={} p0={}", fit.q, fit.p0);
+    }
 
     /// Dense reference: build the n×n precision Λ and linear term h, solve by Cholesky.
     fn dense(
