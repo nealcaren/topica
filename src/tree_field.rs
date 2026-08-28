@@ -54,10 +54,19 @@ pub(crate) struct TreeFieldResult {
     pub var: Vec<f64>,
 }
 
+/// The reply forest's children adjacency and a post-order (children before parents). Built ONCE
+/// per field fit / `kappa_ci` from the fixed reply tree, then reused across every `solve` /
+/// `loglik` evaluation the Nelder–Mead makes — the parents do not change during an optimization,
+/// so rebuilding it per call (hundreds of NM iters × K dims) was pure waste (issue #824, lever 2).
+pub(crate) struct Topology {
+    children: Vec<Vec<usize>>,
+    order: Vec<usize>,
+}
+
 /// Children adjacency and a post-order (children before parents) for a forest.
 ///
 /// `parents[d]` is the index of `d`'s parent, or any negative value for a root.
-fn topology(parents: &[i64]) -> (Vec<Vec<usize>>, Vec<usize>) {
+pub(crate) fn build_topology(parents: &[i64]) -> Topology {
     let n = parents.len();
     let mut children = vec![Vec::new(); n];
     let mut roots = Vec::new();
@@ -84,16 +93,72 @@ fn topology(parents: &[i64]) -> (Vec<Vec<usize>>, Vec<usize>) {
             }
         }
     }
-    (children, order)
+    Topology { children, order }
+}
+
+/// Marginal log-likelihood `log p(y | params)` via the UPWARD pass only. This is all the field
+/// fit and `kappa_ci` need — they never read the smoothed posterior — so it skips the downward
+/// (distribute) pass and the `mean`/`var` allocations that [`solve_with`] does. The canonical
+/// `(jc, hc)` are only read within their own node's iteration here (the downward pass is what
+/// needs them stored), so they stay as locals: the only per-call allocations are the two upward
+/// message buffers. Arithmetic and accumulation order match [`solve`] exactly, so the returned
+/// `logz` is bit-for-bit identical.
+fn upward_logz(top: &Topology, parents: &[i64], y: &[f64], r: &[f64], p: TreeFieldParams) -> f64 {
+    let n = parents.len();
+    let b = (1.0 - p.a) * p.m;
+    let mut jmsg = vec![0.0; n];
+    let mut hmsg = vec![0.0; n];
+    let mut logz = 0.0;
+    for &d in &top.order {
+        let mut jsum = 1.0 / r[d];
+        let mut hsum = y[d] / r[d];
+        for &c in &top.children[d] {
+            jsum += jmsg[c];
+            hsum += hmsg[c];
+        }
+        if parents[d] < 0 {
+            jsum += 1.0 / p.p0;
+            hsum += p.m / p.p0;
+        }
+        let (jc, hc) = (jsum, hsum);
+
+        logz += -0.5 * ((2.0 * PI * r[d]).ln() + y[d] * y[d] / r[d]);
+
+        if parents[d] < 0 {
+            logz += -0.5 * ((2.0 * PI * p.p0).ln() + p.m * p.m / p.p0);
+            logz += 0.5 * LOG_2PI - 0.5 * jc.ln() + 0.5 * hc * hc / jc;
+        } else {
+            let aa = jc + 1.0 / p.q;
+            let denom = p.q * jc + 1.0;
+            jmsg[d] = p.a * p.a * jc / denom;
+            hmsg[d] = p.a * (hc - b * jc) / denom;
+            logz += -0.5 * p.q.ln() - 0.5 * aa.ln();
+            logz += 0.5 * hc * hc / aa + hc * b / (aa * p.q) - 0.5 * jc * b * b / (aa * p.q);
+        }
+    }
+    logz
 }
 
 /// Exact Gaussian belief propagation on a forest. `y` and `r` (observation noise variance) are
-/// per node; `parents[d] < 0` marks a root. Panics on size mismatch in debug builds.
+/// per node; `parents[d] < 0` marks a root. Panics on size mismatch in debug builds. Convenience
+/// wrapper that builds the topology; hot paths build it once and call [`solve_with`].
 pub(crate) fn solve(parents: &[i64], y: &[f64], r: &[f64], p: TreeFieldParams) -> TreeFieldResult {
+    solve_with(&build_topology(parents), parents, y, r, p)
+}
+
+/// [`solve`] with a prebuilt [`Topology`]. Full upward + downward smoother; returns the marginal
+/// log-likelihood and the smoothed per-node mean and variance.
+pub(crate) fn solve_with(
+    top: &Topology,
+    parents: &[i64],
+    y: &[f64],
+    r: &[f64],
+    p: TreeFieldParams,
+) -> TreeFieldResult {
     let n = parents.len();
     debug_assert_eq!(y.len(), n);
     debug_assert_eq!(r.len(), n);
-    let (children, order) = topology(parents);
+    let (children, order) = (&top.children, &top.order);
     let b = (1.0 - p.a) * p.m; // OU intercept so the stationary mean is m
 
     // ---- upward pass: collected canonical (jc, hc), upward messages, and log-evidence ----
@@ -102,7 +167,7 @@ pub(crate) fn solve(parents: &[i64], y: &[f64], r: &[f64], p: TreeFieldParams) -
     let mut jmsg = vec![0.0; n];
     let mut hmsg = vec![0.0; n];
     let mut logz = 0.0;
-    for &d in &order {
+    for &d in order {
         let mut jsum = 1.0 / r[d];
         let mut hsum = y[d] / r[d];
         for &c in &children[d] {
@@ -174,15 +239,30 @@ pub(crate) fn solve(parents: &[i64], y: &[f64], r: &[f64], p: TreeFieldParams) -
 /// (`fit_fixed_mean`'s Nelder–Mead evaluates it hundreds of times per M-step) that the E-step's own
 /// `par_iter` was contending with (see issue #824). To keep the fit bit-for-bit reproducible the
 /// per-dimension log-liks are collected in dimension order and summed serially (float `+` is not
-/// associative), rather than reduced in rayon's nondeterministic order.
+/// associative), rather than reduced in rayon's nondeterministic order. Builds the topology once
+/// and reuses it across the K dims; callers inside a Nelder–Mead loop should build it themselves
+/// and call [`loglik_multi_top`] so the topology is not rebuilt every function evaluation.
 pub(crate) fn loglik_multi(
     parents: &[i64],
     obs: &[Vec<f64>],
     r: &[f64],
     p: TreeFieldParams,
 ) -> f64 {
+    loglik_multi_top(&build_topology(parents), parents, obs, r, p)
+}
+
+/// [`loglik_multi`] with a prebuilt [`Topology`]. Uses the upward-only [`upward_logz`] (the
+/// smoothed posterior is not needed for a likelihood), so it does no downward pass and allocates
+/// only the two upward buffers per dim.
+pub(crate) fn loglik_multi_top(
+    top: &Topology,
+    parents: &[i64],
+    obs: &[Vec<f64>],
+    r: &[f64],
+    p: TreeFieldParams,
+) -> f64 {
     obs.par_iter()
-        .map(|yk| solve(parents, yk, r, p).loglik)
+        .map(|yk| upward_logz(top, parents, yk, r, p))
         .collect::<Vec<f64>>()
         .iter()
         .sum()
@@ -202,12 +282,13 @@ pub(crate) fn profile_loglik_at_a(
     init: TreeFieldParams,
 ) -> f64 {
     // 2-D Nelder–Mead over (ln q, ln p0) at fixed a; small and deterministic.
+    let top = build_topology(parents);
     let neg_ll = |t: &[f64]| -> f64 {
         let (q, p0) = (t[0].exp(), t[1].exp());
         if !(q > 1e-12 && p0 > 1e-12) {
             return f64::INFINITY;
         }
-        -loglik_multi(parents, obs, r, TreeFieldParams { a, q, m: 0.0, p0 })
+        -loglik_multi_top(&top, parents, obs, r, TreeFieldParams { a, q, m: 0.0, p0 })
     };
     let x0 = vec![init.q.max(1e-6).ln(), init.p0.max(1e-6).ln()];
     -nelder_mead_min(&neg_ll, x0, 0.5, 200).1
@@ -242,13 +323,14 @@ pub(crate) fn fit(
         m: t[2],
         p0: t[3].exp(),
     };
+    let top = build_topology(parents);
     let neg_ll = |t: &[f64]| -> f64 {
         let p = unpack(t);
         // guard the boundary (a→1, q→0) that makes the OU degenerate
         if !(p.a.is_finite() && p.q > 1e-12 && p.p0 > 1e-12) {
             return f64::INFINITY;
         }
-        -loglik_multi(parents, obs, r, p)
+        -loglik_multi_top(&top, parents, obs, r, p)
     };
     let x0 = vec![
         (init.a / (1.0 - init.a)).ln(),
@@ -278,12 +360,13 @@ pub(crate) fn fit_fixed_mean(
     init: TreeFieldParams,
 ) -> TreeFieldFit {
     let sigmoid = |z: f64| 1.0 / (1.0 + (-z).exp());
+    let top = build_topology(parents);
     let neg_ll = |t: &[f64]| -> f64 {
         let (a, q, p0) = (sigmoid(t[0]), t[1].exp(), t[2].exp());
         if !(a.is_finite() && q > 1e-12 && p0 > 1e-12) {
             return f64::INFINITY;
         }
-        -loglik_multi(parents, obs, r, TreeFieldParams { a, q, m: 0.0, p0 })
+        -loglik_multi_top(&top, parents, obs, r, TreeFieldParams { a, q, m: 0.0, p0 })
     };
     let x0 = vec![(init.a / (1.0 - init.a)).ln(), init.q.ln(), init.p0.ln()];
     let best = nelder_mead_min(&neg_ll, x0, 0.5, 400);
@@ -614,6 +697,30 @@ mod tests {
         assert!(worst_ll < 1e-8, "loglik mismatch {worst_ll:e}");
         assert!(worst_m < 1e-8, "mean mismatch {worst_m:e}");
         assert!(worst_v < 1e-8, "var mismatch {worst_v:e}");
+    }
+
+    /// The upward-only likelihood path (the hot path for the field fit / kappa_ci) must return
+    /// EXACTLY the same `logz` as the full `solve`, bit-for-bit — it skips the downward pass but
+    /// keeps the same arithmetic and accumulation order (issue #824, lever 2).
+    #[test]
+    fn upward_logz_equals_solve_loglik_bit_for_bit() {
+        let mut rng = Lcg(0xfeed_face_0000_0002);
+        for _ in 0..300 {
+            let parents = rand_forest(&mut rng);
+            let n = parents.len();
+            let y: Vec<f64> = (0..n).map(|_| rng.range(-2.0, 2.0)).collect();
+            let r: Vec<f64> = (0..n).map(|_| rng.range(-1.0, 1.0).exp()).collect();
+            let p = TreeFieldParams {
+                a: rng.range(0.5, 0.98),
+                q: rng.range(-1.0, 0.5).exp(),
+                m: rng.range(-0.5, 0.5),
+                p0: rng.range(-0.5, 1.0).exp(),
+            };
+            let top = build_topology(&parents);
+            let up = upward_logz(&top, &parents, &y, &r, p);
+            let full = solve_with(&top, &parents, &y, &r, p).loglik;
+            assert_eq!(up.to_bits(), full.to_bits(), "up={up} full={full}");
+        }
     }
 
     #[test]
