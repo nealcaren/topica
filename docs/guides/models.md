@@ -750,6 +750,23 @@ m.group_prevalence      # (G, K) per-group baseline topic mix (probability scale
 topica.inspect.topic_table(m)
 ```
 
+**Parent vs root coupling.** By default a node's prior shrinks toward its immediate
+parent, the reply-chain structure that fits debate, Q&A, and help threads. For broadcast
+discourse where replies track the thread topic rather than the specific comment they
+answer (much of sports and fandom), pass `coupling="root"` to shrink each node toward its
+thread root instead:
+
+```python
+m = topica.ReplyTM(num_topics=25, seed=13, coupling="root")
+```
+
+Root coupling fits the same logistic-normal field on a reparented depth-2 star (every node
+points at its thread root), so `kappa`, `transform`, `persistence`, and the readouts behave
+identically; only the coupling neighbor changes. To let the data say which structure fits,
+fit both and compare them on held-out replies with the `"root"` baseline in
+`reply_completion` below: `delta["root"]` is parent-coupling minus root-coupling, positive
+where the reply edge matters more than the thread topic and negative where it does not.
+
 **Inferring topics for a new thread.** `transform` maps a fresh reply forest to topic
 proportions, holding the fitted topics, reversion, step/root variances, and per-group
 anchors fixed. Pass `parents` (and `covariates`) for the new forest exactly as at fit.

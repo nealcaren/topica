@@ -25,11 +25,20 @@ use std::collections::HashMap;
 /// baseline; `kappa` measures the reversion (on real corpora it is typically ~0, i.e. persistence-
 /// dominated). Reduces to a plain logistic-normal topic model when the reply tree is flat.
 /// `num_topics` is K; `em_iters` the variational-EM iteration cap; `seed` makes the fit deterministic.
+/// `coupling` chooses the prior structure: `"parent"` (default; shrink toward the immediate parent,
+/// the reply-chain prior) or `"root"` (shrink toward the thread root, a broadcast / topic-around-the-
+/// root prior for discourse where replies track the thread topic rather than the specific parent).
 #[pyclass(module = "topica")]
 pub struct ReplyTM {
     num_topics: usize,
     em_iters: usize,
     seed: u64,
+    // Reply coupling structure: "parent" (a node shrinks toward its immediate parent, the OU
+    // reply-chain prior) or "root" (a node shrinks toward its thread root, a broadcast /
+    // topic-around-the-root prior). "root" is fit by running the SAME kernel on a reparented
+    // depth-2 star topology (every non-root points at its thread root), so the whole field / kappa
+    // / transform / persistence stack is unchanged; only the coupling neighbor differs.
+    coupling: String,
     fitted: bool,
     vocab: Vec<String>,
     group_names: Vec<String>,
@@ -59,6 +68,9 @@ struct ReplyTmState {
     num_topics: usize,
     em_iters: usize,
     seed: u64,
+    // Old saves predate the coupling option; default them to the original parent coupling.
+    #[serde(default = "default_coupling")]
+    coupling: String,
     fitted: bool,
     vocab: Vec<String>,
     group_names: Vec<String>,
@@ -78,6 +90,26 @@ struct ReplyTmState {
     corpus: Option<corpus::Corpus>,
 }
 
+fn default_coupling() -> String {
+    "parent".to_string()
+}
+
+/// Reparent a forest to its thread-root star: every non-root node points at its thread root, roots
+/// stay roots. This is the topology the `coupling="root"` variant fits and infers on. `parents`
+/// must already be validated acyclic (each parent chain reaches a root).
+fn root_star_parents(parents: &[i64]) -> Vec<i64> {
+    let n = parents.len();
+    let mut root = vec![-1i64; n];
+    for start in 0..n {
+        let mut cur = start as i64;
+        while parents[cur as usize] >= 0 {
+            cur = parents[cur as usize];
+        }
+        root[start] = if cur == start as i64 { -1 } else { cur };
+    }
+    root
+}
+
 impl ReplyTM {
     fn require_fitted(&self) -> PyResult<()> {
         if self.fitted {
@@ -93,18 +125,25 @@ impl ReplyTM {
 #[pymethods]
 impl ReplyTM {
     #[new]
-    #[pyo3(signature = (num_topics, *, em_iters=150, seed=13))]
-    fn new(num_topics: usize, em_iters: usize, seed: u64) -> PyResult<Self> {
+    #[pyo3(signature = (num_topics, *, em_iters=150, seed=13, coupling="parent".to_string()))]
+    fn new(num_topics: usize, em_iters: usize, seed: u64, coupling: String) -> PyResult<Self> {
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
         if em_iters == 0 {
             return Err(PyValueError::new_err("em_iters must be >= 1"));
         }
+        if coupling != "parent" && coupling != "root" {
+            return Err(PyValueError::new_err(format!(
+                "coupling must be \"parent\" (shrink toward the immediate parent) or \"root\" \
+                 (shrink toward the thread root); got {coupling:?}"
+            )));
+        }
         Ok(ReplyTM {
             num_topics,
             em_iters,
             seed,
+            coupling,
             fitted: false,
             vocab: Vec::new(),
             group_names: Vec::new(),
@@ -334,8 +373,18 @@ impl ReplyTM {
             }
         };
 
-        // Retain the tree + groups for persistence() before the move-closure consumes them.
-        slf.fit_parents = par.clone();
+        // The coupling topology the kernel actually fits on: the reply tree itself for the default
+        // parent coupling, or the reparented thread-root star for root coupling. Everything
+        // downstream (field fit, kappa, persistence, transform) operates on this topology, so
+        // storing it as `fit_parents` keeps them consistent with how the model was fit.
+        let coupling_par = if slf.coupling == "root" {
+            root_star_parents(&par)
+        } else {
+            par.clone()
+        };
+
+        // Retain the coupling topology + groups for persistence() before the move-closure consumes them.
+        slf.fit_parents = coupling_par.clone();
         slf.fit_groups = groups.clone();
 
         let k = slf.num_topics;
@@ -346,7 +395,7 @@ impl ReplyTM {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             crate::reply_tm::fit_reply_tm(
                 &docs_id,
-                &par,
+                &coupling_par,
                 &groups,
                 num_groups,
                 k,
@@ -531,6 +580,14 @@ impl ReplyTM {
             }
         };
 
+        // Couple the new forest the same way the model was fit: toward the immediate parent, or
+        // (root coupling) toward each node's thread root via the reparented star topology.
+        let coupling_par = if self.coupling == "root" {
+            root_star_parents(&par)
+        } else {
+            par
+        };
+
         let kappa = self.kappa;
         let sigma2 = self.sigma2;
         let p0 = self.p0;
@@ -538,7 +595,7 @@ impl ReplyTM {
         let theta = py.allow_threads(move || {
             crate::reply_tm::transform_reply_tm(
                 &docs_id,
-                &par,
+                &coupling_par,
                 &groups,
                 &beta,
                 &anchor_rows,
@@ -672,6 +729,7 @@ impl ReplyTM {
                 num_topics: self.num_topics,
                 em_iters: self.em_iters,
                 seed: self.seed,
+                coupling: self.coupling.clone(),
                 fitted: self.fitted,
                 vocab: self.vocab.clone(),
                 group_names: self.group_names.clone(),
@@ -701,6 +759,7 @@ impl ReplyTM {
             num_topics: s.num_topics,
             em_iters: s.em_iters,
             seed: s.seed,
+            coupling: s.coupling,
             fitted: s.fitted,
             vocab: s.vocab,
             group_names: s.group_names,
@@ -983,6 +1042,7 @@ impl ReplyTM {
         d.set_item("num_topics", self.num_topics)?;
         d.set_item("em_iters", self.em_iters)?;
         d.set_item("seed", self.seed)?;
+        d.set_item("coupling", self.coupling.clone())?;
         Ok(d)
     }
 
@@ -992,14 +1052,23 @@ impl ReplyTM {
         self.seed
     }
 
+    /// The reply coupling structure (`"parent"` or `"root"`).
+    #[getter]
+    fn coupling(&self) -> String {
+        self.coupling.clone()
+    }
+
     fn __repr__(&self) -> String {
         if self.fitted {
             format!(
-                "ReplyTM(num_topics={}, fitted, kappa={:.3}, sigma2={:.3})",
-                self.num_topics, self.kappa, self.sigma2
+                "ReplyTM(num_topics={}, coupling={:?}, fitted, kappa={:.3}, sigma2={:.3})",
+                self.num_topics, self.coupling, self.kappa, self.sigma2
             )
         } else {
-            format!("ReplyTM(num_topics={}, unfitted)", self.num_topics)
+            format!(
+                "ReplyTM(num_topics={}, coupling={:?}, unfitted)",
+                self.num_topics, self.coupling
+            )
         }
     }
 }

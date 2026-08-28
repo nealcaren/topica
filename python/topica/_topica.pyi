@@ -3060,7 +3060,11 @@ class ReplyTM:
     validated by planted recovery + a held-out-beat gate (the parent's topics predict held-out
     leaf tokens better than the no-tree baseline on synthetic persistence-structured data).
     Experimental."""
-    def __init__(self, num_topics: int, *, em_iters: int = 150, seed: int = 13) -> None: ...
+    def __init__(self, num_topics: int, *, em_iters: int = 150, seed: int = 13, coupling: str = "parent") -> None:
+        """coupling is "parent" (default; a node's prior shrinks toward its immediate parent, the
+        reply-chain prior) or "root" (shrink toward the thread root, a broadcast / topic-around-the-
+        root prior for discourse where replies track the thread topic, not the specific parent)."""
+        ...
     def fit(
         self,
         data: Corpus | Sequence[Sequence[str]],
@@ -3091,6 +3095,10 @@ class ReplyTM:
         ...
     @property
     def num_topics(self) -> int: ...
+    @property
+    def coupling(self) -> str:
+        """The reply coupling structure (``"parent"`` or ``"root"``)."""
+        ...
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
