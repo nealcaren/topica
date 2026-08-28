@@ -68,7 +68,11 @@ struct ReplyTmState {
     num_topics: usize,
     em_iters: usize,
     seed: u64,
-    // Old saves predate the coupling option; default them to the original parent coupling.
+    // Defaults a missing `coupling` to the original parent coupling. NOTE this is inert for the
+    // current positional-bincode save format (a genuinely older ReplyTM save, which predates this
+    // field, cannot round-trip and will fail to load) — it only migrates a self-describing format.
+    // Acceptable under the pre-v1.0 save-compat policy: ReplyTM is new and experimental. Kept for
+    // consistency with the other states (see mod.rs / neural.rs).
     #[serde(default = "default_coupling")]
     coupling: String,
     fitted: bool,
@@ -784,8 +788,10 @@ impl ReplyTM {
     /// boundary-prone `kappa`. The ML `kappa` collapses to the σ² floor on real corpora; this instead
     /// fits an internal NO-TREE pass (plain logistic-normal η, so a parent and child are estimated
     /// **independently** and the estimate is not circular), then regresses each reply's η on its
-    /// parent's η (centered on the covariate-group mean), pooled across topics with a thread-clustered
-    /// bootstrap. Returns a dict:
+    /// coupling neighbor's η (centered on the covariate-group mean), pooled across topics with a
+    /// thread-clustered bootstrap. The coupling neighbor is the immediate parent under the default
+    /// `coupling="parent"` and the thread ROOT under `coupling="root"`, so persistence reads as
+    /// child-tracks-parent or child-tracks-root respectively. Returns a dict:
     ///   `observed_persistence` — the raw slope `a` (how much a reply's topic mix tracks its
     ///     parent's); identified whenever parents vary (NaN on a degenerate corpus where every
     ///     eligible parent equals its group anchor). `observed_ci` is its 95% bootstrap interval,

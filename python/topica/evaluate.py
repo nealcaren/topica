@@ -884,7 +884,7 @@ def reply_completion(
     This is the turnkey preference test for ReplyTM: does the reply tree add
     predictive information on real data, and does the gain come from the
     observed edge? It fits the matched models named in ``baselines`` (the tree
-    plus up to four comparators) on the SAME reduced corpus (identical
+    plus up to five comparators) on the SAME reduced corpus (identical
     vocabulary, ``num_topics``, ``min_count``, and ``seed``) and scores held-out
     tokens of short leaf comments under each.
 
@@ -947,7 +947,7 @@ def reply_completion(
         ``seed``); ``1.0`` uses them all.
     baselines : which comparators to fit, any of ``"no_tree"``, ``"permuted"``,
         ``"root"``, ``"lda"``, ``"stm"``.
-    em_iters : EM iterations for the ReplyTM fits (tree, no_tree, permuted). Match
+    em_iters : EM iterations for the ReplyTM fits (tree, no_tree, permuted, root). Match
         this to the analysis fit. The off-the-shelf ``lda`` / ``stm`` comparators
         run at their own default iteration counts, not ``em_iters``.
     min_count : words rarer than this are dropped (shared across models).

@@ -640,6 +640,37 @@ def test_root_coupling_transform_and_save(tmp_path):
     assert np.allclose(m2.transform(docs, parents=parents, covariates=cov), th)
 
 
+def test_coupling_survives_save_load_both():
+    """settings["coupling"] round-trips through save/load for both values."""
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=15, depth=4)
+    import tempfile, os
+    for coupling in ("parent", "root"):
+        m = topica.ReplyTM(2, em_iters=30, seed=13, coupling=coupling)
+        m.fit(docs, parents=parents)
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "m.bin")
+            m.save(p)
+            assert topica.ReplyTM.load(p).settings["coupling"] == coupling
+
+
+def test_root_coupling_transform_new_forest():
+    """Root coupling reparents a NEW forest (different topology from the fit forest) to its thread
+    root: transform matches a hand-reparented star fit under parent coupling."""
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=25, depth=6)
+    m_root = topica.ReplyTM(2, em_iters=60, seed=13, coupling="root")
+    m_root.fit(docs, parents=parents)
+    # a fresh multi-level forest, unrelated to the fit topology
+    new = [list(docs[i]) for i in (0, 1, 2, 3, 4)]
+    new_parents = [-1, 0, 1, 0, 2]  # root 0; a depth-3 chain 0<-1<-2<-4 plus a branch 0<-3
+    got = m_root.transform(new, parents=new_parents)
+    # Root coupling must collapse new_parents to the thread-root star before inference, so the
+    # result equals transform on the hand-reparented star under the SAME model (identical topics).
+    star = [-1, 0, 0, 0, 0]  # every non-root points at root 0
+    got_star = m_root.transform(new, parents=star)
+    assert np.allclose(got, got_star)
+    assert got.shape == (5, 2) and np.allclose(got.sum(1), 1.0)
+
+
 def _broadcast_corpus(seed=1, n_threads=70):
     """Planted BROADCAST discourse: a thin leaf tracks its THREAD ROOT's topic, not its immediate
     parent, which is deliberately the OPPOSITE topic. With few seen tokens per leaf the prior

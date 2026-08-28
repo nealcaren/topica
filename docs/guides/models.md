@@ -761,8 +761,9 @@ m = topica.ReplyTM(num_topics=25, seed=13, coupling="root")
 ```
 
 Root coupling fits the same logistic-normal field on a reparented depth-2 star (every node
-points at its thread root), so `kappa`, `transform`, `persistence`, and the readouts behave
-identically; only the coupling neighbor changes. To let the data say which structure fits,
+points at its thread root), so the same machinery runs for `kappa`, `transform`,
+`persistence`, and the readouts; only the coupling neighbor changes (their values differ,
+since they are now computed on the root-star topology). To let the data say which structure fits,
 fit both and compare them on held-out replies with the `"root"` baseline in
 `reply_completion` below: `delta["root"]` is parent-coupling minus root-coupling, positive
 where the reply edge matters more than the thread topic and negative where it does not.
