@@ -795,16 +795,25 @@ class ReplyCompletionResult:
     settings: dict
 
     def __repr__(self):
-        d = self.delta.get("no_tree")
         head = "ReplyCompletionResult("
-        if d is not None:
-            lo, hi = d["ci"]
-            return (
-                f"{head}tree-no_tree={d['estimate']:+.4f} "
-                f"[{lo:+.4f}, {hi:+.4f}], leaves={self.n_eval_leaves}, "
-                f"threads={self.n_threads})"
-            )
-        return f"{head}leaves={self.n_eval_leaves}, threads={self.n_threads})"
+        # Show EVERY requested comparison, not just tree-no_tree: delta["lda"]/["stm"]
+        # fold in the whole modeling stack (covariates, estimator), so a reader who saw
+        # only the flattering tree-no_tree line could misattribute a covariate/tool gain
+        # to the reply tree. Order no_tree/permuted (tree ablations) before lda/stm.
+        order = ["no_tree", "permuted", "lda", "stm"]
+        parts = []
+        for name in order:
+            d = self.delta.get(name)
+            if d is not None:
+                lo, hi = d["ci"]
+                parts.append(f"tree-{name}={d['estimate']:+.4f} [{lo:+.4f}, {hi:+.4f}]")
+        body = ", ".join(parts) if parts else ""
+        if body:
+            body += ", "
+        return (
+            f"{head}{body}beats_no_tree={self.beats_no_tree}, "
+            f"leaves={self.n_eval_leaves}, threads={self.n_threads})"
+        )
 
 
 def _reply_tree_meta(parents):

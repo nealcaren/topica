@@ -21,6 +21,7 @@ Every model shares the same shape: construct with hyperparameters and a `seed`,
 | Steer topics with known keywords | [`keyATM`, `seededlda`](guided.md) |
 | Sharper, more coherent topics at scale | [`ProdLDA`](#prodlda) |
 | Model short texts (tweets, answers) | [`PT`, `GSDMM`](short-text.md) |
+| Model nested reply threads (posts + comments) | [`ReplyTM`](#replytm), [`CSATM`](#csatm) |
 | Build a topic hierarchy | `PA`, `HLDA` |
 
 ## The roster
@@ -698,6 +699,7 @@ res = topica.evaluate.reply_completion(docs, parents, num_topics=25, covariates=
 res.delta["no_tree"]     # {'estimate': ..., 'ci': (lo, hi)}  tree minus no-tree
 res.delta["permuted"]    # the placebo: the advantage should shrink here
 res.beats_no_tree        # True when the no-tree interval excludes zero from below
+res.per_token_ll         # {name: mean held-out per-token log-lik} for each model
 ```
 
 To answer the "why not just LDA or STM?" question on the same footing, add off-the-shelf
@@ -713,6 +715,14 @@ res = topica.evaluate.reply_completion(
     baselines=("no_tree", "lda", "stm"))
 res.delta["lda"], res.delta["stm"]   # tree minus the named tool, same CI machinery
 ```
+
+Read `delta["no_tree"]` for the tree-attributable gain: it is the same model with the
+tree switched off, so it isolates the reply structure. `delta["lda"]` and `delta["stm"]`
+fold in every difference from that tool (Dirichlet vs logistic-normal, the covariate
+anchor, the estimator), so a large value there is not evidence the tree helps, and
+ReplyTM can beat `no_tree` while still losing to LDA or STM on the same data. Cite
+`delta["no_tree"]` for the structural claim, `delta["lda"]`/`delta["stm"]` for the
+"vs off-the-shelf tool" claim.
 
 The interval clusters on the thread, not the comment, because comments within a thread
 are correlated. The placebo is a no-op on chain-like threads (one node per depth layer),
@@ -757,7 +767,10 @@ theta_new = m.transform(new_docs, parents=new_parents, covariates=new_group)  # 
 
 Note that `topica.evaluate.eval_heldout` calls `transform` without `parents`, so it scores
 ReplyTM tree-blind (every held-out document a root); `reply_completion` above is the
-tree-aware held-out test.
+tree-aware held-out test. The tree-aware and tree-blind `theta` point estimates can look
+nearly identical when a document's own tokens or its covariate anchor already pin its
+topic mix; the tree's contribution shows up on thin, few-token replies, and is measured
+by `reply_completion`, not by eyeballing two `transform` calls.
 
 **Uncertainty, and how to read it for a group contrast.** `group_prevalence` is
 `(G, K)` on the probability scale; `prevalence_se` is `(G, K-1)` in the underlying

@@ -567,6 +567,20 @@ def test_reply_completion_offshelf_does_not_shift_core_deltas():
     assert "lda" in withlda.delta and np.isfinite(withlda.delta["lda"]["estimate"])
 
 
+def test_reply_completion_repr_shows_all_deltas():
+    """The repr must surface beats_no_tree and every requested comparison, not only the
+    flattering tree-no_tree line (a reader could otherwise misattribute a covariate/tool gain
+    to the reply tree)."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.92)
+    cov = [i % 2 for i in range(len(docs))]
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=5, covariates=cov,
+        baselines=("no_tree", "lda", "stm"), em_iters=40, seed=13, n_boot=100)
+    r = repr(res)
+    assert "beats_no_tree=" in r
+    assert "tree-no_tree=" in r and "tree-lda=" in r and "tree-stm=" in r
+
+
 def test_transform_covariates_none_uses_mean_anchor():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=30, depth=6)
     m = topica.ReplyTM(2, em_iters=60, seed=13)
