@@ -4,14 +4,17 @@
 //!
 //! The class exposes the validated core — fit on a `Corpus` or token lists + a reply tree + an
 //! optional categorical covariate, with topic/proportion/prevalence readouts (prevalence carries a
-//! cluster-robust method-of-composition SE), the persistence parameter `kappa` with a
-//! profile-likelihood CI, coherence, and save/load. The covariate story lives entirely in
+//! cluster-robust method-of-composition SE), coherence, and save/load. Reply persistence is best
+//! read from `persistence()` — an identifiable reduced-form estimate (observed slope + reliability
+//! gate + attenuation-corrected structural κ) — rather than the ML `kappa` getter, which collapses
+//! to the σ² floor on real corpora. The covariate story lives entirely in
 //! `group_prevalence`/`prevalence_se`; ReplyTM is outside the `effects` namespace. Formula
 //! covariates and `transform` on new threads are follow-ups.
 
 use super::*;
 use numpy::{PyArray1, PyArray2};
 use pyo3::types::{PyDict, PyType};
+use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
@@ -31,6 +34,8 @@ pub struct ReplyTM {
     group_names: Vec<String>,
     beta: Vec<Vec<f64>>,
     doc_topic: Vec<Vec<f64>>,
+    doc_eta: Vec<Vec<f64>>,
+    doc_topic_var: Vec<Vec<f64>>,
     group_prevalence: Vec<Vec<f64>>,
     prevalence_se: Vec<Vec<f64>>,
     kappa: f64,
@@ -38,6 +43,10 @@ pub struct ReplyTM {
     sigma2: f64,
     p0: f64,
     bound_history: Vec<f64>,
+    // Training reply tree + covariate groups (document-aligned), retained so `persistence()` can
+    // re-fit an uncoupled pass and regress child η on parent η.
+    fit_parents: Vec<i64>,
+    fit_groups: Vec<usize>,
     // Training corpus (all documents kept, including any emptied by min_count, so the reply-tree
     // node indices stay valid). Backs `coherence()` and save/load.
     corpus: Option<corpus::Corpus>,
@@ -54,6 +63,8 @@ struct ReplyTmState {
     group_names: Vec<String>,
     beta: Vec<Vec<f64>>,
     doc_topic: Vec<Vec<f64>>,
+    doc_eta: Vec<Vec<f64>>,
+    doc_topic_var: Vec<Vec<f64>>,
     group_prevalence: Vec<Vec<f64>>,
     prevalence_se: Vec<Vec<f64>>,
     kappa: f64,
@@ -61,6 +72,8 @@ struct ReplyTmState {
     sigma2: f64,
     p0: f64,
     bound_history: Vec<f64>,
+    fit_parents: Vec<i64>,
+    fit_groups: Vec<usize>,
     corpus: Option<corpus::Corpus>,
 }
 
@@ -96,6 +109,8 @@ impl ReplyTM {
             group_names: Vec::new(),
             beta: Vec::new(),
             doc_topic: Vec::new(),
+            doc_eta: Vec::new(),
+            doc_topic_var: Vec::new(),
             group_prevalence: Vec::new(),
             prevalence_se: Vec::new(),
             kappa: f64::NAN,
@@ -103,6 +118,8 @@ impl ReplyTM {
             sigma2: f64::NAN,
             p0: f64::NAN,
             bound_history: Vec::new(),
+            fit_parents: Vec::new(),
+            fit_groups: Vec::new(),
             corpus: None,
         })
     }
@@ -316,6 +333,10 @@ impl ReplyTM {
             }
         };
 
+        // Retain the tree + groups for persistence() before the move-closure consumes them.
+        slf.fit_parents = par.clone();
+        slf.fit_groups = groups.clone();
+
         let k = slf.num_topics;
         let v = vocab.len();
         let iters = slf.em_iters;
@@ -340,6 +361,8 @@ impl ReplyTM {
         let gp = m.group_prevalence();
         slf.vocab = vocab;
         slf.group_names = group_names;
+        slf.doc_eta = m.lambda.clone();
+        slf.doc_topic_var = m.doc_topic_var.clone();
         slf.beta = m.beta;
         slf.doc_topic = dt;
         slf.group_prevalence = gp;
@@ -365,6 +388,24 @@ impl ReplyTM {
     #[getter]
     fn num_topics(&self) -> usize {
         self.num_topics
+    }
+
+    /// D×(K-1) per-document variational mean η (softmax basis, reference topic K-1 fixed at 0):
+    /// the latent topic coordinate whose reversion the reply prior models. Paired with
+    /// `doc_topic_var` for a measurement-error-corrected persistence estimate.
+    #[getter]
+    fn doc_eta<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        Ok(vecs_to_arr2(&self.doc_eta).to_pyarray_bound(py))
+    }
+
+    /// D×(K-1) per-document posterior variance ν of η (the Laplace curvature): the measurement-error
+    /// variance of each `doc_eta` row. Use it to correct a child-on-parent η regression for
+    /// attenuation (reliability = Var(η) / (Var(η) + mean ν)).
+    #[getter]
+    fn doc_topic_var<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        Ok(vecs_to_arr2(&self.doc_topic_var).to_pyarray_bound(py))
     }
 
     /// D×K document-topic proportions θ.
@@ -462,6 +503,8 @@ impl ReplyTM {
                 group_names: self.group_names.clone(),
                 beta: self.beta.clone(),
                 doc_topic: self.doc_topic.clone(),
+                doc_eta: self.doc_eta.clone(),
+                doc_topic_var: self.doc_topic_var.clone(),
                 group_prevalence: self.group_prevalence.clone(),
                 prevalence_se: self.prevalence_se.clone(),
                 kappa: self.kappa,
@@ -469,6 +512,8 @@ impl ReplyTM {
                 sigma2: self.sigma2,
                 p0: self.p0,
                 bound_history: self.bound_history.clone(),
+                fit_parents: self.fit_parents.clone(),
+                fit_groups: self.fit_groups.clone(),
                 corpus: self.corpus.clone(),
             },
         )
@@ -487,6 +532,8 @@ impl ReplyTM {
             group_names: s.group_names,
             beta: s.beta,
             doc_topic: s.doc_topic,
+            doc_eta: s.doc_eta,
+            doc_topic_var: s.doc_topic_var,
             group_prevalence: s.group_prevalence,
             prevalence_se: s.prevalence_se,
             kappa: s.kappa,
@@ -494,8 +541,176 @@ impl ReplyTM {
             sigma2: s.sigma2,
             p0: s.p0,
             bound_history: s.bound_history,
+            fit_parents: s.fit_parents,
+            fit_groups: s.fit_groups,
             corpus: s.corpus,
         })
+    }
+
+    /// Reduced-form reply **persistence** — the honest, identifiable replacement for the
+    /// boundary-prone `kappa`. The ML `kappa` collapses to the σ² floor on real corpora; this instead
+    /// fits an internal NO-TREE pass (plain logistic-normal η, so a parent and child are estimated
+    /// **independently** and the estimate is not circular), then regresses each reply's η on its
+    /// parent's η (centered on the covariate-group mean), pooled across topics with a thread-clustered
+    /// bootstrap. Returns a dict:
+    ///   `observed_persistence` — the raw slope `a` (how much a reply's topic mix tracks its
+    ///     parent's); always identified. `observed_ci` is its 95% bootstrap interval.
+    ///   `reliability` — `Var(η) / (Var(η) + mean ν)` of the parent, the signal share and the
+    ///     identifiability gate: `<= 0` means the per-document η are mostly noise, so the structural
+    ///     value cannot be recovered.
+    ///   `structural_kappa` — `1 - a/reliability`, the measurement-error-corrected reversion, with
+    ///     `structural_kappa_ci`; `NaN` (and NaN bounds) when `reliability <= 0`.
+    #[pyo3(signature = (*, bootstrap=400))]
+    fn persistence<'py>(&self, py: Python<'py>, bootstrap: usize) -> PyResult<Bound<'py, PyDict>> {
+        self.require_fitted()?;
+        let corpus = self.corpus.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err("no training corpus retained; refit the model")
+        })?;
+        let docs_id = &corpus.docs;
+        let n = docs_id.len();
+        let n_edges = self.fit_parents.iter().filter(|&&p| p >= 0).count();
+        if n_edges == 0 {
+            return Err(PyValueError::new_err(
+                "persistence needs a reply tree; this model was fit with parents=None",
+            ));
+        }
+        let k = self.num_topics;
+        let km1 = k - 1;
+        let v = self.vocab.len();
+        let ng = self.group_names.len().max(1);
+        let groups = self.fit_groups.clone();
+        let iters = self.em_iters;
+        let seed = self.seed;
+        // Uncoupled η: fit the same corpus with every document a root (no parent coupling).
+        let all_roots = vec![-1i64; n];
+        let docs_owned: Vec<Vec<u32>> = docs_id.clone();
+        let m0 = py.allow_threads(move || {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            crate::reply_tm::fit_reply_tm(
+                &docs_owned,
+                &all_roots,
+                &groups,
+                ng,
+                k,
+                v,
+                iters,
+                1e-6,
+                |_, _, _| true,
+                &mut rng,
+            )
+        });
+        let eta = &m0.lambda;
+        let nu = &m0.doc_topic_var;
+
+        // group anchors = per-group mean of the uncoupled η (documents with tokens)
+        let has_tok: Vec<bool> = docs_id.iter().map(|d| !d.is_empty()).collect();
+        let mut anchor = vec![vec![0.0f64; km1]; ng];
+        let mut gcnt = vec![0usize; ng];
+        for i in 0..n {
+            if !has_tok[i] {
+                continue;
+            }
+            let g = self.fit_groups[i];
+            gcnt[g] += 1;
+            for kk in 0..km1 {
+                anchor[g][kk] += eta[i][kk];
+            }
+        }
+        for g in 0..ng {
+            if gcnt[g] > 0 {
+                for kk in 0..km1 {
+                    anchor[g][kk] /= gcnt[g] as f64;
+                }
+            }
+        }
+
+        // thread root of each document
+        let mut root = vec![0usize; n];
+        for start in 0..n {
+            let mut cur = start as i64;
+            while self.fit_parents[cur as usize] >= 0 {
+                cur = self.fit_parents[cur as usize];
+            }
+            root[start] = cur as usize;
+        }
+        // per-thread aggregates over reply edges: (Sxy, Sxx, Snu, count)
+        let mut agg: HashMap<usize, [f64; 4]> = HashMap::new();
+        for ch in 0..n {
+            let p = self.fit_parents[ch];
+            if p < 0 || !has_tok[ch] || !has_tok[p as usize] {
+                continue;
+            }
+            let g = self.fit_groups[ch];
+            let (pe, ce) = (&eta[p as usize], &eta[ch]);
+            let pnu = &nu[p as usize];
+            let e = agg.entry(root[ch]).or_insert([0.0; 4]);
+            for kk in 0..km1 {
+                let x = pe[kk] - anchor[g][kk];
+                let y = ce[kk] - anchor[g][kk];
+                e[0] += x * y;
+                e[1] += x * x;
+                e[2] += pnu[kk];
+                e[3] += 1.0;
+            }
+        }
+        // Sort by thread root so the order (hence float-sum order and bootstrap draws) is
+        // deterministic — HashMap iteration order is randomized.
+        let mut items: Vec<(usize, [f64; 4])> = agg.into_iter().collect();
+        items.sort_by_key(|(root, _)| *root);
+        let threads: Vec<[f64; 4]> = items.into_iter().map(|(_, v)| v).collect();
+        if threads.len() < 2 {
+            return Err(PyValueError::new_err(
+                "not enough reply edges across threads to estimate persistence",
+            ));
+        }
+        // point estimate from a set of thread aggregates
+        let est = |sel: &[[f64; 4]]| -> (f64, f64, f64) {
+            let mut s = [0.0f64; 4];
+            for a in sel {
+                for j in 0..4 {
+                    s[j] += a[j];
+                }
+            }
+            let a = s[0] / s[1]; // slope
+            let var_x = s[1] / s[3];
+            let mean_nu = s[2] / s[3];
+            let rel = 1.0 - mean_nu / var_x;
+            let a_corr = if rel > 0.0 { a / rel } else { f64::NAN };
+            (a, rel, 1.0 - a_corr) // (observed a, reliability, structural kappa)
+        };
+        let (a_obs, rel, kappa_s) = est(&threads);
+
+        // thread-clustered bootstrap
+        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
+        let (mut a_bs, mut k_bs): (Vec<f64>, Vec<f64>) = (Vec::new(), Vec::new());
+        let t = threads.len();
+        for _ in 0..bootstrap.max(1) {
+            let sel: Vec<[f64; 4]> = (0..t)
+                .map(|_| threads[(rng.gen::<f64>() * t as f64) as usize % t])
+                .collect();
+            let (a, _, kap) = est(&sel);
+            a_bs.push(a);
+            k_bs.push(kap);
+        }
+        let pct = |v: &mut Vec<f64>, q: f64| -> f64 {
+            v.retain(|x| x.is_finite());
+            if v.is_empty() {
+                return f64::NAN;
+            }
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let idx = ((q * (v.len() - 1) as f64).round() as usize).min(v.len() - 1);
+            v[idx]
+        };
+        let obs_ci = (pct(&mut a_bs.clone(), 0.025), pct(&mut a_bs.clone(), 0.975));
+        let kap_ci = (pct(&mut k_bs.clone(), 0.025), pct(&mut k_bs.clone(), 0.975));
+
+        let d = PyDict::new_bound(py);
+        d.set_item("observed_persistence", a_obs)?;
+        d.set_item("observed_ci", obs_ci)?;
+        d.set_item("reliability", rel)?;
+        d.set_item("structural_kappa", kappa_s)?;
+        d.set_item("structural_kappa_ci", kap_ci)?;
+        Ok(d)
     }
 
     /// 95% profile-likelihood CI for the reversion `κ` as a `(lower, upper)` tuple, re-optimizing

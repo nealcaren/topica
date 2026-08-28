@@ -261,6 +261,53 @@ def test_kappa_within_its_ci():
         assert lo - 1e-9 <= m.kappa <= hi + 1e-9, (seed, m.kappa, (lo, hi))
 
 
+def test_persistence():
+    """persistence() is the identifiable replacement for the boundary-prone kappa: it refits an
+    uncoupled (no-tree) pass and regresses child η on parent η. Returns observed persistence
+    (always identified), a reliability gate, and a measurement-error-corrected structural kappa."""
+    import math
+
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=60, depth=8)
+    m = topica.ReplyTM(4, em_iters=60, seed=13)
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
+    r = m.persistence(bootstrap=200)
+    for key in (
+        "observed_persistence",
+        "observed_ci",
+        "reliability",
+        "structural_kappa",
+        "structural_kappa_ci",
+    ):
+        assert key in r
+    # observed persistence is identified: finite, positive (replies track parents), CI brackets it
+    a = r["observed_persistence"]
+    assert math.isfinite(a) and a > 0
+    lo, hi = r["observed_ci"]
+    assert lo <= a <= hi
+    # deterministic (seeded internal fit + bootstrap over sorted threads); NaN-aware compare
+    r2 = m.persistence(bootstrap=200)
+
+    def eq(x, y):
+        return x == y or (isinstance(x, float) and math.isnan(x) and math.isnan(y))
+
+    assert eq(r["observed_persistence"], r2["observed_persistence"])
+    assert eq(r["structural_kappa"], r2["structural_kappa"])
+    assert all(eq(x, y) for x, y in zip(r["structural_kappa_ci"], r2["structural_kappa_ci"]))
+
+
+def test_persistence_requires_tree():
+    """persistence() needs reply edges; a no-tree fit raises rather than returning garbage."""
+    import warnings
+
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=6)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        m = topica.ReplyTM(3, em_iters=30, seed=13)
+        m.fit(docs, parents=None)
+    with pytest.raises(ValueError):
+        m.persistence()
+
+
 def test_coherence():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=6)
     m = topica.ReplyTM(2, em_iters=40, seed=13)

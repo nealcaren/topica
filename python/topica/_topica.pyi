@@ -3083,6 +3083,15 @@ class ReplyTM:
     @property
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
+    def doc_eta(self) -> numpy.typing.NDArray[numpy.float64]:
+        """D×(K-1) per-document variational mean η (softmax basis, reference topic fixed at 0)."""
+        ...
+    @property
+    def doc_topic_var(self) -> numpy.typing.NDArray[numpy.float64]:
+        """D×(K-1) posterior variance ν of η (measurement-error variance for attenuation
+        correction: reliability = Var(η) / (Var(η) + mean ν))."""
+        ...
+    @property
     def group_prevalence(self) -> numpy.typing.NDArray[numpy.float64]:
         """Per-group baseline topic prevalence (softmax of the covariate anchor)."""
         ...
@@ -3107,6 +3116,15 @@ class ReplyTM:
     ) -> numpy.typing.NDArray[numpy.float64]:
         """Per-topic coherence. ``coherence_type`` is ``"u_mass"`` (default) or a windowed measure
         (``"c_v"``/``"c_uci"``/``"c_npmi"``); ``texts`` supplies a reference corpus for those."""
+        ...
+    def persistence(self, *, bootstrap: int = 400) -> dict:
+        """Reduced-form reply persistence — the identifiable replacement for ``kappa``. Refits an
+        internal no-tree pass (uncoupled η) and regresses each reply's η on its parent's, pooled
+        across topics with a thread-clustered bootstrap. Returns a dict with
+        ``observed_persistence`` (+``observed_ci``) — the raw child-tracks-parent slope, always
+        identified; ``reliability`` — the signal share and identifiability gate (``<=0`` means η is
+        mostly noise); and ``structural_kappa`` (+``structural_kappa_ci``) — the
+        measurement-error-corrected reversion, ``NaN`` when reliability ``<= 0``."""
         ...
     def save(self, path: str) -> None:
         """Save the fitted model to ``path``. Reload with ``ReplyTM.load``."""

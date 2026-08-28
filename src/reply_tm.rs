@@ -68,6 +68,10 @@ pub struct ReplyTmModel {
     pub bound_history: Vec<f64>,
     pub converged: bool,
     pub em_iters_run: usize,
+    /// Per-document posterior variance of `η` (D × K-1), the final-iteration Laplace `ν`. Exposes
+    /// the measurement-error variance of each `lambda` row so a reduced-form persistence estimator
+    /// can correct child-on-parent regression for attenuation.
+    pub doc_topic_var: Vec<Vec<f64>>,
 }
 
 /// Numerically-stable softmax of `[eta, 0]` (reference topic K-1 fixed at 0). Subtracts the max
@@ -457,6 +461,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         bound_history,
         converged,
         em_iters_run,
+        doc_topic_var: last_nu_diag,
     }
 }
 
