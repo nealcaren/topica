@@ -164,6 +164,31 @@ def test_held_out_beat_tree_vs_no_tree():
     assert np.mean(tree) > np.mean(no_tree), (np.mean(tree), np.mean(no_tree))
 
 
+def test_fit_accepts_corpus():
+    """fit() takes a topica.Corpus (doc order preserved) as well as raw token lists, so the
+    reply tree indexes line up with the corpus documents."""
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=6)
+    corpus = topica.Corpus.from_documents(docs)
+    m = topica.ReplyTM(2, em_iters=40, seed=13)
+    m.fit(corpus, parents=parents, covariates=cov, covariate_labels=["A", "B"])
+    assert m.topic_word.shape == (2, len(vocab))
+    assert m.doc_topic.shape == (len(docs), 2)
+    assert set(m.vocabulary) == set(vocab)
+
+
+def test_min_count_emptying_warns():
+    """A document whose every token is rarer than min_count is emptied but kept as a tree node;
+    the user is warned rather than silently losing the document's content."""
+    import warnings
+
+    docs = [["a0", "a0", "a1"], ["rareX", "rareY"], ["a1", "a1", "a0"]]
+    m = topica.ReplyTM(2, em_iters=10, seed=13)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        m.fit(docs, parents=[-1, 0, 1], min_count=2)
+    assert any("emptied" in str(x.message) for x in w), [str(x.message) for x in w]
+
+
 def test_inspect_integration():
     """The taught inspect API must work on ReplyTM (regression: it was misdispatched as a
     time-sliced model because topic_word/vocabulary were methods, not properties)."""

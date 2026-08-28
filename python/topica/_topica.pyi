@@ -3062,17 +3062,18 @@ class ReplyTM:
     def __init__(self, num_topics: int, *, em_iters: int = 150, seed: int = 13) -> None: ...
     def fit(
         self,
-        docs: Sequence[Sequence[str]],
+        data: Corpus | Sequence[Sequence[str]],
         parents: Sequence[int] | None = None,
         covariates: Sequence[int] | None = None,
         covariate_labels: Sequence[str] | None = None,
         *,
         min_count: int = 1,
     ) -> None:
-        """`parents[d]` is document ``d``'s parent index in the reply tree (``-1`` for a
-        thread root), in the SAME order as ``docs``. `covariates[d]` is an optional categorical
-        group id in a DENSE range ``0..num_groups`` whose per-group baseline becomes the reversion
-        anchor; `covariate_labels` names the groups. Requires ``topica.enable_experimental()``."""
+        """`data` is a ``topica.Corpus`` or a list of token lists. `parents[d]` is document
+        ``d``'s parent index in the reply tree (``-1`` for a thread root), in the SAME order as
+        the documents. `covariates[d]` is an optional categorical group id in a DENSE range
+        ``0..num_groups`` whose per-group baseline becomes the reversion anchor; `covariate_labels`
+        names the groups. Requires ``topica.enable_experimental()``."""
         ...
     @property
     def num_topics(self) -> int: ...

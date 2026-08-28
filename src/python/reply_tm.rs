@@ -5,8 +5,8 @@
 //! The class exposes the validated core — fit on token lists + a reply tree + an optional
 //! categorical covariate, with topic/proportion/prevalence readouts (prevalence carries a
 //! method-of-composition SE), the persistence parameter `kappa` with a profile-likelihood CI,
-//! and the ELBO trace. Corpus/formula covariates, save/load, and the namespaced `effects`/
-//! `evaluate` surface are follow-ups.
+//! and the ELBO trace. `fit` accepts either a `topica.Corpus` or raw token lists. Formula
+//! covariates, save/load, and the namespaced `effects`/`evaluate` surface are follow-ups.
 
 use super::*;
 use numpy::PyArray2;
@@ -81,23 +81,43 @@ impl ReplyTM {
         })
     }
 
-    /// Fit ReplyTM. `docs` is a list of token lists (already tokenized). `parents[d]` is `d`'s
-    /// parent **document index** in the reply tree (`-1` for a thread root); build it in the
-    /// SAME order as `docs`. `covariates` is an optional per-document categorical group id in a
-    /// DENSE range `0..num_groups` (the reversion anchor becomes that group's baseline prevalence);
-    /// omit for a single global anchor. `covariate_labels` names the groups for the readouts.
-    /// `min_count` drops words rarer than it. Experimental: requires `topica.enable_experimental()`.
-    #[pyo3(signature = (docs, parents=None, covariates=None, covariate_labels=None, *, min_count=1))]
+    /// Fit ReplyTM. `data` is either a `topica.Corpus` or a list of token lists (already
+    /// tokenized). `parents[d]` is `d`'s parent **document index** in the reply tree (`-1` for a
+    /// thread root); build it in the SAME order as the documents. `covariates` is an optional
+    /// per-document categorical group id in a DENSE range `0..num_groups` (the reversion anchor
+    /// becomes that group's baseline prevalence); omit for a single global anchor.
+    /// `covariate_labels` names the groups for the readouts. `min_count` drops words rarer than it.
+    /// Experimental: requires `topica.enable_experimental()`.
+    #[pyo3(signature = (data, parents=None, covariates=None, covariate_labels=None, *, min_count=1))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
-        docs: Vec<Vec<String>>,
+        data: &Bound<'_, PyAny>,
         parents: Option<Vec<i64>>,
         covariates: Option<Vec<usize>>,
         covariate_labels: Option<Vec<String>>,
         min_count: usize,
     ) -> PyResult<()> {
         require_experimental("ReplyTM")?;
+        // Accept either a topica.Corpus (materialise its token strings) or raw token lists, so the
+        // reply tree can be built in the same document order the corpus was ingested in.
+        let docs: Vec<Vec<String>> = if let Ok(c) = data.extract::<Corpus>() {
+            c.inner
+                .docs
+                .iter()
+                .map(|doc| {
+                    doc.iter()
+                        .map(|&wid| c.inner.id_to_word[wid as usize].clone())
+                        .collect()
+                })
+                .collect()
+        } else {
+            data.extract::<Vec<Vec<String>>>().map_err(|_| {
+                PyValueError::new_err(
+                    "expected a Corpus or a list of token lists (list[list[str]])",
+                )
+            })?
+        };
         let n = docs.len();
         if n == 0 {
             return Err(PyValueError::new_err("docs is empty"));
@@ -125,6 +145,9 @@ impl ReplyTM {
                 "no words survive min_count; lower min_count",
             ));
         }
+        // Documents emptied by min_count filtering: they stay as tree nodes (their latent η is
+        // still coupled to parent/children) but contribute no tokens, so their proportions are
+        // prior-only. Warn — a silently emptied node quietly changes the tree the user built.
         let docs_id: Vec<Vec<u32>> = docs
             .iter()
             .map(|doc| {
@@ -133,6 +156,23 @@ impl ReplyTM {
                     .collect()
             })
             .collect();
+        let emptied = docs_id
+            .iter()
+            .zip(&docs)
+            .filter(|(ids, orig)| ids.is_empty() && !orig.is_empty())
+            .count();
+        if emptied > 0 {
+            PyErr::warn_bound(
+                py,
+                &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
+                &format!(
+                    "min_count={min_count} emptied {emptied} document(s) of all tokens; they \
+                     remain as reply-tree nodes but contribute no words (their topic proportions \
+                     are prior-only). Lower min_count to keep them.",
+                ),
+                1,
+            )?;
+        }
 
         // parents: validate length + range + acyclicity (indices into the doc list; -1 = root)
         let par: Vec<i64> = match &parents {

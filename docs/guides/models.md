@@ -657,6 +657,68 @@ most coherent on sliding-window c_npmi. CSATM's contribution is the thread-aware
 upgrade. The paper's reported coherence and assignment-accuracy gains were measured
 against external references with tuned hyperparameters and are not reproduced here.
 
+## ReplyTM
+
+ReplyTM (topica-original) is a **logistic-normal topic model with a reply-tree
+prior**. It sits on the same CTM machinery as [`CTM`](#ctm) and [`STM`](#stm): each
+document has a Gaussian topic vector in the softmax basis. What ReplyTM adds is where
+that vector's prior mean comes from. A thread root is drawn around its
+covariate-group baseline; a reply is drawn around a blend of its parent comment's
+vector and that same group baseline. The blend is `(1 - kappa) * parent + kappa *
+baseline`, so `kappa` is a **reversion** knob: `kappa = 0` copies the parent (pure
+persistence along the reply edge), `kappa = 1` ignores the parent and falls back to
+the group baseline (a plain covariate topic model). The tree parameters
+(persistence, per-edge variance, root variance) are fit by maximum likelihood on a
+Gaussian belief-propagation pass over the tree, not set by hand.
+
+The point of the prior is out-of-sample: a comment's parent tells you something about
+what the comment is about, on top of its own words. On high-contingency corpora
+(structured debate, deep argument threads) that parent signal predicts held-out leaf
+tokens better than the covariate baseline alone; ReplyTM ships a committed
+held-out-beat gate that checks the tree prior beats the no-tree baseline on a
+persistence-structured corpus.
+
+Pass the reply structure exactly like [`CSATM`](#csatm): a `parents` list where
+`parents[d]` is document `d`'s parent **index** (`-1` for a thread root), in the same
+order as the documents. `fit` validates it (out-of-range, self-parent, and cycles all
+raise `ValueError`). `fit` accepts either a `topica.Corpus` or raw token lists, and
+the same index-fragility warning applies: build `parents` against a stable id, not a
+position that a `Corpus` build may have reordered (see the CSATM worked example
+above).
+
+```python
+import topica
+topica.enable_experimental()   # ReplyTM is experimental
+
+# docs in a fixed order; parents[d] indexes into docs (-1 = thread root);
+# group[d] is a dense categorical covariate (e.g. the subreddit, the verdict).
+m = topica.ReplyTM(num_topics=25, seed=13)
+m.fit(docs, parents=parents, covariates=group, covariate_labels=["cmv", "hn"])
+
+m.group_prevalence      # (G, K) per-group baseline topic mix
+m.prevalence_se         # (G, K-1) method-of-composition SE for group contrasts
+m.kappa, m.kappa_ci     # reversion strength + 95% profile-likelihood CI
+topica.inspect.topic_table(m)
+```
+
+**Uncertainty is reported, not implied.** `prevalence_se` is a method-of-composition
+standard error on each group's baseline (it folds the between-document sampling
+variance together with the mean per-document posterior variance), so a
+group-contrast claim can carry an honest interval. `kappa_ci` is a 95%
+profile-likelihood interval on the reversion, so "this corpus is persistence-
+dominated" is a statement you can bracket rather than assert.
+
+ReplyTM is **experimental**, and the honest empirical picture is why. The core is
+validated by planted recovery, a degenerate-case reduction (a flat tree collapses it
+to a plain logistic-normal model, and `kappa`/`sigma2` come back `NaN` because the
+reply parameters are then unidentified), determinism, and the held-out-beat gate. But
+the tree prior does **not** help everywhere. On loose forum chat the fitted `kappa`
+sits at 0 (persistence, not reversion) and holding out leaf tokens can favor the
+no-tree baseline: a reply there is often a topic change, and its parent is a poor
+predictor. The value shows up on **high-contingency** genres where replies stay on the
+parent's topic. Treat the reply prior as a smoothing device that pays off when the
+conversation is actually contingent, and read `kappa_ci` before claiming it did.
+
 ## Scholar
 
 SCHOLAR ([Card, Tan & Smith 2018](https://aclanthology.org/P18-1189/)) brings
