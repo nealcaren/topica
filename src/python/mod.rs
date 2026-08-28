@@ -88,6 +88,7 @@ mod party_embeddings;
 mod pltm;
 #[path = "corpus.rs"]
 mod py_corpus;
+mod reply_tm;
 mod rtm;
 mod save;
 mod scholar;
@@ -120,6 +121,7 @@ use online_lda::OnlineLDA;
 use party_embeddings::PartyEmbeddings;
 use pltm::PolylingualLDA;
 use py_corpus::Corpus;
+use reply_tm::ReplyTM;
 use rtm::RTM;
 use save::*;
 use scholar::Scholar;
@@ -9533,6 +9535,60 @@ fn window_cooccurrence(
     py.allow_threads(move || coh::cooccurrence(&docs, num_relevant, &pairs, window))
 }
 
+/// Minimal ReplyTM fit entry point (experimental) — used to smoke-test the reply-threaded
+/// topic model on real corpora before the full model class lands. `docs` are token-id lists,
+/// `parents[d]` is `d`'s parent index (negative marks a root), `groups[d]` is `d`'s covariate
+/// group id in `0..num_groups` (all-zeros + `num_groups=1` = no covariate), `num_types` the
+/// vocab size. Returns the RAW fit `(topic_word β K×V, lambda η D×(K-1), anchor μ G×(K-1),
+/// kappa, sigma2, p0, bound_history)` — callers softmax `[η, 0]` for θ and `[μ, 0]` for group
+/// prevalence, and use the raw η/μ to form the tree-prior predictive means for held-out scoring.
+/// `num_topics` is K, `num_types` the vocab size, `em_iters`/`em_tol` bound the variational-EM
+/// loop, and `seed` makes the fit deterministic.
+#[pyfunction]
+#[pyo3(signature = (docs, parents, groups, num_groups, num_topics, num_types, em_iters=150, em_tol=1e-6, seed=13))]
+#[allow(clippy::type_complexity)]
+fn reply_tm_fit(
+    py: Python<'_>,
+    docs: Vec<Vec<u32>>,
+    parents: Vec<i64>,
+    groups: Vec<usize>,
+    num_groups: usize,
+    num_topics: usize,
+    num_types: usize,
+    em_iters: usize,
+    em_tol: f64,
+    seed: u64,
+) -> (
+    Vec<Vec<f64>>,
+    Vec<Vec<f64>>,
+    Vec<Vec<f64>>,
+    f64,
+    f64,
+    f64,
+    Vec<f64>,
+) {
+    use rand_chacha::rand_core::SeedableRng;
+    py.allow_threads(move || {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
+        let m = crate::reply_tm::fit_reply_tm(
+            &docs,
+            &parents,
+            &groups,
+            num_groups,
+            num_topics,
+            num_types,
+            em_iters,
+            em_tol,
+            false, // raw smoke-test entry point does not return kappa_ci
+            |_, _, _| true,
+            &mut rng,
+        );
+        let dt = m.lambda;
+        let gp = m.anchor;
+        (m.beta, dt, gp, m.kappa, m.sigma2, m.p0, m.bound_history)
+    })
+}
+
 /// stm-faithful FREX score matrix (K×V) from the `topica-core` `inspect` module
 /// (the same port faSTM and the Stata plugin use). `beta` is the K×V topic-word
 /// probability matrix as a list of lists; `word_counts` (length V) enables stm's
@@ -17062,6 +17118,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<GSDMM>()?;
     m.add_class::<BTM>()?;
     m.add_class::<CSATM>()?;
+    m.add_class::<ReplyTM>()?;
     m.add_class::<FactorialLDA>()?;
     m.add_class::<PolylingualLDA>()?;
     m.add_class::<DiscLDA>()?;
@@ -17102,6 +17159,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(tokenize_many, m)?)?;
     m.add_function(wrap_pyfunction!(window_cooccurrence, m)?)?;
+    m.add_function(wrap_pyfunction!(reply_tm_fit, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_frex_scores, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_lift_scores, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_score_scores, m)?)?;
