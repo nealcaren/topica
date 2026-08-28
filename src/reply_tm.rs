@@ -437,12 +437,16 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
 ///
 /// The E-step coupling is directed — a document's prior mean depends only on its PARENT's η, never on
 /// its children (see `fit_reply_tm`). So a single sweep in topological order (every parent before its
-/// children) is the exact structured mean-field fixed point: each node is inferred against a prior
-/// mean built from its parent's already-finalized η, exactly as one fit iteration would, but with no
-/// need to iterate because nothing downstream feeds back. `parents[d]` indexes into `docs` (negative =
-/// root); `groups[d]` selects the anchor row. Documents with no in-vocabulary tokens carry no
-/// evidence, so their posterior mode is the prior mean (θ = softmax of that mean) and they still pass
-/// persistence on to their children. Returns D×K proportions in `docs` order.
+/// children) is the structured mean-field fixed point: each node is inferred against a prior mean
+/// built from its parent's already-finalized η, and nothing downstream feeds back, so there is no need
+/// to iterate. On a tree of token-bearing nodes this reproduces the converged fit E-step. `parents[d]`
+/// indexes into `docs` (negative = root); `groups[d]` selects the anchor row. Documents with no
+/// in-vocabulary tokens carry no evidence, so their posterior mode is the prior mean (θ = softmax of
+/// that mean) and they still pass persistence on to their children. NOTE this differs from
+/// `fit_reply_tm`, which excludes empty documents from its E-step and leaves their η at the init 0
+/// (θ uniform); transform's prior-mode is the principled value (it matches `ctm::infer_theta`), so on
+/// a tree with an empty interior or root node transform and the stored fit `doc_topic` diverge for
+/// that node and its subtree. Returns D×K proportions in `docs` order.
 pub fn transform_reply_tm(
     docs: &[Vec<u32>],
     parents: &[i64],

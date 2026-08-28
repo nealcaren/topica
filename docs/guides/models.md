@@ -742,17 +742,22 @@ topica.inspect.topic_table(m)
 
 **Inferring topics for a new thread.** `transform` maps a fresh reply forest to topic
 proportions, holding the fitted topics, reversion, step/root variances, and per-group
-anchors fixed. Pass `parents` (and `covariates`) for the new forest exactly as at fit;
-the reply coupling is directed (a document's prior mean depends only on its parent's η),
-so a single topological pass — every parent before its children — is the exact structured
-mean-field, no iteration needed. Omit `parents` to treat every document as a root (a plain
-logistic-normal inference against the group anchor, ignoring reply structure), and omit
-`covariates` to anchor at the across-group mean. Requires a model fit **with** a reply
-tree (the variances are otherwise undefined).
+anchors fixed. Pass `parents` (and `covariates`) for the new forest exactly as at fit.
+The reply coupling is directed (a document's prior mean depends only on its parent's η),
+so a single topological pass (every parent before its children) is the structured
+mean-field fixed point, with no iteration needed. Omit `parents` to treat every document
+as a root (a plain logistic-normal inference against the group anchor, ignoring reply
+structure), and omit `covariates` to anchor at the unweighted mean of the fitted group
+anchors. Requires a model fit **with** a reply tree (the variances are otherwise
+undefined).
 
 ```python
 theta_new = m.transform(new_docs, parents=new_parents, covariates=new_group)  # (N, K)
 ```
+
+Note that `topica.evaluate.eval_heldout` calls `transform` without `parents`, so it scores
+ReplyTM tree-blind (every held-out document a root); `reply_completion` above is the
+tree-aware held-out test.
 
 **Uncertainty, and how to read it for a group contrast.** `group_prevalence` is
 `(G, K)` on the probability scale; `prevalence_se` is `(G, K-1)` in the underlying

@@ -385,19 +385,21 @@ impl ReplyTM {
     /// as at fit). `parents[d]` is `d`'s parent **document index** in the new forest (`-1` for a
     /// thread root), in the SAME order as the documents; omit it to treat every document as a root
     /// (a plain logistic-normal inference against the group anchor, ignoring reply structure).
-    /// `covariates` is the per-document group id; omit to anchor every document at the across-group
-    /// mean baseline. Returns an N×K proportions matrix.
+    /// `covariates` is the per-document group id; omit to anchor every document at the unweighted mean
+    /// of the fitted group anchors (a neutral baseline, not the size-weighted marginal). Returns an
+    /// N×K proportions matrix.
     ///
     /// The reply coupling is directed (a document's prior mean depends only on its parent's η), so a
-    /// single topological pass is the exact structured mean-field — no iteration needed. Requires a
-    /// model fit **with** a reply tree (the step/root variances are otherwise undefined).
+    /// single topological pass is the structured mean-field fixed point, no iteration needed; on a
+    /// tree of token-bearing nodes it reproduces the converged fit. Requires a model fit **with** a
+    /// reply tree (the step/root variances are otherwise undefined).
     #[pyo3(signature = (data, parents=None, covariates=None))]
     fn transform<'py>(
         &self,
         py: Python<'py>,
         data: &Bound<'py, PyAny>,
         parents: Option<Vec<i64>>,
-        covariates: Option<Vec<usize>>,
+        covariates: Option<Vec<i64>>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         if !self.sigma2.is_finite() || !self.p0.is_finite() {
@@ -506,13 +508,17 @@ impl ReplyTM {
                         g.len()
                     )));
                 }
-                if let Some(&bad) = g.iter().find(|&&gid| gid >= ng) {
+                if let Some(&bad) = g.iter().find(|&&gid| gid < 0 || gid >= ng as i64) {
                     return Err(PyValueError::new_err(format!(
-                        "covariates has group id {bad}, but the model was fit with {ng} group(s) \
-                         (ids 0..{ng})"
+                        "covariates has group id {bad}, but the model was fit with {ng} group(s); \
+                         valid ids are 0 through {}",
+                        ng - 1
                     )));
                 }
-                (g, anchors)
+                (
+                    g.iter().map(|&gid| gid as usize).collect::<Vec<usize>>(),
+                    anchors,
+                )
             }
             None => {
                 let mut mean = vec![0.0f64; km1];

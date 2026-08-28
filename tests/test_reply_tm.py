@@ -535,3 +535,59 @@ def test_reply_completion_rejects_unknown_baseline():
     with pytest.raises(ValueError, match="unknown baseline"):
         topica.evaluate.reply_completion(
             docs, parents, num_topics=5, baselines=("bogus",), em_iters=20, seed=13)
+
+
+def _drop_inducing_corpus(n_threads=45):
+    """Each eval leaf carries two corpus-common words plus one unique-rare word. Under
+    min_count=2 the rare word is dropped from the vocabulary, so on the ~1/3 of leaves whose
+    single seen token happens to be the rare one, the fixed-vocab Corpus empties and drops the
+    leaf (an off-the-shelf baseline cannot score it) while ReplyTM still scores its in-vocab
+    held tokens from a prior-only theta. This exercises the per-baseline pairing."""
+    docs, parents = [], []
+    for t in range(n_threads):
+        docs.append(["cw0", "cw1", "cw2"]); parents.append(-1)
+        root = len(docs) - 1
+        docs.append(["cw0", "cw1", f"rare_{t}"]); parents.append(root)
+    return docs, parents
+
+
+def test_reply_completion_offshelf_does_not_shift_core_deltas():
+    """Requesting an off-the-shelf baseline must not change the ReplyTM-vs-ReplyTM contrasts:
+    each delta is paired over the leaves that baseline scored, so no_tree (which never drops a
+    leaf) is invariant to whether lda is also requested, even when lda drops some leaves."""
+    docs, parents = _drop_inducing_corpus()
+    kw = dict(num_topics=3, em_iters=40, seed=13, n_boot=200, min_count=2)
+    base = topica.evaluate.reply_completion(docs, parents, baselines=("no_tree",), **kw)
+    with pytest.warns(UserWarning, match="off-the-shelf"):
+        withlda = topica.evaluate.reply_completion(
+            docs, parents, baselines=("no_tree", "lda"), **kw)
+    assert base.delta["no_tree"]["estimate"] == withlda.delta["no_tree"]["estimate"]
+    assert base.delta["no_tree"]["ci"] == withlda.delta["no_tree"]["ci"]
+    # lda still produced a finite delta from the leaves it could score
+    assert "lda" in withlda.delta and np.isfinite(withlda.delta["lda"]["estimate"])
+
+
+def test_transform_covariates_none_uses_mean_anchor():
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=30, depth=6)
+    m = topica.ReplyTM(2, em_iters=60, seed=13)
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
+    th = m.transform(docs, parents=parents)  # covariates omitted
+    assert th.shape == (len(docs), 2) and np.allclose(th.sum(1), 1.0)
+
+
+def test_transform_accepts_corpus_input():
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=25, depth=5)
+    m = topica.ReplyTM(2, em_iters=50, seed=13)
+    m.fit(docs, parents=parents)
+    from_lists = m.transform(docs, parents=parents)
+    corpus = topica.Corpus.from_documents(docs)
+    from_corpus = m.transform(corpus, parents=parents)
+    assert np.allclose(from_lists, from_corpus)
+
+
+def test_transform_rejects_negative_covariate():
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=5)
+    m = topica.ReplyTM(2, em_iters=40, seed=13)
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
+    with pytest.raises(ValueError, match="group id"):
+        m.transform(docs[:2], parents=[-1, 0], covariates=[-1, 0])
