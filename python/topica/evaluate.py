@@ -36,6 +36,7 @@ __all__ = [
     'CoherenceCI',
     'Heldout',
     'HeldoutResult',
+    'ReplyCompletionResult',
     'ResidualCheck',
     'TopicDendrogram',
     'align_topics',
@@ -53,6 +54,7 @@ __all__ = [
     'inverted_rbo',
     'make_heldout',
     'perplexity',
+    'reply_completion',
     'semantic_coherence',
     'topic_diversity',
     'topic_semantic_diversity',
@@ -758,6 +760,366 @@ def perplexity(model, held_out, *, seed=0):
         raise ValueError("none of the held-out tokens were in the model vocabulary")
     return float(np.exp(-logp / n))
 
+
+
+# ---------------------------------------------------------------------------
+# reply_completion: held-out leaf-token comparison for ReplyTM (issue #824 /
+# the replytm-paper validation)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ReplyCompletionResult:
+    """Result of :func:`reply_completion`.
+
+    ``per_token_ll`` holds the mean held-out per-token log-likelihood for each
+    fitted model (``tree``, and whichever baselines were run). ``delta`` holds
+    the paired, thread-root-clustered comparison of the true-tree model against
+    each baseline: ``estimate`` is the mean per-token log-likelihood difference
+    (tree minus baseline; positive means the tree predicts held-out leaf tokens
+    better), and ``ci`` is its 95% cluster-bootstrap interval. ``beats_no_tree``
+    is a convenience flag, true when the no-tree interval excludes zero from
+    below. The counts describe how much data the comparison rests on.
+    """
+
+    per_token_ll: dict
+    delta: dict
+    n_eval_leaves: int
+    n_threads: int
+    n_heldout_tokens: int
+    oov_dropped: int
+    beats_no_tree: bool
+    settings: dict
+
+    def __repr__(self):
+        d = self.delta.get("no_tree")
+        head = "ReplyCompletionResult("
+        if d is not None:
+            lo, hi = d["ci"]
+            return (
+                f"{head}tree-no_tree={d['estimate']:+.4f} "
+                f"[{lo:+.4f}, {hi:+.4f}], leaves={self.n_eval_leaves}, "
+                f"threads={self.n_threads})"
+            )
+        return f"{head}leaves={self.n_eval_leaves}, threads={self.n_threads})"
+
+
+def _reply_tree_meta(parents):
+    """Children, depth, thread-root, and leaf flags for a reply forest.
+
+    ``parents[d]`` is ``d``'s parent index or negative for a root. Assumes the
+    tree is acyclic (ReplyTM.fit validates that before this is ever reached).
+    """
+    n = len(parents)
+    children = [[] for _ in range(n)]
+    for d, p in enumerate(parents):
+        if p is not None and p >= 0:
+            children[p].append(d)
+    depth = [0] * n
+    root = [0] * n
+    for start in range(n):
+        cur, steps = start, 0
+        while parents[cur] is not None and parents[cur] >= 0:
+            cur = parents[cur]
+            steps += 1
+        root[start] = cur
+        depth[start] = steps
+    is_leaf = [len(children[d]) == 0 for d in range(n)]
+    return children, depth, root, is_leaf
+
+
+def _permute_parents_within_depth(parents, depth, root, rng):
+    """Depth-stratified within-thread parent permutation (the placebo tree).
+
+    Each non-root node is re-pointed to a uniformly random node that sits one
+    level up (``depth - 1``) in the SAME thread. This keeps every node's depth
+    and thread fixed and the forest acyclic, so the tree's shape statistics are
+    preserved while the specific parent-child pairing is randomized. That
+    isolates whether ReplyTM's gain comes from the *observed* reply edge rather
+    than from the tree's shape alone.
+    """
+    from collections import defaultdict
+    layer = defaultdict(list)
+    for d, (dp, rt) in enumerate(zip(depth, root)):
+        layer[(rt, dp)].append(d)
+    perm = list(parents)
+    for d, p in enumerate(parents):
+        if p is None or p < 0:
+            continue
+        cands = layer[(root[d], depth[d] - 1)]
+        perm[d] = int(cands[rng.integers(len(cands))])
+    return perm
+
+
+def reply_completion(
+    docs,
+    parents,
+    *,
+    num_topics,
+    covariates=None,
+    covariate_names=None,
+    heldout_frac=0.5,
+    min_eval_tokens=2,
+    eval_frac=1.0,
+    baselines=("no_tree", "permuted"),
+    em_iters=100,
+    min_count=1,
+    seed=13,
+    n_boot=1000,
+):
+    """Held-out leaf-token comparison of ReplyTM against matched baselines.
+
+    This is the turnkey preference test for ReplyTM: does the reply tree add
+    predictive information on real data, and does the gain come from the
+    observed edge? It fits three matched models on the SAME reduced corpus
+    (identical vocabulary, ``num_topics``, ``min_count``, and ``seed``) and
+    scores held-out tokens of short leaf comments under each.
+
+    Protocol. We select non-root leaf comments (a reply with no replies of its
+    own) that have at least ``min_eval_tokens`` tokens, and for each we hold out
+    a ``heldout_frac`` share of its tokens. All three models are then fit on the
+    corpus with those tokens removed, so the held-out tokens never influence any
+    fit. For each held-out token ``w`` in leaf ``d`` we score
+    ``log(sum_k theta[d, k] * topic_word[k, w])`` under that model's fitted
+    ``doc_topic`` and ``topic_word``, and average per token. Because a leaf's
+    ``theta`` is inferred from its (few) seen tokens plus its prior, a tree that
+    couples the prior to the parent should predict thin leaves better.
+
+    The models:
+
+    - ``tree``: ReplyTM with the true reply tree.
+    - ``no_tree``: ReplyTM with every document a root (``parents = -1``), a
+      logistic-normal baseline with the same covariate anchors but no tree
+      coupling. This is the model-versus-model comparator.
+    - ``permuted``: ReplyTM with a depth-stratified within-thread parent
+      permutation (the placebo). If the gain is real it should shrink here.
+
+    Aggregation clusters on the thread root, not the comment, because comments
+    within a thread are correlated. The paired difference (tree minus baseline)
+    is bootstrapped over threads, so the interval reflects the number of
+    independent conversations, not the number of tokens.
+
+    Parameters
+    ----------
+    docs : list of token lists, or a ``topica.Corpus``.
+    parents : list of int. ``parents[d]`` is ``d``'s parent document index, or
+        ``-1`` for a thread root, in the same order as ``docs``.
+    num_topics : int. K, shared by all three models.
+    covariates, covariate_names : optional per-document categorical group ids
+        (dense ``0..num_groups``) and their names, passed through to every fit
+        so the anchors match.
+    heldout_frac : float. Share of each eval leaf's tokens held out (the rest
+        are seen by the fit). At least one seen and one held-out token are kept.
+    min_eval_tokens : int. Minimum tokens for a leaf to be eligible (``>= 2``).
+    eval_frac : float. Share of eligible leaves to evaluate (sampled with
+        ``seed``); ``1.0`` uses them all.
+    baselines : which comparators to fit, any of ``"no_tree"``, ``"permuted"``.
+    em_iters : EM iterations per fit. Match this to the analysis fit.
+    min_count : words rarer than this are dropped (shared across models).
+    seed : RNG seed for leaf sampling, the token split, the permutation, and the
+        bootstrap; also the model seed.
+    n_boot : thread-clustered bootstrap resamples for the interval.
+
+    Returns
+    -------
+    ReplyCompletionResult
+
+    Notes
+    -----
+    Requires ``topica.enable_experimental()`` (ReplyTM is experimental). Held-out
+    tokens whose word never appears in the reduced training corpus are out of
+    vocabulary and are dropped from scoring (counted in ``oov_dropped``), as in
+    :func:`perplexity`.
+    """
+    from . import ReplyTM  # local import: ReplyTM is experimental-gated
+
+    if not (0.0 < heldout_frac < 1.0):
+        raise ValueError("heldout_frac must be in (0, 1)")
+    if min_eval_tokens < 2:
+        raise ValueError("min_eval_tokens must be >= 2")
+    if not (0.0 < eval_frac <= 1.0):
+        raise ValueError("eval_frac must be in (0, 1]")
+    baselines = tuple(baselines)
+    for b in baselines:
+        if b not in ("no_tree", "permuted"):
+            raise ValueError(f"unknown baseline {b!r}; use 'no_tree' and/or 'permuted'")
+
+    docs_attr = getattr(docs, "documents", None)
+    if callable(docs_attr):
+        docs = docs_attr()
+    docs = [list(d) for d in docs]
+    n = len(docs)
+    if len(parents) != n:
+        raise ValueError(f"parents has {len(parents)} entries but there are {n} documents")
+    parents = [int(p) for p in parents]
+
+    children, depth, root, is_leaf = _reply_tree_meta(parents)
+    rng = np.random.default_rng(seed)
+
+    # eligible eval leaves: non-root, childless, with enough tokens
+    eligible = [
+        d for d in range(n)
+        if parents[d] >= 0 and is_leaf[d] and len(docs[d]) >= min_eval_tokens
+    ]
+    if not eligible:
+        raise ValueError(
+            "no eligible eval leaves (non-root childless comments with >= "
+            f"{min_eval_tokens} tokens). The corpus may be flat or too shallow "
+            "for a leaf-completion comparison."
+        )
+    if eval_frac < 1.0:
+        k = max(1, int(round(eval_frac * len(eligible))))
+        eligible = sorted(rng.choice(eligible, size=k, replace=False).tolist())
+
+    # split each eval leaf's tokens into seen (kept in the fit) and held out
+    train_docs = [list(d) for d in docs]
+    held = {}  # leaf index -> list of held-out word strings
+    for d in eligible:
+        toks = list(docs[d])
+        order = rng.permutation(len(toks))
+        n_hold = int(round(heldout_frac * len(toks)))
+        n_hold = min(max(n_hold, 1), len(toks) - 1)  # keep >=1 seen and >=1 held
+        hold_pos = set(order[:n_hold].tolist())
+        seen = [toks[i] for i in range(len(toks)) if i not in hold_pos]
+        held[d] = [toks[i] for i in range(len(toks)) if i in hold_pos]
+        train_docs[d] = seen
+
+    # matched fits on the SAME reduced corpus. Suppress the expected UserWarnings
+    # (emptied docs, no-tree reduction) so the eval output stays clean.
+    def _fit(par):
+        m = ReplyTM(num_topics, em_iters=em_iters, seed=seed)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=UserWarning)
+            m.fit(
+                train_docs,
+                parents=par,
+                covariates=covariates,
+                covariate_names=covariate_names,
+                min_count=min_count,
+            )
+        return m
+
+    try:
+        models = {"tree": _fit(parents)}
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "reply_completion needs ReplyTM, which is experimental: call "
+            "topica.enable_experimental() first."
+        ) from exc
+    if "no_tree" in baselines:
+        models["no_tree"] = _fit([-1] * n)
+    perm_changed_frac = None
+    if "permuted" in baselines:
+        perm = _permute_parents_within_depth(parents, depth, root, rng)
+        # The placebo only has power where an eval leaf's parent can actually
+        # change, which needs the thread to branch at the leaf's depth. In pure
+        # chains every depth layer has one node, so the permutation is a no-op
+        # and the permuted model equals the true-tree model. Surface that rather
+        # than let a degenerate placebo read as "the gain survives permutation".
+        changed = sum(1 for d in eligible if perm[d] != parents[d])
+        perm_changed_frac = changed / len(eligible)
+        if perm_changed_frac < 0.2:
+            warnings.warn(
+                "the parent-permutation placebo changed the parent of only "
+                f"{perm_changed_frac:.0%} of eval leaves: the threads barely "
+                "branch at the leaf layer, so the placebo is nearly the true "
+                "tree and its comparison is uninformative. Interpret the "
+                "'permuted' delta with care on shallow/chain-like corpora.",
+                UserWarning,
+                stacklevel=2,
+            )
+        models["permuted"] = _fit(perm)
+
+    # score held-out tokens under each model's theta * topic_word
+    def _score(model):
+        phi = np.asarray(model.topic_word, dtype=np.float64)
+        theta = np.asarray(model.doc_topic, dtype=np.float64)
+        vocab = {w: i for i, w in enumerate(model.vocabulary)}
+        per_token = {}   # leaf -> list of token log-liks
+        oov = 0
+        for d in eligible:
+            ids = [vocab[w] for w in held[d] if w in vocab]
+            oov += len(held[d]) - len(ids)
+            if not ids:
+                per_token[d] = []
+                continue
+            pw = np.clip(theta[d] @ phi[:, ids], 1e-12, None)
+            per_token[d] = np.log(pw).tolist()
+        return per_token, oov
+
+    scored = {name: _score(m) for name, m in models.items()}
+    # vocab is identical across the matched fits, so oov is too; report one.
+    oov_dropped = scored["tree"][1]
+
+    # flatten to per-token arrays keyed by thread root (only leaves with >=1
+    # in-vocab held-out token contribute)
+    tree_pt = scored["tree"][0]
+    thread_ids, per_model_ll = [], {name: [] for name in models}
+    for d in eligible:
+        m_lls = {name: scored[name][0][d] for name in models}
+        if not tree_pt[d]:
+            continue
+        for j in range(len(tree_pt[d])):
+            thread_ids.append(root[d])
+            for name in models:
+                per_model_ll[name].append(m_lls[name][j])
+    thread_ids = np.asarray(thread_ids)
+    per_model_ll = {name: np.asarray(v, dtype=np.float64) for name, v in per_model_ll.items()}
+    n_tokens = len(thread_ids)
+    if n_tokens == 0:
+        raise ValueError(
+            "no held-out tokens were in the training vocabulary; lower min_count "
+            "or raise heldout_frac/min_eval_tokens so leaves keep shared words."
+        )
+    uniq_threads = np.unique(thread_ids)
+    n_threads = len(uniq_threads)
+
+    per_token_ll = {name: float(v.mean()) for name, v in per_model_ll.items()}
+
+    # thread-clustered paired bootstrap of the per-token delta (tree - baseline)
+    def _cluster_ci(delta):
+        if n_threads < 2:
+            return (float("nan"), float("nan"))
+        # index tokens by thread for fast resampling
+        by_thread = {t: np.where(thread_ids == t)[0] for t in uniq_threads}
+        boot = np.empty(n_boot, dtype=np.float64)
+        for b in range(n_boot):
+            pick = uniq_threads[rng.integers(n_threads, size=n_threads)]
+            idx = np.concatenate([by_thread[t] for t in pick])
+            boot[b] = delta[idx].mean()
+        lo, hi = np.percentile(boot, [2.5, 97.5])
+        return (float(lo), float(hi))
+
+    delta = {}
+    tree_ll = per_model_ll["tree"]
+    for name in models:
+        if name == "tree":
+            continue
+        d_arr = tree_ll - per_model_ll[name]
+        delta[name] = {"estimate": float(d_arr.mean()), "ci": _cluster_ci(d_arr)}
+
+    beats_no_tree = bool("no_tree" in delta and delta["no_tree"]["ci"][0] > 0.0)
+
+    return ReplyCompletionResult(
+        per_token_ll=per_token_ll,
+        delta=delta,
+        n_eval_leaves=int(sum(1 for d in eligible if tree_pt[d])),
+        n_threads=int(n_threads),
+        n_heldout_tokens=int(n_tokens),
+        oov_dropped=int(oov_dropped),
+        beats_no_tree=beats_no_tree,
+        settings={
+            "num_topics": num_topics,
+            "heldout_frac": heldout_frac,
+            "min_eval_tokens": min_eval_tokens,
+            "eval_frac": eval_frac,
+            "baselines": list(baselines),
+            "em_iters": em_iters,
+            "min_count": min_count,
+            "seed": seed,
+            "n_boot": n_boot,
+            "perm_changed_frac": perm_changed_frac,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

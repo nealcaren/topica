@@ -683,6 +683,27 @@ it; it is not a real-corpus result and not a model-versus-model comparison (both
 predictors come from one ReplyTM fit). On real corpora the benefit is genre-dependent
 (see the experimental note below).
 
+For the real-corpus, model-versus-model test, use
+[`topica.evaluate.reply_completion`](../api/diagnostics.md#topica.evaluate.reply_completion).
+It fits three matched models on the same reduced corpus (identical vocabulary, `K`,
+`min_count`, and seed) and scores held-out tokens of short leaf comments under each: the
+true tree, a no-tree baseline (every document a root), and a parent-permutation placebo
+(parents shuffled within depth inside each thread). It returns the paired,
+thread-root-clustered difference of the true tree against each baseline, so you can ask
+both whether the tree adds predictive information and whether the gain comes from the
+observed edge rather than the tree's shape:
+
+```python
+res = topica.evaluate.reply_completion(docs, parents, num_topics=25, covariates=group)
+res.delta["no_tree"]     # {'estimate': ..., 'ci': (lo, hi)}  tree minus no-tree
+res.delta["permuted"]    # the placebo: the advantage should shrink here
+res.beats_no_tree        # True when the no-tree interval excludes zero from below
+```
+
+The interval clusters on the thread, not the comment, because comments within a thread
+are correlated. The placebo is a no-op on chain-like threads (one node per depth layer),
+and `reply_completion` warns when that happens.
+
 Pass the reply structure exactly like [`CSATM`](#csatm): a `parents` list where
 `parents[d]` is document `d`'s parent **index** (`-1` for a thread root), in the same
 order as the documents. `fit` validates it (out-of-range, self-parent, and cycles all
