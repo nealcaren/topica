@@ -349,3 +349,65 @@ def test_inspect_integration():
     m.fit(docs, parents=parents)
     table = topica.inspect.topic_table(m)
     assert len(table) == 2
+
+
+def _branching_corpus(seed=1, n_threads=45, K=5, V=90, persistence=0.9,
+                      max_depth=5, branch=(1, 4)):
+    """Branching reply threads with a per-edge topic-persistence walk. Branching (not chains)
+    so the depth-stratified parent-permutation placebo has candidates to shuffle among."""
+    rng = np.random.default_rng(seed)
+    beta = rng.dirichlet(np.ones(V) * 0.15, size=K)
+    docs, parents, eta_of = [], [], {}
+
+    def emit(parent_idx, eta):
+        eta = persistence * eta + (1 - persistence) * rng.normal(size=K)
+        theta = np.exp(eta)
+        theta /= theta.sum()
+        idx = len(docs)
+        ids = rng.choice(K, size=int(rng.integers(6, 16)), p=theta)
+        docs.append([f"w{int(rng.choice(V, p=beta[z]))}" for z in ids])
+        parents.append(parent_idx)
+        eta_of[idx] = eta
+        return idx
+
+    for _ in range(n_threads):
+        frontier = [emit(-1, rng.normal(size=K))]
+        for _d in range(max_depth):
+            frontier = [emit(node, eta_of[node])
+                        for node in frontier for _ in range(int(rng.integers(*branch)))]
+            if not frontier:
+                break
+    return docs, parents
+
+
+def test_reply_completion_planted_beats_and_placebo_shrinks():
+    """evaluate.reply_completion: on a persistence-structured corpus the true tree beats the
+    matched no-tree baseline on held-out leaf tokens (CI excludes zero), and the gain is
+    attributed to the observed edge (the parent-permutation placebo advantage is much smaller)."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.92)
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=5, em_iters=60, seed=13, n_boot=300)
+    assert res.beats_no_tree
+    assert res.delta["no_tree"]["ci"][0] > 0.0
+    # placebo is non-degenerate on this branching corpus, and shrinks the advantage
+    assert res.settings["perm_changed_frac"] > 0.5
+    assert res.delta["permuted"]["estimate"] < res.delta["no_tree"]["estimate"]
+    assert res.n_eval_leaves > 0 and res.n_threads >= 2
+
+
+def test_reply_completion_null_does_not_beat():
+    """With no real parent-child persistence, the tree must not beat the no-tree baseline
+    (fails safe): the model does not manufacture a predictive gain from tree structure alone."""
+    docs, parents = _branching_corpus(seed=2, persistence=0.0)
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=5, em_iters=60, seed=13, n_boot=300)
+    assert not res.beats_no_tree
+
+
+def test_reply_completion_requires_branching_for_placebo():
+    """The placebo warns on chain-like corpora, where every depth layer has one node so the
+    within-thread parent permutation is a no-op."""
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=30, depth=8)
+    with pytest.warns(UserWarning, match="placebo"):
+        topica.evaluate.reply_completion(
+            docs, parents, num_topics=2, em_iters=40, seed=13, n_boot=100)
