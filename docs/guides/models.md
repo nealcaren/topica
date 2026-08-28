@@ -147,7 +147,7 @@ Not (yet) on the validated roster, on one of two grounds: the model is unpublish
 | `TensorLDA` | text | svd | seed-reproducible | Online Tensor LDA (Kangaslahti et al. 2026): deterministic method-of-moments topic modeling via second and third-order cumulants. |
 | `NarrativeTM` | text | gibbs | seed-reproducible | Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text. |
 | `CSATM` | text, links | gibbs | seed-reproducible | Conversational Structure Aware TM (Sun et al. 2020): weights each comment's tokens by a reply-tree 'popularity' score and, after Gibbs, smooths each comment's topics toward its ancestors along the reply path ('transitivity'). For threaded forum data (posts + nested comments). Ported from the paper (no reference implementation); validated by planted recovery + LDA reduction. |
-| `ReplyTM` | text | variational | seed-reproducible | ReplyTM (topica-original): a reply-threaded topic model — CTM logistic-normal topics with a reply-tree structured prior, so a reply's topic prior is coupled to the comment it answers (a persistence-smoothing prior, reverting toward its covariate-group baseline). For threaded discussion (posts + nested comments). Validated by planted recovery + a held-out-beat gate: the tree prior beats the no-tree baseline out-of-sample on high-contingency corpora (debate, deep threads). |
+| `ReplyTM` | text, links | variational | seed-reproducible | ReplyTM (topica-original): a reply-threaded topic model — CTM logistic-normal topics with a reply-tree structured prior, so a reply's topic prior is coupled to the comment it answers (a persistence-smoothing prior, reverting toward its covariate-group baseline). For threaded discussion (posts + nested comments). Validated by planted recovery and a synthetic held-out-beat gate (the parent's topics predict held-out leaf tokens better than the no-tree baseline on persistence-structured data). The real-corpus benefit is genre-dependent; read kappa_ci before claiming persistence. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate. |
 | `IdealPointSentenceTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The sentence-embedding sibling of IdealPointTM, fit by EM. |
 | `EmbeddingLDA` | text, embeddings | gibbs | seed-reproducible | LDA anchored by pre-trained embeddings: k-means clusters the vocabulary embeddings, seeds each topic with the words nearest a cluster centroid, and (optionally) biases each document's mixture toward its own embedding. A topica original; validated by planted-recovery only. |
@@ -667,16 +667,21 @@ covariate-group baseline; a reply is drawn around a blend of its parent comment'
 vector and that same group baseline. The blend is `(1 - kappa) * parent + kappa *
 baseline`, so `kappa` is a **reversion** knob: `kappa = 0` copies the parent (pure
 persistence along the reply edge), `kappa = 1` ignores the parent and falls back to
-the group baseline (a plain covariate topic model). The tree parameters
-(persistence, per-edge variance, root variance) are fit by maximum likelihood on a
-Gaussian belief-propagation pass over the tree, not set by hand.
+the group baseline (a plain covariate topic model). The tree parameters (persistence,
+per-edge variance, root variance) are fit by maximum likelihood on a Gaussian
+belief-propagation pass over the tree. The variances are floored at 0.1 to keep the
+diffusion from collapsing, so a reported `sigma2` or `p0` of exactly 0.1 may be the
+floor rather than an estimate.
 
 The point of the prior is out-of-sample: a comment's parent tells you something about
-what the comment is about, on top of its own words. On high-contingency corpora
-(structured debate, deep argument threads) that parent signal predicts held-out leaf
-tokens better than the covariate baseline alone; ReplyTM ships a committed
-held-out-beat gate that checks the tree prior beats the no-tree baseline on a
-persistence-structured corpus.
+what the comment is about, on top of its own words. ReplyTM ships a committed
+acceptance gate that checks this on **synthetic** persistence-structured data: it holds
+out the tokens of leaf comments, then predicts them two ways from the same fit, once
+from the parent comment's topic mix and once from the group baseline. The parent-based
+prediction wins. That gate establishes the parent carries signal on data built to have
+it; it is not a real-corpus result and not a model-versus-model comparison (both
+predictors come from one ReplyTM fit). On real corpora the benefit is genre-dependent
+(see the experimental note below).
 
 Pass the reply structure exactly like [`CSATM`](#csatm): a `parents` list where
 `parents[d]` is document `d`'s parent **index** (`-1` for a thread root), in the same
@@ -687,33 +692,60 @@ position that a `Corpus` build may have reordered (see the CSATM worked example
 above).
 
 ```python
+import numpy as np
 import topica
 topica.enable_experimental()   # ReplyTM is experimental
 
 # docs in a fixed order; parents[d] indexes into docs (-1 = thread root);
 # group[d] is a dense categorical covariate (e.g. the subreddit, the verdict).
 m = topica.ReplyTM(num_topics=25, seed=13)
-m.fit(docs, parents=parents, covariates=group, covariate_labels=["cmv", "hn"])
+m.fit(docs, parents=parents, covariates=group, covariate_names=["cmv", "hn"])
 
-m.group_prevalence      # (G, K) per-group baseline topic mix
-m.prevalence_se         # (G, K-1) method-of-composition SE for group contrasts
-m.kappa, m.kappa_ci     # reversion strength + 95% profile-likelihood CI
+m.group_prevalence      # (G, K) per-group baseline topic mix (probability scale)
 topica.inspect.topic_table(m)
 ```
 
-**Uncertainty is reported, not implied.** `prevalence_se` is a method-of-composition
-standard error on each group's baseline (it folds the between-document sampling
-variance together with the mean per-document posterior variance), so a
-group-contrast claim can carry an honest interval. `kappa_ci` is a 95%
-profile-likelihood interval on the reversion, so "this corpus is persistence-
-dominated" is a statement you can bracket rather than assert.
+**Uncertainty, and how to read it for a group contrast.** `group_prevalence` is
+`(G, K)` on the probability scale; `prevalence_se` is `(G, K-1)` in the underlying
+softmax (η) space, with the **last topic as the fixed reference** (η is length `K-1`,
+so column `k` of the SE is topic `k` relative to topic `K-1`). The SE is a
+cluster-robust method-of-composition standard error: it clusters the between-document
+variance on the thread root, because the reply tree makes documents within a thread
+correlated and treating them as independent would understate the variance (worst
+exactly in the `kappa ≈ 0` regime the model is built for). It is `NaN` for any group
+with fewer than two threads (the between-thread variance is then unidentified). To put
+an interval on a group contrast in η space:
+
+```python
+se = m.prevalence_se                 # (G, K-1), η space, reference = last topic
+k = 0                                # topic of interest (0 <= k < K-1)
+a, b = 0, 1                          # the two groups to contrast
+# η-space difference of topic k between groups, with an approximate 95% interval
+# (independence across groups is assumed when adding the two variances)
+eta = np.log(m.group_prevalence[:, :-1] / m.group_prevalence[:, -1:])
+diff = eta[a, k] - eta[b, k]
+half = 1.96 * np.hypot(se[a, k], se[b, k])
+print(diff, "±", half)               # excludes 0 -> the groups differ on topic k
+```
+
+The reversion is reported with a CI: `m.kappa` and `m.kappa_ci`, a 95%
+profile-likelihood interval that re-optimizes the variances at each candidate `kappa`
+(so it reflects the `kappa`-vs-`sigma2` ridge rather than a slice). Read it before
+claiming persistence: on a small or weakly-structured corpus it is wide and licenses
+nothing, and the point estimate is biased toward `kappa → 0` by topic-model shrinkage,
+a bias the interval does not correct. It is `(nan, nan)` when there are no reply edges
+or the fit was too short to identify the field.
+
+ReplyTM's covariate story lives entirely in `group_prevalence` / `prevalence_se`; it is
+**not** wired into the `topica.effects` namespace, so reach for those two readouts
+rather than `effects.estimate_effect`.
 
 ReplyTM is **experimental**, and the honest empirical picture is why. The core is
 validated by planted recovery, a degenerate-case reduction (a flat tree collapses it
 to a plain logistic-normal model, and `kappa`/`sigma2` come back `NaN` because the
-reply parameters are then unidentified), determinism, and the held-out-beat gate. But
-the tree prior does **not** help everywhere. On loose forum chat the fitted `kappa`
-sits at 0 (persistence, not reversion) and holding out leaf tokens can favor the
+reply parameters are then unidentified), determinism, and the synthetic acceptance gate
+above. But the tree prior does **not** help everywhere. On loose forum chat the fitted
+`kappa` sits at 0 (persistence, not reversion) and holding out leaf tokens can favor the
 no-tree baseline: a reply there is often a topic change, and its parent is a poor
 predictor. The value shows up on **high-contingency** genres where replies stay on the
 parent's topic. Treat the reply prior as a smoothing device that pays off when the

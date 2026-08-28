@@ -20,7 +20,13 @@
 //! parent's current variational mean λ_parent (a structured mean-field on point estimates, NOT
 //! the smoothed tree posterior); the [`crate::tree_field`] kernel supplies the exact marginal
 //! likelihood used to fit `(κ, σ²)` and to profile κ for its CI. Prevalence carries a
-//! method-of-composition SE. Ships experimental (topica-original, no published reference).
+//! cluster-robust (on the thread) method-of-composition SE; κ carries a profile-likelihood CI.
+//!
+//! The per-iteration objective (`bound_history`) is the sum of the per-document CTM conditional
+//! bounds with the parent coupling plugged in as a fixed mean — a variational free energy, NOT a
+//! true ELBO for the joint tree model (the parent's posterior variance does not enter the coupling
+//! term), so it is monitored, not guaranteed monotone. Ships experimental (topica-original, no
+//! published reference).
 
 #![allow(dead_code)] // several public entry points are exercised only by tests / the binding
 
@@ -29,6 +35,7 @@ use crate::tree_field::{self, TreeFieldParams};
 use crate::variational::{doc_sparse, lbfgs_minimize};
 use rand::Rng;
 use rayon::prelude::*;
+use std::collections::HashMap;
 
 /// A fitted ReplyTM.
 pub struct ReplyTmModel {
@@ -42,12 +49,14 @@ pub struct ReplyTmModel {
     /// reverts toward. With one group this is the global mean; with a categorical covariate
     /// (subreddit, verdict, submission-type) it is that group's prevalence in η-space.
     pub anchor: Vec<Vec<f64>>,
-    /// Method-of-composition standard error of each anchor entry (num_groups × K-1): combines the
-    /// between-document sampling variance of η with the mean per-document posterior variance ν,
-    /// so a group's prevalence carries honest uncertainty rather than being a bare mean.
+    /// Cluster-robust method-of-composition standard error of each anchor entry (num_groups × K-1):
+    /// combines a between-THREAD sampling variance of η (clustered on the reply-tree root, so the
+    /// within-thread correlation the model fits does not deflate it) with the mean per-document
+    /// posterior variance ν. `NaN` for a group with fewer than two threads (variance unidentified).
     pub anchor_se: Vec<Vec<f64>>,
-    /// Profile-likelihood 95% CI for the reversion `κ` (lower, upper); `(NaN, NaN)` when there
-    /// are no reply edges (κ unidentified). On real corpora this typically brackets 0.
+    /// Profile-likelihood 95% CI for the reversion `κ` (lower, upper), re-optimizing (σ², p0) at
+    /// each κ; `(NaN, NaN)` when there are no reply edges or the field was not fit (κ unidentified).
+    /// Conditional on the topic fit; the point estimate is biased toward κ→0 (persistence).
     pub kappa_ci: (f64, f64),
     /// Reversion strength `κ = 1 - a` toward the anchor.
     pub kappa: f64,
@@ -111,6 +120,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     // near-exact pseudo-observation (the old bug) pinned the field and biased (κ, σ²) and the
     // anchor toward the origin.
     let has_tokens: Vec<bool> = sparse.iter().map(|(w, _)| !w.is_empty()).collect();
+    let n_edges = parents.iter().filter(|&&p| p >= 0).count();
 
     // seed each topic from a random (non-empty) document's word distribution, smoothed — an
     // LDA/CTM-style init that breaks symmetry toward real word clusters (random-uniform init
@@ -143,6 +153,11 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     let mut bound_history: Vec<f64> = Vec::with_capacity(em_iters);
     let mut converged = false;
     let mut em_iters_run = 0usize;
+    // Whether the tree field (a, σ², p0) was ever actually fit. It is gated behind a warm-up, so a
+    // corpus that converges inside the warm-up window would otherwise return the INIT constants
+    // (κ=0.3, σ²=1, p0=1) dressed up as estimates. We refuse to break before it has run once, and
+    // null the field params if the iteration budget never reached it.
+    let mut field_fit_ran = false;
 
     for em in 0..em_iters {
         em_iters_run = em + 1;
@@ -213,7 +228,10 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         }
         last_nu_diag.clone_from(&nu_diag_store); // keep the final-iteration posterior variances
 
-        if em_tol > 0.0 && bound_history.len() >= 2 {
+        // Only honor convergence once the field has been fit at least once (or there are no edges,
+        // so there is no field to fit). Otherwise a fast-converging corpus would return the field
+        // initializers as if estimated (see `field_fit_ran`).
+        if em_tol > 0.0 && bound_history.len() >= 2 && (field_fit_ran || n_edges == 0) {
             let prev = bound_history[bound_history.len() - 2];
             let rel = (total_bound - prev).abs() / (prev.abs() + 1e-12);
             if rel < em_tol {
@@ -301,50 +319,79 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
             a = fit.a.min(0.999);
             sigma2 = fit.q.max(0.1);
             p0 = fit.p0.max(0.1);
+            field_fit_ran = true;
         }
     }
 
-    // The field is only identified when there ARE reply edges. With an all-root corpus
-    // (parents=None) a and q never enter the tree likelihood, so κ/σ² would be noise; report
-    // them as NaN (unidentified) rather than an arbitrary optimizer landing.
-    let n_edges = parents.iter().filter(|&&p| p >= 0).count();
-    if n_edges == 0 {
+    // The field params are only real estimates when there ARE reply edges AND the field was
+    // actually fit (it is warm-up-gated, so a short/fast run may never reach it). Otherwise they
+    // are still the init constants; report NaN (unidentified) rather than dress them up as fitted.
+    if n_edges == 0 || !field_fit_ran {
         a = f64::NAN;
         sigma2 = f64::NAN;
+        p0 = f64::NAN;
     }
 
     // ---- uncertainty ----
-    // Anchor SE (method-of-composition): the group prevalence is a mean of per-document η, each
-    // of which carries posterior variance ν. Its SE combines the between-document sampling
-    // variance and the mean per-document posterior variance — so prevalence is reported with
-    // honest uncertainty, not as a bare point.
+    // Thread root of each document (walk parents to the root). The reply tree induces WITHIN-THREAD
+    // correlation — that is the whole model — so the group-prevalence SE must cluster on the thread,
+    // not treat documents as i.i.d. (which would understate the variance by the design effect,
+    // worst exactly in the κ≈0 persistence regime the model is sold for).
+    let thread_root: Vec<usize> = (0..d)
+        .map(|start| {
+            let mut cur = start as i64;
+            while parents[cur as usize] >= 0 {
+                cur = parents[cur as usize];
+            }
+            cur as usize
+        })
+        .collect();
+
+    // Anchor SE (method of composition, cluster-robust): the group prevalence is a mean of
+    // per-document η. Its variance combines (a) a CLUSTER-robust between-thread term — sum the
+    // centered η within each thread, square, sum over threads, with a G/(G-1) small-cluster
+    // correction — and (b) the composition term for latent uncertainty, mean per-document posterior
+    // variance ν. NaN when a group has fewer than two threads (the between-thread variance is then
+    // unidentified — we decline to report a spuriously tight interval).
     let ng = num_groups.max(1);
-    let mut anchor_se = vec![vec![0.0f64; km1]; ng];
+    let mut anchor_se = vec![vec![f64::NAN; km1]; ng];
     for (g, se_g) in anchor_se.iter_mut().enumerate() {
         let members: Vec<usize> = (0..d)
             .filter(|&di| has_tokens[di] && groups[di] == g)
             .collect();
         let n = members.len();
-        if n < 2 {
-            continue;
+        // distinct threads represented in this group
+        let mut roots: Vec<usize> = members.iter().map(|&di| thread_root[di]).collect();
+        roots.sort_unstable();
+        roots.dedup();
+        let n_clusters = roots.len();
+        if n < 2 || n_clusters < 2 {
+            continue; // leaves se = NaN: not enough independent threads for an honest interval
         }
+        let cf = n_clusters as f64 / (n_clusters as f64 - 1.0); // small-cluster correction
         for (i, se) in se_g.iter_mut().enumerate() {
             let mean = anchor[g][i];
-            let between: f64 = members
-                .iter()
-                .map(|&di| (lambda[di][i] - mean).powi(2))
-                .sum::<f64>()
-                / (n as f64 - 1.0);
-            let mean_nu: f64 =
-                members.iter().map(|&di| last_nu_diag[di][i]).sum::<f64>() / n as f64;
-            *se = ((between + mean_nu) / n as f64).sqrt();
+            // between-thread: (G/(G-1)) * Σ_c (Σ_{d in c} (η_d - mean))² / n²
+            let mut csum: HashMap<usize, f64> = HashMap::new();
+            for &di in &members {
+                *csum.entry(thread_root[di]).or_insert(0.0) += lambda[di][i] - mean;
+            }
+            let between: f64 =
+                cf * csum.values().map(|s| s * s).sum::<f64>() / (n as f64 * n as f64);
+            // composition term for latent uncertainty: Σ_d ν_d / n²
+            let nu_term: f64 =
+                members.iter().map(|&di| last_nu_diag[di][i]).sum::<f64>() / (n as f64 * n as f64);
+            *se = (between + nu_term).sqrt();
         }
     }
 
-    // κ profile-likelihood 95% CI: profile `a` over the tree marginal log-likelihood (a χ²(1)
-    // drop of 1.92 in the profile), holding σ²/p0 at their fitted values. Unidentified (NaN)
-    // with no edges. On real corpora this typically brackets 0 (persistence-dominated).
-    let kappa_ci = if n_edges == 0 {
+    // κ 95% CI by PROFILE likelihood: at each candidate `a`, re-optimize the nuisance variances
+    // (σ², p0) and take a χ²(1) drop of 1.92 from the profile max. Re-optimizing (rather than
+    // slicing at the fitted σ²) reflects the a↔σ² ridge, so the interval is not spuriously narrow.
+    // NaN when there are no edges or the field was never fit (κ unidentified). Conditional on the
+    // topic fit θ (obs/r held), and note the point estimate is biased toward persistence (κ→0) by
+    // topic-model shrinkage — the interval does not correct that bias.
+    let kappa_ci = if n_edges == 0 || !field_fit_ran {
         (f64::NAN, f64::NAN)
     } else {
         let obs: Vec<Vec<f64>> = (0..km1)
@@ -363,25 +410,25 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                 }
             })
             .collect();
-        let ll_at = |av: f64| {
-            tree_field::loglik_multi(
-                parents,
-                &obs,
-                &r,
-                TreeFieldParams {
-                    a: av,
-                    q: sigma2.max(1e-6),
-                    m: 0.0,
-                    p0: p0.max(1e-6),
-                },
-            )
+        let init = TreeFieldParams {
+            a: 0.0,
+            q: sigma2.max(1e-6),
+            m: 0.0,
+            p0: p0.max(1e-6),
         };
+        let prof = |av: f64| tree_field::profile_loglik_at_a(parents, &obs, &r, av, init);
         let a_hat = if a.is_finite() { a } else { 0.999 };
-        let ll_max = ll_at(a_hat);
+        // Two-pass: evaluate the profile on the grid (plus the fitted â) and take the true max,
+        // so a suboptimal â cannot understate ll_max and distort the interval.
+        let grid: Vec<f64> = (1..=199).map(|j| j as f64 / 200.0).chain([a_hat]).collect();
+        let profs: Vec<(f64, f64)> = grid.iter().map(|&av| (av, prof(av))).collect();
+        let ll_max = profs
+            .iter()
+            .map(|&(_, ll)| ll)
+            .fold(f64::NEG_INFINITY, f64::max);
         let (mut lo, mut hi) = (a_hat, a_hat);
-        for j in 1..=199 {
-            let av = j as f64 / 200.0;
-            if ll_at(av) >= ll_max - 1.92 {
+        for &(av, ll) in &profs {
+            if ll >= ll_max - 1.92 {
                 lo = lo.min(av);
                 hi = hi.max(av);
             }

@@ -3057,22 +3057,23 @@ class ReplyTM:
     persistence-smoothing prior), reverting toward its covariate-group baseline. `kappa` measures
     the reversion (on real corpora it is typically ~0, persistence-dominated). Reduces to a plain
     logistic-normal model when the reply tree is flat. topica-original, no published reference;
-    validated by planted recovery + a held-out-beat gate (the tree prior beats the no-tree
-    baseline out-of-sample on high-contingency corpora). Experimental."""
+    validated by planted recovery + a held-out-beat gate (the parent's topics predict held-out
+    leaf tokens better than the no-tree baseline on synthetic persistence-structured data).
+    Experimental."""
     def __init__(self, num_topics: int, *, em_iters: int = 150, seed: int = 13) -> None: ...
     def fit(
         self,
         data: Corpus | Sequence[Sequence[str]],
         parents: Sequence[int] | None = None,
         covariates: Sequence[int] | None = None,
-        covariate_labels: Sequence[str] | None = None,
+        covariate_names: Sequence[str] | None = None,
         *,
         min_count: int = 1,
-    ) -> None:
+    ) -> "ReplyTM":
         """`data` is a ``topica.Corpus`` or a list of token lists. `parents[d]` is document
         ``d``'s parent index in the reply tree (``-1`` for a thread root), in the SAME order as
         the documents. `covariates[d]` is an optional categorical group id in a DENSE range
-        ``0..num_groups`` whose per-group baseline becomes the reversion anchor; `covariate_labels`
+        ``0..num_groups`` whose per-group baseline becomes the reversion anchor; `covariate_names`
         names the groups. Requires ``topica.enable_experimental()``."""
         ...
     @property
@@ -3087,18 +3088,33 @@ class ReplyTM:
         ...
     @property
     def prevalence_se(self) -> numpy.typing.NDArray[numpy.float64]:
-        """Method-of-composition SE of the group prevalence anchor (η space)."""
+        """Cluster-robust (on the thread) method-of-composition SE of the group prevalence anchor
+        (η space); NaN for a group with fewer than two threads."""
         ...
     def group_labels(self) -> list[str]: ...
     @property
     def vocabulary(self) -> list[str]: ...
-    def top_words(self, n: int = 10, *, topic: int | None = None) -> list:
+    def top_words(self, n: int = 10, *, topic: int | None = None, weights: bool = False) -> list:
         """Top-n words per topic. With ``topic=None`` returns a list per topic; with an integer
-        ``topic`` returns that topic's words."""
+        ``topic`` returns that topic's words. ``weights=True`` returns ``(word, prob)`` pairs."""
+        ...
+    def coherence(
+        self, n: int = 10, coherence_type: str = "u_mass", texts: object | None = None
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-topic coherence. ``coherence_type`` is ``"u_mass"`` (default) or a windowed measure
+        (``"c_v"``/``"c_uci"``/``"c_npmi"``); ``texts`` supplies a reference corpus for those."""
+        ...
+    def save(self, path: str) -> None:
+        """Save the fitted model to ``path``. Reload with ``ReplyTM.load``."""
+        ...
+    @classmethod
+    def load(cls, path: str) -> "ReplyTM":
+        """Load a model saved with ``save``."""
         ...
     @property
     def kappa_ci(self) -> tuple[float, float]:
-        """95% profile-likelihood CI for the reversion (lower, upper); (nan, nan) with no edges."""
+        """95% profile-likelihood CI for the reversion (lower, upper), re-optimizing (sigma2, p0)
+        at each kappa; (nan, nan) with no edges or an unfit field. Biased toward kappa->0."""
         ...
     @property
     def kappa(self) -> float:
@@ -3106,15 +3122,16 @@ class ReplyTM:
         ...
     @property
     def sigma2(self) -> float:
-        """Per-edge diffusion variance."""
+        """Per-edge diffusion variance (floored at 0.1); NaN when the field was not fit."""
         ...
     @property
     def p0(self) -> float:
-        """Root prior variance."""
+        """Root prior variance (floored at 0.1); NaN when the field was not fit."""
         ...
     @property
     def bound_history(self) -> list[float]:
-        """The variational-EM evidence-bound trace (one value per iteration)."""
+        """Per-iteration variational-objective trace (per-doc CTM bounds with the tree coupling as a
+        fixed mean); a monitoring free energy, not a true ELBO, so not guaranteed monotone."""
         ...
     @property
     def settings(self) -> dict:

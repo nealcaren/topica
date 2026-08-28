@@ -16,7 +16,7 @@
 //! per-node mean and variance by belief propagation: an upward (leaves→root) collect pass and
 //! a downward (root→leaves) distribute pass — the tree generalization of the RTS smoother.
 //! The dense per-thread solve is the reference; the `tests` module checks BP == dense to
-//! ~1e-10 on random forests (the algorithm was first validated in Python, see
+//! < 1e-8 on random forests (the algorithm was first validated in Python, see
 //! `notes/tree_field_validate.py`).
 //!
 //! `ReplyTM`'s M-step uses [`fit`]/[`loglik_multi`] here to estimate `(κ, σ²)` and profile κ for
@@ -174,6 +174,95 @@ pub(crate) fn loglik_multi(
     p: TreeFieldParams,
 ) -> f64 {
     obs.iter().map(|yk| solve(parents, yk, r, p).loglik).sum()
+}
+
+/// PROFILE log-likelihood at a fixed `a` (hence fixed κ): the max of [`loglik_multi`] over the
+/// nuisance diffusion/root variances `(q, p0)`, with `a` held. A plain slice at fixed `(q, p0)`
+/// ignores the a↔q ridge (a stiffer AR coefficient trades against smaller diffusion for nearly
+/// the same smoothing) and yields an over-narrow CI; re-optimizing the nuisance at each `a` gives
+/// a genuine profile. `m` stays 0 (the field is fit on anchor-centered residuals). `obs`/`r` are
+/// held fixed, so the interval is profile in `(q, p0)` but conditional on the topic fit `θ`.
+pub(crate) fn profile_loglik_at_a(
+    parents: &[i64],
+    obs: &[Vec<f64>],
+    r: &[f64],
+    a: f64,
+    init: TreeFieldParams,
+) -> f64 {
+    // 2-D Nelder–Mead over (ln q, ln p0) at fixed a; small and deterministic.
+    let neg_ll = |t: &[f64; 2]| -> f64 {
+        let (q, p0) = (t[0].exp(), t[1].exp());
+        if !(q > 1e-12 && p0 > 1e-12) {
+            return f64::INFINITY;
+        }
+        -loglik_multi(parents, obs, r, TreeFieldParams { a, q, m: 0.0, p0 })
+    };
+    let x0 = [init.q.max(1e-6).ln(), init.p0.max(1e-6).ln()];
+    let (alpha, gamma, rho, sigma) = (1.0, 2.0, 0.5, 0.5);
+    let mut simplex = [x0, [x0[0] + 0.5, x0[1]], [x0[0], x0[1] + 0.5]];
+    let mut fv = [
+        neg_ll(&simplex[0]),
+        neg_ll(&simplex[1]),
+        neg_ll(&simplex[2]),
+    ];
+    for _ in 0..200 {
+        // order vertices best..worst
+        let mut idx = [0usize, 1, 2];
+        idx.sort_by(|&i, &j| {
+            fv[i]
+                .partial_cmp(&fv[j])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let (b, s, w) = (idx[0], idx[1], idx[2]);
+        if (fv[w] - fv[b]).abs() < 1e-9 {
+            break;
+        }
+        let cen = [
+            (simplex[b][0] + simplex[s][0]) / 2.0,
+            (simplex[b][1] + simplex[s][1]) / 2.0,
+        ];
+        let reflect = |t: f64| {
+            [
+                cen[0] + t * (cen[0] - simplex[w][0]),
+                cen[1] + t * (cen[1] - simplex[w][1]),
+            ]
+        };
+        let xr = reflect(alpha);
+        let fr = neg_ll(&xr);
+        if fr < fv[b] {
+            let xe = reflect(gamma);
+            let fe = neg_ll(&xe);
+            if fe < fr {
+                simplex[w] = xe;
+                fv[w] = fe;
+            } else {
+                simplex[w] = xr;
+                fv[w] = fr;
+            }
+        } else if fr < fv[s] {
+            simplex[w] = xr;
+            fv[w] = fr;
+        } else {
+            let xc = [
+                cen[0] + rho * (simplex[w][0] - cen[0]),
+                cen[1] + rho * (simplex[w][1] - cen[1]),
+            ];
+            let fc = neg_ll(&xc);
+            if fc < fv[w] {
+                simplex[w] = xc;
+                fv[w] = fc;
+            } else {
+                for &i in &[s, w] {
+                    simplex[i] = [
+                        simplex[b][0] + sigma * (simplex[i][0] - simplex[b][0]),
+                        simplex[b][1] + sigma * (simplex[i][1] - simplex[b][1]),
+                    ];
+                    fv[i] = neg_ll(&simplex[i]);
+                }
+            }
+        }
+    }
+    -fv.iter().cloned().fold(f64::INFINITY, f64::min)
 }
 
 /// Result of fitting the OU field hyperparameters by maximum marginal likelihood.

@@ -9542,6 +9542,8 @@ fn window_cooccurrence(
 /// vocab size. Returns the RAW fit `(topic_word β K×V, lambda η D×(K-1), anchor μ G×(K-1),
 /// kappa, sigma2, p0, bound_history)` — callers softmax `[η, 0]` for θ and `[μ, 0]` for group
 /// prevalence, and use the raw η/μ to form the tree-prior predictive means for held-out scoring.
+/// `num_topics` is K, `num_types` the vocab size, `em_iters`/`em_tol` bound the variational-EM
+/// loop, and `seed` makes the fit deterministic.
 #[pyfunction]
 #[pyo3(signature = (docs, parents, groups, num_groups, num_topics, num_types, em_iters=150, em_tol=1e-6, seed=13))]
 #[allow(clippy::type_complexity)]

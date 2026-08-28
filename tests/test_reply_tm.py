@@ -47,14 +47,21 @@ def test_experimental_gate_blocks_fit():
         "except RuntimeError as e:\n"
         "    print('GATED' if 'experimental' in str(e) else 'OTHER')\n"
     )
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    # Clear TOPICA_EXPERIMENTAL so an env var set by another test in the suite cannot leak into
+    # the subprocess and un-gate the model (the gate must hold from a clean environment).
+    import os
+
+    env = {k: v for k, v in os.environ.items() if k != "TOPICA_EXPERIMENTAL"}
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env
+    )
     assert out.stdout.strip() == "GATED", out.stdout + out.stderr
 
 
 def test_fit_shapes_and_readouts():
     docs, parents, cov, vocab = _threaded_corpus()
     m = topica.ReplyTM(2, em_iters=60, seed=13)
-    m.fit(docs, parents=parents, covariates=cov, covariate_labels=["A", "B"])
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     D, K, V, G = len(docs), 2, len(vocab), 2
     assert m.topic_word.shape == (K, V)
     assert m.doc_topic.shape == (D, K)
@@ -66,23 +73,27 @@ def test_fit_shapes_and_readouts():
     assert m.num_topics == K
     assert np.isfinite(m.kappa) and np.isfinite(m.sigma2)
     assert len(m.bound_history) >= 1
-    # ELBO should not decrease overall
+    # the variational objective (not a true ELBO) should not decrease overall
     assert m.bound_history[-1] >= m.bound_history[0] - 1e-6
     # uncertainty is reported: prevalence SE (G x K-1) and a kappa CI bracketing kappa
     assert m.prevalence_se.shape == (G, K - 1)
-    assert np.all(m.prevalence_se >= 0)
+    finite_se = m.prevalence_se[np.isfinite(m.prevalence_se)]
+    assert np.all(finite_se >= 0)
     lo, hi = m.kappa_ci
     assert lo <= m.kappa + 1e-9 and hi >= m.kappa - 1e-9
     # top_words: all-topics mode returns K lists; single-topic mode returns one list
     allw = m.top_words()
     assert len(allw) == K and all(isinstance(t, list) for t in allw)
     assert isinstance(m.top_words(3, topic=0), list) and len(m.top_words(3, topic=0)) == 3
+    # weights=True returns (word, prob) pairs
+    ww = m.top_words(3, topic=0, weights=True)
+    assert len(ww) == 3 and all(isinstance(w, str) and isinstance(p, float) for w, p in ww)
 
 
 def test_topic_and_prevalence_recovery():
     docs, parents, cov, vocab = _threaded_corpus()
     m = topica.ReplyTM(2, em_iters=100, seed=13)
-    m.fit(docs, parents=parents, covariates=cov, covariate_labels=["A", "B"])
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     beta = m.topic_word
     vidx = {w: i for i, w in enumerate(m.vocabulary)}
     a_cols = [vidx[f"a{i}"] for i in range(5)]
@@ -143,7 +154,7 @@ def test_held_out_beat_tree_vs_no_tree():
     test = set(rng.choice(leaves, size=len(leaves) // 3, replace=False).tolist())
     train = [[] if i in test else docs[i] for i in range(d)]  # hold out leaf tokens
     m = topica.ReplyTM(2, em_iters=100, seed=13)
-    m.fit(train, parents=parents, covariates=cov, covariate_labels=["A", "B"])
+    m.fit(train, parents=parents, covariates=cov, covariate_names=["A", "B"])
     beta, theta, anchor = m.topic_word, m.doc_topic, m.group_prevalence
     vidx = {w: i for i, w in enumerate(m.vocabulary)}
 
@@ -170,7 +181,7 @@ def test_fit_accepts_corpus():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=6)
     corpus = topica.Corpus.from_documents(docs)
     m = topica.ReplyTM(2, em_iters=40, seed=13)
-    m.fit(corpus, parents=parents, covariates=cov, covariate_labels=["A", "B"])
+    m.fit(corpus, parents=parents, covariates=cov, covariate_names=["A", "B"])
     assert m.topic_word.shape == (2, len(vocab))
     assert m.doc_topic.shape == (len(docs), 2)
     assert set(m.vocabulary) == set(vocab)
@@ -187,6 +198,75 @@ def test_min_count_emptying_warns():
         warnings.simplefilter("always")
         m.fit(docs, parents=[-1, 0, 1], min_count=2)
     assert any("emptied" in str(x.message) for x in w), [str(x.message) for x in w]
+
+
+def test_kappa_is_fit_not_frozen():
+    """Regression: κ/σ²/p0 must be ESTIMATED, never the init constants left frozen when EM
+    converges inside the warm-up window (the bug that reported κ=0.3=1-a_init on any
+    fast-converging corpus). With too few iterations to reach the field fit, they are NaN
+    (unidentified), not the inits."""
+    import math
+
+    docs, parents, cov, vocab = _threaded_corpus()
+    m = topica.ReplyTM(2, em_iters=100, seed=13)
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
+    # the field was fit: κ is a real estimate, not the 0.3 initializer, and σ²/p0 are not the 1.0 inits
+    assert m.kappa != pytest.approx(0.3), "kappa is frozen at 1 - a_init (field never fit)"
+    assert not (m.sigma2 == 1.0 and m.p0 == 1.0), "sigma2/p0 frozen at inits"
+    assert np.isfinite(m.kappa) and np.isfinite(m.sigma2)
+    # too few iterations to reach the warm-up-gated field fit → unidentified, reported as NaN
+    m2 = topica.ReplyTM(2, em_iters=8, seed=13)
+    m2.fit(docs, parents=parents)
+    assert math.isnan(m2.kappa) and math.isnan(m2.sigma2), (m2.kappa, m2.sigma2)
+
+
+def test_prevalence_se_cluster_robust():
+    """The prevalence SE clusters on the thread root. A group with only one thread has no
+    between-thread variation, so its SE is NaN (unidentified), not a spuriously tight 0."""
+    import math
+
+    # group 0: many threads; group 1: a SINGLE long thread (one cluster)
+    docs, parents, cov = [], [], []
+    rng = np.random.default_rng(0)
+    for t in range(20):  # group-0 threads
+        base = len(docs)
+        for step in range(4):
+            parents.append(-1 if step == 0 else base + step - 1)
+            docs.append([f"a{rng.integers(5)}" for _ in range(20)])
+            cov.append(0)
+    base = len(docs)  # group-1: one thread only
+    for step in range(12):
+        parents.append(-1 if step == 0 else base + step - 1)
+        docs.append([f"b{rng.integers(5)}" for _ in range(20)])
+        cov.append(1)
+    m = topica.ReplyTM(2, em_iters=60, seed=13)
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["multi", "single"])
+    se = m.prevalence_se
+    assert np.all(np.isfinite(se[0])), "multi-thread group should have a finite SE"
+    assert np.all(np.isnan(se[1])), "single-thread group SE must be NaN (unidentified)"
+
+
+def test_coherence():
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=6)
+    m = topica.ReplyTM(2, em_iters=40, seed=13)
+    m.fit(docs, parents=parents)
+    coh = m.coherence(10)
+    assert coh.shape == (2,) and np.all(np.isfinite(coh))
+
+
+def test_save_load_roundtrip(tmp_path):
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=6)
+    m = topica.ReplyTM(2, em_iters=40, seed=13)
+    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
+    p = str(tmp_path / "reply.topica")
+    m.save(p)
+    m2 = topica.ReplyTM.load(p)
+    assert np.array_equal(m.topic_word, m2.topic_word)
+    assert np.array_equal(m.group_prevalence, m2.group_prevalence)
+    assert m.kappa == m2.kappa and m.kappa_ci == m2.kappa_ci
+    assert m.group_labels() == m2.group_labels()
+    # coherence still works after load (the corpus snapshot round-tripped)
+    assert np.allclose(m.coherence(10), m2.coherence(10))
 
 
 def test_inspect_integration():

@@ -71,6 +71,7 @@ pub(crate) const MODEL_TAG_WORDSHOAL: u8 = 53;
 pub(crate) const MODEL_TAG_TOPICAL_NGRAMS: u8 = 54;
 pub(crate) const MODEL_TAG_KEYNMF: u8 = 55;
 pub(crate) const MODEL_TAG_CSATM: u8 = 56;
+pub(crate) const MODEL_TAG_REPLYTM: u8 = 57;
 
 pub(crate) fn model_tag_name(tag: u8) -> &'static str {
     match tag {
@@ -127,6 +128,7 @@ pub(crate) fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_INFOCTM => "InfoCTM",
         MODEL_TAG_ONLINE_LDA => "OnlineLDA",
         MODEL_TAG_S3 => "SemanticSignalSeparation",
+        MODEL_TAG_REPLYTM => "ReplyTM",
         _ => "unknown",
     }
 }

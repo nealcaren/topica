@@ -2,15 +2,16 @@
 //! with a reply-tree structured prior; see `crate::reply_tm`). Experimental tier: topica-original,
 //! no published reference yet, so `fit` is gated behind `topica.enable_experimental()`.
 //!
-//! The class exposes the validated core — fit on token lists + a reply tree + an optional
-//! categorical covariate, with topic/proportion/prevalence readouts (prevalence carries a
-//! method-of-composition SE), the persistence parameter `kappa` with a profile-likelihood CI,
-//! and the ELBO trace. `fit` accepts either a `topica.Corpus` or raw token lists. Formula
-//! covariates, save/load, and the namespaced `effects`/`evaluate` surface are follow-ups.
+//! The class exposes the validated core — fit on a `Corpus` or token lists + a reply tree + an
+//! optional categorical covariate, with topic/proportion/prevalence readouts (prevalence carries a
+//! cluster-robust method-of-composition SE), the persistence parameter `kappa` with a
+//! profile-likelihood CI, coherence, and save/load. The covariate story lives entirely in
+//! `group_prevalence`/`prevalence_se`; ReplyTM is outside the `effects` namespace. Formula
+//! covariates and `transform` on new threads are follow-ups.
 
 use super::*;
-use numpy::PyArray2;
-use pyo3::types::PyDict;
+use numpy::{PyArray1, PyArray2};
+use pyo3::types::{PyDict, PyType};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
@@ -37,6 +38,30 @@ pub struct ReplyTM {
     sigma2: f64,
     p0: f64,
     bound_history: Vec<f64>,
+    // Training corpus (all documents kept, including any emptied by min_count, so the reply-tree
+    // node indices stay valid). Backs `coherence()` and save/load.
+    corpus: Option<corpus::Corpus>,
+}
+
+/// Serialisable snapshot of a fitted ReplyTM (see `save`/`load`).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ReplyTmState {
+    num_topics: usize,
+    em_iters: usize,
+    seed: u64,
+    fitted: bool,
+    vocab: Vec<String>,
+    group_names: Vec<String>,
+    beta: Vec<Vec<f64>>,
+    doc_topic: Vec<Vec<f64>>,
+    group_prevalence: Vec<Vec<f64>>,
+    prevalence_se: Vec<Vec<f64>>,
+    kappa: f64,
+    kappa_ci: (f64, f64),
+    sigma2: f64,
+    p0: f64,
+    bound_history: Vec<f64>,
+    corpus: Option<corpus::Corpus>,
 }
 
 impl ReplyTM {
@@ -78,6 +103,7 @@ impl ReplyTM {
             sigma2: f64::NAN,
             p0: f64::NAN,
             bound_history: Vec::new(),
+            corpus: None,
         })
     }
 
@@ -86,18 +112,18 @@ impl ReplyTM {
     /// thread root); build it in the SAME order as the documents. `covariates` is an optional
     /// per-document categorical group id in a DENSE range `0..num_groups` (the reversion anchor
     /// becomes that group's baseline prevalence); omit for a single global anchor.
-    /// `covariate_labels` names the groups for the readouts. `min_count` drops words rarer than it.
+    /// `covariate_names` names the groups for the readouts. `min_count` drops words rarer than it.
     /// Experimental: requires `topica.enable_experimental()`.
-    #[pyo3(signature = (data, parents=None, covariates=None, covariate_labels=None, *, min_count=1))]
+    #[pyo3(signature = (data, parents=None, covariates=None, covariate_names=None, *, min_count=1))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         parents: Option<Vec<i64>>,
         covariates: Option<Vec<usize>>,
-        covariate_labels: Option<Vec<String>>,
+        covariate_names: Option<Vec<String>>,
         min_count: usize,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<Self>> {
         require_experimental("ReplyTM")?;
         // Accept either a topica.Corpus (materialise its token strings) or raw token lists, so the
         // reply tree can be built in the same document order the corpus was ingested in.
@@ -252,16 +278,41 @@ impl ReplyTM {
                         break;
                     }
                 }
-                let names = covariate_labels
+                let names = covariate_names
                     .clone()
                     .unwrap_or_else(|| (0..ng).map(|i| format!("group{i}")).collect());
                 if names.len() != ng {
                     return Err(PyValueError::new_err(format!(
-                        "covariate_labels has {} names but the covariate has {ng} groups",
+                        "covariate_names has {} names but the covariate has {ng} groups",
                         names.len()
                     )));
                 }
                 (g.clone(), ng, names)
+            }
+        };
+
+        // Build a corpus snapshot (all documents kept, in tree-index order) for coherence()
+        // and save/load. Uses the SAME vocab ids as `beta`'s columns.
+        let corpus_snapshot = {
+            let mut doc_freqs = vec![0u32; vocab.len()];
+            let mut total_freqs = vec![0u32; vocab.len()];
+            for doc in &docs_id {
+                let mut seen = vec![false; vocab.len()];
+                for &w in doc {
+                    total_freqs[w as usize] += 1;
+                    if !seen[w as usize] {
+                        seen[w as usize] = true;
+                        doc_freqs[w as usize] += 1;
+                    }
+                }
+            }
+            corpus::Corpus {
+                id_to_word: vocab.clone(),
+                docs: docs_id.clone(),
+                doc_names: (0..n).map(|i| format!("doc{i}")).collect(),
+                doc_labels: vec![String::new(); n],
+                doc_freqs,
+                total_freqs,
             }
         };
 
@@ -298,8 +349,9 @@ impl ReplyTM {
         slf.sigma2 = m.sigma2;
         slf.p0 = m.p0;
         slf.bound_history = m.bound_history;
+        slf.corpus = Some(corpus_snapshot);
         slf.fitted = true;
-        Ok(())
+        Ok(slf.into())
     }
 
     /// K×V topic-word probability matrix.
@@ -330,9 +382,11 @@ impl ReplyTM {
         Ok(vecs_to_arr2(&self.group_prevalence).to_pyarray_bound(py))
     }
 
-    /// G×(K-1) method-of-composition standard error of the group prevalence anchor (in η space):
-    /// combines the between-document sampling variance with the mean per-document posterior
-    /// variance, so group contrasts can be reported with honest uncertainty.
+    /// G×(K-1) cluster-robust method-of-composition standard error of the group prevalence anchor
+    /// (in η space): combines a between-THREAD sampling variance (clustered on the reply-tree root,
+    /// so within-thread correlation does not deflate it) with the mean per-document posterior
+    /// variance. `NaN` for a group with fewer than two threads (variance unidentified). To get an
+    /// interval on the probability-scale `group_prevalence`, apply the delta method.
     #[getter]
     fn prevalence_se<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
@@ -352,42 +406,100 @@ impl ReplyTM {
     }
 
     /// Top-`n` words per topic. With `topic=None` (default) returns a list of lists for all K
-    /// topics; with an integer `topic`, returns that one topic's words.
-    #[pyo3(signature = (n=10, *, topic=None))]
-    fn top_words(&self, py: Python<'_>, n: usize, topic: Option<usize>) -> PyResult<PyObject> {
+    /// topics; with an integer `topic`, returns that one topic's words. `weights=True` returns
+    /// `(word, probability)` pairs instead of bare words.
+    #[pyo3(signature = (n=10, *, topic=None, weights=false))]
+    fn top_words<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        topic: Option<usize>,
+        weights: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.require_fitted()?;
-        let one = |t: usize| -> Vec<String> {
-            let row = &self.beta[t];
-            let mut idx: Vec<usize> = (0..row.len()).collect();
-            idx.sort_by(|&a, &b| {
-                row[b]
-                    .partial_cmp(&row[a])
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            idx.into_iter()
-                .take(n)
-                .map(|i| self.vocab[i].clone())
-                .collect()
-        };
-        match topic {
-            Some(t) => {
-                if t >= self.num_topics {
-                    return Err(PyValueError::new_err(format!(
-                        "topic {t} out of range [0, {})",
-                        self.num_topics
-                    )));
-                }
-                Ok(one(t).into_py(py))
-            }
-            None => {
-                let all: Vec<Vec<String>> = (0..self.num_topics).map(one).collect();
-                Ok(all.into_py(py))
-            }
-        }
+        let phi = vecs_to_arr2(&self.beta);
+        topic_words_helper(py, &phi, &self.vocab, self.num_topics, n, topic, weights)
     }
 
-    /// 95% profile-likelihood CI for the reversion `κ` as a `(lower, upper)` tuple; `(nan, nan)`
-    /// when there are no reply edges. On real corpora this usually brackets 0 (persistence).
+    /// Topic coherence (one score per topic). `coherence_type` is `"u_mass"` (default, uses the
+    /// training corpus) or a windowed measure (`"c_v"`, `"c_uci"`, `"c_npmi"`); `texts` supplies
+    /// an alternative reference corpus for the windowed measures. Higher is more coherent.
+    #[pyo3(signature = (n=10, coherence_type="u_mass".to_string(), texts=None))]
+    fn coherence<'py>(
+        &self,
+        py: Python<'py>,
+        n: usize,
+        coherence_type: String,
+        texts: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        self.require_fitted()?;
+        let phi = vecs_to_arr2(&self.beta);
+        let tops = top_word_ids_phi(&phi, self.num_topics, n);
+        coherence_dispatch(
+            py,
+            self.corpus.as_ref().unwrap(),
+            &tops,
+            n,
+            &coherence_type,
+            texts,
+        )
+    }
+
+    /// Save the fitted model to `path`. Reload with `ReplyTM.load`.
+    fn save(&self, path: &str) -> PyResult<()> {
+        self.require_fitted()?;
+        write_state(
+            path,
+            MODEL_TAG_REPLYTM,
+            &ReplyTmState {
+                num_topics: self.num_topics,
+                em_iters: self.em_iters,
+                seed: self.seed,
+                fitted: self.fitted,
+                vocab: self.vocab.clone(),
+                group_names: self.group_names.clone(),
+                beta: self.beta.clone(),
+                doc_topic: self.doc_topic.clone(),
+                group_prevalence: self.group_prevalence.clone(),
+                prevalence_se: self.prevalence_se.clone(),
+                kappa: self.kappa,
+                kappa_ci: self.kappa_ci,
+                sigma2: self.sigma2,
+                p0: self.p0,
+                bound_history: self.bound_history.clone(),
+                corpus: self.corpus.clone(),
+            },
+        )
+    }
+
+    /// Load a model saved with `save`.
+    #[classmethod]
+    fn load(_cls: &Bound<'_, PyType>, path: &str) -> PyResult<Self> {
+        let s: ReplyTmState = read_state(path, MODEL_TAG_REPLYTM)?;
+        Ok(ReplyTM {
+            num_topics: s.num_topics,
+            em_iters: s.em_iters,
+            seed: s.seed,
+            fitted: s.fitted,
+            vocab: s.vocab,
+            group_names: s.group_names,
+            beta: s.beta,
+            doc_topic: s.doc_topic,
+            group_prevalence: s.group_prevalence,
+            prevalence_se: s.prevalence_se,
+            kappa: s.kappa,
+            kappa_ci: s.kappa_ci,
+            sigma2: s.sigma2,
+            p0: s.p0,
+            bound_history: s.bound_history,
+            corpus: s.corpus,
+        })
+    }
+
+    /// 95% profile-likelihood CI for the reversion `κ` as a `(lower, upper)` tuple, re-optimizing
+    /// (σ², p0) at each κ so the a↔σ² ridge is reflected; `(nan, nan)` when there are no reply
+    /// edges or the field was not fit. Conditional on the topic fit; the point estimate is biased
+    /// toward κ→0 (persistence) by topic-model shrinkage and the interval does not correct that.
     #[getter]
     fn kappa_ci(&self) -> (f64, f64) {
         self.kappa_ci
@@ -399,19 +511,22 @@ impl ReplyTM {
         self.kappa
     }
 
-    /// Per-edge diffusion variance `σ²`.
+    /// Per-edge diffusion variance `σ²` (floored at 0.1; a returned 0.1 may be the floor, not an
+    /// estimate). `NaN` when the reply field was not identified/fit.
     #[getter]
     fn sigma2(&self) -> f64 {
         self.sigma2
     }
 
-    /// Root prior variance.
+    /// Root prior variance (floored at 0.1). `NaN` when the reply field was not identified/fit.
     #[getter]
     fn p0(&self) -> f64 {
         self.p0
     }
 
-    /// The variational-EM evidence-bound trace (one value per iteration).
+    /// The per-iteration variational-objective trace (sum of the per-document CTM bounds with the
+    /// tree coupling plugged in as a fixed mean). This is a monitoring free energy, NOT a true
+    /// ELBO for the joint tree model, so it is not guaranteed monotone.
     #[getter]
     fn bound_history(&self) -> Vec<f64> {
         self.bound_history.clone()
