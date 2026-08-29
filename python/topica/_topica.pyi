@@ -3185,7 +3185,8 @@ class ReplyTM:
         ...
     @property
     def p0(self) -> float:
-        """Root prior variance (floored at 0.1); NaN when the field was not fit."""
+        """Root prior variance: the mean marginal variance of the fitted full root covariance
+        Sigma_root (a scalar summary; the base prior is the full Sigma_root). NaN with no roots."""
         ...
     @property
     def bound_history(self) -> list[float]:

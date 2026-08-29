@@ -62,6 +62,9 @@ pub struct ReplyTM {
     kappa_ci: (f64, f64),
     sigma2: f64,
     p0: f64,
+    // Full root-prior covariance Σ_root (K-1 × K-1, row-major); the base logistic-normal prior for
+    // root documents and for `transform`'s root nodes (#834).
+    sigma_root: Vec<f64>,
     bound_history: Vec<f64>,
     // Training reply tree + covariate groups (document-aligned), retained so `persistence()` can
     // re-fit an uncoupled pass and regress child η on parent η.
@@ -106,6 +109,8 @@ struct ReplyTmState {
     kappa_ci: (f64, f64),
     sigma2: f64,
     p0: f64,
+    #[serde(default)]
+    sigma_root: Vec<f64>,
     bound_history: Vec<f64>,
     fit_parents: Vec<i64>,
     fit_groups: Vec<usize>,
@@ -232,6 +237,7 @@ impl ReplyTM {
             kappa_ci: (f64::NAN, f64::NAN),
             sigma2: f64::NAN,
             p0: f64::NAN,
+            sigma_root: Vec::new(),
             bound_history: Vec::new(),
             fit_parents: Vec::new(),
             fit_groups: Vec::new(),
@@ -527,6 +533,7 @@ impl ReplyTM {
         slf.blend_beta = m.blend_beta;
         slf.sigma2 = m.sigma2;
         slf.p0 = m.p0;
+        slf.sigma_root = m.sigma_root;
         slf.bound_history = m.bound_history;
         slf.corpus = Some(corpus_snapshot);
         slf.fitted = true;
@@ -698,7 +705,19 @@ impl ReplyTM {
 
         let kappa = self.kappa;
         let sigma2 = self.sigma2;
-        let p0 = self.p0;
+        // Full root precision Σ_root⁻¹ for the root nodes. The isotropic p0·I fallback covers a
+        // freshly-constructed/degenerate model with no Σ_root; note it does NOT rescue genuinely
+        // old saves — the positional-bincode format cannot load a pre-Σ_root file at all (see the
+        // serde-default note on the state struct), consistent with the pre-v1.0 save-compat policy.
+        let root_siginv: Vec<f64> = if self.sigma_root.len() == km1 * km1 {
+            crate::linalg::spd_inverse_and_half_logdet(&self.sigma_root, km1).0
+        } else {
+            let mut s = vec![0.0f64; km1 * km1];
+            for i in 0..km1 {
+                s[i * km1 + i] = 1.0 / self.p0;
+            }
+            s
+        };
         let beta = self.beta.clone();
         let theta = py.allow_threads(move || {
             crate::reply_tm::transform_reply_tm(
@@ -709,7 +728,7 @@ impl ReplyTM {
                 &anchor_rows,
                 kappa,
                 sigma2,
-                p0,
+                &root_siginv,
                 blend,
             )
         });
@@ -856,6 +875,7 @@ impl ReplyTM {
                 kappa_ci: self.kappa_ci,
                 sigma2: self.sigma2,
                 p0: self.p0,
+                sigma_root: self.sigma_root.clone(),
                 bound_history: self.bound_history.clone(),
                 fit_parents: self.fit_parents.clone(),
                 fit_groups: self.fit_groups.clone(),
@@ -890,6 +910,7 @@ impl ReplyTM {
             kappa_ci: s.kappa_ci,
             sigma2: s.sigma2,
             p0: s.p0,
+            sigma_root: s.sigma_root,
             bound_history: s.bound_history,
             fit_parents: s.fit_parents,
             fit_groups: s.fit_groups,
@@ -1158,7 +1179,10 @@ impl ReplyTM {
         self.sigma2
     }
 
-    /// Root prior variance (floored at 0.1). `NaN` when the reply field was not identified/fit.
+    /// Root prior variance: the mean marginal variance of the fitted full root covariance Σ_root (a
+    /// scalar summary; the base logistic-normal prior is the full Σ_root, not this isotropic value).
+    /// Defined whenever the corpus has token-bearing roots (including the no-tree/CTM-equivalent
+    /// case); `NaN` otherwise.
     #[getter]
     fn p0(&self) -> f64 {
         self.p0
