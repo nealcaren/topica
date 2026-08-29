@@ -256,6 +256,20 @@ class TestFrexRankedExclusivity:
         assert np.all(frex >= prob)
         assert np.any(frex > prob)
 
+    def test_same_frex_scale_at_default_weight(self):
+        # Regression guard for the weight-convention fix: stm's `exclusivity` weights
+        # `w` on exclusivity while `frex_scores` (calcfrex) weights it on frequency,
+        # so the frex path must pass `1 - w`. Then both paths sum the *identical*
+        # per-word FREX scores and differ only in word selection — so frex-selection
+        # (the n largest) is >= prob-selection (any other n-subset) elementwise, even
+        # at the asymmetric default w=0.7. Under the un-flipped weight this ordering
+        # does not hold because the two paths score words differently.
+        rng = np.random.default_rng(0)
+        phi = rng.dirichlet(np.ones(30) * 0.3, size=4)
+        prob = topica.exclusivity(phi, n=10, rank="prob", w=0.7)
+        frex = topica.exclusivity(phi, n=10, rank="frex", w=0.7)
+        assert np.all(frex >= prob - 1e-9)
+
     def test_symmetric_topics_score_equally(self):
         # The two topics are mirror images, so both readings are symmetric.
         for rank in ("prob", "frex"):

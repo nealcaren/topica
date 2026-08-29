@@ -589,6 +589,10 @@ def topic_diversity(topics, topn=25, *, rank="prob", w=0.5):
     if rank not in ("prob", "frex"):
         raise ValueError(f'rank must be "prob" or "frex", got {rank!r}')
     if rank == "frex":
+        # Validate w up front so a bad-weight error is not masked by the
+        # "needs a fitted model" message the try/except below reports.
+        if not (0.0 <= w <= 1.0):
+            raise ValueError(f"w (frequency weight) must be in [0, 1], got {w!r}")
         from .inspect import frex as _frex_words
         try:
             rows = _frex_words(topics, w=w, n=topn)
@@ -911,9 +915,18 @@ def exclusivity(model_or_phi, *, n=10, w=0.7, rank="prob"):
     if rank == "frex":
         # Sum each topic's top-n FREX scores (select by FREX, not probability). Same
         # frex scores stm's `exclusivity` sums, only the word selection differs.
+        #
+        # stm's two functions weight the harmonic mean with OPPOSITE conventions:
+        # `exclusivity`'s `w` weights exclusivity (0.7 = mostly exclusivity), while
+        # `frex_scores` (calcfrex)'s `w` weights *frequency*. To sum the identical
+        # per-word FREX scores the prob path uses, we pass `1 - w` here so the
+        # exclusivity weight lines up (their frequency/exclusivity ranks already
+        # match: log is monotone, so beta/colsum and logbeta-lse rank the same).
         from ._topica import inspect_frex_scores
 
-        scores = np.asarray(inspect_frex_scores(phi.tolist(), [], float(w)), dtype=np.float64)
+        scores = np.asarray(
+            inspect_frex_scores(phi.tolist(), [], 1.0 - float(w)), dtype=np.float64
+        )
         n = int(n)
         return np.array(
             [np.sort(scores[t])[::-1][:n].sum() for t in range(scores.shape[0])],
