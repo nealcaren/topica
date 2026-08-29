@@ -3115,7 +3115,20 @@ class ReplyTM:
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
-    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """D×K plug-in document-topic proportions ``softmax([mean η, 0])``. This discards the
+        posterior variance ν and biases thin, high-ν documents toward a uniform mix; for held-out
+        token prediction against a sample-averaged Gibbs model use ``posterior_doc_topic`` (#838)."""
+        ...
+    def posterior_doc_topic(
+        self, *, n_samples: int = 400, seed: int = 13
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """D×K posterior-predictive proportions ``E[softmax([η, 0])]``, a Monte-Carlo average of
+        ``n_samples`` η draws from ``N(doc_eta, diag(doc_topic_var))``. Unlike the plug-in
+        ``doc_topic`` it integrates over ν, so it does not flatten thin leaves; it is the θ to score
+        held-out tokens with when comparing to a sample-averaged model like LDA (#838). Deterministic
+        given ``seed``; draws use only the diagonal of ν."""
+        ...
     @property
     def doc_eta(self) -> numpy.typing.NDArray[numpy.float64]:
         """D×(K-1) per-document variational mean η. This is the TREE-COUPLED posterior, so

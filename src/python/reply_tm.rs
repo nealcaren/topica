@@ -778,10 +778,77 @@ impl ReplyTM {
     }
 
     /// D×K document-topic proportions θ.
+    ///
+    /// This is the PLUG-IN `softmax([mean η, 0])`, which discards the per-document posterior
+    /// variance `ν` (`doc_topic_var`). For a logistic-normal model `softmax(E[η]) != E[softmax(η)]`,
+    /// and the plug-in is biased toward the center exactly where `ν` is large (thin documents). For
+    /// held-out token prediction use `posterior_doc_topic`, the posterior-predictive `E[softmax(η)]`,
+    /// which puts ReplyTM on the same footing as a Gibbs model's sample-averaged θ (issue #838).
     #[getter]
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         Ok(vecs_to_arr2(&self.doc_topic).to_pyarray_bound(py))
+    }
+
+    /// D×K posterior-predictive document-topic proportions `E[softmax([η, 0])]`, a Monte-Carlo
+    /// average of `n_samples` draws of η from each document's Gaussian posterior
+    /// `N(doc_eta, diag(doc_topic_var))`. Unlike the plug-in `doc_topic`, this integrates over the
+    /// posterior variance ν, so it does not collapse thin, high-ν documents toward a uniform mix.
+    /// It is the θ to score held-out tokens with when comparing against a sample-averaged Gibbs
+    /// model such as LDA (issue #838). Deterministic given `seed`. Note the draws use only the
+    /// diagonal of ν (the stored marginal variances), not its full off-diagonal covariance.
+    #[pyo3(signature = (*, n_samples=400, seed=13))]
+    fn posterior_doc_topic<'py>(
+        &self,
+        py: Python<'py>,
+        n_samples: usize,
+        seed: u64,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        if n_samples == 0 {
+            return Err(PyValueError::new_err("n_samples must be >= 1"));
+        }
+        let eta = &self.doc_eta;
+        let var = &self.doc_topic_var;
+        let km1 = if eta.is_empty() { 0 } else { eta[0].len() };
+        let k = km1 + 1;
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        // Box-Muller standard normal (no rand_distr dependency; matches the fit's convention).
+        let gauss = |rng: &mut ChaCha8Rng| -> f64 {
+            let u1: f64 = rng.gen::<f64>().max(1e-12);
+            let u2: f64 = rng.gen::<f64>();
+            (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+        };
+        let mut out = vec![vec![0.0f64; k]; eta.len()];
+        let inv_s = 1.0 / n_samples as f64;
+        for (di, mean) in eta.iter().enumerate() {
+            let sd: Vec<f64> = var[di].iter().map(|v| v.max(0.0).sqrt()).collect();
+            let acc = &mut out[di];
+            for _ in 0..n_samples {
+                // draw η_s = mean + sd ⊙ z, then softmax([η_s, 0]) with reference topic K-1 at 0.
+                let mut logits = vec![0.0f64; k];
+                let mut mx = 0.0f64; // reference logit is 0, so the running max starts at 0
+                for i in 0..km1 {
+                    let e = mean[i] + sd[i] * gauss(&mut rng);
+                    logits[i] = e;
+                    if e > mx {
+                        mx = e;
+                    }
+                }
+                let mut z = 0.0f64;
+                for i in 0..k {
+                    logits[i] = (logits[i] - mx).exp();
+                    z += logits[i];
+                }
+                for i in 0..k {
+                    acc[i] += logits[i] / z;
+                }
+            }
+            for a in acc.iter_mut() {
+                *a *= inv_s;
+            }
+        }
+        Ok(vecs_to_arr2(&out).to_pyarray_bound(py))
     }
 
     /// G×K per-group baseline topic prevalence (softmax of the covariate anchor): the descriptive

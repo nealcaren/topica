@@ -348,6 +348,54 @@ def test_save_load_roundtrip(tmp_path):
     assert r1["observed_ci"] == r2["observed_ci"]
 
 
+def test_posterior_doc_topic_predictive(tmp_path):
+    """posterior_doc_topic is E[softmax(eta)]: proper simplex, deterministic, distinct from the
+    plug-in softmax(mean eta), and stable across save/load (issue #838)."""
+    docs, parents, cov, _ = _threaded_corpus(n_threads=20, depth=6, doc_len=8)
+    m = topica.ReplyTM(3, em_iters=40, seed=13)
+    m.fit(docs, parents=parents, covariates=cov)
+
+    plug = np.asarray(m.doc_topic)
+    pdt = np.asarray(m.posterior_doc_topic(n_samples=400, seed=13))
+    assert pdt.shape == plug.shape
+    assert np.allclose(pdt.sum(axis=1), 1.0)  # a valid distribution per document
+    assert (pdt >= 0).all()
+    # deterministic given seed; posterior-predictive is NOT the plug-in (nu is integrated out)
+    assert np.array_equal(pdt, np.asarray(m.posterior_doc_topic(n_samples=400, seed=13)))
+    assert not np.allclose(pdt, plug)
+    with pytest.raises(ValueError):
+        m.posterior_doc_topic(n_samples=0)
+
+    # it depends only on doc_eta + doc_topic_var, which round-trip, so it survives save/load
+    p = str(tmp_path / "reply.topica")
+    m.save(p)
+    m2 = topica.ReplyTM.load(p)
+    assert np.array_equal(pdt, np.asarray(m2.posterior_doc_topic(n_samples=400, seed=13)))
+
+
+def test_reply_completion_scores_logistic_normal_fairly():
+    """reply_completion must score ReplyTM and STM (logistic-normal) with the posterior-predictive
+    theta, not the plug-in, so the LDA delta is not an estimator artifact (issue #838). The two
+    logistic-normal baselines (no_tree, stm) should sit close to the tree; the delta is recorded and
+    predictive_samples is surfaced in settings."""
+    docs, parents, cov, _ = _threaded_corpus(n_threads=40, depth=5, doc_len=10)
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=4, covariates=cov,
+        baselines=("no_tree", "lda", "stm"), em_iters=40, seed=13, n_boot=200,
+    )
+    assert res.settings["predictive_samples"] == 400
+    assert set(res.delta) == {"no_tree", "lda", "stm"}
+    # same-family baselines are near the tree (both posterior-predictive now); the eval ran.
+    assert abs(res.delta["no_tree"]["estimate"]) < 0.2
+    assert np.isfinite(res.delta["lda"]["estimate"])
+    # predictive_samples is honored: a tiny sample count changes the tree's scored likelihood.
+    res_few = topica.evaluate.reply_completion(
+        docs, parents, num_topics=4, covariates=cov,
+        baselines=("no_tree",), em_iters=40, seed=13, n_boot=1, predictive_samples=2,
+    )
+    assert res_few.per_token_ll["tree"] != res.per_token_ll["tree"]
+
+
 def test_inspect_integration():
     """The taught inspect API must work on ReplyTM (regression: it was misdispatched as a
     time-sliced model because topic_word/vocabulary were methods, not properties)."""
