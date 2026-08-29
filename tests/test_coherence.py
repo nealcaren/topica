@@ -188,6 +188,105 @@ class TestDiversity:
         assert 0.0 < d <= 1.0
 
 
+class _Model:
+    """Minimal duck-typed model carrying a static ``(K, V)`` topic_word and a
+    vocabulary — enough for the FREX-ranked diversity/exclusivity path."""
+
+    def __init__(self, topic_word, vocabulary):
+        self.topic_word = np.asarray(topic_word, dtype=np.float64)
+        self.vocabulary = list(vocabulary)
+
+
+class TestFrexRankedDiversity:
+    """`rank="frex"` neutralizes the shrinkage penalty (issue #844): two topics
+    that share their highest-*probability* words but differ in their *distinctive*
+    words score low on probability-ranked diversity (a measurement artifact) and
+    high on FREX-ranked diversity."""
+
+    # sh* are shared background (equal, high prob in both topics); a*/b* are each
+    # topic's exclusive, lower-probability but highly distinctive words.
+    VOCAB = ["sh0", "sh1", "a0", "a1", "b0", "b1"]
+    PHI = np.array(
+        [[0.35, 0.35, 0.14, 0.14, 0.01, 0.01],
+         [0.35, 0.35, 0.01, 0.01, 0.14, 0.14]]
+    )
+
+    @property
+    def model(self):
+        return _Model(self.PHI, self.VOCAB)
+
+    def test_prob_ranking_penalizes_shared_words(self):
+        # Top-2 by probability is {sh0, sh1} for BOTH topics → 2 unique / 4 = 0.5.
+        assert topica.topic_diversity(self.model, topn=2, rank="prob") == 0.5
+
+    def test_frex_ranking_recovers_distinctive_words(self):
+        # Top-2 by FREX is {a0, a1} vs {b0, b1} → all 4 unique → 1.0.
+        assert topica.topic_diversity(self.model, topn=2, rank="frex") == 1.0
+        # And it beats the probability-ranked artifact.
+        assert topica.topic_diversity(self.model, topn=2, rank="frex") > \
+            topica.topic_diversity(self.model, topn=2, rank="prob")
+
+    def test_default_rank_is_prob(self):
+        assert topica.topic_diversity(self.model, topn=2) == \
+            topica.topic_diversity(self.model, topn=2, rank="prob")
+
+    def test_bad_rank_raises(self):
+        with pytest.raises(ValueError, match="prob.*frex"):
+            topica.topic_diversity(self.model, rank="nope")
+
+    def test_frex_on_word_lists_raises_clearly(self):
+        # rank="frex" needs a model-derived ranking, not pre-extracted word lists.
+        with pytest.raises(ValueError, match="fitted model"):
+            topica.topic_diversity([["a", "b"], ["c", "d"]], rank="frex")
+
+
+class TestFrexRankedExclusivity:
+    """`exclusivity(rank="frex")` sums each topic's genuinely most distinctive
+    words rather than its top-probability words (issue #844). Both use the same
+    FREX scores, so they are on the same scale and directly comparable."""
+
+    VOCAB = TestFrexRankedDiversity.VOCAB
+    PHI = TestFrexRankedDiversity.PHI
+
+    def test_frex_selection_beats_prob_selection(self):
+        # Selecting by probability sums the shared words' (low) FREX; selecting by
+        # FREX sums the distinctive words' (high) FREX. frex >= prob per topic.
+        prob = topica.exclusivity(self.PHI, n=2, rank="prob")
+        frex = topica.exclusivity(self.PHI, n=2, rank="frex")
+        assert np.all(frex >= prob)
+        assert np.any(frex > prob)
+
+    def test_same_frex_scale_at_default_weight(self):
+        # Regression guard for the weight-convention fix: stm's `exclusivity` weights
+        # `w` on exclusivity while `frex_scores` (calcfrex) weights it on frequency,
+        # so the frex path must pass `1 - w`. Then both paths sum the *identical*
+        # per-word FREX scores and differ only in word selection — so frex-selection
+        # (the n largest) is >= prob-selection (any other n-subset) elementwise, even
+        # at the asymmetric default w=0.7. Under the un-flipped weight this ordering
+        # does not hold because the two paths score words differently.
+        rng = np.random.default_rng(0)
+        phi = rng.dirichlet(np.ones(30) * 0.3, size=4)
+        prob = topica.exclusivity(phi, n=10, rank="prob", w=0.7)
+        frex = topica.exclusivity(phi, n=10, rank="frex", w=0.7)
+        assert np.all(frex >= prob - 1e-9)
+
+    def test_symmetric_topics_score_equally(self):
+        # The two topics are mirror images, so both readings are symmetric.
+        for rank in ("prob", "frex"):
+            e = topica.exclusivity(self.PHI, n=2, rank=rank)
+            assert e[0] == pytest.approx(e[1])
+
+    def test_default_rank_is_prob(self):
+        np.testing.assert_allclose(
+            topica.exclusivity(self.PHI, n=2),
+            topica.exclusivity(self.PHI, n=2, rank="prob"),
+        )
+
+    def test_bad_rank_raises(self):
+        with pytest.raises(ValueError, match="prob.*frex"):
+            topica.exclusivity(self.PHI, rank="nope")
+
+
 class TestSemanticDiversity:
     """topic_semantic_diversity (Wu, Nguyen & Luu 2024, Eq. 18): fraction of
     top-word *pairs* that are unique to a single topic."""

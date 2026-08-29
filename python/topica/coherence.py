@@ -566,21 +566,51 @@ def coherence_ci(
     return CoherenceCI(np.asarray(estimate, dtype=float), se, ci_low, ci_high)
 
 
-def topic_diversity(topics, topn=25):
+def topic_diversity(topics, topn=25, *, rank="prob", w=0.5):
     """Fraction of unique words across all topics' top-`topn` words (Dieng,
     Ruiz & Blei 2020). 1.0 means every top word is unique to its topic; low
     values indicate topics that recycle the same words.
 
     `topics` is a fitted model or a list of word lists.
+
+    `rank` selects each topic's top-`topn` words: ``"prob"`` (raw ``P(w | topic)``,
+    the default) or ``"frex"`` (FREX = frequency-exclusivity, STM's word ranking).
+    Ranking by probability floats the corpus's shared high-frequency words into
+    every topic's list, so it penalizes shrinkage models (ReplyTM/CTM/STM) for a
+    measurement artifact rather than a topic-quality defect; FREX ranking measures
+    diversity over each topic's *distinctive* vocabulary instead (issue #844, and
+    STM's own coherence/exclusivity-frontier framing, Roberts et al. 2014). ``w``
+    is the FREX frequency weight in ``[0, 1]`` (used only when ``rank="frex"``).
+    ``rank="frex"`` needs a fitted model or a ``(K, V)`` topic_word matrix (its
+    ranking is model-derived), not a pre-extracted list of word lists.
     """
     if not isinstance(topn, (int, np.integer)) or topn < 1:
         raise ValueError(f"topn must be a positive integer, got {topn!r}")
-    tops = _extract_topics(topics, topn)
+    if rank not in ("prob", "frex"):
+        raise ValueError(f'rank must be "prob" or "frex", got {rank!r}')
+    if rank == "frex":
+        # Validate w up front so a bad-weight error is not masked by the
+        # "needs a fitted model" message the try/except below reports.
+        if not (0.0 <= w <= 1.0):
+            raise ValueError(f"w (frequency weight) must be in [0, 1], got {w!r}")
+        from .inspect import frex as _frex_words
+        try:
+            rows = _frex_words(topics, w=w, n=topn)
+        except (AttributeError, TypeError, ValueError) as e:
+            raise ValueError(
+                'topic_diversity(rank="frex") needs a fitted model whose FREX ranking '
+                "is derived from its topic_word matrix, not a pre-extracted list of word "
+                "lists; for a raw (K, V) matrix call topica.inspect.frex(matrix, vocabulary) "
+                "and pass its word lists with rank=\"prob\""
+            ) from e
+        tops = [[wd for wd, _ in row] for row in rows]
+    else:
+        tops = _extract_topics(topics, topn)
     seen = set()
     total = 0
     for t in tops:
-        for w in t[:topn]:
-            seen.add(w)
+        for w_ in t[:topn]:
+            seen.add(w_)
             total += 1
     return len(seen) / total if total else float("nan")
 
@@ -855,30 +885,55 @@ def _vocabulary_of(obj, vocabulary):
     raise ValueError("vocabulary is required when the model/array carries none")
 
 
-def exclusivity(model_or_phi, *, n=10, w=0.7):
+def exclusivity(model_or_phi, *, n=10, w=0.7, rank="prob"):
     """Per-topic exclusivity, shape ``(num_topics,)`` — stm's ``exclusivity``.
 
-    For each topic, the **FREX summary** over its top-``n`` words (by probability):
-    the sum of each word's frequency–exclusivity score (the rank harmonic mean of
-    probability and exclusivity ``φ_{t,v} / Σ_k φ_{k,v}``, weighted by ``w``, stm's
-    default 0.7). Higher means the topic's top words are more distinctive. Pair with
-    per-topic coherence to make stm's coherence-vs-exclusivity quality plot: good
-    topics sit toward the upper-right (coherent *and* distinctive).
+    For each topic, the **FREX summary** over its top-``n`` words: the sum of each
+    word's frequency–exclusivity score (the rank harmonic mean of probability and
+    exclusivity ``φ_{t,v} / Σ_k φ_{k,v}``, weighted by ``w``, stm's default 0.7).
+    Higher means the topic's top words are more distinctive. Pair with per-topic
+    coherence to make stm's coherence-vs-exclusivity quality plot: good topics sit
+    toward the upper-right (coherent *and* distinctive).
+
+    `rank` chooses which top-``n`` words are summed: ``"prob"`` (top-``n`` by raw
+    ``P(w | topic)``, stm's exact ``exclusivity``, the default) or ``"frex"`` (top-``n``
+    by FREX score). Selecting by probability lets the corpus's shared high-frequency
+    words — which every topic's top-probability list carries under a shrinkage prior —
+    drag the summary down, penalizing shrinkage models (ReplyTM/CTM/STM) for a
+    measurement artifact; ``rank="frex"`` sums each topic's genuinely most distinctive
+    words instead (issue #844). Both use the identical FREX scores, so they are on the
+    same scale (a sum over ``n`` words, roughly ``[0, n]``) and directly comparable.
 
     The scores come from the single stm-faithful implementation in topica's Rust
     core (``topica-core``'s ``inspect``), shared with faSTM and the Stata plugin.
 
-    .. note::
-       This is stm's exclusivity (a sum of FREX scores over the top ``n`` words,
-       roughly in ``[0, n]``), not a mean exclusivity in ``[0, 1]``. The scale
-       changed in the move to the shared stm-faithful core.
-
-    `model_or_phi` is a fitted model (uses its ``topic_word``) or a ``(K, V)``
-    array.
+    `model_or_phi` is a fitted model (uses its ``topic_word``) or a ``(K, V)`` array.
     """
+    if rank not in ("prob", "frex"):
+        raise ValueError(f'rank must be "prob" or "frex", got {rank!r}')
+    phi = _as_topic_word(model_or_phi)
+    if rank == "frex":
+        # Sum each topic's top-n FREX scores (select by FREX, not probability). Same
+        # frex scores stm's `exclusivity` sums, only the word selection differs.
+        #
+        # stm's two functions weight the harmonic mean with OPPOSITE conventions:
+        # `exclusivity`'s `w` weights exclusivity (0.7 = mostly exclusivity), while
+        # `frex_scores` (calcfrex)'s `w` weights *frequency*. To sum the identical
+        # per-word FREX scores the prob path uses, we pass `1 - w` here so the
+        # exclusivity weight lines up (their frequency/exclusivity ranks already
+        # match: log is monotone, so beta/colsum and logbeta-lse rank the same).
+        from ._topica import inspect_frex_scores
+
+        scores = np.asarray(
+            inspect_frex_scores(phi.tolist(), [], 1.0 - float(w)), dtype=np.float64
+        )
+        n = int(n)
+        return np.array(
+            [np.sort(scores[t])[::-1][:n].sum() for t in range(scores.shape[0])],
+            dtype=np.float64,
+        )
     from ._topica import inspect_exclusivity
 
-    phi = _as_topic_word(model_or_phi)
     return np.asarray(
         inspect_exclusivity(phi.tolist(), int(n), float(w)), dtype=np.float64
     )
