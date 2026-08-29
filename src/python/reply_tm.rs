@@ -65,6 +65,9 @@ pub struct ReplyTM {
     // Full root-prior covariance Σ_root (K-1 × K-1, row-major); the base logistic-normal prior for
     // root documents and for `transform`'s root nodes (#834).
     sigma_root: Vec<f64>,
+    // Full edge (OU step) covariance Σ_edge; the reply edges' prior covariance, on the same footing
+    // as sigma_root so tree and no-tree share the base covariance.
+    sigma_edge: Vec<f64>,
     bound_history: Vec<f64>,
     // Training reply tree + covariate groups (document-aligned), retained so `persistence()` can
     // re-fit an uncoupled pass and regress child η on parent η.
@@ -111,6 +114,8 @@ struct ReplyTmState {
     p0: f64,
     #[serde(default)]
     sigma_root: Vec<f64>,
+    #[serde(default)]
+    sigma_edge: Vec<f64>,
     bound_history: Vec<f64>,
     fit_parents: Vec<i64>,
     fit_groups: Vec<usize>,
@@ -238,6 +243,7 @@ impl ReplyTM {
             sigma2: f64::NAN,
             p0: f64::NAN,
             sigma_root: Vec::new(),
+            sigma_edge: Vec::new(),
             bound_history: Vec::new(),
             fit_parents: Vec::new(),
             fit_groups: Vec::new(),
@@ -534,6 +540,7 @@ impl ReplyTM {
         slf.sigma2 = m.sigma2;
         slf.p0 = m.p0;
         slf.sigma_root = m.sigma_root;
+        slf.sigma_edge = m.sigma_edge;
         slf.bound_history = m.bound_history;
         slf.corpus = Some(corpus_snapshot);
         slf.fitted = true;
@@ -704,20 +711,23 @@ impl ReplyTM {
         };
 
         let kappa = self.kappa;
-        let sigma2 = self.sigma2;
-        // Full root precision Σ_root⁻¹ for the root nodes. The isotropic p0·I fallback covers a
-        // freshly-constructed/degenerate model with no Σ_root; note it does NOT rescue genuinely
-        // old saves — the positional-bincode format cannot load a pre-Σ_root file at all (see the
-        // serde-default note on the state struct), consistent with the pre-v1.0 save-compat policy.
-        let root_siginv: Vec<f64> = if self.sigma_root.len() == km1 * km1 {
-            crate::linalg::spd_inverse_and_half_logdet(&self.sigma_root, km1).0
-        } else {
-            let mut s = vec![0.0f64; km1 * km1];
-            for i in 0..km1 {
-                s[i * km1 + i] = 1.0 / self.p0;
+        // Full precisions for roots (Σ_root⁻¹) and edges (Σ_edge⁻¹). The isotropic diagonal fallback
+        // covers a freshly-constructed/degenerate model with an empty covariance; note it does NOT
+        // rescue genuinely old saves — the positional-bincode format cannot load a pre-covariance
+        // file at all (see the serde-default note on the state struct), per the pre-v1.0 policy.
+        let full_or_iso = |sig: &[f64], var: f64| -> Vec<f64> {
+            if sig.len() == km1 * km1 {
+                crate::linalg::spd_inverse_and_half_logdet(sig, km1).0
+            } else {
+                let mut s = vec![0.0f64; km1 * km1];
+                for i in 0..km1 {
+                    s[i * km1 + i] = 1.0 / var;
+                }
+                s
             }
-            s
         };
+        let root_siginv = full_or_iso(&self.sigma_root, self.p0);
+        let edge_siginv = full_or_iso(&self.sigma_edge, self.sigma2);
         let beta = self.beta.clone();
         let theta = py.allow_threads(move || {
             crate::reply_tm::transform_reply_tm(
@@ -727,7 +737,7 @@ impl ReplyTM {
                 &beta,
                 &anchor_rows,
                 kappa,
-                sigma2,
+                &edge_siginv,
                 &root_siginv,
                 blend,
             )
@@ -876,6 +886,7 @@ impl ReplyTM {
                 sigma2: self.sigma2,
                 p0: self.p0,
                 sigma_root: self.sigma_root.clone(),
+                sigma_edge: self.sigma_edge.clone(),
                 bound_history: self.bound_history.clone(),
                 fit_parents: self.fit_parents.clone(),
                 fit_groups: self.fit_groups.clone(),
@@ -911,6 +922,7 @@ impl ReplyTM {
             sigma2: s.sigma2,
             p0: s.p0,
             sigma_root: s.sigma_root,
+            sigma_edge: s.sigma_edge,
             bound_history: s.bound_history,
             fit_parents: s.fit_parents,
             fit_groups: s.fit_groups,
@@ -1105,7 +1117,9 @@ impl ReplyTM {
     /// edges or the field was not fit. Conditional on the topic fit; the point estimate is biased
     /// toward κ→0 (persistence) by topic-model shrinkage and the interval does not correct that.
     /// Computed lazily on access (it is the dominant per-fit cost and usually not needed —
-    /// `persistence()` supersedes it), from the stored fit; expect ~1s per call.
+    /// `persistence()` supersedes it), from the stored fit; expect ~1s per call. The profile uses
+    /// the isotropic scalar (σ², p0) tree-field, an approximation to the full Σ_edge/Σ_root the fit
+    /// actually estimates — the CI reflects the reversion ridge, not the anisotropy of the priors.
     #[getter]
     fn kappa_ci<'py>(&self, py: Python<'py>) -> PyResult<(f64, f64)> {
         self.require_fitted()?;
@@ -1172,8 +1186,9 @@ impl ReplyTM {
         self.blend_beta
     }
 
-    /// Per-edge diffusion variance `σ²` (floored at 0.1; a returned 0.1 may be the floor, not an
-    /// estimate). `NaN` when the reply field was not identified/fit.
+    /// Per-edge (OU step) variance: the mean marginal variance of the fitted full edge covariance
+    /// Σ_edge (a scalar summary; the edge prior is the full Σ_edge, on the same footing as the root
+    /// Σ_root). `NaN` when there are no reply edges / the field was not fit.
     #[getter]
     fn sigma2(&self) -> f64 {
         self.sigma2

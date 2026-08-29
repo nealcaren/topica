@@ -667,15 +667,16 @@ that vector's prior mean comes from. A thread root is drawn around its
 covariate-group baseline with a **full covariance** (the same correlated logistic-normal
 prior CTM/STM fit, so with no reply tree ReplyTM's base matches CTM up to empty-document
 handling, not a weaker isotropic model); a reply is drawn around a blend of its parent
-comment's vector and that same group baseline, with an isotropic per-edge variance. The blend is `(1 - kappa) * parent + kappa *
+comment's vector and that same group baseline, with its own full edge covariance (so a reply
+leaf is on the same covariance footing as a root, and the tree-vs-no_tree comparison reflects
+the reply coupling, not a covariance downgrade). The blend is `(1 - kappa) * parent + kappa *
 baseline`, so `kappa` is a **reversion** knob: `kappa = 0` copies the parent (pure
 persistence along the reply edge), `kappa = 1` ignores the parent and falls back to
-the group baseline (a plain covariate topic model). The reply-edge parameters (persistence
-`kappa`, per-edge variance `sigma2`) are fit by maximum likelihood on a Gaussian
-belief-propagation pass over the tree; `sigma2` is floored at 0.1 to keep the diffusion from
-collapsing, so a reported `sigma2` of exactly 0.1 may be the floor rather than an estimate.
-The root prior is a full covariance fit CTM-style (see above), and `p0` reports its mean
-marginal variance (defined even in the no-tree case, where it is not floored).
+the group baseline (a plain covariate topic model). The persistence `kappa` is fit by maximum
+likelihood on a Gaussian belief-propagation pass over the tree. The root and edge priors are
+both full covariances fit CTM-style (see above); `p0` and `sigma2` report their respective mean
+marginal variances (the root's and the reply edge's), each defined once the corpus has roots or
+edges.
 
 The point of the prior is out-of-sample: a comment's parent tells you something about
 what the comment is about, on top of its own words. ReplyTM ships a committed
