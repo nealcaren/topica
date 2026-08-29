@@ -120,6 +120,7 @@ nav:
       - Guided topics (keyATM): examples/guided.md
       - Sentiment covariate (DMR): examples/dmr-sentiment.md
       - Short text (GSDMM/BTM): examples/short-text.md
+      - Threaded conversations (ThreadTM): examples/threads.md
       - LLM embeddings & labels: examples/llm-topics.md
   - Replications:
       - Overview: replications/index.md
