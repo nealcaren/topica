@@ -72,7 +72,8 @@ pub struct ReplyTmModel {
     /// Blend coupling root weight `β` (`NaN` unless `coupling="blend"`): how much a node's prior mean
     /// tracks its thread root. The anchor gets the remaining `1 - α - β`.
     pub blend_beta: f64,
-    /// Per-edge diffusion variance `σ²`.
+    /// Reported per-edge variance: the mean marginal variance of the fitted full edge covariance
+    /// `sigma_edge` (a scalar summary; the edge prior is the full `sigma_edge`).
     pub sigma2: f64,
     /// Root prior variance (mean marginal variance of `sigma_root`, a scalar summary of the full
     /// root covariance).
@@ -223,6 +224,9 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     let mut bound_history: Vec<f64> = Vec::with_capacity(em_iters);
     let mut converged = false;
     let mut em_iters_run = 0usize;
+    // Whether Σ_edge was ever estimated from at least one token-bearing edge (so the reported sigma2
+    // is a real estimate, not the identity init on a degenerate tree whose non-roots are all empty).
+    let mut edge_cov_fit = false;
     // Whether the tree field (a, σ², p0) was ever actually fit. It is gated behind a warm-up, so a
     // corpus that converges inside the warm-up window would otherwise return the INIT constants
     // (κ=0.3, σ²=1, p0=1) dressed up as estimates. We refuse to break before it has run once, and
@@ -540,6 +544,8 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                 );
                 // clamp a < 1 so the next iteration's logit init stays finite (a=1 → +inf → NaN in
                 // the Nelder-Mead simplex); floor σ²/p0 (a clamp, not an estimate — see kappa_ci).
+                // This scalar isotropic σ² seeds only the tree-field BP that estimates the reversion
+                // `a` (κ); the REPORTED sigma2 is reassigned from mean-diag Σ_edge after the loop.
                 a = fit.a.min(0.999);
                 sigma2 = fit.q.max(0.1);
                 p0 = fit.p0.max(0.1);
@@ -595,6 +601,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                     ss[i * km1 + i] += 1e-6; // PD ridge
                 }
                 sigma_edge = ss;
+                edge_cov_fit = true;
             }
         }
     }
@@ -604,11 +611,15 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     // are still the init constants; report NaN (unidentified) rather than dress them up as fitted.
     if n_edges == 0 || !field_fit_ran {
         a = f64::NAN;
-        sigma2 = f64::NAN;
-    } else {
-        // sigma2 now summarizes the fitted full edge covariance (mean marginal variance).
-        sigma2 = (0..km1).map(|i| sigma_edge[i * km1 + i]).sum::<f64>() / km1 as f64;
     }
+    // sigma2 summarizes the fitted full edge covariance (mean marginal variance) — but only once
+    // Σ_edge was actually estimated from a token-bearing edge; otherwise it is the identity init on a
+    // degenerate tree (all non-roots empty), so report NaN rather than a spurious 1.0.
+    sigma2 = if edge_cov_fit {
+        (0..km1).map(|i| sigma_edge[i * km1 + i]).sum::<f64>() / km1 as f64
+    } else {
+        f64::NAN
+    };
     // p0 now summarizes the fitted full root covariance (mean marginal variance), so it is defined
     // whenever there are token-bearing roots — including the no-tree (CTM-equivalent) case — rather
     // than the old scalar root variance. NaN only if Σ_root was never estimated (no roots).

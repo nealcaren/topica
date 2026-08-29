@@ -330,6 +330,13 @@ def test_save_load_roundtrip(tmp_path):
     assert np.array_equal(m.topic_word, m2.topic_word)
     assert np.array_equal(m.group_prevalence, m2.group_prevalence)
     assert m.kappa == m2.kappa and m.kappa_ci == m2.kappa_ci
+    # the full Σ_edge/Σ_root priors round-trip: their scalar summaries and a tree-aware transform
+    # must be bit-identical after load (a diagonal-only save would silently change predictions).
+    assert m.sigma2 == m2.sigma2 and m.p0 == m2.p0
+    assert np.array_equal(
+        m.transform(docs, parents=parents, covariates=cov),
+        m2.transform(docs, parents=parents, covariates=cov),
+    )
     assert m.group_labels() == m2.group_labels()
     # coherence still works after load (the corpus snapshot round-tripped)
     assert np.allclose(m.coherence(10), m2.coherence(10))

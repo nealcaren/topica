@@ -1117,7 +1117,9 @@ impl ReplyTM {
     /// edges or the field was not fit. Conditional on the topic fit; the point estimate is biased
     /// toward κ→0 (persistence) by topic-model shrinkage and the interval does not correct that.
     /// Computed lazily on access (it is the dominant per-fit cost and usually not needed —
-    /// `persistence()` supersedes it), from the stored fit; expect ~1s per call.
+    /// `persistence()` supersedes it), from the stored fit; expect ~1s per call. The profile uses
+    /// the isotropic scalar (σ², p0) tree-field, an approximation to the full Σ_edge/Σ_root the fit
+    /// actually estimates — the CI reflects the reversion ridge, not the anisotropy of the priors.
     #[getter]
     fn kappa_ci<'py>(&self, py: Python<'py>) -> PyResult<(f64, f64)> {
         self.require_fitted()?;
