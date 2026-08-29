@@ -222,20 +222,20 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     // untouched. `content_beta[cg]` is content level `cg`'s K×V topic-word matrix; the E-step scores
     // each document under its own level's β and the M-step re-fits κ from per-(topic, level) counts.
     let n_content = content.map_or(1, |c| c.num_groups.max(1));
-    // Fixed background m_v = ln(empirical corpus word frequency), as in SAGE/STM.
+    // Fixed background m_v = ln(add-one-smoothed empirical corpus word frequency), matching the CTM
+    // core's content model exactly (freq init 1, total init V): m_v = ln((count_v + 1) / (N + V)).
     let mut m_bg = vec![0.0f64; num_types];
     if content.is_some() {
-        let mut freq = vec![0.0f64; num_types];
-        let mut total = 0.0f64;
+        let mut freq = vec![1.0f64; num_types];
+        let mut total = num_types as f64;
         for (words, counts) in &sparse {
             for (wi, &w) in words.iter().enumerate() {
                 freq[w] += counts[wi];
                 total += counts[wi];
             }
         }
-        let total = total.max(1.0);
         for v in 0..num_types {
-            m_bg[v] = (freq[v].max(1e-12) / total).ln();
+            m_bg[v] = (freq[v] / total).ln();
         }
     }
     // κ deviations: topic (K×V), content-level (G×V), topic×level interaction (K*G×V).

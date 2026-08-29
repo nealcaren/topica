@@ -148,7 +148,7 @@ Not (yet) on the validated roster, on one of two grounds: the model is unpublish
 | `TensorLDA` | text | svd | seed-reproducible | Online Tensor LDA (Kangaslahti et al. 2026): deterministic method-of-moments topic modeling via second and third-order cumulants. |
 | `NarrativeTM` | text | gibbs | seed-reproducible | Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text. |
 | `CSATM` | text, links | gibbs | seed-reproducible | Conversational Structure Aware TM (Sun et al. 2020): weights each comment's tokens by a reply-tree 'popularity' score and, after Gibbs, smooths each comment's topics toward its ancestors along the reply path ('transitivity'). For threaded forum data (posts + nested comments). Ported from the paper (no reference implementation); validated by planted recovery + LDA reduction. |
-| `ReplyTM` | text, links | variational | seed-reproducible | ReplyTM (topica-original): a reply-threaded topic model — CTM logistic-normal topics with a reply-tree structured prior, so a reply's topic prior is coupled to the comment it answers (a persistence-smoothing prior, reverting toward its covariate-group baseline). For threaded discussion (posts + nested comments). Validated by planted recovery and a synthetic held-out-beat gate (the parent's topics predict held-out leaf tokens better than the no-tree baseline on persistence-structured data). The real-corpus benefit is genre-dependent; read kappa_ci before claiming persistence. |
+| `ReplyTM` | text, links | variational | seed-reproducible | ReplyTM (topica-original): a reply-threaded topic model — CTM logistic-normal topics with a reply-tree structured prior, so a reply's topic prior is coupled to the comment it answers (a persistence-smoothing prior, reverting toward its covariate-group baseline). Supports a prevalence covariate and an optional content covariate (topic words shift by depth/level, à la STM's content model). For threaded discussion (posts + nested comments). Validated by planted recovery and a synthetic held-out-beat gate (the parent's topics predict held-out leaf tokens better than the no-tree baseline on persistence-structured data). The real-corpus benefit is genre-dependent; read kappa_ci before claiming persistence. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate. |
 | `IdealPointSentenceTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The sentence-embedding sibling of IdealPointTM, fit by EM. |
 | `EmbeddingLDA` | text, embeddings | gibbs | seed-reproducible | LDA anchored by pre-trained embeddings: k-means clusters the vocabulary embeddings, seeds each topic with the words nearest a cluster centroid, and (optionally) biases each document's mixture toward its own embedding. A topica original; validated by planted-recovery only. |
@@ -821,17 +821,26 @@ m = topica.ReplyTM(num_topics=25, seed=13).fit(docs, parents=parents, content="d
 
 m.content_labels                    # ["root", "shallow", "deep"]
 m.content_top_words(topic=3)        # {"root": [...], "shallow": [...], "deep": [...]}
-m.content_topic_word                # (levels, K, V) per-level topic-word; topic_word is the marginal
-m.content_kappa                     # the fitted deviations (background/topic/content/interaction)
+m.topic_word_by_group               # (K, levels, V) per-level topic-word; topic_word is the marginal
+m.content_kappa                     # the fitted deviations (m/kappa_topic/kappa_cov/kappa_interaction)
 ```
 
 `content_top_words(topic)` is the headline readout: it shows how one topic's language changes
 from the root to deep replies. A deviation near zero means that level does not move the topic's
-words from the marginal, so the channel regularizes toward "no drift" where there is none. The
-tree prevalence prior is unchanged (content and prevalence are orthogonal), so `kappa`,
-`persistence`, and `group_prevalence` read exactly as before. `transform` on a content-fit model
-takes `content=` for the new forest (`"depth"` re-bins it with the fitted edges) and scores each
-new document under its content level's words.
+words from the marginal, so the channel regularizes toward "no drift" where there is none.
+`topic_word_by_group` uses STM's `(K, levels, V)` layout, so the cross-model content diagnostics
+(`topica.content.topic_polarization`, `group_topic_word`, `group_exclusivity`) work on it directly.
+
+Content and prevalence are separate covariates: the content channel adds a log-linear deviation
+on the topic *words*, while the tree prior keeps shaping *prevalence*. The tree-prior estimators
+(`kappa`, `persistence`, `group_prevalence`) are structurally unchanged, but because the E-step
+now scores each document under its content-level words, the inferred η, and hence `kappa` and
+`group_prevalence`, will differ numerically from a no-content fit (`persistence()` is exempt: it
+runs its own uncoupled, content-free refit). `content="depth"` always creates one level per
+`depth_bins` edge, so on a shallow corpus a deep bin can be empty and simply echoes the marginal;
+levels are treated as unordered categories in this version (no adjacent-level smoothing).
+`transform` on a content-fit model takes `content=` for the new forest (`"depth"` re-bins it with
+the fitted edges) and scores each new document under its content level's words.
 
 **Inferring topics for a new thread.** `transform` maps a fresh reply forest to topic
 proportions, holding the fitted topics, reversion, per-edge variance, root covariance, and

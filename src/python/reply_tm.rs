@@ -1368,20 +1368,31 @@ impl ReplyTM {
         topic_words_helper(py, &phi, &self.vocab, self.num_topics, n, topic, weights)
     }
 
-    /// The content-covariate level labels (order matches the first axis of `content_topic_word`);
-    /// empty unless the model was fit with `content=`.
+    /// The content-covariate level labels (order matches the group axis of `topic_word_by_group`);
+    /// empty unless the model was fit with `content=`. Also exposed as `groups` for the shared
+    /// `topica.content` diagnostics.
     #[getter]
     fn content_labels(&self) -> PyResult<Vec<String>> {
         self.require_fitted()?;
         Ok(self.content_names.clone())
     }
 
-    /// G_content × K × V per-content-level topic-word distributions, `None` unless fit with
-    /// `content=`. Level `g`'s row `k` is topic `k`'s word distribution among documents at content
-    /// level `g` (e.g. depth bin), so `content_topic_word[deep] - content_topic_word[root]` shows how
-    /// a topic's vocabulary shifts downstream. The plain `topic_word` is their level-averaged marginal.
+    /// Alias of `content_labels` under the name the cross-model `topica.content` helpers key on.
     #[getter]
-    fn content_topic_word<'py>(
+    fn groups(&self) -> PyResult<Vec<String>> {
+        self.require_fitted()?;
+        Ok(self.content_names.clone())
+    }
+
+    /// K × G_content × V per-content-level topic-word distributions, `None` unless fit with
+    /// `content=`. `topic_word_by_group[k, g]` is topic `k`'s word distribution among documents at
+    /// content level `g` (e.g. depth bin), so `topic_word_by_group[:, deep] - topic_word_by_group[:,
+    /// root]` shows how each topic's vocabulary shifts downstream. Same `(K, G, V)` layout STM's
+    /// `topic_word_by_group` uses, so the `topica.content` diagnostics (`group_topic_word`,
+    /// `topic_polarization`, `group_exclusivity`) work on it. The plain `topic_word` is the
+    /// level-averaged marginal.
+    #[getter]
+    fn topic_word_by_group<'py>(
         &self,
         py: Python<'py>,
     ) -> PyResult<Option<Bound<'py, PyArray3<f64>>>> {
@@ -1392,44 +1403,67 @@ impl ReplyTM {
         let g = self.content_beta.len();
         let k = self.num_topics;
         let v = self.vocab.len();
-        let mut out = numpy::ndarray::Array3::<f64>::zeros((g, k, v));
+        let mut out = numpy::ndarray::Array3::<f64>::zeros((k, g, v));
+        // content_beta is stored (G, K, V); expose the codebase-canonical (K, G, V).
         for (gi, level) in self.content_beta.iter().enumerate() {
             for (ti, row) in level.iter().enumerate() {
                 for (wi, &p) in row.iter().enumerate() {
-                    out[[gi, ti, wi]] = p;
+                    out[[ti, gi, wi]] = p;
                 }
             }
         }
         Ok(Some(out.to_pyarray_bound(py)))
     }
 
+    /// The level-averaged marginal topic-word matrix (K × V), i.e. `topic_word`; exposed under the
+    /// name the `topica.content` `group_exclusivity` helper reads. `None` without a content covariate.
+    #[getter]
+    fn topic_word_marginal<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Option<Bound<'py, PyArray2<f64>>>> {
+        self.require_fitted()?;
+        if self.content_beta.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(vecs_to_arr2(&self.beta).to_pyarray_bound(py)))
+    }
+
     /// The fitted SAGE content deviations `κ` as a dict of numpy arrays (`None` unless fit with
-    /// `content=`): `"background"` (V, the log word-frequency `m`), `"topic"` (K×V), `"content"`
-    /// (G×V, the per-level deviation), and `"interaction"` (K*G×V, indexed `topic*G + level`). A
-    /// deviation near zero means that level does not shift the topic's words from the marginal.
+    /// `content=`), matching STM's `content_kappa`: `"m"` (V, the log word-frequency background),
+    /// `"kappa_topic"` (K×V), `"kappa_cov"` (G×V, the per-level deviation), and `"kappa_interaction"`
+    /// (K×G×V, the topic×level deviation). A deviation near zero means that level does not shift the
+    /// topic's words from the marginal.
     #[getter]
     fn content_kappa<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
         self.require_fitted()?;
         if self.content_kappa_topic.is_empty() {
             return Ok(None);
         }
+        let k = self.num_topics;
+        let g = self.num_content_groups;
+        let v = self.vocab.len();
+        // Reshape the flat (K*G, V) interaction (indexed topic*G + level) to STM's (K, G, V).
+        let mut inter = numpy::ndarray::Array3::<f64>::zeros((k, g, v));
+        for t in 0..k {
+            for gi in 0..g {
+                let row = &self.content_kappa_interaction[t * g + gi];
+                for (wi, &x) in row.iter().enumerate() {
+                    inter[[t, gi, wi]] = x;
+                }
+            }
+        }
         let d = PyDict::new_bound(py);
+        d.set_item("m", PyArray1::from_slice_bound(py, &self.content_kappa_m))?;
         d.set_item(
-            "background",
-            PyArray1::from_slice_bound(py, &self.content_kappa_m),
-        )?;
-        d.set_item(
-            "topic",
+            "kappa_topic",
             vecs_to_arr2(&self.content_kappa_topic).to_pyarray_bound(py),
         )?;
         d.set_item(
-            "content",
+            "kappa_cov",
             vecs_to_arr2(&self.content_kappa_cov).to_pyarray_bound(py),
         )?;
-        d.set_item(
-            "interaction",
-            vecs_to_arr2(&self.content_kappa_interaction).to_pyarray_bound(py),
-        )?;
+        d.set_item("kappa_interaction", inter.to_pyarray_bound(py))?;
         Ok(Some(d))
     }
 

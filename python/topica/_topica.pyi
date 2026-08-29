@@ -3207,20 +3207,30 @@ class ReplyTM:
         ...
     @property
     def content_labels(self) -> list[str]:
-        """The content-covariate level labels (order matches ``content_topic_word``'s first axis);
-        empty unless fit with ``content=`` (#841)."""
+        """The content-covariate level labels (order matches ``topic_word_by_group``'s group axis);
+        empty unless fit with ``content=``. Also exposed as ``groups`` (#841)."""
         ...
     @property
-    def content_topic_word(self) -> numpy.typing.NDArray[numpy.float64] | None:
-        """G_content×K×V per-level topic-word distributions (``None`` without a content covariate);
-        ``content_topic_word[deep] - content_topic_word[root]`` shows how a topic's words shift
-        downstream. ``topic_word`` is their level-averaged marginal (#841)."""
+    def groups(self) -> list[str]:
+        """Alias of ``content_labels`` under the name the ``topica.content`` diagnostics read (#841)."""
+        ...
+    @property
+    def topic_word_by_group(self) -> numpy.typing.NDArray[numpy.float64] | None:
+        """K×G_content×V per-level topic-word distributions (``None`` without a content covariate),
+        the same ``(K, G, V)`` layout STM uses, so the ``topica.content`` helpers work on it.
+        ``topic_word_by_group[:, deep] - topic_word_by_group[:, root]`` shows how each topic's words
+        shift downstream; ``topic_word`` is the level-averaged marginal (#841)."""
+        ...
+    @property
+    def topic_word_marginal(self) -> numpy.typing.NDArray[numpy.float64] | None:
+        """The level-averaged marginal topic-word matrix (K×V, i.e. ``topic_word``), under the name the
+        ``topica.content`` ``group_exclusivity`` helper reads. ``None`` without a content covariate."""
         ...
     @property
     def content_kappa(self) -> dict | None:
         """The fitted SAGE content deviations κ as a dict of numpy arrays (``None`` without a content
-        covariate): ``background`` (V), ``topic`` (K×V), ``content`` (G×V), ``interaction`` (K*G×V,
-        indexed ``topic*G + level``). Near-zero means that level does not shift the topic (#841)."""
+        covariate), matching STM's ``content_kappa``: ``m`` (V), ``kappa_topic`` (K×V), ``kappa_cov``
+        (G×V), ``kappa_interaction`` (K×G×V). Near-zero means that level does not shift the topic (#841)."""
         ...
     def content_top_words(self, topic: int, n: int = 10) -> dict:
         """Top-``n`` words per content level for one ``topic``: ``{level_label: [word, ...]}`` — the

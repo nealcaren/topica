@@ -57,7 +57,7 @@ def test_content_depth_recovers_planted_shift():
 
     # a no-content fit cannot separate the two vocabularies for the same topic
     mnc = topica.ReplyTM(2, em_iters=80, seed=13).fit(docs, parents=parents)
-    assert mnc.content_topic_word is None and mnc.content_kappa is None
+    assert mnc.topic_word_by_group is None and mnc.content_kappa is None
     tw = np.asarray(mnc.topic_word)
     an = max(range(2), key=lambda t: overlap(
         [mnc.vocabulary[i] for i in tw[t].argsort()[::-1][:10]], AR + AD))
@@ -67,18 +67,24 @@ def test_content_depth_recovers_planted_shift():
 
 
 def test_content_readouts_and_labels():
-    """#841: content readouts have the right shapes and are None without a content covariate."""
+    """#841: content readouts have the right shapes (STM-compatible), plug into topica.content, and
+    are None without a content covariate."""
     docs, parents, *_ = _content_shift_corpus(n_threads=40)
     m = topica.ReplyTM(2, em_iters=40, seed=13).fit(docs, parents=parents, content="depth")
-    G, K, V = 3, 2, len(m.vocabulary)
-    ctw = np.asarray(m.content_topic_word)
-    assert ctw.shape == (G, K, V)
-    assert np.allclose(ctw.sum(axis=2), 1.0)  # each level's topic rows are distributions
+    K, G, V = 2, 3, len(m.vocabulary)
+    twbg = np.asarray(m.topic_word_by_group)  # (K, G, V), STM's layout
+    assert twbg.shape == (K, G, V)
+    assert np.allclose(twbg.sum(axis=2), 1.0)  # each (topic, level) row is a distribution
+    assert m.groups == m.content_labels == ["root", "shallow", "deep"]
+    assert np.asarray(m.topic_word_marginal).shape == (K, V)
     ck = m.content_kappa
-    assert set(ck) == {"background", "topic", "content", "interaction"}
-    assert np.asarray(ck["interaction"]).shape == (K * G, V)
+    assert set(ck) == {"m", "kappa_topic", "kappa_cov", "kappa_interaction"}  # STM keys
+    assert np.asarray(ck["kappa_interaction"]).shape == (K, G, V)
     tw = m.content_top_words(0, n=5)
     assert set(tw) == {"root", "shallow", "deep"} and len(tw["root"]) == 5
+    # the shared cross-model content diagnostics work on the ReplyTM content channel
+    pol = topica.content.topic_polarization(m)
+    assert pol.shape == (K,) and np.all(pol >= 0)
 
 
 def test_content_arbitrary_labels_and_transform():
@@ -115,7 +121,7 @@ def test_content_save_load_and_prior(tmp_path):
     m.save(p)
     m2 = topica.ReplyTM.load(p)
     assert m2.content_labels == m.content_labels
-    assert np.allclose(np.asarray(m.content_topic_word), np.asarray(m2.content_topic_word))
+    assert np.allclose(np.asarray(m.topic_word_by_group), np.asarray(m2.topic_word_by_group))
     assert np.allclose(
         m.transform(docs[:5], parents=parents[:5], content="depth"),
         m2.transform(docs[:5], parents=parents[:5], content="depth"),
