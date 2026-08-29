@@ -39,6 +39,21 @@ One gotcha when you compare them side by side: `inverted_rbo` defaults to
 default to `topn=25`. On a small vocabulary the wider window forces overlap and
 reads as a misleadingly low diversity, so set `topn` explicitly when comparing.
 
+A second gotcha bites shrinkage models (STM, CTM, ThreadTM) specifically. Ranking
+each topic's top words by raw probability floats the corpus's shared high-frequency
+words into every topic's list, so `topic_diversity` and `exclusivity` penalize the
+model for a measurement artifact rather than a topic-quality defect. Pass
+`rank="frex"` to rank by FREX (frequency-exclusivity, STM's own word ranking)
+instead, which measures diversity over each topic's *distinctive* vocabulary:
+
+```python
+topica.evaluate.topic_diversity(model, topn=25, rank="frex")   # over distinctive words
+topica.evaluate.exclusivity(model, n=10, rank="frex")          # sum each topic's top FREX words
+```
+
+Both readings use the identical FREX scores, so `rank="prob"` (the default,
+STM-faithful) and `rank="frex"` are on the same scale and directly comparable.
+
 `embedding_coherence` scores a topic by how close its top words sit in a
 word-embedding space — the intrinsic middle ground between corpus-based
 `coherence` and LLM-based `topica.llm.coherence`. Bring your own embedding (it is
