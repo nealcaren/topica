@@ -630,6 +630,15 @@ class CTM:
         ...
     @property
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    def posterior_doc_topic(
+        self, *, n_samples: int = 400, seed: int = 13
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Posterior-predictive ``E[softmax(η)]`` per document (D×K): a Monte-Carlo average over the
+        full logistic-normal variational posterior, symmetric with ``ReplyTM.posterior_doc_topic``.
+        Unlike the plug-in ``doc_topic`` it integrates the posterior covariance ν (needs
+        ``keep_eta_cov=True``); the hedged θ to score held-out tokens with (#840). Deterministic
+        given ``seed``."""
+        ...
     @property
     def topic_correlation(self) -> numpy.typing.NDArray[numpy.float64]:
         """Topic-correlation matrix (num_topics, num_topics) from theta across docs."""
@@ -816,6 +825,15 @@ class STM:
         ...
     @property
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    def posterior_doc_topic(
+        self, *, n_samples: int = 400, seed: int = 13
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Posterior-predictive ``E[softmax(η)]`` per document (D×K): a Monte-Carlo average over the
+        full logistic-normal variational posterior, symmetric with ``ReplyTM.posterior_doc_topic``.
+        Unlike the plug-in ``doc_topic`` it integrates the posterior covariance ν (needs
+        ``keep_eta_cov=True``); the hedged θ to score held-out tokens with (#840). Deterministic
+        given ``seed``."""
+        ...
     @property
     def topic_correlation(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
@@ -3081,6 +3099,7 @@ class ReplyTM:
         content_names: Sequence[str] | None = None,
         content_prior: str = "l2",
         content_prior_var: float = 0.5,
+        content_smooth: float = 0.0,
         depth_bins: Sequence[int] | None = None,
     ) -> "ReplyTM":
         """`data` is a ``topica.Corpus`` or a list of token lists. `parents[d]` is document
@@ -3169,14 +3188,13 @@ class ReplyTM:
         """Cluster-robust (on the thread) method-of-composition SE of the group prevalence anchor
         (η space); NaN for a group with fewer than two threads."""
         ...
-    def group_prevalence_ci(
+    def _group_prevalence_ci_mc(
         self, *, ci: float = 0.95, n_samples: int = 2000, seed: int = 13
     ) -> numpy.typing.NDArray[numpy.float64]:
-        """G×K×2 probability-scale credible interval ``[lower, upper]`` aligned cell-for-cell with
-        ``group_prevalence`` (pair with ``group_labels()`` for row names). Monte-Carlo: per group,
-        draw η from ``N(anchor, diag(prevalence_se²))``, softmax each draw, take the ``ci``
-        percentiles per topic (``ci`` is the coverage, matching ``time_prevalence_ci``). Uses only
-        the diagonal η SE; a group with fewer than two threads yields NaN bounds (#830)."""
+        """Monte-Carlo primitive backing :func:`topica.inspect.group_prevalence_ci`: a ``(G, K, 4)``
+        array whose last axis is ``[mean, ci_low, ci_high, sd]`` on the probability scale. Prefer the
+        public ``topica.inspect.group_prevalence_ci(model)`` wrapper, which attaches labels and a
+        ``to_frame()`` (#843)."""
         ...
     def group_labels(self) -> list[str]: ...
     @property
@@ -3231,6 +3249,14 @@ class ReplyTM:
         """The fitted SAGE content deviations κ as a dict of numpy arrays (``None`` without a content
         covariate), matching STM's ``content_kappa``: ``m`` (V), ``kappa_topic`` (K×V), ``kappa_cov``
         (G×V), ``kappa_interaction`` (K×G×V). Near-zero means that level does not shift the topic (#841)."""
+        ...
+    def content_word_contrast(
+        self, topic: int, level_a, level_b, n: int = 10
+    ) -> list[tuple[str, float]]:
+        """Top-``n`` ``(word, log_ratio)`` pairs separating one ``topic``'s language between two
+        content levels, by descending ``ln(beta[level_a] / beta[level_b])`` (STM's ``word_contrast``
+        on content levels). ``level_a``/``level_b`` are level indices or labels; the natural threaded
+        readout is ``content_word_contrast(k, "deep", "root")``. Requires a content fit (#841)."""
         ...
     def content_top_words(self, topic: int, n: int = 10) -> dict:
         """Top-``n`` words per content level for one ``topic``: ``{level_label: [word, ...]}`` — the

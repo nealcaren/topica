@@ -7350,6 +7350,67 @@ fn infer_theta_batch_per_doc(
     out
 }
 
+/// Posterior-predictive `E[softmax([η, 0])]` per document (D × K), a Monte-Carlo average over the
+/// full logistic-normal variational posterior `N(eta_mean_d, eta_cov_d)` — the hedged, sample-
+/// averaged θ that a proper held-out predictive should use, rather than the plug-in `softmax(mean η)`
+/// (issue #840, symmetric with `ReplyTM.posterior_doc_topic`, which uses a diagonal ν; STM/CTM retain
+/// the full ν here). Deterministic given `seed`.
+fn posterior_doc_topic_mc(
+    eta_mean: &Array2<f64>,
+    eta_cov: &Array3<f32>,
+    num_topics: usize,
+    n_samples: usize,
+    seed: u64,
+) -> Array2<f64> {
+    let d = eta_mean.nrows();
+    let km1 = eta_mean.ncols();
+    let k = num_topics;
+    let mut out = Array2::<f64>::zeros((d, k));
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let gauss = |rng: &mut ChaCha8Rng| -> f64 {
+        let u1: f64 = rng.gen::<f64>().max(1e-12);
+        let u2: f64 = rng.gen::<f64>();
+        (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+    };
+    let inv_s = 1.0 / n_samples as f64;
+    for di in 0..d {
+        // Cholesky (jittered for PD safety) of the document's full variational covariance.
+        let mut cov = vec![0.0f64; km1 * km1];
+        for i in 0..km1 {
+            for j in 0..km1 {
+                cov[i * km1 + j] = eta_cov[[di, i, j]] as f64;
+            }
+        }
+        let l = crate::linalg::cholesky_jitter(&cov, km1); // lower-triangular, row-major
+        let mean = eta_mean.row(di);
+        for _ in 0..n_samples {
+            let z: Vec<f64> = (0..km1).map(|_| gauss(&mut rng)).collect();
+            // η = mean + L z, then softmax([η, 0]) with reference topic K-1 held at 0.
+            let mut logits = vec![0.0f64; k];
+            let mut mx = 0.0f64;
+            for i in 0..km1 {
+                let mut e = mean[i];
+                for j in 0..=i {
+                    e += l[i * km1 + j] * z[j];
+                }
+                logits[i] = e;
+                if e > mx {
+                    mx = e;
+                }
+            }
+            let mut zsum = 0.0f64;
+            for lg in logits.iter_mut() {
+                *lg = (*lg - mx).exp();
+                zsum += *lg;
+            }
+            for i in 0..k {
+                out[[di, i]] += logits[i] / zsum * inv_s;
+            }
+        }
+    }
+    out
+}
+
 /// Correlated Topic Model (Blei & Lafferty; the STM core). Topics are drawn
 /// from a logistic-normal prior with a full covariance, so they can correlate —
 /// unlike LDA's Dirichlet. Fit by variational EM (STM's Laplace E-step).
@@ -7825,6 +7886,36 @@ impl CTM {
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         Ok(self.theta.as_ref().unwrap().to_pyarray_bound(py))
+    }
+
+    /// Posterior-predictive `E[softmax(η)]` per document (D × K): a Monte-Carlo average of `n_samples`
+    /// draws over the full logistic-normal variational posterior, symmetric with
+    /// `ReplyTM.posterior_doc_topic`. Unlike the plug-in `doc_topic` (= `softmax(mean η)`) it integrates
+    /// the posterior covariance ν, so it hedges rather than overcommitting — the θ to score held-out
+    /// tokens with when comparing to a sample-averaged model like LDA (#840). Needs the variational
+    /// covariance; refit with `keep_eta_cov=True` if it was dropped. Deterministic given `seed`.
+    #[pyo3(signature = (*, n_samples=400, seed=13))]
+    fn posterior_doc_topic<'py>(
+        &self,
+        py: Python<'py>,
+        n_samples: usize,
+        seed: u64,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        if n_samples == 0 {
+            return Err(PyValueError::new_err("n_samples must be >= 1"));
+        }
+        let mean = self
+            .eta_mean
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("no variational eta_mean retained; refit"))?;
+        let cov = self.eta_cov.as_ref().ok_or_else(|| {
+            PyValueError::new_err(
+                "posterior_doc_topic needs the variational covariance ν; refit with keep_eta_cov=True",
+            )
+        })?;
+        let arr = posterior_doc_topic_mc(mean, cov, self.num_topics, n_samples, seed);
+        Ok(arr.to_pyarray_bound(py))
     }
 
     /// Topic-correlation matrix from the logistic-normal Σ, shape
@@ -8958,6 +9049,36 @@ impl STM {
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         Ok(self.theta.as_ref().unwrap().to_pyarray_bound(py))
+    }
+
+    /// Posterior-predictive `E[softmax(η)]` per document (D × K): a Monte-Carlo average of `n_samples`
+    /// draws over the full logistic-normal variational posterior, symmetric with
+    /// `ReplyTM.posterior_doc_topic`. Unlike the plug-in `doc_topic` (= `softmax(mean η)`) it integrates
+    /// the posterior covariance ν, so it hedges rather than overcommitting — the θ to score held-out
+    /// tokens with when comparing to a sample-averaged model like LDA (#840). Needs the variational
+    /// covariance; refit with `keep_eta_cov=True` if it was dropped. Deterministic given `seed`.
+    #[pyo3(signature = (*, n_samples=400, seed=13))]
+    fn posterior_doc_topic<'py>(
+        &self,
+        py: Python<'py>,
+        n_samples: usize,
+        seed: u64,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        self.require_fitted()?;
+        if n_samples == 0 {
+            return Err(PyValueError::new_err("n_samples must be >= 1"));
+        }
+        let mean = self
+            .eta_mean
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("no variational eta_mean retained; refit"))?;
+        let cov = self.eta_cov.as_ref().ok_or_else(|| {
+            PyValueError::new_err(
+                "posterior_doc_topic needs the variational covariance ν; refit with keep_eta_cov=True",
+            )
+        })?;
+        let arr = posterior_doc_topic_mc(mean, cov, self.num_topics, n_samples, seed);
+        Ok(arr.to_pyarray_bound(py))
     }
 
     /// Topic-correlation matrix, shape ``(num_topics, num_topics)``.

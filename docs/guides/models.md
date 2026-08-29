@@ -761,7 +761,7 @@ m = topica.ReplyTM(num_topics=25, seed=13)
 m.fit(docs, parents=parents, covariates=group)   # e.g. covariates=["cmv", "hn", "cmv", ...]
 
 m.group_prevalence        # (G, K) per-group baseline topic mix (probability scale)
-m.group_prevalence_ci()   # (G, K, 2) probability-scale CI aligned with group_prevalence
+topica.inspect.group_prevalence_ci(m)   # tidy prob-scale CI (labels + mean/ci_low/ci_high/sd)
 m.converged               # did EM converge before the em_iters cap? (else raise it)
 topica.inspect.topic_table(m)
 ```
@@ -900,10 +900,11 @@ which you should read as strong persistence, not a tight interval.
 
 ReplyTM's covariate story lives entirely in `group_prevalence` / `prevalence_se`; it is
 **not** wired into the `topica.effects` namespace, so reach for those two readouts
-rather than `effects.estimate_effect`. For a publication table, `m.group_prevalence_ci()`
-returns a probability-scale credible interval aligned cell-for-cell with
-`group_prevalence` (a Monte-Carlo transform of the η-space `prevalence_se`), so you get
-`prevalence ± CI` in one call without the η conversion by hand.
+rather than `effects.estimate_effect`. For a publication table,
+`topica.inspect.group_prevalence_ci(m)` returns a probability-scale credible interval (a
+Monte-Carlo transform of the η-space `prevalence_se`) as a tidy result carrying the group
+labels and `mean`/`ci_low`/`ci_high`/`sd`; call `.to_frame()` for one row per (group, topic),
+so you get `prevalence ± CI` without the η conversion by hand.
 
 ReplyTM is **experimental**, and the honest empirical picture is why. The core is
 validated by planted recovery, a degenerate-case reduction (a flat tree collapses it
