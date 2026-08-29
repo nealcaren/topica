@@ -7888,12 +7888,12 @@ impl CTM {
         Ok(self.theta.as_ref().unwrap().to_pyarray_bound(py))
     }
 
-    /// Posterior-predictive `E[softmax(η)]` per document (D × K): a Monte-Carlo average over the full
-    /// logistic-normal variational posterior, symmetric with `ReplyTM.posterior_doc_topic`. Unlike the
-    /// plug-in `doc_topic` (= `softmax(mean η)`) it integrates the posterior covariance ν, so it hedges
-    /// rather than overcommitting — the θ to score held-out tokens with when comparing to a sample-
-    /// averaged model like LDA (#840). Needs the variational covariance; refit with `keep_eta_cov=True`
-    /// if it was dropped. Deterministic given `seed`.
+    /// Posterior-predictive `E[softmax(η)]` per document (D × K): a Monte-Carlo average of `n_samples`
+    /// draws over the full logistic-normal variational posterior, symmetric with
+    /// `ReplyTM.posterior_doc_topic`. Unlike the plug-in `doc_topic` (= `softmax(mean η)`) it integrates
+    /// the posterior covariance ν, so it hedges rather than overcommitting — the θ to score held-out
+    /// tokens with when comparing to a sample-averaged model like LDA (#840). Needs the variational
+    /// covariance; refit with `keep_eta_cov=True` if it was dropped. Deterministic given `seed`.
     #[pyo3(signature = (*, n_samples=400, seed=13))]
     fn posterior_doc_topic<'py>(
         &self,
@@ -9051,12 +9051,12 @@ impl STM {
         Ok(self.theta.as_ref().unwrap().to_pyarray_bound(py))
     }
 
-    /// Posterior-predictive `E[softmax(η)]` per document (D × K): a Monte-Carlo average over the full
-    /// logistic-normal variational posterior, symmetric with `ReplyTM.posterior_doc_topic`. Unlike the
-    /// plug-in `doc_topic` (= `softmax(mean η)`) it integrates the posterior covariance ν, so it hedges
-    /// rather than overcommitting — the θ to score held-out tokens with when comparing to a sample-
-    /// averaged model like LDA (#840). Needs the variational covariance; refit with `keep_eta_cov=True`
-    /// if it was dropped. Deterministic given `seed`.
+    /// Posterior-predictive `E[softmax(η)]` per document (D × K): a Monte-Carlo average of `n_samples`
+    /// draws over the full logistic-normal variational posterior, symmetric with
+    /// `ReplyTM.posterior_doc_topic`. Unlike the plug-in `doc_topic` (= `softmax(mean η)`) it integrates
+    /// the posterior covariance ν, so it hedges rather than overcommitting — the θ to score held-out
+    /// tokens with when comparing to a sample-averaged model like LDA (#840). Needs the variational
+    /// covariance; refit with `keep_eta_cov=True` if it was dropped. Deterministic given `seed`.
     #[pyo3(signature = (*, n_samples=400, seed=13))]
     fn posterior_doc_topic<'py>(
         &self,
