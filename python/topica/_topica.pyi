@@ -634,7 +634,7 @@ class CTM:
         self, *, n_samples: int = 400, seed: int = 13
     ) -> numpy.typing.NDArray[numpy.float64]:
         """Posterior-predictive ``E[softmax(η)]`` per document (D×K): a Monte-Carlo average over the
-        full logistic-normal variational posterior, symmetric with ``ReplyTM.posterior_doc_topic``.
+        full logistic-normal variational posterior, symmetric with ``ThreadTM.posterior_doc_topic``.
         Unlike the plug-in ``doc_topic`` it integrates the posterior covariance ν (needs
         ``keep_eta_cov=True``); the hedged θ to score held-out tokens with (#840). Deterministic
         given ``seed``."""
@@ -829,7 +829,7 @@ class STM:
         self, *, n_samples: int = 400, seed: int = 13
     ) -> numpy.typing.NDArray[numpy.float64]:
         """Posterior-predictive ``E[softmax(η)]`` per document (D×K): a Monte-Carlo average over the
-        full logistic-normal variational posterior, symmetric with ``ReplyTM.posterior_doc_topic``.
+        full logistic-normal variational posterior, symmetric with ``ThreadTM.posterior_doc_topic``.
         Unlike the plug-in ``doc_topic`` it integrates the posterior covariance ν (needs
         ``keep_eta_cov=True``); the hedged θ to score held-out tokens with (#840). Deterministic
         given ``seed``."""
@@ -3069,8 +3069,8 @@ class CSATM:
     def __repr__(self) -> str: ...
 
 
-class ReplyTM:
-    """ReplyTM: a reply-threaded topic model. CTM/STM logistic-normal topics with a reply-tree
+class ThreadTM:
+    """ThreadTM: a reply-threaded topic model. CTM/STM logistic-normal topics with a reply-tree
     structured prior — a reply's topic prior is coupled to the comment it answers (a
     persistence-smoothing prior), reverting toward its covariate-group baseline. `kappa` measures
     the reversion (on real corpora it is typically ~0, persistence-dominated). Reduces to a plain
@@ -3101,7 +3101,7 @@ class ReplyTM:
         content_prior_var: float = 0.5,
         content_smooth: float = 0.0,
         depth_bins: Sequence[int] | None = None,
-    ) -> "ReplyTM":
+    ) -> "ThreadTM":
         """`data` is a ``topica.Corpus`` or a list of token lists. `parents[d]` is document
         ``d``'s parent index in the reply tree (``-1`` for a thread root), in the SAME order as
         the documents. `covariates[d]` is an optional categorical group id in a DENSE range
@@ -3285,10 +3285,10 @@ class ReplyTM:
         unidentifiable."""
         ...
     def save(self, path: str) -> None:
-        """Save the fitted model to ``path``. Reload with ``ReplyTM.load``."""
+        """Save the fitted model to ``path``. Reload with ``ThreadTM.load``."""
         ...
     @classmethod
-    def load(cls, path: str) -> "ReplyTM":
+    def load(cls, path: str) -> "ThreadTM":
         """Load a model saved with ``save``."""
         ...
     @property

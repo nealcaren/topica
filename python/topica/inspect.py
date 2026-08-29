@@ -41,7 +41,7 @@ __all__ = [
 
 
 def group_prevalence_ci(model, *, ci=0.95, n_samples=2000, seed=13):
-    """Probability-scale credible intervals for a :class:`~topica.ReplyTM`'s per-group topic
+    """Probability-scale credible intervals for a :class:`~topica.ThreadTM`'s per-group topic
     prevalence, as a tidy :class:`~topica._results.GroupPrevalenceCI`.
 
     ``group_prevalence`` is a softmax and ``prevalence_se`` is a standard error in the η (logit)

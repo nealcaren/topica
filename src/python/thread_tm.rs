@@ -1,5 +1,5 @@
-//! Python binding for ReplyTM — a reply-threaded topic model (CTM/STM logistic-normal topics
-//! with a reply-tree structured prior; see `crate::reply_tm`). Experimental tier: topica-original,
+//! Python binding for ThreadTM — a reply-threaded topic model (CTM/STM logistic-normal topics
+//! with a reply-tree structured prior; see `crate::thread_tm`). Experimental tier: topica-original,
 //! no published reference yet, so `fit` is gated behind `topica.enable_experimental()`.
 //!
 //! The class exposes the validated core — fit on a `Corpus` or token lists + a reply tree + an
@@ -8,7 +8,7 @@
 //! read from `persistence()` — an identifiable reduced-form estimate (observed slope + reliability
 //! gate + attenuation-corrected structural κ) — rather than the ML `kappa` getter, which collapses
 //! to the σ² floor on real corpora. The covariate story lives entirely in
-//! `group_prevalence`/`prevalence_se`; ReplyTM is outside the `effects` namespace. `transform`
+//! `group_prevalence`/`prevalence_se`; ThreadTM is outside the `effects` namespace. `transform`
 //! infers proportions for new reply forests (a single topological pass, topics/field/anchors held
 //! fixed); formula covariates remain a follow-up.
 
@@ -20,7 +20,7 @@ use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
 
-/// ReplyTM: a reply-threaded topic model. A reply's topic prior is coupled to the comment it
+/// ThreadTM: a reply-threaded topic model. A reply's topic prior is coupled to the comment it
 /// answers (a persistence-smoothing prior along reply edges), reverting toward its covariate-group
 /// baseline; `kappa` measures the reversion (on real corpora it is typically ~0, i.e. persistence-
 /// dominated). Reduces to a plain logistic-normal topic model when the reply tree is flat.
@@ -30,7 +30,7 @@ use std::collections::HashMap;
 /// root prior), or `"blend"` (shrink toward both, `α·parent + β·root + (1-α-β)·anchor`, with the
 /// weights estimated or pinned via `blend_alpha`/`blend_beta`).
 #[pyclass(module = "topica")]
-pub struct ReplyTM {
+pub struct ThreadTM {
     num_topics: usize,
     em_iters: usize,
     seed: u64,
@@ -94,16 +94,16 @@ pub struct ReplyTM {
     corpus: Option<corpus::Corpus>,
 }
 
-/// Serialisable snapshot of a fitted ReplyTM (see `save`/`load`).
+/// Serialisable snapshot of a fitted ThreadTM (see `save`/`load`).
 #[derive(serde::Serialize, serde::Deserialize)]
-struct ReplyTmState {
+struct ThreadTmState {
     num_topics: usize,
     em_iters: usize,
     seed: u64,
     // Defaults a missing `coupling` to the original parent coupling. NOTE this is inert for the
-    // current positional-bincode save format (a genuinely older ReplyTM save, which predates this
+    // current positional-bincode save format (a genuinely older ThreadTM save, which predates this
     // field, cannot round-trip and will fail to load) — it only migrates a self-describing format.
-    // Acceptable under the pre-v1.0 save-compat policy: ReplyTM is new and experimental. Kept for
+    // Acceptable under the pre-v1.0 save-compat policy: ThreadTM is new and experimental. Kept for
     // consistency with the other states (see mod.rs / neural.rs).
     #[serde(default = "default_coupling")]
     coupling: String,
@@ -355,7 +355,7 @@ fn depth_content_groups(parents: &[i64], edges: &[usize]) -> (Vec<usize>, usize,
     (groups, n_levels, names)
 }
 
-impl ReplyTM {
+impl ThreadTM {
     fn require_fitted(&self) -> PyResult<()> {
         if self.fitted {
             Ok(())
@@ -393,7 +393,7 @@ impl ReplyTM {
 }
 
 #[pymethods]
-impl ReplyTM {
+impl ThreadTM {
     #[new]
     #[pyo3(signature = (num_topics, *, em_iters=150, seed=13, coupling="parent".to_string(), blend_alpha=None, blend_beta=None))]
     fn new(
@@ -437,7 +437,7 @@ impl ReplyTM {
                 ));
             }
         }
-        Ok(ReplyTM {
+        Ok(ThreadTM {
             num_topics,
             em_iters,
             seed,
@@ -477,7 +477,7 @@ impl ReplyTM {
         })
     }
 
-    /// Fit ReplyTM. `data` is either a `topica.Corpus` or a list of token lists (already
+    /// Fit ThreadTM. `data` is either a `topica.Corpus` or a list of token lists (already
     /// tokenized). `parents[d]` is `d`'s parent **document index** in the reply tree (`-1` for a
     /// thread root); build it in the SAME order as the documents. `covariates` is an optional
     /// per-document categorical group id in a DENSE range `0..num_groups` (the reversion anchor
@@ -505,7 +505,7 @@ impl ReplyTM {
         content_smooth: f64,
         depth_bins: Option<Vec<usize>>,
     ) -> PyResult<Py<Self>> {
-        require_experimental("ReplyTM")?;
+        require_experimental("ThreadTM")?;
         // Accept either a topica.Corpus (materialise its token strings) or raw token lists, so the
         // reply tree can be built in the same document order the corpus was ingested in.
         let docs: Vec<Vec<String>> = if let Ok(c) = data.extract::<Corpus>() {
@@ -590,7 +590,7 @@ impl ReplyTM {
                 PyErr::warn_bound(
                     py,
                     &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
-                    "ReplyTM.fit called with parents=None: no reply tree, so the model reduces to \
+                    "ThreadTM.fit called with parents=None: no reply tree, so the model reduces to \
                      a plain logistic-normal topic model and kappa/sigma2 are undefined (NaN). \
                      Pass parents to use the reply structure.",
                     1,
@@ -731,7 +731,7 @@ impl ReplyTM {
                     1,
                 )?;
             }
-            Some(crate::reply_tm::BlendConfig {
+            Some(crate::thread_tm::BlendConfig {
                 root: roots,
                 fixed_alpha: slf.blend_alpha_fixed,
                 fixed_beta: slf.blend_beta_fixed,
@@ -833,14 +833,14 @@ impl ReplyTM {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let content_cfg = content_groups
                 .as_ref()
-                .map(|g| crate::reply_tm::ContentConfig {
+                .map(|g| crate::thread_tm::ContentConfig {
                     groups: g,
                     num_groups: n_content,
                     prior_var: content_prior_var,
                     l1: content_l1,
                     smooth: content_smooth,
                 });
-            crate::reply_tm::fit_reply_tm(
+            crate::thread_tm::fit_thread_tm(
                 &docs_id,
                 &coupling_par,
                 &groups,
@@ -1063,7 +1063,7 @@ impl ReplyTM {
 
         // Couple the new forest the same way the model was fit: toward the immediate parent; (root)
         // toward each node's thread root via the reparented star; or (blend) toward both, with the
-        // fitted weights passed through so transform_reply_tm builds α·parent + β·root + rest·anchor.
+        // fitted weights passed through so transform_thread_tm builds α·parent + β·root + rest·anchor.
         let (coupling_par, blend) = if self.coupling == "root" {
             (root_star_parents(&par), None)
         } else if self.coupling == "blend" {
@@ -1129,7 +1129,7 @@ impl ReplyTM {
             let content_arg = content_groups
                 .as_ref()
                 .map(|g| (content_beta.as_slice(), g.as_slice()));
-            crate::reply_tm::transform_reply_tm(
+            crate::thread_tm::transform_thread_tm(
                 &docs_id,
                 &coupling_par,
                 &groups,
@@ -1609,13 +1609,13 @@ impl ReplyTM {
         )
     }
 
-    /// Save the fitted model to `path`. Reload with `ReplyTM.load`.
+    /// Save the fitted model to `path`. Reload with `ThreadTM.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
         write_state(
             path,
-            MODEL_TAG_REPLYTM,
-            &ReplyTmState {
+            MODEL_TAG_THREADTM,
+            &ThreadTmState {
                 num_topics: self.num_topics,
                 em_iters: self.em_iters,
                 seed: self.seed,
@@ -1659,8 +1659,8 @@ impl ReplyTM {
     /// Load a model saved with `save`.
     #[classmethod]
     fn load(_cls: &Bound<'_, PyType>, path: &str) -> PyResult<Self> {
-        let s: ReplyTmState = read_state(path, MODEL_TAG_REPLYTM)?;
-        Ok(ReplyTM {
+        let s: ThreadTmState = read_state(path, MODEL_TAG_THREADTM)?;
+        Ok(ThreadTM {
             num_topics: s.num_topics,
             em_iters: s.em_iters,
             seed: s.seed,
@@ -1743,7 +1743,7 @@ impl ReplyTM {
         let docs_owned: Vec<Vec<u32>> = docs_id.clone();
         let m0 = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            crate::reply_tm::fit_reply_tm(
+            crate::thread_tm::fit_thread_tm(
                 &docs_owned,
                 &all_roots,
                 &groups,
@@ -1919,7 +1919,7 @@ impl ReplyTM {
         let groups = self.fit_groups.clone();
         let (s2, p0) = (self.sigma2, self.p0);
         let (lo, hi) = py.allow_threads(move || {
-            crate::reply_tm::kappa_profile_ci(
+            crate::thread_tm::kappa_profile_ci(
                 &parents,
                 &doc_eta,
                 &anchor,
@@ -2062,19 +2062,19 @@ impl ReplyTM {
     fn __repr__(&self) -> String {
         if self.fitted && self.coupling == "blend" {
             return format!(
-                "ReplyTM(num_topics={}, coupling=\"blend\", fitted, alpha={:.3}, beta={:.3}, \
+                "ThreadTM(num_topics={}, coupling=\"blend\", fitted, alpha={:.3}, beta={:.3}, \
                  sigma2={:.3})",
                 self.num_topics, self.blend_alpha, self.blend_beta, self.sigma2
             );
         }
         if self.fitted {
             format!(
-                "ReplyTM(num_topics={}, coupling={:?}, fitted, kappa={:.3}, sigma2={:.3})",
+                "ThreadTM(num_topics={}, coupling={:?}, fitted, kappa={:.3}, sigma2={:.3})",
                 self.num_topics, self.coupling, self.kappa, self.sigma2
             )
         } else {
             format!(
-                "ReplyTM(num_topics={}, coupling={:?}, unfitted)",
+                "ThreadTM(num_topics={}, coupling={:?}, unfitted)",
                 self.num_topics, self.coupling
             )
         }

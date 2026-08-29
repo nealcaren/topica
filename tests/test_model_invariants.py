@@ -713,8 +713,8 @@ def _fit_pltm(iters=400):
     return m.doc_topic, m.topic_word(lang="en"), K
 
 
-def _fit_replytm(iters=60):
-    # ReplyTM (experimental): impose K interleaved reply chains, each staying within one planted
+def _fit_threadtm(iters=60):
+    # ThreadTM (experimental): impose K interleaved reply chains, each staying within one planted
     # block (parent i-K shares doc i's block), so the tree field is exercised on genuinely
     # persistence-structured threads. iters clears the warm-up so the field is actually fit.
     import warnings
@@ -724,7 +724,7 @@ def _fit_replytm(iters=60):
     parents = [i - K if i >= K else -1 for i in range(len(docs))]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        m = topica.ReplyTM(num_topics=K, em_iters=iters, seed=1)
+        m = topica.ThreadTM(num_topics=K, em_iters=iters, seed=1)
         m.fit(docs, parents=parents)
     return m.doc_topic, m.topic_word, K
 
@@ -732,7 +732,7 @@ def _fit_replytm(iters=60):
 FIT_ADAPTERS = {
     "LDA": _fit_lda,
     "CSATM": _fit_csatm,
-    "ReplyTM": _fit_replytm,
+    "ThreadTM": _fit_threadtm,
     "TopicalNGrams": _fit_topical_ngrams,
     "KeyNMF": _fit_keynmf,
     "OnlineLDA": _fit_online_lda,

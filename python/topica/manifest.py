@@ -804,7 +804,7 @@ def record_fit(model, corpus=None, *, prevalence=None, prevalence_names=None,
     ----------
     corpus : the ``Corpus`` (or token lists) the model was fit on. Optional: when
         omitted it defaults to the model's own retained corpus (``model.corpus``,
-        which e.g. :class:`~topica.ReplyTM` exposes). A model that does not retain
+        which e.g. :class:`~topica.ThreadTM` exposes). A model that does not retain
         a reusable corpus raises a clear error asking you to pass it.
     privacy : ``"minimal"`` (default) or ``"aggregate"``. ``"full"`` is not in V1.
     content_fingerprint : opt-in, **sensitive**. Adds an order-sensitive hash of
@@ -869,7 +869,7 @@ def record_fit(model, corpus=None, *, prevalence=None, prevalence_names=None,
 
     import topica
 
-    # Default the corpus to the one the model retained (e.g. ReplyTM.corpus), so record_fit(model)
+    # Default the corpus to the one the model retained (e.g. ThreadTM.corpus), so record_fit(model)
     # works for a model that kept its training corpus. Raise a clear error otherwise, rather than
     # letting a missing positional argument surface as an opaque TypeError.
     if corpus is None:

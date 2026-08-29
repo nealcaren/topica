@@ -1,6 +1,6 @@
-//! ReplyTM — a reply-threaded topic model.
+//! ThreadTM — a reply-threaded topic model.
 //!
-//! ReplyTM is CTM's logistic-normal topic model with **one structural change**: a document's
+//! ThreadTM is CTM's logistic-normal topic model with **one structural change**: a document's
 //! prior mean is coupled to its parent in the reply tree (a persistence-smoothing prior along
 //! reply edges), reverting toward a per-covariate-group anchor:
 //!
@@ -11,7 +11,7 @@
 //! ```
 //!
 //! Both the root prior (Σ_root) and the reply-edge step (Σ_edge) carry a FULL covariance (the same
-//! correlated logistic-normal prior CTM/STM fit). Roots get it so with no reply tree ReplyTM reduces
+//! correlated logistic-normal prior CTM/STM fit). Roots get it so with no reply tree ThreadTM reduces
 //! to CTM — up to empty-document handling and a small ridge — rather than a weaker isotropic model
 //! (#834); edges get it so a reply leaf is on the SAME covariance footing as a root, so
 //! `reply_completion`'s tree-vs-no_tree comparison reflects the reply coupling and not a covariance
@@ -42,8 +42,8 @@ use rand::Rng;
 use rayon::prelude::*;
 use std::collections::HashMap;
 
-/// A fitted ReplyTM.
-pub struct ReplyTmModel {
+/// A fitted ThreadTM.
+pub struct ThreadTmModel {
     pub num_topics: usize,
     pub num_types: usize,
     /// K×V topic-word distributions (rows sum to 1).
@@ -131,7 +131,7 @@ fn softmax_ref(eta: &[f64]) -> Vec<f64> {
     e.iter().map(|&x| x / s).collect()
 }
 
-impl ReplyTmModel {
+impl ThreadTmModel {
     /// Topic proportions `θ_d = softmax([η_d, 0])` per document.
     pub fn doc_topic(&self) -> Vec<Vec<f64>> {
         self.lambda.iter().map(|eta| softmax_ref(eta)).collect()
@@ -144,7 +144,7 @@ impl ReplyTmModel {
     }
 }
 
-/// Fit ReplyTM by variational EM. `docs` are token-id lists, `parents[d]` the index of `d`'s
+/// Fit ThreadTM by variational EM. `docs` are token-id lists, `parents[d]` the index of `d`'s
 /// parent in the reply forest (any negative value marks a root). `num_types` is the vocabulary
 /// size. Returns the fitted model; deterministic given `rng` (the E-step runs in parallel but
 /// folds sufficient statistics in document order, as in `fit_ctm`).
@@ -160,7 +160,7 @@ pub struct BlendConfig {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
+pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
     parents: &[i64],
     groups: &[usize],
@@ -174,7 +174,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     content: Option<&ContentConfig>,
     mut on_progress: F,
     rng: &mut R,
-) -> ReplyTmModel {
+) -> ThreadTmModel {
     let k = num_topics;
     let km1 = k - 1;
     let d = docs.len();
@@ -188,7 +188,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     let n_edges = parents.iter().filter(|&&p| p >= 0).count();
 
     // Initialize the topic-word matrix by the SAME spectral (anchor-word) init STM/CTM use
-    // (`crate::spectral`), so ReplyTM's logistic-normal base starts from an STM-quality point rather
+    // (`crate::spectral`), so ThreadTM's logistic-normal base starts from an STM-quality point rather
     // than a random document (issue #834: the weaker random seed left the base ~0.1-0.26 nats/token
     // behind STM, masking the tree's gain). Falls back to the previous per-document random seed when
     // spectral init is unavailable (it returns None on a degenerate/too-small corpus).
@@ -271,7 +271,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     // Root prior FULL covariance Σ_root (K-1 × K-1), estimated CTM-style from the root documents so
     // the base logistic-normal model captures topic correlation (issue #834: an isotropic root prior
     // left the base ~0.1-0.26 nats/token behind STM at scale). With no reply tree every document is a
-    // root, so this makes ReplyTM's base equivalent to CTM. Init to the identity (≡ the old p0 = 1).
+    // root, so this makes ThreadTM's base equivalent to CTM. Init to the identity (≡ the old p0 = 1).
     let mut sigma_root = vec![0.0f64; km1 * km1];
     // Edge (OU step) FULL covariance Σ_edge, the analogue of Σ_root for reply edges. Keeping edges
     // isotropic while roots were full made a thin leaf's prior RICHER with the tree off than on, so
@@ -853,7 +853,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         (None, None)
     };
 
-    ReplyTmModel {
+    ThreadTmModel {
         num_topics: k,
         num_types,
         beta,
@@ -881,22 +881,22 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
 
 /// Infer topic proportions θ for a NEW reply forest under a fitted model, holding the topics `beta`,
 /// the reversion `kappa`, the full edge and root precisions `edge_siginv` (= Σ_edge⁻¹) and
-/// `root_siginv` (= Σ_root⁻¹), and the per-group `anchor` all fixed. This is `transform` for ReplyTM.
+/// `root_siginv` (= Σ_root⁻¹), and the per-group `anchor` all fixed. This is `transform` for ThreadTM.
 ///
 /// The E-step coupling is directed — a document's prior mean depends only on its PARENT's η, never on
-/// its children (see `fit_reply_tm`). So a single sweep in topological order (every parent before its
+/// its children (see `fit_thread_tm`). So a single sweep in topological order (every parent before its
 /// children) is the structured mean-field fixed point: each node is inferred against a prior mean
 /// built from its parent's already-finalized η, and nothing downstream feeds back, so there is no need
 /// to iterate. On a tree of token-bearing nodes this reproduces the converged fit E-step. `parents[d]`
 /// indexes into `docs` (negative = root); `groups[d]` selects the anchor row. Documents with no
 /// in-vocabulary tokens carry no evidence, so their posterior mode is the prior mean (θ = softmax of
 /// that mean) and they still pass persistence on to their children. NOTE this differs from
-/// `fit_reply_tm`, which excludes empty documents from its E-step and leaves their η at the init 0
+/// `fit_thread_tm`, which excludes empty documents from its E-step and leaves their η at the init 0
 /// (θ uniform); transform's prior-mode is the principled value (it matches `ctm::infer_theta`), so on
 /// a tree with an empty interior or root node transform and the stored fit `doc_topic` diverge for
 /// that node and its subtree. Returns D×K proportions in `docs` order.
 #[allow(clippy::too_many_arguments)]
-pub fn transform_reply_tm(
+pub fn transform_thread_tm(
     docs: &[Vec<u32>],
     parents: &[i64],
     groups: &[usize],
@@ -993,7 +993,7 @@ pub fn transform_reply_tm(
     lambda.iter().map(|eta| softmax_ref(eta)).collect()
 }
 
-/// 95% profile-likelihood CI for the reversion κ, factored out of `fit_reply_tm` because it is the
+/// 95% profile-likelihood CI for the reversion κ, factored out of `fit_thread_tm` because it is the
 /// dominant per-fit cost and is usually not read. At each candidate `a` on a 99-point grid it
 /// re-optimizes the nuisance variances (σ², p0) via `profile_loglik_at_a` and keeps the a's within
 /// a χ²(1)/2 = 1.92 log-likelihood drop of the profile max. The grid points are independent, so
@@ -1072,7 +1072,7 @@ mod tests {
     }
 
     /// Generate a threaded corpus with a known reversion `κ`, disjoint block topics, and an OU
-    /// prevalence field; fit ReplyTM; recover the topics and a non-degenerate κ.
+    /// prevalence field; fit ThreadTM; recover the topics and a non-degenerate κ.
     #[test]
     fn recovers_topics_and_reversion() {
         let (k, wpt) = (4usize, 5usize); // 4 topics, 5 words each -> V = 20, disjoint blocks
@@ -1126,7 +1126,7 @@ mod tests {
 
         let mut fit_rng = StdRng::seed_from_u64(7);
         let groups = vec![0usize; docs.len()]; // single covariate group (global anchor)
-        let model = fit_reply_tm(
+        let model = fit_thread_tm(
             &docs,
             &parents,
             &groups,
