@@ -3115,7 +3115,21 @@ class ReplyTM:
     @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
-    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]: ...
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """D×K plug-in document-topic proportions ``softmax([mean η, 0])``. This is an overconfident
+        point estimate that discards the posterior variance ν, sharpest on thin, high-ν documents. A
+        collapsed-Gibbs model's ``doc_topic`` (e.g. LDA) is a sample-averaged, hedged posterior mean;
+        to compare on the same estimator footing use the hedged ``posterior_doc_topic`` (#838)."""
+        ...
+    def posterior_doc_topic(
+        self, *, n_samples: int = 400, seed: int = 13
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """D×K posterior-predictive proportions ``E[softmax([η, 0])]``, a Monte-Carlo average of
+        ``n_samples`` η draws from ``N(doc_eta, diag(doc_topic_var))``. Unlike the overconfident
+        plug-in ``doc_topic`` it integrates over ν, hedging thin leaves instead of overcommitting,
+        which puts it on the same estimator footing as a sample-averaged model like LDA for a fair
+        held-out comparison (#838). Deterministic given ``seed``; draws use only the diagonal of ν."""
+        ...
     @property
     def doc_eta(self) -> numpy.typing.NDArray[numpy.float64]:
         """D×(K-1) per-document variational mean η. This is the TREE-COUPLED posterior, so

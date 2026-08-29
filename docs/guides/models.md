@@ -709,9 +709,17 @@ res.per_token_ll         # {name: mean held-out per-token log-lik} for each mode
 To answer the "why not just LDA or STM?" question on the same footing, add off-the-shelf
 comparators to `baselines=`: `"lda"` fits a plain `LDA(K)` and `"stm"` an `STM(K)` with
 the covariate one-hot-encoded as prevalence, both on the same reduced corpus (pinned to
-the tree model's vocabulary) and scored through the identical leaf mask and fit-time-theta
-protocol, so `delta["lda"]` / `delta["stm"]` are the tree-minus-tool difference with the
-same thread-clustered interval (`"stm"` needs a covariate with at least two groups):
+the tree model's vocabulary) and scored through the identical leaf mask, so `delta["lda"]`
+/ `delta["stm"]` are the tree-minus-tool difference with the same thread-clustered interval
+(`"stm"` needs a covariate with at least two groups). The scoring is estimator-matched: a
+logistic-normal model (ReplyTM, STM) is scored with its posterior-predictive `E[softmax(η)]`
+(a Monte-Carlo average over its η posterior, `predictive_samples=400` by default), not the
+plug-in `softmax(mean η)` that `doc_topic` returns, so it is compared on the same estimator
+footing as LDA's already sample-averaged `doc_topic`. The plug-in is an overconfident point
+estimate that ignores the posterior variance ν, sharpest on exactly the thin leaves this test
+targets; matching the estimators keeps `delta["lda"]` a model comparison rather than an
+estimator artifact (on the real corpora of issue #838 this closed most of the apparent LDA
+gap):
 
 ```python
 res = topica.evaluate.reply_completion(

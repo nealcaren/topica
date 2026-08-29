@@ -878,6 +878,7 @@ def reply_completion(
     min_count=1,
     seed=13,
     n_boot=1000,
+    predictive_samples=400,
 ):
     """Held-out leaf-token comparison of ReplyTM against matched baselines.
 
@@ -901,9 +902,19 @@ def reply_completion(
     corpus with those tokens removed, so the held-out tokens never influence any
     fit. For each held-out token ``w`` in leaf ``d`` we score
     ``log(sum_k theta[d, k] * topic_word[k, w])`` under that model's fitted
-    ``doc_topic`` and ``topic_word``, and average per token. Because a leaf's
-    ``theta`` is inferred from its (few) seen tokens plus its prior, a tree that
-    couples the prior to the parent should predict thin leaves better.
+    ``theta`` and ``topic_word``, and average per token. To keep the estimator
+    fair across models (issue #838), a logistic-normal model (ReplyTM and the STM
+    baseline) is scored with the posterior-predictive ``E[softmax(η)]`` (a
+    Monte-Carlo average of ``predictive_samples`` draws from its own η posterior),
+    not the plug-in ``softmax(mean η)`` that ``doc_topic`` returns. The plug-in is
+    an overconfident point estimate that ignores the posterior variance ν, so it is
+    sharpest on exactly the thin leaves that are the eval targets, whereas LDA's
+    ``doc_topic`` is an already-averaged (hedged) posterior mean; matching the two
+    estimators keeps ``delta["lda"]`` a model comparison rather than an estimator
+    artifact (on the real corpora of issue #838 this closed most of the apparent
+    LDA gap). Because a leaf's ``theta`` is inferred from its (few) seen tokens plus
+    its prior, a tree that couples the prior to the parent should predict thin
+    leaves better.
 
     The models:
 
@@ -956,9 +967,13 @@ def reply_completion(
         this to the analysis fit. The off-the-shelf ``lda`` / ``stm`` comparators
         run at their own default iteration counts, not ``em_iters``.
     min_count : words rarer than this are dropped (shared across models).
-    seed : RNG seed for leaf sampling, the token split, the permutation, and the
-        bootstrap; also the model seed.
+    seed : RNG seed for leaf sampling, the token split, the permutation, the
+        bootstrap, and the posterior-predictive theta draws; also the model seed.
     n_boot : thread-clustered bootstrap resamples for the interval.
+    predictive_samples : int. Monte-Carlo draws used for the posterior-predictive
+        ``E[softmax(η)]`` that scores each logistic-normal model (see Notes). The
+        default (400) matches the estimate that validated the fix in issue #838; a
+        much smaller value makes the scored likelihoods noisy.
 
     Returns
     -------
@@ -1138,10 +1153,36 @@ def reply_completion(
             )
             row_map["stm"] = orig_to_row
 
+    def _predictive_theta(model):
+        """The θ to score held-out tokens with, matched in estimator quality across models.
+
+        A logistic-normal model's ``doc_topic`` is the PLUG-IN ``softmax(mean η)``, an
+        overconfident point estimate that ignores the posterior variance ν and so is sharpest on
+        thin, high-ν leaves (exactly the eval targets). LDA's ``doc_topic`` is instead a
+        sample-averaged (hedged) posterior mean. Scoring the two with different estimator quality
+        confounds a model comparison with an estimator difference (issue #838). We put them on the
+        same footing by scoring the logistic-normal models with the posterior-predictive
+        ``E[softmax(η)]`` (a Monte-Carlo average over their own η posterior, which hedges the thin
+        leaves the same way); LDA's already-averaged ``doc_topic`` is used unchanged.
+        """
+        pdt = getattr(model, "posterior_doc_topic", None)
+        if callable(pdt):  # ReplyTM (diagonal ν) exposes it directly
+            return np.asarray(
+                pdt(n_samples=predictive_samples, seed=seed), dtype=np.float64
+            )
+        from .effects import model_family
+        if model_family(model) == "logistic_normal":  # STM/CTM (full ν)
+            from .stm import posterior_theta_samples
+            draws = posterior_theta_samples(
+                model, nsims=predictive_samples, seed=seed, uncertainty="local"
+            )
+            return np.asarray(draws, dtype=np.float64).mean(axis=0)
+        return np.asarray(model.doc_topic, dtype=np.float64)  # LDA etc.: already averaged
+
     # score held-out tokens under each model's theta * topic_word
     def _score(model, rmap):
         phi = np.asarray(model.topic_word, dtype=np.float64)
-        theta = np.asarray(model.doc_topic, dtype=np.float64)
+        theta = _predictive_theta(model)
         vocab = {w: i for i, w in enumerate(model.vocabulary)}
         per_token = {}   # leaf -> list of token log-liks
         oov = 0
@@ -1265,6 +1306,7 @@ def reply_completion(
             "seed": seed,
             "n_boot": n_boot,
             "perm_changed_frac": perm_changed_frac,
+            "predictive_samples": predictive_samples,
         },
     )
 
