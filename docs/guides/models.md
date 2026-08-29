@@ -806,6 +806,33 @@ in `reply_completion` below: `delta["root"]` is parent-coupling minus root-coupl
 where the reply edge matters more than the thread topic and negative where it does not, and
 `delta["blend"]` is parent-coupling minus the estimated blend.
 
+**Content drift: how a topic's words shift downstream.** The covariate above shapes topic
+*prevalence* (which topics a group's threads use). A **content** covariate instead shapes the
+topic *words*: it lets the same topic use a different vocabulary at each level, a log-linear
+(SAGE) deviation on the topic-word matrix, exactly like STM's content covariate but composed
+with the reply tree. The natural content covariate for a thread is depth, so `content="depth"`
+bins position-in-thread automatically (default lower edges `[0, 1, 3]`, i.e. root / shallow /
+deep; override with `depth_bins=`). You can also pass an arbitrary per-document categorical
+(`content=labels`), and choose the deviation prior (`content_prior="l2"` dense ridge, the
+default, or `"l1"` sparse; `content_prior_var=` sets the scale):
+
+```python
+m = topica.ReplyTM(num_topics=25, seed=13).fit(docs, parents=parents, content="depth")
+
+m.content_labels                    # ["root", "shallow", "deep"]
+m.content_top_words(topic=3)        # {"root": [...], "shallow": [...], "deep": [...]}
+m.content_topic_word                # (levels, K, V) per-level topic-word; topic_word is the marginal
+m.content_kappa                     # the fitted deviations (background/topic/content/interaction)
+```
+
+`content_top_words(topic)` is the headline readout: it shows how one topic's language changes
+from the root to deep replies. A deviation near zero means that level does not move the topic's
+words from the marginal, so the channel regularizes toward "no drift" where there is none. The
+tree prevalence prior is unchanged (content and prevalence are orthogonal), so `kappa`,
+`persistence`, and `group_prevalence` read exactly as before. `transform` on a content-fit model
+takes `content=` for the new forest (`"depth"` re-bins it with the fitted edges) and scores each
+new document under its content level's words.
+
 **Inferring topics for a new thread.** `transform` maps a fresh reply forest to topic
 proportions, holding the fitted topics, reversion, per-edge variance, root covariance, and
 per-group anchors fixed. Pass `parents` (and `covariates`) for the new forest exactly as at fit.

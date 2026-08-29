@@ -3077,6 +3077,11 @@ class ReplyTM:
         covariate_names: Sequence[str] | None = None,
         *,
         min_count: int = 1,
+        content: str | Sequence[int] | Sequence[str] | None = None,
+        content_names: Sequence[str] | None = None,
+        content_prior: str = "l2",
+        content_prior_var: float = 0.5,
+        depth_bins: Sequence[int] | None = None,
     ) -> "ReplyTM":
         """`data` is a ``topica.Corpus`` or a list of token lists. `parents[d]` is document
         ``d``'s parent index in the reply tree (``-1`` for a thread root), in the SAME order as
@@ -3084,21 +3089,33 @@ class ReplyTM:
         ``0..num_groups`` whose per-group baseline becomes the reversion anchor; string/categorical
         labels (a list or a pandas Series) are accepted too and auto-encoded to ``0..num_groups``,
         with the distinct labels becoming the group names. `covariate_names` names the groups
-        (overriding auto-encoded labels). Requires ``topica.enable_experimental()``."""
+        (overriding auto-encoded labels).
+
+        `content` adds a SAGE content-covariate channel that lets a topic's WORDS shift by level
+        (issue #841), on top of the tree prevalence prior: pass ``"depth"`` to auto-bin
+        position-in-thread (see `depth_bins`, default lower edges ``[0, 1, 3]`` = root/shallow/deep),
+        or a per-document categorical (ints or labels). `content_names` labels the levels;
+        `content_prior` is ``"l2"`` (dense ridge, default) or ``"l1"`` (sparse Laplace);
+        `content_prior_var` (default 0.5) is the deviation-prior scale. Read the shift with
+        `content_topic_word` / `content_top_words` / `content_kappa`.
+        Requires ``topica.enable_experimental()``."""
         ...
     def transform(
         self,
         data: Corpus | Sequence[Sequence[str]],
         parents: Sequence[int] | None = None,
         covariates: Sequence[int] | Sequence[str] | None = None,
+        content: str | Sequence[int] | Sequence[str] | None = None,
     ) -> numpy.typing.NDArray[numpy.float64]:
         """Infer topic proportions for a NEW reply forest, holding the fitted topics, reversion,
         step/root variances, and per-group anchors fixed. `data` is a ``Corpus`` or token lists
         (mapped to the training vocabulary). `parents[d]` is ``d``'s parent document index (``-1``
         for a root); omit to treat every document as a root (ignoring reply structure). `covariates`
         selects the per-document group anchor (integer ids or string labels mapped through the
-        fitted groups); omit to anchor at the across-group mean. Returns an N×K matrix. Requires a
-        model fit WITH a reply tree."""
+        fitted groups); omit to anchor at the across-group mean. `content` (only for a content-fit
+        model) scores each new document under its content level's topic-word distribution:
+        ``"depth"`` re-bins the new tree with the fitted edges, or pass per-document levels/labels.
+        Returns an N×K matrix. Requires a model fit WITH a reply tree."""
         ...
     @property
     def num_topics(self) -> int: ...
@@ -3187,6 +3204,28 @@ class ReplyTM:
     def top_words(self, n: int = 10, *, topic: int | None = None, weights: bool = False) -> list:
         """Top-n words per topic. With ``topic=None`` returns a list per topic; with an integer
         ``topic`` returns that topic's words. ``weights=True`` returns ``(word, prob)`` pairs."""
+        ...
+    @property
+    def content_labels(self) -> list[str]:
+        """The content-covariate level labels (order matches ``content_topic_word``'s first axis);
+        empty unless fit with ``content=`` (#841)."""
+        ...
+    @property
+    def content_topic_word(self) -> numpy.typing.NDArray[numpy.float64] | None:
+        """G_content×K×V per-level topic-word distributions (``None`` without a content covariate);
+        ``content_topic_word[deep] - content_topic_word[root]`` shows how a topic's words shift
+        downstream. ``topic_word`` is their level-averaged marginal (#841)."""
+        ...
+    @property
+    def content_kappa(self) -> dict | None:
+        """The fitted SAGE content deviations κ as a dict of numpy arrays (``None`` without a content
+        covariate): ``background`` (V), ``topic`` (K×V), ``content`` (G×V), ``interaction`` (K*G×V,
+        indexed ``topic*G + level``). Near-zero means that level does not shift the topic (#841)."""
+        ...
+    def content_top_words(self, topic: int, n: int = 10) -> dict:
+        """Top-``n`` words per content level for one ``topic``: ``{level_label: [word, ...]}`` — the
+        "how does this topic's language shift by level (e.g. root vs deep)" readout. Requires a
+        content fit (#841)."""
         ...
     def coherence(
         self,

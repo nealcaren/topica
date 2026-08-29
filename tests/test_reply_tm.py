@@ -15,6 +15,121 @@ import topica
 topica.enable_experimental()
 
 
+def _content_shift_corpus(seed=0, n_threads=120):
+    """A planted CONTENT shift (issue #841): topic A uses one vocabulary at the root/shallow and a
+    different one deep in the thread, at constant prevalence (~70% A / 30% B, no prevalence drift);
+    topic B is stable. A content=depth fit should recover A's root-vs-deep word swap; a no-content
+    fit blends the two. Returns (docs, parents, AR, AD, B)."""
+    rng = np.random.default_rng(seed)
+    AR = [f"ar{i}" for i in range(5)]
+    AD = [f"ad{i}" for i in range(5)]
+    B = [f"b{i}" for i in range(10)]
+    docs, parents = [], []
+    for _ in range(n_threads):
+        for depth in range(6):
+            parents.append(-1 if depth == 0 else len(docs) - 1)
+            doc = []
+            for _ in range(25):
+                if rng.random() < 0.7:
+                    pool = AR if depth < 3 else AD  # topic A's vocab shifts with depth
+                    doc.append(pool[rng.integers(len(pool))])
+                else:
+                    doc.append(B[rng.integers(len(B))])
+            docs.append(doc)
+    return docs, parents, AR, AD, B
+
+
+def test_content_depth_recovers_planted_shift():
+    """#841 acceptance: content="depth" recovers a topic whose words shift root->deep, which a
+    no-content ReplyTM misses."""
+    docs, parents, AR, AD, B = _content_shift_corpus()
+    m = topica.ReplyTM(2, em_iters=80, seed=13).fit(docs, parents=parents, content="depth")
+    assert m.content_labels == ["root", "shallow", "deep"]
+
+    def overlap(words, pool):
+        return len(set(words) & set(pool))
+
+    # identify the shifting ("A") topic by its AR-heavy root words
+    a = max(range(2), key=lambda t: overlap(m.content_top_words(t, n=5)["root"], AR))
+    twa = m.content_top_words(a, n=5)
+    assert overlap(twa["root"], AR) >= 4 and overlap(twa["root"], AD) <= 1
+    assert overlap(twa["deep"], AD) >= 4 and overlap(twa["deep"], AR) <= 1
+
+    # a no-content fit cannot separate the two vocabularies for the same topic
+    mnc = topica.ReplyTM(2, em_iters=80, seed=13).fit(docs, parents=parents)
+    assert mnc.content_topic_word is None and mnc.content_kappa is None
+    tw = np.asarray(mnc.topic_word)
+    an = max(range(2), key=lambda t: overlap(
+        [mnc.vocabulary[i] for i in tw[t].argsort()[::-1][:10]], AR + AD))
+    top10 = [mnc.vocabulary[i] for i in tw[an].argsort()[::-1][:10]]
+    # the marginal topic mixes both root and deep vocab (it cannot represent the shift)
+    assert not (overlap(top10, AR) >= 4 and overlap(top10, AD) <= 1)
+
+
+def test_content_readouts_and_labels():
+    """#841: content readouts have the right shapes and are None without a content covariate."""
+    docs, parents, *_ = _content_shift_corpus(n_threads=40)
+    m = topica.ReplyTM(2, em_iters=40, seed=13).fit(docs, parents=parents, content="depth")
+    G, K, V = 3, 2, len(m.vocabulary)
+    ctw = np.asarray(m.content_topic_word)
+    assert ctw.shape == (G, K, V)
+    assert np.allclose(ctw.sum(axis=2), 1.0)  # each level's topic rows are distributions
+    ck = m.content_kappa
+    assert set(ck) == {"background", "topic", "content", "interaction"}
+    assert np.asarray(ck["interaction"]).shape == (K * G, V)
+    tw = m.content_top_words(0, n=5)
+    assert set(tw) == {"root", "shallow", "deep"} and len(tw["root"]) == 5
+
+
+def test_content_arbitrary_labels_and_transform():
+    """#841: content accepts arbitrary categorical labels; transform scores under the content level."""
+    docs, parents, *_ = _content_shift_corpus(n_threads=40)
+    # a per-document label (here re-deriving depth as a label to exercise the categorical path)
+    labels = []
+    for d, p in enumerate(parents):
+        depth = 0
+        cur = p
+        while cur >= 0:
+            depth += 1
+            cur = parents[cur]
+        labels.append("root" if depth == 0 else "reply")
+    m = topica.ReplyTM(2, em_iters=40, seed=13).fit(docs, parents=parents, content=labels)
+    assert m.content_labels == ["root", "reply"]
+    th = m.transform(docs[:6], parents=parents[:6], content=["root", "reply", "reply", "reply", "reply", "reply"])
+    assert th.shape == (6, 2)
+    # depth transform round-trips on a content=depth model
+    md = topica.ReplyTM(2, em_iters=40, seed=13).fit(docs, parents=parents, content="depth")
+    thd = md.transform(docs[:6], parents=parents[:6], content="depth")
+    assert thd.shape == (6, 2)
+    with pytest.raises(ValueError):
+        m.transform(docs[:2], parents=[-1, 0], content="depth")  # model fit with labels, not depth
+
+
+def test_content_save_load_and_prior(tmp_path):
+    """#841: content model round-trips through save/load; l1 and l2 priors both fit."""
+    docs, parents, *_ = _content_shift_corpus(n_threads=40)
+    m = topica.ReplyTM(2, em_iters=40, seed=13).fit(
+        docs, parents=parents, content="depth", content_prior="l1", content_prior_var=0.5
+    )
+    p = str(tmp_path / "content.topica")
+    m.save(p)
+    m2 = topica.ReplyTM.load(p)
+    assert m2.content_labels == m.content_labels
+    assert np.allclose(np.asarray(m.content_topic_word), np.asarray(m2.content_topic_word))
+    assert np.allclose(
+        m.transform(docs[:5], parents=parents[:5], content="depth"),
+        m2.transform(docs[:5], parents=parents[:5], content="depth"),
+    )
+    with pytest.raises(ValueError):
+        topica.ReplyTM(2, em_iters=5, seed=13).fit(
+            docs, parents=parents, content="depth", depth_bins=[1, 2]  # must start at 0
+        )
+    with pytest.raises(ValueError):
+        topica.ReplyTM(2, em_iters=5, seed=13).fit(
+            docs, parents=parents, content="depth", content_prior="bogus"
+        )
+
+
 def _threaded_corpus(seed=13, n_threads=60, depth=10, doc_len=40):
     """Two disjoint block topics, an OU-ish prevalence walk down chains, two covariate groups
     (group g's roots lean toward topic g)."""

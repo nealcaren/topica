@@ -447,7 +447,7 @@ pub struct CtmModel {
 
 /// Build per-group topic-word β (G×K×V) from the SAGE content deviations:
 /// `β_{g,k,v} = softmax_v(m_v + κᵀ_{k,v} + κᶜ_{g,v} + κᴵ_{k,g,v})`.
-fn build_content_beta(
+pub fn build_content_beta(
     m: &[f64],
     kt: &[Vec<f64>],
     kc: &[Vec<f64>],
@@ -576,7 +576,7 @@ where
 /// deviation blocks (κ_cov, κ_interaction), keeping the topic baseline κ_topic on
 /// L2; `content_l1 = 0` is the original L-BFGS solve, bit-exact.
 #[allow(clippy::too_many_arguments)]
-fn optimize_content(
+pub fn optimize_content(
     m: &[f64],
     kappa_t: &mut [Vec<f64>],
     kappa_c: &mut [Vec<f64>],

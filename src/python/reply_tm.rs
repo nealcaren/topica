@@ -72,6 +72,19 @@ pub struct ReplyTM {
     // Whether the variational EM bound converged within `em_iters` (bound change below tol) rather
     // than hitting the iteration cap. Computed by the kernel; exposed via `converged`.
     converged: bool,
+    // Content covariate (issue #841): per-level topic-word matrices (G_content × K × V) and the SAGE
+    // κ deviations, empty unless fit with `content=`. `num_content_groups` is 1 when no content
+    // covariate was fit. `content_names` labels the levels.
+    content_beta: Vec<Vec<Vec<f64>>>,
+    content_kappa_m: Vec<f64>,
+    content_kappa_topic: Vec<Vec<f64>>,
+    content_kappa_cov: Vec<Vec<f64>>,
+    content_kappa_interaction: Vec<Vec<f64>>,
+    content_names: Vec<String>,
+    num_content_groups: usize,
+    // The depth-bin lower edges used when fit with content="depth" (empty otherwise), so transform
+    // can re-bin a new forest's depths the same way.
+    content_depth_edges: Vec<usize>,
     // Training reply tree + covariate groups (document-aligned), retained so `persistence()` can
     // re-fit an uncoupled pass and regress child η on parent η.
     fit_parents: Vec<i64>,
@@ -122,6 +135,22 @@ struct ReplyTmState {
     bound_history: Vec<f64>,
     #[serde(default)]
     converged: bool,
+    #[serde(default)]
+    content_beta: Vec<Vec<Vec<f64>>>,
+    #[serde(default)]
+    content_kappa_m: Vec<f64>,
+    #[serde(default)]
+    content_kappa_topic: Vec<Vec<f64>>,
+    #[serde(default)]
+    content_kappa_cov: Vec<Vec<f64>>,
+    #[serde(default)]
+    content_kappa_interaction: Vec<Vec<f64>>,
+    #[serde(default)]
+    content_names: Vec<String>,
+    #[serde(default = "default_one_usize")]
+    num_content_groups: usize,
+    #[serde(default)]
+    content_depth_edges: Vec<usize>,
     fit_parents: Vec<i64>,
     fit_groups: Vec<usize>,
     corpus: Option<corpus::Corpus>,
@@ -137,6 +166,10 @@ fn default_none_f64() -> Option<f64> {
 
 fn default_nan() -> f64 {
     f64::NAN
+}
+
+fn default_one_usize() -> usize {
+    1
 }
 
 /// Each node's thread root (itself for a root). Used to build the blend `BlendConfig`.
@@ -285,6 +318,43 @@ fn coerce_transform_covariates(obj: &Bound<'_, PyAny>, fitted: &[String]) -> PyR
     Ok(out)
 }
 
+/// Bin each document's depth (steps to its thread root along `parents`) into content levels by a
+/// list of ascending lower edges: level = the number of edges `<= depth`, minus 1. Default edges
+/// `[0, 1, 3]` give root (0) / shallow (1-2) / deep (3+). Returns the per-document levels, the
+/// level count, and default level names.
+fn depth_content_groups(parents: &[i64], edges: &[usize]) -> (Vec<usize>, usize, Vec<String>) {
+    let n_levels = edges.len();
+    let groups: Vec<usize> = (0..parents.len())
+        .map(|start| {
+            let mut steps = 0usize;
+            let mut cur = start as i64;
+            while cur >= 0 && parents[cur as usize] >= 0 {
+                cur = parents[cur as usize];
+                steps += 1;
+            }
+            // largest level i with edges[i] <= steps (edges ascending, edges[0] == 0)
+            let mut b = 0usize;
+            for (i, &e) in edges.iter().enumerate() {
+                if steps >= e {
+                    b = i;
+                }
+            }
+            b
+        })
+        .collect();
+    // Default names: the canonical 3-bin scheme reads as root/shallow/deep; otherwise "depth>=e".
+    let names = if edges == [0, 1, 3] {
+        vec![
+            "root".to_string(),
+            "shallow".to_string(),
+            "deep".to_string(),
+        ]
+    } else {
+        edges.iter().map(|e| format!("depth>={e}")).collect()
+    };
+    (groups, n_levels, names)
+}
+
 impl ReplyTM {
     fn require_fitted(&self) -> PyResult<()> {
         if self.fitted {
@@ -368,6 +438,14 @@ impl ReplyTM {
             sigma_edge: Vec::new(),
             bound_history: Vec::new(),
             converged: false,
+            content_beta: Vec::new(),
+            content_kappa_m: Vec::new(),
+            content_kappa_topic: Vec::new(),
+            content_kappa_cov: Vec::new(),
+            content_kappa_interaction: Vec::new(),
+            content_names: Vec::new(),
+            num_content_groups: 1,
+            content_depth_edges: Vec::new(),
             fit_parents: Vec::new(),
             fit_groups: Vec::new(),
             corpus: None,
@@ -383,7 +461,10 @@ impl ReplyTM {
     /// `0..num_groups` in first-seen order, with the distinct labels becoming the group names.
     /// `covariate_names` names the groups for the readouts (overriding auto-encoded labels).
     /// `min_count` drops words rarer than it. Experimental: requires `topica.enable_experimental()`.
-    #[pyo3(signature = (data, parents=None, covariates=None, covariate_names=None, *, min_count=1))]
+    #[pyo3(signature = (data, parents=None, covariates=None, covariate_names=None, *, min_count=1,
+                        content=None, content_names=None, content_prior="l2".to_string(),
+                        content_prior_var=0.5, depth_bins=None))]
+    #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
@@ -392,6 +473,11 @@ impl ReplyTM {
         covariates: Option<Bound<'_, PyAny>>,
         covariate_names: Option<Vec<String>>,
         min_count: usize,
+        content: Option<Bound<'_, PyAny>>,
+        content_names: Option<Vec<String>>,
+        content_prior: String,
+        content_prior_var: f64,
+        depth_bins: Option<Vec<usize>>,
     ) -> PyResult<Py<Self>> {
         require_experimental("ReplyTM")?;
         // Accept either a topica.Corpus (materialise its token strings) or raw token lists, so the
@@ -632,12 +718,96 @@ impl ReplyTM {
         slf.fit_parents = coupling_par.clone();
         slf.fit_groups = groups.clone();
 
+        // Content covariate (issue #841): a second covariate that shapes topic WORDS by level via
+        // the SAGE κ channel, orthogonal to the tree prevalence prior. Either "depth" (auto-binned
+        // position-in-thread from the REAL reply tree `par`, not the coupling topology) or an explicit
+        // per-document categorical (int/str/float labels, auto-encoded like `covariates`).
+        let content_l1 = match content_prior.as_str() {
+            "l2" => 0.0,
+            "l1" => 1.0 / content_prior_var,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "content_prior must be \"l2\" or \"l1\", got {other:?}"
+                )))
+            }
+        };
+        if !(content_prior_var.is_finite() && content_prior_var > 0.0) {
+            return Err(PyValueError::new_err(
+                "content_prior_var must be finite and > 0",
+            ));
+        }
+        let mut content_depth_edges_used: Vec<usize> = Vec::new();
+        let (content_groups, n_content, content_group_names): (
+            Option<Vec<usize>>,
+            usize,
+            Vec<String>,
+        ) = match &content {
+            None => (None, 1, Vec::new()),
+            Some(obj) => {
+                if let Ok(s) = obj.extract::<String>() {
+                    if s != "depth" {
+                        return Err(PyValueError::new_err(format!(
+                            "content must be \"depth\" or a per-document label sequence, got {s:?}"
+                        )));
+                    }
+                    let edges = depth_bins.clone().unwrap_or_else(|| vec![0, 1, 3]);
+                    if edges.is_empty() || edges[0] != 0 || edges.windows(2).any(|w| w[0] >= w[1]) {
+                        return Err(PyValueError::new_err(
+                            "depth_bins must be strictly ascending lower edges starting at 0, \
+                                 e.g. [0, 1, 3] for root/shallow/deep",
+                        ));
+                    }
+                    content_depth_edges_used = edges.clone();
+                    let (g, ncg, names) = depth_content_groups(&par, &edges);
+                    let names = match &content_names {
+                        Some(cn) if cn.len() == ncg => cn.clone(),
+                        Some(cn) => {
+                            return Err(PyValueError::new_err(format!(
+                                "content_names has {} names but depth_bins define {ncg} levels",
+                                cn.len()
+                            )))
+                        }
+                        None => names,
+                    };
+                    (Some(g), ncg, names)
+                } else {
+                    let (g, derived) = coerce_fit_covariates(obj)?;
+                    if g.len() != n {
+                        return Err(PyValueError::new_err(format!(
+                            "content has {} entries but there are {n} documents",
+                            g.len()
+                        )));
+                    }
+                    let ncg = g.iter().copied().max().map(|m| m + 1).unwrap_or(1);
+                    let names = content_names
+                        .clone()
+                        .or(derived)
+                        .unwrap_or_else(|| (0..ncg).map(|i| format!("content{i}")).collect());
+                    if names.len() != ncg {
+                        return Err(PyValueError::new_err(format!(
+                            "content_names has {} names but the content covariate has {ncg} levels",
+                            names.len()
+                        )));
+                    }
+                    (Some(g), ncg, names)
+                }
+            }
+        };
+
         let k = slf.num_topics;
         let v = vocab.len();
         let iters = slf.em_iters;
         let seed = slf.seed;
         let m = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let content_cfg = content_groups
+                .as_ref()
+                .map(|g| crate::reply_tm::ContentConfig {
+                    groups: g,
+                    num_groups: n_content,
+                    prior_var: content_prior_var,
+                    l1: content_l1,
+                });
             crate::reply_tm::fit_reply_tm(
                 &docs_id,
                 &coupling_par,
@@ -649,6 +819,7 @@ impl ReplyTM {
                 1e-6,
                 false, // kappa_ci computed lazily by the getter, not in fit
                 blend_cfg.as_ref(),
+                content_cfg.as_ref(),
                 |_, _, _| true,
                 &mut rng,
             )
@@ -674,6 +845,17 @@ impl ReplyTM {
         slf.sigma_edge = m.sigma_edge;
         slf.bound_history = m.bound_history;
         slf.converged = m.converged;
+        // Content covariate outputs (empty/1 when no content covariate was fit).
+        slf.num_content_groups = m.num_content_groups;
+        slf.content_names = content_group_names;
+        slf.content_depth_edges = content_depth_edges_used;
+        slf.content_beta = m.content_beta.unwrap_or_default();
+        if let Some(ck) = m.content_kappa {
+            slf.content_kappa_m = ck.m;
+            slf.content_kappa_topic = ck.kappa_topic;
+            slf.content_kappa_cov = ck.kappa_cov;
+            slf.content_kappa_interaction = ck.kappa_interaction;
+        }
         slf.corpus = Some(corpus_snapshot);
         slf.fitted = true;
         Ok(slf.into())
@@ -693,13 +875,14 @@ impl ReplyTM {
     /// single topological pass is the structured mean-field fixed point, no iteration needed; on a
     /// tree of token-bearing nodes it reproduces the converged fit. Requires a model fit **with** a
     /// reply tree (the step/root variances are otherwise undefined).
-    #[pyo3(signature = (data, parents=None, covariates=None))]
+    #[pyo3(signature = (data, parents=None, covariates=None, content=None))]
     fn transform<'py>(
         &self,
         py: Python<'py>,
         data: &Bound<'py, PyAny>,
         parents: Option<Vec<i64>>,
         covariates: Option<Bound<'py, PyAny>>,
+        content: Option<Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
         // Accept integer group ids, or string/categorical labels mapped through the fitted groups.
@@ -707,6 +890,12 @@ impl ReplyTM {
             None => None,
             Some(obj) => Some(coerce_transform_covariates(obj, &self.group_names)?),
         };
+        if content.is_some() && self.content_beta.is_empty() {
+            return Err(PyValueError::new_err(
+                "content= was passed to transform, but the model was not fit with a content \
+                 covariate; refit with content= or drop it here",
+            ));
+        }
         if !self.sigma2.is_finite() || !self.p0.is_finite() {
             return Err(PyValueError::new_err(
                 "transform needs a model fit with a reply tree; this model was fit with \
@@ -836,6 +1025,10 @@ impl ReplyTM {
             }
         };
 
+        // Keep the raw new-forest parents for content="depth" re-binning (the coupling match below
+        // consumes `par` into the coupling topology, which may be reparented for root/blend).
+        let par_for_content = par.clone();
+
         // Couple the new forest the same way the model was fit: toward the immediate parent; (root)
         // toward each node's thread root via the reparented star; or (blend) toward both, with the
         // fitted weights passed through so transform_reply_tm builds α·parent + β·root + rest·anchor.
@@ -866,7 +1059,44 @@ impl ReplyTM {
         let root_siginv = full_or_iso(&self.sigma_root, self.p0);
         let edge_siginv = full_or_iso(&self.sigma_edge, self.sigma2);
         let beta = self.beta.clone();
+        // Content covariate for the new forest: "depth" re-bins the new tree with the fitted edges;
+        // labels map through the fitted content levels. Validated against the fitted level count.
+        let content_groups: Option<Vec<usize>> = match &content {
+            None => None,
+            Some(obj) => {
+                let g: Vec<usize> = if let Ok(s) = obj.extract::<String>() {
+                    if s != "depth" {
+                        return Err(PyValueError::new_err(format!(
+                            "content must be \"depth\" or a per-document label sequence, got {s:?}"
+                        )));
+                    }
+                    if self.content_depth_edges.is_empty() {
+                        return Err(PyValueError::new_err(
+                            "the model was not fit with content=\"depth\"; pass the content labels \
+                             it was fit with instead",
+                        ));
+                    }
+                    depth_content_groups(&par_for_content, &self.content_depth_edges).0
+                } else {
+                    coerce_transform_covariates(obj, &self.content_names)?
+                        .iter()
+                        .map(|&x| x as usize)
+                        .collect()
+                };
+                if let Some(&bad) = g.iter().find(|&&x| x >= self.num_content_groups) {
+                    return Err(PyValueError::new_err(format!(
+                        "content level {bad} is out of range; the model has {} level(s)",
+                        self.num_content_groups
+                    )));
+                }
+                Some(g)
+            }
+        };
+        let content_beta = self.content_beta.clone();
         let theta = py.allow_threads(move || {
+            let content_arg = content_groups
+                .as_ref()
+                .map(|g| (content_beta.as_slice(), g.as_slice()));
             crate::reply_tm::transform_reply_tm(
                 &docs_id,
                 &coupling_par,
@@ -877,6 +1107,7 @@ impl ReplyTM {
                 &edge_siginv,
                 &root_siginv,
                 blend,
+                content_arg,
             )
         });
         Ok(vecs_to_arr2(&theta).to_pyarray_bound(py))
@@ -1137,6 +1368,108 @@ impl ReplyTM {
         topic_words_helper(py, &phi, &self.vocab, self.num_topics, n, topic, weights)
     }
 
+    /// The content-covariate level labels (order matches the first axis of `content_topic_word`);
+    /// empty unless the model was fit with `content=`.
+    #[getter]
+    fn content_labels(&self) -> PyResult<Vec<String>> {
+        self.require_fitted()?;
+        Ok(self.content_names.clone())
+    }
+
+    /// G_content × K × V per-content-level topic-word distributions, `None` unless fit with
+    /// `content=`. Level `g`'s row `k` is topic `k`'s word distribution among documents at content
+    /// level `g` (e.g. depth bin), so `content_topic_word[deep] - content_topic_word[root]` shows how
+    /// a topic's vocabulary shifts downstream. The plain `topic_word` is their level-averaged marginal.
+    #[getter]
+    fn content_topic_word<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Option<Bound<'py, PyArray3<f64>>>> {
+        self.require_fitted()?;
+        if self.content_beta.is_empty() {
+            return Ok(None);
+        }
+        let g = self.content_beta.len();
+        let k = self.num_topics;
+        let v = self.vocab.len();
+        let mut out = numpy::ndarray::Array3::<f64>::zeros((g, k, v));
+        for (gi, level) in self.content_beta.iter().enumerate() {
+            for (ti, row) in level.iter().enumerate() {
+                for (wi, &p) in row.iter().enumerate() {
+                    out[[gi, ti, wi]] = p;
+                }
+            }
+        }
+        Ok(Some(out.to_pyarray_bound(py)))
+    }
+
+    /// The fitted SAGE content deviations `κ` as a dict of numpy arrays (`None` unless fit with
+    /// `content=`): `"background"` (V, the log word-frequency `m`), `"topic"` (K×V), `"content"`
+    /// (G×V, the per-level deviation), and `"interaction"` (K*G×V, indexed `topic*G + level`). A
+    /// deviation near zero means that level does not shift the topic's words from the marginal.
+    #[getter]
+    fn content_kappa<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.require_fitted()?;
+        if self.content_kappa_topic.is_empty() {
+            return Ok(None);
+        }
+        let d = PyDict::new_bound(py);
+        d.set_item(
+            "background",
+            PyArray1::from_slice_bound(py, &self.content_kappa_m),
+        )?;
+        d.set_item(
+            "topic",
+            vecs_to_arr2(&self.content_kappa_topic).to_pyarray_bound(py),
+        )?;
+        d.set_item(
+            "content",
+            vecs_to_arr2(&self.content_kappa_cov).to_pyarray_bound(py),
+        )?;
+        d.set_item(
+            "interaction",
+            vecs_to_arr2(&self.content_kappa_interaction).to_pyarray_bound(py),
+        )?;
+        Ok(Some(d))
+    }
+
+    /// Top-`n` words per content level for one topic: `{level_label: [word, ...]}`, the "how does
+    /// topic `topic`'s language shift by level" readout (e.g. root vs deep). Requires a content fit.
+    #[pyo3(signature = (topic, n=10))]
+    fn content_top_words<'py>(
+        &self,
+        py: Python<'py>,
+        topic: usize,
+        n: usize,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        self.require_fitted()?;
+        if self.content_beta.is_empty() {
+            return Err(PyValueError::new_err(
+                "no content covariate was fit; pass content= to fit for per-level words",
+            ));
+        }
+        if topic >= self.num_topics {
+            return Err(PyValueError::new_err(format!(
+                "topic {topic} out of range 0..{}",
+                self.num_topics
+            )));
+        }
+        let out = PyDict::new_bound(py);
+        for (gi, level) in self.content_beta.iter().enumerate() {
+            let row = &level[topic];
+            let mut idx: Vec<usize> = (0..row.len()).collect();
+            idx.sort_by(|&a, &b| row[b].partial_cmp(&row[a]).unwrap());
+            let words: Vec<String> = idx.iter().take(n).map(|&w| self.vocab[w].clone()).collect();
+            let label = self
+                .content_names
+                .get(gi)
+                .cloned()
+                .unwrap_or_else(|| format!("level{gi}"));
+            out.set_item(label, words)?;
+        }
+        Ok(out)
+    }
+
     /// Topic coherence (one score per topic). `coherence_type` is `"u_mass"` (default, uses the
     /// training corpus) or a windowed measure (`"c_v"`, `"c_uci"`, `"c_npmi"`); `texts` supplies
     /// an alternative reference corpus for the windowed measures. Higher is more coherent.
@@ -1194,6 +1527,14 @@ impl ReplyTM {
                 sigma_edge: self.sigma_edge.clone(),
                 bound_history: self.bound_history.clone(),
                 converged: self.converged,
+                content_beta: self.content_beta.clone(),
+                content_kappa_m: self.content_kappa_m.clone(),
+                content_kappa_topic: self.content_kappa_topic.clone(),
+                content_kappa_cov: self.content_kappa_cov.clone(),
+                content_kappa_interaction: self.content_kappa_interaction.clone(),
+                content_names: self.content_names.clone(),
+                num_content_groups: self.num_content_groups,
+                content_depth_edges: self.content_depth_edges.clone(),
                 fit_parents: self.fit_parents.clone(),
                 fit_groups: self.fit_groups.clone(),
                 corpus: self.corpus.clone(),
@@ -1231,6 +1572,14 @@ impl ReplyTM {
             sigma_edge: s.sigma_edge,
             bound_history: s.bound_history,
             converged: s.converged,
+            content_beta: s.content_beta,
+            content_kappa_m: s.content_kappa_m,
+            content_kappa_topic: s.content_kappa_topic,
+            content_kappa_cov: s.content_kappa_cov,
+            content_kappa_interaction: s.content_kappa_interaction,
+            content_names: s.content_names,
+            num_content_groups: s.num_content_groups,
+            content_depth_edges: s.content_depth_edges,
             fit_parents: s.fit_parents,
             fit_groups: s.fit_groups,
             corpus: s.corpus,
@@ -1291,6 +1640,7 @@ impl ReplyTM {
                 1e-6,
                 false, // uncoupled pass for persistence(); no kappa_ci needed
                 None,  // uncoupled: every doc a root, no blend
+                None,  // persistence ignores the content channel (prevalence only)
                 |_, _, _| true,
                 &mut rng,
             )
