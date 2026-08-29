@@ -785,6 +785,24 @@ def test_blend_fixed_weights_respected():
     assert m.settings["blend_alpha"] == 0.6 and m.settings["blend_beta"] == 0.3
 
 
+def test_blend_partial_pin_keeps_convexity():
+    """Pinning ONE weight must estimate the other conditionally and never push alpha+beta past 1
+    (a negative anchor weight would make the prior mean non-convex). Regression for the
+    three-reviewer finding on PR #833."""
+    docs, parents = _mixed_corpus()
+    for pin in (0.5, 0.7, 0.9):
+        ma = topica.ReplyTM(4, em_iters=60, seed=13, coupling="blend", blend_alpha=pin)
+        ma.fit(docs, parents=parents)
+        assert ma.blend_alpha == pin
+        assert 0.0 <= ma.blend_beta <= 1.0 - pin + 1e-9
+        assert ma.blend_alpha + ma.blend_beta <= 1.0 + 1e-9
+        mb = topica.ReplyTM(4, em_iters=60, seed=13, coupling="blend", blend_beta=pin)
+        mb.fit(docs, parents=parents)
+        assert mb.blend_beta == pin
+        assert 0.0 <= mb.blend_alpha <= 1.0 - pin + 1e-9
+        assert mb.blend_alpha + mb.blend_beta <= 1.0 + 1e-9
+
+
 def test_blend_transform_and_save(tmp_path):
     docs, parents = _mixed_corpus(n_threads=30)
     m = topica.ReplyTM(4, em_iters=50, seed=13, coupling="blend")

@@ -368,32 +368,45 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                     }
                 }
                 if ne > 0.0 {
-                    if bc.fixed_alpha.is_none() || bc.fixed_beta.is_none() {
-                        // De-attenuate: subtract the measurement-error second moments, then ridge
-                        // for stability / collinearity (depth-2 threads, where parent == root).
-                        let ridge = 1e-6 * (spp + srr) + 1e-9;
-                        let a11 = (spp - snu_p).max(0.0) + ridge;
-                        let a22 = (srr - snu_r).max(0.0) + ridge;
-                        let a12 = spr - snu_pr;
-                        let (b1, b2) = (spy, sry);
-                        let det = a11 * a22 - a12 * a12;
-                        if det.abs() > 1e-12 {
-                            let mut al = (a22 * b1 - a12 * b2) / det;
-                            let mut be = (a11 * b2 - a12 * b1) / det;
-                            // Project onto {α,β ≥ 0, α+β ≤ 1} so the prior mean stays a convex
-                            // blend of parent, root, and anchor.
-                            al = al.max(0.0);
-                            be = be.max(0.0);
-                            if al + be > 1.0 {
-                                let s = al + be;
-                                al /= s;
-                                be /= s;
+                    // Errors-in-variables normal equations (de-attenuated), with a ridge for
+                    // stability / collinearity (depth-2 threads, where parent == root).
+                    let ridge = 1e-6 * (spp + srr) + 1e-9;
+                    let a11 = (spp - snu_p).max(0.0) + ridge;
+                    let a22 = (srr - snu_r).max(0.0) + ridge;
+                    let a12 = spr - snu_pr;
+                    // The free (unpinned) weight's conditional 1-D EIV minimizer, clamped so it never
+                    // drives α+β past 1 (a negative anchor weight would break the convex blend).
+                    let free_a = |b: f64, hi: f64| ((spy - b * a12) / a11).clamp(0.0, hi);
+                    let free_b = |a: f64, hi: f64| ((sry - a * a12) / a22).clamp(0.0, hi);
+                    let (al, be) = match (bc.fixed_alpha, bc.fixed_beta) {
+                        (Some(fa), Some(fb)) => (fa, fb),
+                        // Pin one, estimate the other conditional on the pin (not the biased joint
+                        // value) and cap it at 1 - pin so the invariant always holds.
+                        (Some(fa), None) => (fa, free_b(fa, 1.0 - fa)),
+                        (None, Some(fb)) => (free_a(fb, 1.0 - fb), fb),
+                        // Both free: the joint solve, projected onto {α,β ≥ 0, α+β ≤ 1} (clamp then
+                        // rescale) so the prior mean stays a convex blend of parent, root, anchor.
+                        (None, None) => {
+                            let det = a11 * a22 - a12 * a12;
+                            if det.abs() <= 1e-12 {
+                                (alpha, beta_w) // keep the previous iterate if degenerate
+                            } else {
+                                let mut a = ((a22 * spy - a12 * sry) / det).max(0.0);
+                                let mut b = ((a11 * sry - a12 * spy) / det).max(0.0);
+                                if a + b > 1.0 {
+                                    let s = a + b;
+                                    a /= s;
+                                    b /= s;
+                                }
+                                (a, b)
                             }
-                            alpha = bc.fixed_alpha.unwrap_or(al);
-                            beta_w = bc.fixed_beta.unwrap_or(be);
                         }
-                    }
-                    // σ² = residual variance of y around α·xp + β·xr.
+                    };
+                    alpha = al;
+                    beta_w = be;
+                    // σ² = residual variance of y around α·xp + β·xr (floored). Left with the
+                    // measurement error folded in, as the σ² floor already bounds the edge prior;
+                    // de-convolving ν here destabilized the fit through the E-step feedback.
                     let resid = (syy - 2.0 * (alpha * spy + beta_w * sry)
                         + alpha * alpha * spp
                         + 2.0 * alpha * beta_w * spr

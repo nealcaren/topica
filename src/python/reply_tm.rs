@@ -461,8 +461,9 @@ impl ReplyTM {
         // Blend configuration: the real tree's thread roots + any pinned weights. Warn when the tree
         // lacks depth-3 structure, where a node's parent equals its root and α vs β is unidentified.
         let blend_cfg = if slf.coupling == "blend" {
+            let roots = thread_roots(&par); // compute once, reused for the check and BlendConfig
             let n_deep = (0..n)
-                .filter(|&c| par[c] >= 0 && thread_roots(&par)[c] != par[c] as usize)
+                .filter(|&c| par[c] >= 0 && roots[c] != par[c] as usize)
                 .count();
             if slf.blend_alpha_fixed.is_none() && slf.blend_beta_fixed.is_none() && n_deep < 2 {
                 PyErr::warn_bound(
@@ -476,7 +477,7 @@ impl ReplyTM {
                 )?;
             }
             Some(crate::reply_tm::BlendConfig {
-                root: thread_roots(&par),
+                root: roots,
                 fixed_alpha: slf.blend_alpha_fixed,
                 fixed_beta: slf.blend_beta_fixed,
             })
