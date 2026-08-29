@@ -55,6 +55,8 @@ def group_prevalence_ci(model, *, ci=0.95, n_samples=2000, seed=13):
     Returns a :class:`~topica._results.GroupPrevalenceCI` (a ``dict``) with keys ``labels`` (the
     group names), and ``(G, K)`` arrays ``mean`` (the point ``group_prevalence``), ``ci_low``,
     ``ci_high``, ``sd``. Call ``.to_frame()`` for a long tidy DataFrame, one row per (group, topic).
+    ``labels`` follow ``model.group_labels()`` (the fitted first-appearance order of the covariate,
+    which ``covariate_names`` renamed in place), not alphabetical order.
     """
     from ._results import GroupPrevalenceCI
 
