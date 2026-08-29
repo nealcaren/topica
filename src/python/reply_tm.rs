@@ -705,8 +705,10 @@ impl ReplyTM {
 
         let kappa = self.kappa;
         let sigma2 = self.sigma2;
-        // Full root precision Σ_root⁻¹ for the root nodes (falls back to the isotropic p0·I prior
-        // for models saved before Σ_root existed, where sigma_root is empty).
+        // Full root precision Σ_root⁻¹ for the root nodes. The isotropic p0·I fallback covers a
+        // freshly-constructed/degenerate model with no Σ_root; note it does NOT rescue genuinely
+        // old saves — the positional-bincode format cannot load a pre-Σ_root file at all (see the
+        // serde-default note on the state struct), consistent with the pre-v1.0 save-compat policy.
         let root_siginv: Vec<f64> = if self.sigma_root.len() == km1 * km1 {
             crate::linalg::spd_inverse_and_half_logdet(&self.sigma_root, km1).0
         } else {

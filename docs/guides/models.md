@@ -665,16 +665,17 @@ prior**. It sits on the same CTM machinery as [`CTM`](#ctm) and [`STM`](#stm): e
 document has a Gaussian topic vector in the softmax basis. What ReplyTM adds is where
 that vector's prior mean comes from. A thread root is drawn around its
 covariate-group baseline with a **full covariance** (the same correlated logistic-normal
-prior CTM/STM fit, so with no reply tree ReplyTM's base is CTM-equivalent, not a weaker
-isotropic model); a reply is drawn around a blend of its parent comment's vector and that
-same group baseline, with an isotropic per-edge variance. The blend is `(1 - kappa) * parent + kappa *
+prior CTM/STM fit, so with no reply tree ReplyTM's base matches CTM up to empty-document
+handling, not a weaker isotropic model); a reply is drawn around a blend of its parent
+comment's vector and that same group baseline, with an isotropic per-edge variance. The blend is `(1 - kappa) * parent + kappa *
 baseline`, so `kappa` is a **reversion** knob: `kappa = 0` copies the parent (pure
 persistence along the reply edge), `kappa = 1` ignores the parent and falls back to
-the group baseline (a plain covariate topic model). The tree parameters (persistence,
-per-edge variance, root variance) are fit by maximum likelihood on a Gaussian
-belief-propagation pass over the tree. The variances are floored at 0.1 to keep the
-diffusion from collapsing, so a reported `sigma2` or `p0` of exactly 0.1 may be the
-floor rather than an estimate.
+the group baseline (a plain covariate topic model). The reply-edge parameters (persistence
+`kappa`, per-edge variance `sigma2`) are fit by maximum likelihood on a Gaussian
+belief-propagation pass over the tree; `sigma2` is floored at 0.1 to keep the diffusion from
+collapsing, so a reported `sigma2` of exactly 0.1 may be the floor rather than an estimate.
+The root prior is a full covariance fit CTM-style (see above), and `p0` reports its mean
+marginal variance (defined even in the no-tree case, where it is not floored).
 
 The point of the prior is out-of-sample: a comment's parent tells you something about
 what the comment is about, on top of its own words. ReplyTM ships a committed
@@ -782,7 +783,10 @@ reliability-corrected (errors-in-variables) regression, so the weights are de-at
 the η measurement error, but they remain conditional on the topic fit; use the held-out
 `reply_completion` delta for the model-versus-model comparison. Separating `alpha` from `beta` needs threads with depth-3 or more (where
 a node's parent is not its root); on shallower corpora the fit warns and you should pin the
-weights or use `coupling="parent"`/`"root"`. `kappa`/`kappa_ci` are `NaN` under blend, since
+weights or use `coupling="parent"`/`"root"`. Blend also needs enough tokens per leaf: on
+very short replies the leaf's own η is too noisy for the two-regressor weight estimator, and
+blend can underperform plain `coupling="parent"`; on short-reply corpora prefer `"parent"` or
+`"root"`, or pin the weights. `kappa`/`kappa_ci` are `NaN` under blend, since
 the mix is described by the two weights instead of a single reversion. To let the data say which structure fits, fit
 these variants and compare them on held-out replies with the `"root"` and `"blend"` baselines
 in `reply_completion` below: `delta["root"]` is parent-coupling minus root-coupling, positive
@@ -790,8 +794,8 @@ where the reply edge matters more than the thread topic and negative where it do
 `delta["blend"]` is parent-coupling minus the estimated blend.
 
 **Inferring topics for a new thread.** `transform` maps a fresh reply forest to topic
-proportions, holding the fitted topics, reversion, step/root variances, and per-group
-anchors fixed. Pass `parents` (and `covariates`) for the new forest exactly as at fit.
+proportions, holding the fitted topics, reversion, per-edge variance, root covariance, and
+per-group anchors fixed. Pass `parents` (and `covariates`) for the new forest exactly as at fit.
 The reply coupling is directed (a document's prior mean depends only on its parent's η),
 so a single topological pass (every parent before its children) is the structured
 mean-field fixed point, with no iteration needed. Omit `parents` to treat every document

@@ -736,7 +736,13 @@ def _mixed_corpus(seed=1, n_threads=200):
     its parent topic, with root and parent topics both drawn from four equally-frequent blocks and
     required to differ (so all topics are balanced, the two regressors are not collinear, and there
     are no pure leaves). The optimal predictor of a held-out leaf token, not knowing which component
-    it came from, is the blend of parent and root, so blend coupling should beat both pure couplings."""
+    it came from, is the blend of parent and root, so blend coupling should beat both pure couplings.
+
+    Leaves carry 6 tokens (not the 2-3 of a "thin" leaf) on purpose: the #834 full-covariance base
+    is strong enough that a thin-leaf planted signal washes out (the leaf's own η is too noisy for
+    the two-regressor weight estimator, and blend can then lose to plain parent coupling). This is a
+    genuine short-reply limitation of blend, documented in the guide; the corpus here gives the
+    estimator enough per-leaf evidence to recover the planted mix."""
     rng = np.random.default_rng(seed)
     blocks = [[f"t{k}w{i}" for i in range(6)] for k in range(4)]
     docs, parents = [], []

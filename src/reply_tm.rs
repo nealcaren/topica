@@ -11,9 +11,10 @@
 //! ```
 //!
 //! The root prior carries a FULL covariance Σ_root (the same correlated logistic-normal prior CTM/STM
-//! fit), so with no reply tree ReplyTM reduces to CTM exactly rather than a weaker isotropic model
-//! (#834); the reply edges keep the isotropic OU step variance σ². It reduces to a plain (correlated)
-//! logistic-normal topic model when the tree is flat. On real corpora the
+//! fit), so with no reply tree ReplyTM reduces to CTM — up to empty-document handling and a small
+//! Σ_root ridge — rather than a weaker isotropic model (#834); the reply edges keep the isotropic OU
+//! step variance σ². It reduces to a plain (correlated) logistic-normal topic model when the tree is
+//! flat. On real corpora the
 //! fit drives κ toward 0, i.e. **persistence** (a reply ≈ its parent), so the "reversion" reading
 //! is usually vacuous — κ is reported with a profile-likelihood CI that reflects this.
 //!
