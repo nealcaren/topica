@@ -731,7 +731,7 @@ def test_blend_validation():
         topica.ReplyTM(2, coupling="bogus")
 
 
-def _mixed_corpus(seed=1, n_threads=140):
+def _mixed_corpus(seed=1, n_threads=200):
     """Planted MIXED discourse: each thin leaf token is drawn 50/50 from its thread-root topic and
     its parent topic, with root and parent topics both drawn from four equally-frequent blocks and
     required to differ (so all topics are balanced, the two regressors are not collinear, and there
@@ -750,8 +750,8 @@ def _mixed_corpus(seed=1, n_threads=140):
                 pk = int(rng.integers(4))
             docs.append(list(rng.choice(blocks[pk], 10))); parents.append(r)
             m = len(docs) - 1
-            for _ in range(3):  # thin leaves: each token a 50/50 draw from root vs parent topic
-                leaf = [rng.choice(blocks[rk if rng.random() < 0.5 else pk]) for _ in range(3)]
+            for _ in range(4):  # leaves: each token a 50/50 draw from root vs parent topic
+                leaf = [rng.choice(blocks[rk if rng.random() < 0.5 else pk]) for _ in range(6)]
                 docs.append(leaf); parents.append(m)
     return docs, parents
 

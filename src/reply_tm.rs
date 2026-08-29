@@ -5,12 +5,15 @@
 //! reply edges), reverting toward a per-covariate-group anchor:
 //!
 //! ```text
-//! root d:      η_d ~ N(anchor_g, p0·I)
+//! root d:      η_d ~ N(anchor_g, Σ_root)                        (full covariance, CTM-style; #834)
 //! non-root d:  η_d ~ N((1-κ)·η_{parent} + κ·anchor_g, σ²·I)     (κ = reversion, σ² = step variance)
 //! tokens:      w ~ softmax([η_d, 0]) · β                        (CTM logistic-normal likelihood)
 //! ```
 //!
-//! It reduces to a plain logistic-normal topic model when the tree is flat. On real corpora the
+//! The root prior carries a FULL covariance Σ_root (the same correlated logistic-normal prior CTM/STM
+//! fit), so with no reply tree ReplyTM reduces to CTM exactly rather than a weaker isotropic model
+//! (#834); the reply edges keep the isotropic OU step variance σ². It reduces to a plain (correlated)
+//! logistic-normal topic model when the tree is flat. On real corpora the
 //! fit drives κ toward 0, i.e. **persistence** (a reply ≈ its parent), so the "reversion" reading
 //! is usually vacuous — κ is reported with a profile-likelihood CI that reflects this.
 //!
@@ -69,8 +72,13 @@ pub struct ReplyTmModel {
     pub blend_beta: f64,
     /// Per-edge diffusion variance `σ²`.
     pub sigma2: f64,
-    /// Root prior variance.
+    /// Root prior variance (mean marginal variance of `sigma_root`, a scalar summary of the full
+    /// root covariance).
     pub p0: f64,
+    /// Root prior FULL covariance Σ_root (K-1 × K-1, row-major), estimated CTM-style so the base
+    /// logistic-normal model captures topic correlation (#834). Used as the root prior in the E-step
+    /// and in `transform`.
+    pub sigma_root: Vec<f64>,
     pub bound: f64,
     pub bound_history: Vec<f64>,
     pub converged: bool,
@@ -146,25 +154,38 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     let has_tokens: Vec<bool> = sparse.iter().map(|(w, _)| !w.is_empty()).collect();
     let n_edges = parents.iter().filter(|&&p| p >= 0).count();
 
-    // seed each topic from a random (non-empty) document's word distribution, smoothed — an
-    // LDA/CTM-style init that breaks symmetry toward real word clusters (random-uniform init
-    // gets stuck in merged-topic optima).
+    // Initialize the topic-word matrix by the SAME spectral (anchor-word) init STM/CTM use
+    // (`crate::spectral`), so ReplyTM's logistic-normal base starts from an STM-quality point rather
+    // than a random document (issue #834: the weaker random seed left the base ~0.1-0.26 nats/token
+    // behind STM, masking the tree's gain). Falls back to the previous per-document random seed when
+    // spectral init is unavailable (it returns None on a degenerate/too-small corpus).
     let nonempty: Vec<usize> = (0..d).filter(|&i| !sparse[i].0.is_empty()).collect();
-    let mut beta = vec![vec![1.0f64 / num_types as f64; num_types]; k];
-    if !nonempty.is_empty() {
-        for row in beta.iter_mut() {
-            let di = nonempty[(rng.gen::<f64>() * nonempty.len() as f64) as usize % nonempty.len()];
-            let (words, counts) = &sparse[di];
-            let mut r = vec![1.0f64; num_types]; // Laplace smoothing
-            for (wi, &w) in words.iter().enumerate() {
-                r[w] += 10.0 * counts[wi];
-            }
-            let s: f64 = r.iter().sum();
-            for (v, &ri) in row.iter_mut().zip(&r) {
-                *v = ri / s;
+    let mut beta = crate::spectral::spectral_init_with_threshold(
+        docs,
+        k,
+        num_types,
+        crate::spectral::DEFAULT_PROJ_THRESHOLD,
+    )
+    .unwrap_or_else(|| {
+        // Fallback: seed each topic from a random non-empty document's word distribution, smoothed.
+        let mut beta = vec![vec![1.0f64 / num_types as f64; num_types]; k];
+        if !nonempty.is_empty() {
+            for row in beta.iter_mut() {
+                let di =
+                    nonempty[(rng.gen::<f64>() * nonempty.len() as f64) as usize % nonempty.len()];
+                let (words, counts) = &sparse[di];
+                let mut r = vec![1.0f64; num_types]; // Laplace smoothing
+                for (wi, &w) in words.iter().enumerate() {
+                    r[w] += 10.0 * counts[wi];
+                }
+                let s: f64 = r.iter().sum();
+                for (v, &ri) in row.iter_mut().zip(&r) {
+                    *v = ri / s;
+                }
             }
         }
-    }
+        beta
+    });
 
     let mut lambda = vec![vec![0.0f64; km1]; d];
     let mut anchor = vec![vec![0.0f64; km1]; num_groups.max(1)];
@@ -173,6 +194,15 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     let mut a = 0.7f64;
     let mut sigma2 = 1.0f64;
     let mut p0 = 1.0f64;
+    // Root prior FULL covariance Σ_root (K-1 × K-1), estimated CTM-style from the root documents so
+    // the base logistic-normal model captures topic correlation (issue #834: an isotropic root prior
+    // left the base ~0.1-0.26 nats/token behind STM at scale). Edges keep the isotropic OU σ². With
+    // no reply tree every document is a root, so this makes ReplyTM's base equivalent to CTM. Init
+    // to the identity (≡ the old p0 = 1 root prior).
+    let mut sigma_root = vec![0.0f64; km1 * km1];
+    for i in 0..km1 {
+        sigma_root[i * km1 + i] = 1.0;
+    }
     // Blend coupling weights (α = parent, β = root); seeded to a parent-leaning mix and updated in
     // the M-step unless pinned. Unused (and returned as NaN) when `blend` is None.
     let mut alpha = blend.and_then(|b| b.fixed_alpha).unwrap_or(0.5);
@@ -200,7 +230,8 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
             (s, 0.5 * km1 as f64 * var.ln())
         };
         let (siginv_edge, ent_edge) = siginv_diag(sigma2);
-        let (siginv_root, ent_root) = siginv_diag(p0);
+        // Root prior uses the FULL Σ_root (its inverse + half-logdet), like CTM; edges stay isotropic.
+        let (siginv_root, ent_root) = crate::linalg::spd_inverse_and_half_logdet(&sigma_root, km1);
 
         // E-step: per-document logistic-normal inference with a tree-coupled prior mean.
         // Reads the previous iteration's `lambda` for the parent coupling (structured
@@ -238,9 +269,11 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                     7,
                     1e-5,
                 );
-                let res = ctm_hpb(&opt, &beta, words, counts, &mu_d, siginv, entropy, true);
-                let nu_diag: Vec<f64> = (0..km1).map(|i| res.nu[i * km1 + i]).collect();
-                (di, opt, nu_diag, res.phi, res.bound)
+                // Roots need the FULL Laplace covariance ν to re-estimate Σ_root (diagonal=false);
+                // edges only use the diagonal for the isotropic σ² field, so keep them cheap.
+                let is_root = par < 0;
+                let res = ctm_hpb(&opt, &beta, words, counts, &mu_d, siginv, entropy, !is_root);
+                (di, opt, res.nu, res.phi, res.bound)
             })
             .collect();
 
@@ -253,10 +286,15 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         // fold sufficient statistics in document order
         let mut beta_ss = vec![vec![1e-8f64; num_types]; k];
         let mut nu_diag_store = vec![vec![0.0f64; km1]; d];
-        for (di, opt, nu_diag, phi, _) in &results {
+        // Full ν for the root documents only (needed for the Σ_root M-step); empty for edges.
+        let mut nu_full_root: Vec<Vec<f64>> = vec![Vec::new(); d];
+        for (di, opt, nu, phi, _) in &results {
             let di = *di;
             lambda[di] = opt.clone();
-            nu_diag_store[di] = nu_diag.clone();
+            nu_diag_store[di] = (0..km1).map(|i| nu[i * km1 + i]).collect();
+            if parents[di] < 0 {
+                nu_full_root[di] = nu.clone();
+            }
             let words = &sparse[di].0;
             for (wi, &w) in words.iter().enumerate() {
                 for (t, brow) in beta_ss.iter_mut().enumerate() {
@@ -308,6 +346,39 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                 for i in 0..km1 {
                     anchor[g][i] = gsum[g][i] / gcnt[g] as f64;
                 }
+            }
+        }
+
+        // M-step (Σ_root): full root-prior covariance, CTM's update
+        // Σ = (1/n_root)[ Σ ν_root + Σ (η_root − anchor)(η_root − anchor)ᵀ ], over token-bearing
+        // roots. Gives the base logistic-normal model topic correlation (#834). A small diagonal
+        // ridge keeps it positive-definite for the inverse/logdet next iteration.
+        {
+            let mut ss = vec![0.0f64; km1 * km1];
+            let mut n_root = 0usize;
+            for di in 0..d {
+                if parents[di] >= 0 || !has_tokens[di] {
+                    continue;
+                }
+                let ag = &anchor[groups[di]];
+                let nu = &nu_full_root[di];
+                for i in 0..km1 {
+                    let ci = lambda[di][i] - ag[i];
+                    for j in 0..km1 {
+                        let cj = lambda[di][j] - ag[j];
+                        ss[i * km1 + j] += nu[i * km1 + j] + ci * cj;
+                    }
+                }
+                n_root += 1;
+            }
+            if n_root > 0 {
+                for v in ss.iter_mut() {
+                    *v /= n_root as f64;
+                }
+                for i in 0..km1 {
+                    ss[i * km1 + i] += 1e-6; // PD ridge
+                }
+                sigma_root = ss;
             }
         }
 
@@ -481,8 +552,18 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     if n_edges == 0 || !field_fit_ran {
         a = f64::NAN;
         sigma2 = f64::NAN;
-        p0 = f64::NAN;
     }
+    // p0 now summarizes the fitted full root covariance (mean marginal variance), so it is defined
+    // whenever there are token-bearing roots — including the no-tree (CTM-equivalent) case — rather
+    // than the old scalar root variance. NaN only if Σ_root was never estimated (no roots).
+    p0 = {
+        let m: f64 = (0..km1).map(|i| sigma_root[i * km1 + i]).sum::<f64>() / km1 as f64;
+        if m > 0.0 && m.is_finite() {
+            m
+        } else {
+            f64::NAN
+        }
+    };
     // Blend reports its mix via (alpha, beta), not a single reversion; kappa is undefined. When the
     // field never ran (no edges / warm-up not reached) the weights are still the init constants, so
     // report them as NaN like the other field params.
@@ -582,6 +663,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         blend_beta: beta_out,
         sigma2,
         p0,
+        sigma_root,
         bound: bound_history.last().copied().unwrap_or(f64::NAN),
         bound_history,
         converged,
@@ -591,8 +673,8 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
 }
 
 /// Infer topic proportions θ for a NEW reply forest under a fitted model, holding the topics `beta`,
-/// the reversion `kappa`, the per-edge variance `sigma2`, the root variance `p0`, and the per-group
-/// `anchor` all fixed. This is `transform` for ReplyTM.
+/// the reversion `kappa`, the per-edge variance `sigma2`, the full root precision `root_siginv`
+/// (= Σ_root⁻¹), and the per-group `anchor` all fixed. This is `transform` for ReplyTM.
 ///
 /// The E-step coupling is directed — a document's prior mean depends only on its PARENT's η, never on
 /// its children (see `fit_reply_tm`). So a single sweep in topological order (every parent before its
@@ -615,7 +697,7 @@ pub fn transform_reply_tm(
     anchor: &[Vec<f64>],
     kappa: f64,
     sigma2: f64,
-    p0: f64,
+    root_siginv: &[f64],
     blend: Option<(f64, f64)>,
 ) -> Vec<Vec<f64>> {
     let k = beta.len();
@@ -633,16 +715,15 @@ pub fn transform_reply_tm(
         })
         .collect();
 
-    // Diagonal inverse prior covariance for edges (σ²) and roots (p0).
-    let siginv_diag = |var: f64| -> Vec<f64> {
+    // Edges use the isotropic OU precision (1/σ²·I); roots use the FULL fitted root precision Σ_root⁻¹.
+    let siginv_edge = {
         let mut s = vec![0.0f64; km1 * km1];
         for i in 0..km1 {
-            s[i * km1 + i] = 1.0 / var;
+            s[i * km1 + i] = 1.0 / sigma2;
         }
         s
     };
-    let siginv_edge = siginv_diag(sigma2);
-    let siginv_root = siginv_diag(p0);
+    let siginv_root = root_siginv;
 
     // Topological order (roots first, every parent before its children). The tree is acyclic (the
     // binding validates this), so a BFS from the roots down the children lists visits each node once.
@@ -669,8 +750,8 @@ pub fn transform_reply_tm(
     for &di in &order {
         let ag = &anchor[groups[di]];
         let par = parents[di];
-        let (mu_d, siginv) = if par < 0 {
-            (ag.clone(), &siginv_root)
+        let (mu_d, siginv): (Vec<f64>, &[f64]) = if par < 0 {
+            (ag.clone(), siginv_root)
         } else if let Some((alpha, beta_w)) = blend {
             let lp = &lambda[par as usize];
             let lr = &lambda[root[di]];

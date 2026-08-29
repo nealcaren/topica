@@ -664,8 +664,10 @@ ReplyTM (topica-original) is a **logistic-normal topic model with a reply-tree
 prior**. It sits on the same CTM machinery as [`CTM`](#ctm) and [`STM`](#stm): each
 document has a Gaussian topic vector in the softmax basis. What ReplyTM adds is where
 that vector's prior mean comes from. A thread root is drawn around its
-covariate-group baseline; a reply is drawn around a blend of its parent comment's
-vector and that same group baseline. The blend is `(1 - kappa) * parent + kappa *
+covariate-group baseline with a **full covariance** (the same correlated logistic-normal
+prior CTM/STM fit, so with no reply tree ReplyTM's base is CTM-equivalent, not a weaker
+isotropic model); a reply is drawn around a blend of its parent comment's vector and that
+same group baseline, with an isotropic per-edge variance. The blend is `(1 - kappa) * parent + kappa *
 baseline`, so `kappa` is a **reversion** knob: `kappa = 0` copies the parent (pure
 persistence along the reply edge), `kappa = 1` ignores the parent and falls back to
 the group baseline (a plain covariate topic model). The tree parameters (persistence,
