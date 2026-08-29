@@ -800,7 +800,7 @@ class ReplyCompletionResult:
         # fold in the whole modeling stack (covariates, estimator), so a reader who saw
         # only the flattering tree-no_tree line could misattribute a covariate/tool gain
         # to the reply tree. Order no_tree/permuted (tree ablations) before lda/stm.
-        order = ["no_tree", "permuted", "root", "lda", "stm"]
+        order = ["no_tree", "permuted", "root", "blend", "lda", "stm"]
         parts = []
         for name in order:
             d = self.delta.get(name)
@@ -884,7 +884,7 @@ def reply_completion(
     This is the turnkey preference test for ReplyTM: does the reply tree add
     predictive information on real data, and does the gain come from the
     observed edge? It fits the matched models named in ``baselines`` (the tree
-    plus up to five comparators) on the SAME reduced corpus (identical
+    plus up to six comparators) on the SAME reduced corpus (identical
     vocabulary, ``num_topics``, ``min_count``, and ``seed``) and scores held-out
     tokens of short leaf comments under each.
 
@@ -918,6 +918,11 @@ def reply_completion(
       root structure). ``delta["root"]`` is parent-coupling minus root-coupling, so
       it is positive where the reply edge matters more than the thread topic and
       negative where the thread root is the operative structure (sports, fandom).
+    - ``blend`` (issue #831): ReplyTM that couples each node to BOTH its parent and
+      its thread root (``alpha*parent + beta*root + (1-alpha-beta)*anchor``), with
+      the mix estimated. ``delta["blend"]`` is parent-coupling minus blend-coupling;
+      a negative value means the blend of edge and thread structure predicts better
+      than the reply edge alone.
     - ``lda`` / ``stm`` (issue #828): off-the-shelf comparators — a plain
       ``LDA(K)``, and an ``STM(K)`` with the ``covariates`` one-hot encoded as
       prevalence — fit on the same reduced corpus (pinned to the tree model's
@@ -946,8 +951,8 @@ def reply_completion(
     eval_frac : float. Share of eligible leaves to evaluate (sampled with
         ``seed``); ``1.0`` uses them all.
     baselines : which comparators to fit, any of ``"no_tree"``, ``"permuted"``,
-        ``"root"``, ``"lda"``, ``"stm"``.
-    em_iters : EM iterations for the ReplyTM fits (tree, no_tree, permuted, root). Match
+        ``"root"``, ``"blend"``, ``"lda"``, ``"stm"``.
+    em_iters : EM iterations for the ReplyTM fits (tree, no_tree, permuted, root, blend). Match
         this to the analysis fit. The off-the-shelf ``lda`` / ``stm`` comparators
         run at their own default iteration counts, not ``em_iters``.
     min_count : words rarer than this are dropped (shared across models).
@@ -975,7 +980,7 @@ def reply_completion(
     if not (0.0 < eval_frac <= 1.0):
         raise ValueError("eval_frac must be in (0, 1]")
     baselines = tuple(baselines)
-    _known_baselines = ("no_tree", "permuted", "root", "lda", "stm")
+    _known_baselines = ("no_tree", "permuted", "root", "blend", "lda", "stm")
     for b in baselines:
         if b not in _known_baselines:
             raise ValueError(
@@ -1052,6 +1057,10 @@ def reply_completion(
         # and covariate; only the coupling neighbor differs. delta["root"] = parent-tree minus
         # root-tree, so it is positive where reply-edge structure beats thread-level structure.
         models["root"] = _fit(parents, coupling="root")
+    if "blend" in baselines:
+        # A matched ReplyTM that couples each node to BOTH its parent and its thread root (issue
+        # #831), with the parent/root mix estimated. delta["blend"] = parent-tree minus blend-tree.
+        models["blend"] = _fit(parents, coupling="blend")
     perm_changed_frac = None
     if "permuted" in baselines:
         perm = _permute_parents_within_depth(parents, depth, root, rng)
