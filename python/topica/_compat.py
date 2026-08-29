@@ -80,6 +80,7 @@ LAZY = {
     'find_thoughts_html': 'inspect',
     'flag_topics': 'evaluate',
     'frex': 'inspect',
+    'group_prevalence_ci': 'inspect',
     'interaction': 'design',
     'inverted_rbo': 'evaluate',
     'label_topics': 'inspect',

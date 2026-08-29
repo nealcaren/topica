@@ -99,3 +99,37 @@ class TimePrevalenceCI(FrameDict):
             for k in range(K)
         ]
         return pd.DataFrame(rows, columns=self._COLUMNS)
+
+
+class GroupPrevalenceCI(FrameDict):
+    """:func:`~topica.inspect.group_prevalence_ci` result: ``labels`` (the covariate group names)
+    plus ``(G, K)`` arrays ``mean``/``ci_low``/``ci_high``/``sd`` on the probability scale.
+    :meth:`to_frame` melts them to one row per (group, topic)."""
+
+    _COLUMNS = ["group", "topic", "mean", "ci_low", "ci_high", "sd"]
+
+    def to_frame(self):
+        """Long tidy frame, one row per (group, topic), with columns ``group``, ``topic``,
+        ``mean``, ``ci_low``, ``ci_high``, ``sd``."""
+        import numpy as np
+        import pandas as pd
+
+        labels = list(self["labels"])
+        mean = np.asarray(self["mean"])
+        lo = np.asarray(self["ci_low"])
+        hi = np.asarray(self["ci_high"])
+        sd = np.asarray(self["sd"])
+        G, K = mean.shape
+        rows = [
+            {
+                "group": labels[g],
+                "topic": k,
+                "mean": float(mean[g, k]),
+                "ci_low": float(lo[g, k]),
+                "ci_high": float(hi[g, k]),
+                "sd": float(sd[g, k]),
+            }
+            for g in range(G)
+            for k in range(K)
+        ]
+        return pd.DataFrame(rows, columns=self._COLUMNS)

@@ -66,6 +66,47 @@ def test_content_depth_recovers_planted_shift():
     assert not (overlap(top10, AR) >= 4 and overlap(top10, AD) <= 1)
 
 
+def test_content_word_contrast():
+    """#846: content_word_contrast(topic, "deep", "root") surfaces the words that separate a topic's
+    language between two levels — for the planted shift, deep-over-root favors AD, root-over-deep AR."""
+    docs, parents, AR, AD, B = _content_shift_corpus()
+    m = topica.ReplyTM(2, em_iters=80, seed=13).fit(docs, parents=parents, content="depth")
+    a = max(range(2), key=lambda t: len(set(m.content_top_words(t, n=5)["root"]) & set(AR)))
+    deep_over_root = m.content_word_contrast(a, "deep", "root", n=5)
+    assert all(isinstance(w, str) and isinstance(r, float) for w, r in deep_over_root)
+    assert [r for _, r in deep_over_root] == sorted((r for _, r in deep_over_root), reverse=True)
+    top_deep = [w for w, _ in deep_over_root]
+    assert len(set(top_deep) & set(AD)) >= 4  # deep-characteristic words are the AD vocabulary
+    # the reverse contrast surfaces the root (AR) vocabulary
+    top_root = [w for w, _ in m.content_word_contrast(a, "root", "deep", n=5)]
+    assert len(set(top_root) & set(AR)) >= 4
+    # accepts integer levels too, and errors on an unknown level
+    assert m.content_word_contrast(a, 2, 0, n=3)  # deep vs root by index
+    with pytest.raises(ValueError):
+        m.content_word_contrast(a, "nope", "root")
+
+
+def test_content_smooth_ordered_levels():
+    """#846: content_smooth ties adjacent (ordered) depth levels; the fit stays valid and the
+    smoothed per-level topic-word distributions are closer between adjacent levels than unsmoothed."""
+    docs, parents, *_ = _content_shift_corpus(n_threads=60)
+    m0 = topica.ReplyTM(2, em_iters=60, seed=13).fit(docs, parents=parents, content="depth")
+    ms = topica.ReplyTM(2, em_iters=60, seed=13).fit(
+        docs, parents=parents, content="depth", content_smooth=5.0
+    )
+    tw0 = np.asarray(m0.topic_word_by_group)  # (K, G, V)
+    tws = np.asarray(ms.topic_word_by_group)
+    assert tws.shape == tw0.shape and np.allclose(tws.sum(axis=2), 1.0)
+    # adjacent-level L1 distance (root vs shallow) should shrink under smoothing
+    adj0 = np.abs(tw0[:, 0] - tw0[:, 1]).sum(axis=1).mean()
+    adjs = np.abs(tws[:, 0] - tws[:, 1]).sum(axis=1).mean()
+    assert adjs <= adj0 + 1e-9
+    with pytest.raises(ValueError):
+        topica.ReplyTM(2, em_iters=5, seed=13).fit(
+            docs, parents=parents, content="depth", content_smooth=-1.0
+        )
+
+
 def test_content_readouts_and_labels():
     """#841: content readouts have the right shapes (STM-compatible), plug into topica.content, and
     are None without a content covariate."""
@@ -642,21 +683,28 @@ def test_kappa_ci_boundary_flag():
 
 
 def test_group_prevalence_ci():
-    """#830 T3a: a one-call prob-scale CI aligned with group_prevalence (G,K,2), bracketing the
-    point estimate; a group with fewer than two threads yields NaN bounds."""
+    """#830 T3a / #843: topica.inspect.group_prevalence_ci returns a FrameDict (labels + mean/ci/sd)
+    matching the house CI-helper convention, with valid prob-scale intervals and a tidy to_frame."""
     docs, parents, cov, _ = _threaded_corpus(n_threads=30, depth=4)
-    m = topica.ReplyTM(3, em_iters=40, seed=13).fit(docs, parents=parents, covariates=cov)
+    m = topica.ReplyTM(3, em_iters=40, seed=13).fit(
+        docs, parents=parents, covariates=cov, covariate_names=["A", "B"]
+    )
+    res = topica.inspect.group_prevalence_ci(m, ci=0.9, n_samples=1500, seed=1)
+    assert set(res) == {"labels", "mean", "ci_low", "ci_high", "sd"}
+    assert res["labels"] == ["A", "B"]
     gp = np.asarray(m.group_prevalence)
-    ci = np.asarray(m.group_prevalence_ci(ci=0.9, n_samples=1500, seed=1))
-    assert ci.shape == gp.shape + (2,)
-    # valid probability-scale interval, correctly ordered (the plug-in point need not sit strictly
-    # inside a narrow MC interval by Jensen, so we don't assert bracketing)
-    assert np.all(ci[:, :, 0] <= ci[:, :, 1])
-    assert np.all((ci >= 0.0) & (ci <= 1.0))
+    assert np.allclose(np.asarray(res["mean"]), gp)  # point estimate is the exact group_prevalence
+    lo, hi = np.asarray(res["ci_low"]), np.asarray(res["ci_high"])
+    assert lo.shape == gp.shape and np.all(lo <= hi) and np.all((lo >= 0) & (hi <= 1))
+    # tidy long frame: one row per (group, topic)
+    df = res.to_frame()
+    assert list(df.columns) == ["group", "topic", "mean", "ci_low", "ci_high", "sd"]
+    assert len(df) == gp.size
     # deterministic given seed
-    assert np.array_equal(ci, np.asarray(m.group_prevalence_ci(ci=0.9, n_samples=1500, seed=1)))
+    res2 = topica.inspect.group_prevalence_ci(m, ci=0.9, n_samples=1500, seed=1)
+    assert np.array_equal(np.asarray(res["ci_low"]), np.asarray(res2["ci_low"]))
     with pytest.raises(ValueError):
-        m.group_prevalence_ci(ci=1.5)
+        topica.inspect.group_prevalence_ci(m, ci=1.5)
 
 
 def test_topic_table_pretty_print():

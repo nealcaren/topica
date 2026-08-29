@@ -14,7 +14,7 @@
 
 use super::*;
 use numpy::{PyArray1, PyArray2, PyArray3, ToPyArray};
-use pyo3::types::{PyDict, PyType};
+use pyo3::types::{PyDict, PyList, PyType};
 use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -365,6 +365,31 @@ impl ReplyTM {
             ))
         }
     }
+
+    /// Resolve a content level given either its integer index or its string label.
+    fn resolve_content_level(&self, level: &Bound<'_, PyAny>) -> PyResult<usize> {
+        if let Ok(i) = level.extract::<usize>() {
+            if i >= self.num_content_groups {
+                return Err(PyValueError::new_err(format!(
+                    "content level {i} out of range; the model has {} level(s)",
+                    self.num_content_groups
+                )));
+            }
+            return Ok(i);
+        }
+        if let Ok(s) = level.extract::<String>() {
+            if let Some(i) = self.content_names.iter().position(|n| n == &s) {
+                return Ok(i);
+            }
+            return Err(PyValueError::new_err(format!(
+                "content level {s:?} is not one of the fitted levels {:?}",
+                self.content_names
+            )));
+        }
+        Err(PyValueError::new_err(
+            "content level must be an integer index or a string label",
+        ))
+    }
 }
 
 #[pymethods]
@@ -463,7 +488,7 @@ impl ReplyTM {
     /// `min_count` drops words rarer than it. Experimental: requires `topica.enable_experimental()`.
     #[pyo3(signature = (data, parents=None, covariates=None, covariate_names=None, *, min_count=1,
                         content=None, content_names=None, content_prior="l2".to_string(),
-                        content_prior_var=0.5, depth_bins=None))]
+                        content_prior_var=0.5, content_smooth=0.0, depth_bins=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -477,6 +502,7 @@ impl ReplyTM {
         content_names: Option<Vec<String>>,
         content_prior: String,
         content_prior_var: f64,
+        content_smooth: f64,
         depth_bins: Option<Vec<usize>>,
     ) -> PyResult<Py<Self>> {
         require_experimental("ReplyTM")?;
@@ -736,6 +762,11 @@ impl ReplyTM {
                 "content_prior_var must be finite and > 0",
             ));
         }
+        if !(content_smooth.is_finite() && content_smooth >= 0.0) {
+            return Err(PyValueError::new_err(
+                "content_smooth must be finite and >= 0 (0 disables adjacent-level smoothing)",
+            ));
+        }
         let mut content_depth_edges_used: Vec<usize> = Vec::new();
         let (content_groups, n_content, content_group_names): (
             Option<Vec<usize>>,
@@ -807,6 +838,7 @@ impl ReplyTM {
                     num_groups: n_content,
                     prior_var: content_prior_var,
                     l1: content_l1,
+                    smooth: content_smooth,
                 });
             crate::reply_tm::fit_reply_tm(
                 &docs_id,
@@ -1242,18 +1274,14 @@ impl ReplyTM {
         Ok(vecs_to_arr2(&self.prevalence_se).to_pyarray_bound(py))
     }
 
-    /// G×K×2 probability-scale credible interval `[lower, upper]` for `group_prevalence`, aligned
-    /// cell-for-cell with it (pair with `group_labels()` for the row names). Because
-    /// `group_prevalence` is a softmax and `prevalence_se` is a standard error in η space, you cannot
-    /// combine them by hand (different scale AND different width, `(G, K)` vs `(G, K-1)`); this does
-    /// the transform for you by Monte-Carlo, drawing η from `N(anchor, diag(prevalence_se²))` per
-    /// group, softmaxing each draw, and taking the `ci` percentiles per topic. `ci` is the coverage
-    /// (0.95 gives a 95% interval), matching `time_prevalence_ci`/`prevalence_ci`. Uses only the
-    /// diagonal (marginal) η SE, so it ignores cross-topic anchor covariance. A group with fewer than
-    /// two threads (its `prevalence_se` is NaN) yields NaN bounds. Build a tidy table with, e.g.,
-    /// `lo, hi = m.group_prevalence_ci().transpose(2, 0, 1)`.
+    /// Monte-Carlo primitive backing `topica.inspect.group_prevalence_ci`: returns a `G×K×4` array
+    /// whose last axis is `[mean, ci_low, ci_high, sd]` on the probability scale. Per group it draws
+    /// η from `N(anchor, diag(prevalence_se²))` (the anchor reconstructed from `group_prevalence` by
+    /// inverse softmax), softmaxes each draw, and summarizes per topic; `ci` is the coverage. Uses
+    /// only the diagonal (marginal) η SE. A group with fewer than two threads (NaN `prevalence_se`)
+    /// yields NaN. The Python wrapper attaches labels and a `to_frame()` (issue #843).
     #[pyo3(signature = (*, ci=0.95, n_samples=2000, seed=13))]
-    fn group_prevalence_ci<'py>(
+    fn _group_prevalence_ci_mc<'py>(
         &self,
         py: Python<'py>,
         ci: f64,
@@ -1282,22 +1310,21 @@ impl ReplyTM {
         };
         let lo_q = 0.5 * (1.0 - ci);
         let hi_q = 0.5 * (1.0 + ci);
-        let mut out = numpy::ndarray::Array3::<f64>::zeros((ng, k, 2));
+        let mut out = numpy::ndarray::Array3::<f64>::zeros((ng, k, 4));
         for g in 0..ng {
-            // Reconstruct the η anchor from the stored softmax prevalence (inverse softmax).
             let gp = &self.group_prevalence[g];
             let ref_p = gp[km1].max(1e-12);
             let anchor: Vec<f64> = (0..km1).map(|i| (gp[i].max(1e-12) / ref_p).ln()).collect();
             let se = &self.prevalence_se[g];
-            // A NaN SE (fewer than two threads) leaves the group's CI undefined.
             if se.iter().any(|v| !v.is_finite()) {
                 for kk in 0..k {
-                    out[[g, kk, 0]] = f64::NAN;
+                    out[[g, kk, 0]] = gp[kk]; // mean is still the plug-in point estimate
                     out[[g, kk, 1]] = f64::NAN;
+                    out[[g, kk, 2]] = f64::NAN;
+                    out[[g, kk, 3]] = f64::NAN;
                 }
                 continue;
             }
-            // Draw η ~ N(anchor, diag(se²)), softmax([η, 0]) per draw, collect per-topic samples.
             let mut cols: Vec<Vec<f64>> = vec![Vec::with_capacity(n_samples); k];
             for _ in 0..n_samples {
                 let mut logits = vec![0.0f64; k];
@@ -1319,9 +1346,14 @@ impl ReplyTM {
                 }
             }
             for (kk, col) in cols.iter_mut().enumerate() {
+                let mean = col.iter().sum::<f64>() / col.len() as f64;
+                let var = col.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>()
+                    / col.len().max(1) as f64;
                 col.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                out[[g, kk, 0]] = percentile_sorted(col, lo_q);
-                out[[g, kk, 1]] = percentile_sorted(col, hi_q);
+                out[[g, kk, 0]] = gp[kk]; // report the exact plug-in mean as the point estimate
+                out[[g, kk, 1]] = percentile_sorted(col, lo_q);
+                out[[g, kk, 2]] = percentile_sorted(col, hi_q);
+                out[[g, kk, 3]] = var.sqrt();
             }
         }
         Ok(out.to_pyarray_bound(py))
@@ -1502,6 +1534,54 @@ impl ReplyTM {
             out.set_item(label, words)?;
         }
         Ok(out)
+    }
+
+    /// The words that most separate one topic's language between two content levels: the top-`n`
+    /// `(word, log_ratio)` pairs by descending `ln(β[level_a] / β[level_b])` for `topic` (STM's
+    /// `word_contrast`, on content levels). `level_a`/`level_b` are level indices or labels (e.g.
+    /// `"deep"`, `"root"`). Positive log-ratio = more characteristic of `level_a`. The natural
+    /// threaded readout is `content_word_contrast(k, "deep", "root")`. Requires a content fit.
+    #[pyo3(signature = (topic, level_a, level_b, n=10))]
+    fn content_word_contrast<'py>(
+        &self,
+        py: Python<'py>,
+        topic: usize,
+        level_a: &Bound<'py, PyAny>,
+        level_b: &Bound<'py, PyAny>,
+        n: usize,
+    ) -> PyResult<Bound<'py, PyList>> {
+        self.require_fitted()?;
+        if self.content_beta.is_empty() {
+            return Err(PyValueError::new_err(
+                "no content covariate was fit; pass content= to fit for the level contrast",
+            ));
+        }
+        if topic >= self.num_topics {
+            return Err(PyValueError::new_err(format!(
+                "topic {topic} out of range 0..{}",
+                self.num_topics
+            )));
+        }
+        let la = self.resolve_content_level(level_a)?;
+        let lb = self.resolve_content_level(level_b)?;
+        let a = &self.content_beta[la][topic];
+        let b = &self.content_beta[lb][topic];
+        let ratio: Vec<f64> = (0..self.vocab.len())
+            .map(|v| (a[v].max(1e-300) / b[v].max(1e-300)).ln())
+            .collect();
+        let mut idx: Vec<usize> = (0..self.vocab.len()).collect();
+        idx.sort_by(|&x, &y| f64::total_cmp(&ratio[y], &ratio[x]));
+        let items: Vec<Bound<'py, pyo3::types::PyTuple>> = idx
+            .iter()
+            .take(n)
+            .map(|&v| {
+                pyo3::types::PyTuple::new_bound(
+                    py,
+                    &[self.vocab[v].clone().into_py(py), ratio[v].into_py(py)],
+                )
+            })
+            .collect();
+        Ok(PyList::new_bound(py, items))
     }
 
     /// Topic coherence (one score per topic). `coherence_type` is `"u_mass"` (default, uses the

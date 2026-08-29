@@ -115,6 +115,10 @@ pub struct ContentConfig<'a> {
     pub num_groups: usize,
     pub prior_var: f64,
     pub l1: f64,
+    /// First-order random-walk precision (`1/τ²`) tying ADJACENT content levels, for ordered levels
+    /// like depth bins. `0` disables it (levels treated as unordered categories). Only applied when
+    /// there are at least two levels.
+    pub smooth: f64,
 }
 
 /// Numerically-stable softmax of `[eta, 0]` (reference topic K-1 fixed at 0). Subtracts the max
@@ -411,6 +415,13 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
 
         // M-step (β): a SAGE content update per level (content covariate), else plain normalization.
         if let Some(c) = content {
+            // Optional first-order random walk over the (ordered) content levels: one base group,
+            // n_content ordered periods, precision c.smooth. Off (None) when smooth<=0 or <2 levels.
+            let rw = if c.smooth > 0.0 && n_content >= 2 {
+                Some((1usize, n_content, c.smooth))
+            } else {
+                None
+            };
             content_beta = crate::ctm::optimize_content(
                 &m_bg,
                 &mut kappa_t,
@@ -422,7 +433,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                 num_types,
                 c.prior_var,
                 c.l1,
-                None, // no ordered random-walk over content levels in v1
+                rw,
                 20,
             );
         } else {

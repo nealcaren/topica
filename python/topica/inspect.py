@@ -28,6 +28,7 @@ __all__ = [
     'find_thoughts',
     'find_thoughts_html',
     'frex',
+    'group_prevalence_ci',
     'label_topics',
     'mmr',
     'prepare_pyldavis',
@@ -37,6 +38,37 @@ __all__ = [
     'topic_table',
     'topics_for_term',
 ]
+
+
+def group_prevalence_ci(model, *, ci=0.95, n_samples=2000, seed=13):
+    """Probability-scale credible intervals for a :class:`~topica.ReplyTM`'s per-group topic
+    prevalence, as a tidy :class:`~topica._results.GroupPrevalenceCI`.
+
+    ``group_prevalence`` is a softmax and ``prevalence_se`` is a standard error in the η (logit)
+    space, so you cannot combine them into an interval by hand (different scale AND different width,
+    ``(G, K)`` vs ``(G, K-1)``). This does the transform by Monte-Carlo: per group it draws η from
+    ``N(anchor, diag(prevalence_se**2))``, softmaxes each draw, and takes the ``ci`` percentiles per
+    topic. It only uses the diagonal (marginal) η SE. A group with fewer than two threads (NaN
+    ``prevalence_se``) yields NaN bounds. ``ci`` is the coverage (0.95 gives a 95% interval),
+    matching :func:`topica.time_prevalence_ci` / :func:`topica.effects.prevalence_ci`.
+
+    Returns a :class:`~topica._results.GroupPrevalenceCI` (a ``dict``) with keys ``labels`` (the
+    group names), and ``(G, K)`` arrays ``mean`` (the point ``group_prevalence``), ``ci_low``,
+    ``ci_high``, ``sd``. Call ``.to_frame()`` for a long tidy DataFrame, one row per (group, topic).
+    """
+    from ._results import GroupPrevalenceCI
+
+    raw = np.asarray(
+        model._group_prevalence_ci_mc(ci=ci, n_samples=n_samples, seed=seed), dtype=np.float64
+    )
+    labels = list(model.group_labels())
+    return GroupPrevalenceCI(
+        labels=labels,
+        mean=raw[:, :, 0],
+        ci_low=raw[:, :, 1],
+        ci_high=raw[:, :, 2],
+        sd=raw[:, :, 3],
+    )
 
 
 
