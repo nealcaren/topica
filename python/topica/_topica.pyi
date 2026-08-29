@@ -3116,18 +3116,19 @@ class ReplyTM:
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
-        """D×K plug-in document-topic proportions ``softmax([mean η, 0])``. This discards the
-        posterior variance ν and biases thin, high-ν documents toward a uniform mix; for held-out
-        token prediction against a sample-averaged Gibbs model use ``posterior_doc_topic`` (#838)."""
+        """D×K plug-in document-topic proportions ``softmax([mean η, 0])``. This is an overconfident
+        point estimate that discards the posterior variance ν, sharpest on thin, high-ν documents. A
+        collapsed-Gibbs model's ``doc_topic`` (e.g. LDA) is a sample-averaged, hedged posterior mean;
+        to compare on the same estimator footing use the hedged ``posterior_doc_topic`` (#838)."""
         ...
     def posterior_doc_topic(
         self, *, n_samples: int = 400, seed: int = 13
     ) -> numpy.typing.NDArray[numpy.float64]:
         """D×K posterior-predictive proportions ``E[softmax([η, 0])]``, a Monte-Carlo average of
-        ``n_samples`` η draws from ``N(doc_eta, diag(doc_topic_var))``. Unlike the plug-in
-        ``doc_topic`` it integrates over ν, so it does not flatten thin leaves; it is the θ to score
-        held-out tokens with when comparing to a sample-averaged model like LDA (#838). Deterministic
-        given ``seed``; draws use only the diagonal of ν."""
+        ``n_samples`` η draws from ``N(doc_eta, diag(doc_topic_var))``. Unlike the overconfident
+        plug-in ``doc_topic`` it integrates over ν, hedging thin leaves instead of overcommitting,
+        which puts it on the same estimator footing as a sample-averaged model like LDA for a fair
+        held-out comparison (#838). Deterministic given ``seed``; draws use only the diagonal of ν."""
         ...
     @property
     def doc_eta(self) -> numpy.typing.NDArray[numpy.float64]:

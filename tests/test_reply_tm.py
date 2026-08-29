@@ -348,29 +348,81 @@ def test_save_load_roundtrip(tmp_path):
     assert r1["observed_ci"] == r2["observed_ci"]
 
 
+def _thin_leaf_corpus(seed=13, n_threads=60):
+    """Thick roots (12 tokens) and thin leaves (2 tokens) so the per-leaf posterior variance ν is
+    large: exactly the regime where the plug-in and the posterior-predictive θ diverge."""
+    rng = np.random.default_rng(seed)
+    A = [f"a{i}" for i in range(6)]
+    B = [f"b{i}" for i in range(6)]
+    docs, parents = [], []
+    for t in range(n_threads):
+        own = A if t % 2 == 0 else B
+        docs.append([own[rng.integers(6)] for _ in range(12)])
+        parents.append(-1)
+        r = len(docs) - 1
+        for _ in range(2):
+            docs.append([own[rng.integers(6)] for _ in range(2)])  # thin leaf → high ν
+            parents.append(r)
+    return docs, parents
+
+
+def _entropy(p):
+    return -(p * np.log(np.clip(p, 1e-12, None))).sum(axis=1)
+
+
 def test_posterior_doc_topic_predictive(tmp_path):
-    """posterior_doc_topic is E[softmax(eta)]: proper simplex, deterministic, distinct from the
-    plug-in softmax(mean eta), and stable across save/load (issue #838)."""
-    docs, parents, cov, _ = _threaded_corpus(n_threads=20, depth=6, doc_len=8)
-    m = topica.ReplyTM(3, em_iters=40, seed=13)
-    m.fit(docs, parents=parents, covariates=cov)
+    """posterior_doc_topic is a correct MC estimate of E[softmax(eta)]: proper simplex,
+    deterministic, converges to an independent reference, and survives save/load (issue #838)."""
+    docs, parents = _thin_leaf_corpus()
+    m = topica.ReplyTM(3, em_iters=50, seed=13).fit(docs, parents=parents)
 
     plug = np.asarray(m.doc_topic)
     pdt = np.asarray(m.posterior_doc_topic(n_samples=400, seed=13))
     assert pdt.shape == plug.shape
     assert np.allclose(pdt.sum(axis=1), 1.0)  # a valid distribution per document
     assert (pdt >= 0).all()
-    # deterministic given seed; posterior-predictive is NOT the plug-in (nu is integrated out)
+    # deterministic given seed
     assert np.array_equal(pdt, np.asarray(m.posterior_doc_topic(n_samples=400, seed=13)))
-    assert not np.allclose(pdt, plug)
     with pytest.raises(ValueError):
         m.posterior_doc_topic(n_samples=0)
+
+    # MC correctness: it converges to an independent numpy E[softmax([eta, 0])] over the SAME
+    # diagonal-nu Gaussian posterior. This pins the estimator, not merely "differs from plug-in".
+    eta = np.asarray(m.doc_eta)
+    var = np.clip(np.asarray(m.doc_topic_var), 0.0, None)
+    rng = np.random.default_rng(0)
+    z = rng.standard_normal((20000,) + eta.shape)
+    draws = eta[None] + z * np.sqrt(var)[None]
+    full = np.concatenate([draws, np.zeros(draws.shape[:2] + (1,))], axis=2)
+    full -= full.max(axis=2, keepdims=True)
+    e = np.exp(full)
+    ref = (e / e.sum(axis=2, keepdims=True)).mean(axis=0)
+    assert np.abs(np.asarray(m.posterior_doc_topic(n_samples=8000, seed=1)) - ref).max() < 0.02
 
     # it depends only on doc_eta + doc_topic_var, which round-trip, so it survives save/load
     p = str(tmp_path / "reply.topica")
     m.save(p)
     m2 = topica.ReplyTM.load(p)
     assert np.array_equal(pdt, np.asarray(m2.posterior_doc_topic(n_samples=400, seed=13)))
+
+
+def test_posterior_doc_topic_hedges_toward_uniform():
+    """The corrected #838 mechanism: integrating over ν makes the posterior-predictive θ FLATTER
+    (higher entropy) than the overconfident plug-in ``softmax(mean η)``, and the flattening is
+    ν-driven (large on thin, high-ν leaves, ~zero on thick low-ν documents). A test that only
+    checked the two θ differ would pass even on an implementation that hedged the wrong way — the
+    direction is the property the fix rests on."""
+    docs, parents = _thin_leaf_corpus()
+    m = topica.ReplyTM(2, em_iters=60, seed=13).fit(docs, parents=parents)
+    plug = np.asarray(m.doc_topic)
+    pdt = np.asarray(m.posterior_doc_topic(n_samples=1000, seed=13))
+    gain = _entropy(pdt) - _entropy(plug)
+    # posterior-predictive is flatter overall (hedges, not sharpens)
+    assert gain.mean() > 0.0
+    # and the hedging is driven by ν: high-ν leaves flatten far more than low-ν documents
+    nu = np.asarray(m.doc_topic_var).mean(axis=1)
+    q_lo, q_hi = np.quantile(nu, [0.25, 0.75])
+    assert gain[nu >= q_hi].mean() > gain[nu <= q_lo].mean()
 
 
 def test_reply_completion_scores_logistic_normal_fairly():

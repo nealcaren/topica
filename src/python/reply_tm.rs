@@ -780,10 +780,12 @@ impl ReplyTM {
     /// D×K document-topic proportions θ.
     ///
     /// This is the PLUG-IN `softmax([mean η, 0])`, which discards the per-document posterior
-    /// variance `ν` (`doc_topic_var`). For a logistic-normal model `softmax(E[η]) != E[softmax(η)]`,
-    /// and the plug-in is biased toward the center exactly where `ν` is large (thin documents). For
-    /// held-out token prediction use `posterior_doc_topic`, the posterior-predictive `E[softmax(η)]`,
-    /// which puts ReplyTM on the same footing as a Gibbs model's sample-averaged θ (issue #838).
+    /// variance `ν` (`doc_topic_var`). For a logistic-normal model `softmax(E[η]) != E[softmax(η)]`:
+    /// the plug-in is an overconfident point estimate that ignores ν, sharpest exactly where ν is
+    /// large (thin documents whose η is barely identified). A collapsed-Gibbs model's `doc_topic`
+    /// (e.g. LDA) is instead a sample-averaged, hedged posterior mean, so to compare the two on the
+    /// same estimator footing (e.g. for held-out token prediction) use `posterior_doc_topic`, the
+    /// posterior-predictive `E[softmax(η)]` (issue #838).
     #[getter]
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
@@ -793,10 +795,12 @@ impl ReplyTM {
     /// D×K posterior-predictive document-topic proportions `E[softmax([η, 0])]`, a Monte-Carlo
     /// average of `n_samples` draws of η from each document's Gaussian posterior
     /// `N(doc_eta, diag(doc_topic_var))`. Unlike the plug-in `doc_topic`, this integrates over the
-    /// posterior variance ν, so it does not collapse thin, high-ν documents toward a uniform mix.
-    /// It is the θ to score held-out tokens with when comparing against a sample-averaged Gibbs
-    /// model such as LDA (issue #838). Deterministic given `seed`. Note the draws use only the
-    /// diagonal of ν (the stored marginal variances), not its full off-diagonal covariance.
+    /// posterior variance ν, so it hedges thin, high-ν documents instead of committing to an
+    /// overconfident point estimate. That puts it on the same estimator footing as a collapsed-Gibbs
+    /// model's sample-averaged θ (e.g. LDA), which is what makes a held-out token comparison a model
+    /// comparison rather than an estimator artifact (issue #838). Deterministic given `seed`. Note
+    /// the draws use only the diagonal of ν (the stored marginal variances), not its full
+    /// off-diagonal covariance.
     #[pyo3(signature = (*, n_samples=400, seed=13))]
     fn posterior_doc_topic<'py>(
         &self,

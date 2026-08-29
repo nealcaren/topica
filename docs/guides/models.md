@@ -714,9 +714,12 @@ the tree model's vocabulary) and scored through the identical leaf mask, so `del
 (`"stm"` needs a covariate with at least two groups). The scoring is estimator-matched: a
 logistic-normal model (ReplyTM, STM) is scored with its posterior-predictive `E[softmax(η)]`
 (a Monte-Carlo average over its η posterior, `predictive_samples=400` by default), not the
-plug-in `softmax(mean η)` that `doc_topic` returns, so it is not penalized against LDA's
-already sample-averaged `doc_topic` (the plug-in flattens exactly the thin leaves this test
-targets; see issue #838):
+plug-in `softmax(mean η)` that `doc_topic` returns, so it is compared on the same estimator
+footing as LDA's already sample-averaged `doc_topic`. The plug-in is an overconfident point
+estimate that ignores the posterior variance ν, sharpest on exactly the thin leaves this test
+targets; matching the estimators keeps `delta["lda"]` a model comparison rather than an
+estimator artifact (on the real corpora of issue #838 this closed most of the apparent LDA
+gap):
 
 ```python
 res = topica.evaluate.reply_completion(

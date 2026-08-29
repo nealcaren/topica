@@ -903,14 +903,18 @@ def reply_completion(
     fit. For each held-out token ``w`` in leaf ``d`` we score
     ``log(sum_k theta[d, k] * topic_word[k, w])`` under that model's fitted
     ``theta`` and ``topic_word``, and average per token. To keep the estimator
-    fair across models (issue #838), a logistic-normal model (ReplyTM, STM/CTM)
-    is scored with the posterior-predictive ``E[softmax(η)]`` — a Monte-Carlo
-    average of ``predictive_samples`` draws from its own η posterior — not the
-    plug-in ``softmax(mean η)`` that ``doc_topic`` returns; the plug-in discards
-    the posterior variance ν and flattens exactly the thin leaves that are the
-    eval targets, biasing it against LDA's already-averaged ``doc_topic``. Because
-    a leaf's ``theta`` is inferred from its (few) seen tokens plus its prior, a
-    tree that couples the prior to the parent should predict thin leaves better.
+    fair across models (issue #838), a logistic-normal model (ReplyTM and the STM
+    baseline) is scored with the posterior-predictive ``E[softmax(η)]`` (a
+    Monte-Carlo average of ``predictive_samples`` draws from its own η posterior),
+    not the plug-in ``softmax(mean η)`` that ``doc_topic`` returns. The plug-in is
+    an overconfident point estimate that ignores the posterior variance ν, so it is
+    sharpest on exactly the thin leaves that are the eval targets, whereas LDA's
+    ``doc_topic`` is an already-averaged (hedged) posterior mean; matching the two
+    estimators keeps ``delta["lda"]`` a model comparison rather than an estimator
+    artifact (on the real corpora of issue #838 this closed most of the apparent
+    LDA gap). Because a leaf's ``theta`` is inferred from its (few) seen tokens plus
+    its prior, a tree that couples the prior to the parent should predict thin
+    leaves better.
 
     The models:
 
@@ -963,9 +967,13 @@ def reply_completion(
         this to the analysis fit. The off-the-shelf ``lda`` / ``stm`` comparators
         run at their own default iteration counts, not ``em_iters``.
     min_count : words rarer than this are dropped (shared across models).
-    seed : RNG seed for leaf sampling, the token split, the permutation, and the
-        bootstrap; also the model seed.
+    seed : RNG seed for leaf sampling, the token split, the permutation, the
+        bootstrap, and the posterior-predictive theta draws; also the model seed.
     n_boot : thread-clustered bootstrap resamples for the interval.
+    predictive_samples : int. Monte-Carlo draws used for the posterior-predictive
+        ``E[softmax(η)]`` that scores each logistic-normal model (see Notes). The
+        default (400) matches the estimate that validated the fix in issue #838; a
+        much smaller value makes the scored likelihoods noisy.
 
     Returns
     -------
@@ -1148,13 +1156,14 @@ def reply_completion(
     def _predictive_theta(model):
         """The θ to score held-out tokens with, matched in estimator quality across models.
 
-        A logistic-normal model's ``doc_topic`` is the PLUG-IN ``softmax(mean η)``, which
-        discards the posterior variance ν and flattens thin, high-ν leaves — exactly the eval
-        targets. LDA's ``doc_topic`` is instead a sample-averaged posterior mean. Scoring both
-        with ``doc_topic`` therefore biases the logistic-normal models (ReplyTM, STM/CTM) against
-        LDA (issue #838). We put them on the same footing by scoring the logistic-normal models
-        with the posterior-predictive ``E[softmax(η)]`` (a Monte-Carlo average over their own η
-        posterior); LDA's already-averaged ``doc_topic`` is used unchanged.
+        A logistic-normal model's ``doc_topic`` is the PLUG-IN ``softmax(mean η)``, an
+        overconfident point estimate that ignores the posterior variance ν and so is sharpest on
+        thin, high-ν leaves (exactly the eval targets). LDA's ``doc_topic`` is instead a
+        sample-averaged (hedged) posterior mean. Scoring the two with different estimator quality
+        confounds a model comparison with an estimator difference (issue #838). We put them on the
+        same footing by scoring the logistic-normal models with the posterior-predictive
+        ``E[softmax(η)]`` (a Monte-Carlo average over their own η posterior, which hedges the thin
+        leaves the same way); LDA's already-averaged ``doc_topic`` is used unchanged.
         """
         pdt = getattr(model, "posterior_doc_topic", None)
         if callable(pdt):  # ReplyTM (diagonal ν) exposes it directly
