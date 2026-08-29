@@ -94,6 +94,27 @@ pub struct ReplyTmModel {
     /// the measurement-error variance of each `lambda` row so a reduced-form persistence estimator
     /// can correct child-on-parent regression for attenuation.
     pub doc_topic_var: Vec<Vec<f64>>,
+    /// Content-covariate deviations `κ` (SAGE / STM content model), `None` unless fit with a content
+    /// covariate. Topic words shift by content level on top of the global `beta` (issue #841).
+    pub content_kappa: Option<crate::ctm::ContentKappa>,
+    /// Per-content-level topic-word distributions `(G_content × K × V)`, `None` unless a content
+    /// covariate was fit. `beta` is their level-averaged marginal. Used by `transform` for a new
+    /// document's content level.
+    pub content_beta: Option<Vec<Vec<Vec<f64>>>>,
+    /// Number of content-covariate levels (1 when no content covariate was fit).
+    pub num_content_groups: usize,
+}
+
+/// Content-covariate configuration (issue #841): a per-document content level in a DENSE range
+/// `0..num_groups` (separate from the prevalence `groups`), with the SAGE `κ`-deviation prior. The
+/// tree prior keeps shaping prevalence (η); this only shapes the topic-word distributions `β` by
+/// content level. `prior_var` is the deviation-prior scale; `l1 > 0` selects the sparse Laplace
+/// prior (rate `l1`), `l1 = 0` the dense L2 ridge.
+pub struct ContentConfig<'a> {
+    pub groups: &'a [usize],
+    pub num_groups: usize,
+    pub prior_var: f64,
+    pub l1: f64,
 }
 
 /// Numerically-stable softmax of `[eta, 0]` (reference topic K-1 fixed at 0). Subtracts the max
@@ -146,6 +167,7 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     em_tol: f64,
     compute_ci: bool,
     blend: Option<&BlendConfig>,
+    content: Option<&ContentConfig>,
     mut on_progress: F,
     rng: &mut R,
 ) -> ReplyTmModel {
@@ -193,6 +215,47 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         }
         beta
     });
+
+    // Content covariate (issue #841): a SAGE κ-deviation channel on the topic-word distributions β,
+    // by a per-document content level (separate from the prevalence `groups`). Reuses the CTM core's
+    // content machinery (`build_content_beta`/`optimize_content`), leaving the tree prevalence prior
+    // untouched. `content_beta[cg]` is content level `cg`'s K×V topic-word matrix; the E-step scores
+    // each document under its own level's β and the M-step re-fits κ from per-(topic, level) counts.
+    let n_content = content.map_or(1, |c| c.num_groups.max(1));
+    // Fixed background m_v = ln(add-one-smoothed empirical corpus word frequency), matching the CTM
+    // core's content model exactly (freq init 1, total init V): m_v = ln((count_v + 1) / (N + V)).
+    let mut m_bg = vec![0.0f64; num_types];
+    if content.is_some() {
+        let mut freq = vec![1.0f64; num_types];
+        let mut total = num_types as f64;
+        for (words, counts) in &sparse {
+            for (wi, &w) in words.iter().enumerate() {
+                freq[w] += counts[wi];
+                total += counts[wi];
+            }
+        }
+        for v in 0..num_types {
+            m_bg[v] = (freq[v] / total).ln();
+        }
+    }
+    // κ deviations: topic (K×V), content-level (G×V), topic×level interaction (K*G×V).
+    let mut kappa_t = vec![vec![0.0f64; num_types]; k];
+    let mut kappa_c = vec![vec![0.0f64; num_types]; n_content];
+    let mut kappa_i = vec![vec![0.0f64; num_types]; k * n_content];
+    // Seed the topic deviation from the spectral β so the content fit starts at an STM-quality point:
+    // κᵀ_{t,v} = ln β_{t,v} − m_v, with κᶜ = κᴵ = 0 (levels start identical to the marginal).
+    if content.is_some() {
+        for t in 0..k {
+            for v in 0..num_types {
+                kappa_t[t][v] = beta[t][v].max(1e-12).ln() - m_bg[v];
+            }
+        }
+    }
+    let mut content_beta: Vec<Vec<Vec<f64>>> = if content.is_some() {
+        crate::ctm::build_content_beta(&m_bg, &kappa_t, &kappa_c, &kappa_i, k, n_content, num_types)
+    } else {
+        Vec::new()
+    };
 
     let mut lambda = vec![vec![0.0f64; km1]; d];
     let mut anchor = vec![vec![0.0f64; km1]; num_groups.max(1)];
@@ -271,16 +334,21 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                         .collect();
                     (mu, &siginv_edge, ent_edge)
                 };
+                // The E-step β is the document's content-level β (content covariate) or the shared β.
+                let beta_doc: &[Vec<f64>] = match content {
+                    Some(c) => &content_beta[c.groups[di]],
+                    None => &beta,
+                };
                 let opt = lbfgs_minimize(
                     lambda[di].clone(),
-                    |eta| ctm_lhood_grad(eta, &beta, words, counts, &mu_d, siginv),
+                    |eta| ctm_lhood_grad(eta, beta_doc, words, counts, &mu_d, siginv),
                     40,
                     7,
                     1e-5,
                 );
                 // Both roots and edges now re-estimate a FULL covariance, so every document needs the
                 // full Laplace covariance ν (diagonal=false).
-                let res = ctm_hpb(&opt, &beta, words, counts, &mu_d, siginv, entropy, false);
+                let res = ctm_hpb(&opt, beta_doc, words, counts, &mu_d, siginv, entropy, false);
                 (di, opt, res.nu, res.phi, res.bound)
             })
             .collect();
@@ -293,6 +361,12 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
 
         // fold sufficient statistics in document order
         let mut beta_ss = vec![vec![1e-8f64; num_types]; k];
+        // Per-(topic, content-level) expected word counts, indexed `t*n_content + cg` (content only).
+        let mut content_ss: Vec<Vec<f64>> = if content.is_some() {
+            vec![vec![1e-8f64; num_types]; k * n_content]
+        } else {
+            Vec::new()
+        };
         let mut nu_diag_store = vec![vec![0.0f64; km1]; d];
         // Full ν for every token-bearing document (Σ_root uses the roots' ν, Σ_edge the edges').
         let mut nu_full: Vec<Vec<f64>> = vec![Vec::new(); d];
@@ -302,9 +376,21 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
             nu_diag_store[di] = (0..km1).map(|i| nu[i * km1 + i]).collect();
             nu_full[di] = nu.clone();
             let words = &sparse[di].0;
-            for (wi, &w) in words.iter().enumerate() {
-                for (t, brow) in beta_ss.iter_mut().enumerate() {
-                    brow[w] += phi[t][wi];
+            match content {
+                Some(c) => {
+                    let cg = c.groups[di];
+                    for (wi, &w) in words.iter().enumerate() {
+                        for t in 0..k {
+                            content_ss[t * n_content + cg][w] += phi[t][wi];
+                        }
+                    }
+                }
+                None => {
+                    for (wi, &w) in words.iter().enumerate() {
+                        for (t, brow) in beta_ss.iter_mut().enumerate() {
+                            brow[w] += phi[t][wi];
+                        }
+                    }
                 }
             }
         }
@@ -323,14 +409,31 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
             }
         }
 
-        // M-step (β): normalize expected token counts
-        for brow in beta_ss.iter_mut() {
-            let s: f64 = brow.iter().sum();
-            for v in brow.iter_mut() {
-                *v /= s;
+        // M-step (β): a SAGE content update per level (content covariate), else plain normalization.
+        if let Some(c) = content {
+            content_beta = crate::ctm::optimize_content(
+                &m_bg,
+                &mut kappa_t,
+                &mut kappa_c,
+                &mut kappa_i,
+                &content_ss,
+                k,
+                n_content,
+                num_types,
+                c.prior_var,
+                c.l1,
+                None, // no ordered random-walk over content levels in v1
+                20,
+            );
+        } else {
+            for brow in beta_ss.iter_mut() {
+                let s: f64 = brow.iter().sum();
+                for v in brow.iter_mut() {
+                    *v /= s;
+                }
             }
+            beta = beta_ss;
         }
-        beta = beta_ss;
 
         // M-step (anchor): per-GROUP per-topic baseline = mean η within the covariate group
         // (categorical prevalence; equals the global mean when there is a single group).
@@ -717,6 +820,28 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         (f64::NAN, f64::NAN)
     };
 
+    // With a content covariate, the reported `beta` is the content-level-averaged topic-word (the
+    // marginal), and the per-level β + κ deviations are returned alongside for the content readouts.
+    let (content_kappa_out, content_beta_out) = if content.is_some() {
+        for t in 0..k {
+            for v in 0..num_types {
+                let s: f64 = (0..n_content).map(|g| content_beta[g][t][v]).sum();
+                beta[t][v] = s / n_content as f64;
+            }
+        }
+        (
+            Some(crate::ctm::ContentKappa {
+                m: m_bg.clone(),
+                kappa_topic: kappa_t.clone(),
+                kappa_cov: kappa_c.clone(),
+                kappa_interaction: kappa_i.clone(),
+            }),
+            Some(content_beta),
+        )
+    } else {
+        (None, None)
+    };
+
     ReplyTmModel {
         num_topics: k,
         num_types,
@@ -737,6 +862,9 @@ pub fn fit_reply_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         converged,
         em_iters_run,
         doc_topic_var: last_nu_diag,
+        content_kappa: content_kappa_out,
+        content_beta: content_beta_out,
+        num_content_groups: n_content,
     }
 }
 
@@ -767,6 +895,9 @@ pub fn transform_reply_tm(
     edge_siginv: &[f64],
     root_siginv: &[f64],
     blend: Option<(f64, f64)>,
+    // Content covariate (issue #841): per-level topic-word matrices and each new document's content
+    // level, so a content-fit model scores each new doc under its own level's β. `None` uses `beta`.
+    content: Option<(&[Vec<Vec<f64>>], &[usize])>,
 ) -> Vec<Vec<f64>> {
     let k = beta.len();
     let km1 = k - 1;
@@ -829,13 +960,18 @@ pub fn transform_reply_tm(
             (mu, siginv_edge)
         };
         let (words, counts) = &sparse[di];
+        // Content covariate: score under this document's content-level β (else the shared β).
+        let beta_doc: &[Vec<f64>] = match content {
+            Some((cb, cg)) => &cb[cg[di]],
+            None => beta,
+        };
         lambda[di] = if words.is_empty() {
             // No token evidence: the objective reduces to the prior, whose mode is η = μ.
             mu_d
         } else {
             lbfgs_minimize(
                 mu_d.clone(),
-                |eta| ctm_lhood_grad(eta, beta, words, counts, &mu_d, siginv),
+                |eta| ctm_lhood_grad(eta, beta_doc, words, counts, &mu_d, siginv),
                 40,
                 7,
                 1e-5,
@@ -990,6 +1126,7 @@ mod tests {
             1e-7,
             true, // exercise the eager kappa_ci path
             None, // parent coupling
+            None, // no content covariate
             |_, _, _| true,
             &mut fit_rng,
         );
