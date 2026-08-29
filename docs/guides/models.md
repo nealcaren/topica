@@ -754,11 +754,15 @@ import topica
 topica.enable_experimental()   # ReplyTM is experimental
 
 # docs in a fixed order; parents[d] indexes into docs (-1 = thread root);
-# group[d] is a dense categorical covariate (e.g. the subreddit, the verdict).
+# group[d] is a categorical covariate (e.g. the subreddit, the verdict). It can be dense
+# integer ids, or string/categorical labels (a list or a pandas Series) which are
+# auto-encoded 0..G-1 with the labels becoming the group names.
 m = topica.ReplyTM(num_topics=25, seed=13)
-m.fit(docs, parents=parents, covariates=group, covariate_names=["cmv", "hn"])
+m.fit(docs, parents=parents, covariates=group)   # e.g. covariates=["cmv", "hn", "cmv", ...]
 
-m.group_prevalence      # (G, K) per-group baseline topic mix (probability scale)
+m.group_prevalence        # (G, K) per-group baseline topic mix (probability scale)
+m.group_prevalence_ci()   # (G, K, 2) probability-scale CI aligned with group_prevalence
+m.converged               # did EM converge before the em_iters cap? (else raise it)
 topica.inspect.topic_table(m)
 ```
 
@@ -855,8 +859,8 @@ nothing, and the point estimate is biased toward `kappa → 0` by topic-model sh
 a bias the interval does not correct. It is `(nan, nan)` when there are no reply edges
 or the fit was too short to identify the field. On a strongly-persistent corpus the
 profile pegs at the persistence floor (`kappa → 0`); rather than report a false-precision
-zero-width `(0.001, 0.001)`, `kappa_ci` then returns a one-sided `(lower, nan)` and warns
-— read that as strong persistence, not a tight interval.
+zero-width `(0.001, 0.001)`, `kappa_ci` then returns a one-sided `(lower, nan)` and warns,
+which you should read as strong persistence, not a tight interval.
 
 ReplyTM's covariate story lives entirely in `group_prevalence` / `prevalence_se`; it is
 **not** wired into the `topica.effects` namespace, so reach for those two readouts

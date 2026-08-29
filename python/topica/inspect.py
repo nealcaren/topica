@@ -311,7 +311,11 @@ class TopicTable(list):
         for i, r in enumerate(rows):
             t = str(r.get("topic", i))
             prev = r.get("prevalence")
-            pcol = f"{prev:6.3f}" if isinstance(prev, (int, float)) else f"{'':>6}"
+            # coerce via float() so numpy scalars (float32, which does not subclass float) format too
+            try:
+                pcol = f"{float(prev):6.3f}"
+            except (TypeError, ValueError):
+                pcol = f"{'':>6}"
             lines.append(f"{t:>{tw}}  {pcol}  {words(r)}")
         return "\n".join(lines)
 

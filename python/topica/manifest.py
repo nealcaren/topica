@@ -802,6 +802,10 @@ def record_fit(model, corpus=None, *, prevalence=None, prevalence_names=None,
 
     Parameters
     ----------
+    corpus : the ``Corpus`` (or token lists) the model was fit on. Optional: when
+        omitted it defaults to the model's own retained corpus (``model.corpus``,
+        which e.g. :class:`~topica.ReplyTM` exposes). A model that does not retain
+        a reusable corpus raises a clear error asking you to pass it.
     privacy : ``"minimal"`` (default) or ``"aggregate"``. ``"full"`` is not in V1.
     content_fingerprint : opt-in, **sensitive**. Adds an order-sensitive hash of
         the corpus tokens so ``verify`` can prove corpus identity. A hash is not

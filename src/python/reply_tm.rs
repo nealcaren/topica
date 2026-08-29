@@ -204,6 +204,21 @@ fn coerce_fit_covariates(obj: &Bound<'_, PyAny>) -> PyResult<(Vec<usize>, Option
         }
         return Ok((out, None));
     }
+    // Whole-valued floats: a common pandas artifact (an integer group column that ever held a NaN
+    // is stored as float64), so accept 0.0/1.0/... as integer ids rather than rejecting them.
+    if let Ok(floats) = obj.extract::<Vec<f64>>() {
+        let mut out = Vec::with_capacity(floats.len());
+        for (d, &v) in floats.iter().enumerate() {
+            if !v.is_finite() || v < 0.0 || v.fract() != 0.0 {
+                return Err(PyValueError::new_err(format!(
+                    "covariates[{d}] = {v} is not a non-negative whole number; pass integer group \
+                     ids 0..num_groups (e.g. df['group'].astype(int)) or string/categorical labels"
+                )));
+            }
+            out.push(v as usize);
+        }
+        return Ok((out, None));
+    }
     // String / categorical path: factorize in first-seen order.
     let labels: Vec<String> = obj.extract::<Vec<String>>().map_err(|_| {
         PyValueError::new_err(
@@ -230,6 +245,20 @@ fn coerce_fit_covariates(obj: &Bound<'_, PyAny>) -> PyResult<(Vec<usize>, Option
 fn coerce_transform_covariates(obj: &Bound<'_, PyAny>, fitted: &[String]) -> PyResult<Vec<i64>> {
     if let Ok(ints) = obj.extract::<Vec<i64>>() {
         return Ok(ints);
+    }
+    // Whole-valued floats (pandas float64 group column) map to integer ids, as in fit.
+    if let Ok(floats) = obj.extract::<Vec<f64>>() {
+        let mut out = Vec::with_capacity(floats.len());
+        for (d, &v) in floats.iter().enumerate() {
+            if !v.is_finite() || v.fract() != 0.0 {
+                return Err(PyValueError::new_err(format!(
+                    "covariates[{d}] = {v} is not a whole number; pass integer group ids or \
+                     string/categorical labels matching the fitted groups"
+                )));
+            }
+            out.push(v as i64);
+        }
+        return Ok(out);
     }
     let labels: Vec<String> = obj.extract::<Vec<String>>().map_err(|_| {
         PyValueError::new_err(
@@ -983,24 +1012,26 @@ impl ReplyTM {
     }
 
     /// G×K×2 probability-scale credible interval `[lower, upper]` for `group_prevalence`, aligned
-    /// cell-for-cell with it (so `group_prevalence[g, k] ± CI` is a one-call table). Because
+    /// cell-for-cell with it (pair with `group_labels()` for the row names). Because
     /// `group_prevalence` is a softmax and `prevalence_se` is a standard error in η space, you cannot
     /// combine them by hand (different scale AND different width, `(G, K)` vs `(G, K-1)`); this does
-    /// the transform for you by Monte-Carlo — for each group it draws η from
-    /// `N(anchor, diag(prevalence_se²))`, softmaxes each draw, and takes the `level` percentiles per
-    /// topic. Uses only the diagonal (marginal) η SE, so it ignores cross-topic anchor covariance.
-    /// A group with fewer than two threads (its `prevalence_se` is NaN) yields NaN bounds.
-    #[pyo3(signature = (*, level=0.95, n_samples=2000, seed=13))]
+    /// the transform for you by Monte-Carlo, drawing η from `N(anchor, diag(prevalence_se²))` per
+    /// group, softmaxing each draw, and taking the `ci` percentiles per topic. `ci` is the coverage
+    /// (0.95 gives a 95% interval), matching `time_prevalence_ci`/`prevalence_ci`. Uses only the
+    /// diagonal (marginal) η SE, so it ignores cross-topic anchor covariance. A group with fewer than
+    /// two threads (its `prevalence_se` is NaN) yields NaN bounds. Build a tidy table with, e.g.,
+    /// `lo, hi = m.group_prevalence_ci().transpose(2, 0, 1)`.
+    #[pyo3(signature = (*, ci=0.95, n_samples=2000, seed=13))]
     fn group_prevalence_ci<'py>(
         &self,
         py: Python<'py>,
-        level: f64,
+        ci: f64,
         n_samples: usize,
         seed: u64,
     ) -> PyResult<Bound<'py, PyArray3<f64>>> {
         self.require_fitted()?;
-        if !(0.0 < level && level < 1.0) {
-            return Err(PyValueError::new_err("level must be in (0, 1)"));
+        if !(0.0 < ci && ci < 1.0) {
+            return Err(PyValueError::new_err("ci must be in (0, 1)"));
         }
         if n_samples == 0 {
             return Err(PyValueError::new_err("n_samples must be >= 1"));
@@ -1018,8 +1049,8 @@ impl ReplyTM {
             let u2: f64 = rng.gen::<f64>();
             (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
         };
-        let lo_q = 0.5 * (1.0 - level);
-        let hi_q = 0.5 * (1.0 + level);
+        let lo_q = 0.5 * (1.0 - ci);
+        let hi_q = 0.5 * (1.0 + ci);
         let mut out = numpy::ndarray::Array3::<f64>::zeros((ng, k, 2));
         for g in 0..ng {
             // Reconstruct the η anchor from the stored softmax prevalence (inverse softmax).
@@ -1513,6 +1544,29 @@ impl ReplyTM {
     fn converged(&self) -> PyResult<bool> {
         self.require_fitted()?;
         Ok(self.converged)
+    }
+
+    /// Alias of `converged` under the name that says what the flag means: `True` only if the fit
+    /// early-stopped on the convergence tolerance, `False` when the full `em_iters` ran.
+    /// `topica.stop_reason` turns it into a plain-language summary (issue #755).
+    #[getter]
+    fn early_stopped(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
+    }
+
+    /// The fit trace as `(iteration, objective)` pairs — `bound_history` in the shape
+    /// `topica.stop_reason` reads. The objective is the monitoring free energy (see `bound_history`),
+    /// not a true ELBO.
+    #[getter]
+    fn fit_history(&self) -> PyResult<Vec<(usize, f64)>> {
+        self.require_fitted()?;
+        Ok(self
+            .bound_history
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| (i, b))
+            .collect())
     }
 
     /// The constructor configuration as a JSON-serialisable dict, keyword-named to match

@@ -3153,13 +3153,13 @@ class ReplyTM:
         (η space); NaN for a group with fewer than two threads."""
         ...
     def group_prevalence_ci(
-        self, *, level: float = 0.95, n_samples: int = 2000, seed: int = 13
+        self, *, ci: float = 0.95, n_samples: int = 2000, seed: int = 13
     ) -> numpy.typing.NDArray[numpy.float64]:
         """G×K×2 probability-scale credible interval ``[lower, upper]`` aligned cell-for-cell with
-        ``group_prevalence`` (so ``group_prevalence ± CI`` is one call). Monte-Carlo: per group,
-        draw η from ``N(anchor, diag(prevalence_se²))``, softmax each draw, take the ``level``
-        percentiles per topic. Uses only the diagonal η SE; a group with fewer than two threads
-        yields NaN bounds (#830)."""
+        ``group_prevalence`` (pair with ``group_labels()`` for row names). Monte-Carlo: per group,
+        draw η from ``N(anchor, diag(prevalence_se²))``, softmax each draw, take the ``ci``
+        percentiles per topic (``ci`` is the coverage, matching ``time_prevalence_ci``). Uses only
+        the diagonal η SE; a group with fewer than two threads yields NaN bounds (#830)."""
         ...
     def group_labels(self) -> list[str]: ...
     @property
@@ -3171,6 +3171,16 @@ class ReplyTM:
     def converged(self) -> bool:
         """Whether variational EM converged (bound change below tolerance) before the ``em_iters``
         cap. ``False`` means the fit stopped at the cap and may need more iterations (#830)."""
+        ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of ``converged``: ``True`` only if the fit early-stopped on the tolerance, ``False``
+        if the full ``em_iters`` ran. ``topica.stop_reason`` summarizes it in plain language."""
+        ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """The fit trace as ``(iteration, objective)`` pairs (``bound_history`` in the shape
+        ``topica.stop_reason`` reads); the objective is a monitoring free energy, not a true ELBO."""
         ...
     @property
     def vocabulary(self) -> list[str]: ...

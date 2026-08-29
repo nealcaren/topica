@@ -467,6 +467,39 @@ def test_covariates_accept_string_labels():
         m.transform(docs[:2], parents=[-1, 0], covariates=["RedPill", "Nope"])
 
 
+def test_covariates_accept_whole_valued_floats():
+    """#830/adversarial: a float64 group column (the common pandas artifact of an int column that
+    once held a NaN) is accepted as integer ids; a non-whole float is a clear error."""
+    docs, parents, cov, _ = _threaded_corpus(n_threads=24, depth=4)
+    fcov = [float(g) for g in cov]  # 0.0 / 1.0
+    m = topica.ReplyTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=fcov)
+    mi = topica.ReplyTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=cov)
+    assert np.allclose(m.group_prevalence, mi.group_prevalence)
+    with pytest.raises(ValueError):
+        topica.ReplyTM(2, em_iters=5, seed=13).fit(
+            docs, parents=parents, covariates=[0.5] + fcov[1:]
+        )
+
+
+def test_covariates_accept_pandas_series():
+    """#830/faithfulness coverage: a pandas Series of labels routes to the string path."""
+    pd = pytest.importorskip("pandas")
+    docs, parents, cov, _ = _threaded_corpus(n_threads=24, depth=4)
+    s = pd.Series(["RedPill" if g == 0 else "CMV" for g in cov])
+    m = topica.ReplyTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=s)
+    assert m.group_labels() == ["RedPill", "CMV"]
+
+
+def test_early_stopped_and_fit_history():
+    """#830/API: converged has an early_stopped alias and a fit_history the stop_reason helper reads."""
+    docs, parents, _, _ = _threaded_corpus(n_threads=20, depth=4)
+    m = topica.ReplyTM(2, em_iters=200, seed=13).fit(docs, parents=parents)
+    assert m.early_stopped == m.converged
+    hist = m.fit_history
+    assert isinstance(hist, list) and hist and hist[0][0] == 0
+    assert isinstance(topica.stop_reason(m), str)
+
+
 def test_converged_flag():
     """#830 T4a: a fitted model exposes a `converged` bool (not inferred from bound_history len)."""
     docs, parents, _, _ = _threaded_corpus(n_threads=20, depth=5)
@@ -493,12 +526,16 @@ def test_group_prevalence_ci():
     docs, parents, cov, _ = _threaded_corpus(n_threads=30, depth=4)
     m = topica.ReplyTM(3, em_iters=40, seed=13).fit(docs, parents=parents, covariates=cov)
     gp = np.asarray(m.group_prevalence)
-    ci = np.asarray(m.group_prevalence_ci(level=0.9, n_samples=1500, seed=1))
+    ci = np.asarray(m.group_prevalence_ci(ci=0.9, n_samples=1500, seed=1))
     assert ci.shape == gp.shape + (2,)
-    assert np.all(ci[:, :, 0] - 1e-9 <= gp) and np.all(gp <= ci[:, :, 1] + 1e-9)
+    # valid probability-scale interval, correctly ordered (the plug-in point need not sit strictly
+    # inside a narrow MC interval by Jensen, so we don't assert bracketing)
     assert np.all(ci[:, :, 0] <= ci[:, :, 1])
+    assert np.all((ci >= 0.0) & (ci <= 1.0))
+    # deterministic given seed
+    assert np.array_equal(ci, np.asarray(m.group_prevalence_ci(ci=0.9, n_samples=1500, seed=1)))
     with pytest.raises(ValueError):
-        m.group_prevalence_ci(level=1.5)
+        m.group_prevalence_ci(ci=1.5)
 
 
 def test_topic_table_pretty_print():
