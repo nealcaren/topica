@@ -443,16 +443,18 @@ def test_transform_recovers_training_theta():
 
 def test_transform_tree_couples_reply_to_parent():
     """The reply coupling must act at transform time: a reply's inferred mix tracks its parent's
-    more under the tree than under the tree-blind (parents=None) pass."""
+    more under the tree than under the tree-blind (parents=None) pass. Fit without covariates so the
+    tree-blind baseline anchors at the global mean, isolating the reply coupling from a group anchor
+    that would otherwise already pull same-group parents and children together."""
     docs, parents, cov, vocab = _threaded_corpus(n_threads=40, depth=6)
     m = topica.ReplyTM(2, em_iters=80, seed=13)
-    m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
-    tree = m.transform(docs, parents=parents, covariates=cov)
-    flat = m.transform(docs, covariates=cov)  # every doc a root
-    # child-parent agreement in topic-0 proportion, over real edges
+    m.fit(docs, parents=parents)
+    tree = m.transform(docs, parents=parents)
+    flat = m.transform(docs)  # every doc a root (tree-blind)
+    # child-parent agreement (full topic mix) over real edges
     edges = [(d, p) for d, p in enumerate(parents) if p >= 0]
-    tree_gap = np.mean([abs(tree[d, 0] - tree[p, 0]) for d, p in edges])
-    flat_gap = np.mean([abs(flat[d, 0] - flat[p, 0]) for d, p in edges])
+    tree_gap = np.mean([np.abs(tree[d] - tree[p]).sum() for d, p in edges])
+    flat_gap = np.mean([np.abs(flat[d] - flat[p]).sum() for d, p in edges])
     assert tree_gap < flat_gap
 
 

@@ -3181,7 +3181,8 @@ class ReplyTM:
         ...
     @property
     def sigma2(self) -> float:
-        """Per-edge diffusion variance (floored at 0.1); NaN when the field was not fit."""
+        """Per-edge (OU step) variance: the mean marginal variance of the fitted full edge
+        covariance Sigma_edge (a scalar summary; the edge prior is the full Sigma_edge). NaN with no edges."""
         ...
     @property
     def p0(self) -> float:
