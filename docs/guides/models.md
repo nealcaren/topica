@@ -21,7 +21,7 @@ Every model shares the same shape: construct with hyperparameters and a `seed`,
 | Steer topics with known keywords | [`keyATM`, `seededlda`](guided.md) |
 | Sharper, more coherent topics at scale | [`ProdLDA`](#prodlda) |
 | Model short texts (tweets, answers) | [`PT`, `GSDMM`](short-text.md) |
-| Model nested reply threads (posts + comments) | [`ReplyTM`](#replytm), [`CSATM`](#csatm) |
+| Model nested reply threads (posts + comments) | [`ThreadTM`](#threadtm), [`CSATM`](#csatm) |
 | Build a topic hierarchy | `PA`, `HLDA` |
 
 ## The roster
@@ -148,7 +148,7 @@ Not (yet) on the validated roster, on one of two grounds: the model is unpublish
 | `TensorLDA` | text | svd | seed-reproducible | Online Tensor LDA (Kangaslahti et al. 2026): deterministic method-of-moments topic modeling via second and third-order cumulants. |
 | `NarrativeTM` | text | gibbs | seed-reproducible | Intra-document narrative trajectory model: captures how topic prevalence shifts across the progress of a text. |
 | `CSATM` | text, links | gibbs | seed-reproducible | Conversational Structure Aware TM (Sun et al. 2020): weights each comment's tokens by a reply-tree 'popularity' score and, after Gibbs, smooths each comment's topics toward its ancestors along the reply path ('transitivity'). For threaded forum data (posts + nested comments). Ported from the paper (no reference implementation); validated by planted recovery + LDA reduction. |
-| `ReplyTM` | text, links | variational | seed-reproducible | ReplyTM (topica-original): a reply-threaded topic model — CTM logistic-normal topics with a reply-tree structured prior, so a reply's topic prior is coupled to the comment it answers (a persistence-smoothing prior, reverting toward its covariate-group baseline). Supports a prevalence covariate and an optional content covariate (topic words shift by depth/level, à la STM's content model). For threaded discussion (posts + nested comments). Validated by planted recovery and a synthetic held-out-beat gate (the parent's topics predict held-out leaf tokens better than the no-tree baseline on persistence-structured data). The real-corpus benefit is genre-dependent; read kappa_ci before claiming persistence. |
+| `ThreadTM` | text, links | variational | seed-reproducible | ThreadTM (topica-original): a reply-threaded topic model — CTM logistic-normal topics with a reply-tree structured prior, so a reply's topic prior is coupled to the comment it answers (a persistence-smoothing prior, reverting toward its covariate-group baseline). Supports a prevalence covariate and an optional content covariate (topic words shift by depth/level, à la STM's content model). For threaded discussion (posts + nested comments). Validated by planted recovery and a synthetic held-out-beat gate (the parent's topics predict held-out leaf tokens better than the no-tree baseline on persistence-structured data). The real-corpus benefit is genre-dependent; read kappa_ci before claiming persistence. |
 | `IdealPointTM` | text, embeddings | variational | seed-reproducible | Topic model with a latent ideal-point head: each author gets a low-dimensional position that shifts within-topic word choice, with a per-topic discrimination. Consumes word tokens as counts (Wordfish with topics) or, when word embeddings are supplied to fit, factored through them as in ETM. The unsupervised, latent-trait twin of the STM content covariate. |
 | `IdealPointSentenceTM` | text, embeddings | em | seed-reproducible | Continuous ideal-point topic model over sentence/document embeddings: topics are Gaussian clusters whose centroids are displaced by a latent author position. The sentence-embedding sibling of IdealPointTM, fit by EM. |
 | `EmbeddingLDA` | text, embeddings | gibbs | seed-reproducible | LDA anchored by pre-trained embeddings: k-means clusters the vocabulary embeddings, seeds each topic with the words nearest a cluster centroid, and (optionally) biases each document's mixture toward its own embedding. A topica original; validated by planted-recovery only. |
@@ -658,14 +658,14 @@ most coherent on sliding-window c_npmi. CSATM's contribution is the thread-aware
 upgrade. The paper's reported coherence and assignment-accuracy gains were measured
 against external references with tuned hyperparameters and are not reproduced here.
 
-## ReplyTM
+## ThreadTM
 
-ReplyTM (topica-original) is a **logistic-normal topic model with a reply-tree
+ThreadTM (topica-original) is a **logistic-normal topic model with a reply-tree
 prior**. It sits on the same CTM machinery as [`CTM`](#ctm) and [`STM`](#stm): each
-document has a Gaussian topic vector in the softmax basis. What ReplyTM adds is where
+document has a Gaussian topic vector in the softmax basis. What ThreadTM adds is where
 that vector's prior mean comes from. A thread root is drawn around its
 covariate-group baseline with a **full covariance** (the same correlated logistic-normal
-prior CTM/STM fit, so with no reply tree ReplyTM's base matches CTM up to empty-document
+prior CTM/STM fit, so with no reply tree ThreadTM's base matches CTM up to empty-document
 handling, not a weaker isotropic model); a reply is drawn around a blend of its parent
 comment's vector and that same group baseline, with its own full edge covariance (so a reply
 leaf is on the same covariance footing as a root, and the tree-vs-no_tree comparison reflects
@@ -679,13 +679,13 @@ marginal variances (the root's and the reply edge's), each defined once the corp
 edges.
 
 The point of the prior is out-of-sample: a comment's parent tells you something about
-what the comment is about, on top of its own words. ReplyTM ships a committed
+what the comment is about, on top of its own words. ThreadTM ships a committed
 acceptance gate that checks this on **synthetic** persistence-structured data: it holds
 out the tokens of leaf comments, then predicts them two ways from the same fit, once
 from the parent comment's topic mix and once from the group baseline. The parent-based
 prediction wins. That gate establishes the parent carries signal on data built to have
 it; it is not a real-corpus result and not a model-versus-model comparison (both
-predictors come from one ReplyTM fit). On real corpora the benefit is genre-dependent
+predictors come from one ThreadTM fit). On real corpora the benefit is genre-dependent
 (see the experimental note below).
 
 For the real-corpus, model-versus-model test, use
@@ -712,7 +712,7 @@ the covariate one-hot-encoded as prevalence, both on the same reduced corpus (pi
 the tree model's vocabulary) and scored through the identical leaf mask, so `delta["lda"]`
 / `delta["stm"]` are the tree-minus-tool difference with the same thread-clustered interval
 (`"stm"` needs a covariate with at least two groups). The scoring is estimator-matched: a
-logistic-normal model (ReplyTM, STM) is scored with its posterior-predictive `E[softmax(η)]`
+logistic-normal model (ThreadTM, STM) is scored with its posterior-predictive `E[softmax(η)]`
 (a Monte-Carlo average over its η posterior, `predictive_samples=400` by default), not the
 plug-in `softmax(mean η)` that `doc_topic` returns, so it is compared on the same estimator
 footing as LDA's already sample-averaged `doc_topic`. The plug-in is an overconfident point
@@ -732,7 +732,7 @@ Read `delta["no_tree"]` for the tree-attributable gain: it is the same model wit
 tree switched off, so it isolates the reply structure. `delta["lda"]` and `delta["stm"]`
 fold in every difference from that tool (Dirichlet vs logistic-normal, the covariate
 anchor, the estimator), so a large value there is not evidence the tree helps, and
-ReplyTM can beat `no_tree` while still losing to LDA or STM on the same data. Cite
+ThreadTM can beat `no_tree` while still losing to LDA or STM on the same data. Cite
 `delta["no_tree"]` for the structural claim, `delta["lda"]`/`delta["stm"]` for the
 "vs off-the-shelf tool" claim.
 
@@ -751,13 +751,13 @@ above).
 ```python
 import numpy as np
 import topica
-topica.enable_experimental()   # ReplyTM is experimental
+topica.enable_experimental()   # ThreadTM is experimental
 
 # docs in a fixed order; parents[d] indexes into docs (-1 = thread root);
 # group[d] is a categorical covariate (e.g. the subreddit, the verdict). It can be dense
 # integer ids, or string/categorical labels (a list or a pandas Series) which are
 # auto-encoded 0..G-1 with the labels becoming the group names.
-m = topica.ReplyTM(num_topics=25, seed=13)
+m = topica.ThreadTM(num_topics=25, seed=13)
 m.fit(docs, parents=parents, covariates=group)   # e.g. covariates=["cmv", "hn", "cmv", ...]
 
 m.group_prevalence        # (G, K) per-group baseline topic mix (probability scale)
@@ -773,7 +773,7 @@ answer (much of sports and fandom), pass `coupling="root"` to shrink each node t
 thread root instead:
 
 ```python
-m = topica.ReplyTM(num_topics=25, seed=13, coupling="root")
+m = topica.ThreadTM(num_topics=25, seed=13, coupling="root")
 ```
 
 Root coupling fits the same logistic-normal field on a reparented depth-2 star (every node
@@ -785,7 +785,7 @@ When discourse is neither purely edge-driven nor purely thread-driven, `coupling
 shrinks each node toward BOTH its parent and its thread root:
 
 ```python
-m = topica.ReplyTM(num_topics=25, seed=13, coupling="blend")
+m = topica.ThreadTM(num_topics=25, seed=13, coupling="blend")
 m.fit(docs, parents=parents)
 m.blend_alpha, m.blend_beta   # fitted parent weight and root weight
 ```
@@ -817,7 +817,7 @@ deep; override with `depth_bins=`). You can also pass an arbitrary per-document 
 default, or `"l1"` sparse; `content_prior_var=` sets the scale):
 
 ```python
-m = topica.ReplyTM(num_topics=25, seed=13).fit(docs, parents=parents, content="depth")
+m = topica.ThreadTM(num_topics=25, seed=13).fit(docs, parents=parents, content="depth")
 
 m.content_labels                    # ["root", "shallow", "deep"]
 m.content_top_words(topic=3)        # {"root": [...], "shallow": [...], "deep": [...]}
@@ -858,7 +858,7 @@ theta_new = m.transform(new_docs, parents=new_parents, covariates=new_group)  # 
 ```
 
 Note that `topica.evaluate.eval_heldout` calls `transform` without `parents`, so it scores
-ReplyTM tree-blind (every held-out document a root); `reply_completion` above is the
+ThreadTM tree-blind (every held-out document a root); `reply_completion` above is the
 tree-aware held-out test. The tree-aware and tree-blind `theta` point estimates can look
 nearly identical when a document's own tokens or its covariate anchor already pin its
 topic mix; the tree's contribution shows up on thin, few-token replies, and is measured
@@ -898,7 +898,7 @@ profile pegs at the persistence floor (`kappa → 0`); rather than report a fals
 zero-width `(0.001, 0.001)`, `kappa_ci` then returns a one-sided `(lower, nan)` and warns,
 which you should read as strong persistence, not a tight interval.
 
-ReplyTM's covariate story lives entirely in `group_prevalence` / `prevalence_se`; it is
+ThreadTM's covariate story lives entirely in `group_prevalence` / `prevalence_se`; it is
 **not** wired into the `topica.effects` namespace, so reach for those two readouts
 rather than `effects.estimate_effect`. For a publication table,
 `topica.inspect.group_prevalence_ci(m)` returns a probability-scale credible interval (a
@@ -906,7 +906,7 @@ Monte-Carlo transform of the η-space `prevalence_se`) as a tidy result carrying
 labels and `mean`/`ci_low`/`ci_high`/`sd`; call `.to_frame()` for one row per (group, topic),
 so you get `prevalence ± CI` without the η conversion by hand.
 
-ReplyTM is **experimental**, and the honest empirical picture is why. The core is
+ThreadTM is **experimental**, and the honest empirical picture is why. The core is
 validated by planted recovery, a degenerate-case reduction (a flat tree collapses it
 to a plain logistic-normal model, and `kappa`/`sigma2` come back `NaN` because the
 reply parameters are then unidentified), determinism, and the synthetic acceptance gate

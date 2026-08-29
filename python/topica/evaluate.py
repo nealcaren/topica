@@ -575,7 +575,7 @@ def eval_heldout(model, heldout, *, seed=0):
     Requires that ``model`` was fit on ``heldout.documents`` (the training corpus
     returned by :func:`make_heldout`). Works for any generative model that
     exposes ``transform`` and ``topic_word``: LDA, DMR, CTM, STM, HDP,
-    LabeledLDA, SupervisedLDA, and ReplyTM. Note ReplyTM is scored **tree-blind**
+    LabeledLDA, SupervisedLDA, and ThreadTM. Note ThreadTM is scored **tree-blind**
     here (``transform`` is called without ``parents``, so every held-out document
     is treated as a root and the reply tree contributes nothing); for the
     tree-aware held-out comparison use :func:`reply_completion` instead. The
@@ -767,7 +767,7 @@ def perplexity(model, held_out, *, seed=0):
 
 
 # ---------------------------------------------------------------------------
-# reply_completion: held-out leaf-token comparison for ReplyTM (issue #824 /
+# reply_completion: held-out leaf-token comparison for ThreadTM (issue #824 /
 # the replytm-paper validation)
 # ---------------------------------------------------------------------------
 
@@ -820,7 +820,7 @@ def _reply_tree_meta(parents):
     """Children, depth, thread-root, and leaf flags for a reply forest.
 
     ``parents[d]`` is ``d``'s parent index or negative for a root. Assumes the
-    tree is acyclic (ReplyTM.fit validates that before this is ever reached).
+    tree is acyclic (ThreadTM.fit validates that before this is ever reached).
     """
     n = len(parents)
     children = [[] for _ in range(n)]
@@ -847,7 +847,7 @@ def _permute_parents_within_depth(parents, depth, root, rng):
     level up (``depth - 1``) in the SAME thread. This keeps every node's depth
     and thread fixed and the forest acyclic, so the tree's shape statistics are
     preserved while the specific parent-child pairing is randomized. That
-    isolates whether ReplyTM's gain comes from the *observed* reply edge rather
+    isolates whether ThreadTM's gain comes from the *observed* reply edge rather
     than from the tree's shape alone.
     """
     from collections import defaultdict
@@ -880,9 +880,9 @@ def reply_completion(
     n_boot=1000,
     predictive_samples=400,
 ):
-    """Held-out leaf-token comparison of ReplyTM against matched baselines.
+    """Held-out leaf-token comparison of ThreadTM against matched baselines.
 
-    This is the turnkey preference test for ReplyTM: does the reply tree add
+    This is the turnkey preference test for ThreadTM: does the reply tree add
     predictive information on real data, and does the gain come from the
     observed edge? It fits the matched models named in ``baselines`` (the tree
     plus up to six comparators) on the SAME reduced corpus (identical
@@ -903,7 +903,7 @@ def reply_completion(
     fit. For each held-out token ``w`` in leaf ``d`` we score
     ``log(sum_k theta[d, k] * topic_word[k, w])`` under that model's fitted
     ``theta`` and ``topic_word``, and average per token. To keep the estimator
-    fair across models (issue #838), a logistic-normal model (ReplyTM and the STM
+    fair across models (issue #838), a logistic-normal model (ThreadTM and the STM
     baseline) is scored with the posterior-predictive ``E[softmax(η)]`` (a
     Monte-Carlo average of ``predictive_samples`` draws from its own η posterior),
     not the plug-in ``softmax(mean η)`` that ``doc_topic`` returns. The plug-in is
@@ -918,18 +918,18 @@ def reply_completion(
 
     The models:
 
-    - ``tree``: ReplyTM with the true reply tree.
-    - ``no_tree``: ReplyTM with every document a root (``parents = -1``), a
+    - ``tree``: ThreadTM with the true reply tree.
+    - ``no_tree``: ThreadTM with every document a root (``parents = -1``), a
       logistic-normal baseline with the same covariate anchors but no tree
       coupling. This is the model-versus-model comparator.
-    - ``permuted``: ReplyTM with a depth-stratified within-thread parent
+    - ``permuted``: ThreadTM with a depth-stratified within-thread parent
       permutation (the placebo). If the gain is real it should shrink here.
-    - ``root`` (issue #831): ReplyTM whose prior shrinks each node toward its
+    - ``root`` (issue #831): ThreadTM whose prior shrinks each node toward its
       THREAD ROOT instead of its immediate parent (a broadcast / topic-around-the-
       root structure). ``delta["root"]`` is parent-coupling minus root-coupling, so
       it is positive where the reply edge matters more than the thread topic and
       negative where the thread root is the operative structure (sports, fandom).
-    - ``blend`` (issue #831): ReplyTM that couples each node to BOTH its parent and
+    - ``blend`` (issue #831): ThreadTM that couples each node to BOTH its parent and
       its thread root (``alpha*parent + beta*root + (1-alpha-beta)*anchor``), with
       the mix estimated. ``delta["blend"]`` is parent-coupling minus blend-coupling;
       a negative value means the blend of edge and thread structure predicts better
@@ -963,7 +963,7 @@ def reply_completion(
         ``seed``); ``1.0`` uses them all.
     baselines : which comparators to fit, any of ``"no_tree"``, ``"permuted"``,
         ``"root"``, ``"blend"``, ``"lda"``, ``"stm"``.
-    em_iters : EM iterations for the ReplyTM fits (tree, no_tree, permuted, root, blend). Match
+    em_iters : EM iterations for the ThreadTM fits (tree, no_tree, permuted, root, blend). Match
         this to the analysis fit. The off-the-shelf ``lda`` / ``stm`` comparators
         run at their own default iteration counts, not ``em_iters``.
     min_count : words rarer than this are dropped (shared across models).
@@ -981,12 +981,12 @@ def reply_completion(
 
     Notes
     -----
-    Requires ``topica.enable_experimental()`` (ReplyTM is experimental). Held-out
+    Requires ``topica.enable_experimental()`` (ThreadTM is experimental). Held-out
     tokens whose word never appears in the reduced training corpus are out of
     vocabulary and are dropped from scoring (counted in ``oov_dropped``), as in
     :func:`perplexity`.
     """
-    from . import ReplyTM  # local import: ReplyTM is experimental-gated
+    from . import ThreadTM  # local import: ThreadTM is experimental-gated
 
     if not (0.0 < heldout_frac < 1.0):
         raise ValueError("heldout_frac must be in (0, 1)")
@@ -1045,7 +1045,7 @@ def reply_completion(
     # matched fits on the SAME reduced corpus. Suppress the expected UserWarnings
     # (emptied docs, no-tree reduction) so the eval output stays clean.
     def _fit(par, coupling="parent"):
-        m = ReplyTM(num_topics, em_iters=em_iters, seed=seed, coupling=coupling)
+        m = ThreadTM(num_topics, em_iters=em_iters, seed=seed, coupling=coupling)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=UserWarning)
             m.fit(
@@ -1061,19 +1061,19 @@ def reply_completion(
         models = {"tree": _fit(parents)}
     except RuntimeError as exc:
         raise RuntimeError(
-            "reply_completion needs ReplyTM, which is experimental: call "
+            "reply_completion needs ThreadTM, which is experimental: call "
             "topica.enable_experimental() first."
         ) from exc
     if "no_tree" in baselines:
         models["no_tree"] = _fit([-1] * n)
     if "root" in baselines:
-        # A matched ReplyTM whose prior shrinks each node toward its THREAD ROOT rather than its
+        # A matched ThreadTM whose prior shrinks each node toward its THREAD ROOT rather than its
         # immediate parent (issue #831): the broadcast-discourse structure. Same corpus, vocabulary,
         # and covariate; only the coupling neighbor differs. delta["root"] = parent-tree minus
         # root-tree, so it is positive where reply-edge structure beats thread-level structure.
         models["root"] = _fit(parents, coupling="root")
     if "blend" in baselines:
-        # A matched ReplyTM that couples each node to BOTH its parent and its thread root (issue
+        # A matched ThreadTM that couples each node to BOTH its parent and its thread root (issue
         # #831), with the parent/root mix estimated. delta["blend"] = parent-tree minus blend-tree.
         models["blend"] = _fit(parents, coupling="blend")
     perm_changed_frac = None
@@ -1100,13 +1100,13 @@ def reply_completion(
 
     # Off-the-shelf comparators (issue #828): a named tool (LDA, STM) fit on the
     # SAME reduced corpus and scored through the identical leaf mask + fit-time-theta
-    # protocol, so the paper can put ReplyTM(tree) and LDA/STM in one matched table.
+    # protocol, so the paper can put ThreadTM(tree) and LDA/STM in one matched table.
     # We pin them to the tree model's vocabulary (a fixed-vocabulary Corpus) so the
     # in-vocab held tokens are exactly the tree's — the pairing the bootstrap needs.
     # That Corpus drops any document emptied under min_count, so their fit-time theta
     # is indexed through kept_indices; a `None` row means the leaf was dropped and it
     # is excluded from every model's paired arrays below.
-    row_map = {name: None for name in models}  # None => identity (the ReplyTM fits)
+    row_map = {name: None for name in models}  # None => identity (the ThreadTM fits)
     off_shelf = [b for b in baselines if b in ("lda", "stm")]
     if off_shelf:
         import topica
@@ -1166,7 +1166,7 @@ def reply_completion(
         leaves the same way); LDA's already-averaged ``doc_topic`` is used unchanged.
         """
         pdt = getattr(model, "posterior_doc_topic", None)
-        if callable(pdt):  # ReplyTM (diagonal ν) exposes it directly
+        if callable(pdt):  # ThreadTM (diagonal ν) exposes it directly
             return np.asarray(
                 pdt(n_samples=predictive_samples, seed=seed), dtype=np.float64
             )
@@ -1204,7 +1204,7 @@ def reply_completion(
     # flatten to per-token arrays keyed by thread root (only leaves with >=1
     # in-vocab held-out token contribute). Each baseline is paired with the tree over
     # exactly the leaves BOTH scored, computed independently per baseline: the tree and
-    # the ReplyTM baselines (no_tree, permuted) always score the same leaves, so their
+    # the ThreadTM baselines (no_tree, permuted) always score the same leaves, so their
     # deltas do not depend on whether an off-the-shelf baseline (lda/stm) — which can
     # drop a leaf the fixed-vocab Corpus emptied under min_count — is also requested.
     tree_pt = scored["tree"][0]

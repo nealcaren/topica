@@ -1,7 +1,7 @@
 //! Gaussian tree-field kernel: exact, O(n), two-pass inference for a linear-Gaussian
 //! Ornstein–Uhlenbeck process on a *forest* of reply trees.
 //!
-//! This is the one new numerical core of `ReplyTM` — a reply-threaded topic model that couples a
+//! This is the one new numerical core of `ThreadTM` — a reply-threaded topic model that couples a
 //! per-topic prevalence coordinate `x_d` along each reply edge and reads it noisily through the
 //! CTM logistic-normal bound. Per topic dimension the field is a scalar linear-Gaussian model:
 //!
@@ -19,7 +19,7 @@
 //! < 1e-8 on random forests (the algorithm was first validated in Python, see
 //! `notes/tree_field_validate.py`).
 //!
-//! `ReplyTM`'s M-step uses [`fit_fixed_mean`] here to estimate `(κ, σ²)` on anchor-centered
+//! `ThreadTM`'s M-step uses [`fit_fixed_mean`] here to estimate `(κ, σ²)` on anchor-centered
 //! residuals and [`profile_loglik_at_a`] to profile κ for its CI; [`solve`]'s smoothed
 //! means/variances are available but the E-step coupling currently uses the parent's point
 //! estimate instead (a structured mean-field), so some entry points are exercised only by the
@@ -306,7 +306,7 @@ pub(crate) struct TreeFieldFit {
 /// Maximum-likelihood fit of `(a, q, m, p0)` across `K` observation dimensions that SHARE the
 /// field hyperparameters (the diffusion is isotropic across topics). `obs[k]` is the length-`n`
 /// observation vector for topic dimension `k`; `r` is the per-node observation-noise variance,
-/// shared across dimensions and supplied by the caller (in ReplyTM it comes from the STM/CTM
+/// shared across dimensions and supplied by the caller (in ThreadTM it comes from the STM/CTM
 /// logistic-normal curvature). Direct Nelder–Mead on the exact marginal log-likelihood from
 /// [`solve`], optimizing in an unconstrained reparameterization
 /// (`a = σ(θ₀)`, `q = e^{θ₁}`, `m = θ₂`, `p0 = e^{θ₃}`).
@@ -349,7 +349,7 @@ pub(crate) fn fit(
     }
 }
 
-/// Like [`fit`] but with the anchor mean `m` HELD at 0 — for ReplyTM, whose field is fit on
+/// Like [`fit`] but with the anchor mean `m` HELD at 0 — for ThreadTM, whose field is fit on
 /// anchor-centered residuals, so the mean is already removed and freeing `m` both double-counts it
 /// and makes the fitted `a` inconsistent with the `m=0` profile used for the κ CI. Optimizes only
 /// `(a, q, p0)`.
