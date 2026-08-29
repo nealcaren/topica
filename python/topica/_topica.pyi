@@ -3073,7 +3073,7 @@ class ReplyTM:
         self,
         data: Corpus | Sequence[Sequence[str]],
         parents: Sequence[int] | None = None,
-        covariates: Sequence[int] | None = None,
+        covariates: Sequence[int] | Sequence[str] | None = None,
         covariate_names: Sequence[str] | None = None,
         *,
         min_count: int = 1,
@@ -3081,21 +3081,24 @@ class ReplyTM:
         """`data` is a ``topica.Corpus`` or a list of token lists. `parents[d]` is document
         ``d``'s parent index in the reply tree (``-1`` for a thread root), in the SAME order as
         the documents. `covariates[d]` is an optional categorical group id in a DENSE range
-        ``0..num_groups`` whose per-group baseline becomes the reversion anchor; `covariate_names`
-        names the groups. Requires ``topica.enable_experimental()``."""
+        ``0..num_groups`` whose per-group baseline becomes the reversion anchor; string/categorical
+        labels (a list or a pandas Series) are accepted too and auto-encoded to ``0..num_groups``,
+        with the distinct labels becoming the group names. `covariate_names` names the groups
+        (overriding auto-encoded labels). Requires ``topica.enable_experimental()``."""
         ...
     def transform(
         self,
         data: Corpus | Sequence[Sequence[str]],
         parents: Sequence[int] | None = None,
-        covariates: Sequence[int] | None = None,
+        covariates: Sequence[int] | Sequence[str] | None = None,
     ) -> numpy.typing.NDArray[numpy.float64]:
         """Infer topic proportions for a NEW reply forest, holding the fitted topics, reversion,
         step/root variances, and per-group anchors fixed. `data` is a ``Corpus`` or token lists
         (mapped to the training vocabulary). `parents[d]` is ``d``'s parent document index (``-1``
         for a root); omit to treat every document as a root (ignoring reply structure). `covariates`
-        selects the per-document group anchor; omit to anchor at the across-group mean. Returns an
-        N×K matrix. Requires a model fit WITH a reply tree."""
+        selects the per-document group anchor (integer ids or string labels mapped through the
+        fitted groups); omit to anchor at the across-group mean. Returns an N×K matrix. Requires a
+        model fit WITH a reply tree."""
         ...
     @property
     def num_topics(self) -> int: ...
@@ -3149,7 +3152,36 @@ class ReplyTM:
         """Cluster-robust (on the thread) method-of-composition SE of the group prevalence anchor
         (η space); NaN for a group with fewer than two threads."""
         ...
+    def group_prevalence_ci(
+        self, *, ci: float = 0.95, n_samples: int = 2000, seed: int = 13
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """G×K×2 probability-scale credible interval ``[lower, upper]`` aligned cell-for-cell with
+        ``group_prevalence`` (pair with ``group_labels()`` for row names). Monte-Carlo: per group,
+        draw η from ``N(anchor, diag(prevalence_se²))``, softmax each draw, take the ``ci``
+        percentiles per topic (``ci`` is the coverage, matching ``time_prevalence_ci``). Uses only
+        the diagonal η SE; a group with fewer than two threads yields NaN bounds (#830)."""
+        ...
     def group_labels(self) -> list[str]: ...
+    @property
+    def corpus(self) -> Corpus:
+        """The training ``Corpus`` the model retained (documents in reply-tree index order; rows
+        align to ``doc_topic``). Lets ``record_fit``/``coherence`` recover it without re-passing."""
+        ...
+    @property
+    def converged(self) -> bool:
+        """Whether variational EM converged (bound change below tolerance) before the ``em_iters``
+        cap. ``False`` means the fit stopped at the cap and may need more iterations (#830)."""
+        ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of ``converged``: ``True`` only if the fit early-stopped on the tolerance, ``False``
+        if the full ``em_iters`` ran. ``topica.stop_reason`` summarizes it in plain language."""
+        ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """The fit trace as ``(iteration, objective)`` pairs (``bound_history`` in the shape
+        ``topica.stop_reason`` reads); the objective is a monitoring free energy, not a true ELBO."""
+        ...
     @property
     def vocabulary(self) -> list[str]: ...
     def top_words(self, n: int = 10, *, topic: int | None = None, weights: bool = False) -> list:
@@ -3187,7 +3219,10 @@ class ReplyTM:
     @property
     def kappa_ci(self) -> tuple[float, float]:
         """95% profile-likelihood CI for the reversion (lower, upper), re-optimizing (sigma2, p0)
-        at each kappa; (nan, nan) with no edges or an unfit field. Biased toward kappa->0."""
+        at each kappa; (nan, nan) with no edges or an unfit field. Biased toward kappa->0. When the
+        profile collapses to a zero-width interval at the persistence floor (kappa pegged at the
+        reversion clamp), returns a one-sided (lower, nan) and warns, rather than a false-precision
+        zero-width CI (#830)."""
         ...
     @property
     def kappa(self) -> float:
