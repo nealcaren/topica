@@ -237,6 +237,21 @@ fn read_metadata_trailer(py: Python<'_>, path: &str) -> Option<PyObject> {
     }
 }
 
+impl Corpus {
+    /// Wrap a core `corpus::Corpus` snapshot as a Python `Corpus` (identity `kept_indices`, no
+    /// metadata or preprocessing record). Used by models that retain their training corpus so they
+    /// can hand it back (e.g. `ReplyTM.corpus`). Plain Rust helper, NOT a Python method.
+    pub(crate) fn from_inner(inner: corpus::Corpus) -> Self {
+        let n = inner.docs.len();
+        Corpus {
+            inner,
+            kept_indices: (0..n).collect(),
+            metadata: None,
+            preprocessing: None,
+        }
+    }
+}
+
 #[pymethods]
 impl Corpus {
     /// Build a corpus from pre-tokenised documents.

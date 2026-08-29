@@ -853,11 +853,17 @@ profile-likelihood interval that re-optimizes the variances at each candidate `k
 claiming persistence: on a small or weakly-structured corpus it is wide and licenses
 nothing, and the point estimate is biased toward `kappa → 0` by topic-model shrinkage,
 a bias the interval does not correct. It is `(nan, nan)` when there are no reply edges
-or the fit was too short to identify the field.
+or the fit was too short to identify the field. On a strongly-persistent corpus the
+profile pegs at the persistence floor (`kappa → 0`); rather than report a false-precision
+zero-width `(0.001, 0.001)`, `kappa_ci` then returns a one-sided `(lower, nan)` and warns
+— read that as strong persistence, not a tight interval.
 
 ReplyTM's covariate story lives entirely in `group_prevalence` / `prevalence_se`; it is
 **not** wired into the `topica.effects` namespace, so reach for those two readouts
-rather than `effects.estimate_effect`.
+rather than `effects.estimate_effect`. For a publication table, `m.group_prevalence_ci()`
+returns a probability-scale credible interval aligned cell-for-cell with
+`group_prevalence` (a Monte-Carlo transform of the η-space `prevalence_se`), so you get
+`prevalence ± CI` in one call without the η conversion by hand.
 
 ReplyTM is **experimental**, and the honest empirical picture is why. The core is
 validated by planted recovery, a degenerate-case reduction (a flat tree collapses it

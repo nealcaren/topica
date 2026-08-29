@@ -13,7 +13,7 @@
 //! fixed); formula covariates remain a follow-up.
 
 use super::*;
-use numpy::{PyArray1, PyArray2};
+use numpy::{PyArray1, PyArray2, PyArray3, ToPyArray};
 use pyo3::types::{PyDict, PyType};
 use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
@@ -69,6 +69,9 @@ pub struct ReplyTM {
     // as sigma_root so tree and no-tree share the base covariance.
     sigma_edge: Vec<f64>,
     bound_history: Vec<f64>,
+    // Whether the variational EM bound converged within `em_iters` (bound change below tol) rather
+    // than hitting the iteration cap. Computed by the kernel; exposed via `converged`.
+    converged: bool,
     // Training reply tree + covariate groups (document-aligned), retained so `persistence()` can
     // re-fit an uncoupled pass and regress child η on parent η.
     fit_parents: Vec<i64>,
@@ -117,6 +120,8 @@ struct ReplyTmState {
     #[serde(default)]
     sigma_edge: Vec<f64>,
     bound_history: Vec<f64>,
+    #[serde(default)]
+    converged: bool,
     fit_parents: Vec<i64>,
     fit_groups: Vec<usize>,
     corpus: Option<corpus::Corpus>,
@@ -161,6 +166,94 @@ fn root_star_parents(parents: &[i64]) -> Vec<i64> {
         root[start] = if cur == start as i64 { -1 } else { cur };
     }
     root
+}
+
+/// Linear-interpolated percentile of an already-ascending-sorted slice (`q` in [0, 1]).
+fn percentile_sorted(sorted: &[f64], q: f64) -> f64 {
+    let n = sorted.len();
+    if n == 0 {
+        return f64::NAN;
+    }
+    if n == 1 {
+        return sorted[0];
+    }
+    let pos = q * (n - 1) as f64;
+    let lo = pos.floor() as usize;
+    let hi = pos.ceil() as usize;
+    let frac = pos - lo as f64;
+    sorted[lo] * (1.0 - frac) + sorted[hi] * frac
+}
+
+/// Coerce a Python `covariates` argument for `fit` into dense integer group ids `0..G` plus, for a
+/// factorized categorical input, the distinct labels in id order. Integer input (a list or a pandas
+/// Series of ints) keeps its values, validated non-negative. String/categorical input is factorized
+/// in first-seen order and its labels become the default group names. `None` here is handled by the
+/// caller (a single global anchor).
+fn coerce_fit_covariates(obj: &Bound<'_, PyAny>) -> PyResult<(Vec<usize>, Option<Vec<String>>)> {
+    // Integer path first: preserve the original behavior (a Series of numpy ints extracts here too).
+    if let Ok(ints) = obj.extract::<Vec<i64>>() {
+        let mut out = Vec::with_capacity(ints.len());
+        for (d, &v) in ints.iter().enumerate() {
+            if v < 0 {
+                return Err(PyValueError::new_err(format!(
+                    "covariates[{d}] = {v} is negative; pass dense integer group ids 0..num_groups, \
+                     or string/categorical labels to have them auto-encoded"
+                )));
+            }
+            out.push(v as usize);
+        }
+        return Ok((out, None));
+    }
+    // String / categorical path: factorize in first-seen order.
+    let labels: Vec<String> = obj.extract::<Vec<String>>().map_err(|_| {
+        PyValueError::new_err(
+            "covariates must be a sequence of dense integer group ids (0..num_groups) or of \
+             string/categorical labels (auto-encoded to 0..num_groups); got an unsupported type",
+        )
+    })?;
+    let mut cats: Vec<String> = Vec::new();
+    let mut idx: HashMap<String, usize> = HashMap::new();
+    let mut groups = Vec::with_capacity(labels.len());
+    for s in labels {
+        let g = *idx.entry(s.clone()).or_insert_with(|| {
+            cats.push(s.clone());
+            cats.len() - 1
+        });
+        groups.push(g);
+    }
+    Ok((groups, Some(cats)))
+}
+
+/// Coerce a Python `covariates` argument for `transform` into integer group ids aligned to the
+/// FITTED groups. Integer input passes through (validated against the group count by the caller);
+/// string/categorical input is mapped through the fitted labels, and an unseen label is an error.
+fn coerce_transform_covariates(obj: &Bound<'_, PyAny>, fitted: &[String]) -> PyResult<Vec<i64>> {
+    if let Ok(ints) = obj.extract::<Vec<i64>>() {
+        return Ok(ints);
+    }
+    let labels: Vec<String> = obj.extract::<Vec<String>>().map_err(|_| {
+        PyValueError::new_err(
+            "covariates must be integer group ids or string/categorical labels matching the \
+             fitted groups",
+        )
+    })?;
+    let idx: HashMap<&str, i64> = fitted
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.as_str(), i as i64))
+        .collect();
+    let mut out = Vec::with_capacity(labels.len());
+    for (d, s) in labels.iter().enumerate() {
+        match idx.get(s.as_str()) {
+            Some(&g) => out.push(g),
+            None => {
+                return Err(PyValueError::new_err(format!(
+                    "covariates[{d}] = {s:?} is not one of the fitted group labels {fitted:?}"
+                )))
+            }
+        }
+    }
+    Ok(out)
 }
 
 impl ReplyTM {
@@ -245,6 +338,7 @@ impl ReplyTM {
             sigma_root: Vec::new(),
             sigma_edge: Vec::new(),
             bound_history: Vec::new(),
+            converged: false,
             fit_parents: Vec::new(),
             fit_groups: Vec::new(),
             corpus: None,
@@ -255,16 +349,18 @@ impl ReplyTM {
     /// tokenized). `parents[d]` is `d`'s parent **document index** in the reply tree (`-1` for a
     /// thread root); build it in the SAME order as the documents. `covariates` is an optional
     /// per-document categorical group id in a DENSE range `0..num_groups` (the reversion anchor
-    /// becomes that group's baseline prevalence); omit for a single global anchor.
-    /// `covariate_names` names the groups for the readouts. `min_count` drops words rarer than it.
-    /// Experimental: requires `topica.enable_experimental()`.
+    /// becomes that group's baseline prevalence); omit for a single global anchor. String or
+    /// categorical labels (a list, or a pandas Series) are accepted too and auto-encoded to
+    /// `0..num_groups` in first-seen order, with the distinct labels becoming the group names.
+    /// `covariate_names` names the groups for the readouts (overriding auto-encoded labels).
+    /// `min_count` drops words rarer than it. Experimental: requires `topica.enable_experimental()`.
     #[pyo3(signature = (data, parents=None, covariates=None, covariate_names=None, *, min_count=1))]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         parents: Option<Vec<i64>>,
-        covariates: Option<Vec<usize>>,
+        covariates: Option<Bound<'_, PyAny>>,
         covariate_names: Option<Vec<String>>,
         min_count: usize,
     ) -> PyResult<Py<Self>> {
@@ -397,10 +493,11 @@ impl ReplyTM {
             }
         };
 
-        // covariate groups
+        // covariate groups (integer ids, or string/categorical labels auto-encoded to 0..num_groups)
         let (groups, num_groups, group_names) = match &covariates {
             None => (vec![0usize; n], 1usize, vec!["all".to_string()]),
-            Some(g) => {
+            Some(obj) => {
+                let (g, derived_names) = coerce_fit_covariates(obj)?;
                 if g.len() != n {
                     return Err(PyValueError::new_err(format!(
                         "covariates has {} entries but there are {n} documents",
@@ -408,22 +505,27 @@ impl ReplyTM {
                     )));
                 }
                 let ng = g.iter().copied().max().map(|m| m + 1).unwrap_or(1);
-                // warn on a non-dense covariate (a gap creates an empty phantom group)
-                for gid in 0..ng {
-                    if !g.contains(&gid) {
-                        PyErr::warn_bound(
-                            py,
-                            &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
-                            "covariates has a gap: group ids are not dense 0..num_groups, so an \
-                             empty phantom group will appear in group_prevalence. Re-code the \
-                             covariate to consecutive ids.",
-                            1,
-                        )?;
-                        break;
+                // A factorized categorical input is dense by construction; only integer input can
+                // have a gap (a missing id creates an empty phantom group), so warn only there.
+                if derived_names.is_none() {
+                    for gid in 0..ng {
+                        if !g.contains(&gid) {
+                            PyErr::warn_bound(
+                                py,
+                                &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
+                                "covariates has a gap: group ids are not dense 0..num_groups, so an \
+                                 empty phantom group will appear in group_prevalence. Re-code the \
+                                 covariate to consecutive ids.",
+                                1,
+                            )?;
+                            break;
+                        }
                     }
                 }
+                // Explicit covariate_names win; otherwise the auto-encoded labels; otherwise generic.
                 let names = covariate_names
                     .clone()
+                    .or(derived_names)
                     .unwrap_or_else(|| (0..ng).map(|i| format!("group{i}")).collect());
                 if names.len() != ng {
                     return Err(PyValueError::new_err(format!(
@@ -431,7 +533,7 @@ impl ReplyTM {
                         names.len()
                     )));
                 }
-                (g.clone(), ng, names)
+                (g, ng, names)
             }
         };
 
@@ -542,6 +644,7 @@ impl ReplyTM {
         slf.sigma_root = m.sigma_root;
         slf.sigma_edge = m.sigma_edge;
         slf.bound_history = m.bound_history;
+        slf.converged = m.converged;
         slf.corpus = Some(corpus_snapshot);
         slf.fitted = true;
         Ok(slf.into())
@@ -567,9 +670,14 @@ impl ReplyTM {
         py: Python<'py>,
         data: &Bound<'py, PyAny>,
         parents: Option<Vec<i64>>,
-        covariates: Option<Vec<i64>>,
+        covariates: Option<Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         self.require_fitted()?;
+        // Accept integer group ids, or string/categorical labels mapped through the fitted groups.
+        let covariates: Option<Vec<i64>> = match &covariates {
+            None => None,
+            Some(obj) => Some(coerce_transform_covariates(obj, &self.group_names)?),
+        };
         if !self.sigma2.is_finite() || !self.p0.is_finite() {
             return Err(PyValueError::new_err(
                 "transform needs a model fit with a reply tree; this model was fit with \
@@ -874,6 +982,89 @@ impl ReplyTM {
         Ok(vecs_to_arr2(&self.prevalence_se).to_pyarray_bound(py))
     }
 
+    /// G×K×2 probability-scale credible interval `[lower, upper]` for `group_prevalence`, aligned
+    /// cell-for-cell with it (so `group_prevalence[g, k] ± CI` is a one-call table). Because
+    /// `group_prevalence` is a softmax and `prevalence_se` is a standard error in η space, you cannot
+    /// combine them by hand (different scale AND different width, `(G, K)` vs `(G, K-1)`); this does
+    /// the transform for you by Monte-Carlo — for each group it draws η from
+    /// `N(anchor, diag(prevalence_se²))`, softmaxes each draw, and takes the `level` percentiles per
+    /// topic. Uses only the diagonal (marginal) η SE, so it ignores cross-topic anchor covariance.
+    /// A group with fewer than two threads (its `prevalence_se` is NaN) yields NaN bounds.
+    #[pyo3(signature = (*, level=0.95, n_samples=2000, seed=13))]
+    fn group_prevalence_ci<'py>(
+        &self,
+        py: Python<'py>,
+        level: f64,
+        n_samples: usize,
+        seed: u64,
+    ) -> PyResult<Bound<'py, PyArray3<f64>>> {
+        self.require_fitted()?;
+        if !(0.0 < level && level < 1.0) {
+            return Err(PyValueError::new_err("level must be in (0, 1)"));
+        }
+        if n_samples == 0 {
+            return Err(PyValueError::new_err("n_samples must be >= 1"));
+        }
+        let ng = self.group_prevalence.len();
+        let k = if ng == 0 {
+            0
+        } else {
+            self.group_prevalence[0].len()
+        };
+        let km1 = k.saturating_sub(1);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let gauss = |rng: &mut ChaCha8Rng| -> f64 {
+            let u1: f64 = rng.gen::<f64>().max(1e-12);
+            let u2: f64 = rng.gen::<f64>();
+            (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+        };
+        let lo_q = 0.5 * (1.0 - level);
+        let hi_q = 0.5 * (1.0 + level);
+        let mut out = numpy::ndarray::Array3::<f64>::zeros((ng, k, 2));
+        for g in 0..ng {
+            // Reconstruct the η anchor from the stored softmax prevalence (inverse softmax).
+            let gp = &self.group_prevalence[g];
+            let ref_p = gp[km1].max(1e-12);
+            let anchor: Vec<f64> = (0..km1).map(|i| (gp[i].max(1e-12) / ref_p).ln()).collect();
+            let se = &self.prevalence_se[g];
+            // A NaN SE (fewer than two threads) leaves the group's CI undefined.
+            if se.iter().any(|v| !v.is_finite()) {
+                for kk in 0..k {
+                    out[[g, kk, 0]] = f64::NAN;
+                    out[[g, kk, 1]] = f64::NAN;
+                }
+                continue;
+            }
+            // Draw η ~ N(anchor, diag(se²)), softmax([η, 0]) per draw, collect per-topic samples.
+            let mut cols: Vec<Vec<f64>> = vec![Vec::with_capacity(n_samples); k];
+            for _ in 0..n_samples {
+                let mut logits = vec![0.0f64; k];
+                let mut mx = 0.0f64; // reference logit is 0
+                for i in 0..km1 {
+                    let e = anchor[i] + se[i] * gauss(&mut rng);
+                    logits[i] = e;
+                    if e > mx {
+                        mx = e;
+                    }
+                }
+                let mut z = 0.0f64;
+                for i in 0..k {
+                    logits[i] = (logits[i] - mx).exp();
+                    z += logits[i];
+                }
+                for i in 0..k {
+                    cols[i].push(logits[i] / z);
+                }
+            }
+            for (kk, col) in cols.iter_mut().enumerate() {
+                col.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                out[[g, kk, 0]] = percentile_sorted(col, lo_q);
+                out[[g, kk, 1]] = percentile_sorted(col, hi_q);
+            }
+        }
+        Ok(out.to_pyarray_bound(py))
+    }
+
     /// The covariate group labels (order matches `group_prevalence` rows).
     fn group_labels(&self) -> PyResult<Vec<String>> {
         self.require_fitted()?;
@@ -885,6 +1076,18 @@ impl ReplyTM {
     fn vocabulary(&self) -> PyResult<Vec<String>> {
         self.require_fitted()?;
         Ok(self.vocab.clone())
+    }
+
+    /// The training `Corpus` the model retained (all documents in reply-tree index order, including
+    /// any emptied by `min_count`). Lets `record_fit`/`coherence` recover it without re-passing the
+    /// corpus; rows align to `doc_topic`.
+    #[getter]
+    fn corpus(&self) -> PyResult<Corpus> {
+        self.require_fitted()?;
+        let inner = self.corpus.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err("no training corpus retained; refit the model")
+        })?;
+        Ok(Corpus::from_inner(inner.clone()))
     }
 
     /// Top-`n` words per topic. With `topic=None` (default) returns a list of lists for all K
@@ -959,6 +1162,7 @@ impl ReplyTM {
                 sigma_root: self.sigma_root.clone(),
                 sigma_edge: self.sigma_edge.clone(),
                 bound_history: self.bound_history.clone(),
+                converged: self.converged,
                 fit_parents: self.fit_parents.clone(),
                 fit_groups: self.fit_groups.clone(),
                 corpus: self.corpus.clone(),
@@ -995,6 +1199,7 @@ impl ReplyTM {
             sigma_root: s.sigma_root,
             sigma_edge: s.sigma_edge,
             bound_history: s.bound_history,
+            converged: s.converged,
             fit_parents: s.fit_parents,
             fit_groups: s.fit_groups,
             corpus: s.corpus,
@@ -1218,7 +1423,7 @@ impl ReplyTM {
         let parents = self.fit_parents.clone();
         let groups = self.fit_groups.clone();
         let (s2, p0) = (self.sigma2, self.p0);
-        Ok(py.allow_threads(move || {
+        let (lo, hi) = py.allow_threads(move || {
             crate::reply_tm::kappa_profile_ci(
                 &parents,
                 &doc_eta,
@@ -1230,7 +1435,25 @@ impl ReplyTM {
                 p0,
                 a,
             )
-        }))
+        });
+        // Boundary peg: on a strongly-persistent corpus the profile is maximized at the reversion
+        // clamp (κ→0), so the 95% region collapses to a single grid point at the floor. Reporting
+        // that as a zero-width `(0.001, 0.001)` reads as false precision, so flag it: warn and
+        // return a one-sided `(lo, nan)` (the upper bound is not identified), matching the spirit of
+        // the `(nan, nan)` unidentified case (issue #830).
+        if lo.is_finite() && hi.is_finite() && (hi - lo).abs() < 1e-6 && lo <= 0.0015 {
+            PyErr::warn_bound(
+                py,
+                &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
+                "kappa_ci collapsed to a zero-width interval at the persistence floor \
+                 (kappa is pegged at the reversion clamp): the profile likelihood is maximized at \
+                 the boundary, so the interval is not identified. Returning (lower, nan) rather than \
+                 a false-precision zero-width CI; read this as strong persistence, not a tight CI.",
+                1,
+            )?;
+            return Ok((lo, f64::NAN));
+        }
+        Ok((lo, hi))
     }
 
     /// Reversion strength `κ = 1 - a` (0 = pure persistence / parent-copy, 1 = no memory). `NaN`
@@ -1280,6 +1503,16 @@ impl ReplyTM {
     #[getter]
     fn bound_history(&self) -> Vec<f64> {
         self.bound_history.clone()
+    }
+
+    /// Whether variational EM converged (the monitoring bound's change fell below tolerance) before
+    /// reaching the `em_iters` cap. `False` means the fit stopped at the cap and may benefit from
+    /// more iterations; check it before trusting a fit rather than inferring convergence from
+    /// `len(bound_history)`.
+    #[getter]
+    fn converged(&self) -> PyResult<bool> {
+        self.require_fitted()?;
+        Ok(self.converged)
     }
 
     /// The constructor configuration as a JSON-serialisable dict, keyword-named to match

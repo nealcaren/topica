@@ -788,7 +788,7 @@ def _require_count(value, name: str, *, minimum: int) -> None:
         raise ValueError(f"{name} must be >= {minimum} (got {value})")
 
 
-def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
+def record_fit(model, corpus=None, *, prevalence=None, prevalence_names=None,
                embeddings=None,
                privacy: str = "minimal", content_fingerprint: bool = False,
                fingerprint_key: bytes | None = None, thread_count: int | None = None,
@@ -864,6 +864,17 @@ def record_fit(model, corpus, *, prevalence=None, prevalence_names=None,
             "prevalence_names")
 
     import topica
+
+    # Default the corpus to the one the model retained (e.g. ReplyTM.corpus), so record_fit(model)
+    # works for a model that kept its training corpus. Raise a clear error otherwise, rather than
+    # letting a missing positional argument surface as an opaque TypeError.
+    if corpus is None:
+        corpus = getattr(model, "corpus", None)
+        if corpus is None:
+            raise ValueError(
+                f"record_fit needs the corpus the model was fit on, but {type(model).__name__} "
+                "does not retain a reusable one; pass it explicitly as record_fit(model, corpus)."
+            )
 
     corpus = _as_corpus(corpus)
 

@@ -79,8 +79,14 @@ def test_fit_shapes_and_readouts():
     assert m.prevalence_se.shape == (G, K - 1)
     finite_se = m.prevalence_se[np.isfinite(m.prevalence_se)]
     assert np.all(finite_se >= 0)
-    lo, hi = m.kappa_ci
-    assert lo <= m.kappa + 1e-9 and hi >= m.kappa - 1e-9
+    # kappa CI brackets kappa; on this strongly-persistent corpus the profile pegs at the
+    # persistence floor, so the upper bound may be a one-sided NaN (issue #830).
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        lo, hi = m.kappa_ci
+    assert lo <= m.kappa + 1e-9
+    assert np.isnan(hi) or hi >= m.kappa - 1e-9
     # top_words: all-topics mode returns K lists; single-topic mode returns one list
     allw = m.top_words()
     assert len(allw) == K and all(isinstance(t, list) for t in allw)
@@ -423,6 +429,100 @@ def test_posterior_doc_topic_hedges_toward_uniform():
     nu = np.asarray(m.doc_topic_var).mean(axis=1)
     q_lo, q_hi = np.quantile(nu, [0.25, 0.75])
     assert gain[nu >= q_hi].mean() > gain[nu <= q_lo].mean()
+
+
+def _persistent_corpus(depth=8, leaf_len=30, n_threads=40, seed=0):
+    """Strongly-persistent, low-ν chains (children copy the parent's block, long docs): drives the
+    reversion to the clamp so kappa_ci hits the persistence-floor boundary case (#830)."""
+    rng = np.random.default_rng(seed)
+    V = [f"a{i}" for i in range(6)] + [f"b{i}" for i in range(6)]
+    docs, parents = [], []
+    for t in range(n_threads):
+        blk = 0 if t % 2 == 0 else 6
+        docs.append([V[blk + rng.integers(6)] for _ in range(leaf_len)])
+        parents.append(-1)
+        prev = len(docs) - 1
+        for _ in range(depth):
+            docs.append([V[blk + rng.integers(6)] for _ in range(leaf_len)])
+            parents.append(prev)
+            prev = len(docs) - 1
+    return docs, parents
+
+
+def test_covariates_accept_string_labels():
+    """#830 T2: string/categorical covariates are auto-encoded (fit + transform), the labels become
+    the group names, and an unseen label at transform is a clear error (not an opaque PyO3 crash)."""
+    docs, parents, cov, _ = _threaded_corpus(n_threads=30, depth=4)
+    labels = ["RedPill" if g == 0 else "CMV" for g in cov]
+    m = topica.ReplyTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=labels)
+    # first-seen order: group 0 is "RedPill" (thread 0 is group 0)
+    assert m.group_labels() == ["RedPill", "CMV"]
+    # integer and string fits must agree (same encoding)
+    mi = topica.ReplyTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=cov)
+    assert np.allclose(m.group_prevalence, mi.group_prevalence)
+    # transform accepts labels, mapped through the fitted groups
+    th = m.transform(docs[:5], parents=[-1, 0, 1, 2, 3], covariates=["RedPill"] * 5)
+    assert th.shape == (5, 2)
+    with pytest.raises(ValueError, match="not one of the fitted group labels"):
+        m.transform(docs[:2], parents=[-1, 0], covariates=["RedPill", "Nope"])
+
+
+def test_converged_flag():
+    """#830 T4a: a fitted model exposes a `converged` bool (not inferred from bound_history len)."""
+    docs, parents, _, _ = _threaded_corpus(n_threads=20, depth=5)
+    m = topica.ReplyTM(2, em_iters=200, seed=13).fit(docs, parents=parents)
+    assert isinstance(m.converged, bool)
+    with pytest.raises(RuntimeError):
+        topica.ReplyTM(2).converged  # unfitted
+
+
+def test_kappa_ci_boundary_flag():
+    """#830 T1: when the profile CI collapses to the persistence floor, kappa_ci returns a one-sided
+    (lower, nan) and warns, rather than a false-precision zero-width interval."""
+    docs, parents = _persistent_corpus()
+    m = topica.ReplyTM(2, em_iters=80, seed=13).fit(docs, parents=parents)
+    with pytest.warns(UserWarning, match="persistence floor"):
+        lo, hi = m.kappa_ci
+    assert lo == pytest.approx(m.kappa, abs=1e-3)
+    assert np.isnan(hi)  # upper not identified at the boundary
+
+
+def test_group_prevalence_ci():
+    """#830 T3a: a one-call prob-scale CI aligned with group_prevalence (G,K,2), bracketing the
+    point estimate; a group with fewer than two threads yields NaN bounds."""
+    docs, parents, cov, _ = _threaded_corpus(n_threads=30, depth=4)
+    m = topica.ReplyTM(3, em_iters=40, seed=13).fit(docs, parents=parents, covariates=cov)
+    gp = np.asarray(m.group_prevalence)
+    ci = np.asarray(m.group_prevalence_ci(level=0.9, n_samples=1500, seed=1))
+    assert ci.shape == gp.shape + (2,)
+    assert np.all(ci[:, :, 0] - 1e-9 <= gp) and np.all(gp <= ci[:, :, 1] + 1e-9)
+    assert np.all(ci[:, :, 0] <= ci[:, :, 1])
+    with pytest.raises(ValueError):
+        m.group_prevalence_ci(level=1.5)
+
+
+def test_topic_table_pretty_print():
+    """#830 T3b: topic_table prints as an aligned table, not a raw list-of-dicts dump, while staying
+    a list (indexing / to_frame unchanged)."""
+    docs, parents, _, _ = _threaded_corpus(n_threads=20, depth=4)
+    m = topica.ReplyTM(2, em_iters=30, seed=13).fit(docs, parents=parents)
+    tt = topica.inspect.topic_table(m)
+    s = str(tt)
+    assert "topic" in s and "prev" in s
+    assert not s.startswith("[{")  # not the raw dict dump
+    assert isinstance(tt, list) and len(tt.to_frame()) == 2
+
+
+def test_record_fit_defaults_corpus():
+    """#830 T4b: record_fit(model) works without re-passing the corpus (defaults to model.corpus)."""
+    docs, parents, _, _ = _threaded_corpus(n_threads=20, depth=4)
+    m = topica.ReplyTM(2, em_iters=30, seed=13).fit(docs, parents=parents)
+    assert m.corpus.num_docs == len(docs)
+    man = topica.provenance.record_fit(m)  # no corpus argument
+    assert man is not None
+    # explicit corpus still works and agrees on doc count
+    man2 = topica.provenance.record_fit(m, m.corpus)
+    assert man2 is not None
 
 
 def test_reply_completion_scores_logistic_normal_fairly():

@@ -293,6 +293,30 @@ class TopicTable(list):
 
         return pd.DataFrame(list(self))
 
+    def __repr__(self):
+        """A readable aligned table (topic, prevalence, top FREX words) instead of the
+        raw ``list`` of dicts. Still a ``list`` underneath, so indexing/iteration and
+        ``.to_frame()`` are unchanged."""
+        if not self:
+            return "TopicTable([])"
+        rows = list(self)
+        # FREX is usually the better label; fall back to prob words if a row lacks it.
+        def words(r):
+            w = r.get("frex") or r.get("prob") or []
+            return ", ".join(map(str, w))
+        tw = max(len(str(r.get("topic", i))) for i, r in enumerate(rows))
+        tw = max(tw, len("topic"))
+        header = f"{'topic':>{tw}}  {'prev':>6}  words"
+        lines = [header, "-" * len(header)]
+        for i, r in enumerate(rows):
+            t = str(r.get("topic", i))
+            prev = r.get("prevalence")
+            pcol = f"{prev:6.3f}" if isinstance(prev, (int, float)) else f"{'':>6}"
+            lines.append(f"{t:>{tw}}  {pcol}  {words(r)}")
+        return "\n".join(lines)
+
+    __str__ = __repr__
+
 
 
 def topic_table(model, vocabulary=None, *, doc_topic=None, n=7, weights=False):
