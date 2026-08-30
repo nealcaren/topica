@@ -51,6 +51,7 @@ __all__ = [
     "load_congress",
     "load_reviews",
     "load_ng20_minilm",
+    "load_threads",
     "get_data_home",
     "clear_cache",
 ]
@@ -158,6 +159,23 @@ _REGISTRY = {
             "'year' and 'date' (time), 'state', 'member', 'bioguide_id', 'title'. "
             "The canonical STM party + time example. Source: Derek Willis's "
             "congress-press (MIT)."
+        ),
+    },
+    "threads": {
+        "remote": "examples/reddit_threads.csv",
+        "filename": "reddit_threads.csv",
+        "sha256": "318206f6b9c64fddcedc42954c32abcf72b1b865d0e521237b8e4800cf94398f",
+        "text_col": "text",
+        "n_docs": 5042,
+        "summary": (
+            "Two-subreddit threaded Reddit corpus (5,042 comments in 171 reply "
+            "trees): 'askscience' (technical Q&A, replies answer their parent) and "
+            "'pokemontrades' (the deepest trees in the source, but replies "
+            "coordinate trades rather than respond on-topic). The ThreadTM reply-"
+            "tree vignette. Columns 'doc_id', 'thread_root', 'parent' (0-based row "
+            "index of the comment replied to, -1 for a root), 'subreddit', "
+            "'timestamp', raw 'text'. Source: ConvoKit reddit-corpus-small "
+            "(Chang et al. 2020)."
         ),
     },
     "ng20_minilm": {
@@ -481,3 +499,73 @@ def load_ng20_minilm(*, return_path: bool = False):
     except ImportError:  # pandas optional; the arrays are still available
         pass
     return bunch
+
+
+def load_threads(*, return_path: bool = False):
+    """Load the two-subreddit threaded Reddit corpus (5,042 comments, 171 trees).
+
+    The :class:`~topica.ThreadTM` reply-tree vignette. Two subreddits, chosen to
+    make the model's point honestly:
+
+    - ``askscience`` — technical Q&A; replies genuinely answer their parent, so
+      the reply tree carries topic structure and persistence is *identifiable*.
+    - ``pokemontrades`` — the deepest reply trees in the source corpus, yet its
+      replies coordinate trades ("added you on DS") rather than respond on-topic,
+      so persistence is *not* identifiable. Tree depth is not persistence.
+
+    Unlike the flat text datasets, threaded data cannot go through
+    :func:`topica.from_dataframe` (that discards the reply tree), so this returns
+    a :class:`Bunch` whose rows stay aligned to the ``parents`` index. Fit is
+    turnkey::
+
+        b = topica.datasets.load_threads()
+        topica.enable_experimental()  # ThreadTM is experimental
+        model = topica.ThreadTM(8, coupling="parent").fit(
+            b.documents, parents=b.parents, covariates=b.subreddit
+        )
+        model.persistence()   # read `reliability` before claiming persistence
+
+    The Bunch carries:
+
+    - ``documents`` — token lists (lowercased, letters-only, min length 3, English
+      stopwords removed), one per row and in row order (empty rows are kept so
+      ``parents`` stays valid).
+    - ``texts`` — the raw, untokenized comment text (retokenize this yourself for
+      a different vocabulary; keep every row to preserve the ``parents`` index).
+    - ``parents`` — list of ints: the 0-based row index of the comment each row
+      replies to, or ``-1`` for a thread root. A parent's index is always smaller
+      than its child's, so the array is safe to pass straight to ``fit``.
+    - ``subreddit`` — the per-row subreddit, the prevalence/content covariate.
+    - ``thread_root`` — the root comment id shared by every row in a tree.
+    - ``timestamp`` — unix seconds (may be null).
+    - ``df`` — the full table as a DataFrame.
+
+    Source: ConvoKit ``reddit-corpus-small`` (Chang et al. 2020); see
+    ``examples/build_reddit_threads.py`` to regenerate. Downloaded once and
+    cached. Pass ``return_path=True`` for the cached CSV path instead of the Bunch.
+    """
+    path = _resolve("threads")
+    if return_path:
+        return path
+    from .. import ENGLISH_STOPWORDS, tokenize
+
+    df = _read_csv(path)
+    texts = [str(t) for t in df["text"].tolist()]
+    stop = set(ENGLISH_STOPWORDS)
+    # Letters-only so curly-apostrophe contractions ("i’d", "it’s") don't survive
+    # as tokens; min length 3 drops the short residue. Raw text is in `texts` for
+    # anyone who wants a different vocabulary.
+    documents = [
+        tokenize(t, stopwords=stop, token_regex=r"[A-Za-z]+", min_length=3)
+        for t in texts
+    ]
+    parents = [int(p) for p in df["parent"].tolist()]
+    return Bunch(
+        df=df,
+        documents=documents,
+        texts=texts,
+        parents=parents,
+        subreddit=df["subreddit"].tolist(),
+        thread_root=df["thread_root"].tolist(),
+        timestamp=df["timestamp"].tolist(),
+    )

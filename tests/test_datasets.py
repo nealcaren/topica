@@ -286,3 +286,98 @@ def test_ng20_minilm_loads_bunch(tmp_path, monkeypatch):
     # second call hits the cache; return_path yields the cached .npz
     p = datasets.load_ng20_minilm(return_path=True)
     assert p.name == "ng20_minilm.npz" and p.exists()
+
+
+# ---------------------------------------------------------------------------
+# threads: the threaded ThreadTM vignette (fetch path, Bunch with reply tree)
+# ---------------------------------------------------------------------------
+
+
+def test_threads_registered():
+    assert "load_threads" in datasets.__all__
+    rec = datasets._REGISTRY["threads"]
+    assert rec["remote"].endswith("reddit_threads.csv")
+    assert rec["text_col"] == "text"
+    assert rec["n_docs"] == 5042
+    assert len(rec["sha256"]) == 64
+    # the summary names both subreddits and credits the source
+    assert "askscience" in rec["summary"] and "pokemontrades" in rec["summary"]
+    assert "ConvoKit" in rec["summary"]
+
+
+def test_threads_committed_csv_matches_registry_sha():
+    """When the repo tree is present (dev/CI checkout, not an installed wheel), the
+    committed examples/reddit_threads.csv must hash to the registry sha256."""
+    from pathlib import Path
+
+    csv = Path(datasets.__file__).resolve().parents[3] / "examples" / "reddit_threads.csv"
+    if not csv.exists():
+        pytest.skip("examples/ not present (installed wheel); checked out of band")
+    assert _sha256_bytes(csv.read_bytes()) == datasets._REGISTRY["threads"]["sha256"]
+
+
+_THREADS_CSV = (
+    "doc_id,thread_root,parent,subreddit,timestamp,text\n"
+    "r1,r1,-1,askscience,100,Why is the sky blue on Earth\n"
+    "c1,r1,0,askscience,101,Rayleigh scattering of sunlight\n"
+    "c2,r1,1,askscience,102,So shorter wavelengths scatter more\n"
+    "t1,t1,-1,pokemontrades,200,LF shiny Charizard FT events\n"
+    "t2,t1,3,pokemontrades,201,added you on DS ready when you are\n"
+).encode()
+
+
+def _threads_resp():
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self.close()
+            return False
+
+    return _Resp(_THREADS_CSV)
+
+
+def test_threads_loads_bunch(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOPICA_DATA_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(
+        datasets.urllib.request, "urlopen", lambda url, timeout=None: _threads_resp()
+    )
+    monkeypatch.setitem(
+        datasets._REGISTRY["threads"], "sha256", _sha256_bytes(_THREADS_CSV)
+    )
+
+    b = datasets.load_threads()
+    assert isinstance(b, datasets.Bunch)
+    assert len(b.documents) == len(b.parents) == 5
+    # roots carry -1; every other parent is a smaller row index in the same thread
+    assert b.parents == [-1, 0, 1, -1, 3]
+    assert set(b.subreddit) == {"askscience", "pokemontrades"}
+    # documents are tokenized, lowercased, letters-only, stopwords removed
+    assert "rayleigh" in b.documents[1] and "scattering" in b.documents[1]
+    assert "the" not in b.documents[0]  # stopword gone
+    assert all(w.isalpha() for doc in b.documents for w in doc)
+    # raw text preserved for a custom vocabulary
+    assert b.texts[0].startswith("Why is the sky")
+    # cached path on the second call
+    p = datasets.load_threads(return_path=True)
+    assert p.name == "reddit_threads.csv" and p.exists()
+
+
+def test_threads_parents_align_and_fit(tmp_path, monkeypatch):
+    """The parents array is fit-ready: every non-root parent precedes its child."""
+    monkeypatch.setenv("TOPICA_DATA_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(
+        datasets.urllib.request, "urlopen", lambda url, timeout=None: _threads_resp()
+    )
+    monkeypatch.setitem(
+        datasets._REGISTRY["threads"], "sha256", _sha256_bytes(_THREADS_CSV)
+    )
+    b = datasets.load_threads()
+    for i, p in enumerate(b.parents):
+        assert p == -1 or p < i  # a parent always comes before its child
+    topica.enable_experimental()
+    m = topica.ThreadTM(2, em_iters=10, seed=13).fit(
+        b.documents, parents=b.parents, min_count=1
+    )
+    assert m.topic_word.shape[0] == 2
