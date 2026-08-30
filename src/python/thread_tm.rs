@@ -485,7 +485,23 @@ impl ThreadTM {
     /// categorical labels (a list, or a pandas Series) are accepted too and auto-encoded to
     /// `0..num_groups` in first-seen order, with the distinct labels becoming the group names.
     /// `covariate_names` names the groups for the readouts (overriding auto-encoded labels).
-    /// `min_count` drops words rarer than it. Experimental: requires `topica.enable_experimental()`.
+    /// `min_count` drops words rarer than it (the same vocabulary knob `Corpus` spells `min_cf`).
+    ///
+    /// Seeding and prevalence anchoring (both orthogonal to the reply tree). `seed_words` is a
+    /// `{topic_index: [keywords]}` dict: it biases those topics' word distributions toward the
+    /// keywords and pins them to fixed slots, while unseeded topic indices are learned freely.
+    /// `seed_prior="frequency"` (default) gives each matched seed word a pseudocount of
+    /// `corpus_count(word) * seed_weight`; `"uniform"` a flat `seed_weight` per word; `seed_strength`
+    /// (if set) overrides both with a flat per-word pseudocount (so it silently supersedes
+    /// `seed_prior`/`seed_weight`). `seed_match` is `"fixed"` (default), `"glob"`, or `"regex"`, one
+    /// strategy for the whole dict, with `case_insensitive`. Seeding is rejected together with a
+    /// `content` covariate. `prevalence_anchor={group_index: [K-length mix]}` shrinks a group's
+    /// baseline topic mix toward the target by `anchor_strength` (0..1); the key is the ENCODED
+    /// integer group id (covariates are encoded `0..num_groups` in FIRST-SEEN order, not the string
+    /// label and not alphabetical — check `group_names`/`covariate_names`), and the mix need not sum
+    /// to 1. NOTE: the fit is deterministic given the inputs; `seed` does NOT vary the fit (the
+    /// variational EM uses a fixed spectral init), so refitting across seeds is not a robustness
+    /// check — resample threads instead. Experimental: requires `topica.enable_experimental()`.
     #[pyo3(signature = (data, parents=None, covariates=None, covariate_names=None, *, min_count=1,
                         content=None, content_names=None, content_prior="l2".to_string(),
                         content_prior_var=0.5, content_smooth=0.0, depth_bins=None,
