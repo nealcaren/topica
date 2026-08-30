@@ -488,7 +488,9 @@ impl ThreadTM {
     /// `min_count` drops words rarer than it. Experimental: requires `topica.enable_experimental()`.
     #[pyo3(signature = (data, parents=None, covariates=None, covariate_names=None, *, min_count=1,
                         content=None, content_names=None, content_prior="l2".to_string(),
-                        content_prior_var=0.5, content_smooth=0.0, depth_bins=None))]
+                        content_prior_var=0.5, content_smooth=0.0, depth_bins=None,
+                        seed_words=None, seed_strength=200.0,
+                        prevalence_anchor=None, anchor_strength=0.5))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -504,6 +506,13 @@ impl ThreadTM {
         content_prior_var: f64,
         content_smooth: f64,
         depth_bins: Option<Vec<usize>>,
+        // SPIKE (seeds/anchors exploration): seed_words maps a topic index to keyword strings
+        // (Dirichlet β seeding, seed_strength pseudocounts per word); prevalence_anchor maps a
+        // covariate-group index to a length-K target topic mix (anchor pull, anchor_strength).
+        seed_words: Option<std::collections::HashMap<usize, Vec<String>>>,
+        seed_strength: f64,
+        prevalence_anchor: Option<std::collections::HashMap<usize, Vec<f64>>>,
+        anchor_strength: f64,
     ) -> PyResult<Py<Self>> {
         require_experimental("ThreadTM")?;
         // Accept either a topica.Corpus (materialise its token strings) or raw token lists, so the
@@ -829,6 +838,68 @@ impl ThreadTM {
         let v = vocab.len();
         let iters = slf.em_iters;
         let seed = slf.seed;
+
+        // SPIKE: build the seed/anchor supervision config from the fit-time vocabulary and
+        // covariate groups. seed_words -> β pseudocounts on the matched (topic, word) cells;
+        // prevalence_anchor -> per-group η targets (additive-log-ratio of the supplied mix).
+        let seed_cfg = {
+            let mut beta_pseudo: Vec<(usize, usize, f64)> = Vec::new();
+            let mut n_unmatched = 0usize;
+            if let Some(sw) = &seed_words {
+                for (&t, words) in sw {
+                    if t >= k {
+                        return Err(PyValueError::new_err(format!(
+                            "seed_words topic index {t} is out of range for num_topics={k}"
+                        )));
+                    }
+                    for w in words {
+                        match wid.get(w.as_str()) {
+                            Some(&id) => beta_pseudo.push((t, id as usize, seed_strength)),
+                            None => n_unmatched += 1,
+                        }
+                    }
+                }
+            }
+            if n_unmatched > 0 {
+                PyErr::warn_bound(
+                    py,
+                    &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
+                    &format!(
+                        "{n_unmatched} seed word(s) are not in the fitted vocabulary (dropped by \
+                         min_count or absent) and were ignored.",
+                    ),
+                    1,
+                )?;
+            }
+            let mut anchor_target: Vec<(usize, Vec<f64>, f64)> = Vec::new();
+            if let Some(pa) = &prevalence_anchor {
+                let s = anchor_strength.clamp(0.0, 1.0);
+                for (&g, mix) in pa {
+                    if g >= num_groups {
+                        return Err(PyValueError::new_err(format!(
+                            "prevalence_anchor group index {g} is out of range for {num_groups} group(s)"
+                        )));
+                    }
+                    if mix.len() != k {
+                        return Err(PyValueError::new_err(format!(
+                            "prevalence_anchor[{g}] has length {}, expected num_topics={k}",
+                            mix.len()
+                        )));
+                    }
+                    // additive-log-ratio with the last topic as reference (η is K-1 dimensional).
+                    let floor = 1e-9;
+                    let last = mix[k - 1].max(floor);
+                    let eta: Vec<f64> = (0..k - 1).map(|i| (mix[i].max(floor) / last).ln()).collect();
+                    anchor_target.push((g, eta, s));
+                }
+            }
+            if beta_pseudo.is_empty() && anchor_target.is_empty() {
+                None
+            } else {
+                Some(crate::thread_tm::SeedConfig { beta_pseudo, anchor_target })
+            }
+        };
+
         let m = py.allow_threads(move || {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let content_cfg = content_groups
@@ -852,6 +923,7 @@ impl ThreadTM {
                 false, // kappa_ci computed lazily by the getter, not in fit
                 blend_cfg.as_ref(),
                 content_cfg.as_ref(),
+                seed_cfg.as_ref(),
                 |_, _, _| true,
                 &mut rng,
             )
@@ -1755,6 +1827,7 @@ impl ThreadTM {
                 false, // uncoupled pass for persistence(); no kappa_ci needed
                 None,  // uncoupled: every doc a root, no blend
                 None,  // persistence ignores the content channel (prevalence only)
+                None,  // persistence ignores seed/anchor supervision
                 |_, _, _| true,
                 &mut rng,
             )

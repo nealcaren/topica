@@ -9703,6 +9703,7 @@ fn thread_tm_fit(
             false, // raw smoke-test entry point does not return kappa_ci
             None,  // parent coupling
             None,  // no content covariate
+            None,  // no seed/anchor supervision
             |_, _, _| true,
             &mut rng,
         );
