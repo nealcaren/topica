@@ -9703,6 +9703,7 @@ fn thread_tm_fit(
             false, // raw smoke-test entry point does not return kappa_ci
             None,  // parent coupling
             None,  // no content covariate
+            None,  // no seed/anchor supervision
             |_, _, _| true,
             &mut rng,
         );
@@ -14145,7 +14146,7 @@ fn parse_seed_dict(d: &Bound<'_, PyDict>) -> PyResult<(Vec<String>, Vec<Vec<Stri
 /// How seed/keyword patterns are matched against the vocabulary, following
 /// quanteda's dictionary `valuetype` (the matcher the seededlda package uses).
 #[derive(Clone, Copy, PartialEq)]
-enum SeedMatch {
+pub(crate) enum SeedMatch {
     /// Exact literal equality (topica's original and default behavior).
     Fixed,
     /// Glob wildcards — `*` matches any run of characters, `?` a single one —
@@ -14157,7 +14158,7 @@ enum SeedMatch {
 }
 
 impl SeedMatch {
-    fn parse(s: &str) -> PyResult<Self> {
+    pub(crate) fn parse(s: &str) -> PyResult<Self> {
         match s {
             "fixed" => Ok(SeedMatch::Fixed),
             "glob" => Ok(SeedMatch::Glob),
@@ -14212,7 +14213,7 @@ fn compile_seed_pattern(pat: &str, mode: SeedMatch, case_insensitive: bool) -> P
 /// `Glob`/`Regex` (and case-insensitive `Fixed`) scan the vocabulary per pattern
 /// and dedup within each topic, so an expanding pattern (or overlapping patterns)
 /// contributes each matched vocabulary word to a topic exactly once.
-fn seed_word_ids(
+pub(crate) fn seed_word_ids(
     word_strings: &[Vec<String>],
     id_to_word: &[String],
     num_topics: usize,

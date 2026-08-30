@@ -159,6 +159,20 @@ pub struct BlendConfig {
     pub fixed_beta: Option<f64>,
 }
 
+/// User supervision for ThreadTM (issue #854): steer the topic-word distributions and/or
+/// the prevalence anchor with keyword seeds. Both are orthogonal to the reply-tree θ prior.
+///
+/// `beta_pseudo` are `(topic, word_id, pseudocount)` Dirichlet pseudocounts added to the
+/// seeded topics' word rows (SeededLDA-style β seeding); they shape WHAT topics are about
+/// and pin them to fixed slots. `anchor_target` are `(group, eta, strength)` pulls: after
+/// each anchor M-step the estimated per-group baseline is shrunk toward `eta` (length K-1,
+/// additive-log-ratio of the target topic mix) by `strength` in [0, 1], steering topic
+/// PREVALENCE. Either list may be empty.
+pub struct SeedConfig {
+    pub beta_pseudo: Vec<(usize, usize, f64)>,
+    pub anchor_target: Vec<(usize, Vec<f64>, f64)>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
@@ -172,6 +186,7 @@ pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     compute_ci: bool,
     blend: Option<&BlendConfig>,
     content: Option<&ContentConfig>,
+    seed_cfg: Option<&SeedConfig>,
     mut on_progress: F,
     rng: &mut R,
 ) -> ThreadTmModel {
@@ -219,6 +234,32 @@ pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         }
         beta
     });
+
+    // Bias the initial β toward the seed words so a seeded topic starts aligned with its
+    // keywords rather than wherever spectral init happened to place it (issue #854). Mix a
+    // normalized seed-word profile into each seeded topic's row; the M-step then does the real
+    // work. Unseeded topics are untouched.
+    if let Some(sc) = seed_cfg {
+        let mut seed_mass: Vec<Vec<f64>> = vec![vec![0.0f64; num_types]; k];
+        for &(t, w, c) in &sc.beta_pseudo {
+            if t < k && w < num_types {
+                seed_mass[t][w] += c;
+            }
+        }
+        for (t, row) in beta.iter_mut().enumerate() {
+            let s: f64 = seed_mass[t].iter().sum();
+            if s > 0.0 {
+                // 0.5 weight on the seed profile, 0.5 on the spectral init.
+                for (v, &m) in row.iter_mut().zip(&seed_mass[t]) {
+                    *v = 0.5 * *v + 0.5 * (m / s);
+                }
+                let z: f64 = row.iter().sum();
+                for v in row.iter_mut() {
+                    *v /= z;
+                }
+            }
+        }
+    }
 
     // Content covariate (issue #841): a SAGE κ-deviation channel on the topic-word distributions β,
     // by a per-document content level (separate from the prevalence `groups`). Reuses the CTM core's
@@ -437,6 +478,16 @@ pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                 20,
             );
         } else {
+            // SeededLDA-style Dirichlet seeding of β (issue #854): add the seed pseudocounts to
+            // the expected word counts before normalizing, so a seeded topic is pulled toward its
+            // keywords every M-step. Independent of the reply-tree θ prior above.
+            if let Some(sc) = seed_cfg {
+                for &(t, w, c) in &sc.beta_pseudo {
+                    if t < k && w < num_types {
+                        beta_ss[t][w] += c;
+                    }
+                }
+            }
             for brow in beta_ss.iter_mut() {
                 let s: f64 = brow.iter().sum();
                 for v in brow.iter_mut() {
@@ -465,6 +516,19 @@ pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
             if gcnt[g] > 0 {
                 for i in 0..km1 {
                     anchor[g][i] = gsum[g][i] / gcnt[g] as f64;
+                }
+            }
+        }
+        // Prevalence-anchor supervision (issue #854): shrink each targeted group's estimated
+        // anchor toward the supplied η target by `strength`, steering that group's baseline mix.
+        if let Some(sc) = seed_cfg {
+            for (g, target, strength) in &sc.anchor_target {
+                let g = *g;
+                let s = strength.clamp(0.0, 1.0);
+                if g < ng && target.len() == km1 {
+                    for i in 0..km1 {
+                        anchor[g][i] = (1.0 - s) * anchor[g][i] + s * target[i];
+                    }
                 }
             }
         }
@@ -1138,6 +1202,7 @@ mod tests {
             true, // exercise the eager kappa_ci path
             None, // parent coupling
             None, // no content covariate
+            None, // no seed/anchor supervision
             |_, _, _| true,
             &mut fit_rng,
         );

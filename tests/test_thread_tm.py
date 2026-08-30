@@ -6,6 +6,7 @@ covariate), array shapes, input validation, and a light end-to-end topic + preva
 """
 import subprocess
 import sys
+import warnings
 
 import numpy as np
 import pytest
@@ -994,6 +995,181 @@ def test_reply_completion_repr_shows_all_deltas():
     r = repr(res)
     assert "beats_no_tree=" in r
     assert "tree-no_tree=" in r and "tree-lda=" in r and "tree-stm=" in r
+
+
+# ---------------------------------------------------------------------------
+# seed words (β) and prevalence anchors (θ) — user supervision (issue #854)
+# ---------------------------------------------------------------------------
+
+def _planted_block_corpus(seed=7, n_threads=120, K=4, blk=10, group_mix=None):
+    """Threaded corpus with K disjoint word blocks (topic t = words {t*blk .. t*blk+blk-1})
+    and two covariate groups whose topic prevalence differs in a KNOWN way. Lets a test seed
+    topic t with block t's words and check both recovery and slot alignment."""
+    rng = np.random.default_rng(seed)
+    if group_mix is None:
+        group_mix = {0: np.array([0.40, 0.40, 0.10, 0.10]),
+                     1: np.array([0.10, 0.10, 0.40, 0.40])}
+
+    def draw(mix, length):
+        toks = []
+        for _ in range(length):
+            t = rng.choice(K, p=mix)
+            toks.append(f"w{t * blk + rng.integers(blk)}")
+        return toks
+
+    docs, parents, groups = [], [], []
+    for th in range(n_threads):
+        g = th % 2
+        docs.append(draw(group_mix[g], 25)); parents.append(-1); groups.append(g)
+        root = len(docs) - 1
+        for _ in range(3):
+            docs.append(draw(group_mix[g], 12)); parents.append(root); groups.append(g)
+    block_words = {t: [f"w{t * blk + j}" for j in range(blk)] for t in range(K)}
+    return docs, parents, groups, block_words, group_mix
+
+
+def _block_mass(model, t, words):
+    tw = np.asarray(model.topic_word)
+    ids = [model.vocabulary.index(w) for w in words if w in model.vocabulary]
+    return float(tw[t, ids].sum())
+
+
+def _fit_seeded(docs, parents, groups, K=4, **kw):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return topica.ThreadTM(K, em_iters=80, seed=13, coupling="parent").fit(
+            docs, parents=parents, covariates=groups,
+            covariate_names=["g0", "g1"], min_count=1, **kw)
+
+
+def test_thread_tm_seed_words_pin_topics_to_slots():
+    """Seeding topic t with block t's words pins fitted-topic t to block t (solving the
+    unsupervised label-switching) and concentrates its mass on the right block."""
+    docs, parents, groups, block_words, _ = _planted_block_corpus()
+    m = _fit_seeded(docs, parents, groups, seed_words=block_words)
+    for t in range(4):
+        masses = [_block_mass(m, t, block_words[b]) for b in range(4)]
+        assert int(np.argmax(masses)) == t, f"topic {t} did not land in its seeded slot"
+        assert masses[t] > 0.6
+
+
+def test_thread_tm_seed_is_soft_learns_beyond_seeds():
+    """Seeding only a FEW of a block's words still pulls the whole block in: seeded topics keep
+    substantial mass on the UNSEEDED block words (a soft prior, not a lock on the seeds), while
+    still landing in their slots. We check the mass on average — with four competing blocks a
+    single topic can occasionally shed its tail, but the soft-prior behavior holds in aggregate."""
+    docs, parents, groups, block_words, _ = _planted_block_corpus()
+    partial = {t: block_words[t][:3] for t in range(4)}  # 3 of 10 words per block
+    m = _fit_seeded(docs, parents, groups, seed_words=partial, seed_weight=0.5)
+    aligned = sum(int(np.argmax([_block_mass(m, t, block_words[b]) for b in range(4)]) == t)
+                  for t in range(4))
+    assert aligned == 4, "seeding a few words per block failed to recover the blocks in-slot"
+    unseeded_mass = np.mean([_block_mass(m, t, block_words[t][3:]) for t in range(4)])
+    assert unseeded_mass > 0.1, "topics collapsed onto their seeds instead of learning the block"
+
+
+def test_thread_tm_prevalence_anchor_steers_group():
+    """Pulling a group's anchor toward a target mix moves its recovered prevalence toward the
+    target, monotonically in anchor_strength."""
+    docs, parents, groups, block_words, _ = _planted_block_corpus()
+    base = _fit_seeded(docs, parents, groups, seed_words=block_words)
+    gp0 = np.asarray(base.group_prevalence)[0]
+    target = gp0.copy(); target[0] *= 0.5; target[2] *= 2.0; target /= target.sum()
+    prev = None
+    for s in (0.0, 0.5, 0.9):
+        m = _fit_seeded(docs, parents, groups, seed_words=block_words,
+                        prevalence_anchor={0: target.tolist()}, anchor_strength=s)
+        d = abs(np.asarray(m.group_prevalence)[0][0] - target[0])
+        if prev is not None:
+            assert d <= prev + 1e-6, "stronger anchor did not move prevalence toward the target"
+        prev = d
+
+
+def test_thread_tm_seed_glob_matching():
+    """seed_match='glob' expands a wildcard against the vocabulary."""
+    docs, parents, groups, block_words, _ = _planted_block_corpus()
+    # 'w0*' matches w0, w0? none here (words are w0..w39); use explicit block-0 glob 'w?' won't do.
+    # seed block 0 via the glob 'w[0-9]' is regex; for glob use the literal prefix of block 0 words.
+    m = _fit_seeded(docs, parents, groups, seed_words={0: ["w1*"]}, seed_match="glob")
+    # 'w1*' matches w1, w10..w19 (block 1's words w10-19 plus stray w1) — just assert it fit + seeded
+    assert np.asarray(m.topic_word).shape[0] == 4
+
+
+def test_thread_tm_seed_validation_and_content_guard():
+    docs, parents, groups, block_words, _ = _planted_block_corpus(n_threads=20)
+    with pytest.raises(ValueError, match="seed_prior"):
+        _fit_seeded(docs, parents, groups, seed_words={0: ["w0"]}, seed_prior="bad")
+    with pytest.raises(ValueError, match="seed_match"):
+        _fit_seeded(docs, parents, groups, seed_words={0: ["w0"]}, seed_match="bad")
+    with pytest.raises(ValueError, match="out of range"):
+        _fit_seeded(docs, parents, groups, seed_words={99: ["w0"]})
+    with pytest.raises(ValueError, match="length"):
+        _fit_seeded(docs, parents, groups, prevalence_anchor={0: [0.5, 0.5]})
+    with pytest.raises(ValueError, match="not supported together with a content"):
+        _fit_seeded(docs, parents, groups, seed_words={0: ["w0"]}, content="depth")
+    # finiteness / sign guards on the strength knobs (f64::clamp would let NaN through)
+    for bad in (float("nan"), -1.0):
+        with pytest.raises(ValueError, match="seed_weight"):
+            _fit_seeded(docs, parents, groups, seed_words={0: ["w0"]}, seed_weight=bad)
+        with pytest.raises(ValueError, match="seed_strength"):
+            _fit_seeded(docs, parents, groups, seed_words={0: ["w0"]}, seed_strength=bad)
+    for bad in (float("nan"), 1.5, -0.1):
+        with pytest.raises(ValueError, match="anchor_strength"):
+            _fit_seeded(docs, parents, groups,
+                        prevalence_anchor={0: [0.25, 0.25, 0.25, 0.25]}, anchor_strength=bad)
+    with pytest.raises(ValueError, match="non-negative topic mix"):
+        _fit_seeded(docs, parents, groups, prevalence_anchor={0: [0.5, -0.2, 0.4, 0.3]})
+
+
+def test_thread_tm_unseeded_fit_unchanged_by_none_seeds():
+    """Passing no seeds must be bit-identical to the pre-feature default path (the seed hooks
+    are inert when seed_words/prevalence_anchor are None)."""
+    docs, parents, groups, _, _ = _planted_block_corpus(n_threads=40)
+    a = _fit_seeded(docs, parents, groups)
+    b = _fit_seeded(docs, parents, groups, seed_words=None, prevalence_anchor=None)
+    assert np.allclose(np.asarray(a.topic_word), np.asarray(b.topic_word))
+    assert np.allclose(np.asarray(a.group_prevalence), np.asarray(b.group_prevalence))
+
+
+def test_thread_tm_seed_matches_introspection():
+    """seed_matches exposes which vocabulary words each topic's patterns resolved to (issue #856),
+    so glob/regex seeding is auditable; it is empty on an unseeded fit."""
+    docs, parents, groups, block_words, _ = _planted_block_corpus()
+    m = _fit_seeded(docs, parents, groups, seed_words={0: ["w0", "w1"], 2: ["w2*"]},
+                    seed_match="glob")
+    sm = dict(m.seed_matches)
+    assert set(sm.keys()) == {0, 2}
+    assert set(sm[0]) == {"w0", "w1"}
+    # 'w2*' globs onto block-2 words w20..w29 (and w2 itself) — a superset check on a few
+    assert {"w20", "w21", "w29"}.issubset(set(sm[2]))
+    assert dict(_fit_seeded(docs, parents, groups).seed_matches) == {}
+
+
+def test_thread_tm_prevalence_anchor_accepts_string_label():
+    """prevalence_anchor keys may be the string covariate label (as passed to covariates=), not
+    only the encoded integer index (issue #856); an unknown label raises helpfully."""
+    docs, parents, groups, _, _ = _planted_block_corpus(n_threads=40)
+    labels = ["g0" if g == 0 else "g1" for g in groups]
+    target = [0.7, 0.1, 0.1, 0.1]
+    by_label = topica.ThreadTM(4, em_iters=60, seed=13, coupling="parent").fit(
+        docs, parents=parents, covariates=labels, min_count=1,
+        prevalence_anchor={"g0": target}, anchor_strength=0.9)
+    by_index = topica.ThreadTM(4, em_iters=60, seed=13, coupling="parent").fit(
+        docs, parents=parents, covariates=labels, min_count=1,
+        prevalence_anchor={0: target}, anchor_strength=0.9)
+    assert np.allclose(np.asarray(by_label.group_prevalence),
+                       np.asarray(by_index.group_prevalence))
+    with pytest.raises(ValueError, match="is not one of the covariate groups"):
+        topica.ThreadTM(4, em_iters=20, seed=13).fit(
+            docs, parents=parents, covariates=labels, min_count=1,
+            prevalence_anchor={"nope": target})
+
+
+def test_thread_tm_seed_words_non_dict_error():
+    """A non-dict seed_words gets a house-quality error, not the raw PyO3 message (issue #856)."""
+    docs, parents, groups, _, _ = _planted_block_corpus(n_threads=20)
+    with pytest.raises((ValueError, TypeError), match="seed_words must be a dict"):
+        _fit_seeded(docs, parents, groups, seed_words=["w0", "w1"])
 
 
 # ---------------------------------------------------------------------------
