@@ -92,7 +92,7 @@ class Bunch(dict):
 # Immutable commit that holds the dataset files. Pinned (not ``main``) so a
 # given topica version always fetches the same bytes; override with the
 # TOPICA_DATA_REF environment variable for local development against a branch.
-_DATA_REF = "548b09228e8641422557d79c0b84aace1cdd97b3"
+_DATA_REF = "4a08c923cc88c3ff3c91ea68bb7c9707bf490852"
 _RAW_BASE = "https://raw.githubusercontent.com/nealcaren/topica"
 
 # name -> dataset record. ``vendored`` files ship in the wheel; the rest carry a
