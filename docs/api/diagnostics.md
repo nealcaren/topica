@@ -14,6 +14,8 @@ reachable bare at the top level (`topica.<name>`) as a compatibility alias.
 
 ::: topica.evaluate.reply_completion
 
+::: topica.evaluate.thread_stability
+
 ## Quality
 
 ::: topica.evaluate.coherence

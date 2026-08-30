@@ -55,6 +55,8 @@ __all__ = [
     'make_heldout',
     'perplexity',
     'reply_completion',
+    'thread_stability',
+    'ThreadStabilityResult',
     'semantic_coherence',
     'topic_diversity',
     'topic_semantic_diversity',
@@ -1473,6 +1475,270 @@ def reply_completion(
             "n_boot": n_boot,
             "perm_changed_frac": perm_changed_frac,
             "predictive_samples": predictive_samples,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# thread_stability: thread-bootstrap robustness for ThreadTM (issue #856)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ThreadStabilityResult:
+    """Result of :func:`thread_stability`.
+
+    ``similarity`` maps each reference topic to ``{"mean", "ci", "min"}`` of its
+    best cosine match to the corresponding topic in each thread-resampled refit
+    (1.0 = the topic reappears intact; low = it dissolves under resampling).
+    ``stable`` lists the reference topics whose mean similarity clears
+    ``stable_threshold``. ``prevalence`` (when a covariate was passed) maps each
+    ``(group, topic)`` to the mean and thread-clustered CI of that cell's
+    probability-scale prevalence across the refits, so a group contrast can be
+    reported as robust to which conversations were sampled. The counts describe
+    the resampling.
+    """
+
+    similarity: dict
+    stable: list
+    prevalence: dict
+    n_boot: int
+    n_threads: int
+    stable_threshold: float
+    settings: dict
+
+    def to_frame(self):
+        """Tidy per-topic stability table (pandas): topic, mean/min similarity, stable flag."""
+        import pandas as pd
+        rows = []
+        for t in sorted(self.similarity):
+            s = self.similarity[t]
+            lo, hi = s["ci"]
+            rows.append({
+                "topic": t,
+                "similarity_mean": s["mean"],
+                "similarity_min": s["min"],
+                "ci_low": lo,
+                "ci_high": hi,
+                "stable": t in self.stable,
+            })
+        return pd.DataFrame(rows)
+
+    def __repr__(self):
+        n_stable = len(self.stable)
+        n_topics = len(self.similarity)
+        worst = min((s["mean"] for s in self.similarity.values()), default=float("nan"))
+        return (
+            f"ThreadStabilityResult(stable={n_stable}/{n_topics} "
+            f"@>= {self.stable_threshold:.2f}, worst_topic_mean_sim={worst:.3f}, "
+            f"n_boot={self.n_boot}, n_threads={self.n_threads})"
+        )
+
+
+def thread_stability(
+    docs,
+    parents,
+    *,
+    num_topics,
+    covariates=None,
+    covariate_names=None,
+    n_boot=20,
+    seed=13,
+    em_iters=100,
+    min_count=1,
+    coupling="parent",
+    seed_words=None,
+    metric="cosine",
+    stable_threshold=0.7,
+    ci=0.95,
+):
+    """Thread-bootstrap robustness for :class:`~topica.ThreadTM`.
+
+    ThreadTM's fit is deterministic given its inputs (the variational EM starts
+    from a fixed spectral init), so refitting across ``seed`` values does NOT
+    perturb it — a multi-seed "stability" check is a silent no-op (issue #856).
+    The right question for a threaded corpus is instead: *are my topics and the
+    per-group prevalence stable to which conversations I happened to sample?* This
+    resamples whole reply trees (thread roots) with replacement, refits ThreadTM on
+    each resampled corpus, aligns its topics back to the reference fit, and reports
+    how intact each topic and each group-prevalence cell stays. Threads are the
+    resampling unit because comments within a thread are correlated (the same unit
+    ThreadTM clusters its standard errors on).
+
+    Protocol. Fit a reference model on the full corpus. For each of ``n_boot``
+    draws, sample ``n_threads`` thread roots with replacement, rebuild a corpus
+    from those threads (each copy re-indexed with its reply edges intact), refit
+    ThreadTM with the SAME ``num_topics``/``coupling``/``seed_words``/``seed``, and
+    Hungarian-align its topics to the reference by word distribution
+    (:func:`align_topics`). ``similarity[t]`` aggregates reference topic ``t``'s
+    best match across the refits; ``prevalence[(g, t)]`` aggregates that group and
+    topic's probability-scale prevalence.
+
+    Parameters
+    ----------
+    docs, parents : the corpus and reply forest, exactly as :meth:`ThreadTM.fit`
+        takes them (``parents[d]`` is ``d``'s parent index, ``-1`` for a root).
+    num_topics : int. K, shared by the reference and every refit.
+    covariates, covariate_names : optional per-document categorical group id and
+        names, passed through to every fit (and needed for the ``prevalence`` CIs).
+    n_boot : int. Number of thread-resampled refits.
+    seed : RNG seed for the resampling; also the (fixed) model seed for every fit.
+    em_iters, min_count, coupling, seed_words : passed through to every
+        :meth:`ThreadTM.fit`, so the robustness check matches your analysis fit
+        (seed a topic and it stays pinned across the refits, which also makes the
+        alignment trivial for the seeded slots).
+    metric : word-distribution distance for :func:`align_topics` (default cosine).
+    stable_threshold : float. A reference topic is ``stable`` when its mean
+        matched similarity across refits is at least this.
+    ci : float. Central interval mass for the reported CIs (default 0.95).
+
+    Returns
+    -------
+    ThreadStabilityResult
+
+    Notes
+    -----
+    Requires ``topica.enable_experimental()`` (ThreadTM is experimental). This runs
+    ``n_boot + 1`` full ThreadTM fits, so it is the heaviest diagnostic here; lower
+    ``n_boot`` or ``em_iters`` for a quick look. This is the conditional
+    (fixed-K, fixed-vocabulary-rule) resampling; it does not add model-selection error.
+    """
+    from . import ThreadTM  # local import: ThreadTM is experimental-gated
+
+    if n_boot < 2:
+        raise ValueError("n_boot must be >= 2")
+    if not (0.0 < ci < 1.0):
+        raise ValueError("ci must be in (0, 1)")
+
+    docs_attr = getattr(docs, "documents", None)
+    if callable(docs_attr):
+        docs = docs_attr()
+    docs = [list(d) for d in docs]
+    n = len(docs)
+    if len(parents) != n:
+        raise ValueError(f"parents has {len(parents)} entries but there are {n} documents")
+    parents = [int(p) for p in parents]
+    cov = None if covariates is None else list(covariates)
+    if cov is not None and len(cov) != n:
+        raise ValueError(f"covariates has {len(cov)} entries but there are {n} documents")
+
+    _, _, root, _ = _reply_tree_meta(parents)
+    # group document indices by thread root, preserving tree order (a parent always
+    # precedes its children because parents index earlier documents).
+    from collections import OrderedDict
+    threads = OrderedDict()
+    for d in range(n):
+        threads.setdefault(root[d], []).append(d)
+    thread_ids = list(threads.keys())
+    n_threads = len(thread_ids)
+    if n_threads < 2:
+        raise ValueError(
+            "thread_stability needs at least two threads to resample; the corpus is a single tree."
+        )
+
+    rng = np.random.default_rng(seed)
+
+    def _fit(bdocs, bparents, bcov):
+        m = ThreadTM(num_topics, em_iters=em_iters, seed=seed, coupling=coupling)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=UserWarning)
+            kw = {} if seed_words is None else {"seed_words": seed_words}
+            m.fit(
+                bdocs, parents=bparents, covariates=bcov,
+                covariate_names=covariate_names, min_count=min_count, **kw,
+            )
+        return m
+
+    ref = _fit(docs, parents, cov)
+    ref_group_names = list(ref.group_labels())
+
+    def _resample():
+        picked = [thread_ids[i] for i in rng.integers(n_threads, size=n_threads)]
+        bdocs, bpar, bcov = [], [], ([] if cov is not None else None)
+        for rt in picked:
+            member = threads[rt]
+            base = len(bdocs)
+            old_to_new = {old: base + i for i, old in enumerate(member)}
+            for old in member:
+                bdocs.append(docs[old])
+                p = parents[old]
+                bpar.append(-1 if p < 0 else old_to_new[p])
+                if cov is not None:
+                    bcov.append(cov[old])
+        return bdocs, bpar, bcov
+
+    lo_q = 100.0 * (1.0 - ci) / 2.0
+    hi_q = 100.0 * (1.0 + ci) / 2.0
+
+    sims = {t: [] for t in range(num_topics)}     # ref topic -> [best similarity per boot]
+    # (group_name, ref_topic) -> [prevalence per boot], only when covariates present
+    prev = {} if cov is not None else None
+    for _ in range(n_boot):
+        bdocs, bpar, bcov = _resample()
+        try:
+            bm = _fit(bdocs, bpar, bcov)
+        except (RuntimeError, ValueError):
+            continue  # a degenerate resample (e.g. emptied vocabulary); skip this draw
+        pairs = align_topics(ref, bm, by="words", metric=metric)
+        match = {int(i): (int(j), 1.0 - float(d)) for (i, j, d) in pairs}
+        for t in range(num_topics):
+            if t in match:
+                sims[t].append(match[t][1])
+        if cov is not None:
+            bgp = np.asarray(bm.group_prevalence, dtype=np.float64)
+            bnames = list(bm.group_labels())
+            name_row = {nm: r for r, nm in enumerate(bnames)}
+            for t in range(num_topics):
+                if t not in match:
+                    continue
+                j = match[t][0]
+                for gname in ref_group_names:
+                    r = name_row.get(gname)
+                    if r is not None and j < bgp.shape[1]:
+                        prev.setdefault((gname, t), []).append(float(bgp[r, j]))
+
+    similarity = {}
+    for t in range(num_topics):
+        arr = np.asarray(sims[t], dtype=np.float64)
+        if len(arr) == 0:
+            similarity[t] = {"mean": float("nan"), "ci": (float("nan"), float("nan")),
+                             "min": float("nan"), "n": 0}
+            continue
+        similarity[t] = {
+            "mean": float(arr.mean()),
+            "ci": (float(np.percentile(arr, lo_q)), float(np.percentile(arr, hi_q))),
+            "min": float(arr.min()),
+            "n": int(len(arr)),
+        }
+    stable = [t for t in range(num_topics)
+              if similarity[t]["n"] > 0 and similarity[t]["mean"] >= stable_threshold]
+
+    prevalence = {}
+    if cov is not None:
+        for key, vals in prev.items():
+            a = np.asarray(vals, dtype=np.float64)
+            prevalence[key] = {
+                "mean": float(a.mean()),
+                "ci": (float(np.percentile(a, lo_q)), float(np.percentile(a, hi_q))),
+                "n": int(len(a)),
+            }
+
+    return ThreadStabilityResult(
+        similarity=similarity,
+        stable=stable,
+        prevalence=prevalence,
+        n_boot=n_boot,
+        n_threads=n_threads,
+        stable_threshold=stable_threshold,
+        settings={
+            "num_topics": num_topics,
+            "n_boot": n_boot,
+            "seed": seed,
+            "em_iters": em_iters,
+            "min_count": min_count,
+            "coupling": coupling,
+            "metric": metric,
+            "ci": ci,
+            "seeded": seed_words is not None,
         },
     )
 

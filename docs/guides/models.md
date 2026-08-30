@@ -883,7 +883,18 @@ Audit what glob/regex seeds actually matched with `m.seed_matches` — a `{topic
 over the seeded topics, so you can confirm `planet*` caught `planet`/`planets` and nothing
 unintended. Note the fit is deterministic given its inputs: `seed` does not vary it (the
 variational EM starts from a fixed spectral init), so refitting across seeds is not a robustness
-check — resample threads instead.
+check. For robustness, resample the conversations with
+[`topica.evaluate.thread_stability`](../api/diagnostics.md#topica.evaluate.thread_stability): it
+refits on bootstrap samples of whole reply trees and reports how intact each topic and each
+group-prevalence cell stays, so you can show a group contrast survives which threads you sampled.
+
+```python
+rob = topica.evaluate.thread_stability(
+    docs, parents, num_topics=8, covariates=subreddit, seed_words=seeds, n_boot=25)
+rob.stable                 # reference topics whose mean matched similarity clears the threshold
+rob.to_frame()             # per-topic similarity mean/CI + a stable flag
+rob.prevalence[("askscience", 3)]   # {'mean', 'ci'} of that (group, topic) prevalence over refits
+```
 
 `prevalence_anchor={group: [K-length mix]}` shrinks a covariate group's baseline topic mix toward
 a supplied target by `anchor_strength` (0..1), steering *prevalence*; it works with `content`. The

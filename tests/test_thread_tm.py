@@ -201,12 +201,13 @@ def _threaded_corpus(seed=13, n_threads=60, depth=10, doc_len=40):
     return docs, parents, cov, vocab
 
 
-def test_experimental_gate_blocks_fit():
-    """fit() must refuse to run until experimental models are enabled (fresh interpreter)."""
+def test_experimental_gate_blocks_construction():
+    """Construction must refuse until experimental models are enabled (issue #856: the gate fires
+    at ThreadTM(...), not only at fit, so a first-timer learns immediately). Fresh interpreter."""
     code = (
-        "import topica; m = topica.ThreadTM(3)\n"
+        "import topica\n"
         "try:\n"
-        "    m.fit([['a','b','c']], parents=[-1]); print('NOTGATED')\n"
+        "    m = topica.ThreadTM(3); print('NOTGATED')\n"
         "except RuntimeError as e:\n"
         "    print('GATED' if 'experimental' in str(e) else 'OTHER')\n"
     )
@@ -1170,6 +1171,50 @@ def test_thread_tm_seed_words_non_dict_error():
     docs, parents, groups, _, _ = _planted_block_corpus(n_threads=20)
     with pytest.raises((ValueError, TypeError), match="seed_words must be a dict"):
         _fit_seeded(docs, parents, groups, seed_words=["w0", "w1"])
+
+
+# ---------------------------------------------------------------------------
+# thread_stability: thread-bootstrap robustness (issue #856)
+# ---------------------------------------------------------------------------
+
+def test_thread_stability_recovers_planted_topics():
+    """On a planted-block corpus every topic reappears under thread resampling, so all K are
+    flagged stable, similarities are high, and the result shapes/frame are well-formed."""
+    docs, parents, groups, block_words, _ = _planted_block_corpus(n_threads=80)
+    res = topica.evaluate.thread_stability(
+        docs, parents, num_topics=4, covariates=groups, covariate_names=["g0", "g1"],
+        n_boot=6, seed=13, em_iters=50, min_count=1, seed_words=block_words)
+    assert res.n_threads == 80 and res.n_boot == 6
+    assert set(res.similarity) == {0, 1, 2, 3}
+    # seeded planted blocks are pinned, so every topic is highly stable
+    assert all(res.similarity[t]["mean"] > 0.8 for t in range(4))
+    assert res.stable == [0, 1, 2, 3]
+    fr = res.to_frame()
+    assert list(fr["topic"]) == [0, 1, 2, 3] and fr["stable"].all()
+
+
+def test_thread_stability_prevalence_ci_recovers_group_contrast():
+    """With covariates the prevalence dict carries thread-clustered CIs per (group, topic); on the
+    planted corpus group 0 loves topics {0,1} and group 1 loves {2,3}, and the CIs reflect that."""
+    docs, parents, groups, block_words, group_mix = _planted_block_corpus(n_threads=90)
+    res = topica.evaluate.thread_stability(
+        docs, parents, num_topics=4, covariates=groups, covariate_names=["g0", "g1"],
+        n_boot=6, seed=13, em_iters=50, min_count=1, seed_words=block_words)
+    # group 0's topic-0 prevalence is high (~0.4) and its CI sits well above group 1's (~0.1)
+    g0_t0 = res.prevalence[("g0", 0)]
+    g1_t0 = res.prevalence[("g1", 0)]
+    assert g0_t0["mean"] > g1_t0["mean"]
+    assert g0_t0["ci"][0] > g1_t0["ci"][1]  # intervals separate -> a robust contrast
+
+
+def test_thread_stability_validation():
+    docs, parents, groups, _, _ = _planted_block_corpus(n_threads=20)
+    with pytest.raises(ValueError, match="n_boot"):
+        topica.evaluate.thread_stability(docs, parents, num_topics=4, n_boot=1)
+    # a single thread cannot be resampled
+    single = [["a", "b", "c"], ["a", "b"]]
+    with pytest.raises(ValueError, match="at least two threads"):
+        topica.evaluate.thread_stability(single, [-1, 0], num_topics=2, n_boot=4, em_iters=5)
 
 
 # ---------------------------------------------------------------------------

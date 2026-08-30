@@ -410,6 +410,10 @@ impl ThreadTM {
         blend_alpha: Option<f64>,
         blend_beta: Option<f64>,
     ) -> PyResult<Self> {
+        // Gate at construction, not only at fit (issue #856): a first-timer who builds the model
+        // before enabling the experimental tier gets the requirement immediately, not many lines
+        // into a fit later.
+        require_experimental("ThreadTM")?;
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
