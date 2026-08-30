@@ -740,6 +740,27 @@ The interval clusters on the thread, not the comment, because comments within a 
 are correlated. The placebo is a no-op on chain-like threads (one node per depth layer),
 and `reply_completion` warns when that happens.
 
+For the **edge-attribution** headline — how much of a reply's held-out predictability comes
+from its *observed* parent, above a within-thread parent permutation — read
+`res.contrast["edge"]`, the paired `permuted - no_tree` difference with its own
+thread-clustered CI (issue #852). It is computed automatically whenever both `permuted` and
+`no_tree` are scored, so the interval sits next to the point estimate rather than leaving it
+as a bare number. Ask for any other baseline-vs-baseline contrast through `contrasts=` (a list
+of `(first, second)` name pairs, or the alias `"edge"`), or form one after the fact from the
+raw paired draws that every result now carries:
+
+```python
+res = topica.evaluate.reply_completion(
+    docs, parents, num_topics=25, covariates=group,
+    baselines=("no_tree", "permuted", "lda"),
+    contrasts=[("tree", "lda")])          # e.g. an equivalence/non-inferiority check
+res.contrast["edge"]         # {'estimate', 'ci', 'first': 'permuted', 'second': 'no_tree'}
+res.contrast["tree-lda"]     # requested contrast, same bootstrap machinery
+res.contrast_ci("tree", "lda")           # or compute any pair on demand
+res.paired["token_ll"]       # {name: per-leaf arrays of held-out token log-liks}
+res.paired["thread_root"]    # leaf -> thread-root id, for a downstream clustered bootstrap
+```
+
 Pass the reply structure exactly like [`CSATM`](#csatm): a `parents` list where
 `parents[d]` is document `d`'s parent **index** (`-1` for a thread root), in the same
 order as the documents. `fit` validates it (out-of-range, self-parent, and cycles all
