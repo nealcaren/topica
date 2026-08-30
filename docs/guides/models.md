@@ -842,6 +842,42 @@ levels are treated as unordered categories in this version (no adjacent-level sm
 `transform` on a content-fit model takes `content=` for the new forest (`"depth"` re-bins it with
 the fitted edges) and scores each new document under its content level's words.
 
+**Seeding topics and anchoring prevalence.** When you arrive with themes you already care
+about, supervise the fit with keyword seeds. Both knobs are orthogonal to the reply tree
+(the tree shapes prevalence; these shape the topic-word content and the group baseline), so
+they compose with coupling and covariates.
+
+`seed_words={topic_index: [keywords]}` biases those topics' word distributions toward the
+keywords (SeededLDA-style Dirichlet seeding) and pins each seeded topic to a **fixed slot**,
+which removes the arbitrary permutation an unsupervised fit lands in. Unseeded topic indices
+are still learned freely, so you can seed a few themes and let the rest emerge. The seed is
+a **soft** prior: with the default frequency scaling (`seed_prior="frequency"`, each matched
+seed word getting a pseudocount of `corpus_count(word) * seed_weight`, scale-robust) a
+seeded topic keeps learning the rest of its vocabulary rather than collapsing onto the seeds.
+`seed_strength` overrides the scheme with a flat per-word pseudocount; `seed_match` is
+`"fixed"` (default), `"glob"` (`tax*`), or `"regex"`, with `case_insensitive`. Seeding the
+word channel is not supported together with a `content` covariate (raise otherwise).
+
+`prevalence_anchor={group_index: [K-length mix]}` shrinks a covariate group's baseline topic
+mix toward a supplied target by `anchor_strength` (0..1), steering *prevalence*; it works with
+`content`.
+
+```python
+m = topica.ThreadTM(num_topics=8, seed=13)
+m.fit(docs, parents=parents, covariates=subreddit, covariate_names=subs,
+      seed_words={
+          0: ["orbit", "planet", "star", "gravity"],   # topic 0 = astronomy
+          1: ["energy", "heat", "pressure", "mass"],    # topic 1 = physics
+          3: ["trade", "shiny", "code", "pokemon"],     # topic 3 = trades
+      })                                                # topics 2, 4-7 learned freely
+topica.inspect.topic_table(m)          # topic 0/1/3 now sit where you put them
+```
+
+On the two-subreddit `load_threads` vignette, seeding four of eight topics leaves the seeded
+topics coherent (mean c_npmi does not drop) and pulls in related non-seed words — the
+astronomy seed gains *speed*, *velocity*, *momentum*; the trade seed gains *thanks*, *ready*,
+*want* — while their per-subreddit prevalence stays clean.
+
 **Inferring topics for a new thread.** `transform` maps a fresh reply forest to topic
 proportions, holding the fitted topics, reversion, per-edge variance, root covariance, and
 per-group anchors fixed. Pass `parents` (and `covariates`) for the new forest exactly as at fit.

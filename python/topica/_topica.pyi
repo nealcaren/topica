@@ -3101,6 +3101,14 @@ class ThreadTM:
         content_prior_var: float = 0.5,
         content_smooth: float = 0.0,
         depth_bins: Sequence[int] | None = None,
+        seed_words: dict[int, Sequence[str]] | None = None,
+        seed_prior: str = "frequency",
+        seed_weight: float = 1.0,
+        seed_strength: float | None = None,
+        seed_match: str = "fixed",
+        case_insensitive: bool = False,
+        prevalence_anchor: dict[int, Sequence[float]] | None = None,
+        anchor_strength: float = 0.5,
     ) -> "ThreadTM":
         """`data` is a ``topica.Corpus`` or a list of token lists. `parents[d]` is document
         ``d``'s parent index in the reply tree (``-1`` for a thread root), in the SAME order as
@@ -3117,6 +3125,18 @@ class ThreadTM:
         `content_prior` is ``"l2"`` (dense ridge, default) or ``"l1"`` (sparse Laplace);
         `content_prior_var` (default 0.5) is the deviation-prior scale. Read the shift with
         `content_topic_word` / `content_top_words` / `content_kappa`.
+
+        User supervision (issue #854), both orthogonal to the reply tree. `seed_words` maps a
+        topic index to keyword strings, biasing those topics' word distributions toward the
+        keywords (SeededLDA-style Dirichlet seeding) and pinning them to fixed slots; unseeded
+        topics are learned freely. `seed_prior="frequency"` (default) gives each matched seed word
+        a pseudocount of ``corpus_count(word) * seed_weight`` (scale-robust, a SOFT prior that still
+        learns beyond the seeds); ``"uniform"`` is a flat ``seed_weight * 100``; `seed_strength`
+        overrides both with a flat per-word pseudocount. `seed_match` is ``"fixed"`` (exact,
+        default), ``"glob"`` (``*``/``?`` wildcards), or ``"regex"``, with `case_insensitive`.
+        Seeding is not supported together with a `content` covariate. `prevalence_anchor` maps a
+        covariate-group index to a length-K target topic mix and shrinks that group's baseline
+        toward it by `anchor_strength` (0..1), steering topic prevalence (works with `content`).
         Requires ``topica.enable_experimental()``."""
         ...
     def transform(

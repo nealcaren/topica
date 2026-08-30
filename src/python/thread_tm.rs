@@ -491,6 +491,7 @@ impl ThreadTM {
                         content_prior_var=0.5, content_smooth=0.0, depth_bins=None,
                         seed_words=None, seed_prior="frequency".to_string(),
                         seed_weight=1.0, seed_strength=None,
+                        seed_match="fixed".to_string(), case_insensitive=false,
                         prevalence_anchor=None, anchor_strength=0.5))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
@@ -507,16 +508,19 @@ impl ThreadTM {
         content_prior_var: f64,
         content_smooth: f64,
         depth_bins: Option<Vec<usize>>,
-        // SPIKE (seeds/anchors exploration): seed_words maps a topic index to keyword strings
+        // User supervision (issue #854). seed_words maps a topic index to keyword strings
         // (Dirichlet β seeding). seed_prior="frequency" (default) sets each seed word's pseudocount
         // to corpus_count(word) * seed_weight, so seeding is scale-robust and does not collapse a
         // topic to its seeds (SeededLDA's scheme); "uniform" uses a flat seed_weight * 100. Passing
-        // seed_strength overrides both with that flat per-word pseudocount (the original knob).
-        // prevalence_anchor maps a covariate-group index to a length-K target topic mix.
+        // seed_strength overrides both with that flat per-word pseudocount. seed_match/case_insensitive
+        // select how patterns match the vocabulary (shared with SeededLDA). prevalence_anchor maps a
+        // covariate-group index to a length-K target topic mix.
         seed_words: Option<std::collections::HashMap<usize, Vec<String>>>,
         seed_prior: String,
         seed_weight: f64,
         seed_strength: Option<f64>,
+        seed_match: String,
+        case_insensitive: bool,
         prevalence_anchor: Option<std::collections::HashMap<usize, Vec<f64>>>,
         anchor_strength: f64,
     ) -> PyResult<Py<Self>> {
@@ -845,7 +849,7 @@ impl ThreadTM {
         let iters = slf.em_iters;
         let seed = slf.seed;
 
-        // SPIKE: build the seed/anchor supervision config from the fit-time vocabulary and
+        // Build the seed/anchor supervision config (issue #854) from the fit-time vocabulary and
         // covariate groups. seed_words -> β pseudocounts on the matched (topic, word) cells;
         // prevalence_anchor -> per-group η targets (additive-log-ratio of the supplied mix).
         let seed_cfg = {
@@ -854,45 +858,57 @@ impl ThreadTM {
                     "seed_prior must be \"frequency\" or \"uniform\"",
                 ));
             }
+            // Seeding the topic-word channel is unsupported alongside a content covariate (SAGE):
+            // with content the β M-step is replaced by per-level sparse deviations, so the seed
+            // pseudocounts would only reach the initializer, not the fit. Reject the combination.
+            if seed_words.is_some() && content.is_some() {
+                return Err(PyValueError::new_err(
+                    "seed_words is not supported together with a content covariate; fit the seeds \
+                     without content, or drop seed_words (prevalence_anchor works with content).",
+                ));
+            }
+            let mode = crate::python::SeedMatch::parse(&seed_match)?;
             let mut beta_pseudo: Vec<(usize, usize, f64)> = Vec::new();
-            let mut n_unmatched = 0usize;
             if let Some(sw) = &seed_words {
+                // Lay the dict out positionally (0..K) and resolve patterns with the shared matcher
+                // (fixed/glob/regex, dedup within a topic) SeededLDA/CorEx use.
+                let mut per_topic: Vec<Vec<String>> = vec![Vec::new(); k];
                 for (&t, words) in sw {
                     if t >= k {
                         return Err(PyValueError::new_err(format!(
                             "seed_words topic index {t} is out of range for num_topics={k}"
                         )));
                     }
-                    for w in words {
-                        match wid.get(w.as_str()) {
-                            Some(&id) => {
-                                // pseudocount per seed word. `seed_strength` (if given) overrides the
-                                // scheme with a flat count; else "frequency" scales by the word's own
-                                // corpus count (SeededLDA-style, scale-robust) and "uniform" is flat.
-                                let pc = match seed_strength {
-                                    Some(s) => s,
-                                    None if seed_prior == "frequency" => {
-                                        counts[w.as_str()] as f64 * seed_weight
-                                    }
-                                    None => seed_weight * 100.0,
-                                };
-                                beta_pseudo.push((t, id as usize, pc));
+                    per_topic[t] = words.clone();
+                }
+                let matched =
+                    crate::python::seed_word_ids(&per_topic, &vocab, k, mode, case_insensitive)?;
+                let mut n_seeded_words = 0usize;
+                for (t, ids) in matched.iter().enumerate() {
+                    for &id in ids {
+                        // pseudocount per matched seed word. `seed_strength` (if given) overrides the
+                        // scheme with a flat count; else "frequency" scales by the word's own corpus
+                        // count (SeededLDA-style, scale-robust) and "uniform" is flat.
+                        let pc = match seed_strength {
+                            Some(s) => s,
+                            None if seed_prior == "frequency" => {
+                                counts[vocab[id].as_str()] as f64 * seed_weight
                             }
-                            None => n_unmatched += 1,
-                        }
+                            None => seed_weight * 100.0,
+                        };
+                        beta_pseudo.push((t, id, pc));
+                        n_seeded_words += 1;
                     }
                 }
-            }
-            if n_unmatched > 0 {
-                PyErr::warn_bound(
-                    py,
-                    &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
-                    &format!(
-                        "{n_unmatched} seed word(s) are not in the fitted vocabulary (dropped by \
-                         min_count or absent) and were ignored.",
-                    ),
-                    1,
-                )?;
+                if n_seeded_words == 0 {
+                    PyErr::warn_bound(
+                        py,
+                        &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
+                        "no seed words matched the fitted vocabulary (all dropped by min_count or \
+                         absent); the fit is unseeded.",
+                        1,
+                    )?;
+                }
             }
             let mut anchor_target: Vec<(usize, Vec<f64>, f64)> = Vec::new();
             if let Some(pa) = &prevalence_anchor {
@@ -912,14 +928,19 @@ impl ThreadTM {
                     // additive-log-ratio with the last topic as reference (η is K-1 dimensional).
                     let floor = 1e-9;
                     let last = mix[k - 1].max(floor);
-                    let eta: Vec<f64> = (0..k - 1).map(|i| (mix[i].max(floor) / last).ln()).collect();
+                    let eta: Vec<f64> = (0..k - 1)
+                        .map(|i| (mix[i].max(floor) / last).ln())
+                        .collect();
                     anchor_target.push((g, eta, s));
                 }
             }
             if beta_pseudo.is_empty() && anchor_target.is_empty() {
                 None
             } else {
-                Some(crate::thread_tm::SeedConfig { beta_pseudo, anchor_target })
+                Some(crate::thread_tm::SeedConfig {
+                    beta_pseudo,
+                    anchor_target,
+                })
             }
         };
 

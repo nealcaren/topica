@@ -159,13 +159,15 @@ pub struct BlendConfig {
     pub fixed_beta: Option<f64>,
 }
 
-/// SPIKE (ThreadTM seeds/anchors exploration, not shipped): steer both the topic-word
-/// distributions and the prevalence anchor with user supervision. `beta_pseudo` are
-/// `(topic, word_id, pseudocount)` Dirichlet pseudocounts added to the seeded topics'
-/// word distributions (SeededLDA-style β seeding); they shape WHAT topics are about and
-/// are orthogonal to the reply tree. `anchor_target` are `(group, eta, strength)` pulls:
-/// after each anchor M-step the estimated per-group baseline is shrunk toward `eta`
-/// (length K-1, additive-log-ratio) by `strength` in [0, 1], steering topic PREVALENCE.
+/// User supervision for ThreadTM (issue #854): steer the topic-word distributions and/or
+/// the prevalence anchor with keyword seeds. Both are orthogonal to the reply-tree θ prior.
+///
+/// `beta_pseudo` are `(topic, word_id, pseudocount)` Dirichlet pseudocounts added to the
+/// seeded topics' word rows (SeededLDA-style β seeding); they shape WHAT topics are about
+/// and pin them to fixed slots. `anchor_target` are `(group, eta, strength)` pulls: after
+/// each anchor M-step the estimated per-group baseline is shrunk toward `eta` (length K-1,
+/// additive-log-ratio of the target topic mix) by `strength` in [0, 1], steering topic
+/// PREVALENCE. Either list may be empty.
 pub struct SeedConfig {
     pub beta_pseudo: Vec<(usize, usize, f64)>,
     pub anchor_target: Vec<(usize, Vec<f64>, f64)>,
@@ -233,9 +235,10 @@ pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         beta
     });
 
-    // SPIKE: bias the initial β toward the seed words so a seeded topic starts aligned with
-    // its keywords rather than wherever spectral init happened to place it. Mix a normalized
-    // seed-word mass into each seeded topic's row.
+    // Bias the initial β toward the seed words so a seeded topic starts aligned with its
+    // keywords rather than wherever spectral init happened to place it (issue #854). Mix a
+    // normalized seed-word profile into each seeded topic's row; the M-step then does the real
+    // work. Unseeded topics are untouched.
     if let Some(sc) = seed_cfg {
         let mut seed_mass: Vec<Vec<f64>> = vec![vec![0.0f64; num_types]; k];
         for &(t, w, c) in &sc.beta_pseudo {
@@ -475,9 +478,9 @@ pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                 20,
             );
         } else {
-            // SPIKE: SeededLDA-style Dirichlet seeding of β. Add the seed pseudocounts to the
-            // expected word counts before normalizing, so a seeded topic is pulled toward its
-            // keywords every M-step. This is independent of the reply-tree θ prior above.
+            // SeededLDA-style Dirichlet seeding of β (issue #854): add the seed pseudocounts to
+            // the expected word counts before normalizing, so a seeded topic is pulled toward its
+            // keywords every M-step. Independent of the reply-tree θ prior above.
             if let Some(sc) = seed_cfg {
                 for &(t, w, c) in &sc.beta_pseudo {
                     if t < k && w < num_types {
@@ -516,8 +519,8 @@ pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
                 }
             }
         }
-        // SPIKE: prevalence-anchor supervision. Shrink each targeted group's estimated anchor
-        // toward the supplied η target by `strength`, steering that group's baseline topic mix.
+        // Prevalence-anchor supervision (issue #854): shrink each targeted group's estimated
+        // anchor toward the supplied η target by `strength`, steering that group's baseline mix.
         if let Some(sc) = seed_cfg {
             for (g, target, strength) in &sc.anchor_target {
                 let g = *g;
