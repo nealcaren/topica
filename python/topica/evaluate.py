@@ -771,6 +771,31 @@ def perplexity(model, held_out, *, seed=0):
 # the replytm-paper validation)
 # ---------------------------------------------------------------------------
 
+def _cluster_ci_boot(diff, thread_ids, *, n_boot, seed):
+    """95% thread-clustered percentile-bootstrap CI on the per-token mean of ``diff``.
+
+    Resamples whole threads (roots) with replacement ``n_boot`` times, taking the
+    per-token mean of the pooled tokens each time. Shared by :func:`reply_completion`'s
+    ``delta``/``contrast`` and :meth:`ReplyCompletionResult.contrast_ci` so every
+    interval in the result rests on the identical procedure.
+    """
+    thread_ids = np.asarray(thread_ids)
+    diff = np.asarray(diff, dtype=np.float64)
+    uniq = np.unique(thread_ids)
+    nth = len(uniq)
+    if nth < 2 or len(diff) == 0:
+        return (float("nan"), float("nan"))
+    by_thread = {t: np.where(thread_ids == t)[0] for t in uniq}
+    rng = np.random.default_rng(seed)
+    boot = np.empty(n_boot, dtype=np.float64)
+    for b in range(n_boot):
+        pick = uniq[rng.integers(nth, size=nth)]
+        idx = np.concatenate([by_thread[t] for t in pick])
+        boot[b] = diff[idx].mean()
+    lo, hi = np.percentile(boot, [2.5, 97.5])
+    return (float(lo), float(hi))
+
+
 @dataclass
 class ReplyCompletionResult:
     """Result of :func:`reply_completion`.
@@ -783,6 +808,16 @@ class ReplyCompletionResult:
     better), and ``ci`` is its 95% cluster-bootstrap interval. ``beats_no_tree``
     is a convenience flag, true when the no-tree interval excludes zero from
     below. The counts describe how much data the comparison rests on.
+
+    ``contrast`` holds thread-clustered CIs on paired *baseline-vs-baseline*
+    differences (issue #852), keyed by a ``"a-b"`` label (or ``"edge"`` for the
+    built-in ``permuted - no_tree`` edge-attribution quantity). Each value is
+    ``{estimate, ci, first, second}`` for ``first - second``, computed from the
+    same root-resampling bootstrap as ``delta``. ``paired`` exposes the raw
+    per-eval-leaf held-out log-likelihoods (one array per leaf per model, the
+    thread-root id, and the token count) so a caller can form and cluster any
+    contrast downstream; :meth:`contrast_ci` does exactly that for an arbitrary
+    pair of scored models.
     """
 
     per_token_ll: dict
@@ -793,6 +828,53 @@ class ReplyCompletionResult:
     oov_dropped: int
     beats_no_tree: bool
     settings: dict
+    contrast: dict = field(default_factory=dict)
+    paired: dict = field(default_factory=dict)
+
+    def contrast_ci(self, first, second, *, n_boot=None, seed=None):
+        """Thread-clustered CI on the paired difference ``first - second``.
+
+        ``first`` and ``second`` are scored-model names (``"tree"``, ``"no_tree"``,
+        ``"permuted"``, ``"root"``, ``"blend"``, ``"lda"``, ``"stm"``). The paired
+        per-token log-likelihoods are taken from :attr:`paired` over the eval
+        leaves BOTH models scored, and resampled by thread root exactly as
+        :func:`reply_completion` does for :attr:`delta`. ``n_boot`` and ``seed``
+        default to the values the result was computed with.
+
+        Returns ``{"estimate": float, "ci": (lo, hi), "first": first,
+        "second": second, "n_tokens": int, "n_threads": int}``.
+        """
+        if not self.paired:
+            raise ValueError("this result carries no paired draws; recompute with a current topica")
+        ll = self.paired["token_ll"]
+        for name in (first, second):
+            if name not in ll:
+                raise ValueError(
+                    f"unknown model {name!r}; scored models are {sorted(ll)}"
+                )
+        roots = self.paired["thread_root"]
+        tids, a_ll, b_ll = [], [], []
+        for i in range(len(self.paired["leaves"])):
+            ap, bp = ll[first][i], ll[second][i]
+            if len(ap) == 0 or len(bp) == 0 or len(ap) != len(bp):
+                continue
+            for j in range(len(ap)):
+                tids.append(int(roots[i]))
+                a_ll.append(ap[j])
+                b_ll.append(bp[j])
+        tids = np.asarray(tids)
+        diff = np.asarray(a_ll, dtype=np.float64) - np.asarray(b_ll, dtype=np.float64)
+        nb = int(self.settings.get("n_boot", 1000)) if n_boot is None else int(n_boot)
+        sd = int(self.settings.get("seed", 13)) if seed is None else int(seed)
+        lo, hi = _cluster_ci_boot(diff, tids, n_boot=nb, seed=sd)
+        return {
+            "estimate": float(diff.mean()) if len(diff) else float("nan"),
+            "ci": (lo, hi),
+            "first": first,
+            "second": second,
+            "n_tokens": int(len(diff)),
+            "n_threads": int(len(np.unique(tids))),
+        }
 
     def __repr__(self):
         head = "ReplyCompletionResult("
@@ -807,6 +889,11 @@ class ReplyCompletionResult:
             if d is not None:
                 lo, hi = d["ci"]
                 parts.append(f"tree-{name}={d['estimate']:+.4f} [{lo:+.4f}, {hi:+.4f}]")
+        # the edge-attribution contrast (permuted - no_tree) is the paper headline, so
+        # surface it in the repr right after the tree deltas when it was computed.
+        for label, c in self.contrast.items():
+            lo, hi = c["ci"]
+            parts.append(f"{label}={c['estimate']:+.4f} [{lo:+.4f}, {hi:+.4f}]")
         body = ", ".join(parts) if parts else ""
         if body:
             body += ", "
@@ -874,6 +961,7 @@ def reply_completion(
     min_eval_tokens=2,
     eval_frac=1.0,
     baselines=("no_tree", "permuted"),
+    contrasts=None,
     em_iters=100,
     min_count=1,
     seed=13,
@@ -963,6 +1051,18 @@ def reply_completion(
         ``seed``); ``1.0`` uses them all.
     baselines : which comparators to fit, any of ``"no_tree"``, ``"permuted"``,
         ``"root"``, ``"blend"``, ``"lda"``, ``"stm"``.
+    contrasts : optional paired *baseline-vs-baseline* contrasts to report with a
+        thread-clustered CI (issue #852), in addition to the tree-minus-baseline
+        ``delta``. Each entry is either a ``(first, second)`` pair of scored-model
+        names (giving a CI on ``first - second``) or the string alias ``"edge"``
+        (the edge-attribution quantity ``permuted - no_tree``: how much of a
+        reply's held-out predictability comes from the *observed* parent, above a
+        within-thread parent permutation). ``"edge"`` is computed automatically
+        whenever both ``permuted`` and ``no_tree`` are scored, so most callers do
+        not need to pass it. The intervals reuse the same root-resampling
+        bootstrap as ``delta``; the raw paired draws are also on the result
+        (``result.paired``) and :meth:`ReplyCompletionResult.contrast_ci` forms
+        an arbitrary pair on demand.
     em_iters : EM iterations for the ThreadTM fits (tree, no_tree, permuted, root, blend). Match
         this to the analysis fit. The off-the-shelf ``lda`` / ``stm`` comparators
         run at their own default iteration counts, not ``em_iters``.
@@ -1001,6 +1101,31 @@ def reply_completion(
             raise ValueError(
                 f"unknown baseline {b!r}; use any of {_known_baselines}"
             )
+
+    # normalize requested paired contrasts to (first, second) name pairs. "edge" is
+    # the built-in permuted - no_tree edge-attribution quantity (issue #852).
+    scored_names = ("tree",) + tuple(b for b in baselines)
+    req_contrasts = []
+    for c in (contrasts or ()):
+        if isinstance(c, str):
+            if c == "edge":
+                pair = ("permuted", "no_tree")
+            else:
+                raise ValueError(
+                    f"unknown contrast alias {c!r}; the only alias is 'edge' "
+                    "(= permuted - no_tree). Otherwise pass a (first, second) name pair."
+                )
+        else:
+            pair = tuple(c)
+            if len(pair) != 2:
+                raise ValueError(f"a contrast must be a (first, second) pair, got {c!r}")
+        for name in pair:
+            if name not in scored_names:
+                raise ValueError(
+                    f"contrast {c!r} names {name!r}, which is not scored; add it to "
+                    f"baselines (scored models: {list(scored_names)})."
+                )
+        req_contrasts.append((c if isinstance(c, str) else None, pair))
 
     docs_attr = getattr(docs, "documents", None)
     if callable(docs_attr):
@@ -1223,19 +1348,19 @@ def reply_completion(
         lo, hi = np.percentile(boot, [2.5, 97.5])
         return (float(lo), float(hi))
 
-    def _paired(name):
-        """Per-token (thread_id, tree_ll, baseline_ll) over leaves both models scored."""
-        tids, t_ll, b_ll = [], [], []
+    def _paired_pair(first, second):
+        """Per-token (thread_id, first_ll, second_ll) over leaves BOTH models scored."""
+        tids, a_ll, b_ll = [], [], []
         for d in eligible:
-            tp = tree_pt[d]
-            bp = scored[name][0][d]
-            if not tp or len(bp) != len(tp):
+            ap = scored[first][0][d]
+            bp = scored[second][0][d]
+            if not ap or not bp or len(ap) != len(bp):
                 continue
-            for j in range(len(tp)):
+            for j in range(len(ap)):
                 tids.append(root[d])
-                t_ll.append(tp[j])
+                a_ll.append(ap[j])
                 b_ll.append(bp[j])
-        return (np.asarray(tids), np.asarray(t_ll, dtype=np.float64),
+        return (np.asarray(tids), np.asarray(a_ll, dtype=np.float64),
                 np.asarray(b_ll, dtype=np.float64))
 
     # headline stats from the tree's own scored tokens (the full eval set)
@@ -1277,7 +1402,7 @@ def reply_completion(
     for name in models:
         if name == "tree":
             continue
-        tids, t_ll, b_ll = _paired(name)
+        tids, t_ll, b_ll = _paired_pair("tree", name)
         per_token_ll[name] = float(b_ll.mean()) if len(b_ll) else float("nan")
         d_arr = t_ll - b_ll
         delta[name] = {
@@ -1287,6 +1412,44 @@ def reply_completion(
 
     beats_no_tree = bool("no_tree" in delta and delta["no_tree"]["ci"][0] > 0.0)
 
+    # Raw per-eval-leaf held-out log-likelihoods per model, plus the leaf's
+    # thread-root id and token count (issue #852). This is the general exposure:
+    # downstream code (or contrast_ci) can form any paired baseline-vs-baseline
+    # contrast and cluster it on the thread root. Leaves are the tree-scored eval
+    # leaves; a model that could not score a leaf (an off-the-shelf fixed-vocab
+    # drop) gets an empty array for it.
+    leaves = [d for d in eligible if tree_pt[d]]
+    paired = {
+        "models": list(models),
+        "leaves": [int(d) for d in leaves],
+        "thread_root": np.asarray([int(root[d]) for d in leaves]),
+        "n_tokens": np.asarray([len(tree_pt[d]) for d in leaves]),
+        "token_ll": {
+            name: [np.asarray(scored[name][0][d], dtype=np.float64) for d in leaves]
+            for name in models
+        },
+    }
+
+    # Paired baseline-vs-baseline contrast CIs (issue #852), keyed by label. "edge"
+    # (permuted - no_tree) is the edge-attribution headline; auto-include it when
+    # both are scored. Every interval uses the deterministic module-level bootstrap
+    # so result.contrast[...] matches result.contrast_ci(...).
+    pairs = list(req_contrasts)
+    if "permuted" in models and "no_tree" in models:
+        if not any(lbl == "edge" or p == ("permuted", "no_tree") for lbl, p in pairs):
+            pairs.insert(0, ("edge", ("permuted", "no_tree")))
+    contrast = {}
+    for lbl, (first, second) in pairs:
+        label = lbl if lbl is not None else f"{first}-{second}"
+        tids, a_ll, b_ll = _paired_pair(first, second)
+        d_arr = a_ll - b_ll
+        contrast[label] = {
+            "estimate": float(d_arr.mean()) if len(d_arr) else float("nan"),
+            "ci": _cluster_ci_boot(d_arr, tids, n_boot=n_boot, seed=seed),
+            "first": first,
+            "second": second,
+        }
+
     return ReplyCompletionResult(
         per_token_ll=per_token_ll,
         delta=delta,
@@ -1295,12 +1458,15 @@ def reply_completion(
         n_heldout_tokens=int(n_tokens),
         oov_dropped=int(oov_dropped),
         beats_no_tree=beats_no_tree,
+        contrast=contrast,
+        paired=paired,
         settings={
             "num_topics": num_topics,
             "heldout_frac": heldout_frac,
             "min_eval_tokens": min_eval_tokens,
             "eval_frac": eval_frac,
             "baselines": list(baselines),
+            "contrasts": [lbl if lbl is not None else f"{p[0]}-{p[1]}" for lbl, p in pairs],
             "em_iters": em_iters,
             "min_count": min_count,
             "seed": seed,

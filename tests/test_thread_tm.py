@@ -1172,6 +1172,69 @@ def test_thread_tm_seed_words_non_dict_error():
         _fit_seeded(docs, parents, groups, seed_words=["w0", "w1"])
 
 
+# ---------------------------------------------------------------------------
+# reply_completion paired baseline-vs-baseline contrasts (issue #852)
+# ---------------------------------------------------------------------------
+
+def test_reply_completion_edge_contrast_and_paired_draws():
+    """The edge-attribution contrast (permuted - no_tree) gets a thread-clustered CI, it is
+    exposed as result.contrast['edge'], and it equals the algebraic (tree-no_tree)-(tree-permuted)
+    identity. The raw paired draws let contrast_ci reproduce any pair on demand."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.92)
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=5,
+        baselines=("no_tree", "permuted"), em_iters=40, seed=13, n_boot=200)
+    # edge auto-computed when both permuted and no_tree are scored
+    assert "edge" in res.contrast
+    edge = res.contrast["edge"]
+    assert edge["first"] == "permuted" and edge["second"] == "no_tree"
+    lo, hi = edge["ci"]
+    assert np.isfinite(lo) and np.isfinite(hi) and lo <= hi
+    # delta = tree - baseline, so edge = permuted - no_tree = delta[no_tree] - delta[permuted]
+    # (the ThreadTM baselines all score the identical leaves, so the identity is exact).
+    assert edge["estimate"] == pytest.approx(
+        res.delta["no_tree"]["estimate"] - res.delta["permuted"]["estimate"], abs=1e-9)
+    # the method reproduces the stored field exactly (same n_boot/seed defaults)
+    m = res.contrast_ci("permuted", "no_tree")
+    assert m["estimate"] == pytest.approx(edge["estimate"], abs=1e-12)
+    assert m["ci"] == edge["ci"]
+    # raw paired exposure
+    assert set(res.paired["models"]) == {"tree", "no_tree", "permuted"}
+    nleaf = len(res.paired["leaves"])
+    assert nleaf == len(res.paired["thread_root"]) == len(res.paired["n_tokens"])
+    for name in res.paired["models"]:
+        assert len(res.paired["token_ll"][name]) == nleaf
+
+
+def test_reply_completion_contrast_ci_matches_delta():
+    """contrast_ci('tree', b) reproduces the tree-minus-baseline point estimate in delta[b]."""
+    docs, parents = _branching_corpus(seed=2, persistence=0.9)
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=4, baselines=("no_tree", "permuted"),
+        em_iters=40, seed=13, n_boot=150)
+    for b in ("no_tree", "permuted"):
+        c = res.contrast_ci("tree", b)
+        assert c["estimate"] == pytest.approx(res.delta[b]["estimate"], abs=1e-9)
+
+
+def test_reply_completion_contrast_validation():
+    """A contrast naming an unscored model is rejected up front; an unknown alias too."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.9)
+    with pytest.raises(ValueError, match="not scored"):
+        topica.evaluate.reply_completion(
+            docs, parents, num_topics=4, baselines=("no_tree",),
+            contrasts=[("permuted", "no_tree")], em_iters=20, seed=13)
+    with pytest.raises(ValueError, match="unknown contrast alias"):
+        topica.evaluate.reply_completion(
+            docs, parents, num_topics=4, baselines=("no_tree", "permuted"),
+            contrasts=["bogus"], em_iters=20, seed=13)
+    # contrast_ci rejects an unscored name after the fact
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=4, baselines=("no_tree",), em_iters=20, seed=13, n_boot=50)
+    with pytest.raises(ValueError, match="unknown model"):
+        res.contrast_ci("tree", "permuted")
+
+
 def test_transform_covariates_none_uses_mean_anchor():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=30, depth=6)
     m = topica.ThreadTM(2, em_iters=60, seed=13)
