@@ -1107,6 +1107,18 @@ def test_thread_tm_seed_validation_and_content_guard():
         _fit_seeded(docs, parents, groups, prevalence_anchor={0: [0.5, 0.5]})
     with pytest.raises(ValueError, match="not supported together with a content"):
         _fit_seeded(docs, parents, groups, seed_words={0: ["w0"]}, content="depth")
+    # finiteness / sign guards on the strength knobs (f64::clamp would let NaN through)
+    for bad in (float("nan"), -1.0):
+        with pytest.raises(ValueError, match="seed_weight"):
+            _fit_seeded(docs, parents, groups, seed_words={0: ["w0"]}, seed_weight=bad)
+        with pytest.raises(ValueError, match="seed_strength"):
+            _fit_seeded(docs, parents, groups, seed_words={0: ["w0"]}, seed_strength=bad)
+    for bad in (float("nan"), 1.5, -0.1):
+        with pytest.raises(ValueError, match="anchor_strength"):
+            _fit_seeded(docs, parents, groups,
+                        prevalence_anchor={0: [0.25, 0.25, 0.25, 0.25]}, anchor_strength=bad)
+    with pytest.raises(ValueError, match="non-negative topic mix"):
+        _fit_seeded(docs, parents, groups, prevalence_anchor={0: [0.5, -0.2, 0.4, 0.3]})
 
 
 def test_thread_tm_unseeded_fit_unchanged_by_none_seeds():

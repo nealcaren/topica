@@ -3131,8 +3131,9 @@ class ThreadTM:
         keywords (SeededLDA-style Dirichlet seeding) and pinning them to fixed slots; unseeded
         topics are learned freely. `seed_prior="frequency"` (default) gives each matched seed word
         a pseudocount of ``corpus_count(word) * seed_weight`` (scale-robust, a SOFT prior that still
-        learns beyond the seeds); ``"uniform"`` is a flat ``seed_weight * 100``; `seed_strength`
-        overrides both with a flat per-word pseudocount. `seed_match` is ``"fixed"`` (exact,
+        learns beyond the seeds); ``"uniform"`` is a flat ``seed_weight`` per word (so the two
+        schemes relate as ``frequency = uniform * corpus_count(word)``); `seed_strength` overrides
+        both with a flat per-word pseudocount. `seed_match` is ``"fixed"`` (exact,
         default), ``"glob"`` (``*``/``?`` wildcards), or ``"regex"``, with `case_insensitive`.
         Seeding is not supported together with a `content` covariate. `prevalence_anchor` maps a
         covariate-group index to a length-K target topic mix and shrinks that group's baseline

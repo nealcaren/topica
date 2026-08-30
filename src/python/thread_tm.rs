@@ -853,11 +853,6 @@ impl ThreadTM {
         // covariate groups. seed_words -> β pseudocounts on the matched (topic, word) cells;
         // prevalence_anchor -> per-group η targets (additive-log-ratio of the supplied mix).
         let seed_cfg = {
-            if seed_prior != "frequency" && seed_prior != "uniform" {
-                return Err(PyValueError::new_err(
-                    "seed_prior must be \"frequency\" or \"uniform\"",
-                ));
-            }
             // Seeding the topic-word channel is unsupported alongside a content covariate (SAGE):
             // with content the β M-step is replaced by per-level sparse deviations, so the seed
             // pseudocounts would only reach the initializer, not the fit. Reject the combination.
@@ -867,9 +862,27 @@ impl ThreadTM {
                      without content, or drop seed_words (prevalence_anchor works with content).",
                 ));
             }
-            let mode = crate::python::SeedMatch::parse(&seed_match)?;
             let mut beta_pseudo: Vec<(usize, usize, f64)> = Vec::new();
             if let Some(sw) = &seed_words {
+                // Validate the seeding knobs only on the path that uses them. Guard finiteness and
+                // sign so a NaN/negative pseudocount cannot silently poison β (a negative pseudocount
+                // makes a normalized β entry negative; f64::clamp would let a NaN through untouched).
+                if seed_prior != "frequency" && seed_prior != "uniform" {
+                    return Err(PyValueError::new_err(
+                        "seed_prior must be \"frequency\" or \"uniform\"",
+                    ));
+                }
+                if !seed_weight.is_finite() || seed_weight < 0.0 {
+                    return Err(PyValueError::new_err("seed_weight must be finite and >= 0"));
+                }
+                if let Some(s) = seed_strength {
+                    if !s.is_finite() || s < 0.0 {
+                        return Err(PyValueError::new_err(
+                            "seed_strength must be finite and >= 0",
+                        ));
+                    }
+                }
+                let mode = crate::python::SeedMatch::parse(&seed_match)?;
                 // Lay the dict out positionally (0..K) and resolve patterns with the shared matcher
                 // (fixed/glob/regex, dedup within a topic) SeededLDA/CorEx use.
                 let mut per_topic: Vec<Vec<String>> = vec![Vec::new(); k];
@@ -886,15 +899,17 @@ impl ThreadTM {
                 let mut n_seeded_words = 0usize;
                 for (t, ids) in matched.iter().enumerate() {
                     for &id in ids {
-                        // pseudocount per matched seed word. `seed_strength` (if given) overrides the
-                        // scheme with a flat count; else "frequency" scales by the word's own corpus
-                        // count (SeededLDA-style, scale-robust) and "uniform" is flat.
+                        // Pseudocount per matched seed word. `seed_strength` (if given) overrides the
+                        // scheme with a flat count. Otherwise "frequency" = corpus_count(word) *
+                        // seed_weight (scale-robust, so a common seed word is trusted more) and
+                        // "uniform" = seed_weight (a flat count per word); the two schemes therefore
+                        // relate as frequency = uniform * corpus_count(word).
                         let pc = match seed_strength {
                             Some(s) => s,
                             None if seed_prior == "frequency" => {
                                 counts[vocab[id].as_str()] as f64 * seed_weight
                             }
-                            None => seed_weight * 100.0,
+                            None => seed_weight,
                         };
                         beta_pseudo.push((t, id, pc));
                         n_seeded_words += 1;
@@ -912,7 +927,12 @@ impl ThreadTM {
             }
             let mut anchor_target: Vec<(usize, Vec<f64>, f64)> = Vec::new();
             if let Some(pa) = &prevalence_anchor {
-                let s = anchor_strength.clamp(0.0, 1.0);
+                if !anchor_strength.is_finite() || !(0.0..=1.0).contains(&anchor_strength) {
+                    return Err(PyValueError::new_err(
+                        "anchor_strength must be finite and in [0, 1]",
+                    ));
+                }
+                let s = anchor_strength;
                 for (&g, mix) in pa {
                     if g >= num_groups {
                         return Err(PyValueError::new_err(format!(
@@ -923,6 +943,12 @@ impl ThreadTM {
                         return Err(PyValueError::new_err(format!(
                             "prevalence_anchor[{g}] has length {}, expected num_topics={k}",
                             mix.len()
+                        )));
+                    }
+                    if mix.iter().any(|&p| !p.is_finite() || p < 0.0) {
+                        return Err(PyValueError::new_err(format!(
+                            "prevalence_anchor[{g}] must be a non-negative topic mix (got a negative \
+                             or non-finite entry); it need not sum to 1"
                         )));
                     }
                     // additive-log-ratio with the last topic as reference (η is K-1 dimensional).
