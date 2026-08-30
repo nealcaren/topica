@@ -489,7 +489,8 @@ impl ThreadTM {
     #[pyo3(signature = (data, parents=None, covariates=None, covariate_names=None, *, min_count=1,
                         content=None, content_names=None, content_prior="l2".to_string(),
                         content_prior_var=0.5, content_smooth=0.0, depth_bins=None,
-                        seed_words=None, seed_strength=200.0,
+                        seed_words=None, seed_prior="frequency".to_string(),
+                        seed_weight=1.0, seed_strength=None,
                         prevalence_anchor=None, anchor_strength=0.5))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
@@ -507,10 +508,15 @@ impl ThreadTM {
         content_smooth: f64,
         depth_bins: Option<Vec<usize>>,
         // SPIKE (seeds/anchors exploration): seed_words maps a topic index to keyword strings
-        // (Dirichlet β seeding, seed_strength pseudocounts per word); prevalence_anchor maps a
-        // covariate-group index to a length-K target topic mix (anchor pull, anchor_strength).
+        // (Dirichlet β seeding). seed_prior="frequency" (default) sets each seed word's pseudocount
+        // to corpus_count(word) * seed_weight, so seeding is scale-robust and does not collapse a
+        // topic to its seeds (SeededLDA's scheme); "uniform" uses a flat seed_weight * 100. Passing
+        // seed_strength overrides both with that flat per-word pseudocount (the original knob).
+        // prevalence_anchor maps a covariate-group index to a length-K target topic mix.
         seed_words: Option<std::collections::HashMap<usize, Vec<String>>>,
-        seed_strength: f64,
+        seed_prior: String,
+        seed_weight: f64,
+        seed_strength: Option<f64>,
         prevalence_anchor: Option<std::collections::HashMap<usize, Vec<f64>>>,
         anchor_strength: f64,
     ) -> PyResult<Py<Self>> {
@@ -843,6 +849,11 @@ impl ThreadTM {
         // covariate groups. seed_words -> β pseudocounts on the matched (topic, word) cells;
         // prevalence_anchor -> per-group η targets (additive-log-ratio of the supplied mix).
         let seed_cfg = {
+            if seed_prior != "frequency" && seed_prior != "uniform" {
+                return Err(PyValueError::new_err(
+                    "seed_prior must be \"frequency\" or \"uniform\"",
+                ));
+            }
             let mut beta_pseudo: Vec<(usize, usize, f64)> = Vec::new();
             let mut n_unmatched = 0usize;
             if let Some(sw) = &seed_words {
@@ -854,7 +865,19 @@ impl ThreadTM {
                     }
                     for w in words {
                         match wid.get(w.as_str()) {
-                            Some(&id) => beta_pseudo.push((t, id as usize, seed_strength)),
+                            Some(&id) => {
+                                // pseudocount per seed word. `seed_strength` (if given) overrides the
+                                // scheme with a flat count; else "frequency" scales by the word's own
+                                // corpus count (SeededLDA-style, scale-robust) and "uniform" is flat.
+                                let pc = match seed_strength {
+                                    Some(s) => s,
+                                    None if seed_prior == "frequency" => {
+                                        counts[w.as_str()] as f64 * seed_weight
+                                    }
+                                    None => seed_weight * 100.0,
+                                };
+                                beta_pseudo.push((t, id as usize, pc));
+                            }
                             None => n_unmatched += 1,
                         }
                     }
