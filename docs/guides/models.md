@@ -858,9 +858,16 @@ seeded topic keeps learning the rest of its vocabulary rather than collapsing on
 `"fixed"` (default), `"glob"` (`tax*`), or `"regex"`, with `case_insensitive`. Seeding the
 word channel is not supported together with a `content` covariate (raise otherwise).
 
-`prevalence_anchor={group_index: [K-length mix]}` shrinks a covariate group's baseline topic
-mix toward a supplied target by `anchor_strength` (0..1), steering *prevalence*; it works with
-`content`.
+Audit what glob/regex seeds actually matched with `m.seed_matches` — a `{topic: [words]}` dict
+over the seeded topics, so you can confirm `planet*` caught `planet`/`planets` and nothing
+unintended. Note the fit is deterministic given its inputs: `seed` does not vary it (the
+variational EM starts from a fixed spectral init), so refitting across seeds is not a robustness
+check — resample threads instead.
+
+`prevalence_anchor={group: [K-length mix]}` shrinks a covariate group's baseline topic mix toward
+a supplied target by `anchor_strength` (0..1), steering *prevalence*; it works with `content`. The
+key is either the encoded integer group index (first-seen order) or the string group label you
+passed to `covariates=`.
 
 ```python
 m = topica.ThreadTM(num_topics=8, seed=13)

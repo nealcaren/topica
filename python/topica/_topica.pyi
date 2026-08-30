@@ -3107,7 +3107,7 @@ class ThreadTM:
         seed_strength: float | None = None,
         seed_match: str = "fixed",
         case_insensitive: bool = False,
-        prevalence_anchor: dict[int, Sequence[float]] | None = None,
+        prevalence_anchor: dict[int | str, Sequence[float]] | None = None,
         anchor_strength: float = 0.5,
     ) -> "ThreadTM":
         """`data` is a ``topica.Corpus`` or a list of token lists. `parents[d]` is document
@@ -3135,10 +3135,20 @@ class ThreadTM:
         schemes relate as ``frequency = uniform * corpus_count(word)``); `seed_strength` overrides
         both with a flat per-word pseudocount. `seed_match` is ``"fixed"`` (exact,
         default), ``"glob"`` (``*``/``?`` wildcards), or ``"regex"``, with `case_insensitive`.
-        Seeding is not supported together with a `content` covariate. `prevalence_anchor` maps a
-        covariate-group index to a length-K target topic mix and shrinks that group's baseline
-        toward it by `anchor_strength` (0..1), steering topic prevalence (works with `content`).
+        Seeding is not supported together with a `content` covariate. Audit what glob/regex seeds
+        matched with the `seed_matches` property. `prevalence_anchor` maps a covariate group to a
+        length-K target topic mix and shrinks that group's baseline toward it by `anchor_strength`
+        (0..1), steering topic prevalence (works with `content`); the key is either the encoded
+        integer group index (first-seen order) or the string group label (as passed to
+        `covariates=`). Note the fit is deterministic; `seed` does not vary it, so refitting across
+        seeds is not a robustness check (resample threads instead).
         Requires ``topica.enable_experimental()``."""
+        ...
+    @property
+    def seed_matches(self) -> dict[int, list[str]]:
+        """Which fitted-vocabulary words each seeded topic's patterns matched (issue #856), as
+        ``{topic_index: [words]}`` over the seeded topics only. Audits what `seed_words` with
+        `seed_match="glob"`/`"regex"` resolved to. Empty when the fit was unseeded."""
         ...
     def transform(
         self,

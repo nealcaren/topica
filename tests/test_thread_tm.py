@@ -1131,6 +1131,47 @@ def test_thread_tm_unseeded_fit_unchanged_by_none_seeds():
     assert np.allclose(np.asarray(a.group_prevalence), np.asarray(b.group_prevalence))
 
 
+def test_thread_tm_seed_matches_introspection():
+    """seed_matches exposes which vocabulary words each topic's patterns resolved to (issue #856),
+    so glob/regex seeding is auditable; it is empty on an unseeded fit."""
+    docs, parents, groups, block_words, _ = _planted_block_corpus()
+    m = _fit_seeded(docs, parents, groups, seed_words={0: ["w0", "w1"], 2: ["w2*"]},
+                    seed_match="glob")
+    sm = dict(m.seed_matches)
+    assert set(sm.keys()) == {0, 2}
+    assert set(sm[0]) == {"w0", "w1"}
+    # 'w2*' globs onto block-2 words w20..w29 (and w2 itself) — a superset check on a few
+    assert {"w20", "w21", "w29"}.issubset(set(sm[2]))
+    assert dict(_fit_seeded(docs, parents, groups).seed_matches) == {}
+
+
+def test_thread_tm_prevalence_anchor_accepts_string_label():
+    """prevalence_anchor keys may be the string covariate label (as passed to covariates=), not
+    only the encoded integer index (issue #856); an unknown label raises helpfully."""
+    docs, parents, groups, _, _ = _planted_block_corpus(n_threads=40)
+    labels = ["g0" if g == 0 else "g1" for g in groups]
+    target = [0.7, 0.1, 0.1, 0.1]
+    by_label = topica.ThreadTM(4, em_iters=60, seed=13, coupling="parent").fit(
+        docs, parents=parents, covariates=labels, min_count=1,
+        prevalence_anchor={"g0": target}, anchor_strength=0.9)
+    by_index = topica.ThreadTM(4, em_iters=60, seed=13, coupling="parent").fit(
+        docs, parents=parents, covariates=labels, min_count=1,
+        prevalence_anchor={0: target}, anchor_strength=0.9)
+    assert np.allclose(np.asarray(by_label.group_prevalence),
+                       np.asarray(by_index.group_prevalence))
+    with pytest.raises(ValueError, match="is not one of the covariate groups"):
+        topica.ThreadTM(4, em_iters=20, seed=13).fit(
+            docs, parents=parents, covariates=labels, min_count=1,
+            prevalence_anchor={"nope": target})
+
+
+def test_thread_tm_seed_words_non_dict_error():
+    """A non-dict seed_words gets a house-quality error, not the raw PyO3 message (issue #856)."""
+    docs, parents, groups, _, _ = _planted_block_corpus(n_threads=20)
+    with pytest.raises((ValueError, TypeError), match="seed_words must be a dict"):
+        _fit_seeded(docs, parents, groups, seed_words=["w0", "w1"])
+
+
 def test_transform_covariates_none_uses_mean_anchor():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=30, depth=6)
     m = topica.ThreadTM(2, em_iters=60, seed=13)
